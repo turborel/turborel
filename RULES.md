@@ -466,8 +466,13 @@ storage empty. Its rows are each session's.
   [§13.11] are in a schema MODULE of its own definitions alone, owned by
   its authorization identifier (`db/declared.rs`), in no other session's
   and no view of the Information Schema.
-- Not implemented: ALTER TABLE of one, which would change every
-  session's rows (SQLCODE -900); and CREATE INDEX on one.
+- ALTER TABLE of one is made only while no session's instance holds a
+  row, the altering session's included, else refused (SQLSTATE TB911);
+  and while its transaction is open, no other writes an instance. The
+  database's instances are noted for it (`temporary::Uses`). So no
+  session keeps rows its new definition does not describe, and no added
+  constraint goes unchecked of rows only another session sees.
+- Not implemented: CREATE INDEX on one.
 *Why:* the standard puts each session's rows in a schema of its own
 [§4.9]; giving the session's view of the definitions its own storage does
 so with no change to how a table is found, bound or checked.

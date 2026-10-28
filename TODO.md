@@ -83,8 +83,8 @@ RULES.md when its design settles.
 - **SQL-92 in full** comes first. What came after it, through SQL:2023
   (triggers, SQL/PSM, and the rest), follows, written from the standards'
   own text, never from memory or other products.
-- **Temporary tables, further** (RULES.md D49): ALTER TABLE of one, which
-  changes every session's rows; CREATE INDEX on one. An instance reserves
+- **Temporary tables, further** (RULES.md D49): CREATE INDEX on one; ALTER
+  TABLE of one while sessions hold rows in it. An instance reserves
   in-memory pools of the database's budget (2 MiB for its rows, and for
   each index) when first written, and should spill to the session's
   temporary files past WORK_MEMORY instead; a PRESERVE ROWS instance's old

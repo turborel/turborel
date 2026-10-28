@@ -15,12 +15,12 @@
 //! transaction, empty too.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use super::{Session, State, api, rule};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc, TemporaryKind};
 use crate::engine::rows::{RowStore, TableOptions};
-use crate::error::Result;
+use crate::error::{Code, Result, SqlError};
 use crate::index::{BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, Probe};
 use crate::log::Lsn;
 use crate::memory::MemoryBudget;
@@ -42,6 +42,77 @@ const SCRATCH: TxCapabilities =
 pub(super) struct Temporaries {
     made: Mutex<HashMap<(QualifiedName, u32), Instance>>,
     pub(super) declared: Mutex<Vec<(TableDesc, Vec<IndexDesc>)>>,
+}
+
+/// \[DESIGN\] The database's instances of each temporary table, of every
+/// session, and the transaction altering it, if one is (RULES.md D49): an
+/// ALTER TABLE of one is made only while no instance holds a row, and no
+/// other transaction writes one until it ends, so none has rows the new
+/// definition does not describe.
+#[derive(Default)]
+pub(crate) struct Uses(Mutex<HashMap<QualifiedName, Use>>);
+
+/// A temporary table's instances, and its altering transaction.
+#[derive(Default)]
+struct Use {
+    instances: Vec<Weak<Rows_>>,
+    altering: Option<TxId>,
+}
+
+impl Uses {
+    /// Notes `rows`, an instance of temporary table `name`.
+    fn register(&self, name: &QualifiedName, rows: &Arc<Rows_>) {
+        let mut tables = lock_builtin(&self.0);
+        let used = tables.entry(name.clone()).or_default();
+        used.instances.retain(|w| w.strong_count() > 0);
+        used.instances.push(Arc::downgrade(rows));
+    }
+
+    /// That transaction `tx` may write an instance of `name`: no other
+    /// transaction is altering it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -911 if one is.
+    fn may_write(&self, name: &QualifiedName, tx: TxId) -> Result<()> {
+        let altering = lock_builtin(&self.0).get(name).and_then(|u| u.altering);
+        if altering.is_some_and(|other| other != tx) {
+            let msg =
+                format!("[DESIGN] temporary table {name} is being altered: its rows are written once that transaction ends (RULES.md D49)");
+            return Err(SqlError::new(Code::Conflict, msg));
+        }
+        Ok(())
+    }
+
+    /// [ISO/IEC 9075:1992 §11.10] Transaction `tx` alters temporary table
+    /// `name`, which no instance of any session holds a row of: no other
+    /// writes one until it ends.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -911 if an instance holds a row.
+    pub(super) fn alter(&self, name: &QualifiedName, tx: TxId) -> Result<()> {
+        let mut tables = lock_builtin(&self.0);
+        let used = tables.entry(name.clone()).or_default();
+        used.instances.retain(|w| w.strong_count() > 0);
+        if used.instances.iter().filter_map(Weak::upgrade).any(|rows| rows.row_count() > 0) {
+            let msg = format!(
+                "[DESIGN] temporary table {name} has rows in a session's instance: it is altered only while none does (RULES.md D49)"
+            );
+            return Err(SqlError::new(Code::Conflict, msg));
+        }
+        used.altering = Some(tx);
+        Ok(())
+    }
+
+    /// Transaction `tx` ended: what it altered may be written again.
+    fn ended(&self, tx: TxId) {
+        for used in lock_builtin(&self.0).values_mut() {
+            if used.altering == Some(tx) {
+                used.altering = None;
+            }
+        }
+    }
 }
 
 /// One instance: its rows, its lock, its indexes, and whether a commit
@@ -70,7 +141,7 @@ impl Session {
         for desc in temporary {
             let indexes: Vec<IndexDesc> = st.catalog.indexes(&desc.name).into_iter().cloned().collect();
             let key = (desc.name.clone(), desc.generation);
-            let instance = made.entry(key).or_insert_with(|| Instance::of(&desc, &indexes, &st.memory));
+            let instance = made.entry(key).or_insert_with(|| Instance::of(&desc, &indexes, (&st.memory, &st.temporaries)));
             let rows: Arc<dyn TableStorage> = Arc::<Rows_>::clone(&instance.rows);
             copy.storage.insert(desc.name.clone(), rows);
             copy.locks.insert(desc.name.clone(), Arc::clone(&instance.lock));
@@ -82,9 +153,13 @@ impl Session {
         Arc::new(copy)
     }
 
-    /// [ISO/IEC 9075:1992 §14.3 GR3] Its transaction ended: each instance
-    /// of ON COMMIT DELETE ROWS emptied.
-    pub(super) fn temporaries_ended(&self) {
+    /// [ISO/IEC 9075:1992 §14.3 GR3] Its transaction, `tx` if it had one,
+    /// ended: each instance of ON COMMIT DELETE ROWS emptied, and what it
+    /// altered of `st`'s temporary tables written again.
+    pub(super) fn temporaries_ended(&self, st: &State, tx: Option<TxId>) {
+        if let Some(tx) = tx {
+            st.temporaries.ended(tx);
+        }
         for instance in lock_builtin(&self.temporaries.made).values().filter(|i| i.delete_rows) {
             instance.rows.emptied();
             instance.indexes.values().for_each(|e| e.emptied());
@@ -141,9 +216,10 @@ fn kind_of(kind: Option<TemporaryKind>) -> &'static str {
 
 impl Instance {
     /// An instance of `desc`, with `indexes`, made as it is first written,
-    /// of `budget`.
-    fn of(desc: &TableDesc, indexes: &[IndexDesc], budget: &Arc<MemoryBudget>) -> Instance {
-        let rows = Arc::new(Rows_ { desc: desc.clone(), budget: Arc::clone(budget), made: Mutex::default() });
+    /// of `budget`, noted in `uses`.
+    fn of(desc: &TableDesc, indexes: &[IndexDesc], (budget, uses): (&Arc<MemoryBudget>, &Arc<Uses>)) -> Instance {
+        let rows = Arc::new(Rows_ { desc: desc.clone(), budget: Arc::clone(budget), uses: Arc::clone(uses), made: Mutex::default() });
+        uses.register(&desc.name, &rows);
         let entries = |ix: &IndexDesc| {
             let made = Entries { desc: desc.clone(), index: ix.clone(), budget: Arc::clone(budget), made: Mutex::default() };
             (ix.name.clone(), Arc::new(made))
@@ -158,6 +234,8 @@ impl Instance {
 struct Rows_ {
     desc: TableDesc,
     budget: Arc<MemoryBudget>,
+    /// Which transaction may write it (`Uses::may_write`).
+    uses: Arc<Uses>,
     made: Mutex<Option<Arc<dyn TableStorage>>>,
 }
 
@@ -166,8 +244,9 @@ impl Rows_ {
         lock_builtin(&self.made).clone()
     }
 
-    /// The rows, made if they are not.
-    fn make(&self) -> Result<Arc<dyn TableStorage>> {
+    /// The rows, made if they are not, for transaction `tx` to write.
+    fn make(&self, tx: TxId) -> Result<Arc<dyn TableStorage>> {
+        self.uses.may_write(&self.desc.name, tx)?;
         let mut made = lock_builtin(&self.made);
         if let Some(rows) = made.as_ref() {
             return Ok(Arc::clone(rows));
@@ -192,16 +271,16 @@ fn no_rows() -> Rows {
 
 impl TableStorage for Rows_ {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
-        self.make()?.insert(tx, row)
+        self.make(tx)?.insert(tx, row)
     }
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.make()?.update(tx, id, row)
+        self.make(tx)?.update(tx, id, row)
     }
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.make()?.delete(tx, id)
+        self.make(tx)?.delete(tx, id)
     }
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.make()?.restore(tx, id, row)
+        self.make(tx)?.restore(tx, id, row)
     }
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
         self.made().map_or(Ok(None), |rows| rows.get(tx, id))
@@ -231,7 +310,7 @@ impl TableStorage for Rows_ {
         SCRATCH
     }
     fn begin(&self, tx: TxId, snapshot: Timestamp) -> Result<()> {
-        self.make()?.begin(tx, snapshot)
+        self.make(tx)?.begin(tx, snapshot)
     }
     fn read_mode(&self, tx: TxId, mode: ReadMode) -> Result<()> {
         self.made().map_or(Ok(()), |rows| rows.read_mode(tx, mode))

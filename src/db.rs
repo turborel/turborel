@@ -407,12 +407,14 @@ impl Session {
             return Err(e);
         }
         let staged = self.take_staged();
-        let ended = match (self.end_transaction(), staged) {
+        let ending = self.end_transaction();
+        let id = ending.as_ref().map(|tx| tx.id);
+        let ended = match (ending, staged) {
             (Some(tx), None) => st.commit(&tx),
             (Some(tx), Some(staged)) => self.db.commit_staged(&tx, &staged),
             (None, _) => return Ok(()),
         };
-        self.temporaries_ended();
+        self.temporaries_ended(st, id);
         // The transaction has ended: a checkpoint may come due.
         self.db.checkpoint_if_due();
         ended
@@ -434,7 +436,9 @@ impl Session {
     fn rollback_in(&self, st: &State) -> Result<()> {
         // The changes of definitions are forgotten; the published ones have
         // the storage of every table its changes are undone in.
-        let ended = match (self.end_transaction(), self.take_staged()) {
+        let ending = self.end_transaction();
+        let id = ending.as_ref().map(|tx| tx.id);
+        let ended = match (ending, self.take_staged()) {
             (Some(tx), None) => st.rollback(&tx),
             (Some(tx), Some(staged)) => {
                 staged.discard();
@@ -442,7 +446,7 @@ impl Session {
             }
             (None, _) => return Ok(()),
         };
-        self.temporaries_ended();
+        self.temporaries_ended(st, id);
         self.db.checkpoint_if_due();
         ended
     }

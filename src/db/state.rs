@@ -103,6 +103,9 @@ pub struct State {
     /// The memory budget its caches draw on, shared by every snapshot
     /// (`memory.rs`).
     pub(crate) memory: Arc<MemoryBudget>,
+    /// The sessions' instances of its temporary tables, shared by every
+    /// snapshot (`db/temporary.rs`).
+    pub(crate) temporaries: Arc<super::temporary::Uses>,
     /// Where its operators spill, shared by every snapshot (`spill.rs`).
     pub(crate) work: Arc<WorkAreas>,
     /// The log, the commit point of transactions begun with this snapshot
@@ -144,6 +147,7 @@ impl State {
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
             memory: Arc::clone(&memory),
+            temporaries: Arc::default(),
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             log: None,
             reopening: None,

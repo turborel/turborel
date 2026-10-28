@@ -215,13 +215,12 @@ impl Session {
                 format!("[ISO/IEC 9075:1992 §11.10 SR5] {qn} is a declared local temporary table: it is not altered"),
             );
         }
-        if temporary.is_some() {
-            let msg = format!(
-                "[DESIGN] ALTER TABLE of {qn}, a temporary table, is valid SQL but is not implemented: each session's rows would change"
-            );
-            return fail(Code::Unsupported, msg);
-        }
         self.prepare_change(st, tx, &qn)?;
+        // [DESIGN] Of a temporary table, only while no session's instance
+        // holds a row (RULES.md D49).
+        if temporary.is_some() {
+            st.temporaries.alter(&qn, tx.id)?;
+        }
         let mut next = State::clone(st);
         let zone = self.now.get().zone;
         let (_, made, reshape) = next.alter_table((&qn, &schema, zone), action, (None, Some(tx)))?;

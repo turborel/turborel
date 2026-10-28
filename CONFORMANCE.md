@@ -256,7 +256,8 @@ restriction is lifted.
   session's rows, ON COMMIT DELETE or PRESERVE ROWS [§14.3 GR3], written
   in READ ONLY transactions too [§13.6–§13.10 GR1], with the rules of
   which tables each refers to [§11.8 SR4, SR5; §11.9 SR3, SR4] and their
-  privileges [§10.3 SR2] (RULES.md D49); and **declared local temporary
+  privileges [§10.3 SR2], altered [§11.10] while no session's instance
+  holds a row (RULES.md D49); and **declared local temporary
   tables** [§13.11], DECLARE LOCAL TEMPORARY TABLE MODULE.T, a session's
   own, in no view of the Information Schema, never altered, dropped,
   granted on or named by a view [§10.3 SR1, §11.10 SR5, §11.18 SR3,
@@ -362,7 +363,6 @@ restriction is lifted.
   one (SQLSTATE 22018). A minute is always 60 seconds, so datetime
   arithmetic, whose results over a leap second are implementation-defined
   [§6.1 Table 10, note], is exact.
-- **ALTER TABLE of a temporary table** (RULES.md D49).
 - **Dynamic SQL in SQL text** [§17]: ALLOCATE and DEALLOCATE DESCRIPTOR,
   GET and SET DESCRIPTOR, PREPARE, DEALLOCATE PREPARE, DESCRIBE, EXECUTE,
   EXECUTE IMMEDIATE, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE
