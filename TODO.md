@@ -96,6 +96,9 @@ RULES.md when its design settles.
   definition>` is made at once, apart from the session's transaction, so
   ROLLBACK does not undo it; SQL-92 makes it part of the transaction
   [§20.1 GR6b iii].
+- **Truncation warnings** [§9.1 GR3b, GR3e]: a string cut to fit a
+  target of FETCH or SELECT INTO raises no warning, SQLSTATE 01004, where
+  SQL-92 raises one; its indicator holds its length.
 - **The names of numeric types:** INTEGER, SMALLINT, DECIMAL and
   NUMERIC are kept as one exact type, of a precision and scale, and FLOAT
   as REAL or DOUBLE PRECISION by its precision; so the Information
