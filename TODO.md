@@ -25,11 +25,10 @@ Each item becomes a decision in RULES.md when done:
 
 ## Project
 
-- **Documentation for alpha** (D23), laid out to be published and read on
-  the project's website: a manual for operators and users (installing,
-  configuring through settings, the SQL taken, the server and client) and
-  an internals guide, in `doc/`, from the doc comments and RULES.md once
-  the design settles.
+- **Documentation for alpha** (D23), to be published and read on the
+  project's website: the manual in `doc/` is laid out whole, its sections
+  to be written as each settles; then an internals guide, from the doc
+  comments and RULES.md, once the design settles.
 
 ---
 

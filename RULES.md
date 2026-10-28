@@ -37,7 +37,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D2 | DO-178C Level A objectives are the target |
 | D3 | No third-party dependencies |
 | D6 | Production code only |
-| D23 | No design documents yet |
+| D23 | A manual of what is settled; no design documents yet |
 | **Tooling and process** | |
 | D4 | Tests in Rust's standard levels |
 | D5 | One integration test binary |
@@ -117,12 +117,20 @@ Built-in plug-ins are ones a production database would ship; a test that
 needs another uses a test-local plug-in. `bench/` measures, it is a tool.
 *Why:* a toy costs upkeep and hides what is real.
 
-**D23. No design documents yet.** The README is a short introduction;
-RULES.md, CONFORMANCE.md and TODO.md are the working documents. A manual and
-an internals guide, in `doc/`, will be written once the design settles.
-Doc comments on public items are required meanwhile (R-DOC-1).
+**D23. A manual of what is settled; no design documents yet.** The
+README is a short introduction; RULES.md, CONFORMANCE.md and TODO.md are
+the working documents. The manual is a set in `doc/` (`doc/README.md`),
+laid out as a system's manuals were: a User's Guide, an SQL Reference
+Manual with a page for each statement (NAME, SYNOPSIS, DESCRIPTION,
+RULES, PRIVILEGES, ERRORS, EXAMPLES, STANDARD, SEE ALSO), an Operator's
+Guide, a Client Reference, and appendices. It describes what users and
+operators see, and only what is settled; a section not yet written says
+so. An internals guide waits for the design to settle. Doc comments on
+public items are required meanwhile (R-DOC-1).
 *Why:* documents written before a design settles go stale; doc comments
-live beside the code they describe.
+live beside the code they describe. What a user sees settles first, and a
+manual laid out whole from the start keeps each part in its place as it
+is written.
 
 ### Tooling and process
 
