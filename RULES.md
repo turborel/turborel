@@ -754,9 +754,9 @@ becomes a trait when it is.
   with a constant judged over the vectors, and the rest of it judged of
   the rows they keep, each made a row; one that can raise is judged whole
   a row at a time, as row by row. Groups are held in the work area, given in the order
-  their first rows came; past it, the aggregation is grouped row by row
-  instead, from the start, as `exec/group.rs` spills and batches cannot
-  yet. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)
+  their first rows came; past it, the rows of every group not yet held
+  are written, numbered, as a pass of `exec/group.rs` writes them, grouped
+  as it groups them, and merged with the groups held by number. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)
   of a COLUMNS table some 50 times as fast, a SUM of one column 17, a
   filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
   made in a buffer kept (`spill::put_norm`).

@@ -122,7 +122,8 @@ const GROUPED: [&str; 6] = [
 /// each group's set functions give what they give row by row, of a table
 /// of each layout, frozen rows changed among them, grouped by one column
 /// or two, nulls a group of their own, filtered or not, no row matched;
-/// and groups past the work area are grouped row by row, alike.
+/// and groups past the work area, their rows written and grouped as row
+/// by row groups them, given in the order their first rows came.
 #[test]
 fn groups_by_batch_answer_as_row_by_row() {
     let db = Database::new();
@@ -136,6 +137,14 @@ fn groups_by_batch_answer_as_row_by_row() {
     exec(&a, "SET WORK_MEMORY = 65536").unwrap();
     let many = "SELECT K, COUNT(*), SUM(N) FROM {t} GROUP BY K";
     assert_eq!(sorted(&a, &many.replace("{t}", "C")), sorted(&a, &many.replace("{t}", "R")));
+    // A table of rows gives its batches in the order of its scan: its
+    // groups by batch come in the order row by row gives them.
+    let by_row: Vec<String> = rows(&a, "SELECT K, COUNT(*), SUM(N), SUM(N + 0) FROM R GROUP BY K")
+        .unwrap()
+        .iter()
+        .map(|r| r.rsplit_once(',').unwrap().0.to_owned())
+        .collect();
+    assert_eq!(rows(&a, &many.replace("{t}", "R")).unwrap(), by_row);
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D38: grouped by batch, datetimes and
