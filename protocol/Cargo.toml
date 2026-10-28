@@ -1,6 +1,6 @@
 [package]
 name = "turborel-protocol"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "The turborel server's native wire protocol: its messages and their encoding, without I/O, shared by the server and its clients (RULES.md D42)."

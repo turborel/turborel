@@ -1,6 +1,6 @@
 [package]
 name = "turboreld"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "turboreld, the turborel server's program: a daemon serving a database, configured by its settings (RULES.md D42)."

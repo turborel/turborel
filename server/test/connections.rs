@@ -170,7 +170,7 @@ fn a_client_loses_a_connection_its_server_breaks() {
         authorization: "X".into(),
         key: turborel_protocol::CancelKey([0; 16]),
         capabilities: vec![],
-        server: turborel_server::SERVER.into(),
+        server: turborel::product(),
     };
     let ready = || vec![readied()];
     let mut c = connection::connect(scripted(vec![ready(), vec![readied()]]), "X", &mut Trust).unwrap();

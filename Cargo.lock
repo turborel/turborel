@@ -645,14 +645,14 @@ dependencies = [
 
 [[package]]
 name = "turborel"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "turborel-test-support",
 ]
 
 [[package]]
 name = "turborel-aes"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "aws-lc-rs",
  "turborel",
@@ -661,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "turborel-cli"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rpassword",
  "tokio",
@@ -673,7 +673,7 @@ dependencies = [
 
 [[package]]
 name = "turborel-client"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rustls",
  "turborel",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "turborel-lz4"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "lz4_flex",
  "turborel",
@@ -691,14 +691,14 @@ dependencies = [
 
 [[package]]
 name = "turborel-protocol"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "turborel",
 ]
 
 [[package]]
 name = "turborel-server"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "aws-lc-rs",
  "rustls",
@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "turborel-test-support"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rcgen",
  "tokio",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "turboreld"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rpassword",
  "tokio",
@@ -868,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "yasna"

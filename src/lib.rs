@@ -56,3 +56,29 @@ mod sync;
 pub mod system;
 pub mod txn;
 pub mod value;
+
+/// The version of turborel, every crate of it at once (VERSIONING.md).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// This release's codename (VERSIONING.md): its own, if it marks a
+/// milestone, else the last named release's of its major version; "alpha"
+/// before 1.0.0.
+pub const CODENAME: &str = "alpha";
+
+/// The product, its version and its codename, as "turborel 0.0.0
+/// (alpha)": what a server tells its clients, and its programs print.
+pub fn product() -> String {
+    format!("turborel {VERSION} ({CODENAME})")
+}
+
+#[cfg(test)]
+mod version_tests {
+    /// Verifies: [DESIGN] VERSIONING.md: before 1.0.0, every version is
+    /// alpha's; the product names its version and codename.
+    #[test]
+    fn a_version_has_its_codename() {
+        let major = super::VERSION.split('.').next();
+        assert_eq!((major, super::CODENAME), (Some("0"), "alpha"));
+        assert_eq!(super::product(), format!("turborel {} (alpha)", super::VERSION));
+    }
+}

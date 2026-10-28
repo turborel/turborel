@@ -214,13 +214,13 @@ fn a_typed_session_begins_with_a_banner() {
     let (_db, server) = served();
     let given = options(&server, vec![]);
     let connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
-    assert_eq!(connection.server(), turborel_server::SERVER);
+    assert_eq!(connection.server(), turborel::product());
     let port = server.address.port();
     let expected = format!(
-        "turborel {}, the command-line client\nCopyright 2026, Turborel contributors.\nDistributed under the BSD 2-Clause License.\n\n\
+        "{}, the command-line client\nCopyright 2026, Turborel contributors.\nDistributed under the BSD 2-Clause License.\n\n\
          Connected to {} at 127.0.0.1:{port}, as X.\n",
-        env!("CARGO_PKG_VERSION"),
-        turborel_server::SERVER,
+        turborel::product(),
+        turborel::product(),
     );
     assert!(turborel_cli::banner(&given, &connection).starts_with(&expected));
 }

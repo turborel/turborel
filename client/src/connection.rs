@@ -226,7 +226,8 @@ impl<S: Read + Write> Connection<S> {
         &self.authorization
     }
 
-    /// The server's product and version, as "turborel 0.1.0".
+    /// The server's product, version and codename, as "turborel 0.0.0
+    /// (alpha)".
     pub fn server(&self) -> &str {
         &self.server
     }

@@ -68,6 +68,8 @@ cargo run -p turborel-cli -- --help  # the command-line client: SQL run on a ser
 - **[RULES.md](RULES.md):** how turborel is designed (the decisions), and
   how its code is written and verified.
 - **[TODO.md](TODO.md):** open work.
+- **[VERSIONING.md](VERSIONING.md):** how releases are numbered and named,
+  what each may change, and the versions of the formats and the protocol.
 - **[CONTRIBUTING.md](CONTRIBUTING.md):** how to contribute, and how to
   report an issue; **[SECURITY.md](SECURITY.md)**, how to report a
   vulnerability.

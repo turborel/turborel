@@ -35,7 +35,8 @@ pub enum Reply {
         key: CancelKey,
         /// The capabilities both have.
         capabilities: Vec<String>,
-        /// The server's product and version, as "turborel 0.1.0": told to
+        /// The server's product, version and codename, as "turborel 0.0.0
+        /// (alpha)" (`turborel::product`): told to
         /// an authenticated client alone.
         server: String,
     },

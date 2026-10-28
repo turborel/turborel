@@ -1,6 +1,6 @@
 [package]
 name = "turborel-client"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "A client of the turborel server: a blocking connection over its wire protocol (RULES.md D42). No dependencies beyond the standard library and turborel's, but for TLS with the feature `tls`."

@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Project checks for turborel, run as `cargo xtask <command>` (RULES.md R-TOOL-1)"

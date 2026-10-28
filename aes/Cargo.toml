@@ -1,6 +1,6 @@
 [package]
 name = "turborel-aes"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "AES-256-GCM encryption for turborel, as an encoding (RULES.md D26, D30, D48): files through STORAGE.ENCODINGS, a table's rows and log records through its option ENCODINGS, keys from a pluggable keyring."

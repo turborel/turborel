@@ -148,7 +148,7 @@ fn every_reply() -> Vec<Reply> {
             authorization: "X".into(),
             key: CancelKey([0xab; KEY_BYTES]),
             capabilities: vec!["one".into()],
-            server: "turborel 0.1.0".into(),
+            server: "turborel 0.0.0 (alpha)".into(),
         },
         Reply::Prepared { statement: 9, parameters, columns: columns.clone() },
         Reply::Prepared { statement: 0, parameters: vec![], columns: vec![] },

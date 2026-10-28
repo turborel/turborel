@@ -75,9 +75,9 @@ pub fn banner(options: &Options, connection: &Connected) -> String {
         Server::Socket(path) => format!("at the socket {}", path.display()),
     };
     format!(
-        "turborel {}, the command-line client\nCopyright 2026, Turborel contributors.\nDistributed under the BSD 2-Clause License.\n\n\
+        "{}, the command-line client\nCopyright 2026, Turborel contributors.\nDistributed under the BSD 2-Clause License.\n\n\
          Connected to {} {at}, as {}.\nEnd each statement with a semicolon; end of input ({END_OF_INPUT}) quits.\n",
-        env!("CARGO_PKG_VERSION"),
+        turborel::product(),
         connection.server(),
         connection.authorization(),
     )

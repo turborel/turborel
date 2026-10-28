@@ -1,6 +1,6 @@
 [package]
 name = "turborel"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "The turborel relational database, as a library: its language SQL-86 and SQL-92 now, as one, extended standard by standard through SQL:2023; transactions that survive a crash; plug-ins. Embedded in a program, or served by turboreld."

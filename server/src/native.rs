@@ -165,7 +165,7 @@ async fn authenticate(
     };
     let session = services.database().session(&authorization);
     let key = services.register_cancel(session.canceller())?;
-    wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: crate::SERVER.to_owned() }).await?;
+    wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
     Ok((session, key))
 }
 
