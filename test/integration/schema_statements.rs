@@ -54,8 +54,8 @@ fn a_table_is_created_in_a_transaction_11_3() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.3 SR2, AR1, §11.19 SR3, AR1,
 /// §11.8 AR1, §5.4 SR8b, §12.3 GR6c v]; [DESIGN] RULES.md D47: a table or
 /// view is defined in a schema that exists, by its owner, under a name no
-/// table or view of it has, its constraints' names new too; in the
-/// session's default schema only; not in a READ ONLY transaction.
+/// table or view of it has, its constraints' names new too; not in a READ
+/// ONLY transaction.
 #[test]
 fn what_a_definition_needs_11_3() {
     let db = schemas();
@@ -63,7 +63,7 @@ fn what_a_definition_needs_11_3() {
     assert_eq!(exec(&a, "CREATE TABLE T (X INTEGER)"), Err(Code::SyntaxRule), "SR2: a table T");
     assert_eq!(exec(&a, "CREATE VIEW T AS SELECT K FROM T"), Err(Code::SyntaxRule), "a table T");
     assert_eq!(exec(&a, "CREATE TABLE U (X INTEGER, CONSTRAINT T_PRIMARY1 CHECK (X > 0))"), Err(Code::SyntaxRule), "a constraint's name");
-    assert_eq!(exec(&a, "CREATE TABLE B.U (X INTEGER)"), Err(Code::Unsupported), "in another schema");
+    assert_eq!(exec(&a, "CREATE TABLE B.U (X INTEGER)"), Err(Code::Privilege), "in another's schema");
     let c = db.session("C").execute("CREATE TABLE U (X INTEGER)", &mut turborel::params::Params::new()).unwrap_err();
     assert_eq!((c.code, c.sqlstate()), (Code::SyntaxRule, SqlState::INVALID_SCHEMA_NAME), "no schema C");
     let b = db.session("B");

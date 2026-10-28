@@ -425,8 +425,8 @@ impl State {
                     return fail(Code::Constraint, format!("[X3.135-1986 §6.3 SR3, GR1] column {column} of {table} is NOT NULL"));
                 }
             }
-            ConstraintKind::Check { text, horizon, .. } => {
-                let cond = self.bound(table, (c, (text, horizon)), bound)?;
+            ConstraintKind::Check { text, names, horizon, .. } => {
+                let cond = self.bound(table, (c, (text, names, horizon)), bound)?;
                 if eval_cond(&cond, &row, &NoSubqueries)? == Truth::False {
                     return fail(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.6 GR3] CHECK {} of {table} is false for a row", c.name));
                 }
@@ -450,7 +450,7 @@ impl State {
     fn bound(
         &self,
         table: &QualifiedName,
-        (c, check): (&ConstraintDesc, (&str, &Horizon)),
+        (c, check): (&ConstraintDesc, (&str, &str, &Horizon)),
         bound: &mut HashMap<QualifiedName, Cond>,
     ) -> Result<Cond> {
         if let Some(cond) = bound.get(&c.name) {
@@ -487,14 +487,14 @@ impl State {
         (desc, c): (&TableDesc, &ConstraintDesc),
         bound: &mut HashMap<QualifiedName, Cond>,
     ) -> Result<()> {
-        let ConstraintKind::Check { text, reads, horizon } = &c.kind else { return Ok(()) };
-        let cond = self.bound(&desc.name, (c, (text, horizon)), bound)?;
+        let ConstraintKind::Check { text, names, reads, horizon } = &c.kind else { return Ok(()) };
+        let cond = self.bound(&desc.name, (c, (text, names, horizon)), bound)?;
         self.read_lock(tx, &desc.name)?;
         for t in reads {
             self.read_lock(tx, t)?;
         }
-        let names = desc.columns.iter().map(|column| column.name.clone()).collect();
-        let scan = LogicalPlan::Scan { table: desc.name.clone(), names, needed: (0..desc.columns.len()).collect() };
+        let columns = desc.columns.iter().map(|column| column.name.clone()).collect();
+        let scan = LogicalPlan::Scan { table: desc.name.clone(), names: columns, needed: (0..desc.columns.len()).collect() };
         let falsified = LogicalPlan::Filter { cond: Cond::Not(Box::new(cond)), input: Box::new(scan) };
         let (_, _, physical) = plan(self, falsified);
         if execute(physical, self, tx.id).next().transpose()?.is_some() {

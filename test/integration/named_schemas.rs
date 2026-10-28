@@ -190,3 +190,74 @@ fn a_name_is_qualified_by_the_one_catalog() {
     assert_eq!(rows(&renamed, "SELECT K FROM SHOP.S.T"), Ok(vec!["1".into()]));
     assert_eq!(code(&renamed, "SELECT K FROM TURBOREL.S.T"), Code::SyntaxRule, "renamed");
 }
+
+/// Schemas S1 and S2 of U: each a table R keyed by K, S1's holding 1 and
+/// 2, S2's 9; S1 a domain POS of positive integers. Then, its default
+/// schema S1, U defines in S2: T, its CHECK, its foreign key and its
+/// column's domain naming S1's; V over S1's R; a domain SMALL of S1's R's
+/// keys; an assertion that S1's R has no negative key; and alters T, a
+/// CHECK and a column added naming S1's.
+fn defined_elsewhere(db: &Database) {
+    db.schema("CREATE SCHEMA S1 AUTHORIZATION U CREATE TABLE R (K INTEGER UNIQUE) CREATE DOMAIN POS AS INTEGER CHECK (VALUE > 0)").unwrap();
+    db.schema("CREATE SCHEMA S2 AUTHORIZATION U CREATE TABLE R (K INTEGER UNIQUE)").unwrap();
+    let u = db.session("U");
+    for sql in [
+        "INSERT INTO S1.R VALUES (1)",
+        "INSERT INTO S1.R VALUES (2)",
+        "INSERT INTO S2.R VALUES (9)",
+        "SET SCHEMA 'S1'",
+        "CREATE TABLE S2.T (K INTEGER CHECK (K IN (SELECT K FROM R)), P POS, FOREIGN KEY (K) REFERENCES R (K))",
+        "CREATE VIEW S2.V AS SELECT K FROM R",
+        "CREATE DOMAIN S2.SMALL AS INTEGER CHECK (VALUE IN (SELECT K FROM R))",
+        "CREATE ASSERTION S2.NONE_NEGATIVE CHECK (NOT EXISTS (SELECT * FROM R WHERE K < 0))",
+        "ALTER TABLE S2.T ADD CHECK (P IN (SELECT K FROM R))",
+        "ALTER TABLE S2.T ADD COLUMN Q S2.SMALL",
+        "INSERT INTO S2.T VALUES (1, 1, 1)",
+    ] {
+        exec(&u, sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+    u.commit().unwrap();
+}
+
+/// That what `defined_elsewhere` defined names S1's, though read with S2
+/// the default schema.
+fn names_kept(db: &Database) {
+    let u = db.session("U");
+    exec(&u, "SET SCHEMA 'S2'").unwrap();
+    assert_eq!(rows(&u, "SELECT K FROM V ORDER BY K"), Ok(vec!["1".into(), "2".into()]), "S1's R");
+    for (sql, why) in [
+        ("INSERT INTO T VALUES (9, 1, 1)", "K's CHECK and foreign key"),
+        ("INSERT INTO T VALUES (2, 9, 1)", "the CHECK added"),
+        ("INSERT INTO T VALUES (2, 0, 1)", "POS"),
+        ("INSERT INTO T VALUES (2, 2, 9)", "SMALL"),
+        ("INSERT INTO S1.R VALUES (-1)", "the assertion"),
+    ] {
+        assert_eq!(exec(&u, sql).err(), Some(Code::Constraint), "{why}");
+    }
+    exec(&u, "INSERT INTO T VALUES (2, 2, 2)").unwrap();
+    exec(&u, "INSERT INTO R VALUES (-1)").unwrap();
+    u.rollback().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR8b, §11.3, §11.10,
+/// §11.19, §11.21, §11.34]; [DESIGN] RULES.md D47: a table, view, domain or
+/// assertion is defined in any schema its definer owns, and a table
+/// altered there; the names in it written without a schema are of the
+/// session's default schema, and stay so, whatever the default schema
+/// later, after recovery, and after a checkpoint.
+#[test]
+fn a_definition_in_another_schema_keeps_its_names() {
+    let db = Database::new();
+    defined_elsewhere(&db);
+    names_kept(&db);
+    let scratch = Scratch::new("named-elsewhere");
+    let dir = scratch.path("db");
+    let kept = open(&dir);
+    defined_elsewhere(&kept);
+    drop(kept);
+    let recovered = open(&dir);
+    names_kept(&recovered);
+    recovered.close().unwrap();
+    drop(recovered);
+    names_kept(&open(&dir));
+}

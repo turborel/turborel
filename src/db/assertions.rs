@@ -46,7 +46,8 @@ impl State {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.34 SR2, SR7] schema {} has a constraint {} already", name.auth, name.ident))
                 .or_at(a.name.at));
         }
-        let kind = ConstraintKind::Check { text: a.check.text.clone(), reads: Vec::new(), horizon: Horizon::default() };
+        let kind =
+            ConstraintKind::Check { text: a.check.text.clone(), names: schema.to_owned(), reads: Vec::new(), horizon: Horizon::default() };
         let mut desc = ConstraintDesc { name: name.clone(), kind, attributes: a.attributes, domain: None };
         let reads = self.assertion_plan(&desc)?.tables();
         // The columns it sees of each: those of now, as a CHECK's.
@@ -110,14 +111,14 @@ impl State {
     /// Assertion `a`, bound as `assertion_plan` says, its column references
     /// noted in `uses`, if given.
     fn bind_assertion(&self, a: &ConstraintDesc, uses: Option<&Uses>) -> Result<LogicalPlan> {
-        let ConstraintKind::Check { text, horizon, .. } = &a.kind else {
+        let ConstraintKind::Check { text, names, horizon, .. } = &a.kind else {
             return Err(rule(format!("[DESIGN] assertion {} is no CHECK", a.name)));
         };
         let sql = format!("SELECT 1 FROM (VALUES (1)) AS ASSERTED (ONE) WHERE NOT ({text})");
         let spec = Parser::new(&sql)?.of_definition().cursor_specification()?;
         let params = Params::new();
         let owner = owner_of(&*self.catalog, &a.name.auth);
-        let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: &a.name.auth, ..Context::new(self, owner, &params) };
+        let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: names, ..Context::new(self, owner, &params) };
         Ok(bind_cursor(cx, &spec)?.plan)
     }
 
@@ -211,12 +212,12 @@ impl State {
         let without = self.without_column(&next);
         let (mut kept, mut broken) = (Vec::new(), Vec::new());
         for a in self.catalog.assertions() {
-            let ConstraintKind::Check { text, reads, horizon } = &a.kind else { continue };
+            let ConstraintKind::Check { text, names, reads, horizon } = &a.kind else { continue };
             if !reads.contains(&desc.name) {
                 continue;
             }
             let seen = horizon.without(&desc.name, at);
-            let kind = ConstraintKind::Check { text: text.clone(), reads: reads.clone(), horizon: seen };
+            let kind = ConstraintKind::Check { text: text.clone(), names: names.clone(), reads: reads.clone(), horizon: seen };
             let narrowed = ConstraintDesc { kind, ..a.clone() };
             if without.assertion_plan(&narrowed).is_ok() {
                 kept.push(narrowed);

@@ -175,7 +175,7 @@ pub(crate) fn view_uses(db: &State, view: &ViewDesc) -> Result<Vec<(QualifiedNam
     let cx = Context {
         horizon: &view.horizon,
         uses: Some(&uses),
-        schema: &view.name.auth,
+        schema: &view.names,
         ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params)
     };
     bind_query_expression(cx, &query, &Nesting::Query)?;
@@ -215,8 +215,7 @@ pub(super) fn column_name(db: &State, name: &QualifiedName, i: usize) -> Option<
 pub fn view_degree(db: &State, view: &ViewDesc) -> Result<usize> {
     let query = Parser::new(&view.query)?.of_definition().view_query()?;
     let params = Params::new();
-    let cx =
-        Context { horizon: &view.horizon, schema: &view.name.auth, ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params) };
+    let cx = Context { horizon: &view.horizon, schema: &view.names, ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params) };
     Ok(bind_query_expression(cx, &query, &Nesting::Query)?.columns.len())
 }
 
@@ -231,7 +230,7 @@ fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, now, .. }: R
         own,
         user,
         now,
-        schema: &view.name.auth,
+        schema: &view.names,
         ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params)
     };
     let bound = bind_query_expression(cx, &query, &Nesting::Query)?;

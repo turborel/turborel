@@ -204,10 +204,12 @@ pub struct ViewDesc {
     pub name: QualifiedName,
     /// Its columns [X3.135-1986 §6.5 SR7].
     pub columns: Vec<ColumnDesc>,
-    /// Its `<query specification>` as written, in which a `<table name>`
-    /// without an `<authorization identifier>` has the view's
-    /// [X3.135-1986 §5.4 SR2].
+    /// Its `<query specification>` as written.
     pub query: String,
+    /// The schema of the names in `query` written without one [ISO/IEC
+    /// 9075:1992 §5.4 SR8]: the view's own, in a `<schema definition>`;
+    /// else the session's default schema as it was defined.
+    pub names: String,
     /// WITH CHECK OPTION [X3.135-1986 §6.5 GR3], of its levels [ISO/IEC
     /// 9075:1992 §11.19 SR13], if written.
     pub check_option: Option<CheckLevels>,

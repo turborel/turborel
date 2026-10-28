@@ -221,7 +221,7 @@ impl State {
             staged.create_schema(&s.name, &owner, descs.clone());
         }
         let saved = mem::replace(&mut self.catalog, Arc::from(staged));
-        let defined = self.define_views(&s.name, &s.views).and_then(|()| {
+        let defined = self.define_views((&s.name, &s.name), &s.views).and_then(|()| {
             self.bind_domains(&s.name)?;
             self.complete_tables(&s.name, &mut descs, &pending)?;
             self.schema_grants(&s, &owner)
@@ -304,7 +304,7 @@ impl State {
             .flat_map(|d| d.constraints.iter().map(|c| c.name.clone()))
             .chain(keys.iter().flatten().map(|p| p.name.clone()))
             .collect();
-        let (mut constraints, pending) = constraints::describe(&name, &columns, &t.elements, taken)?;
+        let (mut constraints, pending) = constraints::describe((&name, names), &columns, &t.elements, taken)?;
         // [§11.21 GR5, GR6] its domains' constraints, on their columns.
         constraints.extend(self.domain_checks(&name, &columns));
         // [ISO/IEC 9075:1992 §4.9] A temporary table's rows are each
@@ -322,13 +322,13 @@ impl State {
         Ok((desc, pending))
     }
 
-    /// The tables `descs`, their names of schema `auth`, in the catalog now, completed:
+    /// The tables `descs`, their names of schema `names`, in the catalog now, completed:
     /// each one's foreign keys `pending` resolved [ISO/IEC 9075:1992
     /// §11.8], and its CHECK conditions bound [§11.9].
-    pub(super) fn complete_tables(&self, auth: &str, descs: &mut [TableDesc], pending: &[Vec<Pending>]) -> Result<()> {
+    pub(super) fn complete_tables(&self, names: &str, descs: &mut [TableDesc], pending: &[Vec<Pending>]) -> Result<()> {
         for (desc, keys) in descs.iter_mut().zip(pending) {
             for p in keys {
-                let resolved = self.resolve_foreign_key(auth, desc, p)?;
+                let resolved = self.resolve_foreign_key(names, desc, p)?;
                 desc.constraints.push(resolved);
             }
             self.bind_checks(desc)?;

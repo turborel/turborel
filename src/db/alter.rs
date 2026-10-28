@@ -105,8 +105,9 @@ impl Reshape {
 }
 
 impl State {
-    /// [ISO/IEC 9075:1992 §11.10] Alters base table `qn` as `action` says:
-    /// its descriptor, indexes, views and privileges, and a new generation
+    /// [ISO/IEC 9075:1992 §11.10] Alters base table `qn` as `action` says,
+    /// the names `action` writes without a schema of schema `names` [§5.4
+    /// SR8]: its descriptor, indexes, views and privileges, and a new generation
     /// of its storage, `made`'s if given, else new. What it took away, what
     /// it made, and how its rows change.
     ///
@@ -115,20 +116,20 @@ impl State {
     /// SQLCODE -103 for a rule the action breaks; the engine's or method's.
     pub(super) fn alter_table(
         &mut self,
-        qn: &QualifiedName,
+        (qn, names): (&QualifiedName, &str),
         action: &AlterAction,
         (made, tx): (Option<&Made>, Option<&Txn>),
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
         match action {
             AlterAction::AddColumn(_) | AlterAction::DropColumn { .. } => {
-                let (dropped, built, reshape) = self.alter_columns(qn, action, made)?;
+                let (dropped, built, reshape) = self.alter_columns((qn, names), action, made)?;
                 Ok((dropped, built, Some(reshape)))
             }
             AlterAction::AlterColumn { column, at, default } => {
                 self.alter_column(qn, column, default.as_ref()).or_at(*at)?;
                 Ok((Dropped::default(), Made::default(), None))
             }
-            AlterAction::AddConstraint(c) => Ok((Dropped::default(), self.add_constraint(qn, c, (made, tx)).or_at(c.at)?, None)),
+            AlterAction::AddConstraint(c) => Ok((Dropped::default(), self.add_constraint((qn, names), c, (made, tx)).or_at(c.at)?, None)),
             AlterAction::DropConstraint { name, behavior } => {
                 Ok((self.drop_constraint(qn, name, *behavior).or_at(name.at)?, Made::default(), None))
             }
@@ -138,10 +139,15 @@ impl State {
 
     /// The column actions of `alter_table`, whose rows change as the
     /// reshape returned says.
-    fn alter_columns(&mut self, qn: &QualifiedName, action: &AlterAction, made: Option<&Made>) -> Result<(Dropped, Made, Reshape)> {
+    fn alter_columns(
+        &mut self,
+        (qn, names): (&QualifiedName, &str),
+        action: &AlterAction,
+        made: Option<&Made>,
+    ) -> Result<(Dropped, Made, Reshape)> {
         let desc = self.base_table(qn)?;
         let (next, reshape, others) = match action {
-            AlterAction::AddColumn(def) => (self.add_column(&desc, def).or_at(def.at)?, Reshape::Append, Vec::new()),
+            AlterAction::AddColumn(def) => (self.add_column((&desc, names), def).or_at(def.at)?, Reshape::Append, Vec::new()),
             AlterAction::DropColumn { column, at, behavior } => self.drop_column(&desc, column, *behavior).or_at(*at)?,
             AlterAction::AlterColumn { .. }
             | AlterAction::AddConstraint(_)

@@ -267,9 +267,10 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
             out.put_u8(tag_of(&ACTIONS, &fk.on_update));
             out.put_u8(tag_of(&ACTIONS, &fk.on_delete));
         }
-        ConstraintKind::Check { text, reads, horizon } => {
+        ConstraintKind::Check { text, names, reads, horizon } => {
             out.put_u8(3);
             out.put_str(text);
+            out.put_str(names);
             put_all(out, reads.iter(), put_name);
             put_horizon(out, horizon);
         }
@@ -286,7 +287,7 @@ fn kind(r: &mut Reader<'_>) -> Result<ConstraintKind> {
             let (match_type, on_update, on_delete) = (of_tag(r, &MATCHES, m)?, of_tag(r, &ACTIONS, u)?, of_tag(r, &ACTIONS, d)?);
             ConstraintKind::ForeignKey(ForeignKey { columns, table, referenced, match_type, on_update, on_delete })
         }
-        3 => ConstraintKind::Check { text: r.str()?, reads: get_all(r, qualified)?, horizon: horizon(r)? },
+        3 => ConstraintKind::Check { text: r.str()?, names: r.str()?, reads: get_all(r, qualified)?, horizon: horizon(r)? },
         _ => return Err(r.corrupt("not a kind of constraint")),
     })
 }
@@ -397,6 +398,7 @@ pub(crate) fn put_view(out: &mut Vec<u8>, view: &ViewDesc) {
     put_name(out, &view.name);
     put_all(out, view.columns.iter(), put_column);
     out.put_str(&view.query);
+    out.put_str(&view.names);
     out.put_u8(match view.check_option {
         None => 0,
         Some(CheckLevels::Cascaded) => 1,
@@ -430,7 +432,7 @@ pub(crate) fn put_view(out: &mut Vec<u8>, view: &ViewDesc) {
 
 /// The view `put_view` wrote.
 pub(crate) fn view(r: &mut Reader<'_>) -> Result<ViewDesc> {
-    let (name, columns, query) = (qualified(r)?, get_all(r, column)?, r.str()?);
+    let (name, columns, query, names) = (qualified(r)?, get_all(r, column)?, r.str()?, r.str()?);
     let check_option = match r.u8()? {
         0 => None,
         1 => Some(CheckLevels::Cascaded),
@@ -447,7 +449,7 @@ pub(crate) fn view(r: &mut Reader<'_>) -> Result<ViewDesc> {
     } else {
         None
     };
-    Ok(ViewDesc { name, columns, query, check_option, grouped, updates, reads, horizon, underlying })
+    Ok(ViewDesc { name, columns, query, names, check_option, grouped, updates, reads, horizon, underlying })
 }
 
 /// `index` in bytes.

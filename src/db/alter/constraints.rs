@@ -24,19 +24,20 @@ fn rule(message: String) -> SqlError {
 }
 
 impl State {
-    /// [ISO/IEC 9075:1992 §11.16] Adds the constraint `c` to base table
-    /// `qn`, with the index of a unique one: `made`'s, if given; else made
+    /// [ISO/IEC 9075:1992 §11.16] Adds the constraint `c`, its names of
+    /// schema `names`, to base table `qn`, with the index of a unique one:
+    /// `made`'s, if given; else made
     /// and filled with the rows transaction `tx` sees, or, without one
     /// (making the change again from the log), its table's.
     pub(in crate::db) fn add_constraint(
         &mut self,
-        qn: &QualifiedName,
+        (qn, names): (&QualifiedName, &str),
         c: &TableConstraint,
         (made, tx): (Option<&Made>, Option<&Txn>),
     ) -> Result<Made> {
         let mut desc = self.base_table(qn)?;
         let table_columns = desc.columns.clone();
-        let mut added = Described::new(qn, &table_columns, self.constraint_names(&qn.auth));
+        let mut added = Described::new((qn, names), &table_columns, self.constraint_names(&qn.auth));
         added.reserve(c.name.iter());
         added.table_constraint(c)?;
         let (constraints, pending) = (added.constraints, added.pending);
@@ -45,7 +46,7 @@ impl State {
             .find_map(|k| if let ConstraintKind::Unique { columns, .. } = &k.kind { Some(columns.clone()) } else { None });
         desc.constraints.extend(constraints);
         for p in &pending {
-            let resolved = self.resolve_foreign_key(&qn.auth, &desc, p)?;
+            let resolved = self.resolve_foreign_key(names, &desc, p)?;
             desc.constraints.push(resolved);
         }
         Described::check_unique(&desc)?;

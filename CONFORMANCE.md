@@ -356,8 +356,7 @@ restriction is lifted.
   one (SQLSTATE 22018). A minute is always 60 seconds, so datetime
   arithmetic, whose results over a leap second are implementation-defined
   [§6.1 Table 10, note], is exact.
-- **ALTER TABLE of a temporary table**, and a table or view defined on its
-  own in a schema other than the session's default one (RULES.md D47).
+- **ALTER TABLE of a temporary table** (RULES.md D49).
 - **Dynamic SQL in SQL text** [§17]: ALLOCATE and DEALLOCATE DESCRIPTOR,
   GET and SET DESCRIPTOR, PREPARE, DEALLOCATE PREPARE, DESCRIBE, EXECUTE,
   EXECUTE IMMEDIATE, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE

@@ -45,6 +45,11 @@ pub enum ConstraintKind {
     Check {
         /// The `<search condition>`.
         text: String,
+        /// The schema of the names in `text` written without one [§5.4
+        /// SR8]: its table's, domain's or assertion's, in a `<schema
+        /// definition>`; else the session's default schema as it was
+        /// defined.
+        names: String,
         /// The tables its subqueries read, none if it has none: a change
         /// to one, or to the table, may falsify it for any row.
         reads: Vec<QualifiedName>,

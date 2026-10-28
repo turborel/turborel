@@ -83,9 +83,6 @@ RULES.md when its design settles.
 - **SQL-92 in full** comes first. What came after it, through SQL:2023
   (triggers, SQL/PSM, and the rest), follows, written from the standards'
   own text, never from memory or other products.
-- **Declared local temporary tables, further** [ISO/IEC 9075:1992 §5.4
-  SR8b]: a CAST in a declared table's CHECK to a domain named without its
-  schema is taken as MODULE's, not the session's default schema's.
 - **Temporary tables, further** (RULES.md D49): ALTER TABLE of one, which
   changes every session's rows; CREATE INDEX on one. An instance reserves
   in-memory pools of the database's budget (2 MiB for its rows, and for
@@ -96,10 +93,11 @@ RULES.md when its design settles.
   rule violation names its table only where a privilege is refused, a
   table is not defined, or a named table has no column it names; and its
   column only in the last case, or for a privilege on a column.
-- **A table or view defined on its own in a schema other than the
-  session's default one** is refused (SQLCODE -900, RULES.md D47): its
-  stored texts are read again in its own schema, so its names would need
-  qualifying there.
+- **Constraint names outside a `<schema definition>`** (RULES.md D47): a
+  constraint's name written without a schema is taken as its table's
+  schema's, where §5.4 SR8b would take the session's default schema's,
+  which may be another; the constraint would then be in another schema
+  than its table, which the catalog does not keep.
 - **Datetimes, further** (RULES.md D54): a default's datetime literal
   without a displacement is of UTC, not the defining session's [§5.3
   SR18]: a schema definition is logged as its text and read again in

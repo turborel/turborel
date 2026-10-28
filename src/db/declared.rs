@@ -12,11 +12,10 @@
 use std::slice;
 use std::sync::Arc;
 
-use super::domains::qualified_tables;
 use super::schema::constraint_index_name;
 use super::{Completion, Session, State, rule};
 use crate::ast::TableDefinition;
-use crate::catalog::{Catalog, ConstraintKind, IndexDesc, QualifiedName, TableDesc, TemporaryKind};
+use crate::catalog::{Catalog, IndexDesc, QualifiedName, TableDesc, TemporaryKind};
 use crate::error::Result;
 use crate::lexer::kw;
 use crate::sync::lock_builtin;
@@ -40,12 +39,6 @@ impl Session {
         // default schema; MODULE.T names a declared table.
         let names = self.default_schema();
         let (mut desc, pending) = next.describe_table((kw::MODULE, &names), t, &[], &[])?;
-        // Its CHECKs are bound in MODULE, so name their tables in full.
-        for c in &mut desc.constraints {
-            if let ConstraintKind::Check { text, .. } = &mut c.kind {
-                *text = qualified_tables(text, &names);
-            }
-        }
         let mut staged = next.catalog.duplicate();
         in_module(&mut *staged, &self.auth(), vec![desc.clone()]);
         next.catalog = Arc::from(staged);

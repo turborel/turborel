@@ -210,7 +210,7 @@ fn check_uses<'s>(seen: &Seen<'s>) -> Result<Vec<(&'s ConstraintDesc, Uses)>> {
     for (t, c) in constraints(seen) {
         let uses = match &c.kind {
             ConstraintKind::NotNull(at) => t.columns.get(*at).map(|col| (t.name.clone(), col.name.clone())).into_iter().collect(),
-            ConstraintKind::Check { text: condition, horizon, .. } => seen.state.check_uses(&t.name, (condition, horizon))?,
+            ConstraintKind::Check { text: condition, names, horizon, .. } => seen.state.check_uses(&t.name, (condition, names, horizon))?,
             ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => continue,
         };
         all.push((c, uses));

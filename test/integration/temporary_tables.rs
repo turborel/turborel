@@ -245,14 +245,15 @@ fn an_instance_reads_and_writes_as_any_table_4_9() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR6, SR8b; §13.11] the
 /// names without a schema's in a declaration are of the session's default
 /// schema, MODULE.T naming a declared table: its domain, the table its
-/// foreign key references, and those its CHECK reads.
+/// foreign key references, and those its CHECK reads, and a domain it
+/// CASTs to.
 #[test]
 fn names_in_a_declaration_5_4() {
     let db = temporary();
     let a = db.session("A");
     a.run("CREATE DOMAIN AMOUNT AS INTEGER CHECK (VALUE > 0)").unwrap();
     a.commit().unwrap();
-    let declared = "DECLARE LOCAL TEMPORARY TABLE MODULE.D (K AMOUNT REFERENCES L (K), CHECK (K IN (SELECT K FROM L)))";
+    let declared = "DECLARE LOCAL TEMPORARY TABLE MODULE.D (K AMOUNT REFERENCES L (K), CHECK (K IN (SELECT K FROM L)), CHECK (CAST (K AS AMOUNT) < 9))";
     a.run(declared).unwrap();
     a.run("INSERT INTO L VALUES (1)").unwrap();
     a.run("INSERT INTO MODULE.D VALUES (1)").unwrap();
@@ -260,5 +261,7 @@ fn names_in_a_declaration_5_4() {
     a.run("INSERT INTO L VALUES (2)").unwrap();
     a.run("DELETE FROM L WHERE K = 2").unwrap();
     assert_eq!(exec(&a, "INSERT INTO MODULE.D VALUES (2)").err(), Some(Code::Constraint), "the foreign key, and the CHECK");
+    a.run("INSERT INTO L VALUES (9)").unwrap();
+    assert_eq!(exec(&a, "INSERT INTO MODULE.D VALUES (9)").err(), Some(Code::Constraint), "the CAST's CHECK");
     a.commit().unwrap();
 }

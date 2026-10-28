@@ -61,7 +61,7 @@ fn every_kind() -> Vec<Record> {
         Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
         Change::Drop { object: DropTarget::Domain(table()), cascade: false },
         Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
-        Change::AlterTable { table: table(), action: "ADD COLUMN \"K\" INTEGER NOT NULL".into() },
+        Change::AlterTable { table: table(), action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(), schema: "S".into() },
         Change::Setting { name: "LOCK_WAIT".into(), value: Some(Value::Char("WAIT".into())) },
         Change::Setting { name: "OPTIMIZER.MAX_PASSES".into(), value: None },
         Change::User { name: "ANN".into(), verifier: Some(vec![0, 255, 7]) },

@@ -201,6 +201,9 @@ pub enum Change {
         table: QualifiedName,
         /// The `<alter table action>` as written.
         action: String,
+        /// The schema of the names it writes without one: the session's
+        /// default schema [ISO/IEC 9075:1992 §5.4 SR8b].
+        schema: String,
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] A table,
     /// view or schema dropped by its transaction, which the definitions
@@ -297,9 +300,10 @@ impl Record {
             }
             Change::DropIndex { name } | Change::Owner { name } => out.put_str(name),
             Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
-            Change::AlterTable { table, action } => {
+            Change::AlterTable { table, action, schema } => {
                 put_table(&mut out, table);
                 out.put_str(action);
+                out.put_str(schema);
             }
             Change::Setting { name, value } => {
                 out.put_str(name);
@@ -358,7 +362,7 @@ impl Record {
             ALTER_INDEX => Change::AlterIndex { name: r.str()?, options: options(&mut r)? },
             DROP_INDEX => Change::DropIndex { name: r.str()? },
             DROP => Change::Drop { object: dropped(&mut r)?, cascade: r.u8()? != 0 },
-            ALTER_TABLE => Change::AlterTable { table: table(&mut r)?, action: r.str()? },
+            ALTER_TABLE => Change::AlterTable { table: table(&mut r)?, action: r.str()?, schema: r.str()? },
             // No setting takes the null value: it stands for the default.
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },
             USER => user(&mut r)?,

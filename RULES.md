@@ -257,10 +257,15 @@ and a schema change that cannot be rolled back is a trap.
 - CREATE TABLE [ISO/IEC 9075:1992 §11.3], CREATE VIEW [§11.19], GRANT
   [§11.36] and REVOKE [§11.37] are statements of a session, outside a
   `<schema definition>` [§20.1], in its transaction (D33).
-- A table or view is defined by the owner of its schema, which exists, in
-  the session's default schema. One named in another schema is refused
-  (SQLCODE -900): the names in it are qualified by the default schema
-  [§5.4 SR8b], but its stored texts are read again in its own.
+- A table, view, domain or assertion is defined by the owner of its
+  schema, which exists, in any schema that owner has. The names it writes
+  without a schema are the session's default schema's [§5.4 SR8b], and so
+  are an ALTER TABLE's. Each text the catalog keeps, a view's query and
+  each CHECK (a table's, a domain's, an assertion's), keeps the schema its
+  names are of beside it (`ViewDesc::names`, `ConstraintKind::Check`), and
+  is read again in that schema, whatever the default schema then; the log
+  record of an ALTER TABLE keeps it too. A constraint's own name is in its
+  table's schema.
 - Each takes the lock of the name it defines, or grants or revokes on,
   exclusive: a table's own lock once there is a table, so two transactions
   defining one name take turns (D28). It takes shared locks on the tables

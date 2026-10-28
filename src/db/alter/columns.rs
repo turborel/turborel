@@ -20,23 +20,24 @@ fn rule(message: String) -> SqlError {
 
 impl State {
     /// [ISO/IEC 9075:1992 §11.11] `desc` with the column `def` added last,
-    /// with its constraints [GR4], of the next generation.
+    /// its names of schema `names`, with its constraints [GR4], of the next
+    /// generation.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 for a rule it breaks: its name is a column's [§11.4
     /// SR1], or a constraint's; -104 for a foreign key it may not make.
-    pub(in crate::db) fn add_column(&self, desc: &TableDesc, def: &ColumnDefinition) -> Result<TableDesc> {
+    pub(in crate::db) fn add_column(&self, (desc, names): (&TableDesc, &str), def: &ColumnDefinition) -> Result<TableDesc> {
         if desc.column(&def.name).is_some() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.4 SR1] {} already has a column {}", desc.name, def.name)));
         }
         let mut next = desc.clone();
         // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
-        let (data_type, domain) = self.column_type(&desc.name.auth, &def.data_type)?;
+        let (data_type, domain) = self.column_type(names, &def.data_type)?;
         let default = def.default.as_ref().map(|o| default_of(data_type, o)).transpose()?;
         next.columns.push(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain });
         let taken = self.constraint_names(&desc.name.auth);
-        let mut added = Described::new(&desc.name, &next.columns, taken);
+        let mut added = Described::new((&desc.name, names), &next.columns, taken);
         added.reserve(def.constraints.iter().filter_map(|c| c.name.as_ref()));
         added.column(desc.columns.len(), def)?;
         let (constraints, pending) = (added.constraints, added.pending);
@@ -46,7 +47,7 @@ impl State {
         let copies = self.domain_checks(&desc.name, column);
         next.constraints.extend(copies);
         for p in &pending {
-            let resolved = self.resolve_foreign_key(&desc.name.auth, &next, p)?;
+            let resolved = self.resolve_foreign_key(names, &next, p)?;
             next.constraints.push(resolved);
         }
         Described::check_unique(&next)?;
@@ -135,10 +136,10 @@ impl State {
     /// subquery, which reads other columns, if it binds no more in
     /// `without`.
     fn refers_to(&self, without: &State, table: &TableDesc, c: &ConstraintDesc, at: usize) -> Result<(bool, bool)> {
-        if let ConstraintKind::Check { text, reads, horizon } = &c.kind
+        if let ConstraintKind::Check { text, names, reads, horizon } = &c.kind
             && !reads.is_empty()
         {
-            return Ok((without.check_condition(&table.name, (text, &horizon.without(&table.name, at))).is_err(), false));
+            return Ok((without.check_condition(&table.name, (text, names, &horizon.without(&table.name, at))).is_err(), false));
         }
         let (uses, alone) = self.columns_of(table, c)?;
         Ok((uses.contains(&at), alone))
@@ -158,9 +159,9 @@ impl State {
                 }
                 (uses, false)
             }
-            ConstraintKind::Check { text, horizon, .. } => {
+            ConstraintKind::Check { text, names, horizon, .. } => {
                 let mut uses = Vec::new();
-                cond_columns(&self.check_condition(&table.name, (text, horizon))?, &mut uses);
+                cond_columns(&self.check_condition(&table.name, (text, names, horizon))?, &mut uses);
                 uses.sort_unstable();
                 uses.dedup();
                 let alone = uses.len() == 1;
@@ -176,8 +177,8 @@ impl State {
 fn refers_from(without: &State, (table, at): (&TableDesc, usize), (other, c): (&QualifiedName, &ConstraintDesc)) -> bool {
     match &c.kind {
         ConstraintKind::ForeignKey(fk) => fk.table == table.name && fk.referenced.contains(&at),
-        ConstraintKind::Check { text, reads, horizon } => {
-            reads.contains(&table.name) && without.check_condition(other, (text, &horizon.without(&table.name, at))).is_err()
+        ConstraintKind::Check { text, names, reads, horizon } => {
+            reads.contains(&table.name) && without.check_condition(other, (text, names, &horizon.without(&table.name, at))).is_err()
         }
         ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => false,
     }
@@ -204,12 +205,12 @@ fn renumbered(c: &ConstraintDesc, table: &TableDesc, reshape: Reshape, own: bool
             ConstraintKind::ForeignKey(fk)
         }
         // Its horizon one column fewer of the table, if it saw the one removed.
-        ConstraintKind::Check { text, reads, horizon } => {
+        ConstraintKind::Check { text, names, reads, horizon } => {
             let seen = match reshape {
                 Reshape::Remove(at) => horizon.without(&table.name, at),
                 Reshape::Keep | Reshape::Append => horizon.clone(),
             };
-            ConstraintKind::Check { text: text.clone(), reads: reads.clone(), horizon: seen }
+            ConstraintKind::Check { text: text.clone(), names: names.clone(), reads: reads.clone(), horizon: seen }
         }
     };
     ConstraintDesc { name: c.name.clone(), kind, attributes: c.attributes, domain: c.domain.clone() }

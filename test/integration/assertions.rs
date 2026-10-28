@@ -146,7 +146,7 @@ fn the_rules_of_an_assertion_11_34() {
     a.run("CREATE ASSERTION OTHERS CHECK (NOT EXISTS (SELECT * FROM B.V WHERE K < 0))").unwrap();
     a.commit().unwrap();
     assert_eq!(exec(&b, "INSERT INTO V VALUES (-1)").err(), Some(Code::Constraint), "A's assertion holds of B's table");
-    assert_eq!(exec(&b, "CREATE ASSERTION A.MINE CHECK (1 = 1)").err(), Some(Code::Unsupported), "AR1: in B's default schema");
+    assert_eq!(exec(&b, "CREATE ASSERTION A.MINE CHECK (1 = 1)").err(), Some(Code::Privilege), "AR1: in A's schema");
     assert_eq!(
         db.schema("CREATE SCHEMA AUTHORIZATION C CREATE ASSERTION A.ELSEWHERE CHECK (1 = 1)").err().map(|e| e.code),
         Some(Code::SyntaxRule),

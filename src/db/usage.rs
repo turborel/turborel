@@ -136,7 +136,7 @@ impl State {
         self.catalog
             .views()
             .into_iter()
-            .filter(|v| unheld(&v.name.auth) && super::domains::casts_to(&v.query, &v.name.auth, &domain.name))
+            .filter(|v| unheld(&v.name.auth) && super::domains::casts_to(&v.query, &v.names, &domain.name))
             .map(|v| v.name.clone())
             .collect()
     }

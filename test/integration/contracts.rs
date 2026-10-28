@@ -265,6 +265,7 @@ fn memory_catalog_keeps_the_catalog_contract() {
         name: v.clone(),
         columns: table_desc("A", "V", "").columns,
         query: "SELECT * FROM T".into(),
+        names: "A".into(),
         check_option: None,
         grouped: false,
         updates: Some((t.clone(), vec![0])),

@@ -3,15 +3,15 @@
 //! TABLE [§11.3], CREATE VIEW [§11.19], GRANT [§11.36] and REVOKE [§11.37]
 //! (`db/revoke.rs`).
 //!
-//! A table or view is defined by the owner of its schema, in the session's
-//! default schema, whose name qualifies the names in it [§5.4 SR8b], as it
-//! does when its stored texts are read again. Each statement takes the
-//! lock of the name it defines, or grants or revokes on, exclusive, and
-//! shared ones on the tables it reads and, defining, on its schema; it is
-//! made on the definitions as
-//! they are once it holds them, so one that waited sees what the other
-//! did. Its change is logged as its text, and made again from it at commit
-//! (`Change::Defined`).
+//! An object is defined by the owner of its schema, its own name and the
+//! names in it written without a schema qualified by the session's default
+//! schema [§5.4 SR8b], which its stored texts keep, so they are read again
+//! with the names they were written with. Each statement takes the lock of
+//! the name it defines, or grants or revokes on, exclusive, and shared
+//! ones on the tables it reads and, defining, on its schema; it is made on
+//! the definitions as they are once it holds them, so one that waited sees
+//! what the other did. Its change is logged as its text, and made again
+//! from it at commit (`Change::Defined`).
 
 use std::mem;
 use std::sync::Arc;
@@ -89,8 +89,8 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// For a table or view defined: SQLCODE -900 if it is named in a schema
-    /// other than `schema`; -104 if `schema` is not the session's own.
+    /// For an object defined: SQLCODE -104 if its schema is not the
+    /// session's own.
     fn object_of(&self, st: &State, statement: &SchemaStatement, schema: &str) -> Result<QualifiedName> {
         match statement {
             SchemaStatement::Table(t) => self.own_object(st, &t.name, (schema, "§11.3 AR1")),
@@ -111,22 +111,17 @@ impl Session {
         }
     }
 
-    /// The name `name` of a table or view to define, in the session's
-    /// default schema `schema`, which it owns, as the Access Rule `rule`
-    /// says.
+    /// The name `name` of an object to define, qualified by the session's
+    /// default schema `schema` if written without one [ISO/IEC 9075:1992
+    /// §5.4 SR8b], in a schema the session owns, as the Access Rule `rule`
+    /// says. A schema not there is refused as the object is defined.
     fn own_object(&self, st: &State, name: &TableName, (schema, rule): (&str, &str)) -> Result<QualifiedName> {
-        if let Some(other) = name.auth.as_ref().filter(|a| *a != schema) {
-            let msg = format!(
-                "[DESIGN] a table or view is defined outside a <schema definition> in the session's default schema {schema}, \
-                 whose name qualifies the names in it [ISO/IEC 9075:1992 §5.4 SR8b], not in {other}: SET SCHEMA '{other}' first (RULES.md D47)"
-            );
-            return Err(SqlError::new(Code::Unsupported, msg).or_at(name.at));
-        }
-        if !self.owns_schema(st, schema) {
-            let msg = format!("[ISO/IEC 9075:1992 {rule}] {} is in schema {schema}, which {} does not own", name.ident, self.auth());
+        let qn = qualify(name, schema);
+        if st.catalog.schema_exists(&qn.auth) && !self.owns_schema(st, &qn.auth) {
+            let msg = format!("[ISO/IEC 9075:1992 {rule}] {} is in schema {}, which {} does not own", qn.ident, qn.auth, self.auth());
             return Err(SqlError::new(Code::Privilege, msg).or_at(name.at));
         }
-        Ok(qualify(name, schema))
+        Ok(qn)
     }
 }
 
@@ -193,14 +188,14 @@ impl State {
         }
         let earlier: Vec<TableDesc> = self.catalog.tables().into_iter().filter(|d| d.name.auth == qn.auth).cloned().collect();
         let keys: Vec<Vec<_>> = earlier.iter().map(|_| Vec::new()).collect();
-        let (mut desc, pending) = self.describe_table((&qn.auth, &qn.auth), t, &earlier, &keys).or_at(t.name.at)?;
+        let (mut desc, pending) = self.describe_table((&qn.auth, schema), t, &earlier, &keys).or_at(t.name.at)?;
         // Another table of the name, dropped, had a generation of its own.
         desc.generation = placed.map_or_else(|| self.retired.get(&qn).map_or(0, |g| g.saturating_add(1)), |(_, g)| *g);
         // Its foreign keys and CHECKs, it among the tables they may name.
         let mut staged = self.catalog.duplicate();
         staged.add_table(desc.clone());
         let saved = mem::replace(&mut self.catalog, Arc::from(staged));
-        let completed = self.complete_tables(&qn.auth, std::slice::from_mut(&mut desc), std::slice::from_ref(&pending));
+        let completed = self.complete_tables(schema, std::slice::from_mut(&mut desc), std::slice::from_ref(&pending));
         self.catalog = saved;
         completed?;
         self.check_new_objects(std::slice::from_ref(&desc))?;
@@ -216,7 +211,7 @@ impl State {
     fn create_view(&mut self, schema: &str, v: &ViewDefinition) -> Result<Defined> {
         let qn = qualify(&v.name, schema);
         self.new_object(&qn, "§11.19 SR3").or_at(v.name.at)?;
-        self.define_views(&qn.auth, std::slice::from_ref(v))?;
+        self.define_views((&qn.auth, schema), std::slice::from_ref(v))?;
         let reads = self.catalog.view(&qn).map(|view| view.reads.clone()).unwrap_or_default();
         Ok(Defined { locks: in_schema(&qn, reads), ..Defined::default() })
     }

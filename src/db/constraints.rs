@@ -45,6 +45,8 @@ pub(in crate::db) struct Described<'a> {
     pub(super) table: &'a QualifiedName,
     pub(super) columns: &'a [crate::catalog::ColumnDesc],
     pub(super) taken: Vec<QualifiedName>,
+    /// The schema of the names its CHECKs write without one [§5.4 SR8].
+    names: String,
     pub(in crate::db) constraints: Vec<ConstraintDesc>,
     pub(in crate::db) pending: Vec<Pending>,
     /// The names written for constraints still to describe, which one the
@@ -55,10 +57,11 @@ pub(in crate::db) struct Described<'a> {
 }
 
 impl<'a> Described<'a> {
-    /// Nothing described yet, of table `table` with `columns`, in a schema
-    /// where `taken` are the constraint names.
+    /// Nothing described yet, of table `table` with `columns`, its CHECKs'
+    /// names of schema `names`, in a schema where `taken` are the
+    /// constraint names.
     pub(in crate::db) fn new(
-        table: &'a QualifiedName,
+        (table, names): (&'a QualifiedName, &str),
         columns: &'a [crate::catalog::ColumnDesc],
         taken: Vec<QualifiedName>,
     ) -> Described<'a> {
@@ -66,6 +69,7 @@ impl<'a> Described<'a> {
             table,
             columns,
             taken,
+            names: names.to_owned(),
             constraints: Vec::new(),
             pending: Vec::new(),
             reserved: Vec::new(),
@@ -173,7 +177,9 @@ impl<'a> Described<'a> {
     /// A CHECK, its condition kept as written; bound once the table is
     /// known (`State::bind_checks`).
     fn check(&mut self, name: Option<&TableName>, check: &Check) -> Result<()> {
-        self.add(name, "CHECK", ConstraintKind::Check { text: check.text.clone(), reads: Vec::new(), horizon: Horizon::default() })
+        let kind =
+            ConstraintKind::Check { text: check.text.clone(), names: self.names.clone(), reads: Vec::new(), horizon: Horizon::default() };
+        self.add(name, "CHECK", kind)
     }
 
     /// [§11.7 SR5, SR6, SR7] `table` has at most one PRIMARY KEY, and no
@@ -203,15 +209,16 @@ fn word(primary: bool) -> &'static str {
 }
 
 /// The constraints of `elements`, the definition of table `table` with
-/// `columns`, in a schema where `taken` are the constraint names: their
-/// descriptors, and its foreign keys still to resolve.
+/// `columns`, its names of schema `names`, in a schema where `taken` are
+/// the constraint names: their descriptors, and its foreign keys still to
+/// resolve.
 pub(super) fn describe(
-    table: &QualifiedName,
+    (table, names): (&QualifiedName, &str),
     columns: &[crate::catalog::ColumnDesc],
     elements: &[TableElement],
     taken: Vec<QualifiedName>,
 ) -> Result<(Vec<ConstraintDesc>, Vec<Pending>)> {
-    let mut d = Described::new(table, columns, taken);
+    let mut d = Described::new((table, names), columns, taken);
     d.reserve(elements.iter().flat_map(|el| match el {
         TableElement::Column(def) => def.constraints.iter().filter_map(|c| c.name.as_ref()).collect::<Vec<_>>(),
         TableElement::Constraint(c) => c.name.iter().collect(),
@@ -241,15 +248,17 @@ pub(super) fn describe(
 
 impl State {
     /// [ISO/IEC 9075:1992 §11.8] Resolves the FOREIGN KEY `p` of table
-    /// `child`, of schema `auth`, against the tables the catalog has.
+    /// `child`, its names of schema `names`, against the tables the
+    /// catalog has.
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 for a Syntax Rule it breaks; -104 if `auth` lacks
-    /// REFERENCES on a referenced column [AR1].
-    pub(in crate::db) fn resolve_foreign_key(&self, auth: &str, child: &TableDesc, p: &Pending) -> Result<ConstraintDesc> {
+    /// SQLCODE -103 for a Syntax Rule it breaks; -104 if the owner of
+    /// `child`'s schema lacks REFERENCES on a referenced column [AR1].
+    pub(in crate::db) fn resolve_foreign_key(&self, names: &str, child: &TableDesc, p: &Pending) -> Result<ConstraintDesc> {
         let r = &p.references;
-        let target = qualify(&r.table, auth);
+        let target = qualify(&r.table, names);
+        let auth = owner_of(&*self.catalog, &child.name.auth);
         let parent = self.catalog.table(&target).ok_or_else(|| {
             let what = if self.catalog.view(&target).is_some() { "a view, not a base table [SR4]" } else { "not defined [SR2]" };
             rule(format!("[ISO/IEC 9075:1992 §11.8] {target} is {what}"))
@@ -258,8 +267,8 @@ impl State {
         super::temporary::may_refer(child, parent, ("§11.8 SR4", "§11.8 SR5")).or_at(r.table.at)?;
         let referenced = match &r.columns {
             // [SR2a] a set of columns of a unique constraint of it.
-            Some(names) => {
-                let positions = Described::new(&target, &parent.columns, Vec::new()).positions(names, "§11.8 SR2a")?;
+            Some(written) => {
+                let positions = Described::new((&target, &target.auth), &parent.columns, Vec::new()).positions(written, "§11.8 SR2a")?;
                 let keyed = parent.unique().any(|u| u.len() == positions.len() && u.iter().all(|c| positions.contains(c)));
                 if !keyed {
                     return Err(rule(format!(
@@ -286,7 +295,7 @@ impl State {
             .or_at(p.at));
         }
         // [AR1] REFERENCES on each referenced column.
-        let (held, _) = applicable(&*self.catalog, owner_of(&*self.catalog, auth), &target);
+        let (held, _) = applicable(&*self.catalog, auth, &target);
         if let Some(column) = referenced.iter().find(|c| !held.references.contains(c)) {
             let name = parent.columns.get(*column).map_or("?", |c| c.name.as_str());
             return Err(SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.8 AR1] {auth} may not reference {target}.{name}"))
@@ -315,9 +324,10 @@ impl State {
         let (table, width) = (desc.name.clone(), desc.columns.len());
         let this = desc.clone();
         for c in &mut desc.constraints {
-            let ConstraintKind::Check { text, reads, horizon } = &mut c.kind else { continue };
-            let cond =
-                self.check_condition(&table, (text, horizon)).map_err(|e| SqlError { msg: format!("CHECK {}: {}", c.name, e.msg), ..e })?;
+            let ConstraintKind::Check { text, names, reads, horizon } = &mut c.kind else { continue };
+            let cond = self
+                .check_condition(&table, (text, names, horizon))
+                .map_err(|e| SqlError { msg: format!("CHECK {}: {}", c.name, e.msg), ..e })?;
             *reads = cond.tables();
             for other in reads.iter().filter(|t| **t != table).filter_map(|t| self.catalog.table(t)) {
                 super::temporary::may_refer(&this, other, ("§11.9 SR3", "§11.9 SR4"))?;
@@ -331,33 +341,34 @@ impl State {
     }
 
     /// [ISO/IEC 9075:1992 §11.9] The condition `text` of a CHECK of table
-    /// `table`, bound over its columns, as its owner's, and as a
-    /// constraint's (`Purpose::Constraint`), seeing the columns `horizon`
-    /// says.
+    /// `table`, its names of schema `names`, bound over its columns, as its
+    /// owner's, and as a constraint's (`Purpose::Constraint`), seeing the
+    /// columns `horizon` says.
     ///
     /// # Errors
     ///
     /// It does not parse or bind: its rules [§11.9 SR1, SR2, SR5, SR6,
     /// AR1].
-    pub(in crate::db) fn check_condition(&self, table: &QualifiedName, (text, horizon): (&str, &Horizon)) -> Result<Cond> {
-        self.bind_check(table, (text, horizon), None)
+    pub(in crate::db) fn check_condition(&self, table: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Cond> {
+        self.bind_check(table, check, None)
     }
 
     /// [ISO/IEC 9075:1992 §21.3.18] The columns the CHECK `text` of table
-    /// `table`, seeing the columns `horizon` says, references, once each.
+    /// `table`, its names of schema `names`, seeing the columns `horizon`
+    /// says, references, once each.
     ///
     /// # Errors
     ///
     /// It does not bind, as `check_condition`.
-    pub(crate) fn check_uses(&self, table: &QualifiedName, (text, horizon): (&str, &Horizon)) -> Result<Vec<(QualifiedName, String)>> {
+    pub(crate) fn check_uses(&self, table: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Vec<(QualifiedName, String)>> {
         let uses = Uses::default();
-        self.bind_check(table, (text, horizon), Some(&uses))?;
+        self.bind_check(table, check, Some(&uses))?;
         Ok(binder::once_each(uses.into_inner()))
     }
 
     /// The CHECK `text` of `table`, bound as `check_condition` says, its
     /// column references noted in `uses`, if given.
-    fn bind_check(&self, table: &QualifiedName, (text, horizon): (&str, &Horizon), uses: Option<&Uses>) -> Result<Cond> {
+    fn bind_check(&self, table: &QualifiedName, (text, names, horizon): (&str, &str, &Horizon), uses: Option<&Uses>) -> Result<Cond> {
         let condition = Parser::new(text)?.of_definition().check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
@@ -370,9 +381,9 @@ impl State {
         let select_list = SelectList::Values(vec![SelectSublist::Derived(SelectItem { value: one, alias: None, at: 0 })]);
         let spec = QuerySpecification { distinct: false, select_list, table_expression };
         let params = Params::new();
-        // As its schema's owner, its names of its schema.
+        // As its schema's owner.
         let owner = owner_of(&*self.catalog, &table.auth);
-        let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: &table.auth, ..Context::new(self, owner, &params) };
+        let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: names, ..Context::new(self, owner, &params) };
         let bound = bind_select(cx, &spec)?;
         if let LogicalPlan::Project { input, .. } = bound.plan
             && let LogicalPlan::Filter { cond, .. } = *input

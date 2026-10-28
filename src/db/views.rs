@@ -12,12 +12,13 @@ use crate::params::Params;
 
 impl State {
     /// [X3.135-1986 §6.5] Records each view of `views`, of the schema
-    /// `auth`, in turn in the catalog, so a view can name the ones before
-    /// it. The caller has put the schema's tables in the catalog, and puts
-    /// the catalog back if any view breaks a rule.
-    pub(super) fn define_views(&mut self, auth: &str, views: &[ViewDefinition]) -> Result<()> {
+    /// `auth`, its names of schema `names` [ISO/IEC 9075:1992 §5.4 SR8], in
+    /// turn in the catalog, so a view can name the ones before it. The
+    /// caller has put the schema's tables in the catalog, and puts the
+    /// catalog back if any view breaks a rule.
+    pub(super) fn define_views(&mut self, (auth, names): (&str, &str), views: &[ViewDefinition]) -> Result<()> {
         for v in views {
-            let desc = self.describe_view(auth, v).or_at(v.name.at)?;
+            let desc = self.describe_view((auth, names), v).or_at(v.name.at)?;
             let mut catalog = self.catalog.duplicate();
             catalog.add_views(vec![desc]);
             self.catalog = Arc::from(catalog);
@@ -26,8 +27,8 @@ impl State {
     }
 
     /// [X3.135-1986 §6.5 SR1-SR9] The description of the view `v` of the
-    /// schema `auth`.
-    fn describe_view(&self, auth: &str, v: &ViewDefinition) -> Result<ViewDesc> {
+    /// schema `auth`, its names of schema `names`.
+    fn describe_view(&self, (auth, names): (&str, &str), v: &ViewDefinition) -> Result<ViewDesc> {
         if let Some(a) = v.name.auth.as_ref().filter(|a| *a != auth) {
             return Err(rule(format!("[X3.135-1986 §6.5 SR1] view {a}.{} is not in schema {auth}", v.name.ident)));
         }
@@ -36,13 +37,13 @@ impl State {
             return Err(rule(format!("[X3.135-1986 §6.5 SR2] {name} is defined twice")));
         }
         // [X3.135-1986 §6.6 SR3a i] its tables are read with the privileges
-        // of the schema's owner, its names of the schema.
+        // of the schema's owner.
         let params = Params::new();
-        let cx = Context { schema: auth, ..Context::new(self, owner_of(&*self.catalog, auth), &params) };
+        let cx = Context { schema: names, ..Context::new(self, owner_of(&*self.catalog, auth), &params) };
         let BoundView { bound, grouped, updates, reads } = bind_view(cx, &v.query)?;
-        let names = view_column_names(&name, v.columns.as_deref(), bound.columns.iter().map(|c| c.name.clone()).collect())?;
+        let titles = view_column_names(&name, v.columns.as_deref(), bound.columns.iter().map(|c| c.name.clone()).collect())?;
         // [SR7] its columns are those of the query, as named.
-        let columns = names
+        let columns = titles
             .into_iter()
             .zip(&bound.columns)
             .map(|(column, c)| ColumnDesc { name: column, data_type: c.data_type, not_null: c.not_null, default: None, domain: None })
@@ -60,7 +61,8 @@ impl State {
         let horizon = Horizon::of(&*self.catalog, &reads);
         // [ISO/IEC 9075:1992 §11.19 GR6] what its owner's REFERENCES on it are found from.
         let underlying = underlying(cx, &v.query)?;
-        Ok(ViewDesc { name, columns, query: v.text.clone(), check_option: v.check_option, grouped, updates, reads, horizon, underlying })
+        let (query, names) = (v.text.clone(), names.to_owned());
+        Ok(ViewDesc { name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
     }
 }
 

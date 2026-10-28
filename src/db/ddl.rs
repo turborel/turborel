@@ -102,9 +102,9 @@ impl State {
     pub(super) fn apply_change(&mut self, change: &Change, made: Option<&Made>) -> Result<Dropped> {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
-            Change::AlterTable { table, action } => {
+            Change::AlterTable { table, action, schema } => {
                 let action = Parser::new(action)?.of_definition().alter_table_action()?;
-                Ok(self.alter_table(table, &action, (made, None))?.0)
+                Ok(self.alter_table((table, schema), &action, (made, None))?.0)
             }
             Change::Defined { auth, schema, sql, placed } => self.redefine((auth, schema), sql, placed.as_ref(), made),
             Change::Insert { .. }
@@ -202,7 +202,8 @@ impl Session {
         tx: &Txn,
         (table, action, text): (&TableName, &AlterAction, &str),
     ) -> Result<Completion> {
-        let qn = qualify(table, &self.default_schema());
+        let schema = self.default_schema();
+        let qn = qualify(table, &schema);
         // [AR1] only the owner of its schema alters a table.
         if !self.owns_schema(st, &qn.auth) {
             return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.10 AR1] {qn} is in a schema {} does not own", self.auth()));
@@ -222,7 +223,7 @@ impl Session {
         }
         self.prepare_change(st, tx, &qn)?;
         let mut next = State::clone(st);
-        let (_, made, reshape) = next.alter_table(&qn, action, (None, Some(tx)))?;
+        let (_, made, reshape) = next.alter_table((&qn, &schema), action, (None, Some(tx)))?;
         let next = Arc::new(next);
         let checked = match (reshape, action) {
             (Some(reshape), _) => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects())),
@@ -235,7 +236,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::AlterTable { table: qn, action: text.to_owned() };
+        let change = Change::AlterTable { table: qn, action: text.to_owned(), schema };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
         Ok(Completion::Success)
     }

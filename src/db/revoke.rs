@@ -224,8 +224,8 @@ impl State {
         let lost = |r: Result<()>| r.is_err_and(|e| e.code == Code::Privilege);
         for d in self.catalog.domains() {
             for c in &d.constraints {
-                let ConstraintKind::Check { text, .. } = &c.kind else { continue };
-                if lost(bound.bound_on_value(&d.name, d.data_type, text).map(|_| ())) {
+                let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
+                if lost(bound.bound_on_value(&d.name, d.data_type, (text, names)).map(|_| ())) {
                     abandoned.domain_constraints.push((d.name.clone(), c.name.clone()));
                 }
             }
@@ -268,11 +268,11 @@ impl State {
                 let held = applicable(after, &table.auth, &fk.table).0;
                 fk.referenced.iter().all(|column| held.references.contains(column))
             }
-            ConstraintKind::Check { text, horizon, .. } => {
+            ConstraintKind::Check { text, names, horizon, .. } => {
                 // Bound again as its owner's, in `after`: as it was defined.
                 let mut bound = self.clone();
                 bound.catalog = Arc::from(after.duplicate());
-                bound.check_condition(table, (text, horizon)).map_or_else(|e| e.code != Code::Privilege, |_| true)
+                bound.check_condition(table, (text, names, horizon)).map_or_else(|e| e.code != Code::Privilege, |_| true)
             }
             ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => true,
         }

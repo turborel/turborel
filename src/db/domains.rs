@@ -21,7 +21,7 @@ use crate::binder::qualify;
 use crate::catalog::{ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, QualifiedName, TableDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw, lex};
-use crate::parser::{Parser, VALUE_COLUMN};
+use crate::parser::VALUE_COLUMN;
 use crate::txn::LockMode;
 use crate::value::DataType;
 
@@ -42,39 +42,14 @@ fn on_column(text: &str, column: &str) -> String {
     out
 }
 
-/// The search condition `text`, each `<table name>` of a `<from clause>`
-/// in it without a schema's name given `schema`'s, as a `<delimited
-/// identifier>` [ISO/IEC 9075:1992 §5.4 SR8]: so it names the same tables
-/// bound in another schema. `text` itself if it does not parse.
-pub(super) fn qualified_tables(text: &str, schema: &str) -> String {
-    let Ok(condition) = Parser::new(text).and_then(|p| p.of_definition().check_condition()) else { return text.to_owned() };
-    let mut names = Vec::new();
-    condition.for_each_subquery(&mut |s| s.query.table_names(&mut names));
-    let mut starts: Vec<usize> = names.iter().filter(|t| t.auth.is_none()).map(|t| t.at).collect();
-    starts.sort_unstable();
-    starts.dedup();
-    let chars: Vec<char> = text.chars().collect();
-    let (mut out, mut at) = (String::new(), 0);
-    for start in starts {
-        out.extend(chars.get(at..start).unwrap_or_default());
-        out.push('"');
-        out.push_str(&schema.replace('"', "\"\""));
-        out.push_str("\".");
-        at = start;
-    }
-    out.extend(chars.get(at..).unwrap_or_default());
-    out
-}
-
 /// The copy on column `column` of `table` of domain constraint `dc`: a
-/// CHECK of the table, its name implementation-dependent, naming `dc`, the
-/// tables it reads named as in the domain's schema.
+/// CHECK of the table, its name implementation-dependent, naming `dc`, its
+/// names of the schema `dc`'s are of.
 fn copy_of(dc: &ConstraintDesc, table: &QualifiedName, column: &str) -> ConstraintDesc {
     let name = QualifiedName { auth: table.auth.clone(), ident: format!("{} ON {}.{column}", dc.name.ident, table.ident) };
     let kind = match &dc.kind {
-        ConstraintKind::Check { text, .. } => {
-            let copied = qualified_tables(&on_column(text, column), &dc.name.auth);
-            ConstraintKind::Check { text: copied, reads: Vec::new(), horizon: Horizon::default() }
+        ConstraintKind::Check { text, names, .. } => {
+            ConstraintKind::Check { text: on_column(text, column), names: names.clone(), reads: Vec::new(), horizon: Horizon::default() }
         }
         other @ (ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_)) => other.clone(),
     };
@@ -189,7 +164,7 @@ impl State {
         let default = d.default.as_ref().map(|o| default_of(d.data_type, o)).transpose().or_at(d.name.at)?;
         let mut constraints = Vec::new();
         for c in &d.constraints {
-            let made = self.domain_constraint(&qn, d.data_type, (c, &constraints), bound)?;
+            let made = self.domain_constraint((&qn, schema), d.data_type, (c, &constraints), bound)?;
             constraints.push(made);
         }
         let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).collect::<Vec<_>>();
@@ -200,9 +175,10 @@ impl State {
     }
 
     /// [ISO/IEC 9075:1992 §11.21 SR6, §11.9, §10.6] The descriptor of
-    /// domain constraint `c` of domain `domain` of type `data_type`, after
-    /// those `earlier`: named as written, or `<domain>_CHECK<k>`; its
-    /// condition bound over a column VALUE of the type, as a CHECK's is.
+    /// domain constraint `c` of domain `domain` of type `data_type`, its
+    /// names of schema `names`, after those `earlier`: named as written, or
+    /// `<domain>_CHECK<k>`; its condition bound over a column VALUE of the
+    /// type, as a CHECK's is.
     ///
     /// # Errors
     ///
@@ -210,7 +186,7 @@ impl State {
     /// of a CHECK's; -104 for a privilege the schema's owner lacks.
     fn domain_constraint(
         &self,
-        domain: &QualifiedName,
+        (domain, names): (&QualifiedName, &str),
         data_type: DataType,
         (c, earlier): (&TableConstraint, &[ConstraintDesc]),
         bound: bool,
@@ -228,19 +204,25 @@ impl State {
                 rule(format!("[ISO/IEC 9075:1992 §10.6 SR2] constraint {name} is not a new one of schema {}", domain.auth)).or_at(c.at)
             );
         }
-        let reads = if bound { self.bound_on_value(domain, data_type, &check.text).or_at(c.at)? } else { Vec::new() };
+        let reads = if bound { self.bound_on_value(domain, data_type, (&check.text, names)).or_at(c.at)? } else { Vec::new() };
         Ok(ConstraintDesc {
             name,
-            kind: ConstraintKind::Check { text: check.text.clone(), reads, horizon: Horizon::default() },
+            kind: ConstraintKind::Check { text: check.text.clone(), names: names.to_owned(), reads, horizon: Horizon::default() },
             attributes: c.attributes,
             domain: None,
         })
     }
 
-    /// The tables a domain constraint's condition `text` reads, bound over
-    /// a column VALUE of `data_type` of a table of the domain's schema,
-    /// that is no other: as each copy of it will be bound.
-    pub(super) fn bound_on_value(&self, domain: &QualifiedName, data_type: DataType, text: &str) -> Result<Vec<QualifiedName>> {
+    /// The tables a domain constraint's condition `text`, its names of
+    /// schema `names`, reads, bound over a column VALUE of `data_type` of a
+    /// table of the domain's schema, that is no other: as each copy of it
+    /// will be bound.
+    pub(super) fn bound_on_value(
+        &self,
+        domain: &QualifiedName,
+        data_type: DataType,
+        (text, names): (&str, &str),
+    ) -> Result<Vec<QualifiedName>> {
         let column = ColumnDesc { name: VALUE_COLUMN.to_owned(), data_type, not_null: false, default: None, domain: None };
         let probe = QualifiedName { auth: domain.auth.clone(), ident: format!("{} VALUE", domain.ident) };
         let desc = TableDesc {
@@ -256,7 +238,7 @@ impl State {
         let mut catalog = staged.catalog.duplicate();
         catalog.add_table(desc);
         staged.catalog = Arc::from(catalog);
-        let cond = staged.check_condition(&probe, (&on_column(text, VALUE_COLUMN), &Horizon(vec![(probe.clone(), 1)])))?;
+        let cond = staged.check_condition(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))?;
         Ok(cond.tables().into_iter().filter(|t| *t != probe).collect())
     }
 
@@ -271,8 +253,8 @@ impl State {
         let mut domains: Vec<DomainDesc> = self.catalog.domains().into_iter().filter(|d| d.name.auth == schema).cloned().collect();
         for d in &mut domains {
             for c in &mut d.constraints {
-                let ConstraintKind::Check { text, reads, .. } = &mut c.kind else { continue };
-                *reads = self.bound_on_value(&d.name, d.data_type, text)?;
+                let ConstraintKind::Check { text, names, reads, .. } = &mut c.kind else { continue };
+                *reads = self.bound_on_value(&d.name, d.data_type, (text, names))?;
             }
         }
         let mut catalog = self.catalog.duplicate();
@@ -324,7 +306,7 @@ impl State {
                 }
             }
             AlterDomainAction::AddConstraint(c) => {
-                let made = self.domain_constraint(&qn, domain.data_type, (c, &domain.constraints), true)?;
+                let made = self.domain_constraint((&qn, schema), domain.data_type, (c, &domain.constraints), true)?;
                 for t in &mut tables {
                     let copies: Vec<ConstraintDesc> =
                         t.columns.iter().filter(|col| of_domain(col, &qn)).map(|col| copy_of(&made, &t.name, &col.name)).collect();
@@ -406,21 +388,21 @@ impl State {
             // [GR1c ii] the owner of the table's schema may add a constraint.
             let kept = owner_of(&*self.catalog, &t.name.auth) == owner;
             let own: Vec<QualifiedName> = domain.constraints.iter().map(|c| c.name.clone()).collect();
-            next.constraints.retain(|c| (kept || !c.domain.as_ref().is_some_and(|d| own.contains(d))) && !casts_check(c, &t.name.auth, qn));
+            next.constraints.retain(|c| (kept || !c.domain.as_ref().is_some_and(|d| own.contains(d))) && !casts_check(c, qn));
             next.constraints.iter_mut().filter(|c| c.domain.as_ref().is_some_and(|d| own.contains(d))).for_each(|c| c.domain = None);
             dropped.names.push(t.name.clone());
             catalog.replace_table(next);
         }
         for other in self.catalog.domains().into_iter().filter(|d| d.name != *qn) {
             let mut next = other.clone();
-            next.constraints.retain(|c| !casts_check(c, &other.name.auth, qn));
+            next.constraints.retain(|c| !casts_check(c, qn));
             catalog.put_domain(next);
         }
         catalog.remove_domain(qn);
         self.catalog = Arc::from(catalog);
         // [GR2] the views that CAST to it, and those that read them.
         for view in
-            self.catalog.views().into_iter().filter(|v| casts_to(&v.query, &v.name.auth, qn)).map(|v| v.name.clone()).collect::<Vec<_>>()
+            self.catalog.views().into_iter().filter(|v| casts_to(&v.query, &v.names, qn)).map(|v| v.name.clone()).collect::<Vec<_>>()
         {
             if self.catalog.view(&view).is_some() {
                 dropped.absorb(self.drop_view(&view, true)?);
@@ -436,22 +418,22 @@ impl State {
         let mut users = Vec::new();
         for t in self.catalog.tables() {
             users.extend(t.columns.iter().filter(|c| of_domain(c, qn)).map(|c| format!("column {}.{}", t.name, c.name)));
-            users.extend(t.constraints.iter().filter(|c| casts_check(c, &t.name.auth, qn)).map(|c| format!("constraint {}", c.name)));
+            users.extend(t.constraints.iter().filter(|c| casts_check(c, qn)).map(|c| format!("constraint {}", c.name)));
         }
-        users.extend(self.catalog.views().into_iter().filter(|v| casts_to(&v.query, &v.name.auth, qn)).map(|v| format!("view {}", v.name)));
+        users.extend(self.catalog.views().into_iter().filter(|v| casts_to(&v.query, &v.names, qn)).map(|v| format!("view {}", v.name)));
         for d in self.catalog.domains().into_iter().filter(|d| d.name != *qn) {
-            users.extend(d.constraints.iter().filter(|c| casts_check(c, &d.name.auth, qn)).map(|c| format!("constraint {}", c.name)));
+            users.extend(d.constraints.iter().filter(|c| casts_check(c, qn)).map(|c| format!("constraint {}", c.name)));
         }
         users
     }
 }
 
-/// Whether the CHECK `c`, of schema `schema`, CASTs to domain `qn`.
-fn casts_check(c: &ConstraintDesc, schema: &str, qn: &QualifiedName) -> bool {
-    if let ConstraintKind::Check { text, .. } = &c.kind { casts_to(text, schema, qn) } else { false }
+/// Whether the CHECK `c` CASTs to domain `qn`.
+fn casts_check(c: &ConstraintDesc, qn: &QualifiedName) -> bool {
+    if let ConstraintKind::Check { text, names, .. } = &c.kind { casts_to(text, names, qn) } else { false }
 }
 
 /// Whether a constraint of table `t` CASTs to domain `qn`.
 fn casts_any(t: &TableDesc, qn: &QualifiedName) -> bool {
-    t.constraints.iter().any(|c| casts_check(c, &t.name.auth, qn))
+    t.constraints.iter().any(|c| casts_check(c, qn))
 }
