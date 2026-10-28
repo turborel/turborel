@@ -520,10 +520,12 @@ from, and on some column of each [ISO/IEC 9075:1992 §11.19 GR6b].
 - What each column is drawn from is found as the view is defined, from the
   columns its select list item references, a subquery's too, and kept in
   its descriptor (`Underlying`), each by table and name.
-- It is known only of a `<query specification>` whose FROM clause names
+- It is known of a `<query specification>` whose FROM clause names
   tables and views, joined without common columns, reading no view of
-  which it is not known. Of any other, the owner holds no REFERENCES on
-  the view.
+  which it is not known; of a `<table value constructor>`, whose columns
+  are drawn from none [§7.10 SR16a]; and of a set operation by position
+  of queries it is known of, each column drawn from both operands' i-th
+  [SR16d]. Of any other, the owner holds no REFERENCES on the view.
 *Why:* finding it again from the query at every privilege check would bind
 the view each time; and where a column may be drawn from more than what
 its item names (a set operator's other side, a derived table, a common

@@ -111,9 +111,10 @@ RULES.md when its design settles.
   after each statement that changes a table it reads, however little it
   changed; GR4's warning, a condition too long for the Information Schema,
   is not raised.
-- **Privileges, further:** a view's owner holds REFERENCES on it only where what its
-  columns are drawn from is known (RULES.md D52): not of a view with a set
-  operator, a derived table, or a join with common columns.
+- **Privileges, further:** a view's owner holds REFERENCES on it only
+  where what its columns are drawn from is known (RULES.md D52): not of a
+  view with a derived table, a join with common columns, or a set
+  operation with CORRESPONDING.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them.

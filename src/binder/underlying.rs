@@ -7,14 +7,17 @@
 //! It is known of a `<query specification>` whose `<from clause>` names
 //! tables and views only, joined without common columns: each item of its
 //! select list is drawn from the columns it references, in a subquery
-//! too, so none is missed. Of any other query, or one that reads a view of
+//! too, so none is missed. Of a `<table value constructor>`, whose columns
+//! are drawn from none [§7.10 SR16a]; and of a set operation by position
+//! of operands it is known of, each column drawn from those of both
+//! operands' [SR16d]. Of any other query, or one that reads a view of
 //! which it is not known, it is not known, and the owner holds no
 //! REFERENCES on the view.
 
 use super::query::Nesting;
 use super::set_operations::bind_query_expression;
 use super::{Context, Selected, Uses, qualify};
-use crate::ast::{JoinSpecification, QueryExpression, TableName, TableReference};
+use crate::ast::{Correspondence, JoinSpecification, QueryExpression, TableName, TableReference};
 use crate::catalog::{QualifiedName, Underlying};
 use crate::error::Result;
 
@@ -25,6 +28,43 @@ use crate::error::Result;
 ///
 /// The query does not bind.
 pub fn underlying(cx: Context<'_>, query: &QueryExpression) -> Result<Option<Underlying>> {
+    match query {
+        QueryExpression::Spec(_) => of_spec(cx, query),
+        QueryExpression::Values(_) => {
+            let degree = bind_query_expression(cx, query, &Nesting::Query)?.columns.len();
+            Ok(Some(Underlying { leaves: Vec::new(), columns: vec![Vec::new(); degree] }))
+        }
+        QueryExpression::SetOp(s) => {
+            if !matches!(s.corresponding, Correspondence::Position) {
+                return Ok(None);
+            }
+            let (Some(left), Some(right)) = (underlying(cx, &s.left)?, underlying(cx, &s.right)?) else { return Ok(None) };
+            Ok(Some(merged(left, right)))
+        }
+    }
+}
+
+/// [ISO/IEC 9075:1992 §7.10 SR16d] What a set operation's columns are
+/// drawn from, of its operands' `left` and `right`: each the i-th columns'
+/// of both, its leaves both's.
+fn merged(left: Underlying, right: Underlying) -> Underlying {
+    let mut leaves = left.leaves;
+    leaves.extend(right.leaves.into_iter().filter(|l| !leaves.contains(l)).collect::<Vec<_>>());
+    let columns = left
+        .columns
+        .into_iter()
+        .zip(right.columns)
+        .map(|(mut from, also)| {
+            from.extend(also.into_iter().filter(|d| !from.contains(d)).collect::<Vec<_>>());
+            from
+        })
+        .collect();
+    Underlying { leaves, columns }
+}
+
+/// What the columns of the `<query specification>` `query` are drawn
+/// from, if it is known.
+fn of_spec(cx: Context<'_>, query: &QueryExpression) -> Result<Option<Underlying>> {
     let Some(spec) = query.spec() else { return Ok(None) };
     let mut named = Vec::new();
     if !spec.table_expression.from.iter().all(|r| traced(r, &mut named)) {

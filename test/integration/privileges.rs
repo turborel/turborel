@@ -243,3 +243,34 @@ fn a_constraint_needs_references_on_what_it_names_11_9() {
     assert_eq!(exec(&a, "CREATE TABLE Y (X INTEGER, CHECK (X IN (SELECT K FROM B.U)))").err(), Some(Code::Privilege), "not K");
     a.rollback().unwrap();
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.19 GR6b, §7.10 SR16a,
+/// SR16d]: a view's columns of a set operation by position are drawn from
+/// both operands' columns, so its owner holds REFERENCES on one only where
+/// it holds it on both; those of a VALUES from none, so it holds REFERENCES
+/// on them. Of a set operation with CORRESPONDING it holds none, what each
+/// column is drawn from not being found.
+#[test]
+fn references_on_a_view_of_a_set_operation_11_19() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, N INTEGER) GRANT SELECT, REFERENCES (K) ON T TO B").unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION B
+           CREATE TABLE P (K INTEGER)
+           CREATE VIEW EACH AS SELECT K FROM P UNION SELECT K FROM A.T
+           CREATE VIEW MIXED (K) AS SELECT K FROM P UNION ALL SELECT N FROM A.T
+           CREATE VIEW LISTED (C) AS VALUES (1), (2)
+           CREATE VIEW NAMED AS SELECT K FROM P UNION CORRESPONDING SELECT K FROM A.T",
+    )
+    .unwrap();
+    let b = db.session("B");
+    for view in ["EACH", "LISTED"] {
+        let column = if view == "LISTED" { "C" } else { "K" };
+        b.run(&format!("CREATE TABLE OF_{view} (J INTEGER CHECK (J IN (SELECT {column} FROM {view})))")).unwrap();
+    }
+    for view in ["MIXED", "NAMED"] {
+        let sql = format!("CREATE TABLE OF_{view} (J INTEGER CHECK (J IN (SELECT K FROM {view})))");
+        assert_eq!(exec(&b, &sql).err(), Some(Code::Privilege), "{view}");
+    }
+    b.rollback().unwrap();
+}
