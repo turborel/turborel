@@ -106,7 +106,13 @@ impl Session {
     /// back.
     pub(super) fn check_at_commit(&self, call: &Call<'_>, tx: &Arc<Txn>) -> Result<()> {
         call.runs(tx);
-        self.check_deferred(call.state(), tx, None).map_err(|e| {
+        let st = call.state();
+        // [§14.3 GR3] The rows of a temporary table of ON COMMIT DELETE ROWS
+        // are deleted first, so what they would break holds; and no table
+        // that keeps its rows refers to one [§11.8 SR5, §11.9 SR4].
+        let deleted = |c: &Check| c.table().and_then(|t| st.catalog.table(t)).is_some_and(|d| d.temporary.is_some_and(|t| t.delete_rows));
+        self.deferral.borrow_mut().pending.retain(|c| !deleted(c));
+        self.check_deferred(st, tx, None).map_err(|e| {
             SqlError::new(Code::CommitFailed, format!("[ISO/IEC 9075:1992 §14.3 GR5a] the transaction is rolled back: {}", e.described()))
                 .with_state(SqlState::TRANSACTION_ROLLBACK_INTEGRITY)
         })

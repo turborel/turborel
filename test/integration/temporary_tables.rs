@@ -294,3 +294,26 @@ fn a_temporary_table_is_altered_while_unused_11_10() {
     b.commit().unwrap();
     assert_eq!(crate::common::rows(&a, "SELECT K, M FROM G"), Ok(vec![]));
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §14.3 GR3, GR4, GR5a]: at
+/// COMMIT, a temporary table of ON COMMIT DELETE ROWS is emptied before the
+/// deferred constraints are checked, so a row of it that breaks one does
+/// not roll the transaction back; one of PRESERVE ROWS keeps its rows, so
+/// such a row does (SQLSTATE 40002).
+#[test]
+fn delete_rows_comes_before_deferred_checks_14_3() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE GLOBAL TEMPORARY TABLE D (K INTEGER CHECK (K > 0) DEFERRABLE INITIALLY DEFERRED) ON COMMIT DELETE ROWS
+           CREATE GLOBAL TEMPORARY TABLE P (K INTEGER CHECK (K > 0) DEFERRABLE INITIALLY DEFERRED) ON COMMIT PRESERVE ROWS",
+    )
+    .unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO D VALUES (-1)").unwrap();
+    a.commit().unwrap();
+    a.run("INSERT INTO P VALUES (-1)").unwrap();
+    let refused = a.commit().unwrap_err();
+    assert_eq!(refused.sqlstate().as_str(), "40002", "{refused}");
+    assert_eq!(crate::common::rows(&a, "SELECT K FROM P"), Ok(vec![]), "rolled back");
+}

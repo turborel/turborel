@@ -149,7 +149,7 @@ impl Check {
     }
 
     /// The table of the constraint it checks: none of an assertion's.
-    fn table(&self) -> Option<&QualifiedName> {
+    pub(super) fn table(&self) -> Option<&QualifiedName> {
         match self {
             Check::Row { table, .. } | Check::Unique { table, .. } | Check::Table { table, .. } => Some(table),
             Check::Referenced { child, .. } => Some(child),
