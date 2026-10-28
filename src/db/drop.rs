@@ -56,8 +56,8 @@ impl State {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 SR3] {qn} is a declared local temporary table: it goes with the session")));
         }
         if self.catalog.table(qn).is_none() {
-            let what = if self.catalog.view(qn).is_some() { "a view, not a base table [SR2]" } else { "not defined [SR1]" };
-            return Err(rule(format!("[ISO/IEC 9075:1992 §11.18] {qn} is {what}")));
+            let (what, clause) = if self.catalog.view(qn).is_some() { ("a view, not a base table", "SR2") } else { ("not defined", "SR1") };
+            return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 {clause}] {qn} is {what}")));
         }
         let mut dropped = self.drop_dependents(qn, cascade, "§11.18 SR4")?;
         let mut catalog = self.catalog.duplicate();
@@ -87,8 +87,9 @@ impl State {
     /// view or a constraint reads it [SR3].
     pub(super) fn drop_view(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         if self.catalog.view(qn).is_none() {
-            let what = if self.catalog.table(qn).is_some() { "a base table, not a view [SR2]" } else { "not defined [SR1]" };
-            return Err(rule(format!("[ISO/IEC 9075:1992 §11.20] {qn} is {what}")));
+            let (what, clause) =
+                if self.catalog.table(qn).is_some() { ("a base table, not a view", "SR2") } else { ("not defined", "SR1") };
+            return Err(rule(format!("[ISO/IEC 9075:1992 §11.20 {clause}] {qn} is {what}")));
         }
         let mut dropped = self.drop_dependents(qn, cascade, "§11.20 SR3")?;
         let mut catalog = self.catalog.duplicate();
@@ -226,7 +227,7 @@ impl Session {
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
-            let dropped = next.drop_object(&target, cascade)?;
+            let dropped = next.drop_object(&target, cascade).or_at(object.at())?;
             let mut wanted: Vec<QualifiedName> = dropped.names.into_iter().filter(|n| !held.contains(n)).collect();
             wanted.sort();
             wanted.dedup();
@@ -261,7 +262,8 @@ impl Session {
                     let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] the one catalog is {}, not {other}", ours.trim_end());
                     return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME).or_at(*at));
                 }
-                if !self.owns_schema(st, name) {
+                // [SR2] the schema is there before its owner is asked.
+                if st.catalog.schema_exists(name) && !self.owns_schema(st, name) {
                     let msg = format!(
                         "[ISO/IEC 9075:1992 §11.2 AR1] schema {name} is owned by {}, not {}",
                         owner_of(&*st.catalog, name),

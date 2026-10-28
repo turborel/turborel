@@ -67,11 +67,12 @@ fn query_errors_are_placed_at_their_construct() {
 /// column [§8.7 SR3] or value [§8.7 SR6], the table changed [§5.4 SR5], a
 /// column defined twice [§6.3 SR1], a SELECT INTO target [§8.10 SR4], the
 /// table altered [ISO/IEC 9075:1992 §11.10 SR2], the domain altered
-/// [§11.22 SR1].
+/// [§11.22 SR1], the object dropped [§11.18 SR2, §11.2 SR2], a schema
+/// not there refused as not there, not as another's.
 #[test]
 fn statement_errors_are_placed_at_their_construct() {
     let db = setup();
-    let cases: [(&str, &str, usize); 8] = [
+    let cases: [(&str, &str, usize); 10] = [
         ("UPDATE T SET AMT = 1, NOPE = 2", "NOPE", 0),
         ("INSERT INTO T (ID, NOPE) VALUES (1, 2)", "NOPE", 0),
         ("INSERT INTO T VALUES (9, 1, 1, 1)", "1", 0),
@@ -80,6 +81,8 @@ fn statement_errors_are_placed_at_their_construct() {
         ("UPDATE T SET NAME = 1", "NAME", 0),
         ("ALTER TABLE NOPE ADD COLUMN X INTEGER", "NOPE", 0),
         ("ALTER DOMAIN NOPE DROP DEFAULT", "NOPE", 0),
+        ("DROP VIEW T CASCADE", "T C", 0),
+        ("DROP SCHEMA NOPE CASCADE", "NOPE", 0),
     ];
     for (sql, part, nth) in cases {
         let (code, pos) = placed(&db, sql);

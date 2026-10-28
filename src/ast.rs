@@ -479,6 +479,16 @@ pub enum DropObject {
     },
 }
 
+impl DropObject {
+    /// Where its name begins in the statement.
+    pub fn at(&self) -> usize {
+        match self {
+            DropObject::Table(name) | DropObject::View(name) | DropObject::Domain(name) | DropObject::Assertion(name) => name.at,
+            DropObject::Schema { at, .. } => *at,
+        }
+    }
+}
+
 /// [ISO/IEC 9075:1992 §11.2] `<drop behavior>` ::= CASCADE | RESTRICT
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropBehavior {
