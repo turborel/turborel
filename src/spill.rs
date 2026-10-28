@@ -42,6 +42,7 @@ use crate::error::Result;
 use crate::memory::MemoryBudget;
 use crate::storage::Row;
 use crate::value::codec::{put_row, row};
+use crate::value::types::TypeRegistry;
 use crate::value::{Bucket, NormKey, Value};
 
 /// \[DESIGN\] The default WORK_MEMORY: what an operator holds in memory
@@ -312,13 +313,14 @@ pub fn row_record(row: &Row) -> Vec<u8> {
     out
 }
 
-/// The row of `record`.
+/// The row of `record`, its values of types beyond the standard found
+/// among `types`.
 ///
 /// # Errors
 ///
 /// SQLCODE -916 if it is not a row's record.
-pub fn record_row(record: &[u8]) -> Result<Row> {
-    row(&mut Reader::new(record, "spilled row"))
+pub fn record_row(record: &[u8], types: &TypeRegistry) -> Result<Row> {
+    row(&mut Reader::new(record, "spilled row").with_types(types))
 }
 
 /// The key of buckets `key`: the same bytes exactly when the buckets are.
@@ -330,6 +332,11 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
             Bucket::Number(bits) => {
                 out.push(1);
                 out.extend_from_slice(&bits.to_le_bytes());
+            }
+            Bucket::Extension(bytes) => {
+                out.push(2);
+                out.extend_from_slice(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
+                out.extend_from_slice(bytes);
             }
         }
     }
@@ -352,6 +359,12 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
             NormKey::Approx(bits) => {
                 out.push(3);
                 out.extend_from_slice(&bits.to_le_bytes());
+            }
+            NormKey::Extension(held) => {
+                let (name, bytes) = &**held;
+                text(&mut out, 4, name);
+                out.extend_from_slice(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
+                out.extend_from_slice(bytes);
             }
         }
     }

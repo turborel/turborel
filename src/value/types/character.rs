@@ -93,6 +93,8 @@ impl SqlType for Character {
             Value::Null => Ok(Value::Null),
             Value::Exact(d) => padded(&d.to_string(), length),
             Value::Approx(x) => padded(&approximate_literal(x), length),
+            // A value of a kind beyond the standard, as its kind shows it.
+            Value::Extension(ref e) => padded(&e.kind.text(&v), length),
             Value::Char(s) => {
                 let kept: String = s.chars().take(usize::try_from(length).unwrap_or(usize::MAX)).collect();
                 self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")
@@ -102,6 +104,10 @@ impl SqlType for Character {
 
     fn literal(&self, v: &Value) -> String {
         string(v).map_or_else(|| v.to_string(), |s| format!("'{}'", s.replace('\'', "''")))
+    }
+
+    fn text(&self, v: &Value) -> String {
+        v.to_string()
     }
 
     fn position(&self, _: &Value) -> Option<f64> {

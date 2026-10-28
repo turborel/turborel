@@ -18,6 +18,7 @@ use crate::bytes::{Put, Reader};
 use crate::disk::encoding::{Encodings, Pipeline};
 use crate::error::Result;
 use crate::storage::RowId;
+use crate::value::types::TypeRegistry;
 
 /// The first byte of a sealed record: no format version of a record.
 const SEALED: u8 = 0xFE;
@@ -41,7 +42,7 @@ pub fn seal(record: &Record, row: RowId, pipeline: &Pipeline) -> Result<Vec<u8>>
 /// # Errors
 ///
 /// As `Record::decode`; as `Encodings::unseal`.
-pub fn open(bytes: &[u8], encodings: &Encodings) -> Result<Record> {
+pub fn open(bytes: &[u8], encodings: &Encodings, types: &TypeRegistry) -> Result<Record> {
     let plain: Cow<'_, [u8]> = match bytes.first() {
         Some(&SEALED) => {
             let mut r = Reader::new(bytes.get(1..).unwrap_or_default(), "sealed log record");
@@ -50,5 +51,5 @@ pub fn open(bytes: &[u8], encodings: &Encodings) -> Result<Record> {
         }
         Some(_) | None => Cow::Borrowed(bytes),
     };
-    Record::decode(&plain)
+    Record::decode(&plain, types)
 }

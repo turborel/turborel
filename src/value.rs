@@ -77,6 +77,8 @@ pub enum DataType {
         /// Binary digits of the mantissa.
         precision: u32,
     },
+    /// A type beyond the standard, a plug-in's (RULES.md D53).
+    Extension(types::ExtensionType),
 }
 
 impl DataType {
@@ -194,6 +196,8 @@ pub enum Value {
     Exact(Decimal),
     /// An approximate number.
     Approx(f64),
+    /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
+    Extension(types::ExtensionValue),
 }
 
 impl Value {
@@ -207,7 +211,7 @@ impl Value {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
             Value::Approx(f) => Some(*f),
-            Value::Null | Value::Char(_) => None,
+            Value::Null | Value::Char(_) | Value::Extension(_) => None,
         }
     }
 
@@ -217,7 +221,7 @@ impl Value {
         match self {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
-            Value::Null | Value::Char(_) => self.clone(),
+            Value::Null | Value::Char(_) | Value::Extension(_) => self.clone(),
         }
     }
 
@@ -240,6 +244,9 @@ impl Value {
                 NormKey::Exact(u, s)
             }
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
+            // Equal values of a kind beyond the standard have the same bytes
+            // (`SqlType`'s contract).
+            Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
         }
     }
 }
@@ -252,6 +259,7 @@ impl fmt::Display for Value {
             Value::Exact(d) => write!(f, "{d}"),
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),
+            Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
 }
@@ -268,6 +276,9 @@ pub enum NormKey {
     Exact(i128, u32),
     /// The bits of an `f64`, with -0 as +0.
     Approx(u64),
+    /// A kind beyond the standard's name, and the value's bytes: boxed, so
+    /// a key of the standard's types stays small.
+    Extension(Box<(String, Vec<u8>)>),
 }
 
 /// [X3.135-1986 §5.9] apply a dyadic operator.

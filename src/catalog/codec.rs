@@ -99,13 +99,19 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
 const CHARACTER_TYPE: u8 = 0;
 const EXACT_TYPE: u8 = 1;
 const APPROXIMATE_TYPE: u8 = 2;
+/// A type beyond the standard: its kind's name, then its parameters.
+const EXTENSION_TYPE: u8 = 3;
 
 fn put_type(out: &mut Vec<u8>, data_type: DataType) {
-    out.put_u8(match data_type {
-        DataType::Character { .. } => CHARACTER_TYPE,
-        DataType::Exact { .. } => EXACT_TYPE,
-        DataType::Approximate { .. } => APPROXIMATE_TYPE,
-    });
+    match data_type {
+        DataType::Character { .. } => out.put_u8(CHARACTER_TYPE),
+        DataType::Exact { .. } => out.put_u8(EXACT_TYPE),
+        DataType::Approximate { .. } => out.put_u8(APPROXIMATE_TYPE),
+        DataType::Extension(e) => {
+            out.put_u8(EXTENSION_TYPE);
+            out.put_str(e.kind.name());
+        }
+    }
     data_type.kind().put_params(&data_type, out);
 }
 
@@ -114,6 +120,10 @@ fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         CHARACTER_TYPE => &CHARACTER,
         EXACT_TYPE => &EXACT,
         APPROXIMATE_TYPE => &APPROXIMATE,
+        EXTENSION_TYPE => {
+            let name = r.str()?;
+            r.kind(&name)?
+        }
         _ => return Err(r.corrupt("not a data type")),
     };
     kind.params(r)

@@ -113,8 +113,18 @@ pub enum AlterDomainAction {
 pub enum TypeName {
     /// A `<data type>`.
     Data(DataType),
-    /// A `<domain name>`: the domain's data type.
+    /// A `<domain name>`: the domain's data type; or, unqualified and no
+    /// domain's, a type beyond the standard (RULES.md D53).
     Domain(TableName),
+    /// \[EXTENSION\] A type beyond the standard with parameters, as its
+    /// name and `(a [, b])` write it (RULES.md D53): no domain takes
+    /// parameters.
+    Extension {
+        /// The type's name.
+        name: TableName,
+        /// Its parameters, as written.
+        params: Vec<u32>,
+    },
 }
 
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT

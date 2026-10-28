@@ -303,6 +303,16 @@ restriction is lifted.
 
 Facilities beyond the standards, marked `[EXTENSION]` in the code:
 
+- **Data types beyond the standard** (RULES.md D53), plug-ins registered
+  with `Database::register_type`: written in a column definition and in
+  CAST by their name, `name` or `name(a [, b])`, a domain of the name in
+  the default schema taken first; a value of one CAST from a character
+  string, and its DEFAULT a character string literal; compared, ordered,
+  grouped, indexed and kept unique as its type's kind says, comparable
+  with values of its own type alone; logged, checkpointed and recovered;
+  sent to clients as its type's name, its text and its bytes, shown as its
+  text by one without the plug-in. A database whose files hold one is not
+  opened without it.
 - **Indexes** (RULES.md D34), of the methods `btree` and `hash` or a
   plug-in's: `CREATE INDEX name ON table (columns) [USING method] [WITH
   (...)]`, `DROP INDEX name`, `ALTER INDEX name SET (...)`, outside a

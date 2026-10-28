@@ -110,9 +110,11 @@ RULES.md when its design settles.
   [§8.11]; BIT and BIT VARYING, NATIONAL CHARACTER, and the bit, hex and
   national literals. SET TIME ZONE waits for these, and for the database's
   clock rather than a session's. Each is a kind of the data type contract
-  (RULES.md D53), built in. Still to build with them: the plug-in path for
-  types beyond the standard (`Database::register_type`, a plug-in type and
-  its values stored by name), with its own contract tests.
+  (RULES.md D53), built in.
+- **Plug-in data types, further** (RULES.md D53): no privilege is needed
+  to write one, SQL-92 granting none on a data type; a character string is
+  stored in one only through CAST, not by store assignment; a function's
+  arguments of one are typed only as its `return_type` says.
 - **Assertions, further** (RULES.md D51): an assertion is checked whole
   after each statement that changes a table it reads, however little it
   changed; GR4's warning, a condition too long for the Information Schema,

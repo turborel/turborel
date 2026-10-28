@@ -262,7 +262,7 @@ impl Database {
             let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held));
             return self.create_files(&place, &given);
         };
-        let image = found.last().map(|record| Image::decode(&record)).transpose()?;
+        let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
         let recorded = |name: &str| image.as_ref().and_then(|i| i.snapshot.setting(name)).cloned();
         let values = snapshot.recorded(&recorded)?;
         let place = Place::new(fs, dir, snapshot.layout(&values)?, (options, held));

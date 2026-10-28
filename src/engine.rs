@@ -56,6 +56,3 @@ pub(crate) fn memory_file(budget: &Arc<MemoryBudget>, what: &str) -> Result<(Arc
 pub(crate) fn fixed_width(data_type: DataType) -> Option<usize> {
     data_type.kind().record_width(&data_type)
 }
-
-/// Bytes of a number in a record or a key.
-pub(crate) use crate::value::types::NUMBER_BYTES as WORD;

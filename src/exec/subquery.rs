@@ -67,7 +67,7 @@ pub struct SubqueryRows {
 impl SubqueryRows {
     /// The rows `rows`, of a spill area if `spilled`, of `db`.
     fn of(rows: Rescanned, db: &Arc<State>) -> SubqueryRows {
-        let spilled = matches!(rows, Rescanned::Spilled(_));
+        let spilled = matches!(rows, Rescanned::Spilled(..));
         let (summary, agreeing) = (Arc::new(Mutex::new(None)), Arc::new(Mutex::new(quantified::Agreeing::default())));
         SubqueryRows { rows: Arc::new(Mutex::new(rows)), db: Arc::clone(db), spilled, summary, agreeing }
     }

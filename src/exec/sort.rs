@@ -18,6 +18,7 @@ use crate::logical::SortKey;
 use crate::spill::{Records, SpillRun, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::value::sort_cmp;
+use crate::value::types::TypeRegistry;
 
 /// [X3.135-1986 §8.3 GR3b] `input` sorted by `keys`, in a work area of
 /// `db`. Never inlined into the caller, whose frame is on the stack while
@@ -62,14 +63,14 @@ fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> 
                 break;
             }
             let mut run = work.run()?;
-            for row in merge(&keys, group)? {
+            for row in merge(&keys, group, work.types())? {
                 run.push(&row_record(&row?))?;
             }
             merged.push(run);
         }
         runs = merged;
     }
-    Ok(Box::new(merge(&keys, runs)?))
+    Ok(Box::new(merge(&keys, runs, work.types())?))
 }
 
 /// `rows`, sorted by `keys`, written as a run of `work`'s spill area.
@@ -97,12 +98,12 @@ pub fn compare_rows(keys: &[SortKey], a: &Row, b: &Row) -> Ordering {
 
 /// The rows of sorted `runs`, merged in order, each run's pages freed as
 /// they are read.
-fn merge(keys: &Arc<[SortKey]>, runs: Vec<Box<dyn SpillRun>>) -> Result<Merge> {
+fn merge(keys: &Arc<[SortKey]>, runs: Vec<Box<dyn SpillRun>>, types: &TypeRegistry) -> Result<Merge> {
     let mut sources = Vec::new();
     for run in runs {
         sources.push(run.into_records()?);
     }
-    let mut merge = Merge { keys: Arc::clone(keys), sources, heads: BinaryHeap::new() };
+    let mut merge = Merge { keys: Arc::clone(keys), sources, heads: BinaryHeap::new(), types: types.clone() };
     for source in 0..merge.sources.len() {
         merge.refill(source)?;
     }
@@ -114,13 +115,14 @@ struct Merge {
     keys: Arc<[SortKey]>,
     sources: Vec<Records>,
     heads: BinaryHeap<Head>,
+    types: TypeRegistry,
 }
 
 impl Merge {
     /// Puts the next row of `source`, if any, in the heap.
     fn refill(&mut self, source: usize) -> Result<()> {
         let Some(next) = self.sources.get_mut(source).and_then(Iterator::next) else { return Ok(()) };
-        let row = record_row(&next?)?;
+        let row = record_row(&next?, &self.types)?;
         self.heads.push(Head { row, source, keys: Arc::clone(&self.keys) });
         Ok(())
     }

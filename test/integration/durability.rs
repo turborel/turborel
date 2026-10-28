@@ -5,6 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use turborel::value::types::TypeRegistry;
 
 use turborel::catalog::TableDesc;
 use turborel::db::Database;
@@ -73,7 +74,10 @@ fn logged() -> (Database, Arc<Watched>) {
 
 /// The records in `log`, with their positions.
 fn records(log: &Watched) -> Vec<(Lsn, Record)> {
-    log.read_from(Lsn(0)).map(|r| r.map(|(lsn, bytes)| (lsn, Record::decode(&bytes).unwrap()))).collect::<Result<_>>().unwrap()
+    log.read_from(Lsn(0))
+        .map(|r| r.map(|(lsn, bytes)| (lsn, Record::decode(&bytes, &TypeRegistry::default()).unwrap())))
+        .collect::<Result<_>>()
+        .unwrap()
 }
 
 /// The kinds of record in `log`, in order.
@@ -279,7 +283,13 @@ fn a_file_log_holds_what_was_committed() {
     let (reopened, _) = FileLog::open(os(), &dir, &[hash], &[], FileLogOptions::default()).unwrap();
     let kinds: Vec<String> = reopened
         .read_from(Lsn(0))
-        .map(|r| format!("{:?}", Record::decode(&r.unwrap().1).unwrap().change).split([' ', '{']).next().unwrap().to_owned())
+        .map(|r| {
+            format!("{:?}", Record::decode(&r.unwrap().1, &TypeRegistry::default()).unwrap().change)
+                .split([' ', '{'])
+                .next()
+                .unwrap()
+                .to_owned()
+        })
         .collect();
     assert_eq!(kinds, ["Insert", "Commit"]);
 }

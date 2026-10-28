@@ -8,6 +8,7 @@ use super::*;
 use crate::disk::io::FileSystem;
 use crate::disk::memory::MemoryFileSystem;
 use crate::spill::{Area, DEFAULT_SPILL_BATCH, WorkAreas, bucket_key, norm_key, record_row, row_record};
+use crate::value::types::TypeRegistry;
 use crate::value::{Bucket, Decimal, Value};
 
 const AREA: usize = 1 << 20;
@@ -108,8 +109,9 @@ fn files_left_are_cleared() {
 fn byte_forms_round_trip_and_tell_keys_apart() {
     let row = vec![Value::Null, Value::Char("AB".into()), Value::Exact(Decimal::new(15, 1)), Value::Approx(2.5_f64)];
     let literals = |r: &[Value]| r.iter().map(Value::to_literal).collect::<Vec<_>>();
-    assert_eq!(literals(&record_row(&row_record(&row)).unwrap()), literals(&row));
-    assert_eq!(record_row(b"\xff").err().map(|e| e.code), Some(Code::Corrupt));
+    let types = TypeRegistry::default();
+    assert_eq!(literals(&record_row(&row_record(&row), &types).unwrap()), literals(&row));
+    assert_eq!(record_row(b"\xff", &types).err().map(|e| e.code), Some(Code::Corrupt));
     let norms = |r: &[Value]| norm_key(&r.iter().map(Value::norm).collect::<Vec<_>>());
     assert_eq!(norms(&row), norms(&row));
     assert_ne!(norms(&[Value::Char("A".into()), Value::Char("B".into())]), norms(&[Value::Char("AB".into())]));

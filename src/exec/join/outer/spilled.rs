@@ -25,6 +25,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::spill::{Records, SpillRun, SpillTable, bucket_key, row_bytes};
 use crate::storage::Row;
 use crate::value::Bucket;
+use crate::value::types::TypeRegistry;
 
 /// The outer join `spec` says of `left` with a right operand of which
 /// `held` came first, then `rest`, in `work`. Never inlined into the
@@ -144,6 +145,7 @@ struct Part {
     rows: Vec<(u64, Row)>,
     buckets: HashMap<Vec<Bucket>, Vec<usize>>,
     spilled: Option<Box<dyn SpillTable>>,
+    types: TypeRegistry,
 }
 
 impl Part {
@@ -151,10 +153,11 @@ impl Part {
     /// in a table of `work`'s spill area if it outgrows it.
     fn of(mut run: Box<dyn SpillRun>, (bytes, keys): (usize, &[(usize, usize)]), work: &mut Work) -> Result<Part> {
         let spilled = if bytes > work.limit() { Some(work.table()?) } else { None };
-        let mut part = Part { run: work.run()?, count: 0, rows: Vec::new(), buckets: HashMap::new(), spilled };
+        let types = work.types().clone();
+        let mut part = Part { run: work.run()?, count: 0, rows: Vec::new(), buckets: HashMap::new(), spilled, types };
         for record in run.records()? {
             let record = record?;
-            let (n, row) = unnumbered(&record)?;
+            let (n, row) = unnumbered(&record, &part.types)?;
             let b = key(&row, keys.iter().map(|k| k.1))?.ok_or_else(lost)?;
             if let Some(table) = &mut part.spilled {
                 table.insert(&bucket_key(&b), &placed(part.count, &record))?;
@@ -172,7 +175,7 @@ impl Part {
     fn candidates(&mut self, l: &Row, keys: &[(usize, usize)]) -> Result<Vec<(usize, Row)>> {
         let Some(b) = key(l, keys.iter().map(|k| k.0))? else { return Ok(Vec::new()) };
         if let Some(table) = &self.spilled {
-            return table.get(&bucket_key(&b))?.iter().map(|v| unplaced(v).map(|(at, (_, row))| (at, row))).collect();
+            return table.get(&bucket_key(&b))?.iter().map(|v| unplaced(v, &self.types).map(|(at, (_, row))| (at, row))).collect();
         }
         let found = self.buckets.get(&b).map(Vec::as_slice).unwrap_or_default();
         Ok(found.iter().filter_map(|&at| self.rows.get(at).map(|(_, row)| (at, row.clone()))).collect())
@@ -185,7 +188,7 @@ impl Part {
     fn probed(&mut self, probes: Records, (spec, matched): (&Spec, &mut [bool]), work: &mut Work) -> Result<Records> {
         let mut out = work.run()?;
         for record in probes {
-            let (n, l) = unnumbered(&record?)?;
+            let (n, l) = unnumbered(&record?, work.types())?;
             let mut found = false;
             for (at, r) in self.candidates(&l, &spec.keys)? {
                 let Some(joined) = spec.joined(&l, &r)? else { continue };
@@ -207,7 +210,7 @@ impl Part {
     fn unmatched(self, matched: &[bool], spec: &Spec, work: &mut Work) -> Result<Records> {
         let mut out = work.run()?;
         for (at, record) in self.run.into_records()?.enumerate() {
-            let (n, row) = unnumbered(&record?)?;
+            let (n, row) = unnumbered(&record?, work.types())?;
             if !matched.get(at).copied().unwrap_or(true) {
                 out.push(&numbered(n, &spec.right_alone(&row)))?;
             }
@@ -222,10 +225,10 @@ fn placed(at: usize, record: &[u8]) -> Vec<u8> {
 }
 
 /// The place, number and row of a record `placed` made.
-fn unplaced(value: &[u8]) -> Result<(usize, (u64, Row))> {
+fn unplaced(value: &[u8], types: &TypeRegistry) -> Result<(usize, (u64, Row))> {
     let (at, record) = value.split_at_checked(8).ok_or_else(lost)?;
     let at = <[u8; 8]>::try_from(at).map(u64::from_le_bytes).map_err(|_| lost())?;
-    Ok((usize::try_from(at).unwrap_or(usize::MAX), unnumbered(record)?))
+    Ok((usize::try_from(at).unwrap_or(usize::MAX), unnumbered(record, types)?))
 }
 
 /// The error of a partition not as it was written.

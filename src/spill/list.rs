@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use super::{Area, SpillArea, SpillRun, WorkAreas};
 use crate::error::{Code, Result, SqlError};
+use crate::value::types::TypeRegistry;
 
 /// Where a list spills: the bytes of items it holds, and the work areas,
 /// with batches of `batch` bytes, its runs are made in; none to hold them
@@ -24,11 +25,14 @@ pub struct ListSpace {
     pub batch: usize,
     /// The work areas, if it may spill.
     pub areas: Option<Arc<WorkAreas>>,
+    /// The types beyond the standard its items may hold values of, read
+    /// back by them once spilled.
+    pub types: TypeRegistry,
 }
 
 impl Default for ListSpace {
     fn default() -> ListSpace {
-        ListSpace { limit: usize::MAX, batch: 0, areas: None }
+        ListSpace { limit: usize::MAX, batch: 0, areas: None, types: TypeRegistry::default() }
     }
 }
 

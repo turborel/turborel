@@ -225,6 +225,6 @@ fn condition_number(n: &ValueSpecification, auth: &str, params: &Params) -> Resu
             SqlState::INVALID_CONDITION_NUMBER,
             "[ISO/IEC 9075:1992 §18.1 GR2] the <condition number> is null".to_owned(),
         ),
-        Value::Char(_) | Value::Approx(_) => Err(not_exact()),
+        Value::Char(_) | Value::Approx(_) | Value::Extension(_) => Err(not_exact()),
     }
 }

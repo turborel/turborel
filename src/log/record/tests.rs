@@ -3,6 +3,7 @@
 //! from record.rs (RULES.md R-SIZE-2).
 
 use super::*;
+use crate::value::types::TypeRegistry;
 use crate::value::{Decimal, Value};
 
 fn table() -> QualifiedName {
@@ -79,7 +80,7 @@ fn every_kind() -> Vec<Record> {
 fn every_kind_of_record_reads_back_as_written() {
     for record in every_kind() {
         let bytes = record.encode();
-        let read = Record::decode(&bytes).unwrap();
+        let read = Record::decode(&bytes, &TypeRegistry::default()).unwrap();
         assert_eq!(read.encode(), bytes, "{record:?}");
         assert_eq!(read.tx, record.tx);
         assert_eq!(format!("{:?}", read.change), format!("{:?}", record.change));
@@ -103,7 +104,7 @@ fn the_format_is_fixed() {
 /// for it).
 #[test]
 fn what_is_not_a_record_is_refused() {
-    let corrupt = |bytes: &[u8]| Record::decode(bytes).err().map(|e| e.code);
+    let corrupt = |bytes: &[u8]| Record::decode(bytes, &TypeRegistry::default()).err().map(|e| e.code);
     for record in every_kind() {
         let bytes = record.encode();
         for cut in 0..bytes.len() {
@@ -114,7 +115,7 @@ fn what_is_not_a_record_is_refused() {
     let abort = Record { tx: 1, change: Change::Abort }.encode();
     let mut version = abort.clone();
     version[0] = 9;
-    assert!(Record::decode(&version).unwrap_err().msg.contains("version 9"));
+    assert!(Record::decode(&version, &TypeRegistry::default()).unwrap_err().msg.contains("version 9"));
     let mut kind = abort.clone();
     kind[1] = 99;
     assert_eq!(corrupt(&kind), Some(Code::Corrupt));

@@ -19,6 +19,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::spill::{ListItem, ListSpace, SpillList, record_row, row_bytes, row_record};
 use crate::storage::{Row, RowId, TableStorage};
+use crate::value::types::TypeRegistry;
 
 /// A table's storage that has begun a transaction: a participant in its
 /// commit and rollback.
@@ -118,12 +119,15 @@ impl ListItem for UndoEntry {
 pub(crate) struct UndoLog {
     list: SpillList<UndoEntry>,
     targets: Vec<Target>,
+    /// The types beyond the standard its entries may hold values of.
+    types: TypeRegistry,
 }
 
 impl UndoLog {
     /// An empty log, spilling in `space`.
     pub(crate) fn new(space: UndoSpace) -> UndoLog {
-        UndoLog { list: SpillList::new(space), targets: Vec::new() }
+        let types = space.types.clone();
+        UndoLog { list: SpillList::new(space), targets: Vec::new(), types }
     }
 
     /// Begins a segment, as a statement begins: its entries' place.
@@ -149,17 +153,17 @@ impl UndoLog {
     /// The spill area's, reading a run a place not `mark`'s cuts across:
     /// its entries then all kept.
     pub(crate) fn take_from(&mut self, start: usize) -> Result<UndoLog> {
-        let targets = &self.targets;
-        let list = self.list.take_from(start, &|record| entry_of(targets, record))?;
-        Ok(UndoLog { list, targets: self.targets.clone() })
+        let (targets, types) = (&self.targets, &self.types);
+        let list = self.list.take_from(start, &|record| entry_of((targets, types), record))?;
+        Ok(UndoLog { list, targets: self.targets.clone(), types: self.types.clone() })
     }
 
     /// [X3.135-1986 §8.9 GR1, §7.3 GR3b i] Reverses its entries, newest
     /// first, as `apply_undo` does; a run that cannot be read back fails
     /// every table it may have changed.
     pub(crate) fn apply(self, tx: TxId) -> Vec<UndoFailure> {
-        let (targets, mut failures) = (self.targets, Vec::new());
-        for segment in self.list.into_segments(true, &|record| entry_of(&targets, record)) {
+        let (targets, types, mut failures) = (self.targets, self.types, Vec::new());
+        for segment in self.list.into_segments(true, &|record| entry_of((&targets, &types), record)) {
             match segment {
                 Ok(entries) => failures.extend(apply_undo(tx, entries)),
                 Err(error) => {
@@ -199,12 +203,12 @@ fn encoded(targets: &mut Vec<Target>, entry: &UndoEntry) -> Vec<u8> {
 }
 
 /// The entry of `record`.
-fn entry_of(targets: &[Target], record: &[u8]) -> Result<UndoEntry> {
+fn entry_of((targets, types): (&[Target], &TypeRegistry), record: &[u8]) -> Result<UndoEntry> {
     let mut r = Reader::new(record, "undo entry");
     let (kind, target, id) = (r.u8()?, r.u32()?, r.u64()?);
     let rest = r.rest();
     let target = targets.get(usize::try_from(target).unwrap_or(usize::MAX)).ok_or_else(|| r.corrupt("no such target"))?;
-    let values = || record_row(rest);
+    let values = || record_row(rest, types);
     Ok(match (kind, target.clone()) {
         (0, Target::Storage(table, storage)) => UndoEntry::Inserted { table, storage, id },
         (1, Target::Storage(table, storage)) => UndoEntry::Deleted { table, storage, id, row: values()? },

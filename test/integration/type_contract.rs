@@ -9,7 +9,7 @@ use turborel::value::{DataType, Decimal, SqlType, Value, assign, bucket, compare
 
 /// Checks the contract of `t`'s kind on `t` and `values`, which are
 /// assigned to `t` first.
-fn type_contract(t: DataType, values: &[Value]) {
+pub(crate) fn type_contract(t: DataType, values: &[Value]) {
     let kind: &dyn SqlType = t.kind();
     assert!(kind.comparable(&t), "{t} is comparable with itself");
     let mut params = Vec::new();
@@ -77,4 +77,12 @@ fn approximate_numbers_keep_the_type_contract() {
     let numbers = [-f64::MAX, -1.5, -0.0, 0.0, 2.5e-300, 1.0e300, f64::MAX].map(Value::Approx);
     type_contract(DataType::Approximate { precision: 53 }, &numbers);
     type_contract(DataType::Approximate { precision: 24 }, &[-3.5, 0.0, 0.1, 1.0e30].map(Value::Approx));
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: a type beyond the standard,
+/// a plug-in's, keeps the `SqlType` contract: the tests' IDENT.
+#[test]
+fn a_plug_in_type_keeps_the_type_contract() {
+    let ids = [[0_u8; 16], [1; 16], [0xff; 16], [0x7f; 16]].map(crate::ident::ident);
+    type_contract(crate::ident::ident_type(), &ids);
 }

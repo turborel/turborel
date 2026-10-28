@@ -6,7 +6,8 @@
 //!
 //! ```text
 //! value: 0 (null) | 1 (character) string | 2 (exact) units i128, scale u32 |
-//!        3 (approximate) IEEE-754 bits u64
+//!        3 (approximate) IEEE-754 bits u64 |
+//!        4 (beyond the standard) its kind's name, then its kind's bytes
 //! row:   values u32, then each value
 //! ```
 
@@ -20,6 +21,8 @@ const NULL: u8 = 0;
 const CHARACTER: u8 = 1;
 const EXACT: u8 = 2;
 const APPROXIMATE: u8 = 3;
+/// A value of a kind beyond the standard: its kind's name, then its bytes.
+const EXTENSION: u8 = 4;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -29,6 +32,12 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
+        Value::Extension(e) => {
+            out.put_u8(EXTENSION);
+            out.put_str(e.kind.name());
+            e.kind.put_value(value, out);
+            return;
+        }
     };
     out.put_u8(tag);
     if let Some(kind) = value.kind() {
@@ -36,13 +45,18 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
     }
 }
 
-/// Reads a value written by `put_value`.
+/// Reads a value written by `put_value`: of a kind beyond the standard,
+/// found among the reader's types (`Reader::with_types`).
 pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
     let kind: &dyn SqlType = match reader.u8()? {
         NULL => return Ok(Value::Null),
         CHARACTER => &types::CHARACTER,
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
+        EXTENSION => {
+            let name = reader.str()?;
+            reader.kind(&name)?
+        }
         tag => return Err(reader.corrupt(&format!("no kind of value has tag {tag}"))),
     };
     kind.value(reader)

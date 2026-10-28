@@ -30,6 +30,11 @@
 
 mod common;
 mod concepts;
+/// The plug-in type of the tests, written once in `support/` (RULES.md
+/// R-TEST-10), included here as the core cannot depend on `support`'s
+/// build of itself.
+#[path = "../../support/src/types.rs"]
+mod ident;
 
 mod assertions;
 mod blocks;
@@ -53,6 +58,7 @@ mod drops;
 mod durability;
 mod encodings;
 mod expressions;
+mod extension_types;
 mod failures;
 mod faults;
 mod functions;

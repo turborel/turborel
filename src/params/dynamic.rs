@@ -65,9 +65,9 @@ fn conformed(value: Value, to: ParameterType) -> Result<(Value, DataType)> {
             let text = match value {
                 Value::Null => return Ok((Value::Null, to.data_type())),
                 Value::Char(s) => s,
-                number @ (Value::Exact(_) | Value::Approx(_)) => match cast(number, &to.data_type())? {
+                number @ (Value::Exact(_) | Value::Approx(_) | Value::Extension(_)) => match cast(number, &to.data_type())? {
                     Value::Char(s) => s.trim_end_matches(' ').to_owned(),
-                    other @ (Value::Null | Value::Exact(_) | Value::Approx(_)) => other.to_string(),
+                    other @ (Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Extension(_)) => other.to_string(),
                 },
             };
             let length = u32::try_from(text.chars().count()).ok().filter(|l| *l <= MAX_CHARACTER_LENGTH).ok_or_else(|| {

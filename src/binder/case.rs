@@ -7,7 +7,7 @@ use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
 use crate::ast::{CaseExpression, Subquery, TypeName, ValueExpression};
-use crate::error::{At, Result};
+use crate::error::Result;
 use crate::logical::{Cond, Expr};
 use crate::params::ParameterType;
 use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
@@ -23,6 +23,14 @@ use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Valu
 ///
 /// SQLCODE -103 if a character string is among numbers [SR2, SR3a].
 pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
+    // \[EXTENSION\] Values of a type beyond the standard come together
+    // only with values of the same type (RULES.md D53).
+    if let Some(e) = types.iter().find(|t| matches!(t, DataType::Extension(_))) {
+        if types.iter().all(|t| t == e) {
+            return Ok(*e);
+        }
+        return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2] values of {e} are brought together with values of another type")));
+    }
     let characters = types.iter().filter(|t| t.is_character()).count();
     if characters != 0 && characters != types.len() {
         return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3a] character strings and numbers are brought together")));
@@ -37,6 +45,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
                 scale = scale.max(*s);
             }
             DataType::Approximate { .. } => exact = false,
+            DataType::Extension(_) => {}
         }
     }
     Ok(match (characters, exact) {
@@ -159,10 +168,7 @@ impl Binder<'_> {
     /// value of any of these types, cast to any [SR4].
     pub(super) fn cast(&self, operand: Option<&ValueExpression>, named: &TypeName, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         // [§6.10 SR1, AR1] a domain's data type, if USAGE on it is held.
-        let target = match named {
-            TypeName::Data(t) => *t,
-            TypeName::Domain(name) => self.db.usable_domain(&super::qualify(name, self.schema), self.auth).or_at(name.at)?.data_type,
-        };
+        let target = self.db.resolve_type(named, (self.schema, self.auth))?.0;
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
         let (e, _) = self.typed(v, ParameterType::Of(target), scope)?;

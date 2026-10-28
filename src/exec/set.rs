@@ -172,7 +172,7 @@ fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Reco
         Counted::Held(mut counts) => {
             let (mut given, mut out) = (Bag::new(work.another()), work.run()?);
             for record in left.into_records()? {
-                let (n, row) = unnumbered(&record?)?;
+                let (n, row) = unnumbered(&record?, work.types())?;
                 if let Some(row) = kept(how, (&mut counts, &mut given), Ok(row)).transpose()? {
                     out.push(&numbered(n, &row))?;
                 }
@@ -183,7 +183,7 @@ fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Reco
             let mut lefts = parts.alike(work)?;
             for record in left.into_records()? {
                 let record = record?;
-                lefts.push(&key(&unnumbered(&record)?.1), &record)?;
+                lefts.push(&key(&unnumbered(&record, work.types())?.1), &record)?;
             }
             for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
                 pair(runs, (how, depth.saturating_add(1)), &mut *sources, work)?;

@@ -15,6 +15,7 @@ use super::work::Work;
 use crate::error::{Code, Result, SqlError};
 use crate::spill::{Records, SpillRun, record_row, row_record};
 use crate::storage::Row;
+use crate::value::types::TypeRegistry;
 
 /// Records written to partitions by a hash of a key of theirs.
 pub(super) struct Partitioner {
@@ -82,7 +83,7 @@ pub(in crate::exec) fn merge_all(mut sources: Vec<Records>, work: &mut Work) -> 
                 break;
             }
             let mut run = work.run()?;
-            for r in Merge::of(group)? {
+            for r in Merge::of(group, work.types())? {
                 let (n, row) = r?;
                 run.push(&numbered(n, &row))?;
             }
@@ -90,7 +91,7 @@ pub(in crate::exec) fn merge_all(mut sources: Vec<Records>, work: &mut Work) -> 
         }
         sources = fewer;
     }
-    Merge::of(sources)
+    Merge::of(sources, work.types())
 }
 
 /// Row `row` with its left row's number `n`, as a record.
@@ -99,11 +100,11 @@ pub(in crate::exec) fn numbered(n: u64, row: &Row) -> Vec<u8> {
 }
 
 /// The number and the row of a record `numbered` made.
-pub(in crate::exec) fn unnumbered(record: &[u8]) -> Result<(u64, Row)> {
+pub(in crate::exec) fn unnumbered(record: &[u8], types: &TypeRegistry) -> Result<(u64, Row)> {
     let malformed = || SqlError::new(Code::Corrupt, "[DESIGN] a joined row's record is malformed");
     let (n, row) = record.split_at_checked(8).ok_or_else(malformed)?;
     let n = <[u8; 8]>::try_from(n).map(u64::from_le_bytes).map_err(|_| malformed())?;
-    Ok((n, record_row(row)?))
+    Ok((n, record_row(row, types)?))
 }
 
 /// Runs of numbered rows, each in order of number, merged in that order:
@@ -112,13 +113,14 @@ pub(in crate::exec) struct Merge {
     sources: Vec<Records>,
     heads: BinaryHeap<Reverse<(u64, usize)>>,
     rows: Vec<Option<Row>>,
+    types: TypeRegistry,
 }
 
 impl Merge {
     /// The rows of `sources`, merged.
-    fn of(sources: Vec<Records>) -> Result<Merge> {
+    fn of(sources: Vec<Records>, types: &TypeRegistry) -> Result<Merge> {
         let rows = sources.iter().map(|_| None).collect();
-        let mut merge = Merge { sources, heads: BinaryHeap::new(), rows };
+        let mut merge = Merge { sources, heads: BinaryHeap::new(), rows, types: types.clone() };
         for source in 0..merge.sources.len() {
             merge.refill(source)?;
         }
@@ -128,7 +130,7 @@ impl Merge {
     /// Takes the next row of `source`, if any.
     fn refill(&mut self, source: usize) -> Result<()> {
         let Some(next) = self.sources.get_mut(source).and_then(Iterator::next) else { return Ok(()) };
-        let (n, row) = unnumbered(&next?)?;
+        let (n, row) = unnumbered(&next?, &self.types)?;
         *self.rows.get_mut(source).ok_or_else(lost)? = Some(row);
         self.heads.push(Reverse((n, source)));
         Ok(())

@@ -220,3 +220,39 @@ fn a_statement_is_cancelled_over_tls_and_a_socket() {
     drop(server);
     assert_eq!(canceller.cancel().map_err(|f| state(&f).0.to_owned()).err().as_deref(), Some("08006"), "the server is gone");
 }
+
+/// Verifies: [EXTENSION] RULES.md D53, D45: a value of a type beyond the
+/// standard reaches a client without its plug-in as the type's name, its
+/// text and its kind's bytes, shown as its text, and its column's type as
+/// one beyond the standard; sent back as a statement's value, the server
+/// reads it as its type again.
+#[test]
+fn plug_in_values_cross_the_wire() {
+    use turborel::value::SqlType;
+    use turborel::value::types::{UNREGISTERED, parts};
+    use turborel_test_support::types::{IDENT_BYTES, Ident};
+    let db = Database::new();
+    db.register_type(Box::new(Ident)).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K IDENT, N INTEGER)").unwrap();
+    let hex = format!("{:032X}", 1);
+    let s = db.session("X");
+    s.run(&format!("INSERT INTO T VALUES (CAST('{hex}' AS IDENT), 7)")).unwrap();
+    s.commit().unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let query = c.prepare("SELECT K FROM T").unwrap();
+    assert_eq!(query.columns()[0].data_type.kind().name(), UNREGISTERED.name(), "not registered here");
+    let Outcome::Rows { rows: got, .. } = c.execute(&query, &[]).unwrap() else { panic!("rows") };
+    let k = got[0][0].clone();
+    assert_eq!(k.to_string(), hex, "shown as its text");
+    let (name, text, bytes) = parts(&k).unwrap();
+    assert_eq!((name.as_str(), text.as_str(), bytes.len()), ("IDENT", hex.as_str(), IDENT_BYTES.saturating_add(4)));
+    let by_key = c.prepare("SELECT N FROM T WHERE K = CAST(? AS CHARACTER(32))").err();
+    assert!(by_key.is_some(), "an IDENT and a string do not compare");
+    let back = c.prepare("SELECT N FROM T WHERE K = (SELECT K FROM T WHERE N = ?)").unwrap();
+    let Outcome::Rows { rows: n, .. } = c.execute(&back, &[Value::Exact(Decimal::new(7, 0))]).unwrap() else { panic!("rows") };
+    assert_eq!(keys(&n), ["7"]);
+    let insert = c.prepare("INSERT INTO T (K) VALUES (?)").unwrap();
+    assert!(matches!(c.execute(&insert, &[k]).unwrap(), Outcome::Done(_)), "sent back, read as an IDENT");
+    assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T WHERE N IS NULL").unwrap()), ["1"]);
+}

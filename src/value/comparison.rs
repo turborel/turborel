@@ -32,6 +32,9 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         | (Value::Approx(_), Value::Char(_)) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
         (Value::Exact(_) | Value::Approx(_), Value::Exact(_) | Value::Approx(_)) => compare_numbers(a, b),
+        // A value of a kind beyond the standard compares as its kind says.
+        (Value::Extension(e), _) => e.kind.compare(a, b),
+        (_, Value::Extension(e)) => e.kind.compare(b, a).map(Ordering::reverse),
     }
 }
 
@@ -44,7 +47,7 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
         (Value::Exact(x), Value::Approx(y)) => compare_exact_approximate(x, *y),
         (Value::Approx(x), Value::Exact(y)) => compare_exact_approximate(y, *x).map(Ordering::reverse),
         (Value::Approx(x), Value::Approx(y)) => x.partial_cmp(y),
-        (Value::Null | Value::Char(_), _) | (_, Value::Null | Value::Char(_)) => None,
+        (Value::Null | Value::Char(_) | Value::Extension(_), _) | (_, Value::Null | Value::Char(_) | Value::Extension(_)) => None,
     }
 }
 
@@ -61,6 +64,9 @@ pub enum Bucket {
     Char(String),
     /// The bits of a number's nearest `f64`, with -0 as +0.
     Number(u64),
+    /// A value of a type beyond the standard, as its kind buckets it: boxed,
+    /// so a bucket of the standard's types stays small.
+    Extension(Box<[u8]>),
 }
 
 /// The bucket of `v`, or none for the null value, which equals nothing
@@ -70,6 +76,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Null => None,
         Value::Char(s) => Some(Bucket::Char(s.trim_end_matches(' ').to_owned())),
         Value::Exact(_) | Value::Approx(_) => number_bucket(v),
+        Value::Extension(e) => e.kind.bucket(v),
     }
 }
 
@@ -79,7 +86,7 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
     let f = match v {
         Value::Exact(d) => d.nearest(),
         Value::Approx(f) => *f,
-        Value::Null | Value::Char(_) => return None,
+        Value::Null | Value::Char(_) | Value::Extension(_) => return None,
     };
     Some(Bucket::Number(if f == 0.0_f64 { 0.0_f64.to_bits() } else { f.to_bits() }))
 }

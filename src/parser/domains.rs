@@ -9,7 +9,7 @@ use crate::ast::{
     AlterDomain, AlterDomainAction, AssertionDefinition, DomainDefinition, TableConstraint, TableConstraintKind, TypeName, ValueExpression,
 };
 use crate::error::Result;
-use crate::lexer::{Tok, kw};
+use crate::lexer::{Tok, delim, kw};
 
 /// The column VALUE stands for in a domain constraint, as it is bound
 /// [ISO/IEC 9075:1992 §6.2 SR5]: no regular identifier is VALUE, a
@@ -84,12 +84,27 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075:1992 §11.4, §6.10] A `<data type>`, or else a `<domain
-    /// name>`.
+    /// name>`; \[EXTENSION\] or a type beyond the standard, its name and
+    /// its parameters in parentheses (RULES.md D53).
+    ///
+    /// ```text
+    /// <extension type> ::= <identifier>
+    ///     [ <left paren> <unsigned integer> [ <comma> <unsigned integer> ] <right paren> ]
+    /// ```
     pub(super) fn type_name(&mut self) -> Result<TypeName> {
-        if matches!(self.peek(), Tok::Identifier(_)) {
-            return Ok(TypeName::Domain(self.table_name()?));
+        if !matches!(self.peek(), Tok::Identifier(_)) {
+            return Ok(TypeName::Data(self.data_type()?));
         }
-        Ok(TypeName::Data(self.data_type()?))
+        let name = self.table_name()?;
+        if !self.accept_delim(delim::LEFT_PAREN) {
+            return Ok(TypeName::Domain(name));
+        }
+        let mut params = vec![self.unsigned_integer()?];
+        if self.accept_delim(delim::COMMA) {
+            params.push(self.unsigned_integer()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(TypeName::Extension { name, params })
     }
 
     /// [ISO/IEC 9075:1992 §6.2 SR5] VALUE, in a domain constraint alone:

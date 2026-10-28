@@ -55,7 +55,11 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
         // [SR3a iv] any number.
         (Literal::Exact(d), DataType::Approximate { .. }) => Value::Exact(*d),
         (Literal::Approximate(f), DataType::Approximate { .. }) => Value::Approx(*f),
-        (Literal::Character(_), DataType::Exact { .. } | DataType::Approximate { .. })
+        // \[EXTENSION\] Of a type beyond the standard, a character string
+        // literal, as CAST to it makes it (RULES.md D53).
+        (Literal::Character(s), DataType::Extension(e)) => e.kind.cast(Value::Char(s.clone()), &subject)?,
+        (Literal::Exact(_) | Literal::Approximate(_), DataType::Extension(_))
+        | (Literal::Character(_), DataType::Exact { .. } | DataType::Approximate { .. })
         | (Literal::Exact(_) | Literal::Approximate(_), DataType::Character { .. })
         | (Literal::Approximate(_), DataType::Exact { .. }) => {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}")));

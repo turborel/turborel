@@ -17,6 +17,7 @@ use crate::spill::{ListItem, SpillList, row_bytes};
 use crate::storage::{Row, RowId};
 use crate::txn::TxId;
 use crate::value::codec::{put_row, row};
+use crate::value::types::TypeRegistry;
 
 /// A row change read from the log.
 pub(in crate::db) struct RowChange {
@@ -62,9 +63,10 @@ pub(super) fn encode_change(change: &RowChange) -> Vec<u8> {
     out
 }
 
-/// The change of a record `encode_change` made.
-pub(super) fn decode_change(record: &[u8]) -> Result<RowChange> {
-    let mut r = Reader::new(record, "recovered row change");
+/// The change of a record `encode_change` made, its values of types beyond
+/// the standard found among `types`.
+pub(super) fn decode_change(record: &[u8], types: &TypeRegistry) -> Result<RowChange> {
+    let mut r = Reader::new(record, "recovered row change").with_types(types);
     let (lsn, tx) = (Lsn(r.u64()?), r.u64()?);
     let table = QualifiedName { auth: r.str()?, ident: r.str()? };
     let (generation, id) = (r.u32()?, r.u64()?);

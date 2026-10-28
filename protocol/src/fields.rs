@@ -6,6 +6,7 @@ use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
+use turborel::value::types::{ExtensionType, TypeParams};
 use turborel::value::{DataType, SqlType, Value, types};
 
 use crate::{Column, Failure};
@@ -14,6 +15,8 @@ pub(crate) const NULL: u8 = 0;
 pub(crate) const CHARACTER: u8 = 1;
 pub(crate) const EXACT: u8 = 2;
 const APPROXIMATE: u8 = 3;
+/// A type or value beyond the standard, a plug-in's (RULES.md D53).
+const EXTENSION: u8 = 4;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -58,17 +61,33 @@ fn string(r: &mut Reader<'_>) -> Result<String> {
     r.str()
 }
 
-/// A type: its kind's tag, then its parameters, as its kind writes them.
+/// A type: its kind's tag, then its parameters, as its kind writes them;
+/// of a kind beyond the standard, its name and its parameters as written,
+/// which a client reads without the kind.
 fn put_type(b: &mut Vec<u8>, t: &DataType) {
-    b.put_u8(match t {
-        DataType::Character { .. } => CHARACTER,
-        DataType::Exact { .. } => EXACT,
-        DataType::Approximate { .. } => APPROXIMATE,
-    });
+    match t {
+        DataType::Character { .. } => b.put_u8(CHARACTER),
+        DataType::Exact { .. } => b.put_u8(EXACT),
+        DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
+        DataType::Extension(e) => {
+            b.put_u8(EXTENSION);
+            b.put_str(e.kind.name());
+            put_count(b, e.params.values().len());
+            for p in e.params.values() {
+                b.put_u32(*p);
+            }
+            return;
+        }
+    }
     t.kind().put_params(t, b);
 }
 
-/// The kind of type or value of `tag`.
+/// A parameter of a type beyond the standard.
+fn param(r: &mut Reader<'_>) -> Result<u32> {
+    r.u32()
+}
+
+/// The kind of type or value of `tag`, one of the standard's.
 fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
     match tag {
         CHARACTER => Some(&types::CHARACTER),
@@ -80,6 +99,15 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
 
 fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
     let tag = r.u8()?;
+    if tag == EXTENSION {
+        let name = r.str()?;
+        let params = counted(r, param)?;
+        let params = TypeParams::of(&params).ok_or_else(|| r.corrupt("a type has too many parameters"))?;
+        // A kind not registered where it is read, as a client's: its values
+        // are shown as their text (`types::Unregistered`).
+        let kind = r.types().and_then(|t| t.kind(&name)).unwrap_or(&types::UNREGISTERED_KIND);
+        return Ok(DataType::Extension(ExtensionType { kind, params }));
+    }
     kind_of(tag).ok_or_else(|| r.corrupt("no data type has this tag"))?.params(r)
 }
 
@@ -110,14 +138,30 @@ pub(crate) fn parameter(r: &mut Reader<'_>) -> Result<ParameterType> {
     Ok(if varying { ParameterType::Varying } else { ParameterType::Of(t) })
 }
 
-/// A value: its kind's tag, then its bytes, as its kind writes them.
+/// A value: its kind's tag, then its bytes, as its kind writes them; of a
+/// kind beyond the standard, its kind's name, the value as text and its
+/// kind's bytes, so a client without the kind still shows it.
 fn put_value(b: &mut Vec<u8>, v: &Value) {
-    b.put_u8(match v {
+    let tag = match v {
         Value::Null => NULL,
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
-    });
+        Value::Extension(e) => {
+            b.put_u8(EXTENSION);
+            // One received unregistered goes back as it came.
+            let (name, text, bytes) = types::parts(v).filter(|_| e.kind.name() == types::UNREGISTERED.name()).unwrap_or_else(|| {
+                let mut bytes = Vec::new();
+                e.kind.put_value(v, &mut bytes);
+                (e.kind.name().to_owned(), e.kind.text(v), bytes)
+            });
+            b.put_str(&name);
+            b.put_str(&text);
+            b.put_bytes(&bytes);
+            return;
+        }
+    };
+    b.put_u8(tag);
     if let Some(kind) = v.kind() {
         kind.put_value(v, b);
     }
@@ -126,6 +170,13 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
 fn value(r: &mut Reader<'_>) -> Result<Value> {
     match r.u8()? {
         NULL => Ok(Value::Null),
+        EXTENSION => {
+            let (name, text, bytes) = (r.str()?, r.str()?, r.bytes()?);
+            match r.types().and_then(|t| t.get(&name)) {
+                Some(kind) => kind.value(&mut Reader::received(bytes, "a value")),
+                None => Ok(types::unregistered(&name, &text, bytes)),
+            }
+        }
         tag => kind_of(tag).ok_or_else(|| r.corrupt("no value has this tag"))?.value(r),
     }
 }
@@ -137,6 +188,11 @@ pub fn row_size(row: &Row) -> usize {
         Value::Char(s) => s.len().saturating_add(5),
         Value::Exact(_) => 21,
         Value::Approx(_) => 9,
+        Value::Extension(_) => {
+            let mut b = Vec::new();
+            put_value(&mut b, v);
+            b.len()
+        }
     });
     values.fold(4, usize::saturating_add)
 }

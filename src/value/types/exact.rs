@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use super::{Descriptor, NUMBER_BYTES, SIGN, SqlType, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
-use crate::value::cast::{approximate_to_exact, numeric_literal};
+use crate::value::cast::{approximate_to_exact, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
 use crate::value::{Bucket, DataType, Decimal, Value, pow10, unassignable};
 
@@ -79,7 +79,7 @@ impl SqlType for Exact {
 
     /// [X3.135-1986 §4.2] Numbers are comparable, exact and approximate.
     fn comparable(&self, other: &DataType) -> bool {
-        !other.is_character()
+        matches!(other, DataType::Exact { .. } | DataType::Approximate { .. })
     }
 
     fn compare(&self, a: &Value, b: &Value) -> Option<Ordering> {
@@ -112,7 +112,7 @@ impl SqlType for Exact {
                 }
             }
             Value::Approx(x) => approximate_to_exact(x, (precision, scale), rule),
-            Value::Null | Value::Char(_) => unassignable(&v, t, rule),
+            Value::Null | Value::Char(_) | Value::Extension(_) => unassignable(&v, t, rule),
         }
     }
 
@@ -126,10 +126,15 @@ impl SqlType for Exact {
             Value::Char(s) => self.cast(numeric_literal(&s)?, t),
             Value::Exact(_) => self.assign(v, t, "ISO/IEC 9075:1992 §6.10 GR3a"),
             Value::Approx(x) => approximate_to_exact(x, shape(t), "ISO/IEC 9075:1992 §6.10 GR3a ii"),
+            Value::Extension(_) => uncastable(&v, t),
         }
     }
 
     fn literal(&self, v: &Value) -> String {
+        v.to_string()
+    }
+
+    fn text(&self, v: &Value) -> String {
         v.to_string()
     }
 

@@ -27,6 +27,7 @@ use crate::physical::Plan;
 use crate::spill::{SpillTable, bucket_key, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::txn::TxId;
+use crate::value::types::TypeRegistry;
 use crate::value::{Bucket, bucket, compare};
 
 /// The rows of `left` joined with those of `right`: on `keys` if given
@@ -58,6 +59,8 @@ pub(in crate::exec) struct Built {
     keys: Vec<(usize, usize)>,
     buckets: HashMap<Vec<Bucket>, Vec<Row>>,
     spilled: Option<Box<dyn SpillTable>>,
+    /// The types beyond the standard its spilled rows may hold values of.
+    types: TypeRegistry,
 }
 
 /// What a hash join's right operand does once it outgrows its work area:
@@ -82,7 +85,7 @@ impl Built {
         keys: Vec<(usize, usize)>,
         (work, full): (&mut Work, Full),
     ) -> Result<Right> {
-        let mut built = Built { keys, buckets: HashMap::new(), spilled: None };
+        let mut built = Built { keys, buckets: HashMap::new(), spilled: None, types: work.types().clone() };
         let mut bytes = 0_usize;
         for r in rows.by_ref() {
             let row = r?;
@@ -122,7 +125,7 @@ impl Built {
     /// The rows of bucket `b`.
     pub(in crate::exec) fn bucket(&self, b: &[Bucket]) -> Result<Vec<Row>> {
         match &self.spilled {
-            Some(table) => table.get(&bucket_key(b))?.iter().map(|r| record_row(r)).collect(),
+            Some(table) => table.get(&bucket_key(b))?.iter().map(|r| record_row(r, &self.types)).collect(),
             None => Ok(self.buckets.get(b).cloned().unwrap_or_default()),
         }
     }

@@ -27,6 +27,7 @@ use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::log::Lsn;
+use crate::value::types::TypeRegistry;
 
 /// The format of an image.
 pub const IMAGE_FORMAT: u8 = 1;
@@ -82,8 +83,8 @@ impl Image {
     /// # Errors
     ///
     /// SQLCODE -916 if they are not one of this format, whole.
-    pub(super) fn decode(bytes: &[u8]) -> Result<Image> {
-        let mut r = Reader::new(bytes, "catalog image");
+    pub(super) fn decode(bytes: &[u8], types: &TypeRegistry) -> Result<Image> {
+        let mut r = Reader::new(bytes, "catalog image").with_types(types);
         if r.u8()? != IMAGE_FORMAT {
             return Err(r.corrupt("its format is not known"));
         }
@@ -126,7 +127,7 @@ mod tests {
     /// highest id, definitions and locators read back as written.
     #[test]
     fn an_image_reads_back_as_written() {
-        let read = Image::decode(&image(true).encode()).unwrap();
+        let read = Image::decode(&image(true).encode(), &TypeRegistry::default()).unwrap();
         assert_eq!((read.clean, read.through, read.start, read.highest), (true, Lsn(77), Lsn(40), 9));
         assert_eq!(format!("{:?}", read.snapshot), format!("{:?}", image(true).snapshot));
         assert_eq!((read.tables, read.indexes), (image(true).tables, image(true).indexes));
@@ -143,7 +144,7 @@ mod tests {
         let mut format = whole.clone();
         format[0] = 9;
         for bad in [format, flag, [whole.clone(), vec![0]].concat(), whole[..whole.len() - 1].to_vec()] {
-            assert_eq!(Image::decode(&bad).err().map(|e| e.code), Some(Code::Corrupt));
+            assert_eq!(Image::decode(&bad, &TypeRegistry::default()).err().map(|e| e.code), Some(Code::Corrupt));
         }
     }
 }

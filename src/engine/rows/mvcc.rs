@@ -78,6 +78,7 @@ use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, SpillList, WorkAreas};
 use crate::storage::{Newest, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxId};
+use crate::value::types::TypeRegistry;
 
 fn conflict(id: RowId) -> SqlError {
     SqlError::new(
@@ -228,7 +229,8 @@ impl Versions {
     /// Where a list of its spills.
     fn space(&self) -> ListSpace {
         let areas = self.work.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-        ListSpace { limit: self.held(), batch: DEFAULT_SPILL_BATCH, areas }
+        // Its lists hold row ids and timestamps, no values.
+        ListSpace { limit: self.held(), batch: DEFAULT_SPILL_BATCH, areas, types: TypeRegistry::default() }
     }
 }
 

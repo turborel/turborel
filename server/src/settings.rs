@@ -207,7 +207,7 @@ pub fn declare(db: &Database) -> Result<()> {
 pub fn count(db: &Database, name: &str) -> usize {
     match db.setting(name) {
         Ok(Value::Exact(d)) => usize::try_from(d.units).unwrap_or(usize::MAX),
-        Ok(Value::Approx(_) | Value::Char(_) | Value::Null) | Err(_) => 1,
+        Ok(Value::Approx(_) | Value::Char(_) | Value::Null | Value::Extension(_)) | Err(_) => 1,
     }
 }
 
@@ -223,6 +223,6 @@ pub fn millis(db: &Database, name: &str) -> Option<std::time::Duration> {
 pub fn text(db: &Database, name: &str) -> String {
     match db.setting(name) {
         Ok(Value::Char(s)) => s,
-        Ok(Value::Exact(_) | Value::Approx(_) | Value::Null) | Err(_) => String::new(),
+        Ok(Value::Exact(_) | Value::Approx(_) | Value::Null | Value::Extension(_)) | Err(_) => String::new(),
     }
 }

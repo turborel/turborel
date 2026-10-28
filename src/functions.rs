@@ -203,9 +203,9 @@ impl Registry {
 pub const AVG_EXTRA_SCALE: u32 = 2;
 
 fn not_character(name: &str, arg: Option<DataType>) -> Result<DataType> {
-    match arg.filter(|t| !t.is_character()) {
+    match arg.filter(|t| matches!(t, DataType::Exact { .. } | DataType::Approximate { .. })) {
         Some(t) => Ok(t),
-        None => fail(Code::SyntaxRule, format!("[X3.135-1986 §5.8 SR9a] the argument of {name} shall not be a character string")),
+        None => fail(Code::SyntaxRule, format!("[X3.135-1986 §5.8 SR9a] the argument of {name} shall be a number")),
     }
 }
 
@@ -249,7 +249,9 @@ impl AggregateFunction for Sum {
         Ok(match not_character(kw::SUM, arg)? {
             DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale },
             // [X3.135-1986 §5.8 SR9d]; `not_character` has refused CHARACTER.
-            DataType::Approximate { .. } | DataType::Character { .. } => DataType::Approximate { precision: DOUBLE_PRECISION },
+            DataType::Approximate { .. } | DataType::Character { .. } | DataType::Extension(_) => {
+                DataType::Approximate { precision: DOUBLE_PRECISION }
+            }
         })
     }
     fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
@@ -282,7 +284,9 @@ impl AggregateFunction for Avg {
                 DataType::Exact { precision: MAX_EXACT_PRECISION, scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION) }
             }
             // `not_character` has refused CHARACTER.
-            DataType::Approximate { .. } | DataType::Character { .. } => DataType::Approximate { precision: DOUBLE_PRECISION },
+            DataType::Approximate { .. } | DataType::Character { .. } | DataType::Extension(_) => {
+                DataType::Approximate { precision: DOUBLE_PRECISION }
+            }
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {

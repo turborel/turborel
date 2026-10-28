@@ -44,7 +44,7 @@ const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scal
 fn character(name: &str, t: &DataType) -> Result<u32> {
     match t {
         DataType::Character { length } => Ok(*length),
-        DataType::Exact { .. } | DataType::Approximate { .. } => {
+        DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Extension(_) => {
             fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
         }
     }
@@ -54,7 +54,7 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
 fn integer(name: &str, t: &DataType) -> Result<()> {
     match t {
         DataType::Exact { scale: 0, .. } => Ok(()),
-        DataType::Exact { .. } | DataType::Character { .. } | DataType::Approximate { .. } => fail(
+        DataType::Exact { .. } | DataType::Character { .. } | DataType::Approximate { .. } | DataType::Extension(_) => fail(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075:1992 §6.7 SR1] the start position and length of {name} are exact numbers of scale 0, not {t}"),
         ),
@@ -66,7 +66,9 @@ fn text(v: &Value) -> Result<Option<&str>> {
     match v {
         Value::Null => Ok(None),
         Value::Char(s) => Ok(Some(s)),
-        Value::Exact(_) | Value::Approx(_) => fail(Code::Api, "[DESIGN] a string function was given a number"),
+        Value::Exact(_) | Value::Approx(_) | Value::Extension(_) => {
+            fail(Code::Api, "[DESIGN] a string function was given a value not a string")
+        }
     }
 }
 
@@ -82,7 +84,7 @@ fn whole(v: Option<&Value>) -> Result<Option<i128>> {
                 not_integer()
             }
         }
-        Some(Value::Char(_) | Value::Approx(_)) => not_integer(),
+        Some(Value::Char(_) | Value::Approx(_) | Value::Extension(_)) => not_integer(),
     }
 }
 

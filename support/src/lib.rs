@@ -49,6 +49,8 @@ impl Drop for Scratch {
 pub mod server;
 #[cfg(feature = "tls")]
 pub mod tls;
+#[cfg(feature = "server")]
+pub mod types;
 
 /// Helpers for what a server's client receives.
 #[cfg(feature = "client")]

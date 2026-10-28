@@ -18,6 +18,16 @@ pub fn cast(v: Value, to: &DataType) -> Result<Value> {
     to.kind().cast(v, to)
 }
 
+/// [ISO/IEC 9075:1992 §6.10 SR4] `v` has no value of `t`: of a kind CAST
+/// does not take to `t`, as a plug-in function might give.
+///
+/// # Errors
+///
+/// Always: SQLSTATE 22005.
+pub(crate) fn uncastable(v: &Value, t: &DataType) -> Result<Value> {
+    fail_with(Code::Data, SqlState::ERROR_IN_ASSIGNMENT, format!("[ISO/IEC 9075:1992 §6.10 SR4] the value {v} cannot be cast to {t}"))
+}
+
 /// `x` at an approximate type's precision: REAL's rounded to single.
 pub(crate) fn at_precision(x: f64, precision: u32) -> f64 {
     if precision <= REAL_PRECISION { round_to_single(x) } else { x }

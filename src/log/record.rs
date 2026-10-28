@@ -40,6 +40,7 @@ use crate::storage::{Row, RowId};
 use crate::txn::{Timestamp, TxId};
 use crate::value::Value;
 use crate::value::codec::{put_row, put_value, row, value};
+use crate::value::types::TypeRegistry;
 
 /// The version of the format this code writes and reads.
 pub const RECORD_VERSION: u8 = 1;
@@ -316,8 +317,8 @@ impl Record {
     /// SQLCODE -916 if they are not a whole record of this format: too
     /// short, too long, of another version or an unknown kind, or holding a
     /// malformed field.
-    pub fn decode(bytes: &[u8]) -> Result<Record> {
-        let mut r = Reader::new(bytes, "log record");
+    pub fn decode(bytes: &[u8], types: &TypeRegistry) -> Result<Record> {
+        let mut r = Reader::new(bytes, "log record").with_types(types);
         let version = r.u8()?;
         if version != RECORD_VERSION {
             return Err(SqlError::new(

@@ -71,7 +71,7 @@ impl Index for Recorder {
 /// A log holding `limit` bytes of entries, spilling to areas of `spill`,
 /// of a budget of `budget` bytes.
 fn log(spill: Option<Arc<dyn Spill>>, (limit, budget): (usize, usize)) -> UndoLog {
-    UndoLog::new(UndoSpace { limit, batch: 4096, areas: Some(areas(spill, budget)) })
+    UndoLog::new(UndoSpace { limit, batch: 4096, areas: Some(areas(spill, budget)), types: TypeRegistry::default() })
 }
 
 /// One entry of each kind, of `table` and `index`.
@@ -158,7 +158,11 @@ fn records_not_of_entries_are_corrupt() {
     let table: Arc<dyn TableStorage> = Arc::new(Recorder(calls));
     let targets = [Target::Storage(QualifiedName { auth: "A".into(), ident: "T".into() }, table)];
     let record = |kind: u8, target: u32| [vec![kind], target.to_le_bytes().to_vec(), 7_u64.to_le_bytes().to_vec()].concat();
-    assert!(entry_of(&targets, &record(0, 0)).is_ok());
-    assert_eq!(entry_of(&targets, &record(3, 0)).err().map(|e| e.code), Some(Code::Corrupt), "an index's, of a table");
-    assert_eq!(entry_of(&targets, &record(0, 1)).err().map(|e| e.code), Some(Code::Corrupt), "no such target");
+    assert!(entry_of((&targets, &TypeRegistry::default()), &record(0, 0)).is_ok());
+    assert_eq!(
+        entry_of((&targets, &TypeRegistry::default()), &record(3, 0)).err().map(|e| e.code),
+        Some(Code::Corrupt),
+        "an index's, of a table"
+    );
+    assert_eq!(entry_of((&targets, &TypeRegistry::default()), &record(0, 1)).err().map(|e| e.code), Some(Code::Corrupt), "no such target");
 }

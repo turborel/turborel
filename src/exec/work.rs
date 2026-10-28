@@ -5,6 +5,7 @@
 //! until they outgrow it, then in a table of its area. Split from exec.rs
 //! (RULES.md R-SIZE-2).
 
+use crate::value::types::TypeRegistry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,6 +27,9 @@ pub(super) struct Work {
     partitions: (usize, usize),
     areas: Arc<WorkAreas>,
     area: Option<Box<dyn SpillArea>>,
+    /// The types beyond the standard the rows it spills may hold values of,
+    /// read back by them (`spill::record_row`).
+    types: TypeRegistry,
 }
 
 impl Work {
@@ -33,13 +37,19 @@ impl Work {
     pub(super) fn new(db: &State) -> Work {
         let (limit, batch) = (work_bytes(db.settings.get(WORK_MEMORY)), batch_bytes(db.settings.get(SPILL_BATCH)));
         let partitions = (db.settings.count(SPILL_PARTITIONS), db.settings.count(SPILL_PARTITION_DEPTH));
-        Work { limit, batch, partitions, areas: Arc::clone(&db.work), area: None }
+        Work { limit, batch, partitions, areas: Arc::clone(&db.work), area: None, types: db.types.clone() }
     }
 
     /// A work area of the same settings, of its own: for an operator's
     /// part that holds rows apart from the rest.
     pub(super) fn another(&self) -> Work {
-        Work { limit: self.limit, batch: self.batch, partitions: self.partitions, areas: Arc::clone(&self.areas), area: None }
+        let (limit, batch, partitions) = (self.limit, self.batch, self.partitions);
+        Work { limit, batch, partitions, areas: Arc::clone(&self.areas), area: None, types: self.types.clone() }
+    }
+
+    /// The types beyond the standard the rows it spills may hold values of.
+    pub(super) fn types(&self) -> &TypeRegistry {
+        &self.types
     }
 
     /// The bytes it may hold in memory.

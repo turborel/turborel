@@ -6,6 +6,7 @@
 //! connection failure (-919, SQLSTATE 08006), never a panic.
 
 use crate::error::{Code, Result, SqlError, SqlState};
+use crate::value::types::{SqlType, TypeRegistry};
 
 /// Appends fields to a buffer.
 pub trait Put {
@@ -53,17 +54,49 @@ pub struct Reader<'a> {
     what: &'static str,
     /// Whether they were received from a connection, not read from storage.
     received: bool,
+    /// The kinds of type beyond the standard a value or type read may be
+    /// of, by name, if any (`value::types`).
+    types: Option<&'a TypeRegistry>,
 }
 
 impl<'a> Reader<'a> {
     /// A reader of `bytes`, which hold a `what`.
     pub fn new(bytes: &'a [u8], what: &'static str) -> Reader<'a> {
-        Reader { bytes, at: 0, what, received: false }
+        Reader { bytes, at: 0, what, received: false, types: None }
     }
 
     /// A reader of `bytes` received from a connection, which hold a `what`.
     pub fn received(bytes: &'a [u8], what: &'static str) -> Reader<'a> {
-        Reader { bytes, at: 0, what, received: true }
+        Reader { bytes, at: 0, what, received: true, types: None }
+    }
+
+    /// This reader, a value or type of a kind beyond the standard it reads
+    /// found among `types`.
+    #[must_use]
+    pub fn with_types(self, types: &'a TypeRegistry) -> Reader<'a> {
+        Reader { types: Some(types), ..self }
+    }
+
+    /// The kinds of type beyond the standard it finds values and types
+    /// among, if any.
+    pub fn types(&self) -> Option<&'a TypeRegistry> {
+        self.types
+    }
+
+    /// The kind of type beyond the standard named `name`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if no such kind is registered where the bytes are read:
+    /// its plug-in is registered before the database is opened, as a
+    /// storage engine is (RULES.md D53).
+    pub fn kind(&self, name: &str) -> Result<&'static dyn SqlType> {
+        self.types.and_then(|t| t.get(name)).ok_or_else(|| {
+            SqlError::new(
+                Code::Api,
+                format!("[DESIGN] {} names the type {name}, which no plug-in registered: register it before opening", self.what),
+            )
+        })
     }
 
     /// The error for a malformed `what`, at the current offset.

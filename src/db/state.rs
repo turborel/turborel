@@ -29,6 +29,7 @@ use crate::stats::Statistics;
 use crate::storage::{StorageEngine, TableOption, TableStorage};
 use crate::system::SystemTables;
 use crate::txn::{Beginning, LockWait, Policy, Reading, TableLock, Transactions, Txn, UndoSpace};
+use crate::value::types::TypeRegistry;
 
 /// \[DESIGN\] A snapshot of the database's definitions: its catalog, the
 /// handles to every table's storage and every index, and the registered
@@ -92,6 +93,8 @@ pub struct State {
     /// until built (`Database::create_index`).
     pub(crate) building: HashSet<String>,
     pub(crate) functions: Registry,
+    /// The data types beyond the standard registered (RULES.md D53).
+    pub(crate) types: TypeRegistry,
     pub(crate) optimizer: Optimizer,
     /// The transaction counter and the graph of waits, shared by every snapshot.
     pub(crate) tx: Arc<Transactions>,
@@ -134,6 +137,7 @@ impl State {
             locks: HashMap::new(),
             indexes: HashMap::new(),
             functions: Registry::with_set_functions(),
+            types: TypeRegistry::default(),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
             memory: Arc::clone(&memory),
@@ -202,7 +206,7 @@ impl State {
     /// its work areas.
     pub(crate) fn list_space(&self) -> UndoSpace {
         let (limit, batch) = (work_bytes(self.settings.get(WORK_MEMORY)), batch_bytes(self.settings.get(SPILL_BATCH)));
-        UndoSpace { limit, batch, areas: Some(Arc::clone(&self.work)) }
+        UndoSpace { limit, batch, areas: Some(Arc::clone(&self.work)), types: self.types.clone() }
     }
 
     /// The engine of tables a schema creates, but those placed

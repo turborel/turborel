@@ -129,13 +129,8 @@ impl State {
     /// SQLCODE -103 if no such domain is; -104 if the schema's owner holds
     /// no USAGE on it.
     pub(super) fn column_type(&self, schema: &str, of: &TypeName) -> Result<(DataType, Option<ColumnDomain>)> {
-        match of {
-            TypeName::Data(t) => Ok((*t, None)),
-            TypeName::Domain(name) => {
-                let domain = self.usable_domain(&qualify(name, schema), owner_of(&*self.catalog, schema)).or_at(name.at)?;
-                Ok((domain.data_type, Some(ColumnDomain { name: domain.name.clone(), default: domain.default.clone() })))
-            }
-        }
+        let (t, domain) = self.resolve_type(of, (schema, owner_of(&*self.catalog, schema)))?;
+        Ok((t, domain.map(|d| ColumnDomain { name: d.name.clone(), default: d.default.clone() })))
     }
 
     /// [ISO/IEC 9075:1992 §11.4 AR1, §6.10 AR1] The domain `qn`, if `auth`

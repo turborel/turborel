@@ -30,6 +30,8 @@ fn shape(name: &str, t: &DataType) -> Shape {
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
         DataType::Approximate { .. } => (APPROXIMATE_WIDTH, true),
+        // A type beyond the standard, shown as its text, as wide as it is.
+        DataType::Extension(_) => (MAX_WIDTH, false),
     };
     Shape { width: width.min(MAX_WIDTH).max(name.chars().count()), right }
 }
@@ -92,7 +94,7 @@ impl Sink for Table<'_> {
                 .iter()
                 .map(|v| match v {
                     Value::Null => self.null.to_owned(),
-                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) => v.to_string(),
+                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Extension(_) => v.to_string(),
                 })
                 .collect();
             let line = self.line(cells.iter().map(String::as_str));

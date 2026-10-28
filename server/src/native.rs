@@ -25,6 +25,7 @@ use requests::{Held, Work};
 use tokio::sync::mpsc;
 use turborel::db::Session;
 use turborel::error::{Code, Result, SqlError, SqlState};
+use turborel::value::types::TypeRegistry;
 use turborel_protocol::{Reply, Request, VERSION, broken};
 use wire::Wire;
 
@@ -52,7 +53,7 @@ impl Protocol for Native {
 
     fn refuse(&self, transport: Box<dyn Transport>, why: SqlError) -> Serving {
         Box::pin(async move {
-            let mut wire = Wire::new(transport, 0);
+            let mut wire = Wire::new(transport, 0, TypeRegistry::default());
             wire.close_with(&why).await;
         })
     }
@@ -70,7 +71,10 @@ async fn next(wire: &mut Wire, services: &Services) -> Result<Request> {
 async fn serve(connection: Connection) {
     let Connection { transport, peer, services } = connection;
     let max_body = u32::try_from(settings::count(services.database(), settings::MAX_MESSAGE_BYTES)).unwrap_or(u32::MAX);
-    let mut wire = Wire::new(transport, max_body);
+    // A client's values of types beyond the standard read as the
+    // database's (RULES.md D53).
+    let types = services.database().types().unwrap_or_default();
+    let mut wire = Wire::new(transport, max_body, types);
     let ended = match services.login(welcome(&mut wire, &peer, &services)).await {
         // The key cancels the session's statements while it lives.
         Ok(Some((session, _key))) => run(&mut wire, &services, session).await,

@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use super::{Descriptor, NUMBER_BYTES, SIGN, SqlType, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
-use crate::value::cast::{at_precision, numeric_literal};
+use crate::value::cast::{at_precision, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
 use crate::value::{Bucket, DOUBLE_PRECISION, DataType, REAL_PRECISION, Value, unassignable};
 
@@ -45,7 +45,7 @@ impl SqlType for Approximate {
 
     /// [X3.135-1986 §4.2] Numbers are comparable, exact and approximate.
     fn comparable(&self, other: &DataType) -> bool {
-        !other.is_character()
+        matches!(other, DataType::Exact { .. } | DataType::Approximate { .. })
     }
 
     fn compare(&self, a: &Value, b: &Value) -> Option<Ordering> {
@@ -73,10 +73,15 @@ impl SqlType for Approximate {
             Value::Char(s) => self.cast(numeric_literal(&s)?, t),
             Value::Exact(d) => Ok(Value::Approx(at_precision(d.to_f64(), precision_of(t)))),
             Value::Approx(x) => Ok(Value::Approx(at_precision(x, precision_of(t)))),
+            Value::Extension(_) => uncastable(&v, t),
         }
     }
 
     fn literal(&self, v: &Value) -> String {
+        v.to_string()
+    }
+
+    fn text(&self, v: &Value) -> String {
         v.to_string()
     }
 

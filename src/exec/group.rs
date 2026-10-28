@@ -127,7 +127,8 @@ impl Grouper {
         let mut next = Some(partition);
         while let Some(records) = next.take() {
             let mut overflow = if depth < self.work.depth() { Overflow::Partitions(None) } else { Overflow::Run(None) };
-            let held = self.pass(Box::new(records.map(|r| r.and_then(|record| unnumbered(&record)))), &mut overflow)?;
+            let types = self.work.types().clone();
+            let held = self.pass(Box::new(records.map(move |r| r.and_then(|record| unnumbered(&record, &types)))), &mut overflow)?;
             sources.push(self.written(held)?);
             match overflow {
                 Overflow::Partitions(Some(parts)) => {

@@ -140,21 +140,24 @@ fn pairs(
     work: &mut Work,
     (sources, depth): (&mut Vec<Records>, usize),
 ) -> Result<()> {
+    let types = work.types().clone();
     for ((right, bytes), probes) in parts.right.into_iter().zip(lefts) {
-        let rows = right.into_records()?.map(|r| r.and_then(|record| record_row(&record)));
+        let held = types.clone();
+        let rows = right.into_records()?.map(move |r| r.and_then(|record| record_row(&record, &held)));
         if bytes > work.limit() && depth < work.depth() {
             let mut sub = Partitions::new(parts.keys.clone(), work)?;
             sub.add_rights(rows)?;
             // A partition that did not shrink is built in a table.
             let shrank = sub.right.iter().all(|(_, b)| *b < bytes);
-            let sub_lefts = sub.lefts(probes.into_records()?.map(|r| r.and_then(|record| unnumbered(&record))), work)?;
+            let probed = types.clone();
+            let sub_lefts = sub.lefts(probes.into_records()?.map(move |r| r.and_then(|record| unnumbered(&record, &probed))), work)?;
             pairs((sub, sub_lefts), work, (&mut *sources, if shrank { depth.saturating_add(1) } else { usize::MAX }))?;
             continue;
         }
         let Right::Held(built) = Built::of(rows, parts.keys.clone(), (&mut *work, Full::Table))? else { return Err(lost()) };
         let mut out = work.run()?;
         for record in probes.into_records()? {
-            let (n, l) = unnumbered(&record?)?;
+            let (n, l) = unnumbered(&record?, &types)?;
             for row in matches(&built, &l)? {
                 out.push(&numbered(n, &row))?;
             }

@@ -31,7 +31,7 @@
 //! the `_with` decoders. The prefix in the reference is for filters that
 //! can decide on a value's first bytes without fetching it.
 
-use super::{WORD, fixed_width};
+use super::fixed_width;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
 use crate::value::{DataType, Value};
@@ -53,8 +53,9 @@ const BITS: usize = 8;
 /// Where a column is in a record.
 #[derive(Debug, Clone, Copy)]
 enum Place {
-    /// At this offset in the fixed part.
-    Fixed(usize),
+    /// At this offset in the fixed part, of this width, as its type's kind
+    /// says (`SqlType::record_width`).
+    Fixed(usize, usize),
     /// The `n`-th character column.
     Variable(usize),
 }
@@ -123,7 +124,7 @@ impl RecordFormat {
             .iter()
             .map(|&t| {
                 if let Some(width) = fixed_width(t) {
-                    let place = Place::Fixed(fixed);
+                    let place = Place::Fixed(fixed, width);
                     fixed = fixed.saturating_add(width);
                     return place;
                 }
@@ -241,7 +242,7 @@ impl RecordFormat {
             } else {
                 let bytes = encode_value(value, data_type)?;
                 match (place, outside.get(i).copied().unwrap_or_default()) {
-                    (Place::Fixed(at), _) => put(&mut record, self.fixed_at().saturating_add(at), &bytes),
+                    (Place::Fixed(at, _), _) => put(&mut record, self.fixed_at().saturating_add(at), &bytes),
                     (Place::Variable(_), false) => variable.extend_from_slice(&bytes),
                     (Place::Variable(_), true) => {
                         variable.extend_from_slice(&store(i, &bytes)?.to_le_bytes());
@@ -367,9 +368,9 @@ impl RecordFormat {
         }
         let outside = || corrupt(&format!("column {i} lies outside it"));
         match place {
-            Place::Fixed(at) => {
+            Place::Fixed(at, width) => {
                 let from = self.fixed_at().saturating_add(at);
-                bytes.get(from..from.saturating_add(WORD)).map(Field::Inline).ok_or_else(outside)
+                bytes.get(from..from.saturating_add(width)).map(Field::Inline).ok_or_else(outside)
             }
             Place::Variable(n) => match self.variable_field(bytes, n).ok_or_else(outside)? {
                 (field, false) => Ok(Field::Inline(field)),

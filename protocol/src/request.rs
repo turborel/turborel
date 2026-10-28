@@ -3,6 +3,7 @@
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 use turborel::value::Value;
+use turborel::value::types::TypeRegistry;
 
 use crate::fields::{put_row, put_strs, row, strs};
 use crate::{CancelKey, KEY_BYTES, broken, frame};
@@ -124,7 +125,17 @@ impl Request {
     ///
     /// A connection failure if it is not a request, or is malformed.
     pub fn decode(kind: u8, body: &[u8]) -> Result<Request> {
-        let mut r = Reader::received(body, "request");
+        Request::decode_with(kind, body, &TypeRegistry::default())
+    }
+
+    /// The request of kind `kind` whose body is `body`, its values of types
+    /// beyond the standard found among `types` (RULES.md D53).
+    ///
+    /// # Errors
+    ///
+    /// A connection failure if it is not a request, or is malformed.
+    pub fn decode_with(kind: u8, body: &[u8], types: &TypeRegistry) -> Result<Request> {
+        let mut r = Reader::received(body, "request").with_types(types);
         let request = match kind {
             HELLO => Request::Hello {
                 version: r.u32()?,

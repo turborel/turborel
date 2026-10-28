@@ -530,9 +530,21 @@ and its position for a histogram. A `DataType` names its kind
   directly, with no virtual call; each kind's own `compare` and `bucket`
   are those same functions.
 - Types beyond the standard are plug-ins through the same trait,
-  registered on the database.
-- `DataType` stays `Copy`: engines and index methods take `&[DataType]`
-  and encode by it, with no registry at hand.
+  registered on the database (`Database::register_type`) before it is
+  opened from its files, under a regular identifier: its kind lives as
+  long as the program, as code does, so `DataType` stays `Copy`, and
+  engines and index methods, which take `&[DataType]`, encode by it with
+  no registry at hand. Its values are `Value::Extension`, the kind with
+  its bytes, so comparison and hashing need no registry either.
+- A plug-in type is written `name` or `name(a [, b])`; a name not
+  qualified is a domain's of the default schema first. It is stored by
+  its name: the catalog, the log, spilled rows and undo read it back
+  through the database's registry (`bytes::Reader::with_types`), and a
+  database whose files name a type not registered is not opened.
+- On the wire a plug-in value is its type's name, its text and its kind's
+  bytes; a client without the plug-in holds it as `Unregistered`, shows
+  its text and sends it back as it came, and the server reads it as its
+  type again.
 *Why:* a standard type is grammar as much as storage, and none is
 replaced; one contract still keeps every type, built in or not, honest to
 the same responsibilities, and a plug-in type stored, logged, indexed and

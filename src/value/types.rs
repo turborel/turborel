@@ -12,7 +12,9 @@
 //! call.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use super::{Bucket, DataType, Value};
 use crate::bytes::Reader;
@@ -21,10 +23,12 @@ use crate::error::{Code, Result, SqlError};
 mod approximate;
 mod character;
 mod exact;
+mod unregistered;
 
 pub use approximate::{APPROXIMATE, Approximate};
 pub use character::{CHARACTER, Character};
 pub use exact::{EXACT, Exact};
+pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 
 /// Bytes of a number in a record or a key: a 64-bit word.
 pub(crate) const NUMBER_BYTES: usize = 8;
@@ -105,6 +109,10 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     /// How `v`, of its kind, is written as a `<literal>`.
     fn literal(&self, v: &Value) -> String;
 
+    /// `v`, of its kind, as characters: as it is shown, and as CAST to a
+    /// character string gives it.
+    fn text(&self, v: &Value) -> String;
+
     /// `v` as a number on a line, for interpolating within a histogram's
     /// bucket, if its kind has one.
     fn position(&self, v: &Value) -> Option<f64>;
@@ -122,6 +130,19 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     ///
     /// SQLCODE -916 if the bytes are not a value of its kind.
     fn value(&self, r: &mut Reader<'_>) -> Result<Value>;
+
+    /// Whether a type of it may be written with `params`, `name(a [, b])`
+    /// (RULES.md D53): by default, with none.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it may not.
+    fn check_params(&self, params: &[u32]) -> Result<()> {
+        if params.is_empty() {
+            return Ok(());
+        }
+        Err(SqlError::new(Code::SyntaxRule, format!("[DESIGN] the type {} takes no parameters", self.name())))
+    }
 
     /// Appends `t`'s parameters to `out`, which `params` reads back.
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>);
@@ -173,6 +194,116 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     fn anchor(&self, v: &Value, t: &DataType) -> Option<(Value, bool)>;
 }
 
+/// The kinds of type beyond the standard registered with a database
+/// (RULES.md D53), by name: cheap to clone, as each snapshot of the
+/// definitions, each transaction's undo and each spill holds them.
+#[derive(Debug, Clone, Default)]
+pub struct TypeRegistry {
+    kinds: Arc<BTreeMap<String, Kind>>,
+}
+
+/// A kind of type beyond the standard, by a thin reference, so a
+/// `DataType` of it stays small: the hot paths copy and compare types.
+pub type Kind = &'static &'static dyn SqlType;
+
+impl TypeRegistry {
+    /// The kind named `name`, if one is registered.
+    pub fn get(&self, name: &str) -> Option<&'static dyn SqlType> {
+        self.kinds.get(name).map(|k| **k)
+    }
+
+    /// The kind named `name`, if one is registered, as a type of it holds
+    /// it.
+    pub fn kind(&self, name: &str) -> Option<Kind> {
+        self.kinds.get(name).copied()
+    }
+
+    /// The names registered, in order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.kinds.keys().map(String::as_str)
+    }
+
+    /// Registers `kind`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a kind of its name is registered already.
+    pub(crate) fn add(&mut self, kind: &'static dyn SqlType) -> Result<()> {
+        if self.kinds.contains_key(kind.name()) {
+            return Err(SqlError::new(Code::Api, format!("[DESIGN] a type {} is registered already", kind.name())));
+        }
+        let held: Kind = Box::leak(Box::new(kind));
+        Arc::make_mut(&mut self.kinds).insert(kind.name().to_owned(), held);
+        Ok(())
+    }
+}
+
+/// A type beyond the standard (RULES.md D53): its kind, a plug-in's,
+/// registered with the database, and its parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct ExtensionType {
+    /// Its kind.
+    pub kind: Kind,
+    /// Its parameters, as written.
+    pub params: TypeParams,
+}
+
+/// Two extension types are the same if their kinds' names and their
+/// parameters are: a kind is registered by its name, once.
+impl PartialEq for ExtensionType {
+    fn eq(&self, other: &ExtensionType) -> bool {
+        self.kind.name() == other.kind.name() && self.params == other.params
+    }
+}
+
+/// The parameters of a type beyond the standard, as written: none,
+/// `name(a)` or `name(a, b)`, each an unsigned integer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeParams {
+    /// The parameters, then `ABSENT` for each not written.
+    values: [u32; MAX_PARAMS],
+}
+
+/// A parameter not written: no parameter is `u32::MAX`.
+const ABSENT: u32 = u32::MAX;
+
+/// None.
+impl Default for TypeParams {
+    fn default() -> TypeParams {
+        TypeParams { values: [ABSENT; MAX_PARAMS] }
+    }
+}
+
+/// The most parameters a type beyond the standard takes, as NUMERIC's
+/// precision and scale.
+pub const MAX_PARAMS: usize = 2;
+
+impl TypeParams {
+    /// `given`, if there are at most `MAX_PARAMS` of them, none `u32::MAX`.
+    pub fn of(given: &[u32]) -> Option<TypeParams> {
+        let mut values = [ABSENT; MAX_PARAMS];
+        values.get_mut(..given.len())?.copy_from_slice(given);
+        given.iter().all(|&p| p != ABSENT).then_some(TypeParams { values })
+    }
+
+    /// The parameters, in order.
+    pub fn values(&self) -> &[u32] {
+        let count = self.values.iter().take_while(|&&p| p != ABSENT).count();
+        self.values.get(..count).unwrap_or_default()
+    }
+}
+
+/// A value of a type beyond the standard (RULES.md D53): its kind, and
+/// the bytes its kind gives it, which its kind compares, hashes and
+/// encodes.
+#[derive(Debug, Clone)]
+pub struct ExtensionValue {
+    /// Its kind.
+    pub kind: &'static dyn SqlType,
+    /// Its bytes, as its kind writes them.
+    pub bytes: Arc<[u8]>,
+}
+
 /// [ISO/IEC 9075:1992 §21.3.5] A data type as the Information Schema
 /// describes it: DATA_TYPE and the columns that apply to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +349,7 @@ impl DataType {
             DataType::Character { .. } => &CHARACTER,
             DataType::Exact { .. } => &EXACT,
             DataType::Approximate { .. } => &APPROXIMATE,
+            DataType::Extension(e) => *e.kind,
         }
     }
 }
@@ -235,6 +367,7 @@ impl DataType {
             DataType::Character { .. } => CHARACTER.encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
+            DataType::Extension(e) => e.kind.encode_record(v, self),
         }
     }
 
@@ -244,6 +377,7 @@ impl DataType {
             DataType::Character { .. } => CHARACTER.decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
+            DataType::Extension(e) => e.kind.decode_record(field, self),
         }
     }
 
@@ -257,6 +391,7 @@ impl DataType {
             DataType::Character { .. } => CHARACTER.encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
+            DataType::Extension(e) => e.kind.encode_key(v, self, out),
         }
     }
 
@@ -270,6 +405,7 @@ impl DataType {
             DataType::Character { .. } => CHARACTER.decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
+            DataType::Extension(e) => e.kind.decode_key(rest, self),
         }
     }
 }
@@ -283,6 +419,11 @@ impl Value {
             Value::Char(_) => Some(&CHARACTER),
             Value::Exact(_) => Some(&EXACT),
             Value::Approx(_) => Some(&APPROXIMATE),
+            Value::Extension(e) => Some(e.kind),
         }
     }
 }
+
+// Unit tests: the kinds' refusals, unregistered values, registries.
+#[cfg(test)]
+mod tests;

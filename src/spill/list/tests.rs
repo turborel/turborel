@@ -1,5 +1,6 @@
 use super::*;
 use crate::spill::testing::{Held, areas};
+use crate::value::types::TypeRegistry;
 
 /// A number, of 8 bytes in memory and as a record.
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +23,12 @@ fn decode(record: &[u8]) -> Result<N> {
 /// A list holding two numbers before it writes them, of runs `broken` or
 /// not, holding 0 to `n` with a mark before each third.
 fn numbers(n: u64, broken: bool) -> SpillList<N> {
-    let space = ListSpace { limit: 16, batch: 4096, areas: Some(areas(Some(Arc::new(Held { broken })), usize::MAX)) };
+    let space = ListSpace {
+        limit: 16,
+        batch: 4096,
+        areas: Some(areas(Some(Arc::new(Held { broken })), usize::MAX)),
+        types: TypeRegistry::default(),
+    };
     let mut list = SpillList::new(space);
     for i in 0..n {
         if i.is_multiple_of(3) {

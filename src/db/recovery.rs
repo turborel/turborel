@@ -235,22 +235,23 @@ impl Database {
         let mut changes = Touched::new(self.snapshot()?.list_space());
         let mut replaying = Replaying { definitions, pending: HashMap::new() };
         let encodings = Arc::clone(&self.snapshot()?.encodings);
+        let types = self.snapshot()?.types.clone();
         for read in log.read_from(from) {
             let (lsn, bytes) = read?;
-            let record = crate::log::sealed::open(&bytes, &encodings)?;
+            let record = crate::log::sealed::open(&bytes, &encodings, &types)?;
             report.records = report.records.saturating_add(1);
             analysis.note(lsn, &record);
             if let Some(change) = self.replay(lsn, record, &mut replaying, &mut report)? {
                 changes.push(change, &mut encode_change)?;
             }
         }
-        changes.visit_newest(&decode_change, &mut |change| {
+        changes.visit_newest(&|record| decode_change(record, &types), &mut |change| {
             if !analysis.stands(change) && self.undo(change, &analysis)? {
                 report.undone = report.undone.saturating_add(1);
             }
             Ok(())
         })?;
-        changes.visit(&decode_change, &mut |change| {
+        changes.visit(&|record| decode_change(record, &types), &mut |change| {
             if analysis.stands(change) && self.redo(change, &analysis)? {
                 report.redone = report.redone.saturating_add(1);
             }
@@ -456,8 +457,9 @@ impl State {
     /// images left it; then its entry under its key now made, once, by its
     /// first change.
     pub(super) fn mend_indexes(&self, touched: &mut Touched, kept: impl Fn(&IndexDesc) -> bool) -> Result<()> {
-        touched.visit(&decode_change, &mut |change| self.take_back_images(change, &kept))?;
-        touched.visit(&decode_change, &mut |change| self.restore_entry(change, &kept))
+        let types = self.types.clone();
+        touched.visit(&|record| decode_change(record, &types), &mut |change| self.take_back_images(change, &kept))?;
+        touched.visit(&|record| decode_change(record, &types), &mut |change| self.restore_entry(change, &kept))
     }
 
     /// Takes back every entry of the row `change` touched under the keys

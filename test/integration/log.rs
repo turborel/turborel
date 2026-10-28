@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use turborel::value::types::TypeRegistry;
 
 use turborel::disk::block::HEADER_LEN;
 use turborel::disk::io::{Durability, FileSystem, OsFileSystem};
@@ -272,7 +273,8 @@ fn records_go_through_the_log() {
     log.sync(commit).unwrap();
     drop(log);
     let (log, _) = reopen(&dir);
-    let read: Vec<Vec<u8>> = all(&log, Lsn(0)).into_iter().map(|(_, bytes)| Record::decode(&bytes).unwrap().encode()).collect();
+    let read: Vec<Vec<u8>> =
+        all(&log, Lsn(0)).into_iter().map(|(_, bytes)| Record::decode(&bytes, &TypeRegistry::default()).unwrap().encode()).collect();
     assert_eq!(read, records.iter().map(Record::encode).collect::<Vec<_>>());
 }
 

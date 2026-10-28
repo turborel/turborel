@@ -100,7 +100,7 @@ fn firsts(partition: Records, (depth, sources): (usize, &mut Vec<Records>), work
     let (again, mut parts, mut bag) = (depth < work.depth(), None, None);
     for record in partition {
         let record = record?;
-        let k = key(&unnumbered(&record)?.1);
+        let k = key(&unnumbered(&record, work.types())?.1);
         if seen.contains(&k) {
             continue;
         }

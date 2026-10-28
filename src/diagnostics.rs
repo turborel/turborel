@@ -58,6 +58,8 @@ pub enum Extension {
     Encoding,
     /// \[EXTENSION\] A `Credentials` (`Database::set_credentials`).
     Credentials,
+    /// \[EXTENSION\] A data type beyond the standard (`Database::register_type`).
+    DataType,
 }
 
 /// \[DESIGN\] An event of the database's.
