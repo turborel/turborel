@@ -25,14 +25,6 @@ Each item becomes a decision in RULES.md when done:
 
 ## Project
 
-- **The first commit** waits until the major items needed for a safe and
-  usable system are done, and everything is where it should be: it begins
-  the history.
-- **Guides for coding agents:** an AGENTS.md, and a CLAUDE.md that points
-  to it, in the repository's root: how the project is built and checked
-  (`cargo xtask verify --coverage`), the rules that bind every change
-  (RULES.md), where things are, and what not to do (no commits by agents,
-  the staging list, citations checked against the standards' text).
 - **Documentation for alpha** (D23), laid out to be published and read on
   the project's website: a manual for operators and users (installing,
   configuring through settings, the SQL taken, the server and client) and

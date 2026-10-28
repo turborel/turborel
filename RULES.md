@@ -83,6 +83,11 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D39 | Directions for extensibility |
 | D40 | Diagnostics: typed events to a pluggable sink |
 | D41 | Table settings: options an engine declares for its tables |
+| D42 | The server: three modes over one core |
+| D43 | Users, passwords and the database's owner |
+| D44 | A running statement is cancelled from another thread |
+| D45 | Protocol version 1, and prepared statements |
+| D46 | The command-line client |
 
 ### The project
 
@@ -172,7 +177,8 @@ lint pass.
 
 **D21. `verify` runs in a pre-commit hook and in CI.** The hook
 (`cargo xtask install-hooks`) runs it before each commit; CI runs it on
-Linux, macOS and Windows, with coverage, on every push and pull request.
+Linux, macOS and Windows on every push and pull request, and coverage on
+Linux.
 *Why:* a hook can be skipped or not installed, and checks one platform.
 
 **D22. No instrumented MC/DC.** MC/DC is shown by test design (R-TEST-8)
@@ -1120,6 +1126,8 @@ TODO.md                 open work
 CONTRIBUTING.md         how to contribute: changes, commit messages, pull
                         requests and issues
 SECURITY.md             how to report a vulnerability
+AGENTS.md               the guide for coding agents
+CLAUDE.md               points Claude Code to AGENTS.md
 .github/                CI (workflows/), the issue forms and the pull request
                         template
 src/                    the library (lib.rs); one concept per module

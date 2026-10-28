@@ -5,3 +5,6 @@
 fips.py
 fipspub127.txt
 sql1992.txt
+# A coding agent's local settings and worktrees (AGENTS.md).
+.claude/settings.local.json
+.claude/worktrees/

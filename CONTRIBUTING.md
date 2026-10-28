@@ -140,7 +140,7 @@ Reported-by: A Reporter <reporter@example.org>
   | `settings` | `settings/`, `memory.rs`, `diagnostics.rs` |
   | `protocol`, `client`, `server`, `turboreld`, `cli`, `lz4` | their crates |
   | `xtask`, `bench`, `test`, `support` | the tools, benchmarks and shared test fixtures |
-  | `doc` | README.md, RULES.md, CONFORMANCE.md, TODO.md, this file |
+  | `doc` | README.md, RULES.md, CONFORMANCE.md, TODO.md, AGENTS.md, CLAUDE.md, this file |
   | `treewide` | a mechanical change across many areas |
 
 - **Trailers**, at the end, one per line, never wrapped:
