@@ -172,9 +172,8 @@ fn the_users_table_shows_each_who_it_may() {
     db.set_owner("ANN").unwrap();
     let sql = "SELECT USER_NAME, IS_OWNER FROM INFORMATION_SCHEMA.USERS ORDER BY USER_NAME";
     let shown = |auth: &str| rows(&db.session(auth), sql).unwrap();
-    let pad = |name: &str| format!("{name:<128}");
-    assert_eq!(shown("ANN"), [format!("{},YES", pad("ANN")), format!("{},NO ", pad("BOB")), format!("{},NO ", pad("CAROL"))]);
-    assert_eq!(shown("BOB"), [format!("{},NO ", pad("BOB"))]);
+    assert_eq!(shown("ANN"), ["ANN,YES", "BOB,NO", "CAROL,NO"]);
+    assert_eq!(shown("BOB"), ["BOB,NO"]);
     assert_eq!(shown("DAVE"), Vec::<String>::new());
     assert_eq!(
         rows(&db.session("ANN"), "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'USERS'"),

@@ -103,10 +103,6 @@ RULES.md when its design settles.
   SR18]: a schema definition is logged as its text and read again in
   recovery, where no session is, so the displacement would have to be
   logged with it.
-- **The Information Schema's domains as CHARACTER VARYING** [§21.2.27,
-  §21.2.28]: SQL_IDENTIFIER and CHARACTER_DATA are CHARACTER, of fixed
-  length, from before CHARACTER VARYING was taken; as it is now, they can
-  be what the standard says, their values unpadded.
 - **Plug-in data types, further** (RULES.md D53): no privilege is needed
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's

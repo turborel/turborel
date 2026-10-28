@@ -45,7 +45,7 @@ fn interval_types_10_1() {
     a.run("CREATE TABLE U (A INTERVAL YEAR(4) TO MONTH, B INTERVAL DAY(3) TO SECOND(2), C INTERVAL SECOND(4, 1), E INTERVAL HOUR)")
         .unwrap();
     let described = "SELECT COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'U' ORDER BY 1";
-    assert_eq!(squeezed(&a, described), ["A ,INTERVAL ,0", "B ,INTERVAL ,2", "C ,INTERVAL ,1", "E ,INTERVAL ,0"]);
+    assert_eq!(squeezed(&a, described), ["A,INTERVAL,0", "B,INTERVAL,2", "C,INTERVAL,1", "E,INTERVAL,0"]);
     for bad in ["MONTH TO YEAR", "MONTH TO DAY", "YEAR TO DAY", "HOUR TO DAY", "DAY(0)"] {
         assert_eq!(exec(&a, &format!("CREATE TABLE W (A INTERVAL {bad})")).err(), Some(Code::SyntaxRule), "{bad}");
     }

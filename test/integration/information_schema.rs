@@ -90,7 +90,12 @@ fn tables_and_columns_are_described_21_2_7() {
                      WHERE TABLE_NAME = 'TABLES' AND TABLE_SCHEMA = 'INFORMATION_SCHEMA' ORDER BY ORDINAL_POSITION";
     assert_eq!(
         seen(&other, described),
-        ["1|TABLE_CATALOG|CHARACTER|128", "2|TABLE_SCHEMA|CHARACTER|128", "3|TABLE_NAME|CHARACTER|128", "4|TABLE_TYPE|CHARACTER|16",]
+        [
+            "1|TABLE_CATALOG|CHARACTER VARYING|128",
+            "2|TABLE_SCHEMA|CHARACTER VARYING|128",
+            "3|TABLE_NAME|CHARACTER VARYING|128",
+            "4|TABLE_TYPE|CHARACTER VARYING|32767",
+        ]
     );
 }
 

@@ -208,14 +208,13 @@ fn checked(desc: &TableDesc, rows: Vec<Row>) -> Result<Vec<Row>> {
 // Columns and values of the system tables
 // ---------------------------------------------------------------------------
 
-/// A column of CHARACTER(`length`), NOT NULL if `not_null`.
+/// A column of CHARACTER VARYING(`length`), NOT NULL if `not_null`.
 pub(crate) fn text_column((name, length): (&str, u32), not_null: bool) -> ColumnDesc {
-    ColumnDesc { name: name.to_owned(), data_type: DataType::Character { length }, not_null, default: None, domain: None }
+    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None }
 }
 
 /// [ISO/IEC 9075:1992 §21.2.27] A column of SQL_IDENTIFIER, CHARACTER
-/// VARYING(L), L the longest `<identifier>`: CHARACTER(L) here, as there is
-/// no CHARACTER VARYING.
+/// VARYING(L), L the longest `<identifier>`.
 pub(crate) fn identifier(name: &str, not_null: bool) -> ColumnDesc {
     text_column((name, u32::try_from(MAX_IDENTIFIER_LENGTH).unwrap_or(u32::MAX)), not_null)
 }

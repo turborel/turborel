@@ -7,12 +7,11 @@
 //! reads it, and no statement but such a view's names one \[§21.1\].
 //!
 //! Each table has the columns §21.3 defines, of the domains of §21.2.27 to
-//! §21.2.29: SQL_IDENTIFIER, CHARACTER(128) (`system::identifier`);
-//! CARDINAL_NUMBER, INTEGER; CHARACTER_DATA, CHARACTER VARYING(ML) with ML
-//! implementation-defined \[§21.2.28\], here CHARACTER: as long as the
-//! longest value §21.3 lists for the column, where it lists them, and
-//! otherwise CHARACTER(4096), a text longer than which is shown as the null
-//! value, as VIEW_DEFINITION's and CHECK_CLAUSE's are when they "cannot be
+//! §21.2.29: SQL_IDENTIFIER, CHARACTER VARYING(128) (`system::identifier`);
+//! CARDINAL_NUMBER, INTEGER; CHARACTER_DATA, CHARACTER VARYING(ML), ML
+//! implementation-defined \[§21.2.28\], here the longest character string,
+//! 32767 characters: a text longer is shown as the null value, as
+//! VIEW_DEFINITION's and CHECK_CLAUSE's are when they "cannot be
 //! represented without truncation" [§21.3.9 Description 3, §21.3.16
 //! Description 2]. There are no translations, so TRANSLATIONS has no
 //! rows; nor does SQL_LANGUAGES, no conformance being
@@ -44,8 +43,9 @@ use crate::storage::Row;
 use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
 
-/// How long a CHARACTER_DATA column whose values §21.3 does not list is.
-pub(super) const LONG: u32 = 4096;
+/// [ISO/IEC 9075:1992 §21.2.28] ML, the length of CHARACTER_DATA: the
+/// longest character string.
+pub(super) const LONG: u32 = crate::value::MAX_CHARACTER_LENGTH;
 
 /// [ISO/IEC 9075:1992 §10.4 SR3, §21.3.23 Description 5] The one
 /// character set, and its collation [§21.3.24 Description 4]: SQL_TEXT,
@@ -123,9 +123,9 @@ impl Columns {
         self
     }
 
-    /// Then a column `name` of CHARACTER_DATA, `length` long.
-    pub(super) fn data(mut self, (name, length): (&str, u32), not_null: bool) -> Columns {
-        self.0.push(text_column((name, length), not_null));
+    /// Then a column `name` of CHARACTER_DATA.
+    pub(super) fn data(mut self, name: &str, not_null: bool) -> Columns {
+        self.0.push(text_column((name, LONG), not_null));
         self
     }
 
@@ -145,7 +145,7 @@ pub(super) fn information(ident: &str) -> QualifiedName {
     QualifiedName { auth: INFORMATION_SCHEMA.to_owned(), ident: ident.to_owned() }
 }
 
-/// `s` in a column of CHARACTER(`LONG`): the null value if it is longer.
+/// `s` in a column of CHARACTER_DATA: the null value if it is longer.
 pub(super) fn long(s: &str) -> Value {
     if s.chars().count() > usize::try_from(LONG).unwrap_or(usize::MAX) { Value::Null } else { text(s) }
 }
@@ -247,7 +247,7 @@ fn data_type_columns() -> Vec<ColumnDesc> {
     Columns::of()
         .ids("TABLE_OR_DOMAIN", true)
         .id("COLUMN_NAME", true)
-        .data(("DATA_TYPE", 24), true)
+        .data("DATA_TYPE", true)
         .number("CHARACTER_MAXIMUM_LENGTH", false)
         .number("CHARACTER_OCTET_LENGTH", false)
         .ids("COLLATION", false)
@@ -292,7 +292,7 @@ fn data_type(catalog: &Value, t: DataType) -> Vec<Value> {
 // ---------------------------------------------------------------------------
 
 fn domains_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("DOMAIN", true).data(("DOMAIN_DEFAULT", LONG), false).done()
+    Columns::of().ids("DOMAIN", true).data("DOMAIN_DEFAULT", false).done()
 }
 
 /// Each domain, with its default as its `<default option>` is written.
@@ -307,7 +307,7 @@ fn domains(seen: &Seen<'_>) -> Vec<Row> {
 }
 
 fn domain_constraints_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("CONSTRAINT", true).ids("DOMAIN", true).data(("IS_DEFERRABLE", 3), true).data(("INITIALLY_DEFERRED", 3), true).done()
+    Columns::of().ids("CONSTRAINT", true).ids("DOMAIN", true).data("IS_DEFERRABLE", true).data("INITIALLY_DEFERRED", true).done()
 }
 
 /// Each constraint of each domain, deferrable or not and initially
@@ -343,7 +343,7 @@ fn default_text(default: Option<&ColumnDefault>) -> Value {
 // ---------------------------------------------------------------------------
 
 fn assertions_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("CONSTRAINT", true).data(("IS_DEFERRABLE", 3), true).data(("INITIALLY_DEFERRED", 3), true).done()
+    Columns::of().ids("CONSTRAINT", true).data("IS_DEFERRABLE", true).data("INITIALLY_DEFERRED", true).done()
 }
 
 /// [§21.3.19] Each assertion, deferrable or not and initially deferred or
@@ -361,7 +361,7 @@ fn translations_columns() -> Vec<ColumnDesc> {
 fn languages_columns() -> Vec<ColumnDesc> {
     ["YEAR", "CONFORMANCE", "INTEGRITY", "IMPLEMENTATION", "BINDING_STYLE", "PROGRAMMING_LANGUAGE"]
         .iter()
-        .fold(Columns::of().data(("SQL_LANGUAGE_SOURCE", LONG), true), |c, part| c.data((&format!("SQL_LANGUAGE_{part}"), LONG), false))
+        .fold(Columns::of().data("SQL_LANGUAGE_SOURCE", true), |c, part| c.data(&format!("SQL_LANGUAGE_{part}"), false))
         .done()
 }
 
@@ -370,7 +370,7 @@ fn languages_columns() -> Vec<ColumnDesc> {
 // ---------------------------------------------------------------------------
 
 fn tables_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("TABLE", true).data(("TABLE_TYPE", 16), true).done()
+    Columns::of().ids("TABLE", true).data("TABLE_TYPE", true).done()
 }
 
 /// Each table, a BASE TABLE, a VIEW, or a GLOBAL or LOCAL TEMPORARY table
@@ -389,12 +389,7 @@ fn described_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
 }
 
 fn views_columns() -> Vec<ColumnDesc> {
-    Columns::of()
-        .ids("TABLE", true)
-        .data(("VIEW_DEFINITION", LONG), false)
-        .data(("CHECK_OPTION", 8), true)
-        .data(("IS_UPDATABLE", 3), true)
-        .done()
+    Columns::of().ids("TABLE", true).data("VIEW_DEFINITION", false).data("CHECK_OPTION", true).data("IS_UPDATABLE", true).done()
 }
 
 /// Each view, its query as written; WITH CHECK OPTION of its `<levels
@@ -429,8 +424,8 @@ fn columns_columns() -> Vec<ColumnDesc> {
         .id("COLUMN_NAME", true)
         .number("ORDINAL_POSITION", true)
         .ids("DOMAIN", false)
-        .data(("COLUMN_DEFAULT", LONG), false)
-        .data(("IS_NULLABLE", 3), false)
+        .data("COLUMN_DEFAULT", false)
+        .data("IS_NULLABLE", false)
         .done()
 }
 
@@ -521,7 +516,7 @@ fn character_sets(seen: &Seen<'_>) -> Vec<Row> {
 }
 
 fn collations_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("COLLATION", true).ids("CHARACTER_SET", true).data(("PAD_ATTRIBUTE", 9), false).done()
+    Columns::of().ids("COLLATION", true).ids("CHARACTER_SET", true).data("PAD_ATTRIBUTE", false).done()
 }
 
 /// [§21.3.24 Description 4] SQL_TEXT, of SQL_TEXT, its pad attribute,

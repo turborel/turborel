@@ -48,10 +48,10 @@ fn column(table: &TableDesc, at: usize) -> Value {
 fn table_constraints_columns() -> Vec<ColumnDesc> {
     Columns::of()
         .ids("CONSTRAINT", true)
-        .data(("CONSTRAINT_TYPE", 11), true)
+        .data("CONSTRAINT_TYPE", true)
         .ids("TABLE", true)
-        .data(("IS_DEFERRABLE", 3), true)
-        .data(("INITIALLY_DEFERRED", 3), true)
+        .data("IS_DEFERRABLE", true)
+        .data("INITIALLY_DEFERRED", true)
         .done()
 }
 
@@ -127,9 +127,9 @@ fn referential_columns() -> Vec<ColumnDesc> {
     Columns::of()
         .ids("CONSTRAINT", true)
         .ids("UNIQUE_CONSTRAINT", true)
-        .data(("MATCH_OPTION", 7), true)
-        .data(("UPDATE_RULE", 11), true)
-        .data(("DELETE_RULE", 11), true)
+        .data("MATCH_OPTION", true)
+        .data("UPDATE_RULE", true)
+        .data("DELETE_RULE", true)
         .done()
 }
 
@@ -170,7 +170,7 @@ fn referential(seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 fn checks_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("CONSTRAINT", true).data(("CHECK_CLAUSE", super::LONG), false).done()
+    Columns::of().ids("CONSTRAINT", true).data("CHECK_CLAUSE", false).done()
 }
 
 /// Each CHECK constraint, its `<search condition>` as written, or that of

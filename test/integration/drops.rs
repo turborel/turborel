@@ -36,7 +36,7 @@ fn a_view_dropped_11_20() {
     assert_eq!(count(&p, "SELECT K FROM D.T"), 3, "with P's privilege on it");
     assert_eq!(code(&p, "SELECT K FROM D.V"), Code::SyntaxRule);
     let privileges = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE GRANTEE = 'P' ORDER BY TABLE_NAME";
-    assert_eq!(rows(&p, privileges), Ok(vec![format!("{:<128}", "T")]), "those on V gone");
+    assert_eq!(rows(&p, privileges), Ok(vec!["T".to_owned()]), "those on V gone");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.20 SR1, SR2, AR1, Format]
@@ -71,7 +71,7 @@ fn a_schema_dropped_11_2() {
     assert_eq!(exec(&s, "DROP SCHEMA D RESTRICT").err(), Some(Code::SyntaxRule), "it holds T");
     let e = db.session("E");
     let schemata = "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'E'";
-    assert_eq!(rows(&e, schemata), Ok(vec![format!("{:<128}", "E")]));
+    assert_eq!(rows(&e, schemata), Ok(vec!["E".to_owned()]));
     e.run("DROP SCHEMA E RESTRICT").unwrap();
     e.commit().unwrap();
     assert_eq!(rows(&e, schemata), Ok(vec![]));

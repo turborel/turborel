@@ -40,7 +40,7 @@ fn the_datetime_types_6_1() {
     let described = "SELECT COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'U' ORDER BY 1";
     assert_eq!(
         squeezed(&a, described),
-        ["A ,DATE ,0", "B ,TIME ,0", "C ,TIME WITH TIME ZONE ,3", "D ,TIMESTAMP ,6", "E ,TIMESTAMP WITH TIME ZONE,0"]
+        ["A,DATE,0", "B,TIME,0", "C,TIME WITH TIME ZONE,3", "D,TIMESTAMP,6", "E,TIMESTAMP WITH TIME ZONE,0"]
     );
     assert_eq!(exec(&a, "CREATE TABLE W (A TIME(7))").err(), Some(Code::Unsupported), "more than 6 digits");
     assert_eq!(exec(&a, "CREATE TABLE W (A TIME WITH ZONE)").err(), Some(Code::Syntax));
@@ -139,7 +139,7 @@ fn datetimes_compare_8_2() {
     assert_eq!(code(&a, "SELECT D FROM T WHERE D = '2024-01-01'"), Code::SyntaxRule, "a character string");
     a.run("CREATE VIEW V (X) AS SELECT TIME '01:00:00' FROM T UNION SELECT TIME '01:00:00.25' FROM T").unwrap();
     let described = "SELECT DATA_TYPE, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'V'";
-    assert_eq!(squeezed(&a, described), ["TIME ,2"]);
+    assert_eq!(squeezed(&a, described), ["TIME,2"]);
     assert_eq!(code(&a, "SELECT D FROM T UNION SELECT S FROM T"), Code::SyntaxRule, "§9.3 SR3e");
     a.commit().unwrap();
 }
@@ -248,7 +248,7 @@ fn datetime_defaults_11_5() {
     a.run("INSERT INTO T (N) VALUES (1)").unwrap();
     assert_eq!(rows(&a, "SELECT D, S, L, H FROM T").unwrap(), ["2024-02-29,2024-02-29 12:34:56,2000-01-01,12:34:56"]);
     let described = "SELECT COLUMN_NAME, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'T' AND COLUMN_NAME IN ('D', 'S') ORDER BY 1";
-    assert_eq!(squeezed(&a, described), ["D ,CURRENT_DATE", "S ,CURRENT_TIMESTAMP(0)"]);
+    assert_eq!(squeezed(&a, described), ["D,CURRENT_DATE", "S,CURRENT_TIMESTAMP(0)"]);
     assert_eq!(exec(&a, "CREATE TABLE U (H TIME DEFAULT CURRENT_DATE)").err(), Some(Code::SyntaxRule), "SR3c");
     assert_eq!(exec(&a, "CREATE TABLE U (S TIMESTAMP DEFAULT DATE '2000-01-01')").err(), Some(Code::SyntaxRule), "SR3a v");
     assert_eq!(exec(&a, "CREATE TABLE U (S TIMESTAMP DEFAULT '2000-01-01')").err(), Some(Code::SyntaxRule), "SR3a v");

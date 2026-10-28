@@ -29,7 +29,7 @@ fn the_bit_string_types_6_1() {
     a.run("CREATE TABLE U (A BIT, B BIT(10), C BIT VARYING(12))").unwrap();
     let described = "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH FROM INFORMATION_SCHEMA.COLUMNS \
                      WHERE TABLE_NAME = 'U' ORDER BY 1";
-    assert_eq!(squeezed(&a, described), ["A ,BIT ,1,1", "B ,BIT ,10,2", "C ,BIT VARYING ,12,2"]);
+    assert_eq!(squeezed(&a, described), ["A,BIT,1,1", "B,BIT,10,2", "C,BIT VARYING,12,2"]);
     assert_eq!(exec(&a, "CREATE TABLE W (A BIT VARYING)").err(), Some(Code::Syntax), "its length written");
     assert_eq!(exec(&a, "CREATE TABLE W (A BIT(0))").err(), Some(Code::SyntaxRule), "more than 0");
     assert_eq!(exec(&a, "CREATE TABLE W (A BIT VARYING(300000))").err(), Some(Code::Unsupported), "too long here");
@@ -128,7 +128,7 @@ fn operations_on_bit_strings_6_7() {
     a.run("CREATE VIEW X (U) AS SELECT F FROM T UNION SELECT V FROM T").unwrap();
     let described = "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS \
                      WHERE TABLE_NAME IN ('W', 'X') ORDER BY 1, 2";
-    assert_eq!(squeezed(&a, described), ["W ,FF ,BIT ,8", "W ,FV ,BIT VARYING ,10", "W ,S ,BIT VARYING ,4", "X ,U ,BIT VARYING ,6"]);
+    assert_eq!(squeezed(&a, described), ["W,FF,BIT,8", "W,FV,BIT VARYING,10", "W,S,BIT VARYING,4", "X,U,BIT VARYING,6"]);
     assert_eq!(code(&a, "SELECT F FROM T UNION SELECT 'a' FROM T"), Code::SyntaxRule, "§9.3 SR3b");
     a.commit().unwrap();
 }

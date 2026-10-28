@@ -63,7 +63,7 @@ fn what_is_in_a_schema_is_its_owners_11_1() {
         p.rollback().unwrap();
     }
     let schemata = "SELECT SCHEMA_NAME, SCHEMA_OWNER FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'S'";
-    assert_eq!(rows(&u, schemata), Ok(vec![format!("{:<128},{:<128}", "S", "U")]));
+    assert_eq!(rows(&u, schemata), Ok(vec!["S,U".to_owned()]));
     u.run("DROP SCHEMA S CASCADE").unwrap();
     u.commit().unwrap();
     assert_eq!(code(&p, "SELECT K FROM S.T"), Code::SyntaxRule, "dropped by its owner");

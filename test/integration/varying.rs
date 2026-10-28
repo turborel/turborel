@@ -26,7 +26,7 @@ fn the_names_of_varying_strings_6_1() {
     let described =
         "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'U' ORDER BY 1";
     let squeezed: Vec<String> = rows(&a, described).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
-    assert_eq!(squeezed, ["A ,CHARACTER VARYING ,3", "B ,CHARACTER VARYING ,4", "D ,CHARACTER VARYING ,6"]);
+    assert_eq!(squeezed, ["A,CHARACTER VARYING,3", "B,CHARACTER VARYING,4", "D,CHARACTER VARYING,6"]);
     assert_eq!(exec(&a, "CREATE TABLE W (A VARCHAR)").err(), Some(Code::Syntax), "its length written");
     assert_eq!(exec(&a, "CREATE TABLE W (A VARCHAR(0))").err(), Some(Code::SyntaxRule), "more than 0");
     assert_eq!(exec(&a, "CREATE TABLE W (A VARCHAR(40000))").err(), Some(Code::Unsupported), "too long here");
@@ -92,7 +92,7 @@ fn types_of_varying_string_operations_6_10() {
     a.run("CREATE VIEW W (S) AS SELECT V FROM T UNION SELECT C FROM T").unwrap();
     let described = "SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'W'";
     let squeezed: Vec<String> = rows(&a, described).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
-    assert_eq!(squeezed, ["CHARACTER VARYING ,5"]);
+    assert_eq!(squeezed, ["CHARACTER VARYING,5"]);
     a.commit().unwrap();
 }
 
@@ -166,7 +166,7 @@ fn national_character_strings_6_1() {
     let described =
         "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'U' AND COLUMN_NAME <> 'N' ORDER BY 1";
     let squeezed: Vec<String> = rows(&a, described).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
-    assert_eq!(squeezed, ["A ,CHARACTER", "B ,CHARACTER VARYING", "C ,CHARACTER", "D ,CHARACTER VARYING"]);
+    assert_eq!(squeezed, ["A,CHARACTER", "B,CHARACTER VARYING", "C,CHARACTER", "D,CHARACTER VARYING"]);
     a.run("INSERT INTO U VALUES (N'ab', n'it''s', 'x', N'', 1)").unwrap();
     assert_eq!(rows(&a, "SELECT A, B, C, CHAR_LENGTH(D) FROM U WHERE A = 'ab' AND B = N'it''s'").unwrap(), ["ab ,it's,x ,0"]);
     assert_eq!(rows(&a, "SELECT N 'x' FROM U").err(), Some(Code::Syntax), "N apart: the column N, then a string");

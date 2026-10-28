@@ -122,13 +122,7 @@ fn users(seen: &Seen<'_>) -> Result<Vec<Row>> {
 // ---------------------------------------------------------------------------
 
 fn table_privileges_columns() -> Vec<ColumnDesc> {
-    Columns::of()
-        .id("GRANTOR", true)
-        .id("GRANTEE", true)
-        .ids("TABLE", true)
-        .data(("PRIVILEGE_TYPE", 10), true)
-        .data(("IS_GRANTABLE", 3), true)
-        .done()
+    Columns::of().id("GRANTOR", true).id("GRANTEE", true).ids("TABLE", true).data("PRIVILEGE_TYPE", true).data("IS_GRANTABLE", true).done()
 }
 
 /// Each table privilege descriptor.
@@ -149,8 +143,8 @@ fn column_privileges_columns() -> Vec<ColumnDesc> {
         .id("GRANTEE", true)
         .ids("TABLE", true)
         .id("COLUMN_NAME", true)
-        .data(("PRIVILEGE_TYPE", 10), true)
-        .data(("IS_GRANTABLE", 3), true)
+        .data("PRIVILEGE_TYPE", true)
+        .data("IS_GRANTABLE", true)
         .done()
 }
 
@@ -171,7 +165,7 @@ fn column_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
 // ---------------------------------------------------------------------------
 
 fn usage_privileges_columns() -> Vec<ColumnDesc> {
-    Columns::of().id("GRANTOR", true).id("GRANTEE", true).ids("OBJECT", true).id("OBJECT_TYPE", true).data(("IS_GRANTABLE", 3), true).done()
+    Columns::of().id("GRANTOR", true).id("GRANTEE", true).ids("OBJECT", true).id("OBJECT_TYPE", true).data("IS_GRANTABLE", true).done()
 }
 
 /// USAGE on the character set and collation SQL_TEXT (`definition::usage`);

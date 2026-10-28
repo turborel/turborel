@@ -27,17 +27,17 @@ const LOCK_WAIT: &str = "SELECT SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCH
 fn settings_are_a_system_table_21_1() {
     let db = setup();
     let s = db.session("APP");
-    assert_eq!(rows(&s, LOCK_WAIT), expected(&["NO_WAIT,DEFAULT"]).map(|r| pad(&r, 256)));
+    assert_eq!(rows(&s, LOCK_WAIT), expected(&["NO_WAIT,DEFAULT"]));
     db.set_setting("LOCK_WAIT", &word("WAIT")).unwrap();
-    assert_eq!(rows(&s, LOCK_WAIT), expected(&["WAIT,DATABASE"]).map(|r| pad(&r, 256)));
+    assert_eq!(rows(&s, LOCK_WAIT), expected(&["WAIT,DATABASE"]));
     s.set_setting("LOCK_WAIT", &word("NO_WAIT")).unwrap();
-    assert_eq!(rows(&s, LOCK_WAIT), expected(&["NO_WAIT,SESSION"]).map(|r| pad(&r, 256)), "its own");
-    assert_eq!(rows(&db.session("NOBODY"), LOCK_WAIT), expected(&["WAIT,DATABASE"]).map(|r| pad(&r, 256)), "any user's, the database's");
+    assert_eq!(rows(&s, LOCK_WAIT), expected(&["NO_WAIT,SESSION"]), "its own");
+    assert_eq!(rows(&db.session("NOBODY"), LOCK_WAIT), expected(&["WAIT,DATABASE"]), "any user's, the database's");
     let all = rows(&s, "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SETTINGS").unwrap();
     assert_eq!(all, vec![db.settings().unwrap().len().to_string()]);
     let described = "SELECT TRIM(DEFAULT_VALUE), TRIM(VALUE_KIND), IS_SESSION_SETTABLE, TRIM(TAKES_EFFECT) \
                      FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'OPTIMIZER.MAX_PASSES'";
-    assert_eq!(rows(&s, described), expected(&["64,INTEGER FROM 1 TO 1000000,NO ,STATEMENT"]));
+    assert_eq!(rows(&s, described), expected(&["64,INTEGER FROM 1 TO 1000000,NO,STATEMENT"]));
     s.declare_cursor("DECLARE C CURSOR FOR SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'SESSION_END'")
         .unwrap();
     let mut p = Params::new().declare("V", DataType::Character { length: 8 }, Value::Null);
@@ -47,18 +47,6 @@ fn settings_are_a_system_table_21_1() {
     assert_eq!(p.value("V").to_string(), "COMMIT  ", "as at OPEN");
     let plan = s.explain("SELECT * FROM INFORMATION_SCHEMA.SETTINGS", &Params::new()).unwrap();
     assert!(plan.contains("System INFORMATION_SCHEMA.SETTINGS"), "{plan}");
-}
-
-/// `row`'s first value padded to `length`, as a CHARACTER column gives it,
-/// and its second as written: "VALUE,SOURCE".
-fn pad(found: &[String], length: usize) -> Vec<String> {
-    found
-        .iter()
-        .map(|r| {
-            let (value, source) = r.split_once(',').unwrap();
-            format!("{value:length$},{source:8}")
-        })
-        .collect()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1, §21.2.1, §11.9 AR1]: a

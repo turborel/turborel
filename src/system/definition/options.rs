@@ -30,8 +30,8 @@ fn indexes_columns() -> Vec<ColumnDesc> {
         .ids("TABLE", true)
         .id("INDEX_NAME", true)
         .id("METHOD_NAME", true)
-        .data(("IS_UNIQUE", 3), true)
-        .data(("COLUMN_NAMES", super::LONG), false)
+        .data("IS_UNIQUE", true)
+        .data("COLUMN_NAMES", false)
         .done()
 }
 
@@ -69,12 +69,12 @@ fn index_options_columns() -> Vec<ColumnDesc> {
         .id("METHOD_NAME", true)
         .id("OPTION_NAME", true)
         .id("DECLARED_BY", false)
-        .data(("OPTION_VALUE", super::LONG), false)
-        .data(("VALUE_SOURCE", 7), true)
-        .data(("DEFAULT_VALUE", super::LONG), false)
-        .data(("VALUE_KIND", super::LONG), true)
-        .data(("CHANGED_BY", 8), false)
-        .data(("DESCRIPTION", super::LONG), false)
+        .data("OPTION_VALUE", false)
+        .data("VALUE_SOURCE", true)
+        .data("DEFAULT_VALUE", false)
+        .data("VALUE_KIND", true)
+        .data("CHANGED_BY", false)
+        .data("DESCRIPTION", false)
         .done()
 }
 
@@ -102,12 +102,12 @@ fn table_options_columns() -> Vec<ColumnDesc> {
         .id("ENGINE_NAME", true)
         .id("OPTION_NAME", true)
         .id("DECLARED_BY", false)
-        .data(("OPTION_VALUE", super::LONG), false)
-        .data(("VALUE_SOURCE", 7), true)
-        .data(("DEFAULT_VALUE", super::LONG), false)
-        .data(("VALUE_KIND", super::LONG), true)
-        .data(("CHANGED_BY", 8), false)
-        .data(("DESCRIPTION", super::LONG), false)
+        .data("OPTION_VALUE", false)
+        .data("VALUE_SOURCE", true)
+        .data("DEFAULT_VALUE", false)
+        .data("VALUE_KIND", true)
+        .data("CHANGED_BY", false)
+        .data("DESCRIPTION", false)
         .done()
 }
 

@@ -164,11 +164,11 @@ fn assertions_in_the_information_schema_21_2() {
     a.run("CREATE ASSERTION LATER CHECK (NOT EXISTS (SELECT * FROM U WHERE K < 0)) DEFERRABLE").unwrap();
     let squeeze = |sql: &str| rows(&a, sql).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>();
     let listed = "SELECT CONSTRAINT_NAME, IS_DEFERRABLE, INITIALLY_DEFERRED FROM INFORMATION_SCHEMA.ASSERTIONS ORDER BY CONSTRAINT_NAME";
-    assert_eq!(squeeze(listed), ["FEW ,NO ,NO", "LATER ,YES,NO"]);
+    assert_eq!(squeeze(listed), ["FEW,NO,NO", "LATER,YES,NO"]);
     let clause = "SELECT CHECK_CLAUSE FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS WHERE CONSTRAINT_NAME = 'FEW'";
     assert_eq!(squeeze(clause), ["(SELECT COUNT(*) FROM T) < 3"]);
     let read = "SELECT TABLE_NAME, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.CONSTRAINT_TABLE_USAGE ORDER BY CONSTRAINT_NAME";
-    assert_eq!(squeeze(read), ["U ,LATER"], "of the columns it references: FEW references none");
+    assert_eq!(squeeze(read), ["U,LATER"], "of the columns it references: FEW references none");
 }
 
 /// Verifies: [DESIGN] RULES.md D25: assertions and their drops are logged

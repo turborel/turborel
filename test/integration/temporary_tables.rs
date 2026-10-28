@@ -123,7 +123,7 @@ fn what_a_temporary_table_refuses_11_3() {
     let kinds = "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'A' ORDER BY TABLE_NAME";
     let kinds: Vec<String> =
         crate::common::rows(&s, kinds).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
-    assert_eq!(kinds, ["G ,GLOBAL TEMPORARY", "L ,LOCAL TEMPORARY"]);
+    assert_eq!(kinds, ["G,GLOBAL TEMPORARY", "L,LOCAL TEMPORARY"]);
     s.run("DROP TABLE G CASCADE").unwrap();
     s.commit().unwrap();
     assert_eq!(crate::common::code(&s, "SELECT K FROM G"), Code::SyntaxRule);
