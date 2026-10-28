@@ -23,9 +23,10 @@ be found sooner than by guessing.
 A user is a name a client signs in as; what it may do is the privileges
 granted to its authorization identifier, as to any. A session the host
 program of an embedded database starts may be of any identifier, a user
-or not; and, by default, the server trusts a client of its own machine
-as whoever it says it is, a user or not: the setting SERVER.TRUST OFF
-makes every client prove it ([Users](../../operator/05-users.md)).
+or not. Every client of a server proves it is a user, unless the
+server's setting SERVER.TRUST is LOCAL, not its default, which trusts a
+client of its own machine as whoever it says it is
+([Users](../../operator/05-users.md)).
 
 The authorization identifier is an identifier: a regular one, such as
 `carol`, is folded to upper case, CAROL; a delimited one, such as

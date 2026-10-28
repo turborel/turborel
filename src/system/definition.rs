@@ -14,8 +14,9 @@
 //! VIEW_DEFINITION's and CHECK_CLAUSE's are when they "cannot be
 //! represented without truncation" [§21.3.9 Description 3, §21.3.16
 //! Description 2]. There are no translations, so TRANSLATIONS has no
-//! rows; nor does SQL_LANGUAGES, no conformance being
-//! claimed [§21.3.26].
+//! rows. SQL_LANGUAGES has one, of the conformance claimed: to ISO 9075
+//! of 1987, the text of X3.135-1986, at Level 2, by direct invocation
+//! (CONFORMANCE.md) [§21.3.26].
 //!
 //! The objects described are the base tables and views of the catalog,
 //! the system tables but the Definition Schema's own, and the views of the
@@ -74,7 +75,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
         defined("CHARACTER_SETS", character_sets_columns, Rows::Infallible(character_sets)),
         defined("COLLATIONS", collations_columns, Rows::Infallible(collations)),
         defined("TRANSLATIONS", translations_columns, Rows::Infallible(none)),
-        defined("SQL_LANGUAGES", languages_columns, Rows::Infallible(none)),
+        defined("SQL_LANGUAGES", languages_columns, Rows::Infallible(languages)),
     ];
     tables.extend(constraints::tables());
     tables.extend(privileges::tables());
@@ -363,6 +364,13 @@ fn languages_columns() -> Vec<ColumnDesc> {
         .iter()
         .fold(Columns::of().data("SQL_LANGUAGE_SOURCE", true), |c, part| c.data(&format!("SQL_LANGUAGE_{part}"), false))
         .done()
+}
+
+/// [§21.3.26] The conformance claimed: ISO 9075:1987, at Level 2, of the
+/// binding style DIRECT, of no programming language; its integrity none,
+/// of 1987 \[SQL_LANGUAGES_STANDARD_VALID_CHECK\].
+fn languages(_: &Seen<'_>) -> Vec<Row> {
+    vec![vec![text("ISO 9075"), text("1987"), text("2"), Value::Null, Value::Null, text("DIRECT"), Value::Null]]
 }
 
 // ---------------------------------------------------------------------------

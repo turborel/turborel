@@ -1092,6 +1092,11 @@ is configured, seen and changed like the database's.
   connection (`Peer::secure`: TLS, or a Unix socket), as the password
   travels whole. A user not there is refused as a wrong password is, after
   as long, the check made against a decoy verifier.
+- The authenticator `trust` takes a client as the user it names, of the
+  server's own machine alone, and only if SERVER.TRUST is LOCAL. It is
+  OFF by default, so every client proves who it is unless the operator
+  says otherwise: on a machine of many accounts, any of them could
+  otherwise connect as the owner.
 - The database's owner is a user: the first one created, so a database
   never has users and no owner; or another the host program or `turboreld
   user owner` makes it; it cannot be dropped until another owns the database. In

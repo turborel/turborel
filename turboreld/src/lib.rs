@@ -68,8 +68,8 @@ The server's settings, beside the database's:
   SERVER.MAX_CONNECTIONS connections taken at once (default 256)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.BATCH_BYTES     about how many bytes of rows go in a batch (default 64 KiB)
-  SERVER.TRUST           LOCAL: trust a client of this machine as who it says (default);
-                         OFF: every client proves who it is
+  SERVER.TRUST           OFF: every client proves who it is (default);
+                         LOCAL: trust a client of this machine as who it says
   SERVER.PASSWORD_ITERATIONS  PBKDF2 iterations of a password made (default 600000)
 
 The database's files, fixed when it is created: --set them as it is:
@@ -81,7 +81,7 @@ The database's files, fixed when it is created: --set them as it is:
   STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
 
 Clients prove who they are by a user's password, over TLS or a Unix socket only; with
-SERVER.TRUST LOCAL, a client of this machine may be trusted instead. The database's
+SERVER.TRUST LOCAL, a client of this machine is trusted instead. The database's
 owner manages users in SQL (CREATE USER, ALTER USER, DROP USER), and sets the database's
 settings, the server's among them, on a running server: SET DATABASE NAME = VALUE.
 Ctrl-C, or SIGTERM on Unix, stops the server: each connection finishes its statement,

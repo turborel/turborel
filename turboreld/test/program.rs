@@ -47,6 +47,8 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     let scratch = Scratch::new("program");
     let dir = scratch.path("db").display().to_string();
     let mut line = vec!["--dir".into(), dir.clone(), "--set".into(), "SERVER.PORT=0".into(), "--set".into(), "SERVER.WORKERS=2".into()];
+    // A client of this machine trusted, as SERVER.TRUST is not by default.
+    line.extend(["--set".into(), "SERVER.TRUST=LOCAL".into()]);
     let keys = scratch.path("keys");
     std::fs::create_dir_all(&keys).unwrap();
     std::fs::write(keys.join("MASTER"), "ab".repeat(32)).unwrap();
@@ -144,7 +146,7 @@ fn the_program_stops_cleanly_when_terminated() {
     use std::io::{BufRead, BufReader};
     let program = env!("CARGO_BIN_EXE_turboreld");
     let mut child = std::process::Command::new(program)
-        .args(["--memory", "--set", "SERVER.PORT=0"])
+        .args(["--memory", "--set", "SERVER.PORT=0", "--set", "SERVER.TRUST=LOCAL"])
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();

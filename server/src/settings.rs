@@ -138,9 +138,9 @@ fn started() -> [Definition; 8] {
         setting(
             TRUST,
             Kind::Choice(TRUST_MODES),
-            Value::Char("LOCAL".into()),
+            Value::Char("OFF".into()),
             Effect::Start,
-            "Whether a client of this machine is trusted as who it says (LOCAL).",
+            "Whether a client of this machine is trusted as who it says (LOCAL), or proves it as every other does (OFF).",
         ),
         setting(
             PASSWORD_ITERATIONS,

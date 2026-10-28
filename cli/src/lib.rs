@@ -53,8 +53,9 @@ Without -c or -f, statements are read from standard input: typed at a terminal,
 each is run once a semicolon ends it, and the end of input (Ctrl-D; Ctrl-Z then
 Enter on Windows) quits. The last statement of a file needs no semicolon.
 A password may be given in the environment variable TURBOREL_PASSWORD instead;
-without either, the server is asked to trust the user, as it may a client of
-its own machine. A password is sent only over TLS or a Unix socket.
+without either, the server is asked to trust the user, as one with SERVER.TRUST
+LOCAL does a client of its own machine. A password is sent only over TLS or a
+Unix socket.
 Ctrl-C cancels the statement running. The program exits with 1 if any
 statement failed.";
 

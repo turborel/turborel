@@ -15,8 +15,8 @@ database uses the crate `turborel` instead, and its `Database` and
 not. Each takes the user to connect as and a `Mechanism` that proves it:
 `Password`, of a password, sent only over TLS or a Unix socket; or
 `Trust`, which asks the server to trust the user as it names itself, as
-a server does of a client of its own machine unless its setting
-SERVER.TRUST is OFF.
+a server does only of a client of its own machine, and only if its
+setting SERVER.TRUST is LOCAL, not its default.
 
 ```rust
 use turborel_client::connection::{connect, Trust};

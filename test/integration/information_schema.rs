@@ -193,13 +193,14 @@ fn privileges_are_described_21_2_10() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1, §21.2.2, §21.2.18,
-/// §21.2.19, §21.3.2]: the Definition Schema cannot be accessed in an
+/// §21.2.19, §21.3.2, §21.3.26]: the Definition Schema cannot be accessed in an
 /// SQL-statement, nor a schema of either made; the views cannot be
 /// updated; the catalog's name is the setting CATALOG_NAME's; the
 /// character set and collation are SQL_TEXT, PAD SPACE; and a view that
 /// reads one shows what its reader sees, CURRENT_USER being the reader's
 /// [§4.26, §6.2 GR9], SELECT on it grantable, SELECT on the Information
-/// Schema being PUBLIC's WITH GRANT OPTION \[§21.1\].
+/// Schema being PUBLIC's WITH GRANT OPTION \[§21.1\]; SQL_LANGUAGES
+/// gives the conformance claimed.
 #[test]
 fn the_information_schema_is_the_databases_21_1() {
     let db = catalog();
@@ -238,7 +239,9 @@ fn the_information_schema_is_the_databases_21_1() {
     )
     .unwrap();
     assert_eq!(seen(&db.session("R"), "SELECT T FROM X.SEEN ORDER BY T"), ["BIG", "C", "P"], "the reader's, R's");
-    for empty in ["DOMAINS", "DOMAIN_CONSTRAINTS", "ASSERTIONS", "TRANSLATIONS", "COLUMN_DOMAIN_USAGE", "SQL_LANGUAGES"] {
+    for empty in ["DOMAINS", "DOMAIN_CONSTRAINTS", "ASSERTIONS", "TRANSLATIONS", "COLUMN_DOMAIN_USAGE"] {
         assert_eq!(seen(&s, &format!("SELECT * FROM INFORMATION_SCHEMA.{empty}")), Vec::<String>::new(), "{empty}");
     }
+    // [§21.3.26] the conformance claimed: SQL-86, ISO 9075 of 1987, Level 2, by direct invocation.
+    assert_eq!(seen(&s, "SELECT * FROM INFORMATION_SCHEMA.SQL_LANGUAGES"), ["ISO 9075|1987|2|NULL|NULL|DIRECT|NULL"]);
 }

@@ -98,7 +98,7 @@ Each in a sentence:
 | SERVER.TLS | OFF | ONE OF OFF, ON, REQUIRED | when the server starts |  |
 | SERVER.TLS_CERTIFICATE | (empty) | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
 | SERVER.TLS_KEY | (empty) | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
-| SERVER.TRUST | LOCAL | ONE OF LOCAL, OFF | when the server starts |  |
+| SERVER.TRUST | OFF | ONE OF LOCAL, OFF | when the server starts |  |
 | SERVER.WORKERS | the processors | INTEGER FROM 1 TO 1024 | at once |  |
 
 Each in a sentence:
@@ -116,7 +116,7 @@ Each in a sentence:
 - **SERVER.TLS**: Whether TCP connections may use TLS (ON), or must (REQUIRED).
 - **SERVER.TLS_CERTIFICATE**: The PEM file of the server's certificate chain.
 - **SERVER.TLS_KEY**: The PEM file of the server's private key.
-- **SERVER.TRUST**: Whether a client of this machine is trusted as who it says (LOCAL).
+- **SERVER.TRUST**: Whether a client of this machine is trusted as who it says (LOCAL), or proves it as every other does (OFF).
 - **SERVER.WORKERS**: Statements the server runs at once, at most.
 
 Plug-ins may declare settings of their own, listed alike.

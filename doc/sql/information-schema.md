@@ -52,7 +52,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | CHARACTER_SETS | character set: SQL_TEXT, the one there is |
 | COLLATIONS | collation: SQL_TEXT's, the one there is |
 | TRANSLATIONS | translation: none |
-| SQL_LANGUAGES | language standard conformance to is claimed: none yet |
+| SQL_LANGUAGES | standard conformance is claimed to: ISO 9075 of 1987, SQL-86, at Level 2, by direct invocation |
 
 NOT NULL is shown as a CHECK constraint, `C IS NOT NULL`. A constraint
 given no name has one made for it: the table's name, its kind and a

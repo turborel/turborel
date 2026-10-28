@@ -32,9 +32,9 @@ as a table as they come, and each statement's outcome.
 
 A password may be given in the environment variable TURBOREL_PASSWORD
 instead of typed. Without either, the client asks the server to trust
-it as the user it names, which a server does of a client of its own
-machine unless its setting SERVER.TRUST is OFF. A password is sent only
-over TLS or a Unix socket.
+it as the user it names, which a server does only of a client of its own
+machine, and only if its setting SERVER.TRUST is LOCAL; it is OFF by
+default. A password is sent only over TLS or a Unix socket.
 
 ## Typed sessions
 

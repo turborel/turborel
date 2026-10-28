@@ -60,8 +60,9 @@ fn an_operator_manages_users() {
 }
 
 /// Verifies: [DESIGN] RULES.md D43: a database whose users an operator
-/// added is served: with SERVER.TRUST OFF, a client proves itself by its
-/// password over a Unix socket, and trust is not served (SQLSTATE 28000).
+/// added is served: with SERVER.TRUST OFF, its default, a client proves
+/// itself by its password over a Unix socket, and trust is not served
+/// (SQLSTATE 28000).
 /// User commands are refused on a database a server holds.
 #[cfg(unix)]
 #[test]
@@ -70,7 +71,8 @@ fn users_an_operator_added_connect_by_password() {
     let dir = scratch.path("db");
     let socket = scratch.path("s");
     user(&dir, &UserCommand::Add { name: "ann".into(), owner: true }, "ann's").unwrap();
-    let line = format!("--dir {} --set SERVER.TRUST=OFF --set SERVER.HOST= --set SERVER.SOCKET={}", dir.display(), socket.display());
+    // SERVER.TRUST is OFF by default.
+    let line = format!("--dir {} --set SERVER.HOST= --set SERVER.SOCKET={}", dir.display(), socket.display());
     let served = config(&line);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let (tell, told) = std::sync::mpsc::channel();
