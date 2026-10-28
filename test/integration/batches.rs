@@ -6,7 +6,7 @@
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 
-use crate::common::{exec, rows};
+use crate::common::{exec, rows, sorted};
 
 /// The rows written: K, a key; G, one of 7 groups; S, a text, null for
 /// every 11th; N, a number in the order the rows were written, null for
@@ -102,4 +102,35 @@ fn rows_read_by_batch_are_read() {
         assert_eq!(two.commit().err().map(|e| e.code), Some(Code::Conflict), "{table}");
     }
     drop(a);
+}
+
+/// Grouped set functions, read by batches where they can be; sorted, as
+/// groups are given in no order an ORDER BY does not give.
+const GROUPED: [&str; 6] = [
+    "SELECT G, COUNT(*), COUNT(S), SUM(N), AVG(N), MIN(S), MAX(K) FROM {t} GROUP BY G",
+    "SELECT S, COUNT(*) FROM {t} GROUP BY S",
+    "SELECT G, S, SUM(N) FROM {t} WHERE K BETWEEN 1000 AND 2500 GROUP BY G, S",
+    "SELECT G, COUNT(*) FROM {t} WHERE S = 's5' AND N > 10 GROUP BY G",
+    "SELECT G, COUNT(*) FROM {t} WHERE K < -100 GROUP BY G",
+    "SELECT G, SUM(N + 0), COUNT(DISTINCT S) FROM {t} GROUP BY G",
+];
+
+/// Verifies: [DESIGN] RULES.md D31, grouped set functions read by batches:
+/// each group's set functions give what they give row by row, of a table
+/// of each layout, frozen rows changed among them, grouped by one column
+/// or two, nulls a group of their own, filtered or not, no row matched;
+/// and groups past the work area are grouped row by row, alike.
+#[test]
+fn groups_by_batch_answer_as_row_by_row() {
+    let db = Database::new();
+    let a = both(&db);
+    let grouped = |s: &Session, table: &str| -> Vec<Vec<String>> { GROUPED.iter().map(|q| sorted(s, &q.replace("{t}", table))).collect() };
+    let columns = grouped(&a, "C");
+    assert_eq!(columns, grouped(&a, "R"));
+    assert_eq!(columns[1].len(), 100, "97 texts, 'changed', 'new' and null");
+    assert!(columns[4].is_empty(), "no row, no group");
+    // One group for each row: past a work area of 64 KiB.
+    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    let many = "SELECT K, COUNT(*), SUM(N) FROM {t} GROUP BY K";
+    assert_eq!(sorted(&a, &many.replace("{t}", "C")), sorted(&a, &many.replace("{t}", "R")));
 }

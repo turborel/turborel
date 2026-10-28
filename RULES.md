@@ -747,12 +747,16 @@ becomes a trait when it is.
   rows gathered. A COLUMNS table gives each frozen vector the tree has no
   entry in straight from its chunks, a condition's columns read first and
   the others only of the rows it keeps, then the tree's rows. An
-  aggregation of no GROUP BY whose set functions count rows or take a
-  column, none DISTINCT, of a table's scan, filtered or not, feeds them
-  from the vectors (`exec/batch.rs`); a filter not told to the scan judges
-  the rows the scan's condition kept, each made a row. Measured against
-  ROWS row by row (`bench/analytics.rs`): COUNT(*) of a COLUMNS table some
-  50 times as fast, a SUM of one column 17, a filter of 1% 10.
+  aggregation whose set functions count rows or take a column, none
+  DISTINCT, grouped by columns the scan reads or not at all, of a table's
+  scan, filtered or not, feeds them from the vectors (`exec/batch.rs`); a
+  filter not told to the scan judges the rows the scan's condition kept,
+  each made a row. Groups are held in the work area, given in the order
+  their first rows came; past it, the aggregation is grouped row by row
+  instead, from the start, as `exec/group.rs` spills and batches cannot
+  yet. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)
+  of a COLUMNS table some 50 times as fast, a SUM of one column 17, a
+  filter of 1% 10, a GROUP BY of 10 groups 3.3.
 *Why:* a row store suits SQL's point reads, updates and cursors, and is
 the base the other layouts build on. Logical row ids stay stable, so
 indexes never need rewriting for them, frozen or not. Columns suit scans

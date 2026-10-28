@@ -29,7 +29,7 @@ use crate::txn::TxId;
 use crate::value::Value;
 
 /// The bytes a set function's state takes in memory, near enough.
-const STATE_BYTES: usize = 64;
+pub(super) const STATE_BYTES: usize = 64;
 
 /// What a grouping groups by and computes.
 pub(super) struct Spec {
