@@ -209,8 +209,11 @@ fn what_a_declared_table_refuses_13_11() {
         "CREATE TABLE P (K INTEGER CHECK (K IN (SELECT K FROM MODULE.D)))",
     ];
     for sql in refused {
-        assert_eq!(exec(&s, sql).err(), Some(Code::SyntaxRule), "{sql}");
+        let error = s.run(sql).unwrap_err();
+        assert_eq!(error.code, Code::SyntaxRule, "{sql}");
+        assert!(error.msg.contains("declared local temporary"), "{sql}: {}", error.msg);
     }
+    s.run("CREATE DOMAIN DD AS INTEGER").unwrap();
     let tables = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'MODULE'";
     assert_eq!(count(&s, tables), 0, "GR5");
     assert_eq!(db.schema("CREATE SCHEMA \"MODULE\" AUTHORIZATION A").err().map(|e| e.code), Some(Code::SyntaxRule));

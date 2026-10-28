@@ -28,7 +28,7 @@ impl State {
 
     /// [X3.135-1986 §6.5 SR1-SR9] The description of the view `v` of the
     /// schema `auth`, its names of schema `names`.
-    fn describe_view(&self, (auth, names): (&str, &str), v: &ViewDefinition) -> Result<ViewDesc> {
+    pub(super) fn describe_view(&self, (auth, names): (&str, &str), v: &ViewDefinition) -> Result<ViewDesc> {
         if let Some(a) = v.name.auth.as_ref().filter(|a| *a != auth) {
             return Err(rule(format!("[X3.135-1986 §6.5 SR1] view {a}.{} is not in schema {auth}", v.name.ident)));
         }

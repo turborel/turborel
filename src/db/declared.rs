@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use super::schema::constraint_index_name;
 use super::{Completion, Session, State, rule};
-use crate::ast::TableDefinition;
+use crate::ast::{PrivilegeDefinition, RevokeStatement, SchemaStatement, TableDefinition};
 use crate::catalog::{Catalog, IndexDesc, QualifiedName, TableDesc, TemporaryKind};
-use crate::error::Result;
+use crate::error::{At, Result};
 use crate::lexer::kw;
 use crate::sync::lock_builtin;
 
@@ -46,6 +46,33 @@ impl Session {
         let indexes = indexes_of(&desc, st.constraint_method());
         lock_builtin(&self.temporaries.declared).push((desc, indexes));
         Ok(Completion::Success)
+    }
+
+    /// The rules of a declared table `statement` would break, checked on
+    /// `st`, the definitions with the session's declared tables, before it
+    /// is made on the published ones, which have none: no privilege is
+    /// granted or revoked on one [ISO/IEC 9075:1992 §10.3 SR1], no view
+    /// names one [§11.19 SR5], and a table refers to one only as SQL-92
+    /// lets it [§11.8 SR4, §11.9 SR3]. `object` is what it is of, its names
+    /// of schema `schema`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 for a rule it breaks, or another of the view's or the
+    /// table's.
+    pub(super) fn refuse_declared(&self, st: &State, statement: &SchemaStatement, (object, schema): (&QualifiedName, &str)) -> Result<()> {
+        if lock_builtin(&self.temporaries.declared).is_empty() {
+            return Ok(());
+        }
+        match statement {
+            SchemaStatement::Grant(PrivilegeDefinition { table, .. }) | SchemaStatement::Revoke(RevokeStatement { table, .. }) => {
+                st.object(object).map(|_| ()).or_at(table.at)
+            }
+            SchemaStatement::View(v) => st.describe_view((&object.auth, schema), v).map(|_| ()).or_at(v.name.at),
+            // [§11.8 SR4, §11.9 SR3] which tables its constraints refer to.
+            SchemaStatement::Table(t) => State::clone(st).table_described((schema, self.now.get().zone), t, None).map(|_| ()),
+            SchemaStatement::Domain(_) | SchemaStatement::Assertion(_) | SchemaStatement::AlterDomain(_) => Ok(()),
+        }
     }
 
     /// `st`, with the session's declared local temporary tables in its

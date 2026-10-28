@@ -48,13 +48,11 @@ impl State {
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 if `qn` is not a base table [SR1, SR2], or, not
+    /// SQLCODE -103 if `qn` is not a base table [SR1, SR2] (a declared
+    /// local temporary table is refused before [SR3], `drop_target`), or, not
     /// `cascade`, a view or a constraint of another table refers to it
     /// [SR4].
     fn drop_table(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
-        if self.catalog.table(qn).is_some_and(|t| t.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared)) {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 SR3] {qn} is a declared local temporary table: it goes with the session")));
-        }
         if self.catalog.table(qn).is_none() {
             let (what, clause) = if self.catalog.view(qn).is_some() { ("a view, not a base table", "SR2") } else { ("not defined", "SR1") };
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 {clause}] {qn} is {what}")));
@@ -252,7 +250,16 @@ impl Session {
     /// -103 if a schema is named in another catalog [§11.2 SR2].
     fn drop_target(&self, st: &State, object: &DropObject) -> Result<DropTarget> {
         match object {
-            DropObject::Table(table) => Ok(DropTarget::Table(self.owned(st, table, "§11.18 AR1")?)),
+            DropObject::Table(table) => {
+                let qn = self.owned(st, table, "§11.18 AR1")?;
+                // [§11.18 SR3] of the session's definitions, which hold its
+                // declared tables, as the published ones do not.
+                if st.catalog.table(&qn).is_some_and(|t| t.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared)) {
+                    let msg = format!("[ISO/IEC 9075:1992 §11.18 SR3] {qn} is a declared local temporary table: it goes with the session");
+                    return Err(rule(msg).or_at(table.at));
+                }
+                Ok(DropTarget::Table(qn))
+            }
             DropObject::View(view) => Ok(DropTarget::View(self.owned(st, view, "§11.20 AR1")?)),
             DropObject::Domain(domain) => Ok(DropTarget::Domain(self.owned(st, domain, "§11.27 AR1")?)),
             DropObject::Assertion(assertion) => Ok(DropTarget::Assertion(self.owned(st, assertion, "§11.35 AR1")?)),

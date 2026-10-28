@@ -59,6 +59,7 @@ impl Session {
         // writes without one, logged with it.
         let zone = self.now.get().zone;
         let object = self.object_of(st, statement, &schema)?;
+        self.refuse_declared(st, statement, (&object, &schema))?;
         st.acquire_name(tx, &object, LockMode::Exclusive)?;
         let mut held = vec![(object, LockMode::Exclusive)];
         loop {
@@ -185,10 +186,29 @@ impl State {
         (placed, made): (Option<&(String, u32)>, Option<&Made>),
     ) -> Result<Defined> {
         let qn = qualify(&t.name, schema);
-        self.new_object(&qn, "§11.3 SR2").or_at(t.name.at)?;
         if let Some((engine, _)) = placed {
             self.placement.insert(qn.clone(), engine.clone());
         }
+        let desc = self.table_described((schema, zone), t, placed)?;
+        let mut catalog = self.catalog.duplicate();
+        catalog.add_table(desc.clone());
+        let built = self.place_table(&mut *catalog, &desc, made)?;
+        self.catalog = Arc::from(catalog);
+        let locks = in_schema(&qn, read_by(&desc));
+        Ok(Defined { made: Some(built), placed: Some((desc.engine, desc.generation)), locks, ..Defined::default() })
+    }
+
+    /// [ISO/IEC 9075:1992 §11.3] The descriptor of base table `t` in schema
+    /// `schema`, its constraints bound, a generation after `placed`'s or
+    /// the last of its name: its rules checked, nothing made.
+    pub(super) fn table_described(
+        &mut self,
+        (schema, zone): (&str, i16),
+        t: &TableDefinition,
+        placed: Option<&(String, u32)>,
+    ) -> Result<TableDesc> {
+        let qn = qualify(&t.name, schema);
+        self.new_object(&qn, "§11.3 SR2").or_at(t.name.at)?;
         let earlier: Vec<TableDesc> = self.catalog.tables().into_iter().filter(|d| d.name.auth == qn.auth).cloned().collect();
         let keys: Vec<Vec<_>> = earlier.iter().map(|_| Vec::new()).collect();
         let (mut desc, pending) = self.describe_table((&qn.auth, schema, zone), t, &earlier, &keys).or_at(t.name.at)?;
@@ -203,12 +223,7 @@ impl State {
         // An error of a CHECK, bound from its own text, is placed at the table.
         completed.or_at(t.name.at)?;
         self.check_new_objects(std::slice::from_ref(&desc))?;
-        let mut catalog = self.catalog.duplicate();
-        catalog.add_table(desc.clone());
-        let built = self.place_table(&mut *catalog, &desc, made)?;
-        self.catalog = Arc::from(catalog);
-        let locks = in_schema(&qn, read_by(&desc));
-        Ok(Defined { made: Some(built), placed: Some((desc.engine, desc.generation)), locks, ..Defined::default() })
+        Ok(desc)
     }
 
     /// [ISO/IEC 9075:1992 §11.19] Creates view `v` in schema `schema`.
