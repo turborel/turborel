@@ -96,9 +96,6 @@ RULES.md when its design settles.
   rule violation names its table only where a privilege is refused, a
   table is not defined, or a named table has no column it names; and its
   column only in the last case, or for a privilege on a column.
-- **Names qualified by their catalog** [ISO/IEC 9075:1992 §5.4]: CAT.S.T
-  is refused (SQLCODE -900); there being one catalog, it is taken once
-  each name is checked to be of CATALOG_NAME where it is resolved.
 - **A table or view defined on its own in a schema other than the
   session's default one** is refused (SQLCODE -900, RULES.md D47): its
   stored texts are read again in its own schema, so its names would need

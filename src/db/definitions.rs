@@ -173,7 +173,7 @@ impl State {
         placed: Option<&(String, u32)>,
         made: Option<&Made>,
     ) -> Result<Dropped> {
-        let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.sql_statement()? else {
+        let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.of_definition().sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
         Ok(self.define((auth, schema), &statement, (placed, made))?.dropped)
@@ -257,7 +257,9 @@ impl State {
 /// The table the logged statement `sql` created, its names in schema
 /// `schema`, if it created one.
 pub(super) fn created(schema: &str, sql: &str) -> Option<QualifiedName> {
-    let Ok(SqlStatement::Schema { statement: SchemaStatement::Table(t), .. }) = Parser::new(sql).and_then(|mut p| p.sql_statement()) else {
+    let Ok(SqlStatement::Schema { statement: SchemaStatement::Table(t), .. }) =
+        Parser::new(sql).and_then(|p| p.of_definition().sql_statement())
+    else {
         return None;
     };
     Some(qualify(&t.name, schema))

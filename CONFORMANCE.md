@@ -188,6 +188,10 @@ restriction is lifted.
   session's authorization identifier [SR2b], or SQL-86's `CREATE SCHEMA
   AUTHORIZATION U`; its name may be qualified by the catalog's. What is in
   it is its owner's, and its unqualified names are of it.
+- **Names qualified by the catalog** [§5.4]: a table's, view's, domain's,
+  constraint's or assertion's, `CAT.S.T`, and a column reference's
+  qualifier's, `CAT.S.T.C`, or a `<qualifier>.*`'s [§6.4, §7.9], the
+  catalog being the one there is; another's is refused (SQLCODE -103).
 - **Constraints** [§11.4, §11.6–§11.9, §10.6]: NOT NULL, UNIQUE (whose
   columns may be null), PRIMARY KEY, FOREIGN KEY with MATCH FULL, PARTIAL or
   neither and every referential action, and CHECK, including CHECK with
@@ -359,8 +363,6 @@ restriction is lifted.
   EXECUTE IMMEDIATE, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE
   and positioned DELETE and UPDATE, refused (SQLCODE -900): statements
   are prepared through the API and the protocol (RULES.md D45).
-- **A name qualified by its catalog** [§5.4]: CAT.S.T, refused (SQLCODE
-  -900); there is one catalog, and a name is qualified by its schema.
 - **The module language and embedded SQL** (RULES.md D32): a parameter
   written with a colon, `:P`, refused (SQLCODE -900).
 - **Never:** character sets other than the one there is, SQL_TEXT, and
@@ -468,6 +470,7 @@ file that implements it.
 | ISO/IEC 9075:1992 §14.1 GR5 isolation level | SERIALIZABLE as itself; REPEATABLE READ as snapshot isolation; READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open; each as SERIALIZABLE on an engine that does not read below it | `db/session.rs`, `txn.rs` |
 | ISO/IEC 9075:1992 §14.1 GR6, GR7 diagnostics area limit | a statement reports one condition, its error, so any limit of 1 or more holds | `db/session.rs` |
 | ISO/IEC 9075:1992 §4.30 the initial default schema | the session's authorization identifier, for every statement the session binds | `db/session.rs` |
+| ISO/IEC 9075:1992 §5.4 SR20 which `<identifier>`s are valid `<catalog name>`s | the one catalog's, the setting CATALOG_NAME's, checked as a statement is read; a definition read again keeps the names it was checked with, so the catalog renamed, its views and constraints read as before | `parser.rs`, `db/schema.rs` |
 | ISO/IEC 9075:1992 §21.2.2 the catalog's name | the setting CATALOG_NAME, `TURBOREL` by default | `settings.rs`, `system.rs` |
 | ISO/IEC 9075:1992 §21.2.27, §21.2.28 SQL_IDENTIFIER, CHARACTER_DATA | CHARACTER(128); CHARACTER as long as the longest value the standard lists for the column, otherwise CHARACTER(4096), a longer text shown as null: of fixed length, not yet the CHARACTER VARYING the standard gives them | `system.rs`, `system/definition.rs` |
 | ISO/IEC 9075:1992 §6.1 SR2 the national character set | SQL_TEXT, the one there is: NATIONAL CHARACTER is CHARACTER | `parser/data_type.rs`, `lexer.rs` |

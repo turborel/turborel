@@ -47,7 +47,7 @@ fn on_column(text: &str, column: &str) -> String {
 /// identifier>` [ISO/IEC 9075:1992 §5.4 SR8]: so it names the same tables
 /// bound in another schema. `text` itself if it does not parse.
 pub(super) fn qualified_tables(text: &str, schema: &str) -> String {
-    let Ok(condition) = Parser::new(text).and_then(|mut p| p.check_condition()) else { return text.to_owned() };
+    let Ok(condition) = Parser::new(text).and_then(|p| p.of_definition().check_condition()) else { return text.to_owned() };
     let mut names = Vec::new();
     condition.for_each_subquery(&mut |s| s.query.table_names(&mut names));
     let mut starts: Vec<usize> = names.iter().filter(|t| t.auth.is_none()).map(|t| t.at).collect();

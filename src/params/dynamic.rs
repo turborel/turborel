@@ -77,16 +77,19 @@ impl Params {
 
     /// A parser of `sql`, a statement with these parameters: one being
     /// prepared or executed takes `<dynamic parameter specification>`s
-    /// [§6.2 SR2], any other its procedure's `<parameter name>`s.
+    /// [§6.2 SR2], any other its procedure's `<parameter name>`s; its
+    /// names in `catalog` (`Parser::in_catalog`).
     ///
     /// # Errors
     ///
     /// Those of `Parser::new`.
-    pub(crate) fn parser(&self, sql: &str, extensions: bool) -> Result<Parser> {
-        if self.dynamic.is_some() {
-            return Parser::for_prepare(sql, extensions);
-        }
-        Parser::for_procedure(sql, extensions, self.names())
+    pub(crate) fn parser(&self, sql: &str, extensions: bool, catalog: &str) -> Result<Parser> {
+        let parser = if self.dynamic.is_some() {
+            Parser::for_prepare(sql, extensions)?
+        } else {
+            Parser::for_procedure(sql, extensions, self.names())?
+        };
+        Ok(parser.in_catalog(catalog))
     }
 
     /// The type each dynamic parameter took, in order; none for one not

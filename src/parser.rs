@@ -12,9 +12,7 @@
 pub use domains::VALUE_COLUMN;
 use std::collections::HashSet;
 
-use crate::ast::{
-    ColumnName, ColumnSpecification, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName,
-};
+use crate::ast::{ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
@@ -32,6 +30,7 @@ mod dynamic;
 mod expression;
 mod interval;
 mod literal;
+mod names;
 mod primary;
 mod query;
 mod schema;
@@ -84,6 +83,23 @@ pub struct Parser {
     /// once the whole statement is read, so SQL that breaks a Format is a
     /// syntax error still (`Parser::refuse_later`).
     refused: Option<SqlError>,
+    /// How a `<catalog name>` written in a name is taken.
+    catalogs: Catalogs,
+}
+
+/// How a parser takes a `<catalog name>` written in a qualified name or a
+/// `<column reference>` [ISO/IEC 9075:1992 §5.4]: dropped once taken,
+/// there being one catalog.
+#[derive(Debug, Clone)]
+enum Catalogs {
+    /// Refused (SQLCODE -900): a parser told of no catalog.
+    Refused,
+    /// Taken if it is this one, the one catalog's name [§5.4 SR20]; else
+    /// SQLCODE -103, SQLSTATE 3D000.
+    Of(String),
+    /// Taken, whatever it is: the text of a definition, checked when it
+    /// was defined.
+    Kept,
 }
 
 fn describe(t: &Tok) -> String {
@@ -133,7 +149,19 @@ impl Parser {
         let toks = lex(src)?;
         let chars: Vec<char> = src.chars().collect();
         let end = Token { tok: Tok::End, start: chars.len(), end: chars.len() };
-        Ok(Parser { toks, end, pos: 0, depth: 0, extensions, params, dynamic: None, src: chars, in_domain: false, refused: None })
+        Ok(Parser {
+            toks,
+            end,
+            pos: 0,
+            depth: 0,
+            extensions,
+            params,
+            dynamic: None,
+            src: chars,
+            in_domain: false,
+            refused: None,
+            catalogs: Catalogs::Refused,
+        })
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6] A parser for a `<preparable
@@ -147,6 +175,24 @@ impl Parser {
         let mut parser = Self::with_extensions(src, extensions)?;
         parser.dynamic = Some(0);
         Ok(parser)
+    }
+
+    /// This parser, taking a `<catalog name>` written in a name if it is
+    /// `catalog`, the one catalog's [ISO/IEC 9075:1992 §5.4 SR20]: as a
+    /// statement is read as it is given.
+    #[must_use]
+    pub fn in_catalog(mut self, catalog: &str) -> Parser {
+        self.catalogs = Catalogs::Of(catalog.trim_end().to_owned());
+        self
+    }
+
+    /// This parser, taking any `<catalog name>` written in a name: as the
+    /// text of a definition is read again, its names checked when it was
+    /// defined, against the catalog's name then.
+    #[must_use]
+    pub fn of_definition(mut self) -> Parser {
+        self.catalogs = Catalogs::Kept;
+        self
     }
 
     /// The `<dynamic parameter specification>`s read so far, of a
@@ -306,40 +352,6 @@ impl Parser {
             return Err(SqlError::at(Code::SyntaxRule, at, format!("[X3.135-1986 §5.5 SR2] a <{what}> shall be greater than 0")));
         }
         Ok(n)
-    }
-
-    // =====================================================================
-    // [X3.135-1986 §5.4] Names
-    // =====================================================================
-
-    /// [X3.135-1986 §5.4] `<table name>` ::= \[`<authorization identifier>`.\] `<table identifier>`
-    fn table_name(&mut self) -> Result<TableName> {
-        let at = self.here();
-        let first = self.qualifier()?;
-        if self.accept_delim(delim::PERIOD) {
-            let ident = self.identifier()?;
-            // [ISO/IEC 9075:1992 §5.4] <schema name> ::= [<catalog name> .]
-            // <unqualified schema name>: a name of three parts, refused.
-            if self.is_delim(delim::PERIOD) && matches!(self.peek_at(1), Tok::Identifier(_)) {
-                self.advance();
-                self.catalog_refused(at);
-                return Ok(TableName { auth: Some(ident), ident: self.identifier()?, at });
-            }
-            Ok(TableName { auth: Some(first), ident, at })
-        } else {
-            Ok(TableName { auth: None, ident: first, at })
-        }
-    }
-
-    /// A `<table name>`'s, or a `<column reference>`'s, first part: an
-    /// `<identifier>`, or MODULE, of a `<qualified local table name>` ::=
-    /// MODULE . `<local table name>` [ISO/IEC 9075:1992 §5.4].
-    fn qualifier(&mut self) -> Result<String> {
-        if self.is_kw(kw::MODULE) && matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
-            self.advance();
-            return Ok(kw::MODULE.to_owned());
-        }
-        self.identifier()
     }
 
     // =====================================================================
@@ -538,40 +550,5 @@ impl Parser {
         let targets = self.target_list()?;
         let table_expression = self.table_expression()?;
         Ok(SqlStatement::Select { query: Box::new(QuerySpecification { distinct, select_list, table_expression }), targets })
-    }
-
-    /// [X3.135-1986 §5.7] `<column specification>` ::= \[`<qualifier>`.\] `<column name>`
-    /// `<qualifier>` ::= `<table name>` | `<correlation name>`
-    fn column_specification(&mut self) -> Result<ColumnSpecification> {
-        let at = self.here();
-        let a = self.qualifier()?;
-        if !self.accept_delim(delim::PERIOD) {
-            return Ok(ColumnSpecification { qualifier: None, column: a, at });
-        }
-        let b = self.identifier()?;
-        if !self.accept_delim(delim::PERIOD) {
-            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: None, ident: a, at }), column: b, at });
-        }
-        let c = self.identifier()?;
-        // [ISO/IEC 9075:1992 §6.4] a <column reference> of a <qualifier>
-        // with its <catalog name>: refused.
-        if self.accept_delim(delim::PERIOD) {
-            self.catalog_refused(at);
-            let d = self.identifier()?;
-            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(b), ident: c, at }), column: d, at });
-        }
-        Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(a), ident: b, at }), column: c, at })
-    }
-
-    /// SQLCODE -900 at the statement's end: a name qualified by its
-    /// `<catalog name>` [ISO/IEC 9075:1992 §5.4], valid SQL, not taken:
-    /// there is one catalog, and a name is qualified by its schema.
-    fn catalog_refused(&mut self, at: usize) {
-        let refused = SqlError::at(
-            Code::Unsupported,
-            at,
-            "[DESIGN] a name qualified by its <catalog name> is valid SQL but is not implemented: qualify it by its schema alone (RULES.md D18)",
-        );
-        self.refuse_later(refused);
     }
 }

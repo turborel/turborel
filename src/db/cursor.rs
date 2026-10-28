@@ -280,8 +280,8 @@ impl Session {
         }
     }
 
-    pub(super) fn parse_cursor(&self, sql: &str, params: &Params) -> Result<CursorSpecification> {
-        params.parser(sql, self.extensions)?.cursor_specification()
+    pub(super) fn parse_cursor(&self, st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
+        params.parser(sql, self.extensions, &st.catalog_name())?.cursor_specification()
     }
 
     pub(super) fn compile(&self, st: &State, spec: &CursorSpecification, params: &Params) -> Result<Compiled> {
@@ -396,7 +396,7 @@ impl Session {
             (c.specification.clone(), (c.insensitive, c.scroll))
         };
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
-        let spec = self.parse_cursor(&text, params)?;
+        let spec = self.parse_cursor(st, &text, params)?;
         let wanted = wanted(&spec, flags)?;
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
@@ -523,7 +523,7 @@ impl Session {
     /// `open_with`'s cursor, in the call `call`.
     fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
         let mut timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth());
-        let spec = self.parse_cursor(sql, params)?;
+        let spec = self.parse_cursor(call.state(), sql, params)?;
         if let Some(Updatability::Update(_)) = spec.updatability {
             return Err(rule(
                 "[DESIGN] an unnamed cursor is read-only: no positioned statement names it, so it is not FOR UPDATE".to_owned(),

@@ -1,8 +1,8 @@
 //! Valid SQL-92 this implementation does not take: refused as valid but
 //! not implemented (SQLCODE -900, RULES.md D18), of character sets other
 //! than SQL_TEXT, collations and translations never (D32), of dynamic SQL
-//! in SQL text and names qualified by their catalog not yet; each read in
-//! full first, so SQL that breaks a Format is a syntax error still.
+//! in SQL text not yet; each read in full first, so SQL that breaks a
+//! Format is a syntax error still.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -138,10 +138,9 @@ fn dynamic_sql_in_sql_text_is_refused() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1, §7.10, §6.7, §5.4] a
-/// direct statement may end in one semicolon; a joined table is a query on
-/// its own; TRIM takes FROM alone; a name qualified by its catalog is
-/// valid but not implemented (SQLCODE -900).
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1, §7.10, §6.7] a direct
+/// statement may end in one semicolon; a joined table is a query on its
+/// own; TRIM takes FROM alone.
 #[test]
 fn smaller_parts_of_sql_92() {
     let db = setup();
@@ -153,9 +152,6 @@ fn smaller_parts_of_sql_92() {
     assert!(s.direct("T CROSS JOIN U").is_ok(), "a joined table");
     assert!(s.prepare("T CROSS JOIN U").is_ok(), "a joined table, prepared");
     assert_eq!(rows(&s, "SELECT TRIM(FROM '  a ') FROM T WHERE ID = 1").unwrap(), ["a"]);
-    for catalog in ["SELECT ID FROM CAT.APP.T", "SELECT CAT.APP.T.ID FROM T", "SELECT CAT.APP.T.* FROM T", "DROP TABLE CAT.APP.W CASCADE"] {
-        assert_eq!(failed(&s, catalog), Code::Unsupported, "{catalog}");
-    }
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.1 SR1, §5.4] NULL and

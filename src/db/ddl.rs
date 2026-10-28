@@ -103,7 +103,7 @@ impl State {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
             Change::AlterTable { table, action } => {
-                let action = Parser::new(action)?.alter_table_action()?;
+                let action = Parser::new(action)?.of_definition().alter_table_action()?;
                 Ok(self.alter_table(table, &action, (made, None))?.0)
             }
             Change::Defined { auth, schema, sql, placed } => self.redefine((auth, schema), sql, placed.as_ref(), made),

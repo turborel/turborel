@@ -7,6 +7,8 @@ use std::path::Path;
 
 use turborel::db::{Database, Direct, OpenOptions};
 use turborel::error::Code;
+use turborel::params::Params;
+use turborel::value::Value;
 
 use crate::common::{Scratch, code, count, exec, os, rows};
 
@@ -137,4 +139,54 @@ fn owners_are_logged() {
     drop(db);
     let db = open(&dir);
     owned_by_u(&db);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR9c, SR10, SR20, §6.4,
+/// §7.9]: a name may be qualified by its catalog, the one there is, named
+/// by the setting CATALOG_NAME: a table's, a column reference's
+/// qualifier's, a `<qualifier>.*`'s, in a statement run, prepared, a
+/// cursor declared and opened, explained, or a schema defined; it names
+/// what the name without it does. Another catalog's name is refused
+/// (SQLCODE -103; in direct SQL, SQLSTATE 2A000 [§20.1 GR5]). A definition read again keeps the
+/// names it was checked with, though the catalog is renamed since.
+#[test]
+fn a_name_is_qualified_by_the_one_catalog() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA S AUTHORIZATION U CREATE TABLE TURBOREL.S.T (K INTEGER) CREATE VIEW V AS SELECT TURBOREL.S.T.K FROM TURBOREL.S.T",
+    )
+    .unwrap();
+    let s = db.session("U");
+    exec(&s, "INSERT INTO TURBOREL.S.T VALUES (1)").unwrap();
+    for sql in ["SELECT TURBOREL.S.T.K FROM TURBOREL.S.T", "SELECT TURBOREL.S.T.* FROM S.T", "SELECT K FROM S.V"] {
+        assert_eq!(rows(&s, sql), Ok(vec!["1".into()]), "{sql}");
+    }
+    assert!(s.prepare("SELECT K FROM TURBOREL.S.T WHERE K = ?").is_ok());
+    s.declare_cursor("DECLARE C CURSOR FOR SELECT K FROM TURBOREL.S.T").unwrap();
+    assert!(s.explain("SELECT K FROM TURBOREL.S.T", &Params::new()).is_ok());
+    for wrong in [
+        "SELECT K FROM OTHER.S.T",
+        "SELECT OTHER.S.T.K FROM S.T",
+        "SELECT OTHER.S.T.* FROM S.T",
+        "DROP TABLE OTHER.S.T CASCADE",
+        "CREATE VIEW OTHER.S.W AS SELECT K FROM S.T",
+    ] {
+        let failed = if wrong.starts_with("SELECT") { Err(code(&s, wrong)) } else { exec(&s, wrong).map(drop) };
+        assert_eq!(failed, Err(Code::SyntaxRule), "{wrong}");
+    }
+    assert_eq!(s.prepare("SELECT K FROM OTHER.S.T").err().map(|e| e.code), Some(Code::SyntaxRule));
+    exec(&s, "OPEN C").unwrap();
+    // A declared cursor's query is read whole as it is opened.
+    s.declare_cursor("DECLARE D CURSOR FOR SELECT K FROM OTHER.S.T").unwrap();
+    assert_eq!(exec(&s, "OPEN D"), Err(Code::SyntaxRule));
+    assert_eq!(
+        db.schema("CREATE SCHEMA R AUTHORIZATION U CREATE TABLE OTHER.R.T (K INTEGER)").err().map(|e| e.code),
+        Some(Code::SyntaxRule)
+    );
+    s.commit().unwrap();
+    db.set_setting("CATALOG_NAME", &Value::Char("SHOP".into())).unwrap();
+    let renamed = db.session("U");
+    assert_eq!(rows(&renamed, "SELECT K FROM S.V"), Ok(vec!["1".into()]), "the view as it was checked");
+    assert_eq!(rows(&renamed, "SELECT K FROM SHOP.S.T"), Ok(vec!["1".into()]));
+    assert_eq!(code(&renamed, "SELECT K FROM TURBOREL.S.T"), Code::SyntaxRule, "renamed");
 }

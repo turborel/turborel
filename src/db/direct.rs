@@ -52,7 +52,7 @@ impl Session {
 
     /// `own_schema`'s `<schema definition>` `sql`, made.
     fn schema_owned(&self, sql: &str) -> Result<Completion> {
-        let schema = Parser::new(sql)?.schema()?;
+        let schema = Parser::new(sql)?.of_definition().schema()?;
         if let Some(other) = schema.auth.as_ref().filter(|a| **a != *self.auth()) {
             return fail(
                 Code::Privilege,

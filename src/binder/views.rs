@@ -170,7 +170,7 @@ pub(crate) fn system_view_columns(db: &State, view: &SystemView) -> Result<Vec<C
 ///
 /// Its query does not bind.
 pub(crate) fn view_uses(db: &State, view: &ViewDesc) -> Result<Vec<(QualifiedName, String)>> {
-    let query = Parser::new(&view.query)?.view_query()?;
+    let query = Parser::new(&view.query)?.of_definition().view_query()?;
     let (params, uses) = (Params::new(), Uses::default());
     let cx = Context {
         horizon: &view.horizon,
@@ -213,7 +213,7 @@ pub(super) fn column_name(db: &State, name: &QualifiedName, i: usize) -> Option<
 ///
 /// The query does not bind.
 pub fn view_degree(db: &State, view: &ViewDesc) -> Result<usize> {
-    let query = Parser::new(&view.query)?.view_query()?;
+    let query = Parser::new(&view.query)?.of_definition().view_query()?;
     let params = Params::new();
     let cx =
         Context { horizon: &view.horizon, schema: &view.name.auth, ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params) };
@@ -223,7 +223,7 @@ pub fn view_degree(db: &State, view: &ViewDesc) -> Result<usize> {
 /// [X3.135-1986 §6.5 GR1] The rows of `view`: its query, bound as its
 /// owner's for `purpose`, and for an updatable view read as its base table.
 fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, now, .. }: Reader<'_>) -> Result<Source> {
-    let query = Parser::new(&view.query)?.view_query()?;
+    let query = Parser::new(&view.query)?.of_definition().view_query()?;
     let params = Params::new();
     let cx = Context {
         purpose,

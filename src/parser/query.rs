@@ -224,10 +224,10 @@ impl Parser {
             && star_after(self, 6);
         if catalog {
             // [ISO/IEC 9075:1992 §7.9] <qualifier> . * of its <catalog
-            // name>: refused.
+            // name>.
             let at = self.here();
-            self.catalog_refused(at);
-            self.identifier()?;
+            let written = self.identifier()?;
+            self.catalog_named(&written, at)?;
             self.expect_delim(delim::PERIOD)?;
         }
         if catalog || schema || (named && star_after(self, 2)) {

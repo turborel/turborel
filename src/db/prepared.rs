@@ -116,7 +116,7 @@ impl Session {
         self.emptied(("PREPARE", ""));
         let st = call.state();
         let kind = kind_of(sql)?;
-        let mut parser = crate::parser::Parser::for_prepare(sql, self.extensions)?;
+        let mut parser = crate::parser::Parser::for_prepare(sql, self.extensions)?.in_catalog(&st.catalog_name());
         let (columns, params) = match kind {
             Kind::Query => {
                 let spec = parser.cursor_specification()?;

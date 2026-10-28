@@ -41,7 +41,7 @@ impl Session {
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: bool) -> Result<Completion> {
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), sql, &self.auth());
-        let parsed = params.validate().and_then(|()| params.parser(sql, self.extensions)?.sql_statement());
+        let parsed = params.validate().and_then(|()| params.parser(sql, self.extensions, &call.state().catalog_name())?.sql_statement());
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
         if let Ok(SqlStatement::GetDiagnostics(get)) = &parsed {

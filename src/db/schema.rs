@@ -162,6 +162,12 @@ impl State {
         Ok((index, cols, built))
     }
 
+    /// The one catalog's name, the setting CATALOG_NAME [ISO/IEC 9075:1992
+    /// §5.4 SR20, §21.2.2].
+    pub(crate) fn catalog_name(&self) -> String {
+        self.settings.get(CATALOG_NAME).to_string().trim_end().to_owned()
+    }
+
     /// [X3.135-1986 §6.1] A `<schema>`. Every rule is checked before anything
     /// changes, so a failing `<schema>` has no effect [X3.135-1986 §3.3].
     /// Its owner is its AUTHORIZATION, or, naming none, `implicit`, the
@@ -170,10 +176,10 @@ impl State {
     /// placed in, for the log (RULES.md D25); and whether a privilege it
     /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15].
     pub(super) fn schema(&mut self, sql: &str, implicit: Option<&str>) -> Result<SchemaMade> {
-        let s = Parser::new(sql)?.schema()?;
-        let ours = self.settings.get(CATALOG_NAME).to_string();
-        if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours.trim_end()) {
-            let msg = format!("[ISO/IEC 9075:1992 §11.1 SR3] the one catalog is {}, not {other}", ours.trim_end());
+        let ours = self.catalog_name();
+        let s = Parser::new(sql)?.in_catalog(&ours).schema()?;
+        if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
+            let msg = format!("[ISO/IEC 9075:1992 §11.1 SR3] the one catalog is {ours}, not {other}");
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_CATALOG_NAME));
         }
         let Some(owner) = s.auth.as_deref().or(implicit).map(str::to_owned) else {

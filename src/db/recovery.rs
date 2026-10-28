@@ -341,7 +341,7 @@ impl Database {
         self.change(|st| {
             match change {
                 Change::Schema { sql, owner, engines } => {
-                    let schema = crate::parser::Parser::new(sql)?.schema()?.name;
+                    let schema = crate::parser::Parser::new(sql)?.of_definition().schema()?.name;
                     for (ident, engine) in engines {
                         st.placement.insert(QualifiedName { auth: schema.clone(), ident: ident.clone() }, engine.clone());
                     }

@@ -15,8 +15,8 @@ impl Session {
     /// Any error of parsing or binding the cursor specification.
     pub fn explain(&self, sql: &str, params: &Params) -> Result<String> {
         let call = self.enter()?;
-        let spec = self.parse_cursor(sql, params)?;
         let st = call.state();
+        let spec = self.parse_cursor(st, sql, params)?;
         let c = self.compile(st, &spec, params)?;
         // Collapse repeats: "merge_filters x2".
         let mut runs: Vec<(&str, usize)> = Vec::new();
@@ -43,8 +43,8 @@ impl Session {
     /// Any error of parsing or binding the cursor specification.
     pub fn physical_plan(&self, sql: &str, params: &Params) -> Result<String> {
         let call = self.enter()?;
-        let spec = self.parse_cursor(sql, params)?;
         let st = call.state();
+        let spec = self.parse_cursor(st, sql, params)?;
         Ok(self.compile(st, &spec, params)?.physical.explain())
     }
 }

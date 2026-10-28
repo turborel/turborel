@@ -453,15 +453,15 @@ impl Session {
     ///
     /// The declaration does not parse, or the cursor is already declared.
     pub fn declare_cursor(&self, sql: &str) -> Result<()> {
-        let _call = self.enter()?;
-        let d = Parser::new(sql)?.declare_cursor()?;
+        let call = self.enter()?;
+        let d = Parser::new(sql)?.in_catalog(&call.state().catalog_name()).declare_cursor()?;
         let mut inner = self.inner.borrow_mut();
         if inner.cursors.contains_key(&d.name) {
             return Err(rule(format!("[X3.135-1986 §8.3 SR1] cursor {} is already declared", d.name)));
         }
         // Known now only if the text parses without the opening procedure's
         // parameters; otherwise it is parsed, and any error reported, at OPEN.
-        let parsed = Parser::new(&d.specification).and_then(|mut p| p.cursor_specification()).ok();
+        let parsed = Parser::new(&d.specification).and_then(|p| p.of_definition().cursor_specification()).ok();
         let updatable = parsed.map(|c| cursor::declared_updatable(&c, (d.insensitive, d.scroll))).transpose()?;
         let declared =
             DeclaredCursor { specification: d.specification, insensitive: d.insensitive, scroll: d.scroll, updatable, open: None };

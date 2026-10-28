@@ -358,7 +358,7 @@ impl State {
     /// The CHECK `text` of `table`, bound as `check_condition` says, its
     /// column references noted in `uses`, if given.
     fn bind_check(&self, table: &QualifiedName, (text, horizon): (&str, &Horizon), uses: Option<&Uses>) -> Result<Cond> {
-        let condition = Parser::new(text)?.check_condition()?;
+        let condition = Parser::new(text)?.of_definition().check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
             correlation: None,

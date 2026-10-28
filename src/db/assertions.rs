@@ -114,7 +114,7 @@ impl State {
             return Err(rule(format!("[DESIGN] assertion {} is no CHECK", a.name)));
         };
         let sql = format!("SELECT 1 FROM (VALUES (1)) AS ASSERTED (ONE) WHERE NOT ({text})");
-        let spec = Parser::new(&sql)?.cursor_specification()?;
+        let spec = Parser::new(&sql)?.of_definition().cursor_specification()?;
         let params = Params::new();
         let owner = owner_of(&*self.catalog, &a.name.auth);
         let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: &a.name.auth, ..Context::new(self, owner, &params) };
