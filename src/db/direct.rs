@@ -13,10 +13,10 @@ impl Session {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1, §20.2] A `<direct SQL
     /// statement>`: a `<direct select statement: multiple rows>`, a
     /// `<query expression>` with an optional ORDER BY, gives its rows, a
-    /// cursor of them read as it is fetched from; a `<schema definition>`
-    /// is processed as `Database::schema` processes it, if it is the
-    /// session's own; any other statement runs as `run` runs it, and gives
-    /// its completion. It has no parameters \[§20.1 SR1\].
+    /// cursor of them read as it is fetched from; a `<schema definition>`,
+    /// if it is the session's own, is made in the session's transaction
+    /// \[§20.1 GR6b ii, iii\]; any other statement runs as `run` runs it,
+    /// and gives its completion. It has no parameters \[§20.1 SR1\].
     ///
     /// # Errors
     ///
@@ -70,6 +70,6 @@ impl Session {
                 format!("[ISO/IEC 9075:1992 §11.1 AR1] {} may create its own schema only, not {other}'s", self.auth()),
             );
         }
-        self.db.schema_of(sql, (Some(&self.auth()), Some(self.now.get().zone)))
+        self.schema_in_transaction(sql, &schema.name)
     }
 }

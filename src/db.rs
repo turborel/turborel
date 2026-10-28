@@ -92,6 +92,7 @@ mod session;
 mod settings;
 mod slow;
 mod snapshot;
+mod staged_schema;
 mod state;
 mod stores;
 mod stream;

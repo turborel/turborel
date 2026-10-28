@@ -47,10 +47,13 @@ CHECK a view of the schema, and the domains are made before the tables
 whose columns are of them. A schema definition is made whole, or not at
 all: if an element breaks a rule, none is made.
 
-Run by a session, CREATE SCHEMA is made at once, apart from the session's
-transaction: it commits nothing of that transaction, and ROLLBACK does
-not undo it. It is refused in a READ ONLY transaction, or when SET
-TRANSACTION has made the next one READ ONLY.
+Run by a session, CREATE SCHEMA is part of the session's transaction,
+and begins one if none is active: the session uses the schema at once,
+other sessions once the transaction commits, and ROLLBACK undoes it.
+Until the transaction ends, it holds the schema's name: another
+transaction creating a schema of the name waits, or is refused if its
+locking is no-wait, the default. It is refused in a READ ONLY
+transaction, or when SET TRANSACTION has made the next one READ ONLY.
 
 ## RULES
 
@@ -80,6 +83,7 @@ None, beyond rule 3; each element's own.
 | 3D000 | -103 | It names a catalog other than the one there is |
 | 2A000 | -104 | Run by a session, its AUTHORIZATION is another's |
 | 25000 | -917 | The transaction, active or next, is READ ONLY |
+| TB911 | -911 | Another transaction holds the schema's name, and locking is no-wait |
 | 0A000 | -900 | It names a character set other than SQL_TEXT |
 | 01007 | 0 | Not an error: a privilege granted was not held with grant option |
 
@@ -91,11 +95,9 @@ CREATE SCHEMA SHOP
     CREATE TABLE ITEMS (ID INTEGER PRIMARY KEY, PRICE MONEY)
     CREATE VIEW CHEAP AS SELECT ID FROM ITEMS WHERE PRICE < 10
     GRANT SELECT ON CHEAP TO PUBLIC;
-ROLLBACK;
+COMMIT;
 SELECT SCHEMA_NAME, SCHEMA_OWNER FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'SHOP';
 ```
-
-The ROLLBACK does not undo it:
 
 ```
 OK
@@ -104,6 +106,16 @@ OK
 --------------------------------------------------------------+--------------------------------------------------------------
  SHOP                                                         | ANN
 (1 row)
+```
+
+Run so with ROLLBACK in place of COMMIT, the schema is undone, and the
+query finds no row.
+
+Of a session whose transaction has created a schema HELD, not yet
+committed, another creating it:
+
+```
+turborel: SQLCODE -911 (SQLSTATE TB911): schema HELD is locked by another transaction; locking is no-wait, so the statement is rejected and undone [X3.135-1986 §7.3 GR3b]
 ```
 
 Schemas refused, run by ANN:
@@ -125,9 +137,8 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): table Z.T is not in schema Y [X3.135-19
 ISO/IEC 9075:1992 §11.1, and X3.135-1986 §6.1, whose `<schema>` is
 CREATE SCHEMA AUTHORIZATION with tables, views and privileges. Which
 privileges a schema definition needs is implementation-defined [§11.1
-AR1]: here, a session's is its own. SQL-92 makes a `<schema definition>`
-run directly part of the transaction [§20.1 GR6b iii], so ROLLBACK would
-undo it; this implementation makes it apart from the transaction.
+AR1]: here, a session's is its own. A `<schema definition>` run directly
+is part of the transaction [§20.1 GR6b ii, iii].
 
 ## SEE ALSO
 

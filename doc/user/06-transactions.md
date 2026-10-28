@@ -11,8 +11,8 @@ and seen by all, and [ROLLBACK](../sql/statements/rollback.md) ends it,
 its changes undone. A statement that fails is undone alone; the
 transaction goes on. A COMMIT once done survives a crash.
 
-Most definitions, as CREATE TABLE, run within the transaction too, and
-are undone by ROLLBACK; CREATE SCHEMA and the statements of users and
+Definitions, as CREATE SCHEMA and CREATE TABLE, run within the
+transaction too, and are undone by ROLLBACK; the statements of users and
 indexes are made at once.
 
 ## Isolation levels

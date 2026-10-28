@@ -107,6 +107,7 @@ impl State {
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None))?.0)
             }
             Change::Defined { auth, schema, zone, sql, placed } => self.redefine((auth, schema, *zone), sql, placed.as_ref(), made),
+            Change::Schema { sql, owner, engines, zone } => self.reschema((sql, owner, *zone), engines, made),
             Change::Insert { .. }
             | Change::Update { .. }
             | Change::Delete { .. }
@@ -115,7 +116,6 @@ impl State {
             | Change::StatementUndone { .. }
             | Change::Checkpoint
             | Change::Stale { .. }
-            | Change::Schema { .. }
             | Change::CreateIndex { .. }
             | Change::DropIndex { .. }
             | Change::AlterIndex { .. }
@@ -137,9 +137,10 @@ impl State {
             // Statements and transactions that began before see it no more
             // (`TableLock::check_generation`): a table altered, or created,
             // whose rows their snapshots do not see.
-            let renewed = match change {
-                Change::AlterTable { table, .. } => Some(table.clone()),
-                Change::Defined { schema, sql, placed: Some(_), .. } => super::definitions::created(schema, sql),
+            let renewed: Vec<QualifiedName> = match change {
+                Change::AlterTable { table, .. } => vec![table.clone()],
+                Change::Defined { schema, sql, placed: Some(_), .. } => super::definitions::created(schema, sql).into_iter().collect(),
+                Change::Schema { sql, engines, .. } => super::staged_schema::schema_tables(sql, engines),
                 Change::Insert { .. }
                 | Change::Update { .. }
                 | Change::Delete { .. }
@@ -148,7 +149,6 @@ impl State {
                 | Change::StatementUndone { .. }
                 | Change::Checkpoint
                 | Change::Stale { .. }
-                | Change::Schema { .. }
                 | Change::Defined { placed: None, .. }
                 | Change::CreateIndex { .. }
                 | Change::DropIndex { .. }
@@ -156,9 +156,9 @@ impl State {
                 | Change::Drop { .. }
                 | Change::Setting { .. }
                 | Change::User { .. }
-                | Change::Owner { .. } => None,
+                | Change::Owner { .. } => Vec::new(),
             };
-            if let Some(table) = renewed {
+            for table in renewed {
                 self.lock_of(&table)?.replaced(self.generation_of(&table), at);
             }
         }

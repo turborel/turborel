@@ -187,7 +187,9 @@ restriction is lifted.
   `CREATE SCHEMA S AUTHORIZATION U`, `CREATE SCHEMA S` owned by the
   session's authorization identifier [SR2b], or SQL-86's `CREATE SCHEMA
   AUTHORIZATION U`; its name may be qualified by the catalog's. What is in
-  it is its owner's, and its unqualified names are of it.
+  it is its owner's, and its unqualified names are of it. Run by a
+  session, it is part of its transaction [§20.1 GR6b ii, iii] (RULES.md
+  D33).
 - **Names qualified by the catalog** [§5.4]: a table's, view's, domain's,
   constraint's or assertion's, `CAT.S.T`, and a column reference's
   qualifier's, `CAT.S.T.C`, or a `<qualifier>.*`'s [§6.4, §7.9], the

@@ -43,11 +43,13 @@ use crate::value::Value;
 
 /// What ALTER TABLE gives the table, made once and published as it is:
 /// the storage of its new generation, if its columns change, and its
-/// indexes made new.
+/// indexes made new; or what a `<schema definition>` gives each of its
+/// tables, by name.
 #[derive(Clone, Default)]
 pub(super) struct Made {
     pub(super) storage: Option<Arc<dyn TableStorage>>,
     pub(super) indexes: Vec<(String, Arc<dyn Index>)>,
+    pub(super) tables: Vec<(QualifiedName, Made)>,
 }
 
 impl Made {
@@ -57,6 +59,12 @@ impl Made {
             storage.discard();
         }
         self.indexes.iter().for_each(|(_, ix)| ix.discard());
+        self.tables.iter().for_each(|(_, made)| made.discard());
+    }
+
+    /// What was made for table `name`, of a `<schema definition>`.
+    pub(super) fn of_table(&self, name: &QualifiedName) -> Option<&Made> {
+        self.tables.iter().find(|(n, _)| n == name).map(|(_, made)| made)
     }
 }
 
@@ -205,7 +213,11 @@ impl State {
         self.rebind_checks(qn)?;
         self.alter_views(qn, reshape, action)?;
         self.alter_privileges(qn, desc, reshape);
-        let built = Made { storage: Some(storage), indexes: indexes.into_iter().map(|(ix, structure)| (ix.name, structure)).collect() };
+        let built = Made {
+            storage: Some(storage),
+            indexes: indexes.into_iter().map(|(ix, structure)| (ix.name, structure)).collect(),
+            tables: Vec::new(),
+        };
         Ok((dropped, built))
     }
 

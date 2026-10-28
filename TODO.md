@@ -92,10 +92,6 @@ RULES.md when its design settles.
   rule violation names its table only where a privilege is refused, a
   table is not defined, or a named table has no column it names; and its
   column only in the last case, or for a privilege on a column.
-- **CREATE SCHEMA in a transaction:** run by a session, a `<schema
-  definition>` is made at once, apart from the session's transaction, so
-  ROLLBACK does not undo it; SQL-92 makes it part of the transaction
-  [§20.1 GR6b iii].
 - **CAST warnings** [§6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7, GR8]: a
   CAST that cuts a string, or pads a bit string with 0 bits, raises no
   warning, SQLSTATE 01004 or 01008, where SQL-92 raises one; a warning

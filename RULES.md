@@ -246,14 +246,17 @@ one there is, and collations.
 *Why:* one consistent language serves programs better than a choice of
 dialects; one character set keeps comparison, keys and storage simple.
 
-**D33. Schema changes are transactional.** CREATE TABLE, CREATE VIEW,
+**D33. Schema changes are transactional.** CREATE SCHEMA run by a
+session [ISO/IEC 9075:1992 §20.1 GR6b ii, iii], CREATE TABLE, CREATE VIEW,
 GRANT, REVOKE (D47), DROP SCHEMA, TABLE and VIEW, and ALTER TABLE run
 inside transactions. A transaction's changes of definitions are staged on a
 copy, made again on a newer copy if others publish meanwhile, and published
 with its commit; rollback forgets them. Each takes its table's exclusive
 lock until the transaction ends; a drop takes those of all it drops, or
 changes the definitions of, with CASCADE too, and of a schema it drops,
-which a table or view defined in the schema takes shared. Each is logged
+which a table or view defined in the schema takes shared; CREATE SCHEMA
+takes its schema's name exclusive, as `Database::schema`, the operator's,
+made at once, does while it runs. Each is logged
 under its transaction, and is made by recovery at its commit record. ALTER TABLE gives a table a new generation
 of its storage, rows copied there, so a rollback leaves the old one intact.
 A transaction that began before a change it cannot see is refused when it

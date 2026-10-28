@@ -281,10 +281,7 @@ impl Database {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }) => {
-                if replaying.replays(lsn) {
-                    self.replay_definition(&definition)?;
-                    report.definitions = report.definitions.saturating_add(1);
-                }
+                self.definition_at((lsn, tx), definition, replaying, report)?;
                 None
             }
             definition @ (Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. }) => {
@@ -321,6 +318,25 @@ impl Database {
         })
     }
 
+    /// The definition `definition`, logged at `lsn` by `tx`: made now, if
+    /// replayed; but a session's `<schema definition>`, of its transaction,
+    /// as that commits [ISO/IEC 9075:1992 §20.1 GR6b ii].
+    fn definition_at(
+        &self,
+        (lsn, tx): (Lsn, TxId),
+        definition: Change,
+        replaying: &mut Replaying,
+        report: &mut RecoveryReport,
+    ) -> Result<()> {
+        if tx != NO_TRANSACTION && matches!(definition, Change::Schema { .. }) {
+            replaying.pending.entry(tx).or_default().push(definition);
+        } else if replaying.replays(lsn) {
+            self.replay_definition(&definition)?;
+            report.definitions = report.definitions.saturating_add(1);
+        }
+        Ok(())
+    }
+
     /// Takes back one entry of `row` under `key` in index `name`, if it is
     /// there: an entry of a version a checkpoint saw awaiting collection,
     /// which the crash lost. Before `mend_indexes`, which then sets right
@@ -340,13 +356,7 @@ impl Database {
     pub(super) fn replay_definition(&self, change: &Change) -> Result<()> {
         self.change(|st| {
             match change {
-                Change::Schema { sql, owner, engines, zone } => {
-                    let schema = crate::parser::Parser::new(sql)?.of_definition().schema()?.name;
-                    for (ident, engine) in engines {
-                        st.placement.insert(QualifiedName { auth: schema.clone(), ident: ident.clone() }, engine.clone());
-                    }
-                    st.schema(sql, (Some(owner), *zone))?;
-                }
+                Change::Schema { sql, owner, engines, zone } => st.reschema((sql, owner, *zone), engines, None)?.discard(),
                 Change::CreateIndex { name, table, columns, method, options } => {
                     let spec = IndexSpec {
                         name: name.clone(),

@@ -16,7 +16,6 @@ use crate::catalog::{Actions, Catalog, ColumnDesc, IndexDesc, PrivilegeDesc, Qua
 use crate::engine::rows::ROW_STORE;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::index::Index;
-use crate::log::record::Change;
 use crate::parser::Parser;
 use crate::settings::CATALOG_NAME;
 use crate::storage::chosen;
@@ -66,10 +65,11 @@ fn rule<T>(message: String) -> Result<T> {
 impl Database {
     /// [X3.135-1986 §6.1; ISO/IEC 9075:1992 §11.1] `<schema definition>`. A
     /// schema is a persistent object created by implementor-defined means
-    /// [X3.135-1986 §3.3, §4.6]; it is not part of any transaction. Run by
-    /// the operator, outside any session, it names its AUTHORIZATION, its
-    /// owner; `Session::direct` runs one owned by the session's
-    /// authorization identifier.
+    /// [X3.135-1986 §3.3, §4.6]. Run by the operator, outside any session,
+    /// it names its AUTHORIZATION, its owner, and is made at once, in no
+    /// transaction; `Session::direct` runs one owned by the session's
+    /// authorization identifier, in the session's transaction
+    /// [ISO/IEC 9075:1992 §20.1 GR6b ii, iii].
     ///
     /// # Errors
     ///
@@ -81,32 +81,13 @@ impl Database {
     pub fn schema(&self, sql: &str) -> Result<Completion> {
         self.schema_of(sql, (None, None))
     }
-
-    /// `schema`, the `<schema definition>` `sql` owned by `implicit` if it
-    /// names no AUTHORIZATION [ISO/IEC 9075:1992 §11.1 SR2b]; a datetime it
-    /// writes without a displacement of `zone`, a session's, or else the
-    /// database's TIME_ZONE [§5.3 SR18].
-    pub(super) fn schema_of(&self, sql: &str, (implicit, zone): (Option<&str>, Option<i16>)) -> Result<Completion> {
-        // Published before a checkpoint can see its record or its tables.
-        let current = self.snapshot()?;
-        let _gate = current.tx.gate.enter();
-        self.noted(self.change(|st| {
-            let zone = zone.unwrap_or_else(|| st.now(&crate::settings::NONE).zone);
-            let (owner, engines, warned, asserted) = st.schema(sql, (implicit, zone))?;
-            st.check_new_assertions(&asserted)?;
-            // Logged before it is published (RULES.md D25).
-            st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone })?;
-            let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
-            let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(super::long_texts::of_schema);
-            Ok(super::long_texts::warned(done, sql, schema))
-        }))
-    }
 }
 
 /// What a `<schema definition>` made: its owner; each table, with the
 /// engine it was placed in; whether a privilege it would grant was not;
-/// and its assertions, to check (`db/assertions.rs`).
-pub(super) type SchemaMade = (String, Vec<(String, String)>, bool, Vec<QualifiedName>);
+/// its assertions, to check (`db/assertions.rs`); and its tables' storage
+/// and indexes.
+pub(super) type SchemaMade = (String, Vec<(String, String)>, bool, Vec<QualifiedName>, Made);
 
 impl State {
     /// \[EXTENSION\] A secondary index on `columns` of table `qn`, built over
@@ -180,7 +161,7 @@ impl State {
     /// Returns its owner, and each table it created, with the engine it was
     /// placed in, for the log (RULES.md D25); and whether a privilege it
     /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15].
-    pub(super) fn schema(&mut self, sql: &str, (implicit, zone): (Option<&str>, i16)) -> Result<SchemaMade> {
+    pub(super) fn schema(&mut self, sql: &str, (implicit, zone): (Option<&str>, i16), made: Option<&Made>) -> Result<SchemaMade> {
         let ours = self.catalog_name();
         let s = Parser::new(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
@@ -234,9 +215,9 @@ impl State {
         let with_views = mem::replace(&mut self.catalog, saved);
         let (granted, warned): (Vec<_>, Vec<_>) = defined?.into_iter().unzip();
         self.check_new_objects(&descs)?;
-        self.apply_schema(&*with_views, &descs, granted.concat())?;
+        let built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
         let asserted = self.schema_assertions(&s)?;
-        Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned.contains(&true), asserted))
+        Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned.contains(&true), asserted, built))
     }
 
     /// [ISO/IEC 9075:1992 §11.21] The domains of `<schema>` `s`, owned by
@@ -440,7 +421,13 @@ impl State {
 
     /// Records the checked tables, their storage, and an index for each UNIQUE
     /// constraint [X3.135-1986 §6.1, §6.4 GR2]. `check_new_objects` has found everything it uses.
-    fn apply_schema(&mut self, staged: &dyn Catalog, descs: &[TableDesc], privileges: Vec<PrivilegeDesc>) -> Result<()> {
+    fn apply_schema(
+        &mut self,
+        staged: &dyn Catalog,
+        descs: &[TableDesc],
+        privileges: Vec<PrivilegeDesc>,
+        made: Option<&Made>,
+    ) -> Result<Made> {
         let mut catalog = staged.duplicate();
         let tables: Vec<QualifiedName> = privileges.iter().map(|p| p.table.clone()).collect();
         catalog.grant(privileges);
@@ -448,13 +435,15 @@ impl State {
             let all = catalog.privileges(&table).into_iter().cloned().collect();
             catalog.set_privileges(&table, merged(all));
         }
+        let mut built = Made::default();
         for d in descs {
             // With its foreign keys, which the staged catalog lacks.
             catalog.replace_table(d.clone());
-            self.place_table(&mut *catalog, d, None)?;
+            let table = self.place_table(&mut *catalog, d, made.and_then(|m| m.of_table(&d.name)))?;
+            built.tables.push((d.name.clone(), table));
         }
         self.catalog = Arc::from(catalog);
-        Ok(())
+        Ok(built)
     }
 
     /// Gives table `d`, checked, its storage, its lock, and an index for
@@ -495,7 +484,7 @@ impl State {
             indexes.push((name, structure));
             catalog.add_index(index);
         }
-        Ok(Made { storage: Some(storage), indexes })
+        Ok(Made { storage: Some(storage), indexes, tables: Vec::new() })
     }
 }
 
@@ -559,7 +548,7 @@ mod tests {
         st.settings.set("UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
         assert_eq!(st.check_new_objects(&[table(ROW_STORE, true)]).err().map(|e| e.code), Some(Code::Api));
         assert_eq!(
-            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0)).err().map(|e| e.code),
+            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), None).err().map(|e| e.code),
             Some(Code::Api)
         );
         assert!(!st.catalog.schema_exists("A"), "the refused <schema> left no trace");
@@ -571,11 +560,11 @@ mod tests {
     fn apply_schema_reports_what_it_cannot_find() {
         let mut st = state();
         let catalog = Arc::clone(&st.catalog);
-        assert_eq!(st.apply_schema(&*catalog, &[table("nope", false)], vec![]).err().map(|e| e.code), Some(Code::Api));
+        assert_eq!(st.apply_schema(&*catalog, &[table("nope", false)], vec![], None).err().map(|e| e.code), Some(Code::Api));
         let mut no_method = state();
         no_method.settings.set("UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
         let other = Arc::clone(&no_method.catalog);
-        assert_eq!(no_method.apply_schema(&*other, &[table(ROW_STORE, true)], vec![]).err().map(|e| e.code), Some(Code::Api));
+        assert_eq!(no_method.apply_schema(&*other, &[table(ROW_STORE, true)], vec![], None).err().map(|e| e.code), Some(Code::Api));
     }
 
     /// Verifies: [DESIGN] `create_index` on a catalog table without storage

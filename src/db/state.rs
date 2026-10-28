@@ -353,7 +353,7 @@ mod tests {
     /// open transaction, which is returned.
     fn with_open_insert() -> (State, Txn, QualifiedName) {
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
-        st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0)).unwrap();
+        st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), None).unwrap();
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let tx = st.begin();
         st.insert_row(&tx, &name, &vec![Value::Exact(Decimal::new(1, 0))]).unwrap();
