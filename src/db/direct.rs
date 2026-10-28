@@ -25,7 +25,11 @@ impl Session {
         let tokens = lex(sql)?;
         let mut words = tokens.iter().map(|t| &t.tok);
         let (first, second) = (words.next(), words.next());
-        if matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE") | Tok::Delimiter("("))) {
+        // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
+        // name too, MODULE's: no other statement begins so.
+        let joined = matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_)))
+            || matches!((first, second), (Some(Tok::KeyWord("MODULE")), Some(Tok::Delimiter("."))));
+        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE") | Tok::Delimiter("("))) {
             return self.open_cursor(sql).map(Direct::Rows);
         }
         if matches!((first, second), (Some(Tok::KeyWord("CREATE")), Some(Tok::KeyWord("SCHEMA")))) {

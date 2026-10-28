@@ -53,6 +53,15 @@ impl Parser {
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BitString(_) => Ok(ValueExpression::Value(self.value_specification()?)),
+            // [ISO/IEC 9075:1992 §5.3, §5.4] a character string literal, or
+            // a column, of a character set.
+            Tok::Introducer(_) => {
+                if matches!(self.peek_at(1), Tok::CharacterString(_)) {
+                    Ok(ValueExpression::Value(self.value_specification()?))
+                } else {
+                    Ok(ValueExpression::Column(self.column_specification()?))
+                }
+            }
             // [ISO/IEC 9075:1992 §5.4] MODULE.T.C: a column of a declared
             // local temporary table.
             Tok::KeyWord(kw::MODULE) => Ok(ValueExpression::Column(self.column_specification()?)),
@@ -164,9 +173,7 @@ impl Parser {
 
     /// [ISO/IEC 9075:1992 §6.10] `<cast specification>` ::= CAST (`<cast
     /// operand>` AS `<cast target>`), the operand a `<value expression>`
-    /// or NULL, the target a `<data type>`.
-    ///
-    /// Not implemented: a `<domain name>` as the target.
+    /// or NULL, the target a `<data type>` or a `<domain name>`.
     fn cast_specification(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         self.expect_kw(kw::CAST)?;
@@ -183,16 +190,15 @@ impl Parser {
     /// LOWER, TRIM, POSITION, CHAR_LENGTH or CHARACTER_LENGTH,
     /// OCTET_LENGTH, BIT_LENGTH.
     ///
-    /// Not implemented: CONVERT and TRANSLATE, of character sets.
+    /// Read and refused: CONVERT and TRANSLATE, of character sets
+    /// (`Parser::conversion`).
     fn string_function(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected a <value expression>")) };
         let name = match word {
             kw::SUBSTRING | kw::UPPER | kw::LOWER | kw::TRIM | kw::POSITION | kw::OCTET_LENGTH | kw::BIT_LENGTH => word,
             kw::CHAR_LENGTH | kw::CHARACTER_LENGTH => kw::CHAR_LENGTH,
-            kw::CONVERT | kw::TRANSLATE => {
-                return Err(self.unsupported(&format!("[ISO/IEC 9075:1992 §6.6, §6.7] {word}")));
-            }
+            kw::CONVERT | kw::TRANSLATE => return self.conversion(),
             _ => return Err(self.syntax("expected a <value expression>")),
         };
         self.advance();
@@ -240,6 +246,10 @@ impl Parser {
                 c
             };
             return Ok(vec![literal(w), character, self.value_expression()?]);
+        }
+        // [§6.7] FROM with neither: BOTH [SR6b] and a space [SR6c].
+        if self.accept_kw(kw::FROM) {
+            return Ok(vec![literal(kw::BOTH), literal(" "), self.value_expression()?]);
         }
         let first = self.value_expression()?;
         if self.accept_kw(kw::FROM) {

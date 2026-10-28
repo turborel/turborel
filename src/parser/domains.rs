@@ -31,6 +31,8 @@ impl Parser {
         while self.is_kw(kw::CONSTRAINT) || self.is_kw(kw::CHECK) {
             constraints.push(self.domain_constraint()?);
         }
+        // [<collate clause>]: refused.
+        self.collate_clause()?;
         Ok(DomainDefinition { name, data_type, default, constraints })
     }
 

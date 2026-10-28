@@ -43,6 +43,8 @@ impl Parser {
         } else {
             SortColumn::Column(self.column_specification()?)
         };
+        // [ISO/IEC 9075:1992 §13.1] [<collate clause>]: refused.
+        self.collate_clause()?;
         let descending = if self.accept_kw(kw::DESC) {
             true
         } else {
@@ -214,11 +216,25 @@ impl Parser {
         let period_at = |p: &Self, n: usize| matches!(p.peek_at(n), Tok::Delimiter(delim::PERIOD));
         let named = matches!(self.peek(), Tok::Identifier(_)) && period_at(self, 1);
         let schema = named && matches!(self.peek_at(2), Tok::Identifier(_)) && period_at(self, 3) && star_after(self, 4);
-        if schema || (named && star_after(self, 2)) {
+        let catalog = named
+            && matches!(self.peek_at(2), Tok::Identifier(_))
+            && period_at(self, 3)
+            && matches!(self.peek_at(4), Tok::Identifier(_))
+            && period_at(self, 5)
+            && star_after(self, 6);
+        if catalog {
+            // [ISO/IEC 9075:1992 §7.9] <qualifier> . * of its <catalog
+            // name>: refused.
+            let at = self.here();
+            self.catalog_refused(at);
+            self.identifier()?;
+            self.expect_delim(delim::PERIOD)?;
+        }
+        if catalog || schema || (named && star_after(self, 2)) {
             let at = self.here();
             let first = self.identifier()?;
             self.expect_delim(delim::PERIOD)?;
-            let qualifier = if schema {
+            let qualifier = if schema || catalog {
                 let ident = self.identifier()?;
                 self.expect_delim(delim::PERIOD)?;
                 TableName { auth: Some(first), ident, at }
@@ -264,9 +280,13 @@ impl Parser {
         let mut group_by = Vec::new();
         if self.accept_kw(kw::GROUP) {
             self.expect_kw(kw::BY)?;
+            // [ISO/IEC 9075:1992 §7.7] <grouping column reference> ::=
+            // <column reference> [<collate clause>]: refused.
             group_by.push(self.column_specification()?);
+            self.collate_clause()?;
             while self.accept_delim(delim::COMMA) {
                 group_by.push(self.column_specification()?);
+                self.collate_clause()?;
             }
         }
         // [X3.135-1986 §5.23] <having clause> ::= HAVING <search condition>
@@ -412,6 +432,7 @@ impl Parser {
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BitString(_)
+            | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => None,
         })

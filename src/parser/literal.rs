@@ -49,6 +49,7 @@ impl Parser {
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BitString(_)
+            | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => return None,
         };
@@ -78,6 +79,11 @@ impl Parser {
         if self.at_interval_literal() {
             return self.interval_literal();
         }
+        // [ISO/IEC 9075:1992 §5.3] <introducer><character set specification>
+        // before a <character string literal>.
+        if matches!(self.peek(), Tok::Introducer(_)) && matches!(self.peek_at(1), Tok::CharacterString(_)) {
+            self.introducer();
+        }
         let mut negative = false;
         if self.sign_attached() {
             negative = self.is_delim(delim::MINUS);
@@ -96,7 +102,9 @@ impl Parser {
                 let f = parse_approximate(&t, at)?;
                 Literal::Approximate(if negative { -f } else { f })
             }
-            Tok::KeyWord(_) | Tok::Identifier(_) | Tok::Delimiter(_) | Tok::End => return Err(self.syntax("expected a <literal>")),
+            Tok::KeyWord(_) | Tok::Identifier(_) | Tok::Introducer(_) | Tok::Delimiter(_) | Tok::End => {
+                return Err(self.syntax("expected a <literal>"));
+            }
         };
         self.advance();
         Ok(lit)

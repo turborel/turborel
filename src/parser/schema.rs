@@ -31,6 +31,14 @@ impl Parser {
             (None, Some(auth)) => (None, auth.clone()),
             (None, None) => return Err(self.syntax("expected a <schema name> or AUTHORIZATION")),
         };
+        // [§11.1] <schema character set specification> ::= DEFAULT
+        // CHARACTER SET <character set specification>: SQL_TEXT's taken.
+        if self.accept_kw(kw::DEFAULT) {
+            if !self.is_kw(kw::CHARACTER) {
+                return Err(self.syntax("expected CHARACTER SET"));
+            }
+            self.character_set_clause()?;
+        }
 
         // <schema element> ::= <table definition> | <view definition> | <privilege definition>
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -42,6 +50,13 @@ impl Parser {
             }
             if !self.is_kw(kw::CREATE) {
                 break;
+            }
+            // [§11.1] a character set, collation or translation
+            // definition: read, then refused.
+            if matches!(self.peek_at(1), Tok::KeyWord(kw::CHARACTER | kw::COLLATION | kw::TRANSLATION)) {
+                self.advance();
+                self.character_set_definition()?;
+                continue;
             }
             if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
                 views.push(self.view_definition()?);
@@ -255,6 +270,8 @@ impl Parser {
         while self.at_column_constraint() {
             constraints.push(self.column_constraint()?);
         }
+        // [ISO/IEC 9075:1992 §11.4] [<collate clause>]: refused.
+        self.collate_clause()?;
         Ok(ColumnDefinition { name, at, data_type, default, constraints })
     }
 
@@ -343,6 +360,12 @@ impl Parser {
     /// \[TABLE\] `<table name>`, of those implemented.
     fn object_name(&mut self) -> Result<(TableName, bool)> {
         self.expect_kw(kw::ON)?;
+        let at = self.here();
+        // A collation, character set or translation: refused as the
+        // statement ends.
+        if self.character_set_object()? {
+            return Ok((TableName { auth: None, ident: String::new(), at }, true));
+        }
         if self.accept_kw(kw::DOMAIN) {
             return Ok((self.table_name()?, true));
         }

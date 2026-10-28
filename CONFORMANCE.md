@@ -153,7 +153,13 @@ restriction is lifted.
 - **Identifiers and key words** [§5.2]: SQL-92's reserved words are the key
   words, in any case; regular identifiers are folded to upper case, up to
   128 characters; delimited identifiers.
-- **Literals** [§5.3]: empty and continued string literals.
+- **Literals** [§5.3]: empty and continued string literals; an
+  `<introducer>` naming SQL_TEXT, of a literal or an identifier [§5.4].
+- **Statements** [§20.1]: a direct statement ends in a semicolon, or none.
+- **Valid SQL not implemented** (RULES.md D18): each construct of SQL-92
+  not taken is read by its Format in full and refused with SQLCODE -900,
+  naming what is not implemented; SQL that breaks a Format is a syntax
+  error (SQLCODE -102), whatever it names.
 - **SQLSTATE** [§22.1] beside every SQLCODE, with its subclass where the
   standard gives one.
 
@@ -340,10 +346,21 @@ restriction is lifted.
   own in a schema other than the session's default one (RULES.md D47).
 - **Connections and sessions** [§15, §16]: CONNECT, SET CONNECTION,
   DISCONNECT, SET SESSION AUTHORIZATION. They come with the server.
-- **Never:** character sets other than the one there is, and collations:
-  CONVERT, TRANSLATE, COLLATE, and their definitions (RULES.md D32). SET
-  CATALOG (there is one catalog) and SET NAMES (there is one character
-  set).
+- **Dynamic SQL in SQL text** [§17]: ALLOCATE and DEALLOCATE DESCRIPTOR,
+  GET and SET DESCRIPTOR, PREPARE, DEALLOCATE PREPARE, DESCRIBE, EXECUTE,
+  EXECUTE IMMEDIATE, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE
+  and positioned DELETE and UPDATE, refused (SQLCODE -900): statements
+  are prepared through the API and the protocol (RULES.md D45).
+- **A name qualified by its catalog** [§5.4]: CAT.S.T, refused (SQLCODE
+  -900); there is one catalog, and a name is qualified by its schema.
+- **The module language and embedded SQL** (RULES.md D32): a parameter
+  written with a colon, `:P`, refused (SQLCODE -900).
+- **Never:** character sets other than the one there is, SQL_TEXT, and
+  collations and translations (RULES.md D32): CHARACTER SET of another,
+  its `<introducer>`, COLLATE, CONVERT, TRANSLATE, CREATE and DROP of a
+  character set, collation or translation, a privilege on one, a schema's
+  DEFAULT CHARACTER SET of another, and SET NAMES, each refused (SQLCODE
+  -900). SET CATALOG (there is one catalog).
 
 ---
 

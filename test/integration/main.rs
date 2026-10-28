@@ -86,6 +86,7 @@ mod privileges;
 mod queries;
 mod query_expressions;
 mod recovery;
+mod refusals;
 mod reopen;
 mod revoke;
 mod rowstore;

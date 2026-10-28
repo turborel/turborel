@@ -93,9 +93,8 @@ impl Parser {
     /// [ISO/IEC 9075:1992 §8.1] `<predicate>` ::= `<comparison predicate>` |
     /// `<between predicate>` | `<in predicate>` | `<like predicate>` |
     /// `<null predicate>` | `<quantified comparison predicate>` | `<exists
-    /// predicate>` | `<unique predicate>` | `<match predicate>`
-    ///
-    /// Not implemented: `<overlaps predicate>`.
+    /// predicate>` | `<unique predicate>` | `<match predicate>` | `<overlaps
+    /// predicate>`
     fn predicate(&mut self) -> Result<Predicate> {
         // [§8.8] <exists predicate> ::= EXISTS <table subquery>
         if self.accept_kw(kw::EXISTS) {
@@ -154,15 +153,25 @@ impl Parser {
     /// subquery>`. A list has two elements at least: one in parentheses is
     /// a `<value expression>`. A `<row subquery>` is read as a `<scalar
     /// subquery>`, a row of the subquery's degree (`binder/predicates.rs`).
-    ///
-    /// Not implemented: NULL and DEFAULT as elements outside a VALUES list.
+    /// NULL and DEFAULT are elements only of an INSERT's VALUES [SR1].
     fn row_value(&mut self) -> Result<RowValue> {
         let start = self.pos;
         if let Some(list) = self.row_list()? {
             return Ok(list);
         }
         self.pos = start;
-        Ok(vec![self.value_expression()?])
+        Ok(vec![self.predicate_element()?])
+    }
+
+    /// A `<row value constructor element>` of a predicate's row: a `<value
+    /// expression>`. NULL and DEFAULT are elements only of a query
+    /// expression simply contained in an INSERT [ISO/IEC 9075:1992 §7.1
+    /// SR1], and refused here (SQLCODE -103).
+    fn predicate_element(&mut self) -> Result<ValueExpression> {
+        if self.is_kw(kw::NULL) || self.is_kw(kw::DEFAULT) {
+            return Err(self.rule("[ISO/IEC 9075:1992 §7.1 SR1] NULL and DEFAULT are row values of an INSERT's query expression alone"));
+        }
+        self.value_expression()
     }
 
     /// (`<row value constructor list>`), if a list of two elements or more
@@ -171,13 +180,16 @@ impl Parser {
         if !self.accept_delim(delim::LEFT_PAREN) || self.is_kw(kw::SELECT) {
             return Ok(None);
         }
+        if self.is_kw(kw::NULL) || self.is_kw(kw::DEFAULT) {
+            return self.predicate_element().map(|_| None);
+        }
         let Ok(first) = self.value_expression() else { return Ok(None) };
         if !self.accept_delim(delim::COMMA) {
             return Ok(None);
         }
-        let mut values = vec![first, self.value_expression()?];
+        let mut values = vec![first, self.predicate_element()?];
         while self.accept_delim(delim::COMMA) {
-            values.push(self.value_expression()?);
+            values.push(self.predicate_element()?);
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(Some(values))
@@ -198,6 +210,7 @@ impl Parser {
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BitString(_)
+            | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected a <comp op>")),
         };
@@ -235,6 +248,7 @@ impl Parser {
                 | Tok::ApproximateNumeric(_)
                 | Tok::CharacterString(_)
                 | Tok::BitString(_)
+                | Tok::Introducer(_)
                 | Tok::Delimiter(_) => {}
             }
             if depth == 0 {
@@ -359,10 +373,16 @@ impl Parser {
                 return Err(self.rule("[X3.135-1986 §5.9 SR2] the token after a monadic operator shall not begin with + or -"));
             }
             let primary = self.qualified_primary()?;
-            return Ok(ValueExpression::Monadic(sign, Box::new(self.time_zone(primary)?)));
+            let factor = self.time_zone(primary)?;
+            self.collate_clause()?;
+            return Ok(ValueExpression::Monadic(sign, Box::new(factor)));
         }
         let primary = self.qualified_primary()?;
-        self.time_zone(primary)
+        let factor = self.time_zone(primary)?;
+        // [ISO/IEC 9075:1992 §6.13] <character factor> ::= <character
+        // primary> [<collate clause>]: refused.
+        self.collate_clause()?;
+        Ok(factor)
     }
 
     /// A `<primary>`, with the `<interval qualifier>` that may follow it

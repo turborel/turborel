@@ -205,9 +205,14 @@ leaving an operand unevaluated. So results never depend on the plan.
 
 **D18. A limit the standard does not set is not a syntax error.** Valid SQL
 beyond one of this implementation's limits gets SQLCODE -900 ("valid, but
-not processed"), not -103. The limits are listed in CONFORMANCE.md.
+not processed"), not -103. The limits are listed in CONFORMANCE.md. So
+does valid SQL not implemented, never (D32) or not yet: the parser reads
+its Format in full, and refuses it once the statement is read whole
+(`Parser::refuse_later`), so SQL that breaks a Format is a syntax error
+(-102) still.
 *Why:* -103 claims the statement breaks a Syntax Rule, which it does not,
-and §3.4 requires conforming SQL to be processed.
+and §3.4 requires conforming SQL to be processed; -102 claims it is not
+SQL.
 
 **D19. A failed undo damages its table.** The statement or ROLLBACK
 reports SQLCODE -914, naming each table and its failure, and every later

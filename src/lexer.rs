@@ -116,6 +116,9 @@ pub mod delim {
     /// character>`, so a `<delimiter token>` [§5.2], and the `<dynamic
     /// parameter specification>` [§6.2].
     pub const QUESTION: &str = "?";
+    /// [ISO/IEC 9075:1992 §5.1, §20.1] The semicolon: after a direct SQL
+    /// statement.
+    pub const SEMICOLON: &str = ";";
 }
 
 /// Every `<delimiter token>` but `<character string literal>`, longest first
@@ -138,6 +141,7 @@ const DELIMITERS: &[&str] = &[
     delim::MINUS,
     delim::SOLIDUS,
     delim::QUESTION,
+    delim::SEMICOLON,
 ];
 
 /// The quote that delimits a `<character string literal>` [X3.135-1986 §5.2].
@@ -170,6 +174,11 @@ pub enum Tok {
     CharacterString(String),
     /// The value of a `<bit string literal>` or a `<hex string literal>`.
     BitString(Bits),
+    /// [ISO/IEC 9075:1992 §5.3, §5.4] `<introducer>` `<character set
+    /// specification>`: the character set's name, upper case, its schema's
+    /// before a period if written, before a `<character string literal>`
+    /// or an `<identifier>`.
+    Introducer(String),
     /// A `<delimiter token>` other than a `<character string literal>`.
     Delimiter(&'static str),
     /// The end of the input.
@@ -328,6 +337,9 @@ impl Scanner {
         if matches!(first, 'B' | 'b' | 'X' | 'x') && self.peek(1) == Some(QUOTE) {
             return self.bit_string(first);
         }
+        if first == '_' && self.next_is(1, |c| c.is_ascii_alphabetic()) {
+            return Ok(self.introducer());
+        }
         if is_identifier_start(first) {
             self.regular_identifier()
         } else if is_digit(first) || (first == '.' && self.next_is(1, is_digit)) {
@@ -361,6 +373,22 @@ impl Scanner {
         }
         self.identifier_length(start, length)?;
         Ok(Tok::Identifier(word))
+    }
+
+    /// [ISO/IEC 9075:1992 §5.3, §5.4] `<introducer>` `<character set
+    /// specification>`: `_`, then a `<character set name>` ::= \[`<schema
+    /// name>` .\] `<SQL language identifier>`, simple Latin letters, digits
+    /// and underscores; in upper case.
+    fn introducer(&mut self) -> Tok {
+        self.advance(1);
+        let start = self.at;
+        let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        self.skip_while(part);
+        while self.peek(0) == Some('.') && self.next_is(1, |c| c.is_ascii_alphabetic()) {
+            self.advance(1);
+            self.skip_while(part);
+        }
+        Tok::Introducer(self.text(start).to_ascii_uppercase())
     }
 
     /// [ISO/IEC 9075:1992 §5.2] `<delimited identifier>` ::= `<double quote>`

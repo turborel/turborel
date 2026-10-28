@@ -48,6 +48,14 @@ impl Parser {
             self.advance();
             return Ok(SqlStatement::SetTransaction(self.transaction_modes()?));
         }
+        if self.next_is_kw(kw::DESCRIPTOR) {
+            self.advance();
+            return self.descriptor_statement(false);
+        }
+        if self.next_is_kw(kw::NAMES) {
+            self.advance();
+            return self.set_names();
+        }
         if self.next_is_kw(kw::TIME) {
             self.advance();
             return self.set_time_zone();
@@ -151,6 +159,9 @@ impl Parser {
     /// [ISO/IEC 9075:1992 §6.2] `<simple value specification>` ::=
     /// `<parameter name>` | `<literal>`.
     pub(super) fn simple_value_specification(&mut self) -> Result<ValueSpecification> {
+        if self.is_delim(delim::COLON) {
+            return Err(self.unsupported("<variable specification> (embedded SQL)"));
+        }
         if self.at_parameter() {
             return Ok(ValueSpecification::Parameter(self.parameter_specification()?));
         }

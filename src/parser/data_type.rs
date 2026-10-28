@@ -18,7 +18,14 @@ impl Parser {
         };
         let at = self.here();
         match kw {
-            kw::CHARACTER | kw::CHAR | kw::VARCHAR | kw::NCHAR => self.character_string_type(),
+            kw::CHARACTER | kw::CHAR | kw::VARCHAR => {
+                let t = self.character_string_type()?;
+                // [ISO/IEC 9075:1992 §6.1] <character string type> [CHARACTER
+                // SET <character set specification>]: SQL_TEXT's taken.
+                self.character_set_clause()?;
+                Ok(t)
+            }
+            kw::NCHAR => self.character_string_type(),
             // [ISO/IEC 9075:1992 §6.1 SR2] NATIONAL CHARACTER is CHARACTER of
             // the national character set, SQL_TEXT, the one there is.
             kw::NATIONAL => {

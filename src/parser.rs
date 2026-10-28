@@ -13,19 +13,21 @@ pub use domains::VALUE_COLUMN;
 use std::collections::HashSet;
 
 use crate::ast::{
-    ColumnName, ColumnSpecification, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SetClause, SqlStatement,
-    TableName, UpdateSource,
+    ColumnName, ColumnSpecification, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
+mod charsets;
 mod constraints;
 mod cursor;
+mod data_statements;
 mod data_type;
 mod datetime;
 mod ddl;
 mod diagnostics;
 mod domains;
+mod dynamic;
 mod expression;
 mod interval;
 mod literal;
@@ -77,6 +79,10 @@ pub struct Parser {
     /// In a domain constraint, where VALUE may be written [ISO/IEC
     /// 9075:1992 §6.2 SR5].
     in_domain: bool,
+    /// The first refusal of valid SQL not implemented (SQLCODE -900), given
+    /// once the whole statement is read, so SQL that breaks a Format is a
+    /// syntax error still (`Parser::refuse_later`).
+    refused: Option<SqlError>,
 }
 
 fn describe(t: &Tok) -> String {
@@ -85,6 +91,7 @@ fn describe(t: &Tok) -> String {
         Tok::Identifier(s) | Tok::ExactNumeric(s) | Tok::ApproximateNumeric(s) => s.clone(),
         Tok::CharacterString(s) => format!("'{s}'"),
         Tok::BitString(b) => format!("B'{b}'"),
+        Tok::Introducer(name) => format!("_{name}"),
         Tok::Delimiter(d) => format!("\"{d}\""),
         Tok::End => "end of statement".into(),
     }
@@ -125,7 +132,7 @@ impl Parser {
         let toks = lex(src)?;
         let chars: Vec<char> = src.chars().collect();
         let end = Token { tok: Tok::End, start: chars.len(), end: chars.len() };
-        Ok(Parser { toks, end, pos: 0, depth: 0, extensions, params, dynamic: None, src: chars, in_domain: false })
+        Ok(Parser { toks, end, pos: 0, depth: 0, extensions, params, dynamic: None, src: chars, in_domain: false, refused: None })
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6] A parser for a `<preparable
@@ -220,8 +227,21 @@ impl Parser {
         text.trim_end().to_owned()
     }
 
-    fn end(&self) -> Result<()> {
-        if *self.peek() == Tok::End { Ok(()) } else { Err(self.syntax("expected end of statement")) }
+    /// The end of a statement: \[ISO/IEC 9075:1992 §20.1\] after one
+    /// semicolon, if written; then the refusal of valid SQL not implemented
+    /// read in it, if any (`refuse_later`).
+    fn end(&mut self) -> Result<()> {
+        self.accept_delim(delim::SEMICOLON);
+        if *self.peek() != Tok::End {
+            return Err(self.syntax("expected end of statement"));
+        }
+        self.refused.take().map_or(Ok(()), Err)
+    }
+
+    /// Refuses the statement as valid SQL not implemented with `e`, once it
+    /// is read whole, unless it breaks a Format first: the first such.
+    fn refuse_later(&mut self, e: SqlError) {
+        self.refused.get_or_insert(e);
     }
 
     /// [X3.135-1986 §5.3] `<identifier>`
@@ -230,6 +250,15 @@ impl Parser {
             Tok::Identifier(s) => {
                 self.advance();
                 Ok(s)
+            }
+            // [ISO/IEC 9075:1992 §5.4] <identifier> ::= [<introducer>
+            // <character set specification>] <actual identifier>.
+            Tok::Introducer(_) => {
+                if !matches!(self.peek_at(1), Tok::Identifier(_)) {
+                    return Err(self.syntax("expected an <identifier> after the <introducer>"));
+                }
+                self.introducer();
+                self.identifier()
             }
             Tok::KeyWord(_)
             | Tok::ExactNumeric(_)
@@ -262,6 +291,7 @@ impl Parser {
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BitString(_)
+            | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => Err(self.syntax("expected an <unsigned integer>")),
         }
@@ -287,6 +317,13 @@ impl Parser {
         let first = self.qualifier()?;
         if self.accept_delim(delim::PERIOD) {
             let ident = self.identifier()?;
+            // [ISO/IEC 9075:1992 §5.4] <schema name> ::= [<catalog name> .]
+            // <unqualified schema name>: a name of three parts, refused.
+            if self.is_delim(delim::PERIOD) && matches!(self.peek_at(1), Tok::Identifier(_)) {
+                self.advance();
+                self.catalog_refused(at);
+                return Ok(TableName { auth: Some(ident), ident: self.identifier()?, at });
+            }
             Ok(TableName { auth: Some(first), ident, at })
         } else {
             Ok(TableName { auth: None, ident: first, at })
@@ -408,6 +445,9 @@ impl Parser {
     /// [X3.135-1986 §5.6] `<target specification>` ::= `<parameter specification>`
     /// (not implemented: `<variable specification>`, which is embedded SQL)
     fn target_specification(&mut self) -> Result<ParameterSpecification> {
+        if self.is_delim(delim::COLON) {
+            return Err(self.unsupported("<variable specification> (embedded SQL)"));
+        }
         if !matches!(self.peek(), Tok::Identifier(_)) {
             return Err(self.syntax("expected a <target specification>"));
         }
@@ -426,16 +466,11 @@ impl Parser {
     /// belongs to the module.
     pub fn sql_statement(&mut self) -> Result<SqlStatement> {
         let stmt = match self.peek() {
-            Tok::KeyWord(kw::CLOSE) => {
-                // [X3.135-1986 §8.1] CLOSE <cursor name>
-                self.advance();
-                SqlStatement::Close(self.identifier()?)
-            }
-            Tok::KeyWord(kw::OPEN) => {
-                // [X3.135-1986 §8.8] OPEN <cursor name>
-                self.advance();
-                SqlStatement::Open(self.identifier()?)
-            }
+            Tok::KeyWord(kw::CLOSE | kw::OPEN) => self.open_or_close()?,
+            // [ISO/IEC 9075:1992 §17] dynamic SQL in SQL text: refused.
+            Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
+            Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,
+
             Tok::KeyWord(kw::COMMIT) => {
                 // [X3.135-1986 §8.2] COMMIT WORK; [ISO/IEC 9075:1992 §14.3] WORK optional.
                 self.advance();
@@ -450,7 +485,14 @@ impl Parser {
             }
             Tok::KeyWord(kw::SET) => self.set_statement()?,
             Tok::KeyWord(kw::FETCH) => self.fetch_statement()?,
-            Tok::KeyWord(kw::GET) => SqlStatement::GetDiagnostics(self.get_diagnostics()?),
+            Tok::KeyWord(kw::GET) => {
+                if self.next_is_kw(kw::DESCRIPTOR) {
+                    self.advance();
+                    self.descriptor_statement(true)?
+                } else {
+                    SqlStatement::GetDiagnostics(self.get_diagnostics()?)
+                }
+            }
             Tok::KeyWord(kw::INSERT) => return Ok(SqlStatement::Insert(self.insert_statement()?)),
             Tok::KeyWord(kw::DELETE) => self.delete_statement()?,
             Tok::KeyWord(kw::UPDATE) => self.update_statement()?,
@@ -466,64 +508,12 @@ impl Parser {
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
             | Tok::BitString(_)
+            | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected an <SQL statement> [X3.135-1986 §7.3]")),
         };
         self.end()?;
         Ok(stmt)
-    }
-
-    /// [X3.135-1986 §8.4, §8.5] DELETE FROM `<table name>`
-    ///     {WHERE CURRENT OF `<cursor name>` | \[WHERE `<search condition>`\]}
-    fn delete_statement(&mut self) -> Result<SqlStatement> {
-        self.expect_kw(kw::DELETE)?;
-        self.expect_kw(kw::FROM)?;
-        let table = self.table_name()?;
-        if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::DeleteSearched { table, where_clause: None });
-        }
-        if self.accept_kw(kw::CURRENT) {
-            self.expect_kw(kw::OF)?;
-            return Ok(SqlStatement::DeletePositioned { table, cursor: self.identifier()? });
-        }
-        Ok(SqlStatement::DeleteSearched { table, where_clause: Some(self.search_condition()?) })
-    }
-
-    /// [X3.135-1986 §8.11, §8.12] UPDATE `<table name>` SET `<set clause>` \[{,`<set clause>`}...\]
-    ///     {WHERE CURRENT OF `<cursor name>` | \[WHERE `<search condition>`\]}
-    fn update_statement(&mut self) -> Result<SqlStatement> {
-        self.expect_kw(kw::UPDATE)?;
-        let table = self.table_name()?;
-        self.expect_kw(kw::SET)?;
-        let mut set = vec![self.set_clause()?];
-        while self.accept_delim(delim::COMMA) {
-            set.push(self.set_clause()?);
-        }
-        if !self.accept_kw(kw::WHERE) {
-            return Ok(SqlStatement::UpdateSearched { table, set, where_clause: None });
-        }
-        if self.accept_kw(kw::CURRENT) {
-            self.expect_kw(kw::OF)?;
-            return Ok(SqlStatement::UpdatePositioned { table, set, cursor: self.identifier()? });
-        }
-        Ok(SqlStatement::UpdateSearched { table, set, where_clause: Some(self.search_condition()?) })
-    }
-
-    /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` =
-    /// `<update source>`, which is `<value expression>` | NULL | DEFAULT
-    /// [ISO/IEC 9075:1992 §13.9]; `<object column>` ::= `<column name>`
-    fn set_clause(&mut self) -> Result<SetClause> {
-        let at = self.here();
-        let column = self.identifier()?;
-        self.expect_delim(delim::EQUALS)?;
-        let value = if self.accept_kw(kw::NULL) {
-            UpdateSource::Null
-        } else if self.accept_kw(kw::DEFAULT) {
-            UpdateSource::Default
-        } else {
-            UpdateSource::Value(self.value_expression()?)
-        };
-        Ok(SetClause { column, value, at })
     }
 
     /// [X3.135-1986 §8.10] SELECT \[ALL | DISTINCT\] `<select list>`
@@ -559,6 +549,25 @@ impl Parser {
             return Ok(ColumnSpecification { qualifier: Some(TableName { auth: None, ident: a, at }), column: b, at });
         }
         let c = self.identifier()?;
+        // [ISO/IEC 9075:1992 §6.4] a <column reference> of a <qualifier>
+        // with its <catalog name>: refused.
+        if self.accept_delim(delim::PERIOD) {
+            self.catalog_refused(at);
+            let d = self.identifier()?;
+            return Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(b), ident: c, at }), column: d, at });
+        }
         Ok(ColumnSpecification { qualifier: Some(TableName { auth: Some(a), ident: b, at }), column: c, at })
+    }
+
+    /// SQLCODE -900 at the statement's end: a name qualified by its
+    /// `<catalog name>` [ISO/IEC 9075:1992 §5.4], valid SQL, not taken:
+    /// there is one catalog, and a name is qualified by its schema.
+    fn catalog_refused(&mut self, at: usize) {
+        let refused = SqlError::at(
+            Code::Unsupported,
+            at,
+            "[DESIGN] a name qualified by its <catalog name> is valid SQL but is not implemented: qualify it by its schema alone (RULES.md D18)",
+        );
+        self.refuse_later(refused);
     }
 }

@@ -80,7 +80,10 @@ fn kind_of(sql: &str) -> Result<Kind> {
     let tokens = lex(sql)?;
     let mut words = tokens.iter().map(|t| &t.tok);
     Ok(match (words.next(), words.next()) {
-        (Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE) | Tok::Delimiter("(")), _) => Kind::Query,
+        // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
+        // name too, MODULE's: no other statement begins so.
+        (Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE) | Tok::Delimiter("(") | Tok::Identifier(_) | Tok::Introducer(_)), _)
+        | (Some(Tok::KeyWord(kw::MODULE)), Some(Tok::Delimiter("."))) => Kind::Query,
         (Some(Tok::KeyWord(kw::CREATE)), Some(Tok::KeyWord(kw::SCHEMA))) => Kind::Schema,
         _ => Kind::Statement,
     })

@@ -40,13 +40,15 @@ fn a_tab_is_not_a_space_5_3() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.2], which takes priority
 /// over X3.135-1986 §5.3: after its first letter, a regular identifier has
-/// underscores anywhere, together or last.
+/// underscores anywhere, together or last; an underscore first is an
+/// `<introducer>` [§5.3, §5.4], so `_A` alone, before FROM, is a syntax
+/// error.
 #[test]
 fn underscores_go_anywhere_after_the_first_letter_5_2() {
     let db = setup();
     let s = db.session("APP");
     assert_eq!(rows(&s, "SELECT A__B_.ID FROM T A__B_ WHERE A__B_.ID = 1"), Ok(vec!["1".into()]));
-    assert_eq!(code(&s, "SELECT _A FROM T"), Code::Lexical, "not first");
+    assert_eq!(code(&s, "SELECT _A FROM T"), Code::Syntax, "not first: an introducer, of no identifier");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.2 SR8, SR9], which take

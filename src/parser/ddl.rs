@@ -25,6 +25,9 @@ impl Parser {
             if self.accept_kw(kw::USER) {
                 return self.user_definition();
             }
+            if self.character_set_definition()? {
+                return Ok(SqlStatement::Commit);
+            }
             return self.create_index();
         }
         let alter = self.accept_kw(kw::ALTER);
@@ -33,6 +36,9 @@ impl Parser {
         }
         if self.accept_kw(kw::USER) {
             return self.alter_or_drop_user(alter);
+        }
+        if !alter && let Some(refused) = self.drop_character_set()? {
+            return Ok(refused);
         }
         if self.accept_word("INDEX") {
             let at = self.here();
@@ -206,6 +212,7 @@ impl Parser {
             Tok::KeyWord(k) => k,
             Tok::CharacterString(_)
             | Tok::BitString(_)
+            | Tok::Introducer(_)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::Delimiter(_)
