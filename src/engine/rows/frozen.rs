@@ -23,6 +23,7 @@
 //! directory:  groups u32 | each: the first page of its header u64
 //! ```
 
+mod batches;
 mod freeze;
 mod merge;
 
@@ -31,6 +32,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
+pub(super) use batches::Batched;
 pub(super) use merge::{Merged, Merging};
 
 use super::options::Columns;

@@ -7,11 +7,11 @@ use std::iter;
 use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
-use super::frozen::{Merged, Merging};
+use super::frozen::{Batched, Merged, Merging};
 use super::mvcc::Read;
 use super::{RowTable, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
-use crate::storage::{Condition, Rows};
+use crate::storage::{Batches, Condition, Rows, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -63,5 +63,25 @@ impl RowTable {
             });
             found.transpose()
         }))
+    }
+
+    /// The rows `tx` sees by batch, of `columns`, only those `condition`
+    /// matches if given, which is then what counts as read: a table that
+    /// freezes rows gives its frozen rows straight from their chunks
+    /// (`rows/frozen/batches.rs`), any other its scan's rows, gathered.
+    pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Condition>) -> Batches {
+        if self.frozen.columns().is_none() {
+            let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
+            return batches_of(rows, columns);
+        }
+        let read = condition.clone().map_or(Read::All, Read::Condition);
+        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
+            Ok(reader) => reader,
+            Err(e) => return Box::new(iter::once(Err(e))),
+        };
+        match self.frozen.directory() {
+            Ok(directory) => Box::new(Batched::new(Arc::clone(&self), (reader, directory), columns.to_vec(), condition)),
+            Err(e) => Box::new(iter::once(Err(e))),
+        }
     }
 }

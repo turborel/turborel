@@ -154,10 +154,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   serializability: a table of the ROWS layout still reads and decodes
   every row; one of COLUMNS skips frozen chunks the filter cannot match
   (D31).
-- **Batch execution** for engines that store columns: a scan of
-  vectors of a column's values, filters and aggregates over them, without
-  a row made for each (the profile of a scan: allocating and decoding
-  rows is two thirds of its time).
+- **Batch execution, further** (RULES.md D31): set functions by batch
+  have no GROUP BY yet, and a filter not told to the scan is judged a row
+  at a time; to come, grouping by batch (spilling as `exec/group.rs`
+  does), filters judged over vectors, projections and joins of batches,
+  and set functions fed a vector at a time (`Accumulator`).
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
 - **Statistics:** zone maps of a ROWS table's pages (a COLUMNS table's

@@ -18,7 +18,10 @@
 //! D31), which isolates transactions itself, with versions, and undoes its
 //! own changes; a database made with `Database::new` keeps it in memory.
 
+mod batch;
 mod options;
+
+pub use batch::{BATCH_ROWS, Batch, Batches, batches_of};
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -225,6 +228,18 @@ pub trait TableStorage: Send + Sync {
     /// read. Default: `scan`.
     fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _condition: &Condition) -> Rows {
         self.scan(tx, columns)
+    }
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
+    /// `condition`, in no particular order, a batch of up to `BATCH_ROWS` of
+    /// them at a time: the values of `columns`, a vector for each, in the
+    /// order asked (RULES.md D31). An engine that keeps columns gives them
+    /// without making each row. Default: `scan_where`'s rows, gathered.
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Condition>) -> Batches {
+        let rows = match condition {
+            Some(c) => self.scan_where(tx, columns, c),
+            None => self.scan(tx, columns),
+        };
+        batches_of(rows, columns)
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
@@ -475,7 +490,13 @@ impl Condition {
     /// returns.
     pub fn matches(&self, row: &Row) -> bool {
         let key: Option<Vec<&Value>> = self.columns.iter().map(|&c| row.get(c)).collect();
-        key.filter(|k| !k.iter().any(|v| v.is_null())).is_some_and(|k| self.probe.answers(k))
+        key.is_some_and(|k| self.matches_key(&k))
+    }
+
+    /// As `matches`, of a row whose values of the condition's columns, in
+    /// their order, are `key`.
+    pub fn matches_key(&self, key: &[&Value]) -> bool {
+        !key.iter().any(|v| v.is_null()) && self.probe.answers(key.iter().copied())
     }
 
     /// Whether a row whose every column's value is within `bounds`, its

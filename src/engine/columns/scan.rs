@@ -76,3 +76,55 @@ fn fill(chunk: &Chunk<'_>, (column, t): (usize, &DataType), (first, from, to): (
     }
     Ok(())
 }
+
+/// The values of column `column`, of type `t`, of the rows at positions
+/// `from` to `to` of `group`.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Vec<Value>> {
+    let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
+    let mut out = Vec::with_capacity(count);
+    let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; count]) };
+    for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
+        let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
+        pages.with(zone.run.page, |bytes| {
+            let chunk = Chunk::parse(bytes)?;
+            for position in first..end {
+                out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(out)
+}
+
+/// The values of column `column`, of type `t`, of the rows at `positions`
+/// of `group`, in increasing order.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn values_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Vec<Value>> {
+    let mut out = Vec::with_capacity(positions.len());
+    let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; positions.len()]) };
+    let mut rest = positions;
+    for zone in zones {
+        let end = zone.run.first.saturating_add(zone.run.rows);
+        let here = rest.partition_point(|&p| p < end);
+        let (these, after) = rest.split_at(here);
+        rest = after;
+        if these.is_empty() {
+            continue;
+        }
+        pages.with(zone.run.page, |bytes| {
+            let chunk = Chunk::parse(bytes)?;
+            for &position in these {
+                out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(out)
+}

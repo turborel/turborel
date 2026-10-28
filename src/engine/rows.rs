@@ -422,6 +422,12 @@ impl TableStorage for RowTable {
         self.scan_rows(tx, columns, Some(condition.clone()))
     }
 
+    /// A table of the COLUMNS layout gives its frozen rows without making
+    /// each (`rows/frozen/batches.rs`).
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Condition>) -> crate::storage::Batches {
+        self.scan_batches_of(tx, columns, condition.cloned())
+    }
+
     fn row_count(&self) -> usize {
         self.live.load(Ordering::Acquire)
     }

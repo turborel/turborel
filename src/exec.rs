@@ -12,6 +12,7 @@
 //! INTERSECT) hold up to WORK_MEMORY of them in memory and spill the rest
 //! (`exec/work.rs`, RULES.md D38).
 
+mod batch;
 mod distinct;
 mod eval;
 mod group;
@@ -149,6 +150,10 @@ fn filtered(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// [X3.135-1986 §5.22, §5.8] The groups of the aggregation `plan`.
 #[inline(never)]
 fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    // Read by batches, if it can be (`exec/batch.rs`).
+    if let Some(rows) = batch::aggregated(&plan, db, tx) {
+        return rows;
+    }
     let Plan::Aggregate { groups, aggs, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
     let rows = execute(*input, db, tx);
     group::grouping(group::Spec { groups, aggs }, rows, db, tx)
