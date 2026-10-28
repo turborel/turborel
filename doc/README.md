@@ -12,8 +12,10 @@ standard are added to the same language as they are implemented, through
 SQL:2023. What is implemented, clause by clause, is in
 [CONFORMANCE.md](../CONFORMANCE.md).
 
-turborel is in alpha. These manuals describe what is settled; a chapter
-not yet written says so.
+turborel is in alpha: what these manuals describe may change in any
+release until 1.0.0 ([Versions](appendix/f-versions.md)). Each change
+updates the pages it touches, so the manuals describe the release they
+come with.
 
 ## The volumes
 

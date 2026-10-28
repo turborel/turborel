@@ -203,6 +203,15 @@ warning an error. The ones most often broken:
   RULES.md if it is one (its row in §1's table too), CONFORMANCE.md for a
   clause implemented or changed (R-TRACE-3), and its item moved or removed
   in TODO.md.
+- [doc/](doc/README.md): the manual, for users, operators and programs.
+  A change of anything they see (SQL, a message, a setting, an option, an
+  event, an API) updates each page that states it, in the same commit and
+  in the page's own format (R-DOC-8). Search `doc/` for what changed, a
+  statement's name, a message's text, a setting's name; check every claim
+  against the code; run every example as written and paste its output as
+  it now is. A new statement gets a page in `doc/sql/statements/`, of the
+  sections the others have, and a line in its README; a new setting a row
+  in Appendix C; a new SQLSTATE one in Appendix A.
 - Committed documents state what is; they never say whether a standard's
   text is at hand, missing or to be acquired.
 

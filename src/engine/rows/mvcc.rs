@@ -80,10 +80,12 @@ use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxId};
 use crate::value::types::TypeRegistry;
 
-fn conflict(id: RowId) -> SqlError {
+/// SQLCODE -911: a row another transaction changed. Its row id, of no
+/// meaning to whoever reads the message, is not told.
+fn conflict() -> SqlError {
     SqlError::new(
         Code::Conflict,
-        format!("[DESIGN] row {id} was changed by a transaction this one does not see, or is being changed; run the transaction again"),
+        "[DESIGN] a row it would change was changed by a transaction this one does not see, or is being changed; run the transaction again",
     )
 }
 
@@ -351,7 +353,7 @@ impl RowTable {
             match self.maker(&version) {
                 Maker::Open(by) => {
                     if by != tx {
-                        return Err(conflict(id));
+                        return Err(conflict());
                     }
                     if version.deleted {
                         return no_row(id);
@@ -360,7 +362,7 @@ impl RowTable {
                 }
                 Maker::Committed(at) => {
                     if at > snapshot {
-                        return Err(conflict(id));
+                        return Err(conflict());
                     }
                     if version.deleted {
                         return no_row(id);
@@ -375,7 +377,7 @@ impl RowTable {
             if let Some(at) = appended {
                 self.undo.release(at);
             }
-            return Err(conflict(id));
+            return Err(conflict());
         }
         let before = appended.is_none().then_some(newest);
         lock_builtin(&open).changes.push(Change { id, before, appended }, &mut encode_change)?;

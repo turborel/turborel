@@ -107,7 +107,7 @@ INSERT INTO PARTS VALUES (5, 'big', 'many');
 ```
 
 ```
-turborel: SQLCODE -201 (SQLSTATE 23000): UNIQUE(ID) on ANN.PARTS would be violated [X3.135-1986 §6.4 GR2]
+turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.PARTS_PRIMARY1 (ID) of ANN.PARTS would be violated: a row of these values is there [X3.135-1986 §6.4 GR2]
 turborel: SQLCODE -201 (SQLSTATE 23000): column ID of ANN.PARTS is NOT NULL [X3.135-1986 §6.3 SR3, GR1]
 turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a CHARACTER(4) value to column QTY (INTEGER) [ISO/IEC 9075:1992 §13.8 SR6, §9.2 SR2] (at character 36)
 ```

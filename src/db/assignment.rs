@@ -7,7 +7,7 @@
 use super::{State, api, rule, table_desc};
 use crate::ast::ParameterSpecification;
 use crate::binder::{self, OutColumn, ViewCheck};
-use crate::catalog::{CheckLevels, QualifiedName};
+use crate::catalog::{CheckLevels, ConstraintKind, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail, fail_with};
 use crate::exec::{Subqueries, eval, eval_cond};
 use crate::index::Key;
@@ -76,6 +76,24 @@ fn holds<F: Fn(&Row) -> Result<Key>>(newest: &Newest, key: &Key, key_of: &F) -> 
     has(&newest.row)
 }
 
+/// The message of a duplicate of `columns` of the table `desc`: its
+/// UNIQUE or PRIMARY KEY constraint named, as GET DIAGNOSTICS names it.
+fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
+    let names: Vec<&str> = columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
+    let constraint = desc.constraints.iter().find_map(|c| match &c.kind {
+        ConstraintKind::Unique { columns: on, primary } => {
+            (on == columns).then_some((if *primary { "PRIMARY KEY" } else { "UNIQUE" }, &c.name))
+        }
+        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
+    });
+    let (kind, constraint_name) = constraint.map_or(("UNIQUE", String::new()), |(k, n)| (k, format!(" {n}")));
+    format!(
+        "[X3.135-1986 §6.4 GR2] {kind}{constraint_name} ({}) of {} would be violated: a row of these values is there",
+        names.join(", "),
+        desc.name
+    )
+}
+
 /// [X3.135-1986 §6.4 GR2] UNIQUE on `columns` of `table`, "effectively
 /// checked after the execution of each `<SQL statement>`" [X3.135-1986
 /// §4.5], or deferred [ISO/IEC 9075:1992 §10.6]: rows may pass through
@@ -109,13 +127,7 @@ pub(super) fn check_key(st: &State, tx: TxId, table: &QualifiedName, columns: &[
                 .map(|other| holds(&storage.newest(tx, other)?, &key, &key_of))
                 .try_fold(0_usize, |n, held| held.map(|held| n.saturating_add(usize::from(held))));
             match holders {
-                Ok(n) if n > 1 => {
-                    let cols: Vec<&str> = ix.columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
-                    return fail(
-                        Code::Constraint,
-                        format!("[X3.135-1986 §6.4 GR2] UNIQUE({}) on {table} would be violated", cols.join(",")),
-                    );
-                }
+                Ok(n) if n > 1 => return fail(Code::Constraint, duplicated(&desc, &ix.columns)),
                 Ok(_) => {}
                 Err(e) => return Err(e),
             }

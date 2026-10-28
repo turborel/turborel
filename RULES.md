@@ -1328,6 +1328,7 @@ Every other file under a target's directory is a module of that target.
 | R-DOC-5 | No commented-out code and no `TODO` or `FIXME` comments: open work goes in TODO.md, and code never cites TODO.md. | review; `cargo xtask verify` |
 | R-DOC-6 | Every file **shall** start with a `//!` doc stating its responsibility and the clauses it implements. | review |
 | R-DOC-7 | Each implementation-defined choice **shall** be listed in CONFORMANCE.md with the file implementing it. | review |
+| R-DOC-8 | A change of what a user, an operator or a program sees **shall** update the manual, `doc/`, in the same commit: each page that states what changed, in its own format (a statement page's NAME, SYNOPSIS, DESCRIPTION, RULES, PRIVILEGES, ERRORS, EXAMPLES, STANDARD and SEE ALSO; a chapter's sections); a new statement, setting, program option or event gets its page or its entry. Every claim is checked against the code, and every example run as shown, its output pasted as the change gives it. | review |
 
 ### R-CONST: no magic numbers or strings
 

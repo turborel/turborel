@@ -60,6 +60,11 @@ is not done.
 - **Documents change in the same commit:** CONFORMANCE.md for a clause
   implemented or changed (R-TRACE-3), RULES.md for a decision made or
   changed, TODO.md for open work done or found. Code never cites TODO.md.
+- **The manual changes in the same commit** (R-DOC-8): a change of what
+  users, operators or programs see, SQL, a message, a setting, an
+  option, updates each page of `doc/` that states it, in that page's
+  format, its examples run again and their output pasted as it is. A new
+  statement gets a reference page of the sections the others have.
 - **No `unsafe`** (R-SAFE-1), no panics in production code (R-ERR), and no
   dependency without a decision in RULES.md (R-SAFE-4).
 - **Performance claims cite measurements:** `cargo xtask bench NAME --save
@@ -140,7 +145,7 @@ Reported-by: A Reporter <reporter@example.org>
   | `settings` | `settings/`, `memory.rs`, `diagnostics.rs` |
   | `protocol`, `client`, `server`, `turboreld`, `cli`, `lz4` | their crates |
   | `xtask`, `bench`, `test`, `support` | the tools, benchmarks and shared test fixtures |
-  | `doc` | README.md, RULES.md, CONFORMANCE.md, TODO.md, AGENTS.md, CLAUDE.md, this file |
+  | `doc` | `doc/`, README.md, RULES.md, CONFORMANCE.md, TODO.md, AGENTS.md, CLAUDE.md, this file |
   | `treewide` | a mechanical change across many areas |
 
 - **Trailers**, at the end, one per line, never wrapped:
@@ -200,7 +205,7 @@ Reviewers check each commit against RULES.md §7's checklist:
 - comments say why;
 - conditions have no side effects;
 - borrows and locks are scoped;
-- the documents are updated.
+- the documents are updated, the manual among them (R-DOC-8).
 
 For [changes that touch data](#changes-that-touch-data), reviewers also
 check that the crash, isolation, result and compatibility checks were done.

@@ -101,7 +101,7 @@ UPDATE PARTS SET QTY = SUM(QTY);
 ```
 
 ```
-turborel: SQLCODE -201 (SQLSTATE 23000): UNIQUE(ID) on ANN.PARTS would be violated [X3.135-1986 §6.4 GR2]
+turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.PARTS_PRIMARY1 (ID) of ANN.PARTS would be violated: a row of these values is there [X3.135-1986 §6.4 GR2]
 turborel: SQLCODE -103 (SQLSTATE 2A000): a value of a SET clause contains no set function [X3.135-1986 §8.12 SR3] (at character 23)
 ```
 

@@ -48,7 +48,8 @@ cargo xtask verify                     # every check a change must pass
 
 ## Documents
 
-- **[doc/](doc/README.md):** the manuals, being written.
+- **[doc/](doc/README.md):** the manuals: a User's Guide, the SQL
+  Reference, an Operator's Guide and the Client Reference.
 - **[VERSIONING.md](VERSIONING.md):** releases, alpha, and the versions of
   the file formats and the protocol.
 - **[CONFORMANCE.md](CONFORMANCE.md):** what is implemented of the

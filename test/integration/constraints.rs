@@ -68,7 +68,7 @@ fn state(s: &turborel::db::Session, sql: &str) -> String {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.7 SR3a, GR2; §11.9; §11.6
-/// GR3; §10.6 GR4] a PRIMARY KEY refuses a duplicate and a null; a CHECK
+/// GR3; §10.6 GR4] a PRIMARY KEY refuses a duplicate, naming itself, and a null; a CHECK
 /// refuses a row it is false for, not one it is unknown for, on INSERT and
 /// UPDATE; each with SQLSTATE 23000, the statement undone.
 #[test]
@@ -78,6 +78,8 @@ fn primary_keys_and_checks_11_7_11_9() {
     let s = db.session("C");
     assert_eq!(state(&s, "INSERT INTO T VALUES (1, 5, 2)"), "00000");
     assert_eq!(state(&s, "INSERT INTO T VALUES (1, 6, 2)"), "23000", "a duplicate key");
+    let named = s.run("INSERT INTO T VALUES (1, 6, 2)").unwrap_err().msg;
+    assert!(named.contains("PRIMARY KEY C.T_PRIMARY1 (K) of C.T"), "the constraint named: {named}");
     assert_eq!(state(&s, "INSERT INTO T VALUES (NULL, 6, 2)"), "23000", "a null key");
     assert_eq!(state(&s, "INSERT INTO T VALUES (2, -1, NULL)"), "23000", "A > 0 is false");
     assert_eq!(state(&s, "INSERT INTO T VALUES (2, NULL, 7)"), "00000", "unknown passes");
