@@ -110,7 +110,8 @@ fn users_survive_a_crash() {
 /// in SQL, the owner creates a user with a password, which the credentials
 /// plug-in makes a verifier of, gives it another, and drops it; the
 /// statements' `<authorization identifier>`s are identifiers, a regular one
-/// folded to upper case, a delimited one as written; WITH is optional.
+/// folded to upper case, a delimited one as written; WITH is optional; a
+/// refusal is placed at the identifier.
 #[test]
 fn the_owner_manages_users_in_sql() {
     let db = Database::new();
@@ -129,6 +130,7 @@ fn the_owner_manages_users_in_sql() {
     assert_eq!(exec(&s, "CREATE USER bob2 PASSWORD 'x'").map(|_| ()), Ok(()));
     assert_eq!(exec(&s, r#"CREATE USER "bob" PASSWORD 'x'"#), Err(Code::SyntaxRule), "a user twice");
     assert_eq!(exec(&s, "DROP USER owner"), Err(Code::SyntaxRule), "the owner");
+    assert_eq!(s.run("ALTER USER nope PASSWORD 'x'").unwrap_err().pos, Some(11), "at the identifier");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4]; [DESIGN] RULES.md D43,

@@ -17,7 +17,7 @@ use std::sync::{Arc, PoisonError};
 use super::{Completion, Database, Session, State};
 use crate::ast::UserStatement;
 use crate::diagnostics::{Event, Extension};
-use crate::error::{Code, Result, SqlError, fail};
+use crate::error::{At, Code, Result, SqlError, fail};
 use crate::lexer::MAX_IDENTIFIER_LENGTH;
 use crate::log::record::Change;
 
@@ -267,9 +267,9 @@ impl Session {
             credentials.verifier(name, password)
         };
         match stmt {
-            UserStatement::Create { name, password } => self.db.create_user(name, &verified(name, password)?)?,
-            UserStatement::Alter { name, password } => self.db.set_verifier(name, &verified(name, password)?)?,
-            UserStatement::Drop { name } => self.db.drop_user(name)?,
+            UserStatement::Create { name: (name, at), password } => self.db.create_user(name, &verified(name, password)?).or_at(*at)?,
+            UserStatement::Alter { name: (name, at), password } => self.db.set_verifier(name, &verified(name, password)?).or_at(*at)?,
+            UserStatement::Drop { name: (name, at) } => self.db.drop_user(name).or_at(*at)?,
         }
         Ok(Completion::Success)
     }

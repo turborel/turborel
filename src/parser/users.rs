@@ -22,7 +22,8 @@ use crate::lexer::{Tok, kw};
 impl Parser {
     /// `<user definition>`, after CREATE USER.
     pub(super) fn user_definition(&mut self) -> Result<SqlStatement> {
-        let name = self.identifier()?;
+        let at = self.here();
+        let name = (self.identifier()?, at);
         let password = self.password()?;
         Ok(SqlStatement::User(UserStatement::Create { name, password }))
     }
@@ -30,7 +31,8 @@ impl Parser {
     /// `<alter user statement>` or `<drop user statement>`, after ALTER
     /// USER or DROP USER, as `alter` says.
     pub(super) fn alter_or_drop_user(&mut self, alter: bool) -> Result<SqlStatement> {
-        let name = self.identifier()?;
+        let at = self.here();
+        let name = (self.identifier()?, at);
         if !alter {
             return Ok(SqlStatement::User(UserStatement::Drop { name }));
         }

@@ -402,23 +402,23 @@ pub enum UserStatement {
     /// `<user definition>` ::= CREATE USER `<authorization identifier>`
     /// \[WITH\] PASSWORD `<character string literal>`
     Create {
-        /// The `<authorization identifier>`.
-        name: String,
+        /// The `<authorization identifier>`, and where it begins.
+        name: (String, usize),
         /// The password, the literal's value.
         password: String,
     },
     /// `<alter user statement>` ::= ALTER USER `<authorization identifier>`
     /// \[WITH\] PASSWORD `<character string literal>`
     Alter {
-        /// The `<authorization identifier>`.
-        name: String,
+        /// The `<authorization identifier>`, and where it begins.
+        name: (String, usize),
         /// The new password.
         password: String,
     },
     /// `<drop user statement>` ::= DROP USER `<authorization identifier>`
     Drop {
-        /// The `<authorization identifier>`.
-        name: String,
+        /// The `<authorization identifier>`, and where it begins.
+        name: (String, usize),
     },
 }
 
