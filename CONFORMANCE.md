@@ -198,8 +198,8 @@ restriction is lifted.
   subqueries. Each is named, by the definition or by the implementation.
   Constraints are checked at the end of each statement; deferrable ones,
   with SET CONSTRAINTS [§14.2], at commit.
-- **Defaults** [§11.5]: a literal, NULL, USER, CURRENT_USER, SESSION_USER or
-  SYSTEM_USER; used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns
+- **Defaults** [§11.5]: a literal, NULL, USER, CURRENT_USER, SESSION_USER,
+  SYSTEM_USER, or a datetime value function; used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns
   added, and the referential action SET DEFAULT.
 - **DROP SCHEMA** [§11.2], **DROP TABLE** [§11.18], **DROP VIEW**
   [§11.20] and **ALTER TABLE** [§11.10–§11.17]: ADD and DROP COLUMN, ALTER

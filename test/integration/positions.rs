@@ -166,3 +166,23 @@ fn errors_of_a_count_or_a_cursor_are_placed() {
         assert_eq!(error.pos, offset(sql, part, nth), "{sql}: at {part}");
     }
 }
+
+/// Verifies: [DESIGN] error positions: a CHECK's error, of a condition
+/// bound from its own text, is placed at the table defined, not at a
+/// character of that text taken as the statement's; a foreign key's
+/// table not defined [ISO/IEC 9075:1992 §11.8 SR2] at the table it names,
+/// its rule told whole.
+#[test]
+fn a_check_or_a_foreign_key_is_placed_in_the_statement() {
+    let db = setup();
+    let s = db.session("APP");
+    let check = "CREATE TABLE T7 (A INTEGER CHECK (A > USER))";
+    let error = s.execute(check, &mut Params::new()).unwrap_err();
+    assert_eq!((error.code, error.pos), (Code::SyntaxRule, offset(check, "T7", 0)));
+    let key = "CREATE TABLE T8 (A INTEGER REFERENCES NOPE)";
+    let error = s.execute(key, &mut Params::new()).unwrap_err();
+    assert_eq!(
+        (error.pos, error.msg.as_str(), error.rule.as_deref()),
+        (offset(key, "NOPE", 0), "APP.NOPE is not defined", Some("ISO/IEC 9075:1992 §11.8 SR2"))
+    );
+}

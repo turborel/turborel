@@ -200,7 +200,8 @@ impl State {
         let saved = mem::replace(&mut self.catalog, Arc::from(staged));
         let completed = self.complete_tables(schema, std::slice::from_mut(&mut desc), std::slice::from_ref(&pending));
         self.catalog = saved;
-        completed?;
+        // An error of a CHECK, bound from its own text, is placed at the table.
+        completed.or_at(t.name.at)?;
         self.check_new_objects(std::slice::from_ref(&desc))?;
         let mut catalog = self.catalog.duplicate();
         catalog.add_table(desc.clone());

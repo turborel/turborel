@@ -247,6 +247,21 @@ pub(super) fn describe(
 }
 
 impl State {
+    /// [ISO/IEC 9075:1992 §11.8 SR2, SR4] The base table `target`, which a
+    /// foreign key references.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is a view, or not defined.
+    fn referenced(&self, target: &QualifiedName) -> Result<&TableDesc> {
+        self.catalog.table(target).ok_or_else(|| {
+            if self.catalog.view(target).is_some() {
+                return rule(format!("[ISO/IEC 9075:1992 §11.8 SR4] {target} is a view, not a base table"));
+            }
+            rule(format!("[ISO/IEC 9075:1992 §11.8 SR2] {target} is not defined"))
+        })
+    }
+
     /// [ISO/IEC 9075:1992 §11.8] Resolves the FOREIGN KEY `p` of table
     /// `child`, its names of schema `names`, against the tables the
     /// catalog has.
@@ -259,11 +274,7 @@ impl State {
         let r = &p.references;
         let target = qualify(&r.table, names);
         let auth = owner_of(&*self.catalog, &child.name.auth);
-        let parent = self.catalog.table(&target).ok_or_else(|| {
-            let what = if self.catalog.view(&target).is_some() { "a view, not a base table [SR4]" } else { "not defined [SR2]" };
-            rule(format!("[ISO/IEC 9075:1992 §11.8] {target} is {what}"))
-        });
-        let parent = parent.or_at(r.table.at)?;
+        let parent = self.referenced(&target).or_at(r.table.at)?;
         super::temporary::may_refer(child, parent, ("§11.8 SR4", "§11.8 SR5")).or_at(r.table.at)?;
         let referenced = match &r.columns {
             // [SR2a] a set of columns of a unique constraint of it.
@@ -325,9 +336,11 @@ impl State {
         let this = desc.clone();
         for c in &mut desc.constraints {
             let ConstraintKind::Check { text, names, reads, horizon } = &mut c.kind else { continue };
-            let cond = self
-                .check_condition(&table, (text, names, horizon))
-                .map_err(|e| SqlError { msg: format!("CHECK {}: {}", c.name, e.msg), ..e })?;
+            let cond = self.check_condition(&table, (text, names, horizon)).map_err(|e| SqlError {
+                msg: format!("CHECK {}: {}", c.name, e.msg),
+                pos: None,
+                ..e
+            })?;
             *reads = cond.tables();
             for other in reads.iter().filter(|t| **t != table).filter_map(|t| self.catalog.table(t)) {
                 super::temporary::may_refer(&this, other, ("§11.9 SR3", "§11.9 SR4"))?;
