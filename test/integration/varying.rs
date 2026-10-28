@@ -152,3 +152,24 @@ fn varying_strings_are_retrieved_9_1() {
     a.execute("SELECT V INTO OUT IND FROM T WHERE C = 'y'", &mut p).unwrap();
     assert_eq!((p.value("OUT").to_string(), p.value("IND").to_string()), ("abc".to_owned(), "5".to_owned()), "cut; its length told");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.1 SR1, SR2; §5.3] NATIONAL
+/// CHARACTER, NATIONAL CHAR and NCHAR, fixed or VARYING, are the character
+/// string types of the national character set, SQL_TEXT, the one there is;
+/// a national literal, N then a quoted string, is a character string of
+/// it, compared with any; N apart from the quote is an identifier.
+#[test]
+fn national_character_strings_6_1() {
+    let db = varying();
+    let a = db.session("A");
+    a.run("CREATE TABLE U (A NATIONAL CHARACTER(3), B NATIONAL CHAR VARYING(4), C NCHAR(2), D NCHAR VARYING(5), N INTEGER)").unwrap();
+    let described =
+        "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'U' AND COLUMN_NAME <> 'N' ORDER BY 1";
+    let squeezed: Vec<String> = rows(&a, described).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
+    assert_eq!(squeezed, ["A ,CHARACTER", "B ,CHARACTER VARYING", "C ,CHARACTER", "D ,CHARACTER VARYING"]);
+    a.run("INSERT INTO U VALUES (N'ab', n'it''s', 'x', N'', 1)").unwrap();
+    assert_eq!(rows(&a, "SELECT A, B, C, CHAR_LENGTH(D) FROM U WHERE A = 'ab' AND B = N'it''s'").unwrap(), ["ab ,it's,x ,0"]);
+    assert_eq!(rows(&a, "SELECT N 'x' FROM U").err(), Some(Code::Syntax), "N apart: the column N, then a string");
+    assert_eq!(exec(&a, "CREATE TABLE W (A NATIONAL VARCHAR(3))").err(), Some(Code::Syntax), "NATIONAL CHARACTER or CHAR");
+    a.commit().unwrap();
+}

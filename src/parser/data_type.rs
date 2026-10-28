@@ -18,7 +18,16 @@ impl Parser {
         };
         let at = self.here();
         match kw {
-            kw::CHARACTER | kw::CHAR | kw::VARCHAR => self.character_string_type(),
+            kw::CHARACTER | kw::CHAR | kw::VARCHAR | kw::NCHAR => self.character_string_type(),
+            // [ISO/IEC 9075:1992 §6.1 SR2] NATIONAL CHARACTER is CHARACTER of
+            // the national character set, SQL_TEXT, the one there is.
+            kw::NATIONAL => {
+                self.advance();
+                if !matches!(self.peek(), Tok::KeyWord(kw::CHARACTER | kw::CHAR)) {
+                    return Err(self.syntax("expected CHARACTER or CHAR"));
+                }
+                self.character_string_type()
+            }
             kw::NUMERIC | kw::DECIMAL | kw::DEC => self.exact_numeric_type(at),
             kw::INTEGER | kw::INT => {
                 self.advance();
@@ -45,7 +54,8 @@ impl Parser {
     /// `<character string type>` ::= CHARACTER \[(`<length>`)\] | CHAR \[(`<length>`)\]
     /// [ISO/IEC 9075:1992 §6.1] `<character string type>`: CHARACTER or
     /// CHAR \[(length)\]; CHARACTER VARYING, CHAR VARYING or VARCHAR
-    /// (length), its length written.
+    /// (length), its length written. Of a `<national character string
+    /// type>`, after NATIONAL, or NCHAR \[VARYING\], the same [SR1, SR2].
     fn character_string_type(&mut self) -> Result<DataType> {
         let varchar = *self.peek() == Tok::KeyWord(kw::VARCHAR);
         self.advance();

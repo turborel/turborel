@@ -257,6 +257,10 @@ restriction is lifted.
   one if either operand is [§6.13 SR3a], and CASE and set operations of
   one if any is [§9.3 SR3a]; a dynamic parameter in a string's place of
   CHARACTER VARYING(32767) [§17.6 GR5].
+- **NATIONAL CHARACTER** [§6.1], NATIONAL CHAR and NCHAR, fixed or
+  VARYING, and the national character string literal, N'...' [§5.3]: the
+  character string types and literals of the national character set
+  [§6.1 SR2].
 - **Domains** [§11.21–§11.27] (RULES.md D50): CREATE DOMAIN, in a schema
   definition too, with a default and CHECK constraints over VALUE; a
   column of one [§11.4], taking its type, default and constraints; ALTER
@@ -293,8 +297,8 @@ restriction is lifted.
 
 ### Not implemented
 
-- **Data types** other than SQL-86's and CHARACTER VARYING: datetimes and
-  intervals, BIT and NATIONAL CHARACTER, their literals, and the functions
+- **Data types** other than SQL-86's, CHARACTER VARYING and NATIONAL
+  CHARACTER: datetimes and intervals, BIT, their literals, and the functions
   and predicates on them (the datetime value functions [§6.8], EXTRACT,
   OVERLAPS [§8.11]).
 - **ALTER TABLE of a temporary table**, and a table or view defined on its
@@ -402,6 +406,7 @@ file that implements it.
 | ISO/IEC 9075:1992 §4.30 the initial default schema | the session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | ISO/IEC 9075:1992 §21.2.2 the catalog's name | the setting CATALOG_NAME, `TURBOREL` by default | `settings.rs`, `system.rs` |
 | ISO/IEC 9075:1992 §21.2.27, §21.2.28 SQL_IDENTIFIER, CHARACTER_DATA | CHARACTER(128); CHARACTER as long as the longest value the standard lists for the column, otherwise CHARACTER(4096), a longer text shown as null: of fixed length, not yet the CHARACTER VARYING the standard gives them | `system.rs`, `system/definition.rs` |
+| ISO/IEC 9075:1992 §6.1 SR2 the national character set | SQL_TEXT, the one there is: NATIONAL CHARACTER is CHARACTER | `parser/data_type.rs`, `lexer.rs` |
 | ISO/IEC 9075:1992 §21.3.23, §21.3.24 the character set SQL_TEXT | form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.5 how data types are described | an exact number as NUMERIC, radix 10; an approximate one as REAL (24 bits) or DOUBLE PRECISION (53), radix 2; a character string's octet length 4n | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.13 names of unnamed constraints | the table's name, the constraint's kind and a number: `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |

@@ -315,6 +315,13 @@ impl Scanner {
 
     /// The `<token>` that starts with `first`, the next character.
     fn token(&mut self, first: char) -> Result<Tok> {
+        // [ISO/IEC 9075:1992 §5.3] `<national character string literal>` ::=
+        // N, then a character string literal's quoted parts: of the
+        // national character set, SQL_TEXT, the one there is [§6.1 SR2].
+        if matches!(first, 'N' | 'n') && self.peek(1) == Some(QUOTE) {
+            self.advance(1);
+            return self.character_string();
+        }
         if is_identifier_start(first) {
             self.regular_identifier()
         } else if is_digit(first) || (first == '.' && self.next_is(1, is_digit)) {

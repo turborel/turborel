@@ -107,8 +107,7 @@ RULES.md when its design settles.
   qualifying there.
 - **Data types:** datetimes and intervals, with their literals,
   the datetime value functions [§6.8], EXTRACT, and the OVERLAPS predicate
-  [§8.11]; BIT and BIT VARYING, NATIONAL CHARACTER, and the bit, hex and
-  national literals. SET TIME ZONE waits for these, and for the database's
+  [§8.11]; BIT and BIT VARYING, and the bit and hex literals. SET TIME ZONE waits for these, and for the database's
   clock rather than a session's. Each is a kind of the data type contract
   (RULES.md D53), built in.
 - **The Information Schema's domains as CHARACTER VARYING** [§21.2.27,
