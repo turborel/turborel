@@ -20,6 +20,10 @@ fn main() -> ExitCode {
             println!("{}", turborel_cli::USAGE);
             ExitCode::SUCCESS
         }
+        Ok(Command::Version) => {
+            println!("{}", turborel::product());
+            ExitCode::SUCCESS
+        }
         Ok(Command::Run(options)) => session(&options).unwrap_or_else(|e| {
             eprintln!("turborel: {e}");
             ExitCode::FAILURE

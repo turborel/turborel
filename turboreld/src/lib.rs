@@ -43,6 +43,7 @@ pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
   --keys DIR             the encryption keys: a file in DIR each, named as the key,
                          of 64 hexadecimal digits (openssl rand -hex 32)
   --help                 print this
+  --version              print the release
 
 User commands, on a database no server holds; a password is typed, or read from
 standard input:
@@ -103,6 +104,8 @@ pub enum Store {
 pub enum Command {
     /// The usage text.
     Help,
+    /// The release, as `turborel::product` gives it.
+    Version,
     /// A server.
     Serve(Config),
     /// A user command, on the database's directory (`users.rs`).
@@ -135,6 +138,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         let mut value = || rest.next().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--help" => return Ok(Command::Help),
+            "--version" => return Ok(Command::Version),
             "--dir" => store = once(store.is_some(), Store::Dir(PathBuf::from(value()?)))?,
             "--memory" => store = once(store.is_some(), Store::Memory)?,
             "--set" => settings.push(setting(value()?)?),

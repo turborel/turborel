@@ -12,13 +12,16 @@ fn program(args: &[&str]) -> Output {
 }
 
 /// Verifies: [DESIGN] RULES.md D46: `turborel --help` prints its usage and
-/// succeeds; a wrong command line fails, saying why; so does a server not
-/// reached.
+/// succeeds, `--version` the release; a wrong command line fails, saying
+/// why; so does a server not reached.
 #[test]
 fn the_program_prints_its_usage_or_what_is_wrong() {
     let help = program(&["--help"]);
     assert!(help.status.success());
     assert!(String::from_utf8(help.stdout).unwrap().starts_with("usage: turborel"));
+    let version = program(&["--version"]);
+    assert!(version.status.success());
+    assert_eq!(String::from_utf8(version.stdout).unwrap().trim_end(), turborel::product());
     let wrong = program(&["--verbose"]);
     assert!(!wrong.status.success());
     assert!(String::from_utf8(wrong.stderr).unwrap().starts_with("turborel: --verbose is not an option"));

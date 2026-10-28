@@ -47,6 +47,7 @@ pub const USAGE: &str = "usage: turborel [options]
       --stop-on-error    end the run at the first statement that fails
       --null TEXT        show a null value as TEXT (default nothing)
       --help             print this
+      --version          print the release
 
 Without -c or -f, statements are read from standard input: typed at a terminal,
 each is run once a semicolon ends it, and the end of input (Ctrl-D; Ctrl-Z then

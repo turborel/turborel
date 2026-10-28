@@ -10,7 +10,7 @@ fn args(line: &str) -> Vec<String> {
 fn config(line: &str) -> Config {
     match parse(&args(line)).unwrap() {
         Command::Serve(config) => config,
-        Command::Help | Command::User(..) => panic!("not a server"),
+        Command::Help | Command::Version | Command::User(..) => panic!("not a server"),
     }
 }
 
@@ -27,6 +27,7 @@ fn the_command_line_names_the_database_and_its_settings() {
     let given: Vec<String> = set.settings.iter().map(|(name, value)| format!("{name}={value}")).collect();
     assert_eq!(given, ["SERVER.WORKERS=3", "x=1.5E0", "SESSION_END=rollback", "SERVER.HOST="]);
     assert!(matches!(parse(&args("--memory --help")), Ok(Command::Help)));
+    assert!(matches!(parse(&args("--version")), Ok(Command::Version)));
 }
 
 /// Verifies: [DESIGN] RULES.md D42: a command line is refused, saying why,

@@ -10,7 +10,7 @@ fn parsed(line: &[&str], vars: &[(&str, &str)]) -> Result<Options, String> {
     let env = |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_owned());
     parse(&args, &env).map(|command| match command {
         Command::Run(options) => options,
-        Command::Help => panic!("help"),
+        Command::Help | Command::Version => panic!("help"),
     })
 }
 

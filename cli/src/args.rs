@@ -84,6 +84,8 @@ pub struct Options {
 pub enum Command {
     /// The usage text.
     Help,
+    /// The release, as `turborel::product` gives it.
+    Version,
     /// A session.
     Run(Options),
 }
@@ -116,6 +118,7 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
         let mut value = || rest.next().cloned().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--help" => return Ok(Command::Help),
+            "--version" => return Ok(Command::Version),
             "-h" | "--host" => named.host = Some(value()?),
             "-p" | "--port" => named.port = Some(port(&value()?)?),
             "--socket" => named.socket = Some(PathBuf::from(value()?)),

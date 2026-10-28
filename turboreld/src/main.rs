@@ -15,6 +15,10 @@ fn main() -> ExitCode {
             println!("{}", turboreld::USAGE);
             Ok(())
         }
+        Command::Version => {
+            println!("{}", turborel::product());
+            Ok(())
+        }
         Command::Serve(config) => {
             turboreld::run(&config, |at| eprintln!("turboreld: listening at {}", at.join(", ")), turboreld::signalled())
         }
