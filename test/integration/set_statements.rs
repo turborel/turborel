@@ -154,3 +154,21 @@ fn a_value_refused_is_told_in_words() {
     assert_eq!(told("SET LOCK_WAIT = 'SOMETIMES'"), "LOCK_WAIT takes ONE OF NO_WAIT, WAIT, not 'SOMETIMES'");
     assert_eq!(told("SET WORK_MEMORY = 'big'"), "WORK_MEMORY takes INTEGER FROM 65536 TO 9223372036854775807, not 'big'");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1 GR6b iii, iv]: a
+/// `<schema definition>` is an SQL-schema statement, so it is refused in a
+/// READ ONLY transaction (SQLCODE -917), the one active or the one SET
+/// TRANSACTION makes next; in one READ WRITE, it is made.
+#[test]
+fn a_read_only_transaction_defines_no_schema_20_1() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("SET TRANSACTION READ ONLY").unwrap();
+    let defined = |sql: &str| s.direct(sql).err().map(|e| e.code);
+    assert_eq!(defined("CREATE SCHEMA NEXT_ONE"), Some(Code::TransactionState), "the next");
+    s.run("SET TRANSACTION READ ONLY").unwrap();
+    rows(&s, "SELECT ID FROM T").unwrap();
+    assert_eq!(defined("CREATE SCHEMA ACTIVE_ONE"), Some(Code::TransactionState), "the active");
+    s.rollback().unwrap();
+    assert_eq!(defined("CREATE SCHEMA WRITTEN"), None);
+}

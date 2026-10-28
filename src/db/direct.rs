@@ -4,6 +4,7 @@
 //! they are fetched; a `<schema definition>`; or any other statement.
 
 use super::{Completion, Direct, Session};
+use crate::ast::AccessMode;
 use crate::error::{Code, Result, fail};
 use crate::lexer::{Tok, lex};
 use crate::parser::Parser;
@@ -52,6 +53,16 @@ impl Session {
 
     /// `own_schema`'s `<schema definition>` `sql`, made.
     fn schema_owned(&self, sql: &str) -> Result<Completion> {
+        // [ISO/IEC 9075:1992 §20.1 GR6b iii, iv] An SQL-schema statement,
+        // so not of a READ ONLY transaction: the one active, or the next.
+        let active = self.inner.borrow().tx.is_some();
+        let mode = if active { self.mode.get() } else { self.next.get() };
+        if mode.access == AccessMode::ReadOnly {
+            return fail(
+                Code::TransactionState,
+                "[ISO/IEC 9075:1992 §20.1 GR6b iv] a <schema definition> in a READ ONLY transaction".to_owned(),
+            );
+        }
         let schema = Parser::new(sql)?.of_definition().schema()?;
         if let Some(other) = schema.auth.as_ref().filter(|a| **a != *self.auth()) {
             return fail(
