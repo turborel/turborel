@@ -158,7 +158,10 @@ pub(super) fn check_targets(
     type_rule: &str,
 ) -> Result<()> {
     if columns.len() != targets.len() {
-        return Err(rule(format!("[X3.135-1986 {count_rule}] {} targets for {} columns", targets.len(), columns.len())));
+        // At the first target too many, or the first of too few.
+        let at = targets.get(columns.len()).or(targets.first()).map_or(0, |t| t.at);
+        let msg = format!("[X3.135-1986 {count_rule}] {} targets for {} columns", targets.len(), columns.len());
+        return Err(rule(msg)).or_at(at);
     }
     for (c, t) in columns.iter().zip(targets) {
         check_target(c, t, params, type_rule).or_at(t.at)?;

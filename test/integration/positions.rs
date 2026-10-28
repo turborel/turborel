@@ -136,3 +136,33 @@ fn outcomes_have_their_sqlstates() {
     a.commit().unwrap();
     assert_eq!(b.commit().unwrap_err().sqlstate(), SqlState::SERIALIZATION_FAILURE, "rolled back");
 }
+
+/// Verifies: [DESIGN] error positions: an error of a count is placed at
+/// what it counts: too many values or select list items [X3.135-1986 §8.7
+/// SR5] at the first too many, too few at their row or first item; too
+/// many SELECT INTO or FETCH targets [§8.10 SR3, §8.6 SR2] at the first
+/// too many, too few at the first; and a
+/// positioned statement's cursor not declared [§8.4 SR2, §8.11 SR2] at
+/// its name.
+#[test]
+fn errors_of_a_count_or_a_cursor_are_placed() {
+    let db = setup();
+    let cases: [(&str, &str, usize); 8] = [
+        ("INSERT INTO T (ID) VALUES (1, 2)", "2", 0),
+        ("INSERT INTO T (ID, NAME) VALUES (1)", "(1)", 0),
+        ("INSERT INTO T (ID, NAME) SELECT ID FROM U", "ID FROM", 0),
+        ("SELECT ID, NAME INTO N FROM T WHERE ID = 1", "N F", 0),
+        ("SELECT ID INTO N, N FROM T WHERE ID = 1", "N", 2),
+        ("FETCH D INTO N", "N", 1),
+        ("DELETE FROM T WHERE CURRENT OF NOPE", "NOPE", 0),
+        ("UPDATE T SET ID = 1 WHERE CURRENT OF NOPE", "NOPE", 0),
+    ];
+    for (sql, part, nth) in cases {
+        let s = db.session("APP");
+        s.declare_cursor("DECLARE D CURSOR FOR SELECT ID, NAME FROM T").unwrap();
+        s.run("OPEN D").unwrap();
+        let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+        let error = s.execute(sql, &mut p).unwrap_err();
+        assert_eq!(error.pos, offset(sql, part, nth), "{sql}: at {part}");
+    }
+}

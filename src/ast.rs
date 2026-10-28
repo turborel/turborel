@@ -204,8 +204,8 @@ pub enum SqlStatement {
     DeletePositioned {
         /// The `<table name>`.
         table: TableName,
-        /// The `<cursor name>`.
-        cursor: String,
+        /// The `<cursor name>`, and where it is written.
+        cursor: (String, usize),
     },
     /// [X3.135-1986 §8.5] `<delete statement: searched>` ::=
     ///     DELETE FROM `<table name>` \[WHERE `<search condition>`\]
@@ -332,8 +332,8 @@ pub enum SqlStatement {
         table: TableName,
         /// The `<set clause>`s, in order.
         set: Vec<SetClause>,
-        /// The `<cursor name>`.
-        cursor: String,
+        /// The `<cursor name>`, and where it is written.
+        cursor: (String, usize),
     },
     /// [X3.135-1986 §8.12] `<update statement: searched>` ::= UPDATE `<table name>`
     ///     SET `<set clause: searched>` \[{,`<set clause: searched>`}...\] \[WHERE `<search condition>`\]

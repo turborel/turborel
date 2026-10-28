@@ -44,7 +44,8 @@ impl Parser {
             if self.dynamic_current_of()? {
                 return Ok(SqlStatement::Commit);
             }
-            return Ok(SqlStatement::DeletePositioned { table, cursor: self.identifier()? });
+            let at = self.here();
+            return Ok(SqlStatement::DeletePositioned { table, cursor: (self.identifier()?, at) });
         }
         Ok(SqlStatement::DeleteSearched { table, where_clause: Some(self.search_condition()?) })
     }
@@ -77,7 +78,8 @@ impl Parser {
             if self.dynamic_current_of()? {
                 return Ok(SqlStatement::Commit);
             }
-            return Ok(SqlStatement::UpdatePositioned { table, set, cursor: self.identifier()? });
+            let at = self.here();
+            return Ok(SqlStatement::UpdatePositioned { table, set, cursor: (self.identifier()?, at) });
         }
         Ok(SqlStatement::UpdateSearched { table, set, where_clause: Some(self.search_condition()?) })
     }

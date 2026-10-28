@@ -14,7 +14,7 @@ use super::{
 use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification, Updatability, ValueSpecification};
 use crate::binder::{self, BoundWrite, OutColumn, bind_cursor, bind_select};
 use crate::catalog::{QualifiedName, TableDesc};
-use crate::error::{Code, Result, SqlState, fail, fail_with};
+use crate::error::{At, Code, Result, SqlState, fail, fail_with};
 use crate::exec::{Runner, compare_rows, execute, row_entries};
 use crate::logical::{Cond, LogicalPlan, SortKey, and_all};
 use crate::params::Params;
@@ -544,9 +544,9 @@ impl Session {
 
     /// [X3.135-1986 §8.11] the positioned UPDATE bound as `w`, through
     /// cursor `cursor`.
-    pub(super) fn update_positioned(&self, cx: StatementContext<'_>, cursor: &str, w: &BoundWrite) -> Result<Completion> {
+    pub(super) fn update_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&str, usize), w: &BoundWrite) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
-        let id = self.positioned_row(cx, cursor, w, "§8.11")?;
+        let id = self.positioned_row(cx, cursor, w, "§8.11").or_at(at)?;
         let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;
         for t in w.set_tables() {
             st.read_lock(tx, &t)?;
@@ -564,9 +564,9 @@ impl Session {
 
     /// [X3.135-1986 §8.4] the positioned DELETE bound as `w`, through
     /// cursor `cursor`.
-    pub(super) fn delete_positioned(&self, cx: StatementContext<'_>, cursor: &str, w: &BoundWrite) -> Result<Completion> {
+    pub(super) fn delete_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&str, usize), w: &BoundWrite) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
-        let id = self.positioned_row(cx, cursor, w, "§8.4")?;
+        let id = self.positioned_row(cx, cursor, w, "§8.4").or_at(at)?;
         let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;
         st.delete_row(tx, &w.table, id)?;
         let mut effects = self.effects();

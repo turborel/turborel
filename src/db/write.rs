@@ -9,7 +9,7 @@ use super::assignment::{candidate, check_option};
 use super::defaults::default_row;
 use super::integrity::Effects;
 use super::{Session, State, StatementContext, plan, rule, set_columns};
-use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
+use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, RowElement, SelectList, SelectSublist};
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Result};
@@ -137,7 +137,8 @@ impl Session {
         let bound = self.bound_insert(st, target, query, params)?;
         if bound.columns.len() != target.object.len() {
             let (n, m) = (bound.columns.len(), target.object.len());
-            return Err(rule(format!("[X3.135-1986 §8.7 SR5; ISO/IEC 9075:1992 §13.8 SR5] a query of degree {n} for {m} columns")));
+            let failed = Err(rule(format!("[X3.135-1986 §8.7 SR5; ISO/IEC 9075:1992 §13.8 SR5] a query of degree {n} for {m} columns")));
+            return degree_at(query, m).map_or(failed.clone(), |at| failed.or_at(at));
         }
         // [X3.135-1986 §8.7 SR6] placed at its select list item, if written;
         // a <table value constructor>'s values are checked as bound.
@@ -231,4 +232,24 @@ pub(super) fn delete_searched(
     }
     st.end_statement(tx, effects)?;
     Ok(count)
+}
+
+/// Where an INSERT's `query` of another degree than its `m` columns is
+/// placed: at its first value or select list item too many, or, of too
+/// few, at its first row or item.
+fn degree_at(query: &QueryExpression, m: usize) -> Option<usize> {
+    match query {
+        QueryExpression::Values(rows) => {
+            let row = rows.first()?;
+            Some(row.elements.get(m).map_or(row.at, |e| match e {
+                RowElement::Value(_, at) | RowElement::Null(at) | RowElement::Default(at) => *at,
+            }))
+        }
+        QueryExpression::Spec(spec) => {
+            let SelectList::Values(items) = &spec.select_list else { return None };
+            let at = |i: &SelectSublist| if let SelectSublist::Derived(d) = i { Some(d.at) } else { None };
+            items.get(m).or(items.first()).and_then(at)
+        }
+        QueryExpression::SetOp(_) => None,
+    }
 }

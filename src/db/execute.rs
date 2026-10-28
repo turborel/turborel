@@ -140,12 +140,12 @@ impl Session {
             SqlStatement::UpdatePositioned { table, set, cursor } => {
                 let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdatePositioned, &table, &set, None))?;
                 self.settle_cursors(st, &w.table);
-                self.update_positioned(StatementContext { st, tx }, &cursor, &w)
+                self.update_positioned(StatementContext { st, tx }, (&cursor.0, cursor.1), &w)
             }
             SqlStatement::DeletePositioned { table, cursor } => {
                 let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::DeletePositioned, &table, &[], None))?;
                 self.settle_cursors(st, &w.table);
-                self.delete_positioned(StatementContext { st, tx }, &cursor, &w)
+                self.delete_positioned(StatementContext { st, tx }, (&cursor.0, cursor.1), &w)
             }
             SqlStatement::Open(name) => self.open(st, tx, &name, params),
             SqlStatement::Fetch { cursor, orientation, targets } => {

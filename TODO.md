@@ -115,9 +115,6 @@ RULES.md when its design settles.
   as their module's authorization identifier, as SQL:2023 defines them.
 - **Roles**, which SQL-92 leaves to the implementation, as it does users
   (RULES.md D43).
-- **Error positions** are not placed for errors of a whole statement (a
-  count of values or targets), nor for the cursor name of a positioned
-  statement.
 - **[X3.135-1986 §7.1 SR1]** (exactly one procedure opens each cursor) is
   not checked.
 
