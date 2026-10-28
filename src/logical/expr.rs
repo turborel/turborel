@@ -14,9 +14,20 @@
 use std::sync::Arc;
 
 use super::Subquery;
-use crate::catalog::MatchType;
+use crate::catalog::{MatchType, QualifiedName};
 use crate::functions::ScalarRef;
 use crate::value::{ArithOp, CompOp, DataType, Value};
+
+/// [ISO/IEC 9075:1992 §4.10.3, §6.10 GR13] The constraints a value CAST to
+/// a domain must satisfy.
+#[derive(Debug, Clone)]
+pub struct DomainChecks {
+    /// The domain.
+    pub domain: QualifiedName,
+    /// Each constraint's name, and its condition: over a row of the value
+    /// alone, VALUE its one column, as no traversal of the CAST reaches.
+    pub checks: Vec<(QualifiedName, Cond)>,
+}
 
 /// [X3.135-1986 §5.18] "true", "false", or "unknown".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +66,9 @@ pub enum Expr {
     Case(Vec<(Cond, Expr)>, Box<Expr>),
     /// [ISO/IEC 9075:1992 §6.10] CAST to a data type.
     Cast(Box<Expr>, DataType),
+    /// [ISO/IEC 9075:1992 §6.10 GR13] CAST to a domain: the value CAST to
+    /// its data type, which none of its constraints may find false.
+    Domain(Box<Expr>, Arc<DomainChecks>),
     /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`, or a column, at
     /// this position, of a `<row subquery>`: the value there of its one
     /// row, null if it has none \[GR1, GR2\].
@@ -139,6 +153,7 @@ impl Expr {
                 Expr::Case(whens, Box::new(f(*otherwise)))
             }
             Expr::Cast(x, t) => Expr::Cast(Box::new(f(*x)), t),
+            Expr::Domain(x, checks) => Expr::Domain(Box::new(f(*x)), checks),
             Expr::Subquery(s, column) => Expr::Subquery(s.map_outer(f), column),
         }
     }
@@ -148,7 +163,7 @@ impl Expr {
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a Expr)) {
         match self {
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) => {}
-            Expr::Neg(x) | Expr::Cast(x, _) => f(x),
+            Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) => f(x),
             Expr::Arith(a, _, b) => {
                 f(a);
                 f(b);
@@ -167,13 +182,13 @@ impl Expr {
 
     /// Whether evaluating this expression can raise a run-time error.
     /// Arithmetic can ([X3.135-1986 §5.9 GR5, GR6]), and so can a function,
-    /// a CAST [ISO/IEC 9075:1992 §6.10 GR], and a scalar subquery with more
+    /// a CAST [ISO/IEC 9075:1992 §6.10 GR], to a domain too, and a scalar subquery with more
     /// than one row [§7.11 GR1]; a column, a constant and monadic minus
     /// cannot (exact values never exceed `MAX_EXACT_PRECISION` digits, so
     /// negation cannot overflow), and CASE only through its parts.
     pub fn can_raise(&self) -> bool {
         match self {
-            Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Subquery(..) => true,
+            Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => true,
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Neg(_) | Expr::Case(..) => {
                 let mut raises = false;
                 self.for_each_child(&mut |e| raises = raises || e.can_raise());

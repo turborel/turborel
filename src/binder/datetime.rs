@@ -255,11 +255,17 @@ pub fn literal_value(w: &Written, zone: i16) -> Value {
 
 impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME or
-    /// CURRENT_TIMESTAMP: the statement's instant, a constant of it [GR3].
-    pub(super) fn datetime_function(&self, f: DatetimeFunction) -> (Expr, DataType) {
+    /// CURRENT_TIMESTAMP: the statement's instant, a constant of it [GR3];
+    /// in no constraint [§11.9 SR5, §11.34 SR6].
+    pub(super) fn datetime_function(&self, f: DatetimeFunction) -> Result<(Expr, DataType)> {
+        if self.purpose.constrains() {
+            return Err(rule(
+                "[ISO/IEC 9075:1992 §11.9 SR5, §11.34 SR6] a constraint's condition shall not contain CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP",
+            ));
+        }
         let t = function_type(f);
         let precision = if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { precision } else { 0 };
-        (Expr::Const(current(f.moment, precision, self.now)), t)
+        Ok((Expr::Const(current(f.moment, precision, self.now)), t))
     }
 
     /// [ISO/IEC 9075:1992 §6.6] EXTRACT (`field` FROM `source`), its source

@@ -15,8 +15,8 @@ mod subquery;
 use std::fmt::Write;
 
 pub use expr::{
-    Cond, Expr, Quantifier, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs, map_expr_columns, or_all,
-    split_and,
+    Cond, DomainChecks, Expr, Quantifier, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs, map_expr_columns,
+    or_all, split_and,
 };
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use subquery::{Decorrelated, Subquery};
@@ -198,6 +198,8 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>) {
     match e {
         Expr::Subquery(s, _) => out.push(s),
         Expr::Case(whens, _) => out.extend(whens.iter().flat_map(|(c, _)| c.subqueries())),
+        // A domain's constraints are run for the value CAST, and read their tables.
+        Expr::Domain(_, d) => d.checks.iter().for_each(|(_, c)| out.extend(cond_subqueries(c))),
         Expr::Column(_) | Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Call(..) | Expr::Outer(..) | Expr::Cast(..) => {}
     }
     e.for_each_child(&mut |child| expr_subqueries(child, out));

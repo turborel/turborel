@@ -156,6 +156,26 @@ fn usage_on_a_domain_10_3() {
     assert_eq!(count(&b, "SELECT K FROM U"), 0, "a column of it stays");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.10.3, §6.10 GR13] a value
+/// CAST to a domain is refused (SQLCODE -201) if a constraint of the
+/// domain is false of it, one that reads a table and one added by ALTER
+/// DOMAIN among them; one not false, the null value too, is its value.
+#[test]
+fn cast_to_a_domain_checks_its_constraints_6_10() {
+    let db = domains();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (2, 2)").unwrap();
+    assert_eq!(rows(&a, "SELECT CAST(0 AS AMOUNT) FROM T").err(), Some(Code::Constraint), "POSITIVE");
+    assert_eq!(rows(&a, "SELECT CAST(N - 5 AS AMOUNT) FROM T").err(), Some(Code::Constraint), "of a column");
+    assert_eq!(rows(&a, "SELECT CAST(N AS AMOUNT) FROM T"), Ok(vec!["2".into()]));
+    assert_eq!(rows(&a, "SELECT CAST(NULL AS AMOUNT) FROM T"), Ok(vec!["NULL".into()]), "unknown is not false");
+    a.run("CREATE DOMAIN KNOWN AS INTEGER CHECK (VALUE IN (SELECT N FROM T))").unwrap();
+    assert_eq!(rows(&a, "SELECT CAST(2 AS KNOWN) FROM T"), Ok(vec!["2".into()]));
+    assert_eq!(rows(&a, "SELECT CAST(3 AS KNOWN) FROM T").err(), Some(Code::Constraint), "reading T");
+    a.run("ALTER DOMAIN AMOUNT ADD CONSTRAINT SMALL CHECK (VALUE < 10)").unwrap();
+    assert_eq!(rows(&a, "SELECT CAST(10 AS AMOUNT) FROM T").err(), Some(Code::Constraint), "SMALL");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 SR1, §6.2 SR5, §10.6
 /// SR2] refused (SQLCODE -103): a domain of a name taken, VALUE outside a
 /// domain constraint, a constraint of a name taken; a domain is defined

@@ -7,7 +7,7 @@
 use super::{Subqueries, broken};
 use crate::catalog::MatchType;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
-use crate::logical::{Cond, Expr, Quantifier, Subquery, Truth};
+use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_key;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, arith, cast, compare, like};
@@ -47,6 +47,7 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
             eval(otherwise, row, subqueries)
         }
         Expr::Cast(x, to) => cast(eval(x, row, subqueries)?, to),
+        Expr::Domain(x, d) => checked(eval(x, row, subqueries)?, d, subqueries),
         // [ISO/IEC 9075:1992 §7.11 GR1, GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {
@@ -61,6 +62,21 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
 }
 
 /// The values of `s`'s outer expressions for `row`.
+/// [ISO/IEC 9075:1992 §6.10 GR13] `v`, CAST to the domain `d`, if none of
+/// its constraints is false of it [§4.10.3].
+fn checked(v: Value, d: &DomainChecks, subqueries: &dyn Subqueries) -> Result<Value> {
+    let row = vec![v];
+    for (name, cond) in &d.checks {
+        if eval_cond(cond, &row, subqueries)? == Truth::False {
+            return fail(
+                Code::Constraint,
+                format!("[ISO/IEC 9075:1992 §6.10 GR13] CHECK {name} of domain {} is false for a value CAST to it", d.domain),
+            );
+        }
+    }
+    Ok(row.into_iter().next().unwrap_or(Value::Null))
+}
+
 fn outer_values(s: &Subquery, row: &Row, subqueries: &dyn Subqueries) -> Result<Vec<Value>> {
     s.outer.iter().map(|e| eval(e, row, subqueries)).collect()
 }

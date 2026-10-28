@@ -21,6 +21,7 @@ use crate::binder::qualify;
 use crate::catalog::{ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, QualifiedName, TableDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw, lex};
+use crate::logical::Cond;
 use crate::parser::VALUE_COLUMN;
 use crate::txn::LockMode;
 use crate::value::DataType;
@@ -250,6 +251,30 @@ impl State {
         data_type: DataType,
         (text, names): (&str, &str),
     ) -> Result<Vec<QualifiedName>> {
+        let (cond, probe) = self.on_value(domain, data_type, (text, names))?;
+        Ok(cond.tables().into_iter().filter(|t| *t != probe).collect())
+    }
+
+    /// [ISO/IEC 9075:1992 §6.10 GR13] The constraints of `domain`, each
+    /// bound over a row of a value alone, VALUE its one column: what a CAST
+    /// to it checks [§4.10.3].
+    ///
+    /// # Errors
+    ///
+    /// A condition no longer binds.
+    pub(crate) fn cast_checks(&self, domain: &DomainDesc) -> Result<Vec<(QualifiedName, Cond)>> {
+        let mut out = Vec::new();
+        for c in &domain.constraints {
+            let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
+            out.push((c.name.clone(), self.on_value(&domain.name, domain.data_type, (text, names))?.0));
+        }
+        Ok(out)
+    }
+
+    /// The domain constraint `text` of `domain`, its names of schema
+    /// `names`, bound over the one column VALUE, of `data_type`, of a table
+    /// of the domain's schema made for it, and that table's name.
+    fn on_value(&self, domain: &QualifiedName, data_type: DataType, (text, names): (&str, &str)) -> Result<(Cond, QualifiedName)> {
         let column = ColumnDesc { name: VALUE_COLUMN.to_owned(), data_type, not_null: false, default: None, domain: None };
         let probe = QualifiedName { auth: domain.auth.clone(), ident: format!("{} VALUE", domain.ident) };
         let desc = TableDesc {
@@ -266,7 +291,7 @@ impl State {
         catalog.add_table(desc);
         staged.catalog = Arc::from(catalog);
         let cond = staged.value_condition(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))?;
-        Ok(cond.tables().into_iter().filter(|t| *t != probe).collect())
+        Ok((cond, probe))
     }
 
     /// [ISO/IEC 9075:1992 §11.1 GR3] The constraints of the domains of

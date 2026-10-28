@@ -421,7 +421,8 @@ impl State {
             referencing: Some(referencing),
             ..Context::new(self, owner, &params)
         };
-        let bound = bind_select(cx, &spec)?;
+        // A position in the condition's own text is none of a statement's.
+        let bound = bind_select(cx, &spec).map_err(|e| SqlError { pos: None, ..e })?;
         referencing.check(owner)?;
         if let LogicalPlan::Project { input, .. } = bound.plan
             && let LogicalPlan::Filter { cond, .. } = *input

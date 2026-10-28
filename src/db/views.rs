@@ -84,7 +84,12 @@ fn view_column_names(name: &QualifiedName, list: Option<&[String]>, query: Vec<O
         return Err(rule(format!("[X3.135-1986 §6.5 SR5] the <view column list> of {name} names a column twice")));
     }
     if list.len() != query.len() {
-        return Err(rule(format!("[X3.135-1986 §6.5 SR6] {name} lists {} columns for a query of degree {}", list.len(), query.len())));
+        let names = if list.len() == 1 { "name" } else { "names" };
+        return Err(rule(format!(
+            "[X3.135-1986 §6.5 SR6] {name} lists {} column {names} for a query of degree {}",
+            list.len(),
+            query.len()
+        )));
     }
     Ok(list.to_vec())
 }

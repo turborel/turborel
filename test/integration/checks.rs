@@ -10,7 +10,8 @@ use turborel::error::Code;
 use crate::common::{exec, sorted};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.9 SR5, SR6, AR1; §7.8
-/// SR3; §7.9 SR13; §7.10 SR15]: a CHECK refuses USER and the like, in its
+/// SR3; §7.9 SR13; §7.10 SR15]: a CHECK refuses USER and the like, and
+/// CURRENT_DATE and the like, in its
 /// subqueries too; a subquery that is possibly non-deterministic, by
 /// DISTINCT, MAX or MIN of a character string, a character string grouping
 /// column, or a set operation but UNION ALL with one, in a view it reads too, of its own schema or another; a table it holds no
@@ -30,6 +31,8 @@ fn what_checks_refuse_11_9() {
     let cases = [
         ("CHECK (C <> USER)", Code::SyntaxRule),
         ("CHECK (C <> CURRENT_USER)", Code::SyntaxRule),
+        ("CHECK (CURRENT_DATE > DATE '2000-01-01')", Code::SyntaxRule),
+        ("CHECK (EXISTS (SELECT * FROM T WHERE CURRENT_TIMESTAMP IS NULL))", Code::SyntaxRule),
         ("CHECK (EXISTS (SELECT * FROM T X WHERE X.C = SESSION_USER))", Code::SyntaxRule),
         ("CHECK (C IN (SELECT DISTINCT C FROM T))", Code::SyntaxRule),
         ("CHECK (C = (SELECT MAX(C) FROM T))", Code::SyntaxRule),

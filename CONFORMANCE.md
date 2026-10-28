@@ -313,7 +313,8 @@ restriction is lifted.
   definition too, with a default and CHECK constraints over VALUE; a
   column of one [§11.4], taking its type, default and constraints; ALTER
   DOMAIN SET and DROP DEFAULT, ADD and DROP CONSTRAINT, the rows there are
-  checked; DROP DOMAIN, RESTRICT or CASCADE; CAST to one [§6.10]; no
+  checked; DROP DOMAIN, RESTRICT or CASCADE; CAST to one, its
+  constraints checked of the value [§6.10 GR13]; no
   domain in usage by its own constraints [§11.21 SR4]; and the USAGE
   privilege on one, granted and revoked [§10.3, §11.36, §11.37], a revoke
   abandoning the views, CHECKs, domain constraints and assertions that CAST

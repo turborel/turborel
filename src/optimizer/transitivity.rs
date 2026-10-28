@@ -75,6 +75,7 @@ fn compared(c: &Cond) -> Option<Compared> {
             | Expr::Outer(..)
             | Expr::Case(..)
             | Expr::Cast(..)
+            | Expr::Domain(..)
             | Expr::Subquery(..),
             _,
         ) => return None,

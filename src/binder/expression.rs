@@ -85,11 +85,12 @@ impl Binder<'_> {
     }
 
     /// [X3.135-1986 §5.6] A `<value specification>`, which in a constraint
-    /// is no authorization identifier [ISO/IEC 9075:1992 §11.9 SR5].
+    /// is no authorization identifier [ISO/IEC 9075:1992 §11.9 SR5, §11.34
+    /// SR6].
     pub(super) fn value_specification(&self, vs: &ValueSpecification) -> Result<(Value, DataType)> {
         if self.purpose.constrains() && matches!(vs, ValueSpecification::User(_)) {
             return Err(rule(
-                "[ISO/IEC 9075:1992 §11.9 SR5] a CHECK condition shall not contain USER, CURRENT_USER, SESSION_USER or SYSTEM_USER",
+                "[ISO/IEC 9075:1992 §11.9 SR5, §11.34 SR6] a constraint's condition shall not contain USER, CURRENT_USER, SESSION_USER or SYSTEM_USER",
             ));
         }
         if let ValueSpecification::Literal(Literal::Datetime(w)) = vs {
@@ -118,7 +119,7 @@ impl Binder<'_> {
             ValueExpression::Case(case) => self.case(case, scope),
             ValueExpression::Cast { operand, target, at } => self.cast(operand.as_deref(), target, scope).or_at(*at),
             ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
-            ValueExpression::Datetime(f) => Ok(self.datetime_function(*f)),
+            ValueExpression::Datetime(f) => self.datetime_function(*f),
             ValueExpression::Extract { field, source, at } => self.extract(*field, source, scope).or_at(*at),
             ValueExpression::Difference { minuend, subtrahend, qualifier, at } => {
                 self.difference((minuend, subtrahend), *qualifier, scope).or_at(*at)

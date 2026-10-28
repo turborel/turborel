@@ -94,7 +94,7 @@ fn alike(c: &Cond) -> bool {
 /// Clears `plain` if `e` has anything but columns, constants, outer
 /// references, signs and arithmetic.
 fn expr_columns_only(e: &Expr, plain: &mut bool) {
-    if matches!(e, Expr::Call(..) | Expr::Case(..) | Expr::Cast(..) | Expr::Subquery(..)) {
+    if matches!(e, Expr::Call(..) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..)) {
         *plain = false;
     }
     e.for_each_child(&mut |child| expr_columns_only(child, plain));

@@ -126,7 +126,8 @@ fn drop_assertion_11_35() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 SR1, SR2, SR4, SR5,
 /// SR6, SR7, AR1, AR2] an assertion's name is no other constraint's of its
 /// schema, and its schema's in a `<schema definition>`; its condition
-/// reads no temporary table, names no parameter and no CURRENT_USER; it is
+/// reads no temporary table, names no parameter, no CURRENT_USER and no
+/// CURRENT_DATE; it is
 /// defined by its schema's owner, who holds REFERENCES on what it reads.
 #[test]
 fn the_rules_of_an_assertion_11_34() {
@@ -139,6 +140,11 @@ fn the_rules_of_an_assertion_11_34() {
     a.run("CREATE GLOBAL TEMPORARY TABLE G (K INTEGER)").unwrap();
     assert_eq!(exec(&a, "CREATE ASSERTION SCRATCH CHECK (NOT EXISTS (SELECT * FROM G))").err(), Some(Code::SyntaxRule), "SR5");
     assert_eq!(exec(&a, "CREATE ASSERTION WHO CHECK (CURRENT_USER = 'A')").err(), Some(Code::SyntaxRule), "SR6");
+    assert_eq!(
+        exec(&a, "CREATE ASSERTION WHEN_ CHECK (CURRENT_DATE > DATE '2000-01-01')").err(),
+        Some(Code::SyntaxRule),
+        "SR6: CURRENT_DATE"
+    );
     assert_eq!(exec(&a, "CREATE ASSERTION OTHERS CHECK (NOT EXISTS (SELECT * FROM B.V))").err(), Some(Code::Privilege), "AR2");
     let b = db.session("B");
     b.run("GRANT REFERENCES (K) ON V TO A").unwrap();

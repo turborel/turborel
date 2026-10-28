@@ -32,6 +32,11 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
             text
         }
         Expr::Cast(x, t) => format!("CAST({} AS {t})", render_expr(x, names)),
+        Expr::Domain(x, d) => {
+            // The CAST to the domain's data type it holds is shown as to the domain.
+            let operand = if let Expr::Cast(operand, _) = &**x { operand } else { x };
+            format!("CAST({} AS {})", render_expr(operand, names), d.domain)
+        }
         Expr::Subquery(_, column) => format!("(<subquery>).{}", column.saturating_add(1)),
     }
 }

@@ -3,12 +3,14 @@
 //! subqueries; and the result type of values brought together. Split from
 //! binder/expression.rs (RULES.md R-SIZE-2).
 
+use std::sync::Arc;
+
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
 use crate::ast::{CaseExpression, Subquery, TypeName, ValueExpression};
 use crate::error::Result;
-use crate::logical::{Cond, Expr};
+use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
 use crate::value::interval::Qualifier;
 use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
@@ -260,7 +262,17 @@ impl Binder<'_> {
     /// value of any of these types, cast to any [SR4].
     pub(super) fn cast(&self, operand: Option<&ValueExpression>, named: &TypeName, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         // [§6.10 SR1, AR1] a domain's data type, if USAGE on it is held.
-        let target = self.db.resolve_type(named, (self.schema, self.auth))?.0;
+        let (target, domain) = self.db.resolve_type(named, (self.schema, self.auth))?;
+        let (e, t) = self.cast_to(operand, target, scope)?;
+        let Some(d) = domain.filter(|d| !d.constraints.is_empty()) else { return Ok((e, t)) };
+        // [GR13] its constraints checked of the value.
+        let checks = DomainChecks { domain: d.name.clone(), checks: self.db.cast_checks(d)? };
+        Ok((Expr::Domain(Box::new(e), Arc::new(checks)), t))
+    }
+
+    /// CAST of `operand`, or of NULL if none, to `target` [ISO/IEC
+    /// 9075:1992 §6.10].
+    fn cast_to(&self, operand: Option<&ValueExpression>, target: DataType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
         let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;

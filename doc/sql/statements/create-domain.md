@@ -8,32 +8,100 @@ CREATE DOMAIN: define a domain
 
 ## SYNOPSIS
 
-*Not yet written.*
+```
+<domain definition> ::=
+    CREATE DOMAIN <domain name> [ AS ] <data type>
+    [ DEFAULT <default option> ]
+    [ <domain constraint>... ]
+
+<domain constraint> ::=
+    [ CONSTRAINT <constraint name> ] CHECK ( <search condition> ) [ <constraint attributes> ]
+```
+
+The `<default option>` and `<constraint attributes>` are those of
+[CREATE TABLE](create-table.md). In a domain constraint, VALUE stands
+for the value of a column of the domain.
 
 ## DESCRIPTION
 
-*Not yet written.*
+CREATE DOMAIN defines a domain: a data type, with a default and
+constraints, that columns may be defined as. A column of a domain takes
+its data type; its default, unless the column has one of its own; and
+each of its constraints, which holds of the column, VALUE the column's
+value. A change to the domain, by ALTER DOMAIN, is a change to each
+column of it.
+
+CAST to a domain gives a value of its data type, which each of its
+constraints is checked of: one false of it refuses the CAST.
+
+CREATE DOMAIN runs within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
 
-*Not yet written.*
+1. The domain's schema exists, and its user owns it. A domain named
+   without a schema is of the session's default schema.
+2. No domain of the schema has the name.
+3. The default is of the data type, as a column's default is.
+4. A constraint's name is new in the schema.
+5. A constraint's condition follows the rules of a CHECK; the only
+   column it names is VALUE.
+6. No constraint CASTs to the domain, nor to a domain one of whose
+   constraints does, however far.
+7. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 
-*Not yet written.*
+The domain's owner holds USAGE on it, grantable. A column, or a CAST, of
+a domain needs USAGE on it. A constraint's condition needs the
+REFERENCES a CHECK needs.
 
 ## ERRORS
 
-*Not yet written.*
+| SQLSTATE | SQLCODE | When |
+|---|---|---|
+| 3F000 | -103 | The schema does not exist |
+| 2A000 | -103 | A rule above is broken |
+| 2A000 | -104 | Its user does not own the schema, or lacks a privilege a constraint needs |
+| 25000 | -917 | The transaction is READ ONLY |
+| 0A000 | -900 | A COLLATE clause |
+
+A CAST to the domain of a value one of its constraints is false of fails
+with SQLSTATE 23000, SQLCODE -201.
 
 ## EXAMPLES
 
-*Not yet written.*
+```sql
+CREATE DOMAIN MONEY AS DECIMAL(9,2) DEFAULT 0 CONSTRAINT NOT_NEGATIVE CHECK (VALUE >= 0);
+CREATE TABLE LEDGER (ENTRY INTEGER, AMOUNT MONEY);
+INSERT INTO LEDGER (ENTRY) VALUES (1);
+INSERT INTO LEDGER VALUES (2, -5);
+SELECT ENTRY, AMOUNT FROM LEDGER;
+SELECT CAST(3 AS MONEY), CAST(-3 AS MONEY) FROM LEDGER;
+```
+
+```
+OK
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.NOT_NEGATIVE ON LEDGER.AMOUNT of ANN.LEDGER is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+        ENTRY |      AMOUNT
+--------------+-------------
+            1 |        0.00
+(1 row)
+
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.NOT_NEGATIVE of domain ANN.MONEY is false for a value CAST to it [ISO/IEC 9075:1992 §6.10 GR13]
+```
+
+The domain's default gave AMOUNT its value; its constraint, a CHECK of
+the column named `NOT_NEGATIVE ON LEDGER.AMOUNT`, refused -5, and the
+CAST of -3.
 
 ## STANDARD
 
-*Not yet written.*
+ISO/IEC 9075:1992 §11.21, and §6.10 GR13 for CAST to one. SQL-86 has no
+domains.
 
 ## SEE ALSO
 
-*Not yet written.*
+[ALTER DOMAIN](alter-domain.md), [DROP DOMAIN](drop-domain.md),
+[CREATE TABLE](create-table.md), [GRANT](grant.md)

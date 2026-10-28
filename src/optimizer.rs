@@ -503,6 +503,7 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::Outer(..)
                 | Expr::Case(..)
                 | Expr::Cast(..)
+                | Expr::Domain(..)
                 | Expr::Subquery(..) => None,
             })
             .collect();

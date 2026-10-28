@@ -294,9 +294,8 @@ pub struct ColumnDefinition {
 }
 
 /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` | USER |
-/// CURRENT_USER | SESSION_USER | SYSTEM_USER | NULL
-///
-/// Not implemented: `<datetime value function>`.
+/// CURRENT_USER | SESSION_USER | SYSTEM_USER | `<datetime value function>`
+/// | NULL
 #[derive(Debug, Clone)]
 pub enum DefaultOption {
     /// A `<literal>`.

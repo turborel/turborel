@@ -19,7 +19,7 @@ use super::{State, plan, rule};
 use crate::ast::{AssertionDefinition, Schema};
 use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_cursor, qualify};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, TableDesc, owner_of};
-use crate::error::{Code, Result, SqlError, SqlState, Subject};
+use crate::error::{At, Code, Result, SqlError, SqlState, Subject};
 use crate::exec::execute;
 use crate::logical::LogicalPlan;
 use crate::params::Params;
@@ -49,7 +49,7 @@ impl State {
         let kind =
             ConstraintKind::Check { text: a.check.text.clone(), names: schema.to_owned(), reads: Vec::new(), horizon: Horizon::default() };
         let mut desc = ConstraintDesc { name: name.clone(), kind, attributes: a.attributes, domain: None };
-        let reads = self.assertion_plan(&desc)?.tables();
+        let reads = self.assertion_plan(&desc).or_at(a.name.at)?.tables();
         // The columns it sees of each: those of now, as a CHECK's.
         let seen = Horizon::of(&*self.catalog, &reads);
         // [SR5] no temporary table.
@@ -127,7 +127,8 @@ impl State {
             referencing: Some(&referencing),
             ..Context::new(self, owner, &params)
         };
-        let plan = bind_cursor(cx, &spec)?.plan;
+        // A position in the query made of its text is none of a statement's.
+        let plan = bind_cursor(cx, &spec).map_err(|e| SqlError { pos: None, ..e })?.plan;
         referencing.check(owner)?;
         Ok(plan)
     }

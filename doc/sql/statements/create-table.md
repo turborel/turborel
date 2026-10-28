@@ -58,7 +58,9 @@ CREATE TABLE: define a base table
 ```
 
 ON UPDATE and ON DELETE may be written in either order, each once. The
-data types are in [Data Types](../02-data-types.md).
+data types are in [Data Types](../02-data-types.md); a column may also
+be of a type a plug-in registers *(extension)*, written by its name and,
+in parentheses, one or two unsigned integers it takes.
 
 ## DESCRIPTION
 
@@ -117,7 +119,8 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
    columns those of a unique constraint, as many as the referencing
    ones, each of the same type.
 6. A CHECK contains no USER, CURRENT_USER, SESSION_USER or SYSTEM_USER,
-   and is not possibly non-deterministic.
+   no CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP, and is not
+   possibly non-deterministic.
 7. A default is of the column's type: a literal it can hold, a user
    function of a character column of at least 128 characters, or a
    datetime value function of its fields.
