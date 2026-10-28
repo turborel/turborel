@@ -39,8 +39,9 @@ use super::{
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
-use crate::value::DataType;
 use crate::value::codec::{put_value, value};
+use crate::value::types::{APPROXIMATE, CHARACTER, EXACT};
+use crate::value::{DataType, SqlType};
 
 /// A count, or a position, as a u32.
 fn count(n: usize) -> u32 {
@@ -94,31 +95,28 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
     }
 }
 
+/// The tag of each built-in kind of type, before its parameters.
+const CHARACTER_TYPE: u8 = 0;
+const EXACT_TYPE: u8 = 1;
+const APPROXIMATE_TYPE: u8 = 2;
+
 fn put_type(out: &mut Vec<u8>, data_type: DataType) {
-    match data_type {
-        DataType::Character { length } => {
-            out.put_u8(0);
-            out.put_u32(length);
-        }
-        DataType::Exact { precision, scale } => {
-            out.put_u8(1);
-            out.put_u32(precision);
-            out.put_u32(scale);
-        }
-        DataType::Approximate { precision } => {
-            out.put_u8(2);
-            out.put_u32(precision);
-        }
-    }
+    out.put_u8(match data_type {
+        DataType::Character { .. } => CHARACTER_TYPE,
+        DataType::Exact { .. } => EXACT_TYPE,
+        DataType::Approximate { .. } => APPROXIMATE_TYPE,
+    });
+    data_type.kind().put_params(&data_type, out);
 }
 
 fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
-    Ok(match r.u8()? {
-        0 => DataType::Character { length: r.u32()? },
-        1 => DataType::Exact { precision: r.u32()?, scale: r.u32()? },
-        2 => DataType::Approximate { precision: r.u32()? },
+    let kind: &dyn SqlType = match r.u8()? {
+        CHARACTER_TYPE => &CHARACTER,
+        EXACT_TYPE => &EXACT,
+        APPROXIMATE_TYPE => &APPROXIMATE,
         _ => return Err(r.corrupt("not a data type")),
-    })
+    };
+    kind.params(r)
 }
 
 fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {

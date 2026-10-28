@@ -98,6 +98,7 @@ mod timestamps;
 mod transaction_memory;
 mod transactions;
 mod trees;
+mod type_contract;
 mod users;
 mod views;
 mod working_tables;

@@ -5,16 +5,18 @@ use std::fmt;
 
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 
-mod cast;
+pub(crate) mod cast;
 pub(crate) mod codec;
-mod comparison;
+pub(crate) mod comparison;
 mod decimal;
 mod like;
+pub mod types;
 
 pub use cast::cast;
 pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use decimal::{Decimal, pow10};
 pub use like::like;
+pub use types::{Descriptor, SqlType};
 
 // ---------------------------------------------------------------------------
 // Implementor-defined choices. The standard leaves each of these to us.
@@ -82,19 +84,16 @@ impl DataType {
     pub fn is_character(&self) -> bool {
         matches!(self, DataType::Character { .. })
     }
-    /// [X3.135-1986 §4.2] "A character string and a number are not comparable values."
+    /// [X3.135-1986 §4.2] Whether its values compare with those of `other`,
+    /// as its kind says.
     pub fn comparable(&self, other: &DataType) -> bool {
-        self.is_character() == other.is_character()
+        self.kind().comparable(other)
     }
 }
 
 impl fmt::Display for DataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DataType::Character { length } => write!(f, "CHARACTER({length})"),
-            DataType::Exact { precision, scale } => write!(f, "NUMERIC({precision},{scale})"),
-            DataType::Approximate { precision } => write!(f, "FLOAT({precision})"),
-        }
+        f.write_str(&self.kind().written(self))
     }
 }
 
@@ -222,14 +221,11 @@ impl Value {
         }
     }
 
-    /// How this value is written as a `<literal>` ([X3.135-1986 §4.2] "the logical
-    /// representation of a value is a `<literal>`").
+    /// How this value is written as a `<literal>`, as its kind writes it
+    /// ([X3.135-1986 §4.2] "the logical representation of a value is a
+    /// `<literal>`").
     pub fn to_literal(&self) -> String {
-        match self {
-            Value::Null => "NULL".into(),
-            Value::Char(s) => format!("'{}'", s.replace('\'', "''")),
-            Value::Exact(_) | Value::Approx(_) => self.to_string(),
-        }
+        self.kind().map_or_else(|| "NULL".to_owned(), |k| k.literal(self))
     }
 
     /// A hashable form under which two values are equal exactly when they are
@@ -324,13 +320,10 @@ fn approximate(op: ArithOp, x: f64, y: f64) -> Result<Value> {
 
 /// [ISO/IEC 9075:1992 §9.2 GR2, GR3] Store assignment of `v` to a column,
 /// parameter or target of type `target`, as the rule `rule` (a citation,
-/// e.g. "ISO/IEC 9075:1992 §13.8 GR4b iii") applies it: null stays null; a
-/// character string is padded with spaces to the length, or loses
-/// trailing spaces beyond it \[GR3b, GR3c\]; a number is approximated in
-/// the type \[GR3k\], an exact one's extra fraction digits truncated and an
-/// approximate one rounded, which is implementation-defined. Retrieval
-/// assignment [§9.1 GR3] is the same but for strings, which its callers
-/// truncate first.
+/// e.g. "ISO/IEC 9075:1992 §13.8 GR4b iii") applies it, as the type's kind
+/// assigns (`SqlType::assign`): null stays null. Retrieval assignment
+/// [§9.1 GR3] is the same but for strings, which its callers truncate
+/// first.
 ///
 /// # Errors
 ///
@@ -339,52 +332,23 @@ fn approximate(op: ArithOp, x: f64, y: f64) -> Result<Value> {
 /// the value is of a type that cannot be assigned to it \[SR2\], as a
 /// plug-in function might give.
 pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
-    match (v, target) {
-        (Value::Null, _) => Ok(Value::Null),
-        (Value::Char(s), DataType::Character { length }) => {
-            let (n, l) = (s.chars().count(), usize::try_from(*length).unwrap_or(usize::MAX));
-            if n <= l {
-                return Ok(Value::Char(format!("{s}{}", " ".repeat(l.saturating_sub(n)))));
-            }
-            if s.chars().skip(l).all(|c| c == ' ') {
-                return Ok(Value::Char(s.chars().take(l).collect()));
-            }
-            fail_with(
-                Code::Data,
-                SqlState::STRING_DATA_RIGHT_TRUNCATION,
-                format!(
-                    "[{rule}; ISO/IEC 9075:1992 §9.2 GR3b ii] a value of {n} characters, not spaces beyond {length}, does not fit {target}"
-                ),
-            )
-        }
-        (Value::Exact(d), DataType::Exact { precision, scale }) => {
-            let units = if d.scale > *scale {
-                d.scale.checked_sub(*scale).and_then(pow10).and_then(|p| d.units.checked_div(p))
-            } else {
-                scale.checked_sub(d.scale).and_then(pow10).and_then(|p| d.units.checked_mul(p))
-            };
-            // The divisor 10^n is at least 1, and the quotient smaller than `units`.
-            match units.map(|u| Decimal::new(u, *scale)).filter(|out| out.fits(*precision, *scale)) {
-                Some(out) => Ok(Value::Exact(out)),
-                None => fail_with(
-                    Code::Data,
-                    SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
-                    format!("[{rule}; ISO/IEC 9075:1992 §9.2 GR3k] {d} does not fit {target} without losing leading digits"),
-                ),
-            }
-        }
-        (Value::Approx(x), DataType::Exact { precision, scale }) => cast::approximate_to_exact(x, (*precision, *scale), rule),
-        (v, t) => match (v.as_f64(), t) {
-            (Some(x), DataType::Approximate { precision }) => {
-                Ok(Value::Approx(if *precision <= REAL_PRECISION { round_to_single(x) } else { x }))
-            }
-            (None, _) | (Some(_), DataType::Character { .. } | DataType::Exact { .. }) => fail_with(
-                Code::Data,
-                SqlState::ERROR_IN_ASSIGNMENT,
-                format!("[{rule}; ISO/IEC 9075:1992 §9.2 SR2] the value {v} cannot be assigned to {t}"),
-            ),
-        },
+    if v.is_null() {
+        return Ok(Value::Null);
     }
+    target.kind().assign(v, target, rule)
+}
+
+/// [ISO/IEC 9075:1992 §9.2 SR2] `v` cannot be assigned to `t`.
+///
+/// # Errors
+///
+/// Always: SQLSTATE 22005.
+pub(crate) fn unassignable(v: &Value, t: &DataType, rule: &str) -> Result<Value> {
+    fail_with(
+        Code::Data,
+        SqlState::ERROR_IN_ASSIGNMENT,
+        format!("[{rule}; ISO/IEC 9075:1992 §9.2 SR2] the value {v} cannot be assigned to {t}"),
+    )
 }
 
 /// `x` rounded to the nearest IEEE single-precision value, the precision of
@@ -394,7 +358,7 @@ pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
     clippy::cast_possible_truncation,
     reason = "RULES.md R-DEV-3: rounding to single precision is the intent, and std has no f64-to-f32 conversion function"
 )]
-fn round_to_single(x: f64) -> f64 {
+pub(crate) fn round_to_single(x: f64) -> f64 {
     f64::from(x as f32)
 }
 

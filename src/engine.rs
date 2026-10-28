@@ -24,11 +24,11 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::{DEFAULT_PAGE_SIZE, Pager};
-use crate::error::{Code, SqlError};
+use crate::error::SqlError;
 use crate::hash::HashFunction;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::memory::MemoryBudget;
-use crate::value::{DataType, Decimal, pow10};
+use crate::value::DataType;
 
 /// \[DESIGN\] The bytes of the buffer pool of a pager file in memory, 2
 /// MiB: its pages are in memory anyway, so the pool only spares their
@@ -51,33 +51,11 @@ pub(crate) fn memory_file(budget: &Arc<MemoryBudget>, what: &str) -> Result<(Arc
     Ok((pool, file))
 }
 
-/// The units of `value` at `scale`, as a 64-bit integer: exact numbers have
-/// at most `MAX_EXACT_PRECISION` (18) digits, which fit.
-///
-/// # Errors
-///
-/// SQLCODE -910 if `value` has more digits after the point than `scale`
-/// keeps, or more digits in all than 64 bits hold: a value not of the
-/// column's type.
-pub(crate) fn units_at(value: &Decimal, scale: u32) -> Result<i64, SqlError> {
-    let units = if value.scale <= scale {
-        pow10(scale.saturating_sub(value.scale)).and_then(|f| value.units.checked_mul(f))
-    } else {
-        pow10(value.scale.saturating_sub(scale)).filter(|&f| value.units.checked_rem(f) == Some(0)).and_then(|f| value.units.checked_div(f))
-    };
-    units.and_then(|u| i64::try_from(u).ok()).ok_or_else(|| {
-        SqlError::new(Code::Api, format!("[DESIGN] {value} cannot be stored at scale {scale} in 64 bits: it is not of the column's type"))
-    })
-}
-
-/// The width of a column's value in a record's fixed part, if it has one:
-/// character strings are variable.
+/// The width of a column's value in a record's fixed part, if it has one,
+/// as its kind says: character strings are variable.
 pub(crate) fn fixed_width(data_type: DataType) -> Option<usize> {
-    match data_type {
-        DataType::Exact { .. } | DataType::Approximate { .. } => Some(WORD),
-        DataType::Character { .. } => None,
-    }
+    data_type.kind().record_width(&data_type)
 }
 
 /// Bytes of a number in a record or a key.
-pub(crate) const WORD: usize = 8;
+pub(crate) use crate::value::types::NUMBER_BYTES as WORD;

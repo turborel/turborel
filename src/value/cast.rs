@@ -1,12 +1,13 @@
-//! [ISO/IEC 9075:1992 §6.10] CAST among the data types of SQL-86: exact
-//! and approximate numbers and fixed-length character strings. Split from
-//! value.rs (RULES.md R-SIZE-2).
+//! [ISO/IEC 9075:1992 §6.10] CAST, as the target type's kind casts
+//! (`value::types`), and the literals it reads and writes, which the kinds
+//! share. Split from value.rs (RULES.md R-SIZE-2).
 
-use super::{DataType, Decimal, MAX_EXACT_PRECISION, REAL_PRECISION, Value, assign, pow10, round_to_single};
+use super::{DataType, Decimal, MAX_EXACT_PRECISION, REAL_PRECISION, Value, pow10, round_to_single};
 use crate::error::{Code, Result, SqlState, fail_with};
 
-/// [ISO/IEC 9075:1992 §6.10 GR2-GR5] `v` cast to `to`: null stays null
-/// \[GR2a\]. Every one of these types may be cast to every other \[SR4\].
+/// [ISO/IEC 9075:1992 §6.10 GR2-GR5] `v` cast to `to`, as its kind casts
+/// (`SqlType::cast`): null stays null \[GR2a\]. Every one of SQL-86's types
+/// may be cast to every other \[SR4\].
 ///
 /// # Errors
 ///
@@ -14,51 +15,18 @@ use crate::error::{Code, Result, SqlState, fail_with};
 /// string is no numeric literal \[GR3b i, GR4b i\]; 22001 if a number's
 /// literal is longer than the string type \[GR5a iv, GR5b iii 4\].
 pub fn cast(v: Value, to: &DataType) -> Result<Value> {
-    match (v, to) {
-        (Value::Null, _) => Ok(Value::Null),
-        // [GR3b, GR4b] the string's <signed numeric literal>, its spaces
-        // trimmed, cast.
-        (Value::Char(s), DataType::Exact { .. } | DataType::Approximate { .. }) => {
-            let Some(literal) = numeric_literal(s.trim_matches(' ')) else {
-                return fail_with(
-                    Code::Data,
-                    SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
-                    format!("[ISO/IEC 9075:1992 §6.10 GR3b i, GR4b i] '{s}' is not a <signed numeric literal>"),
-                );
-            };
-            cast(literal, to)
-        }
-        // [GR3a i] implementation-defined: an exact number's extra digits
-        // truncated, as store assignment does; an approximate one rounded.
-        (Value::Exact(d), DataType::Exact { .. }) => assign(Value::Exact(d), to, "ISO/IEC 9075:1992 §6.10 GR3a"),
-        (Value::Approx(x), DataType::Exact { precision, scale }) => {
-            approximate_to_exact(x, (*precision, *scale), "ISO/IEC 9075:1992 §6.10 GR3a ii")
-        }
-        // [GR4a]
-        (Value::Exact(d), DataType::Approximate { precision }) => Ok(Value::Approx(at_precision(d.to_f64(), *precision))),
-        (Value::Approx(x), DataType::Approximate { precision }) => Ok(Value::Approx(at_precision(x, *precision))),
-        // [GR5a, GR5b] a number's shortest literal, padded.
-        (Value::Exact(d), DataType::Character { length }) => padded(&d.to_string(), *length),
-        (Value::Approx(x), DataType::Character { length }) => padded(&approximate_literal(x), *length),
-        // [GR5c] truncated or padded; the warning of truncating a character
-        // not a space [GR5c ii] is not raised, there being no diagnostics
-        // area.
-        (Value::Char(s), DataType::Character { length }) => {
-            let kept: String = s.chars().take(usize::try_from(*length).unwrap_or(usize::MAX)).collect();
-            assign(Value::Char(kept), to, "ISO/IEC 9075:1992 §6.10 GR5c")
-        }
-    }
+    to.kind().cast(v, to)
 }
 
 /// `x` at an approximate type's precision: REAL's rounded to single.
-fn at_precision(x: f64, precision: u32) -> f64 {
+pub(crate) fn at_precision(x: f64, precision: u32) -> f64 {
     if precision <= REAL_PRECISION { round_to_single(x) } else { x }
 }
 
 /// \[GR3a; §9.2 GR3k\] `x` as an exact number of `precision` and `scale`,
 /// rounded to the scale, if it fits; `rule` is the rule applied, for the
 /// error.
-pub(super) fn approximate_to_exact(x: f64, (precision, scale): (u32, u32), rule: &str) -> Result<Value> {
+pub(crate) fn approximate_to_exact(x: f64, (precision, scale): (u32, u32), rule: &str) -> Result<Value> {
     let out_of_range =
         || fail_with(Code::Data, SqlState::NUMERIC_VALUE_OUT_OF_RANGE, format!("[{rule}] {x:E} does not fit NUMERIC({precision},{scale})"));
     let places = usize::try_from(scale).unwrap_or(usize::MAX);
@@ -75,7 +43,7 @@ pub(super) fn approximate_to_exact(x: f64, (precision, scale): (u32, u32), rule:
 
 /// \[GR5b i\] The shortest `<approximate numeric literal>` of `x`: its
 /// mantissa one digit not zero, a period and digits; 0E0 for zero.
-fn approximate_literal(x: f64) -> String {
+pub(crate) fn approximate_literal(x: f64) -> String {
     if x == 0.0_f64 {
         return "0E0".to_owned();
     }
@@ -89,7 +57,7 @@ fn approximate_literal(x: f64) -> String {
 }
 
 /// [GR5a ii-iv] `text` padded to `length`, if it is no longer.
-fn padded(text: &str, length: u32) -> Result<Value> {
+pub(crate) fn padded(text: &str, length: u32) -> Result<Value> {
     let n = text.chars().count();
     match usize::try_from(length).ok().and_then(|l| l.checked_sub(n)) {
         Some(spaces) => Ok(Value::Char(format!("{text}{}", " ".repeat(spaces)))),
@@ -101,10 +69,29 @@ fn padded(text: &str, length: u32) -> Result<Value> {
     }
 }
 
+/// [ISO/IEC 9075:1992 §6.10 GR3b, GR4b] The `<signed numeric literal>` `s`
+/// is, its spaces trimmed, to cast to a number.
+///
+/// # Errors
+///
+/// SQLSTATE 22018 if it is none \[GR3b i, GR4b i\].
+pub(crate) fn numeric_literal(s: &str) -> Result<Value> {
+    literal_value(s.trim_matches(' ')).map_or_else(
+        || {
+            fail_with(
+                Code::Data,
+                SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
+                format!("[ISO/IEC 9075:1992 §6.10 GR3b i, GR4b i] '{s}' is not a <signed numeric literal>"),
+            )
+        },
+        Ok,
+    )
+}
+
 /// [ISO/IEC 9075:1992 §5.3] The value of `s` if it is a `<signed numeric
 /// literal>`: an exact one, [+|-] digits with a period among or before
 /// them, or an approximate one, that followed by E and a signed integer.
-fn numeric_literal(s: &str) -> Option<Value> {
+fn literal_value(s: &str) -> Option<Value> {
     let (negative, body) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
@@ -141,13 +128,13 @@ mod tests {
     /// `<signed numeric literal>`, and the shortest approximate literal.
     #[test]
     fn numeric_literals() {
-        let exact = |s: &str| if let Some(Value::Exact(d)) = numeric_literal(s) { Some((d.units, d.scale)) } else { None };
+        let exact = |s: &str| if let Some(Value::Exact(d)) = literal_value(s) { Some((d.units, d.scale)) } else { None };
         assert_eq!(exact("-12.50"), Some((-1250, 2)));
         assert_eq!(exact(".5"), Some((5, 1)));
-        let Some(Value::Approx(x)) = numeric_literal("+1E-2") else { panic!("+1E-2 is approximate") };
+        let Some(Value::Approx(x)) = literal_value("+1E-2") else { panic!("+1E-2 is approximate") };
         assert!((x - 0.01_f64).abs() < 1e-12_f64);
         for bad in ["", ".", "1.2.3", "E1", "1E", "1E+", "A1", "--1"] {
-            assert!(numeric_literal(bad).is_none(), "{bad}");
+            assert!(literal_value(bad).is_none(), "{bad}");
         }
         assert_eq!(approximate_literal(0.0), "0E0");
         assert_eq!(approximate_literal(100.0), "1.0E2");

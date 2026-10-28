@@ -88,6 +88,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D44 | A running statement is cancelled from another thread |
 | D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
+| D53 | Data types: one contract, standard types built in |
 
 ### The project
 
@@ -513,6 +514,30 @@ the view each time; and where a column may be drawn from more than what
 its item names (a set operator's other side, a derived table, a common
 column), granting none is safe where granting by the item alone is not.
 
+**D53. Data types: one contract, standard types built in.** What a data
+type does is one trait, `value::SqlType`: how it is written, what it
+compares with, store assignment and CAST to it, its value's bytes in the
+log, the catalog and on the wire, in a record and in an index key (with
+the anchor of a probe), its literal, its Information Schema descriptor,
+and its position for a histogram. A `DataType` names its kind
+(`DataType::kind`), and every type-level operation goes through it.
+- SQL's standard types are built in: each a kind of its own module in
+  `value/types/`, registered by default. The parser and binder know them,
+  since their syntax (`DATE '...'`, `INTERVAL ... DAY TO HOUR`) and their
+  rules are the language's.
+- A built-in kind's values are variants of `Value`, so comparison and
+  hashing (`value::compare`, `value::bucket`), the hot path, match them
+  directly, with no virtual call; each kind's own `compare` and `bucket`
+  are those same functions.
+- Types beyond the standard are plug-ins through the same trait,
+  registered on the database.
+- `DataType` stays `Copy`: engines and index methods take `&[DataType]`
+  and encode by it, with no registry at hand.
+*Why:* a standard type is grammar as much as storage, and none is
+replaced; one contract still keeps every type, built in or not, honest to
+the same responsibilities, and a plug-in type stored, logged, indexed and
+sent as a built-in one is.
+
 **D27. A thread-safe core over snapshots of the definitions.**
 - A `Database` is shared between threads, and every extension trait is
   `Send + Sync`; a plug-in guards its own state.
@@ -811,8 +836,9 @@ bounds it without binding plug-ins to one page cache.
 
 **D39. Directions for extensibility.** Beyond today's plug-ins, the server's
 wire protocol is a plug-in (`server::Protocol`, D42), so more than one
-protocol can serve the same database; and data types will be plug-ins, each with its comparison,
-casts, encoding, index keys, functions and predicates.
+protocol can serve the same database; and data types share one contract,
+`SqlType` (D53): SQL's standard types are built in behind it, and types
+beyond the standard are plug-ins through it.
 *Why:* the same principle as the engines and index methods: the core
 fixes the protocols between components, and implementations are
 replaceable.

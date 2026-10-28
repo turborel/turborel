@@ -31,10 +31,10 @@
 //! the `_with` decoders. The prefix in the reference is for filters that
 //! can decide on a value's first bytes without fetching it.
 
-use super::{WORD, fixed_width, units_at};
+use super::{WORD, fixed_width};
 use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
-use crate::value::{DataType, Decimal, Value};
+use crate::value::{DataType, Value};
 
 /// The record's header byte as this code writes it.
 const HEADER: u8 = 0;
@@ -429,31 +429,15 @@ fn put(record: &mut [u8], at: usize, bytes: &[u8]) {
     }
 }
 
-/// The bytes of non-null `value` in a column of `data_type`.
+/// The bytes of non-null `value` in a column of `data_type`, as its kind
+/// encodes them.
 fn encode_value(value: &Value, data_type: DataType) -> Result<Vec<u8>> {
-    match (value, data_type) {
-        (Value::Exact(d), DataType::Exact { scale, .. }) => Ok(units_at(d, scale)?.to_le_bytes().to_vec()),
-        (Value::Approx(f), DataType::Approximate { .. }) => Ok(f.to_bits().to_le_bytes().to_vec()),
-        (Value::Char(s), DataType::Character { .. }) => Ok(s.trim_end_matches(' ').as_bytes().to_vec()),
-        (
-            Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Char(_),
-            DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Character { .. },
-        ) => Err(SqlError::new(Code::Api, format!("[DESIGN] {value} is not a value of a column of type {data_type:?}"))),
-    }
+    data_type.encode_record(value)
 }
 
 /// The value `field` holds in a column of `data_type`, if it is one.
 fn decode_value(field: &[u8], data_type: DataType) -> Option<Value> {
-    let word = || <[u8; WORD]>::try_from(field).ok();
-    match data_type {
-        DataType::Exact { scale, .. } => Some(Value::Exact(Decimal::new(i128::from(i64::from_le_bytes(word()?)), scale))),
-        DataType::Approximate { .. } => Some(Value::Approx(f64::from_bits(u64::from_le_bytes(word()?)))),
-        DataType::Character { length } => {
-            let s = std::str::from_utf8(field).ok()?;
-            let pad = usize::try_from(length).ok()?.checked_sub(s.chars().count())?;
-            Some(Value::Char(format!("{s}{}", " ".repeat(pad))))
-        }
-    }
+    data_type.decode_record(field)
 }
 
 // Unit tests: rows read back as written, any column alone, values out of

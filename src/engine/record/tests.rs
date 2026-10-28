@@ -3,6 +3,7 @@
 //! R-TEST-1, R-TEST-2). Split from record.rs (RULES.md R-SIZE-2).
 
 use super::*;
+use crate::value::Decimal;
 
 fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))

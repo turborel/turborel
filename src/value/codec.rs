@@ -10,7 +10,7 @@
 //! row:   values u32, then each value
 //! ```
 
-use super::{Decimal, Value};
+use super::{SqlType, Value, types};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::storage::Row;
@@ -21,40 +21,31 @@ const CHARACTER: u8 = 1;
 const EXACT: u8 = 2;
 const APPROXIMATE: u8 = 3;
 
-/// Appends `value` to `out`.
+/// Appends `value` to `out`: its tag, then its bytes, as its kind writes
+/// them.
 pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
-    match value {
-        Value::Null => out.put_u8(NULL),
-        Value::Char(s) => {
-            out.put_u8(CHARACTER);
-            out.put_str(s);
-        }
-        Value::Exact(d) => {
-            out.put_u8(EXACT);
-            out.put_i128(d.units);
-            out.put_u32(d.scale);
-        }
-        Value::Approx(f) => {
-            out.put_u8(APPROXIMATE);
-            // The bits, so every value, NaN and -0.0 included, reads back as
-            // it was.
-            out.put_u64(f.to_bits());
-        }
+    let tag = match value {
+        Value::Null => NULL,
+        Value::Char(_) => CHARACTER,
+        Value::Exact(_) => EXACT,
+        Value::Approx(_) => APPROXIMATE,
+    };
+    out.put_u8(tag);
+    if let Some(kind) = value.kind() {
+        kind.put_value(value, out);
     }
 }
 
 /// Reads a value written by `put_value`.
 pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
-    match reader.u8()? {
-        NULL => Ok(Value::Null),
-        CHARACTER => Ok(Value::Char(reader.str()?)),
-        EXACT => {
-            let units = reader.i128()?;
-            Ok(Value::Exact(Decimal::new(units, reader.u32()?)))
-        }
-        APPROXIMATE => Ok(Value::Approx(f64::from_bits(reader.u64()?))),
-        tag => Err(reader.corrupt(&format!("no kind of value has tag {tag}"))),
-    }
+    let kind: &dyn SqlType = match reader.u8()? {
+        NULL => return Ok(Value::Null),
+        CHARACTER => &types::CHARACTER,
+        EXACT => &types::EXACT,
+        APPROXIMATE => &types::APPROXIMATE,
+        tag => return Err(reader.corrupt(&format!("no kind of value has tag {tag}"))),
+    };
+    kind.value(reader)
 }
 
 /// Appends `row` to `out`.

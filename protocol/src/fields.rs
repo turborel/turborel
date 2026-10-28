@@ -6,7 +6,7 @@ use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
-use turborel::value::{DataType, Decimal, Value};
+use turborel::value::{DataType, SqlType, Value, types};
 
 use crate::{Column, Failure};
 
@@ -58,31 +58,29 @@ fn string(r: &mut Reader<'_>) -> Result<String> {
     r.str()
 }
 
+/// A type: its kind's tag, then its parameters, as its kind writes them.
 fn put_type(b: &mut Vec<u8>, t: &DataType) {
-    match t {
-        DataType::Character { length } => {
-            b.put_u8(CHARACTER);
-            b.put_u32(*length);
-        }
-        DataType::Exact { precision, scale } => {
-            b.put_u8(EXACT);
-            b.put_u32(*precision);
-            b.put_u32(*scale);
-        }
-        DataType::Approximate { precision } => {
-            b.put_u8(APPROXIMATE);
-            b.put_u32(*precision);
-        }
+    b.put_u8(match t {
+        DataType::Character { .. } => CHARACTER,
+        DataType::Exact { .. } => EXACT,
+        DataType::Approximate { .. } => APPROXIMATE,
+    });
+    t.kind().put_params(t, b);
+}
+
+/// The kind of type or value of `tag`.
+fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
+    match tag {
+        CHARACTER => Some(&types::CHARACTER),
+        EXACT => Some(&types::EXACT),
+        APPROXIMATE => Some(&types::APPROXIMATE),
+        _ => None,
     }
 }
 
 fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
-    match r.u8()? {
-        CHARACTER => Ok(DataType::Character { length: r.u32()? }),
-        EXACT => Ok(DataType::Exact { precision: r.u32()?, scale: r.u32()? }),
-        APPROXIMATE => Ok(DataType::Approximate { precision: r.u32()? }),
-        _ => Err(r.corrupt("no data type has this tag")),
-    }
+    let tag = r.u8()?;
+    kind_of(tag).ok_or_else(|| r.corrupt("no data type has this tag"))?.params(r)
 }
 
 pub(crate) fn put_column(b: &mut Vec<u8>, c: &Column) {
@@ -112,32 +110,23 @@ pub(crate) fn parameter(r: &mut Reader<'_>) -> Result<ParameterType> {
     Ok(if varying { ParameterType::Varying } else { ParameterType::Of(t) })
 }
 
+/// A value: its kind's tag, then its bytes, as its kind writes them.
 fn put_value(b: &mut Vec<u8>, v: &Value) {
-    match v {
-        Value::Null => b.put_u8(NULL),
-        Value::Char(s) => {
-            b.put_u8(CHARACTER);
-            b.put_str(s);
-        }
-        Value::Exact(d) => {
-            b.put_u8(EXACT);
-            b.put_i128(d.units);
-            b.put_u32(d.scale);
-        }
-        Value::Approx(f) => {
-            b.put_u8(APPROXIMATE);
-            b.put_u64(f.to_bits());
-        }
+    b.put_u8(match v {
+        Value::Null => NULL,
+        Value::Char(_) => CHARACTER,
+        Value::Exact(_) => EXACT,
+        Value::Approx(_) => APPROXIMATE,
+    });
+    if let Some(kind) = v.kind() {
+        kind.put_value(v, b);
     }
 }
 
 fn value(r: &mut Reader<'_>) -> Result<Value> {
     match r.u8()? {
         NULL => Ok(Value::Null),
-        CHARACTER => Ok(Value::Char(r.str()?)),
-        EXACT => Ok(Value::Exact(Decimal::new(r.i128()?, r.u32()?))),
-        APPROXIMATE => Ok(Value::Approx(f64::from_bits(r.u64()?))),
-        _ => Err(r.corrupt("no value has this tag")),
+        tag => kind_of(tag).ok_or_else(|| r.corrupt("no value has this tag"))?.value(r),
     }
 }
 

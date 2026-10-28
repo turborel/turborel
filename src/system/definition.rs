@@ -41,7 +41,7 @@ use crate::binder::{system_view_columns, view_uses};
 use crate::catalog::{CheckLevels, ColumnDefault, ColumnDesc, ConstraintDesc, QualifiedName, TemporaryKind, owner_of};
 use crate::error::Result;
 use crate::storage::Row;
-use crate::value::{DOUBLE_PRECISION, DataType, REAL_PRECISION, Value};
+use crate::value::{DataType, Value};
 
 /// How long a CHARACTER_DATA column whose values §21.3 does not list is.
 pub(super) const LONG: u32 = 4096;
@@ -273,27 +273,17 @@ fn data_types(seen: &Seen<'_>) -> Result<Vec<Row>> {
     Ok(rows)
 }
 
-/// [§21.3.5 Description 3] The data type `t`, from DATA_TYPE on. A
-/// character string's maximum length in octets is four for each character,
-/// the most UTF-8 takes; its collation SQL_TEXT. An exact numeric is
-/// NUMERIC, of decimal precision \[§6.1 SR17\]; an approximate one REAL
-/// or DOUBLE PRECISION, as it holds values, of binary precision.
+/// [§21.3.5 Description 3] The data type `t`, from DATA_TYPE on, as its
+/// kind describes it (`SqlType::descriptor`): a character string's
+/// collation SQL_TEXT, the one there is.
 fn data_type(catalog: &Value, t: DataType) -> Vec<Value> {
-    let null = || Value::Null;
-    match t {
-        DataType::Character { length } => {
-            let octets = number(usize::try_from(length).unwrap_or(usize::MAX).saturating_mul(4));
-            let collation = ids(catalog, &information(SQL_TEXT));
-            [vec![text("CHARACTER"), count(length), octets], collation.to_vec(), vec![null(), null(), null(), null()]].concat()
-        }
-        DataType::Exact { precision, scale } => {
-            vec![text("NUMERIC"), null(), null(), null(), null(), null(), count(precision), number(10), count(scale), null()]
-        }
-        DataType::Approximate { precision } => {
-            let (name, bits) = if precision <= REAL_PRECISION { ("REAL", REAL_PRECISION) } else { ("DOUBLE PRECISION", DOUBLE_PRECISION) };
-            vec![text(name), null(), null(), null(), null(), null(), count(bits), number(2), null(), null()]
-        }
-    }
+    let d = t.kind().descriptor(&t);
+    let optional = |n: Option<u32>| n.map_or(Value::Null, count);
+    let collation = if d.collated { ids(catalog, &information(SQL_TEXT)).to_vec() } else { vec![Value::Null, Value::Null, Value::Null] };
+    let octets = d.octets.map_or(Value::Null, number);
+    let head = vec![text(&d.name), optional(d.length), octets];
+    let tail = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision)];
+    [head, collation, tail].concat()
 }
 
 // ---------------------------------------------------------------------------

@@ -27,15 +27,13 @@
 //! not above it, so every other key compares with the value as with the
 //! anchor, and only the anchor's own key needs comparing with the value.
 
-use super::{WORD, units_at};
 use crate::error::{Code, Result, SqlError};
-use crate::value::{DataType, Decimal, Value, pow10};
+use crate::value::types::{malformed, take};
+use crate::value::{DataType, Value};
 
 /// The tags before a column's value.
 const NULL: u8 = 0;
 const PRESENT: u8 = 1;
-/// The sign bit of a 64-bit word.
-const SIGN: u64 = 1 << 63;
 
 /// Appends the key of `values`, the values of columns of `types`, to `out`.
 ///
@@ -53,41 +51,14 @@ pub fn encode_key(values: &[Value], types: &[DataType], out: &mut Vec<u8>) -> Re
     Ok(())
 }
 
-/// The key of one column.
+/// The key of one column: its kind's, after a tag.
 fn encode_column(value: &Value, data_type: DataType, out: &mut Vec<u8>) -> Result<()> {
-    let mismatch = || SqlError::new(Code::Api, format!("[DESIGN] {value} is not a key of a column of type {data_type:?}"));
-    match (value, data_type) {
-        (Value::Null, _) => out.push(NULL),
-        (Value::Exact(d), DataType::Exact { scale, .. }) => {
-            out.push(PRESENT);
-            let units = u64::from_be_bytes(units_at(d, scale)?.to_be_bytes());
-            out.extend_from_slice(&(units ^ SIGN).to_be_bytes());
-        }
-        (Value::Approx(f), DataType::Approximate { .. }) => {
-            out.push(PRESENT);
-            // SQL compares -0.0 and 0.0 as equal, so they share a key.
-            let bits = if *f == 0.0_f64 { 0 } else { f.to_bits() };
-            let ordered = if bits & SIGN == 0 { bits | SIGN } else { !bits };
-            out.extend_from_slice(&ordered.to_be_bytes());
-        }
-        (Value::Char(s), DataType::Character { length }) => {
-            let pad = usize::try_from(length).ok().and_then(|n| n.checked_sub(s.chars().count())).ok_or_else(mismatch)?;
-            out.push(PRESENT);
-            out.extend_from_slice(s.as_bytes());
-            out.resize(out.len().saturating_add(pad), b' ');
-        }
-        (
-            Value::Exact(_) | Value::Approx(_) | Value::Char(_),
-            DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Character { .. },
-        ) => {
-            return Err(mismatch());
-        }
+    if value.is_null() {
+        out.push(NULL);
+        return Ok(());
     }
-    Ok(())
-}
-
-fn malformed() -> SqlError {
-    SqlError::new(Code::Corrupt, "[DESIGN] an index key is malformed")
+    out.push(PRESENT);
+    data_type.encode_key(value, out)
 }
 
 /// The values of the key `bytes`, of columns of `types`; a character value
@@ -102,44 +73,13 @@ pub fn decode_key(bytes: &[u8], types: &[DataType]) -> Result<Vec<Value>> {
     if rest.is_empty() { Ok(values) } else { Err(malformed()) }
 }
 
-/// The first `n` bytes of `rest`, which then holds those after.
-fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
-    let (taken, after) = rest.split_at_checked(n).ok_or_else(malformed)?;
-    *rest = after;
-    Ok(taken)
-}
-
 /// The value of one column, from the start of `rest`.
 fn decode_column(rest: &mut &[u8], data_type: DataType) -> Result<Value> {
     match take(rest, 1)? {
-        [NULL] => return Ok(Value::Null),
-        [PRESENT] => {}
-        _ => return Err(malformed()),
+        [NULL] => Ok(Value::Null),
+        [PRESENT] => data_type.decode_key(rest),
+        _ => Err(malformed()),
     }
-    let word =
-        |bytes: &mut &[u8]| -> Result<u64> { Ok(u64::from_be_bytes(<[u8; WORD]>::try_from(take(bytes, WORD)?).map_err(|_| malformed())?)) };
-    Ok(match data_type {
-        DataType::Exact { scale, .. } => {
-            let units = i64::from_be_bytes((word(rest)? ^ SIGN).to_be_bytes());
-            Value::Exact(Decimal::new(i128::from(units), scale))
-        }
-        DataType::Approximate { .. } => {
-            let ordered = word(rest)?;
-            Value::Approx(f64::from_bits(if ordered & SIGN == 0 { !ordered } else { ordered ^ SIGN }))
-        }
-        DataType::Character { length } => {
-            // The value ends where the character after its `length`-th
-            // begins: at a byte that does not continue a character.
-            let length = usize::try_from(length).map_err(|_| malformed())?;
-            let starts = rest.iter().enumerate().filter(|&(_, b)| b & 0xC0 != 0x80).map(|(i, _)| i);
-            let end = starts.clone().nth(length).unwrap_or(rest.len());
-            let s = std::str::from_utf8(take(rest, end)?).map_err(|_| malformed())?;
-            if s.chars().count() != length {
-                return Err(malformed());
-            }
-            Value::Char(s.to_owned())
-        }
-    })
 }
 
 /// The key of a value's anchor, and whether it is the value's own key.
@@ -159,37 +99,13 @@ pub struct Anchor {
 /// length. None for NULL or a value of another kind, which every key must
 /// be compared with.
 pub fn anchor(value: &Value, data_type: DataType) -> Option<Anchor> {
+    if value.is_null() {
+        return None;
+    }
+    let (anchored, exact) = data_type.kind().anchor(value, &data_type)?;
     let mut key = Vec::new();
-    let (anchored, exact) = match (value, data_type) {
-        (Value::Exact(d), DataType::Exact { scale, .. }) => {
-            let units = floor_units(d, scale);
-            (Value::Exact(Decimal::new(i128::from(units), scale)), units_at(d, scale).ok() == Some(units))
-        }
-        (Value::Char(s), DataType::Character { length }) => {
-            let length = usize::try_from(length).ok()?;
-            (Value::Char(s.chars().take(length).collect()), s.chars().count() <= length)
-        }
-        (Value::Approx(_), DataType::Approximate { .. }) => (value.clone(), true),
-        (Value::Null, _)
-        | (Value::Exact(_), DataType::Approximate { .. } | DataType::Character { .. })
-        | (Value::Approx(_), DataType::Exact { .. } | DataType::Character { .. })
-        | (Value::Char(_), DataType::Exact { .. } | DataType::Approximate { .. }) => return None,
-    };
     encode_column(&anchored, data_type, &mut key).ok()?;
     Some(Anchor { key, exact })
-}
-
-/// The units of the greatest number at `scale` not above `d`, within 64
-/// bits.
-fn floor_units(d: &Decimal, scale: u32) -> i64 {
-    let clamp = |negative: bool| if negative { i64::MIN } else { i64::MAX };
-    let units = if d.scale <= scale {
-        pow10(scale.saturating_sub(d.scale)).and_then(|f| d.units.checked_mul(f))
-    } else {
-        // Divided by more than 10^38, a value of 38 digits is below 1.
-        Some(pow10(d.scale.saturating_sub(scale)).map_or(if d.units < 0 { -1 } else { 0 }, |f| d.units.div_euclid(f)))
-    };
-    units.map_or_else(|| clamp(d.units < 0), |u| i64::try_from(u).unwrap_or_else(|_| clamp(u < 0)))
 }
 
 // Unit tests: keys sort as SQL compares their values (RULES.md R-TEST-1,

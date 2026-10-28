@@ -204,13 +204,10 @@ pub struct Histogram {
     bounds: Vec<Value>,
 }
 
-/// A value as a number on a line, for interpolating within a bucket.
+/// A value as a number on a line, for interpolating within a bucket, as
+/// its kind places it.
 fn position(value: &Value) -> Option<f64> {
-    match value {
-        Value::Exact(d) => Some(d.to_f64()),
-        Value::Approx(f) => Some(*f),
-        Value::Char(_) | Value::Null => None,
-    }
+    value.kind()?.position(value)
 }
 
 impl Histogram {

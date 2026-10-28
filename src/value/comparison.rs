@@ -31,12 +31,20 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         | (Value::Exact(_), Value::Char(_))
         | (Value::Approx(_), Value::Char(_)) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
-        // [X3.135-1986 §5.11 GR4] numbers compare by algebraic value, also when
-        // one is exact and the other approximate.
+        (Value::Exact(_) | Value::Approx(_), Value::Exact(_) | Value::Approx(_)) => compare_numbers(a, b),
+    }
+}
+
+/// [X3.135-1986 §5.11 GR4] Two numbers compared by algebraic value, also
+/// when one is exact and the other approximate; none if either is no
+/// number.
+pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
+    match (a, b) {
         (Value::Exact(x), Value::Exact(y)) => Some(x.cmp_value(y)),
         (Value::Exact(x), Value::Approx(y)) => compare_exact_approximate(x, *y),
         (Value::Approx(x), Value::Exact(y)) => compare_exact_approximate(y, *x).map(Ordering::reverse),
         (Value::Approx(x), Value::Approx(y)) => x.partial_cmp(y),
+        (Value::Null | Value::Char(_), _) | (_, Value::Null | Value::Char(_)) => None,
     }
 }
 
@@ -58,13 +66,22 @@ pub enum Bucket {
 /// The bucket of `v`, or none for the null value, which equals nothing
 /// [X3.135-1986 §5.11 GR2].
 pub fn bucket(v: &Value) -> Option<Bucket> {
-    let number = |f: f64| Bucket::Number(if f == 0.0_f64 { 0.0_f64.to_bits() } else { f.to_bits() });
     match v {
         Value::Null => None,
         Value::Char(s) => Some(Bucket::Char(s.trim_end_matches(' ').to_owned())),
-        Value::Exact(d) => Some(number(d.nearest())),
-        Value::Approx(f) => Some(number(*f)),
+        Value::Exact(_) | Value::Approx(_) => number_bucket(v),
     }
+}
+
+/// The bucket of a number: its nearest `f64`'s bits, -0 as +0; none if it
+/// is no number.
+pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
+    let f = match v {
+        Value::Exact(d) => d.nearest(),
+        Value::Approx(f) => *f,
+        Value::Null | Value::Char(_) => return None,
+    };
+    Some(Bucket::Number(if f == 0.0_f64 { 0.0_f64.to_bits() } else { f.to_bits() }))
 }
 
 /// Fraction digits that write any finite `f64` exactly: every `f64` is a
