@@ -21,7 +21,7 @@ use crate::error::Result;
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Cond, Expr, Truth};
 use crate::physical::Plan;
-use crate::spill::{norm_key, row_bytes};
+use crate::spill::{put_norm, row_bytes};
 use crate::storage::{Batch, Row};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
@@ -97,7 +97,7 @@ fn batches_of(read: &Read<'_>, db: &Arc<State>, tx: TxId) -> Result<impl Iterato
 /// The groups of the rows `read` reads, each its grouping values and the
 /// finished set functions `aggs`; none if they outgrow the work area.
 fn grouped_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> Result<Option<Vec<Row>>> {
-    let mut groups = Groups { found: HashMap::new(), held: Vec::new(), bytes: 0, limit: Work::new(db).limit() };
+    let mut groups = Groups { found: HashMap::new(), held: Vec::new(), bytes: 0, limit: Work::new(db).limit(), key: Vec::new() };
     let runner = Runner::new(db, tx);
     let width = read.columns.iter().max().map_or(0, |&c| c.saturating_add(1));
     for batch in batches_of(read, db, tx)? {
@@ -150,6 +150,8 @@ struct Groups {
     held: Vec<(Row, Vec<Box<dyn Accumulator>>)>,
     bytes: usize,
     limit: usize,
+    /// The key of the row being grouped.
+    key: Vec<u8>,
 }
 
 impl Groups {
@@ -160,14 +162,19 @@ impl Groups {
         for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
             let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
             let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r));
-            let values: Row = read.groups.iter().map(|&at| value(at).cloned().unwrap_or(Value::Null)).collect();
-            let key = norm_key(&values.iter().map(Value::norm).collect::<Vec<_>>());
-            let at = if let Some(&at) = self.found.get(&key) {
+            // The key made in a buffer kept, no value copied unless its
+            // group is new.
+            self.key.clear();
+            for &at in &read.groups {
+                put_norm(value(at).unwrap_or(&Value::Null), &mut self.key);
+            }
+            let at = if let Some(&at) = self.found.get(self.key.as_slice()) {
                 at
             } else {
+                let values: Row = read.groups.iter().map(|&at| value(at).cloned().unwrap_or(Value::Null)).collect();
                 self.bytes = self
                     .bytes
-                    .saturating_add(key.len())
+                    .saturating_add(self.key.len())
                     .saturating_add(row_bytes(&values))
                     .saturating_add(aggs.len().saturating_mul(STATE_BYTES));
                 if self.bytes > self.limit {
@@ -175,7 +182,7 @@ impl Groups {
                 }
                 self.held.push((values, aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect()));
                 let at = self.held.len().saturating_sub(1);
-                self.found.insert(key, at);
+                self.found.insert(self.key.clone(), at);
                 at
             };
             let Some((_, states)) = self.held.get_mut(at) else { continue };

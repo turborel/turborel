@@ -194,7 +194,7 @@ impl Decimal {
 
     /// Strip trailing fractional zeros so that 1.50 and 1.5 look the same: equal
     /// numbers compare by algebraic value [X3.135-1986 §5.11 GR4].
-    pub(super) fn normalized(&self) -> (i128, u32) {
+    pub(crate) fn normalized(&self) -> (i128, u32) {
         let (mut u, mut s) = (self.units, self.scale);
         while s > 0 && u % RADIX_I128 == 0 {
             u /= RADIX_I128;

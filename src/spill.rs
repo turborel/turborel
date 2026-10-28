@@ -356,38 +356,84 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
     out
 }
 
+/// The tags of a normalized key's values (`norm_key`).
+const NULL_TAG: u8 = 0;
+const CHAR_TAG: u8 = 1;
+const EXACT_TAG: u8 = 2;
+const APPROX_TAG: u8 = 3;
+const EXTENSION_TAG: u8 = 4;
+const BITS_TAG: u8 = 5;
+const INSTANT_TAG: u8 = 6;
+const SPAN_TAG: u8 = 7;
+
+/// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
+/// `v.norm()`, made without making it.
+pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
+    match v {
+        Value::Null => out.push(NULL_TAG),
+        Value::Char(s) => text(out, CHAR_TAG, s.trim_end_matches(' ')),
+        Value::Exact(d) => {
+            let (units, scale) = d.normalized();
+            out.push(EXACT_TAG);
+            out.extend_from_slice(&units.to_le_bytes());
+            out.extend_from_slice(&scale.to_le_bytes());
+        }
+        Value::Approx(f) => {
+            out.push(APPROX_TAG);
+            out.extend_from_slice(&(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }).to_le_bytes());
+        }
+        Value::Bits(b) => {
+            out.push(BITS_TAG);
+            b.put_key(out);
+        }
+        Value::Datetime(d) => {
+            out.push(INSTANT_TAG);
+            out.extend_from_slice(&d.utc.to_le_bytes());
+        }
+        Value::Interval(i) => {
+            out.push(SPAN_TAG);
+            out.extend_from_slice(&i.units.to_le_bytes());
+        }
+        Value::Extension(e) => {
+            text(out, EXTENSION_TAG, e.kind.name());
+            out.extend_from_slice(&u64::try_from(e.bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
+            out.extend_from_slice(&e.bytes);
+        }
+    }
+}
+
 /// The key of normalized values `key`: the same bytes exactly when the
 /// values are identical (`Value::norm`).
 pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
     let mut out = Vec::new();
     for k in key {
         match k {
-            NormKey::Null => out.push(0),
-            NormKey::Char(s) => text(&mut out, 1, s),
+            NormKey::Null => out.push(NULL_TAG),
+            NormKey::Char(s) => text(&mut out, CHAR_TAG, s),
             NormKey::Exact(units, scale) => {
-                out.push(2);
+                out.push(EXACT_TAG);
                 out.extend_from_slice(&units.to_le_bytes());
                 out.extend_from_slice(&scale.to_le_bytes());
             }
             NormKey::Approx(bits) => {
-                out.push(3);
+                out.push(APPROX_TAG);
                 out.extend_from_slice(&bits.to_le_bytes());
             }
             NormKey::Bits(b) => {
-                out.push(5);
+                out.push(BITS_TAG);
                 b.put_key(&mut out);
             }
             NormKey::Instant(utc) => {
-                out.push(6);
+                out.push(INSTANT_TAG);
                 out.extend_from_slice(&utc.to_le_bytes());
             }
             NormKey::Span(units) => {
-                out.push(7);
+                out.push(SPAN_TAG);
                 out.extend_from_slice(&units.to_le_bytes());
             }
             NormKey::Extension(held) => {
                 let (name, bytes) = &**held;
-                text(&mut out, 4, name);
+                text(&mut out, EXTENSION_TAG, name);
                 out.extend_from_slice(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(bytes);
             }
@@ -402,3 +448,8 @@ fn text(out: &mut Vec<u8>, tag: u8, s: &str) {
     out.extend_from_slice(&u64::try_from(s.len()).unwrap_or(u64::MAX).to_le_bytes());
     out.extend_from_slice(s.as_bytes());
 }
+
+// Unit tests: a value's normalized key, made in place, is the one made of
+// its normalized value (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

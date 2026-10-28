@@ -156,8 +156,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   (D31).
 - **Batch execution, further** (RULES.md D31): groups by batch past the
   work area are grouped again row by row, the table read twice, where they
-  should spill as `exec/group.rs` does; each row's grouping key is made
-  anew, where a buffer could be kept; a filter not told to the scan is
+  should spill as `exec/group.rs` does; a filter not told to the scan is
   judged a row at a time. To come: filters judged over vectors,
   projections and joins of batches, and set functions fed a vector at a
   time (`Accumulator`).

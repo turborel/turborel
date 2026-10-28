@@ -134,3 +134,42 @@ fn groups_by_batch_answer_as_row_by_row() {
     let many = "SELECT K, COUNT(*), SUM(N) FROM {t} GROUP BY K";
     assert_eq!(sorted(&a, &many.replace("{t}", "C")), sorted(&a, &many.replace("{t}", "R")));
 }
+
+/// Verifies: [DESIGN] RULES.md D31, D38: grouped by batch, datetimes and
+/// intervals make the groups they make row by row: dates, intervals, and
+/// timestamps of one instant written at two time zones, one group.
+#[test]
+fn datetimes_group_by_batch_as_row_by_row() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, D DATE, I INTERVAL DAY TO HOUR, W TIMESTAMP WITH TIME ZONE)
+           WITH (LAYOUT = 'COLUMNS', COLUMNS.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    for first in (0..3000).step_by(500) {
+        let values: Vec<String> = (first..first + 500)
+            .map(|k| {
+                let zone = if k % 2 == 0 { "+00:00" } else { "+01:00" };
+                let hour = if k % 2 == 0 { 10 } else { 11 };
+                format!(
+                    "({k}, DATE '2026-10-{:02}', INTERVAL '{} {}' DAY TO HOUR, TIMESTAMP '2026-10-28 {hour}:00:00{zone}')",
+                    k % 28 + 1,
+                    k % 5,
+                    k % 3
+                )
+            })
+            .collect();
+        a.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    for column in ["D", "I", "W"] {
+        let by_batch = sorted(&a, &format!("SELECT {column}, COUNT(*) FROM T GROUP BY {column}"));
+        let by_row: Vec<String> = sorted(&a, &format!("SELECT {column}, COUNT(*), SUM(K + 0) FROM T GROUP BY {column}"))
+            .iter()
+            .map(|r| r.rsplit_once(',').unwrap().0.to_owned())
+            .collect();
+        assert_eq!(by_batch, by_row, "{column}");
+    }
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM (SELECT W FROM T GROUP BY W) X"), Ok(vec!["1".to_owned()]), "one instant");
+}

@@ -756,7 +756,8 @@ becomes a trait when it is.
   instead, from the start, as `exec/group.rs` spills and batches cannot
   yet. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)
   of a COLUMNS table some 50 times as fast, a SUM of one column 17, a
-  filter of 1% 10, a GROUP BY of 10 groups 3.3.
+  filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
+  made in a buffer kept (`spill::put_norm`).
 *Why:* a row store suits SQL's point reads, updates and cursors, and is
 the base the other layouts build on. Logical row ids stay stable, so
 indexes never need rewriting for them, frozen or not. Columns suit scans
