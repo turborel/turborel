@@ -13,7 +13,7 @@ use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::Expr;
 use crate::value::datetime::{Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
-use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier};
+use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, field_name};
 use crate::value::types::datetime::{cast_at, current};
 use crate::value::{DataType, Decimal, SMALLINT_PRECISION, Value, pow10};
 
@@ -205,7 +205,7 @@ fn interval_extract(field: ExtractField, e: Expr, q: Qualifier) -> Result<(Expr,
         return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3b] INTERVAL {q} has no time zone")));
     };
     if !q.has(f) {
-        return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3a] INTERVAL {q} has no field {f:?}")));
+        return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3a] INTERVAL {q} has no field {}", field_name(f))));
     }
     let scale = if f == Field::Second { u32::from(q.fraction) } else { 0 };
     let x = Extract { field, scale, digits: MAX_LEADING_PRECISION };
@@ -285,7 +285,7 @@ impl Binder<'_> {
             ExtractField::TimezoneHour | ExtractField::TimezoneMinute => (zoned, 0),
         };
         if !valid {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3] {t} has no field {field:?}")));
+            return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3] {t} has no field {}", extract_name(field))));
         }
         let f = Extract { field, scale, digits: SMALLINT_PRECISION };
         let result = f.return_type(&[t])?;
@@ -303,5 +303,15 @@ impl Binder<'_> {
             return Err(SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {from} to {to} is not valid")));
         }
         Ok(Expr::Call(ScalarRef(Arc::new(CastAt { to, now: self.now })), vec![e]))
+    }
+}
+
+/// The key word of `field`: its `<datetime field>`'s, or TIMEZONE_HOUR or
+/// TIMEZONE_MINUTE.
+fn extract_name(field: ExtractField) -> &'static str {
+    match field {
+        ExtractField::Datetime(f) => field_name(f),
+        ExtractField::TimezoneHour => "TIMEZONE_HOUR",
+        ExtractField::TimezoneMinute => "TIMEZONE_MINUTE",
     }
 }

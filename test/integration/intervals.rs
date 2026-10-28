@@ -95,6 +95,8 @@ fn interval_arithmetic_6_14() {
         "2024-02-01,2022-12-31,2024-02-29,2025-07-31"
     );
     assert_eq!(code(&a, "SELECT D + INTERVAL '1' MONTH FROM T"), Code::Data, "22008: 2024-02-31");
+    let said = a.open_cursor("SELECT D + INTERVAL '1' MONTH FROM T").err().map(|e| e.msg).unwrap_or_default();
+    assert!(said.contains("+ INTERVAL '1' MONTH(2) is no valid datetime"), "the operation named: {said}");
     assert_eq!(code(&a, "SELECT D + INTERVAL '9' YEAR(4) * 1000 FROM T"), Code::Data, "22008: year 11024");
     assert_eq!(
         one(&a, "TIMESTAMP '2024-02-29 23:00:00' + S, TIME '23:30:00' + INTERVAL '45' MINUTE, TIME '00:10:00' - INTERVAL '20' MINUTE"),
@@ -206,7 +208,7 @@ fn intervals_are_cast_6_10() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.6 SR3, SR4, GR3a i] EXTRACT
 /// of a field of an interval, of the interval's sign, SECOND of the scale
 /// of its fraction; of a field it has not, or of a time zone's, refused
-/// (SQLCODE -103).
+/// (SQLCODE -103), the field named by its key word.
 #[test]
 fn extract_of_intervals_6_6() {
     let db = intervals();
@@ -222,6 +224,10 @@ fn extract_of_intervals_6_6() {
     for bad in ["EXTRACT(DAY FROM M)", "EXTRACT(YEAR FROM S)", "EXTRACT(TIMEZONE_HOUR FROM S)"] {
         assert_eq!(code(&a, &format!("SELECT {bad} FROM T")), Code::SyntaxRule, "{bad}");
     }
+    let said = |sql: &str| a.open_cursor(sql).err().map(|e| e.msg).unwrap_or_default();
+    assert!(said("SELECT EXTRACT(DAY FROM M) FROM T").contains("has no field DAY"), "the field's key word");
+    assert!(said("SELECT EXTRACT(TIMEZONE_HOUR FROM TIME '10:00:00') FROM T").contains("has no field TIMEZONE_HOUR"));
+    assert!(said("SELECT M + S FROM T").contains(" + INTERVAL"), "the operator's symbol");
     a.commit().unwrap();
 }
 

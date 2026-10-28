@@ -195,7 +195,7 @@ impl Binder<'_> {
             let q = qualifier(&ta).ok_or_else(|| not_interval(&ta))?;
             return if fits(&tb, q) { Ok((arith(a, shown(b, tb, self.now)), tb)) } else { Err(not_added(&tb, q)) };
         }
-        let refused = || rule(format!("[ISO/IEC 9075:1992 §6.14, §6.15] {ta} {op:?} {tb} is no datetime or interval arithmetic"));
+        let refused = || rule(format!("[ISO/IEC 9075:1992 §6.14, §6.15] {ta} {} {tb} is no datetime or interval arithmetic", op.symbol()));
         let number = |t: &DataType| t.is_numeric();
         let t = match (qualifier(&ta), qualifier(&tb)) {
             (Some(x), Some(y)) => {

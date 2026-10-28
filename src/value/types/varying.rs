@@ -27,7 +27,7 @@ use super::{Descriptor, SqlType, malformed, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::approximate_literal;
-use crate::value::{Bucket, DataType, Value, compare_strings, unassignable};
+use crate::value::{Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
 
 /// The kind of CHARACTER VARYING(length).
 #[derive(Debug)]
@@ -155,7 +155,10 @@ impl SqlType for Varying {
         fail_with(
             Code::Data,
             SqlState::STRING_DATA_RIGHT_TRUNCATION,
-            format!("[{rule}; ISO/IEC 9075:1992 §9.2 GR3e ii] a value of {count} characters, not spaces beyond {most}, does not fit {t}"),
+            format!(
+                "[{}] a value of {count} characters, not spaces beyond {most}, does not fit {t}",
+                assignment_rule(rule, "§9.2 GR3e ii")
+            ),
         )
     }
 

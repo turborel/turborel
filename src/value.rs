@@ -434,6 +434,16 @@ pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
     target.kind().assign(v, target, rule)
 }
 
+/// The citation of the rule `rule` that assigns a value, and of the
+/// clause `clause` of ISO/IEC 9075:1992 that it applies: written once if
+/// `rule` is of that standard too.
+pub(crate) fn assignment_rule(rule: &str, clause: &str) -> String {
+    match rule.strip_prefix("ISO/IEC 9075:1992 ") {
+        Some(_) => format!("{rule}, {clause}"),
+        None => format!("{rule}; ISO/IEC 9075:1992 {clause}"),
+    }
+}
+
 /// [ISO/IEC 9075:1992 §9.2 SR2] `v` cannot be assigned to `t`.
 ///
 /// # Errors
@@ -443,7 +453,7 @@ pub(crate) fn unassignable(v: &Value, t: &DataType, rule: &str) -> Result<Value>
     fail_with(
         Code::Data,
         SqlState::ERROR_IN_ASSIGNMENT,
-        format!("[{rule}; ISO/IEC 9075:1992 §9.2 SR2] the value {v} cannot be assigned to {t}"),
+        format!("[{}] the value {v} cannot be assigned to {t}", assignment_rule(rule, "§9.2 SR2")),
     )
 }
 
@@ -514,5 +524,13 @@ mod tests {
         assert_eq!(assign(text, &exact, "test").unwrap_err().code, Code::Data);
         let tiny_scale = DataType::Exact { precision: 5, scale: 0 };
         assert_eq!(assign(Value::Exact(Decimal::new(1, u32::MAX)), &tiny_scale, "test").unwrap_err().code, Code::Data);
+    }
+
+    /// Verifies: [DESIGN] an assignment's error cites ISO/IEC 9075:1992 once
+    /// when the rule that assigns is of it too, else both standards.
+    #[test]
+    fn assignment_rules_cite_each_standard_once() {
+        assert_eq!(assignment_rule("ISO/IEC 9075:1992 §13.8 GR4b iii", "§9.2 GR3b ii"), "ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3b ii");
+        assert_eq!(assignment_rule("X3.135-1986 §8.7 GR1", "§9.2 GR3b ii"), "X3.135-1986 §8.7 GR1; ISO/IEC 9075:1992 §9.2 GR3b ii");
     }
 }

@@ -74,12 +74,14 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
     within(units, result, "the product")
 }
 
-/// SQLSTATE 22008: `d` leaves the datetimes.
-fn datetime_overflow<T>(d: &Datetime) -> Result<T> {
+/// SQLSTATE 22008: `d` plus, or minus, `i` leaves the datetimes.
+fn datetime_overflow<T>(d: &Datetime, i: &Interval, subtract: bool) -> Result<T> {
+    let sign = if subtract { '-' } else { '+' };
+    let interval = format!("INTERVAL '{i}' {}", i.qualifier);
     fail_with(
         Code::Data,
         SqlState::DATETIME_FIELD_OVERFLOW,
-        format!("[ISO/IEC 9075:1992 §6.14 GR3c] {} {d} is not a valid datetime", d.key_word()),
+        format!("[ISO/IEC 9075:1992 §6.14 GR3c] {} '{d}' {sign} {interval} is no valid datetime", d.key_word()),
     )
 }
 
@@ -94,13 +96,13 @@ fn datetime_overflow<T>(d: &Datetime) -> Result<T> {
 /// is no date \[GR3c\].
 pub fn shift(d: &Datetime, i: &Interval, subtract: bool) -> Result<Value> {
     let units = if subtract { i.units.checked_neg() } else { Some(i.units) };
-    let Some(units) = units.and_then(|u| i64::try_from(u).ok()) else { return datetime_overflow(d) };
+    let Some(units) = units.and_then(|u| i64::try_from(u).ok()) else { return datetime_overflow(d, i, subtract) };
     let moved = if i.qualifier.year_month() {
         let (was_year, was_month, day) = civil_from_days(d.days());
         let months = was_year.saturating_mul(12).saturating_add(was_month.saturating_sub(1)).saturating_add(units);
         let (year, month) = (months.checked_div_euclid(12).unwrap_or(0), months.checked_rem_euclid(12).unwrap_or(0).saturating_add(1));
         if !(1..=9999).contains(&year) || day > days_in(year, month) {
-            return datetime_overflow(d);
+            return datetime_overflow(d, i, subtract);
         }
         let local = days_from_civil(year, month, day).saturating_mul(MICROS_PER_DAY).saturating_add(d.time_of_day());
         Datetime::of_local(d.moment, local, d.zone, d.zoned, u32::from(d.precision))
@@ -112,7 +114,7 @@ pub fn shift(d: &Datetime, i: &Interval, subtract: bool) -> Result<Value> {
     // [§6.14 SR2] of the datetime's precision.
     let moved = moved.truncated(u32::from(d.precision));
     if !moved.in_range() {
-        return datetime_overflow(&moved);
+        return datetime_overflow(d, i, subtract);
     }
     Ok(Value::Datetime(moved))
 }

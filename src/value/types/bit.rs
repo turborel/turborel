@@ -13,7 +13,7 @@ use super::{Descriptor, SqlType};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::uncastable;
-use crate::value::{BYTE_BITS, Bits, Bucket, DataType, Value, unassignable};
+use crate::value::{BYTE_BITS, Bits, Bucket, DataType, Value, assignment_rule, unassignable};
 
 /// The kind of BIT(length), or of BIT VARYING(length).
 #[derive(Debug)]
@@ -114,11 +114,11 @@ impl SqlType for Bit {
         let (len, length) = (b.len(), length_of(t));
         if len > length {
             let at = if self.varying { "GR3j" } else { "GR3g" };
-            let msg = format!("[{rule}; ISO/IEC 9075:1992 §9.2 {at}] a bit string of {len} bits does not fit {t}");
+            let msg = format!("[{}] a bit string of {len} bits does not fit {t}", assignment_rule(rule, &format!("§9.2 {at}")));
             return fail_with(Code::Data, SqlState::STRING_DATA_RIGHT_TRUNCATION, msg);
         }
         if len < length && !self.varying {
-            let msg = format!("[{rule}; ISO/IEC 9075:1992 §9.2 GR3h] a bit string of {len} bits is not of {t}'s length");
+            let msg = format!("[{}] a bit string of {len} bits is not of {t}'s length", assignment_rule(rule, "§9.2 GR3h"));
             return fail_with(Code::Data, SqlState::STRING_DATA_LENGTH_MISMATCH, msg);
         }
         Ok(v)

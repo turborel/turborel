@@ -13,7 +13,7 @@ use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_to_exact, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
-use crate::value::{Bucket, DataType, Decimal, Value, pow10, unassignable};
+use crate::value::{Bucket, DataType, Decimal, Value, assignment_rule, pow10, unassignable};
 
 /// The kind of NUMERIC(precision, scale).
 #[derive(Debug)]
@@ -107,7 +107,7 @@ impl SqlType for Exact {
                     None => fail_with(
                         Code::Data,
                         SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
-                        format!("[{rule}; ISO/IEC 9075:1992 §9.2 GR3k] {d} does not fit {t} without losing leading digits"),
+                        format!("[{}] {d} does not fit {t} without losing leading digits", assignment_rule(rule, "§9.2 GR3k")),
                     ),
                 }
             }
