@@ -24,11 +24,13 @@ mod approximate;
 mod character;
 mod exact;
 mod unregistered;
+mod varying;
 
 pub use approximate::{APPROXIMATE, Approximate};
 pub use character::{CHARACTER, Character};
 pub use exact::{EXACT, Exact};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
+pub use varying::{VARYING, Varying};
 
 /// Bytes of a number in a record or a key: a 64-bit word.
 pub(crate) const NUMBER_BYTES: usize = 8;
@@ -347,6 +349,7 @@ impl DataType {
     pub fn kind(&self) -> &'static dyn SqlType {
         match self {
             DataType::Character { .. } => &CHARACTER,
+            DataType::Varying { .. } => &VARYING,
             DataType::Exact { .. } => &EXACT,
             DataType::Approximate { .. } => &APPROXIMATE,
             DataType::Extension(e) => *e.kind,
@@ -365,6 +368,7 @@ impl DataType {
     pub fn encode_record(&self, v: &Value) -> Result<Vec<u8>> {
         match self {
             DataType::Character { .. } => CHARACTER.encode_record(v, self),
+            DataType::Varying { .. } => VARYING.encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
             DataType::Extension(e) => e.kind.encode_record(v, self),
@@ -375,6 +379,7 @@ impl DataType {
     pub fn decode_record(&self, field: &[u8]) -> Option<Value> {
         match self {
             DataType::Character { .. } => CHARACTER.decode_record(field, self),
+            DataType::Varying { .. } => VARYING.decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
             DataType::Extension(e) => e.kind.decode_record(field, self),
@@ -389,6 +394,7 @@ impl DataType {
     pub fn encode_key(&self, v: &Value, out: &mut Vec<u8>) -> Result<()> {
         match self {
             DataType::Character { .. } => CHARACTER.encode_key(v, self, out),
+            DataType::Varying { .. } => VARYING.encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
             DataType::Extension(e) => e.kind.encode_key(v, self, out),
@@ -403,6 +409,7 @@ impl DataType {
     pub fn decode_key(&self, rest: &mut &[u8]) -> Result<Value> {
         match self {
             DataType::Character { .. } => CHARACTER.decode_key(rest, self),
+            DataType::Varying { .. } => VARYING.decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
             DataType::Extension(e) => e.kind.decode_key(rest, self),

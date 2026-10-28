@@ -249,6 +249,14 @@ restriction is lifted.
   own, in no view of the Information Schema, never altered, dropped,
   granted on or named by a view [§10.3 SR1, §11.10 SR5, §11.18 SR3,
   §11.19 SR5].
+- **CHARACTER VARYING** [§6.1], CHAR VARYING and VARCHAR, of a length
+  written: a value kept as assigned, unpadded [§9.2 GR3d, GR3e; §9.1 GR3d,
+  GR3e], compared padded with spaces [§8.2 GR3a], indexed and kept unique
+  so; CAST to it [§6.10 GR6]; SUBSTRING and TRIM of a varying type [§6.7
+  SR2a, SR6e], UPPER and LOWER of their operand's [SR3a], || of a varying
+  one if either operand is [§6.13 SR3a], and CASE and set operations of
+  one if any is [§9.3 SR3a]; a dynamic parameter in a string's place of
+  CHARACTER VARYING(32767) [§17.6 GR5].
 - **Domains** [§11.21–§11.27] (RULES.md D50): CREATE DOMAIN, in a schema
   definition too, with a default and CHECK constraints over VALUE; a
   column of one [§11.4], taking its type, default and constraints; ALTER
@@ -285,9 +293,10 @@ restriction is lifted.
 
 ### Not implemented
 
-- **Data types** other than SQL-86's: VARCHAR, datetimes and intervals, BIT
-  and NATIONAL CHARACTER, their literals, and the functions and predicates
-  on them (the datetime value functions [§6.8], EXTRACT, OVERLAPS [§8.11]).
+- **Data types** other than SQL-86's and CHARACTER VARYING: datetimes and
+  intervals, BIT and NATIONAL CHARACTER, their literals, and the functions
+  and predicates on them (the datetime value functions [§6.8], EXTRACT,
+  OVERLAPS [§8.11]).
 - **ALTER TABLE of a temporary table**, and a table or view defined on its
   own in a schema other than the session's default one (RULES.md D47).
 - **Connections and sessions** [§15, §16]: CONNECT, SET CONNECTION,
@@ -375,7 +384,8 @@ file that implements it.
 | §3.3, §7.3 GR3b ii negative SQLCODE values | -101 lexical, -102 Format, -103 Syntax Rule, -104 privilege, -201 constraint, -301 data, -501 cursor, -811 cardinality, -900 not implemented, -910 API misuse, -911 conflict with another transaction, -912 transaction policy, -913 commit failed, -914 table damaged by a failed undo, -915 I/O error, -916 corrupt stored data, -917 invalid transaction state, -918 memory budget spent, -919 connection exception (a server's), -920 statement cancelled, -921 dynamic SQL error | `error.rs` |
 | §4.6, §4.7 how schemas are created and stored | `Database::schema` and the `Catalog` trait; in memory, or kept in a directory with its catalog file and log | `db.rs`, `catalog.rs`, `db/files.rs` |
 | ISO/IEC 9075:1992 §11.1 AR1 the privileges a schema definition needs | through a session, as a server's clients run it: a schema of any name, its authorization identifier the session's, written or implicit [SR2b]; `Database::schema`, the host program's, creates any, naming its AUTHORIZATION | `db/direct.rs`, `db/schema.rs` |
-| ISO/IEC 9075:1992 §17.6 GR5b-d, s, u CHARACTER VARYING of a dynamic parameter | not implemented: described as CHARACTER of the longest length, 32767, its value taken as given, not padded, a number as its literal | `params/dynamic.rs` |
+| ISO/IEC 9075:1992 §17.6 GR5b-d, s, u CHARACTER VARYING of a dynamic parameter | of the longest length, 32767, its value CAST to it [§17.9 GR5g] | `params/dynamic.rs` |
+| ISO/IEC 9075:1992 §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |
 | ISO/IEC 9075:1992 §17.6 GR5 a dynamic parameter as a CASE result, which GR5 gives no type | refused, as one GR4 refuses (SQLSTATE 37000) | `binder/case.rs` |
 | ISO/IEC 9075:1992 §17.6 GR10 a prepared statement in a later transaction | valid; bound and planned again at each execution, against the definitions then | `db/prepared.rs` |
 | ISO/IEC 9075:1992 §20.1 GR2a whether direct invocation terminated unexpectedly | a server's connection that ends without its client terminating it: lost, failed or cut by the server stopping; its transaction is rolled back | `server/src/native.rs` |
@@ -391,7 +401,7 @@ file that implements it.
 | ISO/IEC 9075:1992 §14.1 GR6, GR7 diagnostics area limit | a statement reports one condition, its error, so any limit of 1 or more holds | `db/session.rs` |
 | ISO/IEC 9075:1992 §4.30 the initial default schema | the session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | ISO/IEC 9075:1992 §21.2.2 the catalog's name | the setting CATALOG_NAME, `TURBOREL` by default | `settings.rs`, `system.rs` |
-| ISO/IEC 9075:1992 §21.2.27, §21.2.28 SQL_IDENTIFIER, CHARACTER_DATA | CHARACTER(128); CHARACTER as long as the longest value the standard lists for the column, otherwise CHARACTER(4096), a longer text shown as null (there is no CHARACTER VARYING) | `system.rs`, `system/definition.rs` |
+| ISO/IEC 9075:1992 §21.2.27, §21.2.28 SQL_IDENTIFIER, CHARACTER_DATA | CHARACTER(128); CHARACTER as long as the longest value the standard lists for the column, otherwise CHARACTER(4096), a longer text shown as null: of fixed length, not yet the CHARACTER VARYING the standard gives them | `system.rs`, `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.23, §21.3.24 the character set SQL_TEXT | form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.5 how data types are described | an exact number as NUMERIC, radix 10; an approximate one as REAL (24 bits) or DOUBLE PRECISION (53), radix 2; a character string's octet length 4n | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.13 names of unnamed constraints | the table's name, the constraint's kind and a number: `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |

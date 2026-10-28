@@ -40,7 +40,7 @@ use super::{
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
-use crate::value::types::{APPROXIMATE, CHARACTER, EXACT};
+use crate::value::types::{APPROXIMATE, CHARACTER, EXACT, VARYING};
 use crate::value::{DataType, SqlType};
 
 /// A count, or a position, as a u32.
@@ -101,10 +101,12 @@ const EXACT_TYPE: u8 = 1;
 const APPROXIMATE_TYPE: u8 = 2;
 /// A type beyond the standard: its kind's name, then its parameters.
 const EXTENSION_TYPE: u8 = 3;
+const VARYING_TYPE: u8 = 4;
 
 fn put_type(out: &mut Vec<u8>, data_type: DataType) {
     match data_type {
         DataType::Character { .. } => out.put_u8(CHARACTER_TYPE),
+        DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
         DataType::Exact { .. } => out.put_u8(EXACT_TYPE),
         DataType::Approximate { .. } => out.put_u8(APPROXIMATE_TYPE),
         DataType::Extension(e) => {
@@ -120,6 +122,7 @@ fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         CHARACTER_TYPE => &CHARACTER,
         EXACT_TYPE => &EXACT,
         APPROXIMATE_TYPE => &APPROXIMATE,
+        VARYING_TYPE => &VARYING,
         EXTENSION_TYPE => {
             let name = r.str()?;
             r.kind(&name)?

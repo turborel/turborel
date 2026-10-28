@@ -236,6 +236,20 @@ fn assign_target(
                 (Value::Char(format!("{s}{}", " ".repeat(l.saturating_sub(m)))), 0)
             }
         }
+        // [ISO/IEC 9075:1992 §9.1 GR3d, GR3e] as it is, or its first L
+        // characters, the indicator set to M; the warning not raised.
+        (DataType::Varying { length }, Value::Char(s)) => {
+            let (m, l) = (s.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
+            if m > l {
+                let m = i64::try_from(m).map_err(|_| {
+                    SqlError::new(Code::Data, format!("[ISO/IEC 9075:1992 §9.1 GR3e] a {m}-character value is too long"))
+                        .with_state(SqlState::INDICATOR_OVERFLOW)
+                })?;
+                (Value::Char(s.chars().take(l).collect()), m)
+            } else {
+                (Value::Char(s.clone()), 0)
+            }
+        }
         // d) exact, e) approximate.
         (target_type, value) => {
             let case = if let DataType::Approximate { .. } = target_type { "e" } else { "d" };

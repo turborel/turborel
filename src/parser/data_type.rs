@@ -18,7 +18,7 @@ impl Parser {
         };
         let at = self.here();
         match kw {
-            kw::CHARACTER | kw::CHAR => self.character_string_type(),
+            kw::CHARACTER | kw::CHAR | kw::VARCHAR => self.character_string_type(),
             kw::NUMERIC | kw::DECIMAL | kw::DEC => self.exact_numeric_type(at),
             kw::INTEGER | kw::INT => {
                 self.advance();
@@ -43,22 +43,42 @@ impl Parser {
     }
 
     /// `<character string type>` ::= CHARACTER \[(`<length>`)\] | CHAR \[(`<length>`)\]
+    /// [ISO/IEC 9075:1992 §6.1] `<character string type>`: CHARACTER or
+    /// CHAR \[(length)\]; CHARACTER VARYING, CHAR VARYING or VARCHAR
+    /// (length), its length written.
     fn character_string_type(&mut self) -> Result<DataType> {
+        let varchar = *self.peek() == Tok::KeyWord(kw::VARCHAR);
         self.advance();
+        if varchar || self.accept_kw(kw::VARYING) {
+            self.expect_delim(delim::LEFT_PAREN)?;
+            let length = self.string_length()?;
+            self.expect_delim(delim::RIGHT_PAREN)?;
+            return Ok(DataType::Varying { length });
+        }
         let mut length = 1; // [X3.135-1986 §5.5 SR3] omitted <length> is 1
         if self.accept_delim(delim::LEFT_PAREN) {
-            let length_at = self.here();
-            length = self.positive("length")?;
-            if length > MAX_CHARACTER_LENGTH {
-                return Err(SqlError::at(
-                    Code::Unsupported,
-                    length_at,
-                    format!("[DESIGN] CHARACTER({length}) is longer than this implementation's maximum of {MAX_CHARACTER_LENGTH}"),
-                ));
-            }
+            length = self.string_length()?;
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
         Ok(DataType::Character { length })
+    }
+
+    /// [ISO/IEC 9075:1992 §6.1] A character string type's `<length>`: more
+    /// than 0, and no more than this implementation's longest string, of
+    /// fixed or variable length.
+    fn string_length(&mut self) -> Result<u32> {
+        let at = self.here();
+        let length = self.positive("length")?;
+        if length > MAX_CHARACTER_LENGTH {
+            return Err(SqlError::at(
+                Code::Unsupported,
+                at,
+                format!(
+                    "[DESIGN] a character string of {length} characters is longer than this implementation's maximum of {MAX_CHARACTER_LENGTH}"
+                ),
+            ));
+        }
+        Ok(length)
     }
 
     /// NUMERIC | DECIMAL | DEC \[(`<precision>` \[,`<scale>`\])\], starting at `at`.

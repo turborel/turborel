@@ -26,7 +26,7 @@ struct Shape {
 /// What a column of `t`'s values needs, named `name`.
 fn shape(name: &str, t: &DataType) -> Shape {
     let (width, right) = match t {
-        DataType::Character { length } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
+        DataType::Character { length } | DataType::Varying { length } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
         DataType::Approximate { .. } => (APPROXIMATE_WIDTH, true),

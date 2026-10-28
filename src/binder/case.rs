@@ -35,11 +35,12 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if characters != 0 && characters != types.len() {
         return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3a] character strings and numbers are brought together")));
     }
-    let mut length = 0_u32;
+    let (mut length, mut varying) = (0_u32, false);
     let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
     for t in types {
         match t {
             DataType::Character { length: n } => length = length.max(*n),
+            DataType::Varying { length: n } => (length, varying) = (length.max(*n), true),
             DataType::Exact { precision, scale: s } => {
                 whole = whole.max(precision.saturating_sub(*s));
                 scale = scale.max(*s);
@@ -51,7 +52,14 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     Ok(match (characters, exact) {
         (0, true) => DataType::Exact { precision: whole.saturating_add(scale).min(MAX_EXACT_PRECISION), scale },
         (0, false) => DataType::Approximate { precision: DOUBLE_PRECISION },
-        _ => DataType::Character { length },
+        // [§9.3 SR3a i] varying if any is; [SR3a ii] else fixed.
+        _ => {
+            if varying {
+                DataType::Varying { length }
+            } else {
+                DataType::Character { length }
+            }
+        }
     })
 }
 

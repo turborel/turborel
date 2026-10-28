@@ -65,6 +65,12 @@ pub enum DataType {
         /// The length in characters.
         length: u32,
     },
+    /// [ISO/IEC 9075:1992 §6.1] CHARACTER VARYING(length), CHAR VARYING,
+    /// VARCHAR: a character string of variable length.
+    Varying {
+        /// The maximum length in characters.
+        length: u32,
+    },
     /// NUMERIC, DECIMAL, INTEGER, SMALLINT.
     Exact {
         /// Decimal digits in all.
@@ -84,7 +90,7 @@ pub enum DataType {
 impl DataType {
     /// Whether this is a character string type.
     pub fn is_character(&self) -> bool {
-        matches!(self, DataType::Character { .. })
+        matches!(self, DataType::Character { .. } | DataType::Varying { .. })
     }
     /// [X3.135-1986 §4.2] Whether its values compare with those of `other`,
     /// as its kind says.

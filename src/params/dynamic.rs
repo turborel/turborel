@@ -26,12 +26,11 @@ pub enum ParameterType {
 }
 
 impl ParameterType {
-    /// The data type it is described as: CHARACTER VARYING as CHARACTER of
-    /// the longest length, as it is not implemented.
+    /// The data type it is described as.
     pub fn data_type(self) -> DataType {
         match self {
             ParameterType::Of(t) => t,
-            ParameterType::Varying => DataType::Character { length: MAX_CHARACTER_LENGTH },
+            ParameterType::Varying => DataType::Varying { length: MAX_CHARACTER_LENGTH },
         }
     }
 }
@@ -56,27 +55,10 @@ fn untyped() -> SqlError {
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR5f, g] `value`, a dynamic parameter's, cast
-/// to `to`: CHARACTER VARYING, not implemented, as the string it is or a
-/// number's literal, not padded.
+/// to `to`'s data type, and that type.
 fn conformed(value: Value, to: ParameterType) -> Result<(Value, DataType)> {
-    match to {
-        ParameterType::Of(t) => Ok((cast(value, &t)?, t)),
-        ParameterType::Varying => {
-            let text = match value {
-                Value::Null => return Ok((Value::Null, to.data_type())),
-                Value::Char(s) => s,
-                number @ (Value::Exact(_) | Value::Approx(_) | Value::Extension(_)) => match cast(number, &to.data_type())? {
-                    Value::Char(s) => s.trim_end_matches(' ').to_owned(),
-                    other @ (Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Extension(_)) => other.to_string(),
-                },
-            };
-            let length = u32::try_from(text.chars().count()).ok().filter(|l| *l <= MAX_CHARACTER_LENGTH).ok_or_else(|| {
-                SqlError::new(Code::Data, format!("[DESIGN] a string of more than {MAX_CHARACTER_LENGTH} characters"))
-                    .with_state(SqlState::STRING_DATA_RIGHT_TRUNCATION)
-            })?;
-            Ok((Value::Char(text), DataType::Character { length: length.max(1) }))
-        }
-    }
+    let t = to.data_type();
+    Ok((cast(value, &t)?, t))
 }
 
 impl Params {

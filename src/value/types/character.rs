@@ -23,7 +23,7 @@ pub static CHARACTER: Character = Character;
 
 /// [§21.3.5 Description 3] Octets a character takes at most: four, in
 /// UTF-8.
-const OCTETS_PER_CHARACTER: usize = 4;
+pub(super) const OCTETS_PER_CHARACTER: usize = 4;
 
 /// The length of `t`, a character string type.
 fn length_of(t: &DataType) -> u32 {
@@ -31,7 +31,7 @@ fn length_of(t: &DataType) -> u32 {
 }
 
 /// The value's string, if it is one.
-fn string(v: &Value) -> Option<&str> {
+pub(super) fn string(v: &Value) -> Option<&str> {
     if let Value::Char(s) = v { Some(s) } else { None }
 }
 

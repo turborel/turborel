@@ -6,7 +6,9 @@
 use super::*;
 use crate::bytes::Put;
 use crate::error::Code;
-use crate::value::Decimal;
+use std::cmp::Ordering;
+
+use crate::value::{Decimal, compare, compare_strings};
 
 /// A value of the kind beyond the standard nothing here knows.
 fn foreign() -> Value {
@@ -131,4 +133,37 @@ fn registries_and_parameters() {
     let a = ExtensionType { kind: &UNREGISTERED_KIND, params: TypeParams::default() };
     let b = ExtensionType { kind: &UNREGISTERED_KIND, params: TypeParams::of(&[1]).unwrap() };
     assert!(a == a && a != b, "the same kind and parameters");
+}
+
+/// Verifies: [DESIGN] RULES.md D53; [ISO/IEC 9075:1992 §8.2 GR3a] the keys
+/// of CHARACTER VARYING, compared as bytes, order every two strings of up
+/// to three characters, of characters below, at and above the space and
+/// beyond the Basic Multilingual Plane, as they compare padded with
+/// spaces; equal strings have one key; no key begins another, so two
+/// columns' keys order as the pairs of strings; each reads back equal.
+#[test]
+fn varying_keys_order_as_strings_compare() {
+    let alphabet = ['\u{0}', '\u{9}', ' ', '!', 'a', 'é', '\u{10000}'];
+    let mut strings = vec![String::new()];
+    for _ in 0..3_u8 {
+        let longer: Vec<String> = strings.iter().flat_map(|s| alphabet.iter().map(move |c| format!("{s}{c}"))).collect();
+        strings.extend(longer);
+    }
+    strings.sort();
+    strings.dedup();
+    let t = DataType::Varying { length: 3 };
+    let key = |s: &str| {
+        let mut out = Vec::new();
+        t.encode_key(&Value::Char(s.to_owned()), &mut out).unwrap();
+        out
+    };
+    let keys: Vec<Vec<u8>> = strings.iter().map(|s| key(s)).collect();
+    for (a, ka) in strings.iter().zip(&keys) {
+        let read = t.decode_key(&mut ka.as_slice()).unwrap();
+        assert_eq!(compare(&read, &Value::Char(a.clone())), Some(Ordering::Equal), "{a:?} reads back");
+        for (b, kb) in strings.iter().zip(&keys) {
+            assert_eq!(ka.cmp(kb), compare_strings(a, b), "{a:?} and {b:?}");
+            assert!(ka == kb || !kb.starts_with(ka), "{a:?}'s key begins {b:?}'s");
+        }
+    }
 }

@@ -106,5 +106,6 @@ mod transactions;
 mod trees;
 mod type_contract;
 mod users;
+mod varying;
 mod views;
 mod working_tables;

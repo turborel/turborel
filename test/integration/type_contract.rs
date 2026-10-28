@@ -60,6 +60,16 @@ fn character_keeps_the_type_contract() {
     type_contract(DataType::Character { length: 5 }, &strings.map(|s| Value::Char(s.into())));
 }
 
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR3a]
+/// CHARACTER VARYING keeps the `SqlType` contract: on strings empty, of
+/// spaces, of trailing spaces, of characters below and above the space,
+/// beyond ASCII, longer than a key's chunk.
+#[test]
+fn varying_keeps_the_type_contract() {
+    let strings = ["", "   ", "a", "a  ", "a\t", "a!", "ab", "\u{0}", "é", "Ω€", "abcdefgh", "abcdefghi", "abcdefgh  x", "abcdefgh\t"];
+    type_contract(DataType::Varying { length: 12 }, &strings.map(|s| Value::Char(s.into())));
+}
+
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: NUMERIC keeps the `SqlType`
 /// contract: on numbers negative, zero, positive, of fewer fraction digits
 /// than the scale, at the precision's ends.

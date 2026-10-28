@@ -26,7 +26,8 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
     let literal = match option {
         DefaultOption::Null => return Ok(ColumnDefault::Value(Value::Null)),
         DefaultOption::User(_) => {
-            let long = if let DataType::Character { length } = subject { length >= USER_LENGTH } else { false };
+            let long =
+                if let DataType::Character { length } | DataType::Varying { length } = subject { length >= USER_LENGTH } else { false };
             if !long {
                 return Err(rule(format!(
                     "[ISO/IEC 9075:1992 §11.5 SR3b] an authorization identifier is the default only of a character string of at least {USER_LENGTH} characters, not {subject}"
@@ -37,7 +38,7 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
         DefaultOption::Literal(l) => l,
     };
     let value = match (literal, subject) {
-        (Literal::Character(s), DataType::Character { length }) => {
+        (Literal::Character(s), DataType::Character { length } | DataType::Varying { length }) => {
             // [SR3a i] no longer than the column.
             if s.chars().count() > usize::try_from(length).unwrap_or(usize::MAX) {
                 return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a i] the default '{s}' is longer than {subject}")));
@@ -60,7 +61,7 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
         (Literal::Character(s), DataType::Extension(e)) => e.kind.cast(Value::Char(s.clone()), &subject)?,
         (Literal::Exact(_) | Literal::Approximate(_), DataType::Extension(_))
         | (Literal::Character(_), DataType::Exact { .. } | DataType::Approximate { .. })
-        | (Literal::Exact(_) | Literal::Approximate(_), DataType::Character { .. })
+        | (Literal::Exact(_) | Literal::Approximate(_), DataType::Character { .. } | DataType::Varying { .. })
         | (Literal::Approximate(_), DataType::Exact { .. }) => {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}")));
         }

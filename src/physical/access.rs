@@ -269,7 +269,7 @@ pub(super) fn probe_candidate(c: &Cond) -> Option<(usize, CompOp, Value)> {
 /// comparing them in the index's key order gives the [X3.135-1986 §5.11] result.
 fn coerce_probe(v: &Value, column: &DataType) -> Option<Value> {
     match (column, v) {
-        (DataType::Character { .. }, Value::Char(_))
+        (DataType::Character { .. } | DataType::Varying { .. }, Value::Char(_))
         | (DataType::Exact { .. }, Value::Exact(_))
         | (DataType::Approximate { .. }, Value::Approx(_)) => Some(v.clone()),
         (DataType::Approximate { .. }, Value::Exact(d)) => Some(Value::Approx(d.to_f64())),

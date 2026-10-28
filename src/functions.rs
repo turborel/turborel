@@ -249,7 +249,7 @@ impl AggregateFunction for Sum {
         Ok(match not_character(kw::SUM, arg)? {
             DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale },
             // [X3.135-1986 §5.8 SR9d]; `not_character` has refused CHARACTER.
-            DataType::Approximate { .. } | DataType::Character { .. } | DataType::Extension(_) => {
+            DataType::Approximate { .. } | DataType::Character { .. } | DataType::Varying { .. } | DataType::Extension(_) => {
                 DataType::Approximate { precision: DOUBLE_PRECISION }
             }
         })
@@ -284,7 +284,7 @@ impl AggregateFunction for Avg {
                 DataType::Exact { precision: MAX_EXACT_PRECISION, scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION) }
             }
             // `not_character` has refused CHARACTER.
-            DataType::Approximate { .. } | DataType::Character { .. } | DataType::Extension(_) => {
+            DataType::Approximate { .. } | DataType::Character { .. } | DataType::Varying { .. } | DataType::Extension(_) => {
                 DataType::Approximate { precision: DOUBLE_PRECISION }
             }
         })

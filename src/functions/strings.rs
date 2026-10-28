@@ -15,7 +15,7 @@ use super::ScalarFunction;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::lexer::kw;
 use crate::params::ParameterType;
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Value};
+use crate::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
 
 /// The key word under which concatenation is registered: an operator, so no
 /// call by name reaches it.
@@ -40,10 +40,11 @@ pub fn functions() -> Vec<Arc<dyn ScalarFunction>> {
 /// implementation-defined precision, `MAX_EXACT_PRECISION`, and scale 0.
 const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 };
 
-/// The length of `t`, a character string type, or a Syntax Rule error.
+/// The length of `t`, a character string type, its maximum length if it
+/// is varying, or a Syntax Rule error.
 fn character(name: &str, t: &DataType) -> Result<u32> {
     match t {
-        DataType::Character { length } => Ok(*length),
+        DataType::Character { length } | DataType::Varying { length } => Ok(*length),
         DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Extension(_) => {
             fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
         }
@@ -54,7 +55,11 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
 fn integer(name: &str, t: &DataType) -> Result<()> {
     match t {
         DataType::Exact { scale: 0, .. } => Ok(()),
-        DataType::Exact { .. } | DataType::Character { .. } | DataType::Approximate { .. } | DataType::Extension(_) => fail(
+        DataType::Exact { .. }
+        | DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Approximate { .. }
+        | DataType::Extension(_) => fail(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075:1992 §6.7 SR1] the start position and length of {name} are exact numbers of scale 0, not {t}"),
         ),
@@ -101,8 +106,8 @@ fn other_known(position: usize, args: &[Option<DataType>]) -> bool {
 }
 
 /// [§6.13] `<concatenation>`: the characters of one string, then the
-/// other's \[GR2\]; null if either is \[GR2a\]. Of the type of the sum of their
-/// lengths \[SR2\].
+/// other's \[GR2\]; null if either is \[GR2a\]. Of the sum of their
+/// lengths: varying if either is, else fixed \[SR3a\].
 struct Concatenation;
 
 impl ScalarFunction for Concatenation {
@@ -112,6 +117,17 @@ impl ScalarFunction for Concatenation {
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let [a, b] = args else { return fail(Code::Api, "[DESIGN] || takes two operands") };
         let length = character(CONCATENATION, a)?.saturating_add(character(CONCATENATION, b)?);
+        // [SR3a i] varying, at most the longest varying string.
+        if matches!(a, DataType::Varying { .. }) || matches!(b, DataType::Varying { .. }) {
+            return Ok(DataType::Varying { length: length.min(MAX_CHARACTER_LENGTH) });
+        }
+        // [SR3a ii] fixed, no longer than the longest fixed string.
+        if length > MAX_CHARACTER_LENGTH {
+            return fail(
+                Code::SyntaxRule,
+                format!("[ISO/IEC 9075:1992 §6.13 SR3a ii] || of CHARACTER({length}) is longer than {MAX_CHARACTER_LENGTH} characters"),
+            );
+        }
         Ok(DataType::Character { length })
     }
     /// [§17.6 GR5d] CHARACTER VARYING, unless the other operand is one too
@@ -143,8 +159,8 @@ impl ScalarFunction for Substring {
         for t in rest {
             integer(kw::SUBSTRING, t)?;
         }
-        // [SR2a] as long as the string at most.
-        Ok(DataType::Character { length })
+        // [SR2a] varying, as long as the string at most.
+        Ok(DataType::Varying { length })
     }
     /// [§17.6 GR5c] the start and the length NUMERIC(P, 0), P the greatest
     /// precision; the string none \[GR4p\].
@@ -190,7 +206,9 @@ impl ScalarFunction for Fold {
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let [s] = args else { return fail(Code::Api, "[DESIGN] UPPER and LOWER take one string") };
-        Ok(DataType::Character { length: character(self.name(), s)? })
+        // [SR3a] the string's type.
+        character(self.name(), s)?;
+        Ok(*s)
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [s] = args else { return fail(Code::Api, "[DESIGN] UPPER and LOWER take one string") };
@@ -211,8 +229,8 @@ impl ScalarFunction for Trim {
         let [_, sc, s] = args else { return fail(Code::Api, "[DESIGN] TRIM takes a specification, a character and a string") };
         // [SR6f] the character comparable with the string.
         character(kw::TRIM, sc)?;
-        // [SR6e] as long as the string at most.
-        Ok(DataType::Character { length: character(kw::TRIM, s)? })
+        // [SR6e] varying, as long as the string at most.
+        Ok(DataType::Varying { length: character(kw::TRIM, s)? })
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [spec, sc, s] = args else { return fail(Code::Api, "[DESIGN] TRIM takes a specification, a character and a string") };

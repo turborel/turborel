@@ -105,12 +105,16 @@ RULES.md when its design settles.
   session's default one** is refused (SQLCODE -900, RULES.md D47): its
   stored texts are read again in its own schema, so its names would need
   qualifying there.
-- **Data types:** VARCHAR, datetimes and intervals, with their literals,
+- **Data types:** datetimes and intervals, with their literals,
   the datetime value functions [§6.8], EXTRACT, and the OVERLAPS predicate
   [§8.11]; BIT and BIT VARYING, NATIONAL CHARACTER, and the bit, hex and
   national literals. SET TIME ZONE waits for these, and for the database's
   clock rather than a session's. Each is a kind of the data type contract
   (RULES.md D53), built in.
+- **The Information Schema's domains as CHARACTER VARYING** [§21.2.27,
+  §21.2.28]: SQL_IDENTIFIER and CHARACTER_DATA are CHARACTER, of fixed
+  length, from before CHARACTER VARYING was taken; as it is now, they can
+  be what the standard says, their values unpadded.
 - **Plug-in data types, further** (RULES.md D53): no privilege is needed
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's

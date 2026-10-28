@@ -108,11 +108,11 @@ impl Params {
             if self.list.iter().take(i).any(|q| q.name == p.name) {
                 return Err(api(format!("[X3.135-1986 §7.3 SR2] parameter {} is declared twice", p.name)));
             }
-            if let DataType::Character { length } = p.data_type
+            if let DataType::Character { length } | DataType::Varying { length } = p.data_type
                 && length > MAX_CHARACTER_LENGTH
             {
                 return Err(api(format!(
-                    "[DESIGN] parameter {} is CHARACTER({length}), longer than the maximum of {MAX_CHARACTER_LENGTH}",
+                    "[DESIGN] parameter {} is a string of {length} characters, longer than the maximum of {MAX_CHARACTER_LENGTH}",
                     p.name
                 )));
             }
@@ -163,7 +163,7 @@ impl Params {
 /// type `data_type`: a string no longer than the length, an exact number for an
 /// exact parameter, any number for an approximate one.
 fn argument_fits(value: &Value, data_type: DataType) -> bool {
-    if let (Value::Char(s), DataType::Character { length }) = (value, data_type) {
+    if let (Value::Char(s), DataType::Character { length } | DataType::Varying { length }) = (value, data_type) {
         return usize::try_from(length).is_ok_and(|l| s.chars().count() <= l);
     }
     matches!(

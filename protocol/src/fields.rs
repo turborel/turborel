@@ -17,6 +17,8 @@ pub(crate) const EXACT: u8 = 2;
 const APPROXIMATE: u8 = 3;
 /// A type or value beyond the standard, a plug-in's (RULES.md D53).
 const EXTENSION: u8 = 4;
+/// CHARACTER VARYING, as a type: its values are strings, as CHARACTER's.
+const VARYING: u8 = 5;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -67,6 +69,7 @@ fn string(r: &mut Reader<'_>) -> Result<String> {
 fn put_type(b: &mut Vec<u8>, t: &DataType) {
     match t {
         DataType::Character { .. } => b.put_u8(CHARACTER),
+        DataType::Varying { .. } => b.put_u8(VARYING),
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
         DataType::Extension(e) => {
@@ -93,6 +96,7 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         CHARACTER => Some(&types::CHARACTER),
         EXACT => Some(&types::EXACT),
         APPROXIMATE => Some(&types::APPROXIMATE),
+        VARYING => Some(&types::VARYING),
         _ => None,
     }
 }

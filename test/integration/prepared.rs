@@ -71,9 +71,10 @@ fn a_prepared_query_is_described_and_opened_with_values() {
 /// operator [h] or a comparison [m], of BETWEEN's [m], of an IN list's
 /// value [r], of a subquery's column [q, t], of a CAST's target [i], of
 /// COALESCE's first operand [j], of the first WHEN operand [k] and of
-/// NULLIF's other [l]; in LIKE, CHARACTER VARYING [s], which is not
-/// implemented: its value as given, unpadded, a number as its literal, at
-/// most 32767 characters (SQLSTATE 22001 past).
+/// NULLIF's other [l]; in LIKE, CHARACTER VARYING of the longest length
+/// [s]: its value cast to it [§17.9 GR5g], unpadded, a number as its
+/// literal, a string past 32767 characters cut [§6.10 GR6c ii], the
+/// warning not raised.
 #[test]
 fn a_parameter_takes_its_type_from_where_it_stands() {
     let (_db, s) = session();
@@ -91,9 +92,7 @@ fn a_parameter_takes_its_type_from_where_it_stands() {
     assert_eq!(query(&s, "SELECT K FROM T WHERE N LIKE ? ORDER BY K", &[text("%O%")]), ["2", "3"]);
     assert_eq!(query(&s, "SELECT K FROM T WHERE N LIKE ?", &[int(5)]).len(), 0, "a number, as its literal");
     assert_eq!(query(&s, "SELECT K FROM T WHERE N LIKE ?", &[Value::Null]).len(), 0, "unknown");
-    let long = s.prepare("SELECT K FROM T WHERE N LIKE ?").unwrap();
-    let too_long = s.open_prepared(&long, &[text(&"A".repeat(32_768))]).err().unwrap();
-    assert_eq!((too_long.code, too_long.sqlstate().as_str()), (Code::Data, "22001"));
+    assert_eq!(query(&s, "SELECT K FROM T WHERE N LIKE ?", &[text(&format!("{}B", "%".repeat(32_767)))]).len(), 3, "cut: the B gone");
     assert_eq!(query(&s, "SELECT K FROM T WHERE (K, N) = (?, ?)", &[int(1), text("ANN")]), ["1"]);
 }
 
