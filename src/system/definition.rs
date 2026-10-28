@@ -41,6 +41,7 @@ use crate::binder::{system_view_columns, view_uses};
 use crate::catalog::{CheckLevels, ColumnDefault, ColumnDesc, ConstraintDesc, QualifiedName, TemporaryKind, owner_of};
 use crate::error::Result;
 use crate::storage::Row;
+use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
 
 /// How long a CHARACTER_DATA column whose values §21.3 does not list is.
@@ -329,6 +330,11 @@ fn default_text(default: Option<&ColumnDefault>) -> Value {
         None => Value::Null,
         Some(ColumnDefault::Value(v)) => long(&v.to_literal()),
         Some(ColumnDefault::User) => text("CURRENT_USER"),
+        Some(ColumnDefault::Datetime(moment, precision)) => text(&match moment {
+            Moment::Date => "CURRENT_DATE".to_owned(),
+            Moment::Time => format!("CURRENT_TIME({precision})"),
+            Moment::Timestamp => format!("CURRENT_TIMESTAMP({precision})"),
+        }),
     }
 }
 

@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use crate::ast::{CheckLevels, Temporary, TemporaryKind};
+use crate::value::datetime::{Moment, Now};
+use crate::value::types::datetime::current;
 use crate::value::{DataType, Value};
 
 pub(crate) mod codec;
@@ -95,18 +97,23 @@ pub enum ColumnDefault {
     /// default is taken \[GR1c\]: in this implementation, the authorization
     /// identifier the statement runs under, each.
     User,
+    /// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME or
+    /// CURRENT_TIMESTAMP, of `precision`: the instant of the statement that
+    /// takes the default \[GR1d\].
+    Datetime(Moment, u32),
 }
 
 impl ColumnDesc {
     /// [ISO/IEC 9075:1992 §11.5 GR2] Its default value, for a statement run
-    /// under the authorization identifier `auth`: before store assignment
-    /// pads a fixed-length string \[GR1b iii, GR1c ii\].
-    pub fn default_value(&self, auth: &str) -> Value {
+    /// under the authorization identifier `auth` at `now`: before store
+    /// assignment pads a fixed-length string \[GR1b iii, GR1c ii\].
+    pub fn default_value(&self, auth: &str, now: Now) -> Value {
         // [GR2a] its own; [GR2b] its domain's; [GR2c] null.
         let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
         match self.default.as_ref().or(of_domain) {
             Some(ColumnDefault::Value(v)) => v.clone(),
             Some(ColumnDefault::User) => Value::Char(auth.to_string()),
+            Some(ColumnDefault::Datetime(moment, precision)) => current(*moment, *precision, now),
             None => Value::Null,
         }
     }

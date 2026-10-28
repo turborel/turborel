@@ -23,7 +23,8 @@ pub use builtin::{
     CATALOG_COMPACT_AFTER, CATALOG_NAME, CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES, CHECKSUM, DECORRELATE_AFTER, DEFAULT_ENGINE,
     ENCODINGS, EQUAL_SELECTIVITY, INDEX_DESCENT_COST, LOCK_TIMEOUT, LOCK_WAIT, LOG_SEGMENT_SIZE, MEMORY_BUDGET, NULL_FRACTION,
     OPTIMIZER_MAX_PASSES, PAGE_SIZE, POOL_BYTES, RANGE_SELECTIVITY, REORDER_GAIN, SESSION_END, SLOW_STATEMENT, SORT_COMPARE_COST,
-    SPILL_BATCH, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, STATEMENT_TIMEOUT, TRANSACTION_POLICY, UNIQUE_INDEX_METHOD, WORK_MEMORY,
+    SPILL_BATCH, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, STATEMENT_TIMEOUT, TIME_ZONE, TRANSACTION_POLICY, UNIQUE_INDEX_METHOD,
+    WORK_MEMORY,
 };
 use builtin::{builtin, whole};
 
@@ -60,6 +61,9 @@ pub enum Kind {
     /// An `<identifier>`'s body: at most `MAX_IDENTIFIER_LENGTH`
     /// characters, as given.
     Identifier,
+    /// A time zone displacement, ±HH:MM, from -12:59 to +13:00 [ISO/IEC
+    /// 9075:1992 §5.3 SR25].
+    Displacement,
     /// Text of at most `max` characters, as given, its ends trimmed; it
     /// may be empty.
     Text {
@@ -146,7 +150,7 @@ pub fn batch_bytes(value: &Value) -> usize {
 fn bytes(value: &Value, default: usize) -> usize {
     match value {
         Value::Exact(d) => usize::try_from(d.units).unwrap_or(usize::MAX),
-        Value::Approx(_) | Value::Char(_) | Value::Null | Value::Bits(_) | Value::Extension(_) => default,
+        Value::Approx(_) | Value::Char(_) | Value::Null | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => default,
     }
 }
 
@@ -197,6 +201,11 @@ pub(crate) fn accepted(name: &str, kind: &Kind, value: &Value) -> Result<Value> 
             let body = given.map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= crate::lexer::MAX_IDENTIFIER_LENGTH);
             body.map(|s| Value::Char(s.to_owned())).ok_or_else(refused)
         }
+        Kind::Displacement => given
+            .map(str::trim)
+            .and_then(crate::value::datetime::parse_displacement)
+            .map(|z| Value::Char(crate::value::Datetime::displacement_text(z)))
+            .ok_or_else(refused),
         Kind::Text { max } => {
             given.map(str::trim).filter(|s| s.chars().count() <= *max).map(|s| Value::Char(s.to_owned())).ok_or_else(refused)
         }
@@ -502,6 +511,7 @@ mod tests {
             (STATEMENT_TIMEOUT, "STATEMENT_TIMEOUT"),
             (LOCK_TIMEOUT, "LOCK_TIMEOUT"),
             (SLOW_STATEMENT, "DIAGNOSTICS.SLOW_STATEMENT"),
+            (TIME_ZONE, "TIME_ZONE"),
         ];
         assert_eq!(s.list(&Own::default()).len(), names.len());
         for (key, name) in names {

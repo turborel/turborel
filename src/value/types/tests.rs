@@ -73,6 +73,9 @@ fn built_in_kinds_refuse_other_kinds() {
         DataType::Approximate { precision: 53 },
         DataType::Bit { length: 3 },
         DataType::BitVarying { length: 3 },
+        DataType::Date,
+        DataType::Time { precision: 3, zoned: true },
+        DataType::Timestamp { precision: 6, zoned: false },
     ];
     let others = [
         Value::Exact(Decimal::new(1, 0)),
@@ -80,6 +83,9 @@ fn built_in_kinds_refuse_other_kinds() {
         Value::Char("B".into()),
         Value::Char("C".into()),
         Value::Exact(Decimal::new(2, 0)),
+        Value::Char("2024-01-01".into()),
+        Value::Bits(Bits::default()),
+        Value::Approx(1.0),
     ];
     for (t, other) in types.iter().zip(&others) {
         refuses(t, other);

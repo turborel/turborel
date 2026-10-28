@@ -12,6 +12,7 @@
 //! row:   values u32, then each value
 //! ```
 
+use super::datetime::Moment;
 use super::{SqlType, Value, types};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -26,6 +27,10 @@ const APPROXIMATE: u8 = 3;
 const EXTENSION: u8 = 4;
 /// A bit string: its length in bits, then its bytes.
 const BITS: u8 = 5;
+/// A date, a time and a timestamp: as their kinds write them.
+const DATE: u8 = 6;
+const TIME: u8 = 7;
+const TIMESTAMP: u8 = 8;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -36,6 +41,11 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
         Value::Bits(_) => BITS,
+        Value::Datetime(d) => match d.moment {
+            Moment::Date => DATE,
+            Moment::Time => TIME,
+            Moment::Timestamp => TIMESTAMP,
+        },
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
             out.put_str(e.kind.name());
@@ -58,6 +68,9 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
         BITS => &types::BIT_VARYING,
+        DATE => &types::DATE,
+        TIME => &types::TIME,
+        TIMESTAMP => &types::TIMESTAMP,
         EXTENSION => {
             let name = reader.str()?;
             reader.kind(&name)?

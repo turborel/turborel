@@ -84,6 +84,8 @@ impl SqlState {
     pub const INDICATOR_OVERFLOW: SqlState = SqlState("22022");
     /// Data exception: invalid escape sequence.
     pub const INVALID_ESCAPE_SEQUENCE: SqlState = SqlState("22025");
+    /// Data exception: invalid datetime format.
+    pub const INVALID_DATETIME_FORMAT: SqlState = SqlState("22007");
     /// Integrity constraint violation.
     pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState("23000");
     /// Triggered data change violation.

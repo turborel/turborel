@@ -7,7 +7,7 @@
 use super::set_functions::column_specifications;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
-use crate::ast::{SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
+use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{AggregateRef, ScalarFunction};
 use crate::lexer::kw;
@@ -92,6 +92,9 @@ impl Binder<'_> {
                 "[ISO/IEC 9075:1992 §11.9 SR5] a CHECK condition shall not contain USER, CURRENT_USER, SESSION_USER or SYSTEM_USER",
             ));
         }
+        if let ValueSpecification::Literal(Literal::Datetime(w)) = vs {
+            return super::datetime::literal(w, self.now);
+        }
         value_specification(vs, self.user, self.params)
     }
 
@@ -112,6 +115,8 @@ impl Binder<'_> {
             ValueExpression::Case(case) => self.case(case, scope),
             ValueExpression::Cast { operand, target, at } => self.cast(operand.as_deref(), target, scope).or_at(*at),
             ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
+            ValueExpression::Datetime(f) => Ok(self.datetime_function(*f)),
+            ValueExpression::Extract { field, source, at } => self.extract(*field, source, scope).or_at(*at),
         }
     }
 
@@ -152,8 +157,8 @@ impl Binder<'_> {
         if t.is_character() {
             return Err(rule("[X3.135-1986 §5.9 SR3] a character string <primary> cannot have an operator"));
         }
-        if t.is_bit() {
-            return Err(rule("[ISO/IEC 9075:1992 §6.12] a bit string is no <numeric primary>"));
+        if t.is_bit() || t.is_datetime() {
+            return Err(rule(format!("[ISO/IEC 9075:1992 §6.12] {t} is no <numeric primary>")));
         }
         Ok(match (sign, e) {
             (Sign::Plus, e) => (e, t),
@@ -183,6 +188,12 @@ impl Binder<'_> {
         }
         if left_type.is_bit() || right_type.is_bit() {
             return Err(rule("[ISO/IEC 9075:1992 §6.12] bit string values cannot be used with arithmetic operators"));
+        }
+        // [§6.14, §6.15 Format] a datetime is added to, or subtracted
+        // from, an interval alone; two subtracted give an interval of the
+        // qualifier written after them.
+        if left_type.is_datetime() || right_type.is_datetime() {
+            return Err(rule("[ISO/IEC 9075:1992 §6.14, §6.15] a datetime is added to or subtracted from an interval alone"));
         }
         let t = match (left_type, right_type) {
             (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,

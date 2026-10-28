@@ -66,6 +66,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D50 | Domains: their constraints copied onto their columns |
 | D51 | Assertions: a query whose rows break it |
 | D52 | A view's REFERENCES: from what its columns are drawn from |
+| D54 | Datetimes: kept in UTC, the session's zone, a pluggable clock |
 | **Architecture** | |
 | D25 | Durability: one log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -549,6 +550,27 @@ and its position for a histogram. A `DataType` names its kind
 replaced; one contract still keeps every type, built in or not, honest to
 the same responsibilities, and a plug-in type stored, logged, indexed and
 sent as a built-in one is.
+
+**D54. Datetimes: kept in UTC, the session's zone, a pluggable clock.**
+- A time or timestamp is kept as its instant in UTC, to the microsecond,
+  as ISO/IEC 9075:1992 §4.5.1 says, with its displacement if its type is
+  WITH TIME ZONE. Without time zone, its displacement is the session's,
+  implied [§6.1 SR5]: a value retrieved is shown in it, so it shows
+  differently in a session of another zone. A date is its days.
+- A session's displacement is the setting TIME_ZONE, the database's by
+  default, `+00:00`, and its own if it sets one.
+- A statement takes the clock's instant and its session's displacement
+  once, as it begins: every CURRENT_DATE, CURRENT_TIME and
+  CURRENT_TIMESTAMP in it is that instant [§6.8 GR3], a constant of its
+  plan, and so is the current date a CAST of a time to a timestamp reads.
+  CAST to or from a datetime is bound with them; `SqlType::cast`, given
+  none, takes UTC.
+- The clock is a plug-in (`Database::set_clock`), the system's by
+  default; a test sets one that stands still (R-TEST-5).
+*Why:* a server's results must not depend on the host's zone, nor a
+statement's datetimes on when within it each is evaluated; SQL-92's text
+is the one on hand, so its reading of a time without time zone is kept
+until a later standard's is.
 
 **D27. A thread-safe core over snapshots of the definitions.**
 - A `Database` is shared between threads, and every extension trait is

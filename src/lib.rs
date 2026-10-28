@@ -30,6 +30,7 @@ pub mod ast;
 pub mod binder;
 pub mod bytes;
 pub mod catalog;
+pub mod clock;
 pub mod db;
 pub mod diagnostics;
 pub mod disk;

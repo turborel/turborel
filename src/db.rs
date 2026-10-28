@@ -59,6 +59,7 @@ mod assertions;
 mod assignment;
 mod catalog_file;
 mod checkpoint;
+mod clock;
 mod completion;
 mod constraints;
 mod cursor;
@@ -220,6 +221,9 @@ pub struct Session {
     /// The cursor whose row a referential action of the statement running
     /// changed, if one did [ISO/IEC 9075:1992 §11.8 GR8].
     conflict: RefCell<Option<String>>,
+    /// The instant of the statement running, and the session's time zone
+    /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1], set as it begins.
+    now: Cell<crate::value::datetime::Now>,
 }
 
 /// One call on a session: the snapshot it runs against, and the session
@@ -297,6 +301,7 @@ impl Session {
             stop: Arc::default(),
             temporaries: temporary::Temporaries::default(),
             conflict: RefCell::new(None),
+            now: Cell::default(),
         }
     }
 
@@ -314,6 +319,7 @@ impl Session {
         match self.db.snapshot().and_then(|published| self.definitions(published)) {
             Ok(snapshot) => {
                 let snapshot = self.with_own(self.with_temporaries(snapshot));
+                self.now.set(snapshot.now(&self.own.borrow()));
                 let millis = |key| u64::try_from(snapshot.settings.integer(key)).unwrap_or(0);
                 self.stop.set_timeout(millis(STATEMENT_TIMEOUT));
                 self.stop.set_lock_timeout(millis(LOCK_TIMEOUT));

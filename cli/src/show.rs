@@ -23,6 +23,23 @@ struct Shape {
     right: bool,
 }
 
+/// [ISO/IEC 9075:1992 §6.1 SR27] The positions of a DATE, of a TIME and of
+/// a TIMESTAMP without their fractions and displacements.
+const DATE_WIDTH: usize = 10;
+/// See [`DATE_WIDTH`].
+const TIME_WIDTH: usize = 8;
+/// See [`DATE_WIDTH`].
+const TIMESTAMP_WIDTH: usize = 19;
+/// See [`DATE_WIDTH`]: of a displacement, ±HH:MM.
+const ZONE_WIDTH: usize = 6;
+
+/// The positions of a time or timestamp of `base` positions, `precision`
+/// digits of fraction, and a displacement if `zoned`.
+fn positions(base: usize, precision: u32, zoned: bool) -> usize {
+    let fraction = usize::try_from(precision).unwrap_or(0);
+    base.saturating_add(fraction).saturating_add(usize::from(fraction > 0)).saturating_add(if zoned { ZONE_WIDTH } else { 0 })
+}
+
 /// What a column of `t`'s values needs, named `name`.
 fn shape(name: &str, t: &DataType) -> Shape {
     let (width, right) = match t {
@@ -33,6 +50,10 @@ fn shape(name: &str, t: &DataType) -> Shape {
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
         DataType::Approximate { .. } => (APPROXIMATE_WIDTH, true),
+        // [ISO/IEC 9075:1992 §6.1 SR27] its length in positions.
+        DataType::Date => (DATE_WIDTH, false),
+        DataType::Time { precision, zoned } => (positions(TIME_WIDTH, *precision, *zoned), false),
+        DataType::Timestamp { precision, zoned } => (positions(TIMESTAMP_WIDTH, *precision, *zoned), false),
         // A type beyond the standard, shown as its text, as wide as it is.
         DataType::Extension(_) => (MAX_WIDTH, false),
     };
@@ -97,7 +118,9 @@ impl Sink for Table<'_> {
                 .iter()
                 .map(|v| match v {
                     Value::Null => self.null.to_owned(),
-                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Extension(_) => v.to_string(),
+                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => {
+                        v.to_string()
+                    }
                 })
                 .collect();
             let line = self.line(cells.iter().map(String::as_str));
@@ -142,6 +165,20 @@ mod tests {
         assert_eq!(lines[1], format!("------+-------+{}+{}", "-".repeat(26), "-".repeat(MAX_WIDTH + 2)));
         assert_eq!(lines[2], format!(" ab   | -12.5 | {:>24} | x", "?"));
         assert_eq!(lines[3], "(1 row)");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D46; [ISO/IEC 9075:1992 §6.1 SR27] a
+    /// column of a datetime is as wide as its length in positions, its
+    /// fraction and displacement counted; of a bit string, its bits.
+    #[test]
+    fn datetime_columns_are_as_wide_as_their_positions() {
+        let width = |t: DataType| shape("C", &t).width;
+        assert_eq!(width(DataType::Date), 10);
+        assert_eq!(width(DataType::Time { precision: 0, zoned: false }), 8);
+        assert_eq!(width(DataType::Time { precision: 2, zoned: true }), 17);
+        assert_eq!(width(DataType::Timestamp { precision: 6, zoned: false }), 26);
+        assert_eq!(width(DataType::Timestamp { precision: 3, zoned: true }), 29);
+        assert_eq!(width(DataType::BitVarying { length: 12 }), 12);
     }
 
     /// Verifies: [DESIGN] RULES.md D46: a failure to write is kept, and

@@ -5,6 +5,7 @@
 use std::cmp::Ordering;
 
 use turborel::bytes::Reader;
+use turborel::value::datetime::{Datetime, Moment, parse};
 use turborel::value::{Bits, DataType, Decimal, SqlType, Value, assign, bucket, compare};
 
 /// Checks the contract of `t`'s kind on `t` and `values`, which are
@@ -90,6 +91,42 @@ fn bit_keeps_the_type_contract() {
 fn bit_varying_keeps_the_type_contract() {
     let strings = ["", "0", "1", "00", "01", "10", "11111111", "111111110", "111111111", "000000001", "101010101010"];
     type_contract(DataType::BitVarying { length: 12 }, &bits(strings));
+}
+
+/// The datetimes `texts` write, of `moment`, each of its own displacement
+/// or of UTC.
+fn datetimes<const N: usize>(moment: Moment, texts: [&str; N]) -> Vec<Value> {
+    texts
+        .iter()
+        .map(|t| {
+            let w = parse(moment, t).unwrap();
+            Value::Datetime(Datetime::of_local(moment, w.local, w.zone.unwrap_or(0), w.zone.is_some(), w.precision))
+        })
+        .collect()
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR5]
+/// DATE keeps the `SqlType` contract: on the first and last days, a leap
+/// day, days either side of 1970.
+#[test]
+fn date_keeps_the_type_contract() {
+    type_contract(DataType::Date, &datetimes(Moment::Date, ["0001-01-01", "1969-12-31", "1970-01-01", "2024-02-29", "9999-12-31"]));
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR5]
+/// TIME and TIMESTAMP, WITH TIME ZONE or not, keep the `SqlType`
+/// contract: on midnight, fractions, displacements east and west, one
+/// instant in two displacements.
+#[test]
+fn times_and_timestamps_keep_the_type_contract() {
+    let times = ["00:00:00", "12:00:00.5", "23:59:59.999999"];
+    type_contract(DataType::Time { precision: 6, zoned: false }, &datetimes(Moment::Time, times));
+    let zoned = ["00:00:00+00:00", "05:30:00+05:30", "12:00:00.25-12:59", "23:00:00+13:00"];
+    type_contract(DataType::Time { precision: 6, zoned: true }, &datetimes(Moment::Time, zoned));
+    let stamps = ["0001-01-01 00:00:00", "1969-12-31 23:59:59.999999", "2024-02-29 12:34:56.789", "9999-12-31 23:59:59"];
+    type_contract(DataType::Timestamp { precision: 6, zoned: false }, &datetimes(Moment::Timestamp, stamps));
+    let zoned_stamps = ["2024-01-01 05:30:00+05:30", "2024-01-01 00:00:00+00:00", "2023-12-31 23:00:00-02:00", "1970-01-01 00:00:00+13:00"];
+    type_contract(DataType::Timestamp { precision: 3, zoned: true }, &datetimes(Moment::Timestamp, zoned_stamps));
 }
 
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: NUMERIC keeps the `SqlType`

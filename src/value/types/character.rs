@@ -118,6 +118,8 @@ impl SqlType for Character {
                 let kept: String = s.chars().take(usize::try_from(length).unwrap_or(usize::MAX)).collect();
                 self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")
             }
+            // [GR5e] its literal's string, as it shows, padded.
+            Value::Datetime(d) => super::datetime::as_string(&d, length, true),
             // [GR5d] its characters, then characters of 0 bits to the
             // length, cut to it; the warnings not raised.
             Value::Bits(b) => {

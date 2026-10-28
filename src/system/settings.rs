@@ -87,6 +87,7 @@ pub(super) fn kind_of(kind: &Kind) -> String {
         Kind::HashFunction => "A HASH FUNCTION".to_owned(),
         Kind::Encodings => "ENCODINGS, BY COMMAS".to_owned(),
         Kind::Identifier => "AN IDENTIFIER".to_owned(),
+        Kind::Displacement => "A TIME ZONE DISPLACEMENT FROM -12:59 TO +13:00".to_owned(),
         Kind::Text { max } => format!("TEXT OF AT MOST {max} CHARACTERS"),
     }
 }

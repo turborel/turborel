@@ -72,6 +72,9 @@ impl Parser {
     /// `<bit string literal>` | `<hex string literal>` [ISO/IEC 9075:1992
     /// §5.3]
     pub(super) fn literal(&mut self) -> Result<Literal> {
+        if self.at_datetime_literal() {
+            return self.datetime_literal();
+        }
         let mut negative = false;
         if self.sign_attached() {
             negative = self.is_delim(delim::MINUS);

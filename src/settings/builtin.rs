@@ -66,6 +66,8 @@ pub const STATEMENT_TIMEOUT: Key = Key(27);
 pub const LOCK_TIMEOUT: Key = Key(28);
 /// See [`DEFAULT_ENGINE`].
 pub const SLOW_STATEMENT: Key = Key(29);
+/// See [`DEFAULT_ENGINE`].
+pub const TIME_ZONE: Key = Key(30);
 
 /// The words of `LOCK_WAIT`, `SESSION_END` and `TRANSACTION_POLICY`.
 pub(super) const LOCK_WAITS: &[&str] = &["NO_WAIT", "WAIT"];
@@ -164,7 +166,7 @@ fn storage() -> [Definition; 5] {
 /// \[DESIGN\] How long a statement, or a wait for a lock, may last, and how
 /// long one may run before the diagnostics are told of it: in
 /// milliseconds, 0 for no limit.
-fn limits() -> [Definition; 3] {
+fn limits() -> [Definition; 4] {
     [
         defined(
             ("STATEMENT_TIMEOUT", at_least(0), whole(0)),
@@ -180,6 +182,11 @@ fn limits() -> [Definition; 3] {
             ("DIAGNOSTICS.SLOW_STATEMENT", at_least(0), whole(0)),
             DATABASE,
             "The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.",
+        ),
+        defined(
+            ("TIME_ZONE", Kind::Displacement, text("+00:00")),
+            SESSION,
+            "The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.",
         ),
     ]
 }

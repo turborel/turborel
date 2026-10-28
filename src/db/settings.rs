@@ -58,6 +58,7 @@ impl State {
                     | Kind::Integer { .. }
                     | Kind::Number { .. }
                     | Kind::Choice(_)
+                    | Kind::Displacement
                     | Kind::Identifier
                     | Kind::Text { .. },
                     _,
@@ -322,7 +323,7 @@ impl Session {
     /// Those of `bind`.
     pub(super) fn bound<T>(&self, st: &State, params: &Params, bind: impl FnOnce(Context<'_>) -> Result<T>) -> Result<T> {
         let (own, schema) = (self.own.borrow(), self.schema.borrow());
-        bind(Context { own: &own, schema: &schema, ..Context::new(st, &self.auth, params) })
+        bind(Context { own: &own, schema: &schema, now: self.now.get(), ..Context::new(st, &self.auth, params) })
     }
 
     /// What ends its open transaction when it ends (`SESSION_END`).

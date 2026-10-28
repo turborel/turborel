@@ -33,6 +33,9 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
         }
         return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2] values of {e} are brought together with values of another type")));
     }
+    if let Some(first) = types.iter().find(|t| t.is_datetime()) {
+        return datetime_set_type(*first, types, clause);
+    }
     let characters = types.iter().filter(|t| t.is_character()).count();
     if characters != 0 && characters != types.len() {
         return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3a] character strings and numbers are brought together")));
@@ -52,7 +55,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
                 scale = scale.max(*s);
             }
             DataType::Approximate { .. } => exact = false,
-            DataType::Extension(_) => {}
+            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Extension(_) => {}
         }
     }
     Ok(match (characters, bits, exact) {
@@ -77,12 +80,42 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     })
 }
 
+/// [§9.3 SR3e] The result type of datetimes of `types`, `first` among them:
+/// of its fields, WITH TIME ZONE if one is, of the greatest precision.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is not of `first`'s fields.
+fn datetime_set_type(first: DataType, types: &[DataType], clause: &str) -> Result<DataType> {
+    if !types.iter().all(|t| first.comparable(t)) {
+        return Err(rule(format!(
+            "[ISO/IEC 9075:1992 {clause}, §9.3 SR3e] values of {first} are brought together with values of another type"
+        )));
+    }
+    let precision = types.iter().map(datetime_precision).max().unwrap_or(0);
+    let zoned = types.iter().any(|t| matches!(t, DataType::Time { zoned: true, .. } | DataType::Timestamp { zoned: true, .. }));
+    Ok(if let DataType::Time { .. } = first {
+        DataType::Time { precision, zoned }
+    } else if let DataType::Timestamp { .. } = first {
+        DataType::Timestamp { precision, zoned }
+    } else {
+        DataType::Date
+    })
+}
+
+/// The digits of the second's fraction of `t`, a datetime type.
+fn datetime_precision(t: &DataType) -> u32 {
+    if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { *precision } else { 0 }
+}
+
 /// `e`, of type `from`, as a value of `to`, the type values of both are
 /// brought together as [§9.3]: cast to it, but for a bit string, kept as it
 /// is, of its own bits, as §9.3 gives the result's type alone and a cast
-/// to a fixed length would extend it with 0 bits [§6.10 GR7c].
+/// to a fixed length would extend it with 0 bits [§6.10 GR7c]; and a
+/// datetime too, of its own instant, as one type holds both [SR3e].
 pub(super) fn brought(e: Expr, from: DataType, to: DataType) -> Expr {
-    if from == to || (from.is_bit() && to.is_bit()) { e } else { Expr::Cast(Box::new(e), to) }
+    let kept = from == to || (from.is_bit() && to.is_bit()) || (from.is_datetime() && to.is_datetime());
+    if kept { e } else { Expr::Cast(Box::new(e), to) }
 }
 
 impl Binder<'_> {
@@ -196,6 +229,9 @@ impl Binder<'_> {
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
         let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;
+        if t.is_datetime() || target.is_datetime() {
+            return Ok((self.datetime_cast(e, t, target)?, target));
+        }
         // [SR4] no number to or from a bit string.
         if (t.is_bit() && target.is_numeric()) || (t.is_numeric() && target.is_bit()) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {t} to {target} is not valid")));

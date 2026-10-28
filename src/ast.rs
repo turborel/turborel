@@ -5,6 +5,7 @@
 //! Comments give the BNF exactly as implemented; alternatives in the
 //! standard that are not implemented are listed under "Not implemented".
 
+use crate::value::datetime::{Field, Moment, Written};
 use crate::value::{Bits, Decimal};
 
 /// [X3.135-1986 §5.4] `<table name>` ::= \[`<authorization identifier>`.\] `<table identifier>`
@@ -150,6 +151,31 @@ pub enum Literal {
     /// A `<bit string literal>`'s or `<hex string literal>`'s value
     /// [ISO/IEC 9075:1992 §5.3].
     Bit(Bits),
+    /// A `<datetime literal>`'s fields, as written [ISO/IEC 9075:1992
+    /// §5.3]: of a displacement the SQL-session gives, if it writes none
+    /// \[SR18\].
+    Datetime(Written),
+}
+
+/// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`: CURRENT_DATE,
+/// CURRENT_TIME or CURRENT_TIMESTAMP, of a precision if written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DatetimeFunction {
+    /// Which: of a date, a time or a timestamp.
+    pub moment: Moment,
+    /// The `<time precision>` or `<timestamp precision>`, if written.
+    pub precision: Option<u32>,
+}
+
+/// [ISO/IEC 9075:1992 §6.6] An `<extract field>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtractField {
+    /// A `<datetime field>`.
+    Datetime(Field),
+    /// TIMEZONE_HOUR.
+    TimezoneHour,
+    /// TIMEZONE_MINUTE.
+    TimezoneMinute,
 }
 
 // ---------------------------------------------------------------------------

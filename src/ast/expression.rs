@@ -7,7 +7,7 @@
 //! `ValueExpression::for_each_child` and `SearchCondition::for_each_value`,
 //! which stop at a subquery, a query of its own.
 
-use super::{QueryExpression, TableName, TypeName, ValueSpecification};
+use super::{DatetimeFunction, ExtractField, QueryExpression, TableName, TypeName, ValueSpecification};
 use crate::catalog::MatchType;
 use crate::value::{ArithOp, CompOp};
 
@@ -194,6 +194,18 @@ pub enum ValueExpression {
         /// Where it begins in the statement.
         at: usize,
     },
+    /// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`.
+    Datetime(DatetimeFunction),
+    /// [ISO/IEC 9075:1992 §6.6] EXTRACT (`<extract field>` FROM `<extract
+    /// source>`).
+    Extract {
+        /// The field.
+        field: ExtractField,
+        /// The datetime it is of.
+        source: Box<ValueExpression>,
+        /// Where it begins in the statement.
+        at: usize,
+    },
     /// \[EXTENSION\] accepted only when a session enables it:
     /// `<identifier>` ( \[`<value expression>` \[{, `<value expression>`}...\]\] )
     Call {
@@ -289,7 +301,8 @@ impl ValueExpression {
     /// values its conditions compare; not those of a subquery.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
-            ValueExpression::Value(_) | ValueExpression::Column(_) | ValueExpression::Subquery(_) => {}
+            ValueExpression::Value(_) | ValueExpression::Column(_) | ValueExpression::Subquery(_) | ValueExpression::Datetime(_) => {}
+            ValueExpression::Extract { source, .. } => f(source),
             ValueExpression::Dyadic(a, _, b) => {
                 f(a);
                 f(b);

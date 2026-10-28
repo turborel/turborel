@@ -29,6 +29,7 @@ impl Parser {
                 self.character_string_type()
             }
             kw::BIT => self.bit_string_type(),
+            kw::DATE | kw::TIME | kw::TIMESTAMP => self.datetime_type(),
             kw::NUMERIC | kw::DECIMAL | kw::DEC => self.exact_numeric_type(at),
             kw::INTEGER | kw::INT => {
                 self.advance();

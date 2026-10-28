@@ -220,7 +220,7 @@ impl State {
             return Ok(());
         }
         // [GR5a iii, GR6a iii] SET DEFAULT gives the child's defaults [§11.5 GR2].
-        let defaults = if action == ReferentialAction::SetDefault { default_row(child, &effects.user)? } else { Vec::new() };
+        let defaults = if action == ReferentialAction::SetDefault { default_row(child, &effects.user, effects.now)? } else { Vec::new() };
         let partial = fk.match_type == MatchType::Partial;
         let before = if partial { self.before_statement(tx, change.parent, effects)? } else { Vec::new() };
         for (row_id, row) in self.matching_rows(tx, (child, fk), &key)? {

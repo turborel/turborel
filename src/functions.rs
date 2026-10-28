@@ -254,6 +254,9 @@ impl AggregateFunction for Sum {
             | DataType::Varying { .. }
             | DataType::Bit { .. }
             | DataType::BitVarying { .. }
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION },
         })
     }
@@ -292,6 +295,9 @@ impl AggregateFunction for Avg {
             | DataType::Varying { .. }
             | DataType::Bit { .. }
             | DataType::BitVarying { .. }
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION },
         })
     }

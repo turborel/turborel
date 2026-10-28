@@ -89,7 +89,8 @@ pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" 
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in
 /// `col`? A character string in a character string column, a bit string in
-/// a bit string one, a number in a numeric one. SQL-86's rules that a string be no longer than the column
+/// a bit string one, a number in a numeric one, a datetime in a datetime
+/// one of its fields. SQL-86's rules that a string be no longer than the column
 /// and only an exact number go to an exact column [X3.135-1986 §8.7 SR6,
 /// §8.11 SR8, §8.12 SR6] are Entry SQL's [ISO/IEC 9075:1992 §13.8, §13.9,
 /// §13.10, Leveling Rules]: a longer string is checked as it is stored
@@ -99,7 +100,8 @@ pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" 
 ///
 /// SQLCODE -103 citing `r` if it cannot.
 pub fn check_assignment(col: &crate::catalog::ColumnDesc, t: DataType, r: AssignRule) -> Result<()> {
-    if col.data_type.is_character() == t.is_character() && col.data_type.is_bit() == t.is_bit() {
+    let datetime = if col.data_type.is_datetime() || t.is_datetime() { col.data_type.comparable(&t) } else { true };
+    if col.data_type.is_character() == t.is_character() && col.data_type.is_bit() == t.is_bit() && datetime {
         return Ok(());
     }
     Err(rule(format!("[ISO/IEC 9075:1992 {}, §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
@@ -226,7 +228,7 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
                 Source::Base(vb) => vb.base.columns.get(position),
                 Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => Some(col),
             };
-            Some(Expr::Const(base.map_or(Value::Null, |c| c.default_value(binder.user))))
+            Some(Expr::Const(base.map_or(Value::Null, |c| c.default_value(binder.user, binder.now))))
         }
         UpdateSource::Value(v) => {
             // [ISO/IEC 9075:1992 §17.6 GR5w] a `?` takes its object column's type.

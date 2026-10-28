@@ -25,9 +25,12 @@ use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::logical::{AggCall, Cond, LogicalPlan, SortKey, Truth};
 use crate::params::{ParameterType, Params};
 use crate::settings::{self, Own};
+use crate::value::datetime::Now;
 use crate::value::{DOUBLE_PRECISION, DataType, Value};
 
 mod case;
+mod datetime;
+pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};
 mod expression;
 mod from;
 mod predicates;
@@ -113,6 +116,9 @@ pub struct Context<'a> {
     /// Where to note, with `uses`, the columns each item of its select list
     /// references, if anywhere: of the query, not of its subqueries.
     pub selected: Option<&'a Selected>,
+    /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1] The instant its statement runs
+    /// at, and its SQL-session's time zone displacement.
+    pub now: Now,
 }
 
 /// The columns a query references, each as its table or view and column
@@ -128,6 +134,7 @@ impl<'a> Context<'a> {
     pub fn new(db: &'a State, auth: &'a str, params: &'a Params) -> Context<'a> {
         let (purpose, own) = (Purpose::Query, &settings::NONE);
         Context {
+            now: db.now(own),
             db,
             auth,
             schema: auth,
@@ -197,6 +204,9 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         ValueSpecification::Literal(Literal::Approximate(f)) => (Value::Approx(*f), DataType::Approximate { precision: DOUBLE_PRECISION }),
         // [ISO/IEC 9075:1992 §5.3 SR10, SR11] fixed, of its bits.
         ValueSpecification::Literal(Literal::Bit(b)) => (Value::Bits(b.clone()), DataType::Bit { length: b.len() }),
+        // [ISO/IEC 9075:1992 §5.3 SR15-SR18] here of UTC: a statement's
+        // binder gives its session's displacement (`Binder::value_specification`).
+        ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, Now::default())?,
         // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
         // [X3.135-1986 §5.6 SR6] its length is implementor-defined; we use the identifier's own length.
         // [ISO/IEC 9075:1992 §6.2 GR10, GR11] So are SESSION_USER, there
@@ -406,6 +416,8 @@ struct Binder<'a> {
     /// outer reference to it, while it is not aggregated: it is then bound
     /// again, aggregated [ISO/IEC 9075:1992 §7.9 SR7].
     aggregated: Cell<bool>,
+    /// Its statement's instant and time zone (`Context::now`).
+    now: Now,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -416,7 +428,7 @@ impl<'a> Binder<'a> {
     /// A binder of a query bound with `cx`, a subquery of `outer`'s if one
     /// is given, over the FROM row `row`, whose columns `used` it reads.
     fn new(cx: Context<'a>, outer: Option<&'a Outer<'a>>, (items, names, visible): Row, used: BTreeSet<usize>) -> Binder<'a> {
-        let Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses, selected } = cx;
+        let Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses, selected, now } = cx;
         let (used, aggregated) = (RefCell::new(used), Cell::new(false));
         Binder {
             db,
@@ -436,6 +448,7 @@ impl<'a> Binder<'a> {
             uses,
             selected,
             aggregated,
+            now,
         }
     }
 
@@ -443,7 +456,7 @@ impl<'a> Binder<'a> {
     fn context(&self) -> Context<'a> {
         let (db, auth, schema, user, params) = (self.db, self.auth, self.schema, self.user, self.params);
         let (purpose, horizon, own, definitions) = (self.purpose, self.horizon, self.own, self.definitions);
-        Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses: self.uses, selected: None }
+        Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses: self.uses, selected: None, now: self.now }
     }
 }
 

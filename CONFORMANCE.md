@@ -261,6 +261,16 @@ restriction is lifted.
   VARYING, and the national character string literal, N'...' [§5.3]: the
   character string types and literals of the national character set
   [§6.1 SR2].
+- **Datetimes** [§4.5.1, §6.1]: DATE, TIME(p) and TIMESTAMP(p), WITH TIME
+  ZONE or not, and their literals, DATE '...', TIME '...' and TIMESTAMP
+  '...' [§5.3]; kept in UTC, compared by their instants [§8.2 GR5],
+  indexed and kept unique so; assigned to a datetime of their fields
+  [§9.2 SR2, GR3l]; CURRENT_DATE, CURRENT_TIME and CURRENT_TIMESTAMP, one
+  instant in a statement [§6.8]; CAST to and from character strings and
+  between datetimes [§6.10 SR4, GR5e, GR6e, GR9-GR11]; EXTRACT of a
+  datetime's fields and displacement [§6.6]; CASE and set operations of
+  one datetime type [§9.3 SR3e]; a default of a datetime literal or a
+  datetime value function [§11.5 SR3a v, SR3c, GR1d] (RULES.md D54).
 - **BIT and BIT VARYING** [§6.1], and the bit and hex string literals,
   B'...' and X'...' [§5.3]: a value of BIT(n) of n bits, else refused
   with 22001 or 22026, one of BIT VARYING(n) of at most n [§9.2 GR3f-GR3j];
@@ -308,10 +318,14 @@ restriction is lifted.
 
 ### Not implemented
 
-- **Data types** other than SQL-86's, CHARACTER VARYING, NATIONAL
-  CHARACTER and BIT: datetimes and intervals, their literals, and the
-  functions and predicates on them (the datetime value functions [§6.8], EXTRACT,
-  OVERLAPS [§8.11]).
+- **Intervals** [§4.5.2]: INTERVAL, its literals, and what needs it:
+  datetime arithmetic [§6.14, §6.15], AT LOCAL and AT TIME ZONE [§6.14],
+  SET TIME ZONE [§16.5], EXTRACT of an interval, and OVERLAPS [§8.11].
+- **Leap seconds**, by choice: a SECOND of 60 or 61, which Table 10 of
+  §6.1 allows, is refused, a literal of one (SQLCODE -103) and a CAST of
+  one (SQLSTATE 22018). A minute is always 60 seconds, so datetime
+  arithmetic, whose results over a leap second are implementation-defined
+  [§6.1 Table 10, note], is exact.
 - **ALTER TABLE of a temporary table**, and a table or view defined on its
   own in a schema other than the session's default one (RULES.md D47).
 - **Connections and sessions** [§15, §16]: CONNECT, SET CONNECTION,
@@ -420,6 +434,11 @@ file that implements it.
 | ISO/IEC 9075:1992 §6.1 SR2 the national character set | SQL_TEXT, the one there is: NATIONAL CHARACTER is CHARACTER | `parser/data_type.rs`, `lexer.rs` |
 | ISO/IEC 9075:1992 §6.10 GR5d, GR6d a bit string CAST to a character string | its bytes as UTF-8, the form-of-use, whose least character is 8 bits; bytes not UTF-8 are refused (SQLSTATE 22018), as a string holds characters | `value/types/character.rs` |
 | ISO/IEC 9075:1992 §6.10 GR7, GR8 a character string CAST to a bit string | the bits of its UTF-8 | `value/types/bit.rs` |
+| ISO/IEC 9075:1992 §6.1 SR26 the greatest `<time fractional seconds precision>` | 6: microseconds | `value/datetime.rs` |
+| ISO/IEC 9075:1992 §4.5.1, §6.1 SR5 an SQL-session's time zone displacement | the setting TIME_ZONE: the database's, `+00:00` by default, or the session's own (RULES.md D54) | `settings/builtin.rs`, `db/clock.rs` |
+| ISO/IEC 9075:1992 §6.8 GR3 when a statement's datetime value functions are evaluated | as it begins, from the database's clock, the system's unless a host sets another (`Database::set_clock`) | `db/clock.rs`, `clock.rs` |
+| ISO/IEC 9075:1992 §6.6 SR4 the precision of EXTRACT's result | 5 digits, and of SECOND the scale of the datetime's precision more | `binder/datetime.rs` |
+| ISO/IEC 9075:1992 §9.2 GR3l, §4.6 a datetime's fraction stored in a type of fewer digits | truncated | `value/datetime.rs` |
 | ISO/IEC 9075:1992 §21.3.23, §21.3.24 the character set SQL_TEXT | form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.5 how data types are described | an exact number as NUMERIC, radix 10; an approximate one as REAL (24 bits) or DOUBLE PRECISION (53), radix 2; a character string's octet length 4n | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.13 names of unnamed constraints | the table's name, the constraint's kind and a number: `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
@@ -482,3 +501,15 @@ SQLCODE -900 (RULES.md D18).
   and BIT(4) is BIT(4), but no rule extends a value of 3 bits to it. Each
   keeps its bits, so a BIT(3) value inserted into a BIT(4) column through
   VALUES is refused (SQLSTATE 22026), as it is alone [§9.2 GR3h].
+- **A time or timestamp without time zone** [ISO/IEC 9075:1992 §4.5.1,
+  §6.1 SR5]: SQL-92 keeps it in UTC, the session's displacement implied,
+  so it is kept so, and a value retrieved shows in the displacement of the
+  session that retrieves it (RULES.md D54). Such a value read from a table
+  and stored in a column WITH TIME ZONE takes the displacement +00:00, and
+  a datetime literal in a `<default clause>` without one is of UTC [§5.3
+  SR18]: no session is at hand where either is made.
+- **One datetime type** [ISO/IEC 9075:1992 §9.3 SR3e, §11.5 SR3c]: "the
+  same datetime type" is read as of the same fields, WITH TIME ZONE or
+  not, as store assignment takes either [§9.2 SR2]: the result of CASE, a
+  set operation or VALUES is WITH TIME ZONE if one is, of the greatest
+  precision; DEFAULT CURRENT_TIME is taken by a TIME column.

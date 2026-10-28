@@ -95,6 +95,8 @@ pub struct State {
     pub(crate) functions: Registry,
     /// The data types beyond the standard registered (RULES.md D53).
     pub(crate) types: TypeRegistry,
+    /// The clock the datetime value functions read (`clock.rs`).
+    pub(crate) clock: Arc<dyn crate::clock::Clock>,
     pub(crate) optimizer: Optimizer,
     /// The transaction counter and the graph of waits, shared by every snapshot.
     pub(crate) tx: Arc<Transactions>,
@@ -138,6 +140,7 @@ impl State {
             indexes: HashMap::new(),
             functions: Registry::with_set_functions(),
             types: TypeRegistry::default(),
+            clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
             memory: Arc::clone(&memory),

@@ -35,7 +35,13 @@ impl Parser {
                 Ok(ValueExpression::Case(Box::new(self.case_expression()?)))
             }
             Tok::KeyWord(kw::CAST) => self.cast_specification(),
-            Tok::KeyWord(kw::USER)
+            Tok::KeyWord(kw::CURRENT_DATE | kw::CURRENT_TIME | kw::CURRENT_TIMESTAMP) => {
+                let f = self.datetime_value_function()?.ok_or_else(|| self.syntax("expected a <datetime value function>"))?;
+                Ok(ValueExpression::Datetime(f))
+            }
+            Tok::KeyWord(kw::EXTRACT) => self.extract_expression(),
+            Tok::KeyWord(kw::DATE | kw::TIME | kw::TIMESTAMP)
+            | Tok::KeyWord(kw::USER)
             | Tok::KeyWord(kw::CURRENT_USER)
             | Tok::KeyWord(kw::SESSION_USER)
             | Tok::KeyWord(kw::SYSTEM_USER)
@@ -177,15 +183,14 @@ impl Parser {
     /// LOWER, TRIM, POSITION, CHAR_LENGTH or CHARACTER_LENGTH,
     /// OCTET_LENGTH, BIT_LENGTH.
     ///
-    /// Not implemented: CONVERT and TRANSLATE, of character sets; EXTRACT,
-    /// of datetimes.
+    /// Not implemented: CONVERT and TRANSLATE, of character sets.
     fn string_function(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected a <value expression>")) };
         let name = match word {
             kw::SUBSTRING | kw::UPPER | kw::LOWER | kw::TRIM | kw::POSITION | kw::OCTET_LENGTH | kw::BIT_LENGTH => word,
             kw::CHAR_LENGTH | kw::CHARACTER_LENGTH => kw::CHAR_LENGTH,
-            kw::CONVERT | kw::TRANSLATE | kw::EXTRACT => {
+            kw::CONVERT | kw::TRANSLATE => {
                 return Err(self.unsupported(&format!("[ISO/IEC 9075:1992 §6.6, §6.7] {word}")));
             }
             _ => return Err(self.syntax("expected a <value expression>")),

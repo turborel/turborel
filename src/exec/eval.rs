@@ -279,7 +279,7 @@ fn like_truth(x: &Value, pattern: &Value, escape: Option<Value>) -> Result<Truth
             }
         }
         Some(Value::Null) => return Ok(Truth::Unknown),
-        Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Extension(_)) => {
+        Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_)) => {
             return fail_with(
                 Code::Data,
                 SqlState::INVALID_ESCAPE_CHARACTER,

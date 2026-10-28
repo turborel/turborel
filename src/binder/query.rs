@@ -222,6 +222,8 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
             | ValueExpression::Function { .. }
             | ValueExpression::Case(_)
             | ValueExpression::Cast { .. }
+            | ValueExpression::Datetime(_)
+            | ValueExpression::Extract { .. }
             | ValueExpression::Subquery(_) => (None, false, None),
         };
         exprs.push(e);

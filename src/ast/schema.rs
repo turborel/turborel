@@ -1,7 +1,7 @@
 //! Abstract syntax of the schema definition language [X3.135-1986 §6].
 //! Split from ast.rs (RULES.md R-SIZE-2).
 
-use super::{DropBehavior, Literal, QueryExpression, SearchCondition, TableName, UserFunction};
+use super::{DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, TableName, UserFunction};
 use crate::value::DataType;
 
 /// [X3.135-1986 §6.1; ISO/IEC 9075:1992 §11.1] `<schema definition>` ::=
@@ -303,6 +303,8 @@ pub enum DefaultOption {
     Literal(Literal),
     /// USER or another `<authorization identifier>`.
     User(UserFunction),
+    /// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`.
+    Datetime(DatetimeFunction),
     /// NULL.
     Null,
 }

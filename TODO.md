@@ -100,16 +100,19 @@ RULES.md when its design settles.
   column only in the last case, or for a privilege on a column.
 - **SQL-92 not yet taken is a syntax error** (SQLCODE -102), where the
   parser's own rule (D18) would refuse it as valid but not implemented
-  (-900): only EXTRACT, CONVERT and TRANSLATE are.
+  (-900): only CONVERT and TRANSLATE are.
 - **A table or view defined on its own in a schema other than the
   session's default one** is refused (SQLCODE -900, RULES.md D47): its
   stored texts are read again in its own schema, so its names would need
   qualifying there.
-- **Data types:** datetimes and intervals, with their literals,
-  the datetime value functions [§6.8], EXTRACT, and the OVERLAPS predicate
-  [§8.11]. SET TIME ZONE waits for these, and for the database's
-  clock rather than a session's. Each is a kind of the data type contract
-  (RULES.md D53), built in.
+- **Data types:** intervals, with their literals, datetime arithmetic,
+  AT LOCAL and AT TIME ZONE [§6.14], EXTRACT of an interval, the OVERLAPS
+  predicate [§8.11], and SET TIME ZONE [§16.5], which sets TIME_ZONE.
+  Each is a kind of the data type contract (RULES.md D53), built in.
+- **Datetimes, further** (RULES.md D54): a time or timestamp without time
+  zone read from a table and stored in a column WITH TIME ZONE takes
+  +00:00, not the session's displacement, and a default's datetime literal
+  is of UTC; both want the session at hand where they are made.
 - **The Information Schema's domains as CHARACTER VARYING** [§21.2.27,
   §21.2.28]: SQL_IDENTIFIER and CHARACTER_DATA are CHARACTER, of fixed
   length, from before CHARACTER VARYING was taken; as it is now, they can

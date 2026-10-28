@@ -22,6 +22,7 @@ use crate::lexer::{Tok, Token, delim, kw, lex};
 mod constraints;
 mod cursor;
 mod data_type;
+mod datetime;
 mod ddl;
 mod diagnostics;
 mod domains;

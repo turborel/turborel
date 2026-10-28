@@ -5,6 +5,7 @@
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;
+use turborel::value::datetime::{Datetime, Moment, parse};
 use turborel::value::{Bits, Decimal, Value};
 
 use super::fields::{CHARACTER, EXACT, NULL};
@@ -92,12 +93,23 @@ fn requests_read_back_as_written() {
     assert_eq!(bytes, [b'X', 0, 0, 0, 0]);
 }
 
+/// The datetime `text` writes, of `moment`.
+fn datetime(moment: Moment, text: &str) -> Value {
+    let w = parse(moment, text).unwrap();
+    Value::Datetime(Datetime::of_local(moment, w.local, w.zone.unwrap_or(0), w.zone.is_some(), w.precision))
+}
+
 /// Rows of every kind of value, at its edges.
 fn edge_rows() -> Vec<Row> {
     vec![
         vec![Value::Exact(Decimal::new(-12_345, 2)), Value::Char("abcd".into()), Value::Approx(-0.5)],
         vec![Value::Exact(Decimal::new(i128::MAX, 0)), Value::Null, Value::Approx(f64::MAX)],
         vec![Value::Bits(Bits::of_bits("1010101011").unwrap()), Value::Bits(Bits::default())],
+        vec![
+            datetime(Moment::Date, "2024-02-29"),
+            datetime(Moment::Time, "23:59:59.5-12:59"),
+            datetime(Moment::Timestamp, "0001-01-01 00:00:00"),
+        ],
         vec![],
     ]
 }
@@ -110,6 +122,11 @@ fn every_reply() -> Vec<Reply> {
         Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53 }, not_null: false },
         Column { name: Some("B".into()), data_type: DataType::Bit { length: 10 }, not_null: false },
         Column { name: Some("V".into()), data_type: DataType::BitVarying { length: 3 }, not_null: false },
+        Column { name: Some("D".into()), data_type: DataType::Date, not_null: false },
+        Column { name: Some("T".into()), data_type: DataType::Time { precision: 2, zoned: false }, not_null: false },
+        Column { name: Some("Z".into()), data_type: DataType::Time { precision: 0, zoned: true }, not_null: false },
+        Column { name: Some("S".into()), data_type: DataType::Timestamp { precision: 6, zoned: false }, not_null: false },
+        Column { name: Some("W".into()), data_type: DataType::Timestamp { precision: 3, zoned: true }, not_null: false },
     ];
     let cited = Failure {
         sqlcode: -103,
@@ -185,8 +202,8 @@ fn malformed_messages_are_connection_failures() {
     let description = |flag: u8, tag: u8| [1, 0, 0, 0, flag, tag, 1, 0, 0, 0, 0];
     assert!(Reply::decode(b'D', &description(0, CHARACTER)).is_ok());
     assert_eq!(Reply::decode(b'D', &description(2, CHARACTER)).map_err(failed).err(), Some(FAILED), "a flag of 2");
-    assert_eq!(Reply::decode(b'D', &description(0, 9)).map_err(failed).err(), Some(FAILED), "no such type");
-    assert_eq!(Reply::decode(b'B', &[1, 0, 0, 0, 1, 0, 0, 0, 9]).map_err(failed).err(), Some(FAILED), "no such value");
+    assert_eq!(Reply::decode(b'D', &description(0, 99)).map_err(failed).err(), Some(FAILED), "no such type");
+    assert_eq!(Reply::decode(b'B', &[1, 0, 0, 0, 1, 0, 0, 0, 99]).map_err(failed).err(), Some(FAILED), "no such value");
     assert_eq!(Request::decode(b'Z', &[1, 2]).map_err(failed).err(), Some(FAILED), "a key cut short");
     assert_eq!(Reply::decode(b'R', &[0, 0, 0, 0, 1]).map_err(failed).err(), Some(FAILED), "a key cut short");
     let e = Reply::decode(b'B', &[1, 0, 0, 0, 9, 0, 0, 0]).unwrap_err();

@@ -10,6 +10,7 @@ use crate::ast::{DefaultOption, Literal};
 use crate::catalog::{ColumnDefault, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::Result;
 use crate::storage::Row;
+use crate::value::datetime::Now;
 use crate::value::{DataType, Value, assign, compare};
 
 /// [ISO/IEC 9075:1992 §11.5 SR3b] The least length of a column whose
@@ -35,6 +36,16 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
             }
             return Ok(ColumnDefault::User);
         }
+        // [SR3c] of the same fields as the column; [GR1d] taken as the
+        // statement that takes it runs.
+        DefaultOption::Datetime(f) => {
+            let t = crate::binder::datetime_function_type(*f);
+            if !subject.is_datetime() || !t.comparable(&subject) {
+                return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3c] the default {t} is not a value of {subject}")));
+            }
+            let precision = if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { precision } else { 0 };
+            return Ok(ColumnDefault::Datetime(f.moment, precision));
+        }
         DefaultOption::Literal(l) => l,
     };
     // [GR1b] its value, a fixed-length string padded.
@@ -48,53 +59,85 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
 ///
 /// SQLCODE -103 if it does not suit the type.
 fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
-    Ok(match (literal, subject) {
-        (Literal::Character(s), DataType::Character { length } | DataType::Varying { length }) => {
-            // [SR3a i] no longer than the column.
-            if s.chars().count() > usize::try_from(length).unwrap_or(usize::MAX) {
-                return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a i] the default '{s}' is longer than {subject}")));
+    let not_of = || rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}"));
+    match literal {
+        Literal::Character(s) => character_default(s, subject).unwrap_or_else(|| Err(not_of())),
+        // [SR3a iii] an exact number the type holds without losing a
+        // significant digit; [SR3a iv] of an approximate type, any number.
+        Literal::Exact(d) => match subject {
+            DataType::Exact { .. } => {
+                let exact = Value::Exact(*d);
+                let kept = assign(exact.clone(), &subject, "ISO/IEC 9075:1992 §11.5 SR3a iii")
+                    .ok()
+                    .filter(|v| compare(v, &exact) == Some(std::cmp::Ordering::Equal));
+                kept.ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a iii] the default {d} loses digits in {subject}")))
             }
-            Value::Char(s.clone())
+            DataType::Approximate { .. } => Ok(Value::Exact(*d)),
+            DataType::Character { .. }
+            | DataType::Varying { .. }
+            | DataType::Bit { .. }
+            | DataType::BitVarying { .. }
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Extension(_) => Err(not_of()),
+        },
+        Literal::Approximate(f) => {
+            if let DataType::Approximate { .. } = subject {
+                Ok(Value::Approx(*f))
+            } else {
+                Err(not_of())
+            }
         }
-        // [SR3a iii] an exact number the type holds without losing a significant digit.
-        (Literal::Exact(d), DataType::Exact { .. }) => {
-            let exact = Value::Exact(*d);
-            let kept = assign(exact.clone(), &subject, "ISO/IEC 9075:1992 §11.5 SR3a iii")
-                .ok()
-                .filter(|v| compare(v, &exact) == Some(std::cmp::Ordering::Equal));
-            kept.ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a iii] the default {d} loses digits in {subject}")))?
-        }
-        // [SR3a iv] any number.
-        (Literal::Exact(d), DataType::Approximate { .. }) => Value::Exact(*d),
-        (Literal::Approximate(f), DataType::Approximate { .. }) => Value::Approx(*f),
-        // \[EXTENSION\] Of a type beyond the standard, a character string
-        // literal, as CAST to it makes it (RULES.md D53).
-        (Literal::Character(s), DataType::Extension(e)) => e.kind.cast(Value::Char(s.clone()), &subject)?,
         // [SR3a ii] a bit string no longer than the column; [GR1b iv, v]
         // of a fixed length, extended with 0 bits, the warning not raised.
-        (Literal::Bit(b), DataType::Bit { length } | DataType::BitVarying { length }) => {
+        Literal::Bit(b) => {
+            let (DataType::Bit { length } | DataType::BitVarying { length }) = subject else { return Err(not_of()) };
             if b.len() > length {
                 return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a ii] the default B'{b}' is longer than {subject}")));
             }
-            subject.kind().cast(Value::Bits(b.clone()), &subject)?
+            subject.kind().cast(Value::Bits(b.clone()), &subject)
         }
-        (Literal::Exact(_) | Literal::Approximate(_) | Literal::Bit(_), DataType::Extension(_))
-        | (
-            Literal::Character(_),
-            DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Bit { .. } | DataType::BitVarying { .. },
-        )
-        | (
-            Literal::Exact(_) | Literal::Approximate(_),
-            DataType::Character { .. } | DataType::Varying { .. } | DataType::Bit { .. } | DataType::BitVarying { .. },
-        )
-        | (
-            Literal::Bit(_),
-            DataType::Character { .. } | DataType::Varying { .. } | DataType::Exact { .. } | DataType::Approximate { .. },
-        )
-        | (Literal::Approximate(_), DataType::Exact { .. }) => {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}")));
+        // [SR3a v] a datetime of the same fields; of UTC, if it writes no
+        // displacement.
+        Literal::Datetime(w) => {
+            let value = crate::binder::datetime_literal(w);
+            if !subject.is_datetime() || value.kind().is_none_or(|k| !k.comparable(&subject)) {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075:1992 §11.5 SR3a v] the default {} is not of the fields of {subject}",
+                    value.to_literal()
+                )));
+            }
+            Ok(value)
         }
-    })
+    }
+}
+
+/// [ISO/IEC 9075:1992 §11.5 SR3a i] The value of the character string
+/// literal `s` as the default of a column of `subject`: of a character
+/// string type, no longer than it; \[EXTENSION\] of a type beyond the
+/// standard, as CAST to it makes it (RULES.md D53); none of another type.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is longer than the column; CAST's errors.
+fn character_default(s: &str, subject: DataType) -> Option<Result<Value>> {
+    match subject {
+        DataType::Character { length } | DataType::Varying { length } => {
+            if s.chars().count() > usize::try_from(length).unwrap_or(usize::MAX) {
+                return Some(Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a i] the default '{s}' is longer than {subject}"))));
+            }
+            Some(Ok(Value::Char(s.to_owned())))
+        }
+        DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.to_owned()), &subject)),
+        DataType::Exact { .. }
+        | DataType::Approximate { .. }
+        | DataType::Bit { .. }
+        | DataType::BitVarying { .. }
+        | DataType::Date
+        | DataType::Time { .. }
+        | DataType::Timestamp { .. } => None,
+    }
 }
 
 /// [ISO/IEC 9075:1992 §11.5 GR2] The default value of each column of
@@ -105,8 +148,8 @@ fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
 ///
 /// SQLSTATE 22001 if the authorization identifier is longer than a column
 /// whose default it is.
-pub(super) fn default_row(desc: &TableDesc, auth: &str) -> Result<Row> {
-    desc.columns.iter().map(|c| default_value(c, auth)).collect()
+pub(super) fn default_row(desc: &TableDesc, auth: &str, now: Now) -> Result<Row> {
+    desc.columns.iter().map(|c| default_value(c, auth, now)).collect()
 }
 
 /// The default value of column `c`, as `default_row` gives it.
@@ -114,8 +157,8 @@ pub(super) fn default_row(desc: &TableDesc, auth: &str) -> Result<Row> {
 /// # Errors
 ///
 /// As `default_row`.
-pub(super) fn default_value(c: &ColumnDesc, auth: &str) -> Result<Value> {
-    assign(c.default_value(auth), &c.data_type, "ISO/IEC 9075:1992 §11.5 GR2")
+pub(super) fn default_value(c: &ColumnDesc, auth: &str, now: Now) -> Result<Value> {
+    assign(c.default_value(auth, now), &c.data_type, "ISO/IEC 9075:1992 §11.5 GR2")
 }
 
 impl State {

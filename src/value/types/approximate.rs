@@ -73,7 +73,7 @@ impl SqlType for Approximate {
             Value::Char(s) => self.cast(numeric_literal(&s)?, t),
             Value::Exact(d) => Ok(Value::Approx(at_precision(d.to_f64(), precision_of(t)))),
             Value::Approx(x) => Ok(Value::Approx(at_precision(x, precision_of(t)))),
-            Value::Bits(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),
         }
     }
 

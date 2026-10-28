@@ -28,6 +28,7 @@ use crate::physical::Plan;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::txn::{Stop, TxId};
+use crate::value::datetime::show_in;
 
 /// \[DESIGN\] The rows of a read-only cursor.
 pub(super) struct Stream {
@@ -122,6 +123,10 @@ pub struct Cursor {
     pub(super) stop: Arc<Stop>,
     /// Its work, timed, to tell if it is slow (`db/slow.rs`).
     pub(super) timed: Option<super::slow::Timed<String>>,
+    /// Its session's time zone displacement as it was opened, its times
+    /// and timestamps without time zone shown in [ISO/IEC 9075:1992 §6.1
+    /// SR5].
+    pub(super) zone: i16,
 }
 
 impl Drop for Cursor {
@@ -151,7 +156,11 @@ impl Cursor {
         if let Some(timed) = self.timed.as_mut() {
             timed.paused();
         }
-        self.db.noted(next)
+        let mut next = self.db.noted(next)?;
+        if let Some(row) = next.as_mut() {
+            show_in(row, self.zone);
+        }
+        Ok(next)
     }
 }
 

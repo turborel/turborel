@@ -25,6 +25,7 @@ use crate::params::Params;
 use crate::parser::Parser;
 use crate::settings::{self, Own};
 use crate::system::{self, DEFINITION_SCHEMA, INFORMATION_SCHEMA, SystemTable, SystemView, desc_of};
+use crate::value::datetime::Now;
 
 use std::sync::Arc;
 
@@ -81,12 +82,13 @@ pub(super) struct Reader<'a> {
     pub(super) own: &'a Own,
     pub(super) user: &'a str,
     pub(super) definitions: bool,
+    pub(super) now: Now,
 }
 
 impl<'a> Reader<'a> {
     /// The reader of a query bound with `cx`.
     pub(super) fn of(cx: &Context<'a>) -> Reader<'a> {
-        Reader { purpose: cx.purpose.of_view(), own: cx.own, user: cx.user, definitions: cx.definitions }
+        Reader { purpose: cx.purpose.of_view(), own: cx.own, user: cx.user, definitions: cx.definitions, now: cx.now }
     }
 }
 
@@ -142,10 +144,10 @@ fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
 /// [ISO/IEC 9075:1992 §21.2] The query of the Information Schema's `view`,
 /// bound as INFORMATION_SCHEMA's, which owns it, reading the Definition
 /// Schema, for `reader`, whose CURRENT_USER it shows what of.
-fn bind_system_view(db: &State, view: &SystemView, Reader { purpose, own, user, .. }: Reader<'_>) -> Result<Bound> {
+fn bind_system_view(db: &State, view: &SystemView, Reader { purpose, own, user, now, .. }: Reader<'_>) -> Result<Bound> {
     let query = Parser::new(view.query)?.view_query()?;
     let params = Params::new();
-    let cx = Context { purpose, own, user, definitions: true, ..Context::new(db, INFORMATION_SCHEMA, &params) };
+    let cx = Context { purpose, own, user, now, definitions: true, ..Context::new(db, INFORMATION_SCHEMA, &params) };
     bind_query_expression(cx, &query, &Nesting::Query)
 }
 
@@ -156,7 +158,8 @@ fn bind_system_view(db: &State, view: &SystemView, Reader { purpose, own, user, 
 ///
 /// Its query does not bind: a defect.
 pub(crate) fn system_view_columns(db: &State, view: &SystemView) -> Result<Vec<ColumnDesc>> {
-    let reader = Reader { purpose: Purpose::Query, own: &settings::NONE, user: INFORMATION_SCHEMA, definitions: true };
+    let reader =
+        Reader { purpose: Purpose::Query, own: &settings::NONE, user: INFORMATION_SCHEMA, definitions: true, now: db.now(&settings::NONE) };
     Ok(described(&bind_system_view(db, view, reader)?.columns))
 }
 
@@ -219,7 +222,7 @@ pub fn view_degree(db: &State, view: &ViewDesc) -> Result<usize> {
 
 /// [X3.135-1986 §6.5 GR1] The rows of `view`: its query, bound as its
 /// owner's for `purpose`, and for an updatable view read as its base table.
-fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, .. }: Reader<'_>) -> Result<Source> {
+fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, now, .. }: Reader<'_>) -> Result<Source> {
     let query = Parser::new(&view.query)?.view_query()?;
     let params = Params::new();
     let cx = Context {
@@ -227,6 +230,7 @@ fn expand(db: &State, view: &ViewDesc, Reader { purpose, own, user, .. }: Reader
         horizon: &view.horizon,
         own,
         user,
+        now,
         schema: &view.name.auth,
         ..Context::new(db, owner_of(&*db.catalog, &view.name.auth), &params)
     };
@@ -309,7 +313,8 @@ pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, 
         )
         .about(Subject::table(name.parts())));
     }
-    let Named { desc, source, .. } = named(db, name, Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false })?;
+    let Named { desc, source, .. } =
+        named(db, name, Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false, now: db.now(&settings::NONE) })?;
     match &source {
         Source::Table => {
             let map = (0..desc.columns.len()).collect();
@@ -349,7 +354,7 @@ pub struct ViewCheck {
 /// updatable view `name`, read as `vb`, spans: itself, and each view under
 /// it, down to the base table, read as `user` reads it.
 fn spanned(db: &State, name: &QualifiedName, (vb, user): (&ViewBase, &str)) -> Result<Vec<ViewCheck>> {
-    let reader = Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false };
+    let reader = Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false, now: db.now(&settings::NONE) };
     let mut checks = Vec::new();
     let (mut at, mut read) = (name.clone(), vb.clone());
     while let Some(view) = db.catalog.view(&at) {

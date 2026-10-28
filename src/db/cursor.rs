@@ -22,6 +22,7 @@ use crate::physical::Plan;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{TxId, Txn};
+use crate::value::datetime::show_in;
 use crate::value::{DataType, Value};
 
 /// Rows a single-row SELECT reads: enough to tell one row from more than one
@@ -176,7 +177,7 @@ fn how_far(j: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> 
             SqlState::NULL_VALUE_NO_INDICATOR,
             "[DESIGN] ABSOLUTE and RELATIVE take a number, not the null value".to_owned(),
         ),
-        Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Extension(_) => Err(not_exact()),
+        Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => Err(not_exact()),
     }
 }
 
@@ -447,7 +448,8 @@ impl Session {
         match values {
             // [X3.135-1986 §8.6 GR2] positioned after the last row; SQLCODE 100.
             None => Ok(Completion::NoData),
-            Some(values) => {
+            Some(mut values) => {
+                show_in(&mut values, self.now.get().zone);
                 assign_targets(&values, targets, params, "§8.6 GR8", "§8.6 GR10")?;
                 Ok(Completion::Success)
             }
@@ -483,7 +485,9 @@ impl Session {
             // [X3.135-1986 §8.10 GR2] no row; the targets are not assigned.
             [] => Ok(Completion::NoData),
             [row] => {
-                assign_targets(row, targets, params, "§8.10 GR8", "§8.10 GR9")?;
+                let mut row = row.clone();
+                show_in(&mut row, self.now.get().zone);
+                assign_targets(&row, targets, params, "§8.10 GR8", "§8.10 GR9")?;
                 Ok(Completion::Success)
             }
             [_, _, ..] => fail(Code::Cardinality, "[X3.135-1986 §8.10 GR2] the result has more than one row"),
@@ -533,7 +537,7 @@ impl Session {
         if let Some(opened) = timed.as_mut() {
             opened.paused();
         }
-        Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed })
+        Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed, zone: self.now.get().zone })
     }
 
     /// [X3.135-1986 §8.11] the positioned UPDATE bound as `w`, through

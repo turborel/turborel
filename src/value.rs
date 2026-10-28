@@ -9,6 +9,7 @@ mod bits;
 pub(crate) mod cast;
 pub(crate) mod codec;
 pub(crate) mod comparison;
+pub mod datetime;
 mod decimal;
 mod like;
 pub mod types;
@@ -16,6 +17,7 @@ pub mod types;
 pub use bits::{BYTE_BITS, Bits};
 pub use cast::cast;
 pub use comparison::{Bucket, bucket, compare, compare_strings};
+pub use datetime::Datetime;
 pub use decimal::{Decimal, pow10};
 pub use like::like;
 pub use types::{Descriptor, SqlType};
@@ -100,6 +102,22 @@ pub enum DataType {
         /// The maximum length in bits.
         length: u32,
     },
+    /// [ISO/IEC 9075:1992 §6.1] DATE.
+    Date,
+    /// [ISO/IEC 9075:1992 §6.1] TIME(precision) \[WITH TIME ZONE\].
+    Time {
+        /// The digits of the second's fraction.
+        precision: u32,
+        /// Whether WITH TIME ZONE.
+        zoned: bool,
+    },
+    /// [ISO/IEC 9075:1992 §6.1] TIMESTAMP(precision) \[WITH TIME ZONE\].
+    Timestamp {
+        /// The digits of the second's fraction.
+        precision: u32,
+        /// Whether WITH TIME ZONE.
+        zoned: bool,
+    },
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -112,6 +130,10 @@ impl DataType {
     /// Whether this is a bit string type.
     pub fn is_bit(&self) -> bool {
         matches!(self, DataType::Bit { .. } | DataType::BitVarying { .. })
+    }
+    /// Whether this is a datetime type.
+    pub fn is_datetime(&self) -> bool {
+        matches!(self, DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. })
     }
     /// Whether this is a numeric type.
     pub fn is_numeric(&self) -> bool {
@@ -229,6 +251,8 @@ pub enum Value {
     Approx(f64),
     /// [ISO/IEC 9075:1992 §4.3] A bit string.
     Bits(Bits),
+    /// [ISO/IEC 9075:1992 §4.5.1] A datetime.
+    Datetime(Datetime),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -244,7 +268,7 @@ impl Value {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
             Value::Approx(f) => Some(*f),
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_) => None,
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => None,
         }
     }
 
@@ -254,7 +278,7 @@ impl Value {
         match self {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_) => self.clone(),
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
         }
     }
 
@@ -278,6 +302,7 @@ impl Value {
             }
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
             Value::Bits(b) => NormKey::Bits(b.clone()),
+            Value::Datetime(d) => NormKey::Instant(d.utc),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -294,6 +319,7 @@ impl fmt::Display for Value {
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),
             Value::Bits(b) => write!(f, "{b}"),
+            Value::Datetime(d) => write!(f, "{d}"),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
@@ -313,6 +339,8 @@ pub enum NormKey {
     Approx(u64),
     /// A bit string.
     Bits(Bits),
+    /// A datetime's instant, in UTC.
+    Instant(i64),
     /// A kind beyond the standard's name, and the value's bytes: boxed, so
     /// a key of the standard's types stays small.
     Extension(Box<(String, Vec<u8>)>),

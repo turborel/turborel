@@ -258,14 +258,18 @@ impl Parser {
         Ok(ColumnDefinition { name, at, data_type, default, constraints })
     }
 
-    /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` | USER
-    /// | CURRENT_USER | SESSION_USER | SYSTEM_USER | NULL, after DEFAULT.
+    /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` |
+    /// `<datetime value function>` | USER | CURRENT_USER | SESSION_USER |
+    /// SYSTEM_USER | NULL, after DEFAULT.
     pub(super) fn default_option(&mut self) -> Result<DefaultOption> {
         if self.accept_kw(kw::NULL) {
             return Ok(DefaultOption::Null);
         }
         if let Some(user) = self.user_function() {
             return Ok(DefaultOption::User(user));
+        }
+        if let Some(f) = self.datetime_value_function()? {
+            return Ok(DefaultOption::Datetime(f));
         }
         Ok(DefaultOption::Literal(self.literal()?))
     }

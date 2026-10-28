@@ -40,7 +40,8 @@ use super::{
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
-use crate::value::types::{APPROXIMATE, BIT, BIT_VARYING, CHARACTER, EXACT, VARYING};
+use crate::value::datetime::Moment;
+use crate::value::types::{APPROXIMATE, BIT, BIT_VARYING, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING};
 use crate::value::{DataType, SqlType};
 
 /// A count, or a position, as a u32.
@@ -104,6 +105,11 @@ const EXTENSION_TYPE: u8 = 3;
 const VARYING_TYPE: u8 = 4;
 const BIT_TYPE: u8 = 5;
 const BIT_VARYING_TYPE: u8 = 6;
+const DATE_TYPE: u8 = 7;
+const TIME_TYPE: u8 = 8;
+const TIME_ZONED_TYPE: u8 = 9;
+const TIMESTAMP_TYPE: u8 = 10;
+const TIMESTAMP_ZONED_TYPE: u8 = 11;
 
 fn put_type(out: &mut Vec<u8>, data_type: DataType) {
     match data_type {
@@ -111,6 +117,11 @@ fn put_type(out: &mut Vec<u8>, data_type: DataType) {
         DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
         DataType::Bit { .. } => out.put_u8(BIT_TYPE),
         DataType::BitVarying { .. } => out.put_u8(BIT_VARYING_TYPE),
+        DataType::Date => out.put_u8(DATE_TYPE),
+        DataType::Time { zoned: false, .. } => out.put_u8(TIME_TYPE),
+        DataType::Time { zoned: true, .. } => out.put_u8(TIME_ZONED_TYPE),
+        DataType::Timestamp { zoned: false, .. } => out.put_u8(TIMESTAMP_TYPE),
+        DataType::Timestamp { zoned: true, .. } => out.put_u8(TIMESTAMP_ZONED_TYPE),
         DataType::Exact { .. } => out.put_u8(EXACT_TYPE),
         DataType::Approximate { .. } => out.put_u8(APPROXIMATE_TYPE),
         DataType::Extension(e) => {
@@ -129,6 +140,11 @@ fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         VARYING_TYPE => &VARYING,
         BIT_TYPE => &BIT,
         BIT_VARYING_TYPE => &BIT_VARYING,
+        DATE_TYPE => &DATE,
+        TIME_TYPE => &TIME,
+        TIME_ZONED_TYPE => &TIME_ZONED,
+        TIMESTAMP_TYPE => &TIMESTAMP,
+        TIMESTAMP_ZONED_TYPE => &TIMESTAMP_ZONED,
         EXTENSION_TYPE => {
             let name = r.str()?;
             r.kind(&name)?
@@ -154,7 +170,9 @@ fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
     }
 }
 
-/// A default: 0 for none, 1 and a value, or 2 for a user's.
+/// A default: 0 for none, 1 and a value, 2 for a user's, or 3 for a
+/// datetime value function's: 0 CURRENT_DATE, 1 CURRENT_TIME or 2
+/// CURRENT_TIMESTAMP, and its precision.
 pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
     match default {
         None => out.put_u8(0),
@@ -163,6 +181,15 @@ pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
             put_value(out, v);
         }
         Some(ColumnDefault::User) => out.put_u8(2),
+        Some(ColumnDefault::Datetime(moment, precision)) => {
+            out.put_u8(3);
+            out.put_u8(match moment {
+                Moment::Date => 0,
+                Moment::Time => 1,
+                Moment::Timestamp => 2,
+            });
+            out.put_u32(*precision);
+        }
     }
 }
 
@@ -172,6 +199,15 @@ pub(crate) fn default(r: &mut Reader<'_>) -> Result<Option<ColumnDefault>> {
         0 => None,
         1 => Some(ColumnDefault::Value(value(r)?)),
         2 => Some(ColumnDefault::User),
+        3 => {
+            let moment = match r.u8()? {
+                0 => Moment::Date,
+                1 => Moment::Time,
+                2 => Moment::Timestamp,
+                _ => return Err(r.corrupt("not a datetime value function")),
+            };
+            Some(ColumnDefault::Datetime(moment, r.u32()?))
+        }
         _ => return Err(r.corrupt("not a column default")),
     })
 }

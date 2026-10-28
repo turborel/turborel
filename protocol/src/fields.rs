@@ -6,6 +6,7 @@ use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
+use turborel::value::datetime::Moment;
 use turborel::value::types::{ExtensionType, TypeParams};
 use turborel::value::{DataType, SqlType, Value, types};
 
@@ -23,6 +24,16 @@ const VARYING: u8 = 5;
 const BIT: u8 = 6;
 /// BIT VARYING, as a type: its values are bit strings, as BIT's.
 const BIT_VARYING: u8 = 7;
+/// DATE, as a type and a value.
+const DATE: u8 = 8;
+/// TIME, as a type; a time, of either time type, as a value.
+const TIME: u8 = 9;
+/// TIME WITH TIME ZONE, as a type.
+const TIME_ZONED: u8 = 10;
+/// TIMESTAMP, as a type; a timestamp, of either type, as a value.
+const TIMESTAMP: u8 = 11;
+/// TIMESTAMP WITH TIME ZONE, as a type.
+const TIMESTAMP_ZONED: u8 = 12;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -76,6 +87,11 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Varying { .. } => b.put_u8(VARYING),
         DataType::Bit { .. } => b.put_u8(BIT),
         DataType::BitVarying { .. } => b.put_u8(BIT_VARYING),
+        DataType::Date => b.put_u8(DATE),
+        DataType::Time { zoned: false, .. } => b.put_u8(TIME),
+        DataType::Time { zoned: true, .. } => b.put_u8(TIME_ZONED),
+        DataType::Timestamp { zoned: false, .. } => b.put_u8(TIMESTAMP),
+        DataType::Timestamp { zoned: true, .. } => b.put_u8(TIMESTAMP_ZONED),
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
         DataType::Extension(e) => {
@@ -105,6 +121,11 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         VARYING => Some(&types::VARYING),
         BIT => Some(&types::BIT),
         BIT_VARYING => Some(&types::BIT_VARYING),
+        DATE => Some(&types::DATE),
+        TIME => Some(&types::TIME),
+        TIME_ZONED => Some(&types::TIME_ZONED),
+        TIMESTAMP => Some(&types::TIMESTAMP),
+        TIMESTAMP_ZONED => Some(&types::TIMESTAMP_ZONED),
         _ => None,
     }
 }
@@ -160,6 +181,11 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
         Value::Bits(_) => BIT,
+        Value::Datetime(d) => match d.moment {
+            Moment::Date => DATE,
+            Moment::Time => TIME,
+            Moment::Timestamp => TIMESTAMP,
+        },
         Value::Extension(e) => {
             b.put_u8(EXTENSION);
             // One received unregistered goes back as it came.
@@ -203,6 +229,9 @@ pub fn row_size(row: &Row) -> usize {
         Value::Approx(_) => 9,
         // Its tag, its length and its bytes, after theirs.
         Value::Bits(b) => b.bytes().len().saturating_add(9),
+        // Its tag, its zone's flag, precision and displacement, and its
+        // instant.
+        Value::Datetime(_) => 15,
         Value::Extension(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);

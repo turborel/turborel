@@ -64,6 +64,9 @@ enum Effect {
 pub(super) struct Effects<'a> {
     done: Vec<Effect>,
     user: String,
+    /// The statement's instant and its session's time zone, of the
+    /// defaults its referential actions give.
+    pub(super) now: crate::value::datetime::Now,
     deferral: &'a RefCell<Deferral>,
     pub(super) cursors: Cursored<'a>,
 }
@@ -91,7 +94,7 @@ impl<'a> Effects<'a> {
     /// Nothing yet done by a statement run under `user`, in a session whose
     /// constraint modes are `deferral`'s, and whose cursors `cursors` say.
     pub(super) fn new(user: &str, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>) -> Effects<'a> {
-        Effects { done: Vec::new(), user: user.to_string(), deferral, cursors }
+        Effects { done: Vec::new(), user: user.to_string(), now: crate::value::datetime::Now::default(), deferral, cursors }
     }
 
     /// The authorization identifier the statement runs under.

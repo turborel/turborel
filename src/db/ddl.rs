@@ -327,7 +327,7 @@ fn copy_rows(
         | AlterAction::DropConstraint { .. }
         | AlterAction::Storage(_) => None,
     };
-    let fill = added.as_ref().map(|c| default_value(c, effects.user())).transpose()?;
+    let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;
     for read in Arc::clone(st.storage_of(table)?).scan(tx.id, &columns) {
         let (_, row) = read?;
         let mut new = reshape.row(row);

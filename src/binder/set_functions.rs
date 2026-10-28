@@ -31,6 +31,8 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
         | ValueExpression::Subquery(_)
+        | ValueExpression::Datetime(_)
+        | ValueExpression::Extract { .. }
         | ValueExpression::Function { .. } => false,
     }
 }
@@ -65,6 +67,8 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
         | ValueExpression::Subquery(_)
+        | ValueExpression::Datetime(_)
+        | ValueExpression::Extract { .. }
         | ValueExpression::Function { .. } => None,
     }
 }

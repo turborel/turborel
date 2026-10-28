@@ -112,7 +112,7 @@ impl Session {
         binder::require(st, auth, desc, &needed, "§8.7 SR1").or_at(stmt.table.at)?;
         // [X3.135-1986 §6.5 GR1a] the candidate row is one of the base table.
         let object = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
-        let defaults = default_row(&target.base, auth)?;
+        let defaults = default_row(&target.base, auth, self.now.get())?;
         Ok(Target { name: target.base.name.clone(), desc: target.base, object, checks: target.checks, defaults })
     }
 
