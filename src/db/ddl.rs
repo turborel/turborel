@@ -239,7 +239,7 @@ impl Session {
         }
         let change = Change::AlterTable { table: qn, action: text.to_owned(), schema, zone };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
-        Ok(Completion::Success)
+        Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)))
     }
 
     /// Before a change of definitions to `table`, a table, view or schema

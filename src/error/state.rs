@@ -28,6 +28,12 @@ impl SqlState {
     pub const PRIVILEGE_NOT_REVOKED: SqlState = SqlState("01006");
     /// Warning: privilege not granted [ISO/IEC 9075:1992 §11.36 GR14, GR15].
     pub const PRIVILEGE_NOT_GRANTED: SqlState = SqlState("01007");
+    /// Warning: search condition too long for information schema [ISO/IEC
+    /// 9075:1992 §11.9 GR2, §11.34 GR4].
+    pub const SEARCH_CONDITION_TOO_LONG: SqlState = SqlState("01009");
+    /// Warning: query expression too long for information schema [ISO/IEC
+    /// 9075:1992 §11.19 GR13].
+    pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState("0100A");
     /// Dependent privilege descriptors still exist [ISO/IEC 9075:1992
     /// §11.37 GR2b].
     pub const DEPENDENT_PRIVILEGES: SqlState = SqlState("2B000");

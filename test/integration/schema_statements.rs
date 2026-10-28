@@ -185,3 +185,41 @@ fn definitions_are_recovered_11_3() {
     assert_eq!(exec(&db.session("A"), "INSERT INTO U VALUES (1, 'a')"), Ok(Completion::Success), "no UNIQUE of the old U");
     drop((db, crashed, a, open));
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.9 GR2, §11.19 GR13,
+/// §11.34 GR4]: a definition whose search condition or query expression
+/// the Information Schema cannot show whole, being longer than
+/// CHARACTER_DATA, completes with a warning: 01009 of a CHECK, a domain's
+/// or a table's, added by ALTER TABLE or ALTER DOMAIN too, and of an
+/// assertion; 0100A of a view's query; in a `<schema definition>` too. The
+/// Information Schema shows it as null. One it shows completes with none.
+#[test]
+fn a_definition_too_long_to_show_is_warned_of_11_9() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) CREATE DOMAIN D AS INTEGER").unwrap();
+    let list = (0..12_000).map(|k| k.to_string()).collect::<Vec<_>>().join(", ");
+    let a = db.session("A");
+    let warned = |sql: &str| exec(&a, sql).map(|done| done.sqlstate().as_str().to_owned());
+    for (sql, state) in [
+        (format!("CREATE TABLE U (K INTEGER CHECK (K IN ({list})))"), "01009"),
+        (format!("ALTER TABLE T ADD CHECK (K IN ({list}))"), "01009"),
+        (format!("ALTER TABLE T ADD COLUMN L INTEGER CHECK (L IN ({list}))"), "01009"),
+        (format!("CREATE DOMAIN E AS INTEGER CHECK (VALUE IN ({list}))"), "01009"),
+        (format!("ALTER DOMAIN D ADD CHECK (VALUE IN ({list}))"), "01009"),
+        (format!("CREATE ASSERTION SHORT CHECK (NOT EXISTS (SELECT * FROM T WHERE K IN ({list})))"), "01009"),
+        (format!("CREATE VIEW V AS SELECT K FROM T WHERE K IN ({list})"), "0100A"),
+        ("CREATE TABLE W (K INTEGER CHECK (K > 0))".to_owned(), "00000"),
+    ] {
+        assert_eq!(warned(&sql), Ok(state.to_owned()), "{}", sql.get(..40).unwrap_or_default());
+    }
+    a.commit().unwrap();
+    let shown = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS WHERE CHECK_CLAUSE IS NULL";
+    assert_eq!(rows(&a, shown), Ok(vec!["6".into()]), "U's, T's two, E's, D's, and the assertion's");
+    // An <in value list> so long binds to a condition of no great depth.
+    a.run("DROP ASSERTION SHORT").unwrap();
+    a.run("INSERT INTO T VALUES (11999, 11999)").unwrap();
+    assert_eq!(rows(&a, "SELECT K FROM V"), Ok(vec!["11999".into()]));
+    a.rollback().unwrap();
+    let schema = format!("CREATE SCHEMA AUTHORIZATION B CREATE TABLE X (K INTEGER CHECK (K IN ({list})))");
+    assert_eq!(db.schema(&schema).unwrap().sqlstate().as_str(), "01009", "in a <schema definition>");
+}

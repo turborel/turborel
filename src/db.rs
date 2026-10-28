@@ -80,6 +80,7 @@ mod image;
 mod index_statements;
 mod indexes;
 mod integrity;
+mod long_texts;
 mod position;
 mod prepared;
 mod recovery;

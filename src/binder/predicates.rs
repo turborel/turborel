@@ -23,7 +23,7 @@ fn negated(cond: Cond, not: bool) -> Cond {
 
 /// The disjunction of `conds`; false if there are none.
 fn or_all(conds: Vec<Cond>) -> Cond {
-    conds.into_iter().reduce(|a, b| Cond::Or(Box::new(a), Box::new(b))).unwrap_or(Cond::Const(Truth::False))
+    crate::logical::or_all(conds).unwrap_or(Cond::Const(Truth::False))
 }
 
 /// A bound row: its values and their types.

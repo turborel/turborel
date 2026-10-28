@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use super::alter::Made;
 use super::ddl::{Changed, Dropped, validate_rows};
-use super::{Completion, Session, State, api, rule};
+use super::{Completion, Session, State, api, long_texts, rule};
 use crate::ast::{PrivilegeDefinition, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition};
 use crate::binder::qualify;
 use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of};
@@ -76,7 +76,7 @@ impl Session {
                 }
                 let change = Change::Defined { auth: self.auth().clone(), schema, zone, sql: text.to_owned(), placed: defined.placed };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
-                return Ok(defined.completion);
+                return Ok(long_texts::warned(defined.completion, text, || long_texts::of_statement(statement)));
             }
             // Made again once the locks are held, on the definitions then.
             defined.made.iter().for_each(Made::discard);

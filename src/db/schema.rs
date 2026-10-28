@@ -96,7 +96,9 @@ impl Database {
             st.check_new_assertions(&asserted)?;
             // Logged before it is published (RULES.md D25).
             st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone })?;
-            Ok(if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success })
+            let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
+            let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(super::long_texts::of_schema);
+            Ok(super::long_texts::warned(done, sql, schema))
         }))
     }
 }

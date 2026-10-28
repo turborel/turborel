@@ -307,15 +307,28 @@ pub fn split_and(c: Cond, out: &mut Vec<Cond>) {
 /// (RULES.md R-CF-6). AND is associative under its truth table
 /// [X3.135-1986 §5.18 GR2], so the shape does not change the result.
 pub fn and_all(conds: Vec<Cond>) -> Option<Cond> {
+    balanced(conds, Cond::And)
+}
+
+/// The disjunction of `conds`, or `None` if there are none: built balanced,
+/// as `and_all` builds a conjunction, so a long `<in value list>` makes no
+/// condition deeper than about log2(n) (RULES.md R-CF-6). OR is
+/// associative under its truth table [X3.135-1986 §5.18 GR2].
+pub fn or_all(conds: Vec<Cond>) -> Option<Cond> {
+    balanced(conds, Cond::Or)
+}
+
+/// `conds` joined by `join`, neighbours pairwise, in order, until one
+/// condition is left.
+fn balanced(conds: Vec<Cond>, join: fn(Box<Cond>, Box<Cond>) -> Cond) -> Option<Cond> {
     let mut level = conds;
-    // Join neighbours pairwise, in order, until one condition is left.
     while level.len() > 1 {
         let mut joined = Vec::new();
         let mut pending: Option<Cond> = None;
         for c in level {
             pending = match pending.take() {
                 Some(left) => {
-                    joined.push(Cond::And(Box::new(left), Box::new(c)));
+                    joined.push(join(Box::new(left), Box::new(c)));
                     None
                 }
                 None => Some(c),

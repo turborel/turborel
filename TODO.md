@@ -104,8 +104,7 @@ RULES.md when its design settles.
   arguments of one are typed only as its `return_type` says.
 - **Assertions, further** (RULES.md D51): an assertion is checked whole
   after each statement that changes a table it reads, however little it
-  changed; GR4's warning, a condition too long for the Information Schema,
-  is not raised.
+  changed.
 - **Privileges, further:** a view's owner holds REFERENCES on it only
   where what its columns are drawn from is known (RULES.md D52): not of a
   view with a derived table, a join with common columns, or a set
