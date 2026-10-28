@@ -13,7 +13,7 @@ fn program(args: &[&str]) -> Output {
 
 /// Verifies: [DESIGN] RULES.md D46: `turborel --help` prints its usage and
 /// succeeds, `--version` the release; a wrong command line fails, saying
-/// why; so does a server not reached.
+/// why; so does a server not reached, at each of its host's addresses.
 #[test]
 fn the_program_prints_its_usage_or_what_is_wrong() {
     let help = program(&["--help"]);
@@ -28,6 +28,10 @@ fn the_program_prints_its_usage_or_what_is_wrong() {
     let unreached = program(&["-p", "1", "-U", "X", "-c", "SELECT 1"]);
     assert!(!unreached.status.success());
     assert!(String::from_utf8(unreached.stderr).unwrap().starts_with("turborel: "));
+    // Of a host of more than one address, each address's failure is told.
+    let addresses = std::net::ToSocketAddrs::to_socket_addrs(&("localhost", 1)).map_or(0, Iterator::count);
+    let each = String::from_utf8(program(&["-h", "localhost", "-p", "1", "-U", "X", "-c", "SELECT 1"]).stderr).unwrap();
+    assert_eq!(each.matches("cannot connect").count(), addresses, "{each}");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1]; [DESIGN] RULES.md D46: the program

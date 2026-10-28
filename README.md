@@ -4,9 +4,10 @@
 > from one build to the next, SQL, API, protocol and files alike. See
 > [VERSIONING.md](VERSIONING.md).
 
-turborel is a relational database system written in Rust. Embed it as a
-library, or run it as a server, `turboreld`, for many clients at once,
-and query it in SQL with `turborel`, its command-line client.
+turborel (TUR-boh-rel) is a relational database system written in
+Rust. Embed it as a library, or run it as a server, `turboreld`, for
+many clients at once, and query it in SQL with `turborel`, its
+command-line client.
 
 ## Built to be extended
 

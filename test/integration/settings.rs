@@ -239,7 +239,8 @@ fn the_catalog_compacts_as_its_setting_says() {
 /// gives it its default again; for every session, as `set_setting` does,
 /// kept with the definitions, so it holds when the database is opened
 /// again. A session's own value stays above it. SET of a setting named
-/// DATABASE is a session's still.
+/// DATABASE is a session's still; a name may begin with a key word, as
+/// DIAGNOSTICS, a period after it.
 #[test]
 fn the_owner_sets_the_databases_values_in_sql() {
     let scratch = Scratch::new("set-database");
@@ -260,6 +261,8 @@ fn the_owner_sets_the_databases_values_in_sql() {
     assert_eq!(shown(&db, "OPTIMIZER.MAX_PASSES"), "5");
     ann.run("SET DATABASE OPTIMIZER.MAX_PASSES TO DEFAULT").unwrap();
     assert_eq!(shown(&db, "OPTIMIZER.MAX_PASSES"), "64", "its default");
+    ann.run("SET DATABASE diagnostics.slow_statement = 50").unwrap();
+    assert_eq!(shown(&db, "DIAGNOSTICS.SLOW_STATEMENT"), "50", "a name of a key word, a period after it");
     assert_eq!(
         count(&other, "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'LOCK_WAIT' AND VALUE_SOURCE = 'SESSION'"),
         1

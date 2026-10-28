@@ -278,6 +278,8 @@ pub enum SqlStatement {
     /// statement>` ::= SET TRANSACTION `<transaction mode>` \[{,
     /// `<transaction mode>`}...\]
     SetTransaction(TransactionModes),
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §16.1] SET CATALOG `<value specification>`
+    SetCatalog(ValueSpecification),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §16.2] `<set schema statement>` ::=
     /// SET SCHEMA `<value specification>`
     SetSchema(ValueSpecification),

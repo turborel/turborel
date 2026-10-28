@@ -139,6 +139,23 @@ fn set_schema_qualifies_unqualified_names_16_2() {
     assert_eq!(rows(&s, "SELECT K FROM T"), expected(&["7"]), "a delimited identifier, by a parameter");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §16.1 SR1, GR2; §5.4 SR20]:
+/// SET CATALOG of the one catalog's name, in any case and padded,
+/// succeeds; of another's, or of no identifier, is refused with SQLSTATE
+/// 3D000; of a number, as a Syntax Rule broken. It begins no transaction.
+#[test]
+fn set_catalog_names_the_one_catalog_16_1() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("SET CATALOG ' turborel '").unwrap();
+    assert!(s.transaction().is_none(), "no transaction begun");
+    for other in ["SET CATALOG 'OTHER'", "SET CATALOG 'TURBOREL.X'"] {
+        let e = s.run(other).unwrap_err();
+        assert_eq!((e.code, e.sqlstate().as_str()), (Code::Data, "3D000"), "{other}");
+    }
+    assert_eq!(exec(&s, "SET CATALOG 1").err(), Some(Code::SyntaxRule), "SR1");
+}
+
 /// Verifies: [EXTENSION]; [DESIGN] RULES.md D36: a value a setting does
 /// not take is refused (SQLCODE -301), saying what it takes as
 /// INFORMATION_SCHEMA.SETTINGS shows it, and the value as SQL writes it;

@@ -31,14 +31,14 @@ impl Parser {
     /// A statement that begins with SET: SET TRANSACTION, SET CONSTRAINTS,
     /// SET SCHEMA, or SET of a setting.
     pub(super) fn set_statement(&mut self) -> Result<SqlStatement> {
-        let database = *self.peek_at(1) == Tok::Identifier(DATABASE.to_owned()) && matches!(self.peek_at(2), Tok::Identifier(_));
+        let database = *self.peek_at(1) == Tok::Identifier(DATABASE.to_owned()) && self.at_setting_name(2);
         if database {
             self.advance();
             self.advance();
             let (name, value) = self.setting_and_value()?;
             return Ok(SqlStatement::SetDatabase { name, value });
         }
-        if matches!(self.peek_at(1), Tok::Identifier(_)) {
+        if self.at_setting_name(1) {
             self.advance();
             let (name, value) = self.setting_and_value()?;
             return Ok(SqlStatement::SetSetting { name, value });
@@ -68,6 +68,11 @@ impl Parser {
             self.advance();
             return self.set_time_zone();
         }
+        if self.next_is_kw(kw::CATALOG) {
+            self.advance();
+            self.advance();
+            return Ok(SqlStatement::SetCatalog(self.value_specification()?));
+        }
         if self.next_is_kw(kw::SCHEMA) {
             self.advance();
             self.advance();
@@ -76,13 +81,23 @@ impl Parser {
         self.set_constraints()
     }
 
+    /// Whether the token `i` on begins a setting's name: an identifier, or
+    /// a key word a period follows, as of DIAGNOSTICS.SLOW_STATEMENT, so
+    /// no statement SET of a key word, as SET CATALOG, is taken for one.
+    fn at_setting_name(&self, i: usize) -> bool {
+        if let Tok::Identifier(_) = self.peek_at(i) {
+            return true;
+        }
+        matches!(self.peek_at(i), Tok::KeyWord(_)) && *self.peek_at(i.saturating_add(1)) == Tok::Delimiter(delim::PERIOD)
+    }
+
     /// \[EXTENSION\] `<setting name>` {`<equals operator>` | TO}
     /// {`<value specification>` | DEFAULT}, after SET or SET DATABASE: the
     /// name, its parts joined by periods, and the value, none for DEFAULT.
     fn setting_and_value(&mut self) -> Result<(String, Option<ValueSpecification>)> {
-        let mut parts = vec![self.identifier()?];
+        let mut parts = vec![self.option_word()?];
         while self.accept_delim(delim::PERIOD) {
-            parts.push(self.identifier()?);
+            parts.push(self.option_word()?);
         }
         if !self.accept_delim(delim::EQUALS) {
             self.expect_kw(kw::TO)?;

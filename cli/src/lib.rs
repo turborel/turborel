@@ -115,9 +115,11 @@ enum Unreached {
 }
 
 /// Connects to `server` as `user`, proved by `mechanism`: each of its
-/// addresses tried in turn, until one is connected to or refuses.
+/// addresses tried in turn, until one is connected to or refuses. If none
+/// is reached, the failure says why of each: one address's, as a TLS
+/// handshake failed, is not hidden by another's, as one nothing listens at.
 fn reach(server: &Server, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connected, Unreached> {
-    let mut last = None;
+    let mut failures: Vec<(String, Failure)> = Vec::new();
     for target in targets(server).map_err(Unreached::Address)? {
         match connect_to(&target, user, mechanism) {
             Ok(connection) => return Ok(connection),
@@ -126,11 +128,26 @@ fn reach(server: &Server, user: &str, mechanism: &mut dyn Mechanism) -> Result<C
                 if failure.sqlstate != SqlState::CONNECTION_FAILURE.as_str() {
                     return Err(Unreached::Refused(failure));
                 }
-                last = Some(failure);
+                failures.push((address_of(&target), failure));
             }
         }
     }
-    Err(last.map_or_else(|| Unreached::Address("the host has no address".to_owned()), Unreached::Refused))
+    let Some((_, first)) = failures.first() else { return Err(Unreached::Address("the host has no address".to_owned())) };
+    if failures.len() == 1 {
+        return Err(Unreached::Refused(first.clone()));
+    }
+    let each: Vec<String> = failures.iter().map(|(at, f)| format!("at {at}: {}", f.message)).collect();
+    Err(Unreached::Refused(Failure { message: each.join("; "), ..first.clone() }))
+}
+
+/// The address `target` reaches, as shown.
+fn address_of(target: &Target) -> String {
+    match target {
+        Target::Tcp(address) => address.to_string(),
+        #[cfg(unix)]
+        Target::Local(path) => path.display().to_string(),
+        Target::Tls(address, ..) => address.to_string(),
+    }
 }
 
 /// Each way to reach `server`, in the order tried.

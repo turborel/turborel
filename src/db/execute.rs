@@ -77,6 +77,7 @@ impl Session {
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
             SqlStatement::SetTransaction(modes) => return self.set_transaction(&modes, params).map(|()| Completion::Success),
             SqlStatement::SetSchema(v) => return self.set_schema(st, &v, params).map(|()| Completion::Success),
+            SqlStatement::SetCatalog(v) => return self.set_catalog(st, &v, params).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetSessionAuthorization(v) => return self.set_session_authorization(&v, params).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §15] the SQL-agent's, a client's.
@@ -162,6 +163,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
+            | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
             | SqlStatement::Connection(_)
@@ -212,6 +214,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Select { .. } => "SELECT",
         SqlStatement::SetTransaction(_) => "SET TRANSACTION",
         SqlStatement::SetSchema(_) => "SET SCHEMA",
+        SqlStatement::SetCatalog(_) => "SET CATALOG",
         SqlStatement::SetTimeZone(_) => "SET TIME ZONE",
         SqlStatement::SetSessionAuthorization(_) => "SET SESSION AUTHORIZATION",
         SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => "CONNECT",

@@ -167,7 +167,7 @@ impl Session {
                 self.bound(st, params, |cx| bind_write(cx, WriteKind::DeletePositioned, table, &[], None))?;
             }
             // [§17.6 GR5u]
-            SqlStatement::SetSchema(v) | SqlStatement::SetSessionAuthorization(v) => {
+            SqlStatement::SetSchema(v) | SqlStatement::SetCatalog(v) | SqlStatement::SetSessionAuthorization(v) => {
                 drop(binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?);
             }
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),

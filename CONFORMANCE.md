@@ -342,6 +342,8 @@ restriction is lifted.
   UNCOMMITTED at one for each statement. No level reads uncommitted
   changes or loses an update, and constraints are checked serializably at
   every level (RULES.md D29).
+- **SET CATALOG** [§16.1]: of the one catalog's name; another's is no
+  valid `<catalog name>` [§5.4 SR20], refused (SQLSTATE 3D000) [GR2].
 - **SET SCHEMA** [§16.2]: the default schema of unqualified names.
 - **SET SESSION AUTHORIZATION** [§16.4]: the session's authorization
   identifier, the value trimmed and read as an `<authorization
@@ -376,7 +378,7 @@ restriction is lifted.
   its `<introducer>`, COLLATE, CONVERT, TRANSLATE, CREATE and DROP of a
   character set, collation or translation, a privilege on one, a schema's
   DEFAULT CHARACTER SET of another, and SET NAMES, each refused (SQLCODE
-  -900). SET CATALOG (there is one catalog).
+  -900).
 
 ---
 

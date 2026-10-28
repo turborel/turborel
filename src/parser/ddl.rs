@@ -196,7 +196,7 @@ impl Parser {
 
     /// A part of an `<option name>`: an `<identifier>`, or a `<key word>`,
     /// as options are named by their plug-ins, not by SQL.
-    fn option_word(&mut self) -> Result<String> {
+    pub(super) fn option_word(&mut self) -> Result<String> {
         if let Tok::KeyWord(k) = self.peek() {
             let word = (*k).to_owned();
             self.advance();

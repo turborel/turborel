@@ -37,6 +37,7 @@ One reference page for each statement, in alphabetical order.
 - [REVOKE](revoke.md): revoke privileges
 - [ROLLBACK](rollback.md): end a transaction, undoing its changes
 - [SELECT](select.md): read rows
+- [SET CATALOG](set-catalog.md): set the default catalog
 - [SET CONNECTION](set-connection.md): choose the current connection
 - [SET CONSTRAINTS](set-constraints.md): set constraint modes
 - [SET DATABASE](set-database.md): change a database setting

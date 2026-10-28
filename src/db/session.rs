@@ -122,6 +122,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
+            | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
             | SqlStatement::Connection(_)
@@ -184,6 +185,37 @@ impl Session {
         };
         self.schema.replace(schema.clone());
         Ok(())
+    }
+
+    /// [ISO/IEC 9075:1992 §16.1] SET CATALOG `v`: of the one catalog, the
+    /// default catalog already; a name of another is no valid `<catalog
+    /// name>` [§5.4 SR20] \[GR2\]. It begins no transaction.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if `v` is no character string \[SR1\]; SQLSTATE 3D000
+    /// if its value, trimmed, is not the one catalog's name.
+    pub(super) fn set_catalog(&self, st: &State, v: &ValueSpecification, params: &Params) -> Result<()> {
+        let (value, data_type) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
+        if !data_type.is_character() {
+            return fail(Code::SyntaxRule, "[ISO/IEC 9075:1992 §16.1 SR1] SET CATALOG takes a character string".to_owned());
+        }
+        let ours = st.settings.get(crate::settings::CATALOG_NAME).to_string();
+        let named = |s: &str| {
+            lex(s.trim_matches(' '))
+                .ok()
+                .and_then(|t| if let [one, end] = t.as_slice() { (end.tok == Tok::End).then(|| one.tok.clone()) } else { None })
+        };
+        if let Value::Char(s) = &value
+            && named(s) == Some(Tok::Identifier(ours.trim_end().to_owned()))
+        {
+            return Ok(());
+        }
+        fail_with(
+            Code::Data,
+            SqlState::INVALID_CATALOG_NAME,
+            format!("[ISO/IEC 9075:1992 §16.1 GR2, §5.4 SR20] {} is not the one catalog, {}", value.to_literal(), ours.trim_end()),
+        )
     }
 
     /// [ISO/IEC 9075:1992 §16.4] SET SESSION AUTHORIZATION `v`: the

@@ -35,8 +35,9 @@ transaction as the setting SESSION_END says.
 and rows, `Outcome::Rows`, or another statement's completion,
 `Outcome::Done`, of its SQLCODE and SQLSTATE. A statement that fails
 gives a `Failure`, of its SQLCODE, SQLSTATE, message, the rule it
-cites apart, and its position in the statement. `query_into` gives a query's rows to a `Sink` a batch at
-a time, as they come, rather than all at once.
+cites apart, and its position in the statement. `query_into` gives a
+query's rows to a `Sink` a batch at a time, as they come, rather than
+all at once.
 
 ```rust
 match conn.query("SELECT ID, NAME FROM STAFF WHERE ID < 3 ORDER BY ID")? {
@@ -54,9 +55,8 @@ match conn.query("SELECT * FROM NOPE") {
 
 A value is a `turborel::value::Value`: `Exact` of a `Decimal`, `Approx`,
 `Char`, `Bits`, `Datetime`, `Interval`, `Extension` of a plug-in's
-type, or `Null`. `in_transaction` says
-whether the session's transaction is active, as the server said after
-the last statement. `canceller` gives what cancels the statement running
+type, or `Null`. `in_transaction` says whether the session's
+transaction is active, as the server said after the last statement. `canceller` gives what cancels the statement running
 from another thread.
 
 ## Prepared statements
