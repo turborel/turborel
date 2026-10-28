@@ -283,6 +283,7 @@ mod tests {
     use crate::engine::rows::ROW_STORE;
     use crate::exec::NoSubqueries;
     use crate::logical::LogicalPlan;
+    use crate::value::Spelled;
 
     /// Verifies: [X3.135-1986 §7.3 SR3] an undeclared target parameter is a
     /// Syntax Rule violation, not a panic.
@@ -298,7 +299,7 @@ mod tests {
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let column = ColumnDesc {
             name: "K".into(),
-            data_type: DataType::Exact { precision: 10, scale: 0 },
+            data_type: DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric },
             not_null: false,
             default: None,
             domain: None,

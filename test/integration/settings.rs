@@ -9,6 +9,7 @@ use turborel::settings::{Definition, Effect, Kind, Source};
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Scratch, after_crash, count, locking_setup, os, setup};
+use turborel::value::Spelled;
 
 fn word(s: &str) -> Value {
     Value::Char(s.into())
@@ -256,7 +257,11 @@ fn the_owner_sets_the_databases_values_in_sql() {
     assert_eq!((shown(&db, "LOCK_WAIT"), shown(&db, "OPTIMIZER.MAX_PASSES")), ("WAIT".into(), "3".into()));
     let other = db.session("BOB");
     other.run("SET LOCK_WAIT = 'no_wait'").unwrap();
-    let mut params = turborel::params::Params::new().declare("P", turborel::value::DataType::Exact { precision: 9, scale: 0 }, whole(5));
+    let mut params = turborel::params::Params::new().declare(
+        "P",
+        turborel::value::DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
+        whole(5),
+    );
     ann.execute("SET DATABASE OPTIMIZER.MAX_PASSES = P", &mut params).unwrap();
     assert_eq!(shown(&db, "OPTIMIZER.MAX_PASSES"), "5");
     ann.run("SET DATABASE OPTIMIZER.MAX_PASSES TO DEFAULT").unwrap();

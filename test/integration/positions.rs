@@ -11,6 +11,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Value};
 
 use crate::common::{rows, setup};
+use turborel::value::Spelled;
 
 /// Where in `sql` the error of running it is placed, and its code.
 fn placed(db: &Database, sql: &str) -> (Code, Option<usize>) {
@@ -18,7 +19,7 @@ fn placed(db: &Database, sql: &str) -> (Code, Option<usize>) {
     let error: SqlError = if sql.starts_with("SELECT") && !sql.contains(" INTO ") {
         s.open_cursor(sql).err().unwrap()
     } else {
-        let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+        let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
         s.execute(sql, &mut p).unwrap_err()
     };
     (error.code, error.pos)
@@ -106,7 +107,7 @@ fn statement_errors_are_placed_at_their_construct() {
 fn outcomes_have_their_sqlstates() {
     let db = setup();
     let s = db.session("APP");
-    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     let mut state = |sql: &str| match s.execute(sql, &mut p) {
         Ok(done) => done.sqlstate().as_str().to_owned(),
         Err(e) => e.sqlstate().as_str().to_owned(),
@@ -168,7 +169,7 @@ fn errors_of_a_count_or_a_cursor_are_placed() {
         let s = db.session("APP");
         s.declare_cursor("DECLARE D CURSOR FOR SELECT ID, NAME FROM T").unwrap();
         s.run("OPEN D").unwrap();
-        let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+        let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
         let error = s.execute(sql, &mut p).unwrap_err();
         assert_eq!(error.pos, offset(sql, part, nth), "{sql}: at {part}");
     }

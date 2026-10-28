@@ -10,6 +10,7 @@ use turborel::error::Code;
 use turborel::txn::LockWait;
 
 use crate::common::{count, rows};
+use turborel::value::Spelled;
 
 /// Fails to compile unless `T` may be shared between threads.
 fn is_send_and_sync<T: Send + Sync>() {}
@@ -98,7 +99,7 @@ fn an_open_cursor_keeps_its_definitions() {
     thread::spawn(move || other.schema("CREATE SCHEMA AUTHORIZATION LATER CREATE TABLE X (A INTEGER)").unwrap()).join().unwrap();
     let mut out = turborel::params::Params::new().declare(
         "OUT",
-        turborel::value::DataType::Exact { precision: 5, scale: 0 },
+        turborel::value::DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric },
         turborel::value::Value::Null,
     );
     assert!(s.execute("FETCH C INTO OUT", &mut out).is_ok(), "the open cursor reads through its own snapshot");
@@ -112,7 +113,7 @@ impl turborel::functions::ScalarFunction for Named {
         &self.0
     }
     fn return_type(&self, _: &[turborel::value::DataType]) -> turborel::error::Result<turborel::value::DataType> {
-        Ok(turborel::value::DataType::Exact { precision: 5, scale: 0 })
+        Ok(turborel::value::DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric })
     }
     fn call(&self, _: &[turborel::value::Value]) -> turborel::error::Result<turborel::value::Value> {
         Ok(turborel::value::Value::Null)
@@ -224,7 +225,7 @@ fn create_index_waits_for_an_open_writer() {
 fn reads_that_intend_to_write_take_turns() {
     let db = crate::common::locking_setup();
     let (owner, reader, other) = (db.session("APP"), db.session("APP"), db.session("APP"));
-    let out = turborel::value::DataType::Exact { precision: 9, scale: 0 };
+    let out = turborel::value::DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     let mut p = turborel::params::Params::new().declare("OUT", out, turborel::value::Value::Null);
     owner.declare_cursor("DECLARE C CURSOR FOR SELECT ID FROM T WHERE ID = 1").unwrap();
     owner.execute("OPEN C", &mut p).unwrap();

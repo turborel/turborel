@@ -59,11 +59,11 @@ given no name has one made for it: the table's name, its kind and a
 number, as `EMPLOYEES_PRIMARY1`. A temporary table the session declares
 is in no view.
 
-The types, in COLUMNS and DOMAINS: an exact number as NUMERIC, of its
-precision and scale, radix 10, whether declared INTEGER, SMALLINT or
-DECIMAL; an approximate number as REAL or DOUBLE PRECISION, radix 2; a
-national character string as CHARACTER, its octet length four octets a
-character.
+The types, in COLUMNS and DOMAINS: a number's by the name it was
+declared with, INTEGER, SMALLINT, DECIMAL or NUMERIC, of its precision
+and scale, radix 10, or REAL, DOUBLE PRECISION or FLOAT, of the binary
+precision it holds values of, 24 or 53, radix 2; a national character
+string as CHARACTER, its octet length four octets a character.
 
 ## This implementation's own views
 

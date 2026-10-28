@@ -5,6 +5,7 @@
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
+use turborel::value::Spelled;
 use turborel::value::{DataType, Decimal, Value};
 
 /// Schema A: T, keyed by K, which CHECK POSITIVE keeps above 0; V, those
@@ -30,12 +31,12 @@ fn diagnosed() -> Database {
 /// Targets: NUM, exact; TXT, CHARACTER(128); and J, 1, the condition
 /// number.
 fn targets() -> Params {
-    let exact = DataType::Exact { precision: 9, scale: 0 };
+    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     Params::new()
         .declare("NUM", exact, Value::Null)
         .declare("TXT", DataType::Character { length: 128 }, Value::Null)
         .declare("J", exact, Value::Exact(Decimal::new(1, 0)))
-        .declare("Q", DataType::Exact { precision: 9, scale: 2 }, Value::Null)
+        .declare("Q", DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, Value::Null)
 }
 
 /// The item `item` of the statement information, as text, its padding

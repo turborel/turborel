@@ -139,7 +139,7 @@ OK
 --------------+---------+---------+--------------------------+--------------------------
    2147483647 |   32767 |  123.45 |    1.0000000149011612E-1 |                     1E-1
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 22003): 1234.50 does not fit NUMERIC(5,2) without losing leading digits [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3k]
+turborel: SQLCODE -301 (SQLSTATE 22003): 1234.50 does not fit DECIMAL(5,2) without losing leading digits [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3k]
                       |                      |                      |
 ----------------------+----------------------+----------------------+--------------------------
                   3.5 |                  3.5 | 0.333333333333333333 |                    3.5E0
@@ -148,8 +148,11 @@ turborel: SQLCODE -301 (SQLSTATE 22003): the exact numeric result needs more tha
 ```
 
 INTEGER holds 2147483647, and more: it is NUMERIC(10, 0), of ten
-digits. The Information Schema shows every exact column as NUMERIC, of
-its precision and scale.
+digits. A type is shown, in messages and in the Information Schema, by
+the name it was written with, INTEGER or DECIMAL(5,2); a type computed,
+of a sum or a literal, as NUMERIC or FLOAT. The name is no part of the
+type: INTEGER and NUMERIC(10, 0) are one type, so a foreign key of one
+references the other.
 
 ## Datetimes
 

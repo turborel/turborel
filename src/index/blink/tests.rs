@@ -6,9 +6,10 @@
 use std::thread;
 
 use super::*;
+use crate::value::Spelled;
 use crate::value::{Decimal, Value, compare};
 
-const MONEY: DataType = DataType::Exact { precision: 6, scale: 2 };
+const MONEY: DataType = DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric };
 
 fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))

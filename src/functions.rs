@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::error::{Code, Result, SqlError, fail};
 use crate::lexer::kw;
 use crate::params::ParameterType;
+use crate::value::Spelled;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value, arith, compare};
 
 mod strings;
@@ -221,7 +222,7 @@ impl AggregateFunction for Count {
     }
     // [X3.135-1986 §5.8 SR7] exact numeric with implementor-defined precision and scale 0.
     fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 })
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
     }
     fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
         Box::new(CountAcc(0))
@@ -250,7 +251,7 @@ impl AggregateFunction for Sum {
     }
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         Ok(match not_character(kw::SUM, arg)? {
-            DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale },
+            DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
             DataType::Interval(q) => DataType::Interval(q),
             // [X3.135-1986 §5.8 SR9d]; `not_character` has refused CHARACTER.
@@ -262,7 +263,7 @@ impl AggregateFunction for Sum {
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION },
+            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
@@ -305,9 +306,11 @@ impl AggregateFunction for Avg {
     }
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         Ok(match not_character(kw::AVG, arg)? {
-            DataType::Exact { scale, .. } => {
-                DataType::Exact { precision: MAX_EXACT_PRECISION, scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION) }
-            }
+            DataType::Exact { scale, .. } => DataType::Exact {
+                precision: MAX_EXACT_PRECISION,
+                scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION),
+                spelled: Spelled::Numeric,
+            },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
             DataType::Interval(q) => DataType::Interval(q),
             // `not_character` has refused CHARACTER.
@@ -319,7 +322,7 @@ impl AggregateFunction for Avg {
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION },
+            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
@@ -410,7 +413,7 @@ mod tests {
     /// Verifies: [X3.135-1986 §5.8 GR4f] AVG of approximate values is approximate.
     #[test]
     fn approximate_average() {
-        let mut avg = Avg.accumulator(DataType::Approximate { precision: DOUBLE_PRECISION });
+        let mut avg = Avg.accumulator(DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float });
         for x in [1.0_f64, 2.0_f64] {
             avg.update(&Value::Approx(x)).unwrap();
         }

@@ -6,8 +6,9 @@
 
 use super::*;
 use crate::value::Decimal;
+use crate::value::Spelled;
 
-const MONEY: DataType = DataType::Exact { precision: 6, scale: 2 };
+const MONEY: DataType = DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric };
 const CODE: DataType = DataType::Character { length: 3 };
 
 fn exact(units: i128, scale: u32) -> Value {

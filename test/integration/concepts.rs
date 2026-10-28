@@ -8,6 +8,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Decimal, Value};
 
 use crate::common::{code, count, exec, rows, setup};
+use turborel::value::Spelled;
 
 /// A database with schema `M` holding `D (K INTEGER, V CHAR(2))`, no
 /// constraints, and no rows.
@@ -90,7 +91,7 @@ fn columns_have_descriptions() {
     let cursor = s.open_cursor("SELECT ID, NAME, AMT + 1 FROM T").unwrap();
     let described: Vec<(Option<String>, DataType, bool)> =
         cursor.columns.iter().map(|c| (c.name.clone(), c.data_type, c.not_null)).collect();
-    assert_eq!(described[0], (Some("ID".into()), DataType::Exact { precision: 10, scale: 0 }, true));
+    assert_eq!(described[0], (Some("ID".into()), DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric }, true));
     assert_eq!(described[1], (Some("NAME".into()), DataType::Character { length: 6 }, false));
     assert_eq!((described[2].0.clone(), described[2].2), (None, false), "an expression is an unnamed column");
 }
@@ -118,7 +119,7 @@ fn a_call_passes_parameters_and_returns_a_status() {
     let db = setup();
     let s = db.session("APP");
     let mut p = Params::new()
-        .declare("K", DataType::Exact { precision: 5, scale: 0 }, Value::Exact(Decimal::new(3, 0)))
+        .declare("K", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(3, 0)))
         .declare("N", DataType::Character { length: 6 }, Value::Null)
         .indicator("NI", 0);
     let found = s.execute("SELECT NAME INTO N NI FROM T WHERE ID = K", &mut p).unwrap();
@@ -185,6 +186,7 @@ fn level_2_facilities_are_processed() {
     s.run("INSERT INTO THIRTEEN_CHARS VALUES (4)").unwrap();
     let query = "SELECT SUM(ALL K), AVG(DISTINCT K), USER FROM LEVELTWO.THIRTEEN_CHARS WHERE K <> 0";
     assert_eq!(rows(&s, query), Ok(vec!["6,3.00,LEVELTWO".into()]));
-    let mut p = Params::new().declare("K", DataType::Exact { precision: 5, scale: 0 }, Value::Null).indicator("KI", -1);
+    let mut p =
+        Params::new().declare("K", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null).indicator("KI", -1);
     assert_eq!(s.execute("INSERT INTO THIRTEEN_CHARS VALUES (K KI)", &mut p).map_err(|e| e.code), Err(Code::Constraint));
 }

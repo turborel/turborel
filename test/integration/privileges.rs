@@ -9,6 +9,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Value};
 
 use crate::common::{code, exec, rows, setup};
+use turborel::value::Spelled;
 
 /// `setup`, and schema B, whose table P grants APP SELECT; INSERT and
 /// UPDATE of V, grantable; and PUBLIC DELETE, grantable, which makes it
@@ -71,7 +72,7 @@ fn statements_need_their_privileges_6_6() {
 fn positioned_changes_need_their_privileges_8_11_8_4() {
     let db = granted();
     let s = db.session("APP");
-    let mut p = Params::new().declare("K_OUT", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("K_OUT", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s.declare_cursor("DECLARE C CURSOR FOR SELECT K FROM B.P").unwrap();
     s.execute("OPEN C", &mut p).unwrap();
     s.execute("FETCH C INTO K_OUT", &mut p).unwrap();

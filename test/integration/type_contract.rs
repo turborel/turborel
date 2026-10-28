@@ -5,6 +5,7 @@
 use std::cmp::Ordering;
 
 use turborel::bytes::Reader;
+use turborel::value::Spelled;
 use turborel::value::datetime::{Datetime, Field, Moment, parse};
 use turborel::value::interval::{self, Interval, Qualifier};
 use turborel::value::{Bits, DataType, Decimal, SqlType, Value, assign, bucket, compare};
@@ -153,7 +154,7 @@ fn intervals_keep_the_type_contract() {
 #[test]
 fn exact_numbers_keep_the_type_contract() {
     let numbers = [exact(-999_999_999, 2), exact(-5, 1), exact(0, 0), exact(1, 2), exact(42, 0), exact(999_999_999, 2)];
-    type_contract(DataType::Exact { precision: 9, scale: 2 }, &numbers);
+    type_contract(DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, &numbers);
 }
 
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: FLOAT keeps the `SqlType`
@@ -162,8 +163,8 @@ fn exact_numbers_keep_the_type_contract() {
 #[test]
 fn approximate_numbers_keep_the_type_contract() {
     let numbers = [-f64::MAX, -1.5, -0.0, 0.0, 2.5e-300, 1.0e300, f64::MAX].map(Value::Approx);
-    type_contract(DataType::Approximate { precision: 53 }, &numbers);
-    type_contract(DataType::Approximate { precision: 24 }, &[-3.5, 0.0, 0.1, 1.0e30].map(Value::Approx));
+    type_contract(DataType::Approximate { precision: 53, spelled: Spelled::Float }, &numbers);
+    type_contract(DataType::Approximate { precision: 24, spelled: Spelled::Float }, &[-3.5, 0.0, 0.1, 1.0e30].map(Value::Approx));
 }
 
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: a type beyond the standard,

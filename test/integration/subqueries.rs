@@ -10,6 +10,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Value};
 
 use crate::common::{code, exec, expected, rows, setup};
+use turborel::value::Spelled;
 
 /// Verifies: [X3.135-1986 §5.13 GR2, §5.16 GR2] "x IN S" is "x =ANY S",
 /// "x NOT IN S" its negation: so a null in S and no match makes both
@@ -94,7 +95,7 @@ fn comparison_with_a_subquery_5_11() {
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID = (SELECT COUNT(*) FROM U HAVING COUNT(*) > 0)"), expected(&["2"]));
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = (SELECT 1 / 0 FROM U WHERE CODE = 'A')"), Code::Data);
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = (SELECT CODE FROM U WHERE CODE = 'A')"), Code::SyntaxRule);
-    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null).declare(
+    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null).declare(
         "C",
         DataType::Character { length: 3 },
         Value::Char("B".into()),
@@ -254,7 +255,7 @@ fn searched_changes_with_subqueries_8_5_8_12() {
 fn a_subquery_reading_its_table_makes_a_cursor_read_only_7_9() {
     let db = setup();
     let s = db.session("APP");
-    let mut p = Params::new().declare("ID_OUT", DataType::Exact { precision: 5, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("ID_OUT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s.run("INSERT INTO U VALUES (2, 'X')").unwrap();
     s.declare_cursor("DECLARE S CURSOR FOR SELECT ID FROM T WHERE ID IN (SELECT ID FROM U)").unwrap();
     s.execute("OPEN S", &mut p).unwrap();

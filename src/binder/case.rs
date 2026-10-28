@@ -12,6 +12,7 @@ use crate::ast::{CaseExpression, Subquery, TypeName, ValueExpression};
 use crate::error::Result;
 use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
+use crate::value::Spelled;
 use crate::value::interval::Qualifier;
 use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
@@ -53,7 +54,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
         match t {
             DataType::Character { length: n } | DataType::Bit { length: n } => length = length.max(*n),
             DataType::Varying { length: n } | DataType::BitVarying { length: n } => (length, varying) = (length.max(*n), true),
-            DataType::Exact { precision, scale: s } => {
+            DataType::Exact { precision, scale: s, .. } => {
                 whole = whole.max(precision.saturating_sub(*s));
                 scale = scale.max(*s);
             }
@@ -61,9 +62,10 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) | DataType::Extension(_) => {}
         }
     }
+    let digits = whole.saturating_add(scale).min(MAX_EXACT_PRECISION);
     Ok(match (characters, bits, exact) {
-        (0, 0, true) => DataType::Exact { precision: whole.saturating_add(scale).min(MAX_EXACT_PRECISION), scale },
-        (0, 0, false) => DataType::Approximate { precision: DOUBLE_PRECISION },
+        (0, 0, true) => DataType::Exact { precision: digits, scale, spelled: Spelled::Numeric },
+        (0, 0, false) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         // [§9.3 SR3b i] varying if any is; [SR3b ii] else fixed.
         (0, _, _) => {
             if varying {

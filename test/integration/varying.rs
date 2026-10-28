@@ -134,6 +134,7 @@ fn varying_strings_are_kept() {
 #[test]
 fn varying_strings_are_retrieved_9_1() {
     use turborel::params::Params;
+    use turborel::value::Spelled;
     use turborel::value::{DataType, Value};
     let db = varying();
     let a = db.session("A");
@@ -141,7 +142,7 @@ fn varying_strings_are_retrieved_9_1() {
     let declared = || {
         Params::new().declare("OUT", DataType::Varying { length: 3 }, Value::Null).declare(
             "IND",
-            DataType::Exact { precision: 9, scale: 0 },
+            DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
             Value::Null,
         )
     };

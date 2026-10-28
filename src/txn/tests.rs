@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::catalog::MemoryCatalog;
+use crate::value::Spelled;
 
 /// Verifies: [DESIGN] commit and rollback reach the storage each
 /// participant joined, not the one its table's name finds: a row written
@@ -17,7 +18,7 @@ fn participants_end_where_they_joined() {
     let engine = crate::engine::rows::RowStore::in_memory(crate::engine::rows::TableOptions::default());
     let column = crate::catalog::ColumnDesc {
         name: "K".into(),
-        data_type: crate::value::DataType::Exact { precision: 9, scale: 0 },
+        data_type: crate::value::DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
         not_null: false,
         default: None,
         domain: None,

@@ -20,6 +20,7 @@ pub use dynamic::ParameterType;
 use crate::ast::ParameterSpecification;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, lex};
+use crate::value::Spelled;
 use crate::value::{DataType, Decimal, INDICATOR_PRECISION, MAX_CHARACTER_LENGTH, Value, assign};
 
 /// A `<parameter declaration>` [X3.135-1986 §7.3] with its argument.
@@ -65,7 +66,11 @@ impl Params {
     /// Add an indicator parameter: exact numeric, scale 0 [X3.135-1986 §5.6 SR2].
     #[must_use]
     pub fn indicator(self, name: &str, value: i64) -> Params {
-        self.declare(name, DataType::Exact { precision: INDICATOR_PRECISION, scale: 0 }, Value::Exact(Decimal::new(i128::from(value), 0)))
+        self.declare(
+            name,
+            DataType::Exact { precision: INDICATOR_PRECISION, scale: 0, spelled: Spelled::Numeric },
+            Value::Exact(Decimal::new(i128::from(value), 0)),
+        )
     }
 
     /// The parameter named `name`, if declared.

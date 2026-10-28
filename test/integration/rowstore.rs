@@ -23,6 +23,7 @@ use turborel::txn::NO_TRANSACTION;
 use turborel::value::{DataType, Value};
 
 use crate::common::{Scratch, crc32c, exec, number, rows};
+use turborel::value::Spelled;
 
 /// Where a row store keeps its tables: `pool`'s pager file `file`, older
 /// versions in memory.
@@ -53,7 +54,7 @@ fn database(store: Option<RowStore>) -> Database {
 /// (starting with SELECT), else the outcome, or the SQLCODE of a failure.
 fn transcript(db: &Database, script: &[&str]) -> Vec<String> {
     let s = db.session("A");
-    let mut p = Params::new().declare("KOUT", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("KOUT", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     script
         .iter()
         .map(|sql| match *sql {
@@ -136,7 +137,13 @@ fn chars(s: &str, length: u32) -> Value {
 /// A table of an integer and a CHAR(`length`), in `store`.
 fn table(store: &RowStore, name: &str, length: u32) -> Arc<dyn TableStorage> {
     let columns = vec![
-        ColumnDesc { name: "K".into(), data_type: DataType::Exact { precision: 9, scale: 0 }, not_null: true, default: None, domain: None },
+        ColumnDesc {
+            name: "K".into(),
+            data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
+            not_null: true,
+            default: None,
+            domain: None,
+        },
         ColumnDesc { name: "S".into(), data_type: DataType::Character { length }, not_null: false, default: None, domain: None },
     ];
     let desc = TableDesc {
@@ -239,7 +246,7 @@ fn rows_too_wide_are_refused() {
 fn row_ids_increase_and_are_never_given_again() {
     let scratch = Scratch::new("rowstore-ids");
     let (pool, file, _) = pool(&scratch, 64);
-    let types = [DataType::Exact { precision: 9, scale: 0 }];
+    let types = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }];
     let files = files(&pool, file);
     let t = RowTable::create(&files, &types, TableOptions::default()).unwrap();
     let ids: Vec<u64> = (0..2000).map(|n| t.insert(NO_TRANSACTION, vec![number(n)]).unwrap()).collect();

@@ -22,6 +22,7 @@ use turborel::txn::NO_TRANSACTION;
 use turborel::value::{CompOp, DataType, Value, compare};
 
 use crate::common::{Scratch, crc32c, number};
+use turborel::value::Spelled;
 
 /// A row of the contract table: an integer and a CHARACTER(3).
 fn row(n: i128, text: &str) -> Row {
@@ -37,7 +38,7 @@ fn table_desc(auth: &str, ident: &str, engine: &str) -> TableDesc {
     let columns = vec![
         ColumnDesc {
             name: "N".into(),
-            data_type: DataType::Exact { precision: 10, scale: 0 },
+            data_type: DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric },
             not_null: true,
             default: None,
             domain: None,
@@ -118,7 +119,7 @@ fn expected(op: CompOp, value: i128) -> Vec<RowId> {
 
 /// Checks the `IndexMethod` and `Index` contracts on `method`.
 fn index_contract(method: &dyn IndexMethod) {
-    let index = method.create(&[DataType::Exact { precision: 9, scale: 0 }]).unwrap();
+    let index = method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }]).unwrap();
     assert!(index.search(&Probe::All).unwrap().is_empty(), "a new index is empty");
     for (k, id) in ENTRIES {
         index.insert(key(k), id).unwrap();
@@ -170,7 +171,7 @@ fn index_contract(method: &dyn IndexMethod) {
 /// columns: every prefix it supports returns exactly the entries whose key
 /// answers it, in key order if the method is ordered.
 fn prefix_contract(method: &dyn IndexMethod) {
-    let exact = DataType::Exact { precision: 9, scale: 0 };
+    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     let index = method.create(&[exact, exact]).unwrap();
     let keys: Vec<Key> = (0..4).flat_map(|a| (0..4).map(move |b| Key(vec![number(a), number(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
@@ -292,7 +293,7 @@ impl ScalarFunction for CallsBack {
         "CALLS_BACK"
     }
     fn return_type(&self, _: &[DataType]) -> error::Result<DataType> {
-        Ok(DataType::Exact { precision: 5, scale: 0 })
+        Ok(DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric })
     }
     fn call(&self, _: &[Value]) -> error::Result<Value> {
         self.0.session("APP").run("INSERT INTO T VALUES (9, 'X', 1, 1)")?;

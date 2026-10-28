@@ -7,13 +7,14 @@ use turborel::params::Params;
 use turborel::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, Value};
 
 use crate::common::{count, exec, rows, setup};
+use turborel::value::Spelled;
 
 fn targets() -> Params {
     Params::new()
-        .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0 }, Value::Null)
+        .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null)
         .declare("NAME_OUT", DataType::Character { length: 2 }, Value::Null)
         .indicator("NAME_IND", 0)
-        .declare("LIMIT", DataType::Exact { precision: 5, scale: 0 }, Value::Exact(Decimal::new(1, 0)))
+        .declare("LIMIT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(1, 0)))
 }
 
 /// The fetch used by the cursor tests on cursor C of `declare_c`.
@@ -165,7 +166,7 @@ fn fetch_targets_must_suit_their_columns_8_6() {
     let s = db.session("APP");
     let mut p = open_c_for_targets(&s);
     assert_eq!(s.execute("FETCH C INTO NAME_OUT, ID_OUT", &mut p).unwrap_err().code, Code::SyntaxRule); // SR3
-    let mut q = targets().declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2 }, Value::Null);
+    let mut q = targets().declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2, spelled: Spelled::Numeric }, Value::Null);
     assert_eq!(s.execute("SELECT F * 1.0005E0 INTO AMT_OUT FROM T WHERE ID = 1", &mut q).unwrap(), Completion::Success);
     assert_eq!(q.value("AMT_OUT").to_string(), "1.50");
     assert_eq!(s.execute("SELECT 1E10 INTO AMT_OUT FROM T WHERE ID = 1", &mut q).unwrap_err().code, Code::Data, "GR3k");
@@ -210,7 +211,7 @@ fn fetch_assigns_by_the_type_of_the_target() {
     s.declare_cursor("DECLARE A CURSOR FOR SELECT AMT FROM T WHERE ID = 1").unwrap();
     let mut p = Params::new().declare("NAME6", DataType::Character { length: 6 }, Value::Null).indicator("NAME6_IND", 0).declare(
         "ONE_DIGIT",
-        DataType::Exact { precision: 1, scale: 0 },
+        DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric },
         Value::Null,
     );
     s.execute("OPEN N", &mut p).unwrap();
@@ -245,7 +246,7 @@ const FETCH_C_AMT: &str = "FETCH C INTO ID_OUT, AMT_OUT INDICATOR AMT_IND";
 fn positioned_cursors(s: &Session) -> Params {
     s.declare_cursor("DECLARE C CURSOR FOR SELECT ID, AMT FROM T WHERE ID < 3").unwrap();
     s.declare_cursor("DECLARE R CURSOR FOR SELECT ID FROM T ORDER BY ID").unwrap();
-    targets().declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2 }, Value::Null).indicator("AMT_IND", 0)
+    targets().declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2, spelled: Spelled::Numeric }, Value::Null).indicator("AMT_IND", 0)
 }
 
 /// Verifies: [X3.135-1986 §8.4 GR1] a cursor that is not open is not on a row,
@@ -441,7 +442,7 @@ fn a_negative_indicator_makes_the_value_null_5_6() {
     let db = setup();
     let s = db.session("APP");
     let mut p = Params::new()
-        .declare("ID", DataType::Exact { precision: 5, scale: 0 }, Value::Exact(Decimal::new(7, 0)))
+        .declare("ID", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(7, 0)))
         .declare("N", DataType::Character { length: 6 }, Value::Char("ZED".into()))
         .indicator("NI", -1);
     // [X3.135-1986 §5.6 GR1] a negative indicator makes the value null.
@@ -456,13 +457,13 @@ fn an_unqualified_name_is_the_parameter_7_3() {
     let db = setup();
     let s = db.session("APP");
     let mut p = Params::new()
-        .declare("ID", DataType::Exact { precision: 5, scale: 0 }, Value::Exact(Decimal::new(8, 0)))
+        .declare("ID", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(8, 0)))
         .declare("N", DataType::Character { length: 6 }, Value::Char("ZED".into()))
         .indicator("NI", 0);
     s.execute("INSERT INTO T (ID, NAME) VALUES (ID, N NI)", &mut p).unwrap();
     // [X3.135-1986 §7.3 SR4] the column ID must be qualified, since a parameter is named ID.
     let mut out = targets();
-    out = out.declare("ID", DataType::Exact { precision: 5, scale: 0 }, Value::Exact(Decimal::new(8, 0)));
+    out = out.declare("ID", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(8, 0)));
     s.execute("SELECT NAME INTO NAME_OUT NAME_IND FROM T WHERE T.ID = ID", &mut out).unwrap();
     assert_eq!((out.value("NAME_OUT").to_string(), out.indicator_value("NAME_IND")), ("ZE".into(), Some(6)));
     // ...so an unqualified ID is the parameter: ID = 8 holds for every row, not just row 8.
@@ -476,7 +477,7 @@ fn parameter_names_are_identifiers_declared_once_7_3() {
     let db = setup();
     let s = db.session("APP");
     // Names must be <identifier>s, declared once [X3.135-1986 §5.4, §7.3 SR2].
-    let mut bad = Params::new().declare("lower", DataType::Exact { precision: 5, scale: 0 }, Value::Null);
+    let mut bad = Params::new().declare("lower", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     assert_eq!(s.execute("COMMIT WORK", &mut bad).unwrap_err().code, Code::Api);
     let mut twice = Params::new().indicator("I", 0).indicator("I", 0);
     assert_eq!(s.execute("COMMIT WORK", &mut twice).unwrap_err().code, Code::Api);
@@ -493,9 +494,9 @@ fn positioned_update_needs_only_its_own_parameters() {
     let s = db.session("APP");
     s.declare_cursor("DECLARE C CURSOR FOR SELECT ID FROM T WHERE ID > LIM INDICATOR LI").unwrap();
     let mut open = Params::new()
-        .declare("LIM", DataType::Exact { precision: 5, scale: 0 }, Value::Exact(Decimal::new(0, 0)))
+        .declare("LIM", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(0, 0)))
         .indicator("LI", 0)
-        .declare("X", DataType::Exact { precision: 5, scale: 0 }, Value::Null);
+        .declare("X", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s.execute("OPEN C", &mut open).unwrap();
     s.execute("FETCH C INTO X", &mut open).unwrap();
     assert_eq!(exec(&s, "UPDATE T SET AMT = 1 WHERE CURRENT OF C"), Ok(Completion::Success));
@@ -513,7 +514,7 @@ fn positioned_update_needs_only_its_own_parameters() {
 fn parameters_are_checked_when_used_5_6() {
     let db = setup();
     let s = db.session("APP");
-    let exact = DataType::Exact { precision: 5, scale: 0 };
+    let exact = DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric };
     let short = DataType::Character { length: 2 };
     let insert = |p: &mut Params, sql: &str| s.execute(sql, p).map_err(|e| e.code);
     // §5.6 SR2: an indicator parameter is exact numeric with scale 0.
@@ -533,6 +534,7 @@ fn parameters_are_checked_when_used_5_6() {
         assert_eq!(insert(&mut p, "COMMIT WORK"), Err(Code::Api), "{name}");
     }
     // The normal case: an exact argument for an approximate parameter fits.
-    let mut p = Params::new().declare("K", DataType::Approximate { precision: 24 }, Value::Exact(Decimal::new(9, 0)));
+    let mut p =
+        Params::new().declare("K", DataType::Approximate { precision: 24, spelled: Spelled::Float }, Value::Exact(Decimal::new(9, 0)));
     assert_eq!(insert(&mut p, "INSERT INTO T (ID, F) VALUES (9, K)"), Ok(Completion::Success));
 }

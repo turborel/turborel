@@ -3,6 +3,7 @@
 //! datetime.rs (RULES.md R-SIZE-2).
 
 use super::*;
+use crate::value::Spelled;
 use crate::value::datetime::{Written, parse};
 
 /// The value `text` writes, of `moment`, of its own displacement, or of
@@ -119,7 +120,8 @@ fn kinds_keep_their_values() {
         "10:00:00+00:00"
     );
     assert!(
-        !DATE.comparable(&DataType::Time { precision: 0, zoned: false }) && !DATE.comparable(&DataType::Exact { precision: 1, scale: 0 })
+        !DATE.comparable(&DataType::Time { precision: 0, zoned: false })
+            && !DATE.comparable(&DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric })
     );
     let now = Now { utc: 3_600_000_000, zone: 90 };
     assert_eq!(current(Moment::Time, 0, now).to_string(), "02:30:00+01:30");

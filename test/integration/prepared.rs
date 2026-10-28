@@ -6,6 +6,7 @@
 use turborel::db::{Cursor, Database, Session};
 use turborel::error::Code;
 use turborel::params::ParameterType;
+use turborel::value::Spelled;
 use turborel::value::{DataType, Decimal, Value};
 
 fn int(n: i128) -> Value {
@@ -45,7 +46,7 @@ fn query(s: &Session, sql: &str, values: &[Value]) -> Vec<String> {
     all(s.open_prepared(&p, values).unwrap())
 }
 
-const INT: DataType = DataType::Exact { precision: 10, scale: 0 };
+const INT: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6, §17.8, §17.9 GR3, GR4,
 /// GR5]: a query prepared once is described, its parameters' types those
@@ -57,8 +58,8 @@ fn a_prepared_query_is_described_and_opened_with_values() {
     let (_db, s) = session();
     let p = s.prepare("SELECT K, N, A FROM T WHERE K = ? OR A > ? ORDER BY K").unwrap();
     let types: Vec<DataType> = p.parameters().iter().map(|t| t.data_type()).collect();
-    assert_eq!(types[0].to_string(), INT.to_string(), "the column's type");
-    assert_eq!(types[1].to_string(), DataType::Exact { precision: 5, scale: 2 }.to_string());
+    assert_eq!((types[0], types[0].to_string().as_str()), (INT, "INTEGER"), "the column's type, as written");
+    assert_eq!(types[1].to_string(), DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Decimal }.to_string());
     let named: Vec<Option<&str>> = p.columns().iter().map(|c| c.name.as_deref()).collect();
     assert_eq!(named, [Some("K"), Some("N"), Some("A")]);
     assert_eq!(all(s.open_prepared(&p, &[int(1), int(5)]).unwrap()), ["1,ANN,1.50"]);
@@ -122,9 +123,9 @@ fn prepared_writes_take_their_columns_types() {
     let (db, s) = session();
     let shown = |p: &turborel::db::Prepared| p.parameters().iter().map(|t| t.data_type().to_string()).collect::<Vec<_>>();
     let insert = s.prepare("INSERT INTO T VALUES (?, ?, ?), (5, 'EVE', ?)").unwrap();
-    assert_eq!(shown(&insert), ["NUMERIC(1,0)", "CHARACTER(3)", "NUMERIC(5,2)", "NUMERIC(5,2)"], "[o], and [p] for the third");
+    assert_eq!(shown(&insert), ["NUMERIC(1,0)", "CHARACTER(3)", "DECIMAL(5,2)", "DECIMAL(5,2)"], "[o], and [p] for the third");
     let all_dynamic = s.prepare("INSERT INTO T VALUES (?, ?, ?)").unwrap();
-    assert_eq!(shown(&all_dynamic), [INT.to_string(), "CHARACTER(5)".to_owned(), "NUMERIC(5,2)".to_owned()], "[p]");
+    assert_eq!(shown(&all_dynamic), ["INTEGER", "CHARACTER(5)", "DECIMAL(5,2)"], "[p]");
     s.execute_prepared(&insert, &[int(4), text("DAN"), Value::Approx(4.25), int(5)]).unwrap();
     let update = s.prepare("UPDATE T SET A = ? WHERE K = ?").unwrap();
     s.execute_prepared(&update, &[Value::Null, int(4)]).unwrap();

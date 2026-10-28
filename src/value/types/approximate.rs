@@ -13,6 +13,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::value::cast::{at_precision, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
 use crate::value::{Bucket, DOUBLE_PRECISION, DataType, REAL_PRECISION, Value, unassignable};
+use crate::value::{Spelled, spelling};
 
 /// The kind of FLOAT(precision).
 #[derive(Debug)]
@@ -26,7 +27,7 @@ const BINARY_RADIX: u32 = 2;
 
 /// The precision of `t`, an approximate numeric type.
 fn precision_of(t: &DataType) -> u32 {
-    if let DataType::Approximate { precision } = t { *precision } else { DOUBLE_PRECISION }
+    if let DataType::Approximate { precision, .. } = t { *precision } else { DOUBLE_PRECISION }
 }
 
 /// A value not of a column of `t`'s type.
@@ -39,8 +40,15 @@ impl SqlType for Approximate {
         "FLOAT"
     }
 
+    /// As written: REAL, DOUBLE PRECISION, else FLOAT(p).
     fn written(&self, t: &DataType) -> String {
-        format!("FLOAT({})", precision_of(t))
+        match spelling(t) {
+            Spelled::Real => "REAL".to_owned(),
+            Spelled::DoublePrecision => "DOUBLE PRECISION".to_owned(),
+            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => {
+                format!("FLOAT({})", precision_of(t))
+            }
+        }
     }
 
     /// [X3.135-1986 §4.2] Numbers are comparable, exact and approximate.
@@ -89,10 +97,16 @@ impl SqlType for Approximate {
         if let Value::Approx(f) = v { Some(*f) } else { None }
     }
 
-    /// REAL or DOUBLE PRECISION, as it holds values, of binary precision.
+    /// [ISO/IEC 9075:1992 §21.3.5] Of the name it was written with, REAL,
+    /// DOUBLE PRECISION or FLOAT, and the binary precision it holds values
+    /// of.
     fn descriptor(&self, t: &DataType) -> Descriptor {
-        let (name, bits) =
-            if precision_of(t) <= REAL_PRECISION { ("REAL", REAL_PRECISION) } else { ("DOUBLE PRECISION", DOUBLE_PRECISION) };
+        let bits = if precision_of(t) <= REAL_PRECISION { REAL_PRECISION } else { DOUBLE_PRECISION };
+        let name = match spelling(t) {
+            Spelled::Real => "REAL",
+            Spelled::DoublePrecision => "DOUBLE PRECISION",
+            Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => "FLOAT",
+        };
         Descriptor { precision: Some(bits), radix: Some(BINARY_RADIX), ..Descriptor::of(name) }
     }
 
@@ -111,7 +125,7 @@ impl SqlType for Approximate {
     }
 
     fn params(&self, r: &mut Reader<'_>) -> Result<DataType> {
-        Ok(DataType::Approximate { precision: r.u32()? })
+        Ok(DataType::Approximate { precision: r.u32()?, spelled: Spelled::Float })
     }
 
     fn record_width(&self, _: &DataType) -> Option<usize> {

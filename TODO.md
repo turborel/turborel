@@ -99,11 +99,6 @@ RULES.md when its design settles.
 - **Truncation warnings** [§9.1 GR3b, GR3e]: a string cut to fit a
   target of FETCH or SELECT INTO raises no warning, SQLSTATE 01004, where
   SQL-92 raises one; its indicator holds its length.
-- **The names of numeric types:** INTEGER, SMALLINT, DECIMAL and
-  NUMERIC are kept as one exact type, of a precision and scale, and FLOAT
-  as REAL or DOUBLE PRECISION by its precision; so the Information
-  Schema's DATA_TYPE gives NUMERIC for each exact column, where its data
-  type descriptor would give the type as declared [§21.3.5, §6.1].
 - **Constraint names outside a `<schema definition>`** (RULES.md D47): a
   constraint's name written without a schema is taken as its table's
   schema's, where §5.4 SR8b would take the session's default schema's,

@@ -5,6 +5,7 @@
 use super::Parser;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
+use crate::value::Spelled;
 use crate::value::{
     DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BIT_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION,
     REAL_PRECISION, SMALLINT_PRECISION,
@@ -43,24 +44,25 @@ impl Parser {
                 self.advance();
                 Ok(DataType::Interval(self.interval_qualifier()?))
             }
-            kw::NUMERIC | kw::DECIMAL | kw::DEC => self.exact_numeric_type(at),
+            kw::NUMERIC => self.exact_numeric_type(at, Spelled::Numeric),
+            kw::DECIMAL | kw::DEC => self.exact_numeric_type(at, Spelled::Decimal),
             kw::INTEGER | kw::INT => {
                 self.advance();
-                Ok(DataType::Exact { precision: INTEGER_PRECISION, scale: 0 })
+                Ok(DataType::Exact { precision: INTEGER_PRECISION, scale: 0, spelled: Spelled::Integer })
             }
             kw::SMALLINT => {
                 self.advance();
-                Ok(DataType::Exact { precision: SMALLINT_PRECISION, scale: 0 })
+                Ok(DataType::Exact { precision: SMALLINT_PRECISION, scale: 0, spelled: Spelled::Smallint })
             }
             kw::FLOAT => self.approximate_numeric_type(at),
             kw::REAL => {
                 self.advance();
-                Ok(DataType::Approximate { precision: REAL_PRECISION })
+                Ok(DataType::Approximate { precision: REAL_PRECISION, spelled: Spelled::Real })
             }
             kw::DOUBLE => {
                 self.advance();
                 self.expect_kw(kw::PRECISION)?;
-                Ok(DataType::Approximate { precision: DOUBLE_PRECISION })
+                Ok(DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision })
             }
             _ => Err(self.syntax("expected a <data type>")),
         }
@@ -139,8 +141,9 @@ impl Parser {
         Ok(length)
     }
 
-    /// NUMERIC | DECIMAL | DEC \[(`<precision>` \[,`<scale>`\])\], starting at `at`.
-    fn exact_numeric_type(&mut self, at: usize) -> Result<DataType> {
+    /// NUMERIC | DECIMAL | DEC \[(`<precision>` \[,`<scale>`\])\], starting at `at`,
+    /// as `spelled` says it was written.
+    fn exact_numeric_type(&mut self, at: usize, spelled: Spelled) -> Result<DataType> {
         self.advance();
         let (mut precision, mut scale) = (DEFAULT_EXACT_PRECISION, 0); // [X3.135-1986 §5.5 SR3]
         if self.accept_delim(delim::LEFT_PAREN) {
@@ -164,7 +167,7 @@ impl Parser {
                 ),
             ));
         }
-        Ok(DataType::Exact { precision, scale })
+        Ok(DataType::Exact { precision, scale, spelled })
     }
 
     /// FLOAT \[(`<precision>`)\], starting at `at`.
@@ -187,6 +190,9 @@ impl Parser {
             ));
         }
         // [X3.135-1986 §5.5 SR10] binary precision equal to or greater than requested.
-        Ok(DataType::Approximate { precision: if precision <= REAL_PRECISION { REAL_PRECISION } else { DOUBLE_PRECISION } })
+        Ok(DataType::Approximate {
+            precision: if precision <= REAL_PRECISION { REAL_PRECISION } else { DOUBLE_PRECISION },
+            spelled: Spelled::Float,
+        })
     }
 }

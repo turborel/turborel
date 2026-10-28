@@ -81,7 +81,7 @@ table's, or a correlation name's, `S.NAME`. See [Names](03-names.md).
 | Bit string | `B'1010'` | BIT of its length |
 | Hexadecimal string | `X'1F'` | BIT of four bits a digit |
 | Exact number | `42`, `-3.75`, `.5`, `5.` | NUMERIC of its digits |
-| Approximate number | `1.5E3`, `-2E-1` | DOUBLE PRECISION |
+| Approximate number | `1.5E3`, `-2E-1` | FLOAT(53), of DOUBLE PRECISION's precision |
 | Date | `DATE '2026-10-28'` | DATE |
 | Time | `TIME '13:45:30.25'`, `TIME '13:45:30+02:00'` | TIME of its fraction's digits |
 | Timestamp | `TIMESTAMP '2026-10-28 13:45:30'` | TIMESTAMP of its fraction's digits |

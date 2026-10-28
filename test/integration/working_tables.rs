@@ -9,15 +9,16 @@ use turborel::params::Params;
 use turborel::value::{DataType, Value};
 
 use crate::common::{exec, rows, setup};
+use turborel::value::Spelled;
 
 /// Targets for fetching T's ID, NAME and AMT, with indicators for NAME
 /// and AMT.
 fn params() -> Params {
     Params::new()
-        .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0 }, Value::Null)
+        .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null)
         .declare("NAME_OUT", DataType::Character { length: 2 }, Value::Null)
         .indicator("NAME_IND", 0)
-        .declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2 }, Value::Null)
+        .declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2, spelled: Spelled::Numeric }, Value::Null)
         .indicator("AMT_IND", 0)
 }
 

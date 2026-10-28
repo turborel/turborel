@@ -69,7 +69,7 @@ the next batch, `close` ends it; `deallocate` lets the statement go.
 
 ```rust
 let by_id = conn.prepare("SELECT NAME FROM STAFF WHERE ID = ?")?;
-// by_id.parameters(): [NUMERIC(10,0)]
+// by_id.parameters(): [INTEGER], ID's type
 if let Outcome::Rows { rows, .. } = conn.execute(&by_id, &[Value::Exact(Decimal::new(2, 0))])? {
     // rows: [["Grace"]]
 }

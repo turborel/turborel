@@ -15,6 +15,7 @@ use super::ScalarFunction;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::lexer::kw;
 use crate::params::ParameterType;
+use crate::value::Spelled;
 use crate::value::{BYTE_BITS, DataType, Decimal, MAX_BIT_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
 
 /// The key word under which concatenation is registered: an operator, so no
@@ -38,7 +39,7 @@ pub fn functions() -> Vec<Arc<dyn ScalarFunction>> {
 
 /// The type of a length or position [§6.6 SR2, SR5]: exact numeric with
 /// implementation-defined precision, `MAX_EXACT_PRECISION`, and scale 0.
-const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 };
+const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// The length of `t`, a character string type, its maximum length if it
 /// is varying, or a Syntax Rule error.
@@ -256,7 +257,7 @@ impl ScalarFunction for Substring {
     /// [§17.6 GR5c] the start and the length NUMERIC(P, 0), P the greatest
     /// precision; the string none \[GR4p\].
     fn parameter_type(&self, position: usize, _args: &[Option<DataType>]) -> Option<ParameterType> {
-        (position > 0).then_some(ParameterType::Of(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 }))
+        (position > 0).then_some(ParameterType::Of(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric }))
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let source = args.first().unwrap_or(&Value::Null);

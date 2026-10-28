@@ -186,6 +186,7 @@ mod tests {
     use crate::exec::NoSubqueries;
     use crate::storage::StorageEngine;
     use crate::txn::NO_TRANSACTION;
+    use crate::value::Spelled;
     use crate::value::{DataType, Decimal, Value};
 
     fn number(n: i128) -> Value {
@@ -199,7 +200,7 @@ mod tests {
     fn a_deleted_row_is_gone() {
         let column = |name: &str| ColumnDesc {
             name: name.into(),
-            data_type: DataType::Exact { precision: 9, scale: 0 },
+            data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
             not_null: false,
             default: None,
             domain: None,

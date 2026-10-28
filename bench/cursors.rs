@@ -23,6 +23,7 @@ use turborel::db::{Completion, Database};
 use turborel::engine::rows::{ROW_STORE, RowStore, TableFiles, TableOptions};
 use turborel::log::MemoryLog;
 use turborel::params::Params;
+use turborel::value::Spelled;
 use turborel::value::{DataType, Value};
 
 /// Rows in the table, and frames: enough for the whole table.
@@ -49,7 +50,7 @@ fn main() {
         rows
     });
     s.declare_cursor("DECLARE C CURSOR FOR SELECT K FROM T").unwrap();
-    let mut p = Params::new().declare("OUT", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("OUT", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     bench.measure(Case::new("OPEN, FETCH every row", "rows"), || {
         s.execute("OPEN C", &mut p).unwrap();
         let mut rows = 0;

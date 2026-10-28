@@ -16,6 +16,7 @@ use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::TxId;
 
 use crate::common::{MemoryTable, Scratch, after_crash, big, code, rows, setup};
+use turborel::value::Spelled;
 
 /// Verifies: [DESIGN] access path selection; [EXTENSION] indexes
 #[test]
@@ -357,7 +358,11 @@ fn plans_are_shown_with_their_parameters() {
     for i in 10..60 {
         s.run(&format!("INSERT INTO T VALUES ({i}, 'N{i}', {i}, 0)")).unwrap();
     }
-    let p = Params::new().declare("P", turborel::value::DataType::Exact { precision: 6, scale: 2 }, crate::common::number(-1));
+    let p = Params::new().declare(
+        "P",
+        turborel::value::DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric },
+        crate::common::number(-1),
+    );
     let plan = s.physical_plan("SELECT ID FROM T WHERE AMT < P", &p).unwrap();
     assert!(plan.contains("IndexScan") && plan.contains("AMT < -1"), "{plan}");
     assert!(s.explain("SELECT ID FROM T WHERE AMT < P", &p).unwrap().contains("AMT < -1"));

@@ -7,6 +7,7 @@ use turborel::error::Code;
 use turborel::value::DataType;
 
 use crate::common::{code, exec, expected, rows, setup, sorted};
+use turborel::value::Spelled;
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.10 GR1b]: of a row with m
 /// duplicates in the first operand and n in the second, UNION gives one if
@@ -72,7 +73,7 @@ fn set_operation_results_take_both_operands_types_7_10() {
     assert!(c.columns[0].not_null, "both NOT NULL");
     let c = s.open_cursor("SELECT ID FROM T UNION SELECT AMT AS ID FROM T").unwrap();
     assert!(!c.columns[0].not_null, "AMT may be null");
-    assert_eq!(c.columns[0].data_type, DataType::Exact { precision: 12, scale: 2 });
+    assert_eq!(c.columns[0].data_type, DataType::Exact { precision: 12, scale: 2, spelled: Spelled::Numeric });
     assert_eq!(code(&s, "SELECT ID FROM T UNION SELECT CODE FROM U"), Code::SyntaxRule, "§9.3 SR2");
     assert_eq!(code(&s, "SELECT ID FROM T EXCEPT SELECT ID, CODE FROM U"), Code::SyntaxRule, "SR9b");
     assert_eq!(code(&s, "VALUES 1 INTERSECT VALUES 'A'"), Code::SyntaxRule, "SR10b ii");

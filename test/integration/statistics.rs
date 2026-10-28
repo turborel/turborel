@@ -22,6 +22,7 @@ use turborel::txn::NO_TRANSACTION;
 use turborel::value::{CompOp, DataType};
 
 use crate::common::{Scratch, crc32c, locking_big, number};
+use turborel::value::Spelled;
 
 /// The rows the Filter of `sql`'s physical plan is estimated to keep, if
 /// it shows an estimate.
@@ -178,7 +179,7 @@ fn tables_opened_have_statistics() {
     let pool = Arc::new(BufferPool::new(64, Box::new(Clock::new(64))).unwrap());
     let file = pool.add_pager(pager);
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let types = [DataType::Exact { precision: 9, scale: 0 }];
+    let types = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }];
     let t = RowTable::create(&files, &types, TableOptions::default()).unwrap();
     assert!(t.statistics().is_none());
     for n in 0..30 {

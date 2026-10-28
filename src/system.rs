@@ -44,6 +44,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::MAX_IDENTIFIER_LENGTH;
 use crate::settings::Own;
 use crate::storage::Row;
+use crate::value::Spelled;
 use crate::value::{DataType, Decimal, INTEGER_PRECISION, Value, assign};
 
 pub use information::{SystemView, view};
@@ -224,7 +225,7 @@ pub(crate) fn identifier(name: &str, not_null: bool) -> ColumnDesc {
 pub(crate) fn cardinal(name: &str, not_null: bool) -> ColumnDesc {
     ColumnDesc {
         name: name.to_owned(),
-        data_type: DataType::Exact { precision: INTEGER_PRECISION, scale: 0 },
+        data_type: DataType::Exact { precision: INTEGER_PRECISION, scale: 0, spelled: Spelled::Numeric },
         not_null,
         default: None,
         domain: None,

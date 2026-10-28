@@ -14,6 +14,7 @@ use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_to_exact, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
 use crate::value::{Bucket, DataType, Decimal, Value, assignment_rule, pow10, unassignable};
+use crate::value::{Spelled, spelling};
 
 /// The kind of NUMERIC(precision, scale).
 #[derive(Debug)]
@@ -27,7 +28,7 @@ const DECIMAL_RADIX: u32 = 10;
 
 /// The precision and scale of `t`, an exact numeric type.
 fn shape(t: &DataType) -> (u32, u32) {
-    if let DataType::Exact { precision, scale } = t { (*precision, *scale) } else { (0, 0) }
+    if let DataType::Exact { precision, scale, .. } = t { (*precision, *scale) } else { (0, 0) }
 }
 
 /// A value not of a column of `t`'s type.
@@ -72,9 +73,15 @@ impl SqlType for Exact {
         "NUMERIC"
     }
 
+    /// As written: INTEGER, SMALLINT, DECIMAL(p,s), else NUMERIC(p,s).
     fn written(&self, t: &DataType) -> String {
         let (precision, scale) = shape(t);
-        format!("NUMERIC({precision},{scale})")
+        match spelling(t) {
+            Spelled::Integer => "INTEGER".to_owned(),
+            Spelled::Smallint => "SMALLINT".to_owned(),
+            Spelled::Decimal => format!("DECIMAL({precision},{scale})"),
+            Spelled::Numeric | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => format!("NUMERIC({precision},{scale})"),
+        }
     }
 
     /// [X3.135-1986 §4.2] Numbers are comparable, exact and approximate.
@@ -147,9 +154,17 @@ impl SqlType for Exact {
     }
 
     /// NUMERIC, of decimal precision [ISO/IEC 9075:1992 §6.1 SR17].
+    /// [ISO/IEC 9075:1992 §21.3.5] Of the name it was written with:
+    /// INTEGER, SMALLINT, DECIMAL or NUMERIC.
     fn descriptor(&self, t: &DataType) -> Descriptor {
         let (precision, scale) = shape(t);
-        Descriptor { precision: Some(precision), radix: Some(DECIMAL_RADIX), scale: Some(scale), ..Descriptor::of(self.name()) }
+        let name = match spelling(t) {
+            Spelled::Integer => "INTEGER",
+            Spelled::Smallint => "SMALLINT",
+            Spelled::Decimal => "DECIMAL",
+            Spelled::Numeric | Spelled::Float | Spelled::Real | Spelled::DoublePrecision => self.name(),
+        };
+        Descriptor { precision: Some(precision), radix: Some(DECIMAL_RADIX), scale: Some(scale), ..Descriptor::of(name) }
     }
 
     fn put_value(&self, v: &Value, out: &mut Vec<u8>) {
@@ -170,7 +185,7 @@ impl SqlType for Exact {
     }
 
     fn params(&self, r: &mut Reader<'_>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: r.u32()?, scale: r.u32()? })
+        Ok(DataType::Exact { precision: r.u32()?, scale: r.u32()?, spelled: Spelled::Numeric })
     }
 
     fn record_width(&self, _: &DataType) -> Option<usize> {

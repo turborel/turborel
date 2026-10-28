@@ -41,9 +41,9 @@ use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
 use crate::value::datetime::Moment;
-use crate::value::types::INTERVAL_DAY_TIME;
-use crate::value::types::{APPROXIMATE, BIT, BIT_VARYING, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING};
-use crate::value::{DataType, SqlType};
+
+mod types;
+use types::{data_type, put_type};
 
 /// A count, or a position, as a u32.
 fn count(n: usize) -> u32 {
@@ -95,67 +95,6 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
         1 => Ok(true),
         _ => Err(r.corrupt("a flag is neither 0 nor 1")),
     }
-}
-
-/// The tag of each built-in kind of type, before its parameters.
-const CHARACTER_TYPE: u8 = 0;
-const EXACT_TYPE: u8 = 1;
-const APPROXIMATE_TYPE: u8 = 2;
-/// A type beyond the standard: its kind's name, then its parameters.
-const EXTENSION_TYPE: u8 = 3;
-const VARYING_TYPE: u8 = 4;
-const BIT_TYPE: u8 = 5;
-const BIT_VARYING_TYPE: u8 = 6;
-const DATE_TYPE: u8 = 7;
-const TIME_TYPE: u8 = 8;
-const TIME_ZONED_TYPE: u8 = 9;
-const TIMESTAMP_TYPE: u8 = 10;
-const TIMESTAMP_ZONED_TYPE: u8 = 11;
-const INTERVAL_TYPE: u8 = 12;
-
-fn put_type(out: &mut Vec<u8>, data_type: DataType) {
-    match data_type {
-        DataType::Character { .. } => out.put_u8(CHARACTER_TYPE),
-        DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
-        DataType::Bit { .. } => out.put_u8(BIT_TYPE),
-        DataType::BitVarying { .. } => out.put_u8(BIT_VARYING_TYPE),
-        DataType::Date => out.put_u8(DATE_TYPE),
-        DataType::Time { zoned: false, .. } => out.put_u8(TIME_TYPE),
-        DataType::Time { zoned: true, .. } => out.put_u8(TIME_ZONED_TYPE),
-        DataType::Timestamp { zoned: false, .. } => out.put_u8(TIMESTAMP_TYPE),
-        DataType::Timestamp { zoned: true, .. } => out.put_u8(TIMESTAMP_ZONED_TYPE),
-        DataType::Interval(_) => out.put_u8(INTERVAL_TYPE),
-        DataType::Exact { .. } => out.put_u8(EXACT_TYPE),
-        DataType::Approximate { .. } => out.put_u8(APPROXIMATE_TYPE),
-        DataType::Extension(e) => {
-            out.put_u8(EXTENSION_TYPE);
-            out.put_str(e.kind.name());
-        }
-    }
-    data_type.kind().put_params(&data_type, out);
-}
-
-fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
-    let kind: &dyn SqlType = match r.u8()? {
-        CHARACTER_TYPE => &CHARACTER,
-        EXACT_TYPE => &EXACT,
-        APPROXIMATE_TYPE => &APPROXIMATE,
-        VARYING_TYPE => &VARYING,
-        BIT_TYPE => &BIT,
-        BIT_VARYING_TYPE => &BIT_VARYING,
-        DATE_TYPE => &DATE,
-        TIME_TYPE => &TIME,
-        TIME_ZONED_TYPE => &TIME_ZONED,
-        TIMESTAMP_TYPE => &TIMESTAMP,
-        TIMESTAMP_ZONED_TYPE => &TIMESTAMP_ZONED,
-        INTERVAL_TYPE => &INTERVAL_DAY_TIME,
-        EXTENSION_TYPE => {
-            let name = r.str()?;
-            r.kind(&name)?
-        }
-        _ => return Err(r.corrupt("not a data type")),
-    };
-    kind.params(r)
 }
 
 fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
@@ -504,6 +443,7 @@ pub(crate) fn privilege(r: &mut Reader<'_>) -> Result<PrivilegeDesc> {
 mod tests {
     use super::*;
     use crate::error::Code;
+    use crate::value::{DataType, Spelled};
 
     /// Bytes of `fill`, then `tail`.
     fn bytes(fill: impl FnOnce(&mut Vec<u8>), tail: &[u8]) -> Vec<u8> {
@@ -531,7 +471,7 @@ mod tests {
             bytes(
                 |out| {
                     out.put_str("C");
-                    put_type(out, DataType::Exact { precision: 9, scale: 0 });
+                    put_type(out, DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric });
                     put_flag(out, false);
                 },
                 &[tag, 0],

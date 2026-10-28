@@ -315,12 +315,13 @@ mod tests {
     use super::*;
     use crate::catalog::{ColumnDesc, IndexDesc, MemoryCatalog};
     use crate::error::Code;
+    use crate::value::Spelled;
     use crate::value::{DataType, Decimal, Value};
 
     fn table(engine: &str) -> TableDesc {
         let column = ColumnDesc {
             name: "K".into(),
-            data_type: DataType::Exact { precision: 10, scale: 0 },
+            data_type: DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric },
             not_null: true,
             default: None,
             domain: None,

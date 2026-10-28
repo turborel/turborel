@@ -115,6 +115,7 @@ mod tests {
     use std::cmp::Ordering;
 
     use super::*;
+    use crate::value::Spelled;
     use crate::value::{Decimal, compare};
 
     fn key(values: &[Value], types: &[DataType]) -> Vec<u8> {
@@ -155,7 +156,7 @@ mod tests {
             exact(2, 0),
             exact(999_999_999_999_999_999, 2),
         ];
-        keys_sort_as_values(DataType::Exact { precision: 18, scale: 2 }, &values);
+        keys_sort_as_values(DataType::Exact { precision: 18, scale: 2, spelled: Spelled::Numeric }, &values);
     }
 
     /// Verifies: [X3.135-1986 §5.11]; [DESIGN] RULES.md D31, key encoding:
@@ -165,7 +166,7 @@ mod tests {
     fn approximate_keys_sort_as_numbers() {
         let values: [f64; 10] =
             [f64::NEG_INFINITY, -1e300, -2.5, -f64::MIN_POSITIVE, -0.0, 0.0, f64::MIN_POSITIVE, 1.0, 1e300, f64::INFINITY];
-        keys_sort_as_values(DataType::Approximate { precision: 53 }, &values.map(Value::Approx));
+        keys_sort_as_values(DataType::Approximate { precision: 53, spelled: Spelled::Float }, &values.map(Value::Approx));
     }
 
     /// Verifies: [X3.135-1986 §5.11 GR5, GR6]; [DESIGN] RULES.md D31, key
@@ -185,7 +186,7 @@ mod tests {
     /// its column is refused with SQLCODE -910.
     #[test]
     fn composite_keys_and_refusals() {
-        let types = [DataType::Character { length: 2 }, DataType::Exact { precision: 4, scale: 0 }];
+        let types = [DataType::Character { length: 2 }, DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric }];
         let k = |s: &str, n: i128| key(&[Value::Char(s.into()), exact(n, 0)], &types);
         assert_eq!(key(&[Value::Null, exact(9, 0)], &types).cmp(&k("", -9)), Ordering::Less);
         assert!(k("a", 9) < k("b", -9) && k("a", -1) < k("a", 1) && k("é", 0) > k("z", 0));
@@ -201,8 +202,11 @@ mod tests {
     /// -916.
     #[test]
     fn keys_decode_to_their_values() {
-        let types =
-            [DataType::Character { length: 3 }, DataType::Exact { precision: 9, scale: 2 }, DataType::Approximate { precision: 53 }];
+        let types = [
+            DataType::Character { length: 3 },
+            DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric },
+            DataType::Approximate { precision: 53, spelled: Spelled::Float },
+        ];
         for values in [
             [Value::Char("é€".into()), exact(-12_345, 2), Value::Approx(-2.5)],
             [Value::Null, exact(7, 0), Value::Approx(-0.0)],
@@ -239,7 +243,7 @@ mod tests {
                 }
             }
         };
-        let money = DataType::Exact { precision: 9, scale: 2 };
+        let money = DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric };
         let keys: Vec<Value> = [-1_001, -1_000, -999, -1, 0, 1, 155, 156, 1_000].map(|u| exact(u, 2)).to_vec();
         check(
             money,
@@ -262,7 +266,7 @@ mod tests {
         let short = DataType::Character { length: 3 };
         let words: Vec<Value> = ["ab", "abc", "abd", "b"].map(|s| Value::Char(s.into())).to_vec();
         check(short, &words, &["abcd", "abc   ", "aaaa", "zzzz", "ab", "abc"].map(|s| Value::Char(s.into())));
-        let real = DataType::Approximate { precision: 53 };
+        let real = DataType::Approximate { precision: 53, spelled: Spelled::Float };
         assert_eq!(anchor(&Value::Approx(1.5), real), Some(Anchor { key: key(&[Value::Approx(1.5)], &[real]), exact: true }));
         for (value, data_type) in
             [(Value::Null, money), (Value::Approx(1.0), money), (exact(1, 0), short), (Value::Char("a".into()), money)]

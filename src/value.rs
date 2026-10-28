@@ -66,6 +66,54 @@ pub const MAX_CHARACTER_LENGTH: u32 = 32_767;
 // [X3.135-1986 §5.5] <data type>
 // ---------------------------------------------------------------------------
 
+/// [ISO/IEC 9075:1992 §6.1, §21.3.5] The name a number's type was
+/// written with, which its data type descriptor keeps: INTEGER is
+/// NUMERIC(10, 0), and REAL FLOAT(24), but each is shown as written. It is
+/// no part of what the type is: two types of one precision and scale are
+/// equal, however written, so a name changes no comparison, assignment or
+/// result. A type computed, as of a sum, is NUMERIC, or FLOAT.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Spelled {
+    /// NUMERIC, or a type computed.
+    #[default]
+    Numeric,
+    /// DECIMAL or DEC.
+    Decimal,
+    /// INTEGER or INT.
+    Integer,
+    /// SMALLINT.
+    Smallint,
+    /// FLOAT, or an approximate type computed.
+    Float,
+    /// REAL.
+    Real,
+    /// DOUBLE PRECISION.
+    DoublePrecision,
+}
+
+/// How the number type `t` was written; NUMERIC of any other type.
+pub fn spelling(t: &DataType) -> Spelled {
+    match t {
+        DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => *spelled,
+        DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Bit { .. }
+        | DataType::BitVarying { .. }
+        | DataType::Date
+        | DataType::Time { .. }
+        | DataType::Timestamp { .. }
+        | DataType::Interval(_)
+        | DataType::Extension(_) => Spelled::Numeric,
+    }
+}
+
+impl PartialEq for Spelled {
+    /// Always: the name is not the type.
+    fn eq(&self, _: &Spelled) -> bool {
+        true
+    }
+}
+
 /// A `<data type>` [X3.135-1986 §5.5].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DataType {
@@ -86,11 +134,15 @@ pub enum DataType {
         precision: u32,
         /// Decimal digits after the point.
         scale: u32,
+        /// How it was written.
+        spelled: Spelled,
     },
     /// FLOAT, REAL, DOUBLE PRECISION.
     Approximate {
         /// Binary digits of the mantissa.
         precision: u32,
+        /// How it was written.
+        spelled: Spelled,
     },
     /// [ISO/IEC 9075:1992 §6.1] BIT(length): a bit string of fixed length.
     Bit {
@@ -518,11 +570,11 @@ mod tests {
         let text = Value::Char("A".into());
         let one = Value::Exact(Decimal::new(1, 0));
         assert_eq!(arith(ArithOp::Add, &text, &one).unwrap_err().code, Code::Data);
-        let approximate = DataType::Approximate { precision: REAL_PRECISION };
+        let approximate = DataType::Approximate { precision: REAL_PRECISION, spelled: Spelled::Float };
         assert_eq!(assign(text.clone(), &approximate, "test").unwrap_err().code, Code::Data);
-        let exact = DataType::Exact { precision: 5, scale: 0 };
+        let exact = DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric };
         assert_eq!(assign(text, &exact, "test").unwrap_err().code, Code::Data);
-        let tiny_scale = DataType::Exact { precision: 5, scale: 0 };
+        let tiny_scale = DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric };
         assert_eq!(assign(Value::Exact(Decimal::new(1, u32::MAX)), &tiny_scale, "test").unwrap_err().code, Code::Data);
     }
 

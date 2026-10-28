@@ -7,6 +7,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Decimal, MAX_EXACT_PRECISION, Value};
 
 use crate::common::{code, rows, setup};
+use turborel::value::Spelled;
 
 struct Twice;
 impl ScalarFunction for Twice {
@@ -15,7 +16,9 @@ impl ScalarFunction for Twice {
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         match args {
-            [DataType::Exact { scale, .. }] => Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: *scale }),
+            [DataType::Exact { scale, .. }] => {
+                Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: *scale, spelled: Spelled::Numeric })
+            }
             _ => fail(Code::SyntaxRule, "TWICE takes one exact number"),
         }
     }
@@ -35,7 +38,7 @@ impl AggregateFunction for CountTimesTen {
         "COUNT"
     }
     fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 })
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
     }
     fn accumulator(&self, _r: DataType) -> Box<dyn Accumulator> {
         Box::new(Acc(0))
@@ -114,7 +117,7 @@ impl ScalarFunction for NonDeterministicConstant {
         "SEQ"
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 })
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
     }
     fn call(&self, _: &[Value]) -> Result<Value> {
         Ok(Value::Exact(Decimal::new(7, 0)))
@@ -144,7 +147,7 @@ impl ScalarFunction for NamedScalar {
         self.0
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 })
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
     }
     fn call(&self, _: &[Value]) -> Result<Value> {
         Ok(Value::Null)
@@ -158,7 +161,7 @@ impl AggregateFunction for NamedAggregate {
         self.0
     }
     fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0 })
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
     }
     fn accumulator(&self, _r: DataType) -> Box<dyn Accumulator> {
         Box::new(Acc(0))

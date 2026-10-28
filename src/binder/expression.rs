@@ -13,6 +13,7 @@ use crate::functions::{AggregateRef, ScalarFunction};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, render_expr};
 use crate::params::ParameterType;
+use crate::value::Spelled;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
 /// [X3.135-1986 §5.9 SR4] The type of an operation on two exact numbers. Its
@@ -38,7 +39,7 @@ fn exact_result_type(op: ArithOp, s1: u32, s2: u32) -> Result<DataType> {
         })?,
         ArithOp::Add | ArithOp::Sub | ArithOp::Div => s1.max(s2),
     };
-    Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale })
+    Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric })
 }
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
@@ -204,7 +205,7 @@ impl Binder<'_> {
         let t = match (left_type, right_type) {
             (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,
             // [X3.135-1986 §5.9 SR5]
-            _ => DataType::Approximate { precision: DOUBLE_PRECISION },
+            _ => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         };
         Ok((Expr::Arith(Box::new(a), op, Box::new(b)), t))
     }

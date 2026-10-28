@@ -12,6 +12,7 @@ use turborel::storage::RowId;
 use turborel::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION};
 
 use crate::common::{code, count, exec, rows, setup};
+use turborel::value::Spelled;
 
 /// The error code of `sql`, an INSERT that must fail.
 fn insert_error(s: &mut Session, sql: &str) -> Code {
@@ -385,7 +386,7 @@ fn data_type_limits_are_not_syntax_errors() {
 /// kept in the engine `engine`.
 fn catalog_with_table(engine: &str) -> MemoryCatalog {
     let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-    let integer = DataType::Exact { precision: 10, scale: 0 };
+    let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
     let column = ColumnDesc { name: "K".into(), data_type: integer, not_null: true, default: None, domain: None };
     let constraint = ConstraintDesc {
         name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },

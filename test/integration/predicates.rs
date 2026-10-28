@@ -7,6 +7,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Value};
 
 use crate::common::{big, code, exec, rows, setup};
+use turborel::value::Spelled;
 
 /// Verifies: [X3.135-1986 §5.12 GR2, GR3] "x BETWEEN y AND z" is "x >= y
 /// AND x <= z", bounds included, and NOT BETWEEN its negation; a null x is
@@ -44,11 +45,10 @@ fn in_lists_are_any_equal_5_13() {
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE NAME IN ('BOB', 'ANN  ') ORDER BY ID"), Ok(vec!["1".into(), "2".into()]), "padded");
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE NAME NOT IN ('BOB', 'X')"), Ok(vec!["1".into()]), "row 3's NAME is null");
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE NAME IN (USER, 'BOB')"), Ok(vec!["2".into()]));
-    let mut p = Params::new().declare("P", DataType::Exact { precision: 9, scale: 0 }, Value::Null).indicator("PI", -1).declare(
-        "N",
-        DataType::Exact { precision: 9, scale: 0 },
-        Value::Null,
-    );
+    let mut p = Params::new()
+        .declare("P", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null)
+        .indicator("PI", -1)
+        .declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s.execute("SELECT COUNT(*) INTO N FROM T WHERE ID NOT IN (1, P PI)", &mut p).unwrap();
     assert_eq!(p.value("N").to_string(), "0", "2 = NULL is unknown, so NOT IN is too");
     s.execute("SELECT COUNT(*) INTO N FROM T WHERE ID IN (1, P PI)", &mut p).unwrap();

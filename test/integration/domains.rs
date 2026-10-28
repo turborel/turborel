@@ -203,11 +203,11 @@ fn domains_in_the_information_schema_21_2() {
     let squeeze = |sql: &str| rows(&a, sql).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>();
     assert_eq!(
         squeeze("SELECT DOMAIN_NAME, DATA_TYPE, NUMERIC_PRECISION, DOMAIN_DEFAULT FROM INFORMATION_SCHEMA.DOMAINS"),
-        ["AMOUNT,NUMERIC,10,1"]
+        ["AMOUNT,INTEGER,10,1"]
     );
     assert_eq!(squeeze("SELECT CONSTRAINT_NAME, DOMAIN_NAME FROM INFORMATION_SCHEMA.DOMAIN_CONSTRAINTS"), ["POSITIVE,AMOUNT"]);
     let columns = "SELECT COLUMN_NAME, DOMAIN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'T' ORDER BY COLUMN_NAME";
-    assert_eq!(squeeze(columns), ["K,AMOUNT,NUMERIC", "N,NULL,NUMERIC"]);
+    assert_eq!(squeeze(columns), ["K,AMOUNT,INTEGER", "N,NULL,INTEGER"]);
     assert_eq!(squeeze("SELECT CHECK_CLAUSE FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS WHERE CONSTRAINT_NAME = 'POSITIVE'"), ["VALUE > 0"]);
     assert_eq!(count(&a, "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME = 'T'"), 0);
     assert_eq!(

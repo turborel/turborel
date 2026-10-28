@@ -5,6 +5,7 @@
 use turborel::db::{Completion, Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
+use turborel::value::Spelled;
 use turborel::value::{DataType, Decimal, Value};
 
 /// Schema A: T, of rows K 1 to 5, N 'A' to 'E'.
@@ -19,7 +20,7 @@ fn five_rows() -> Database {
 
 /// K_OUT, the target, and J, a number.
 fn params(j: Value) -> Params {
-    let integer = DataType::Exact { precision: 9, scale: 0 };
+    let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     Params::new().declare("K_OUT", integer, Value::Null).declare("J", integer, j)
 }
 

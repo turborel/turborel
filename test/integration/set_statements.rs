@@ -9,6 +9,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Decimal, Value};
 
 use crate::common::{count, exec, expected, rows, setup};
+use turborel::value::Spelled;
 
 /// The SQLSTATE `sql` ends with in `s`.
 fn state(s: &Session, sql: &str) -> String {
@@ -86,7 +87,11 @@ fn transaction_modes_are_checked_14_1() {
     assert_eq!(exec(&s, "SET TRANSACTION ISOLATION LEVEL SOMETIMES"), Err(Code::Syntax));
     assert_eq!(exec(&s, "SET TRANSACTION"), Err(Code::Syntax));
     assert_eq!(state(&s, "SET TRANSACTION DIAGNOSTICS SIZE 0"), "35000");
-    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Exact(Decimal::new(-2, 0)));
+    let mut p = Params::new().declare(
+        "N",
+        DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
+        Value::Exact(Decimal::new(-2, 0)),
+    );
     assert_eq!(s.execute("SET TRANSACTION DIAGNOSTICS SIZE N", &mut p).unwrap_err().sqlstate().as_str(), "35000", "by a parameter");
     assert_eq!(mode("SET TRANSACTION READ WRITE"), write(IsolationLevel::Serializable), "the refused ones changed nothing");
 }

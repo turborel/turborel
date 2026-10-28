@@ -72,8 +72,8 @@ fn tables_and_columns_are_described_21_2_7() {
     assert_eq!(
         seen(&owner, &format!("{columns}'P' ORDER BY ORDINAL_POSITION")),
         [
-            "K|1|NULL|NO|NUMERIC|NULL|NULL|10|10|0|NULL",
-            "J|2|NULL|NO|NUMERIC|NULL|NULL|10|10|0|NULL",
+            "K|1|NULL|NO|INTEGER|NULL|NULL|10|10|0|NULL",
+            "J|2|NULL|NO|INTEGER|NULL|NULL|10|10|0|NULL",
             "NAME|3|'NONE    '|YES|CHARACTER|8|32|NULL|NULL|NULL|SQL_TEXT",
         ]
     );
@@ -81,8 +81,8 @@ fn tables_and_columns_are_described_21_2_7() {
         seen(&owner, &format!("{columns}'C' AND ORDINAL_POSITION > 3 ORDER BY 2")),
         [
             "X|4|NULL|YES|REAL|NULL|NULL|24|2|NULL|NULL",
-            "Y|5|NULL|YES|DOUBLE PRECISION|NULL|NULL|53|2|NULL|NULL",
-            "D|6|NULL|YES|NUMERIC|NULL|NULL|6|10|2|NULL",
+            "Y|5|NULL|YES|FLOAT|NULL|NULL|53|2|NULL|NULL",
+            "D|6|NULL|YES|DECIMAL|NULL|NULL|6|10|2|NULL",
         ]
     );
     assert_eq!(seen(&other, "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'C'"), ["1"], "the column it may update");
@@ -244,4 +244,36 @@ fn the_information_schema_is_the_databases_21_1() {
     }
     // [§21.3.26] the conformance claimed: SQL-86, ISO 9075 of 1987, Level 2, by direct invocation.
     assert_eq!(seen(&s, "SELECT * FROM INFORMATION_SCHEMA.SQL_LANGUAGES"), ["ISO 9075|1987|2|NULL|NULL|DIRECT|NULL"]);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.2.7, §21.3.5, §6.1]: a
+/// column's DATA_TYPE is its type's name as written: INTEGER, SMALLINT,
+/// DECIMAL, NUMERIC, REAL, DOUBLE PRECISION or FLOAT, as a database kept
+/// in a directory gives it once opened again; the name is no part of the
+/// type, so a foreign key of INTEGER references NUMERIC(10,0), and a
+/// message names the column's type as written.
+#[test]
+fn number_types_are_described_as_written_21_3_5() {
+    let scratch = crate::common::Scratch::new("type-names");
+    let dir = scratch.path("db");
+    let open = || {
+        let db = Database::new();
+        db.open_files(&crate::common::os(), &dir, &turborel::db::OpenOptions::default()).unwrap();
+        db
+    };
+    let db = open();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION N
+           CREATE TABLE P (K NUMERIC(10) PRIMARY KEY)
+           CREATE TABLE T (I INTEGER REFERENCES P, S SMALLINT, D DEC(4,1), N NUMERIC(3), R REAL, P DOUBLE PRECISION, F FLOAT(10))",
+    )
+    .unwrap();
+    let types = "SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'T' ORDER BY 1";
+    let written = ["1|I|INTEGER", "2|S|SMALLINT", "3|D|DECIMAL", "4|N|NUMERIC", "5|R|REAL", "6|P|DOUBLE PRECISION", "7|F|FLOAT"];
+    assert_eq!(seen(&db.session("N"), types), written);
+    let refused = db.session("N").run("INSERT INTO T (S) VALUES (100000)").unwrap_err();
+    assert!(refused.msg.contains("does not fit SMALLINT"), "{}", refused.msg);
+    db.close().unwrap();
+    drop(db);
+    assert_eq!(seen(&open().session("N"), types), written, "kept with the catalog");
 }

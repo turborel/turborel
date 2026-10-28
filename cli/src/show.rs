@@ -142,6 +142,7 @@ impl Sink for Table<'_> {
 mod tests {
     use super::*;
     use turborel::value::Decimal;
+    use turborel::value::Spelled;
 
     fn column(name: Option<&str>, data_type: DataType) -> Column {
         Column { name: name.map(str::to_owned), data_type, not_null: false }
@@ -156,8 +157,8 @@ mod tests {
         let mut table = Table::new(&mut out, "?");
         let columns = [
             column(Some("NAME"), DataType::Character { length: 3 }),
-            column(Some("N"), DataType::Exact { precision: 3, scale: 1 }),
-            column(None, DataType::Approximate { precision: 53 }),
+            column(Some("N"), DataType::Exact { precision: 3, scale: 1, spelled: Spelled::Numeric }),
+            column(None, DataType::Approximate { precision: 53, spelled: Spelled::Float }),
             column(Some("LONG"), DataType::Character { length: 32767 }),
         ];
         table.columns(&columns);

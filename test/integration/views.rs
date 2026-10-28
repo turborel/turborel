@@ -10,6 +10,7 @@ use turborel::params::Params;
 use turborel::value::{DataType, Value};
 
 use crate::common::{code, exec, expected, rows};
+use turborel::value::Spelled;
 
 /// Schema S: tables E (employees) and D (departments), and views over
 /// them: RICH (E's rows with PAY over 100), RICH_C (the same, renamed, WITH
@@ -129,7 +130,7 @@ fn grouped_views_are_read_as_tables_7_4() {
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM E WHERE EXISTS (SELECT MAX(N) FROM DEPTS)"), expected(&["4"]));
     assert_eq!(code(&s, "SELECT ID FROM E WHERE PAY = (SELECT TOTAL FROM DEPTS)"), Code::Cardinality, "two rows");
     assert_eq!(rows(&s, "SELECT ID FROM E WHERE PAY * 2 IN (SELECT TOTAL FROM DEPTS) ORDER BY ID"), expected(&[]));
-    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     assert_eq!(s.execute("SELECT TOTAL INTO N FROM DEPTS", &mut p).unwrap_err().code, Code::Cardinality, "two rows");
     s.execute("SELECT MAX(TOTAL) INTO N FROM DEPTS", &mut p).unwrap();
     assert_eq!(p.value("N").to_string(), "500");
@@ -168,7 +169,7 @@ fn changes_through_updatable_views_6_5() {
     let s3 = db.session("S3");
     assert_eq!(exec(&s3, "INSERT INTO OVER VALUES (1)"), Err(Code::SyntaxRule));
     s3.run("INSERT INTO T VALUES (1)").unwrap();
-    let mut p = Params::new().declare("OUT", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("OUT", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s3.declare_cursor("DECLARE C CURSOR FOR SELECT A FROM OVER").unwrap();
     s3.execute("OPEN C", &mut p).unwrap();
     s3.execute("FETCH C INTO OUT", &mut p).unwrap();
@@ -191,7 +192,7 @@ fn with_check_option_6_5() {
     assert_eq!(exec(&s, "UPDATE RICH_C SET P = P - 100"), Err(Code::Constraint), "BOB's would be 50");
     assert_eq!(rows(&s, "SELECT PAY FROM E WHERE ID = 2"), expected(&["150.00"]), "none changed");
     assert_eq!(exec(&s, "UPDATE RICH_C SET P = P + 1"), Ok(Completion::Success));
-    let mut p = Params::new().declare("OUT", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("OUT", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s.declare_cursor("DECLARE C CURSOR FOR SELECT K FROM RICH_C WHERE K = 3").unwrap();
     s.execute("OPEN C", &mut p).unwrap();
     s.execute("FETCH C INTO OUT", &mut p).unwrap();
@@ -263,7 +264,7 @@ fn check_option_levels_11_19() {
 fn cursors_over_views_8_3() {
     let db = views();
     let s = db.session("S");
-    let mut p = Params::new().declare("K", DataType::Exact { precision: 9, scale: 0 }, Value::Null);
+    let mut p = Params::new().declare("K", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     s.declare_cursor("DECLARE C CURSOR FOR SELECT ID FROM RICH_A").unwrap();
     s.execute("OPEN C", &mut p).unwrap();
     s.execute("FETCH C INTO K", &mut p).unwrap();

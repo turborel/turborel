@@ -192,7 +192,7 @@ CREATE TABLE T9 (A INTEGER DEFAULT 'x');
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T3 has more than one PRIMARY KEY [ISO/IEC 9075:1992 §11.7 SR5, SR6] (at character 13)
 turborel: SQLCODE -103 (SQLSTATE 2A000): the columns referenced are not those of a unique constraint of ANN.EMPLOYEES [ISO/IEC 9075:1992 §11.8 SR2a] (at character 27)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the default is not a <literal> of NUMERIC(10,0) [ISO/IEC 9075:1992 §11.5 SR3a] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the default is not a <literal> of INTEGER [ISO/IEC 9075:1992 §11.5 SR3a] (at character 17)
 ```
 
 ## STANDARD

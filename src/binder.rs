@@ -46,6 +46,7 @@ mod subquery;
 mod underlying;
 mod views;
 
+use crate::value::Spelled;
 use from::FromItem;
 use query::{Nesting, bind_query_specification};
 use set_operations::bind_query_expression;
@@ -193,9 +194,11 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         // [X3.135-1986 §5.6 GR3]
         ValueSpecification::Literal(Literal::Character(s)) => (Value::Char(s.clone()), DataType::Character { length: char_length(s) }),
         ValueSpecification::Literal(Literal::Exact(d)) => {
-            (Value::Exact(*d), DataType::Exact { precision: d.digits().max(d.scale), scale: d.scale })
+            (Value::Exact(*d), DataType::Exact { precision: d.digits().max(d.scale), scale: d.scale, spelled: Spelled::Numeric })
         }
-        ValueSpecification::Literal(Literal::Approximate(f)) => (Value::Approx(*f), DataType::Approximate { precision: DOUBLE_PRECISION }),
+        ValueSpecification::Literal(Literal::Approximate(f)) => {
+            (Value::Approx(*f), DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float })
+        }
         // [ISO/IEC 9075:1992 §5.3 SR10, SR11] fixed, of its bits.
         ValueSpecification::Literal(Literal::Bit(b)) => (Value::Bits(b.clone()), DataType::Bit { length: b.len() }),
         // [ISO/IEC 9075:1992 §5.3 SR15-SR18] here of UTC: a statement's

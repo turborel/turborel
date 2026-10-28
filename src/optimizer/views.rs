@@ -111,6 +111,7 @@ mod tests {
     use crate::db::State;
     use crate::functions::{ScalarFunction, ScalarRef};
     use crate::logical::{Quantifier, Subquery, Truth};
+    use crate::value::Spelled;
     use crate::value::{ArithOp, CompOp, DataType, Decimal, Value};
 
     struct Identity;
@@ -119,7 +120,7 @@ mod tests {
             "ID"
         }
         fn return_type(&self, args: &[DataType]) -> crate::error::Result<DataType> {
-            Ok(args.first().copied().unwrap_or(DataType::Exact { precision: 1, scale: 0 }))
+            Ok(args.first().copied().unwrap_or(DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric }))
         }
         fn call(&self, args: &[Value]) -> crate::error::Result<Value> {
             Ok(args.first().cloned().unwrap_or(Value::Null))

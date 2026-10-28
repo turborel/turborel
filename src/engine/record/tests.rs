@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::value::Decimal;
+use crate::value::Spelled;
 
 fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))
@@ -12,10 +13,10 @@ fn exact(units: i128, scale: u32) -> Value {
 /// Ten columns of every type, so the null bitmap takes two bytes.
 fn types() -> Vec<DataType> {
     let mut t = vec![
-        DataType::Exact { precision: 18, scale: 0 },
+        DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric },
         DataType::Character { length: 5 },
-        DataType::Approximate { precision: 53 },
-        DataType::Exact { precision: 6, scale: 2 },
+        DataType::Approximate { precision: 53, spelled: Spelled::Float },
+        DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric },
         DataType::Character { length: 3 },
     ];
     t.extend(t.clone());
@@ -71,7 +72,7 @@ fn rows_read_back_as_written() {
 /// with SQLCODE -910.
 #[test]
 fn values_must_be_of_their_columns_types() {
-    let format = RecordFormat::new(&[DataType::Exact { precision: 6, scale: 2 }]);
+    let format = RecordFormat::new(&[DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric }]);
     let mut bytes = Vec::new();
     format.encode(&vec![exact(5, 0)], &mut bytes).unwrap();
     assert_eq!(format!("{:?}", format.column(&bytes, 0).unwrap()), format!("{:?}", exact(500, 2)));
@@ -105,7 +106,7 @@ fn spill(format: &RecordFormat, row: &Row, spill: Spill, store: &mut Vec<(usize,
 #[test]
 fn long_values_go_out_of_line() {
     let format = RecordFormat::new(&[
-        DataType::Exact { precision: 4, scale: 0 },
+        DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric },
         DataType::Character { length: 100 },
         DataType::Character { length: 100 },
     ]);
@@ -172,7 +173,8 @@ fn malformed_references_are_refused() {
 /// UTF-8 or longer than their column, or a column that does not exist.
 #[test]
 fn malformed_records_are_refused() {
-    let format = RecordFormat::new(&[DataType::Exact { precision: 4, scale: 0 }, DataType::Character { length: 2 }]);
+    let format =
+        RecordFormat::new(&[DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric }, DataType::Character { length: 2 }]);
     let mut bytes = Vec::new();
     format.encode(&vec![exact(7, 0), Value::Char("ab".into())], &mut bytes).unwrap();
     let corrupt = |b: &[u8]| format.decode(b).err().map(|e| e.code);

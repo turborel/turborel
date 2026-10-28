@@ -11,6 +11,7 @@ use turborel::value::{Bits, Decimal, Value};
 
 use super::fields::{CHARACTER, EXACT, NULL};
 use super::*;
+use turborel::value::Spelled;
 
 /// The kind and body of the one frame `bytes` should be, its header read
 /// with `max`; its body is all that follows the header.
@@ -119,9 +120,9 @@ fn edge_rows() -> Vec<Row> {
 /// One reply of every kind, with fields at their edges.
 fn every_reply() -> Vec<Reply> {
     let columns = vec![
-        Column { name: Some("K".into()), data_type: DataType::Exact { precision: 9, scale: 2 }, not_null: true },
+        Column { name: Some("K".into()), data_type: DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, not_null: true },
         Column { name: None, data_type: DataType::Character { length: 4 }, not_null: false },
-        Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53 }, not_null: false },
+        Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53, spelled: Spelled::Float }, not_null: false },
         Column { name: Some("B".into()), data_type: DataType::Bit { length: 10 }, not_null: false },
         Column { name: Some("V".into()), data_type: DataType::BitVarying { length: 3 }, not_null: false },
         Column { name: Some("D".into()), data_type: DataType::Date, not_null: false },
@@ -141,7 +142,7 @@ fn every_reply() -> Vec<Reply> {
         active: false,
     };
     let plain = Failure { sqlcode: -911, sqlstate: "TB911".into(), message: String::new(), rule: None, position: None, active: true };
-    let parameters = vec![ParameterType::Varying, ParameterType::Of(DataType::Exact { precision: 5, scale: 2 })];
+    let parameters = vec![ParameterType::Varying, ParameterType::Of(DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Numeric })];
     vec![
         Reply::Challenge(vec![0xff]),
         Reply::Ready {

@@ -517,6 +517,7 @@ mod tests {
     use crate::engine::rows::ROW_STORE;
     use crate::index::BTREE_METHOD;
     use crate::value::DataType;
+    use crate::value::Spelled;
 
     fn state() -> State {
         State::with_builtins(Box::new(MemoryCatalog::default()))
@@ -525,7 +526,7 @@ mod tests {
     fn table(engine: &str, unique: bool) -> TableDesc {
         let column = ColumnDesc {
             name: "K".into(),
-            data_type: DataType::Exact { precision: 10, scale: 0 },
+            data_type: DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric },
             not_null: true,
             default: None,
             domain: None,

@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use harness::{Bench, Case, on_threads, scatter};
 use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, Probe};
+use turborel::value::Spelled;
 use turborel::value::{CompOp, DataType, Decimal, Value};
 
 /// Entries per thread.
@@ -31,7 +32,7 @@ const FRAMES: usize = 32_768;
 /// Thread counts.
 const THREADS: [usize; 3] = [1, 4, 8];
 /// The indexed column: an INTEGER.
-const COLUMN: DataType = DataType::Exact { precision: 10, scale: 0 };
+const COLUMN: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
 
 fn main() {
     let bench = Bench::new("indexes");

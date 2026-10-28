@@ -494,7 +494,7 @@ file that implements it.
 | ISO/IEC 9075:1992 §6.6 SR4 the precision of EXTRACT's result | 5 digits, and of SECOND the scale of the datetime's precision more | `binder/datetime.rs` |
 | ISO/IEC 9075:1992 §9.2 GR3l, §4.6 a datetime's fraction stored in a type of fewer digits | truncated | `value/datetime.rs` |
 | ISO/IEC 9075:1992 §21.3.23, §21.3.24 the character set SQL_TEXT | form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
-| ISO/IEC 9075:1992 §21.3.5 how data types are described | an exact number as NUMERIC, radix 10; an approximate one as REAL (24 bits) or DOUBLE PRECISION (53), radix 2; a character string's octet length 4n | `system/definition.rs` |
+| ISO/IEC 9075:1992 §21.3.5 how data types are described | a number's by the name it was written with: INTEGER, SMALLINT, DECIMAL or NUMERIC, radix 10; REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53; a type computed as NUMERIC or FLOAT. The name is no part of the type: INTEGER and NUMERIC(10,0) are one type. A character string's octet length 4n | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs` |
 | ISO/IEC 9075:1992 §21.3.13 names of unnamed constraints | the table's name, the constraint's kind and a number: `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
 | Memory | MEMORY_BUDGET 256 MiB; a file database's buffer pool, STORAGE.POOL_BYTES, 32 MiB; the pool of an in-memory engine or index method 2 MiB; WORK_MEMORY, what an operator holds before it spills, 4 MiB, at least 64 KiB, a session's to set; SPILL_BATCH, the bytes a spilled run is written in, 16 KiB, from 4 KiB to 1 MiB (RULES.md D38) | `memory.rs`, `db/files.rs`, `engine.rs`, `spill.rs` |
 

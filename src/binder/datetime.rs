@@ -12,6 +12,7 @@ use crate::ast::{DatetimeFunction, ExtractField, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::Expr;
+use crate::value::Spelled;
 use crate::value::datetime::{Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, field_name};
 use crate::value::types::datetime::{cast_at, current};
@@ -169,7 +170,7 @@ impl ScalarFunction for Extract {
         "EXTRACT"
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Exact { precision: self.digits.saturating_add(self.scale), scale: self.scale })
+        Ok(DataType::Exact { precision: self.digits.saturating_add(self.scale), scale: self.scale, spelled: Spelled::Numeric })
     }
     /// [GR3a] The field's value; [GR3a ii] of TIMEZONE_HOUR and
     /// TIMEZONE_MINUTE, the hours and minutes of its displacement, of its

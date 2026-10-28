@@ -26,6 +26,7 @@ use turborel::engine::rows::{RowStore, TableFiles, TableOptions};
 use turborel::log::MemoryLog;
 use turborel::storage::{Row, StorageEngine, TableStorage};
 use turborel::txn::NO_TRANSACTION;
+use turborel::value::Spelled;
 use turborel::value::{DataType, Decimal, Value};
 
 /// Short rows per table, and frames: enough for the whole table.
@@ -87,9 +88,9 @@ fn table(bench: &Bench, long: usize) -> (RowStore, Arc<dyn TableStorage>) {
     let file = pool.add_pager(Arc::new(bench.pager("rows")));
     let store = RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default());
     let columns = [
-        ("K", DataType::Exact { precision: 18, scale: 0 }),
+        ("K", DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric }),
         ("NAME", DataType::Character { length: 40 }),
-        ("F", DataType::Approximate { precision: 53 }),
+        ("F", DataType::Approximate { precision: 53, spelled: Spelled::Float }),
         ("LAST", DataType::Character { length: u32::try_from(last_length(long)).unwrap() }),
     ];
     let desc = TableDesc {
