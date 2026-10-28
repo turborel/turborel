@@ -145,7 +145,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
 }
 
 /// [X3.135-1986 §5.11 GR2, GR3] "x op y".
-fn compared(x: &Value, op: CompOp, y: &Value) -> Truth {
+pub(super) fn compared(x: &Value, op: CompOp, y: &Value) -> Truth {
     compare(x, y).map_or(Truth::Unknown, |ord| truth(op.holds(ord)))
 }
 

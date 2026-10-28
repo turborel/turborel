@@ -46,7 +46,10 @@ fn both(db: &Database) -> Session {
 }
 
 /// Set functions, of no GROUP BY, read by batches where they can be.
-const QUERIES: [&str; 12] = [
+const QUERIES: [&str; 15] = [
+    "SELECT COUNT(*), SUM(N) FROM {t} WHERE G = 3 AND S IS NOT NULL AND 100 < K",
+    "SELECT COUNT(*) FROM {t} WHERE N >= 100 AND N < 200 AND (S = 's1' OR S = 's2')",
+    "SELECT COUNT(*) FROM {t} WHERE G <> 1 AND K > N",
     "SELECT COUNT(*) FROM {t}",
     "SELECT COUNT(*), COUNT(S), COUNT(N), SUM(N), AVG(N), MIN(N), MAX(N) FROM {t}",
     "SELECT MIN(S), MAX(S), MIN(K), MAX(K) FROM {t}",
@@ -81,7 +84,7 @@ fn set_functions_by_batch_answer_as_row_by_row() {
     let sums = rows(&a, "SELECT SUM(N), SUM(N + 0) FROM C").unwrap();
     let pair: Vec<&str> = sums[0].split(',').collect();
     assert_eq!(pair[0], pair[1], "by batch and row by row");
-    assert_eq!(columns[8], vec!["0,NULL".to_owned()], "no row: a count of 0 and a null sum");
+    assert_eq!(columns[11], vec!["0,NULL".to_owned()], "no row: a count of 0 and a null sum");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D29, serializability under batches:
@@ -172,4 +175,17 @@ fn datetimes_group_by_batch_as_row_by_row() {
         assert_eq!(by_batch, by_row, "{column}");
     }
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM (SELECT W FROM T GROUP BY W) X"), Ok(vec!["1".to_owned()]), "one instant");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, [X3.135-1986 §5.9 GR5]: a filter that
+/// can raise an error raises it by batch as row by row, judged whole a row
+/// at a time, not narrowed first by its conjuncts judged over vectors.
+#[test]
+fn a_filter_that_raises_raises_by_batch() {
+    let db = Database::new();
+    let a = both(&db);
+    for table in ["R", "C"] {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE K > 5000 AND 10 / (G - G) > 0");
+        assert_eq!(rows(&a, &sql).err(), Some(Code::Data), "{table}: division by zero");
+    }
 }

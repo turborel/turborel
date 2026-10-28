@@ -749,9 +749,11 @@ becomes a trait when it is.
   the others only of the rows it keeps, then the tree's rows. An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the scan reads or not at all, of a table's
-  scan, filtered or not, feeds them from the vectors (`exec/batch.rs`); a
-  filter not told to the scan judges the rows the scan's condition kept,
-  each made a row. Groups are held in the work area, given in the order
+  scan, filtered or not, feeds them from the vectors (`exec/batch.rs`). A
+  filter that cannot raise an error has its conjuncts comparing a column
+  with a constant judged over the vectors, and the rest of it judged of
+  the rows they keep, each made a row; one that can raise is judged whole
+  a row at a time, as row by row. Groups are held in the work area, given in the order
   their first rows came; past it, the aggregation is grouped row by row
   instead, from the start, as `exec/group.rs` spills and batches cannot
   yet. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)

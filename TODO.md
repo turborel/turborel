@@ -156,8 +156,9 @@ The registry, scopes and SET statements exist (D36). Still to do:
   (D31).
 - **Batch execution, further** (RULES.md D31): groups by batch past the
   work area are grouped again row by row, the table read twice, where they
-  should spill as `exec/group.rs` does; a filter not told to the scan is
-  judged a row at a time. To come: filters judged over vectors,
+  should spill as `exec/group.rs` does; of a filter, only conjuncts
+  comparing a column with a constant are judged over vectors. To come:
+  more of a filter judged so (IS NULL, LIKE, IN of constants),
   projections and joins of batches, and set functions fed a vector at a
   time (`Accumulator`).
 - **Index-only scans** need what is visible kept beside the index (as
