@@ -1,0 +1,22 @@
+[package]
+name = "turborel-client"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A client of the turborel server: a blocking connection over its wire protocol (RULES.md D42). No dependencies beyond the standard library and turborel's, but for TLS with the feature `tls`."
+autotests = false
+
+[dependencies]
+turborel = { path = ".." }
+turborel-protocol = { path = "../protocol" }
+# TLS (RULES.md D26, D42), only with the feature `tls`: without it, the
+# client has no dependency beyond the standard library and turborel.
+rustls = { version = "=0.23.46", default-features = false, features = ["aws_lc_rs", "prefer-post-quantum", "std", "tls12"], optional = true }
+
+[features]
+tls = ["dep:rustls"]
+
+[lints]
+workspace = true
+
+# Its tests against a server are the server's (server/test), which has both.

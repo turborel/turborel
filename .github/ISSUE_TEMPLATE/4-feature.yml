@@ -1,0 +1,45 @@
+name: Feature
+description: Something turborel should do that it does not.
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check TODO.md first: it may be planned already.
+        SQL starts from the standard's grammar. A feature the standards define is cited by its clause; an extension is proposed as BNF and agreed before it is built.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you need to do, and why turborel cannot do it today, or not well.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - SQL the standard defines
+        - SQL beyond the standard (an extension)
+        - Storage, transactions or recovery
+        - Server, protocol or client
+        - Configuration or operation
+        - A plug-in or extension point
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: |
+        For SQL the standard defines: the standard and clause, e.g. "ISO/IEC 9075:1992 §11.21".
+        For an extension: its grammar as BNF, and what it does.
+        For anything else: how it would work, and the settings or interfaces it would add.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What else would solve the problem, and why this is better.

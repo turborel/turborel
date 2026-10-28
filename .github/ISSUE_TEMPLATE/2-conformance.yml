@@ -1,0 +1,62 @@
+name: Conformance
+description: turborel departs from a rule of the SQL standard it implements.
+labels: ["conformance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check CONFORMANCE.md first. The choices a standard leaves to an implementation, and the limits listed there, are not departures.
+        turborel implements ANSI X3.135-1986 and ISO/IEC 9075:1992; where they differ, the newer wins.
+  - type: dropdown
+    id: standard
+    attributes:
+      label: Standard
+      options:
+        - ISO/IEC 9075:1992 (SQL-92)
+        - ANSI X3.135-1986 (SQL-86)
+        - A later part of ISO/IEC 9075
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: The rule
+      description: Its clause and number, as printed, e.g. "§11.36 GR3", "§7.9 SR4".
+    validations:
+      required: true
+  - type: textarea
+    id: text
+    attributes:
+      label: What the rule says
+      description: Quote the rule, and the grammar it applies to.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Statements
+      description: The smallest script, from an empty database, that shows the departure.
+      render: sql
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the rule requires
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What turborel does
+      description: Its result, or its SQLCODE, SQLSTATE and message.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: "`git rev-parse --short=12 HEAD`"
+    validations:
+      required: true

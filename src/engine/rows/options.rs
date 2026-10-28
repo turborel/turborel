@@ -1,0 +1,173 @@
+//! \[EXTENSION\] The row store's table options (RULES.md D41): how long a
+//! character value may be before it goes out of line, which needs a
+//! rebuild, and how its statistics are sampled and refreshed, which change
+//! in place. A table's options are those its descriptor sets
+//! (`TableDesc::options`), else those `RowStore::configure` gave it, else
+//! the store's defaults. Split from engine/rows.rs (RULES.md R-SIZE-2).
+
+use crate::catalog::TableDesc;
+use crate::settings::Kind;
+use crate::stats::Sampling;
+use crate::storage::{Rebuild, TableOption};
+use crate::value::{Decimal, Value};
+
+/// \[DESIGN\] The default share of a table's rows changed after which its
+/// statistics are gathered again: a tenth.
+pub const DEFAULT_REFRESH_FRACTION: f64 = 0.1;
+/// \[DESIGN\] The default changes past that share, so a small table's are
+/// not gathered on every change.
+pub const DEFAULT_REFRESH_ROWS: u64 = 50;
+
+/// \[DESIGN\] The default of TRANSACTIONS.TRACKED_ROWS: the rows of a
+/// transaction's reads, or writes, of a table tracked one by one, about
+/// a megabyte of them.
+pub const DEFAULT_TRACKED_ROWS: usize = 65_536;
+
+/// \[DESIGN\] The default of TRANSACTIONS.HELD_BYTES: the bytes of a
+/// transaction's changes to a table held in memory, a megabyte.
+pub const DEFAULT_HELD_BYTES: usize = 1 << 20;
+
+/// The names of the row store's table options.
+const OUT_OF_LINE: &str = "OUT_OF_LINE";
+const SAMPLE: &str = "STATISTICS.SAMPLE";
+const BUCKETS: &str = "STATISTICS.BUCKETS";
+const REFRESH_FRACTION: &str = "STATISTICS.REFRESH_FRACTION";
+const REFRESH_ROWS: &str = "STATISTICS.REFRESH_ROWS";
+const TRACKED_ROWS: &str = "TRANSACTIONS.TRACKED_ROWS";
+const HELD_BYTES: &str = "TRANSACTIONS.HELD_BYTES";
+
+/// \[DESIGN\] How a table of the row store keeps its rows (RULES.md D31), and
+/// its statistics.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TableOptions {
+    /// Character values longer than this, in bytes, go out of line; none
+    /// for a quarter of a page's capacity.
+    pub out_of_line: Option<usize>,
+    /// How its statistics are sampled and refreshed.
+    pub statistics: Refresh,
+    /// The rows of a transaction's reads, or writes, tracked one by one;
+    /// none for `DEFAULT_TRACKED_ROWS`.
+    pub tracked_rows: Option<usize>,
+    /// The bytes of a transaction's changes held in memory; none for
+    /// `DEFAULT_HELD_BYTES`.
+    pub held_bytes: Option<usize>,
+}
+
+/// What a table keeps of its transactions in memory: the rows of their
+/// reads or writes tracked one by one, and the bytes of their changes
+/// held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct Bounds {
+    pub(super) tracked: usize,
+    pub(super) held: usize,
+}
+
+impl TableOptions {
+    /// What a table of these options keeps of its transactions.
+    pub(super) fn bounds(&self) -> Bounds {
+        Bounds { tracked: self.tracked_rows.unwrap_or(DEFAULT_TRACKED_ROWS), held: self.held_bytes.unwrap_or(DEFAULT_HELD_BYTES) }
+    }
+}
+
+/// How a table's statistics are sampled, and when they are gathered again:
+/// once the changes since the last pass are more than `fraction` of the
+/// rows it found, and `rows` more.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Refresh {
+    /// How each column's values are sampled.
+    pub sampling: Sampling,
+    /// The share of the rows.
+    pub fraction: f64,
+    /// The changes past it.
+    pub rows: u64,
+}
+
+impl Default for Refresh {
+    fn default() -> Self {
+        Refresh { sampling: Sampling::default(), fraction: DEFAULT_REFRESH_FRACTION, rows: DEFAULT_REFRESH_ROWS }
+    }
+}
+
+fn whole(n: impl TryInto<i128>) -> Value {
+    Value::Exact(Decimal::new(n.try_into().unwrap_or(i128::MAX), 0))
+}
+
+/// The row store's table options, each defaulting to `defaults`'.
+pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
+    let stats = defaults.statistics;
+    vec![
+        TableOption::new(
+            (OUT_OF_LINE, Kind::Integer { min: 0, max: 1_i128 << 30_i32 }, whole(defaults.out_of_line.unwrap_or(0))),
+            Rebuild::Yes,
+            "Character values longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.",
+        ),
+        TableOption::new(
+            (SAMPLE, Kind::Integer { min: 1, max: 1_000_000 }, whole(stats.sampling.values)),
+            Rebuild::No,
+            "The most values of each column the statistics sample.",
+        ),
+        TableOption::new(
+            (BUCKETS, Kind::Integer { min: 1, max: 10_000 }, whole(stats.sampling.buckets)),
+            Rebuild::No,
+            "The buckets of each column's histogram.",
+        ),
+        TableOption::new(
+            (REFRESH_FRACTION, Kind::Number { min: 0.0_f64, max: 1_000.0_f64 }, Value::Approx(stats.fraction)),
+            Rebuild::No,
+            "The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.",
+        ),
+        TableOption::new(
+            (REFRESH_ROWS, Kind::Integer { min: 0, max: i128::from(i64::MAX) }, whole(stats.rows)),
+            Rebuild::No,
+            "The changes past STATISTICS.REFRESH_FRACTION of the rows after which the statistics are gathered again.",
+        ),
+        TableOption::new(
+            (
+                TRACKED_ROWS,
+                Kind::Integer { min: 1, max: i128::from(i64::MAX) },
+                whole(defaults.tracked_rows.unwrap_or(DEFAULT_TRACKED_ROWS)),
+            ),
+            Rebuild::No,
+            "The rows of a transaction's reads, or writes, of the table tracked one by one to check its commit; past them, every row is counted, which may refuse a commit that need not be.",
+        ),
+        TableOption::new(
+            (HELD_BYTES, Kind::Integer { min: 4 << 10, max: 1_i128 << 40_i32 }, whole(defaults.held_bytes.unwrap_or(DEFAULT_HELD_BYTES))),
+            Rebuild::No,
+            "The bytes of a transaction's changes to the table held in memory, to undo them and check others' reads by; past them, changes are written to a spill area, and a committed one's rows kept as each column's least and greatest value.",
+        ),
+    ]
+}
+
+/// The encodings, by commas, that `desc` sets its rows to pass through
+/// (the database's option `ENCODINGS`).
+pub(super) fn encodings_of(desc: &TableDesc) -> String {
+    crate::storage::encodings_of(&desc.options).to_owned()
+}
+
+/// `base`, how a table's statistics are kept, with the options `desc` sets.
+pub(super) fn refresh_of(desc: &TableDesc, base: Refresh) -> Refresh {
+    resolved(desc, TableOptions { statistics: base, ..TableOptions::default() }).statistics
+}
+
+/// What a table keeps of its transactions, as `desc` sets it, else `base`.
+pub(super) fn bounds_of(desc: &TableDesc, base: Bounds) -> Bounds {
+    resolved(desc, TableOptions { tracked_rows: Some(base.tracked), held_bytes: Some(base.held), ..TableOptions::default() }).bounds()
+}
+
+/// `base` with the options `desc` sets.
+pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
+    let set = |name: &str| desc.options.iter().find(|(n, _)| n == name).map(|(_, v)| v);
+    let count = |name: &str| set(name).and_then(|v| if let Value::Exact(d) = v { u64::try_from(d.units).ok() } else { None });
+    let size = |name: &str| count(name).and_then(|n| usize::try_from(n).ok());
+    let mut out = base;
+    if let Some(n) = size(OUT_OF_LINE) {
+        out.out_of_line = (n > 0).then_some(n);
+    }
+    out.statistics.sampling.values = size(SAMPLE).unwrap_or(base.statistics.sampling.values);
+    out.statistics.sampling.buckets = size(BUCKETS).unwrap_or(base.statistics.sampling.buckets);
+    out.statistics.fraction = set(REFRESH_FRACTION).and_then(Value::as_f64).unwrap_or(base.statistics.fraction);
+    out.statistics.rows = count(REFRESH_ROWS).unwrap_or(base.statistics.rows);
+    out.tracked_rows = size(TRACKED_ROWS).or(base.tracked_rows);
+    out.held_bytes = size(HELD_BYTES).or(base.held_bytes);
+    out
+}

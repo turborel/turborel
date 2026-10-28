@@ -1,0 +1,2 @@
+# Lint violations the baselines still hide, per file and lint (RULES.md R-DEV-2).
+# Counts may only fall. Update with `cargo xtask lint-audit --write` after removing violations.

@@ -1,0 +1,95 @@
+name: Bug
+description: Something fails, crashes, loses data, or returns a wrong result.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Try the latest `main` first, and search the issues: add to one that matches.
+        A vulnerability is never reported here: see SECURITY.md.
+        Put a severe impact first in the title: `[DATA LOSS]`, `[WRONG RESULT]`, `[CRASH]` or `[REGRESSION]`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happens
+      description: The impact first, in a short paragraph. Then one sentence that sums it up.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Data loss or damage, or a database that will not open
+        - Wrong result
+        - Crash, abort or hang
+        - Wrong error, SQLCODE or SQLSTATE
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: |
+        The smallest script, from an empty database, that shows it: the schema, the data and the statements.
+        With more than one session, number them and give the order of their statements.
+        Say whether the database is in memory or in a directory, and any crash or restart in between.
+      render: sql
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should happen, and why. Cite the standard's rule if it says, e.g. `[ISO/IEC 9075:1992 §7.9 GR1]`.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happens instead. Give the SQLCODE, SQLSTATE and message, and the panic message or backtrace if there is one.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression
+      description: If it worked before, give the last good commit and, if you ran `git bisect`, the first bad one.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: "`git rev-parse --short=12 HEAD`"
+    validations:
+      required: true
+  - type: dropdown
+    id: run
+    attributes:
+      label: How turborel ran
+      options:
+        - Embedded (the library)
+        - turboreld, the server
+        - The command-line client
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: The operating system and version, and the architecture, e.g. "Ubuntu 24.04, x86_64".
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings changed from their defaults
+      description: "`SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS WHERE VALUE_SOURCE <> 'DEFAULT'`, and the options of the tables involved (INFORMATION_SCHEMA.TABLE_OPTIONS)."
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Diagnostics, how often it happens, what you ruled out.

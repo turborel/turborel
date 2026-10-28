@@ -1,0 +1,4 @@
+# `cargo xtask <command>` builds and runs the project tool in xtask/
+# (RULES.md R-TOOL-1). Run `cargo xtask` with no command for the list.
+[alias]
+xtask = "run --quiet --package xtask --"

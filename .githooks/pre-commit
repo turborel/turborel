@@ -1,0 +1,6 @@
+#!/bin/sh
+# Every check a change must pass, before each commit (RULES.md R-PROC-1).
+# The checks live in `cargo xtask`; this file only hands over to it, because
+# git runs hooks as scripts (on Windows, through the sh Git for Windows ships).
+# Install with `cargo xtask install-hooks`.
+exec cargo xtask verify

@@ -1,0 +1,18 @@
+[package]
+name = "turborel-lz4"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "LZ4 compression for turborel, as an encoding (RULES.md D30, D48): files through STORAGE.ENCODINGS, a table's rows through its option ENCODINGS."
+autotests = false
+
+[dependencies]
+turborel = { path = ".." }
+# LZ4 blocks (RULES.md D48): safe Rust only, for encoding and decoding.
+lz4_flex = { version = "=0.14.0", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+
+[dev-dependencies]
+turborel-test-support = { path = "../support" }
+
+[lints]
+workspace = true

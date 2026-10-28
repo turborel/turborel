@@ -1,0 +1,155 @@
+[package]
+name = "turborel"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "The turborel relational database, as a library: its language SQL-86 and SQL-92 now, as one, extended standard by standard through SQL:2023; transactions that survive a crash; plug-ins. Embedded in a program, or served by turboreld."
+readme = "README.md"
+# The test and benchmark targets are declared below, in `test/` and `bench/`.
+autotests = false
+autobenches = false
+
+[dependencies]
+
+[dev-dependencies]
+turborel-test-support = { path = "support" }
+
+[lints]
+workspace = true
+
+# ONE integration test binary (RULES.md D5).
+[[test]]
+name = "integration"
+path = "test/integration/main.rs"
+
+# Benchmarks, on the harness in bench/harness.rs (RULES.md R-BENCH-1): `cargo xtask bench`.
+# `harness = false`: each has its own `main`, on that harness rather than libtest's.
+
+[[bench]]
+name = "scaling"
+path = "bench/scaling.rs"
+harness = false
+
+[[bench]]
+name = "hash"
+path = "bench/hash.rs"
+harness = false
+
+[[bench]]
+name = "hashtable"
+path = "bench/hashtable.rs"
+harness = false
+
+[[bench]]
+name = "indexes"
+path = "bench/indexes.rs"
+harness = false
+
+[[bench]]
+name = "kept"
+path = "bench/kept.rs"
+harness = false
+
+[[bench]]
+name = "spilling"
+path = "bench/spilling.rs"
+harness = false
+
+[[bench]]
+name = "blocks"
+path = "bench/blocks.rs"
+harness = false
+
+[[bench]]
+name = "pages"
+path = "bench/pages.rs"
+harness = false
+
+[[bench]]
+name = "buffer"
+path = "bench/buffer.rs"
+harness = false
+
+[[bench]]
+name = "log"
+path = "bench/log.rs"
+harness = false
+
+[[bench]]
+name = "tree"
+path = "bench/tree.rs"
+harness = false
+
+[[bench]]
+name = "joins"
+path = "bench/joins.rs"
+harness = false
+
+[[bench]]
+name = "rows"
+path = "bench/rows.rs"
+harness = false
+
+# `cargo xtask <command>` runs the project's checks (RULES.md R-TOOL-1).
+[workspace]
+members = ["xtask", "protocol", "client", "server", "turboreld", "support", "cli", "lz4", "aes"]
+
+# Overflow is a defect in every build, not only in debug builds, so release
+# behaves like the tested build (RULES.md R-NUM-1).
+[profile.release]
+overflow-checks = true
+
+# Lint levels are the rules of RULES.md. `cargo xtask verify` runs clippy with
+# `-D warnings`, so every "warn" here blocks a merge. Code that predates a rule
+# carries a file-level `#![expect(...)]` naming it (RULES.md R-DEV-2).
+[workspace.lints.rust]
+unsafe_code = "forbid"                                    # R-SAFE-1
+missing_docs = "warn"                                     # R-DOC-1
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+# `--cfg lint_audit` turns the lint baselines off, so `cargo xtask lint-audit` can
+# count what they hide (RULES.md R-DEV-2).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lint_audit)'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }              # R-STYLE-2
+must_use_candidate = "allow"                              # R-STYLE-2: too noisy to help
+doc_markdown = "allow"                                    # R-DOC-4: clause IDs like GR3a are cited as printed
+unnested_or_patterns = "allow"                            # R-CF-5 (D17): flat alternatives at the root
+# R-ERR: no panics in production code
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+get_unwrap = "warn"
+unwrap_in_result = "warn"
+panic_in_result_fn = "warn"
+fallible_impl_from = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+exit = "warn"
+# R-NUM: arithmetic and conversions
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+integer_division = "warn"
+default_numeric_fallback = "warn"
+lossy_float_literal = "warn"
+# R-CF: control flow that stays testable to MC/DC
+wildcard_enum_match_arm = "warn"
+cognitive_complexity = "warn"
+excessive_nesting = "warn"
+# R-STYLE: hygiene
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+shadow_unrelated = "warn"
+mem_forget = "warn"
+mod_module_files = "warn"
+allow_attributes_without_reason = "warn"                  # R-DEV-1
+
+[[bench]]
+name = "cursors"
+path = "bench/cursors.rs"
+harness = false

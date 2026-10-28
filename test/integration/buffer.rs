@@ -1,0 +1,276 @@
+//! The buffer pool (RULES.md D30): pages cached, written back on flush and
+//! on eviction, frames pinned while held, block files cached for reading, a
+//! failed write-back or load leaving the pool consistent, and threads using
+//! the pool at once.
+
+use std::path::Path;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use turborel::disk::block::{BlockFile, BlockOptions};
+use turborel::disk::buffer::{BufferPool, Clock, FileId};
+use turborel::disk::encoding::Pipeline;
+use turborel::disk::io::{Durability, FileSystem, OsFileSystem};
+use turborel::disk::pager::{PageId, Pager};
+use turborel::error::{Code, Result};
+
+use crate::common::{Scratch, crc32c};
+use crate::faults::{FaultyFs, Op, Rule};
+
+fn pager(fs: &dyn FileSystem, path: &Path) -> Arc<Pager> {
+    Arc::new(Pager::create(fs, path, crc32c(), Pipeline::none(), 4096).unwrap())
+}
+
+fn pool(frames: usize) -> BufferPool {
+    BufferPool::new(frames, Box::new(Clock::new(frames))).unwrap()
+}
+
+/// A new page of `file` holding `content`; its number.
+fn put(pool: &BufferPool, file: FileId, content: &[u8]) -> PageId {
+    let (id, mut page) = pool.new_page(file).unwrap();
+    page.extend_from_slice(content);
+    id
+}
+
+fn get(pool: &BufferPool, file: FileId, id: PageId) -> Result<Vec<u8>> {
+    Ok(pool.read(file, id.0)?.to_vec())
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: pages made and written
+/// through the pool read back from it without reading the file (hits);
+/// `flush` writes the dirty ones to the pager, which then reads them; a
+/// page written again is dirty again.
+#[test]
+fn pages_are_cached_and_written_back_on_flush() {
+    let scratch = Scratch::new("buffer-cache");
+    let pager = pager(&OsFileSystem, &scratch.path("p"));
+    let pool = pool(4);
+    let file = pool.add_pager(Arc::clone(&pager));
+    let ids: Vec<PageId> = (0..3).map(|n| put(&pool, file, format!("page {n}").as_bytes())).collect();
+    assert_eq!(get(&pool, file, ids[1]).unwrap(), b"page 1");
+    let counts = pool.counts();
+    assert_eq!((counts.hits, counts.misses, counts.write_backs), (1, 0, 0));
+    assert_eq!(pager.counts().writes, 0, "nothing written yet");
+    pool.flush().unwrap();
+    assert_eq!(pool.counts().write_backs, 3);
+    let mut content = Vec::new();
+    pager.read(ids[2], &mut content).unwrap();
+    assert_eq!(content, b"page 2");
+    pool.flush().unwrap();
+    assert_eq!(pool.counts().write_backs, 3, "nothing dirty");
+    let mut page = pool.write(file, ids[0]).unwrap();
+    assert_eq!(page.len(), 6, "a page held for writing reads as it is");
+    page.extend_from_slice(b", again");
+    drop(page);
+    pool.sync(file, Durability::Data).unwrap();
+    pager.read(ids[0], &mut content).unwrap();
+    assert_eq!((content.as_slice(), pool.frames()), (&b"page 0, again"[..], 4));
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: with more pages than
+/// frames, frames are evicted, dirty pages written back first, and pages
+/// read again on a miss come back as written.
+#[test]
+fn eviction_writes_back_dirty_pages() {
+    let scratch = Scratch::new("buffer-evict");
+    let pool = pool(2);
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let ids: Vec<PageId> = (0..6).map(|n| put(&pool, file, &vec![n; 5000])).collect();
+    for (n, id) in (0..6).zip(&ids) {
+        assert_eq!(get(&pool, file, *id).unwrap(), vec![n; 5000], "page {n}");
+    }
+    let counts = pool.counts();
+    assert!(counts.evictions >= 4 && counts.write_backs >= 4 && counts.misses >= 4, "{counts:?}");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: a held page pins its frame:
+/// with every frame held, another page cannot be read (SQLCODE -910) until
+/// one is released; a held page cannot be freed; a freed page leaves the
+/// pool and its file.
+#[test]
+fn held_pages_pin_their_frames() {
+    let scratch = Scratch::new("buffer-pins");
+    let pool = pool(1);
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let a = put(&pool, file, b"a");
+    let b = put(&pool, file, b"b");
+    let held = pool.read(file, a.0).unwrap();
+    assert_eq!(&*held, b"a");
+    assert_eq!(pool.read(file, b.0).err().map(|e| e.code), Some(Code::Api), "the only frame is held");
+    assert_eq!(pool.free(file, a).err().map(|e| e.code), Some(Code::Api), "held");
+    drop(held);
+    assert_eq!(get(&pool, file, b).unwrap(), b"b");
+    pool.free(file, b).unwrap();
+    assert_eq!(pool.read(file, b.0).err().map(|e| e.code), Some(Code::Api), "freed in the pager");
+    assert_eq!(get(&pool, file, a).unwrap(), b"a");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: a block file's blocks are
+/// cached for reading, a second read being a hit; they cannot be written
+/// through the pool, nor pages made in a block file (SQLCODE -910); an
+/// unregistered file and a pool without frames are refused.
+#[test]
+fn block_files_are_cached_for_reading() {
+    let scratch = Scratch::new("buffer-blocks");
+    let blocks =
+        Arc::new(BlockFile::create(&OsFileSystem, &scratch.path("b"), crc32c(), Pipeline::none(), BlockOptions::default()).unwrap());
+    let first = blocks.append(b"first block").unwrap();
+    let second = blocks.append(b"second block").unwrap();
+    let pool = pool(4);
+    let file = pool.add_blocks(Arc::clone(&blocks));
+    assert_eq!(&*pool.read(file, second.0).unwrap(), b"second block");
+    assert_eq!(&*pool.read(file, first.0).unwrap(), b"first block");
+    assert_eq!(&*pool.read(file, second.0).unwrap(), b"second block");
+    assert_eq!((pool.counts().misses, pool.counts().hits), (2, 1));
+    assert_eq!(blocks.counts().reads, 2, "the hit did not read the file");
+    assert_eq!(pool.write(file, PageId(first.0)).err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(pool.new_page(file).err().map(|e| e.code), Some(Code::Api));
+    pool.sync(file, Durability::Data).unwrap();
+    assert_eq!(pool.read(FileId(9), 0).err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(BufferPool::new(0, Box::new(Clock::new(0))).err().map(|e| e.code), Some(Code::Api));
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: when writing back an
+/// evicted dirty page fails, the read that needed its frame fails with
+/// that error, and the page stays in the pool, dirty, with its content, to
+/// be written back later; when a page cannot be read (corrupt), the read
+/// fails and the pool stays usable.
+#[test]
+fn failed_write_backs_and_loads_leave_the_pool_consistent() {
+    let scratch = Scratch::new("buffer-failures");
+    let path = scratch.path("p");
+    let (fs, faults) = FaultyFs::with_faults();
+    let pager = pager(&*fs, &path);
+    let pool = pool(1);
+    let file = pool.add_pager(Arc::clone(&pager));
+    let b = put(&pool, file, b"b");
+    pool.flush().unwrap();
+    let a = put(&pool, file, b"a, not yet written");
+    faults.inject(Rule::fail(Op::Write).at_or_past(4096));
+    assert!(pool.read(file, b.0).err().unwrap().msg.contains("injected"));
+    assert_eq!(get(&pool, file, a).unwrap(), b"a, not yet written", "still in the pool");
+    faults.clear();
+    assert_eq!(get(&pool, file, b).unwrap(), b"b", "a written back, b read");
+    let mut content = Vec::new();
+    pager.read(a, &mut content).unwrap();
+    assert_eq!(content, b"a, not yet written");
+    // Corrupt page b on disk, and evict it.
+    let mut bytes = std::fs::read(&path).unwrap();
+    let at = usize::try_from((b.0 + 1) * 4096 + 30).unwrap();
+    bytes[at] ^= 0xFF;
+    std::fs::write(&path, bytes).unwrap();
+    assert_eq!(get(&pool, file, a).unwrap(), b"a, not yet written");
+    assert_eq!(get(&pool, file, b).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(get(&pool, file, a).unwrap(), b"a, not yet written", "the pool still works");
+}
+
+/// Threads using the pool at once, and pages each owns.
+const THREADS: u8 = 4;
+const PAGES_EACH: u8 = 8;
+const ROUNDS: u8 = 20;
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: threads reading and
+/// writing their own pages through a pool smaller than all their pages, at
+/// once, see their own writes, and every page ends as last written.
+#[test]
+fn threads_share_a_small_pool() {
+    let scratch = Scratch::new("buffer-threads");
+    let pool = Arc::new(pool(6));
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let workers: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let pool = Arc::clone(&pool);
+            thread::spawn(move || {
+                let ids: Vec<PageId> = (0..PAGES_EACH).map(|_| put(&pool, file, &[t, 0])).collect();
+                for round in 1..=ROUNDS {
+                    for &id in &ids {
+                        let mut page = pool.write(file, id).unwrap();
+                        assert_eq!(page.as_slice(), &[t, round - 1]);
+                        page[1] = round;
+                    }
+                }
+                ids
+            })
+        })
+        .collect();
+    let all: Vec<(u8, Vec<PageId>)> = workers.into_iter().enumerate().map(|(t, w)| (u8::try_from(t).unwrap(), w.join().unwrap())).collect();
+    for (t, ids) in all {
+        for id in ids {
+            assert_eq!(get(&pool, file, id).unwrap(), vec![t, ROUNDS]);
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: a dirty page whose frame
+/// another thread takes is found again only once it is written back, so a
+/// thread wanting it while the write-back runs waits for it and reads what
+/// was last written, not the file's older copy.
+#[test]
+fn a_page_being_written_back_is_waited_for() {
+    let scratch = Scratch::new("buffer-write-back-race");
+    let (fs, faults) = FaultyFs::with_faults();
+    let pool = Arc::new(pool(3));
+    let file = pool.add_pager(pager(&*fs, &scratch.path("p")));
+    let (p, q, s) = (put(&pool, file, b"old"), put(&pool, file, b"q"), put(&pool, file, b"s"));
+    pool.flush().unwrap();
+    pool.write(file, p).unwrap().copy_from_slice(b"new");
+    // Q and S held, so P's frame is the one a new page takes; its write-back held up.
+    let (held_q, held_s) = (pool.read(file, q.0).unwrap(), pool.read(file, s.0).unwrap());
+    let offset = (p.0 + 1) * 4096;
+    faults.inject(Rule::delay(Duration::from_millis(300)).at_or_past(offset).below(offset + 4096).times(1));
+    let taker = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || pool.new_page(file).map(|(id, _)| id).unwrap())
+    };
+    while faults.injected() == 0 {
+        thread::yield_now();
+    }
+    drop(held_s);
+    assert_eq!(get(&pool, file, p).unwrap(), b"new", "not the file's older copy");
+    drop(held_q);
+    taker.join().unwrap();
+    assert_eq!(get(&pool, file, p).unwrap(), b"new");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: `flush` returns only once
+/// a dirty page another thread is writing back, to take its frame, is in
+/// the file; `free` of such a page waits for it too.
+#[test]
+fn flush_waits_for_write_backs_under_way() {
+    let scratch = Scratch::new("buffer-flush-race");
+    let (fs, faults) = FaultyFs::with_faults();
+    let pager = pager(&*fs, &scratch.path("p"));
+    let pool = Arc::new(pool(1));
+    let file = pool.add_pager(Arc::clone(&pager));
+    let p = put(&pool, file, b"old");
+    pool.flush().unwrap();
+    pool.write(file, p).unwrap().copy_from_slice(b"new");
+    let offset = (p.0 + 1) * 4096;
+    faults.inject(Rule::delay(Duration::from_millis(300)).at_or_past(offset).below(offset + 4096).times(1));
+    let taker = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || drop(pool.new_page(file).unwrap()))
+    };
+    while faults.injected() == 0 {
+        thread::yield_now();
+    }
+    pool.flush().unwrap();
+    let mut content = Vec::new();
+    pager.read(p, &mut content).unwrap();
+    assert_eq!(content, b"new");
+    taker.join().unwrap();
+    // A page freed while it is written back is freed once it is.
+    pool.write(file, p).unwrap().copy_from_slice(b"end");
+    faults.inject(Rule::delay(Duration::from_millis(300)).at_or_past(offset).below(offset + 4096).times(1));
+    let taker = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || drop(pool.new_page(file).unwrap()))
+    };
+    while faults.injected() == 1 {
+        thread::yield_now();
+    }
+    pool.free(file, p).unwrap();
+    taker.join().unwrap();
+    assert_eq!(get(&pool, file, p).err().map(|e| e.code), Some(Code::Api), "freed");
+}

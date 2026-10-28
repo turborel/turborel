@@ -1,0 +1,53 @@
+name: Performance
+description: Something is slower than it was, or than it should be, or takes too much memory or disk.
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: Numbers, not impressions. Put `[REGRESSION]` first in the title if an earlier commit was faster.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What is slow
+      description: The workload, and what it costs (time, throughput, memory, disk), against what you expected and why.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The schema, how much data and how it is made, and the statements timed, with how many sessions at once.
+      render: sql
+    validations:
+      required: true
+  - type: textarea
+    id: measured
+    attributes:
+      label: Measurements
+      description: |
+        What you measured and how, with several runs.
+        If a benchmark shows it: `cargo xtask bench NAME --save before` on the good commit, then `--compare before` on the bad one.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression
+      description: If it was faster before, give the last good commit and, if you ran `git bisect`, the first bad one.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: "`git rev-parse --short=12 HEAD`"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        The platform, processor, cores, memory and storage, and how turborel ran (embedded, turboreld or the client).
+        Give the settings changed from their defaults: `SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS WHERE VALUE_SOURCE <> 'DEFAULT'`.
+    validations:
+      required: true

@@ -1,0 +1,14 @@
+# Thresholds for RULES.md R-SIZE and R-CF. Change them only by changing RULES.md.
+too-many-lines-threshold = 50        # R-SIZE-1: lines of code per function
+cognitive-complexity-threshold = 15  # R-CF-2
+excessive-nesting-threshold = 5      # R-CF-2
+too-many-arguments-threshold = 5     # R-SIZE-3
+max-fn-params-bools = 1              # R-SIZE-3
+
+# Unit tests (#[test] and #[cfg(test)]) may panic: a panic is a test failure (R-TEST-4).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true

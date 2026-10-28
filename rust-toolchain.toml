@@ -1,0 +1,6 @@
+# The toolchain is a configuration item (RULES.md R-CM-1): every build, test and
+# coverage run uses exactly this version. Change it in its own reviewed commit.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt", "llvm-tools"]
+profile = "minimal"

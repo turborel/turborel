@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Project checks for turborel, run as `cargo xtask <command>` (RULES.md R-TOOL-1)"
+publish = false
+
+# No dependencies: the tool is std-only, so it is simple to review and to
+# qualify as a verification tool (RULES.md R-TOOL-2).
+[dependencies]
+
+[lints]
+workspace = true

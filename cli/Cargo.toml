@@ -1,0 +1,39 @@
+[package]
+name = "turborel-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "turborel, the command-line client of the turborel server: SQL typed or read from files, run over a connection, results streamed as tables (RULES.md D46)."
+# The test target is declared below, in `test/`.
+autotests = false
+
+[dependencies]
+turborel = { path = ".." }
+turborel-client = { path = "../client", features = ["tls"] }
+# Ctrl-C, to cancel the statement running (RULES.md D46): tokio's signals,
+# on a runtime of one thread.
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "signal"] }
+# A password typed at a terminal without its echo (RULES.md D46).
+rpassword = "=7.5.4"
+
+[dev-dependencies]
+turborel-test-support = { path = "../support", features = ["tls"] }
+turborel-server = { path = "../server" }
+
+[lints]
+workspace = true
+
+# Its options and its work, as a library, so tests reach all of it.
+[lib]
+path = "src/lib.rs"
+
+# The program: `turborel --help`. Its documentation is the library's.
+[[bin]]
+name = "turborel"
+path = "src/main.rs"
+doc = false
+
+# ONE integration test binary (RULES.md D5).
+[[test]]
+name = "cli"
+path = "test/main.rs"
