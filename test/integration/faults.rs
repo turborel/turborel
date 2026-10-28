@@ -70,7 +70,8 @@ impl Rule {
         Rule { effect: Effect::Delay(pause), ..Rule::fail(Op::Write) }
     }
 
-    /// Only on paths containing `part`.
+    /// Only on paths containing `part`, its directories parted by `/` on
+    /// every platform.
     pub fn on(mut self, part: &str) -> Rule {
         self.path = Some(part.to_owned());
         self
@@ -132,7 +133,8 @@ impl Faults {
     /// counts the match, and is used up when its faults are.
     fn fires(&self, op: Op, path: &Path, offset: u64) -> Option<Effect> {
         let mut rules = self.rules.lock().unwrap();
-        let shown = path.to_string_lossy();
+        // Windows parts directories by `\`: a rule's `/` matches either.
+        let shown = path.to_string_lossy().replace('\\', "/");
         let index = rules.iter().position(|r| {
             r.op == op && (r.from_offset..r.below).contains(&offset) && r.path.as_deref().is_none_or(|p| shown.contains(p))
         })?;
