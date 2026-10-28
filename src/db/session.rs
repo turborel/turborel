@@ -257,19 +257,25 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Those of `as_owner`; SQLCODE -103 if there is no such setting; -301
-    /// if the value is not of its kind or range; those of
-    /// `Database::set_setting`.
+    /// Those of `as_owner`; SQLCODE -103 if there is no such setting, or
+    /// it is fixed once the database is created; -301 if the value is not
+    /// of its kind or range, or names what is not registered; the other
+    /// errors of `Database::set_setting`.
     pub(super) fn set_database(&self, st: &State, name: &str, value: Option<&ValueSpecification>, params: &Params) -> Result<()> {
         self.as_owner("SET DATABASE")?;
         let settings = &st.settings;
         let Some(definition) = settings.key(name).and_then(|k| settings.definition(k)) else {
             return fail(Code::SyntaxRule, format!("[DESIGN] there is no setting {name}"));
         };
+        if definition.effect == crate::settings::Effect::Creation && st.created {
+            return fail(Code::SyntaxRule, format!("[DESIGN] {} is fixed when the database is created", definition.name));
+        }
         let Some(given) = value else { return self.db.reset_setting(&definition.name) };
         let (v, _) = binder::value_specification(given, &self.auth(), params)?;
         crate::settings::accepted(&definition.name, &definition.kind, &v).map_err(|e| SqlError { code: Code::Data, ..e })?;
-        self.db.set_setting(&definition.name, &v)
+        // A value the database refuses, as a name nothing is registered
+        // under, is the statement's data exception, not the API's misuse.
+        self.db.set_setting(&definition.name, &v).map_err(|e| if e.code == Code::Api { SqlError { code: Code::Data, ..e } } else { e })
     }
 
     /// \[DESIGN\] What cancels this session's statements (RULES.md D44): a

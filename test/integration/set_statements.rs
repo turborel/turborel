@@ -138,3 +138,19 @@ fn set_schema_qualifies_unqualified_names_16_2() {
     s.execute("SET SCHEMA S", &mut p).unwrap();
     assert_eq!(rows(&s, "SELECT K FROM T"), expected(&["7"]), "a delimited identifier, by a parameter");
 }
+
+/// Verifies: [EXTENSION]; [DESIGN] RULES.md D36: a value a setting does
+/// not take is refused (SQLCODE -301), saying what it takes as
+/// INFORMATION_SCHEMA.SETTINGS shows it, and the value as SQL writes it;
+/// so is a name nothing is registered under, in SET DATABASE.
+#[test]
+fn a_value_refused_is_told_in_words() {
+    let db = turborel::db::Database::new();
+    db.create_user("A", b"").unwrap();
+    let s = db.session("A");
+    let code = s.run("SET DATABASE DEFAULT_ENGINE = 'nope'").err().map(|e| e.code);
+    assert_eq!(code, Some(Code::Data), "not the API's misuse");
+    let told = |sql: &str| s.execute(sql, &mut Params::new()).unwrap_err().msg;
+    assert_eq!(told("SET LOCK_WAIT = 'SOMETIMES'"), "LOCK_WAIT takes ONE OF NO_WAIT, WAIT, not 'SOMETIMES'");
+    assert_eq!(told("SET WORK_MEMORY = 'big'"), "WORK_MEMORY takes INTEGER FROM 65536 TO 9223372036854775807, not 'big'");
+}

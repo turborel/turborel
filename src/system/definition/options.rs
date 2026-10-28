@@ -12,7 +12,6 @@ use std::sync::Arc;
 use super::{Columns, defined, ids, long};
 use crate::catalog::{ColumnDesc, IndexDesc, TableDesc};
 use crate::storage::{Rebuild, Row, TableOption, option_value};
-use crate::system::settings::kind_of;
 use crate::system::{Rows, Seen, SystemTable, catalog_name, text, yes};
 use crate::value::Value;
 
@@ -147,7 +146,7 @@ fn described(declared: &[(String, TableOption)], set: &[(String, Value)], (own, 
             Rebuild::No => "IN PLACE",
             Rebuild::Yes => rebuilt,
         };
-        let row = vec![text(by), value, text(source), long(&o.default.to_string()), text(&kind_of(&o.kind)), text(changed), long(&o.doc)];
+        let row = vec![text(by), value, text(source), long(&o.default.to_string()), text(&o.kind.described()), text(changed), long(&o.doc)];
         named.push((o.name.clone(), row));
     }
     for (n, v) in set.iter().filter(|(n, _)| !options.iter().any(|o| o.name == *n)) {

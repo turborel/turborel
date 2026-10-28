@@ -137,7 +137,7 @@ fn settings_fixed_at_creation_stay_fixed() {
     db.create_user("OWNER", b"x").unwrap();
     db.set_owner("OWNER").unwrap();
     let refused = db.session("OWNER").run("SET DATABASE LOG.SEGMENT_SIZE = 8192").err().map(|e| e.code);
-    assert_eq!(refused, Some(Code::Api), "in SQL too");
+    assert_eq!(refused, Some(Code::SyntaxRule), "in SQL too, a Syntax Rule's");
     db.close().unwrap();
     drop(db);
     let given = |size: i128| open(&dir, |db| db.set_setting("STORAGE.PAGE_SIZE", &number(size)).unwrap());

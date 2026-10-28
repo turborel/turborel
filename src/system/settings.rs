@@ -6,7 +6,7 @@
 use super::{Seen, SystemTable, identifier, text, text_column, yes};
 use crate::catalog::ColumnDesc;
 use crate::error::Result;
-use crate::settings::{Effect, Kind, Source};
+use crate::settings::{Effect, Source};
 use crate::storage::Row;
 use crate::value::Value;
 
@@ -66,28 +66,12 @@ impl SystemTable for Settings {
                     shown(&l.value),
                     text(source),
                     shown(&d.default),
-                    shown(&Value::Char(kind_of(&d.kind))),
+                    shown(&Value::Char(d.kind.described())),
                     yes(d.per_session),
                     text(effect),
                     text(&d.doc),
                 ]
             })
             .collect())
-    }
-}
-
-/// The values a setting of `kind` takes, as the SETTINGS table shows them.
-pub(super) fn kind_of(kind: &Kind) -> String {
-    match kind {
-        Kind::Integer { min, max } => format!("INTEGER FROM {min} TO {max}"),
-        Kind::Number { min, max } => format!("NUMBER FROM {} TO {}", Value::Approx(*min), Value::Approx(*max)),
-        Kind::Choice(words) => format!("ONE OF {}", words.join(", ")),
-        Kind::Engine => "A STORAGE ENGINE".to_owned(),
-        Kind::IndexMethod => "AN INDEX METHOD".to_owned(),
-        Kind::HashFunction => "A HASH FUNCTION".to_owned(),
-        Kind::Encodings => "ENCODINGS, BY COMMAS".to_owned(),
-        Kind::Identifier => "AN IDENTIFIER".to_owned(),
-        Kind::Displacement => "A TIME ZONE DISPLACEMENT FROM -12:59 TO +13:00".to_owned(),
-        Kind::Text { max } => format!("TEXT OF AT MOST {max} CHARACTERS"),
     }
 }
