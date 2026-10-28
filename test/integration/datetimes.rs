@@ -103,6 +103,14 @@ fn datetimes_are_assigned_9_2() {
     assert_eq!(exec(&a, "INSERT INTO T (H) VALUES (1)").err(), Some(Code::SyntaxRule), "a number");
     a.run("INSERT INTO T (Z) VALUES (TIMESTAMP '2024-06-01 00:00:00')").unwrap();
     assert_eq!(rows(&a, "SELECT Z FROM T WHERE D IS NULL").unwrap(), ["2024-06-01 00:00:00.000000+00:00"], "of the session's displacement");
+    // [§6.1 SR5] one read from a table too, in the session's displacement.
+    a.run("SET TIME_ZONE = '+02:00'").unwrap();
+    a.run("INSERT INTO T (D, Z) SELECT DATE '2000-01-01', S FROM T WHERE S IS NOT NULL").unwrap();
+    a.run("UPDATE T SET Z = S WHERE D = DATE '2024-01-02'").unwrap();
+    assert_eq!(
+        sorted(&a, "SELECT Z FROM T WHERE S IS NOT NULL OR D = DATE '2000-01-01'"),
+        ["2024-01-02 05:04:05.678000+02:00", "2024-01-02 05:04:05.678000+02:00"]
+    );
     a.commit().unwrap();
 }
 

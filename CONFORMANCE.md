@@ -518,10 +518,10 @@ SQLCODE -900 (RULES.md D18).
 - **A time or timestamp without time zone** [ISO/IEC 9075:1992 §4.5.1,
   §6.1 SR5]: SQL-92 keeps it in UTC, the session's displacement implied,
   so it is kept so, and a value retrieved shows in the displacement of the
-  session that retrieves it (RULES.md D54). Such a value read from a table
-  and stored in a column WITH TIME ZONE takes the displacement +00:00, and
-  a datetime literal in a `<default clause>` without one is of UTC [§5.3
-  SR18]: no session is at hand where either is made.
+  session that retrieves it (RULES.md D54); stored in a column WITH TIME
+  ZONE, it takes that displacement. A datetime literal in a `<default
+  clause>` without one is of UTC [§5.3 SR18]: a definition is read again
+  where no session is.
 - **One datetime type** [ISO/IEC 9075:1992 §9.3 SR3e, §11.5 SR3c]: "the
   same datetime type" is read as of the same fields, WITH TIME ZONE or
   not, as store assignment takes either [§9.2 SR2]: the result of CASE, a

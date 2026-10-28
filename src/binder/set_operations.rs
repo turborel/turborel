@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use super::case::set_type;
+use super::datetime::{stored, takes_zone};
 use super::expression::dynamic_of;
 use super::query::{Nesting, bind_query};
 use super::statements::{INSERT_RULE, check_assignment};
@@ -49,7 +50,23 @@ pub(super) fn bind_query_expression(cx: Context<'_>, q: &QueryExpression, nestin
 ///
 /// It breaks a rule of its query.
 pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[ObjectColumn]) -> Result<Bound> {
-    bind_query_expression(cx, query, &Nesting::Source { columns })
+    let now = cx.now;
+    let bound = bind_query_expression(cx, query, &Nesting::Source { columns })?;
+    // A time or timestamp without time zone, of the session's displacement
+    // as a column WITH TIME ZONE takes it [§6.1 SR5].
+    let wanted =
+        columns.len() == bound.columns.len() && bound.columns.iter().zip(columns).any(|(c, o)| takes_zone(c.data_type, o.desc.data_type));
+    if !wanted {
+        return Ok(bound);
+    }
+    let exprs = bound
+        .columns
+        .iter()
+        .zip(columns)
+        .enumerate()
+        .map(|(i, (c, o))| stored(Expr::Column(i), c.data_type, o.desc.data_type, now))
+        .collect();
+    Ok(Bound { plan: LogicalPlan::Project { exprs, input: Box::new(bound.plan) }, columns: bound.columns })
 }
 
 /// The type of each element of a row of a `<table value constructor>`, or

@@ -94,6 +94,22 @@ pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
     }
 }
 
+/// [ISO/IEC 9075:1992 §9.2 GR3l, §6.1 SR5] `e`, of type `from`, as stored
+/// in a column of type `to`: a time or timestamp without time zone, in one
+/// WITH TIME ZONE, of the session's displacement, `now`'s, which it
+/// implies; any other as it is.
+pub(super) fn stored(e: Expr, from: DataType, to: DataType, now: Now) -> Expr {
+    if takes_zone(from, to) { shown(e, from, now) } else { e }
+}
+
+/// Whether a value of `from`, stored in a column of `to`, takes the
+/// session's displacement: a time or timestamp without time zone, in one
+/// WITH TIME ZONE.
+pub(super) fn takes_zone(from: DataType, to: DataType) -> bool {
+    matches!(from, DataType::Time { zoned: false, .. } | DataType::Timestamp { zoned: false, .. })
+        && matches!(to, DataType::Time { zoned: true, .. } | DataType::Timestamp { zoned: true, .. })
+}
+
 /// [ISO/IEC 9075:1992 §6.10 SR4] Whether CAST takes a value of `from` to
 /// `to`, either a datetime type: from and to a character string, a
 /// datetime of the same fields, a date and a timestamp, a time and a

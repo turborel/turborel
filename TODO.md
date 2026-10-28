@@ -105,10 +105,11 @@ RULES.md when its design settles.
   session's default one** is refused (SQLCODE -900, RULES.md D47): its
   stored texts are read again in its own schema, so its names would need
   qualifying there.
-- **Datetimes, further** (RULES.md D54): a time or timestamp without time
-  zone read from a table and stored in a column WITH TIME ZONE takes
-  +00:00, not the session's displacement, and a default's datetime literal
-  is of UTC; both want the session at hand where they are made.
+- **Datetimes, further** (RULES.md D54): a default's datetime literal
+  without a displacement is of UTC, not the defining session's [§5.3
+  SR18]: a schema definition is logged as its text and read again in
+  recovery, where no session is, so the displacement would have to be
+  logged with it.
 - **The Information Schema's domains as CHARACTER VARYING** [§21.2.27,
   §21.2.28]: SQL_IDENTIFIER and CHARACTER_DATA are CHARACTER, of fixed
   length, from before CHARACTER VARYING was taken; as it is now, they can

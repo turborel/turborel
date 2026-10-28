@@ -235,7 +235,7 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
             // [ISO/IEC 9075:1992 §17.6 GR5w] a `?` takes its object column's type.
             let (e, t) = binder.typed(v, ParameterType::Of(col.data_type), Scope::Rows(rules.set_function))?;
             check_assignment(col, t, rules.assign)?;
-            Some(e)
+            Some(super::datetime::stored(e, t, col.data_type, binder.now))
         }
     };
     Ok((position, value))
