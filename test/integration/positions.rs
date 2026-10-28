@@ -65,17 +65,19 @@ fn query_errors_are_placed_at_their_construct() {
 /// that change data or define them are placed at what they are about: a
 /// SET clause's unknown column [X3.135-1986 §8.12 SR4], an inserted
 /// column [§8.7 SR3] or value [§8.7 SR6], the table changed [§5.4 SR5], a
-/// column defined twice [§6.3 SR1], a SELECT INTO target [§8.10 SR4].
+/// column defined twice [§6.3 SR1], a SELECT INTO target [§8.10 SR4], the
+/// table altered [ISO/IEC 9075:1992 §11.10 SR2].
 #[test]
 fn statement_errors_are_placed_at_their_construct() {
     let db = setup();
-    let cases: [(&str, &str, usize); 6] = [
+    let cases: [(&str, &str, usize); 7] = [
         ("UPDATE T SET AMT = 1, NOPE = 2", "NOPE", 0),
         ("INSERT INTO T (ID, NOPE) VALUES (1, 2)", "NOPE", 0),
         ("INSERT INTO T VALUES (9, 1, 1, 1)", "1", 0),
         ("DELETE FROM NOPE", "NOPE", 0),
         ("SELECT NAME INTO N FROM T WHERE ID = 1", "N F", 0),
         ("UPDATE T SET NAME = 1", "NAME", 0),
+        ("ALTER TABLE NOPE ADD COLUMN X INTEGER", "NOPE", 0),
     ];
     for (sql, part, nth) in cases {
         let (code, pos) = placed(&db, sql);

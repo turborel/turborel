@@ -11,8 +11,8 @@
 use super::{Made, Reshape};
 use crate::ast::{AlterAction, Literal, OptionValue, TableStorage};
 use crate::catalog::{QualifiedName, TableDesc};
-use crate::db::State;
 use crate::db::ddl::Dropped;
+use crate::db::{State, rule};
 use crate::error::{At, Code, Result, SqlError};
 use crate::settings::Kind;
 use crate::storage::{TableOption, chosen, needs_rebuild};
@@ -128,6 +128,12 @@ impl State {
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
         let AlterAction::Storage(storage) = action else { return Err(SqlError::new(Code::Api, "[DESIGN] not a storage action")) };
         let desc = self.base_table(qn)?;
+        // As CREATE TABLE refuses them of one (`db/schema.rs`).
+        if desc.temporary.is_some() {
+            return Err(rule(format!(
+                "[DESIGN] {qn} is temporary: its rows are each session's, in memory, so it names no engine or options"
+            )));
+        }
         let mut next = self.stored(&desc, storage)?;
         let declared = self.options_of(&next.engine);
         if next.engine == desc.engine && !needs_rebuild(&declared, &desc.options, &next.options) {

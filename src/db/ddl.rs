@@ -31,7 +31,7 @@ use crate::ast::{AlterAction, TableName};
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, TemporaryKind};
 use crate::db::Completion;
-use crate::error::{Code, Result, SqlError, fail};
+use crate::error::{At, Code, Result, SqlError, fail};
 use crate::index::Index;
 use crate::log::record::Change;
 use crate::parser::Parser;
@@ -208,7 +208,7 @@ impl Session {
         if !self.owns_schema(st, &qn.auth) {
             return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.10 AR1] {qn} is in a schema {} does not own", self.auth()));
         }
-        let temporary = st.base_table(&qn)?.temporary;
+        let temporary = st.base_table(&qn).or_at(table.at)?.temporary;
         if temporary.is_some_and(|t| t.kind == TemporaryKind::Declared) {
             return fail(
                 Code::SyntaxRule,

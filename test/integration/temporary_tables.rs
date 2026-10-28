@@ -107,7 +107,7 @@ fn which_tables_a_temporary_table_refers_to_11_8() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §10.3 SR2, §11.3 SR3, §21.3.8]
 /// privileges on a temporary table are granted as ALL PRIVILEGES alone; ON
 /// COMMIT is of a temporary table alone; [DESIGN] one names no engine or
-/// options, nor is given an index; the
+/// options, by CREATE TABLE or ALTER TABLE, nor is given an index; the
 /// Information Schema gives each table's kind; one is dropped as any is.
 #[test]
 fn what_a_temporary_table_refuses_11_3() {
@@ -117,6 +117,8 @@ fn what_a_temporary_table_refuses_11_3() {
     s.run("GRANT ALL PRIVILEGES ON L TO B").unwrap();
     assert_eq!(exec(&s, "CREATE TABLE X (K INTEGER) ON COMMIT DELETE ROWS").err(), Some(Code::SyntaxRule), "§11.3 SR3");
     assert_eq!(exec(&s, "CREATE GLOBAL TEMPORARY TABLE X (K INTEGER) USING rowstore").err(), Some(Code::SyntaxRule));
+    assert_eq!(exec(&s, "ALTER TABLE L SET (OUT_OF_LINE = 1)").err(), Some(Code::SyntaxRule), "SET");
+    assert_eq!(exec(&s, "ALTER TABLE L USING rowstore").err(), Some(Code::SyntaxRule), "USING");
     s.commit().unwrap();
     assert_eq!(db.create_index("L_K", "A.L", &["K"], "btree").map_err(|e| e.code), Err(Code::SyntaxRule));
     let kinds = "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'A' ORDER BY TABLE_NAME";

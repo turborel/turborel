@@ -229,7 +229,9 @@ impl Parser {
         if self.accept_kw(kw::CASCADE) {
             return Ok(DropBehavior::Cascade);
         }
-        self.expect_kw(kw::RESTRICT)?;
-        Ok(DropBehavior::Restrict)
+        if self.accept_kw(kw::RESTRICT) {
+            return Ok(DropBehavior::Restrict);
+        }
+        Err(self.syntax("expected CASCADE or RESTRICT"))
     }
 }

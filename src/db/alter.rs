@@ -231,8 +231,8 @@ impl State {
         if let Some(desc) = self.catalog.table(qn) {
             return Ok(desc.clone());
         }
-        let what = if self.catalog.view(qn).is_some() { "a view, not a base table [SR4]" } else { "not defined [SR2]" };
-        Err(rule(format!("[ISO/IEC 9075:1992 §11.10] {qn} is {what}")))
+        let (what, clause) = if self.catalog.view(qn).is_some() { ("a view, not a base table", "SR4") } else { ("not defined", "SR2") };
+        Err(rule(format!("[ISO/IEC 9075:1992 §11.10 {clause}] {qn} is {what}")))
     }
 
     /// The indexes of the table, `next` now, made again on its new

@@ -45,7 +45,7 @@ impl Session {
             IndexStatement::Create { name, table, columns, storage } => {
                 let qn = qualify(table, &self.default_schema());
                 self.owns(st, &qn)?;
-                let desc = st.base_table(&qn)?;
+                let desc = st.base_table(&qn).or_at(table.at)?;
                 for (column, at) in columns {
                     if desc.column(column).is_none() {
                         return Err(refused(&format!("{qn} has no column {column}"))).or_at(*at);
