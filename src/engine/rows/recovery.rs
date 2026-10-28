@@ -11,17 +11,22 @@ use std::ops::Bound;
 use std::sync::atomic::Ordering;
 
 use super::version::{Maker, Version};
-use super::{RowTable, key};
+use super::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::{Row, RowId};
 
 impl RowTable {
-    /// The rows whose newest version is not a deletion.
+    /// The rows whose newest version is not a deletion: the tree's, and
+    /// the frozen rows no entry of the tree stands for.
     pub(super) fn count_newest(&self) -> Result<usize> {
-        let mut rows = 0_usize;
+        let directory = self.frozen.directory()?;
+        let mut rows = usize::try_from(directory.rows()).unwrap_or(usize::MAX);
         for entry in self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward) {
-            let (_, newest) = entry?;
+            let (k, newest) = entry?;
+            if directory.holding(row_id(&k)?).is_some() {
+                rows = rows.saturating_sub(1);
+            }
             if !Version::parse(&newest)?.deleted {
                 rows = rows.saturating_add(1);
             }
@@ -57,16 +62,37 @@ impl RowTable {
             None => self.tree.insert(&k, &version).map(|_| None),
         });
         let old = written.inspect_err(|_| self.free(&pages))?;
-        if old.as_ref().is_none_or(|o| Version::parse(o).is_ok_and(|v| v.deleted)) {
+        // A frozen row with no entry was there already.
+        let was = match &old {
+            Some(o) => Version::parse(o).is_ok_and(|v| !v.deleted),
+            None => self.frozen_row(id, Some(&[]))?.is_some(),
+        };
+        if !was {
             self.live.fetch_add(1, Ordering::AcqRel);
         }
         Ok(old)
     }
 
-    /// Removes row `id`; its version, if it had one.
+    /// Removes row `id`; its version, if it had one. A frozen row keeps a
+    /// deletion committed before every snapshot (`rows/frozen.rs`).
     fn remove_newest(&self, id: RowId) -> Result<Option<Vec<u8>>> {
-        let old = self.tree.delete(&key(id))?;
-        if old.as_ref().is_some_and(|o| Version::parse(o).is_ok_and(|v| !v.deleted)) {
+        let k = key(id);
+        let frozen = self.frozen_row(id, Some(&[]))?.is_some();
+        let old = if frozen {
+            let deletion = Version { maker: Maker::Committed(0), deleted: true, older: None, record: &[] }.encode();
+            let old = self.tree.replace(&k, &deletion)?;
+            if old.is_none() {
+                self.tree.insert(&k, &deletion)?;
+            }
+            old
+        } else {
+            self.tree.delete(&k)?
+        };
+        let was = match &old {
+            Some(o) => Version::parse(o).is_ok_and(|v| !v.deleted),
+            None => frozen,
+        };
+        if was {
             self.live.fetch_sub(1, Ordering::AcqRel);
         }
         Ok(old)

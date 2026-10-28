@@ -7,6 +7,7 @@ use std::iter;
 use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
+use super::frozen::{Merged, Merging};
 use super::mvcc::Read;
 use super::{RowTable, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
@@ -43,6 +44,16 @@ impl RowTable {
         // The condition's columns are decoded too, to check it.
         let mut columns = columns.to_vec();
         columns.extend(condition.iter().flat_map(|c| c.columns.iter().copied()));
+        // Its groups as they are before its tree is read (`rows/frozen.rs`).
+        let directory = match self.frozen.directory() {
+            Ok(directory) => directory,
+            Err(e) => return Box::new(iter::once(Err(e))),
+        };
+        // A table that freezes rows reads through the directory it holds,
+        // so the entries of rows frozen as it reads are kept for it.
+        if self.frozen.columns().is_some() || !directory.groups.is_empty() {
+            return Box::new(Merged::new(Arc::clone(&self), (Merging::Seen(reader), directory), columns, condition));
+        }
         Box::new(Self::entries(&self).filter_map(move |entry| {
             let found = entry.and_then(|(key, newest)| {
                 let id = row_id(&key)?;

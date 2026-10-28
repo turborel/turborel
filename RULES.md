@@ -75,7 +75,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D28 | Transactions may wait for locks; deadlocks are refused |
 | D29 | Engines own concurrency, at logical timestamps |
 | D30 | A storage foundation of independent components |
-| D31 | The built-in engine is a row store, its layout to be pluggable |
+| D31 | The built-in engine keeps rows, or columns |
 | D34 | Index methods |
 | D35 | The optimizer and planner |
 | D36 | Settings |
@@ -694,12 +694,15 @@ work for the heuristics above it.
 reused; mmap leaves the order of writes to the operating system, which
 breaks write-ahead logging.
 
-**D31. The built-in engine is a row store, its layout to be pluggable.**
+**D31. The built-in engine keeps rows, or columns.**
 Whole engines are the extension point; inside the built-in one, a table's
-layout is to be pluggable, sharing one value codec, record format,
-statistics module and buffer pool. The row store comes first, and is the
-only layout yet: the trait is drawn once a second exists, a column store
-and then a hybrid (PAX).
+option LAYOUT chooses how it keeps its rows, every layout sharing one
+value codec, record format, statistics module, buffer pool, MVCC and
+row ids. ROWS keeps each row's values together; COLUMNS keeps rows
+written so, then freezes them into groups of each column's values
+together (below). A hybrid (PAX), each page holding a group's rows'
+columns apart, is the next layout, and the format of frozen groups
+becomes a trait when it is.
 - A table is a B-link tree (Lehman and Yao, 1981) keyed by a logical 64-bit
   row id, given in blocks per thread. Long values are kept out of line.
   A leaf split keeps as its high key the shortest that parts its halves
@@ -721,9 +724,34 @@ and then a hybrid (PAX).
 - Scans are given the columns needed, and simple filters.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity.
+- COLUMNS: the tree is the table's delta, every row written there as in
+  ROWS. Once COLUMNS.FREEZE_ROWS rows past the last group are committed
+  before every snapshot (and COLUMNS.FREEZE_DELAY seconds ago), the end of
+  a transaction freezes up to COLUMNS.GROUP_ROWS of them, 2^16 by default,
+  into a group (`engine/columns`): its row ids, and each column's values
+  in chunks of a page each, each chunk's least and greatest values and
+  nulls kept (zone maps), every page sealed by the table's ENCODINGS, its
+  number the context. Groups are immutable, their row ids' ranges apart,
+  found through a directory the meta page names. A row's newest state is
+  its entry in the tree if it has one, else its group's values, which
+  every reader sees: so a frozen row changed is written as any row is,
+  over a version holding its frozen values, and a deletion of one stays in
+  the tree. A scan merges the tree and the groups in row id order, a
+  group read a vector (2048 rows) at a time, only the chunks a condition
+  on one column may match. The entries of rows frozen leave the tree once
+  no reader holds the directory from before their group; a checkpoint is
+  not captured during a freeze. The log is unchanged, of whole rows, and
+  recovery writes them to the tree.
 *Why:* a row store suits SQL's point reads, updates and cursors, and is
 the base the other layouts build on. Logical row ids stay stable, so
-indexes never need rewriting for them.
+indexes never need rewriting for them, frozen or not. Columns suit scans
+of a few columns of many rows; keeping new rows as rows keeps writes and
+key lookups as fast as in ROWS, the design of SQL Server's deltastore,
+HyPer's Data Blocks and TiFlash's delta tree. Measured on 200,000 rows of
+16 columns in memory (`bench/analytics.rs`): COUNT(*) 4.1 times as fast,
+a SUM of one column 3.5, a filter of 1% by a column in the rows' order
+6.2, one row fetched by key 2.9 times as slow, as each column is a page
+of its own.
 
 **D34. Index methods.** An index method is a plug-in that creates indexes
 and says which probes they answer. Two are built in, both in pages through

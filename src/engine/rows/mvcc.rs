@@ -314,12 +314,6 @@ impl RowTable {
             bytes = self.undo.read(at)?;
         }
     }
-
-    /// The record of row `id` that `reader` sees.
-    pub(super) fn visible(&self, id: RowId, reader: Reader) -> Result<Option<Vec<u8>>> {
-        let Some(newest) = self.tree.get(&key(id))? else { return Ok(None) };
-        self.visible_from(newest, reader)
-    }
 }
 
 impl RowTable {
@@ -347,7 +341,15 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
-        let Some(newest) = self.tree.get(&k)? else { return no_row(id) };
+        let (newest, thawed) = match self.tree.get(&k)? {
+            Some(newest) => (newest, None),
+            // A frozen row: changed over a version holding its frozen
+            // values (`rows/frozen.rs`), its entry inserted.
+            None => match self.frozen_version(id)? {
+                Some((version, pages)) => (version, Some(pages)),
+                None => return no_row(id),
+            },
+        };
         let (older, appended) = {
             let version = Version::parse(&newest)?;
             match self.maker(&version) {
@@ -373,10 +375,12 @@ impl RowTable {
             }
         };
         let new = Version { maker: Maker::Open(tx), deleted: record.is_none(), older, record: record.unwrap_or_default() }.encode();
-        if !self.tree.replace_if(&k, &newest, &new)? {
+        let written = if thawed.is_some() { self.tree.insert(&k, &new)? } else { self.tree.replace_if(&k, &newest, &new)? };
+        if !written {
             if let Some(at) = appended {
                 self.undo.release(at);
             }
+            self.free(&thawed.unwrap_or_default());
             return Err(conflict());
         }
         let before = appended.is_none().then_some(newest);
@@ -385,14 +389,21 @@ impl RowTable {
     }
 
     /// Outside any transaction: replaces row `id`'s newest version with
-    /// `record`, committed, or removes it; frees the values it held.
+    /// `record`, committed, or removes it; frees the values it held. A
+    /// frozen row keeps its deletion (`rows/frozen.rs`).
     fn write_latest(&self, id: RowId, record: Option<&[u8]>) -> Result<()> {
         let k = key(id);
-        let old = match record {
-            Some(record) => self.tree.replace(&k, &Version { maker: Maker::Committed(0), deleted: false, older: None, record }.encode())?,
-            None => self.tree.delete(&k)?,
+        let frozen = self.frozen_holds(id);
+        let version =
+            Version { maker: Maker::Committed(0), deleted: record.is_none(), older: None, record: record.unwrap_or_default() }.encode();
+        let old = if record.is_some() || frozen { self.tree.replace(&k, &version)? } else { self.tree.delete(&k)? };
+        let Some(old) = old else {
+            if self.frozen_row(id, Some(&[]))?.is_none() {
+                return no_row(id);
+            }
+            self.tree.insert(&k, &version)?;
+            return Ok(());
         };
-        let Some(old) = old else { return no_row(id) };
         self.free_values(id, Version::parse(&old)?.record);
         Ok(())
     }
@@ -466,7 +477,7 @@ impl RowTable {
 impl RowTable {
     /// The newest state of row `id`, for UNIQUE.
     pub(super) fn newest_of(&self, tx: TxId, id: RowId) -> Result<Newest> {
-        let Some(newest) = self.tree.get(&key(id))? else { return Ok(Newest { row: None, pending: None }) };
+        let Some(newest) = self.tree.get(&key(id))? else { return Ok(Newest { row: self.frozen_row(id, None)?, pending: None }) };
         let version = Version::parse(&newest)?;
         let decoded = |record: &[u8], deleted: bool| if deleted { Ok(None) } else { self.decode(id, record, None).map(Some) };
         let other = match self.maker(&version) {

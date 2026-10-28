@@ -104,7 +104,9 @@ impl RowTable {
                 let k = key(*id);
                 let Some(newest) = self.tree.get(&k)? else { return Ok(()) };
                 let version = Version::parse(&newest)?;
-                if version.deleted && self.maker(&version) == Maker::Committed(at) {
+                // A frozen row's deletion is kept, so its group's row is not
+                // seen again (`rows/frozen.rs`).
+                if version.deleted && self.maker(&version) == Maker::Committed(at) && !self.frozen_holds(*id) {
                     self.tree.delete_if(&k, &newest)?;
                 }
                 Ok(())

@@ -101,8 +101,17 @@ them. See [Temporary Tables](../../user/09-temporary-tables.md).
 
 **Storage** *(extension)*. USING names the engine that keeps the table's
 rows, else the database's setting DEFAULT_ENGINE; WITH sets the engine's
-options for the table. INFORMATION_SCHEMA.TABLE_OPTIONS shows them. A
-temporary table names neither.
+options for the table. INFORMATION_SCHEMA.TABLE_OPTIONS shows them, and
+[Appendix G](../../appendix/g-table-options.md) lists the built-in
+engine's. A temporary table names neither.
+
+**Layout** *(extension)*. The built-in engine's option LAYOUT says how
+the table keeps its rows: ROWS, the default, each row's values together;
+COLUMNS, each column's values together, once rows are frozen into
+groups. A table that is read in bulk, a few of its columns at a time,
+reads faster in columns; one whose rows are mostly fetched by key, and
+changed, in rows. Its rows, and what queries of it give, are the same in
+either; see [Appendix G](../../appendix/g-table-options.md).
 
 CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
 
@@ -181,18 +190,41 @@ OK
 
 NOT NULL is a CHECK constraint, as the Information Schema shows it.
 
+Of the COLUMNS layout, its rows frozen a minute after they are committed
+at the soonest *(extension)*:
+
+```sql
+CREATE TABLE SALES (ID INTEGER PRIMARY KEY, REGION CHAR(8), AMOUNT DECIMAL(9,2))
+    WITH (LAYOUT = 'COLUMNS', COLUMNS.FREEZE_DELAY = 60);
+COMMIT;
+SELECT OPTION_NAME, OPTION_VALUE FROM INFORMATION_SCHEMA.TABLE_OPTIONS
+    WHERE TABLE_NAME = 'SALES' AND VALUE_SOURCE = 'TABLE' ORDER BY 1;
+```
+
+```
+OK
+OK
+ OPTION_NAME                                                  | OPTION_VALUE
+--------------------------------------------------------------+--------------------------------------------------------------
+ COLUMNS.FREEZE_DELAY                                         | 60
+ LAYOUT                                                       | COLUMNS
+(2 rows)
+```
+
 Tables refused:
 
 ```sql
 CREATE TABLE T3 (A INTEGER PRIMARY KEY, B INTEGER PRIMARY KEY);
 CREATE TABLE T5 (A INTEGER REFERENCES EMPLOYEES (NAME));
 CREATE TABLE T9 (A INTEGER DEFAULT 'x');
+CREATE TABLE T7 (A INTEGER) WITH (LAYOUT = 'PAGES');
 ```
 
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T3 has more than one PRIMARY KEY [ISO/IEC 9075:1992 §11.7 SR5, SR6] (at character 13)
 turborel: SQLCODE -103 (SQLSTATE 2A000): the columns referenced are not those of a unique constraint of ANN.EMPLOYEES [ISO/IEC 9075:1992 §11.8 SR2a] (at character 27)
 turborel: SQLCODE -103 (SQLSTATE 2A000): the default is not a <literal> of INTEGER [ISO/IEC 9075:1992 §11.5 SR3a] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 2A000): LAYOUT takes ONE OF ROWS, COLUMNS, not 'PAGES' (at character 34)
 ```
 
 ## STANDARD

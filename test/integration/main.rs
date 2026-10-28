@@ -43,6 +43,7 @@ mod buffer;
 mod cancel;
 mod checkpoints;
 mod checks;
+mod column_layout;
 mod constraints;
 mod contracts;
 mod creation;

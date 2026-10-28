@@ -36,6 +36,7 @@
 
 mod discard;
 mod files;
+mod frozen;
 mod ids;
 mod meta;
 mod mvcc;
@@ -46,6 +47,7 @@ mod sealing;
 mod stats;
 mod store;
 mod undo;
+mod values;
 mod version;
 
 use std::collections::HashMap;
@@ -53,6 +55,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
+use frozen::{Frozen, Merged, Merging};
 use ids::{BLOCK, IdBlocks};
 use ids::{key, no_row, row_id};
 pub use meta::TABLE_FORMAT;
@@ -63,7 +66,7 @@ use sealing::Sealing;
 use stats::Gathered;
 pub use undo::UndoStore;
 
-use super::record::{RecordFormat, Reference, Spill};
+use super::record::{RecordFormat, Spill};
 use super::tree::BLinkTree;
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
@@ -76,7 +79,7 @@ use crate::memory::{Host, MemoryBudget};
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
-use crate::sync::{lock, lock_builtin};
+use crate::sync::{lock, lock_builtin, write};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 use crate::value::DataType;
 
@@ -144,7 +147,7 @@ impl StorageEngine for RowStore {
         let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type).collect();
         let files = self.files()?;
         files.durable.fetch_max(durable, Ordering::AcqRel);
-        Ok(Some(Box::new(RowTable::open(&files, meta, &types, options)?.sealed(self.sealing(desc)))))
+        Ok(Some(Box::new(RowTable::open_with(&files, (meta, &types), options, self.sealing(desc))?)))
     }
 
     /// Writes back every page and the pager's free list; a file shadowed
@@ -153,6 +156,8 @@ impl StorageEngine for RowStore {
     /// now.
     fn checkpoint(&self, at: Lsn) -> Result<()> {
         let files = self.files()?;
+        // No table's rows half frozen (`rows/frozen.rs`).
+        let _frozen = write(&files.freezes)?;
         if let Some(shadows) = &files.shadows {
             // What is written now is kept in memory: no I/O with writers held.
             shadows.hold()?;
@@ -208,6 +213,10 @@ pub struct RowTable {
     discarded: AtomicBool,
     /// How its rows are sealed (`rows/sealing.rs`).
     sealing: Sealing,
+    /// Its frozen row groups, of the COLUMNS layout (`rows/frozen.rs`).
+    frozen: Frozen,
+    /// Held shared while it freezes rows (`TableFiles::freezes`).
+    freezes: Arc<RwLock<()>>,
 }
 
 /// What a table's meta page names, made or read.
@@ -229,7 +238,7 @@ impl RowTable {
         let tree = BLinkTree::create(Arc::clone(&files.pool), files.file)?;
         let meta = {
             let (meta, mut page) = files.pool.new_page(files.file)?;
-            *page = meta_content(tree.meta(), RESERVE);
+            *page = meta_content(tree.meta(), RESERVE, 0);
             meta
         };
         RowTable::with(files, Found { meta, tree, reserved: RESERVE }, types, options)
@@ -244,12 +253,19 @@ impl RowTable {
     /// SQLCODE -916 if `meta` is not a table's meta page, or a row cannot
     /// be read; as `create`.
     pub fn open(files: &TableFiles, meta: PageId, types: &[DataType], options: TableOptions) -> Result<RowTable> {
-        let (tree_meta, reserved) = {
+        RowTable::open_with(files, (meta, types), options, Sealing::plain())
+    }
+
+    /// As `open`, its rows sealed as `sealing` says, its frozen row groups'
+    /// pages too, which are read as it opens.
+    fn open_with(files: &TableFiles, (meta, types): (PageId, &[DataType]), options: TableOptions, sealing: Sealing) -> Result<RowTable> {
+        let (tree_meta, reserved, directory) = {
             let page = files.pool.read(files.file, meta.0)?;
             parse_meta(&page).ok_or_else(|| corrupt(&format!("page {} is not a table's meta page of this format", meta.0)))?
         };
         let tree = BLinkTree::open(Arc::clone(&files.pool), files.file, tree_meta)?;
-        let table = RowTable::with(files, Found { meta, tree, reserved }, types, options)?;
+        let table = RowTable::with(files, Found { meta, tree, reserved }, types, options)?.sealed(sealing);
+        table.load_directory(directory)?;
         table.live.store(table.count_newest()?, Ordering::Release);
         table.gathered.gather_when_asked();
         Ok(table)
@@ -278,6 +294,8 @@ impl RowTable {
             durable: Arc::clone(&files.durable),
             discarded: AtomicBool::new(false),
             sealing: Sealing::plain(),
+            frozen: Frozen::new(options.columns),
+            freezes: Arc::clone(&files.freezes),
         })
     }
 
@@ -315,84 +333,17 @@ impl RowTable {
             return Ok(());
         }
         let reserved = id.saturating_add(RESERVE);
-        *self.pool.write(self.file, self.meta)? = meta_content(self.tree.meta(), reserved);
+        *self.pool.write(self.file, self.meta)? = meta_content(self.tree.meta(), reserved, self.frozen.stored());
         self.reserved.store(reserved, Ordering::Release);
         Ok(())
     }
 
-    /// The record of row `id`, holding `row`, and the pages of its values
-    /// out of line; on failure, none is left allocated.
-    fn encode(&self, id: RowId, row: &Row) -> Result<(Vec<u8>, Vec<PageId>)> {
-        let mut pages = Vec::new();
-        let mut record = Vec::new();
-        // A record sealed takes more: room is kept for it.
-        let spill = Spill { most: self.spill.most.saturating_sub(self.sealing.overhead()), ..self.spill };
-        let encoded = self.format.encode_spilling(row, spill, &mut record, |column, bytes| {
-            let page = self.put_value(id, column, bytes)?;
-            pages.push(page);
-            Ok(page.0)
-        });
-        match encoded.and_then(|()| self.sealing.record(id, record)) {
-            Ok(stored) => Ok((stored, pages)),
-            Err(e) => {
-                self.free(&pages);
-                Err(e)
-            }
-        }
-    }
-
-    /// Keeps `bytes`, column `column`'s value of row `id`, in a new page.
-    fn put_value(&self, id: RowId, column: usize, bytes: &[u8]) -> Result<PageId> {
-        let column = u32::try_from(column).map_err(|_| SqlError::new(Code::Unsupported, "[DESIGN] a table has too many columns"))?;
-        let mut stored = Vec::with_capacity(OWNER.saturating_add(bytes.len()).saturating_add(1));
-        stored.extend_from_slice(&id.to_le_bytes());
-        stored.extend_from_slice(&column.to_le_bytes());
-        self.sealing.value(id, bytes, &mut stored)?;
-        let (page, mut content) = self.pool.new_page(self.file)?;
-        *content = stored;
-        Ok(page)
-    }
-
-    /// The value `reference` names, of row `id`: refused if its page is not
-    /// that row's column's.
-    fn get_value(&self, id: RowId, reference: Reference) -> Result<Vec<u8>> {
-        let page = self.pool.read(self.file, reference.at)?;
-        let owner = u64::try_from(reference.column).ok().map(|c| (id, c));
-        let found = page.get(..KEY).zip(page.get(KEY..OWNER)).and_then(|(row, column)| {
-            let row = RowId::from_le_bytes(<[u8; KEY]>::try_from(row).ok()?);
-            let column = u32::from_le_bytes(<[u8; 4]>::try_from(column).ok()?);
-            Some((row, u64::from(column)))
-        });
-        if found.is_none() || found != owner {
-            return Err(corrupt(&format!("page {} does not hold column {} of row {id}", reference.at, reference.column)));
-        }
-        Ok(self.sealing.plain_value(id, page.get(OWNER..).unwrap_or_default())?.into_owned())
-    }
-
-    /// Frees `pages`. One that cannot be freed is left: a change already
-    /// made never fails for it.
-    fn free(&self, pages: &[PageId]) {
-        for &page in pages {
-            let _ = self.pool.free(self.file, page);
-        }
-    }
-
-    /// Frees the pages of the values `record`, row `id`'s, keeps out of line.
-    fn free_values(&self, id: RowId, record: &[u8]) {
-        if let Ok(references) = self.sealing.plain_record(id, record).and_then(|plain| self.format.outside(&plain)) {
-            let pages: Vec<PageId> = references.iter().map(|r| PageId(r.at)).collect();
-            self.free(&pages);
-        }
-    }
-
-    /// The row `record` holds, row `id`'s, with `columns` decoded, or all.
-    fn decode(&self, id: RowId, record: &[u8], columns: Option<&[usize]>) -> Result<Row> {
-        let mut fetch = |reference: Reference| self.get_value(id, reference);
-        let record = self.sealing.plain_record(id, record)?;
-        match columns {
-            Some(columns) => self.format.decode_columns_with(&record, columns, &mut fetch),
-            None => self.format.decode_with(&record, &mut fetch),
-        }
+    /// Writes the meta page as the table is now.
+    fn write_meta(&self) -> Result<()> {
+        let _reserving = lock(&self.reserving)?;
+        *self.pool.write(self.file, self.meta)? =
+            meta_content(self.tree.meta(), self.reserved.load(Ordering::Acquire), self.frozen.stored());
+        Ok(())
     }
 }
 
@@ -453,7 +404,11 @@ impl TableStorage for RowTable {
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
         let reader = self.reader(tx)?;
         self.note_read(tx, Read::Row(id))?;
-        self.visible(id, reader)?.map(|record| self.decode(id, &record, None)).transpose()
+        match self.tree.get(&key(id))? {
+            Some(newest) => self.visible_from(newest, reader)?.map(|record| self.decode(id, &record, None)).transpose(),
+            // Frozen, so committed before every snapshot (`rows/frozen.rs`).
+            None => self.frozen_row(id, None),
+        }
     }
 
     /// Only `columns` are decoded, and only their values out of line read.
@@ -507,6 +462,7 @@ impl TableStorage for RowTable {
         self.discarded.store(true, Ordering::Release);
     }
     fn reconfigure(&self, desc: &TableDesc) {
+        self.frozen.reconfigure(options::columns_of(desc, self.frozen.columns()));
         self.sealing.rename(&options::encodings_of(desc));
         self.gathered.reconfigure(desc);
         self.versions.reconfigure(desc);
@@ -539,6 +495,7 @@ impl TableStorage for RowTable {
 
     fn commit(&self, tx: TxId, at: Timestamp) {
         self.commit_open(tx, at);
+        self.note_commit(at);
     }
 
     fn rollback(&self, tx: TxId) -> Result<()> {
@@ -558,16 +515,26 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
+    /// Freezes rows due, too: one that cannot be is left for the next.
     fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
         self.collect(horizon, removed)?;
+        let _ = self.freeze_due(horizon);
         self.gather_if_due();
         Ok(())
     }
 
     fn versions(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
         let unreadable = self.pending(Box::new(move |at, own| if own { at <= as_of } else { at <= horizon }), Some(columns));
+        let frozen = match self.frozen.directory() {
+            Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
+            Err(e) => return Box::new(std::iter::once(Err(e))),
+        };
         let columns = columns.to_vec();
-        Box::new(unreadable.chain(Self::entries(&self).flat_map(move |entry| {
+        // Held to the end, so no entry of a row frozen meanwhile is taken
+        // out before it is read.
+        let held = self.frozen.directory();
+        Box::new(unreadable.chain(frozen).chain(Self::entries(&self).flat_map(move |entry| {
+            let _held = &held;
             let found = entry.and_then(|(key, newest)| self.versions_of(row_id(&key)?, newest, (horizon, as_of), &columns));
             match found {
                 Ok(found) => found.into_iter().map(Ok).collect::<Vec<_>>(),

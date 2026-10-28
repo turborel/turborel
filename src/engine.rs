@@ -9,8 +9,11 @@
 //! * `tree`: a B-link tree over the buffer pool, keyed by bytes, for
 //!   tables (by row id) and indexes (by key, then row id);
 //! * `rows`: the row-store layout, a table as a tree of records keyed by
-//!   row id, long values out of line.
+//!   row id, long values out of line;
+//! * `columns`: the column layout's frozen row groups, each column's
+//!   values in chunks of their own, under a table of the row store.
 
+pub mod columns;
 pub mod hash;
 pub mod key;
 pub mod record;

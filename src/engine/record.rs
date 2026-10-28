@@ -116,6 +116,11 @@ impl RecordFormat {
         self.types.len()
     }
 
+    /// Its columns' types, in order.
+    pub fn types(&self) -> &[DataType] {
+        &self.types
+    }
+
     /// The format for columns of `types`, in order.
     pub fn new(types: &[DataType]) -> RecordFormat {
         let mut fixed = 0_usize;

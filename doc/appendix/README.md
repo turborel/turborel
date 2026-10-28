@@ -12,4 +12,5 @@ Tables to look things up in.
 - [Appendix D: Limits](d-limits.md)
 - [Appendix E: Implementation-Defined Choices](e-implementation.md)
 - [Appendix F: Versions](f-versions.md)
+- [Appendix G: Table Options](g-table-options.md)
 - [Glossary](glossary.md)

@@ -153,13 +153,18 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 - **Scan filters** more precise than one `column op constant`. Even that
   one only cuts the rows returned and the reads tracked for
-  serializability: the row store still reads and decodes every row, until
-  zone maps let it skip pages.
-- **Batch execution** for engines that store columns.
+  serializability: a table of the ROWS layout still reads and decodes
+  every row; one of COLUMNS skips frozen chunks the filter cannot match
+  (D31).
+- **Batch execution** for engines that store columns: a scan of
+  vectors of a column's values, filters and aggregates over them, without
+  a row made for each (the profile of a scan: allocating and decoding
+  rows is two thirds of its time).
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
-- **Statistics:** zone maps (minimum and maximum per page); the row
-  store's fetch and scan costs, measured: it keeps the defaults of
+- **Statistics:** zone maps of a ROWS table's pages (a COLUMNS table's
+  frozen chunks have them, D31); the row store's fetch and scan costs,
+  measured: it keeps the defaults of
   `TableStorage`, and its scan cost ignores the columns read; wide columns
   left out of histograms.
 
@@ -188,10 +193,21 @@ The registry, scopes and SET statements exist (D36). Still to do:
   87.6M/s to 151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27):
   four still read less than one, on the frame's latch; a reader-biased
   latch (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
-- **Layouts** (D31): the `Layout` trait, drawn once a second layout exists;
-  then a column store, before alpha, and a hybrid (PAX). Each seals what
-  it stores through its tables' ENCODINGS as the row store does
-  (`Host::encodings`, D48), where compression gains most, on columns.
+- **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
+  a trait. For COLUMNS:
+  - a group rewritten, its deleted and changed rows' entries folded in,
+    once COLUMNS.REWRITE_FRACTION of it is (a frozen row changed or
+    deleted stays in the tree until then, as does a row id given late,
+    from a thread's block, in its group's range);
+  - COLUMNS.ORDER, the columns rows are sorted by as they are frozen;
+  - compression of chunks (constant, run-length, frame of reference,
+    dictionary), COLUMNS.COMPRESSION, before their ENCODINGS;
+  - the database's setting STORAGE.LAYOUT, of new tables;
+  - freezing in the background, not at a transaction's end;
+  - the planner's costs of a scan by the columns read, and of a frozen
+    row fetched, a page a column;
+  - a condition on two or more columns skipping chunks; bloom filters;
+  - groups' headers read as they are needed, not held in memory.
 
 ---
 

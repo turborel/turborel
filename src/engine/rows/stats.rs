@@ -105,12 +105,23 @@ impl RowTable {
         // towards the next.
         let before = self.gathered.changes.load(Ordering::Relaxed);
         let mut builder = StatsBuilder::sampling(self.format.columns(), self.gathered.refresh().sampling);
+        // Its groups as they are before the tree is read, held to the end.
+        let directory = self.frozen.directory()?;
         for entry in self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward) {
             let (key, newest) = entry?;
             let Some(record) = self.visible_from(newest, Reader::Latest)? else { continue };
             let row = self.decode(row_id(&key)?, &record, None)?;
             builder.add(&row, record.len());
         }
+        // The frozen rows no entry stands for, each as wide as its record
+        // would be (`rows/frozen.rs`).
+        let mut record = Vec::new();
+        self.each_unshadowed(&directory, |_, row| {
+            record.clear();
+            self.format.encode(&row, &mut record)?;
+            builder.add(&row, record.len());
+            Ok(())
+        })?;
         let stats = Arc::new(builder.finish());
         *write(&self.gathered.stats)? = Some(Arc::clone(&stats));
         self.gathered.rows.store(stats.rows, Ordering::Relaxed);

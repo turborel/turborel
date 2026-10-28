@@ -4,8 +4,9 @@
 //! from rows.rs (RULES.md R-SIZE-2).
 //!
 //! Freed: the pages of the values each version of each row keeps out of
-//! line, the newest in the tree and the older in the undo store; then the
-//! tree's pages, and the table's meta page. A failure cannot be reported
+//! line, the newest in the tree and the older in the undo store; its
+//! frozen row groups' pages and their directory's; then the tree's pages,
+//! and the table's meta page. A failure cannot be reported
 //! from a `drop`: the pages are then lost to the file, which costs space
 //! only. Versions a crash left in the pages name older ones the undo store
 //! no longer has (`rows/recovery.rs`); those are not followed.
@@ -42,6 +43,13 @@ impl RowTable {
                 let Some(older) = version.older.and_then(|at| self.undo.read(at).ok()) else { break };
                 bytes = older;
             }
+        }
+        // Its groups' pages go with the last reader of them.
+        self.frozen.retire_all();
+        if self.frozen.stored() != 0 {
+            let pages = self.group_pages()?;
+            let (_, chain) = crate::engine::columns::group::read_chain(&pages, crate::disk::pager::PageId(self.frozen.stored()))?;
+            pages.free(&chain);
         }
         self.tree.free()?;
         self.pool.free(self.file, self.meta)

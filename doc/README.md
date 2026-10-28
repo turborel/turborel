@@ -25,7 +25,7 @@ come with.
 | [II. SQL Reference Manual](sql/README.md) | The same, looking something up | The language element by element; each statement on a page of its own |
 | [III. Operator's Guide](operator/README.md) | Whoever installs and runs a server | Installing, running `turboreld`, databases, settings, users, connections |
 | [IV. Client Reference](client/README.md) | Users of the client, and programs that connect | The `turborel` command, and the client library |
-| [Appendices](appendix/README.md) | Everyone | SQLSTATEs, key words, settings, limits, implementation-defined choices, versions, a glossary |
+| [Appendices](appendix/README.md) | Everyone | SQLSTATEs, key words, settings, limits, implementation-defined choices, versions, table options, a glossary |
 
 Read the User's Guide from the start to learn turborel; turn to the
 Reference Manual and the appendices to look a thing up.

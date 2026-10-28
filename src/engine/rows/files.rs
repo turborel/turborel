@@ -28,6 +28,10 @@ pub struct TableFiles {
     /// The database's work areas, once the store is attached: where its
     /// transactions' changes spill (RULES.md D38).
     pub(super) work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
+    /// Held shared while a table freezes rows into a column group, and
+    /// exclusively while a checkpoint is captured, so none captures half
+    /// a group (`rows/frozen.rs`).
+    pub(super) freezes: Arc<RwLock<()>>,
 }
 
 impl TableFiles {
@@ -48,6 +52,7 @@ impl TableFiles {
             sealed: Arc::new(AtomicU64::new(0)),
             shadows: None,
             work: Arc::default(),
+            freezes: Arc::default(),
         }
     }
 

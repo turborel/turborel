@@ -11,6 +11,7 @@ use crate::disk::buffer::Clock;
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::OsFileSystem;
 use crate::disk::pager::Pager;
+use crate::engine::record::Reference;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::log::MemoryLog;
 
@@ -35,11 +36,16 @@ fn stale_references_are_refused() {
     assert_eq!(table.get_value(8, reference).err().map(|e| e.code), Some(Code::Corrupt), "another row");
     let other_column = Reference { column: 1, ..reference };
     assert_eq!(table.get_value(7, other_column).err().map(|e| e.code), Some(Code::Corrupt), "another column");
-    assert_eq!(parse_meta(&meta_content(PageId(3), 9)), Some((PageId(3), 9)));
+    assert_eq!(parse_meta(&meta_content(PageId(3), 9, 11)), Some((PageId(3), 9, 11)));
     assert_eq!(parse_meta(&[TABLE_FORMAT; 3]), None);
-    let mut other_format = meta_content(PageId(3), 9);
-    other_format[0] = 2;
+    let mut other_format = meta_content(PageId(3), 9, 11);
+    other_format[0] = 3;
     assert_eq!(parse_meta(&other_format), None);
+    // Format 1, before frozen row groups: no directory.
+    let mut first = meta_content(PageId(3), 9, 0);
+    first.truncate(17);
+    first[0] = 1;
+    assert_eq!(parse_meta(&first), Some((PageId(3), 9, 0)));
 }
 
 /// Verifies: [DESIGN] RULES.md D29, D31, garbage collection: what an
