@@ -111,11 +111,6 @@ RULES.md when its design settles.
   after each statement that changes a table it reads, however little it
   changed; GR4's warning, a condition too long for the Information Schema,
   is not raised.
-- **Domains, further** (RULES.md D50): a domain in usage by its own
-  constraints is not refused [§11.21 SR4]; REVOKE USAGE CASCADE takes the
-  views it abandons, not the table CHECKs and domain constraints that
-  CAST to the domain [§11.37 SR14, SR16]; no collation of one, there
-  being one character set.
 - **Privileges, further:** a CHECK needs REFERENCES on some column of
   every table it reads, even one it names no column of, which §11.9 AR1a
   would not ask. A view's owner holds REFERENCES on it only where what its

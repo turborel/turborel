@@ -485,7 +485,11 @@ type, default, constraints and USAGE grants (`DomainDesc`).
   table's own constraints [§11.27 GR1c]. The Information Schema shows the
   domain's constraint, not the copies.
 - CAST to a domain takes its data type, and needs USAGE on it; §6.10 has
-  it check none of its constraints, so none is checked.
+  it check none of its constraints, so none is checked. Whether a CHECK or
+  a query CASTs to a domain is read from its text (`domains::casts_to`),
+  in the schema its names are of: so no domain is in usage by its own
+  constraints [§11.21 SR4], and what CASTs to one in a schema whose owner
+  loses USAGE on it is abandoned [§11.37 SR13-SR16].
 *Why:* a CHECK of a table is already bound, checked, deferred and logged;
 copying a domain constraint onto each column makes it one, with no new
 machinery to check it by.

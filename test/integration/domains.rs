@@ -5,7 +5,7 @@
 use turborel::db::Database;
 use turborel::error::Code;
 
-use crate::common::{count, exec, rows, sorted};
+use crate::common::{code, count, exec, rows, sorted};
 
 /// Schema A: domain AMOUNT, INTEGER, default 1, positive; table T of a
 /// column K of it and another, N.
@@ -214,12 +214,12 @@ fn views_that_cast_to_a_domain_11_27() {
     assert_eq!(exec(&a, "REVOKE USAGE ON DOMAIN AMOUNT FROM B RESTRICT").err(), Some(Code::SyntaxRule), "W is abandoned");
     a.run("REVOKE USAGE ON DOMAIN AMOUNT FROM B CASCADE").unwrap();
     a.commit().unwrap();
-    assert_eq!(crate::common::code(&b, "SELECT M FROM W"), Code::SyntaxRule, "W went");
+    assert_eq!(code(&b, "SELECT M FROM W"), Code::SyntaxRule, "W went");
     a.run("CREATE VIEW V AS SELECT CAST(N AS AMOUNT) AS M FROM T").unwrap();
     a.run("ALTER TABLE T DROP COLUMN K CASCADE").unwrap();
     assert_eq!(exec(&a, "DROP DOMAIN AMOUNT RESTRICT").err(), Some(Code::SyntaxRule), "V casts to it");
     a.run("DROP DOMAIN AMOUNT CASCADE").unwrap();
-    assert_eq!(crate::common::code(&a, "SELECT M FROM V"), Code::SyntaxRule, "V went");
+    assert_eq!(code(&a, "SELECT M FROM V"), Code::SyntaxRule, "V went");
 }
 
 /// Verifies: [DESIGN] RULES.md D25: domains, a column's domain, and their
@@ -329,4 +329,66 @@ fn what_domains_refuse_11_22() {
     a.run("INSERT INTO C VALUES (-1)").unwrap();
     a.run("CREATE TABLE E (K SMALL)").unwrap();
     a.run("INSERT INTO E VALUES (99)").unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 SR4] no domain is in
+/// usage by its own constraints: none CASTs to it, nor to a domain one of
+/// whose constraints CASTs to it, however far (SQLCODE -103); a domain
+/// CAST to by another's constraint is not in usage by its own.
+#[test]
+fn a_domain_is_in_usage_by_none_of_its_constraints_11_21() {
+    let db = domains();
+    let own = db.schema("CREATE SCHEMA AUTHORIZATION Z CREATE DOMAIN D AS INTEGER CHECK (CAST (VALUE AS D) > 0)").unwrap_err();
+    assert_eq!(own.code, Code::SyntaxRule);
+    assert!(own.msg.contains("in usage by its own constraints"), "{}", own.msg);
+    let a = db.session("A");
+    a.run("CREATE DOMAIN SMALL AS INTEGER CHECK (CAST (VALUE AS AMOUNT) < 10)").unwrap();
+    a.run("CREATE DOMAIN TINY AS INTEGER CHECK (CAST (VALUE AS SMALL) < 5)").unwrap();
+    a.commit().unwrap();
+    for (sql, why) in [
+        ("ALTER DOMAIN AMOUNT ADD CHECK (CAST (VALUE AS SMALL) > 0)", "through SMALL's"),
+        ("ALTER DOMAIN AMOUNT ADD CHECK (CAST (VALUE AS A.TINY) > 0)", "through TINY's and SMALL's"),
+        ("ALTER DOMAIN SMALL ADD CHECK (CAST (VALUE AS SMALL) > 0)", "its own"),
+    ] {
+        assert_eq!(exec(&a, sql).err(), Some(Code::SyntaxRule), "{why}");
+    }
+    a.run("ALTER DOMAIN TINY ADD CHECK (CAST (VALUE AS AMOUNT) > 0)").unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.37 SR13-SR16, SR18,
+/// GR3-GR6]: what CASTs to a domain in a schema left with no USAGE on it
+/// is abandoned: a view, a table's CHECK, another domain's constraint,
+/// with its copies on columns, and an assertion. RESTRICT refuses to
+/// abandon any (SQLCODE -103); CASCADE drops each, and nothing else.
+#[test]
+fn revoking_usage_abandons_what_casts_to_the_domain_11_37() {
+    let db = domains();
+    db.schema("CREATE SCHEMA AUTHORIZATION B").unwrap();
+    let (a, b) = (db.session("A"), db.session("B"));
+    a.run("GRANT USAGE ON DOMAIN AMOUNT TO B").unwrap();
+    a.commit().unwrap();
+    for sql in [
+        "CREATE TABLE U (K INTEGER CHECK (CAST (K AS A.AMOUNT) < 9), CHECK (K < 99))",
+        "CREATE DOMAIN WRAP AS INTEGER CONSTRAINT WRAPPED CHECK (CAST (VALUE AS A.AMOUNT) < 9)",
+        "CREATE TABLE W (K WRAP)",
+        "CREATE VIEW V AS SELECT CAST (K AS A.AMOUNT) AS K FROM U",
+        "CREATE ASSERTION SMALL CHECK (NOT EXISTS (SELECT * FROM U WHERE CAST (K AS A.AMOUNT) > 5))",
+    ] {
+        b.run(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+    b.commit().unwrap();
+    assert_eq!(exec(&a, "REVOKE USAGE ON DOMAIN AMOUNT FROM B RESTRICT").err(), Some(Code::SyntaxRule), "SR18");
+    a.rollback().unwrap();
+    a.run("REVOKE USAGE ON DOMAIN AMOUNT FROM B CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(code(&b, "SELECT K FROM V"), Code::SyntaxRule, "the view");
+    b.rollback().unwrap();
+    for sql in ["INSERT INTO U VALUES (50)", "INSERT INTO W VALUES (50)"] {
+        b.run(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+    assert_eq!(exec(&b, "INSERT INTO U VALUES (100)").err(), Some(Code::Constraint), "U's other CHECK stays");
+    b.rollback().unwrap();
+    let left = "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.DOMAIN_CONSTRAINTS WHERE DOMAIN_NAME = 'WRAP'";
+    assert_eq!(rows(&b, left), Ok(vec![]), "WRAP's constraint");
+    assert_eq!(count(&b, "SELECT * FROM INFORMATION_SCHEMA.ASSERTIONS WHERE CONSTRAINT_NAME = 'SMALL'"), 0, "the assertion");
 }

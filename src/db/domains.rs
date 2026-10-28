@@ -96,6 +96,32 @@ fn names(toks: &[&Tok], at: usize, (schema, domain): (&str, &QualifiedName)) -> 
 }
 
 impl State {
+    /// [ISO/IEC 9075:1992 §11.21 SR4] That domain `qn` is in usage by none
+    /// of `constraints`, its own: none CASTs to it, nor to a domain one of
+    /// whose constraints it is in usage by, however far.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103, naming the domain it would be in usage by.
+    fn not_in_own_usage(&self, qn: &QualifiedName, constraints: &[ConstraintDesc]) -> Result<()> {
+        let mut known: Vec<QualifiedName> = self.catalog.domains().into_iter().map(|d| d.name.clone()).collect();
+        if !known.contains(qn) {
+            known.push(qn.clone());
+        }
+        let named = |c: &ConstraintDesc| known.iter().filter(|d| casts_check(c, d)).cloned().collect::<Vec<_>>();
+        let mut seen: Vec<QualifiedName> = constraints.iter().flat_map(named).collect();
+        let mut at = 0_usize;
+        while let Some(d) = seen.get(at).cloned() {
+            at = at.saturating_add(1);
+            if d == *qn {
+                return Err(rule(format!("[ISO/IEC 9075:1992 §11.21 SR4] domain {qn} would be in usage by its own constraints")));
+            }
+            let further = self.catalog.domain(&d).map(|dd| dd.constraints.iter().flat_map(named).collect::<Vec<_>>()).unwrap_or_default();
+            seen.extend(further.into_iter().filter(|n| !seen.contains(n)).collect::<Vec<_>>());
+        }
+        Ok(())
+    }
+
     /// [ISO/IEC 9075:1992 §11.4 SR5, AR1] The data type of a column `of`,
     /// in schema `schema`, and its domain, if of one.
     ///
@@ -167,6 +193,7 @@ impl State {
             let made = self.domain_constraint((&qn, schema), d.data_type, (c, &constraints), bound)?;
             constraints.push(made);
         }
+        self.not_in_own_usage(&qn, &constraints).or_at(d.name.at)?;
         let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).collect::<Vec<_>>();
         let mut catalog = self.catalog.duplicate();
         catalog.put_domain(DomainDesc { name: qn, data_type: d.data_type, default, constraints, usage: Vec::new() });
@@ -305,17 +332,7 @@ impl State {
                     set_domain_default(c, None);
                 }
             }
-            AlterDomainAction::AddConstraint(c) => {
-                let made = self.domain_constraint((&qn, schema), domain.data_type, (c, &domain.constraints), true)?;
-                for t in &mut tables {
-                    let copies: Vec<ConstraintDesc> =
-                        t.columns.iter().filter(|col| of_domain(col, &qn)).map(|col| copy_of(&made, &t.name, &col.name)).collect();
-                    t.constraints.extend(copies);
-                    self.bind_checks(t)?;
-                    validate.push(t.name.clone());
-                }
-                domain.constraints.push(made);
-            }
+            AlterDomainAction::AddConstraint(c) => validate = self.add_domain_constraint((&mut domain, schema), &mut tables, c)?,
             AlterDomainAction::DropConstraint(n) => {
                 let name = qualify(n, &qn.auth);
                 if !domain.constraints.iter().any(|c| c.name == name) {
@@ -335,6 +352,32 @@ impl State {
         catalog.put_domain(domain);
         self.catalog = Arc::from(catalog);
         Ok(Defined { locks, validate, ..Defined::default() })
+    }
+}
+
+impl State {
+    /// [ISO/IEC 9075:1992 §11.25] ALTER DOMAIN ADD `c`, its names of
+    /// schema `schema`: added to `domain`, and copied onto each of its
+    /// columns of `tables` [GR2]; the tables whose rows are to be checked.
+    fn add_domain_constraint(
+        &self,
+        (domain, schema): (&mut DomainDesc, &str),
+        tables: &mut [TableDesc],
+        c: &TableConstraint,
+    ) -> Result<Vec<QualifiedName>> {
+        let qn = domain.name.clone();
+        let made = self.domain_constraint((&qn, schema), domain.data_type, (c, &domain.constraints), true)?;
+        self.not_in_own_usage(&qn, std::slice::from_ref(&made)).or_at(c.at)?;
+        let mut validate = Vec::new();
+        for t in tables {
+            let copies: Vec<ConstraintDesc> =
+                t.columns.iter().filter(|col| of_domain(col, &qn)).map(|col| copy_of(&made, &t.name, &col.name)).collect();
+            t.constraints.extend(copies);
+            self.bind_checks(t)?;
+            validate.push(t.name.clone());
+        }
+        domain.constraints.push(made);
+        Ok(validate)
     }
 }
 
@@ -429,7 +472,7 @@ impl State {
 }
 
 /// Whether the CHECK `c` CASTs to domain `qn`.
-fn casts_check(c: &ConstraintDesc, qn: &QualifiedName) -> bool {
+pub(super) fn casts_check(c: &ConstraintDesc, qn: &QualifiedName) -> bool {
     if let ConstraintKind::Check { text, names, .. } = &c.kind { casts_to(text, names, qn) } else { false }
 }
 

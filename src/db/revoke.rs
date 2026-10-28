@@ -97,19 +97,20 @@ fn standing(catalog: &dyn Catalog, grants: &[Granted]) -> Vec<bool> {
 
 /// What a revoke would abandon [ISO/IEC 9075:1992 §11.37 SR11-SR16].
 #[derive(Default)]
-struct Abandoned {
+pub(super) struct Abandoned {
     grants: Vec<Granted>,
-    views: Vec<QualifiedName>,
+    pub(super) views: Vec<QualifiedName>,
     /// Privileges of views' owners on their views, lost.
     owners: Vec<QualifiedName>,
-    constraints: Vec<(QualifiedName, ConstraintDesc)>,
+    /// Table constraints, each with its table [SR14].
+    pub(super) constraints: Vec<(QualifiedName, ConstraintDesc)>,
     /// Domain constraints, each with its domain [SR16].
-    domain_constraints: Vec<(QualifiedName, QualifiedName)>,
-    assertions: Vec<QualifiedName>,
+    pub(super) domain_constraints: Vec<(QualifiedName, QualifiedName)>,
+    pub(super) assertions: Vec<QualifiedName>,
 }
 
 impl Abandoned {
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.grants.is_empty()
             && self.views.is_empty()
             && self.owners.is_empty()
@@ -119,7 +120,7 @@ impl Abandoned {
     }
 
     /// The first of them, named for a refusal.
-    fn first(&self) -> String {
+    pub(super) fn first(&self) -> String {
         if let Some(g) = self.grants.first() {
             let grantee = g.grantee.as_deref().unwrap_or("PUBLIC");
             return format!("a privilege {} granted {grantee} on {}", g.grantor, g.table);
@@ -281,7 +282,7 @@ impl State {
     /// Makes `after` the catalog, the views, constraints and assertions
     /// `abandoned` dropped with CASCADE [ISO/IEC 9075:1992 §11.37 GR3-GR6]: what that
     /// took away, and the locks it needs.
-    fn destroy(&mut self, after: Arc<dyn Catalog>, abandoned: &Abandoned) -> Result<(Dropped, Vec<(QualifiedName, LockMode)>)> {
+    pub(super) fn destroy(&mut self, after: Arc<dyn Catalog>, abandoned: &Abandoned) -> Result<(Dropped, Vec<(QualifiedName, LockMode)>)> {
         self.catalog = after;
         let mut locks = Vec::new();
         let mut catalog = self.catalog.duplicate();

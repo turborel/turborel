@@ -5,10 +5,12 @@
 use std::sync::Arc;
 
 use super::definitions::Defined;
+use super::domains::{casts_check, casts_to};
+use super::revoke::Abandoned;
 use super::{Completion, State, rule};
 use crate::ast::{Action, DropBehavior, PrivilegeDefinition, RevokeStatement};
 use crate::binder::qualify;
-use crate::catalog::{DomainDesc, QualifiedName, UsageDesc, owner_of};
+use crate::catalog::{ConstraintDesc, DomainDesc, QualifiedName, UsageDesc, owner_of};
 use crate::error::{Code, Result, SqlError, SqlState};
 
 /// [ISO/IEC 9075:1992 §11.36 SR1, §11.37 SR1] That `actions`, of a domain,
@@ -78,8 +80,9 @@ impl State {
     /// names in schema `schema`: the grants `auth` made the grantees, or
     /// their grant option alone, gone; with CASCADE, what that abandons
     /// [SR7–SR17] gone too: the grants of those left with no grant option,
-    /// and the views and CHECKs of those left with no USAGE that CAST to
-    /// it. A warning if `auth` granted none of them it [GR8, GR9].
+    /// and the views, CHECKs, domain constraints and assertions of those
+    /// left with no USAGE that CAST to it. A warning if `auth` granted none
+    /// of them it [GR8, GR9].
     ///
     /// # Errors
     ///
@@ -107,7 +110,7 @@ impl State {
         let abandoned = self.casting_without_usage(&domain, &owner);
         let lost = before.iter().filter(|u| !named(u) && !domain.usage.contains(u)).count();
         if r.behavior == DropBehavior::Restrict && (lost > 0 || !abandoned.is_empty()) {
-            let what = abandoned.first().map_or_else(|| "a grant of it".to_owned(), ToString::to_string);
+            let what = if abandoned.is_empty() { "a grant of it".to_owned() } else { abandoned.first() };
             return Err(rule(format!(
                 "[ISO/IEC 9075:1992 §11.37 SR18] revoking USAGE on {} abandons {what}: revoke it with CASCADE",
                 domain.name
@@ -116,28 +119,38 @@ impl State {
         let mut catalog = self.catalog.duplicate();
         catalog.put_domain(domain);
         self.catalog = Arc::from(catalog);
-        let mut defined = Defined::default();
-        for view in abandoned {
-            if self.catalog.view(&view).is_some() {
-                let dropped = self.drop_view(&view, true)?;
-                defined.dropped.absorb(dropped);
-            }
-        }
+        let (dropped, locks) = self.destroy(Arc::clone(&self.catalog), &abandoned)?;
+        let mut defined = Defined { dropped, locks, ..Defined::default() };
         if warned {
             defined.completion = Completion::Warning(SqlState::PRIVILEGE_NOT_REVOKED);
         }
         Ok(defined)
     }
 
-    /// The views of schemas whose owners hold no USAGE on `domain` that
-    /// CAST to it: abandoned [ISO/IEC 9075:1992 §11.37 SR13].
-    fn casting_without_usage(&self, domain: &DomainDesc, owner: &str) -> Vec<QualifiedName> {
+    /// What CASTs to `domain` in a schema whose owner holds no USAGE on
+    /// it: abandoned [ISO/IEC 9075:1992 §11.37 SR13-SR16]. Its views, and
+    /// its tables' CHECKs, other domains' constraints and assertions; a
+    /// copy of a domain constraint on a column goes with the domain's.
+    fn casting_without_usage(&self, domain: &DomainDesc, owner: &str) -> Abandoned {
         let unheld = |schema: &str| !holds(&domain.usage, owner_of(&*self.catalog, schema), owner).0;
-        self.catalog
+        let casts = |c: &ConstraintDesc| casts_check(c, &domain.name);
+        let mut abandoned = Abandoned::default();
+        abandoned.views = self
+            .catalog
             .views()
             .into_iter()
-            .filter(|v| unheld(&v.name.auth) && super::domains::casts_to(&v.query, &v.names, &domain.name))
+            .filter(|v| unheld(&v.name.auth) && casts_to(&v.query, &v.names, &domain.name))
             .map(|v| v.name.clone())
-            .collect()
+            .collect();
+        for t in self.catalog.tables().into_iter().filter(|t| unheld(&t.name.auth)) {
+            let own = t.constraints.iter().filter(|c| c.domain.is_none() && casts(c));
+            abandoned.constraints.extend(own.map(|c| (t.name.clone(), c.clone())));
+        }
+        for d in self.catalog.domains().into_iter().filter(|d| d.name != domain.name && unheld(&d.name.auth)) {
+            abandoned.domain_constraints.extend(d.constraints.iter().filter(|c| casts(c)).map(|c| (d.name.clone(), c.name.clone())));
+        }
+        abandoned.assertions =
+            self.catalog.assertions().into_iter().filter(|a| unheld(&a.name.auth) && casts(a)).map(|a| a.name.clone()).collect();
+        abandoned
     }
 }
