@@ -50,11 +50,14 @@ fn session(options: &Options) -> Result<ExitCode, String> {
     let interrupts = Interrupts::listen((interrupted, not_cancelled))?;
     let connection = turborel_cli::connect(options, || password.unwrap_or_else(|| Err(std::io::Error::other("none was typed"))))?;
     interrupts.cancel_by(connection.canceller());
+    let stdin = std::io::stdin();
+    let typed = stdin.is_terminal() && options.inputs.contains(&Input::Standard);
+    if typed {
+        println!("{}", turborel_cli::banner(options, &connection));
+    }
     // Each connection CONNECT makes asks for its own password.
     let dialer = Dialer::new(options.clone(), Box::new(|| rpassword::prompt_password("password: ")));
     let mut agent = Agent::connected(dialer, connection);
-    let stdin = std::io::stdin();
-    let typed = stdin.is_terminal() && options.inputs.contains(&Input::Standard);
     let io = Io {
         input: &mut stdin.lock(),
         typed,

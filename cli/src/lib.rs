@@ -57,6 +57,32 @@ its own machine. A password is sent only over TLS or a Unix socket.
 Ctrl-C cancels the statement running. The program exits with 1 if any
 statement failed.";
 
+/// How the end of typed input is given: Ctrl-D, or on Windows Ctrl-Z then
+/// Enter.
+#[cfg(not(windows))]
+const END_OF_INPUT: &str = "Ctrl-D";
+#[cfg(windows)]
+const END_OF_INPUT: &str = "Ctrl-Z then Enter";
+
+/// What the program prints as a typed session begins (RULES.md D46): the
+/// client and its licence, the server `connection` reached as `options`
+/// say, as whom, and how to end.
+pub fn banner(options: &Options, connection: &Connected) -> String {
+    let at = match &options.server {
+        Server::Tcp { host, port, tls: Some(_) } => format!("at {host}:{port} over TLS"),
+        Server::Tcp { host, port, tls: None } => format!("at {host}:{port}"),
+        #[cfg(unix)]
+        Server::Socket(path) => format!("at the socket {}", path.display()),
+    };
+    format!(
+        "turborel {}, the command-line client\nCopyright 2026, Turborel contributors.\nDistributed under the BSD 2-Clause License.\n\n\
+         Connected to {} {at}, as {}.\nEnd each statement with a semicolon; end of input ({END_OF_INPUT}) quits.\n",
+        env!("CARGO_PKG_VERSION"),
+        connection.server(),
+        connection.authorization(),
+    )
+}
+
 /// Connects as `options` say, a password typed read by `typed`.
 ///
 /// # Errors

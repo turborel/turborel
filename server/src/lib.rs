@@ -17,3 +17,7 @@ pub mod server;
 pub mod settings;
 pub mod tls;
 pub mod transport;
+
+/// The server's product and version, told to each client authenticated
+/// (`Reply::Ready`, RULES.md D45): its crate's version.
+pub const SERVER: &str = concat!("turborel ", env!("CARGO_PKG_VERSION"));

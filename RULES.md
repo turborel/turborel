@@ -1145,7 +1145,9 @@ operator must be able to bound what any statement takes.
   whose transaction is active, or to end it (D46).
 - Requests may be sent before the last is answered: each is answered, in
   order.
-- Ready gives a random 128-bit key. A connection whose first and only
+- Ready gives the server's product and version ("turborel 0.1.0",
+  `turborel_server::SERVER`), to an authenticated client alone, and a
+  random 128-bit key. A connection whose first and only
   message is Cancel with it cancels what that session runs (D44), over
   TCP, TLS or a Unix socket alike; the server closes it, saying nothing.
 - Hello and Ready exchange capabilities; version 1 defines none, so later
@@ -1169,6 +1171,10 @@ cannot have.
   name; numbers align right. A null is shown as `--null` says, nothing by
   default. Another statement says OK, OK with a warning and its SQLSTATE,
   or no data.
+- A typed session begins with a banner on standard output: the client's
+  version, its copyright and licence, the server's product and version as
+  Ready gives them, where it is reached and as whom, and how to end. A run
+  not typed prints none, so its output is its statements' alone.
 - A failure is told on standard error and the run goes on; a run not
   typed stops at a cancelled statement, or with `--stop-on-error` at the
   first failure; any run stops once the current connection is lost. The

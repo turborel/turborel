@@ -26,8 +26,8 @@ pub enum Reply {
     /// The next step of an authentication exchange.
     Challenge(Vec<u8>),
     /// Authenticated: the session's authorization identifier, the key that
-    /// cancels its statements, and the capabilities the server has of
-    /// those the client has.
+    /// cancels its statements, the capabilities the server has of those the
+    /// client has, and the server's name and version.
     Ready {
         /// The session's authorization identifier.
         authorization: String,
@@ -35,6 +35,9 @@ pub enum Reply {
         key: CancelKey,
         /// The capabilities both have.
         capabilities: Vec<String>,
+        /// The server's product and version, as "turborel 0.1.0": told to
+        /// an authenticated client alone.
+        server: String,
     },
     /// [ISO/IEC 9075:1992 §17.8, §17.9 GR3, GR4] A statement prepared: its
     /// dynamic parameters' types, and its result's columns, of a query.
@@ -63,10 +66,11 @@ impl Reply {
     pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
             Reply::Challenge(bytes) => frame(out, CHALLENGE, |b| b.put_bytes(bytes)),
-            Reply::Ready { authorization, key, capabilities } => frame(out, READY, |b| {
+            Reply::Ready { authorization, key, capabilities, server } => frame(out, READY, |b| {
                 b.put_str(authorization);
                 b.extend_from_slice(&key.0);
                 put_strs(b, capabilities);
+                b.put_str(server);
             }),
             Reply::Prepared { statement, parameters, columns } => frame(out, PREPARED, |b| {
                 b.put_u32(*statement);
@@ -105,7 +109,7 @@ impl Reply {
             READY => {
                 let authorization = r.str()?;
                 let key = <[u8; KEY_BYTES]>::try_from(r.take(KEY_BYTES)?).map_err(|_| r.corrupt("a key is cut short"))?;
-                Reply::Ready { authorization, key: CancelKey(key), capabilities: strs(&mut r)? }
+                Reply::Ready { authorization, key: CancelKey(key), capabilities: strs(&mut r)?, server: r.str()? }
             }
             PREPARED => Reply::Prepared { statement: r.u32()?, parameters: counted(&mut r, parameter)?, columns: counted(&mut r, column)? },
             DESCRIPTION => Reply::Description(counted(&mut r, column)?),

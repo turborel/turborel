@@ -166,7 +166,12 @@ fn a_client_loses_a_connection_its_server_breaks() {
     assert_eq!(lost(scripted(vec![])), Some("08006".into()), "nothing");
     let gone = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     assert_eq!(lost(gone), Some("08006".into()), "no server");
-    let readied = || Reply::Ready { authorization: "X".into(), key: turborel_protocol::CancelKey([0; 16]), capabilities: vec![] };
+    let readied = || Reply::Ready {
+        authorization: "X".into(),
+        key: turborel_protocol::CancelKey([0; 16]),
+        capabilities: vec![],
+        server: turborel_server::SERVER.into(),
+    };
     let ready = || vec![readied()];
     let mut c = connection::connect(scripted(vec![ready(), vec![readied()]]), "X", &mut Trust).unwrap();
     assert_eq!(state(&c.query("SELECT 1").unwrap_err()).0, "08006");

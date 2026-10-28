@@ -144,7 +144,12 @@ fn every_reply() -> Vec<Reply> {
     let parameters = vec![ParameterType::Varying, ParameterType::Of(DataType::Exact { precision: 5, scale: 2 })];
     vec![
         Reply::Challenge(vec![0xff]),
-        Reply::Ready { authorization: "X".into(), key: CancelKey([0xab; KEY_BYTES]), capabilities: vec!["one".into()] },
+        Reply::Ready {
+            authorization: "X".into(),
+            key: CancelKey([0xab; KEY_BYTES]),
+            capabilities: vec!["one".into()],
+            server: "turborel 0.1.0".into(),
+        },
         Reply::Prepared { statement: 9, parameters, columns: columns.clone() },
         Reply::Prepared { statement: 0, parameters: vec![], columns: vec![] },
         Reply::Suspended,

@@ -126,6 +126,8 @@ pub struct Connection<S: Read + Write> {
     stream: BufReader<S>,
     /// The session's authorization identifier.
     authorization: String,
+    /// The server's product and version, as Ready gave them.
+    server: String,
     /// The longest body read.
     max_body: u32,
     /// Set once the connection is lost: it takes no more.
@@ -182,6 +184,7 @@ impl<S: Read + Write> Connection<S> {
         let mut connection = Connection {
             stream: BufReader::new(stream),
             authorization: String::new(),
+            server: String::new(),
             max_body: MAX_BODY,
             lost: None,
             key: None,
@@ -203,8 +206,9 @@ impl<S: Read + Write> Connection<S> {
                     let answer = mechanism.answer(&challenge)?;
                     connection.send(&Request::Answer(answer))?;
                 }
-                Reply::Ready { authorization, key, capabilities: _ } => {
+                Reply::Ready { authorization, key, capabilities: _, server } => {
                     connection.authorization = authorization;
+                    connection.server = server;
                     connection.key = Some(key);
                     return Ok(connection);
                 }
@@ -220,6 +224,11 @@ impl<S: Read + Write> Connection<S> {
     /// it.
     pub fn authorization(&self) -> &str {
         &self.authorization
+    }
+
+    /// The server's product and version, as "turborel 0.1.0".
+    pub fn server(&self) -> &str {
+        &self.server
     }
 
     /// Whether the session's transaction is active, as the server said

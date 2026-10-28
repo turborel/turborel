@@ -166,6 +166,8 @@ fn a_password_is_sent_securely() {
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: Some(tls) };
     let connection = turborel_cli::connect(&given, || Ok("ann's".into())).unwrap();
     assert_eq!(connection.authorization(), "ANN");
+    let port = server.address.port();
+    assert!(turborel_cli::banner(&given, &connection).contains(&format!("at 127.0.0.1:{port} over TLS, as ANN.")));
     connection.terminate().unwrap();
     let wrong = turborel_cli::connect(&given, || Ok("bob's".into())).err().unwrap();
     assert!(wrong.contains("SQLSTATE 28000"), "{wrong}");
@@ -175,7 +177,9 @@ fn a_password_is_sent_securely() {
     #[cfg(unix)]
     {
         given.server = Server::Socket(pki.scratch.path("s"));
-        assert_eq!(turborel_cli::connect(&given, || panic!("not typed")).unwrap().authorization(), "ANN");
+        let local = turborel_cli::connect(&given, || panic!("not typed")).unwrap();
+        assert_eq!(local.authorization(), "ANN");
+        assert!(turborel_cli::banner(&given, &local).contains(&format!("at the socket {}, as ANN.", pki.scratch.path("s").display())));
     }
     let tls = Tls { roots: pki.authority.clone(), name: None };
     given.server = Server::Tcp { host: "localhost".into(), port: server.address.port(), tls: Some(tls) };
@@ -200,4 +204,23 @@ fn a_server_not_reached_is_told() {
     let tls = Tls { roots: scratch.path("none.pem"), name: None };
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: 1, tls: Some(tls) };
     assert!(turborel_cli::connect(&given, || Ok(String::new())).err().unwrap().contains("cannot read"));
+}
+
+/// Verifies: [DESIGN] RULES.md D45, D46: a typed session begins with a
+/// banner: the client's version, its copyright and licence, the server's
+/// product and version, as Ready gives them, where it is, and as whom.
+#[test]
+fn a_typed_session_begins_with_a_banner() {
+    let (_db, server) = served();
+    let given = options(&server, vec![]);
+    let connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
+    assert_eq!(connection.server(), turborel_server::SERVER);
+    let port = server.address.port();
+    let expected = format!(
+        "turborel {}, the command-line client\nCopyright 2026, Turborel contributors.\nDistributed under the BSD 2-Clause License.\n\n\
+         Connected to {} at 127.0.0.1:{port}, as X.\n",
+        env!("CARGO_PKG_VERSION"),
+        turborel_server::SERVER,
+    );
+    assert!(turborel_cli::banner(&given, &connection).starts_with(&expected));
 }
