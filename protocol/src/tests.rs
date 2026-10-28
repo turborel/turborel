@@ -5,7 +5,8 @@
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;
-use turborel::value::datetime::{Datetime, Moment, parse};
+use turborel::value::datetime::{Datetime, Field, Moment, parse};
+use turborel::value::interval::{Interval, Qualifier};
 use turborel::value::{Bits, Decimal, Value};
 
 use super::fields::{CHARACTER, EXACT, NULL};
@@ -110,6 +111,7 @@ fn edge_rows() -> Vec<Row> {
             datetime(Moment::Time, "23:59:59.5-12:59"),
             datetime(Moment::Timestamp, "0001-01-01 00:00:00"),
         ],
+        vec![Value::Interval(Interval { units: -14, qualifier: Qualifier::new(Field::Year, Field::Month, 2, 0) })],
         vec![],
     ]
 }
@@ -127,6 +129,8 @@ fn every_reply() -> Vec<Reply> {
         Column { name: Some("Z".into()), data_type: DataType::Time { precision: 0, zoned: true }, not_null: false },
         Column { name: Some("S".into()), data_type: DataType::Timestamp { precision: 6, zoned: false }, not_null: false },
         Column { name: Some("W".into()), data_type: DataType::Timestamp { precision: 3, zoned: true }, not_null: false },
+        Column { name: Some("I".into()), data_type: DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2)), not_null: false },
+        Column { name: Some("I".into()), data_type: DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2)), not_null: false },
     ];
     let cited = Failure {
         sqlcode: -103,

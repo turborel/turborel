@@ -13,6 +13,7 @@ use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::Expr;
 use crate::value::datetime::{Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
+use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier};
 use crate::value::types::datetime::{cast_at, current};
 use crate::value::{DataType, Decimal, SMALLINT_PRECISION, Value, pow10};
 
@@ -88,6 +89,7 @@ pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => e,
     }
 }
@@ -97,6 +99,9 @@ pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
 /// datetime of the same fields, a date and a timestamp, a time and a
 /// timestamp; no number, no bit string.
 fn castable(from: &DataType, to: &DataType) -> bool {
+    if from.is_interval() || to.is_interval() {
+        return interval_castable(from, to);
+    }
     let moment = |t: &DataType| match t {
         DataType::Date => Some(Moment::Date),
         DataType::Time { .. } => Some(Moment::Time),
@@ -107,6 +112,7 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => None,
     };
     match (moment(from), moment(to)) {
@@ -117,11 +123,29 @@ fn castable(from: &DataType, to: &DataType) -> bool {
     }
 }
 
-/// [ISO/IEC 9075:1992 §6.6] EXTRACT of `field` from a datetime, as shown.
+/// [ISO/IEC 9075:1992 §6.10 SR4-SR6] Whether CAST takes a value of `from`
+/// to `to`, either an interval type: from and to a character string, an
+/// interval of the same class, an exact number to and from one of a
+/// single field.
+fn interval_castable(from: &DataType, to: &DataType) -> bool {
+    let single = |t: &DataType| if let DataType::Interval(q) = t { q.start == q.end } else { false };
+    match (from, to) {
+        (DataType::Interval(a), DataType::Interval(b)) => a.year_month() == b.year_month(),
+        (DataType::Exact { .. }, DataType::Interval(_)) => single(to),
+        (DataType::Interval(_), DataType::Exact { .. }) => single(from),
+        (DataType::Interval(_), _) => to.is_character(),
+        (_, _) => from.is_character(),
+    }
+}
+
+/// [ISO/IEC 9075:1992 §6.6] EXTRACT of `field` from a datetime, as shown,
+/// or from an interval.
 struct Extract {
     field: ExtractField,
     /// The scale of its result: of SECOND, the source's precision.
     scale: u32,
+    /// The digits of its result before the point.
+    digits: u32,
 }
 
 impl ScalarFunction for Extract {
@@ -129,26 +153,48 @@ impl ScalarFunction for Extract {
         "EXTRACT"
     }
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Exact { precision: SMALLINT_PRECISION.saturating_add(self.scale), scale: self.scale })
+        Ok(DataType::Exact { precision: self.digits.saturating_add(self.scale), scale: self.scale })
     }
     /// [GR3a] The field's value; [GR3a ii] of TIMEZONE_HOUR and
     /// TIMEZONE_MINUTE, the hours and minutes of its displacement, of its
     /// sign; [GR3b] null of null.
     fn call(&self, args: &[Value]) -> Result<Value> {
-        let Some(Value::Datetime(d)) = args.first() else { return Ok(Value::Null) };
-        let n = match self.field {
-            ExtractField::TimezoneHour => i64::from(d.zone.checked_div(60).unwrap_or(0)),
-            ExtractField::TimezoneMinute => i64::from(d.zone.checked_rem(60).unwrap_or(0)),
-            ExtractField::Datetime(Field::Second) => {
-                let micros = d.field(Field::Second).unwrap_or(0);
-                let unit =
-                    pow10(MAX_TIME_PRECISION.saturating_sub(self.scale)).and_then(|u| i64::try_from(u).ok()).unwrap_or(MICROS_PER_SECOND);
-                return Ok(Value::Exact(Decimal::new(i128::from(micros.checked_div(unit).unwrap_or(0)), self.scale)));
-            }
-            ExtractField::Datetime(f) => d.field(f).unwrap_or(0),
+        let n = match (args.first(), self.field) {
+            (Some(Value::Datetime(d)), ExtractField::TimezoneHour) => Some(i128::from(d.zone.checked_div(60).unwrap_or(0))),
+            (Some(Value::Datetime(d)), ExtractField::TimezoneMinute) => Some(i128::from(d.zone.checked_rem(60).unwrap_or(0))),
+            (Some(Value::Datetime(d)), ExtractField::Datetime(f)) => d.field(f).map(i128::from),
+            (Some(Value::Interval(i)), ExtractField::Datetime(f)) => i.field(f),
+            _ => None,
         };
-        Ok(Value::Exact(Decimal::new(i128::from(n), 0)))
+        let Some(n) = n else { return Ok(Value::Null) };
+        if self.field != ExtractField::Datetime(Field::Second) {
+            return Ok(Value::Exact(Decimal::new(n, 0)));
+        }
+        // Microseconds, to the scale.
+        let unit = pow10(MAX_TIME_PRECISION.saturating_sub(self.scale)).unwrap_or(i128::from(MICROS_PER_SECOND));
+        Ok(Value::Exact(Decimal::new(n.checked_div(unit).unwrap_or(0), self.scale)))
     }
+}
+
+/// [ISO/IEC 9075:1992 §6.6 SR3a, SR4, GR3a i] EXTRACT of `field` from
+/// `e`, an interval of `q`: a field it has, of its sign, SECOND of the
+/// scale of its fraction.
+///
+/// # Errors
+///
+/// SQLCODE -103 of a field it has not, or of TIMEZONE_HOUR or
+/// TIMEZONE_MINUTE.
+fn interval_extract(field: ExtractField, e: Expr, q: Qualifier) -> Result<(Expr, DataType)> {
+    let ExtractField::Datetime(f) = field else {
+        return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3b] INTERVAL {q} has no time zone")));
+    };
+    if !q.has(f) {
+        return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3a] INTERVAL {q} has no field {f:?}")));
+    }
+    let scale = if f == Field::Second { u32::from(q.fraction) } else { 0 };
+    let x = Extract { field, scale, digits: MAX_LEADING_PRECISION };
+    let result = x.return_type(&[])?;
+    Ok((Expr::Call(ScalarRef(Arc::new(x)), vec![e]), result))
 }
 
 /// The fields a datetime type has, if it is one.
@@ -163,6 +209,7 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -204,8 +251,11 @@ impl Binder<'_> {
     /// SECOND the source's precision \[SR4\].
     pub(super) fn extract(&self, field: ExtractField, source: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let (e, t) = self.value_expression(source, scope)?;
+        if let DataType::Interval(q) = t {
+            return interval_extract(field, e, q);
+        }
         let Some((moment, precision, zoned)) = fields(&t) else {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3] EXTRACT is of a datetime, not {t}")));
+            return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3] EXTRACT is of a datetime or an interval, not {t}")));
         };
         let (valid, scale) = match field {
             ExtractField::Datetime(f) => (has(moment, f), if f == Field::Second { precision } else { 0 }),
@@ -214,7 +264,7 @@ impl Binder<'_> {
         if !valid {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.6 SR3] {t} has no field {field:?}")));
         }
-        let f = Extract { field, scale };
+        let f = Extract { field, scale, digits: SMALLINT_PRECISION };
         let result = f.return_type(&[t])?;
         Ok((Expr::Call(ScalarRef(Arc::new(f)), vec![shown(e, t, self.now)]), result))
     }

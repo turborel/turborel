@@ -337,6 +337,10 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
                 out.push(4);
                 out.extend_from_slice(&utc.to_le_bytes());
             }
+            Bucket::Span(units) => {
+                out.push(5);
+                out.extend_from_slice(&units.to_le_bytes());
+            }
             Bucket::Bits(held) => {
                 out.push(3);
                 out.extend_from_slice(&u64::try_from(held.len()).unwrap_or(u64::MAX).to_le_bytes());
@@ -376,6 +380,10 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
             NormKey::Instant(utc) => {
                 out.push(6);
                 out.extend_from_slice(&utc.to_le_bytes());
+            }
+            NormKey::Span(units) => {
+                out.push(7);
+                out.extend_from_slice(&units.to_le_bytes());
             }
             NormKey::Extension(held) => {
                 let (name, bytes) = &**held;

@@ -120,6 +120,7 @@ impl SqlType for Character {
             }
             // [GR5e] its literal's string, as it shows, padded.
             Value::Datetime(d) => super::datetime::as_string(&d, length, true),
+            Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true),
             // [GR5d] its characters, then characters of 0 bits to the
             // length, cut to it; the warnings not raised.
             Value::Bits(b) => {

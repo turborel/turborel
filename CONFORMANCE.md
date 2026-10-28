@@ -271,6 +271,19 @@ restriction is lifted.
   datetime's fields and displacement [§6.6]; CASE and set operations of
   one datetime type [§9.3 SR3e]; a default of a datetime literal or a
   datetime value function [§11.5 SR3a v, SR3c, GR1d] (RULES.md D54).
+- **Intervals** [§4.5.2, §6.1, §10.1]: INTERVAL of a qualifier, year-month
+  or day-time, and its literals, INTERVAL '...' [§5.3]; compared, indexed
+  and kept unique by their months or microseconds [§8.2 GR6]; assigned in
+  a column's fields, 22015 if they leave it [§9.2 GR3m]; a datetime plus
+  or minus an interval of its fields, 22008 of no valid datetime [§6.14];
+  intervals added, multiplied and divided by numbers [§6.15 GR1-GR5];
+  (A - B) and a qualifier, the difference of two datetimes [§6.15 GR6];
+  AT LOCAL and AT TIME ZONE [§6.14 GR4]; CAST to and from strings, exact
+  numbers of one field and intervals of their class [§6.10 SR4-SR6,
+  GR3c, GR12]; EXTRACT of an interval's fields [§6.6]; SUM and AVG of
+  intervals [§6.5 SR9e]; CASE and set operations of one class [§9.3
+  SR3f]; a default of an interval literal [§11.5 SR3a vi]; OVERLAPS
+  [§8.11]; SET TIME ZONE [§16.5] (RULES.md D54).
 - **BIT and BIT VARYING** [§6.1], and the bit and hex string literals,
   B'...' and X'...' [§5.3]: a value of BIT(n) of n bits, else refused
   with 22001 or 22026, one of BIT VARYING(n) of at most n [§9.2 GR3f-GR3j];
@@ -318,9 +331,6 @@ restriction is lifted.
 
 ### Not implemented
 
-- **Intervals** [§4.5.2]: INTERVAL, its literals, and what needs it:
-  datetime arithmetic [§6.14, §6.15], AT LOCAL and AT TIME ZONE [§6.14],
-  SET TIME ZONE [§16.5], EXTRACT of an interval, and OVERLAPS [§8.11].
 - **Leap seconds**, by choice: a SECOND of 60 or 61, which Table 10 of
   §6.1 allows, is refused, a literal of one (SQLCODE -103) and a CAST of
   one (SQLSTATE 22018). A minute is always 60 seconds, so datetime
@@ -435,7 +445,11 @@ file that implements it.
 | ISO/IEC 9075:1992 §6.10 GR5d, GR6d a bit string CAST to a character string | its bytes as UTF-8, the form-of-use, whose least character is 8 bits; bytes not UTF-8 are refused (SQLSTATE 22018), as a string holds characters | `value/types/character.rs` |
 | ISO/IEC 9075:1992 §6.10 GR7, GR8 a character string CAST to a bit string | the bits of its UTF-8 | `value/types/bit.rs` |
 | ISO/IEC 9075:1992 §6.1 SR26 the greatest `<time fractional seconds precision>` | 6: microseconds | `value/datetime.rs` |
-| ISO/IEC 9075:1992 §4.5.1, §6.1 SR5 an SQL-session's time zone displacement | the setting TIME_ZONE: the database's, `+00:00` by default, or the session's own (RULES.md D54) | `settings/builtin.rs`, `db/clock.rs` |
+| ISO/IEC 9075:1992 §4.5.1, §6.1 SR5, §16.5 GR1a an SQL-session's time zone displacement, and the one it begins with | the setting TIME_ZONE: the database's, `+00:00` by default, or the session's own, which SET TIME ZONE sets; LOCAL takes the database's again (RULES.md D54) | `settings/builtin.rs`, `db/clock.rs`, `db/time_zone.rs` |
+| ISO/IEC 9075:1992 §10.1 SR3, SR4 the greatest `<interval leading field precision>` and `<interval fractional seconds precision>` | 9 and 6 | `value/interval.rs` |
+| ISO/IEC 9075:1992 §6.15 GR4, GR5 the leading precision of an interval computed | of a sum or difference, one digit more than its operands' greatest; of a product or quotient, 9; a result past it raises 22015 | `value/interval/arith.rs`, `binder/interval.rs` |
+| ISO/IEC 9075:1992 §6.15 GR6b whether the difference of two datetimes is rounded or truncated | truncated, toward 0, to the qualifier's least field | `value/interval/arith.rs` |
+| ISO/IEC 9075:1992 §21.3.5 an interval's DATETIME_PRECISION | its `<interval fractional seconds precision>`, of SECOND; else 0 | `value/types/interval.rs` |
 | ISO/IEC 9075:1992 §6.8 GR3 when a statement's datetime value functions are evaluated | as it begins, from the database's clock, the system's unless a host sets another (`Database::set_clock`) | `db/clock.rs`, `clock.rs` |
 | ISO/IEC 9075:1992 §6.6 SR4 the precision of EXTRACT's result | 5 digits, and of SECOND the scale of the datetime's precision more | `binder/datetime.rs` |
 | ISO/IEC 9075:1992 §9.2 GR3l, §4.6 a datetime's fraction stored in a type of fewer digits | truncated | `value/datetime.rs` |
@@ -513,3 +527,18 @@ SQLCODE -900 (RULES.md D18).
   not, as store assignment takes either [§9.2 SR2]: the result of CASE, a
   set operation or VALUES is WITH TIME ZONE if one is, of the greatest
   precision; DEFAULT CURRENT_TIME is taken by a TIME column.
+- **A datetime's or an interval's literal in CAST** [ISO/IEC 9075:1992
+  §6.10 GR5e, GR6e, GR9a, GR12b]: "the shortest character string that
+  conforms to the definition of `<literal>`" is read as the literal's
+  string, the part between its quotes, an interval's sign before it:
+  CAST(DATE '2024-01-02' AS CHAR(10)) is '2024-01-02', and CAST from a
+  string takes that string. An interval's fields after the leading one
+  are of any digits, `<datetime value>` being an `<unsigned integer>`
+  [§5.3]: SR21's two digits are of a datetime literal's.
+- **AT TIME ZONE** [ISO/IEC 9075:1992 §6.14 GR4]: the value is "DV - TZ",
+  DV the datetime in UTC; it is read as the same instant shown in the
+  displacement TZ, of the type WITH TIME ZONE, as a datetime WITH TIME
+  ZONE keeps its own [§4.5.1].
+- **OVERLAPS with an interval** [ISO/IEC 9075:1992 §8.11 SR3a]: "such that
+  the interval can be added to the datetime" is read as §6.14 SR3 says
+  of addition: the interval's fields are the datetime's.

@@ -52,6 +52,7 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => {
             fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
         }
@@ -71,6 +72,7 @@ fn bit_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -88,6 +90,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => fail(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075:1992 §6.7 SR1] the start position and length of {name} are exact numbers of scale 0, not {t}"),
@@ -100,7 +103,7 @@ fn text(v: &Value) -> Result<Option<&str>> {
     match v {
         Value::Null => Ok(None),
         Value::Char(s) => Ok(Some(s)),
-        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => {
+        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
             fail(Code::Api, "[DESIGN] a string function was given a value not a character string")
         }
     }
@@ -118,7 +121,9 @@ fn whole(v: Option<&Value>) -> Result<Option<i128>> {
                 not_integer()
             }
         }
-        Some(Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_)) => not_integer(),
+        Some(Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+            not_integer()
+        }
     }
 }
 

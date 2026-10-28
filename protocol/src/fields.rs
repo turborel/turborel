@@ -34,6 +34,8 @@ const TIME_ZONED: u8 = 10;
 const TIMESTAMP: u8 = 11;
 /// TIMESTAMP WITH TIME ZONE, as a type.
 const TIMESTAMP_ZONED: u8 = 12;
+/// INTERVAL, as a type and a value: its qualifier says its class.
+const INTERVAL: u8 = 13;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -92,6 +94,7 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Time { zoned: true, .. } => b.put_u8(TIME_ZONED),
         DataType::Timestamp { zoned: false, .. } => b.put_u8(TIMESTAMP),
         DataType::Timestamp { zoned: true, .. } => b.put_u8(TIMESTAMP_ZONED),
+        DataType::Interval(_) => b.put_u8(INTERVAL),
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
         DataType::Extension(e) => {
@@ -126,6 +129,7 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         TIME_ZONED => Some(&types::TIME_ZONED),
         TIMESTAMP => Some(&types::TIMESTAMP),
         TIMESTAMP_ZONED => Some(&types::TIMESTAMP_ZONED),
+        INTERVAL => Some(&types::INTERVAL_DAY_TIME),
         _ => None,
     }
 }
@@ -186,6 +190,7 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
             Moment::Time => TIME,
             Moment::Timestamp => TIMESTAMP,
         },
+        Value::Interval(_) => INTERVAL,
         Value::Extension(e) => {
             b.put_u8(EXTENSION);
             // One received unregistered goes back as it came.
@@ -232,6 +237,8 @@ pub fn row_size(row: &Row) -> usize {
         // Its tag, its zone's flag, precision and displacement, and its
         // instant.
         Value::Datetime(_) => 15,
+        // Its tag, its qualifier's four words, and its units.
+        Value::Interval(_) => 33,
         Value::Extension(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);

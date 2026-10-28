@@ -40,7 +40,7 @@ impl Parser {
                 Ok(ValueExpression::Datetime(f))
             }
             Tok::KeyWord(kw::EXTRACT) => self.extract_expression(),
-            Tok::KeyWord(kw::DATE | kw::TIME | kw::TIMESTAMP)
+            Tok::KeyWord(kw::DATE | kw::TIME | kw::TIMESTAMP | kw::INTERVAL)
             | Tok::KeyWord(kw::USER)
             | Tok::KeyWord(kw::CURRENT_USER)
             | Tok::KeyWord(kw::SESSION_USER)

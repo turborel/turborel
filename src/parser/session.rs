@@ -48,6 +48,10 @@ impl Parser {
             self.advance();
             return Ok(SqlStatement::SetTransaction(self.transaction_modes()?));
         }
+        if self.next_is_kw(kw::TIME) {
+            self.advance();
+            return self.set_time_zone();
+        }
         if self.next_is_kw(kw::SCHEMA) {
             self.advance();
             self.advance();

@@ -122,6 +122,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
+            | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Index(_)

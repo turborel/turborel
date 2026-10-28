@@ -11,7 +11,7 @@ use crate::catalog::{ColumnDefault, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::datetime::Now;
-use crate::value::{DataType, Value, assign, compare};
+use crate::value::{DataType, Decimal, Value, assign, compare};
 
 /// [ISO/IEC 9075:1992 §11.5 SR3b] The least length of a column whose
 /// default is CURRENT_USER, SESSION_USER or SYSTEM_USER.
@@ -62,17 +62,8 @@ fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
     let not_of = || rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}"));
     match literal {
         Literal::Character(s) => character_default(s, subject).unwrap_or_else(|| Err(not_of())),
-        // [SR3a iii] an exact number the type holds without losing a
-        // significant digit; [SR3a iv] of an approximate type, any number.
         Literal::Exact(d) => match subject {
-            DataType::Exact { .. } => {
-                let exact = Value::Exact(*d);
-                let kept = assign(exact.clone(), &subject, "ISO/IEC 9075:1992 §11.5 SR3a iii")
-                    .ok()
-                    .filter(|v| compare(v, &exact) == Some(std::cmp::Ordering::Equal));
-                kept.ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a iii] the default {d} loses digits in {subject}")))
-            }
-            DataType::Approximate { .. } => Ok(Value::Exact(*d)),
+            DataType::Exact { .. } | DataType::Approximate { .. } => exact_default(*d, subject),
             DataType::Character { .. }
             | DataType::Varying { .. }
             | DataType::Bit { .. }
@@ -80,6 +71,7 @@ fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
+            | DataType::Interval(_)
             | DataType::Extension(_) => Err(not_of()),
         },
         Literal::Approximate(f) => {
@@ -98,6 +90,16 @@ fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
             }
             subject.kind().cast(Value::Bits(b.clone()), &subject)
         }
+        // [SR3a vi] an interval of the column's class, in its fields.
+        Literal::Interval(i) => {
+            if !subject.kind().comparable(&DataType::Interval(i.qualifier)) || !subject.is_interval() {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075:1992 §11.5 SR3a vi] the default {} is not of {subject}",
+                    Value::Interval(*i).to_literal()
+                )));
+            }
+            Ok(Value::Interval(*i))
+        }
         // [SR3a v] a datetime of the same fields; of UTC, if it writes no
         // displacement.
         Literal::Datetime(w) => {
@@ -111,6 +113,25 @@ fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
             Ok(value)
         }
     }
+}
+
+/// [ISO/IEC 9075:1992 §11.5 SR3a iii, iv] The value of the exact numeric
+/// literal `d` as the default of a column of `subject`, a numeric type: of
+/// an exact type, if it holds it without losing a significant digit; of
+/// an approximate type, any number.
+///
+/// # Errors
+///
+/// SQLCODE -103 if an exact type would lose a digit.
+fn exact_default(d: Decimal, subject: DataType) -> Result<Value> {
+    let exact = Value::Exact(d);
+    if !subject.is_numeric() || matches!(subject, DataType::Approximate { .. }) {
+        return Ok(exact);
+    }
+    let kept = assign(exact.clone(), &subject, "ISO/IEC 9075:1992 §11.5 SR3a iii")
+        .ok()
+        .filter(|v| compare(v, &exact) == Some(std::cmp::Ordering::Equal));
+    kept.ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a iii] the default {d} loses digits in {subject}")))
 }
 
 /// [ISO/IEC 9075:1992 §11.5 SR3a i] The value of the character string
@@ -136,7 +157,8 @@ fn character_default(s: &str, subject: DataType) -> Option<Result<Value>> {
         | DataType::BitVarying { .. }
         | DataType::Date
         | DataType::Time { .. }
-        | DataType::Timestamp { .. } => None,
+        | DataType::Timestamp { .. }
+        | DataType::Interval(_) => None,
     }
 }
 

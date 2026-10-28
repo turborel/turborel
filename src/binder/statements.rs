@@ -100,7 +100,8 @@ pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" 
 ///
 /// SQLCODE -103 citing `r` if it cannot.
 pub fn check_assignment(col: &crate::catalog::ColumnDesc, t: DataType, r: AssignRule) -> Result<()> {
-    let datetime = if col.data_type.is_datetime() || t.is_datetime() { col.data_type.comparable(&t) } else { true };
+    let temporal = col.data_type.is_datetime() || t.is_datetime() || col.data_type.is_interval() || t.is_interval();
+    let datetime = if temporal { col.data_type.comparable(&t) } else { true };
     if col.data_type.is_character() == t.is_character() && col.data_type.is_bit() == t.is_bit() && datetime {
         return Ok(());
     }

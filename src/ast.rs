@@ -6,6 +6,7 @@
 //! standard that are not implemented are listed under "Not implemented".
 
 use crate::value::datetime::{Field, Moment, Written};
+use crate::value::interval::Interval;
 use crate::value::{Bits, Decimal};
 
 /// [X3.135-1986 §5.4] `<table name>` ::= \[`<authorization identifier>`.\] `<table identifier>`
@@ -155,6 +156,9 @@ pub enum Literal {
     /// §5.3]: of a displacement the SQL-session gives, if it writes none
     /// \[SR18\].
     Datetime(Written),
+    /// An `<interval literal>`'s value, its sign applied [ISO/IEC
+    /// 9075:1992 §5.3 GR5].
+    Interval(Interval),
 }
 
 /// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`: CURRENT_DATE,
@@ -275,6 +279,9 @@ pub enum SqlStatement {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §16.2] `<set schema statement>` ::=
     /// SET SCHEMA `<value specification>`
     SetSchema(ValueSpecification),
+    /// [ISO/IEC 9075:1992 §16.5] `<set local time zone statement>`: SET TIME
+    /// ZONE, of an `<interval value expression>`, or LOCAL, none.
+    SetTimeZone(Option<ValueExpression>),
     /// \[EXTENSION\] SET `<setting name>` {= | TO} {`<value
     /// specification>` | DEFAULT}: the session's own value of a setting
     /// (RULES.md D36), where `<setting name>` ::= `<identifier>` \[{.

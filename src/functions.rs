@@ -203,9 +203,12 @@ impl Registry {
 pub const AVG_EXTRA_SCALE: u32 = 2;
 
 fn not_character(name: &str, arg: Option<DataType>) -> Result<DataType> {
-    match arg.filter(|t| matches!(t, DataType::Exact { .. } | DataType::Approximate { .. })) {
+    match arg.filter(|t| matches!(t, DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Interval(_))) {
         Some(t) => Ok(t),
-        None => fail(Code::SyntaxRule, format!("[X3.135-1986 §5.8 SR9a] the argument of {name} shall be a number")),
+        None => fail(
+            Code::SyntaxRule,
+            format!("[X3.135-1986 §5.8 SR9a; ISO/IEC 9075:1992 §6.5 SR9a] the argument of {name} shall be a number or an interval"),
+        ),
     }
 }
 
@@ -248,6 +251,8 @@ impl AggregateFunction for Sum {
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         Ok(match not_character(kw::SUM, arg)? {
             DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale },
+            // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
+            DataType::Interval(q) => DataType::Interval(q),
             // [X3.135-1986 §5.8 SR9d]; `not_character` has refused CHARACTER.
             DataType::Approximate { .. }
             | DataType::Character { .. }
@@ -260,20 +265,34 @@ impl AggregateFunction for Sum {
             | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION },
         })
     }
-    fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
-        Box::new(SumAcc(Value::Null))
+    fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
+        Box::new(SumAcc(Value::Null, result))
     }
 }
 
-struct SumAcc(Value);
+/// The sum so far, and the type of the result.
+struct SumAcc(Value, DataType);
 
 impl Accumulator for SumAcc {
     fn update(&mut self, v: &Value) -> Result<()> {
         self.0 = if self.0.is_null() { v.clone() } else { arith(ArithOp::Add, &self.0, v)? };
         Ok(())
     }
+    /// [ISO/IEC 9075:1992 §6.5 SR9e] an interval in the argument's fields.
     fn finish(&self) -> Result<Value> {
-        Ok(self.0.clone())
+        in_fields(self.0.clone(), self.1)
+    }
+}
+
+/// `v`, if an interval and `t` an interval type, in `t`'s fields.
+///
+/// # Errors
+///
+/// SQLSTATE 22015 if they cannot hold it.
+fn in_fields(v: Value, t: DataType) -> Result<Value> {
+    match (&v, t) {
+        (Value::Interval(i), DataType::Interval(q)) => crate::value::types::interval::fitted(i, q),
+        _ => Ok(v),
     }
 }
 
@@ -289,6 +308,8 @@ impl AggregateFunction for Avg {
             DataType::Exact { scale, .. } => {
                 DataType::Exact { precision: MAX_EXACT_PRECISION, scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION) }
             }
+            // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
+            DataType::Interval(q) => DataType::Interval(q),
             // `not_character` has refused CHARACTER.
             DataType::Approximate { .. }
             | DataType::Character { .. }
@@ -302,7 +323,7 @@ impl AggregateFunction for Avg {
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(AvgAcc { sum: SumAcc(Value::Null), count: 0, result })
+        Box::new(AvgAcc { sum: SumAcc(Value::Null, result), count: 0, result })
     }
 }
 
@@ -322,8 +343,9 @@ impl Accumulator for AvgAcc {
             (Value::Null, _) => Ok(Value::Null),
             // The sum divided by the count at the result scale.
             (Value::Exact(d), DataType::Exact { scale, .. }) => Ok(Value::Exact(d.quotient_at(Decimal::new(self.count, 0), scale)?)),
-            // An approximate sum gives an approximate average.
-            (sum, _) => arith(ArithOp::Div, sum, &Value::Exact(Decimal::new(self.count, 0))),
+            // An approximate sum gives an approximate average; an
+            // interval's, an interval in its fields.
+            (sum, _) => in_fields(arith(ArithOp::Div, sum, &Value::Exact(Decimal::new(self.count, 0)))?, self.result),
         }
     }
 }

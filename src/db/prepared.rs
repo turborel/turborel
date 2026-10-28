@@ -165,6 +165,7 @@ impl Session {
             }
             // [§17.6 GR5u]
             SqlStatement::SetSchema(v) => drop(binder::value_specification_as(v, &self.auth, params, ParameterType::Varying)?),
+            SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
             // Of a module's cursors and targets: FETCH and SELECT ... INTO
             // name parameters, which a prepared statement has none of, so
             // only OPEN and CLOSE reach here.
@@ -177,6 +178,7 @@ impl Session {
             | SqlStatement::Rollback
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
+            | SqlStatement::SetTimeZone(None)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Drop { .. }

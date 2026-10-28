@@ -37,6 +37,7 @@ fn length_of(t: &DataType) -> u32 {
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => 0,
     }
 }
@@ -130,7 +131,7 @@ impl SqlType for Bit {
             Value::Null => Ok(Value::Null),
             Value::Bits(b) => Ok(self.fitted(b, t)),
             Value::Char(s) => Ok(self.fitted(&of_text(s), t)),
-            Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
         }
     }
 

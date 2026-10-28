@@ -5,7 +5,8 @@
 use std::cmp::Ordering;
 
 use turborel::bytes::Reader;
-use turborel::value::datetime::{Datetime, Moment, parse};
+use turborel::value::datetime::{Datetime, Field, Moment, parse};
+use turborel::value::interval::{self, Interval, Qualifier};
 use turborel::value::{Bits, DataType, Decimal, SqlType, Value, assign, bucket, compare};
 
 /// Checks the contract of `t`'s kind on `t` and `values`, which are
@@ -127,6 +128,23 @@ fn times_and_timestamps_keep_the_type_contract() {
     type_contract(DataType::Timestamp { precision: 6, zoned: false }, &datetimes(Moment::Timestamp, stamps));
     let zoned_stamps = ["2024-01-01 05:30:00+05:30", "2024-01-01 00:00:00+00:00", "2023-12-31 23:00:00-02:00", "1970-01-01 00:00:00+13:00"];
     type_contract(DataType::Timestamp { precision: 3, zoned: true }, &datetimes(Moment::Timestamp, zoned_stamps));
+}
+
+/// The intervals `texts` write, of qualifier `q`.
+fn intervals<const N: usize>(q: Qualifier, texts: [&str; N]) -> Vec<Value> {
+    texts.iter().map(|t| Value::Interval(Interval { units: interval::parse(&q, t).unwrap(), qualifier: q })).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR6]
+/// INTERVAL keeps the `SqlType` contract, of each class: on intervals
+/// negative, zero, positive, and at the leading field's ends.
+#[test]
+fn intervals_keep_the_type_contract() {
+    let ym = Qualifier::new(Field::Year, Field::Month, 9, 0);
+    type_contract(DataType::Interval(ym), &intervals(ym, ["-999999999-11", "-1-00", "0-00", "0-01", "1-00", "999999999-11"]));
+    let dt = Qualifier::new(Field::Day, Field::Second, 9, 6);
+    let days = ["-999999999 23:59:59.999999", "-0 00:00:00.000001", "0 00:00:00", "1 12:00:00", "999999999 23:59:59.999999"];
+    type_contract(DataType::Interval(dt), &intervals(dt, days));
 }
 
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: NUMERIC keeps the `SqlType`

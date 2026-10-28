@@ -75,6 +75,9 @@ impl Parser {
         if self.at_datetime_literal() {
             return self.datetime_literal();
         }
+        if self.at_interval_literal() {
+            return self.interval_literal();
+        }
         let mut negative = false;
         if self.sign_attached() {
             negative = self.is_delim(delim::MINUS);

@@ -10,6 +10,7 @@ use crate::ast::{CaseExpression, Subquery, TypeName, ValueExpression};
 use crate::error::Result;
 use crate::logical::{Cond, Expr};
 use crate::params::ParameterType;
+use crate::value::interval::Qualifier;
 use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
 /// [ISO/IEC 9075:1992 §9.3] The result type of values of `types`: CHARACTER
@@ -28,13 +29,13 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     // \[EXTENSION\] Values of a type beyond the standard come together
     // only with values of the same type (RULES.md D53).
     if let Some(e) = types.iter().find(|t| matches!(t, DataType::Extension(_))) {
-        if types.iter().all(|t| t == e) {
-            return Ok(*e);
-        }
-        return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2] values of {e} are brought together with values of another type")));
+        return extension_set_type(*e, types, clause);
     }
     if let Some(first) = types.iter().find(|t| t.is_datetime()) {
         return datetime_set_type(*first, types, clause);
+    }
+    if let Some(DataType::Interval(first)) = types.iter().find(|t| t.is_interval()) {
+        return interval_set_type(*first, types, clause);
     }
     let characters = types.iter().filter(|t| t.is_character()).count();
     if characters != 0 && characters != types.len() {
@@ -55,7 +56,7 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
                 scale = scale.max(*s);
             }
             DataType::Approximate { .. } => exact = false,
-            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Extension(_) => {}
+            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) | DataType::Extension(_) => {}
         }
     }
     Ok(match (characters, bits, exact) {
@@ -101,6 +102,40 @@ fn datetime_set_type(first: DataType, types: &[DataType], clause: &str) -> Resul
     } else {
         DataType::Date
     })
+}
+
+/// \[EXTENSION\] The result type of values of `types`, `e` among them, of a
+/// type beyond the standard: `e`, if all are of it (RULES.md D53).
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is of another type.
+fn extension_set_type(e: DataType, types: &[DataType], clause: &str) -> Result<DataType> {
+    if types.iter().all(|t| *t == e) {
+        return Ok(e);
+    }
+    Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2] values of {e} are brought together with values of another type")))
+}
+
+/// [§9.3 SR3f] The result type of intervals of `types`, `first` among them:
+/// of one class, of the most significant start and least significant end
+/// of their fields, and the greatest precisions.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is no interval of `first`'s class.
+fn interval_set_type(first: Qualifier, types: &[DataType], clause: &str) -> Result<DataType> {
+    let mut q = first;
+    for t in types {
+        let DataType::Interval(other) = t else {
+            return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR3f] intervals are brought together with {t}")));
+        };
+        if other.year_month() != first.year_month() {
+            return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR3f] INTERVAL {first} and INTERVAL {other} are of two classes")));
+        }
+        q = q.joined(other, u32::from(q.leading.max(other.leading)));
+    }
+    Ok(DataType::Interval(q))
 }
 
 /// The digits of the second's fraction of `t`, a datetime type.
@@ -229,7 +264,7 @@ impl Binder<'_> {
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
         let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;
-        if t.is_datetime() || target.is_datetime() {
+        if t.is_datetime() || target.is_datetime() || t.is_interval() || target.is_interval() {
             return Ok((self.datetime_cast(e, t, target)?, target));
         }
         // [SR4] no number to or from a bit string.

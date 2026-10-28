@@ -95,6 +95,9 @@ impl Binder<'_> {
         if let ValueSpecification::Literal(Literal::Datetime(w)) = vs {
             return super::datetime::literal(w, self.now);
         }
+        if let ValueSpecification::Literal(Literal::Interval(i)) = vs {
+            return Ok((Value::Interval(*i), DataType::Interval(i.qualifier)));
+        }
         value_specification(vs, self.user, self.params)
     }
 
@@ -117,6 +120,10 @@ impl Binder<'_> {
             ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
             ValueExpression::Datetime(f) => Ok(self.datetime_function(*f)),
             ValueExpression::Extract { field, source, at } => self.extract(*field, source, scope).or_at(*at),
+            ValueExpression::Difference { minuend, subtrahend, qualifier, at } => {
+                self.difference((minuend, subtrahend), *qualifier, scope).or_at(*at)
+            }
+            ValueExpression::AtZone { source, zone, at } => self.at_zone(source, zone.as_deref(), scope).or_at(*at),
         }
     }
 
@@ -189,11 +196,9 @@ impl Binder<'_> {
         if left_type.is_bit() || right_type.is_bit() {
             return Err(rule("[ISO/IEC 9075:1992 §6.12] bit string values cannot be used with arithmetic operators"));
         }
-        // [§6.14, §6.15 Format] a datetime is added to, or subtracted
-        // from, an interval alone; two subtracted give an interval of the
-        // qualifier written after them.
-        if left_type.is_datetime() || right_type.is_datetime() {
-            return Err(rule("[ISO/IEC 9075:1992 §6.14, §6.15] a datetime is added to or subtracted from an interval alone"));
+        // [§6.14, §6.15] datetimes and intervals.
+        if left_type.is_datetime() || right_type.is_datetime() || left_type.is_interval() || right_type.is_interval() {
+            return self.temporal((a, left_type), op, (b, right_type));
         }
         let t = match (left_type, right_type) {
             (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,

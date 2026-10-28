@@ -175,6 +175,7 @@ impl SqlType for Varying {
             Value::Bits(b) => Ok(cut(of_bits(&b)?)),
             // [GR6e] its literal's string, as it shows.
             Value::Datetime(d) => super::datetime::as_string(&d, length_of(t), false),
+            Value::Interval(i) => super::datetime::fitted(i.to_string(), length_of(t), false),
             Value::Extension(ref e) => Ok(cut(e.kind.text(&v))),
         }
     }

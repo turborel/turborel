@@ -9,6 +9,7 @@
 
 use super::{DatetimeFunction, ExtractField, QueryExpression, TableName, TypeName, ValueSpecification};
 use crate::catalog::MatchType;
+use crate::value::interval::Qualifier;
 use crate::value::{ArithOp, CompOp};
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,9 @@ pub type RowValue = Vec<ValueExpression>;
 pub enum Predicate {
     /// [§8.2] `<comparison predicate>` ::= `<row value constructor>` `<comp op>` `<row value constructor>`
     Comparison(RowValue, CompOp, RowValue),
+    /// [§8.11] `<overlaps predicate>` ::= `<row value constructor>`
+    /// OVERLAPS `<row value constructor>`
+    Overlaps(RowValue, RowValue),
     /// [§8.3] `<between predicate>` ::= `<row value constructor>` \[NOT\]
     /// BETWEEN `<row value constructor>` AND `<row value constructor>`
     Between {
@@ -196,6 +200,28 @@ pub enum ValueExpression {
     },
     /// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`.
     Datetime(DatetimeFunction),
+    /// [ISO/IEC 9075:1992 §6.15] (`<datetime value expression>` -
+    /// `<datetime term>`) `<interval qualifier>`.
+    Difference {
+        /// The datetime subtracted from.
+        minuend: Box<ValueExpression>,
+        /// The datetime subtracted.
+        subtrahend: Box<ValueExpression>,
+        /// The interval's fields.
+        qualifier: Qualifier,
+        /// Where it begins in the statement.
+        at: usize,
+    },
+    /// [ISO/IEC 9075:1992 §6.14] A `<datetime primary>` with its `<time
+    /// zone>`: AT LOCAL, none, or AT TIME ZONE an interval.
+    AtZone {
+        /// The datetime.
+        source: Box<ValueExpression>,
+        /// The displacement, or none for the session's.
+        zone: Option<Box<ValueExpression>>,
+        /// Where it begins in the statement.
+        at: usize,
+    },
     /// [ISO/IEC 9075:1992 §6.6] EXTRACT (`<extract field>` FROM `<extract
     /// source>`).
     Extract {
@@ -303,6 +329,16 @@ impl ValueExpression {
         match self {
             ValueExpression::Value(_) | ValueExpression::Column(_) | ValueExpression::Subquery(_) | ValueExpression::Datetime(_) => {}
             ValueExpression::Extract { source, .. } => f(source),
+            ValueExpression::Difference { minuend, subtrahend, .. } => {
+                f(minuend);
+                f(subtrahend);
+            }
+            ValueExpression::AtZone { source, zone, .. } => {
+                f(source);
+                if let Some(z) = zone {
+                    f(z);
+                }
+            }
             ValueExpression::Dyadic(a, _, b) => {
                 f(a);
                 f(b);
@@ -419,7 +455,7 @@ impl Predicate {
     /// those of its subqueries.
     pub fn for_each_value<'a>(&'a self, f: &mut dyn FnMut(&'a ValueExpression)) {
         match self {
-            Predicate::Comparison(a, _, b) => a.iter().chain(b).for_each(f),
+            Predicate::Comparison(a, _, b) | Predicate::Overlaps(a, b) => a.iter().chain(b).for_each(f),
             Predicate::Between { value, low, high, .. } => value.iter().chain(low).chain(high).for_each(f),
             Predicate::InList { value, list, .. } => value.iter().chain(list).for_each(f),
             Predicate::Like { value, pattern, escape, .. } => {
@@ -448,6 +484,7 @@ impl Predicate {
             | Predicate::Exists(subquery)
             | Predicate::Unique(subquery) => Some(subquery),
             Predicate::Comparison(..)
+            | Predicate::Overlaps(..)
             | Predicate::Between { .. }
             | Predicate::InList { .. }
             | Predicate::Like { .. }

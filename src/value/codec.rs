@@ -31,6 +31,8 @@ const BITS: u8 = 5;
 const DATE: u8 = 6;
 const TIME: u8 = 7;
 const TIMESTAMP: u8 = 8;
+/// An interval: its qualifier, then its units.
+const INTERVAL: u8 = 9;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -46,6 +48,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
             Moment::Time => TIME,
             Moment::Timestamp => TIMESTAMP,
         },
+        Value::Interval(_) => INTERVAL,
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
             out.put_str(e.kind.name());
@@ -71,6 +74,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         DATE => &types::DATE,
         TIME => &types::TIME,
         TIMESTAMP => &types::TIMESTAMP,
+        INTERVAL => &types::INTERVAL_DAY_TIME,
         EXTENSION => {
             let name = reader.str()?;
             reader.kind(&name)?

@@ -30,6 +30,12 @@ impl Parser {
             }
             kw::BIT => self.bit_string_type(),
             kw::DATE | kw::TIME | kw::TIMESTAMP => self.datetime_type(),
+            // [ISO/IEC 9075:1992 §6.1] `<interval type>` ::= INTERVAL
+            // `<interval qualifier>`.
+            kw::INTERVAL => {
+                self.advance();
+                Ok(DataType::Interval(self.interval_qualifier()?))
+            }
             kw::NUMERIC | kw::DECIMAL | kw::DEC => self.exact_numeric_type(at),
             kw::INTEGER | kw::INT => {
                 self.advance();

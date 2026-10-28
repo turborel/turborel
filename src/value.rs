@@ -11,6 +11,7 @@ pub(crate) mod codec;
 pub(crate) mod comparison;
 pub mod datetime;
 mod decimal;
+pub mod interval;
 mod like;
 pub mod types;
 
@@ -118,6 +119,8 @@ pub enum DataType {
         /// Whether WITH TIME ZONE.
         zoned: bool,
     },
+    /// [ISO/IEC 9075:1992 §6.1] INTERVAL `<interval qualifier>`.
+    Interval(interval::Qualifier),
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -134,6 +137,10 @@ impl DataType {
     /// Whether this is a datetime type.
     pub fn is_datetime(&self) -> bool {
         matches!(self, DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. })
+    }
+    /// Whether this is an interval type.
+    pub fn is_interval(&self) -> bool {
+        matches!(self, DataType::Interval(_))
     }
     /// Whether this is a numeric type.
     pub fn is_numeric(&self) -> bool {
@@ -253,6 +260,8 @@ pub enum Value {
     Bits(Bits),
     /// [ISO/IEC 9075:1992 §4.5.1] A datetime.
     Datetime(Datetime),
+    /// [ISO/IEC 9075:1992 §4.5.2] An interval.
+    Interval(interval::Interval),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -268,7 +277,7 @@ impl Value {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
             Value::Approx(f) => Some(*f),
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => None,
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => None,
         }
     }
 
@@ -278,6 +287,7 @@ impl Value {
         match self {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
+            Value::Interval(i) => Value::Interval(interval::Interval { units: i.units.saturating_neg(), ..*i }),
             Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
         }
     }
@@ -303,6 +313,7 @@ impl Value {
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
             Value::Bits(b) => NormKey::Bits(b.clone()),
             Value::Datetime(d) => NormKey::Instant(d.utc),
+            Value::Interval(i) => NormKey::Span(i.units),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -320,6 +331,7 @@ impl fmt::Display for Value {
             Value::Approx(x) => write!(f, "{x:E}"),
             Value::Bits(b) => write!(f, "{b}"),
             Value::Datetime(d) => write!(f, "{d}"),
+            Value::Interval(i) => write!(f, "{i}"),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
@@ -341,6 +353,8 @@ pub enum NormKey {
     Bits(Bits),
     /// A datetime's instant, in UTC.
     Instant(i64),
+    /// An interval's units.
+    Span(i128),
     /// A kind beyond the standard's name, and the value's bytes: boxed, so
     /// a key of the standard's types stays small.
     Extension(Box<(String, Vec<u8>)>),
@@ -363,6 +377,12 @@ pub fn arith(op: ArithOp, a: &Value, b: &Value) -> Result<Value> {
             ArithOp::Mul => x.checked_mul(*y)?,
             ArithOp::Div => x.checked_div(*y)?,
         })),
+        // [ISO/IEC 9075:1992 §6.14, §6.15] of intervals and datetimes.
+        (Value::Interval(x), Value::Interval(y)) => interval::add(x, y, op == ArithOp::Sub),
+        (Value::Interval(x), Value::Exact(_) | Value::Approx(_)) => interval::scale(x, op, b),
+        (Value::Exact(_) | Value::Approx(_), Value::Interval(y)) => interval::scale(y, op, a),
+        (Value::Datetime(d), Value::Interval(i)) => interval::shift(d, i, op == ArithOp::Sub),
+        (Value::Interval(i), Value::Datetime(d)) => interval::shift(d, i, false),
         // [X3.135-1986 §5.9 SR5] if either operand is approximate, the result is approximate.
         _ => match (a.as_f64(), b.as_f64()) {
             (Some(x), Some(y)) => approximate(op, x, y),

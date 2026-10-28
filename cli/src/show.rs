@@ -54,6 +54,8 @@ fn shape(name: &str, t: &DataType) -> Shape {
         DataType::Date => (DATE_WIDTH, false),
         DataType::Time { precision, zoned } => (positions(TIME_WIDTH, *precision, *zoned), false),
         DataType::Timestamp { precision, zoned } => (positions(TIMESTAMP_WIDTH, *precision, *zoned), false),
+        // [ISO/IEC 9075:1992 §10.1 GR5] its positions, and its sign.
+        DataType::Interval(q) => (usize::try_from(q.positions()).unwrap_or(MAX_WIDTH).saturating_add(1), true),
         // A type beyond the standard, shown as its text, as wide as it is.
         DataType::Extension(_) => (MAX_WIDTH, false),
     };
@@ -118,9 +120,13 @@ impl Sink for Table<'_> {
                 .iter()
                 .map(|v| match v {
                     Value::Null => self.null.to_owned(),
-                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => {
-                        v.to_string()
-                    }
+                    Value::Char(_)
+                    | Value::Exact(_)
+                    | Value::Approx(_)
+                    | Value::Bits(_)
+                    | Value::Datetime(_)
+                    | Value::Interval(_)
+                    | Value::Extension(_) => v.to_string(),
                 })
                 .collect();
             let line = self.line(cells.iter().map(String::as_str));
@@ -179,6 +185,13 @@ mod tests {
         assert_eq!(width(DataType::Timestamp { precision: 6, zoned: false }), 26);
         assert_eq!(width(DataType::Timestamp { precision: 3, zoned: true }), 29);
         assert_eq!(width(DataType::BitVarying { length: 12 }), 12);
+        let day_second = turborel::value::interval::Qualifier::new(
+            turborel::value::datetime::Field::Day,
+            turborel::value::datetime::Field::Second,
+            2,
+            6,
+        );
+        assert_eq!(width(DataType::Interval(day_second)), 19, "its positions and its sign");
     }
 
     /// Verifies: [DESIGN] RULES.md D46: a failure to write is kept, and

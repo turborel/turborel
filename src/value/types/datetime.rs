@@ -65,6 +65,7 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Interval(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -168,7 +169,7 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
         Value::Null => Ok(Value::Null),
         Value::Char(s) => of_text(s, shape, now),
         Value::Datetime(d) => convert(d, shape, now),
-        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Extension(_) => uncastable(&v, t),
+        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
     }
 }
 
@@ -185,7 +186,17 @@ fn string_length(t: &DataType) -> Option<u32> {
 ///
 /// SQLSTATE 22001 if it is longer [GR5e iv, GR6e iii].
 pub fn as_string(d: &Datetime, length: u32, fixed: bool) -> Result<Value> {
-    let text = d.to_string();
+    fitted(d.to_string(), length, fixed)
+}
+
+/// [ISO/IEC 9075:1992 §6.10 GR5e, GR6e] `text`, a datetime's or an
+/// interval's literal's string, as a character string of `length`
+/// characters, fixed and padded with spaces or at most so many.
+///
+/// # Errors
+///
+/// SQLSTATE 22001 if it is longer [GR5e iv, GR6e iii].
+pub fn fitted(text: String, length: u32, fixed: bool) -> Result<Value> {
     let (count, fits) = (text.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
     if count > fits {
         let msg = format!("[ISO/IEC 9075:1992 §6.10 GR5e iv, GR6e iii] '{text}' is longer than {length} characters");

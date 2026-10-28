@@ -68,6 +68,7 @@ mod get_diagnostics;
 mod index_settings;
 mod indexes;
 mod information_schema;
+mod intervals;
 mod isolation;
 mod joined_tables;
 mod joins;

@@ -103,7 +103,7 @@ fn leap(year: i64) -> bool {
 }
 
 /// Days in `month` of `year`.
-fn days_in(year: i64, month: i64) -> i64 {
+pub(crate) fn days_in(year: i64, month: i64) -> i64 {
     match month {
         2 => {
             if leap(year) {
@@ -118,7 +118,7 @@ fn days_in(year: i64, month: i64) -> i64 {
 }
 
 /// Days from 0001-01-01 to `year`-`month`-`day`, valid.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     // Years before it, then months of this year before it.
     let y = year.saturating_sub(1);
     let before = y.saturating_mul(365).saturating_add(floor_div(y, 4)).saturating_sub(floor_div(y, 100)).saturating_add(floor_div(y, 400));
@@ -127,7 +127,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 }
 
 /// The year, month and day of `days` from 0001-01-01.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
     // Days from 0000-03-01, the start of a 400-year era's first year.
     let z = days.saturating_add(306);
     let era = floor_div(z, 146_097);

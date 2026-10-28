@@ -76,6 +76,12 @@ fn built_in_kinds_refuse_other_kinds() {
         DataType::Date,
         DataType::Time { precision: 3, zoned: true },
         DataType::Timestamp { precision: 6, zoned: false },
+        DataType::Interval(crate::value::interval::Qualifier::new(
+            crate::value::datetime::Field::Day,
+            crate::value::datetime::Field::Day,
+            2,
+            0,
+        )),
     ];
     let others = [
         Value::Exact(Decimal::new(1, 0)),
@@ -86,6 +92,7 @@ fn built_in_kinds_refuse_other_kinds() {
         Value::Char("2024-01-01".into()),
         Value::Bits(Bits::default()),
         Value::Approx(1.0),
+        Value::Exact(Decimal::new(3, 0)),
     ];
     for (t, other) in types.iter().zip(&others) {
         refuses(t, other);

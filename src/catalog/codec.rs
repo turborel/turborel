@@ -41,6 +41,7 @@ use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::codec::{put_value, value};
 use crate::value::datetime::Moment;
+use crate::value::types::INTERVAL_DAY_TIME;
 use crate::value::types::{APPROXIMATE, BIT, BIT_VARYING, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING};
 use crate::value::{DataType, SqlType};
 
@@ -110,6 +111,7 @@ const TIME_TYPE: u8 = 8;
 const TIME_ZONED_TYPE: u8 = 9;
 const TIMESTAMP_TYPE: u8 = 10;
 const TIMESTAMP_ZONED_TYPE: u8 = 11;
+const INTERVAL_TYPE: u8 = 12;
 
 fn put_type(out: &mut Vec<u8>, data_type: DataType) {
     match data_type {
@@ -122,6 +124,7 @@ fn put_type(out: &mut Vec<u8>, data_type: DataType) {
         DataType::Time { zoned: true, .. } => out.put_u8(TIME_ZONED_TYPE),
         DataType::Timestamp { zoned: false, .. } => out.put_u8(TIMESTAMP_TYPE),
         DataType::Timestamp { zoned: true, .. } => out.put_u8(TIMESTAMP_ZONED_TYPE),
+        DataType::Interval(_) => out.put_u8(INTERVAL_TYPE),
         DataType::Exact { .. } => out.put_u8(EXACT_TYPE),
         DataType::Approximate { .. } => out.put_u8(APPROXIMATE_TYPE),
         DataType::Extension(e) => {
@@ -145,6 +148,7 @@ fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         TIME_ZONED_TYPE => &TIME_ZONED,
         TIMESTAMP_TYPE => &TIMESTAMP,
         TIMESTAMP_ZONED_TYPE => &TIMESTAMP_ZONED,
+        INTERVAL_TYPE => &INTERVAL_DAY_TIME,
         EXTENSION_TYPE => {
             let name = r.str()?;
             r.kind(&name)?

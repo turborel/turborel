@@ -86,6 +86,12 @@ impl SqlState {
     pub const INVALID_ESCAPE_SEQUENCE: SqlState = SqlState("22025");
     /// Data exception: invalid datetime format.
     pub const INVALID_DATETIME_FORMAT: SqlState = SqlState("22007");
+    /// Data exception: datetime field overflow.
+    pub const DATETIME_FIELD_OVERFLOW: SqlState = SqlState("22008");
+    /// Data exception: invalid time zone displacement value.
+    pub const INVALID_TIME_ZONE_DISPLACEMENT: SqlState = SqlState("22009");
+    /// Data exception: interval field overflow.
+    pub const INTERVAL_FIELD_OVERFLOW: SqlState = SqlState("22015");
     /// Integrity constraint violation.
     pub const INTEGRITY_CONSTRAINT_VIOLATION: SqlState = SqlState("23000");
     /// Triggered data change violation.

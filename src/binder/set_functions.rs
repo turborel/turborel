@@ -33,6 +33,8 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
         | ValueExpression::Subquery(_)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }
+        | ValueExpression::Difference { .. }
+        | ValueExpression::AtZone { .. }
         | ValueExpression::Function { .. } => false,
     }
 }
@@ -69,6 +71,8 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Subquery(_)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }
+        | ValueExpression::Difference { .. }
+        | ValueExpression::AtZone { .. }
         | ValueExpression::Function { .. } => None,
     }
 }

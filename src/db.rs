@@ -95,6 +95,7 @@ mod state;
 mod stores;
 mod stream;
 mod temporary;
+mod time_zone;
 mod types;
 mod usage;
 mod users;

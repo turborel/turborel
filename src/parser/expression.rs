@@ -134,6 +134,10 @@ impl Parser {
         if not {
             return Err(self.syntax("expected BETWEEN, IN or LIKE after NOT"));
         }
+        // [§8.11] <overlaps predicate>
+        if self.accept_kw(kw::OVERLAPS) {
+            return Ok(Predicate::Overlaps(value, self.row_value()?));
+        }
         let op = self.comp_op()?;
         // [§8.7] <quantifier> ::= ALL | SOME | ANY
         if self.is_kw(kw::ANY) || self.is_kw(kw::SOME) || self.is_kw(kw::ALL) {
@@ -344,7 +348,7 @@ impl Parser {
     }
 
     /// [X3.135-1986 §5.9] `<factor>` ::= \[+ | -\] `<primary>`
-    fn factor(&mut self) -> Result<ValueExpression> {
+    pub(super) fn factor(&mut self) -> Result<ValueExpression> {
         // A sign touching a number is part of that <literal>, not an operator.
         if (self.is_delim(delim::PLUS) || self.is_delim(delim::MINUS)) && !self.sign_attached() {
             let sign = if self.is_delim(delim::MINUS) { Sign::Minus } else { Sign::Plus };
@@ -354,8 +358,18 @@ impl Parser {
             if self.is_delim(delim::PLUS) || self.is_delim(delim::MINUS) {
                 return Err(self.rule("[X3.135-1986 §5.9 SR2] the token after a monadic operator shall not begin with + or -"));
             }
-            return Ok(ValueExpression::Monadic(sign, Box::new(self.primary()?)));
+            let primary = self.qualified_primary()?;
+            return Ok(ValueExpression::Monadic(sign, Box::new(self.time_zone(primary)?)));
         }
-        self.primary()
+        let primary = self.qualified_primary()?;
+        self.time_zone(primary)
+    }
+
+    /// A `<primary>`, with the `<interval qualifier>` that may follow it
+    /// [ISO/IEC 9075:1992 §6.15].
+    fn qualified_primary(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        let primary = self.primary()?;
+        self.qualified(primary, at)
     }
 }

@@ -150,7 +150,13 @@ pub fn batch_bytes(value: &Value) -> usize {
 fn bytes(value: &Value, default: usize) -> usize {
     match value {
         Value::Exact(d) => usize::try_from(d.units).unwrap_or(usize::MAX),
-        Value::Approx(_) | Value::Char(_) | Value::Null | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => default,
+        Value::Approx(_)
+        | Value::Char(_)
+        | Value::Null
+        | Value::Bits(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => default,
     }
 }
 

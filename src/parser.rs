@@ -27,6 +27,7 @@ mod ddl;
 mod diagnostics;
 mod domains;
 mod expression;
+mod interval;
 mod literal;
 mod primary;
 mod query;

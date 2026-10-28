@@ -36,13 +36,17 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         | (Value::Bits(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_))
         | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_), Value::Bits(_))
         | (Value::Datetime(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_), Value::Datetime(_)) => None,
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_), Value::Datetime(_))
+        | (Value::Interval(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_), Value::Interval(_)) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
         (Value::Exact(_) | Value::Approx(_), Value::Exact(_) | Value::Approx(_)) => compare_numbers(a, b),
         // [ISO/IEC 9075:1992 §8.2 GR4] bit by bit.
         (Value::Bits(x), Value::Bits(y)) => Some(x.cmp(y)),
         // [ISO/IEC 9075:1992 §8.2 GR5] by their instants.
         (Value::Datetime(x), Value::Datetime(y)) => x.compare(y),
+        // [ISO/IEC 9075:1992 §8.2 GR6] of one class, by their units.
+        (Value::Interval(x), Value::Interval(y)) => (x.qualifier.year_month() == y.qualifier.year_month()).then(|| x.units.cmp(&y.units)),
         // A value of a kind beyond the standard compares as its kind says.
         (Value::Extension(e), _) => e.kind.compare(a, b),
         (_, Value::Extension(e)) => e.kind.compare(b, a).map(Ordering::reverse),
@@ -58,8 +62,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
         (Value::Exact(x), Value::Approx(y)) => compare_exact_approximate(x, *y),
         (Value::Approx(x), Value::Exact(y)) => compare_exact_approximate(y, *x).map(Ordering::reverse),
         (Value::Approx(x), Value::Approx(y)) => x.partial_cmp(y),
-        (Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_), _)
-        | (_, Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_)) => None,
+        (Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_), _)
+        | (_, Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => None,
     }
 }
 
@@ -81,6 +85,8 @@ pub enum Bucket {
     Bits(Box<[u8]>),
     /// A datetime's instant, its microseconds in UTC.
     Instant(i64),
+    /// An interval's months or microseconds.
+    Span(i128),
     /// A value of a type beyond the standard, as its kind buckets it: boxed,
     /// so a bucket of the standard's types stays small.
     Extension(Box<[u8]>),
@@ -95,6 +101,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Exact(_) | Value::Approx(_) => number_bucket(v),
         Value::Bits(_) => BIT_VARYING.bucket(v),
         Value::Datetime(d) => Some(Bucket::Instant(d.utc)),
+        Value::Interval(i) => Some(Bucket::Span(i.units)),
         Value::Extension(e) => e.kind.bucket(v),
     }
 }
@@ -105,7 +112,7 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
     let f = match v {
         Value::Exact(d) => d.nearest(),
         Value::Approx(f) => *f,
-        Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => return None,
+        Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => return None,
     };
     Some(Bucket::Number(if f == 0.0_f64 { 0.0_f64.to_bits() } else { f.to_bits() }))
 }

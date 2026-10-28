@@ -93,6 +93,7 @@ impl Binder<'_> {
                 compare_rows(&exprs(&x), *op, &exprs(&y))
             }
             Predicate::Between { value, low, high, not } => self.between([value, low, high], *not, scope)?,
+            Predicate::Overlaps(left, right) => self.overlaps(left, right, scope)?,
             Predicate::InList { value, list, not } => self.in_list(value, list, *not, scope)?,
             // [§8.4 SR3, SR4] "R IN S" is "R = ANY S".
             Predicate::InSubquery { value, subquery, not } => {

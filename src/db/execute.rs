@@ -77,6 +77,8 @@ impl Session {
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
             SqlStatement::SetTransaction(modes) => return self.set_transaction(&modes, params).map(|()| Completion::Success),
             SqlStatement::SetSchema(v) => return self.set_schema(st, &v, params).map(|()| Completion::Success),
+            // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
+            SqlStatement::SetTimeZone(v) => return self.set_time_zone(st, v.as_ref(), params).map(|()| Completion::Success),
             SqlStatement::SetSetting { name, value } => {
                 return self.set_named(st, &name, value.as_ref(), params).map(|()| Completion::Success);
             }
@@ -151,6 +153,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
+            | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Index(_)
@@ -198,6 +201,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Select { .. } => "SELECT",
         SqlStatement::SetTransaction(_) => "SET TRANSACTION",
         SqlStatement::SetSchema(_) => "SET SCHEMA",
+        SqlStatement::SetTimeZone(_) => "SET TIME ZONE",
         SqlStatement::SetConstraints { .. } => "SET CONSTRAINT",
         SqlStatement::UpdatePositioned { .. } => "UPDATE CURSOR",
         SqlStatement::UpdateSearched { .. } => "UPDATE WHERE",

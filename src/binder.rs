@@ -30,7 +30,9 @@ use crate::value::{DOUBLE_PRECISION, DataType, Value};
 
 mod case;
 mod datetime;
+mod interval;
 pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};
+pub use interval::{displacement_of, is_displacement};
 mod expression;
 mod from;
 mod predicates;
@@ -186,6 +188,17 @@ pub fn qualify(name: &TableName, auth: &str) -> QualifiedName {
     QualifiedName { auth: name.auth.clone().unwrap_or_else(|| auth.to_string()), ident: name.ident.clone() }
 }
 
+/// [ISO/IEC 9075:1992 §16.5] A `<value expression>` of no table, as SET
+/// TIME ZONE gives one: bound, and its type.
+///
+/// # Errors
+///
+/// It does not bind.
+pub fn bind_value(cx: Context<'_>, v: &crate::ast::ValueExpression) -> Result<(crate::logical::Expr, DataType)> {
+    let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
+    binder.value_expression(v, Scope::Rows("[ISO/IEC 9075:1992 §16.5] SET TIME ZONE has no set function"))
+}
+
 /// [X3.135-1986 §5.6] `<value specification>`: its value and data type.
 ///
 /// # Errors
@@ -207,6 +220,8 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         // [ISO/IEC 9075:1992 §5.3 SR15-SR18] here of UTC: a statement's
         // binder gives its session's displacement (`Binder::value_specification`).
         ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, Now::default())?,
+        // [ISO/IEC 9075:1992 §5.3 SR20] of its qualifier.
+        ValueSpecification::Literal(Literal::Interval(i)) => (Value::Interval(*i), DataType::Interval(i.qualifier)),
         // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
         // [X3.135-1986 §5.6 SR6] its length is implementor-defined; we use the identifier's own length.
         // [ISO/IEC 9075:1992 §6.2 GR10, GR11] So are SESSION_USER, there

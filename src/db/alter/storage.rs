@@ -32,6 +32,7 @@ pub(in crate::db) fn value_of(value: &OptionValue) -> Value {
         OptionValue::Literal(Literal::Approximate(x)) => Value::Approx(*x),
         OptionValue::Literal(Literal::Bit(b)) => Value::Bits(b.clone()),
         OptionValue::Literal(Literal::Datetime(w)) => crate::binder::datetime_literal(w),
+        OptionValue::Literal(Literal::Interval(i)) => Value::Interval(*i),
     }
 }
 
