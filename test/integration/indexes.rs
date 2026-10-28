@@ -136,3 +136,37 @@ fn indexes_are_dropped() {
     db.create_index("T_NAME", "APP.T", &["NAME"], "hash").unwrap();
     assert_eq!(rows(&s, query), before);
 }
+
+/// Verifies: [DESIGN] access path selection; [EXTENSION] indexes; [ISO/IEC
+/// 9075:1992 §8.3 GR1] a lower and an upper bound of a B-link index's
+/// column are one probe, of both, so the keys past the upper are not read:
+/// BETWEEN, two comparisons, inclusive or not, after an equality of the
+/// index's first column too; the rows those of a scan.
+#[test]
+fn a_range_is_one_probe_of_both_bounds() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION R CREATE TABLE T (G INTEGER NOT NULL, K INTEGER NOT NULL, V INTEGER)").unwrap();
+    let s = db.session("R");
+    for k in 0..2000 {
+        s.run(&format!("INSERT INTO T VALUES ({}, {k}, {k})", k % 2)).unwrap();
+    }
+    s.commit().unwrap();
+    db.create_index("T_K", "R.T", &["K"], "btree").unwrap();
+    db.create_index("T_GK", "R.T", &["G", "K"], "btree").unwrap();
+    let cases = [
+        ("SELECT V FROM T WHERE K BETWEEN 100 AND 104", 5),
+        ("SELECT V FROM T WHERE K > 100 AND K < 104", 3),
+        ("SELECT V FROM T WHERE K >= 100 AND K < 104", 4),
+        ("SELECT V FROM T WHERE 104 >= K AND K > 100", 4),
+        ("SELECT V FROM T WHERE G = 1 AND K BETWEEN 100 AND 110", 5),
+    ];
+    for (sql, n) in cases {
+        let plan = s.explain(sql, &Params::new()).unwrap();
+        let physical = plan.split("-- physical:").nth(1).unwrap_or_default();
+        assert!(physical.contains("IndexScan") && !physical.contains("Filter"), "{sql}: {plan}");
+        let found = rows(&s, sql).unwrap();
+        assert_eq!(found.len(), n, "{sql}");
+        let scanned: Vec<String> = rows(&s, &sql.replace("WHERE", "WHERE V = V AND")).unwrap();
+        assert_eq!(found, scanned, "{sql}: the rows of a scan");
+    }
+}

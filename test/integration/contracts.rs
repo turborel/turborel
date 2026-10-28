@@ -15,11 +15,11 @@ use turborel::disk::pager::Pager;
 use turborel::engine::rows::{RowStore, TableFiles, TableOptions};
 use turborel::error::{self, Code};
 use turborel::functions::ScalarFunction;
-use turborel::index::{BTreeMethod, HashMethod, IndexMethod, Key, Probe};
+use turborel::index::HashMethod;
 use turborel::log::{Log, MemoryLog};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::NO_TRANSACTION;
-use turborel::value::{CompOp, DataType, Value, compare};
+use turborel::value::{DataType, Value};
 
 use crate::common::{Scratch, crc32c, number};
 use turborel::value::Spelled;
@@ -100,121 +100,6 @@ fn the_built_in_engine_keeps_the_storage_contract() {
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
     storage_contract(&RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default()));
-}
-
-/// The keys and ids the index contract uses: a duplicate key, and gaps.
-const ENTRIES: [(i128, RowId); 5] = [(1, 10), (2, 11), (2, 12), (3, 13), (5, 14)];
-/// Probe values below, on, between and above the keys.
-const PROBES: [i128; 5] = [0, 2, 4, 5, 6];
-const OPERATORS: [CompOp; 6] = [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Gt, CompOp::Le, CompOp::Ge];
-
-fn key(n: i128) -> Key {
-    Key(vec![number(n)])
-}
-
-/// The ids whose key satisfies `key op value`, by the comparison rules.
-fn expected(op: CompOp, value: i128) -> Vec<RowId> {
-    ENTRIES.iter().filter(|(k, _)| compare(&number(*k), &number(value)).is_some_and(|o| op.holds(o))).map(|(_, id)| *id).collect()
-}
-
-/// Checks the `IndexMethod` and `Index` contracts on `method`.
-fn index_contract(method: &dyn IndexMethod) {
-    let index = method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }]).unwrap();
-    assert!(index.search(&Probe::All).unwrap().is_empty(), "a new index is empty");
-    for (k, id) in ENTRIES {
-        index.insert(key(k), id).unwrap();
-    }
-    let ids = |probe: &Probe| index.search(probe).unwrap().into_iter().map(|(_, id)| id).collect::<Vec<_>>();
-    let key_of = |id: RowId| ENTRIES.iter().find(|(_, i)| *i == id).map(|(k, _)| *k).unwrap();
-    for op in OPERATORS.into_iter().filter(|op| method.supports(*op)) {
-        for value in PROBES {
-            let probe = Probe::Compare { op, value: number(value) };
-            let found = ids(&probe);
-            let mut sorted = found.clone();
-            sorted.sort_unstable();
-            assert_eq!(sorted, expected(op, value), "{} {op:?} {value}", method.name());
-            assert!(
-                index.search(&probe).unwrap().iter().all(|(k, id)| *k == key(key_of(*id))),
-                "{} returns each entry's key",
-                method.name()
-            );
-            let estimate = index.estimate(&probe);
-            assert!(estimate.is_none_or(|n| n == found.len()), "{} {op:?} {value}: an estimate known cheaply is exact here", method.name());
-            if method.ordered() {
-                assert!(found.windows(2).all(|w| key_of(w[0]) <= key_of(w[1])), "{} {op:?} {value} in key order", method.name());
-            }
-        }
-    }
-    let mut all = ids(&Probe::All);
-    all.sort_unstable();
-    assert_eq!(all, ENTRIES.map(|(_, id)| id).to_vec(), "{}", method.name());
-    let rows = |k: i128| {
-        let mut r = index.rows(&key(k)).unwrap();
-        r.sort_unstable();
-        r
-    };
-    assert_eq!(rows(2), [11, 12], "{}", method.name());
-    // Entries are counted: a pair inserted twice stays until removed twice,
-    // and is found once meanwhile.
-    index.insert(key(2), 11).unwrap();
-    assert_eq!((rows(2), ids(&Probe::Compare { op: CompOp::Eq, value: number(2) }).len()), (vec![11, 12], 2), "{}", method.name());
-    index.remove(&key(2), 11).unwrap();
-    assert_eq!(rows(2), [11, 12], "{}: one insert left", method.name());
-    index.remove(&key(2), 11).unwrap();
-    index.remove(&key(2), 99).unwrap(); // absent: no change
-    assert_eq!((rows(2), rows(5)), (vec![12], vec![14]), "{}", method.name());
-    index.remove(&key(5), 14).unwrap();
-    assert_eq!(rows(5), Vec::<RowId>::new(), "{}", method.name());
-}
-
-/// Checks the `Probe::Prefix` contract on `method`, with an index on two
-/// columns: every prefix it supports returns exactly the entries whose key
-/// answers it, in key order if the method is ordered.
-fn prefix_contract(method: &dyn IndexMethod) {
-    let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index = method.create(&[exact, exact]).unwrap();
-    let keys: Vec<Key> = (0..4).flat_map(|a| (0..4).map(move |b| Key(vec![number(a), number(b)]))).collect();
-    for (id, k) in (1..).zip(&keys) {
-        index.insert(k.clone(), id).unwrap();
-    }
-    let thens = OPERATORS.into_iter().map(Some).chain([None]);
-    for (equal, then) in [1, 2].into_iter().flat_map(|e| thens.clone().map(move |t| (e, t))) {
-        if !method.supports_prefix(2, equal, then) {
-            continue;
-        }
-        for (a, b) in (0..5).flat_map(|a| (0..5).map(move |b| (a, b))) {
-            let values = [number(a), number(b)];
-            let probe = Probe::Prefix { equal: values.get(..equal).unwrap().to_vec(), then: then.map(|op| (op, number(b))) };
-            let found: Vec<RowId> = index.search(&probe).unwrap().into_iter().map(|(_, id)| id).collect();
-            let mut sorted = found.clone();
-            sorted.sort_unstable();
-            let expected: Vec<RowId> = (1..).zip(&keys).filter(|(_, k)| probe.answers(&k.0)).map(|(id, _)| id).collect();
-            assert_eq!(sorted, expected, "{} {probe:?}", method.name());
-            if method.ordered() {
-                assert_eq!(found, expected, "{} {probe:?} in key order", method.name());
-            }
-        }
-    }
-}
-
-/// Verifies: [EXTENSION] `IndexMethod` and `Index` contracts, for the built-in
-/// btree (in memory and in a pager file) and hash methods: every supported
-/// probe, of one column or a prefix of two (RULES.md D34), returns exactly
-/// the matching entries, with their keys, in key order if the method is
-/// ordered; an estimate known cheaply is exact; entries are counted, a pair
-/// inserted twice staying until removed twice.
-#[test]
-fn built_in_index_methods_keep_the_index_contract() {
-    let scratch = Scratch::new("contract-btree");
-    let pager = Pager::create(&OsFileSystem, &scratch.path("index"), crc32c(), Pipeline::none(), 4096).unwrap();
-    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
-    let file = pool.add_pager(Arc::new(pager));
-    for method in [&BTreeMethod::in_memory() as &dyn IndexMethod, &BTreeMethod::new(pool, file), &HashMethod::in_memory()] {
-        assert!(method.supports(CompOp::Eq), "{} answers equality", method.name());
-        index_contract(method);
-        assert!(method.supports_prefix(2, 2, None), "{} answers a whole key's equality", method.name());
-        prefix_contract(method);
-    }
 }
 
 /// Verifies: [DESIGN] `Catalog` contract, for `MemoryCatalog`.

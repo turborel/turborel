@@ -726,7 +726,11 @@ indexes never need rewriting for them.
 and says which probes they answer. Two are built in, both in pages through
 the buffer pool, so an index larger than memory lives in its file:
 - `btree`, a B-link tree keyed by the encoded key then the row id: ordered,
-  for equality and ranges.
+  for equality and ranges. A lower and an upper bound of one column, as
+  BETWEEN gives, are one probe (`Probe::Range`), so the keys past the
+  upper are not read: 100 keys of 200,000 by BETWEEN went from 28 to some
+  7,400 queries a second (`bench/cursors.rs`, 2026-10-28). A method says
+  it answers ranges by `IndexMethod::supports_range`.
 - `hash`, a linear hash table (Litwin, 1980) keyed by the encoded key:
   equality only, growing and shrinking a bucket at a time, readers locking
   nothing.

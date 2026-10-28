@@ -103,6 +103,10 @@ impl IndexMethod for BTreeMethod {
     fn supports_prefix(&self, columns: usize, equal: usize, then: Option<CompOp>) -> bool {
         equal > 0 && equal.saturating_add(usize::from(then.is_some())) <= columns && then.is_none_or(|op| self.supports(op))
     }
+    /// Equal values of any first columns, then two bounds of the next.
+    fn supports_range(&self, columns: usize, equal: usize) -> bool {
+        equal < columns
+    }
     fn ordered(&self) -> bool {
         true
     }
@@ -252,6 +256,13 @@ impl BLinkIndex {
             Probe::All => Some(Range::all(false)),
             Probe::Compare { op, value } => self.prefix_range(&[], Some((*op, value))),
             Probe::Prefix { equal, then } => self.prefix_range(equal, then.as_ref().map(|(op, v)| (*op, v))),
+            // From where the lower bound's keys begin to where the upper
+            // bound's end.
+            Probe::Range { equal, low, high } => {
+                let from = self.prefix_range(equal, Some((low.0, &low.1)))?;
+                let to = self.prefix_range(equal, Some((high.0, &high.1)))?;
+                Some(Range { lower: from.lower, upper: to.upper, checked: from.checked || to.checked })
+            }
         }
     }
 

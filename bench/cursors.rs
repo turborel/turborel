@@ -1,6 +1,7 @@
 //! How fast cursors give rows: opening a cursor over a
 //! table and fetching its first row, and fetching every row, through the
-//! Rust API and through OPEN and FETCH statements. Run with `cargo xtask
+//! Rust API and through OPEN and FETCH statements; and a query of a range
+//! of an indexed column, its rows few of the table's. Run with `cargo xtask
 //! bench`, on the harness (RULES.md R-BENCH-1).
 
 #![allow(
@@ -60,6 +61,17 @@ fn main() {
         s.execute("CLOSE C", &mut p).unwrap();
         s.commit().unwrap();
         rows
+    });
+    db.create_index("T_K", "B.T", &["K"], "btree").unwrap();
+    bench.measure(Case::new("query a range of 100 keys of an index, BETWEEN", "queries"), || {
+        let mut cursor = s.open_cursor("SELECT NAME FROM T WHERE K BETWEEN 100000 AND 100099").unwrap();
+        let mut rows = 0_u64;
+        while cursor.fetch().unwrap().is_some() {
+            rows += 1;
+        }
+        assert_eq!(rows, 100);
+        s.commit().unwrap();
+        1
     });
 }
 

@@ -86,6 +86,21 @@ pub enum Probe {
         /// The comparison of the next column, if any.
         then: Option<(CompOp, Value)>,
     },
+    /// The keys whose first columns equal `equal`, one value for each, if
+    /// any, and whose next column lies between two bounds: above `low` by
+    /// its operator, `>` or `>=`, and below `high` by its, `<` or `<=`; as
+    /// BETWEEN gives [ISO/IEC 9075:1992 §8.3 GR1], or two comparisons
+    /// (`IndexMethod::supports_range`).
+    Range {
+        /// The values of the key's first columns.
+        equal: Vec<Value>,
+        /// The lower bound of the next column, and its operator; boxed, as
+        /// are `high`'s, so that a probe, and each plan holding one, is no
+        /// larger than another kind of probe makes it.
+        low: Box<(CompOp, Value)>,
+        /// The upper bound of the next column, and its operator.
+        high: Box<(CompOp, Value)>,
+    },
 }
 
 impl Probe {
@@ -101,6 +116,11 @@ impl Probe {
             Probe::Prefix { equal, then } => {
                 equal.iter().all(|v| holds(CompOp::Eq, key.next(), v)) && then.as_ref().is_none_or(|(op, v)| holds(*op, key.next(), v))
             }
+            Probe::Range { equal, low, high } => {
+                let equals = equal.iter().all(|v| holds(CompOp::Eq, key.next(), v));
+                let next = key.next();
+                equals && holds(low.0, next, &low.1) && holds(high.0, next, &high.1)
+            }
         }
     }
 }
@@ -108,7 +128,7 @@ impl Probe {
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
 ///
 /// Contract (RULES.md R-SAFE-3; checked for btree and hash by
-/// `test/integration/contracts.rs`):
+/// `test/integration/index_contracts.rs`):
 /// * `name` is unique among the registered methods, and constant.
 /// * `supports(op)` is true only if every index it creates answers
 ///   `Probe::Compare` with `op` exactly (see `Index`), and
@@ -145,6 +165,11 @@ pub trait IndexMethod: Send + Sync {
     /// Can an index on `columns` columns answer a `Probe::Prefix` of
     /// `equal` values, then a comparison by `then`, if given? Default: no.
     fn supports_prefix(&self, _columns: usize, _equal: usize, _then: Option<CompOp>) -> bool {
+        false
+    }
+    /// Can an index on `columns` columns answer a `Probe::Range` of `equal`
+    /// values, then two bounds of the next column? Default: no.
+    fn supports_range(&self, _columns: usize, _equal: usize) -> bool {
         false
     }
     /// Does `search` return row ids in ascending key order (by the [X3.135-1986 §5.11]
@@ -223,7 +248,7 @@ pub trait IndexMethod: Send + Sync {
 /// then find an entry of a version a reader does not see: the reader keeps
 /// a row only if the version it sees has the entry's key.
 ///
-/// Contract (RULES.md R-SAFE-3; checked by `test/integration/contracts.rs`):
+/// Contract (RULES.md R-SAFE-3; checked by `test/integration/index_contracts.rs`):
 /// * Callers never insert a key containing a null, and probe only with
 ///   operators the method `supports`.
 /// * `search` returns exactly the (key, id) pairs inserted more often than

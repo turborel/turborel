@@ -154,9 +154,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Two-sided index probes:** an index is probed with one bound only, so a
-  BETWEEN, or two range conditions on a column, reads every entry past the
-  bound chosen; on a column of few values, the scan wins instead.
 - **Scan filters** more precise than one `column op constant`. Even that
   one only cuts the rows returned and the reads tracked for
   serializability: the row store still reads and decodes every row, until

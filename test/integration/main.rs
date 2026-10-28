@@ -65,6 +65,7 @@ mod failures;
 mod faults;
 mod functions;
 mod get_diagnostics;
+mod index_contracts;
 mod index_settings;
 mod indexes;
 mod information_schema;

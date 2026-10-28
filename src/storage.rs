@@ -492,6 +492,11 @@ impl Condition {
                 equal.iter().zip(&ranges).all(|(v, r)| within(CompOp::Eq, r, v))
                     && then.as_ref().is_none_or(|(op, v)| ranges.get(equal.len()).is_some_and(|r| within(*op, r, v)))
             }
+            Probe::Range { equal, low, high } => {
+                let next = ranges.get(equal.len());
+                equal.iter().zip(&ranges).all(|(v, r)| within(CompOp::Eq, r, v))
+                    && next.is_some_and(|r| within(low.0, r, &low.1) && within(high.0, r, &high.1))
+            }
         }
     }
 }
@@ -520,4 +525,38 @@ pub struct Newest {
     /// A change another open transaction made to it: the row it leaves,
     /// none for a delete. While it is pending the row is in doubt.
     pub pending: Option<Option<Row>>,
+}
+
+// Unit tests: whether rows within bounds may match a range probe
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Decimal;
+
+    fn n(v: i128) -> Value {
+        Value::Exact(Decimal::new(v, 0))
+    }
+
+    /// Verifies: [DESIGN] RULES.md D29: rows changed within bounds may
+    /// match a range of an index's columns only if the bounds meet it: of
+    /// the range's column, and of the columns held equal before it.
+    #[test]
+    fn rows_within_bounds_may_match_a_range() {
+        let range = |equal: Vec<Value>| Condition {
+            columns: vec![0, 1],
+            probe: Probe::Range { equal, low: Box::new((CompOp::Ge, n(10))), high: Box::new((CompOp::Lt, n(20))) },
+        };
+        let bounds = |a: (i128, i128), b: (i128, i128)| vec![Some((n(a.0), n(a.1))), Some((n(b.0), n(b.1)))];
+        let alone = Condition {
+            columns: vec![1],
+            probe: Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, n(10))), high: Box::new((CompOp::Lt, n(20))) },
+        };
+        assert!(alone.may_match(&bounds((0, 0), (15, 30))), "overlapping");
+        assert!(!alone.may_match(&bounds((0, 0), (20, 30))), "past the upper bound, exclusive");
+        assert!(!alone.may_match(&bounds((0, 0), (0, 9))), "below the lower");
+        assert!(range(vec![n(1)]).may_match(&bounds((0, 2), (0, 30))), "the equal column within");
+        assert!(!range(vec![n(5)]).may_match(&bounds((0, 2), (0, 30))), "the equal column without");
+        assert!(!alone.may_match(&[Some((n(0), n(0))), None]), "a column of no value not null");
+    }
 }

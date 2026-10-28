@@ -116,6 +116,7 @@ impl PhysicalPlanner<'_> {
                     Probe::All => method.ordered() && !want.is_empty(),
                     Probe::Compare { op, .. } => method.supports(*op),
                     Probe::Prefix { equal, then } => method.supports_prefix(types.len(), equal.len(), then.as_ref().map(|(op, _)| *op)),
+                    Probe::Range { equal, .. } => method.supports_range(types.len(), equal.len()),
                 };
                 // Indexes hold no key with a null, so the rows of a probe are
                 // all its conjuncts select only if no column it does not test
@@ -172,6 +173,24 @@ fn probes(columns: &[usize], types: &[DataType], compared: &[(usize, usize, Comp
         let probe = if fixed == 0 { Probe::Compare { op, value } } else { Probe::Prefix { equal: equal.clone(), then: Some((op, value)) } };
         out.push(Candidate { probe, used, fixed, guess });
     }
+    // [ISO/IEC 9075:1992 §8.3 GR1] a lower and an upper bound of the next
+    // column, as of BETWEEN: one range, the keys past the upper not read.
+    let bound = |below: bool| {
+        on(fixed).find(|(_, _, op, _)| matches!(op, CompOp::Lt | CompOp::Le) == below && *op != CompOp::Eq && *op != CompOp::Ne)
+    };
+    if let (Some((lo_ci, col, lo_op, lo)), Some((hi_ci, _, hi_op, hi))) = (bound(false), bound(true)) {
+        let (a, b) = (estimate::compare((col, lo_op, &lo), known), estimate::compare((col, hi_op, &hi), known));
+        // Of one column, both hold where either does not fail: a + b - 1,
+        // if the statistics know; else as if independent.
+        let guess = guess * (a + b - 1.0_f64).max(a * b);
+        let used = [used.as_slice(), &[lo_ci, hi_ci]].concat();
+        out.push(Candidate {
+            probe: Probe::Range { equal: equal.clone(), low: Box::new((lo_op, lo)), high: Box::new((hi_op, hi)) },
+            used,
+            fixed,
+            guess,
+        });
+    }
     if fixed > 0 {
         let probe = match (equal.as_slice(), columns.len()) {
             ([only], 1) => Probe::Compare { op: CompOp::Eq, value: only.clone() },
@@ -188,6 +207,7 @@ fn tested(probe: &Probe) -> usize {
         Probe::All => 0,
         Probe::Compare { .. } => 1,
         Probe::Prefix { equal, then } => equal.len().saturating_add(usize::from(then.is_some())),
+        Probe::Range { equal, .. } => equal.len().saturating_add(1),
     }
 }
 

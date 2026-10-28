@@ -200,7 +200,7 @@ impl HashIndex {
         let values: &[Value] = match probe {
             Probe::All => return Lookup::Every,
             Probe::Compare { value, .. } => std::slice::from_ref(value),
-            Probe::Prefix { equal, .. } => equal,
+            Probe::Prefix { equal, .. } | Probe::Range { equal, .. } => equal,
         };
         if values.iter().any(Value::is_null) {
             return Lookup::Nothing;
