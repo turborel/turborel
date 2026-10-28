@@ -87,7 +87,8 @@ impl Session {
     /// not read-only, and its object columns: through an updatable view,
     /// its base table's [X3.135-1986 §6.5 GR2].
     pub(super) fn insert_target(&self, st: &State, stmt: &InsertStatement) -> Result<Target> {
-        let auth = self.auth.as_str();
+        let held = self.auth();
+        let auth = held.as_str();
         let name = qualify(&stmt.table, &self.default_schema());
         let target = binder::write_target(st, &name, ("§8.7 SR2", auth)).or_at(stmt.table.at)?;
         let desc = &target.named;

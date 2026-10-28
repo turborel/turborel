@@ -138,8 +138,9 @@ fn every_reply() -> Vec<Reply> {
         message: "column K is ambiguous".into(),
         rule: Some("X3.135-1986 §5.7 SR3b".into()),
         position: Some(7),
+        active: false,
     };
-    let plain = Failure { sqlcode: -911, sqlstate: "TB911".into(), message: String::new(), rule: None, position: None };
+    let plain = Failure { sqlcode: -911, sqlstate: "TB911".into(), message: String::new(), rule: None, position: None, active: true };
     let parameters = vec![ParameterType::Varying, ParameterType::Of(DataType::Exact { precision: 5, scale: 2 })];
     vec![
         Reply::Challenge(vec![0xff]),
@@ -150,9 +151,9 @@ fn every_reply() -> Vec<Reply> {
         Reply::Description(columns),
         Reply::Description(vec![]),
         Reply::Rows(edge_rows()),
-        Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into() }),
-        Reply::Complete(Completed { sqlcode: 100, sqlstate: "02000".into() }),
-        Reply::Complete(Completed { sqlcode: i32::MIN, sqlstate: "01007".into() }),
+        Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into(), active: true }),
+        Reply::Complete(Completed { sqlcode: 100, sqlstate: "02000".into(), active: false }),
+        Reply::Complete(Completed { sqlcode: i32::MIN, sqlstate: "01007".into(), active: false }),
         Reply::Error(cited),
         Reply::Error(plain),
     ]

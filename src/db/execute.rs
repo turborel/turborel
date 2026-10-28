@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use super::write::{delete_searched, update_searched};
 use super::{Call, Completion, Session, State, StatementContext, slow};
-use crate::ast::{DropObject, IndexStatement, SchemaStatement, SqlStatement, UserStatement};
+use crate::ast::{ConnectionStatement, DropObject, IndexStatement, SchemaStatement, SqlStatement, UserStatement};
 use crate::binder::{WriteKind, bind_write};
-use crate::error::{Result, SqlState};
+use crate::error::{Code, Result, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
 use crate::txn::Txn;
@@ -40,7 +40,7 @@ impl Session {
     /// DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c, GR1d].
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: bool) -> Result<Completion> {
         let mut call = self.enter()?;
-        call.timed = slow::Timed::of(call.state(), sql, &self.auth);
+        call.timed = slow::Timed::of(call.state(), sql, &self.auth());
         let parsed = params.validate().and_then(|()| params.parser(sql, self.extensions)?.sql_statement());
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
@@ -77,6 +77,15 @@ impl Session {
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
             SqlStatement::SetTransaction(modes) => return self.set_transaction(&modes, params).map(|()| Completion::Success),
             SqlStatement::SetSchema(v) => return self.set_schema(st, &v, params).map(|()| Completion::Success),
+            // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
+            SqlStatement::SetSessionAuthorization(v) => return self.set_session_authorization(&v, params).map(|()| Completion::Success),
+            // [ISO/IEC 9075:1992 §15] the SQL-agent's, a client's.
+            SqlStatement::Connection(_) => {
+                return fail(
+                    Code::Unsupported,
+                    "[DESIGN] CONNECT, SET CONNECTION and DISCONNECT are the SQL-agent's: a client runs them, as turborel's does, not a session (RULES.md D46)",
+                );
+            }
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetTimeZone(v) => return self.set_time_zone(st, v.as_ref(), params).map(|()| Completion::Success),
             SqlStatement::SetSetting { name, value } => {
@@ -154,6 +163,8 @@ impl Session {
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
             | SqlStatement::SetTimeZone(_)
+            | SqlStatement::SetSessionAuthorization(_)
+            | SqlStatement::Connection(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Index(_)
@@ -202,6 +213,10 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::SetTransaction(_) => "SET TRANSACTION",
         SqlStatement::SetSchema(_) => "SET SCHEMA",
         SqlStatement::SetTimeZone(_) => "SET TIME ZONE",
+        SqlStatement::SetSessionAuthorization(_) => "SET SESSION AUTHORIZATION",
+        SqlStatement::Connection(ConnectionStatement::Connect { .. } | ConnectionStatement::ConnectDefault) => "CONNECT",
+        SqlStatement::Connection(ConnectionStatement::Set(_)) => "SET CONNECTION",
+        SqlStatement::Connection(ConnectionStatement::Disconnect(_)) => "DISCONNECT",
         SqlStatement::SetConstraints { .. } => "SET CONSTRAINT",
         SqlStatement::UpdatePositioned { .. } => "UPDATE CURSOR",
         SqlStatement::UpdateSearched { .. } => "UPDATE WHERE",

@@ -265,7 +265,7 @@ impl Session {
                     let msg = format!(
                         "[ISO/IEC 9075:1992 §11.2 AR1] schema {name} is owned by {}, not {}",
                         owner_of(&*st.catalog, name),
-                        self.auth
+                        self.auth()
                     );
                     return Err(SqlError::new(Code::Privilege, msg).or_at(*at));
                 }
@@ -280,7 +280,7 @@ impl Session {
     fn owned(&self, st: &State, name: &TableName, cited: &str) -> Result<QualifiedName> {
         let qn = qualify(name, &self.default_schema());
         if !self.owns_schema(st, &qn.auth) {
-            return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 {cited}] {qn} is in a schema {} does not own", self.auth))
+            return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 {cited}] {qn} is in a schema {} does not own", self.auth()))
                 .or_at(name.at);
         }
         Ok(qn)

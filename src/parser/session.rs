@@ -48,6 +48,14 @@ impl Parser {
             self.advance();
             return Ok(SqlStatement::SetTransaction(self.transaction_modes()?));
         }
+        if self.next_is_kw(kw::CONNECTION) {
+            self.advance();
+            return self.set_connection();
+        }
+        if self.next_is_kw(kw::SESSION) {
+            self.advance();
+            return self.set_session_authorization();
+        }
         if self.next_is_kw(kw::DESCRIPTOR) {
             self.advance();
             return self.descriptor_statement(false);

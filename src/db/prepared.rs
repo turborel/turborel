@@ -167,7 +167,9 @@ impl Session {
                 self.bound(st, params, |cx| bind_write(cx, WriteKind::DeletePositioned, table, &[], None))?;
             }
             // [§17.6 GR5u]
-            SqlStatement::SetSchema(v) => drop(binder::value_specification_as(v, &self.auth, params, ParameterType::Varying)?),
+            SqlStatement::SetSchema(v) | SqlStatement::SetSessionAuthorization(v) => {
+                drop(binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?);
+            }
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
             // Of a module's cursors and targets: FETCH and SELECT ... INTO
             // name parameters, which a prepared statement has none of, so
@@ -182,6 +184,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetTimeZone(None)
+            | SqlStatement::Connection(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Drop { .. }

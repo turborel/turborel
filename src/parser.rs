@@ -19,6 +19,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
 mod charsets;
+mod connections;
 mod constraints;
 mod cursor;
 mod data_statements;
@@ -467,6 +468,9 @@ impl Parser {
     pub fn sql_statement(&mut self) -> Result<SqlStatement> {
         let stmt = match self.peek() {
             Tok::KeyWord(kw::CLOSE | kw::OPEN) => self.open_or_close()?,
+            // [ISO/IEC 9075:1992 §15.1, §15.3]
+            Tok::KeyWord(kw::CONNECT) => self.connect_statement()?,
+            Tok::KeyWord(kw::DISCONNECT) => self.disconnect_statement()?,
             // [ISO/IEC 9075:1992 §17] dynamic SQL in SQL text: refused.
             Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
             Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,

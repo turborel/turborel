@@ -21,7 +21,7 @@ impl Session {
     /// What a statement of this session does, nothing yet: run under its
     /// authorization identifier, with its constraint modes.
     pub(super) fn effects(&self) -> Effects<'_> {
-        let mut effects = Effects::new(&self.auth, &self.deferral, Cursored { rows: self.cursor_changes(), conflict: &self.conflict });
+        let mut effects = Effects::new(&self.auth(), &self.deferral, Cursored { rows: self.cursor_changes(), conflict: &self.conflict });
         effects.now = self.now.get();
         effects
     }

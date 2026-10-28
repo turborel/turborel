@@ -205,7 +205,7 @@ impl Session {
         let qn = qualify(table, &self.default_schema());
         // [AR1] only the owner of its schema alters a table.
         if !self.owns_schema(st, &qn.auth) {
-            return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.10 AR1] {qn} is in a schema {} does not own", self.auth));
+            return fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.10 AR1] {qn} is in a schema {} does not own", self.auth()));
         }
         let temporary = st.base_table(&qn)?.temporary;
         if temporary.is_some_and(|t| t.kind == TemporaryKind::Declared) {

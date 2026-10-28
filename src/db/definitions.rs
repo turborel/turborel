@@ -61,7 +61,7 @@ impl Session {
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
-            let defined = next.define((&self.auth, &schema), statement, (None, None))?;
+            let defined = next.define((&self.auth(), &schema), statement, (None, None))?;
             let wanted: Vec<(QualifiedName, LockMode)> = defined.locks.iter().filter(|l| !held.contains(l)).cloned().collect();
             if wanted.is_empty() {
                 let next = Arc::new(next);
@@ -71,7 +71,7 @@ impl Session {
                 if let Some(a) = &defined.asserted {
                     next.check_assertion(tx, a)?;
                 }
-                let change = Change::Defined { auth: self.auth.clone(), schema, sql: text.to_owned(), placed: defined.placed };
+                let change = Change::Defined { auth: self.auth().clone(), schema, sql: text.to_owned(), placed: defined.placed };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
                 return Ok(defined.completion);
             }
@@ -103,7 +103,7 @@ impl Session {
                 let qn = qualify(&a.name, schema);
                 // [§11.22 AR1] only the owner of its schema alters a domain.
                 if !self.owns_schema(st, &qn.auth) {
-                    let msg = format!("[ISO/IEC 9075:1992 §11.22 AR1] domain {qn} is in a schema {} does not own", self.auth);
+                    let msg = format!("[ISO/IEC 9075:1992 §11.22 AR1] domain {qn} is in a schema {} does not own", self.auth());
                     return Err(SqlError::new(Code::Privilege, msg).or_at(a.name.at));
                 }
                 Ok(qn)
@@ -123,7 +123,7 @@ impl Session {
             return Err(SqlError::new(Code::Unsupported, msg).or_at(name.at));
         }
         if !self.owns_schema(st, schema) {
-            let msg = format!("[ISO/IEC 9075:1992 {rule}] {} is in schema {schema}, which {} does not own", name.ident, self.auth);
+            let msg = format!("[ISO/IEC 9075:1992 {rule}] {} is in schema {schema}, which {} does not own", name.ident, self.auth());
             return Err(SqlError::new(Code::Privilege, msg).or_at(name.at));
         }
         Ok(qualify(name, schema))
@@ -135,7 +135,7 @@ impl Session {
     /// `schema` [ISO/IEC 9075:1992 §11.1 GR2] (`owner_of`): the Access Rule
     /// of every statement that defines or changes what is in it.
     pub(super) fn owns_schema(&self, st: &State, schema: &str) -> bool {
-        owner_of(&*st.catalog, schema) == self.auth
+        owner_of(&*st.catalog, schema) == *self.auth()
     }
 }
 

@@ -435,7 +435,7 @@ impl Session {
         let values = {
             let mut inner = self.inner.borrow_mut();
             let c = inner.cursors.get_mut(name).ok_or_else(|| rule(format!("[X3.135-1986 §8.6 SR1] no cursor {name} is declared")))?;
-            let to = movement(orientation, c.scroll, (&self.auth, params))?;
+            let to = movement(orientation, c.scroll, (&self.auth(), params))?;
             let Some(open) = c.open.as_mut() else {
                 return cursor_error(name, format!("[X3.135-1986 §8.6 GR1] cursor {name} is not open"));
             };
@@ -522,7 +522,7 @@ impl Session {
 
     /// `open_with`'s cursor, in the call `call`.
     fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
-        let mut timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth);
+        let mut timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth());
         let spec = self.parse_cursor(sql, params)?;
         if let Some(Updatability::Update(_)) = spec.updatability {
             return Err(rule(

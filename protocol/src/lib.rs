@@ -127,11 +127,15 @@ pub struct Completed {
     pub sqlcode: i32,
     /// Its SQLSTATE: five characters.
     pub sqlstate: String,
+    /// Whether the session's transaction is active after it [ISO/IEC
+    /// 9075:1992 §4.28], as a client's connection statements need to know
+    /// [§15.1 GR1, §15.3 GR6].
+    pub active: bool,
 }
 
 impl From<Completion> for Completed {
     fn from(c: Completion) -> Completed {
-        Completed { sqlcode: c.sqlcode(), sqlstate: c.sqlstate().as_str().to_owned() }
+        Completed { sqlcode: c.sqlcode(), sqlstate: c.sqlstate().as_str().to_owned(), active: false }
     }
 }
 
@@ -156,6 +160,9 @@ pub struct Failure {
     pub rule: Option<String>,
     /// Where in the statement, in characters, if known.
     pub position: Option<u64>,
+    /// Whether the session's transaction is active after it, as
+    /// `Completed::active`.
+    pub active: bool,
 }
 
 impl From<&SqlError> for Failure {
@@ -166,6 +173,7 @@ impl From<&SqlError> for Failure {
             message: e.msg.clone(),
             rule: e.rule.clone(),
             position: e.pos.and_then(|p| u64::try_from(p).ok()),
+            active: false,
         }
     }
 }
@@ -187,10 +195,12 @@ impl std::error::Error for Failure {}
 
 impl Failure {
     /// Whether the connection it came on is lost: a connection exception
-    /// (SQLSTATE class 08), or credentials refused (28), after which the
-    /// server closes it.
+    /// (SQLSTATE class 08), or credentials refused as it is made (28, of a
+    /// connection exception's SQLCODE), after which the server closes it.
+    /// A statement's 28000 [ISO/IEC 9075:1992 §16.4 GR3, GR5] leaves it.
     pub fn ends_connection(&self) -> bool {
-        self.sqlstate.starts_with("08") || self.sqlstate.starts_with("28")
+        let connecting = self.sqlcode == SqlError::new(Code::Connection, "").sqlcode();
+        self.sqlstate.starts_with("08") || (connecting && self.sqlstate.starts_with("28"))
     }
 }
 

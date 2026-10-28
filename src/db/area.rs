@@ -109,7 +109,7 @@ impl Session {
                 typed(items.iter().map(|(t, item)| (t, item.numeric(), value(*item))), params)?
             }
             GetDiagnostics::Condition { number: n, items } => {
-                let n = condition_number(n, &self.auth, params)?;
+                let n = condition_number(n, &self.auth(), params)?;
                 let Some(condition) = area.condition.as_ref().filter(|_| n == 1) else {
                     let msg = format!("[ISO/IEC 9075:1992 §18.1 GR2] there is no condition {n}: the area holds {count}");
                     return fail_with(Code::Data, SqlState::INVALID_CONDITION_NUMBER, msg);
@@ -134,7 +134,7 @@ impl Session {
         let access = ["42", "2A", "37"].contains(&condition.state.class());
         let visible = |(schema, ident): &(String, String)| {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
-            access || !applicable(&*st.catalog, &self.auth, &name).0.is_empty()
+            access || !applicable(&*st.catalog, &self.auth(), &name).0.is_empty()
         };
         let Subject { constraint, table, column, cursor } = &condition.subject;
         let table = table.clone().filter(visible);

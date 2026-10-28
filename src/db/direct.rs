@@ -53,12 +53,12 @@ impl Session {
     /// `own_schema`'s `<schema definition>` `sql`, made.
     fn schema_owned(&self, sql: &str) -> Result<Completion> {
         let schema = Parser::new(sql)?.schema()?;
-        if let Some(other) = schema.auth.as_ref().filter(|a| **a != self.auth) {
+        if let Some(other) = schema.auth.as_ref().filter(|a| **a != *self.auth()) {
             return fail(
                 Code::Privilege,
-                format!("[ISO/IEC 9075:1992 §11.1 AR1] {} may create its own schema only, not {other}'s", self.auth),
+                format!("[ISO/IEC 9075:1992 §11.1 AR1] {} may create its own schema only, not {other}'s", self.auth()),
             );
         }
-        self.db.schema_of(sql, Some(&self.auth))
+        self.db.schema_of(sql, Some(&self.auth()))
     }
 }

@@ -24,11 +24,13 @@ pub struct TableName {
     pub at: usize,
 }
 
+mod connection;
 mod diagnostics;
 mod expression;
 mod query;
 mod schema;
 
+pub use connection::{ConnectionStatement, Disconnected};
 pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
 pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
@@ -282,6 +284,12 @@ pub enum SqlStatement {
     /// [ISO/IEC 9075:1992 §16.5] `<set local time zone statement>`: SET TIME
     /// ZONE, of an `<interval value expression>`, or LOCAL, none.
     SetTimeZone(Option<ValueExpression>),
+    /// [ISO/IEC 9075:1992 §16.4] `<set session authorization identifier
+    /// statement>` ::= SET SESSION AUTHORIZATION `<value specification>`
+    SetSessionAuthorization(ValueSpecification),
+    /// [ISO/IEC 9075:1992 §15] A statement of connections, the SQL-agent's:
+    /// a client runs it, never a session.
+    Connection(ConnectionStatement),
     /// \[EXTENSION\] SET `<setting name>` {= | TO} {`<value
     /// specification>` | DEFAULT}: the session's own value of a setting
     /// (RULES.md D36), where `<setting name>` ::= `<identifier>` \[{.

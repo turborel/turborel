@@ -11,7 +11,7 @@ use turborel::db::{Completion, Cursor, Direct, Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::storage::Row;
 use turborel::value::Value;
-use turborel_protocol::{Column, Failure, Reply, row_size};
+use turborel_protocol::{Column, Completed, Failure, Reply, row_size};
 
 /// What a worker is asked to do.
 pub(super) enum Work {
@@ -81,6 +81,16 @@ impl Held {
             Ok(Some(last)) => last,
             Ok(None) | Err(Cut::Gone) => return,
             Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
+        };
+        // [ISO/IEC 9075:1992 §15.1 GR1, §15.3 GR6] whether the transaction
+        // is active, for the client's connection statements.
+        let active = self.session.transaction().is_some();
+        let last = if let Reply::Complete(c) = last {
+            Reply::Complete(Completed { active, ..c })
+        } else if let Reply::Error(f) = last {
+            Reply::Error(Failure { active, ..f })
+        } else {
+            last
         };
         // A client gone hears nothing.
         let _ = sending.0.blocking_send(last);

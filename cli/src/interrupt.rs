@@ -7,7 +7,7 @@
 use std::future::Future;
 use std::io;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 
 use turborel_client::{Canceller, Failure};
@@ -15,7 +15,7 @@ use turborel_client::{Canceller, Failure};
 /// What Ctrl-C cancels, once there is something.
 #[derive(Debug, Clone, Default)]
 pub struct Interrupts {
-    canceller: Arc<OnceLock<Canceller>>,
+    canceller: Arc<Mutex<Option<Canceller>>>,
 }
 
 /// What to do when Ctrl-C is pressed and no statement can be cancelled;
@@ -44,10 +44,10 @@ impl Interrupts {
         Ok(interrupts)
     }
 
-    /// Cancels by `canceller` from now on.
-    pub fn cancel_by(&self, canceller: Canceller) {
-        // Set once: a session has one canceller.
-        let _ = self.canceller.set(canceller);
+    /// Cancels by `canceller` from now on, or, for none, by nothing: the
+    /// current connection's, as SET CONNECTION and DISCONNECT change it.
+    pub fn cancel_by(&self, canceller: Option<Canceller>) {
+        *self.canceller.lock().unwrap_or_else(PoisonError::into_inner) = canceller;
     }
 }
 
@@ -56,7 +56,7 @@ impl Interrupts {
 /// so a signal sent after that is answered; or why it cannot be.
 pub(crate) async fn answer<F: Future<Output = io::Result<()>>>(
     mut signal: impl FnMut() -> F,
-    canceller: &OnceLock<Canceller>,
+    canceller: &Mutex<Option<Canceller>>,
     (early, failed): Handlers,
     ready: Sender<Result<(), String>>,
 ) {
@@ -80,7 +80,8 @@ pub(crate) async fn answer<F: Future<Output = io::Result<()>>>(
         if got.is_err() {
             return;
         }
-        match canceller.get() {
+        let by = canceller.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        match by {
             Some(by) => {
                 if let Err(e) = by.cancel() {
                     failed(&e);
@@ -113,7 +114,7 @@ mod tests {
 
     /// Answers `signals` signals, then the signal fails; why it was told
     /// it cannot be ready, if it was.
-    fn answered(signals: usize, canceller: &OnceLock<Canceller>) -> Option<String> {
+    fn answered(signals: usize, canceller: &Mutex<Option<Canceller>>) -> Option<String> {
         let (tell, told) = std::sync::mpsc::channel();
         let mut left = signals;
         let signal = move || {
@@ -131,21 +132,22 @@ mod tests {
     /// it is answered otherwise; Ctrl-C that cannot be taken is told.
     #[test]
     fn ctrl_c_cancels_once_connected() {
-        let none = OnceLock::new();
+        let none = Mutex::new(None);
         assert_eq!(answered(2, &none), None);
         assert_eq!(EARLY.load(Ordering::SeqCst), 2, "before a connection");
         assert_eq!(answered(0, &none).as_deref(), Some("cannot take Ctrl-C: gone"));
         let server = start(&Database::new(), &[]);
         let connection = server.connect("X");
-        let set = OnceLock::new();
-        let _ = set.set(connection.canceller().unwrap());
+        let set = Mutex::new(connection.canceller());
         assert_eq!(answered(1, &set), None);
         assert_eq!((EARLY.load(Ordering::SeqCst), FAILED.load(Ordering::SeqCst)), (2, 0), "cancelled");
         server.stop();
         assert_eq!(answered(1, &set), None);
         assert_eq!(FAILED.load(Ordering::SeqCst), 1, "the server is gone");
         let interrupts = Interrupts::listen((early, failed)).unwrap();
-        interrupts.cancel_by(connection.canceller().unwrap());
-        assert!(interrupts.canceller.get().is_some());
+        interrupts.cancel_by(connection.canceller());
+        assert!(interrupts.canceller.lock().unwrap().is_some());
+        interrupts.cancel_by(None);
+        assert!(interrupts.canceller.lock().unwrap().is_none(), "no connection current");
     }
 }

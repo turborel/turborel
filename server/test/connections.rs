@@ -173,7 +173,7 @@ fn a_client_loses_a_connection_its_server_breaks() {
     let rows = vec![Reply::Description(vec![]), Reply::Challenge(vec![])];
     let mut c = connection::connect(scripted(vec![ready(), rows]), "X", &mut Trust).unwrap();
     assert_eq!(state(&c.query("SELECT 1").unwrap_err()).0, "08006");
-    let answered = vec![ready(), vec![Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into() })]];
+    let answered = vec![ready(), vec![Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into(), active: false })]];
     let c = connection::connect(scripted(answered), "X", &mut Trust).unwrap();
     assert_eq!(state(&c.terminate().unwrap_err()).0, "08006");
     let refused = turborel_protocol::Failure::from(&turborel_protocol::broken("no"));

@@ -140,7 +140,9 @@ fn errors_reach_the_client_as_the_database_gives_them() {
     for sql in ["SELECT NOPE FROM T", "SELEKT K FROM T", "INSERT INTO T VALUES (NULL, 'A', 1)", "SELECT 2 / K FROM T", "SELECT K FROM Y.B"]
     {
         let failure = c.query(sql).unwrap_err();
-        assert_eq!(failure, Failure::from(&embedded_error(&db, sql)), "{sql}");
+        // The session's transaction, begun by the first, goes on.
+        assert!(failure.active, "{sql}");
+        assert_eq!(failure, Failure { active: true, ..Failure::from(&embedded_error(&db, sql)) }, "{sql}");
         assert!(!failure.ends_connection());
     }
     let mut raw = server.raw();

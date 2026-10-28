@@ -331,6 +331,16 @@ restriction is lifted.
   changes or loses an update, and constraints are checked serializably at
   every level (RULES.md D29).
 - **SET SCHEMA** [§16.2]: the default schema of unqualified names.
+- **SET SESSION AUTHORIZATION** [§16.4]: the session's authorization
+  identifier, the value trimmed and read as an `<authorization
+  identifier>`; refused in a transaction. The default schema stays as it
+  was [§4.30].
+- **Connections** [§15]: CONNECT TO a server AS a name, USER a user, or TO
+  DEFAULT; SET CONNECTION to a name or DEFAULT; DISCONNECT a name,
+  DEFAULT, CURRENT or ALL. The client library is the SQL-agent
+  (`turborel_client::agent`), and so the command-line client is; a server
+  or a session refuses them (SQLCODE -900) (RULES.md D46). No transaction
+  spans servers (SQLSTATE 0A001).
 - **COMMIT and ROLLBACK** without WORK [§14.3, §14.4].
 - **The Information Schema** [§21]: its 23 views, with the standard's own
   definitions, over the Definition Schema (RULES.md D37).
@@ -344,8 +354,6 @@ restriction is lifted.
   [§6.1 Table 10, note], is exact.
 - **ALTER TABLE of a temporary table**, and a table or view defined on its
   own in a schema other than the session's default one (RULES.md D47).
-- **Connections and sessions** [§15, §16]: CONNECT, SET CONNECTION,
-  DISCONNECT, SET SESSION AUTHORIZATION. They come with the server.
 - **Dynamic SQL in SQL text** [§17]: ALLOCATE and DEALLOCATE DESCRIPTOR,
   GET and SET DESCRIPTOR, PREPARE, DEALLOCATE PREPARE, DESCRIBE, EXECUTE,
   EXECUTE IMMEDIATE, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE
@@ -444,6 +452,10 @@ file that implements it.
 | ISO/IEC 9075:1992 §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |
 | ISO/IEC 9075:1992 §17.6 GR5 a dynamic parameter as a CASE result, which GR5 gives no type | refused, as one GR4 refuses (SQLSTATE 37000) | `binder/case.rs` |
 | ISO/IEC 9075:1992 §17.6 GR10 a prepared statement in a later transaction | valid; bound and planned again at each execution, against the definitions then | `db/prepared.rs` |
+| ISO/IEC 9075:1992 §4.30, §15.1 GR8a the authorization identifier a session begins with, and the default SQL-server | the user the client connects as, at a server; for a session the host program starts, the identifier it names. DEFAULT is the server the command line names, connected to as it starts | `db.rs`, `cli/src/dial.rs` |
+| ISO/IEC 9075:1992 §15.1 SR1, GR4 the implicit `<user name>`, and restrictions on one | the user the command line names; one named is proved as the command line says, a password typed asked for again, and the server accepts or refuses it (RULES.md D43) | `cli/src/dial.rs` |
+| ISO/IEC 9075:1992 §15.1 GR8b how an `<SQL-server name>` determines the server | it is an address: 'host', 'host:port', '[IPv6 address]:port', or on Unix a socket's path beginning '/'; over TLS when the default server's connection is, trusting the same certificates. An address is no `<identifier>`, so CONNECT to one names its connection with AS [GR6] | `cli/src/dial.rs` |
+| ISO/IEC 9075:1992 §16.4 GR4 whether a session sets another authorization identifier | a session begun by the database's owner sets any, a user or not; any other session only the one it began with (SQLSTATE 28000) (RULES.md D43) | `db/session.rs` |
 | ISO/IEC 9075:1992 §20.1 GR2a whether direct invocation terminated unexpectedly | a server's connection that ends without its client terminating it: lost, failed or cut by the server stopping; its transaction is rolled back | `server/src/native.rs` |
 | §6.5 GR1 whether a viewed table is materialized | no: its query is bound into the plan of each query that names it | `binder/views.rs` |
 | §3.4 binding of programs to modules | `Session` and `Params` | `db.rs`, `params.rs` |

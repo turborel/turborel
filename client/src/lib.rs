@@ -3,6 +3,7 @@
 //! library alone, for programs that connect to a server rather than embed
 //! the database; and, with the feature `tls`, over TLS.
 
+pub mod agent;
 mod cancel;
 pub mod connection;
 pub mod statements;

@@ -6,6 +6,7 @@
 //! tests reach all of it.
 
 mod args;
+mod dial;
 mod interrupt;
 mod run;
 mod show;
@@ -15,16 +16,18 @@ use std::net::ToSocketAddrs;
 
 use turborel::error::SqlState;
 
-use turborel_client::connection::{Connection, Mechanism, Password, Trust};
-use turborel_client::target::{Duplex, Target, connect_to};
+use turborel_client::agent::Connected;
+use turborel_client::connection::{Mechanism, Password, Trust};
+use turborel_client::target::{Target, connect_to};
 use turborel_client::tls;
 
 /// A failure, as the server reports it.
 pub use turborel_client::Failure;
 
 pub use args::{Command, Credentials, DEFAULT_HOST, DEFAULT_PORT, Input, Options, PASSWORD_VARIABLE, Server, Tls, parse};
+pub use dial::Dialer;
 pub use interrupt::{Handlers, Interrupts};
-pub use run::{Io, MORE, PROMPT, run};
+pub use run::{Io, MORE, PROMPT, Statements, run};
 pub use show::{MAX_WIDTH, Table};
 pub use split::Splitter;
 
@@ -59,26 +62,48 @@ statement failed.";
 /// # Errors
 ///
 /// Why it cannot: the server cannot be reached, or refuses the user.
-pub fn connect(options: &Options, typed: impl FnOnce() -> std::io::Result<String>) -> Result<Connection<Box<dyn Duplex>>, String> {
-    let mut mechanism: Box<dyn Mechanism> = match &options.credentials {
+pub fn connect(options: &Options, typed: impl FnOnce() -> std::io::Result<String>) -> Result<Connected, String> {
+    let mut mechanism = mechanism(&options.credentials, typed)?;
+    reach(&options.server, &options.user, mechanism.as_mut()).map_err(|unreached| match unreached {
+        Unreached::Address(why) => why,
+        Unreached::Refused(failure) => failure.to_string(),
+    })
+}
+
+/// How `credentials` are proved, a password typed read by `typed`.
+fn mechanism(credentials: &Credentials, typed: impl FnOnce() -> std::io::Result<String>) -> Result<Box<dyn Mechanism>, String> {
+    Ok(match credentials {
         Credentials::Trust => Box::new(Trust),
         Credentials::Ask => Box::new(Password(typed().map_err(|e| format!("cannot read the password: {e}"))?)),
         Credentials::Given(password) => Box::new(password.clone()),
-    };
+    })
+}
+
+/// Why a server was not reached.
+enum Unreached {
+    /// Where it is cannot be found.
+    Address(String),
+    /// It cannot be connected to, or refuses.
+    Refused(Failure),
+}
+
+/// Connects to `server` as `user`, proved by `mechanism`: each of its
+/// addresses tried in turn, until one is connected to or refuses.
+fn reach(server: &Server, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connected, Unreached> {
     let mut last = None;
-    for target in targets(&options.server)? {
-        match connect_to(&target, &options.user, mechanism.as_mut()) {
+    for target in targets(server).map_err(Unreached::Address)? {
+        match connect_to(&target, user, mechanism) {
             Ok(connection) => return Ok(connection),
             Err(failure) => {
                 // A refusal is the server's answer: no other address is tried.
                 if failure.sqlstate != SqlState::CONNECTION_FAILURE.as_str() {
-                    return Err(failure.to_string());
+                    return Err(Unreached::Refused(failure));
                 }
                 last = Some(failure);
             }
         }
     }
-    Err(last.map_or_else(|| "the host has no address".to_owned(), |failure: Failure| failure.to_string()))
+    Err(last.map_or_else(|| Unreached::Address("the host has no address".to_owned()), Unreached::Refused))
 }
 
 /// Each way to reach `server`, in the order tried.

@@ -40,6 +40,18 @@ impl SqlState {
     /// Connection exception: SQL-server rejected establishment of
     /// SQL-connection.
     pub const CONNECTION_REJECTED: SqlState = SqlState("08004");
+    /// Connection exception: SQL-client unable to establish SQL-connection.
+    pub const UNABLE_TO_CONNECT: SqlState = SqlState("08001");
+    /// Connection exception: connection name in use.
+    pub const CONNECTION_NAME_IN_USE: SqlState = SqlState("08002");
+    /// Connection exception: connection does not exist.
+    pub const CONNECTION_DOES_NOT_EXIST: SqlState = SqlState("08003");
+    /// Feature not supported: multiple server transactions.
+    pub const MULTIPLE_SERVER_TRANSACTIONS: SqlState = SqlState("0A001");
+    /// Invalid connection name.
+    pub const INVALID_CONNECTION_NAME: SqlState = SqlState("2E000");
+    /// Warning: disconnect error.
+    pub const DISCONNECT_ERROR: SqlState = SqlState("01002");
     /// Connection exception: connection failure.
     pub const CONNECTION_FAILURE: SqlState = SqlState("08006");
     /// Invalid authorization specification.

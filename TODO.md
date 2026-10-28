@@ -75,8 +75,6 @@ RULES.md when its design settles.
   no change. To settle: whether replication is a kind of `Log` or a plug-in
   of its own; how replicas agree on the order of records; view changes;
   state transfer from checkpoints; reads on backups.
-- **Connection and session statements** [ISO/IEC 9075:1992 §15, §16]:
-  CONNECT, SET CONNECTION, DISCONNECT, SET SESSION AUTHORIZATION.
 
 ---
 

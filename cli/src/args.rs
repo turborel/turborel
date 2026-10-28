@@ -166,13 +166,15 @@ fn server(socket: Option<PathBuf>, host: Option<String>, port: Option<u16>, tls:
     socket_server(path)
 }
 
+/// The server at the Unix socket `path`, on Unix.
 #[cfg(unix)]
 #[expect(clippy::unnecessary_wraps, reason = "elsewhere than Unix, it fails")]
-fn socket_server(path: PathBuf) -> Result<Server, String> {
+pub(crate) fn socket_server(path: PathBuf) -> Result<Server, String> {
     Ok(Server::Socket(path))
 }
 
+/// The server at the Unix socket `path`, on Unix.
 #[cfg(not(unix))]
-fn socket_server(_: PathBuf) -> Result<Server, String> {
+pub(crate) fn socket_server(_: PathBuf) -> Result<Server, String> {
     Err("--socket: a Unix socket is reached on Unix only".into())
 }

@@ -1,6 +1,7 @@
 //! Fixtures shared by the client program's tests.
 
-use turborel_cli::{Credentials, Input, Io, Options, Server};
+use turborel_cli::{Credentials, Dialer, Input, Io, Options, Server};
+use turborel_client::agent::Agent;
 
 pub use turborel_test_support::Scratch;
 pub use turborel_test_support::server::{Running, start, start_with};
@@ -25,13 +26,15 @@ pub struct Ran {
     pub err: String,
 }
 
-/// Runs `options`, `standard` its standard input, typed if `typed`.
+/// Runs `options`, `standard` its standard input, typed if `typed`: by an
+/// SQL-agent, as the program does, connected as `options` say.
 pub fn ran(options: &Options, standard: &str, typed: bool) -> Ran {
-    let mut connection = turborel_cli::connect(options, || Ok(String::new())).unwrap();
+    let connection = turborel_cli::connect(options, || Ok(String::new())).unwrap();
+    let mut agent = Agent::connected(Dialer::new(options.clone(), Box::new(|| Ok(String::new()))), connection);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err };
-    let succeeded = turborel_cli::run(&mut connection, options, io);
-    connection.terminate().unwrap();
+    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None };
+    let succeeded = turborel_cli::run(&mut agent, options, io);
+    agent.terminate().unwrap();
     Ran { succeeded, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }
 

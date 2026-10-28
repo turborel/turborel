@@ -30,6 +30,7 @@
 
 mod common;
 
+mod agents;
 mod authentication;
 mod connections;
 mod passwords;

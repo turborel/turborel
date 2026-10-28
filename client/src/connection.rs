@@ -136,6 +136,9 @@ pub struct Connection<S: Read + Write> {
     reach: Option<Target>,
     /// The number its next prepared statement takes.
     pub(crate) next_statement: u32,
+    /// Whether its session's transaction is active, as the server last
+    /// said [ISO/IEC 9075:1992 §4.28].
+    active: bool,
 }
 
 /// Connects to the server at `address` as `user`, authenticated by
@@ -184,6 +187,7 @@ impl<S: Read + Write> Connection<S> {
             key: None,
             reach: None,
             next_statement: 0,
+            active: false,
         };
         let hello = Request::Hello {
             version: VERSION,
@@ -216,6 +220,13 @@ impl<S: Read + Write> Connection<S> {
     /// it.
     pub fn authorization(&self) -> &str {
         &self.authorization
+    }
+
+    /// Whether the session's transaction is active, as the server said
+    /// after the last statement [ISO/IEC 9075:1992 §4.28]: so a client's
+    /// connection statements may refuse to leave it [§15.1 GR1, §15.3 GR6].
+    pub fn in_transaction(&self) -> bool {
+        self.active
     }
 
     /// How to reach the server again: so a `Canceller` connects to it.
@@ -326,6 +337,11 @@ impl<S: Read + Write> Connection<S> {
         }
     }
 
+    /// Whether the connection is lost: it takes no more.
+    pub fn is_lost(&self) -> bool {
+        self.lost.is_some()
+    }
+
     /// `failure`, the connection lost if it ends it.
     pub(crate) fn failed(&mut self, failure: Failure) -> Failure {
         if failure.ends_connection() {
@@ -362,6 +378,15 @@ impl<S: Read + Write> Connection<S> {
         if let Err(e) = self.stream.read_exact(&mut body) {
             return Err(self.lose(&format!("[DESIGN] cannot receive: {e}")));
         }
-        Reply::decode(kind, &body).map_err(|e| self.failed(Failure::from(&e)))
+        let reply = Reply::decode(kind, &body).map_err(|e| self.failed(Failure::from(&e)))?;
+        // A query's rows are read in a transaction; a statement's end says
+        // whether it goes on.
+        match &reply {
+            Reply::Complete(c) => self.active = c.active,
+            Reply::Error(f) => self.active = f.active,
+            Reply::Description(_) | Reply::Rows(_) | Reply::Suspended => self.active = true,
+            Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } => {}
+        }
+        Ok(reply)
     }
 }

@@ -1075,6 +1075,13 @@ is configured, seen and changed like the database's.
   A password is typed without its echo at a terminal (rpassword, as the
   command-line client reads one, D46), or else read from standard input;
   never from the command line.
+- SET SESSION AUTHORIZATION [ISO/IEC 9075:1992 §16.4]: a session begun
+  by the database's owner sets any authorization identifier, a user or
+  not; any other session
+  sets only the one it began with (SQLSTATE 28000) [GR4, GR5]. The default
+  schema stays as it was [§4.30]. A Failure's 28000 ends the connection
+  only of a connection exception's SQLCODE, as a server refusing
+  credentials sends it; a statement's has another.
 - Users and the owner are told to the diagnostics (`Event::UserChanged`,
   `OwnerChanged`), never a verifier, for an audit of who may connect.
 *Why:* a server reached from other machines needs clients to prove who
@@ -1127,7 +1134,10 @@ operator must be able to bound what any statement takes.
   prepared [§17.10 GR1], 07001 for values not one for each parameter
   [§17.9 GR5a].
 - A Complete gives the statement's SQLCODE and its SQLSTATE, so a
-  completion with a warning reaches the client (D47).
+  completion with a warning reaches the client (D47). A Complete and an
+  Error end with a byte saying whether the session's transaction is
+  active after the statement: an SQL-agent refuses to leave a connection
+  whose transaction is active, or to end it (D46).
 - Requests may be sent before the last is answered: each is answered, in
   order.
 - Ready gives a random 128-bit key. A connection whose first and only
@@ -1156,8 +1166,21 @@ cannot have.
   or no data.
 - A failure is told on standard error and the run goes on; a run not
   typed stops at a cancelled statement, or with `--stop-on-error` at the
-  first failure; any run stops once the connection is lost. The program
-  exits with 1 if any statement failed.
+  first failure; any run stops once the current connection is lost. The
+  program exits with 1 if any statement failed.
+- The client library is the SQL-agent [ISO/IEC 9075:1992 §15]
+  (`turborel_client::agent`): it runs CONNECT, SET CONNECTION and
+  DISCONNECT itself, every other statement on the current connection, and
+  a server that is sent one refuses it (SQLCODE -900). A `Connector` makes
+  its connections; the command-line client's (`cli/src/dial.rs`) takes an
+  `<SQL-server name>` as an address: 'host:port', or on Unix a socket's
+  path beginning '/'; DEFAULT is the server the command line names, the
+  connection made as the program starts. A connection is proved as the
+  command line says: a password typed is asked for again; one from
+  TURBOREL_PASSWORD is sent again. No transaction spans servers, so
+  CONNECT and SET CONNECTION are refused in an active one (0A001)
+  [§15.1 GR1, §15.2 GR1], and DISCONNECT of a connection whose
+  transaction is active (25000) [§15.3 GR6].
 - Where: `--host`/`--port` (127.0.0.1, 7422), `--tls FILE` trusting that
   PEM file's certificates with `--server-name`, or `--socket` on Unix,
   refused clearly elsewhere. Every address of a host is tried until one
@@ -1168,8 +1191,10 @@ cannot have.
   Without either, the server is asked to trust the user.
 - Ctrl-C cancels the statement running (D44) by tokio's signals, on a
   thread of their own with a one-thread runtime: SIGINT on Unix, the
-  console's Ctrl-C on Windows. Before the connection is made it ends the
-  program, as it would have; the password is typed before it is taken.
+  console's Ctrl-C on Windows. It cancels on the current connection, as
+  SET CONNECTION and DISCONNECT change it; before a connection is made,
+  or while none is current, it ends the program, as it would have; the
+  password is typed before it is taken.
 - Dependencies (R-SAFE-4): tokio 1.54.1 (MIT), already the server's, with
   the features rt and signal only; rpassword 7.5.4 (Apache-2.0), a
   terminal's input without its echo on Unix and Windows, small enough to

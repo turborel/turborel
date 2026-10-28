@@ -121,16 +121,16 @@ fn a_run_ends_when_it_cannot_go_on() {
     let given = options(&server, vec![command("SELECT K FROM T; SELECT K FROM T")]);
     let mut connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
     let mut err = Vec::new();
-    let io = Io { input: &mut io::empty(), typed: false, out: &mut Closed, err: &mut err };
+    let io = Io { input: &mut io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     assert_eq!(String::from_utf8(err).unwrap(), "turborel: cannot write: closed\n", "once");
     let mut typed = Vec::new();
-    let io = Io { input: &mut "SELECT K FROM T;".as_bytes(), typed: true, out: &mut Closed, err: &mut typed };
+    let io = Io { input: &mut "SELECT K FROM T;".as_bytes(), typed: true, out: &mut Closed, err: &mut typed, interrupts: None };
     assert!(!turborel_cli::run(&mut connection, &options(&server, vec![Input::Standard]), io));
     assert_eq!(String::from_utf8(typed).unwrap(), "turborel: cannot write: closed\n", "not even prompted");
     server.stop();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut io::empty(), typed: false, out: &mut out, err: &mut err };
+    let io = Io { input: &mut io::empty(), typed: false, out: &mut out, err: &mut err, interrupts: None };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     let told = String::from_utf8(err).unwrap();
     assert_eq!(told.lines().count(), 1, "ended: {told}");
@@ -139,7 +139,7 @@ fn a_run_ends_when_it_cannot_go_on() {
 
 /// A server of `pki`, its TLS offered, where ANN's password is "ann's",
 /// taken beside trust; on Unix, at a socket too.
-fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
+pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
     let db = Database::new();
     secured(&db, pki, "ON");
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());

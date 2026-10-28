@@ -5,6 +5,7 @@
 use turborel::db::{Credentials, Database, OpenOptions, Opened};
 use turborel::error::{Code, Result};
 use turborel::lexer::authorization_identifier;
+use turborel::params::Params;
 
 use crate::common::{Kept, Scratch, after_crash, exec, rows};
 
@@ -195,4 +196,67 @@ fn a_user_names_itself_by_an_identifier() {
         assert_eq!(authorization_identifier(wrong).err().map(|e| e.code), Some(Code::Syntax), "{wrong}");
     }
     assert_eq!(authorization_identifier("'ann").err().map(|e| e.code), Some(Code::Lexical));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §16.4]; [DESIGN] RULES.md D43: SET SESSION
+/// AUTHORIZATION makes the session's identifier the one its value names,
+/// trimmed \[GR2\]; a session sets the one it began with, and one begun by
+/// the database's owner sets any other, else SQLSTATE 28000 [GR4, GR5].
+/// A value not an `<authorization identifier>` is refused, 28000 \[GR3\];
+/// one not a character string, SQLCODE -103 \[SR1\]; and it is refused in a
+/// transaction, 25000 \[GR1\]. The privileges are then the new identifier's.
+#[test]
+fn set_session_authorization_sets_whom_a_session_runs_as() {
+    let db = Database::new();
+    for user in ["ANN", "BOB"] {
+        db.create_user(user, b"").unwrap();
+    }
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER)").unwrap();
+    let ann = db.session("ANN");
+    exec(&ann, "SET SESSION AUTHORIZATION ' bob '").unwrap();
+    assert_eq!(rows(&ann, "SELECT CURRENT_USER, SESSION_USER FROM ANN.T"), Err(Code::Privilege), "as BOB");
+    assert_eq!(rows(&ann, "SELECT 1 FROM INFORMATION_SCHEMA.USERS WHERE USER_NAME = CURRENT_USER"), Ok(vec!["1".into()]));
+    ann.commit().unwrap();
+    exec(&ann, "SET SESSION AUTHORIZATION 'ANN'").unwrap();
+    assert_eq!(rows(&ann, "SELECT COUNT(*) FROM T"), Ok(vec!["0".into()]), "ANN's own again");
+    assert_eq!(exec(&ann, "SET SESSION AUTHORIZATION 'BOB'"), Err(Code::TransactionState), "in a transaction");
+    ann.commit().unwrap();
+    let state = |s: &turborel::db::Session, sql: &str| s.execute(sql, &mut Params::new()).err().map(|e| e.sqlstate().as_str().to_owned());
+    for wrong in ["'1A'", "'ANN BOB'", "'USER'", "''", "'\"'"] {
+        assert_eq!(state(&ann, &format!("SET SESSION AUTHORIZATION {wrong}")).as_deref(), Some("28000"), "{wrong}");
+    }
+    assert_eq!(exec(&ann, "SET SESSION AUTHORIZATION 1"), Err(Code::SyntaxRule));
+    exec(&ann, "SET SESSION AUTHORIZATION '\"some one\"'").unwrap();
+    let bob = db.session("BOB");
+    assert_eq!(state(&bob, "SET SESSION AUTHORIZATION 'ANN'").as_deref(), Some("28000"), "not the owner's");
+    exec(&bob, "SET SESSION AUTHORIZATION 'BOB'").unwrap();
+    db.set_owner("BOB").unwrap();
+    exec(&bob, "SET SESSION AUTHORIZATION 'ANN'").unwrap();
+    assert_eq!(state(&bob, "SET SESSION AUTHORIZATION 'CAROL'"), None, "BOB began it, and owns the database");
+}
+
+/// Verifies: [DESIGN] RULES.md D42: CONNECT, SET CONNECTION and DISCONNECT
+/// are parsed [ISO/IEC 9075:1992 §15.1-§15.3], but are the SQL-agent's: a
+/// session refuses them (SQLCODE -900); a wrong one is a syntax error.
+#[test]
+fn a_session_refuses_the_connection_statements() {
+    let db = Database::new();
+    let s = db.session("ANN");
+    for sql in [
+        "CONNECT TO 'h:1' AS 'C' USER 'ANN'",
+        "CONNECT TO DEFAULT",
+        "SET CONNECTION 'C'",
+        "SET CONNECTION DEFAULT",
+        "DISCONNECT ALL",
+        "DISCONNECT CURRENT;",
+        "DISCONNECT 'C'",
+        "DISCONNECT DEFAULT",
+    ] {
+        assert_eq!(exec(&s, sql), Err(Code::Unsupported), "{sql}");
+    }
+    for wrong in
+        ["CONNECT 'h'", "CONNECT TO", "CONNECT TO 'h' AS", "SET CONNECTION", "DISCONNECT", "DISCONNECT ALL CURRENT", "CONNECT TO 'h' USER"]
+    {
+        assert_eq!(exec(&s, wrong), Err(Code::Syntax), "{wrong}");
+    }
 }

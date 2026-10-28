@@ -9,10 +9,12 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 
 use turborel::error::{Code, SqlError};
-use turborel_client::Failure;
-use turborel_client::connection::{Connection, Streamed};
+use turborel_client::agent::{Agent, Connector};
+use turborel_client::connection::{Connection, Sink, Streamed};
+use turborel_client::{Canceller, Failure};
 
 use crate::args::{Input, Options};
+use crate::interrupt::Interrupts;
 use crate::show::Table;
 use crate::split::Splitter;
 
@@ -32,6 +34,9 @@ pub struct Io<'a> {
     pub out: &'a mut dyn Write,
     /// Where failures go.
     pub err: &'a mut dyn Write,
+    /// What Ctrl-C cancels, if it is taken: kept to the current
+    /// connection's statement as connection statements change it.
+    pub interrupts: Option<&'a Interrupts>,
 }
 
 /// Whether a run goes on.
@@ -48,24 +53,71 @@ enum Wrong {
     Unwritten(io::Error),
 }
 
+/// What runs a run's statements: a connection, or an SQL-agent's
+/// connections [ISO/IEC 9075:1992 §15], which takes CONNECT, SET
+/// CONNECTION and DISCONNECT itself.
+pub trait Statements {
+    /// Runs `sql`, a query's rows given to `sink`.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure.
+    fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure>;
+
+    /// What cancels the statement running, if anything can.
+    fn canceller(&self) -> Option<Canceller>;
+
+    /// Whether the connection statements run over is lost.
+    fn is_lost(&self) -> bool;
+}
+
+impl<S: Read + Write> Statements for Connection<S> {
+    fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+        Connection::query_into(self, sql, sink)
+    }
+
+    fn canceller(&self) -> Option<Canceller> {
+        Connection::canceller(self)
+    }
+
+    fn is_lost(&self) -> bool {
+        Connection::is_lost(self)
+    }
+}
+
+impl<C: Connector> Statements for Agent<C> {
+    fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+        Agent::query_into(self, sql, sink)
+    }
+
+    fn canceller(&self) -> Option<Canceller> {
+        Agent::canceller(self)
+    }
+
+    fn is_lost(&self) -> bool {
+        Agent::is_lost(self)
+    }
+}
+
 /// A run, under way.
-struct Shell<'a, S: Read + Write> {
-    connection: &'a mut Connection<S>,
+struct Shell<'a, S: Statements + ?Sized> {
+    connection: &'a mut S,
     options: &'a Options,
     /// Standard input, while it is not being read.
     input: Option<&'a mut dyn BufRead>,
     typed: bool,
     out: &'a mut dyn Write,
     err: &'a mut dyn Write,
+    interrupts: Option<&'a Interrupts>,
     /// Whether anything failed.
     failed: bool,
 }
 
 /// Runs `options`' inputs over `connection`, as `io` says: whether every
 /// statement succeeded. What failed is told to `io.err`.
-pub fn run<S: Read + Write>(connection: &mut Connection<S>, options: &Options, io: Io<'_>) -> bool {
-    let Io { input, typed, out, err } = io;
-    let mut shell = Shell { connection, options, input: Some(input), typed, out, err, failed: false };
+pub fn run<S: Statements + ?Sized>(connection: &mut S, options: &Options, io: Io<'_>) -> bool {
+    let Io { input, typed, out, err, interrupts } = io;
+    let mut shell = Shell { connection, options, input: Some(input), typed, out, err, interrupts, failed: false };
     for named in &options.inputs {
         if let Next::Stop = shell.input(named) {
             break;
@@ -79,7 +131,7 @@ fn cancelled(failure: &Failure) -> bool {
     failure.sqlcode == SqlError::new(Code::Cancelled, "").sqlcode()
 }
 
-impl<S: Read + Write> Shell<'_, S> {
+impl<S: Statements + ?Sized> Shell<'_, S> {
     /// Runs the statements of `input`.
     fn input(&mut self, input: &Input) -> Next {
         match input {
@@ -141,11 +193,15 @@ impl<S: Read + Write> Shell<'_, S> {
 
     /// Runs `sql`, typed or not.
     fn statement(&mut self, sql: &str, typed: bool) -> Next {
-        match self.ran(sql) {
+        let ran = self.ran(sql);
+        if let Some(interrupts) = self.interrupts {
+            interrupts.cancel_by(self.connection.canceller());
+        }
+        match ran {
             Ok(()) => Next::Go,
             Err(Wrong::Unwritten(e)) => self.tell(&format!("cannot write: {e}"), Next::Stop),
             Err(Wrong::Failed(failure)) => {
-                let stop = failure.ends_connection() || (!typed && (self.options.stop_on_error || cancelled(&failure)));
+                let stop = self.connection.is_lost() || (!typed && (self.options.stop_on_error || cancelled(&failure)));
                 self.tell(&failure.to_string(), if stop { Next::Stop } else { Next::Go })
             }
         }

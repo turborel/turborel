@@ -243,8 +243,8 @@ impl Session {
         if self.inner.borrow().tx.is_some() {
             return fail(Code::TransactionState, format!("[EXTENSION] {what} runs outside a transaction: commit or roll back first"));
         }
-        if self.db.owner()?.as_deref() != Some(self.auth.as_str()) {
-            return fail(Code::Privilege, format!("[EXTENSION] only the database's owner runs {what}, and {} is not it", self.auth));
+        if self.db.owner()?.as_deref() != Some(self.auth().as_str()) {
+            return fail(Code::Privilege, format!("[EXTENSION] only the database's owner runs {what}, and {} is not it", self.auth()));
         }
         Ok(())
     }

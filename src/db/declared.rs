@@ -28,7 +28,7 @@ impl Session {
     /// # Errors
     ///
     /// SQLCODE -103 if the session declared a table of its name already
-    /// \[SR1\], or for a rule its definition breaks [§11.3–§11.9]; -104 for a
+    /// [SR1], or for a rule its definition breaks [§11.3–§11.9]; -104 for a
     /// privilege it lacks.
     pub(super) fn declare_table(&self, st: &Arc<State>, t: &TableDefinition) -> Result<Completion> {
         let qn = QualifiedName { auth: kw::MODULE.to_owned(), ident: t.name.ident.clone() };
@@ -47,7 +47,7 @@ impl Session {
             }
         }
         let mut staged = next.catalog.duplicate();
-        in_module(&mut *staged, &self.auth, vec![desc.clone()]);
+        in_module(&mut *staged, &self.auth(), vec![desc.clone()]);
         next.catalog = Arc::from(staged);
         next.complete_tables(&names, slice::from_mut(&mut desc), slice::from_ref(&pending))?;
         let indexes = indexes_of(&desc, st.constraint_method());
@@ -64,7 +64,7 @@ impl Session {
         }
         let mut copy = State::clone(&st);
         let mut catalog = copy.catalog.duplicate();
-        in_module(&mut *catalog, &self.auth, declared.iter().map(|(desc, _)| desc.clone()).collect());
+        in_module(&mut *catalog, &self.auth(), declared.iter().map(|(desc, _)| desc.clone()).collect());
         for (_, indexes) in declared.iter() {
             indexes.iter().cloned().for_each(|ix| catalog.add_index(ix));
         }

@@ -86,7 +86,7 @@ impl Session {
         if self.owns_schema(st, &qn.auth) {
             return Ok(());
         }
-        fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.10 AR1] {qn} is in a schema {} does not own", self.auth))
+        fail(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.10 AR1] {qn} is in a schema {} does not own", self.auth()))
     }
 
     /// The index `name`, of a table whose schema its identifier owns.

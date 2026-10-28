@@ -5,7 +5,9 @@ use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 
-use crate::fields::{column, counted, failure, parameter, put_column, put_count, put_failure, put_parameter, put_row, put_strs, row, strs};
+use crate::fields::{
+    column, counted, failure, flag, parameter, put_column, put_count, put_failure, put_flag, put_parameter, put_row, put_strs, row, strs,
+};
 use crate::{CancelKey, Column, Completed, Failure, KEY_BYTES, broken, frame};
 
 const CHALLENGE: u8 = b'C';
@@ -85,6 +87,7 @@ impl Reply {
             Reply::Complete(c) => frame(out, COMPLETE, |b| {
                 b.put_u32(c.sqlcode.cast_unsigned());
                 b.put_str(&c.sqlstate);
+                put_flag(b, c.active);
             }),
             Reply::Error(failure) => frame(out, ERROR, |b| put_failure(b, failure)),
         }
@@ -108,7 +111,7 @@ impl Reply {
             DESCRIPTION => Reply::Description(counted(&mut r, column)?),
             ROWS => Reply::Rows(counted(&mut r, row)?),
             SUSPENDED => Reply::Suspended,
-            COMPLETE => Reply::Complete(Completed { sqlcode: r.u32()?.cast_signed(), sqlstate: r.str()? }),
+            COMPLETE => Reply::Complete(Completed { sqlcode: r.u32()?.cast_signed(), sqlstate: r.str()?, active: flag(&mut r)? }),
             ERROR => Reply::Error(failure(&mut r)?),
             other => return Err(broken(format!("[DESIGN] no reply is of kind {other}"))),
         };

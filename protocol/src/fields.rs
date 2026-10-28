@@ -272,6 +272,7 @@ pub(crate) fn put_failure(b: &mut Vec<u8>, f: &Failure) {
     if let Some(position) = f.position {
         b.put_u64(position);
     }
+    put_flag(b, f.active);
 }
 
 pub(crate) fn failure(r: &mut Reader<'_>) -> Result<Failure> {
@@ -280,5 +281,5 @@ pub(crate) fn failure(r: &mut Reader<'_>) -> Result<Failure> {
     let message = r.str()?;
     let rule = if flag(r)? { Some(r.str()?) } else { None };
     let position = if flag(r)? { Some(r.u64()?) } else { None };
-    Ok(Failure { sqlcode, sqlstate, message, rule, position })
+    Ok(Failure { sqlcode, sqlstate, message, rule, position, active: flag(r)? })
 }

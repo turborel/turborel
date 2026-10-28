@@ -9,7 +9,7 @@ use super::{Session, State};
 use crate::ast::{AccessMode, IsolationLevel, SqlStatement, TableName, TransactionModes, ValueSpecification};
 use crate::binder::{self, qualify};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
-use crate::lexer::{Tok, delim, lex};
+use crate::lexer::{Tok, authorization_identifier, delim, lex};
 use crate::params::{ParameterType, Params};
 use crate::txn::{Reading, Stop};
 use crate::value::{DataType, Value};
@@ -63,7 +63,7 @@ impl Session {
             return fail(Code::TransactionState, "[ISO/IEC 9075:1992 §14.1 GR1] SET TRANSACTION while a transaction is active".to_owned());
         }
         if let Some(size) = &modes.diagnostics {
-            let (n, data_type) = binder::value_specification(size, &self.auth, params)?;
+            let (n, data_type) = binder::value_specification(size, &self.auth(), params)?;
             if !matches!(data_type, DataType::Exact { scale: 0, .. }) {
                 return fail(
                     Code::SyntaxRule,
@@ -123,6 +123,8 @@ impl Session {
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
             | SqlStatement::SetTimeZone(_)
+            | SqlStatement::SetSessionAuthorization(_)
+            | SqlStatement::Connection(_)
             | SqlStatement::SetSetting { .. }
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Index(_)
@@ -151,7 +153,7 @@ impl Session {
     /// another catalog (3D000).
     pub(super) fn set_schema(&self, st: &State, v: &ValueSpecification, params: &Params) -> Result<()> {
         // [ISO/IEC 9075:1992 §17.6 GR5u] a `?` is CHARACTER VARYING.
-        let (value, data_type) = binder::value_specification_as(v, &self.auth, params, ParameterType::Varying)?;
+        let (value, data_type) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
         if !data_type.is_character() {
             return fail(Code::SyntaxRule, "[ISO/IEC 9075:1992 §16.2 SR1] SET SCHEMA takes a character string".to_owned());
         }
@@ -184,6 +186,43 @@ impl Session {
         Ok(())
     }
 
+    /// [ISO/IEC 9075:1992 §16.4] SET SESSION AUTHORIZATION `v`: the
+    /// session's authorization identifier the identifier `v`'s value,
+    /// trimmed, writes. A session sets the one it began with; one begun
+    /// by the database's owner, any other (RULES.md D43) \[GR4\]. It begins
+    /// no transaction.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if `v` is not a character string \[SR1\]; SQLSTATE
+    /// 25000 in a transaction \[GR1\]; 28000 if its value is no
+    /// `<authorization identifier>` \[GR3\], or the session was not begun
+    /// by the owner and names another \[GR5\].
+    pub(super) fn set_session_authorization(&self, v: &ValueSpecification, params: &Params) -> Result<()> {
+        let (value, data_type) = binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?;
+        if !data_type.is_character() {
+            return fail(Code::SyntaxRule, "[ISO/IEC 9075:1992 §16.4 SR1] SET SESSION AUTHORIZATION takes a character string".to_owned());
+        }
+        if self.transaction().is_some() {
+            return fail(Code::TransactionState, "[ISO/IEC 9075:1992 §16.4 GR1] SET SESSION AUTHORIZATION in a transaction".to_owned());
+        }
+        let refused = |why: String| fail_with(Code::Privilege, SqlState::INVALID_AUTHORIZATION, why);
+        let named = if let Value::Char(s) = &value { authorization_identifier(s.trim_matches(' ')).ok() } else { None };
+        let Some(name) = named else {
+            return refused(format!("[ISO/IEC 9075:1992 §16.4 GR3] {} is not an <authorization identifier>", value.to_literal()));
+        };
+        let owner = self.db.owner()?;
+        if name != self.started && owner.as_deref() != Some(self.started.as_str()) {
+            let msg = format!(
+                "[ISO/IEC 9075:1992 §16.4 GR5] a session begun by {} sets no authorization identifier but its own: only the database's owner's does",
+                self.started
+            );
+            return refused(msg);
+        }
+        self.auth.replace(name);
+        Ok(())
+    }
+
     /// \[EXTENSION\] SET of a setting (RULES.md D36): this session's own
     /// value of the setting `name`, one a session may set, the value of
     /// `value`, or, for none (DEFAULT), the database's again. Like SET
@@ -203,7 +242,7 @@ impl Session {
             let msg = format!("[DESIGN] {} is the database's, which a session does not set for itself", definition.name);
             return fail(Code::SyntaxRule, msg);
         }
-        let given = value.map(|v| binder::value_specification(v, &self.auth, params)).transpose()?;
+        let given = value.map(|v| binder::value_specification(v, &self.auth(), params)).transpose()?;
         if let Some((v, _)) = &given {
             crate::settings::accepted(&definition.name, &definition.kind, v).map_err(|e| SqlError { code: Code::Data, ..e })?;
         }
@@ -228,7 +267,7 @@ impl Session {
             return fail(Code::SyntaxRule, format!("[DESIGN] there is no setting {name}"));
         };
         let Some(given) = value else { return self.db.reset_setting(&definition.name) };
-        let (v, _) = binder::value_specification(given, &self.auth, params)?;
+        let (v, _) = binder::value_specification(given, &self.auth(), params)?;
         crate::settings::accepted(&definition.name, &definition.kind, &v).map_err(|e| SqlError { code: Code::Data, ..e })?;
         self.db.set_setting(&definition.name, &v)
     }

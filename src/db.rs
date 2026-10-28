@@ -198,7 +198,11 @@ struct SessionState {
 /// identifier, the module's cursors, and the current transaction.
 pub struct Session {
     db: Database,
-    auth: String,
+    /// Its authorization identifier [ISO/IEC 9075:1992 §4.30], which SET
+    /// SESSION AUTHORIZATION sets [§16.4].
+    auth: RefCell<String>,
+    /// The authorization identifier it began with [§16.4 GR4].
+    started: String,
     extensions: bool,
     inner: RefCell<SessionState>,
     /// Set while a call runs, so a plug-in calling back into this session is
@@ -287,10 +291,16 @@ fn table_desc(st: &State, name: &QualifiedName) -> Result<TableDesc> {
 }
 
 impl Session {
+    /// Its authorization identifier, as it is now.
+    pub(crate) fn auth(&self) -> std::cell::Ref<'_, String> {
+        self.auth.borrow()
+    }
+
     fn new(db: Database, auth: &str) -> Session {
         Session {
             db,
-            auth: auth.to_string(),
+            auth: RefCell::new(auth.to_string()),
+            started: auth.to_string(),
             extensions: false,
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),
