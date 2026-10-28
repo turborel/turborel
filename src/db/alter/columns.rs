@@ -27,14 +27,14 @@ impl State {
     ///
     /// SQLCODE -103 for a rule it breaks: its name is a column's [§11.4
     /// SR1], or a constraint's; -104 for a foreign key it may not make.
-    pub(in crate::db) fn add_column(&self, (desc, names): (&TableDesc, &str), def: &ColumnDefinition) -> Result<TableDesc> {
+    pub(in crate::db) fn add_column(&self, (desc, names, zone): (&TableDesc, &str, i16), def: &ColumnDefinition) -> Result<TableDesc> {
         if desc.column(&def.name).is_some() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.4 SR1] {} already has a column {}", desc.name, def.name)));
         }
         let mut next = desc.clone();
         // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
         let (data_type, domain) = self.column_type(names, &def.data_type)?;
-        let default = def.default.as_ref().map(|o| default_of(data_type, o)).transpose()?;
+        let default = def.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose()?;
         next.columns.push(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain });
         let taken = self.constraint_names(&desc.name.auth);
         let mut added = Described::new((&desc.name, names), &next.columns, taken);

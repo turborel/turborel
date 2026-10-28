@@ -587,6 +587,11 @@ sent as a built-in one is.
   plan, and so is the current date a CAST of a time to a timestamp reads.
   CAST to or from a datetime is bound with them; `SqlType::cast`, given
   none, takes UTC.
+- A default's datetime literal without a displacement is of the
+  defining session's [§5.3 SR18], or, of a schema the operator defines,
+  of the database's TIME_ZONE. The displacement is logged with the
+  definition (`Change::Schema`, `Defined`, `AlterTable`), so recovery
+  makes the same default, no session being there.
 - The clock is a plug-in (`Database::set_clock`), the system's by
   default; a test sets one that stands still (R-TEST-5).
 *Why:* a server's results must not depend on the host's zone, nor a

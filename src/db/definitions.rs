@@ -55,13 +55,16 @@ impl Session {
     /// with the transaction's.
     pub(super) fn schema_statement(&self, st: &Arc<State>, tx: &Txn, statement: &SchemaStatement, text: &str) -> Result<Completion> {
         let schema = self.default_schema();
+        // [ISO/IEC 9075:1992 §5.3 SR18] the displacement of a datetime it
+        // writes without one, logged with it.
+        let zone = self.now.get().zone;
         let object = self.object_of(st, statement, &schema)?;
         st.acquire_name(tx, &object, LockMode::Exclusive)?;
         let mut held = vec![(object, LockMode::Exclusive)];
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
-            let defined = next.define((&self.auth(), &schema), statement, (None, None))?;
+            let defined = next.define((&self.auth(), &schema, zone), statement, (None, None))?;
             let wanted: Vec<(QualifiedName, LockMode)> = defined.locks.iter().filter(|l| !held.contains(l)).cloned().collect();
             if wanted.is_empty() {
                 let next = Arc::new(next);
@@ -71,7 +74,7 @@ impl Session {
                 if let Some(a) = &defined.asserted {
                     next.check_assertion(tx, a)?;
                 }
-                let change = Change::Defined { auth: self.auth().clone(), schema, sql: text.to_owned(), placed: defined.placed };
+                let change = Change::Defined { auth: self.auth().clone(), schema, zone, sql: text.to_owned(), placed: defined.placed };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
                 return Ok(defined.completion);
             }
@@ -140,18 +143,18 @@ impl State {
     /// storage, if given.
     pub(super) fn define(
         &mut self,
-        (auth, schema): (&str, &str),
+        (auth, schema, zone): (&str, &str, i16),
         statement: &SchemaStatement,
         (placed, made): (Option<&(String, u32)>, Option<&Made>),
     ) -> Result<Defined> {
         match statement {
-            SchemaStatement::Table(t) => self.create_table(schema, t, (placed, made)),
+            SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made)),
             SchemaStatement::View(v) => self.create_view(schema, v),
             SchemaStatement::Grant(p) => self.grant(auth, schema, p),
             SchemaStatement::Revoke(r) => self.revoke((auth, schema), r),
-            SchemaStatement::Domain(d) => self.create_domain(schema, d),
+            SchemaStatement::Domain(d) => self.create_domain((schema, zone), d),
             SchemaStatement::Assertion(a) => self.create_assertion(schema, a),
-            SchemaStatement::AlterDomain(a) => self.alter_domain(schema, a),
+            SchemaStatement::AlterDomain(a) => self.alter_domain((schema, zone), a),
         }
     }
 
@@ -163,7 +166,7 @@ impl State {
     /// The statement's own; SQLCODE -910 if it is not a schema statement.
     pub(super) fn redefine(
         &mut self,
-        (auth, schema): (&str, &str),
+        (auth, schema, zone): (&str, &str, i16),
         sql: &str,
         placed: Option<&(String, u32)>,
         made: Option<&Made>,
@@ -171,13 +174,13 @@ impl State {
         let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.of_definition().sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
-        Ok(self.define((auth, schema), &statement, (placed, made))?.dropped)
+        Ok(self.define((auth, schema, zone), &statement, (placed, made))?.dropped)
     }
 
     /// [ISO/IEC 9075:1992 §11.3] Creates base table `t` in schema `schema`.
     fn create_table(
         &mut self,
-        schema: &str,
+        (schema, zone): (&str, i16),
         t: &TableDefinition,
         (placed, made): (Option<&(String, u32)>, Option<&Made>),
     ) -> Result<Defined> {
@@ -188,7 +191,7 @@ impl State {
         }
         let earlier: Vec<TableDesc> = self.catalog.tables().into_iter().filter(|d| d.name.auth == qn.auth).cloned().collect();
         let keys: Vec<Vec<_>> = earlier.iter().map(|_| Vec::new()).collect();
-        let (mut desc, pending) = self.describe_table((&qn.auth, schema), t, &earlier, &keys).or_at(t.name.at)?;
+        let (mut desc, pending) = self.describe_table((&qn.auth, schema, zone), t, &earlier, &keys).or_at(t.name.at)?;
         // Another table of the name, dropped, had a generation of its own.
         desc.generation = placed.map_or_else(|| self.retired.get(&qn).map_or(0, |g| g.saturating_add(1)), |(_, g)| *g);
         // Its foreign keys and CHECKs, it among the tables they may name.

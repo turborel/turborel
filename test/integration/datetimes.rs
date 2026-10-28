@@ -303,3 +303,69 @@ fn datetimes_are_kept() {
     drop(db);
     kept(&open());
 }
+
+/// Schema A, defined in `dir`, by a session of displacement +02:00:
+/// table T, its column S's default written without a displacement, its
+/// column U's added by ALTER TABLE, its column V of domain W's; and schema
+/// Z, by the operator, the database's TIME_ZONE +03:00, its table R's
+/// column S's default so too.
+fn defaults_in(dir: &std::path::Path) -> Database {
+    let db = Database::new();
+    db.open_files(&os(), dir, &OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = db.session("A");
+    for sql in [
+        "SET TIME ZONE INTERVAL '02:00' HOUR TO MINUTE",
+        "CREATE TABLE T (N INTEGER, S TIMESTAMP WITH TIME ZONE DEFAULT TIMESTAMP '2026-01-01 12:00:00')",
+        "ALTER TABLE T ADD COLUMN U TIMESTAMP WITH TIME ZONE DEFAULT TIMESTAMP '2026-01-01 13:00:00'",
+        "CREATE DOMAIN W AS TIMESTAMP WITH TIME ZONE DEFAULT TIMESTAMP '2026-01-01 14:00:00'",
+        "ALTER TABLE T ADD COLUMN V W",
+    ] {
+        a.run(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+    a.commit().unwrap();
+    db.set_setting("TIME_ZONE", &turborel::value::Value::Char("+03:00".into())).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION Z CREATE TABLE R (S TIMESTAMP WITH TIME ZONE DEFAULT TIMESTAMP '2026-01-01 12:00:00') \
+         GRANT INSERT, SELECT ON R TO A",
+    )
+    .unwrap();
+    db
+}
+
+/// That the defaults of `defaults_in` are of the displacements they were
+/// defined in, read by a session of another.
+fn defaults_kept(db: &Database) {
+    let a = db.session("A");
+    a.run("SET TIME ZONE INTERVAL -'05:00' HOUR TO MINUTE").unwrap();
+    a.run("INSERT INTO T (N) VALUES (1)").unwrap();
+    a.run("INSERT INTO Z.R VALUES (DEFAULT)").unwrap_or_else(|e| panic!("{e}"));
+    let utc = |sql: &str| rows(&a, sql).unwrap();
+    let at = "SELECT COUNT(*) FROM T WHERE S = TIMESTAMP '2026-01-01 10:00:00+00:00' AND U = TIMESTAMP '2026-01-01 11:00:00+00:00' \
+              AND V = TIMESTAMP '2026-01-01 12:00:00+00:00'";
+    assert_eq!(utc(at), ["1"], "of +02:00");
+    assert_eq!(utc("SELECT COUNT(*) FROM Z.R WHERE S = TIMESTAMP '2026-01-01 09:00:00+00:00'"), ["1"], "of +03:00");
+    a.rollback().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3 SR18, §11.5 SR3a v]: a
+/// default's datetime literal written without a displacement is of the
+/// defining session's, or, a schema defined by the operator, of the
+/// database's TIME_ZONE; so it stays after recovery and a checkpoint,
+/// whatever the session reading it.
+#[test]
+fn a_default_takes_the_defining_displacement_5_3() {
+    let scratch = Scratch::new("datetime-defaults");
+    let dir = scratch.path("db");
+    let db = defaults_in(&dir);
+    defaults_kept(&db);
+    drop(db);
+    let recovered = Database::new();
+    recovered.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    defaults_kept(&recovered);
+    recovered.close().unwrap();
+    drop(recovered);
+    let reopened = Database::new();
+    reopened.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    defaults_kept(&reopened);
+}

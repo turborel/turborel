@@ -38,7 +38,7 @@ impl Session {
         // [§5.4 SR6, SR8b] Its names without a schema's are of the session's
         // default schema; MODULE.T names a declared table.
         let names = self.default_schema();
-        let (mut desc, pending) = next.describe_table((kw::MODULE, &names), t, &[], &[])?;
+        let (mut desc, pending) = next.describe_table((kw::MODULE, &names, self.now.get().zone), t, &[], &[])?;
         let mut staged = next.catalog.duplicate();
         in_module(&mut *staged, &self.auth(), vec![desc.clone()]);
         next.catalog = Arc::from(staged);

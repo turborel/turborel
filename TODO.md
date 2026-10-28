@@ -98,11 +98,6 @@ RULES.md when its design settles.
   schema's, where §5.4 SR8b would take the session's default schema's,
   which may be another; the constraint would then be in another schema
   than its table, which the catalog does not keep.
-- **Datetimes, further** (RULES.md D54): a default's datetime literal
-  without a displacement is of UTC, not the defining session's [§5.3
-  SR18]: a schema definition is logged as its text and read again in
-  recovery, where no session is, so the displacement would have to be
-  logged with it.
 - **Plug-in data types, further** (RULES.md D53): no privilege is needed
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's

@@ -246,10 +246,11 @@ pub fn function_type(f: DatetimeFunction) -> DataType {
     type_of(f.moment, f.precision.unwrap_or(implied), true)
 }
 
-/// The value of the `<datetime literal>` `w`, of UTC if it writes no
-/// displacement: where no SQL-session gives one.
-pub fn literal_value(w: &Written) -> Value {
-    Value::Datetime(Datetime::of_local(w.moment, w.local, w.zone.unwrap_or(0), w.zone.is_some(), w.precision))
+/// The value of the `<datetime literal>` `w`, of the displacement `zone`
+/// if it writes none [ISO/IEC 9075:1992 §5.3 SR18]: where a statement's
+/// `Now` is not at hand.
+pub fn literal_value(w: &Written, zone: i16) -> Value {
+    Value::Datetime(Datetime::of_local(w.moment, w.local, w.zone.unwrap_or(zone), w.zone.is_some(), w.precision))
 }
 
 impl Binder<'_> {

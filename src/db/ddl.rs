@@ -102,11 +102,11 @@ impl State {
     pub(super) fn apply_change(&mut self, change: &Change, made: Option<&Made>) -> Result<Dropped> {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
-            Change::AlterTable { table, action, schema } => {
+            Change::AlterTable { table, action, schema, zone } => {
                 let action = Parser::new(action)?.of_definition().alter_table_action()?;
-                Ok(self.alter_table((table, schema), &action, (made, None))?.0)
+                Ok(self.alter_table((table, schema, *zone), &action, (made, None))?.0)
             }
-            Change::Defined { auth, schema, sql, placed } => self.redefine((auth, schema), sql, placed.as_ref(), made),
+            Change::Defined { auth, schema, zone, sql, placed } => self.redefine((auth, schema, *zone), sql, placed.as_ref(), made),
             Change::Insert { .. }
             | Change::Update { .. }
             | Change::Delete { .. }
@@ -223,7 +223,8 @@ impl Session {
         }
         self.prepare_change(st, tx, &qn)?;
         let mut next = State::clone(st);
-        let (_, made, reshape) = next.alter_table((&qn, &schema), action, (None, Some(tx)))?;
+        let zone = self.now.get().zone;
+        let (_, made, reshape) = next.alter_table((&qn, &schema, zone), action, (None, Some(tx)))?;
         let next = Arc::new(next);
         let checked = match (reshape, action) {
             (Some(reshape), _) => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects())),
@@ -236,7 +237,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::AlterTable { table: qn, action: text.to_owned(), schema };
+        let change = Change::AlterTable { table: qn, action: text.to_owned(), schema, zone };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
         Ok(Completion::Success)
     }

@@ -275,7 +275,7 @@ fn recovery_undoes_and_redoes_what_the_pages_need() {
     let row = |k: i128| vec![number(k)];
     let insert = |tx: TxId, id: RowId, k: i128| record(tx, Change::Insert { table: table.clone(), generation: 0, row: id, after: row(k) });
     let schema = "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".to_string();
-    record(NO_TRANSACTION, Change::Schema { sql: schema, owner: "A".into(), engines: vec![("T".into(), "checkpointed".into())] });
+    record(NO_TRANSACTION, Change::Schema { sql: schema, owner: "A".into(), engines: vec![("T".into(), "checkpointed".into())], zone: 0 });
     record(10, Change::Insert { table: table.clone(), generation: 0, row: 6, after: row(60) });
     record(10, Change::Commit { at: 1 });
     insert(1, 1, 1);

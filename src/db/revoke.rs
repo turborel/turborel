@@ -306,7 +306,8 @@ impl State {
         for (domain, c) in &abandoned.domain_constraints {
             let written = |q: &QualifiedName| TableName { auth: Some(q.auth.clone()), ident: q.ident.clone(), at: 0 };
             let statement = AlterDomain { name: written(domain), action: AlterDomainAction::DropConstraint(written(c)) };
-            locks.extend(self.alter_domain(&domain.auth, &statement)?.locks);
+            // Dropping a constraint makes no default: no displacement is needed.
+            locks.extend(self.alter_domain((&domain.auth, 0), &statement)?.locks);
         }
         // [GR5] DROP ASSERTION.
         for a in &abandoned.assertions {

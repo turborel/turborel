@@ -31,7 +31,8 @@ pub(in crate::db) fn value_of(value: &OptionValue) -> Value {
         OptionValue::Literal(Literal::Exact(d)) => Value::Exact(*d),
         OptionValue::Literal(Literal::Approximate(x)) => Value::Approx(*x),
         OptionValue::Literal(Literal::Bit(b)) => Value::Bits(b.clone()),
-        OptionValue::Literal(Literal::Datetime(w)) => crate::binder::datetime_literal(w),
+        // An option is the database's, of no session: its datetime of UTC.
+        OptionValue::Literal(Literal::Datetime(w)) => crate::binder::datetime_literal(w, 0),
         OptionValue::Literal(Literal::Interval(i)) => Value::Interval(*i),
     }
 }

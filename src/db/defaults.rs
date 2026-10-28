@@ -23,7 +23,7 @@ const USER_LENGTH: u32 = 128;
 /// # Errors
 ///
 /// SQLCODE -103 if the option does not suit the type [SR3].
-pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<ColumnDefault> {
+pub(super) fn default_of(subject: DataType, option: &DefaultOption, zone: i16) -> Result<ColumnDefault> {
     let literal = match option {
         DefaultOption::Null => return Ok(ColumnDefault::Value(Value::Null)),
         DefaultOption::User(_) => {
@@ -49,7 +49,7 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
         DefaultOption::Literal(l) => l,
     };
     // [GR1b] its value, a fixed-length string padded.
-    Ok(ColumnDefault::Value(assign(literal_value(literal, subject)?, &subject, "ISO/IEC 9075:1992 §11.5 GR1b")?))
+    Ok(ColumnDefault::Value(assign(literal_value(literal, subject, zone)?, &subject, "ISO/IEC 9075:1992 §11.5 GR1b")?))
 }
 
 /// [ISO/IEC 9075:1992 §11.5 SR3a] The value of `literal`, the default of a
@@ -58,7 +58,7 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
 /// # Errors
 ///
 /// SQLCODE -103 if it does not suit the type.
-fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
+fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Value> {
     let not_of = || rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}"));
     match literal {
         Literal::Character(s) => character_default(s, subject).unwrap_or_else(|| Err(not_of())),
@@ -100,10 +100,10 @@ fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
             }
             Ok(Value::Interval(*i))
         }
-        // [SR3a v] a datetime of the same fields; of UTC, if it writes no
-        // displacement.
+        // [SR3a v] a datetime of the same fields; of the defining session's
+        // displacement, if it writes none [§5.3 SR18].
         Literal::Datetime(w) => {
-            let value = crate::binder::datetime_literal(w);
+            let value = crate::binder::datetime_literal(w, zone);
             if !subject.is_datetime() || value.kind().is_none_or(|k| !k.comparable(&subject)) {
                 return Err(rule(format!(
                     "[ISO/IEC 9075:1992 §11.5 SR3a v] the default {} is not of the fields of {subject}",
@@ -193,7 +193,7 @@ impl State {
     /// SQLCODE -103 if the table has no such column [§11.12 SR3], the
     /// default does not suit it [§11.5 SR3], or it has none to drop
     /// [§11.14 SR2].
-    pub(super) fn alter_column(&mut self, qn: &QualifiedName, column: &str, option: Option<&DefaultOption>) -> Result<()> {
+    pub(super) fn alter_column(&mut self, (qn, zone): (&QualifiedName, i16), column: &str, option: Option<&DefaultOption>) -> Result<()> {
         let mut desc = self.base_table(qn)?;
         let c = desc
             .columns
@@ -201,7 +201,7 @@ impl State {
             .find(|c| c.name == column)
             .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.12 SR3] {qn} has no column {column}")))?;
         c.default = match (option, &c.default) {
-            (Some(o), _) => Some(default_of(c.data_type, o)?),
+            (Some(o), _) => Some(default_of(c.data_type, o, zone)?),
             (None, Some(_)) => None,
             (None, None) => {
                 return Err(rule(format!("[ISO/IEC 9075:1992 §11.14 SR2] column {column} of {qn} has no default to drop")));

@@ -170,13 +170,13 @@ impl State {
     ///
     /// SQLCODE -103 for a Syntax Rule it breaks: no schema, a domain of its
     /// name [SR1], a constraint's name taken, or its constraints' rules.
-    pub(super) fn create_domain(&mut self, schema: &str, d: &DomainDefinition) -> Result<Defined> {
-        self.make_domain(schema, d, true)
+    pub(super) fn create_domain(&mut self, (schema, zone): (&str, i16), d: &DomainDefinition) -> Result<Defined> {
+        self.make_domain((schema, zone), d, true)
     }
 
     /// `create_domain`'s work: its constraints `bound`, or, in a `<schema
     /// definition>`, left to bind once its tables are made (`bind_domains`).
-    pub(super) fn make_domain(&mut self, schema: &str, d: &DomainDefinition, bound: bool) -> Result<Defined> {
+    pub(super) fn make_domain(&mut self, (schema, zone): (&str, i16), d: &DomainDefinition, bound: bool) -> Result<Defined> {
         let qn = qualify(&d.name, schema);
         if !self.catalog.schema_exists(&qn.auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.21 SR1] there is no schema {}", qn.auth);
@@ -187,7 +187,7 @@ impl State {
                 rule(format!("[ISO/IEC 9075:1992 §11.21 SR1] schema {} has a domain {} already", qn.auth, qn.ident)).or_at(d.name.at)
             );
         }
-        let default = d.default.as_ref().map(|o| default_of(d.data_type, o)).transpose().or_at(d.name.at)?;
+        let default = d.default.as_ref().map(|o| default_of(d.data_type, o, zone)).transpose().or_at(d.name.at)?;
         let mut constraints = Vec::new();
         for c in &d.constraints {
             let made = self.domain_constraint((&qn, schema), d.data_type, (c, &constraints), bound)?;
@@ -310,7 +310,7 @@ impl State {
     /// SQLCODE -103 if there is no such domain [§11.22 SR1], it has no
     /// default to drop [§11.24 SR2], no constraint of the name to drop
     /// [§11.26 SR3], or a constraint added breaks a rule.
-    pub(super) fn alter_domain(&mut self, schema: &str, a: &AlterDomain) -> Result<Defined> {
+    pub(super) fn alter_domain(&mut self, (schema, zone): (&str, i16), a: &AlterDomain) -> Result<Defined> {
         let qn = qualify(&a.name, schema);
         let mut domain =
             self.catalog.domain(&qn).cloned().ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.22 SR1] there is no domain {qn}")))?;
@@ -319,7 +319,7 @@ impl State {
         let mut validate = Vec::new();
         match &a.action {
             AlterDomainAction::SetDefault(o) => {
-                domain.default = Some(default_of(domain.data_type, o).or_at(a.name.at)?);
+                domain.default = Some(default_of(domain.data_type, o, zone).or_at(a.name.at)?);
                 columns_of(&mut tables, &qn).for_each(|c| set_domain_default(c, domain.default.clone()));
             }
             AlterDomainAction::DropDefault => {

@@ -79,20 +79,23 @@ impl Database {
     /// A privilege it would grant that its owner cannot is not granted, and
     /// it completes with a warning [ISO/IEC 9075:1992 §11.36 GR14, GR15].
     pub fn schema(&self, sql: &str) -> Result<Completion> {
-        self.schema_of(sql, None)
+        self.schema_of(sql, (None, None))
     }
 
     /// `schema`, the `<schema definition>` `sql` owned by `implicit` if it
-    /// names no AUTHORIZATION [ISO/IEC 9075:1992 §11.1 SR2b].
-    pub(super) fn schema_of(&self, sql: &str, implicit: Option<&str>) -> Result<Completion> {
+    /// names no AUTHORIZATION [ISO/IEC 9075:1992 §11.1 SR2b]; a datetime it
+    /// writes without a displacement of `zone`, a session's, or else the
+    /// database's TIME_ZONE [§5.3 SR18].
+    pub(super) fn schema_of(&self, sql: &str, (implicit, zone): (Option<&str>, Option<i16>)) -> Result<Completion> {
         // Published before a checkpoint can see its record or its tables.
         let current = self.snapshot()?;
         let _gate = current.tx.gate.enter();
         self.noted(self.change(|st| {
-            let (owner, engines, warned, asserted) = st.schema(sql, implicit)?;
+            let zone = zone.unwrap_or_else(|| st.now(&crate::settings::NONE).zone);
+            let (owner, engines, warned, asserted) = st.schema(sql, (implicit, zone))?;
             st.check_new_assertions(&asserted)?;
             // Logged before it is published (RULES.md D25).
-            st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines })?;
+            st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone })?;
             Ok(if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success })
         }))
     }
@@ -175,7 +178,7 @@ impl State {
     /// Returns its owner, and each table it created, with the engine it was
     /// placed in, for the log (RULES.md D25); and whether a privilege it
     /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15].
-    pub(super) fn schema(&mut self, sql: &str, implicit: Option<&str>) -> Result<SchemaMade> {
+    pub(super) fn schema(&mut self, sql: &str, (implicit, zone): (Option<&str>, i16)) -> Result<SchemaMade> {
         let ours = self.catalog_name();
         let s = Parser::new(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
@@ -203,10 +206,10 @@ impl State {
                 s.name
             ));
         }
-        self.schema_domains(&s, &owner)?;
+        self.schema_domains(&s, &owner, zone)?;
         let (mut descs, mut pending): (Vec<TableDesc>, Vec<Vec<Pending>>) = (Vec::new(), Vec::new());
         for table in &s.tables {
-            let (desc, keys) = self.describe_table((&s.name, &s.name), table, &descs, &pending).or_at(table.name.at)?;
+            let (desc, keys) = self.describe_table((&s.name, &s.name, zone), table, &descs, &pending).or_at(table.name.at)?;
             descs.push(desc);
             pending.push(keys);
         }
@@ -235,9 +238,10 @@ impl State {
     }
 
     /// [ISO/IEC 9075:1992 §11.21] The domains of `<schema>` `s`, owned by
-    /// `owner`, made first, which its tables' columns may be of: a failing
+    /// `owner`, its datetimes of `zone` where they write no displacement,
+    /// made first, which its tables' columns may be of: a failing
     /// `<schema>` is discarded whole (`Database::change`).
-    fn schema_domains(&mut self, s: &Schema, owner: &str) -> Result<()> {
+    fn schema_domains(&mut self, s: &Schema, owner: &str, zone: i16) -> Result<()> {
         if s.domains.is_empty() {
             return Ok(());
         }
@@ -245,7 +249,7 @@ impl State {
         catalog.create_schema(&s.name, owner, Vec::new());
         self.catalog = Arc::from(catalog);
         for d in &s.domains {
-            self.make_domain(&s.name, d, false)?;
+            self.make_domain((&s.name, zone), d, false)?;
         }
         Ok(())
     }
@@ -274,7 +278,7 @@ impl State {
     /// are known.
     pub(super) fn describe_table(
         &self,
-        (auth, names): (&str, &str),
+        (auth, names, zone): (&str, &str, i16),
         t: &TableDefinition,
         earlier: &[TableDesc],
         keys: &[Vec<Pending>],
@@ -292,7 +296,7 @@ impl State {
             }
             // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
             let (data_type, domain) = self.column_type(names, &c.data_type).or_at(c.at)?;
-            let default = c.default.as_ref().map(|o| default_of(data_type, o)).transpose().or_at(c.at)?;
+            let default = c.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose().or_at(c.at)?;
             columns.push(ColumnDesc { name: c.name.clone(), data_type, not_null: false, default, domain });
         }
         if columns.is_empty() {
@@ -552,7 +556,7 @@ mod tests {
         st.settings.set("UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
         assert_eq!(st.check_new_objects(&[table(ROW_STORE, true)]).err().map(|e| e.code), Some(Code::Api));
         assert_eq!(
-            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", None).err().map(|e| e.code),
+            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0)).err().map(|e| e.code),
             Some(Code::Api)
         );
         assert!(!st.catalog.schema_exists("A"), "the refused <schema> left no trace");

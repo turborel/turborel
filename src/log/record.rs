@@ -167,6 +167,10 @@ pub enum Change {
         /// Each table it created, and the engine it was placed in: what
         /// replaying the text alone would not know (RULES.md D25).
         engines: Vec<(String, String)>,
+        /// The time zone displacement, in minutes, of a datetime it writes
+        /// without one [ISO/IEC 9075:1992 §5.3 SR18]: the session's, or of
+        /// the operator's, the database's.
+        zone: i16,
     },
     /// \[EXTENSION\] An index created.
     CreateIndex {
@@ -204,6 +208,9 @@ pub enum Change {
         /// The schema of the names it writes without one: the session's
         /// default schema [ISO/IEC 9075:1992 §5.4 SR8b].
         schema: String,
+        /// The displacement, in minutes, of a datetime it writes without
+        /// one: the session's [ISO/IEC 9075:1992 §5.3 SR18].
+        zone: i16,
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] A table,
     /// view or schema dropped by its transaction, which the definitions
@@ -223,6 +230,9 @@ pub enum Change {
         auth: String,
         /// The session's default schema as it ran.
         schema: String,
+        /// The session's time zone displacement as it ran, in minutes
+        /// [ISO/IEC 9075:1992 §5.3 SR18].
+        zone: i16,
         /// Its text.
         sql: String,
         /// Of a table it created, the engine it was placed in and the
@@ -285,8 +295,8 @@ impl Record {
                 out.put_u64(*row);
                 put_row(&mut out, key);
             }
-            Change::Schema { sql, owner, engines } => put_schema(&mut out, (owner, sql), engines),
-            Change::Defined { auth, schema, sql, placed } => put_defined(&mut out, (auth, schema, sql), placed.as_ref()),
+            Change::Schema { sql, owner, engines, zone } => put_schema(&mut out, (owner, sql, *zone), engines),
+            Change::Defined { auth, schema, zone, sql, placed } => put_defined(&mut out, (auth, schema, sql, *zone), placed.as_ref()),
             Change::CreateIndex { name, table, columns, method, options } => {
                 out.put_str(name);
                 put_table(&mut out, table);
@@ -300,10 +310,11 @@ impl Record {
             }
             Change::DropIndex { name } | Change::Owner { name } => out.put_str(name),
             Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
-            Change::AlterTable { table, action, schema } => {
+            Change::AlterTable { table, action, schema, zone } => {
                 put_table(&mut out, table);
                 out.put_str(action);
                 out.put_str(schema);
+                out.put_i128(i128::from(*zone));
             }
             Change::Setting { name, value } => {
                 out.put_str(name);
@@ -346,7 +357,7 @@ impl Record {
             SCHEMA => {
                 let owner = r.str()?;
                 let (sql, engines) = schema(&mut r)?;
-                Change::Schema { sql, owner, engines }
+                Change::Schema { sql, owner, engines, zone: zone(&mut r)? }
             }
             DEFINED => defined(&mut r)?,
             CREATE_INDEX => {
@@ -362,7 +373,7 @@ impl Record {
             ALTER_INDEX => Change::AlterIndex { name: r.str()?, options: options(&mut r)? },
             DROP_INDEX => Change::DropIndex { name: r.str()? },
             DROP => Change::Drop { object: dropped(&mut r)?, cascade: r.u8()? != 0 },
-            ALTER_TABLE => Change::AlterTable { table: table(&mut r)?, action: r.str()?, schema: r.str()? },
+            ALTER_TABLE => Change::AlterTable { table: table(&mut r)?, action: r.str()?, schema: r.str()?, zone: zone(&mut r)? },
             // No setting takes the null value: it stands for the default.
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },
             USER => user(&mut r)?,
@@ -374,8 +385,9 @@ impl Record {
     }
 }
 
-/// A schema's text, and the engine of each table it created.
-fn put_schema(out: &mut Vec<u8>, (owner, sql): (&str, &str), engines: &[(String, String)]) {
+/// A schema's text, the engine of each table it created, and its
+/// displacement.
+fn put_schema(out: &mut Vec<u8>, (owner, sql, zone): (&str, &str, i16), engines: &[(String, String)]) {
     out.put_str(owner);
     out.put_str(sql);
     out.put_u32(u32::try_from(engines.len()).unwrap_or(u32::MAX));
@@ -383,6 +395,7 @@ fn put_schema(out: &mut Vec<u8>, (owner, sql): (&str, &str), engines: &[(String,
         out.put_str(table);
         out.put_str(engine);
     }
+    out.put_i128(i128::from(zone));
 }
 
 /// What `put_schema` wrote after the owner: the text, and the engines.
@@ -396,8 +409,9 @@ fn schema(r: &mut Reader<'_>) -> Result<(String, Vec<(String, String)>)> {
     Ok((sql, engines))
 }
 
-/// A schema statement's authorizer, default schema, text, and created table's engine and generation.
-fn put_defined(out: &mut Vec<u8>, (auth, schema, sql): (&str, &str, &str), placed: Option<&(String, u32)>) {
+/// A schema statement's authorizer, default schema, text, created table's
+/// engine and generation, and displacement.
+fn put_defined(out: &mut Vec<u8>, (auth, schema, sql, zone): (&str, &str, &str, i16), placed: Option<&(String, u32)>) {
     out.put_str(auth);
     out.put_str(schema);
     out.put_str(sql);
@@ -406,13 +420,20 @@ fn put_defined(out: &mut Vec<u8>, (auth, schema, sql): (&str, &str, &str), place
         out.put_str(engine);
         out.put_u32(*generation);
     }
+    out.put_i128(i128::from(zone));
 }
 
 /// What `put_defined` wrote, as a change.
 fn defined(r: &mut Reader<'_>) -> Result<Change> {
     let (auth, schema, sql) = (r.str()?, r.str()?, r.str()?);
     let placed = if r.u8()? == 0 { None } else { Some((r.str()?, r.u32()?)) };
-    Ok(Change::Defined { auth, schema, sql, placed })
+    Ok(Change::Defined { auth, schema, zone: zone(r)?, sql, placed })
+}
+
+/// A time zone displacement, in minutes, as `put_i128` wrote it.
+fn zone(r: &mut Reader<'_>) -> Result<i16> {
+    let minutes = r.i128()?;
+    i16::try_from(minutes).map_err(|_| r.corrupt("a time zone displacement is out of range"))
 }
 
 /// A user's name, and its verifier if it is kept.

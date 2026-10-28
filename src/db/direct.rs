@@ -59,6 +59,6 @@ impl Session {
                 format!("[ISO/IEC 9075:1992 §11.1 AR1] {} may create its own schema only, not {other}'s", self.auth()),
             );
         }
-        self.db.schema_of(sql, Some(&self.auth()))
+        self.db.schema_of(sql, (Some(&self.auth()), Some(self.now.get().zone)))
     }
 }

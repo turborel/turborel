@@ -39,14 +39,16 @@ fn every_kind() -> Vec<Record> {
             sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
             owner: "A".into(),
             engines: vec![("T".into(), "rowstore".into())],
+            zone: -330,
         },
         Change::Defined {
             auth: "A".into(),
             schema: "B".into(),
+            zone: 780,
             sql: "CREATE TABLE T (K INTEGER)".into(),
             placed: Some(("rowstore".into(), u32::MAX)),
         },
-        Change::Defined { auth: String::new(), schema: String::new(), sql: "GRANT SELECT ON T TO B".into(), placed: None },
+        Change::Defined { auth: String::new(), schema: String::new(), zone: 0, sql: "GRANT SELECT ON T TO B".into(), placed: None },
         Change::CreateIndex {
             name: "I".into(),
             table: table(),
@@ -61,7 +63,7 @@ fn every_kind() -> Vec<Record> {
         Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
         Change::Drop { object: DropTarget::Domain(table()), cascade: false },
         Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
-        Change::AlterTable { table: table(), action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(), schema: "S".into() },
+        Change::AlterTable { table: table(), action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(), schema: "S".into(), zone: -779 },
         Change::Setting { name: "LOCK_WAIT".into(), value: Some(Value::Char("WAIT".into())) },
         Change::Setting { name: "OPTIMIZER.MAX_PASSES".into(), value: None },
         Change::User { name: "ANN".into(), verifier: Some(vec![0, 255, 7]) },
@@ -126,11 +128,16 @@ fn what_is_not_a_record_is_refused() {
     let tag = insert.len() - 1;
     insert[tag] = 77;
     assert_eq!(corrupt(&insert), Some(Code::Corrupt), "an unknown kind of value");
-    let schema = Record { tx: 1, change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![] } }.encode();
+    let schema = Record { tx: 1, change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], zone: 0 } }.encode();
     let mut not_utf8 = schema.clone();
-    let last = not_utf8.len() - 5;
+    // "ab", then its engines' count, then its displacement.
+    let last = not_utf8.len() - 5 - 16;
     not_utf8[last] = 0xFF;
     assert_eq!(corrupt(&not_utf8), Some(Code::Corrupt));
+    let mut far = schema.clone();
+    let zone = far.len() - 16;
+    far[zone..].copy_from_slice(&i128::MAX.to_le_bytes());
+    assert_eq!(corrupt(&far), Some(Code::Corrupt), "a displacement out of range");
     let mut huge = Record { tx: 1, change: Change::Delete { table: table(), generation: 0, row: 1, before: vec![] } }.encode();
     let count = huge.len() - 4;
     huge[count..].copy_from_slice(&u32::MAX.to_le_bytes());

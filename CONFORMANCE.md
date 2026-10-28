@@ -281,7 +281,8 @@ restriction is lifted.
   instant in a statement [§6.8]; CAST to and from character strings and
   between datetimes [§6.10 SR4, GR5e, GR6e, GR9-GR11]; EXTRACT of a
   datetime's fields and displacement [§6.6]; CASE and set operations of
-  one datetime type [§9.3 SR3e]; a default of a datetime literal or a
+  one datetime type [§9.3 SR3e]; a default of a datetime literal, of the
+  defining session's displacement if it writes none [§5.3 SR18], or a
   datetime value function [§11.5 SR3a v, SR3c, GR1d] (RULES.md D54).
 - **Intervals** [§4.5.2, §6.1, §10.1]: INTERVAL of a qualifier, year-month
   or day-time, and its literals, INTERVAL '...' [§5.3]; compared, indexed

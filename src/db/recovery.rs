@@ -340,12 +340,12 @@ impl Database {
     pub(super) fn replay_definition(&self, change: &Change) -> Result<()> {
         self.change(|st| {
             match change {
-                Change::Schema { sql, owner, engines } => {
+                Change::Schema { sql, owner, engines, zone } => {
                     let schema = crate::parser::Parser::new(sql)?.of_definition().schema()?.name;
                     for (ident, engine) in engines {
                         st.placement.insert(QualifiedName { auth: schema.clone(), ident: ident.clone() }, engine.clone());
                     }
-                    st.schema(sql, Some(owner))?;
+                    st.schema(sql, (Some(owner), *zone))?;
                 }
                 Change::CreateIndex { name, table, columns, method, options } => {
                     let spec = IndexSpec {
