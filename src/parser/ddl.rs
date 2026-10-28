@@ -59,7 +59,8 @@ impl Parser {
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
         }
-        let name = self.identifier()?;
+        let named_at = self.here();
+        let name = (self.identifier()?, named_at);
         self.expect_kw(kw::ON)?;
         let table = self.table_name()?;
         self.expect_delim(delim::LEFT_PAREN)?;

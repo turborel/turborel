@@ -42,10 +42,10 @@ impl Session {
             );
         }
         match stmt {
-            IndexStatement::Create { name, table, columns, storage } => {
+            IndexStatement::Create { name: (name, name_at), table, columns, storage } => {
                 let qn = qualify(table, &self.default_schema());
                 self.owns(st, &qn)?;
-                let desc = st.base_table(&qn).or_at(table.at)?;
+                let desc = st.catalog.table(&qn).ok_or_else(|| refused(&format!("{qn} is not a base table"))).or_at(table.at)?;
                 for (column, at) in columns {
                     if desc.column(column).is_none() {
                         return Err(refused(&format!("{qn} has no column {column}"))).or_at(*at);
@@ -56,7 +56,7 @@ impl Session {
                     None => BTREE_METHOD.to_owned(),
                 };
                 if st.catalog.index(name).is_some() {
-                    return Err(refused(&format!("an index named {name} already exists")));
+                    return Err(refused(&format!("an index named {name} already exists"))).or_at(*name_at);
                 }
                 let options = options_of(st, &method, &storage.options)?;
                 let columns = columns.iter().map(|(c, _)| c.clone()).collect();
@@ -71,7 +71,9 @@ impl Session {
                 self.db.drop_index(name)?;
             }
             IndexStatement::Alter { name: (name, at), options } => {
-                self.index_owned(st, name).or_at(*at)?;
+                let ix = self.index_owned(st, name).or_at(*at)?;
+                // Each option checked first, so a refusal is placed at it.
+                options_of(st, &ix.method, options)?;
                 let given: Vec<(String, Option<Value>)> =
                     options.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
                 self.db.alter_index(name, &given)?;

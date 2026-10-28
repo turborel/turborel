@@ -351,7 +351,7 @@ fn what_domains_refuse_11_22() {
     a.run("INSERT INTO E VALUES (99)").unwrap();
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 SR4] no domain is in
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 SR4, §11.25 SR2] no domain is in
 /// usage by its own constraints: none CASTs to it, nor to a domain one of
 /// whose constraints CASTs to it, however far (SQLCODE -103); a domain
 /// CAST to by another's constraint is not in usage by its own.

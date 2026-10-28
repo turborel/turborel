@@ -88,10 +88,7 @@ pub fn chosen(
     (name, value): (&str, Option<&Value>),
 ) -> Result<Vec<(String, Value)>> {
     let name = name.trim().to_ascii_uppercase();
-    let option = declared
-        .iter()
-        .find(|o| o.name == name)
-        .ok_or_else(|| refused(&format!("there is no table option {name} for a table of {engine}")))?;
+    let option = declared.iter().find(|o| o.name == name).ok_or_else(|| refused(&format!("{engine} takes no option {name}")))?;
     let mut out: Vec<(String, Value)> = set.iter().filter(|(n, _)| *n != name).cloned().collect();
     if let Some(value) = value {
         let taken = accepted(&name, &option.kind, value).map_err(|e| refused(&e.msg))?;

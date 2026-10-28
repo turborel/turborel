@@ -430,8 +430,8 @@ pub enum IndexStatement {
     /// `<table name>` ( `<column name list>` ) \[USING `<method name>`\]
     /// \[WITH `<table options>`\]
     Create {
-        /// The `<index name>`, an `<identifier>`.
-        name: String,
+        /// The `<index name>`, an `<identifier>`, and where it begins.
+        name: (String, usize),
         /// The `<table name>`.
         table: TableName,
         /// The `<column name>`s, in order, and where each begins.

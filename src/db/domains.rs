@@ -115,7 +115,9 @@ impl State {
         while let Some(d) = seen.get(at).cloned() {
             at = at.saturating_add(1);
             if d == *qn {
-                return Err(rule(format!("[ISO/IEC 9075:1992 §11.21 SR4] domain {qn} would be in usage by its own constraints")));
+                return Err(rule(format!(
+                    "[ISO/IEC 9075:1992 §11.21 SR4, §11.25 SR2] domain {qn} would be in usage by its own constraints"
+                )));
             }
             let further = self.catalog.domain(&d).map(|dd| dd.constraints.iter().flat_map(named).collect::<Vec<_>>()).unwrap_or_default();
             seen.extend(further.into_iter().filter(|n| !seen.contains(n)).collect::<Vec<_>>());
@@ -337,8 +339,11 @@ impl State {
     /// [§11.26 SR3], or a constraint added breaks a rule.
     pub(super) fn alter_domain(&mut self, (schema, zone): (&str, i16), a: &AlterDomain) -> Result<Defined> {
         let qn = qualify(&a.name, schema);
-        let mut domain =
-            self.catalog.domain(&qn).cloned().ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.22 SR1] there is no domain {qn}")))?;
+        let mut domain = self
+            .catalog
+            .domain(&qn)
+            .cloned()
+            .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.22 SR1] there is no domain {qn}")).or_at(a.name.at))?;
         let mut tables: Vec<TableDesc> =
             self.catalog.tables().into_iter().filter(|t| t.columns.iter().any(|c| of_domain(c, &qn))).cloned().collect();
         let mut validate = Vec::new();
