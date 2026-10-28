@@ -455,7 +455,9 @@ impl Scanner {
             self.advance(1);
             self.skip_while(is_digit);
         }
-        if self.peek(0) == Some('E') {
+        // The E in either case, as the letters of B'', X'' and N'' are
+        // [ISO/IEC 9075:1992 §5.1 GR1].
+        if matches!(self.peek(0), Some('E' | 'e')) {
             // The E, then the sign if there is one.
             let before_digits = usize::from(matches!(self.peek(1), Some('+' | '-'))).saturating_add(1);
             if self.next_is(before_digits, is_digit) {

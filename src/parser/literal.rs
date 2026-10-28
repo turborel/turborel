@@ -131,7 +131,7 @@ fn parse_exact(text: &str) -> std::result::Result<Decimal, String> {
 /// [X3.135-1986 §5.2 GR3] mantissa times 10 to the exponent, for the
 /// `<approximate numeric literal>` `text` at character `at`.
 fn parse_approximate(text: &str, at: usize) -> Result<f64> {
-    let Some((mantissa, exponent)) = text.split_once('E') else {
+    let Some((mantissa, exponent)) = text.split_once(['E', 'e']) else {
         return Err(SqlError::at(Code::Syntax, at, format!("[X3.135-1986 §5.2 F] {text} is not an <approximate numeric literal>")));
     };
     // Give "5." and ".5" the digits Rust's float parser wants on both sides.

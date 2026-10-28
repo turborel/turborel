@@ -117,12 +117,14 @@ fn not_equals_is_written_with_angle_brackets_5_3() {
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID != 1"), Code::Lexical); // "!=" is not SQL
 }
 
-/// Verifies: [X3.135-1986 §5.2 SR2, SR4, SR5] string, exact and approximate literals give their values.
+/// Verifies: [X3.135-1986 §5.2 SR2, SR4, SR5] string, exact and approximate literals give their values;
+/// [EXTENSION] [ISO/IEC 9075:1992 §5.1 GR1] an exponent's E in either case, as B, X and N are.
 #[test]
 fn literals_give_their_values_5_2() {
     let db = setup();
     let s = db.session("APP");
     assert_eq!(rows(&s, "SELECT 'IT''S', .5, 5., 1.5E2, -2.0E-1 FROM T WHERE ID = 1"), Ok(vec!["IT'S,0.5,5,1.5E2,-2E-1".into()]));
+    assert_eq!(rows(&s, "SELECT 1.5e2, 2e-1 FROM T WHERE ID = 1"), Ok(vec!["1.5E2,2E-1".into()]));
 }
 
 /// Verifies: [X3.135-1986 §5.2 SR4]; [DESIGN] an exact literal of the maximum
