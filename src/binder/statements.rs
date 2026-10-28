@@ -178,13 +178,17 @@ impl BoundWrite {
 /// in the order written.
 fn bind_set_clauses(binder: &Binder<'_>, kind: WriteKind, set: &[SetClause]) -> Result<Vec<(usize, Option<Expr>)>> {
     let rules = match kind {
-        WriteKind::UpdatePositioned => {
-            SetRules { set_function: "[X3.135-1986 §8.11 SR5]", column: "§8.11 SR6", assign: UPDATE_POSITIONED_RULE }
-        }
+        WriteKind::UpdatePositioned => SetRules {
+            set_function: "[X3.135-1986 §8.11 SR5] a value of a SET clause contains no set function",
+            column: "§8.11 SR6",
+            assign: UPDATE_POSITIONED_RULE,
+        },
         // A DELETE has no SET clauses, so only the UPDATE rules are ever cited.
-        WriteKind::UpdateSearched | WriteKind::DeleteSearched | WriteKind::DeletePositioned => {
-            SetRules { set_function: "[X3.135-1986 §8.12 SR3]", column: "§8.12 SR4", assign: UPDATE_SEARCHED_RULE }
-        }
+        WriteKind::UpdateSearched | WriteKind::DeleteSearched | WriteKind::DeletePositioned => SetRules {
+            set_function: "[X3.135-1986 §8.12 SR3] a value of a SET clause contains no set function",
+            column: "§8.12 SR4",
+            assign: UPDATE_SEARCHED_RULE,
+        },
     };
     let mut bound_set: Vec<(usize, Option<Expr>)> = Vec::new();
     for sc in set {

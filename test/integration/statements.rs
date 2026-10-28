@@ -529,12 +529,14 @@ fn a_column_is_set_at_most_once_8_12() {
     assert_eq!(exec(&s, "UPDATE T SET AMT = 1, AMT = 2"), Err(Code::SyntaxRule)); // [X3.135-1986 §8.12 SR4]
 }
 
-/// Verifies: [X3.135-1986 §8.12 SR3] a SET value has no set function.
+/// Verifies: [X3.135-1986 §8.12 SR3] a SET value has no set function,
+/// the refusal saying so.
 #[test]
 fn a_set_value_has_no_set_function_8_12() {
     let db = setup();
     let s = db.session("APP");
-    assert_eq!(exec(&s, "UPDATE T SET AMT = SUM(ID)"), Err(Code::SyntaxRule)); // [X3.135-1986 §8.12 SR3]
+    let refused = s.execute("UPDATE T SET AMT = SUM(ID)", &mut turborel::params::Params::new()).unwrap_err();
+    assert_eq!((refused.code, refused.msg.as_str()), (Code::SyntaxRule, "a value of a SET clause contains no set function"));
 }
 
 /// Verifies: [X3.135-1986 §5.8 SR1] a searched DELETE's condition has no set function.
