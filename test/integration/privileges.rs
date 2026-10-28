@@ -211,3 +211,35 @@ fn references_on_a_view_11_19() {
     assert_eq!(granted, Ok(Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED)), "not grantable");
     b.commit().unwrap();
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.9 AR1, §11.21 SR6, §11.34
+/// AR2]: a constraint's condition needs REFERENCES on each column it names
+/// of each table it reads [AR1a]; where it names no column at all, on one
+/// column at least of each [AR1b]. A table it reads but names no column
+/// of needs none while it names a column of another; VALUE, in a domain
+/// constraint, names none.
+#[test]
+fn a_constraint_needs_references_on_what_it_names_11_9() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER, N INTEGER)").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let (a, b) = (db.session("A"), db.session("B"));
+    for (sql, why) in [
+        ("CREATE TABLE T (X INTEGER, CHECK (EXISTS (SELECT * FROM B.U)))", "AR1b: no column named"),
+        ("CREATE TABLE T (X INTEGER, CHECK (X IN (SELECT K FROM B.U)))", "AR1a: K named"),
+        ("CREATE ASSERTION NONE_IN_U CHECK (NOT EXISTS (SELECT * FROM B.U))", "AR1b, of an assertion"),
+        ("CREATE DOMAIN D AS INTEGER CHECK (VALUE > 0 OR EXISTS (SELECT * FROM B.U))", "AR1b: VALUE is no column"),
+    ] {
+        assert_eq!(exec(&a, sql).err(), Some(Code::Privilege), "{why}");
+        a.rollback().unwrap();
+    }
+    a.run("CREATE TABLE T (X INTEGER, CHECK (X > 0 OR EXISTS (SELECT * FROM B.U)))").unwrap();
+    a.commit().unwrap();
+    b.run("GRANT REFERENCES (N) ON U TO A").unwrap();
+    b.commit().unwrap();
+    a.run("CREATE TABLE W (X INTEGER, CHECK (EXISTS (SELECT * FROM B.U)))").unwrap();
+    a.run("CREATE ASSERTION NONE_IN_U CHECK (NOT EXISTS (SELECT * FROM B.U))").unwrap();
+    a.run("CREATE DOMAIN D AS INTEGER CHECK (VALUE > 0 OR EXISTS (SELECT * FROM B.U))").unwrap();
+    assert_eq!(exec(&a, "CREATE TABLE Y (X INTEGER, CHECK (X IN (SELECT K FROM B.U)))").err(), Some(Code::Privilege), "not K");
+    a.rollback().unwrap();
+}

@@ -17,7 +17,7 @@ use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::{State, plan, rule};
 use crate::ast::{AssertionDefinition, Schema};
-use crate::binder::{self, Context, Purpose, Uses, bind_cursor, qualify};
+use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_cursor, qualify};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, TableDesc, owner_of};
 use crate::error::{Code, Result, SqlError, SqlState, Subject};
 use crate::exec::execute;
@@ -118,8 +118,18 @@ impl State {
         let spec = Parser::new(&sql)?.of_definition().cursor_specification()?;
         let params = Params::new();
         let owner = owner_of(&*self.catalog, &a.name.auth);
-        let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: names, ..Context::new(self, owner, &params) };
-        Ok(bind_cursor(cx, &spec)?.plan)
+        let referencing = Referencing::default();
+        let cx = Context {
+            purpose: Purpose::Constraint,
+            horizon,
+            uses,
+            schema: names,
+            referencing: Some(&referencing),
+            ..Context::new(self, owner, &params)
+        };
+        let plan = bind_cursor(cx, &spec)?.plan;
+        referencing.check(owner)?;
+        Ok(plan)
     }
 
     /// [ISO/IEC 9075:1992 §11.34 GR2] That assertion `name` is not false,

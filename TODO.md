@@ -111,9 +111,7 @@ RULES.md when its design settles.
   after each statement that changes a table it reads, however little it
   changed; GR4's warning, a condition too long for the Information Schema,
   is not raised.
-- **Privileges, further:** a CHECK needs REFERENCES on some column of
-  every table it reads, even one it names no column of, which §11.9 AR1a
-  would not ask. A view's owner holds REFERENCES on it only where what its
+- **Privileges, further:** a view's owner holds REFERENCES on it only where what its
   columns are drawn from is known (RULES.md D52): not of a view with a set
   operator, a derived table, or a join with common columns.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):

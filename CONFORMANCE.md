@@ -212,7 +212,9 @@ restriction is lifted.
 - **The REFERENCES privilege** [§10.3, §11.8 AR1, §11.9 AR1], and
   **INSERT on columns** [§10.3 GR4, §13.8 AR1]: INSERT, UPDATE and
   REFERENCES granted on a table extend to a column added later [§10.3
-  GR3–GR5, §11.11 GR3]. A view's owner holds REFERENCES on each column of
+  GR3–GR5, §11.11 GR3]. A constraint's condition needs REFERENCES on each
+  column it names, and, where it names no column at all, on one column at
+  least of each table it reads [§11.9 AR1a, AR1b]. A view's owner holds REFERENCES on each column of
   it drawn only from columns it holds REFERENCES on [§11.19 GR6b] (RULES.md
   D52), so a CHECK or an assertion may read a view.
 - **The warning cursor operation conflict** [§11.8 GR8]: a referential

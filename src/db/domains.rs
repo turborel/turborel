@@ -265,7 +265,7 @@ impl State {
         let mut catalog = staged.catalog.duplicate();
         catalog.add_table(desc);
         staged.catalog = Arc::from(catalog);
-        let cond = staged.check_condition(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))?;
+        let cond = staged.value_condition(&probe, (&on_column(text, VALUE_COLUMN), names, &Horizon(vec![(probe.clone(), 1)])))?;
         Ok(cond.tables().into_iter().filter(|t| *t != probe).collect())
     }
 

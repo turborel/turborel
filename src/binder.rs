@@ -36,7 +36,9 @@ pub use interval::{displacement_of, is_displacement};
 mod expression;
 mod from;
 mod predicates;
+mod purpose;
 mod query;
+mod referencing;
 mod set_functions;
 mod set_operations;
 mod statements;
@@ -118,10 +120,17 @@ pub struct Context<'a> {
     /// Where to note, with `uses`, the columns each item of its select list
     /// references, if anywhere: of the query, not of its subqueries.
     pub selected: Option<&'a Selected>,
+    /// Of a constraint, where to note what its REFERENCES depend on
+    /// [ISO/IEC 9075:1992 §11.9 AR1], if anywhere: if nowhere, each table
+    /// it reads needs some.
+    pub referencing: Option<&'a Referencing>,
     /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1] The instant its statement runs
     /// at, and its SQL-session's time zone displacement.
     pub now: Now,
 }
+
+pub use purpose::Purpose;
+pub use referencing::Referencing;
 
 /// The columns a query references, each as its table or view and column
 /// name, in the order referenced, once or more.
@@ -148,36 +157,8 @@ impl<'a> Context<'a> {
             definitions: false,
             uses: None,
             selected: None,
+            referencing: None,
         }
-    }
-}
-
-/// What a query is bound for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Purpose {
-    /// To be run.
-    Query,
-    /// [ISO/IEC 9075:1992 §11.9] The `<search condition>` of a CHECK,
-    /// kept and evaluated whenever what it reads changes: one with no
-    /// authorization identifier in it \[SR5\] and not possibly
-    /// non-deterministic [SR6, §4.10], whose tables it holds REFERENCES on
-    /// \[AR1\].
-    Constraint,
-    /// A view such a `<search condition>` reads, which "generally
-    /// contains" what the view's query does \[SR5, SR6\]: bound as its
-    /// owner's, as a view always is.
-    UnderConstraint,
-}
-
-impl Purpose {
-    /// Whether the query is part of a constraint [§11.9 SR5, SR6].
-    fn constrains(self) -> bool {
-        matches!(self, Purpose::Constraint | Purpose::UnderConstraint)
-    }
-
-    /// The purpose of a view the query reads.
-    fn of_view(self) -> Purpose {
-        if self.constrains() { Purpose::UnderConstraint } else { Purpose::Query }
     }
 }
 
@@ -427,6 +408,8 @@ struct Binder<'a> {
     /// Where it notes those of each item of its select list
     /// (`Context::selected`).
     selected: Option<&'a Selected>,
+    /// Where it notes what its REFERENCES depend on (`Context::referencing`).
+    referencing: Option<&'a Referencing>,
     /// Set when a subquery of its select list has a set function over an
     /// outer reference to it, while it is not aggregated: it is then bound
     /// again, aggregated [ISO/IEC 9075:1992 §7.9 SR7].
@@ -443,7 +426,7 @@ impl<'a> Binder<'a> {
     /// A binder of a query bound with `cx`, a subquery of `outer`'s if one
     /// is given, over the FROM row `row`, whose columns `used` it reads.
     fn new(cx: Context<'a>, outer: Option<&'a Outer<'a>>, (items, names, visible): Row, used: BTreeSet<usize>) -> Binder<'a> {
-        let Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses, selected, now } = cx;
+        let Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses, selected, referencing, now } = cx;
         let (used, aggregated) = (RefCell::new(used), Cell::new(false));
         Binder {
             db,
@@ -462,6 +445,7 @@ impl<'a> Binder<'a> {
             definitions,
             uses,
             selected,
+            referencing,
             aggregated,
             now,
         }
@@ -471,7 +455,8 @@ impl<'a> Binder<'a> {
     fn context(&self) -> Context<'a> {
         let (db, auth, schema, user, params) = (self.db, self.auth, self.schema, self.user, self.params);
         let (purpose, horizon, own, definitions) = (self.purpose, self.horizon, self.own, self.definitions);
-        Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses: self.uses, selected: None, now: self.now }
+        let (referencing, now) = (self.referencing, self.now);
+        Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses: self.uses, selected: None, referencing, now }
     }
 }
 
@@ -504,6 +489,9 @@ impl Binder<'_> {
         if self.purpose == Purpose::Constraint {
             let needed = Actions { references: std::iter::once(i).collect(), ..Actions::default() };
             require(self.db, self.auth, &item.desc, &needed, "§11.9 AR1a")?;
+            if let Some(r) = self.referencing {
+                r.column_named(&item.table);
+            }
         }
         if let Some(uses) = self.uses.filter(|_| !item.table.auth.is_empty()) {
             let column = views::column_name(self.db, &item.table, i).or_else(|| item.desc.columns.get(i).map(|c| c.name.clone()));

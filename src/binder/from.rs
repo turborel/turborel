@@ -27,8 +27,8 @@ use super::subquery::Outer;
 use super::views::{Named, Reader, Source, ViewBase, named};
 use super::{Binder, Context, Purpose, Scope, qualify, require, rule};
 use crate::ast::{DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, SearchCondition, TableReference};
-use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, applicable};
-use crate::error::{At, Code, Result, SqlError, Subject};
+use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc};
+use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, and_all, cond_columns};
 use crate::system::SystemRead;
 
@@ -248,17 +248,10 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     let name = qualify(&t.table, cx.schema);
     let Named { desc, source } = named(cx.db, &name, Reader::of(&cx)).map_err(|e| SqlError { pos: None, ..e })?;
     if cx.purpose == Purpose::Constraint {
-        // [ISO/IEC 9075:1992 §11.9 AR1] REFERENCES, on a column at least, for
-        // a constraint, rather than SELECT [AR1b]; on each column it names
-        // too [AR1a] (`Binder::note`).
-        let (held, _) = applicable(&*cx.db.catalog, cx.auth, &name);
-        if held.references.is_empty() {
-            return Err(SqlError::new(
-                Code::Privilege,
-                format!("[ISO/IEC 9075:1992 §11.9 AR1] {} has no REFERENCES privilege on {name}", cx.auth),
-            )
-            .about(Subject::table(name.parts())));
-        }
+        // [ISO/IEC 9075:1992 §11.9 AR1] REFERENCES, not SELECT, for a
+        // constraint: on each column it names [AR1a] (`Binder::note`), or
+        // on one at least, if it names none [AR1b].
+        super::referencing::table_read(&cx, &name)?;
     } else if !matches!(source, Source::System(_)) {
         // [ISO/IEC 9075:1992 §21.1] SELECT on a system table is PUBLIC's.
         require(cx.db, cx.auth, &desc, &Actions { select: true, ..Actions::default() }, b.clause)?;

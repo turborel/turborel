@@ -13,7 +13,7 @@ use crate::ast::{
     SelectSublist, TableConstraint, TableConstraintKind, TableElement, TableExpression, TableName, TableReference, ValueExpression,
     ValueSpecification,
 };
-use crate::binder::{self, Context, Purpose, Uses, bind_select, qualify};
+use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_select, qualify};
 use crate::catalog::{
     ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of,
 };
@@ -350,7 +350,18 @@ impl State {
     /// It does not parse or bind: its rules [§11.9 SR1, SR2, SR5, SR6,
     /// AR1].
     pub(in crate::db) fn check_condition(&self, table: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Cond> {
-        self.bind_check(table, check, None)
+        self.bind_check(table, check, (None, &Referencing::default()))
+    }
+
+    /// [ISO/IEC 9075:1992 §11.21 SR6, §11.9] The condition of a domain
+    /// constraint, bound over `probe`, a table of one column, VALUE's, as
+    /// `check_condition` binds a CHECK's: VALUE names no column [AR1].
+    ///
+    /// # Errors
+    ///
+    /// As `check_condition`'s.
+    pub(in crate::db) fn value_condition(&self, probe: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Cond> {
+        self.bind_check(probe, check, (None, &Referencing::of_value(probe)))
     }
 
     /// [ISO/IEC 9075:1992 §21.3.18] The columns the CHECK `text` of table
@@ -362,13 +373,19 @@ impl State {
     /// It does not bind, as `check_condition`.
     pub(crate) fn check_uses(&self, table: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Vec<(QualifiedName, String)>> {
         let uses = Uses::default();
-        self.bind_check(table, check, Some(&uses))?;
+        self.bind_check(table, check, (Some(&uses), &Referencing::default()))?;
         Ok(binder::once_each(uses.into_inner()))
     }
 
     /// The CHECK `text` of `table`, bound as `check_condition` says, its
-    /// column references noted in `uses`, if given.
-    fn bind_check(&self, table: &QualifiedName, (text, names, horizon): (&str, &str, &Horizon), uses: Option<&Uses>) -> Result<Cond> {
+    /// column references noted in `uses`, if given, what its REFERENCES
+    /// depend on in `referencing` [§11.9 AR1].
+    fn bind_check(
+        &self,
+        table: &QualifiedName,
+        (text, names, horizon): (&str, &str, &Horizon),
+        (uses, referencing): (Option<&Uses>, &Referencing),
+    ) -> Result<Cond> {
         let condition = Parser::new(text)?.of_definition().check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
@@ -383,8 +400,16 @@ impl State {
         let params = Params::new();
         // As its schema's owner.
         let owner = owner_of(&*self.catalog, &table.auth);
-        let cx = Context { purpose: Purpose::Constraint, horizon, uses, schema: names, ..Context::new(self, owner, &params) };
+        let cx = Context {
+            purpose: Purpose::Constraint,
+            horizon,
+            uses,
+            schema: names,
+            referencing: Some(referencing),
+            ..Context::new(self, owner, &params)
+        };
         let bound = bind_select(cx, &spec)?;
+        referencing.check(owner)?;
         if let LogicalPlan::Project { input, .. } = bound.plan
             && let LogicalPlan::Filter { cond, .. } = *input
         {
