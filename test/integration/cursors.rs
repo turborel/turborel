@@ -2,7 +2,7 @@
 //! parameters [X3.135-1986 §5.6, §7.3].
 
 use turborel::db::{Completion, Session};
-use turborel::error::Code;
+use turborel::error::{Code, SqlState};
 use turborel::params::Params;
 use turborel::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, Value};
 
@@ -69,7 +69,9 @@ fn fetch_of_a_null_sets_the_indicator_to_minus_one_8_6() {
 }
 
 /// Verifies: [X3.135-1986 §8.6 GR8a, GR10b] a string longer than its target is
-/// cut to fit, and the indicator holds its full length.
+/// cut to fit, and the indicator holds its full length; [ISO/IEC 9075:1992
+/// §9.1 GR3b] the FETCH completes with the warning 01004, of SQLCODE 0, and
+/// one cutting nothing without it.
 #[test]
 fn fetch_cuts_a_long_string_and_reports_its_length_8_6() {
     let db = setup();
@@ -77,10 +79,11 @@ fn fetch_cuts_a_long_string_and_reports_its_length_8_6() {
     declare_c(&s);
     let mut p = targets();
     s.execute("OPEN C", &mut p).unwrap();
-    s.execute(FETCH_C, &mut p).unwrap();
+    assert_eq!(s.execute(FETCH_C, &mut p).unwrap(), Completion::Success, "a null value cuts nothing");
     // Row 2 is 'BOB   ': six characters into CHARACTER(2), so the indicator holds 6 [X3.135-1986 §8.6 GR8a, GR10b].
-    s.execute(FETCH_C, &mut p).unwrap();
+    let done = s.execute(FETCH_C, &mut p).unwrap();
     assert_eq!((p.value("NAME_OUT").to_string(), p.indicator_value("NAME_IND")), ("BO".into(), Some(6)));
+    assert_eq!((done, done.sqlcode(), done.sqlstate()), (Completion::Warning(SqlState::STRING_TRUNCATED), 0, SqlState::STRING_TRUNCATED));
 }
 
 /// Verifies: [X3.135-1986 §8.6 GR2] a FETCH past the last row gives SQLCODE 100
@@ -368,13 +371,16 @@ fn deleted_rows_are_skipped_4_12() {
     assert_eq!(s.execute("FETCH C INTO ID_OUT", &mut p).unwrap(), Completion::NoData);
 }
 
-/// Verifies: [X3.135-1986 §8.10] SELECT INTO assigns the values of its one row to the targets.
+/// Verifies: [X3.135-1986 §8.10] SELECT INTO assigns the values of its one row to the targets;
+/// [ISO/IEC 9075:1992 §9.1 GR3b] a name cut to fit its target is the warning 01004.
 #[test]
 fn select_into_assigns_the_row_8_10() {
     let db = setup();
     let s = db.session("APP");
     let mut p = targets();
-    assert_eq!(s.execute("SELECT ID, NAME INTO ID_OUT, NAME_OUT NAME_IND FROM T WHERE ID = 1", &mut p).unwrap(), Completion::Success);
+    let done = s.execute("SELECT ID, NAME INTO ID_OUT, NAME_OUT NAME_IND FROM T WHERE ID = 1", &mut p).unwrap();
+    assert_eq!(done, Completion::Warning(SqlState::STRING_TRUNCATED));
+    assert_eq!(s.execute("SELECT ID INTO ID_OUT FROM T WHERE ID = 1", &mut p).unwrap(), Completion::Success);
     assert_eq!(p.value("ID_OUT").to_string(), "1");
 }
 

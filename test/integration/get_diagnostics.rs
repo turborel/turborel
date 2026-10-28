@@ -2,8 +2,8 @@
 //! [§18.1]: what each statement leaves there, its condition's items, and
 //! what GET DIAGNOSTICS refuses.
 
-use turborel::db::{Database, Session};
-use turborel::error::Code;
+use turborel::db::{Completion, Database, Session};
+use turborel::error::{Code, SqlState};
 use turborel::params::Params;
 use turborel::value::Spelled;
 use turborel::value::{DataType, Decimal, Value};
@@ -223,4 +223,21 @@ fn an_inaccessible_column_is_named_18_1() {
     assert_eq!(named(&b), ["2A000", "T", "M"], "no column M to insert");
     assert!(b.run("DELETE FROM A.T").is_err());
     assert_eq!(named(&b), ["2A000", "T", ""], "DELETE, on the table");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §9.1 GR3b, §18.1 GR1a] a string
+/// a FETCH or SELECT INTO cuts to fit its target is a warning, 01004, which
+/// the area keeps; GET DIAGNOSTICS cutting one into its own target
+/// completes with that warning too, and leaves the area as it was.
+#[test]
+fn a_string_cut_to_fit_is_a_warning() {
+    let db = diagnosed();
+    let a = db.session("A");
+    let mut p = targets().declare("SHORT", DataType::Character { length: 1 }, Value::Null);
+    let done = a.execute("SELECT N INTO SHORT FROM T WHERE K = 1", &mut p).unwrap();
+    assert_eq!((done, p.value("SHORT").to_string()), (Completion::Warning(SqlState::STRING_TRUNCATED), "A".to_owned()));
+    assert_eq!(condition(&a, "RETURNED_SQLSTATE"), "01004");
+    let done = a.execute("GET DIAGNOSTICS SHORT = COMMAND_FUNCTION", &mut p).unwrap();
+    assert_eq!((done, p.value("SHORT").to_string()), (Completion::Warning(SqlState::STRING_TRUNCATED), "S".to_owned()));
+    assert_eq!((statement(&a, "COMMAND_FUNCTION"), condition(&a, "RETURNED_SQLSTATE")), ("SELECT".to_owned(), "01004".to_owned()));
 }

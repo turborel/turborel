@@ -80,6 +80,7 @@ None.
 | 2A000 | -102 | An item's name is not one of those above |
 | 2A000 | -103 | A target is not a parameter declared |
 | 35000 | -301 | There is no condition of the number |
+| 01004 | 0 | Not an error: a warning, a value cut to fit its target, as [FETCH](fetch.md) cuts it; the area is left as it was |
 
 ## EXAMPLES
 

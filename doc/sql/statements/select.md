@@ -197,7 +197,8 @@ procedure declares the parameters; it is not direct SQL, and the
 `turborel` client does not run it. No row sets SQLCODE 100 (SQLSTATE
 02000), the targets unchanged; more than one is SQLSTATE 21000, SQLCODE
 -811; targets not as many as the columns are SQLSTATE 2A000, SQLCODE
--103.
+-103. A value is assigned to its target as [FETCH](fetch.md) assigns
+it: a string cut to fit is a warning, SQLSTATE 01004.
 
 ## STANDARD
 

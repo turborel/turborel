@@ -452,8 +452,7 @@ impl Session {
             None => Ok(Completion::NoData),
             Some(mut values) => {
                 show_in(&mut values, self.now.get().zone);
-                assign_targets(&values, targets, params, "§8.6 GR8", "§8.6 GR10")?;
-                Ok(Completion::Success)
+                assign_targets(&values, targets, params, "§8.6 GR8", "§8.6 GR10")
             }
         }
     }
@@ -489,8 +488,7 @@ impl Session {
             [row] => {
                 let mut row = row.clone();
                 show_in(&mut row, self.now.get().zone);
-                assign_targets(&row, targets, params, "§8.10 GR8", "§8.10 GR9")?;
-                Ok(Completion::Success)
+                assign_targets(&row, targets, params, "§8.10 GR8", "§8.10 GR9")
             }
             [_, _, ..] => fail(Code::Cardinality, "[X3.135-1986 §8.10 GR2] the result has more than one row"),
         }

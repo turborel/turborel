@@ -246,7 +246,9 @@ restriction is lifted.
   CORRESPONDING; table value constructors of many rows [§7.2]; TABLE t.
 - **Updatable queries with subqueries** [§7.9 SR12d], and searched UPDATE
   and DELETE that read the table they change.
-- **Store and retrieval assignment** [§9.1, §9.2].
+- **Store and retrieval assignment** [§9.1, §9.2]: a string retrieved
+  into a parameter too short for it cut to fit, its indicator holding its
+  length, with the warning 01004 [§9.1 GR2a, GR3b, GR3e, GR3g, GR3j].
 - **GET DIAGNOSTICS** [§18.1] of the diagnostics area [§4.19]: every
   statement item, and every condition item, the constraint, table and
   cursor a condition is about among them, and the column of a privilege
@@ -307,8 +309,9 @@ restriction is lifted.
   [§6.6 GR4-GR6]; CASE and set operations of BIT VARYING if any is
   [§9.3 SR3b]; CAST to and from character strings [§6.10 GR5d, GR6d, GR7,
   GR8], not numbers [SR4]; a default of a bit string literal [§11.5 SR3a
-  ii, GR1b iv, v]. The warnings of implicit zero-bit padding and of
-  truncation are not raised, as a cut character string's is not.
+  ii, GR1b iv, v]. Retrieved into a parameter, a bit string is cut to
+  fit, with the warning 01004, or a BIT one padded with 0 bits, with
+  01008 [§9.1 GR3f-GR3j]; CAST raises neither warning.
 - **Domains** [§11.21–§11.27] (RULES.md D50): CREATE DOMAIN, in a schema
   definition too, with a default and CHECK constraints over VALUE; a
   column of one [§11.4], taking its type, default and constraints; ALTER

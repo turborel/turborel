@@ -224,3 +224,35 @@ fn bit_strings_are_kept() {
     drop(db);
     kept(&open());
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §9.1 GR2a, GR3f-GR3j] a bit
+/// string retrieved into a parameter: as it is if it fits; its first L
+/// bits if longer, its indicator set to its length, with the warning
+/// 01004; a fixed length's padded with 0 bits if shorter, with the warning
+/// 01008.
+#[test]
+fn bit_strings_are_retrieved_9_1() {
+    use turborel::db::Completion;
+    use turborel::error::SqlState;
+    use turborel::params::Params;
+    use turborel::value::{DataType, Value};
+    let db = bits();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (B'1010', B'101010')").unwrap();
+    let cases = [
+        ("F", DataType::Bit { length: 4 }, "1010", 0, Completion::Success),
+        ("F", DataType::Bit { length: 2 }, "10", 4, Completion::Warning(SqlState::STRING_TRUNCATED)),
+        ("F", DataType::Bit { length: 8 }, "10100000", 0, Completion::Warning(SqlState::ZERO_BIT_PADDING)),
+        ("V", DataType::BitVarying { length: 8 }, "101010", 0, Completion::Success),
+        ("V", DataType::BitVarying { length: 3 }, "101", 6, Completion::Warning(SqlState::STRING_TRUNCATED)),
+    ];
+    for (column, target, value, indicator, done) in cases {
+        let mut p = Params::new().declare("OUT", target, Value::Null).indicator("IND", -9);
+        let completion = a.execute(&format!("SELECT {column} INTO OUT INDICATOR IND FROM T"), &mut p).unwrap();
+        assert_eq!(
+            (completion, p.value("OUT").to_string(), p.indicator_value("IND")),
+            (done, value.to_owned(), Some(indicator)),
+            "{column} into {target}"
+        );
+    }
+}

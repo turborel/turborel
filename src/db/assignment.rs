@@ -4,7 +4,7 @@
 //! [X3.135-1986 §8.11, §8.12], and assignment to FETCH and SELECT targets
 //! [X3.135-1986 §8.6, §8.10]. Split from db.rs (RULES.md R-SIZE-2).
 
-use super::{State, api, rule, table_desc};
+use super::{Completion, State, api, rule, table_desc};
 use crate::ast::ParameterSpecification;
 use crate::binder::{self, OutColumn, ViewCheck};
 use crate::catalog::{CheckLevels, ConstraintKind, QualifiedName, TableDesc};
@@ -15,6 +15,7 @@ use crate::logical::{Cond, Truth};
 use crate::params::Params;
 use crate::storage::{Newest, Row, RowId, project};
 use crate::txn::TxId;
+use crate::value::cast::cast;
 use crate::value::{DataType, Decimal, Value, assign};
 
 /// [ISO/IEC 9075:1992 §11.19 GR11] Rows inserted or updated by an update
@@ -199,28 +200,32 @@ fn check_target(c: &OutColumn, t: &ParameterSpecification, params: &Params, type
     Ok(())
 }
 
-/// [X3.135-1986 §8.6 GR8-GR10, §8.10 GR7-GR9] assign a row's values to targets.
+/// [X3.135-1986 §8.6 GR8-GR10, §8.10 GR7-GR9] assign a row's values to
+/// targets; the completion is the first warning an assignment raises, if
+/// one does [ISO/IEC 9075:1992 §9.1 GR3b, GR3e, GR3g, GR3h, GR3j].
 pub(super) fn assign_targets(
     values: &[Value],
     targets: &[ParameterSpecification],
     params: &mut Params,
     null_rule: &str,
     assign_rule: &str,
-) -> Result<()> {
+) -> Result<Completion> {
+    let mut warning = None;
     for (v, t) in values.iter().zip(targets) {
-        assign_target(v, t, params, (null_rule, assign_rule)).or_at(t.at)?;
+        let raised = assign_target(v, t, params, (null_rule, assign_rule)).or_at(t.at)?;
+        warning = warning.or(raised);
     }
-    Ok(())
+    Ok(warning.map_or(Completion::Success, Completion::Warning))
 }
 
 /// [X3.135-1986 §8.6 GR8-GR10, §8.10 GR7-GR9] assigns `fetched` to the target `spec`,
-/// citing `null_rule` and `assign_rule`.
+/// citing `null_rule` and `assign_rule`; the warning it raises, if any.
 fn assign_target(
     fetched: &Value,
     spec: &ParameterSpecification,
     params: &mut Params,
     (null_rule, assign_rule): (&str, &str),
-) -> Result<()> {
+) -> Result<Option<SqlState>> {
     let int = |n: i64| Value::Exact(Decimal::new(i128::from(n), 0));
     let target = declared_type(params, &spec.name)?;
     if fetched.is_null() {
@@ -234,48 +239,64 @@ fn assign_target(
             );
         };
         params.set(ind, int(-1));
-        return Ok(());
+        return Ok(None);
     }
-    let (value, indicator) = match (target, fetched) {
-        (DataType::Character { length }, Value::Char(s)) => {
-            let (m, l) = (s.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
-            if m > l {
-                // b) the first L characters; the indicator is set to M.
-                let m = i64::try_from(m).map_err(|_| {
-                    SqlError::new(Code::Data, format!("[X3.135-1986 {null_rule}] a {m}-character value is too long"))
-                        .with_state(SqlState::INDICATOR_OVERFLOW)
-                })?;
-                (Value::Char(s.chars().take(l).collect()), m)
-            } else {
-                // a), c) padded with spaces to length L.
-                (Value::Char(format!("{s}{}", " ".repeat(l.saturating_sub(m)))), 0)
-            }
-        }
-        // [ISO/IEC 9075:1992 §9.1 GR3d, GR3e] as it is, or its first L
-        // characters, the indicator set to M; the warning not raised.
-        (DataType::Varying { length }, Value::Char(s)) => {
-            let (m, l) = (s.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
-            if m > l {
-                let m = i64::try_from(m).map_err(|_| {
-                    SqlError::new(Code::Data, format!("[ISO/IEC 9075:1992 §9.1 GR3e] a {m}-character value is too long"))
-                        .with_state(SqlState::INDICATOR_OVERFLOW)
-                })?;
-                (Value::Char(s.chars().take(l).collect()), m)
-            } else {
-                (Value::Char(s.clone()), 0)
-            }
-        }
-        // d) exact, e) approximate.
-        (target_type, value) => {
-            let case = if let DataType::Approximate { .. } = target_type { "e" } else { "d" };
-            (assign(value.clone(), &target_type, &format!("X3.135-1986 {assign_rule}{case}; ISO/IEC 9075:1992 §9.1 GR3k"))?, 0)
-        }
-    };
+    let (value, indicator, warning) = retrieved(fetched, &target, assign_rule)?;
     params.set(&spec.name, value);
     if let Some(ind) = &spec.indicator {
         params.set(ind, int(indicator));
     }
-    Ok(())
+    Ok(warning)
+}
+
+/// [ISO/IEC 9075:1992 §9.1 GR2, GR3] `fetched`, not null, as a target of
+/// type `target` takes it: the value, the target's indicator, and the
+/// warning raised, if any; `assign_rule` cited of a number.
+fn retrieved(fetched: &Value, target: &DataType, assign_rule: &str) -> Result<(Value, i64, Option<SqlState>)> {
+    let cut = Some(SqlState::STRING_TRUNCATED);
+    match (target, fetched) {
+        // [X3.135-1986 §8.6 GR10a-c; §9.1 GR3a-c] the first L characters,
+        // or padded with spaces to length L.
+        (DataType::Character { length }, Value::Char(s)) => {
+            let (m, l) = (s.chars().count(), usize::try_from(*length).unwrap_or(usize::MAX));
+            if m > l {
+                return Ok((Value::Char(s.chars().take(l).collect()), indicator_of(m)?, cut));
+            }
+            Ok((Value::Char(format!("{s}{}", " ".repeat(l.saturating_sub(m)))), 0, None))
+        }
+        // [§9.1 GR3d, GR3e] as it is, or its first L characters.
+        (DataType::Varying { length }, Value::Char(s)) => {
+            let (m, l) = (s.chars().count(), usize::try_from(*length).unwrap_or(usize::MAX));
+            if m > l {
+                return Ok((Value::Char(s.chars().take(l).collect()), indicator_of(m)?, cut));
+            }
+            Ok((Value::Char(s.clone()), 0, None))
+        }
+        // [§9.1 GR3f-GR3j] as it is, its first L bits, or a fixed length's
+        // padded with 0 bits, as CAST fits them [§6.10 GR7].
+        (DataType::Bit { length } | DataType::BitVarying { length }, Value::Bits(b)) => {
+            let value = cast(fetched.clone(), target)?;
+            if b.len() > *length {
+                return Ok((value, indicator_of(usize::try_from(b.len()).unwrap_or(usize::MAX))?, cut));
+            }
+            let padded = b.len() < *length && matches!(target, DataType::Bit { .. });
+            Ok((value, 0, padded.then_some(SqlState::ZERO_BIT_PADDING)))
+        }
+        // [X3.135-1986 §8.6 GR10d, GR10e; §9.1 GR3k] exact, approximate.
+        (target_type, value) => {
+            let case = if let DataType::Approximate { .. } = target_type { "e" } else { "d" };
+            Ok((assign(value.clone(), target_type, &format!("X3.135-1986 {assign_rule}{case}; ISO/IEC 9075:1992 §9.1 GR3k"))?, 0, None))
+        }
+    }
+}
+
+/// [ISO/IEC 9075:1992 §9.1 GR2a] the indicator of a string of length `m`
+/// cut to fit.
+fn indicator_of(m: usize) -> Result<i64> {
+    i64::try_from(m).map_err(|_| {
+        SqlError::new(Code::Data, format!("[ISO/IEC 9075:1992 §9.1 GR2a] a value of length {m} is too long for its indicator"))
+            .with_state(SqlState::INDICATOR_OVERFLOW)
+    })
 }
 
 /// The declared type of the parameter `name`. The parser has checked that it

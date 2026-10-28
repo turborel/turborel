@@ -34,6 +34,11 @@ impl SqlState {
     /// Warning: query expression too long for information schema [ISO/IEC
     /// 9075:1992 §11.19 GR13].
     pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState("0100A");
+    /// Warning: string data, right truncation [ISO/IEC 9075:1992 §9.1
+    /// GR3b, GR3e].
+    pub const STRING_TRUNCATED: SqlState = SqlState("01004");
+    /// Warning: implicit zero-bit padding [ISO/IEC 9075:1992 §9.1 GR3h].
+    pub const ZERO_BIT_PADDING: SqlState = SqlState("01008");
     /// Dependent privilege descriptors still exist [ISO/IEC 9075:1992
     /// §11.37 GR2b].
     pub const DEPENDENT_PRIVILEGES: SqlState = SqlState("2B000");

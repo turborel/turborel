@@ -19,8 +19,10 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 00000 | Successful completion |
 | 01001 | Warning: cursor operation conflict |
 | 01002 | Warning: disconnect error |
+| 01004 | Warning: string data, right truncation: a string cut to fit a parameter |
 | 01006 | Warning: privilege not revoked |
 | 01007 | Warning: privilege not granted |
+| 01008 | Warning: implicit zero-bit padding: a bit string padded to fit a parameter |
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
 | 02000 | No data |

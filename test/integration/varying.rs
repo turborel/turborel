@@ -130,9 +130,12 @@ fn varying_strings_are_kept() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §9.1 GR3d, GR3e] a varying
 /// string retrieved into a parameter of a varying type is set as it is,
 /// unpadded; one longer than its maximum to its first characters, its
-/// indicator set to the value's length.
+/// indicator set to the value's length, and the SELECT INTO completes with
+/// the warning 01004.
 #[test]
 fn varying_strings_are_retrieved_9_1() {
+    use turborel::db::Completion;
+    use turborel::error::SqlState;
     use turborel::params::Params;
     use turborel::value::Spelled;
     use turborel::value::{DataType, Value};
@@ -147,10 +150,10 @@ fn varying_strings_are_retrieved_9_1() {
         )
     };
     let mut p = declared();
-    a.execute("SELECT V INTO OUT IND FROM T WHERE C = 'x'", &mut p).unwrap();
+    assert_eq!(a.execute("SELECT V INTO OUT IND FROM T WHERE C = 'x'", &mut p).unwrap(), Completion::Success);
     assert_eq!((p.value("OUT").to_string(), p.value("IND").to_string()), ("ab".to_owned(), "0".to_owned()), "unpadded");
     let mut p = declared();
-    a.execute("SELECT V INTO OUT IND FROM T WHERE C = 'y'", &mut p).unwrap();
+    assert_eq!(a.execute("SELECT V INTO OUT IND FROM T WHERE C = 'y'", &mut p).unwrap(), Completion::Warning(SqlState::STRING_TRUNCATED));
     assert_eq!((p.value("OUT").to_string(), p.value("IND").to_string()), ("abc".to_owned(), "5".to_owned()), "cut; its length told");
 }
 

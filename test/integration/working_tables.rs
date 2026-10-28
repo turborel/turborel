@@ -44,7 +44,8 @@ fn a_cursor_keeps_the_rows_of_its_open_8_8() {
     exec(&s, "INSERT INTO T (ID) VALUES (9)").unwrap();
     exec(&s, "DELETE FROM T WHERE ID = 3").unwrap();
     let mut ids = Vec::new();
-    while s.execute("FETCH S INTO ID_OUT, NAME_OUT INDICATOR NAME_IND", &mut p).unwrap() == Completion::Success {
+    // Each NAME is cut to fit NAME_OUT, a warning [ISO/IEC 9075:1992 §9.1 GR3b].
+    while s.execute("FETCH S INTO ID_OUT, NAME_OUT INDICATOR NAME_IND", &mut p).unwrap() != Completion::NoData {
         ids.push((p.value("ID_OUT").to_string(), p.value("NAME_OUT").to_string()));
     }
     assert_eq!(ids.len(), 2, "rows 2 and 3, not 9: {ids:?}");

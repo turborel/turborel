@@ -251,7 +251,9 @@ digits dropped; a value that does not fit is refused (SQLSTATE 22001 of
 a string, 22003 of a number, 22026 of a bit string of the wrong
 length). A value of another kind, as a number to a character column, is
 refused as the statement is read. A string read into a parameter too
-short for it is cut to fit instead, its indicator holding its length.
+short for it is cut to fit instead, its indicator holding its length,
+with the warning 01004; a bit string shorter than a BIT parameter is
+padded with 0 bits, with the warning 01008.
 
 **CAST** ( *value* AS *type* ) gives the value in another type, or a
 domain's, checking the domain's constraints:

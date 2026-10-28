@@ -31,9 +31,11 @@ completes with no data, SQLSTATE 02000, the targets unchanged.
 
 A null value sets the target's indicator to -1. A character string
 longer than its target is cut to fit, and the indicator holds its
-length in characters; the warning SQL-92 raises of it, SQLSTATE 01004,
-is not raised. A value is assigned to a target as to a column, by its
-type.
+length in characters; FETCH then completes with a warning, SQLSTATE
+01004, SQLCODE 0. A bit string is cut so, its length in bits in the
+indicator; one shorter than a BIT target is padded with 0 bits, with the
+warning 01008. Any other value is assigned to a target as to a column,
+by its type.
 
 FETCH runs only in a program that embeds turborel: see
 [DECLARE CURSOR](declare-cursor.md).
@@ -58,6 +60,8 @@ None.
 | 24000 | -501 | The cursor is not open |
 | 22002 | -301 | A null value, and its target has no indicator |
 | 02000 | 100 | Not an error: no data, the cursor past its last row or before its first |
+| 01004 | 0 | Not an error: a warning, a string cut to fit its target |
+| 01008 | 0 | Not an error: a warning, a bit string padded with 0 bits to fit its target |
 
 ## EXAMPLES
 
@@ -88,7 +92,7 @@ Of S, of a target SHORT, CHAR(2), and one with no indicator:
 
 ```
 FETCH ABSOLUTE -1 FROM S INTO MY_ID, MY_NAME INDICATOR NAME_IND   3, NAME_IND = -1
-FETCH ABSOLUTE 1 FROM S INTO MY_ID, SHORT INDICATOR NAME_IND      1, SHORT = 'Ad', NAME_IND = 3
+FETCH ABSOLUTE 1 FROM S INTO MY_ID, SHORT INDICATOR NAME_IND      1, SHORT = 'Ad', NAME_IND = 3; warning 01004
 FETCH LAST FROM S INTO MY_ID, MY_NAME                             -301 (22002): the value is null, and target MY_NAME has no indicator parameter [X3.135-1986 §8.6 GR8]
 ```
 

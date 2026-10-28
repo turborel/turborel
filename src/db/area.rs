@@ -119,9 +119,10 @@ impl Session {
                 typed(items.iter().map(|(t, item)| (t, item.numeric(), value(*item))), params)?
             }
         };
-        // [X3.135-1986 §8.6 GR8-GR10; ISO/IEC 9075:1992 §9.1] as a FETCH assigns.
-        assign_targets(&values, &targets, params, "§8.6 GR8", "§8.6 GR10")?;
-        Ok(Completion::Success)
+        // [X3.135-1986 §8.6 GR8-GR10; ISO/IEC 9075:1992 §9.1] as a FETCH
+        // assigns: a string cut is a warning, though the area is left as
+        // it was [§18.1 GR1a].
+        assign_targets(&values, &targets, params, "§8.6 GR8", "§8.6 GR10")
     }
 
     /// The names `condition` gives, as this session's authorization
