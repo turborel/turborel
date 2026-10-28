@@ -97,6 +97,7 @@ async fn local(path: &str) -> Result<Box<dyn Listener>> {
 
 /// No Unix socket, off Unix.
 #[cfg(not(unix))]
+#[expect(clippy::unused_async, reason = "awaited as on Unix, where it listens")]
 async fn local(_: &str) -> Result<Box<dyn Listener>> {
     Err(unable("[DESIGN] SERVER.SOCKET: Unix sockets are not on this platform".into()))
 }
