@@ -66,6 +66,11 @@ path = "bench/pages.rs"
 harness = false
 
 [[bench]]
+name = "analytics"
+path = "bench/analytics.rs"
+harness = false
+
+[[bench]]
 name = "buffer"
 path = "bench/buffer.rs"
 harness = false
