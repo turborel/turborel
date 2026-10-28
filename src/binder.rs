@@ -195,6 +195,8 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
             (Value::Exact(*d), DataType::Exact { precision: d.digits().max(d.scale), scale: d.scale })
         }
         ValueSpecification::Literal(Literal::Approximate(f)) => (Value::Approx(*f), DataType::Approximate { precision: DOUBLE_PRECISION }),
+        // [ISO/IEC 9075:1992 §5.3 SR10, SR11] fixed, of its bits.
+        ValueSpecification::Literal(Literal::Bit(b)) => (Value::Bits(b.clone()), DataType::Bit { length: b.len() }),
         // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
         // [X3.135-1986 §5.6 SR6] its length is implementor-defined; we use the identifier's own length.
         // [ISO/IEC 9075:1992 §6.2 GR10, GR11] So are SESSION_USER, there

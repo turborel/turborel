@@ -37,7 +37,18 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
         }
         DefaultOption::Literal(l) => l,
     };
-    let value = match (literal, subject) {
+    // [GR1b] its value, a fixed-length string padded.
+    Ok(ColumnDefault::Value(assign(literal_value(literal, subject)?, &subject, "ISO/IEC 9075:1992 §11.5 GR1b")?))
+}
+
+/// [ISO/IEC 9075:1992 §11.5 SR3a] The value of `literal`, the default of a
+/// column of `subject`, before it is assigned to it.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it does not suit the type.
+fn literal_value(literal: &Literal, subject: DataType) -> Result<Value> {
+    Ok(match (literal, subject) {
         (Literal::Character(s), DataType::Character { length } | DataType::Varying { length }) => {
             // [SR3a i] no longer than the column.
             if s.chars().count() > usize::try_from(length).unwrap_or(usize::MAX) {
@@ -59,15 +70,31 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption) -> Result<Co
         // \[EXTENSION\] Of a type beyond the standard, a character string
         // literal, as CAST to it makes it (RULES.md D53).
         (Literal::Character(s), DataType::Extension(e)) => e.kind.cast(Value::Char(s.clone()), &subject)?,
-        (Literal::Exact(_) | Literal::Approximate(_), DataType::Extension(_))
-        | (Literal::Character(_), DataType::Exact { .. } | DataType::Approximate { .. })
-        | (Literal::Exact(_) | Literal::Approximate(_), DataType::Character { .. } | DataType::Varying { .. })
+        // [SR3a ii] a bit string no longer than the column; [GR1b iv, v]
+        // of a fixed length, extended with 0 bits, the warning not raised.
+        (Literal::Bit(b), DataType::Bit { length } | DataType::BitVarying { length }) => {
+            if b.len() > length {
+                return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a ii] the default B'{b}' is longer than {subject}")));
+            }
+            subject.kind().cast(Value::Bits(b.clone()), &subject)?
+        }
+        (Literal::Exact(_) | Literal::Approximate(_) | Literal::Bit(_), DataType::Extension(_))
+        | (
+            Literal::Character(_),
+            DataType::Exact { .. } | DataType::Approximate { .. } | DataType::Bit { .. } | DataType::BitVarying { .. },
+        )
+        | (
+            Literal::Exact(_) | Literal::Approximate(_),
+            DataType::Character { .. } | DataType::Varying { .. } | DataType::Bit { .. } | DataType::BitVarying { .. },
+        )
+        | (
+            Literal::Bit(_),
+            DataType::Character { .. } | DataType::Varying { .. } | DataType::Exact { .. } | DataType::Approximate { .. },
+        )
         | (Literal::Approximate(_), DataType::Exact { .. }) => {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a] the default is not a <literal> of {subject}")));
         }
-    };
-    // [GR1b] its value, a fixed-length string padded.
-    Ok(ColumnDefault::Value(assign(value, &subject, "ISO/IEC 9075:1992 §11.5 GR1b")?))
+    })
 }
 
 /// [ISO/IEC 9075:1992 §11.5 GR2] The default value of each column of

@@ -93,7 +93,10 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
 
 /// `e`, of type `t` if it has one, cast to `to` if that is another.
 fn conformed(e: Expr, t: Option<DataType>, to: DataType) -> Expr {
-    if t.is_some_and(|t| t != to) { Expr::Cast(Box::new(e), to) } else { e }
+    match t {
+        Some(t) => super::case::brought(e, t, to),
+        None => e,
+    }
 }
 
 /// The first value of column `k` of `rows` that is not a `<dynamic

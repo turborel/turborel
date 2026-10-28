@@ -12,7 +12,7 @@ use super::{Descriptor, SqlType};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_literal, padded};
-use crate::value::{Bucket, DataType, Value, compare_strings, unassignable};
+use crate::value::{Bits, Bucket, DataType, Value, compare_strings, unassignable};
 
 /// The kind of CHARACTER(length).
 #[derive(Debug)]
@@ -36,6 +36,25 @@ pub(super) fn string(v: &Value) -> Option<&str> {
 }
 
 /// A value not of a column of `t`'s type.
+/// [ISO/IEC 9075:1992 §6.10 GR5d, GR6d] The characters `b`'s bits are,
+/// of the form-of-use UTF-8, whose least character is of 8 bits: its
+/// bytes, its last extended with 0 bits; the warning of that padding not
+/// raised.
+///
+/// # Errors
+///
+/// SQLSTATE 22018 if they are not UTF-8: a string holds characters, so
+/// is of a valid encoding.
+pub(super) fn of_bits(b: &Bits) -> Result<String> {
+    String::from_utf8(b.bytes().to_vec()).or_else(|_| {
+        fail_with(
+            Code::Data,
+            SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
+            format!("[ISO/IEC 9075:1992 §6.10 GR5d, GR6d] the bit string B'{b}' is not characters of UTF-8"),
+        )
+    })
+}
+
 fn mismatch(v: &Value, t: &DataType) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {v} is not a value of a column of type {t}"))
 }
@@ -98,6 +117,12 @@ impl SqlType for Character {
             Value::Char(s) => {
                 let kept: String = s.chars().take(usize::try_from(length).unwrap_or(usize::MAX)).collect();
                 self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")
+            }
+            // [GR5d] its characters, then characters of 0 bits to the
+            // length, cut to it; the warnings not raised.
+            Value::Bits(b) => {
+                let fits = usize::try_from(length).unwrap_or(usize::MAX);
+                Ok(Value::Char(of_bits(&b)?.chars().chain(std::iter::repeat('\0')).take(fits).collect()))
             }
         }
     }

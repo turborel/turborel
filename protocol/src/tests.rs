@@ -5,7 +5,7 @@
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;
-use turborel::value::{Decimal, Value};
+use turborel::value::{Bits, Decimal, Value};
 
 use super::fields::{CHARACTER, EXACT, NULL};
 use super::*;
@@ -97,6 +97,7 @@ fn edge_rows() -> Vec<Row> {
     vec![
         vec![Value::Exact(Decimal::new(-12_345, 2)), Value::Char("abcd".into()), Value::Approx(-0.5)],
         vec![Value::Exact(Decimal::new(i128::MAX, 0)), Value::Null, Value::Approx(f64::MAX)],
+        vec![Value::Bits(Bits::of_bits("1010101011").unwrap()), Value::Bits(Bits::default())],
         vec![],
     ]
 }
@@ -107,6 +108,8 @@ fn every_reply() -> Vec<Reply> {
         Column { name: Some("K".into()), data_type: DataType::Exact { precision: 9, scale: 2 }, not_null: true },
         Column { name: None, data_type: DataType::Character { length: 4 }, not_null: false },
         Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53 }, not_null: false },
+        Column { name: Some("B".into()), data_type: DataType::Bit { length: 10 }, not_null: false },
+        Column { name: Some("V".into()), data_type: DataType::BitVarying { length: 3 }, not_null: false },
     ];
     let cited = Failure {
         sqlcode: -103,

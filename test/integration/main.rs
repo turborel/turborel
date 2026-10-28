@@ -37,6 +37,7 @@ mod concepts;
 mod ident;
 
 mod assertions;
+mod bits;
 mod blocks;
 mod buffer;
 mod cancel;

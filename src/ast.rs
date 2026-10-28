@@ -5,7 +5,7 @@
 //! Comments give the BNF exactly as implemented; alternatives in the
 //! standard that are not implemented are listed under "Not implemented".
 
-use crate::value::Decimal;
+use crate::value::{Bits, Decimal};
 
 /// [X3.135-1986 §5.4] `<table name>` ::= \[`<authorization identifier>`.\] `<table identifier>`
 ///
@@ -147,6 +147,9 @@ pub enum Literal {
     Exact(Decimal),
     /// An `<approximate numeric literal>`.
     Approximate(f64),
+    /// A `<bit string literal>`'s or `<hex string literal>`'s value
+    /// [ISO/IEC 9075:1992 §5.3].
+    Bit(Bits),
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,8 @@ use crate::params::ParameterType;
 use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
 /// [ISO/IEC 9075:1992 §9.3] The result type of values of `types`: CHARACTER
-/// of the greatest length, if all are character strings [SR3a ii]; exact,
+/// of the greatest length, if all are character strings [SR3a ii]; BIT so,
+/// if all are bit strings [SR3b ii]; either VARYING if one is; exact,
 /// of the greatest scale, if all are exact [SR3c], with as many digits
 /// before the point as any has, up to `MAX_EXACT_PRECISION`, the
 /// implementation-defined precision; else approximate, of
@@ -21,7 +22,8 @@ use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Valu
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if a character string is among numbers [SR2, SR3a].
+/// SQLCODE -103 if a character string is among numbers [SR2, SR3a], or a
+/// bit string among other values [SR3b].
 pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     // \[EXTENSION\] Values of a type beyond the standard come together
     // only with values of the same type (RULES.md D53).
@@ -35,12 +37,16 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if characters != 0 && characters != types.len() {
         return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3a] character strings and numbers are brought together")));
     }
+    let bits = types.iter().filter(|t| t.is_bit()).count();
+    if bits != 0 && bits != types.len() {
+        return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3b] bit strings and other values are brought together")));
+    }
     let (mut length, mut varying) = (0_u32, false);
     let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
     for t in types {
         match t {
-            DataType::Character { length: n } => length = length.max(*n),
-            DataType::Varying { length: n } => (length, varying) = (length.max(*n), true),
+            DataType::Character { length: n } | DataType::Bit { length: n } => length = length.max(*n),
+            DataType::Varying { length: n } | DataType::BitVarying { length: n } => (length, varying) = (length.max(*n), true),
             DataType::Exact { precision, scale: s } => {
                 whole = whole.max(precision.saturating_sub(*s));
                 scale = scale.max(*s);
@@ -49,9 +55,17 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             DataType::Extension(_) => {}
         }
     }
-    Ok(match (characters, exact) {
-        (0, true) => DataType::Exact { precision: whole.saturating_add(scale).min(MAX_EXACT_PRECISION), scale },
-        (0, false) => DataType::Approximate { precision: DOUBLE_PRECISION },
+    Ok(match (characters, bits, exact) {
+        (0, 0, true) => DataType::Exact { precision: whole.saturating_add(scale).min(MAX_EXACT_PRECISION), scale },
+        (0, 0, false) => DataType::Approximate { precision: DOUBLE_PRECISION },
+        // [§9.3 SR3b i] varying if any is; [SR3b ii] else fixed.
+        (0, _, _) => {
+            if varying {
+                DataType::BitVarying { length }
+            } else {
+                DataType::Bit { length }
+            }
+        }
         // [§9.3 SR3a i] varying if any is; [SR3a ii] else fixed.
         _ => {
             if varying {
@@ -61,6 +75,14 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
             }
         }
     })
+}
+
+/// `e`, of type `from`, as a value of `to`, the type values of both are
+/// brought together as [§9.3]: cast to it, but for a bit string, kept as it
+/// is, of its own bits, as §9.3 gives the result's type alone and a cast
+/// to a fixed length would extend it with 0 bits [§6.10 GR7c].
+pub(super) fn brought(e: Expr, from: DataType, to: DataType) -> Expr {
+    if from == to || (from.is_bit() && to.is_bit()) { e } else { Expr::Cast(Box::new(e), to) }
 }
 
 impl Binder<'_> {
@@ -158,13 +180,7 @@ impl Binder<'_> {
         }
         let t = set_type(&types, "§6.9 SR7")?;
         let mut results = bound.into_iter().map(|r| match r {
-            Some((e, et)) => {
-                if et == t {
-                    e
-                } else {
-                    Expr::Cast(Box::new(e), t)
-                }
-            }
+            Some((e, et)) => brought(e, et, t),
             None => Expr::Const(Value::Null),
         });
         let arms: Vec<(Cond, Expr)> = whens.into_iter().map(|(c, _)| (c, results.next().unwrap_or(Expr::Const(Value::Null)))).collect();
@@ -179,7 +195,11 @@ impl Binder<'_> {
         let target = self.db.resolve_type(named, (self.schema, self.auth))?.0;
         let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
         // [§17.6 GR5i] a `?` takes the target's type.
-        let (e, _) = self.typed(v, ParameterType::Of(target), scope)?;
+        let (e, t) = self.typed(v, ParameterType::Of(target), scope)?;
+        // [SR4] no number to or from a bit string.
+        if (t.is_bit() && target.is_numeric()) || (t.is_numeric() && target.is_bit()) {
+            return Err(rule(format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {t} to {target} is not valid")));
+        }
         Ok((Expr::Cast(Box::new(e), target), target))
     }
 

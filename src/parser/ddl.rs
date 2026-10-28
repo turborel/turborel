@@ -204,7 +204,12 @@ impl Parser {
         let word = match self.peek().clone() {
             Tok::Identifier(_) => return Ok(OptionValue::Word(self.identifier()?)),
             Tok::KeyWord(k) => k,
-            Tok::CharacterString(_) | Tok::ExactNumeric(_) | Tok::ApproximateNumeric(_) | Tok::Delimiter(_) | Tok::End => {
+            Tok::CharacterString(_)
+            | Tok::BitString(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::Delimiter(_)
+            | Tok::End => {
                 return Ok(OptionValue::Literal(self.literal()?));
             }
         };

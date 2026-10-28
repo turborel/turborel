@@ -26,7 +26,10 @@ struct Shape {
 /// What a column of `t`'s values needs, named `name`.
 fn shape(name: &str, t: &DataType) -> Shape {
     let (width, right) = match t {
-        DataType::Character { length } | DataType::Varying { length } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
+        // A bit string as its 0s and 1s, one to a bit.
+        DataType::Character { length } | DataType::Varying { length } | DataType::Bit { length } | DataType::BitVarying { length } => {
+            (usize::try_from(*length).unwrap_or(MAX_WIDTH), false)
+        }
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
         DataType::Approximate { .. } => (APPROXIMATE_WIDTH, true),
@@ -94,7 +97,7 @@ impl Sink for Table<'_> {
                 .iter()
                 .map(|v| match v {
                     Value::Null => self.null.to_owned(),
-                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Extension(_) => v.to_string(),
+                    Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Extension(_) => v.to_string(),
                 })
                 .collect();
             let line = self.line(cells.iter().map(String::as_str));

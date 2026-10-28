@@ -8,7 +8,7 @@ use crate::bytes::Put;
 use crate::error::Code;
 use std::cmp::Ordering;
 
-use crate::value::{Decimal, compare, compare_strings};
+use crate::value::{Bits, Decimal, compare, compare_strings};
 
 /// A value of the kind beyond the standard nothing here knows.
 fn foreign() -> Value {
@@ -67,8 +67,20 @@ fn an_unregistered_value_is_nothing_else() {
 /// a key cut short is SQLCODE -916.
 #[test]
 fn built_in_kinds_refuse_other_kinds() {
-    let types = [DataType::Character { length: 3 }, DataType::Exact { precision: 5, scale: 1 }, DataType::Approximate { precision: 53 }];
-    let others = [Value::Exact(Decimal::new(1, 0)), Value::Char("A".into()), Value::Char("B".into())];
+    let types = [
+        DataType::Character { length: 3 },
+        DataType::Exact { precision: 5, scale: 1 },
+        DataType::Approximate { precision: 53 },
+        DataType::Bit { length: 3 },
+        DataType::BitVarying { length: 3 },
+    ];
+    let others = [
+        Value::Exact(Decimal::new(1, 0)),
+        Value::Char("A".into()),
+        Value::Char("B".into()),
+        Value::Char("C".into()),
+        Value::Exact(Decimal::new(2, 0)),
+    ];
     for (t, other) in types.iter().zip(&others) {
         refuses(t, other);
     }
@@ -108,6 +120,34 @@ fn built_in_kinds_cast_and_write() {
     EXACT.put_value(&Value::Null, &mut out);
     APPROXIMATE.put_value(&Value::Null, &mut out);
     assert_eq!(out.len(), 4 + 16 + 4 + 8, "a value of another kind writes its kind's zero");
+}
+
+/// Verifies: [DESIGN] RULES.md D53; [ISO/IEC 9075:1992 §6.10 SR4, §5.3]
+/// the bit kinds refuse to CAST a number or a value beyond the standard
+/// (SQLSTATE 22005), write a literal as B'...', a value of another kind as
+/// the empty bit string, and read back no bit string longer than its
+/// bytes (SQLCODE -916); a record of a fixed length is of the bytes its
+/// bits take, one of another length refused (SQLCODE -910).
+#[test]
+fn bit_kinds_cast_and_write() {
+    let t = DataType::Bit { length: 4 };
+    assert_eq!(code(BIT.cast(Value::Exact(Decimal::new(1, 0)), &t)), Some(Code::Data));
+    assert_eq!(code(BIT_VARYING.cast(foreign(), &t)), Some(Code::Data));
+    let b = Value::Bits(Bits::of_bits("101").unwrap());
+    assert_eq!((BIT.literal(&b), BIT.literal(&Value::Null)), ("B'101'".to_owned(), "NULL".to_owned()));
+    assert_eq!(code(BIT.encode_record(&b, &t)), Some(Code::Api), "3 bits for BIT(4)");
+    assert_eq!(BIT.record_width(&t), Some(1));
+    assert!(BIT.decode_record(&[], &t).is_none() && BIT_VARYING.decode_record(&[], &t).is_none());
+    assert!(BIT_VARYING.decode_record(&[9, 0], &t).is_none(), "more bits unused than a byte has");
+    let mut out = Vec::new();
+    BIT.put_value(&Value::Null, &mut out);
+    assert_eq!(out.len(), 4 + 4, "the empty bit string");
+    let mut long = Vec::new();
+    long.put_u32(9);
+    long.put_bytes(&[0xFF]);
+    assert_eq!(code(BIT.value(&mut Reader::new(&long, "value"))), Some(Code::Corrupt), "9 bits in a byte");
+    assert_eq!(BIT.descriptor(&t).octets, Some(1));
+    assert_eq!(BIT_VARYING.written(&DataType::BitVarying { length: 7 }), "BIT VARYING(7)");
 }
 
 /// Verifies: [DESIGN] RULES.md D53: a type's parameters are at most two,

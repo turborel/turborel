@@ -61,6 +61,8 @@ impl SqlState {
     pub const DATA_EXCEPTION: SqlState = SqlState("22000");
     /// Data exception: string data, right truncation.
     pub const STRING_DATA_RIGHT_TRUNCATION: SqlState = SqlState("22001");
+    /// Data exception: string data, length mismatch.
+    pub const STRING_DATA_LENGTH_MISMATCH: SqlState = SqlState("22026");
     /// Data exception: null value, no indicator parameter.
     pub const NULL_VALUE_NO_INDICATOR: SqlState = SqlState("22002");
     /// Data exception: numeric value out of range.

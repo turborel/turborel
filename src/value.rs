@@ -5,6 +5,7 @@ use std::fmt;
 
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 
+mod bits;
 pub(crate) mod cast;
 pub(crate) mod codec;
 pub(crate) mod comparison;
@@ -12,6 +13,7 @@ mod decimal;
 mod like;
 pub mod types;
 
+pub use bits::{BYTE_BITS, Bits};
 pub use cast::cast;
 pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use decimal::{Decimal, pow10};
@@ -48,6 +50,10 @@ pub const INDICATOR_PRECISION: u32 = 9;
 // implementation does not process: SQLCODE -900 (RULES.md D18).
 // ---------------------------------------------------------------------------
 
+/// \[DESIGN\] Longest BIT(`<length>`) and BIT VARYING: the bits of the
+/// longest character string's bytes, at one byte to a character.
+pub const MAX_BIT_LENGTH: u32 = 32_767 * 8;
+
 /// \[DESIGN\] Longest `CHARACTER(<length>)`. [X3.135-1986 §5.5 SR2] only requires a
 /// length greater than 0; values are stored padded to their length
 /// [X3.135-1986 §8.7 GR7b], so this bounds one value to 32 KiB.
@@ -83,6 +89,17 @@ pub enum DataType {
         /// Binary digits of the mantissa.
         precision: u32,
     },
+    /// [ISO/IEC 9075:1992 §6.1] BIT(length): a bit string of fixed length.
+    Bit {
+        /// The length in bits.
+        length: u32,
+    },
+    /// [ISO/IEC 9075:1992 §6.1] BIT VARYING(length): a bit string of
+    /// variable length.
+    BitVarying {
+        /// The maximum length in bits.
+        length: u32,
+    },
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -91,6 +108,14 @@ impl DataType {
     /// Whether this is a character string type.
     pub fn is_character(&self) -> bool {
         matches!(self, DataType::Character { .. } | DataType::Varying { .. })
+    }
+    /// Whether this is a bit string type.
+    pub fn is_bit(&self) -> bool {
+        matches!(self, DataType::Bit { .. } | DataType::BitVarying { .. })
+    }
+    /// Whether this is a numeric type.
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, DataType::Exact { .. } | DataType::Approximate { .. })
     }
     /// [X3.135-1986 §4.2] Whether its values compare with those of `other`,
     /// as its kind says.
@@ -202,6 +227,8 @@ pub enum Value {
     Exact(Decimal),
     /// An approximate number.
     Approx(f64),
+    /// [ISO/IEC 9075:1992 §4.3] A bit string.
+    Bits(Bits),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -217,7 +244,7 @@ impl Value {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
             Value::Approx(f) => Some(*f),
-            Value::Null | Value::Char(_) | Value::Extension(_) => None,
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_) => None,
         }
     }
 
@@ -227,7 +254,7 @@ impl Value {
         match self {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
-            Value::Null | Value::Char(_) | Value::Extension(_) => self.clone(),
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_) => self.clone(),
         }
     }
 
@@ -250,6 +277,7 @@ impl Value {
                 NormKey::Exact(u, s)
             }
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
+            Value::Bits(b) => NormKey::Bits(b.clone()),
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
@@ -265,6 +293,7 @@ impl fmt::Display for Value {
             Value::Exact(d) => write!(f, "{d}"),
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),
+            Value::Bits(b) => write!(f, "{b}"),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
         }
     }
@@ -282,6 +311,8 @@ pub enum NormKey {
     Exact(i128, u32),
     /// The bits of an `f64`, with -0 as +0.
     Approx(u64),
+    /// A bit string.
+    Bits(Bits),
     /// A kind beyond the standard's name, and the value's bytes: boxed, so
     /// a key of the standard's types stays small.
     Extension(Box<(String, Vec<u8>)>),

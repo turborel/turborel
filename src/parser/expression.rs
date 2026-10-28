@@ -193,6 +193,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
+            | Tok::BitString(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected a <comp op>")),
         };
@@ -229,6 +230,7 @@ impl Parser {
                 | Tok::ExactNumeric(_)
                 | Tok::ApproximateNumeric(_)
                 | Tok::CharacterString(_)
+                | Tok::BitString(_)
                 | Tok::Delimiter(_) => {}
             }
             if depth == 0 {

@@ -4,6 +4,7 @@
 
 use std::cmp::Ordering;
 
+use super::types::{BIT_VARYING, SqlType};
 use super::{Decimal, Value};
 
 /// [X3.135-1986 §5.11 GR5] compare character strings after padding the shorter with spaces.
@@ -23,15 +24,21 @@ fn padded(s: &str, length: usize) -> impl Iterator<Item = char> + '_ {
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
-        // string and a number are not comparable [X3.135-1986 §5.11 SR1].
+        // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
+        // bit string with either: bit strings are with each other [ISO/IEC
+        // 9075:1992 §4.3.1].
         (Value::Null, _)
         | (_, Value::Null)
         | (Value::Char(_), Value::Exact(_))
         | (Value::Char(_), Value::Approx(_))
         | (Value::Exact(_), Value::Char(_))
-        | (Value::Approx(_), Value::Char(_)) => None,
+        | (Value::Approx(_), Value::Char(_))
+        | (Value::Bits(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_), Value::Bits(_)) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
         (Value::Exact(_) | Value::Approx(_), Value::Exact(_) | Value::Approx(_)) => compare_numbers(a, b),
+        // [ISO/IEC 9075:1992 §8.2 GR4] bit by bit.
+        (Value::Bits(x), Value::Bits(y)) => Some(x.cmp(y)),
         // A value of a kind beyond the standard compares as its kind says.
         (Value::Extension(e), _) => e.kind.compare(a, b),
         (_, Value::Extension(e)) => e.kind.compare(b, a).map(Ordering::reverse),
@@ -47,7 +54,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
         (Value::Exact(x), Value::Approx(y)) => compare_exact_approximate(x, *y),
         (Value::Approx(x), Value::Exact(y)) => compare_exact_approximate(y, *x).map(Ordering::reverse),
         (Value::Approx(x), Value::Approx(y)) => x.partial_cmp(y),
-        (Value::Null | Value::Char(_) | Value::Extension(_), _) | (_, Value::Null | Value::Char(_) | Value::Extension(_)) => None,
+        (Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_), _)
+        | (_, Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_)) => None,
     }
 }
 
@@ -64,6 +72,9 @@ pub enum Bucket {
     Char(String),
     /// The bits of a number's nearest `f64`, with -0 as +0.
     Number(u64),
+    /// A bit string, as its key: boxed, so a bucket of a number or a
+    /// character string stays small.
+    Bits(Box<[u8]>),
     /// A value of a type beyond the standard, as its kind buckets it: boxed,
     /// so a bucket of the standard's types stays small.
     Extension(Box<[u8]>),
@@ -76,6 +87,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Null => None,
         Value::Char(s) => Some(Bucket::Char(s.trim_end_matches(' ').to_owned())),
         Value::Exact(_) | Value::Approx(_) => number_bucket(v),
+        Value::Bits(_) => BIT_VARYING.bucket(v),
         Value::Extension(e) => e.kind.bucket(v),
     }
 }
@@ -86,7 +98,7 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
     let f = match v {
         Value::Exact(d) => d.nearest(),
         Value::Approx(f) => *f,
-        Value::Null | Value::Char(_) | Value::Extension(_) => return None,
+        Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_) => return None,
     };
     Some(Bucket::Number(if f == 0.0_f64 { 0.0_f64.to_bits() } else { f.to_bits() }))
 }

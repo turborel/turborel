@@ -19,6 +19,7 @@
 //!   9075:1992 §5.3 SR1, SR4, SR9].
 
 use crate::error::{Code, Result, SqlError};
+use crate::value::Bits;
 
 /// Declares a constant for each `<key word>`, named as it is written, in
 /// `kw`, and `KEY_WORDS`, the list of them all.
@@ -167,6 +168,8 @@ pub enum Tok {
     ApproximateNumeric(String),
     /// The value of a `<character string literal>`, with '' already turned into '.
     CharacterString(String),
+    /// The value of a `<bit string literal>` or a `<hex string literal>`.
+    BitString(Bits),
     /// A `<delimiter token>` other than a `<character string literal>`.
     Delimiter(&'static str),
     /// The end of the input.
@@ -322,6 +325,9 @@ impl Scanner {
             self.advance(1);
             return self.character_string();
         }
+        if matches!(first, 'B' | 'b' | 'X' | 'x') && self.peek(1) == Some(QUOTE) {
+            return self.bit_string(first);
+        }
         if is_identifier_start(first) {
             self.regular_identifier()
         } else if is_digit(first) || (first == '.' && self.next_is(1, is_digit)) {
@@ -439,6 +445,13 @@ impl Scanner {
     /// representation>` ::= ''. The parts are one literal [SR1] if each
     /// separator has a `<newline>` [SR4]; it may be empty [SR9].
     fn character_string(&mut self) -> Result<Tok> {
+        self.quoted_parts().map(Tok::CharacterString)
+    }
+
+    /// The characters of a literal's quoted parts, one after another if
+    /// each separator between them has a `<newline>` [ISO/IEC 9075:1992
+    /// §5.3 SR1-SR4].
+    fn quoted_parts(&mut self) -> Result<String> {
         let mut value = String::new();
         loop {
             self.quoted_part(&mut value)?;
@@ -447,9 +460,27 @@ impl Scanner {
             let newline = self.c.get(after..self.at).unwrap_or_default().contains(&'\n');
             if !(newline && self.peek(0) == Some(QUOTE)) {
                 self.at = after;
-                return Ok(Tok::CharacterString(value));
+                return Ok(value);
             }
         }
+    }
+
+    /// [ISO/IEC 9075:1992 §5.3] `<bit string literal>` ::= B ' \[`<bit>`...\]
+    /// ' \[{`<separator>`... ' \[`<bit>`...\] '}...\], each `<bit>` 0 or 1;
+    /// `<hex string literal>`, X then quoted `<hexit>`s, four bits each
+    /// \[SR11\]. `first`, B or X, in either case, is the next character;
+    /// the parts are one literal as a character string literal's are
+    /// \[SR2-SR4\].
+    fn bit_string(&mut self, first: char) -> Result<Tok> {
+        let start = self.at;
+        self.advance(1);
+        let digits = self.quoted_parts()?;
+        let hex = matches!(first, 'X' | 'x');
+        let bits = if hex { Bits::of_hex(&digits) } else { Bits::of_bits(&digits) };
+        bits.map(Tok::BitString).ok_or_else(|| {
+            let (literal, of) = if hex { ("<hex string literal>", "<hexit>") } else { ("<bit string literal>", "<bit>") };
+            error(Code::Lexical, start, format!("[ISO/IEC 9075:1992 §5.3] a {literal} holds a character not a {of}"))
+        })
     }
 
     /// One quoted part of a `<character string literal>`, its characters

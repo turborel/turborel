@@ -112,7 +112,7 @@ impl SqlType for Exact {
                 }
             }
             Value::Approx(x) => approximate_to_exact(x, (precision, scale), rule),
-            Value::Null | Value::Char(_) | Value::Extension(_) => unassignable(&v, t, rule),
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Extension(_) => unassignable(&v, t, rule),
         }
     }
 
@@ -126,7 +126,7 @@ impl SqlType for Exact {
             Value::Char(s) => self.cast(numeric_literal(&s)?, t),
             Value::Exact(_) => self.assign(v, t, "ISO/IEC 9075:1992 §6.10 GR3a"),
             Value::Approx(x) => approximate_to_exact(x, shape(t), "ISO/IEC 9075:1992 §6.10 GR3a ii"),
-            Value::Extension(_) => uncastable(&v, t),
+            Value::Bits(_) | Value::Extension(_) => uncastable(&v, t),
         }
     }
 

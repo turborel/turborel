@@ -45,7 +45,8 @@ impl Parser {
             | Tok::Delimiter(delim::MINUS)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
-            | Tok::CharacterString(_) => Ok(ValueExpression::Value(self.value_specification()?)),
+            | Tok::CharacterString(_)
+            | Tok::BitString(_) => Ok(ValueExpression::Value(self.value_specification()?)),
             // [ISO/IEC 9075:1992 §5.4] MODULE.T.C: a column of a declared
             // local temporary table.
             Tok::KeyWord(kw::MODULE) => Ok(ValueExpression::Column(self.column_specification()?)),

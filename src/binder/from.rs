@@ -495,7 +495,7 @@ fn corresponding(
     let at1 = first.offset.saturating_add(first.position(left_column));
     let at2 = second.offset.saturating_add(second.position(right_column));
     let (local1, local2) = (at1.saturating_sub(start), at2.saturating_sub(start));
-    let cast = |e: Expr, own| if own == common { e } else { Expr::Cast(Box::new(e), common) };
+    let cast = |e: Expr, own| super::case::brought(e, own, common);
     // [SR6d] COALESCE (TA.C, TB.C).
     let coalesced = Expr::Case(
         vec![(Cond::IsNull(Expr::Column(local1), true), cast(Expr::Column(local1), c1.data_type))],

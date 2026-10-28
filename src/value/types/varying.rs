@@ -22,7 +22,7 @@
 
 use std::cmp::Ordering;
 
-use super::character::{OCTETS_PER_CHARACTER, string};
+use super::character::{OCTETS_PER_CHARACTER, of_bits, string};
 use super::{Descriptor, SqlType, malformed, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
@@ -171,6 +171,8 @@ impl SqlType for Varying {
             Value::Exact(d) => within(d.to_string(), t),
             Value::Approx(x) => within(approximate_literal(x), t),
             Value::Char(s) => Ok(cut(s)),
+            // [GR6d] its characters, cut to the length.
+            Value::Bits(b) => Ok(cut(of_bits(&b)?)),
             Value::Extension(ref e) => Ok(cut(e.kind.text(&v))),
         }
     }

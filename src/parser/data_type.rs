@@ -6,8 +6,8 @@ use super::Parser;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::{
-    DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, REAL_PRECISION,
-    SMALLINT_PRECISION,
+    DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BIT_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION,
+    REAL_PRECISION, SMALLINT_PRECISION,
 };
 
 impl Parser {
@@ -28,6 +28,7 @@ impl Parser {
                 }
                 self.character_string_type()
             }
+            kw::BIT => self.bit_string_type(),
             kw::NUMERIC | kw::DECIMAL | kw::DEC => self.exact_numeric_type(at),
             kw::INTEGER | kw::INT => {
                 self.advance();
@@ -86,6 +87,39 @@ impl Parser {
                 format!(
                     "[DESIGN] a character string of {length} characters is longer than this implementation's maximum of {MAX_CHARACTER_LENGTH}"
                 ),
+            ));
+        }
+        Ok(length)
+    }
+
+    /// [ISO/IEC 9075:1992 §6.1] `<bit string type>` ::= BIT \[(`<length>`)\]
+    /// | BIT VARYING (`<length>`); an omitted length 1 [SR4].
+    fn bit_string_type(&mut self) -> Result<DataType> {
+        self.advance();
+        if self.accept_kw(kw::VARYING) {
+            self.expect_delim(delim::LEFT_PAREN)?;
+            let length = self.bit_length()?;
+            self.expect_delim(delim::RIGHT_PAREN)?;
+            return Ok(DataType::BitVarying { length });
+        }
+        let mut length = 1;
+        if self.accept_delim(delim::LEFT_PAREN) {
+            length = self.bit_length()?;
+            self.expect_delim(delim::RIGHT_PAREN)?;
+        }
+        Ok(DataType::Bit { length })
+    }
+
+    /// [ISO/IEC 9075:1992 §6.1 SR3] A bit string type's `<length>`: more
+    /// than 0, and no more than this implementation's longest bit string.
+    fn bit_length(&mut self) -> Result<u32> {
+        let at = self.here();
+        let length = self.positive("length")?;
+        if length > MAX_BIT_LENGTH {
+            return Err(SqlError::at(
+                Code::Unsupported,
+                at,
+                format!("[DESIGN] a bit string of {length} bits is longer than this implementation's maximum of {MAX_BIT_LENGTH}"),
             ));
         }
         Ok(length)

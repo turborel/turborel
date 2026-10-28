@@ -7,7 +7,8 @@
 //! ```text
 //! value: 0 (null) | 1 (character) string | 2 (exact) units i128, scale u32 |
 //!        3 (approximate) IEEE-754 bits u64 |
-//!        4 (beyond the standard) its kind's name, then its kind's bytes
+//!        4 (beyond the standard) its kind's name, then its kind's bytes |
+//!        5 (bit string) its length in bits u32, then its bytes
 //! row:   values u32, then each value
 //! ```
 
@@ -23,6 +24,8 @@ const EXACT: u8 = 2;
 const APPROXIMATE: u8 = 3;
 /// A value of a kind beyond the standard: its kind's name, then its bytes.
 const EXTENSION: u8 = 4;
+/// A bit string: its length in bits, then its bytes.
+const BITS: u8 = 5;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -32,6 +35,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
+        Value::Bits(_) => BITS,
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
             out.put_str(e.kind.name());
@@ -53,6 +57,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         CHARACTER => &types::CHARACTER,
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
+        BITS => &types::BIT_VARYING,
         EXTENSION => {
             let name = reader.str()?;
             reader.kind(&name)?

@@ -176,7 +176,7 @@ fn how_far(j: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> 
             SqlState::NULL_VALUE_NO_INDICATOR,
             "[DESIGN] ABSOLUTE and RELATIVE take a number, not the null value".to_owned(),
         ),
-        Value::Char(_) | Value::Approx(_) | Value::Extension(_) => Err(not_exact()),
+        Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Extension(_) => Err(not_exact()),
     }
 }
 

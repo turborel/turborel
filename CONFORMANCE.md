@@ -261,6 +261,17 @@ restriction is lifted.
   VARYING, and the national character string literal, N'...' [§5.3]: the
   character string types and literals of the national character set
   [§6.1 SR2].
+- **BIT and BIT VARYING** [§6.1], and the bit and hex string literals,
+  B'...' and X'...' [§5.3]: a value of BIT(n) of n bits, else refused
+  with 22001 or 22026, one of BIT VARYING(n) of at most n [§9.2 GR3f-GR3j];
+  compared bit by bit [§8.2 GR4], indexed and kept unique so; || of BIT if
+  both operands are, else BIT VARYING [§6.13 SR6], SUBSTRING of BIT
+  VARYING [§6.7 SR7, GR6], CHAR_LENGTH, OCTET_LENGTH and BIT_LENGTH
+  [§6.6 GR4-GR6]; CASE and set operations of BIT VARYING if any is
+  [§9.3 SR3b]; CAST to and from character strings [§6.10 GR5d, GR6d, GR7,
+  GR8], not numbers [SR4]; a default of a bit string literal [§11.5 SR3a
+  ii, GR1b iv, v]. The warnings of implicit zero-bit padding and of
+  truncation are not raised, as a cut character string's is not.
 - **Domains** [§11.21–§11.27] (RULES.md D50): CREATE DOMAIN, in a schema
   definition too, with a default and CHECK constraints over VALUE; a
   column of one [§11.4], taking its type, default and constraints; ALTER
@@ -297,9 +308,9 @@ restriction is lifted.
 
 ### Not implemented
 
-- **Data types** other than SQL-86's, CHARACTER VARYING and NATIONAL
-  CHARACTER: datetimes and intervals, BIT, their literals, and the functions
-  and predicates on them (the datetime value functions [§6.8], EXTRACT,
+- **Data types** other than SQL-86's, CHARACTER VARYING, NATIONAL
+  CHARACTER and BIT: datetimes and intervals, their literals, and the
+  functions and predicates on them (the datetime value functions [§6.8], EXTRACT,
   OVERLAPS [§8.11]).
 - **ALTER TABLE of a temporary table**, and a table or view defined on its
   own in a schema other than the session's default one (RULES.md D47).
@@ -407,6 +418,8 @@ file that implements it.
 | ISO/IEC 9075:1992 §21.2.2 the catalog's name | the setting CATALOG_NAME, `TURBOREL` by default | `settings.rs`, `system.rs` |
 | ISO/IEC 9075:1992 §21.2.27, §21.2.28 SQL_IDENTIFIER, CHARACTER_DATA | CHARACTER(128); CHARACTER as long as the longest value the standard lists for the column, otherwise CHARACTER(4096), a longer text shown as null: of fixed length, not yet the CHARACTER VARYING the standard gives them | `system.rs`, `system/definition.rs` |
 | ISO/IEC 9075:1992 §6.1 SR2 the national character set | SQL_TEXT, the one there is: NATIONAL CHARACTER is CHARACTER | `parser/data_type.rs`, `lexer.rs` |
+| ISO/IEC 9075:1992 §6.10 GR5d, GR6d a bit string CAST to a character string | its bytes as UTF-8, the form-of-use, whose least character is 8 bits; bytes not UTF-8 are refused (SQLSTATE 22018), as a string holds characters | `value/types/character.rs` |
+| ISO/IEC 9075:1992 §6.10 GR7, GR8 a character string CAST to a bit string | the bits of its UTF-8 | `value/types/bit.rs` |
 | ISO/IEC 9075:1992 §21.3.23, §21.3.24 the character set SQL_TEXT | form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.5 how data types are described | an exact number as NUMERIC, radix 10; an approximate one as REAL (24 bits) or DOUBLE PRECISION (53), radix 2; a character string's octet length 4n | `system/definition.rs` |
 | ISO/IEC 9075:1992 §21.3.13 names of unnamed constraints | the table's name, the constraint's kind and a number: `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
@@ -423,6 +436,7 @@ SQLCODE -900 (RULES.md D18).
 
 | Limit | Value | Why | Where |
 |---|---|---|---|
+| BIT and BIT VARYING length | 262,136 bits (32,767 octets) | ISO/IEC 9075:1992 [§6.1 SR3] requires only a length above 0. | `value.rs`, `parser/data_type.rs` |
 | CHARACTER length | 32,767 characters | [§5.5 SR2] requires only a length above 0. Values are stored padded to their length [§8.7 GR7b], so without a limit `CHAR(4000000000)` could allocate about 4 GB for each value. | `value.rs`, `parser/data_type.rs` |
 | Exact precision | 18 digits, for NUMERIC, DECIMAL and exact literals | [§5.5 SR6, SR7] and [§5.2 SR4] set no maximum. | `value.rs`, `parser/data_type.rs` |
 | FLOAT precision | 53 binary digits; approximate literals within the range of a double | [§5.5 SR10] allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser.rs` |
@@ -457,3 +471,14 @@ SQLCODE -900 (RULES.md D18).
   a privilege through it, as SQL-92 has it [ISO/IEC 9075:1992 §10.3 GR2,
   §11.37 SR7a ii], where SQL-86 took only a grant naming the grantor
   itself; for GRANT and REVOKE alike (RULES.md D47).
+- **A bit string's descriptor** [ISO/IEC 9075:1992 §21.3.5]: the
+  description gives a bit string type its length in bits, and an octet
+  length and a collation only to a character string type, but the check
+  constraint TABLE_OR_DOMAIN_CHECK_COMBINATIONS requires all three of
+  BIT and BIT VARYING. Its length in bits and the octets those take are
+  given, as facts of it; no collation, as a bit string has none.
+- **Bit strings brought together** [ISO/IEC 9075:1992 §9.3 SR3b]: the
+  result of CASE, a set operation or a table value constructor of BIT(3)
+  and BIT(4) is BIT(4), but no rule extends a value of 3 bits to it. Each
+  keeps its bits, so a BIT(3) value inserted into a BIT(4) column through
+  VALUES is refused (SQLSTATE 22026), as it is alone [§9.2 GR3h].

@@ -152,6 +152,9 @@ impl Binder<'_> {
         if t.is_character() {
             return Err(rule("[X3.135-1986 §5.9 SR3] a character string <primary> cannot have an operator"));
         }
+        if t.is_bit() {
+            return Err(rule("[ISO/IEC 9075:1992 §6.12] a bit string is no <numeric primary>"));
+        }
         Ok(match (sign, e) {
             (Sign::Plus, e) => (e, t),
             (Sign::Minus, Expr::Const(c)) => (Expr::Const(c.negate()), t),
@@ -177,6 +180,9 @@ impl Binder<'_> {
         };
         if left_type.is_character() || right_type.is_character() {
             return Err(rule("[X3.135-1986 §5.9 SR3] character string values cannot be used with arithmetic operators"));
+        }
+        if left_type.is_bit() || right_type.is_bit() {
+            return Err(rule("[ISO/IEC 9075:1992 §6.12] bit string values cannot be used with arithmetic operators"));
         }
         let t = match (left_type, right_type) {
             (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,

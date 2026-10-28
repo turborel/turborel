@@ -30,6 +30,7 @@ pub(in crate::db) fn value_of(value: &OptionValue) -> Value {
         OptionValue::Literal(Literal::Character(s)) | OptionValue::Word(s) => Value::Char(s.clone()),
         OptionValue::Literal(Literal::Exact(d)) => Value::Exact(*d),
         OptionValue::Literal(Literal::Approximate(x)) => Value::Approx(*x),
+        OptionValue::Literal(Literal::Bit(b)) => Value::Bits(b.clone()),
     }
 }
 

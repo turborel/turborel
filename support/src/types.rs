@@ -84,7 +84,7 @@ impl SqlType for Ident {
                 parse(s).map(ident).ok_or_else(|| SqlError::new(Code::Data, format!("[DESIGN] '{s}' is not 32 hexadecimal digits")))
             }
             Value::Extension(_) => bytes(&v).map(ident).ok_or_else(|| mismatch(&v)),
-            Value::Exact(_) | Value::Approx(_) => Err(mismatch(&v)),
+            Value::Exact(_) | Value::Approx(_) | Value::Bits(_) => Err(mismatch(&v)),
         }
     }
 

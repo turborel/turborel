@@ -5,7 +5,7 @@
 use std::cmp::Ordering;
 
 use turborel::bytes::Reader;
-use turborel::value::{DataType, Decimal, SqlType, Value, assign, bucket, compare};
+use turborel::value::{Bits, DataType, Decimal, SqlType, Value, assign, bucket, compare};
 
 /// Checks the contract of `t`'s kind on `t` and `values`, which are
 /// assigned to `t` first.
@@ -68,6 +68,28 @@ fn character_keeps_the_type_contract() {
 fn varying_keeps_the_type_contract() {
     let strings = ["", "   ", "a", "a  ", "a\t", "a!", "ab", "\u{0}", "é", "Ω€", "abcdefgh", "abcdefghi", "abcdefgh  x", "abcdefgh\t"];
     type_contract(DataType::Varying { length: 12 }, &strings.map(|s| Value::Char(s.into())));
+}
+
+/// Bit strings of the 0s and 1s of `digits`.
+fn bits<const N: usize>(digits: [&str; N]) -> Vec<Value> {
+    digits.iter().map(|d| Value::Bits(Bits::of_bits(d).unwrap())).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR4]
+/// BIT keeps the `SqlType` contract: on bit strings of its length, all 0s,
+/// all 1s, of a last byte part used.
+#[test]
+fn bit_keeps_the_type_contract() {
+    type_contract(DataType::Bit { length: 10 }, &bits(["0000000000", "1111111111", "1010101010", "0000000001", "1000000000"]));
+}
+
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR4]
+/// BIT VARYING keeps the `SqlType` contract: on bit strings empty, of one
+/// bit, of a byte, of a byte and part of another, each beginning others.
+#[test]
+fn bit_varying_keeps_the_type_contract() {
+    let strings = ["", "0", "1", "00", "01", "10", "11111111", "111111110", "111111111", "000000001", "101010101010"];
+    type_contract(DataType::BitVarying { length: 12 }, &bits(strings));
 }
 
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53: NUMERIC keeps the `SqlType`

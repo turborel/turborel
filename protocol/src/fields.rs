@@ -19,6 +19,10 @@ const APPROXIMATE: u8 = 3;
 const EXTENSION: u8 = 4;
 /// CHARACTER VARYING, as a type: its values are strings, as CHARACTER's.
 const VARYING: u8 = 5;
+/// BIT, as a type; a bit string, of either bit type, as a value.
+const BIT: u8 = 6;
+/// BIT VARYING, as a type: its values are bit strings, as BIT's.
+const BIT_VARYING: u8 = 7;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -70,6 +74,8 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
     match t {
         DataType::Character { .. } => b.put_u8(CHARACTER),
         DataType::Varying { .. } => b.put_u8(VARYING),
+        DataType::Bit { .. } => b.put_u8(BIT),
+        DataType::BitVarying { .. } => b.put_u8(BIT_VARYING),
         DataType::Exact { .. } => b.put_u8(EXACT),
         DataType::Approximate { .. } => b.put_u8(APPROXIMATE),
         DataType::Extension(e) => {
@@ -97,6 +103,8 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         EXACT => Some(&types::EXACT),
         APPROXIMATE => Some(&types::APPROXIMATE),
         VARYING => Some(&types::VARYING),
+        BIT => Some(&types::BIT),
+        BIT_VARYING => Some(&types::BIT_VARYING),
         _ => None,
     }
 }
@@ -151,6 +159,7 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
+        Value::Bits(_) => BIT,
         Value::Extension(e) => {
             b.put_u8(EXTENSION);
             // One received unregistered goes back as it came.
@@ -192,6 +201,8 @@ pub fn row_size(row: &Row) -> usize {
         Value::Char(s) => s.len().saturating_add(5),
         Value::Exact(_) => 21,
         Value::Approx(_) => 9,
+        // Its tag, its length and its bytes, after theirs.
+        Value::Bits(b) => b.bytes().len().saturating_add(9),
         Value::Extension(_) => {
             let mut b = Vec::new();
             put_value(&mut b, v);
