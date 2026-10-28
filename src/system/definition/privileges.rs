@@ -57,9 +57,18 @@ fn descriptors(seen: &Seen<'_>) -> Result<BTreeMap<Descriptor, bool>> {
         let schema_owner = owner_of(catalog, &o.name.auth);
         let (held, grantable) = applicable(catalog, schema_owner, &o.name);
         add(&mut all, (SYSTEM_GRANTOR, schema_owner, &o), (&held, &grantable));
+        // One grantor's privileges to one grantee taken together: UPDATE
+        // on every column, on some grantable, is UPDATE on the table.
+        let mut pairs: BTreeMap<(&str, &str), (Actions, Actions)> = BTreeMap::new();
         for p in catalog.privileges(&o.name) {
-            let given = if p.grantable { p.actions.clone() } else { Actions::default() };
-            add(&mut all, (&p.grantor, p.grantee.as_deref().unwrap_or(PUBLIC), &o), (&p.actions, &given));
+            let (pair_held, pair_given) = pairs.entry((&p.grantor, p.grantee.as_deref().unwrap_or(PUBLIC))).or_default();
+            pair_held.add(&p.actions);
+            if p.grantable {
+                pair_given.add(&p.actions);
+            }
+        }
+        for ((grantor, grantee), (pair_held, pair_given)) in &pairs {
+            add(&mut all, (grantor, grantee, &o), (pair_held, pair_given));
         }
     }
     Ok(all)

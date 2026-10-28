@@ -34,7 +34,7 @@ use super::schema::constraint_index_name;
 use super::{State, api, rule};
 use crate::ast::{AlterAction, DropBehavior};
 use crate::binder::view_degree;
-use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc, ViewDesc};
+use crate::catalog::{Actions, ConstraintKind, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc};
 use crate::error::{At, Result};
 use crate::index::Index;
 use crate::storage::{Row, TableStorage};
@@ -377,22 +377,23 @@ impl State {
     /// GR3; §10.3 GR3–GR5].
     fn alter_privileges(&mut self, table: &QualifiedName, before: &TableDesc, reshape: Reshape) {
         let every: BTreeSet<usize> = (0..before.columns.len()).collect();
-        let moved = |columns: &mut BTreeSet<usize>| {
-            let whole = *columns == every;
+        let descs: Vec<PrivilegeDesc> = self.catalog.privileges(table).into_iter().cloned().collect();
+        let appended = matches!(reshape, Reshape::Append);
+        let moved = |columns: &mut BTreeSet<usize>, extended: bool| {
             *columns = columns.iter().filter_map(|&c| reshape.moved(c)).collect();
-            if whole && matches!(reshape, Reshape::Append) {
+            if extended {
                 columns.insert(before.columns.len());
             }
         };
-        let privileges: Vec<_> = self
-            .catalog
-            .privileges(table)
-            .into_iter()
+        let privileges: Vec<_> = descs
+            .iter()
             .map(|p| {
+                let whole = |of: Columns| appended && on_every_column(&descs, p, (of, &every));
+                let (insert, update, references) = (whole(|a| &a.insert), whole(|a| &a.update), whole(|a| &a.references));
                 let mut p = p.clone();
-                moved(&mut p.actions.insert);
-                moved(&mut p.actions.update);
-                moved(&mut p.actions.references);
+                moved(&mut p.actions.insert, insert);
+                moved(&mut p.actions.update, update);
+                moved(&mut p.actions.references, references);
                 p
             })
             .collect();
@@ -401,4 +402,20 @@ impl State {
         catalog.grant(privileges);
         self.catalog = Arc::from(catalog);
     }
+}
+
+/// The columns of one privilege of a set of them: of INSERT, UPDATE or
+/// REFERENCES.
+type Columns = fn(&Actions) -> &BTreeSet<usize>;
+
+/// Whether the privilege `of` picks, held on `every` column by `p`'s
+/// grantee of `p`'s grantor, in any of `descs`, is `p`'s: of the grantable
+/// descriptor if it is grantable on every column, else of the other. So a
+/// privilege on the table goes to a column added, once [ISO/IEC 9075:1992
+/// §11.11 GR3].
+fn on_every_column(descs: &[PrivilegeDesc], p: &PrivilegeDesc, (of, every): (Columns, &BTreeSet<usize>)) -> bool {
+    let alike = || descs.iter().filter(|q| q.grantor == p.grantor && q.grantee == p.grantee);
+    let held: BTreeSet<usize> = alike().flat_map(|q| of(&q.actions).iter().copied()).collect();
+    let given: BTreeSet<usize> = alike().filter(|q| q.grantable).flat_map(|q| of(&q.actions).iter().copied()).collect();
+    held == *every && (given == *every) == p.grantable
 }

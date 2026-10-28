@@ -274,3 +274,31 @@ fn references_on_a_view_of_a_set_operation_11_19() {
     }
     b.rollback().unwrap();
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.36 GR3; §11.11 GR3;
+/// §21.2.10] UPDATE granted on a table to a grantee holding UPDATE on one
+/// of its columns with grant option is UPDATE on the table, as
+/// TABLE_PRIVILEGES shows it, not grantable; and so UPDATE on a column
+/// added later, not grantable, as the table's is.
+#[test]
+fn a_table_privilege_over_a_column_privilege_11_36() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION O
+           CREATE TABLE T (A INTEGER, B INTEGER)
+           GRANT UPDATE (B) ON T TO P WITH GRANT OPTION
+           GRANT UPDATE ON T TO P",
+    )
+    .unwrap();
+    let p = db.session("P");
+    let table = "SELECT PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE GRANTEE = 'P'";
+    let trimmed = |r: Vec<String>| r.into_iter().map(|c| c.replace(' ', "")).collect::<Vec<_>>();
+    assert_eq!(rows(&p, table).map(trimmed), Ok(vec!["UPDATE,NO".to_owned()]));
+    p.commit().unwrap();
+    let o = db.session("O");
+    o.run("ALTER TABLE T ADD COLUMN C INTEGER").unwrap();
+    o.commit().unwrap();
+    p.run("UPDATE O.T SET C = 1").unwrap();
+    let columns = "SELECT COLUMN_NAME, IS_GRANTABLE FROM INFORMATION_SCHEMA.COLUMN_PRIVILEGES WHERE GRANTEE = 'P' ORDER BY 1";
+    assert_eq!(rows(&p, columns).map(trimmed), Ok(vec!["A,NO".to_owned(), "B,YES".to_owned(), "C,NO".to_owned()]));
+}
