@@ -9,7 +9,7 @@ use turborel_client::connection::{self, Password, Trust};
 use turborel_client::tls;
 use turborel_protocol::Request;
 use turborel_server::password::{self as pbkdf2, Pbkdf2};
-use turborel_server::settings::{self, PASSWORD_ITERATIONS};
+use turborel_server::settings::PASSWORD_ITERATIONS;
 
 use crate::common::{Pki, Running, done, pki, rows, secured, set, start_with, state};
 
@@ -31,7 +31,7 @@ fn served(pki: &Pki) -> (Database, Running) {
     db.set_owner("ANN").unwrap();
     let password = Arc::new(pbkdf2::Password::new(db.clone(), &made).unwrap());
     #[cfg(unix)]
-    db.set_setting(settings::SOCKET, &turborel::value::Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
+    db.set_setting(turborel_server::settings::SOCKET, &turborel::value::Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
     let server = start_with(&db, &[], vec![password]);
     (db, server)
 }

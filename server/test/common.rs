@@ -3,6 +3,7 @@
 use turborel_client::connection::{self, Connection, Trust};
 use turborel_client::tls;
 
+#[cfg(unix)]
 pub use turborel_test_support::Scratch;
 pub use turborel_test_support::client::{done, rows, state};
 pub use turborel_test_support::server::{Running, set, start, start_with};
