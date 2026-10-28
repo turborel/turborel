@@ -75,7 +75,7 @@ Each in a sentence:
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
 - **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty.
 - **STORAGE.PAGE_SIZE**: The bytes of a page of the data file, a power of two.
-- **STORAGE.POOL_BYTES**: The bytes of the buffer pool of the data file, reserved of MEMORY_BUDGET as the database is opened.
+- **STORAGE.POOL_BYTES**: The bytes of the buffer pool of the data file, reserved of MEMORY_BUDGET as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.
 - **TIME_ZONE**: The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.
 - **TRANSACTION_POLICY**: STRICT refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; PERMISSIVE allows it.
 - **UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.

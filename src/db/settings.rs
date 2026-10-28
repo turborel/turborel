@@ -90,7 +90,8 @@ impl Database {
     }
 
     /// Tells the memory budget its limit, the setting MEMORY_BUDGET's, as
-    /// it is now published.
+    /// it is now published, and the pages of a database in memory their
+    /// pool's size, STORAGE.POOL_BYTES'.
     ///
     /// # Errors
     ///
@@ -98,6 +99,8 @@ impl Database {
     pub(super) fn budget_from_settings(&self) -> Result<()> {
         let st = self.snapshot()?;
         st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET)));
+        // A database in memory makes its pool so, if it has not yet.
+        st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
         Ok(())
     }
 

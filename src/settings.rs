@@ -94,6 +94,11 @@ pub fn budget_bytes(value: &Value) -> usize {
     bytes(value, crate::memory::DEFAULT_BUDGET)
 }
 
+/// The bytes a value of STORAGE.POOL_BYTES says.
+pub fn pool_bytes(value: &Value) -> usize {
+    bytes(value, crate::db::POOL_BYTES)
+}
+
 /// The bytes a value of WORK_MEMORY says.
 pub fn work_bytes(value: &Value) -> usize {
     bytes(value, crate::spill::DEFAULT_WORK_MEMORY)

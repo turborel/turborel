@@ -748,10 +748,10 @@ indexes never need rewriting for them, frozen or not. Columns suit scans
 of a few columns of many rows; keeping new rows as rows keeps writes and
 key lookups as fast as in ROWS, the design of SQL Server's deltastore,
 HyPer's Data Blocks and TiFlash's delta tree. Measured on 200,000 rows of
-16 columns in memory (`bench/analytics.rs`): COUNT(*) 4.1 times as fast,
-a SUM of one column 3.5, a filter of 1% by a column in the rows' order
-6.2, one row fetched by key 2.9 times as slow, as each column is a page
-of its own.
+16 columns in memory, against ROWS (`bench/analytics.rs`): COUNT(*) 3.1
+times as fast, a SUM of one column 3.0, a filter of 1% by a column in the
+rows' order 4.8; one row fetched by key 7% slower, as each column is a
+page of its own.
 
 **D34. Index methods.** An index method is a plug-in that creates indexes
 and says which probes they answer. Two are built in, both in pages through
@@ -855,7 +855,10 @@ catalog to keep in step.
   reservation past the budget is refused (SQLCODE -918).
 - Plug-ins are given the budget when they are registered
   (`StorageEngine::attach`, `IndexMethod::attach`), so their caches draw on
-  the same limit. Each owner keeps its own pool and eviction policy.
+  the same limit. Each owner keeps its own pool and eviction policy. A
+  database in memory gives its engine and index methods one pool to
+  share, as one in a directory shares its data file's, of
+  STORAGE.POOL_BYTES as its first table is made.
 - Each reservation says what holds it; INFORMATION_SCHEMA.MEMORY_RESERVATIONS
   shows the database's owner each one held and its bytes, and anyone else
   none, as a spill area tells what others' statements do.

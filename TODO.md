@@ -131,8 +131,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   database kept nowhere, served by `turboreld --memory`, never has one.
 - **Constants still to move onto the registry**, each keeping today's
   value as its default:
-  - the pool of an in-memory engine or index method (2 MiB): an engine's
-    own setting, which needs the engine to see the database's settings;
   - log durability, once the log can change it while open;
   - turning the optimizer's rules on and off, one setting each: today
     `Database::with_optimizer` does, and what it sets is lost when the

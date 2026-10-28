@@ -12,6 +12,7 @@ use super::sealing::DATABASE_OPTIONS;
 use super::users::Users;
 use crate::catalog::{Catalog, QualifiedName, TableDesc};
 use crate::disk::encoding::Encodings;
+use crate::engine::MemoryPages;
 use crate::engine::rows::{ROW_STORE, RowStore, TableOptions};
 use crate::error::Result;
 use crate::functions::Registry;
@@ -103,6 +104,10 @@ pub struct State {
     /// The memory budget its caches draw on, shared by every snapshot
     /// (`memory.rs`).
     pub(crate) memory: Arc<MemoryBudget>,
+    /// The pages of its built-in engine and index methods, if it is kept
+    /// in memory: their pool made when first needed, sized by the setting
+    /// STORAGE.POOL_BYTES then (`engine.rs`).
+    pub(crate) pages: Arc<MemoryPages>,
     /// The sessions' instances of its temporary tables, shared by every
     /// snapshot (`db/temporary.rs`).
     pub(crate) temporaries: Arc<super::temporary::Uses>,
@@ -147,22 +152,22 @@ impl State {
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
             memory: Arc::clone(&memory),
+            pages: MemoryPages::new(crate::db::POOL_BYTES),
             temporaries: Arc::default(),
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             log: None,
             reopening: None,
             building: HashSet::new(),
         };
-        // The built-ins, given the budget as `attach` gives a plug-in it.
-        let engine = RowStore::in_memory(TableOptions::default());
-        engine.use_budget(Arc::clone(&memory));
+        // The built-ins, given the budget as `attach` gives a plug-in it,
+        // sharing their pages in memory, sized by STORAGE.POOL_BYTES.
+        st.pages.use_budget(Arc::clone(&memory));
+        let engine = RowStore::sharing(TableOptions::default(), Arc::clone(&st.pages));
         engine.use_work(Arc::clone(&st.work));
         engine.use_encodings(Arc::clone(&st.encodings));
-        let btree = BTreeMethod::in_memory();
-        btree.use_budget(Arc::clone(&memory));
+        let btree = BTreeMethod::sharing(Arc::clone(&st.pages));
         st.engines.insert(ROW_STORE.to_owned(), Arc::new(engine));
-        let hash = HashMethod::in_memory();
-        hash.use_budget(Arc::clone(&memory));
+        let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);

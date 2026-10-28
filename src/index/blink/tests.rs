@@ -6,6 +6,7 @@
 use std::thread;
 
 use super::*;
+use crate::engine::memory_file;
 use crate::value::Spelled;
 use crate::value::{Decimal, Value, compare};
 

@@ -158,7 +158,7 @@ fn storage() -> [Definition; 5] {
         defined(
             ("STORAGE.POOL_BYTES", at_least(1_i128 << 16_i32), count(crate::db::POOL_BYTES)),
             (false, Effect::Start),
-            "The bytes of the buffer pool of the data file, reserved of MEMORY_BUDGET as the database is opened.",
+            "The bytes of the buffer pool of the data file, reserved of MEMORY_BUDGET as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.",
         ),
     ]
 }

@@ -21,29 +21,34 @@ fn bytes(n: usize) -> Value {
 }
 
 /// Verifies: [DESIGN] RULES.md D38: a database in memory reserves the pool
-/// of its engine as its first table is made, and of its index method as its
-/// first index is, 2 MiB each, of MEMORY_BUDGET's 256 MiB; past the budget a
-/// statement is refused (SQLCODE -918, SQLSTATE TB918); a lower budget takes
-/// back nothing reserved; one below 1 MiB is no MEMORY_BUDGET.
+/// its engine and index methods share as its first table is made, of
+/// STORAGE.POOL_BYTES then, 32 MiB unless set, of MEMORY_BUDGET's 256 MiB,
+/// its indexes taking no more; past the budget a statement is refused
+/// (SQLCODE -918, SQLSTATE TB918); STORAGE.POOL_BYTES set after the pool is
+/// made changes nothing; a lower budget takes back nothing reserved; one
+/// below 1 MiB is no MEMORY_BUDGET.
 #[test]
 fn pools_reserve_the_budget() {
     let db = Database::new();
     assert_eq!(db.memory().unwrap(), (256 * MIB, 0));
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
-    assert_eq!(db.memory().unwrap(), (256 * MIB, 2 * MIB), "the engine's pool");
+    assert_eq!(db.memory().unwrap(), (256 * MIB, 32 * MIB), "the shared pool");
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER UNIQUE)").unwrap();
-    assert_eq!(db.memory().unwrap().1, 4 * MIB, "and the index method's");
+    assert_eq!(db.memory().unwrap().1, 32 * MIB, "its index method shares it");
 
     let small = Database::new();
     small.set_setting("MEMORY_BUDGET", &bytes(3 * MIB)).unwrap();
-    small.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
-    let refused = small.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER UNIQUE)").unwrap_err();
+    small.set_setting("STORAGE.POOL_BYTES", &bytes(4 * MIB)).unwrap();
+    let refused = small.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap_err();
     assert_eq!((refused.code, refused.sqlstate().as_str()), (Code::Resources, "TB918"), "{}", refused.msg);
+    small.set_setting("STORAGE.POOL_BYTES", &bytes(2 * MIB)).unwrap();
+    small.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    small.set_setting("STORAGE.POOL_BYTES", &bytes(MIB)).unwrap();
     small.set_setting("MEMORY_BUDGET", &bytes(MIB)).unwrap();
-    assert_eq!(small.memory().unwrap(), (MIB, 2 * MIB), "nothing taken back");
+    assert_eq!(small.memory().unwrap(), (MIB, 2 * MIB), "nothing taken back, the pool as it was made");
     small.reset_setting("MEMORY_BUDGET").unwrap();
     small.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER UNIQUE)").unwrap();
-    assert_eq!(small.memory().unwrap(), (256 * MIB, 4 * MIB));
+    assert_eq!(small.memory().unwrap(), (256 * MIB, 2 * MIB));
     assert_eq!(small.set_setting("MEMORY_BUDGET", &bytes(MIB - 1)).err().map(|e| e.code), Some(Code::Api));
 }
 

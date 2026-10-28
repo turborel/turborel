@@ -75,7 +75,7 @@ use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
-use crate::memory::{Host, MemoryBudget};
+use crate::memory::Host;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
@@ -104,9 +104,9 @@ pub struct RowStore {
     /// Where its tables are; for a store in memory, made when the first
     /// table is.
     files: Mutex<Option<TableFiles>>,
-    /// The budget its pool in memory draws on, for files made in memory:
-    /// its own until it is attached to a database's (`attach`).
-    budget: Mutex<Arc<MemoryBudget>>,
+    /// Its pages in memory, for files made in memory: of a budget of its
+    /// own until it is attached to a database's (`attach`).
+    memory: Arc<crate::engine::MemoryPages>,
     defaults: TableOptions,
     /// Options for tables not yet created, by name.
     tables: Mutex<HashMap<QualifiedName, TableOptions>>,

@@ -21,7 +21,8 @@ pub mod rows;
 pub mod tree;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Pipeline;
@@ -31,6 +32,7 @@ use crate::error::SqlError;
 use crate::hash::HashFunction;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::memory::MemoryBudget;
+use crate::sync::lock_builtin;
 use crate::value::DataType;
 
 /// \[DESIGN\] The bytes of the buffer pool of a pager file in memory, 2
@@ -45,13 +47,65 @@ pub const MEMORY_POOL_BYTES: usize = 2 << 20;
 /// # Errors
 ///
 /// SQLCODE -918 if the budget cannot grant the pool; the pager's errors.
+#[cfg(test)]
 pub(crate) fn memory_file(budget: &Arc<MemoryBudget>, what: &str) -> Result<(Arc<BufferPool>, FileId), SqlError> {
+    memory_file_of(budget, MEMORY_POOL_BYTES, what)
+}
+
+/// As `memory_file`, its pool of `bytes`.
+fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Result<(Arc<BufferPool>, FileId), SqlError> {
     let fs = MemoryFileSystem::new();
     let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
     let pager = Pager::create(&fs, Path::new("/pages"), hash, Pipeline::none(), DEFAULT_PAGE_SIZE)?;
-    let pool = Arc::new(BufferPool::in_budget(budget, (MEMORY_POOL_BYTES, pager.page_size()), what)?);
+    let pool = Arc::new(BufferPool::in_budget(budget, (bytes, pager.page_size()), what)?);
     let file = pool.add_pager(Arc::new(pager));
     Ok((pool, file))
+}
+
+/// \[DESIGN\] Pages in memory, made when first asked for: a pager file in a
+/// file system of its own, in a buffer pool of the bytes it is sized to
+/// then, reserved of the budget it is given. A database kept in memory
+/// gives one to its built-in engine and index methods, which share it, as
+/// a database kept in a directory shares its data file, sized by its
+/// setting STORAGE.POOL_BYTES.
+pub(crate) struct MemoryPages {
+    budget: Mutex<Arc<MemoryBudget>>,
+    bytes: AtomicUsize,
+    made: Mutex<Option<(Arc<BufferPool>, FileId)>>,
+}
+
+impl MemoryPages {
+    /// Pages whose pool will be of `bytes`, reserved of a budget of their
+    /// own until they are given another.
+    pub(crate) fn new(bytes: usize) -> Arc<MemoryPages> {
+        Arc::new(MemoryPages { budget: Mutex::new(MemoryBudget::new(bytes)), bytes: AtomicUsize::new(bytes), made: Mutex::new(None) })
+    }
+
+    /// Makes `budget` the one their pool draws on, if made after.
+    pub(crate) fn use_budget(&self, budget: Arc<MemoryBudget>) {
+        *lock_builtin(&self.budget) = budget;
+    }
+
+    /// Makes their pool of `bytes`, if made after.
+    pub(crate) fn resize(&self, bytes: usize) {
+        self.bytes.store(bytes, Ordering::Release);
+    }
+
+    /// Their pool and file, made if not yet, held by `what`.
+    ///
+    /// # Errors
+    ///
+    /// As `memory_file`.
+    pub(crate) fn file(&self, what: &str) -> Result<(Arc<BufferPool>, FileId), SqlError> {
+        let mut made = lock_builtin(&self.made);
+        if let Some((pool, file)) = made.as_ref() {
+            return Ok((Arc::clone(pool), *file));
+        }
+        let budget = Arc::clone(&lock_builtin(&self.budget));
+        let (pool, file) = memory_file_of(&budget, self.bytes.load(Ordering::Acquire), what)?;
+        *made = Some((Arc::clone(&pool), file));
+        Ok((pool, file))
+    }
 }
 
 /// The width of a column's value in a record's fixed part, if it has one,

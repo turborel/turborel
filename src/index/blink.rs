@@ -30,7 +30,7 @@ use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
 use crate::engine::key::{anchor, decode_key, encode_key};
 use crate::engine::tree::{BLinkTree, Direction, Update};
-use crate::engine::{MEMORY_POOL_BYTES, memory_file};
+use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
 use crate::spill::{Area, WorkAreas, sorted_records};
@@ -49,15 +49,15 @@ pub struct BTreeMethod {
     /// Where its indexes are; for a method in memory, made when the first
     /// index is.
     files: Mutex<Option<(Arc<BufferPool>, FileId)>>,
-    /// The budget its pool in memory draws on, for a file made in memory:
-    /// its own until it is attached to a database's (`attach`).
-    budget: Mutex<Arc<MemoryBudget>>,
+    /// Its pages in memory, for a file made in memory: of a budget of its
+    /// own until it is attached to a database's (`attach`).
+    memory: Arc<MemoryPages>,
 }
 
 impl BTreeMethod {
     /// A method keeping its indexes in pager file `file` of `pool`.
     pub fn new(pool: Arc<BufferPool>, file: FileId) -> BTreeMethod {
-        BTreeMethod { files: Mutex::new(Some((pool, file))), budget: Mutex::new(MemoryBudget::new(0)) }
+        BTreeMethod { files: Mutex::new(Some((pool, file))), memory: MemoryPages::new(0) }
     }
 
     /// \[DESIGN\] A method keeping its indexes in memory, in a file system of
@@ -66,12 +66,17 @@ impl BTreeMethod {
     /// Its pool (`MEMORY_POOL_BYTES`) is reserved then, of the budget of
     /// the database it is attached to, or of its own.
     pub fn in_memory() -> BTreeMethod {
-        BTreeMethod { files: Mutex::new(None), budget: Mutex::new(MemoryBudget::new(MEMORY_POOL_BYTES)) }
+        BTreeMethod::sharing(MemoryPages::new(MEMORY_POOL_BYTES))
+    }
+
+    /// A method keeping its indexes in `memory`, which others may share.
+    pub(crate) fn sharing(memory: Arc<MemoryPages>) -> BTreeMethod {
+        BTreeMethod { files: Mutex::new(None), memory }
     }
 
     /// Makes `budget` the one its pool in memory draws on, if made after.
     pub(crate) fn use_budget(&self, budget: Arc<MemoryBudget>) {
-        *lock_builtin(&self.budget) = budget;
+        self.memory.use_budget(budget);
     }
 
     /// Its file, made in memory if it has none yet.
@@ -80,8 +85,7 @@ impl BTreeMethod {
         if let Some((pool, file)) = files.as_ref() {
             return Ok((Arc::clone(pool), *file));
         }
-        let budget = Arc::clone(&lock_builtin(&self.budget));
-        let (pool, file) = memory_file(&budget, "the pool in memory of the btree index method")?;
+        let (pool, file) = self.memory.file("the pool in memory of the built-in engine and index methods")?;
         *files = Some((Arc::clone(&pool), file));
         Ok((pool, file))
     }
