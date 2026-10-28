@@ -119,7 +119,7 @@ fn interval_arithmetic_6_14() {
 /// interval qualifier: the difference of two datetimes of the same fields,
 /// of years and months between their years and months, else of their
 /// instants, truncated to its least field (SQLSTATE 22015 if its leading
-/// field cannot hold it).
+/// field cannot hold it); a row of VALUES of one.
 #[test]
 fn datetime_differences_6_15() {
     let db = intervals();
@@ -134,6 +134,8 @@ fn datetime_differences_6_15() {
     assert_eq!(code(&a, "SELECT (TIME '01:00:00' - D) DAY FROM T"), Code::SyntaxRule, "not of the same fields");
     assert_eq!(code(&a, "SELECT (TIME '01:00:00' - TIME '00:00:00') YEAR FROM T"), Code::SyntaxRule, "a time has no years");
     assert_eq!(code(&a, "SELECT (D + D) DAY FROM T"), Code::Syntax, "a difference");
+    let values = squeezed(&a, "VALUES (DATE '2024-01-11' - DATE '2024-01-01') DAY, ((DATE '2024-01-03' - DATE '2024-01-01') DAY)");
+    assert_eq!(values, ["10", "2"], "a row of one element of VALUES, its parentheses written or not [§7.1 SR2]");
     a.commit().unwrap();
 }
 

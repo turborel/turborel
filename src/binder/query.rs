@@ -75,7 +75,7 @@ pub(super) fn bind_query(
 
     // [X3.135-1986 §5.21] <where clause>: applied to rows.
     let where_scope = Scope::Rows(
-        "[X3.135-1986 §5.21 SR3] a <set function specification> in a <where clause> is over an outer reference, in a <subquery> of a <having clause>",
+        "[X3.135-1986 §5.21 SR3] a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference",
     );
     let where_cond = te.where_clause.as_ref().map(|c| binder.search_condition(c, where_scope)).transpose()?;
 

@@ -172,9 +172,12 @@ impl Parser {
             }
             self.expect_delim(delim::RIGHT_PAREN)?;
             // [SR2] "(V)" is a list, unless an operator after it makes it
-            // the start of one element.
+            // the start of one element, or an <interval qualifier> the
+            // difference of two datetimes [§6.15].
+            let fields = [kw::YEAR, kw::MONTH, kw::DAY, kw::HOUR, kw::MINUTE, kw::SECOND];
             let operator =
-                [delim::PLUS, delim::MINUS, delim::ASTERISK, delim::SOLIDUS, delim::CONCATENATION].iter().any(|d| self.is_delim(d));
+                [delim::PLUS, delim::MINUS, delim::ASTERISK, delim::SOLIDUS, delim::CONCATENATION].iter().any(|d| self.is_delim(d))
+                    || fields.iter().any(|f| self.is_kw(f));
             if !(operator && elements.len() == 1) {
                 return Ok(ValuesRow { elements, at });
             }
