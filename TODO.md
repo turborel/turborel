@@ -218,13 +218,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Tests
 
-- **Windows in CI:** the first push's Windows job stopped at clippy, on
-  code compiled only off Unix (the stub of a Unix socket's listener), so
-  its tests have not yet run there. A Mac can check the crates without
-  aws-lc for Windows (`cargo clippy --target x86_64-pc-windows-gnu`), but
-  not the server, turboreld, the command-line client, aes or support,
-  whose aws-lc-sys needs a Windows C toolchain: until it passes in full,
-  the Windows job is their only check.
+- **Windows in CI:** the Windows job has stopped at clippy, twice, on code
+  compiled only off Unix (the stub of a Unix socket's listener, then
+  imports used only by Unix-only tests), so its tests have not yet run
+  there. A Mac can check the crates without aws-lc for Windows (`cargo
+  clippy --target x86_64-pc-windows-gnu`), but not the server, turboreld,
+  the command-line client, aes or support, whose aws-lc-sys needs a
+  Windows C toolchain: until it passes in full, the Windows job is their
+  only check.
 - Rules implemented but not tested: §5.3 SR2's `1A`, FLOAT(p) up to 24
   taken as REAL and its boundary (FLOAT(24) against FLOAT(25)), REAL
   rounded on assignment, UNION over nulls giving one null row (run, but

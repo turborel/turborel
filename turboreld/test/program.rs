@@ -9,7 +9,9 @@ use turborel_client::connection::{self, Trust};
 use turboreld::{Command, Config};
 
 use turborel_test_support::Scratch;
-use turborel_test_support::client::{done, rows, state};
+#[cfg(unix)]
+use turborel_test_support::client::state;
+use turborel_test_support::client::{done, rows};
 
 fn config(line: &[String]) -> Config {
     match turboreld::parse(line).unwrap() {

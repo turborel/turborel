@@ -4,8 +4,10 @@
 use std::io::Cursor;
 use std::path::Path;
 
+#[cfg(unix)]
 use turborel_client::connection::{self, Password, Trust};
 use turborel_test_support::Scratch;
+#[cfg(unix)]
 use turborel_test_support::client::state;
 use turboreld::{Command, Config, UserCommand, parse};
 
