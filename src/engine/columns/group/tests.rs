@@ -169,9 +169,7 @@ fn what_groups_refuse() {
 /// another order than their ids', every id between its least and greatest
 /// among them, keeps its ids in its rows' order and its rows' positions by
 /// id: each row found by its id, an id not its found none, its least and
-/// greatest ids its range; read back from its header alike; and a header
-/// of the format before, with no positions by id, is read as of rows in
-/// order.
+/// greatest ids its range; read back from its header alike.
 #[test]
 fn groups_of_rows_out_of_order_read_back() {
     let (pool, file) = file();
@@ -189,16 +187,4 @@ fn groups_of_rows_out_of_order_read_back() {
     assert_eq!(group.position(&pages, 4100).unwrap(), None);
     let back = read(&pages, group.header[0], &TYPES).unwrap();
     assert_eq!((back.ids.clone(), back.by_id.clone()), (group.ids.clone(), group.by_id.clone()));
-    // The format before: no count of runs by id after the ids'.
-    let in_order = written(&pages, (7, 3), 100);
-    let mut header = header::encode(&in_order, &TYPES).unwrap();
-    let at = 25_usize.checked_add(in_order.ids.len().checked_mul(16).unwrap()).unwrap();
-    header.drain(at..at.checked_add(4).unwrap());
-    header[0] = 1;
-    let mut chain = Vec::new();
-    let old = put_chain(&pages, &header, &mut chain).unwrap();
-    let before = read(&pages, old[0], &TYPES).unwrap();
-    assert!(!before.sorted());
-    assert_eq!(before.position(&pages, 10).unwrap(), Some(1));
-    pages.free(&chain);
 }

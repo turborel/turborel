@@ -10,18 +10,13 @@
 //! locator:    meta page u64 | durable position u64
 //! ```
 //!
-//! A meta page of format 1 has no directory: its table has no groups.
-//!
 //! Integers are little-endian.
 
 use crate::disk::pager::PageId;
 
 /// The format of a table's meta page.
-pub const TABLE_FORMAT: u8 = 2;
-/// The format before, of no frozen row groups.
-const NO_GROUPS: u8 = 1;
+pub const TABLE_FORMAT: u8 = 1;
 const META_LEN: usize = 25;
-const OLD_META_LEN: usize = 17;
 /// Bytes of a page number or a position.
 const WORD: usize = 8;
 
@@ -53,7 +48,6 @@ pub(super) fn parse_meta(content: &[u8]) -> Option<(PageId, u64, u64)> {
     let word = |at: usize| content.get(at..at.checked_add(WORD)?).and_then(|b| <[u8; WORD]>::try_from(b).ok()).map(u64::from_le_bytes);
     let directory = match (content.first().copied(), content.len()) {
         (Some(TABLE_FORMAT), META_LEN) => word(1 + 2 * WORD)?,
-        (Some(NO_GROUPS), OLD_META_LEN) => 0,
         (Some(_) | None, _) => return None,
     };
     Some((PageId(word(1)?), word(1 + WORD)?, directory))

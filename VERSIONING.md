@@ -79,6 +79,7 @@ version, and comes with a major release (see
 | Catalog image | 1 | the image's first byte | `db/image.rs`, `IMAGE_FORMAT` |
 | Log record | 1 | each record's first byte | `log/record.rs`, `RECORD_VERSION` |
 | Row store table | 1 | its meta page | `engine/rows/meta.rs`, `TABLE_FORMAT` |
+| Column store row group | 1 | its header's first byte | `engine/columns/group.rs`, `GROUP_FORMAT` |
 | B-link tree | 1 | its meta page | `engine/tree.rs`, `TREE_FORMAT` |
 | Hash index | 1 | its meta page | `engine/hash.rs`, `FORMAT` |
 | Native protocol | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION` |

@@ -41,11 +41,6 @@ fn stale_references_are_refused() {
     let mut other_format = meta_content(PageId(3), 9, 11);
     other_format[0] = 3;
     assert_eq!(parse_meta(&other_format), None);
-    // Format 1, before frozen row groups: no directory.
-    let mut first = meta_content(PageId(3), 9, 0);
-    first.truncate(17);
-    first[0] = 1;
-    assert_eq!(parse_meta(&first), Some((PageId(3), 9, 0)));
 }
 
 /// Verifies: [DESIGN] RULES.md D29, D31, garbage collection: what an

@@ -23,8 +23,7 @@
 //! ```
 //!
 //! Integers are little-endian. Every page passes through the table's
-//! encodings, its page number their context. A header of format 1, before
-//! groups were sorted, has no runs by id.
+//! encodings, its page number their context.
 
 mod header;
 
@@ -41,7 +40,7 @@ use crate::storage::{Row, RowId};
 use crate::value::{DataType, Value, compare};
 
 /// The format of a group's header.
-const GROUP_FORMAT: u8 = 2;
+const GROUP_FORMAT: u8 = 1;
 /// Bytes of a row id.
 const ID: usize = 8;
 /// Bytes of a row id and its position.
