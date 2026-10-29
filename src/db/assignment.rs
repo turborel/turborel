@@ -100,6 +100,9 @@ fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
 /// §4.5], or deferred [ISO/IEC 9075:1992 §10.6]: rows may pass through
 /// duplicate keys meanwhile (as in SET ID = ID + 1), but not end with
 /// them. `ids` are the rows written, through the index of the constraint.
+/// Of a PRIMARY KEY, first, none has a null in its columns [ISO/IEC
+/// 9075:1992 §11.7 SR3a]. Each row is read once; a key whose index holds
+/// only the row's own entry is no duplicate, and needs no more.
 ///
 /// \[DESIGN\] The rows counted are those whose newest version has the key,
 /// whichever transaction committed it, as `tx` must not commit a duplicate
@@ -107,30 +110,42 @@ fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
 /// transaction is changing, with the key before or after, is in doubt: the
 /// statement is refused with SQLCODE -911, to be run again once that
 /// transaction ends.
-pub(super) fn check_key(st: &State, tx: TxId, table: &QualifiedName, columns: &[usize], ids: &[RowId]) -> Result<()> {
+pub(super) fn check_key(st: &State, tx: TxId, table: &QualifiedName, (columns, primary): (&[usize], bool), ids: &[RowId]) -> Result<()> {
     let desc = table_desc(st, table)?;
     let storage = st.storage_of(table)?;
+    let key_of =
+        |row: &Row| project(row, columns).map(Key).ok_or_else(|| api(format!("[DESIGN] a row of {table} is shorter than its columns")));
+    // Each row read once, for both rules.
+    let mut keys = Vec::with_capacity(ids.len());
+    for &id in ids {
+        if let Some(row) = storage.get(tx, id)? {
+            keys.push(key_of(&row)?);
+        }
+    }
+    if primary {
+        let null = keys.iter().find_map(|k| k.0.iter().position(Value::is_null));
+        if let Some(column) = null.and_then(|at| columns.get(at)).and_then(|&c| desc.columns.get(c)) {
+            return fail(
+                Code::Constraint,
+                format!("[ISO/IEC 9075:1992 §11.7 SR3a] PRIMARY KEY column {} of {} is null", column.name, desc.name),
+            );
+        }
+    }
     for ix in st.catalog.indexes(table).into_iter().filter(|ix| ix.unique && ix.columns == columns) {
         let index = st.index_of(&ix.name)?;
-        let key_of = |row: &Row| {
-            project(row, &ix.columns).map(Key).ok_or_else(|| api(format!("[DESIGN] a row of {table} is shorter than its columns")))
-        };
-        for &id in ids {
-            let Some(row) = storage.get(tx, id)? else { continue };
-            let key = key_of(&row)?;
-            // A key with a null is never a duplicate [X3.135-1986 §6.4 GR2].
-            if key.0.iter().any(Value::is_null) {
+        // A key with a null is never a duplicate [X3.135-1986 §6.4 GR2].
+        for key in keys.iter().filter(|k| !k.0.iter().any(Value::is_null)) {
+            let found = index.rows(key)?;
+            // The row's own entry alone: no other row may hold the key.
+            if found.len() < 2 {
                 continue;
             }
-            let holders = index
-                .rows(&key)?
-                .into_iter()
-                .map(|other| holds(&storage.newest(tx, other)?, &key, &key_of))
-                .try_fold(0_usize, |n, held| held.map(|held| n.saturating_add(usize::from(held))));
-            match holders {
-                Ok(n) if n > 1 => return fail(Code::Constraint, duplicated(&desc, &ix.columns)),
-                Ok(_) => {}
-                Err(e) => return Err(e),
+            let mut holders = 0_usize;
+            for other in found {
+                holders = holders.saturating_add(usize::from(holds(&storage.newest(tx, other)?, key, &key_of)?));
+            }
+            if holders > 1 {
+                return fail(Code::Constraint, duplicated(&desc, columns));
             }
         }
     }

@@ -392,10 +392,7 @@ impl State {
             Check::Row { id, .. } => self.check_row(tx, (desc, c), *id, bound),
             Check::Unique { table, ids, .. } => {
                 let ConstraintKind::Unique { columns, primary } = &c.kind else { return Ok(()) };
-                if *primary {
-                    self.check_primary(tx, desc, columns, ids)?;
-                }
-                check_key(self, tx.id, table, columns, ids)
+                check_key(self, tx.id, table, (columns, *primary), ids)
             }
             Check::Table { .. } => self.check_table(tx, (desc, c), bound),
             Check::Referenced { old, id, .. } => {
@@ -459,23 +456,6 @@ impl State {
         let cond = self.check_condition(table, check)?;
         bound.insert(c.name.clone(), cond.clone());
         Ok(cond)
-    }
-
-    /// [§11.7 SR3a] The rows `ids` of `desc` have no null in the columns
-    /// of its PRIMARY KEY.
-    fn check_primary(&self, tx: &Txn, desc: &TableDesc, columns: &[usize], ids: &[RowId]) -> Result<()> {
-        let storage = self.storage_of(&desc.name)?;
-        for &id in ids {
-            let Some(row) = storage.get(tx.id, id)? else { continue };
-            if let Some(&at) = columns.iter().find(|&&at| row.get(at).is_some_and(Value::is_null)) {
-                let column = desc.columns.get(at).map_or("?", |col| col.name.as_str());
-                return fail(
-                    Code::Constraint,
-                    format!("[ISO/IEC 9075:1992 §11.7 SR3a] PRIMARY KEY column {column} of {} is null", desc.name),
-                );
-            }
-        }
-        Ok(())
     }
 
     /// [§11.6 GR3] CHECK `c` of `desc`, with a subquery: of table T with
