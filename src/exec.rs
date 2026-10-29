@@ -31,7 +31,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::index::{Key, Probe};
 use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
-use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage, project};
+use crate::storage::{Condition, Conjunct, Conjunction, Row, RowId, TableStorage, project};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
 use crate::value::{CompOp, Value};
@@ -186,11 +186,12 @@ fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIte
     }
 }
 
-/// The conjuncts of `cond` comparing a column with a constant, if any,
-/// unless `cond` can raise an error: every row `cond` keeps satisfies each,
-/// so a scan tells its engine (`TableStorage::scan_where`), which may then
-/// leave out the rows they do not match, skip the frozen chunks one cannot
-/// match, and count only the rows they all match as read.
+/// The conjuncts of `cond` comparing a column with a constant, testing it
+/// IS NULL or IS NOT NULL, or IN a list of constants, if any, unless `cond`
+/// can raise an error: every row `cond` keeps satisfies each, so a scan
+/// tells its engine (`TableStorage::scan_where`), which may then leave out
+/// the rows they do not match, skip the frozen chunks one cannot match, and
+/// count only the rows they all match as read.
 fn simple_conjuncts(cond: &Cond) -> Option<Conjunction> {
     // A condition that can raise an error must see every row: a row the
     // conjunct rejects may still raise it, and whether it does may not
@@ -203,28 +204,28 @@ fn simple_conjuncts(cond: &Cond) -> Option<Conjunction> {
     if found.is_empty() {
         return None;
     }
-    // Equalities first: an engine judging rows by only one judges by one.
-    found.sort_by_key(|(_, op, _)| *op != CompOp::Eq);
-    Some(Conjunction(
-        found.into_iter().map(|(column, op, value)| Condition { columns: vec![column], probe: Probe::Compare { op, value } }).collect(),
-    ))
+    Some(Conjunction(found))
 }
 
-/// The `column op constant` conjuncts of `cond`, each as the column, the
-/// operator and the constant.
-fn conjuncts(cond: &Cond, found: &mut Vec<(usize, CompOp, Value)>) {
+/// The conjuncts of `cond` a scan is told (`simple_conjuncts`).
+fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
+    let compared = |column: usize, op: CompOp, value: &Value| {
+        Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value: value.clone() } })
+    };
     match cond {
         Cond::And(a, b) => {
             conjuncts(a, found);
             conjuncts(b, found);
         }
-        Cond::Compare(Expr::Column(c), op, Expr::Const(v)) => found.push((*c, *op, v.clone())),
+        Cond::Compare(Expr::Column(c), op, Expr::Const(v)) => found.push(compared(*c, *op, v)),
         // "constant op column" is "column op' constant", the operator turned around.
-        Cond::Compare(Expr::Const(v), op, Expr::Column(c)) => found.push((*c, op.flip(), v.clone())),
+        Cond::Compare(Expr::Const(v), op, Expr::Column(c)) => found.push(compared(*c, op.flip(), v)),
+        Cond::IsNull(Expr::Column(c), not) => found.push(Conjunct::Null { column: *c, not: *not }),
+        // An `<in predicate>` of constants, as the binder writes it.
+        Cond::Or(..) => found.extend(batch::in_list(cond).map(|(column, values)| Conjunct::In { column, values })),
         Cond::Compare(..)
-        | Cond::Const(_)
-        | Cond::Or(..)
         | Cond::Not(_)
+        | Cond::Const(_)
         | Cond::Is(..)
         | Cond::IsNull(..)
         | Cond::Like(..)

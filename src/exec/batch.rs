@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use judge::Judging;
+pub(super) use judge::in_list;
 pub(super) use project::projected;
 
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};

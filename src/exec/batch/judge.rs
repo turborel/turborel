@@ -129,7 +129,7 @@ fn compared_with_constant(cond: &Cond) -> Option<(usize, CompOp, &Value)> {
 /// The column and constants of `cond` if it is an OR of equalities of one
 /// column with constants, as an `<in predicate>` of constants is
 /// (`binder/predicates.rs`).
-fn in_list(cond: &Cond) -> Option<(usize, Vec<Value>)> {
+pub(in crate::exec) fn in_list(cond: &Cond) -> Option<(usize, Vec<Value>)> {
     if let Cond::Or(a, b) = cond {
         let (c, mut list) = in_list(a)?;
         let (d, more) = in_list(b)?;

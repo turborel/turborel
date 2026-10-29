@@ -58,38 +58,101 @@ impl Condition {
     }
 }
 
+/// \[DESIGN\] A condition true of every row a filter keeps, that a scan
+/// is told (`TableStorage::scan_where`).
+#[derive(Debug, Clone)]
+pub enum Conjunct {
+    /// Of an index's kind: the values of its columns answer its probe.
+    Condition(Condition),
+    /// [X3.135-1986 §5.15] `column IS NULL`, or IS NOT NULL if `not`.
+    Null {
+        /// The column.
+        column: usize,
+        /// IS NOT NULL was written.
+        not: bool,
+    },
+    /// [X3.135-1986 §5.13] `column IN (values)`, each a constant.
+    In {
+        /// The column.
+        column: usize,
+        /// The constants.
+        values: Vec<Value>,
+    },
+}
+
+impl Conjunct {
+    /// The columns it reads, in the order `matches_key` takes their values.
+    pub fn columns(&self) -> Vec<usize> {
+        match self {
+            Conjunct::Condition(c) => c.columns.clone(),
+            Conjunct::Null { column, .. } | Conjunct::In { column, .. } => vec![*column],
+        }
+    }
+
+    /// Whether `row` may be one it is true of.
+    pub fn matches(&self, row: &Row) -> bool {
+        let key: Option<Vec<&Value>> = self.columns().iter().map(|&c| row.get(c)).collect();
+        key.is_some_and(|k| self.matches_key(&k))
+    }
+
+    /// As `matches`, of a row whose values of its columns, in their order,
+    /// are `key`.
+    pub fn matches_key(&self, key: &[&Value]) -> bool {
+        match self {
+            Conjunct::Condition(c) => c.matches_key(key),
+            Conjunct::Null { not, .. } => key.first().is_some_and(|v| v.is_null() != *not),
+            Conjunct::In { values, .. } => key.first().is_some_and(|v| values.iter().any(|c| compare(v, c) == Some(Ordering::Equal))),
+        }
+    }
+
+    /// Whether a row whose every column's value is within `bounds`, its
+    /// least and greatest not null, may be one it is true of: never
+    /// narrower than whether one is. As the bounds say nothing of nulls,
+    /// IS NULL may be true of any row.
+    pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
+        match self {
+            Conjunct::Condition(c) => c.may_match(bounds),
+            Conjunct::Null { not: false, .. } => true,
+            Conjunct::Null { column, not: true } => bounds.get(*column).is_some_and(Option::is_some),
+            Conjunct::In { column, values } => {
+                bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| values.iter().any(|v| within(CompOp::Eq, r, v)))
+            }
+        }
+    }
+}
+
 /// \[DESIGN\] Conditions rows were chosen by, each true of every row
 /// chosen: those of a filter a scan is told (`TableStorage::scan_where`),
 /// or an index's one (`TableStorage::read_by_condition`).
 #[derive(Debug, Clone)]
-pub struct Conjunction(pub Vec<Condition>);
+pub struct Conjunction(pub Vec<Conjunct>);
 
 impl Conjunction {
     /// The rows `condition` chose.
     pub fn of(condition: Condition) -> Conjunction {
-        Conjunction(vec![condition])
+        Conjunction(vec![Conjunct::Condition(condition)])
     }
 
-    /// Its conditions.
-    pub fn conditions(&self) -> &[Condition] {
+    /// Its conjuncts.
+    pub fn conjuncts(&self) -> &[Conjunct] {
         &self.0
     }
 
-    /// The columns its conditions read, each once.
+    /// The columns its conjuncts read, each once.
     pub fn columns(&self) -> Vec<usize> {
-        let mut columns: Vec<usize> = self.0.iter().flat_map(|c| c.columns.iter().copied()).collect();
+        let mut columns: Vec<usize> = self.0.iter().flat_map(Conjunct::columns).collect();
         columns.sort_unstable();
         columns.dedup();
         columns
     }
 
-    /// Whether `row` may be one chosen: each condition matches it.
+    /// Whether `row` may be one chosen: each conjunct matches it.
     pub fn matches(&self, row: &Row) -> bool {
         self.0.iter().all(|c| c.matches(row))
     }
 
     /// Whether a row whose every column's value is within `bounds` may be
-    /// one chosen: each condition may match it.
+    /// one chosen: each conjunct may match it.
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
         self.0.iter().all(|c| c.may_match(bounds))
     }
@@ -140,5 +203,29 @@ mod tests {
         assert!(range(vec![n(1)]).may_match(&bounds((0, 2), (0, 30))), "the equal column within");
         assert!(!range(vec![n(5)]).may_match(&bounds((0, 2), (0, 30))), "the equal column without");
         assert!(!alone.may_match(&[Some((n(0), n(0))), None]), "a column of no value not null");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D29, D31 [X3.135-1986 §5.13, §5.15]: a
+    /// conjunct of IS NULL, IS NOT NULL or IN matches a row as the predicate
+    /// is true of it, IN never of a null; within bounds of no null, IS NULL
+    /// may match any row, IS NOT NULL a row of a value, IN a row whose
+    /// bounds hold one of its values; a conjunction matches as each does.
+    #[test]
+    fn conjuncts_match_as_their_predicates() {
+        let null = Conjunct::Null { column: 0, not: false };
+        let not_null = Conjunct::Null { column: 0, not: true };
+        let listed = Conjunct::In { column: 1, values: vec![n(3), n(7)] };
+        let row = vec![Value::Null, n(7)];
+        assert!(null.matches(&row) && !not_null.matches(&row) && listed.matches(&row));
+        assert!(!listed.matches(&vec![n(1), Value::Null]), "IN of a null");
+        assert!(!listed.matches(&vec![n(1), n(5)]));
+        let bounds = vec![None, Some((n(4), n(6)))];
+        assert!(null.may_match(&bounds), "nulls not known");
+        assert!(!not_null.may_match(&bounds), "no value in column 0");
+        assert!(!listed.may_match(&bounds), "neither 3 nor 7 within 4 to 6");
+        assert!(listed.may_match(&[None, Some((n(6), n(9)))]));
+        let both = Conjunction(vec![null, listed]);
+        assert_eq!(both.columns(), vec![0, 1]);
+        assert!(both.matches(&row) && !both.may_match(&bounds));
     }
 }

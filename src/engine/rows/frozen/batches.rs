@@ -1,8 +1,9 @@
 //! \[DESIGN\] A column store table's rows by batch (`TableStorage::scan_batches`,
 //! RULES.md D31), in no particular order: first its frozen rows, a vector
 //! at a time, each column's values straight from its chunks, no row made;
-//! then the tree's rows, as the reader sees them. A condition's columns are
-//! read first, and the other columns only of the rows it keeps.
+//! then the tree's rows, as the reader sees them. The chunks the scan's
+//! conditions cannot match are skipped; the rows of the rest are given
+//! for the filter to judge, as it judges every row given.
 //!
 //! A group's rows the tree has entries for are read from them as the
 //! group is taken up, the tree read once over its range of row ids, in
@@ -159,28 +160,14 @@ impl Batched {
     /// of its rows the tree has no entry for is given.
     fn run_batch(&self, (from, to): (u32, u32)) -> Result<Option<Batch>> {
         let Some(group) = self.current() else { return Ok(None) };
-        let mut positions = self.unshadowed((from, to));
         let pages = self.table.group_pages()?;
         let types = self.table.format.types();
-        // The rows judged by the first condition only, the filter judging
-        // them whole after: every condition skipped chunks (`candidates`),
-        // and judging the rest twice cost more than it saved (`G = 3 AND K
-        // > 10` of 400,000 rows, 11.6 ms judged by one, 12.9 ms by both).
-        if let Some(condition) = self.condition.iter().flat_map(Conjunction::conditions).next() {
-            let keys = condition
-                .columns
-                .iter()
-                .map(|&c| types.get(c).map_or(Ok(Vec::new()), |t| values_at(group, &pages, (c, t), &positions)))
-                .collect::<Result<Vec<_>>>()?;
-            let kept: Vec<u32> = (0..positions.len())
-                .filter(|&n| {
-                    let key: Option<Vec<&Value>> = keys.iter().map(|k| k.get(n)).collect();
-                    key.is_some_and(|k| condition.matches_key(&k))
-                })
-                .filter_map(|n| positions.get(n).copied())
-                .collect();
-            positions = kept;
-        }
+        // A frozen row is not judged here, the filter judging every row
+        // given over its vectors (`exec/batch/judge.rs`): the conditions
+        // skipped the chunks they cannot match (`candidates`), and judging
+        // a row here too cost more than it saved (`G = 3` of 400,000 rows,
+        // 6.4 ms not judged here, 11.1 ms judged).
+        let positions = self.unshadowed((from, to));
         if positions.is_empty() {
             return Ok(None);
         }

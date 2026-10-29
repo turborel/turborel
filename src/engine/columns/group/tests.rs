@@ -10,7 +10,7 @@ use crate::engine::columns::scan::{candidates, rows};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::index::Probe;
 use crate::memory::MemoryBudget;
-use crate::storage::{Condition, Conjunction};
+use crate::storage::{Condition, Conjunct, Conjunction};
 use crate::value::{CompOp, Decimal, Spelled};
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
@@ -124,13 +124,24 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     // Of two conditions, the chunks both may match: K below 1,050 keeps
     // the runs of 10 and 11 that begin before it.
     let below = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Lt, value: int(1050) } };
-    let both_runs = candidates(&group, Some(&Conjunction(vec![between.clone(), below.clone()])));
+    let both_runs = candidates(&group, Some(&Conjunction(vec![Conjunct::Condition(between.clone()), Conjunct::Condition(below.clone())])));
     let first: u32 = both_runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
     assert!(first > 0 && first < read, "fewer than of one alone: {first} of {read}");
     assert!(both_runs.iter().all(|&(from, _)| from < 1050), "{both_runs:?}");
     let above = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: int(3000) } };
-    assert!(candidates(&group, Some(&Conjunction(vec![between, above]))).is_empty(), "no chunk both may match");
+    assert!(
+        candidates(&group, Some(&Conjunction(vec![Conjunct::Condition(between), Conjunct::Condition(above)]))).is_empty(),
+        "no chunk both may match"
+    );
     assert_eq!(candidates(&group, Some(&Conjunction(Vec::new()))), vec![(0, 4000)], "no condition");
+    // K has no null: IS NULL keeps no chunk, IS NOT NULL every one; IN of
+    // two groups' values keeps their chunks.
+    let null = |not| Conjunction(vec![Conjunct::Null { column: 0, not }]);
+    assert!(candidates(&group, Some(&null(false))).is_empty(), "no null");
+    assert_eq!(candidates(&group, Some(&null(true))), vec![(0, 4000)]);
+    let listed = Conjunction(vec![Conjunct::In { column: 2, values: vec![int(10), int(30)] }]);
+    let kept: u32 = candidates(&group, Some(&listed)).iter().map(|(from, to)| to.saturating_sub(*from)).sum();
+    assert!((200..2000).contains(&kept), "the chunks of the 200 rows of 10 and 30, not all: {kept}");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, frozen row groups: a group of no rows,

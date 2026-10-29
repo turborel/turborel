@@ -149,9 +149,9 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Scan filters** beyond conjunctions of `column op constant` (D31):
-  IS NULL, IN, LIKE with a constant prefix, OR of one column's ranges,
-  parameters. Those pushed only cut the rows returned and the reads
+- **Scan filters** beyond conjunctions of a column compared with a
+  constant, IS NULL and IN a list (D31): NOT IN, LIKE with a constant
+  prefix, OR of one column's ranges. Those pushed only cut the rows returned and the reads
   tracked for serializability in the row store, which still reads and
   decodes every row; zone maps of its pages would let it skip some.
 - **Batch execution, further** (RULES.md D31): a filter with LIKE is

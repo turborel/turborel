@@ -23,7 +23,7 @@ mod condition;
 mod options;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, batches_of};
-pub use condition::{Condition, Conjunction};
+pub use condition::{Condition, Conjunct, Conjunction};
 
 use std::sync::Arc;
 

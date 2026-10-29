@@ -727,16 +727,19 @@ the format of frozen groups becomes a trait when it is.
   gathered in batches written as one record each (`OpenOptions::undo_batch`),
   read from memory until written.
 - Scans are given the columns needed, and the conjuncts of a filter that
-  compare a column with a constant, a BETWEEN as two
-  (`TableStorage::scan_where`, `storage::Conjunction`), unless the filter
-  can raise an error: each true of every row the filter keeps, so an
-  engine may leave out rows they do not match, and count as read only
-  those they all match; the filter still judges every row given. The
-  column store skips a frozen chunk any of them cannot match, and judges
-  rows by the first, an equality if there is one, as judging the rest
-  twice cost more than it saved: of 400,000 rows, `G = 3 AND B < 4000`
-  ran in 1.0 ms where with one conjunct told it took 11.6, `B BETWEEN
-  100000 AND 103999` in 1.2 ms where it took 13.4.
+  compare a column with a constant (a BETWEEN as two), test it IS NULL or
+  IS NOT NULL, or test it IN a list of constants (`TableStorage::scan_where`,
+  `storage::Conjunction`), unless the filter can raise an error: each
+  true of every row the filter keeps, so an engine may leave out rows
+  they do not match, and count as read only those they all match; the
+  filter still judges every row given. The column store skips a frozen
+  chunk any of them cannot match, and leaves the rows of the rest to the
+  filter, as judging them twice cost more than it saved (`G = 3` of
+  400,000 rows: 6.4 ms, 11.1 ms judged in the engine too). Of 400,000
+  rows, `G = 3 AND B < 4000` ran in 1.1 ms where with one conjunct told
+  it took 11.6; `B BETWEEN 100000 AND 103999` in 1.2 ms where it took
+  13.4; `B IN (5, 200000, 399000)` in 1.1 ms where it took 9.0; and
+  `N IS NULL`, its nulls in one chunk, in 0.9 ms where it took 4.2.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity. The row store
   gathers them again, once a table has changed enough, as the database's

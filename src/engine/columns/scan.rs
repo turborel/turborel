@@ -6,7 +6,7 @@
 use super::Chunk;
 use super::group::{Group, Pages, Seal};
 use crate::error::Result;
-use crate::storage::{Condition, Conjunction, Row};
+use crate::storage::{Conjunct, Conjunction, Row};
 use crate::value::{DataType, Value};
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
@@ -14,7 +14,7 @@ use crate::value::{DataType, Value};
 /// there are none.
 pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Vec<(u32, u32)> {
     let mut runs = vec![(0, group.rows)];
-    for condition in conditions.iter().flat_map(|c| c.conditions()) {
+    for condition in conditions.iter().flat_map(|c| c.conjuncts()) {
         runs = both(&runs, &kept_by(group, condition));
         if runs.is_empty() {
             break;
@@ -42,11 +42,13 @@ fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
 }
 
 /// The runs of positions of `group`'s rows that `condition` may match, in
-/// order: every row if it compares more than one column; else those of the
-/// chunks of its column whose values may match.
-fn kept_by(group: &Group, condition: &Condition) -> Vec<(u32, u32)> {
+/// order: every row if it reads more than one column; else those of the
+/// chunks of its column whose values may match: by their least and
+/// greatest values, or, for IS NULL and IS NOT NULL, their nulls.
+fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
     let all = vec![(0, group.rows)];
-    let [column] = condition.columns.as_slice() else { return all };
+    let columns = condition.columns();
+    let [column] = columns.as_slice() else { return all };
     let Some(zones) = group.columns.get(*column) else { return all };
     let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];
     let mut runs: Vec<(u32, u32)> = Vec::new();
@@ -54,7 +56,12 @@ fn kept_by(group: &Group, condition: &Condition) -> Vec<(u32, u32)> {
         if let Some(b) = bounds.get_mut(*column) {
             b.clone_from(&zone.bounds);
         }
-        if !condition.may_match(&bounds) {
+        let may = match condition {
+            Conjunct::Null { not: false, .. } => zone.nulls > 0,
+            Conjunct::Null { not: true, .. } => zone.nulls < zone.run.rows,
+            Conjunct::Condition(_) | Conjunct::In { .. } => condition.may_match(&bounds),
+        };
+        if !may {
             continue;
         }
         let (from, to) = (zone.run.first, zone.run.first.saturating_add(zone.run.rows));
