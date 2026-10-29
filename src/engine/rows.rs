@@ -49,6 +49,7 @@ mod store;
 mod undo;
 mod values;
 mod version;
+mod zones;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -56,7 +57,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
 use frozen::{Frozen, Merged, Merging};
-use ids::{BLOCK, IdBlocks};
+use ids::IdBlocks;
 use ids::{key, no_row, row_id};
 pub use meta::TABLE_FORMAT;
 use meta::{locator_of, meta_content, parse_locator, parse_meta};
@@ -65,6 +66,7 @@ pub use options::{DEFAULT_HELD_BYTES, DEFAULT_TRACKED_ROWS, Refresh, TableOption
 use sealing::Sealing;
 use stats::Gathered;
 pub use undo::UndoStore;
+use zones::Zones;
 
 use super::record::{RecordFormat, Spill};
 use super::tree::BLinkTree;
@@ -79,7 +81,7 @@ use crate::memory::Host;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
-use crate::sync::{lock, lock_builtin, write};
+use crate::sync::{lock_builtin, write};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 use crate::value::DataType;
 
@@ -232,6 +234,8 @@ pub struct RowTable {
     frozen: Frozen,
     /// Held shared while it freezes rows (`TableFiles::freezes`).
     freezes: Arc<RwLock<()>>,
+    /// Its zone maps, of the row store (`rows/zones.rs`).
+    zones: Zones,
 }
 
 /// What a table's meta page names, made or read.
@@ -281,6 +285,7 @@ impl RowTable {
         let tree = BLinkTree::open(Arc::clone(&files.pool), files.file, tree_meta)?;
         let table = RowTable::with(files, Found { meta, tree, reserved }, types, options)?.sealed(sealing);
         table.load_directory(directory)?;
+        table.zones.opened(reserved);
         table.live.store(table.count_newest()?, Ordering::Release);
         table.gathered.gather_when_asked();
         Ok(table)
@@ -311,6 +316,7 @@ impl RowTable {
             sealing: Sealing::plain(),
             frozen: Frozen::new(options.columns),
             freezes: Arc::clone(&files.freezes),
+            zones: Zones::new(types, options.columns.is_none()),
         })
     }
 
@@ -326,46 +332,11 @@ impl RowTable {
     }
 }
 
-impl RowTable {
-    /// A new row id.
-    fn next_id(&self) -> Result<RowId> {
-        self.blocks.next(|| {
-            let start = self.next.fetch_add(BLOCK, Ordering::AcqRel);
-            let last = start.checked_add(BLOCK - 1).filter(|&last| last < RowId::MAX);
-            let last = last.ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] the table has given every row id"))?;
-            self.reserve_past(last)?;
-            Ok(start)
-        })
-    }
-
-    /// Makes the meta page record `id` as possibly given.
-    fn reserve_past(&self, id: RowId) -> Result<()> {
-        if id < self.reserved.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        let _reserving = lock(&self.reserving)?;
-        if id < self.reserved.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        let reserved = id.saturating_add(RESERVE);
-        *self.pool.write(self.file, self.meta)? = meta_content(self.tree.meta(), reserved, self.frozen.stored());
-        self.reserved.store(reserved, Ordering::Release);
-        Ok(())
-    }
-
-    /// Writes the meta page as the table is now.
-    fn write_meta(&self) -> Result<()> {
-        let _reserving = lock(&self.reserving)?;
-        *self.pool.write(self.file, self.meta)? =
-            meta_content(self.tree.meta(), self.reserved.load(Ordering::Acquire), self.frozen.stored());
-        Ok(())
-    }
-}
-
 impl TableStorage for RowTable {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
         let id = self.next_id()?;
         let (record, pages) = self.encode(id, &row)?;
+        self.zones.widen(id, Some(&row), false);
         match self.insert_version(tx, id, &record) {
             Ok(true) => {
                 self.live.fetch_add(1, Ordering::AcqRel);
@@ -385,12 +356,14 @@ impl TableStorage for RowTable {
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
         let (record, pages) = self.encode(id, &row)?;
+        self.zones.widen(id, Some(&row), true);
         self.write_version(tx, id, Some(&record)).inspect_err(|_| self.free(&pages))?;
         self.gathered.changed();
         Ok(())
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
+        self.zones.widen(id, None, true);
         self.write_version(tx, id, None)?;
         self.live.fetch_sub(1, Ordering::AcqRel);
         self.gathered.changed();
@@ -405,6 +378,7 @@ impl TableStorage for RowTable {
         self.blocks.clear();
         self.reserve_past(id)?;
         let (record, pages) = self.encode(id, &row)?;
+        self.zones.widen(id, Some(&row), true);
         let restored = match self.insert_version(tx, id, &record) {
             Ok(true) => {
                 self.live.fetch_add(1, Ordering::AcqRel);
@@ -480,6 +454,7 @@ impl TableStorage for RowTable {
 
     /// Writes the row's newest version outright (`rows/recovery.rs`).
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
+        self.zones.widen(id, row.as_ref(), true);
         self.apply_newest(id, row)
     }
 
@@ -557,17 +532,21 @@ impl TableStorage for RowTable {
         self.collect(horizon, removed)
     }
 
-    /// Statistics to gather; rows to freeze, groups to write again,
-    /// entries to take out.
+    /// Statistics to gather; zones to sum up; rows to freeze, groups to
+    /// write again, entries to take out.
     fn maintenance_due(&self) -> bool {
-        self.gather_wanted() || self.freeze_wanted()
+        self.gather_wanted() || self.zones.due() || self.freeze_wanted()
     }
 
-    /// Statistics gathered as one call's work, freezing as the next's.
+    /// Statistics gathered as one call's work, zones summed up as the
+    /// next's, freezing as the next's.
     fn maintain(&self, horizon: Timestamp) -> Result<bool> {
         if self.gather_wanted() {
             self.gather_if_due();
             return Ok(true);
+        }
+        if self.zones.due() {
+            return self.sum_zones(horizon);
         }
         self.freeze_due(horizon)
     }

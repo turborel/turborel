@@ -13,16 +13,20 @@
 //! given. A thread that has ended leaves its block behind; a shard of the
 //! blocks holding more than `KEPT` forgets them all, so threads that come
 //! and go cost a bounded amount, and their blocks' unused ids are skipped.
+//! The meta page records the ids that may have been given, a reservation
+//! moved past each block as it is taken, so ids go on past them when the
+//! table is opened again.
 
 use std::hash::BuildHasher;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::thread::{self, ThreadId};
 
-use super::{KEY, corrupt};
+use super::{KEY, RESERVE, RowTable, corrupt, meta_content};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::{MurmurBuildHasher, MurmurMap};
 use crate::storage::RowId;
-use crate::sync::lock_builtin;
+use crate::sync::{lock, lock_builtin};
 
 /// Ids a thread takes at a time: more than a leaf holds, so threads
 /// inserting at once work in different leaves.
@@ -95,4 +99,40 @@ pub(super) fn row_id(key: &[u8]) -> Result<RowId> {
 /// The error of no row with id `id`.
 pub(super) fn no_row<T>(id: RowId) -> Result<T> {
     Err(SqlError::new(Code::Api, format!("[DESIGN] no row with id {id}")))
+}
+
+impl RowTable {
+    /// A new row id.
+    pub(super) fn next_id(&self) -> Result<RowId> {
+        self.blocks.next(|| {
+            let start = self.next.fetch_add(BLOCK, Ordering::AcqRel);
+            let last = start.checked_add(BLOCK - 1).filter(|&last| last < RowId::MAX);
+            let last = last.ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] the table has given every row id"))?;
+            self.reserve_past(last)?;
+            Ok(start)
+        })
+    }
+
+    /// Makes the meta page record `id` as possibly given.
+    pub(super) fn reserve_past(&self, id: RowId) -> Result<()> {
+        if id < self.reserved.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let _reserving = lock(&self.reserving)?;
+        if id < self.reserved.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let reserved = id.saturating_add(RESERVE);
+        *self.pool.write(self.file, self.meta)? = meta_content(self.tree.meta(), reserved, self.frozen.stored());
+        self.reserved.store(reserved, Ordering::Release);
+        Ok(())
+    }
+
+    /// Writes the meta page as the table is now.
+    pub(super) fn write_meta(&self) -> Result<()> {
+        let _reserving = lock(&self.reserving)?;
+        *self.pool.write(self.file, self.meta)? =
+            meta_content(self.tree.meta(), self.reserved.load(Ordering::Acquire), self.frozen.stored());
+        Ok(())
+    }
 }

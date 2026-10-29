@@ -261,7 +261,7 @@ impl RowTable {
 
     /// Who made a version, counting a committed transaction whose stamp is
     /// late as committed.
-    fn maker(&self, version: &Version<'_>) -> Maker {
+    pub(super) fn maker(&self, version: &Version<'_>) -> Maker {
         match version.maker {
             Maker::Open(by) => {
                 let late = self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner);

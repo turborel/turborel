@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use super::frozen::{Batched, Merged, Merging};
 use super::mvcc::Read;
-use super::{RowTable, row_id};
+use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
-use crate::storage::{Batches, Conjunction, Rows, batches_of};
+use crate::storage::{Batches, Conjunction, RowId, Rows, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -26,11 +26,47 @@ impl Deref for TreeOf {
     }
 }
 
+/// A table's tree's entries in ranges of row ids (`RowTable::ranged`).
+pub(super) struct Ranged {
+    table: Arc<RowTable>,
+    ranges: std::vec::IntoIter<(RowId, Option<RowId>)>,
+    current: Option<Scan<TreeOf>>,
+}
+
+impl Iterator for Ranged {
+    type Item = <Scan<TreeOf> as Iterator>::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(entry) = self.current.as_mut()?.next() {
+                return Some(entry);
+            }
+            self.current = self.ranges.next().map(|range| RowTable::range(&self.table, range));
+        }
+    }
+}
+
 impl RowTable {
     /// Every entry of the table's tree, in row id order, read through
     /// `table`, which the scan holds.
     pub(super) fn entries(table: &Arc<Self>) -> Scan<TreeOf> {
         scan_of(TreeOf(Arc::clone(table)), Bound::Unbounded, Bound::Unbounded, Direction::Forward)
+    }
+
+    /// The tree's entries in `ranges` of row ids, in order, each from its
+    /// first id up to, not including, its end if it has one; read through
+    /// `table`, which the scan holds.
+    fn ranged(table: &Arc<Self>, ranges: Vec<(RowId, Option<RowId>)>) -> Ranged {
+        let mut ranges = ranges.into_iter();
+        let current = ranges.next().map(|range| Self::range(table, range));
+        Ranged { table: Arc::clone(table), ranges, current }
+    }
+
+    /// The tree's entries from row `first` up to, not including, `end`.
+    fn range(table: &Arc<Self>, (first, end): (RowId, Option<RowId>)) -> Scan<TreeOf> {
+        let (low, high) = (key(first), end.map(key));
+        let upper = high.as_ref().map_or(Bound::Unbounded, |h| Bound::Excluded(&h[..]));
+        scan_of(TreeOf(Arc::clone(table)), Bound::Included(&low[..]), upper, Direction::Forward)
     }
 
     /// The rows `tx` sees, `columns` decoded, and only those `condition`
@@ -54,7 +90,9 @@ impl RowTable {
         if self.frozen.columns().is_some() || !directory.groups.is_empty() {
             return Box::new(Merged::new(Arc::clone(&self), (Merging::Seen(reader), directory), columns, condition));
         }
-        Box::new(Self::entries(&self).filter_map(move |entry| {
+        // Only the zones whose rows the conditions may match (`rows/zones.rs`).
+        let ranges = self.zones.ranges(condition.as_ref());
+        Box::new(Self::ranged(&self, ranges).filter_map(move |entry| {
             let found = entry.and_then(|(key, newest)| {
                 let id = row_id(&key)?;
                 let Some(record) = self.visible_from(newest, reader)? else { return Ok(None) };

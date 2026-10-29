@@ -151,9 +151,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 - **Scan filters** beyond conjunctions of a column compared with a
   constant, IS NULL and IN a list (D31): NOT IN, LIKE with a constant
-  prefix, OR of one column's ranges. Those pushed only cut the rows returned and the reads
-  tracked for serializability in the row store, which still reads and
-  decodes every row; zone maps of its pages would let it skip some.
+  prefix, OR of one column's ranges.
 - **Batch execution, further** (RULES.md D31): a filter with LIKE is
   judged a row at a time, as LIKE can raise an error for a pattern, which
   a row the filter's other conjuncts reject must still raise; a LIKE
@@ -162,11 +160,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
   a vector at a time (`Accumulator`).
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
-- **Statistics:** zone maps of a row store table's pages (a column store's
-  frozen chunks have them, D31); the row store's fetch and scan costs,
-  measured: it keeps the defaults of
-  `TableStorage`, and its scan cost ignores the columns read; wide columns
-  left out of histograms.
+- **Statistics:** the row store's fetch and scan costs, measured: it
+  keeps the defaults of `TableStorage`, its scan cost ignores the columns
+  read, and the planner does not ask its zone maps (D31) what share of a
+  table a scan's conditions read, so it may choose an index where a scan
+  skips most of the table; wide columns left out of histograms.
+- **Zone maps, further** (D31): a zone a rolled-back insert widened is
+  never narrowed; zones are summed up from scratch after a table is
+  opened, a pass of the whole table, rather than kept with its pages.
 
 ---
 

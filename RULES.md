@@ -740,6 +740,22 @@ the format of frozen groups becomes a trait when it is.
   it took 11.6; `B BETWEEN 100000 AND 103999` in 1.2 ms where it took
   13.4; `B IN (5, 200000, 399000)` in 1.1 ms where it took 9.0; and
   `N IS NULL`, its nulls in one chunk, in 0.9 ms where it took 4.2.
+- Zone maps of the row store (`rows/zones.rs`): for each block of 1024
+  row ids, of each column of a number, a datetime, an interval or a
+  character string of at most 32, its least and greatest value and
+  whether one is null; a scan reads only the blocks its conditions may
+  match. By row id, as rows never move between ids, so leaves splitting
+  touch none. A write widens its block's zone before it is made; the
+  maintenance thread sums up again one an update or deletion left stale,
+  from each version of its rows a reader at or after the horizon may
+  read, an open transaction's too, and keeps it stale while such a
+  version is not its row's newest; a write meanwhile throws its sum away.
+  So a zone is never narrower than what a snapshot may read. Kept in
+  memory, each zone locked alone; a table opened knows none until each is
+  summed up. Of 400,000 rows: `B BETWEEN 100000 AND 103999`, B in the
+  rows' order, 54.4 ms to 0.9 ms; `B IN (5, 200000, 399000)` 48.4 to 0.4;
+  `N IS NULL`, its nulls in two blocks, 45.2 to 0.3; a scan nothing
+  skips 2 to 3% slower; an insert 1% slower.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity. The row store
   gathers them again, once a table has changed enough, as the database's
