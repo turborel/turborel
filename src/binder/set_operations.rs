@@ -206,6 +206,14 @@ fn set_operation(cx: Context<'_>, s: &SetOperation, nesting: &Nesting<'_>) -> Re
     let operand = nesting.operand();
     let left = bind_query_expression(cx, &s.left, &operand)?;
     let right = bind_query_expression(cx, &s.right, &operand)?;
+    combined(cx, s, left, right)
+}
+
+/// `set_operation`'s work once its operands are bound. Never inlined into
+/// it, whose frame each operand that is a set operation adds to the stack
+/// again (RULES.md R-CF-6).
+#[inline(never)]
+fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Result<Bound> {
     let character = left.columns.iter().chain(&right.columns).any(|c| c.data_type.is_character());
     if cx.purpose.constrains() && character && !(s.op == SetOperator::Union && s.all) {
         return Err(nondeterministic("§7.10 SR15", "UNION, EXCEPT or INTERSECT, not UNION ALL, of a character string column"));

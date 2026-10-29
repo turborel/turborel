@@ -62,39 +62,86 @@ fn failed(e: SqlError) -> RowIter {
 /// Rows are read as transaction `tx` sees them. A failure is the iterator's
 /// next item, so it reaches the caller as an error, not a panic.
 pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    // Matched by reference, the plan handed whole to each arm's function,
+    // so no arm adds a plan of its own to the frame every level of a plan
+    // adds to the stack (RULES.md R-CF-6).
+    match &plan {
+        Plan::SeqScan { .. } => scanned_plan(plan, db, tx),
+        Plan::IndexScan { .. } => indexed(plan, db, tx),
+        Plan::Filter { .. } => filtered(plan, db, tx),
+        Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan(plan, db, tx),
+        Plan::OuterJoin { .. } => join::outer(plan, db, tx),
+        // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
+        Plan::Aggregate { .. } => grouped(plan, db, tx),
+        Plan::DefaultRow { .. } => defaulted(plan, db, tx),
+        // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
+        Plan::Project { .. } => projected(plan, db, tx),
+        Plan::Append { .. } => appended(plan, db, tx),
+        Plan::SetOp { .. } => set::operation(plan, db, tx),
+        Plan::Values { .. } => set::values(plan, db, tx),
+        Plan::System { .. } => system_plan(plan, db),
+        Plan::Sort { .. } => sorted_plan(plan, db, tx),
+        Plan::Distinct { .. } => distinct_rows(plan, db, tx),
+    }
+}
+
+/// The rows of the scan `plan`.
+#[inline(never)]
+fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    let Plan::SeqScan { table, columns, .. } = plan else { return failed(broken("a scan is not one")) };
+    scanned(&table, &columns, db, tx)
+}
+
+/// The rows of the product or hash join `plan`.
+#[inline(never)]
+fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     match plan {
-        Plan::SeqScan { table, columns, .. } => scanned(&table, &columns, db, tx),
-
-        index @ Plan::IndexScan { .. } => indexed(index, db, tx),
-        filter @ Plan::Filter { .. } => filtered(filter, db, tx),
-
         Plan::Product { left, right } => join::joined(*left, *right, None, db, tx),
         Plan::HashJoin { left, right, keys, .. } => join::joined(*left, *right, Some(keys), db, tx),
-        outer @ Plan::OuterJoin { .. } => join::outer(outer, db, tx),
-
-        // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
-        group @ Plan::Aggregate { .. } => grouped(group, db, tx),
-
-        // [X3.135-1986 §5.25 GR3]
-        Plan::DefaultRow { row, input } => {
-            let mut rows = execute(*input, db, tx).peekable();
-            if rows.peek().is_none() { Box::new(std::iter::once(Ok(row))) } else { Box::new(rows) }
-        }
-
-        // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
-        project @ Plan::Project { .. } => projected(project, db, tx),
-
-        // [X3.135-1986 §8.3 GR2b ii] the rows of both operands.
-        Plan::Append { left, right } => Box::new(execute(*left, db, tx).chain(execute(*right, db, tx))),
-        set @ Plan::SetOp { .. } => set::operation(set, db, tx),
-        values @ Plan::Values { .. } => set::values(values, db, tx),
-        // [ISO/IEC 9075:1992 §21.1] a system table's rows, made as it is read.
-        Plan::System { read } => system_rows(&read, db),
-
-        Plan::Sort { keys, input, .. } => sorted(&keys, *input, db, tx),
-
-        distinct @ Plan::Distinct { .. } => distinct_rows(distinct, db, tx),
+        Plan::SeqScan { .. }
+        | Plan::IndexScan { .. }
+        | Plan::Filter { .. }
+        | Plan::OuterJoin { .. }
+        | Plan::Aggregate { .. }
+        | Plan::DefaultRow { .. }
+        | Plan::Project { .. }
+        | Plan::Append { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Sort { .. }
+        | Plan::Distinct { .. } => failed(broken("a join is not one")),
     }
+}
+
+/// [X3.135-1986 §5.25 GR3] The rows of `plan`'s input, or its default row
+/// if there are none.
+#[inline(never)]
+fn defaulted(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    let Plan::DefaultRow { row, input } = plan else { return failed(broken("a default row is not one")) };
+    let mut rows = execute(*input, db, tx).peekable();
+    if rows.peek().is_none() { Box::new(std::iter::once(Ok(row))) } else { Box::new(rows) }
+}
+
+/// [X3.135-1986 §8.3 GR2b ii] the rows of both operands of `plan`.
+#[inline(never)]
+fn appended(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    let Plan::Append { left, right } = plan else { return failed(broken("an append is not one")) };
+    Box::new(execute(*left, db, tx).chain(execute(*right, db, tx)))
+}
+
+/// [ISO/IEC 9075:1992 §21.1] a system table's rows, made as it is read.
+#[inline(never)]
+fn system_plan(plan: Plan, db: &Arc<State>) -> RowIter {
+    let Plan::System { read } = plan else { return failed(broken("a system table's read is not one")) };
+    system_rows(&read, db)
+}
+
+/// The rows of the sort `plan`.
+#[inline(never)]
+fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    let Plan::Sort { keys, input, .. } = plan else { return failed(broken("a sort is not one")) };
+    sorted(&keys, *input, db, tx)
 }
 
 /// The rows of `table`'s columns `columns`, each read only while the
