@@ -9,8 +9,9 @@
 
 use std::cmp::Ordering;
 
-use super::Judged;
-use crate::storage::Ints;
+use super::{Judged, Side};
+use crate::exec::batch::vector::ints::lane;
+use crate::storage::{Batch, Ints};
 use crate::value::{CompOp, Value, pow10};
 
 /// The rows of `kept` that `judged` keeps of `ints`, if it is judged of
@@ -34,8 +35,24 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
             let keeps = |u: i64| if *not { !has_null && !equal(u) } else { equal(u) };
             Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect())
         }
-        Judged::Like(..) => None,
+        Judged::Like(..) | Judged::Compared(..) => None,
     }
+}
+
+/// The rows of `over`, rows of `batch`, of which `a` `op` `b` is true, each
+/// side evaluated as integers (`vector/ints.rs`) and both scaled to the
+/// greater scale: none if either's integers are not made.
+pub(super) fn compared((left, op, right): (&Side, CompOp, &Side), batch: &Batch, over: &[usize]) -> Option<Vec<usize>> {
+    let (first, second) = (lane(&left.0, &left.1, batch, Some(over))?, lane(&right.0, &right.1, batch, Some(over))?);
+    let common = first.scale.max(second.scale);
+    let factors = (pow10(common.checked_sub(first.scale)?)?, pow10(common.checked_sub(second.scale)?)?);
+    let unit = |ints: &Ints, n: usize| (!ints.is_null(n)).then(|| ints.units.get(n).copied()).flatten();
+    let scaled = |units: i64, factor: i128| i128::from(units).checked_mul(factor);
+    let truth = |n: usize| match (unit(&first, n), unit(&second, n)) {
+        (Some(one), Some(other)) => holds(op, scaled(one, factors.0).zip(scaled(other, factors.1)).map(|(p, q)| p.cmp(&q))),
+        (None, _) | (_, None) => false,
+    };
+    Some(over.iter().enumerate().filter(|&(n, _)| truth(n)).map(|(_, &r)| r).collect())
 }
 
 /// The factor each integer of `scale` is multiplied by, and `constant` at

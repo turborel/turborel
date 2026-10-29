@@ -41,6 +41,26 @@ impl Lane<'_> {
     }
 }
 
+/// Whether `e` may be evaluated as integers, its columns' vectors of them:
+/// of columns and exact constants, negated, summed, subtracted or
+/// multiplied, no deeper than `DEPTH`.
+pub(in crate::exec::batch) fn evaluable(e: &Expr) -> bool {
+    shaped(e, super::DEPTH)
+}
+
+/// `evaluable`'s work, of an expression up to `depth` deep.
+fn shaped(e: &Expr, depth: usize) -> bool {
+    let Some(deeper) = depth.checked_sub(1) else { return false };
+    match e {
+        Expr::Column(_) | Expr::Const(Value::Exact(_)) => true,
+        Expr::Neg(operand) => shaped(operand, deeper),
+        Expr::Arith(a, op, b) => *op != ArithOp::Div && shaped(a, deeper) && shaped(b, deeper),
+        Expr::Const(_) | Expr::Call(..) | Expr::Outer(..) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => {
+            false
+        }
+    }
+}
+
 /// The integers of `e` over the rows `rows` of `batch`, or all, each column
 /// `c` of `e` the vector at `inputs[c]`, if `e` is of columns of integers
 /// and exact constants, and computes, of those rows, nothing past the

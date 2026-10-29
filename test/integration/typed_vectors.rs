@@ -11,7 +11,7 @@ use crate::common::{both_ways, exec, rows, sorted};
 /// The rows written: K, a key; D, a DECIMAL(9, 2) of either sign; I, a
 /// SMALLINT, one of 5; N, a NUMERIC(18), near its limits for some rows;
 /// each but K null for every 7th row.
-const ROWS: i64 = 5000;
+const ROWS: i64 = 10_000;
 
 /// Tables R, of the row store, and C, of the column store, alike: written,
 /// C's rows frozen, then some changed and deleted in each.
@@ -52,7 +52,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 25] = [
+const QUERIES: [&str; 29] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -77,6 +77,10 @@ const QUERIES: [&str; 25] = [
     "SELECT SUM(D * 0.0000000000000001), SUM(K / 2), MIN(I - D) FROM {t} WHERE K < 3000",
     "SELECT I, SUM(-D + 1), MIN(D * I) FROM {t} GROUP BY I",
     "SELECT I, SUM(3), COUNT(K / 2), MAX(D * 2.5E0) FROM {t} GROUP BY I",
+    "SELECT COUNT(*), SUM(D) FROM {t} WHERE D * 2 > 3 AND I < 4",
+    "SELECT COUNT(*) FROM {t} WHERE D - 5 < 0 AND K + 1 > 100 AND D <> I",
+    "SELECT COUNT(*), MIN(K) FROM {t} WHERE D * D > 1.5 AND -D <= 0.25",
+    "SELECT COUNT(*) FROM {t} WHERE K / 2 > 1000 AND D * 2 > 0",
     "SELECT D, SUM(CASE WHEN I > 2 THEN I * 10 ELSE 0 END), COUNT(*) FROM {t} WHERE K < 2000 GROUP BY D",
 ];
 
@@ -91,7 +95,8 @@ const QUERIES: [&str; 25] = [
 /// evaluated of values; every comparison, a list of an approximate
 /// number; negations, differences and products of scales up to 18; a
 /// running sum, or a product, past 18 digits raising either way, grouped
-/// or not; of a constant, of an approximate number, of a quotient and a
+/// or not; filters that can raise of comparisons of expressions, one of
+/// a quotient, one past 18 digits raising either way; of a constant, of an approximate number, of a quotient and a
 /// CASE a row at a time; groups past the work area; rows changed and deleted after they were
 /// frozen.
 #[test]
@@ -115,6 +120,7 @@ fn exact_numbers_as_integers_answer_as_row_by_row() {
     // [X3.135-1986 §5.8 GR4e] a running sum past 18 digits raises, of
     // integers as of decimals, though the sum of all is within them.
     let raising = [
+        "SELECT COUNT(*) FROM {t} WHERE N * 1000 > 0 AND I = 1",
         "SELECT SUM(N) FROM {t}",
         "SELECT SUM(N) FROM {t} GROUP BY I",
         "SELECT SUM(N * 1000) FROM {t}",
