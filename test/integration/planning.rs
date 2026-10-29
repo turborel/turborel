@@ -99,12 +99,12 @@ fn engine_cost_model_changes_the_plan() {
             s.run(&format!("INSERT INTO T VALUES ({i}, {i}, {i}, {i})")).unwrap();
         }
     }
-    // 20 matching rows: cheap to fetch by id from the memory engine, but at
-    // the costly engine's price, scanning all 100 rows is cheaper.
-    let sql = "SELECT A FROM T WHERE A >= 80";
+    // 3 matching rows: cheap to fetch by id from the row store, but at the
+    // costly engine's price, scanning all 100 rows is cheaper.
+    let sql = "SELECT A FROM T WHERE A >= 97";
     assert!(db.session("R").explain(sql, &Params::new()).unwrap().contains("IndexScan"));
     assert!(db.session("C").explain(sql, &Params::new()).unwrap().contains("SeqScan"));
-    let expected: Vec<String> = (80..100).map(|i: i32| i.to_string()).collect();
+    let expected: Vec<String> = (97..100).map(|i: i32| i.to_string()).collect();
     for auth in ["R", "C"] {
         let mut got = rows(&db.session(auth), sql).unwrap();
         got.sort_by_key(|v| v.parse::<i32>().unwrap());
@@ -300,9 +300,9 @@ fn sort_elimination_uses_ordered_indexes() {
     let s = db.session("APP");
     let physical = |q: &str| s.physical_plan(q, &Params::new()).unwrap();
     // A btree probe on the sort column returns rows in order: no Sort.
-    let p = physical("SELECT ID, NAME FROM T WHERE ID > 50 ORDER BY ID");
-    assert!(!p.contains("Sort") && p.contains("ID > 50"), "{p}");
-    let p = physical("SELECT ID FROM T WHERE ID > 50 ORDER BY ID DESC");
+    let p = physical("SELECT ID, NAME FROM T WHERE ID > 57 ORDER BY ID");
+    assert!(!p.contains("Sort") && p.contains("ID > 57"), "{p}");
+    let p = physical("SELECT ID FROM T WHERE ID > 57 ORDER BY ID DESC");
     assert!(!p.contains("Sort") && p.contains("backward"), "{p}");
     // A hash index gives no order, and NAME may be null (indexes hold no nulls).
     assert!(physical("SELECT NAME FROM T ORDER BY NAME").contains("Sort"));
@@ -310,8 +310,8 @@ fn sort_elimination_uses_ordered_indexes() {
     assert!(physical("SELECT ID, NAME FROM T ORDER BY ID, NAME").contains("Sort"));
     assert!(physical("SELECT ID + 1 FROM T ORDER BY 1").contains("Sort"));
     // Results are the same as with an explicit sort.
-    let ordered = rows(&s, "SELECT ID FROM T WHERE ID > 50 ORDER BY ID DESC").unwrap();
-    assert_eq!(ordered, (51..=60).rev().map(|i| i.to_string()).collect::<Vec<_>>());
+    let ordered = rows(&s, "SELECT ID FROM T WHERE ID > 57 ORDER BY ID DESC").unwrap();
+    assert_eq!(ordered, (58..=60).rev().map(|i| i.to_string()).collect::<Vec<_>>());
     // Reading all 60 rows through the index costs more than scanning and sorting...
     assert!(physical("SELECT ID, NAME FROM T ORDER BY ID").contains("Sort"));
     drop(s);
@@ -526,9 +526,10 @@ fn index_statistics_choose_and_estimate() {
     assert!(plan.contains("using T_K_HASH [hash]"), "{plan}");
     assert_eq!(rows(&s, "SELECT A FROM T WHERE K = 1234"), Ok(vec!["4".into()]));
     // A = B in every row: 2,000 rows have A = 3 and B = 3, of ten keys in
-    // all; as if independent, a tenth of a tenth, 200.
+    // all; as if independent, a tenth of a tenth, 200. Asked in the
+    // index's order, which the index gives as it probes.
     // The keys counted by a sketch, so near enough.
-    let est = ab_estimate(&s, "SELECT K FROM T WHERE A = 3 AND B = 3");
+    let est = ab_estimate(&s, "SELECT K, A, B FROM T WHERE A = 3 AND B = 3 ORDER BY A, B");
     assert!((est - 2000.0).abs() < 100.0, "{est}");
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE A = 3 AND B = 3"), Ok(vec!["2000".into()]));
 }
@@ -557,7 +558,8 @@ fn insert_keyed(s: &Session, (from, to): (i64, i64), keys: i64) {
 #[test]
 fn index_statistics_are_kept_with_the_index() {
     let scratch = Scratch::new("planning-kept-statistics");
-    let sql = "SELECT K FROM T WHERE A = 3 AND B = 3";
+    // Asked in the index's order, which the index gives as it probes.
+    let sql = "SELECT K, A, B FROM T WHERE A = 3 AND B = 3 ORDER BY A, B";
     let db = Database::new();
     db.open_files(&after_crash(), &scratch.dir, &OpenOptions::default()).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL, A INTEGER NOT NULL, B INTEGER NOT NULL)").unwrap();

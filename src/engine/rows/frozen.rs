@@ -50,6 +50,17 @@ use crate::sync::{lock_builtin, read};
 use crate::txn::Timestamp;
 use crate::value::Value;
 
+/// \[DESIGN\] The cost of a row of the tree scanned for none of its
+/// columns, and the cost more if all are read: a row of all costing 1. Of
+/// 400,000 rows of sixteen columns, a pool holding them, a COUNT(*) read a
+/// row in 0.27 us, fourteen columns more 0.06 us besides their sums.
+const ROW: f64 = 0.8;
+const ROW_COLUMNS: f64 = 0.2;
+/// \[DESIGN\] The cost of a row fetched by id through an index, a row of
+/// all columns scanned costing 1: of the same rows, each fetched of a
+/// twentieth to three tenths of them took 3.8 us, a scan 0.3 us a row, so a
+/// scan was the faster past about a twelfth.
+const ROW_FETCH: f64 = 10.0;
 /// \[DESIGN\] The cost of a frozen row scanned for none of its columns, a
 /// row of the tree's costing 1, and the cost more if all are read
 /// (`bench/analytics.rs`, a pool holding the table: a COUNT(*) read a row at
@@ -332,13 +343,13 @@ impl RowTable {
     }
 
     /// The planner's cost of a scan of `columns` (`TableStorage::scan_cost`):
-    /// each row of the tree 1, each frozen row as `FROZEN_ROW` and
-    /// `FROZEN_COLUMNS` say.
+    /// each row of the tree as `ROW` and `ROW_COLUMNS` say, each frozen row
+    /// as `FROZEN_ROW` and `FROZEN_COLUMNS`.
     pub(super) fn frozen_scan_cost(&self, columns: &[usize]) -> f64 {
         let (frozen, all) = self.frozen_share();
         let width = f64::from(u32::try_from(self.format.columns()).unwrap_or(u32::MAX)).max(1.0_f64);
-        let read = f64::from(u32::try_from(columns.len()).unwrap_or(u32::MAX)).min(width);
-        (all - frozen).max(0.0_f64) + frozen * (FROZEN_ROW + FROZEN_COLUMNS * read / width)
+        let read = f64::from(u32::try_from(columns.len()).unwrap_or(u32::MAX)).min(width) / width;
+        (all - frozen).max(0.0_f64) * (ROW + ROW_COLUMNS * read) + frozen * (FROZEN_ROW + FROZEN_COLUMNS * read)
     }
 
     /// The share of the table's rows a scan told `conditions` reads
@@ -361,7 +372,7 @@ impl RowTable {
     pub(super) fn frozen_fetch_cost(&self) -> f64 {
         let (frozen, all) = self.frozen_share();
         let share = if all > 0.0_f64 { (frozen / all).min(1.0_f64) } else { 0.0_f64 };
-        crate::storage::DEFAULT_FETCH_COST * (1.0_f64 + FROZEN_FETCH * share)
+        ROW_FETCH * (1.0_f64 + FROZEN_FETCH * share)
     }
 
     /// The rows frozen, and all the table's rows, as costs.

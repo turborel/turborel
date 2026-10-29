@@ -838,9 +838,15 @@ the format of frozen groups becomes a trait when it is.
   checkpoint thread (`db/background.rs`), holds the database weakly, and
   ends as it is closed or dropped. The log is unchanged, of whole rows, and
   recovery writes them to the tree. The planner is told a scan's cost by
-  the columns it reads: a row of the tree 1, a frozen row 0.25 and 0.75
-  more as all its columns are read; and a fetch's 10% more as all the
-  rows are frozen, as measured (`bench/analytics.rs`).
+  the columns it reads: a row of the tree 0.8 and 0.2 more as all its
+  columns are read, a frozen row 0.25 and 0.75 more; and a fetch by id
+  10, 10% more as all the rows are frozen, as measured
+  (`bench/analytics.rs`; a scan of 400,000 rows of sixteen columns, 0.27
+  us a row read for no column and 0.06 more for fourteen; a fetch through
+  an index of a twentieth to three tenths of them 3.8 us a row, so a scan
+  was the faster past about a twelfth: priced at 3 a fetch, the planner
+  chose the index up to a third, a fifth taking 308 ms where a scan took
+  123).
 - Batches (`TableStorage::scan_batches`): a scan's rows by vectors of up
   to 2048 of each column's values, in no particular order, by default its
   rows gathered. A column store table gives each frozen vector straight

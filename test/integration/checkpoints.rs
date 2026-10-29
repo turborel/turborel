@@ -92,7 +92,7 @@ fn a_crash_after_a_checkpoint_recovers() {
     assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T").unwrap(), count);
     assert_eq!(count, ["1401"], "1,000 + 1 + 400, the open transaction's delete undone");
     assert_eq!(sorted(&db.session("APP"), "SELECT K FROM T WHERE V = 'later'").len(), 10, "the index, reopened");
-    assert!(db.session("APP").physical_plan("SELECT K FROM T WHERE V = 'bulk'", &Params::new()).unwrap().contains("T_V"));
+    assert!(db.session("APP").physical_plan("SELECT K FROM T WHERE V = 'later'", &Params::new()).unwrap().contains("T_V"));
     assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T WHERE V = 'bulk'"), Ok(vec!["400".into()]), "rows inserted after it");
     assert_eq!(rows(&db.session("APP"), "SELECT K FROM T WHERE V = 'rolled'"), Ok(vec![]), "entries of what was undone");
     let dup = db.session("APP").run("INSERT INTO T VALUES (2000, 'dup')").err().map(|e| e.code);

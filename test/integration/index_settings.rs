@@ -34,6 +34,10 @@ fn indexed() -> (Database, Calls) {
     for k in 0..20 {
         s.run(&format!("INSERT INTO T VALUES ({k}, 'v{}')", k % 5)).unwrap();
     }
+    // Rows of another value, so a value of V is few enough to probe for.
+    for k in 200..280 {
+        s.run(&format!("INSERT INTO T VALUES ({k}, 'x')")).unwrap();
+    }
     s.commit().unwrap();
     calls.taken();
     (db, calls)

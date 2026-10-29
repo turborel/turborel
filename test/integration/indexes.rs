@@ -97,6 +97,11 @@ fn an_index_is_built_while_its_table_is_written() {
     }
     settle(&db);
     let s = db.session("APP");
+    // Rows of no F, which the index holds no entry of, so a value of F is
+    // few enough to probe for.
+    let values: Vec<String> = (5000..7000).map(|i: i64| format!("({i}, 'Z', 0, NULL)")).collect();
+    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    s.commit().unwrap();
     let plan = s.physical_plan("SELECT ID FROM T WHERE F = 3", &Params::new()).unwrap();
     assert!(plan.contains("T_F"), "the index is read: {plan}");
     for f in 0..9 {
