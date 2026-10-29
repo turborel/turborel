@@ -197,9 +197,14 @@ fn datetimes_group_by_batch_as_row_by_row() {
         a.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
     }
     a.commit().unwrap();
+    // Of W, its groups' counts only: which of the instant's two spellings
+    // a group gives is its first row's, and the maintenance thread may
+    // freeze the table's rows between two queries, which then read them
+    // in another order.
+    let shown = |column: &str| if column == "W" { "COUNT(*)".to_owned() } else { column.to_owned() };
     for column in ["D", "I", "W"] {
-        let by_batch = sorted(&a, &format!("SELECT {column}, COUNT(*) FROM T GROUP BY {column}"));
-        let by_row: Vec<String> = sorted(&a, &format!("SELECT {column}, COUNT(*), SUM(K + 0) FROM T GROUP BY {column}"))
+        let by_batch = sorted(&a, &format!("SELECT {}, COUNT(*) FROM T GROUP BY {column}", shown(column)));
+        let by_row: Vec<String> = sorted(&a, &format!("SELECT {}, COUNT(*), SUM(K + 0) FROM T GROUP BY {column}", shown(column)))
             .iter()
             .map(|r| r.rsplit_once(',').unwrap().0.to_owned())
             .collect();
@@ -211,7 +216,7 @@ fn datetimes_group_by_batch_as_row_by_row() {
     exec(&a, "SET WORK_MEMORY = 65536").unwrap();
     for column in ["D", "I", "W"] {
         for sql in [
-            format!("SELECT {column}, COUNT(*) FROM T GROUP BY {column}"),
+            format!("SELECT {}, COUNT(*) FROM T GROUP BY {column}", shown(column)),
             format!("SELECT COUNT(*) FROM (SELECT DISTINCT {column}, K FROM T) AS X"),
             format!("SELECT COUNT(*) FROM T AS L, T AS M WHERE L.{column} = M.{column} AND L.K < 60 AND M.K < 1500"),
         ] {
