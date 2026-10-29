@@ -11,25 +11,24 @@
 
 mod judge;
 mod project;
+mod stream;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use judge::Judging;
-pub(super) use project::projected;
+pub(super) use project::{projectable, projected};
 
+use super::failed;
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
-use super::{Runner, failed};
-use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::Accumulator;
-use crate::logical::{AggCall, Cond, Expr, pushed_conjuncts};
+use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
 use crate::spill::{put_norm, row_bytes};
 use crate::storage::{Batch, Row};
-use crate::txn::{TxId, checked};
+use crate::txn::TxId;
 use crate::value::Value;
 
 /// What a set function takes of each row: a count of it, or the value of
@@ -40,17 +39,14 @@ enum Taken {
     Column(usize),
 }
 
-/// What an aggregation read by batches reads: its table, the columns the
-/// scan reads, its filter if any, and what each set function takes.
-struct Read<'p> {
-    table: &'p QualifiedName,
-    columns: &'p [usize],
-    filter: Option<&'p Cond>,
+/// What an aggregation read by batches reads: the columns of its input's
+/// rows its batches hold, the width of those rows, what each set function
+/// takes, and where each grouping column is in a batch.
+struct Read {
+    columns: Vec<usize>,
+    width: usize,
     taken: Vec<Taken>,
-    /// Where each grouping column is in a batch.
     groups: Vec<usize>,
-    /// How its filter, if any, is judged.
-    judging: Option<Judging>,
 }
 
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
@@ -65,55 +61,43 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
         .collect()
 }
 
-/// What `plan` reads, if it is an aggregation read by batches.
-fn read_of(plan: &Plan) -> Option<Read<'_>> {
+/// What `plan` reads, if it is an aggregation read by batches: of a
+/// subtree that gives them (`stream::layout`).
+fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     let Plan::Aggregate { groups, aggs, input, .. } = plan else { return None };
-    let (scan, filter) =
-        if let Plan::Filter { cond, input, .. } = input.as_ref() { (input.as_ref(), Some(cond)) } else { (input.as_ref(), None) };
-    let Plan::SeqScan { table, columns, .. } = scan else { return None };
+    let (columns, width) = stream::layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
-    let judging = filter.map(|cond| Judging::of(cond, columns));
-    Some(Read { table, columns, filter, taken: taken(aggs, columns)?, groups: at, judging })
+    Some(Read { taken: taken(aggs, &columns)?, groups: at, columns, width })
 }
 
-/// The row of the aggregation `plan`, read by batches, if it is one read
-/// so; else none, for it to be grouped row by row.
-pub(super) fn aggregated(plan: &Plan, db: &Arc<State>, tx: TxId) -> Option<super::RowIter> {
-    let read = read_of(plan)?;
-    let Plan::Aggregate { aggs, .. } = plan else { return None };
+/// Whether `plan` is an aggregation read by batches.
+pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
+    read_of(plan, db).is_some()
+}
+
+/// The rows of the aggregation `plan`, one read by batches (`aggregable`).
+pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIter {
+    let (Some(read), Plan::Aggregate { aggs, input, .. }) = (read_of(&plan, db), plan) else {
+        return failed(super::broken("an aggregation not read by batches"));
+    };
+    let stream = match stream::open(*input, db, tx) {
+        Ok(stream) => stream,
+        Err(e) => return failed(e),
+    };
     if read.groups.is_empty() {
-        return Some(match read_all(&read, aggs, db, tx) {
+        return match read_all(&read, &aggs, stream.batches) {
             Ok(row) => Box::new(std::iter::once(Ok(row))),
             Err(e) => failed(e),
-        });
+        };
     }
-    Some(grouped_all(&read, aggs, db, tx).unwrap_or_else(failed))
-}
-
-/// The batches `read` reads, as `tx` sees them, each read only while the
-/// statement is not cancelled (RULES.md D44).
-fn batches_of(read: &Read<'_>, db: &Arc<State>, tx: TxId) -> Result<impl Iterator<Item = Result<Batch>> + use<>> {
-    scanned((read.table, read.columns, read.filter), db, tx)
-}
-
-/// The batches of a scan of `table`'s `columns`, told the simple conjuncts
-/// of `filter`, if any, as `tx` sees them, each read only while the
-/// statement is not cancelled (RULES.md D44).
-fn scanned(
-    (table, columns, filter): (&QualifiedName, &[usize], Option<&Cond>),
-    db: &Arc<State>,
-    tx: TxId,
-) -> Result<impl Iterator<Item = Result<Batch>> + Send + use<>> {
-    let storage = Arc::clone(db.storage_of(table)?);
-    let pushed = filter.and_then(pushed_conjuncts);
-    Ok(checked(storage.scan_batches(tx, columns, pushed.as_ref()), db.tx.stop_of(tx)))
+    grouped_all(&read, &aggs, (db, tx), stream.batches).unwrap_or_else(failed)
 }
 
 /// The groups of the rows `read` reads, each its grouping values and the
 /// finished set functions `aggs`, in the order their first rows came;
 /// those past the work area made as `exec/group.rs` makes them.
-fn grouped_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> Result<super::RowIter> {
-    let width = read.columns.iter().max().map_or(0, |&c| c.saturating_add(1));
+fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), batches: stream::Batches) -> Result<super::RowIter> {
+    let width = read.width;
     let spec = Spec { groups: read.groups.iter().filter_map(|&at| read.columns.get(at).copied()).collect(), aggs: aggs.to_vec() };
     let mut groups = Groups {
         found: HashMap::new(),
@@ -126,10 +110,8 @@ fn grouped_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> 
         spilled: false,
         width,
     };
-    let runner = Runner::new(db, tx);
-    for batch in batches_of(read, db, tx)? {
-        let batch = batch?;
-        let rows = read.judging.as_ref().map(|j| j.kept(&batch, &runner)).transpose()?;
+    for kept in batches {
+        let (batch, rows) = kept?;
         groups.feed(&batch, rows.as_deref(), (read, aggs))?;
     }
     let held: Finished = groups
@@ -193,7 +175,7 @@ impl Groups {
     /// Feeds the rows of `batch` at `rows`, or all, to their groups'
     /// set functions `aggs`, as `read` says; a row of a group past the work
     /// area is written, for its group to be made after.
-    fn feed(&mut self, batch: &Batch, rows: Option<&[usize]>, (read, aggs): (&Read<'_>, &[AggCall])) -> Result<()> {
+    fn feed(&mut self, batch: &Batch, rows: Option<&[usize]>, (read, aggs): (&Read, &[AggCall])) -> Result<()> {
         for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
             let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
             let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r));
@@ -215,7 +197,7 @@ impl Groups {
     /// The place of the group of row `r` of `batch`, the `number`th, its
     /// key made: found, or made if the work area has room; else the row is
     /// written, and it has none.
-    fn place(&mut self, number: u64, (batch, r): (&Batch, usize), (read, aggs): (&Read<'_>, &[AggCall])) -> Result<Option<usize>> {
+    fn place(&mut self, number: u64, (batch, r): (&Batch, usize), (read, aggs): (&Read, &[AggCall])) -> Result<Option<usize>> {
         if let Some(&at) = self.found.get(self.key.as_slice()) {
             return Ok(Some(at));
         }
@@ -241,14 +223,12 @@ impl Groups {
     }
 }
 
-/// The finished set functions `aggs` of the rows `read` reads.
-fn read_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> Result<Vec<Value>> {
-    let batches = batches_of(read, db, tx)?;
+/// The finished set functions `aggs` of the rows of `batches`, as `read`
+/// says.
+fn read_all(read: &Read, aggs: &[AggCall], batches: stream::Batches) -> Result<Vec<Value>> {
     let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect();
-    let runner = Runner::new(db, tx);
-    for batch in batches {
-        let batch = batch?;
-        let rows = read.judging.as_ref().map(|j| j.kept(&batch, &runner)).transpose()?;
+    for kept in batches {
+        let (batch, rows) = kept?;
         fed(&batch, &read.taken, rows.as_deref(), &mut states)?;
     }
     states.iter().map(|s| s.finish()).collect()

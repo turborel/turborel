@@ -37,6 +37,7 @@ mod concepts;
 mod ident;
 
 mod assertions;
+mod batch_joins;
 mod batches;
 mod bits;
 mod blocks;

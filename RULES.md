@@ -847,10 +847,20 @@ the format of frozen groups becomes a trait when it is.
   from its chunks, a condition's columns read first and the others only
   of the rows it keeps; the tree's entries in its group's range of row
   ids, read once as the group is taken up, in their rows' place; then the
-  tree's other rows. An
+  tree's other rows. A subtree of a plan gives its rows by batch (a
+  stream, `exec/batch/stream.rs`) if it is a table's scan; a filter of
+  one, told the simple conjuncts of its condition, or of another stream,
+  each batch with the rows kept of it; or an inner hash join whose left
+  operand is a stream: its right read first, row by row, and built as the
+  row path builds it; held in the work area, each of the left's batches
+  probes it, a batch of joined rows made of each, the left's columns then
+  the right's; partitioned, the joined rows made row by row and gathered.
+  Of 400,000 rows joined with 10, a COUNT(*) of the column store took
+  16 ms where row by row it took 79 (the row store's, 50 where 110), and
+  SUM grouped by a column of the 10 rows 36 where 123 (71 where 151). An
   aggregation whose set functions count rows or take a column, none
-  DISTINCT, grouped by columns the scan reads or not at all, of a table's
-  scan, filtered or not, feeds them from the vectors (`exec/batch.rs`),
+  DISTINCT, grouped by columns the stream holds or not at all, of a
+  stream, feeds them from the vectors (`exec/batch.rs`),
   of no GROUP BY a vector at a time (`Accumulator::update_many`,
   `update_rows`, each by default `update` a value at a time): COUNT
   counting, SUM adding exact values as decimals, nothing cloned, MAX and
@@ -864,9 +874,9 @@ the format of frozen groups becomes a trait when it is.
   of the column store where it took 47.8, 52.6 of the row store where it
   took 85.2. The rest of it is judged of
   the rows they keep, each made a row; one that can raise is judged whole
-  a row at a time, as row by row. A projection of such a scan whose
-  expressions read only its columns, no subquery among them, of a table
-  that reads by batch (`reads_by_batch`, a column store table's), makes
+  a row at a time, as row by row. A projection of a stream whose
+  expressions read only its columns, no subquery among them, every table
+  of which reads by batch (`reads_by_batch`, a column store table's), makes
   each row it gives of the vectors, a column or a constant as it is, any
   other expression evaluated as a row's is of a row of only the values it
   reads, kept and written over (`SELECT K + 1, S` of 400,000 rows: 80.8

@@ -79,10 +79,11 @@ impl Judging {
         Judging { columns: columns.to_vec(), judged, rest, width }
     }
 
-    /// The rows of `batch` the filter keeps: those its conjuncts judged over
+    /// The rows of `batch` the filter keeps, of those at `rows`, which a
+    /// filter before kept, or of all: those its conjuncts judged over
     /// vectors keep, then of those, those the rest keeps.
-    pub(super) fn kept(&self, batch: &Batch, runner: &Runner) -> Result<Vec<usize>> {
-        let mut kept: Vec<usize> = (0..batch.rows).collect();
+    pub(super) fn kept_of(&self, batch: &Batch, rows: Option<&[usize]>, runner: &Runner) -> Result<Vec<usize>> {
+        let mut kept: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
         for judged in &self.judged {
             let vector = batch.columns.get(judged.place()).map_or(&[][..], Vec::as_slice);
             kept.retain(|&r| vector.get(r).is_some_and(|v| judged.keeps(v)));

@@ -115,7 +115,7 @@ impl Partitions {
 /// in `left`'s order, in `work`. Never inlined into the caller, whose frame
 /// is on the stack while the left operand is made (RULES.md R-CF-6).
 #[inline(never)]
-pub(super) fn joined(left: RowIter, parts: Partitions, mut work: Work) -> RowIter {
+pub(in crate::exec) fn joined(left: RowIter, parts: Partitions, mut work: Work) -> RowIter {
     match merged(left, parts, &mut work) {
         Ok(rows) => Box::new(rows.map(|r| r.map(|(_, row)| row))),
         Err(e) => failed(e),

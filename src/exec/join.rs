@@ -12,6 +12,7 @@ mod partitioned;
 mod rescan;
 
 pub(super) use outer::outer;
+pub(in crate::exec) use partitioned::joined as partitioned_joined;
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(super) use rescan::Rescanned;
 
@@ -120,6 +121,19 @@ impl Built {
         }
         self.spilled = Some(table);
         Ok(self)
+    }
+
+    /// The rows of bucket `b`, borrowed if held in memory.
+    pub(in crate::exec) fn bucket_rows(&self, b: &[Bucket]) -> Result<std::borrow::Cow<'_, [Row]>> {
+        match &self.spilled {
+            Some(_) => self.bucket(b).map(std::borrow::Cow::Owned),
+            None => Ok(std::borrow::Cow::Borrowed(self.buckets.get(b).map_or(&[][..], Vec::as_slice))),
+        }
+    }
+
+    /// The pairs of a left column and a right column it is joined on.
+    pub(in crate::exec) fn keys(&self) -> &[(usize, usize)] {
+        &self.keys
     }
 
     /// The rows of bucket `b`.

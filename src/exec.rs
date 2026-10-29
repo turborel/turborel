@@ -50,7 +50,7 @@ pub type RowIter = Box<dyn Iterator<Item = Result<Row>> + Send>;
 /// \[DESIGN\] A broken invariant between the planner and the executor: a plan
 /// that names something the state does not have. SQLCODE -910, never a panic
 /// (RULES.md R-ERR-1).
-fn broken(what: &str) -> SqlError {
+pub(in crate::exec) fn broken(what: &str) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {what}"))
 }
 
@@ -151,8 +151,8 @@ fn filtered(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 #[inline(never)]
 fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     // Read by batches, if it can be (`exec/batch.rs`).
-    if let Some(rows) = batch::aggregated(&plan, db, tx) {
-        return rows;
+    if batch::aggregable(&plan, db) {
+        return batch::aggregated(plan, db, tx);
     }
     let Plan::Aggregate { groups, aggs, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
     let rows = execute(*input, db, tx);
@@ -286,8 +286,8 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, 
 #[inline(never)]
 fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     // Read by batches, if it can be (`exec/batch/project.rs`).
-    if let Some(rows) = batch::projected(&plan, db, tx) {
-        return rows;
+    if batch::projectable(&plan, db) {
+        return batch::projected(plan, db, tx);
     }
     let Plan::Project { exprs, input, .. } = plan else { return failed(broken("a projection is not one")) };
     let (input, runner) = (execute(*input, db, tx), Runner::new(db, tx));
