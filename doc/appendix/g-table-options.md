@@ -18,6 +18,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 | COLUMNSTORE.FREEZE_DELAY | 0 | INTEGER FROM 0 TO 31622400 | in place |
 | COLUMNSTORE.FREEZE_ROWS | 0 | INTEGER FROM 0 TO 9223372036854775807 | in place |
 | COLUMNSTORE.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
+| COLUMNSTORE.ORDER | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | COLUMNSTORE.REWRITE_FRACTION | 0.2 | NUMBER FROM 0 TO 1 | in place |
 | ENCODINGS | none | ENCODINGS, BY COMMAS | in place |
 | OUT_OF_LINE | 0 | INTEGER FROM 0 TO 1073741824 | rebuild |
@@ -34,6 +35,7 @@ Each in a sentence:
 - **COLUMNSTORE.FREEZE_DELAY**: The seconds a row of a table of the column store stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNSTORE.FREEZE_ROWS**: The rows committed past the last group after which a table of the column store freezes them; 0 for COLUMNSTORE.GROUP_ROWS.
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
+- **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes from then on, ascending, so a condition on the first skips more of them; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own. See [Encryption](../operator/07-encryption.md).
 - **OUT_OF_LINE**: Character values longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
@@ -73,6 +75,18 @@ row by its key reads a page of each of its columns, so it costs more
 than in a table of the row store. COLUMNSTORE.FREEZE_DELAY keeps rows that
 are changed soon after they are written from being frozen while they
 still are.
+
+COLUMNSTORE.ORDER sorts the rows of each group as it is frozen, or
+written again, by the columns it names, ascending, nulls as ORDER BY
+puts them: each page of the first column's values then holds a narrow
+range of them, so a condition on that column skips most pages. Counting
+a hundredth of 200,000 rows by a column whose values are scattered ran
+4.7 times as fast with the table sorted by it; a condition on a column
+the rows were in the order of before ran a sixth slower, and fetching a
+row by its key a twentieth slower. Groups frozen before the option is
+set or changed keep their order. A column the option names is not
+dropped until it names it no more; each is named as an identifier is,
+a regular one in any case, a delimited one in double quotes.
 
 What a table holds, and what a query of it gives, is the same in either
 store; only how fast each query runs differs. ALTER TABLE ... USING

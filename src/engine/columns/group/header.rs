@@ -6,6 +6,9 @@ use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::value::{DataType, Value};
 
+/// The format of a group's header before groups were sorted: no runs by id.
+const SORTLESS_FORMAT: u8 = 1;
+
 fn put_u32(out: &mut Vec<u8>, n: u32) {
     out.extend_from_slice(&n.to_le_bytes());
 }
@@ -33,8 +36,12 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
     put_u64(&mut out, group.first);
     put_u64(&mut out, group.last);
     put_u32(&mut out, group.rows);
-    put_u32(&mut out, count32(group.ids.len())?);
-    group.ids.iter().for_each(|run| put_run(&mut out, run));
+    for runs in [&group.ids, &group.by_id] {
+        put_u32(&mut out, count32(runs.len())?);
+        for run in runs {
+            put_run(&mut out, run);
+        }
+    }
     put_u32(&mut out, count32(group.columns.len())?);
     for (zones, t) in group.columns.iter().zip(types) {
         put_u32(&mut out, count32(zones.len())?);
@@ -113,11 +120,13 @@ impl<'a> Reader<'a> {
 pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) -> Result<Group> {
     let (bytes, header) = read_chain(pages, first)?;
     let mut r = Reader(&bytes);
-    if r.byte()? != GROUP_FORMAT {
+    let format = r.byte()?;
+    if format != GROUP_FORMAT && format != SORTLESS_FORMAT {
         return Err(corrupt("its header is of another format"));
     }
     let (first_id, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
     let ids = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
+    let by_id = if format == SORTLESS_FORMAT { Vec::new() } else { (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()? };
     if r.count()? != types.len() {
         return Err(corrupt("its columns are not its table's"));
     }
@@ -129,5 +138,5 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
-    Ok(Group { first: first_id, last, rows, ids, columns, header })
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, header })
 }

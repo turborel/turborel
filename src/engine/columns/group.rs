@@ -1,25 +1,30 @@
 //! \[DESIGN\] A frozen row group of the column layout (RULES.md D31): rows
-//! committed before every snapshot, in row id order, each column's values
+//! committed before every snapshot, in row id order or sorted by columns
+//! (COLUMNSTORE.ORDER), each column's values
 //! in chunks (`columns.rs`) on pages of their own; for each chunk, the rows
 //! it holds, its least and greatest values and its nulls, so a scan reads
 //! only the chunks a condition may match (zone maps). A group is written
 //! once and never changed: a change of one of its rows is the delta's.
 //!
-//! Its row ids are its first and last if every id between is its, else
-//! chunks of their own, each id 8 bytes. What describes it, its header, is
-//! kept on a chain of pages:
+//! Its row ids are its least and greatest if every id between is its, in
+//! order, else chunks of their own, each id 8 bytes, in its rows' order;
+//! and if they are not in increasing order, its rows' positions by id too,
+//! each an id and its position, 12 bytes, so a row is found by its id.
+//! What describes it, its header, is kept on a chain of pages:
 //!
 //! ```text
 //! page:    next page u64 (0 for none) | the header's bytes
 //! header:  GROUP_FORMAT u8 | first id u64 | last id u64 | rows u32 |
-//!          id runs u32 | each: run | columns u32 | each: runs u32 | each:
+//!          id runs u32 | each: run | by id runs u32 | each: run |
+//!          columns u32 | each: runs u32 | each:
 //!          run | nulls u32 | bounds u8 (1 if any) | least | greatest
 //! run:     first row u32 | rows u32 | page u64
 //! bound:   length u32 | the value as its type writes it in a record
 //! ```
 //!
 //! Integers are little-endian. Every page passes through the table's
-//! encodings, its page number their context.
+//! encodings, its page number their context. A header of format 1, before
+//! groups were sorted, has no runs by id.
 
 mod header;
 
@@ -36,9 +41,11 @@ use crate::storage::{Row, RowId};
 use crate::value::{DataType, Value, compare};
 
 /// The format of a group's header.
-const GROUP_FORMAT: u8 = 1;
+const GROUP_FORMAT: u8 = 2;
 /// Bytes of a row id.
 const ID: usize = 8;
+/// Bytes of a row id and its position.
+const BY_ID: usize = 12;
 /// Bytes of a chain page's link.
 const LINK: usize = 8;
 
@@ -145,15 +152,18 @@ pub struct Zone {
 /// \[DESIGN\] A frozen row group: its row ids, and its columns' chunks.
 #[derive(Debug, Clone)]
 pub struct Group {
-    /// Its first row id.
+    /// Its least row id.
     pub first: RowId,
-    /// Its last row id.
+    /// Its greatest row id.
     pub last: RowId,
     /// How many rows it holds.
     pub rows: u32,
-    /// The chunks of its row ids; none if they are every id from first to
-    /// last.
+    /// The chunks of its row ids, in its rows' order; none if they are
+    /// every id from first to last, in order.
     pub ids: Vec<Run>,
+    /// The chunks of its rows' positions by id, if its ids are not in
+    /// increasing order; none if they are.
+    pub by_id: Vec<Run>,
     /// Each column's chunks, in order.
     pub columns: Vec<Vec<Zone>>,
     /// The pages of its header.
@@ -206,10 +216,11 @@ fn write_column<S: Seal>(
     Ok(zones)
 }
 
-/// Writes `ids`, if they are not every id from their first to their last.
+/// Writes `ids`, if they are not every id from their first to their last,
+/// in order.
 fn write_ids<S: Seal>(pages: &Pages<'_, S>, ids: &[RowId], written: &mut Vec<PageId>) -> Result<Vec<Run>> {
     let (Some(&first), Some(&last)) = (ids.first(), ids.last()) else { return Ok(Vec::new()) };
-    if last.checked_sub(first).and_then(|span| span.checked_add(1)) == u64::try_from(ids.len()).ok() {
+    if increasing(ids) && last.checked_sub(first).and_then(|span| span.checked_add(1)) == u64::try_from(ids.len()).ok() {
         return Ok(Vec::new());
     }
     let per_page = pages.capacity.checked_div(ID).unwrap_or(1).max(1);
@@ -222,9 +233,32 @@ fn write_ids<S: Seal>(pages: &Pages<'_, S>, ids: &[RowId], written: &mut Vec<Pag
     Ok(runs)
 }
 
+/// Whether `ids` are in increasing order.
+fn increasing(ids: &[RowId]) -> bool {
+    ids.windows(2).all(|w| w.first() < w.get(1))
+}
+
+/// Writes the positions of `ids` by id, if they are not in increasing
+/// order.
+fn write_by_id<S: Seal>(pages: &Pages<'_, S>, ids: &[RowId], written: &mut Vec<PageId>) -> Result<Vec<Run>> {
+    if increasing(ids) {
+        return Ok(Vec::new());
+    }
+    let mut by_id: Vec<(RowId, u32)> = ids.iter().enumerate().map(|(at, &id)| Ok((id, count32(at)?))).collect::<Result<_>>()?;
+    by_id.sort_unstable();
+    let per_page = pages.capacity.checked_div(BY_ID).unwrap_or(1).max(1);
+    let mut runs = Vec::new();
+    for (n, chunk) in by_id.chunks(per_page).enumerate() {
+        let bytes: Vec<u8> = chunk.iter().flat_map(|(id, at)| id.to_le_bytes().into_iter().chain(at.to_le_bytes())).collect();
+        let page = pages.put(&bytes, written)?;
+        runs.push(Run { first: count32(n.saturating_mul(per_page))?, rows: count32(chunk.len())?, page });
+    }
+    Ok(runs)
+}
+
 impl Group {
-    /// Writes `rows`, whose ids are `ids`, in increasing order, a column
-    /// of each of `types`, as a group.
+    /// Writes `rows`, whose ids are `ids`, a column of each of `types`, as
+    /// a group, in their order.
     ///
     /// # Errors
     ///
@@ -245,12 +279,13 @@ impl Group {
         (ids, rows): (&[RowId], &[Row]),
         written: &mut Vec<PageId>,
     ) -> Result<Group> {
-        let (Some(&first), Some(&last)) = (ids.first(), ids.last()) else {
+        let (Some(&first), Some(&last)) = (ids.iter().min(), ids.iter().max()) else {
             return Err(SqlError::new(Code::Api, "[DESIGN] a frozen row group of no rows"));
         };
         let id_runs = write_ids(pages, ids, written)?;
+        let by_id = write_by_id(pages, ids, written)?;
         let columns = types.iter().enumerate().map(|(c, t)| write_column(pages, t, (rows, c), written)).collect::<Result<Vec<_>>>()?;
-        let mut group = Group { first, last, rows: count32(rows.len())?, ids: id_runs, columns, header: Vec::new() };
+        let mut group = Group { first, last, rows: count32(rows.len())?, ids: id_runs, by_id, columns, header: Vec::new() };
         group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
         Ok(group)
     }
@@ -258,10 +293,11 @@ impl Group {
     /// Every page it is on.
     pub fn pages(&self) -> Vec<PageId> {
         let chunks = self.columns.iter().flatten().map(|z| z.run.page);
-        self.ids.iter().map(|r| r.page).chain(chunks).chain(self.header.iter().copied()).collect()
+        let ids = self.ids.iter().chain(&self.by_id).map(|r| r.page);
+        ids.chain(chunks).chain(self.header.iter().copied()).collect()
     }
 
-    /// Its row ids, in order.
+    /// Its row ids, in its rows' order.
     ///
     /// # Errors
     ///
@@ -289,6 +325,9 @@ impl Group {
         if self.ids.is_empty() {
             return Ok(u32::try_from(id.saturating_sub(self.first)).ok());
         }
+        if !self.by_id.is_empty() {
+            return self.position_by_id(pages, id);
+        }
         // The last run whose first id is at most `id`.
         let mut found = None;
         for run in &self.ids {
@@ -299,6 +338,33 @@ impl Group {
             found = ids.binary_search(&id).ok().map(|at| run.first.saturating_add(u32::try_from(at).unwrap_or(u32::MAX)));
         }
         Ok(found)
+    }
+
+    /// Whether its rows are in another order than their ids'.
+    pub fn sorted(&self) -> bool {
+        !self.by_id.is_empty()
+    }
+
+    /// The position of row `id`, found by id, if it is there.
+    fn position_by_id<S: Seal>(&self, pages: &Pages<'_, S>, id: RowId) -> Result<Option<u32>> {
+        for run in &self.by_id {
+            let found = pages.with(run.page, |bytes| {
+                let (entries, rest) = bytes.as_chunks::<BY_ID>();
+                if !rest.is_empty() {
+                    return Err(corrupt("a page of positions by id is not whole"));
+                }
+                let id_of = |e: &[u8; BY_ID]| e.first_chunk::<ID>().map_or(0, |b| u64::from_le_bytes(*b));
+                if entries.last().is_none_or(|e| id_of(e) < id) {
+                    return Ok(None);
+                }
+                let at = entries.binary_search_by_key(&id, id_of).ok().and_then(|n| entries.get(n));
+                Ok(Some(at.and_then(|e| e.last_chunk::<4>()).map(|b| u32::from_le_bytes(*b))))
+            })?;
+            if let Some(found) = found {
+                return Ok(found);
+            }
+        }
+        Ok(None)
     }
 
     /// The value of column `column`, of type `t`, of the row at `position`.

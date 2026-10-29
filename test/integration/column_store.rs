@@ -359,3 +359,36 @@ fn rows_read_as_they_are_frozen_are_read_once() {
         assert!(reader.join().unwrap() > 0, "the reader read");
     });
 }
+
+/// Verifies: [EXTENSION] RULES.md D31, D41, COLUMNSTORE.ORDER: a table of
+/// the column store whose groups are sorted by columns answers as a table
+/// of the row store; the option names the table's columns as it does, and
+/// refuses a name of none, one named twice, or more than eight; a column
+/// it names is not dropped until it names it no more.
+#[test]
+fn groups_sorted_by_columns_answer_alike() {
+    let db = Database::new();
+    let a = both(&db);
+    a.run("CREATE TABLE O (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, COLUMNSTORE.ORDER = 's, \"G\"')").unwrap();
+    a.run("INSERT INTO O SELECT * FROM R").unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    assert_eq!(answers(&a, "O"), answers(&a, "R"));
+    a.run("UPDATE O SET N = -N WHERE K < 900").unwrap();
+    a.run("DELETE FROM O WHERE K BETWEEN 900 AND 999").unwrap();
+    a.run("UPDATE R SET N = -N WHERE K < 900").unwrap();
+    a.run("DELETE FROM R WHERE K BETWEEN 900 AND 999").unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    assert_eq!(answers(&a, "O"), answers(&a, "R"), "groups written again");
+    let order = "SELECT OPTION_VALUE FROM INFORMATION_SCHEMA.TABLE_OPTIONS WHERE TABLE_NAME = 'O' AND OPTION_NAME = 'COLUMNSTORE.ORDER'";
+    assert_eq!(rows(&a, order), Ok(vec!["S, G".to_owned()]), "as the table names them");
+    for refused in ["'Q'", "'S, s'", "'K, G, S, N, K, G, S, N, K'"] {
+        assert_eq!(exec(&a, &format!("ALTER TABLE O SET (COLUMNSTORE.ORDER = {refused})")).err(), Some(Code::SyntaxRule), "{refused}");
+    }
+    assert_eq!(exec(&a, "ALTER TABLE O DROP COLUMN G RESTRICT").err(), Some(Code::SyntaxRule), "ORDER names it");
+    a.run("ALTER TABLE O SET (COLUMNSTORE.ORDER = 'S')").unwrap();
+    a.run("ALTER TABLE O DROP COLUMN G RESTRICT").unwrap();
+    a.commit().unwrap();
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM O"), rows(&a, "SELECT COUNT(*) FROM R"));
+}

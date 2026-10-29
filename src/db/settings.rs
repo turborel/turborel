@@ -60,7 +60,8 @@ impl State {
                     | Kind::Choice(_)
                     | Kind::Displacement
                     | Kind::Identifier
-                    | Kind::Text { .. },
+                    | Kind::Text { .. }
+                    | Kind::Columns { .. },
                     _,
                 ) => false,
             };

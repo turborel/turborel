@@ -195,7 +195,10 @@ The registry, scopes and SET statements exist (D36). Still to do:
   latch (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
   a trait. For the column store:
-  - COLUMNSTORE.ORDER, the columns rows are sorted by as they are frozen;
+  - COLUMNSTORE.ORDER changed: the groups frozen before sorted again in
+    the background; and descending columns;
+  - a table option of columns (COLUMNSTORE.ORDER) following a column
+    renamed, once ALTER TABLE renames columns;
   - chunks compressed further: run-length, bit-packing below a byte,
     FSST for texts, ALP for approximate numbers; and conditions judged on
     the codes of a dictionary or a frame without decoding each value;

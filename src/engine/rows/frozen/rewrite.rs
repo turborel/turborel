@@ -15,9 +15,10 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::Entry;
+use super::freeze::ordered;
 use crate::engine::columns::group::Group;
 use crate::engine::columns::scan::rows;
-use crate::engine::rows::options::Columns;
+use crate::engine::rows::options::{Columns, Order};
 use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
@@ -54,7 +55,7 @@ impl RowTable {
             }
             let entries = self.entries_in(&entry.group)?;
             if due(entries.len(), entry.group.rows, &columns) {
-                self.rewrite(entry, (entries, cutoff))?;
+                self.rewrite(entry, (entries, cutoff), &columns.order)?;
                 written = written.saturating_add(1);
             }
         }
@@ -73,8 +74,8 @@ impl RowTable {
     }
 
     /// Writes `entry`'s group again, `entries` of its range committed at or
-    /// before `cutoff` folded in.
-    fn rewrite(&self, entry: &Arc<Entry>, (entries, cutoff): (Vec<(RowId, Vec<u8>)>, Timestamp)) -> Result<()> {
+    /// before `cutoff` folded in, its rows sorted as `order` says.
+    fn rewrite(&self, entry: &Arc<Entry>, (entries, cutoff): (Vec<(RowId, Vec<u8>)>, Timestamp), order: &Order) -> Result<()> {
         let pages = self.group_pages()?;
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
@@ -94,7 +95,7 @@ impl RowTable {
             kept.insert(id, row);
             folded.push((id, bytes));
         }
-        let (new_ids, new_rows): (Vec<RowId>, Vec<Row>) = kept.into_iter().filter_map(|(id, row)| row.map(|r| (id, r))).unzip();
+        let (new_ids, new_rows) = ordered(order, kept.into_iter().filter_map(|(id, row)| row.map(|r| (id, r))).collect());
         let group = if new_ids.is_empty() { None } else { Some(Group::write(&pages, types, &new_ids, &new_rows)?) };
         self.publish((Some(entry), group), folded)
     }

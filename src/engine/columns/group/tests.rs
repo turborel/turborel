@@ -142,3 +142,41 @@ fn what_groups_refuse() {
     assert_eq!(read(&pages, short[0], &TYPES).err().map(|e| e.code), Some(Code::Corrupt), "cut short");
     pages.free(&written_pages);
 }
+
+/// Verifies: [DESIGN] RULES.md D31, COLUMNSTORE.ORDER: a group of rows in
+/// another order than their ids', every id between its least and greatest
+/// among them, keeps its ids in its rows' order and its rows' positions by
+/// id: each row found by its id, an id not its found none, its least and
+/// greatest ids its range; read back from its header alike; and a header
+/// of the format before, with no positions by id, is read as of rows in
+/// order.
+#[test]
+fn groups_of_rows_out_of_order_read_back() {
+    let (pool, file) = file();
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let count = 4000_u64;
+    let ids: Vec<RowId> = (0..count).map(|n| n.checked_mul(7).unwrap().checked_rem(count).unwrap().checked_add(100).unwrap()).collect();
+    let all: Vec<Row> = (0..4000).map(row).collect();
+    let group = Group::write(&pages, &TYPES, &ids, &all).unwrap();
+    assert_eq!((group.first, group.last), (100, 4099));
+    assert!(group.sorted() && !group.ids.is_empty(), "its ids kept, and positions by id");
+    assert_eq!(group.row_ids(&pages).unwrap(), ids);
+    for n in [0_usize, 1, 2, 1500, 3999] {
+        assert_eq!(group.position(&pages, ids[n]).unwrap(), Some(u32::try_from(n).unwrap()));
+    }
+    assert_eq!(group.position(&pages, 4100).unwrap(), None);
+    let back = read(&pages, group.header[0], &TYPES).unwrap();
+    assert_eq!((back.ids.clone(), back.by_id.clone()), (group.ids.clone(), group.by_id.clone()));
+    // The format before: no count of runs by id after the ids'.
+    let in_order = written(&pages, (7, 3), 100);
+    let mut header = header::encode(&in_order, &TYPES).unwrap();
+    let at = 25_usize.checked_add(in_order.ids.len().checked_mul(16).unwrap()).unwrap();
+    header.drain(at..at.checked_add(4).unwrap());
+    header[0] = 1;
+    let mut chain = Vec::new();
+    let old = put_chain(&pages, &header, &mut chain).unwrap();
+    let before = read(&pages, old[0], &TYPES).unwrap();
+    assert!(!before.sorted());
+    assert_eq!(before.position(&pages, 10).unwrap(), Some(1));
+    pages.free(&chain);
+}

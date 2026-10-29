@@ -739,7 +739,16 @@ the format of frozen groups becomes a trait when it is.
   (`columns/encoded.rs`); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Measured: rows of numbers of few values or near one another, and of
   texts of few values, freeze into 12 pages where they take 46 plain, and
-  scans run as fast, a value read at a time either way. Groups are immutable, their row ids' ranges apart,
+  scans run as fast, a value read at a time either way. A group's rows are
+  in row id order, or sorted by the columns COLUMNSTORE.ORDER names (at
+  most 8, ascending, nulls as ORDER BY puts them, row ids breaking ties)
+  as they are frozen or written again, its ids then kept in its rows'
+  order and its rows' positions by id, so a row is found by its id: a
+  hundredth of 200,000 rows counted by a scattered column ran 4.7 times
+  as fast sorted by it (`bench/analytics.rs`), a column the rows were in
+  order of a sixth slower, a fetch by key a twentieth. An option naming
+  columns (`Kind::Columns`) names the table's, and a column it names is
+  not dropped. Groups are immutable, their row ids' ranges apart,
   found through a directory the meta page names. A row's newest state is
   its entry in the tree if it has one, else its group's values, which
   every reader sees: so a frozen row changed is written as any row is,
@@ -751,7 +760,8 @@ the format of frozen groups becomes a trait when it is.
   replaced in the directory, and the entries taken out as a freeze takes
   out its rows'. A scan merges the tree and the groups in row id order, a
   group read a vector (2048 rows) at a time, only the chunks a condition
-  on one column may match. The entries of rows frozen leave the tree once
+  on one column may match; a sorted group's rows read all as it is taken
+  up, then put in row id order. The entries of rows frozen leave the tree once
   no reader holds the directory from before their group; a checkpoint is
   not captured during a freeze. A deletion collected while a freeze under
   way may freeze its row keeps its entry, so the row is not seen again; a
@@ -779,8 +789,9 @@ the format of frozen groups becomes a trait when it is.
   to 2048 of each column's values, in no particular order, by default its
   rows gathered. A column store table gives each frozen vector straight
   from its chunks, a condition's columns read first and the others only
-  of the rows it keeps; the tree's entries in the vector's range of row
-  ids, read with it, in its rows' place; then the tree's other rows. An
+  of the rows it keeps; the tree's entries in its group's range of row
+  ids, read once as the group is taken up, in their rows' place; then the
+  tree's other rows. An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the scan reads or not at all, of a table's
   scan, filtered or not, feeds them from the vectors (`exec/batch.rs`). A

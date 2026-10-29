@@ -2,7 +2,9 @@
 //! tree's entries and its groups' rows merged in row id order, a row's
 //! entry taken before its frozen values. Each group's rows are read a
 //! vector at a time, only the runs whose chunks a condition may match
-//! (`columns/scan.rs`). Split from frozen.rs (RULES.md R-SIZE-2).
+//! (`columns/scan.rs`); those of a group sorted by its columns
+//! (COLUMNSTORE.ORDER) all as it is taken up, then put in row id order.
+//! Split from frozen.rs (RULES.md R-SIZE-2).
 
 use std::collections::VecDeque;
 use std::iter::Peekable;
@@ -101,7 +103,14 @@ impl Merged {
                     at = end;
                 }
             }
+            let sorted = entry.group.sorted();
             self.group = Some((entry, ids));
+            if sorted {
+                while let Some((from, to)) = self.runs.pop_front() {
+                    self.read_run(from, to)?;
+                }
+                self.frozen.make_contiguous().sort_unstable_by_key(|(id, _)| *id);
+            }
         }
         Ok(self.frozen.front().map(|(id, _)| *id))
     }

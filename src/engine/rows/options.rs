@@ -6,7 +6,7 @@
 //! the store's defaults. Split from engine/rows.rs (RULES.md R-SIZE-2).
 
 use crate::catalog::TableDesc;
-use crate::settings::Kind;
+use crate::settings::{Kind, column_names};
 use crate::stats::Sampling;
 use crate::storage::{Rebuild, TableOption};
 use crate::value::{Decimal, Value};
@@ -40,6 +40,7 @@ const FREEZE_ROWS: &str = "COLUMNSTORE.FREEZE_ROWS";
 const FREEZE_DELAY: &str = "COLUMNSTORE.FREEZE_DELAY";
 const REWRITE_FRACTION: &str = "COLUMNSTORE.REWRITE_FRACTION";
 const COMPRESSION: &str = "COLUMNSTORE.COMPRESSION";
+const ORDER: &str = "COLUMNSTORE.ORDER";
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
@@ -52,6 +53,10 @@ pub const DEFAULT_REWRITE_FRACTION: f64 = 0.2;
 pub const DEFAULT_GROUP_ROWS: u32 = 1 << 16;
 /// \[DESIGN\] The fewest rows of a frozen row group: one vector.
 pub const MIN_GROUP_ROWS: u32 = 2048;
+/// \[DESIGN\] The most columns COLUMNSTORE.ORDER names: the first one or
+/// two order a group's rows into runs a condition skips, the rest only
+/// break their ties.
+pub const MOST_ORDER: usize = 8;
 /// \[DESIGN\] The longest COLUMNSTORE.FREEZE_DELAY, in seconds: a year.
 const MAX_FREEZE_DELAY: u32 = 366 * 24 * 60 * 60;
 
@@ -94,6 +99,33 @@ pub struct Columns {
     /// Whether its chunks are compressed, each in the encoding that takes
     /// fewest bytes (`engine/columns/encoded.rs`).
     pub compress: bool,
+    /// The columns each group's rows are sorted by as they are frozen.
+    pub order: Order,
+}
+
+/// \[DESIGN\] The columns a group's rows are sorted by, ascending, by
+/// their places in the row: at most `MOST_ORDER`; none, in row id order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Order {
+    places: [usize; MOST_ORDER],
+    len: usize,
+}
+
+impl Order {
+    /// Of the columns at `places`, the first `MOST_ORDER` of them.
+    pub fn of(places: &[usize]) -> Order {
+        let mut order = Order::default();
+        for (slot, &place) in order.places.iter_mut().zip(places) {
+            *slot = place;
+            order.len = order.len.saturating_add(1);
+        }
+        order
+    }
+
+    /// The places of its columns, in order.
+    pub fn places(&self) -> &[usize] {
+        self.places.get(..self.len).unwrap_or_default()
+    }
 }
 
 impl Default for Columns {
@@ -104,6 +136,7 @@ impl Default for Columns {
             freeze_delay: 0,
             rewrite_fraction: DEFAULT_REWRITE_FRACTION,
             compress: true,
+            order: Order::default(),
         }
     }
 }
@@ -231,6 +264,11 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
             Rebuild::No,
             "Whether a table of the column store compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.",
         ),
+        TableOption::new(
+            (ORDER, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
+            Rebuild::No,
+            "The columns, by commas, by which a table of the column store sorts the rows of each group it freezes from then on, ascending, so a condition on the first skips more of them; none, in the order they were written.",
+        ),
     ]
 }
 
@@ -261,6 +299,14 @@ pub(super) fn columns_of(desc: &TableDesc, base: Option<Columns>) -> Option<Colu
     resolved(desc, TableOptions { columns: base, ..TableOptions::default() }).columns
 }
 
+/// The order COLUMNSTORE.ORDER, `value`, names, of `desc`'s columns: those
+/// it names that are the table's (the database checks each is).
+fn order_of(desc: &TableDesc, value: &Value) -> Order {
+    let Value::Char(names) = value else { return Order::default() };
+    let places: Vec<usize> = column_names(names).unwrap_or_default().iter().filter_map(|n| desc.column(n)).collect();
+    Order::of(&places)
+}
+
 /// `base` with the options `desc` sets.
 pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
     let set = |name: &str| desc.options.iter().find(|(n, _)| n == name).map(|(_, v)| v);
@@ -282,6 +328,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         freeze_delay: count(FREEZE_DELAY).and_then(|n| u32::try_from(n).ok()).unwrap_or(c.freeze_delay),
         rewrite_fraction: set(REWRITE_FRACTION).and_then(Value::as_f64).unwrap_or(c.rewrite_fraction),
         compress: set(COMPRESSION).map_or(c.compress, |v| v.to_string().trim_end() != "NONE"),
+        order: set(ORDER).map_or(c.order, |v| order_of(desc, v)),
     });
     out
 }

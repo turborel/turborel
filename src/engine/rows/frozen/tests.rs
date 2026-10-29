@@ -8,7 +8,7 @@ use crate::disk::buffer::{BufferPool, Clock};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
-use crate::engine::rows::options::Columns;
+use crate::engine::rows::options::{Columns, Order};
 use crate::engine::rows::{RowTable, TableFiles, TableOptions, key};
 use crate::engine::tree::Direction;
 use crate::error::Code;
@@ -43,7 +43,14 @@ fn options(delay: u32) -> TableOptions {
 /// As `options`, groups written again past `fraction` of their rows.
 fn rewriting(delay: u32, fraction: f64) -> TableOptions {
     TableOptions {
-        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: delay, rewrite_fraction: fraction, compress: true }),
+        columns: Some(Columns {
+            group_rows: 2048,
+            freeze_rows: 0,
+            freeze_delay: delay,
+            rewrite_fraction: fraction,
+            compress: true,
+            order: Order::default(),
+        }),
         ..TableOptions::default()
     }
 }
@@ -279,7 +286,14 @@ fn groups_are_written_again() {
 fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool) -> (usize, Vec<String>) {
     let (_, files) = files();
     let options = TableOptions {
-        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: 0, rewrite_fraction: 0.0, compress }),
+        columns: Some(Columns {
+            group_rows: 2048,
+            freeze_rows: 0,
+            freeze_delay: 0,
+            rewrite_fraction: 0.0,
+            compress,
+            order: Order::default(),
+        }),
         ..TableOptions::default()
     };
     let table = Arc::new(RowTable::create(&files, types, options).unwrap());
@@ -362,4 +376,40 @@ fn a_read_by_batch_misses_no_entry_taken_out() {
     assert_eq!(entries(&table), 5000 - 4096, "taken out as it reads");
     let rest: usize = batches.map(|b| b.unwrap().rows).sum();
     assert_eq!(first.checked_add(rest), Some(5000));
+}
+
+/// Whether `table`'s first group's rows are in order of their texts.
+fn sorted_by_text(table: &RowTable) -> bool {
+    let directory = table.frozen.directory().unwrap();
+    let group = &directory.groups[0].group;
+    let texts = crate::engine::columns::scan::values(group, &table.group_pages().unwrap(), (1, &TYPES[1]), (0, group.rows)).unwrap();
+    group.sorted() && texts.windows(2).all(|w| crate::value::sort_cmp(&w[0], &w[1]).is_le())
+}
+
+/// Verifies: [DESIGN] RULES.md D31, COLUMNSTORE.ORDER: a table whose
+/// groups are sorted by a column freezes each group's rows in its order;
+/// a row is found by its id, a scan gives every row in row id order, and
+/// batches give every row; once rows of a group are changed and deleted,
+/// it is written again sorted, the changes in it.
+#[test]
+fn groups_are_sorted_by_their_order() {
+    let (_, files) = files();
+    let mut options = options(0);
+    if let Some(columns) = options.columns.as_mut() {
+        columns.order = Order::of(&[1]);
+    }
+    let table = Arc::new(RowTable::create(&files, &TYPES, options).unwrap());
+    let ids: Vec<RowId> = (0..5000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    ended(&table, 1);
+    assert!(sorted_by_text(&table), "sorted as frozen");
+    assert_eq!(table.get(NO_TRANSACTION, ids[1234]).unwrap().map(|r| r[1].to_string()), Some("v1234".to_owned()));
+    let in_order: Vec<String> = (0_i32..5_000_i32).map(|n| n.to_string()).collect();
+    assert_eq!(scanned(&table, NO_TRANSACTION), in_order, "in row id order");
+    let batched: usize = Arc::clone(&table).scan_batches(NO_TRANSACTION, &[0], None).map(|b| b.unwrap().rows).sum();
+    assert_eq!(batched, 5000);
+    changed(&table, (&ids[0..400], &ids[400..500]), 10);
+    assert!(sorted_by_text(&table), "sorted as written again");
+    assert_eq!(table.frozen.directory().unwrap().groups[0].group.rows, 2048 - 100);
+    assert_eq!(table.get(NO_TRANSACTION, ids[3]).unwrap().map(|r| r[1].to_string()), Some("v-3".to_owned()));
+    assert!(table.get(NO_TRANSACTION, ids[450]).unwrap().is_none());
 }

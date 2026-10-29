@@ -12,6 +12,7 @@ use crate::db::constraints::Described;
 use crate::db::defaults::default_of;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::cond_columns;
+use crate::settings::Kind;
 
 /// A Syntax Rule violation.
 fn rule(message: String) -> SqlError {
@@ -75,6 +76,7 @@ impl State {
         behavior: DropBehavior,
     ) -> Result<(TableDesc, Reshape, Vec<TableDesc>)> {
         let at = desc.column(column).ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {} has no column {column}", desc.name)))?;
+        self.unnamed_by_options(desc, column)?;
         if desc.columns.len() == 1 {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.15 SR3] {column} is the only column of {}", desc.name)));
         }
@@ -118,6 +120,26 @@ impl State {
         next.refresh_not_null();
         next.generation = desc.generation.saturating_add(1);
         Ok((next, reshape, others))
+    }
+
+    /// Refuses `column` of `desc` if an option of columns names it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if one does.
+    fn unnamed_by_options(&self, desc: &TableDesc, column: &str) -> Result<()> {
+        let declared = self.options_of(&desc.engine);
+        let naming = desc.options.iter().find(|(name, value)| {
+            declared.iter().any(|o| o.name == *name && matches!(o.kind, Kind::Columns { .. }))
+                && super::storage::columns_named(value).iter().any(|c| c == column)
+        });
+        match naming {
+            Some((name, _)) => Err(rule(format!(
+                "[EXTENSION] the table option {name} of {} names {column}: it is dropped once the option names it no more",
+                desc.name
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The definitions with `next`, a table with a column dropped, in place

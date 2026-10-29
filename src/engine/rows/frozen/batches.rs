@@ -4,8 +4,9 @@
 //! then the tree's rows, as the reader sees them. A condition's columns are
 //! read first, and the other columns only of the rows it keeps.
 //!
-//! A vector's rows the tree has entries for are read from them as the
-//! vector is, the tree read over its range of row ids, and its range then
+//! A group's rows the tree has entries for are read from them as the
+//! group is taken up, the tree read once over its range of row ids, in
+//! whatever order its rows are (COLUMNSTORE.ORDER), and that range then
 //! left out of the tree's rows read last: a freeze meanwhile may take out
 //! an entry of a row frozen before (`freeze.rs`), whose group's row is the
 //! same, so each row is read once, of the one or the other. Split from
@@ -36,9 +37,12 @@ pub(in crate::engine::rows) struct Batched {
     /// Its groups, taken before its tree is read, held to the end.
     directory: Arc<Directory>,
     next_group: usize,
-    /// The group being read, its row ids, and its runs left to read.
-    group: Option<(usize, Vec<RowId>)>,
+    /// The group being read, its row ids, those the tree has entries for,
+    /// in order, and its runs left to read.
+    group: Option<(usize, Vec<RowId>, Vec<RowId>)>,
     runs: VecDeque<(u32, u32)>,
+    /// The rows of the tree's entries in the group's range, left to give.
+    entries: Vec<Row>,
     /// The tree's entries, once the groups are read.
     delta: Option<Scan<TreeOf>>,
     /// The ranges of row ids of the tree's entries read with the groups'
@@ -64,6 +68,7 @@ impl Batched {
             next_group: 0,
             group: None,
             runs: VecDeque::new(),
+            entries: Vec::new(),
             delta: None,
             read: Vec::new(),
         }
@@ -71,14 +76,15 @@ impl Batched {
 
     /// The group being read.
     fn current(&self) -> Option<&Group> {
-        self.group.as_ref().and_then(|(at, _)| self.directory.groups.get(*at)).map(|e| &e.group)
+        self.group.as_ref().and_then(|(at, _, _)| self.directory.groups.get(*at)).map(|e| &e.group)
     }
 
-    /// Takes up the next group, its runs a vector at most each; whether
-    /// there was one.
+    /// Takes up the next group, its runs a vector at most each, and the
+    /// tree's entries in its range; whether there was one.
     fn next_group(&mut self) -> Result<bool> {
-        let Some(entry) = self.directory.groups.get(self.next_group) else { return Ok(false) };
+        let Some(entry) = self.directory.groups.get(self.next_group).cloned() else { return Ok(false) };
         let ids = entry.group.row_ids(&self.table.group_pages()?)?;
+        let shadowed = self.entries_in(&entry.group)?;
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
         for (from, to) in candidates(&entry.group, self.condition.as_ref()) {
             let mut at = from;
@@ -88,7 +94,7 @@ impl Batched {
                 at = end;
             }
         }
-        self.group = Some((self.next_group, ids));
+        self.group = Some((self.next_group, ids, shadowed));
         self.next_group = self.next_group.saturating_add(1);
         Ok(true)
     }
@@ -109,32 +115,51 @@ impl Batched {
         Ok(self.condition.as_ref().is_none_or(|c| c.matches(&row)).then_some(row))
     }
 
-    /// The positions from `from` to `to` of the group being read whose rows
-    /// the tree has no entry for; and the rows of the tree's entries in
-    /// their range of row ids, which is noted as read.
-    fn unshadowed(&mut self, (from, to): (u32, u32)) -> Result<(Vec<u32>, Vec<Row>)> {
-        let Some((_, ids)) = &self.group else { return Ok((Vec::new(), Vec::new())) };
-        let at = |p: u32| usize::try_from(p).ok().and_then(|p| ids.get(p)).copied();
-        let (Some(first), Some(last)) = (at(from), at(to.saturating_sub(1))) else { return Ok((Vec::new(), Vec::new())) };
-        let (low, high) = (key(first), key(last));
-        let (mut shadowed, mut rows) = (Vec::new(), Vec::new());
+    /// The ids of the tree's entries in `group`'s range of row ids, in
+    /// order, the rows of those the reader sees kept to give, and the range
+    /// noted as read.
+    fn entries_in(&mut self, group: &Group) -> Result<Vec<RowId>> {
+        let (low, high) = (key(group.first), key(group.last));
         let decoded = self.decoded();
+        let mut shadowed = Vec::new();
         for entry in self.table.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
             let (k, newest) = entry?;
             let id = row_id(&k)?;
             shadowed.push(id);
-            rows.extend(self.delta_row((id, newest), &decoded)?);
+            if let Some(row) = self.delta_row((id, newest), &decoded)? {
+                self.entries.push(row);
+            }
         }
-        let positions = (from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect();
-        self.read.push((first, last));
-        Ok((positions, rows))
+        self.read.push((group.first, group.last));
+        Ok(shadowed)
+    }
+
+    /// The positions from `from` to `to` of the group being read whose rows
+    /// the tree has no entry for.
+    fn unshadowed(&self, (from, to): (u32, u32)) -> Vec<u32> {
+        let Some((_, ids, shadowed)) = &self.group else { return Vec::new() };
+        let at = |p: u32| usize::try_from(p).ok().and_then(|p| ids.get(p)).copied();
+        (from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect()
+    }
+
+    /// A batch of the rows of the tree's entries left to give, if any.
+    fn entries_batch(&mut self) -> Option<Batch> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let rest = self.entries.split_off(self.entries.len().saturating_sub(BATCH_ROWS));
+        let mut batch = Batch::empty(self.columns.len());
+        for row in &rest {
+            batch.push(row, &self.columns);
+        }
+        Some(batch)
     }
 
     /// The batch of the run `from` to `to` of the group being read, if any
-    /// of its rows is given: of its `positions` the tree has no entry for,
-    /// then the tree's `entries` in its range.
-    fn run_batch(&self, (from, to): (u32, u32), (mut positions, entries): (Vec<u32>, Vec<Row>)) -> Result<Option<Batch>> {
+    /// of its rows the tree has no entry for is given.
+    fn run_batch(&self, (from, to): (u32, u32)) -> Result<Option<Batch>> {
         let Some(group) = self.current() else { return Ok(None) };
+        let mut positions = self.unshadowed((from, to));
         let pages = self.table.group_pages()?;
         let types = self.table.format.types();
         if let Some(condition) = &self.condition {
@@ -152,7 +177,7 @@ impl Batched {
                 .collect();
             positions = kept;
         }
-        if positions.is_empty() && entries.is_empty() {
+        if positions.is_empty() {
             return Ok(None);
         }
         let whole = u32::try_from(positions.len()).ok() == Some(to.saturating_sub(from));
@@ -170,9 +195,6 @@ impl Batched {
                 None => vec![Value::Null; positions.len()],
             };
             batch.columns.push(column);
-        }
-        for row in &entries {
-            batch.push(row, &self.columns);
         }
         Ok(Some(batch))
     }
@@ -210,9 +232,11 @@ impl Batched {
 
     fn step(&mut self) -> Result<Option<Batch>> {
         loop {
+            if let Some(batch) = self.entries_batch() {
+                return Ok(Some(batch));
+            }
             if let Some(run) = self.runs.pop_front() {
-                let split = self.unshadowed(run)?;
-                match self.run_batch(run, split)? {
+                match self.run_batch(run)? {
                     Some(batch) => return Ok(Some(batch)),
                     None => continue,
                 }

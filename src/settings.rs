@@ -28,7 +28,7 @@ pub use builtin::{
     WORK_MEMORY,
 };
 use builtin::{builtin, whole};
-pub use kind::Kind;
+pub use kind::{Kind, column_list, column_names};
 
 /// When a change of a setting takes effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +165,11 @@ pub(crate) fn accepted(name: &str, kind: &Kind, value: &Value) -> Result<Value> 
         Kind::Encodings => {
             let names: Vec<&str> = given.ok_or_else(refused)?.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
             Ok(Value::Char(names.join(",")))
+        }
+        // Each a column of the table: `stored` checks them.
+        Kind::Columns { most } => {
+            let names = given.and_then(column_names).filter(|n| n.len() <= *most).ok_or_else(refused)?;
+            Ok(Value::Char(column_list(&names)))
         }
         Kind::Identifier => {
             let body = given.map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= crate::lexer::MAX_IDENTIFIER_LENGTH);
@@ -501,6 +506,24 @@ mod tests {
         assert_eq!(shown(accepted("X", &path, &text(""))), Some("''".to_owned()), "empty");
         assert!(accepted("X", &path, &text("a/b/c")).is_err(), "too long");
         assert!(accepted("X", &path, &whole(1)).is_err(), "not text");
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D41 [ISO/IEC 9075:1992 §5.2 SR10,
+    /// SR13, SR14]: a list of columns takes names by commas, a regular one
+    /// upper case, a delimited one as written, its doubled quotes one, each
+    /// written back delimited only if it must be; none, empty; not more
+    /// than its most, nor a name empty, nor a quote not closed.
+    #[test]
+    fn columns_are_taken_as_identifiers() {
+        let shown = |r: Result<Value>| r.ok().map(|v| v.to_literal());
+        let two = Kind::Columns { most: 2 };
+        assert_eq!(shown(accepted("X", &two, &text(" a ,  \"b\"\"c\" "))), Some("'A, \"b\"\"c\"'".to_owned()));
+        assert_eq!(shown(accepted("X", &two, &text("\"B_1\", x"))), Some("'B_1, X'".to_owned()), "delimited only if it must be");
+        assert_eq!(shown(accepted("X", &two, &text("  "))), Some("''".to_owned()), "none");
+        for refused in ["a, b, c", "a,", ",a", "a,,b", "\"a", "\"a\" b", "\"\""] {
+            assert!(accepted("X", &two, &text(refused)).is_err(), "{refused}");
+        }
+        assert!(accepted("X", &two, &whole(1)).is_err(), "not text");
     }
 
     /// Verifies: [DESIGN] RULES.md D36: a value is taken only of its

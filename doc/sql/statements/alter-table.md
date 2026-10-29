@@ -78,12 +78,14 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCK_WAIT =
    NOT NULL and the table has rows, the column has a default.
 3. ALTER COLUMN and DROP COLUMN: the table has the column. DROP DEFAULT:
    the column has a default of its own.
-4. DROP COLUMN: the column is not the table's only one.
+4. DROP COLUMN: the column is not the table's only one, nor one a table
+   option names, such as COLUMNSTORE.ORDER *(extension)*: the option is
+   changed first.
 5. DROP CONSTRAINT: the table has the constraint. A constraint a column
    has from its domain is changed by [ALTER DOMAIN](alter-domain.md).
 6. A constraint added follows the rules of [CREATE TABLE](create-table.md).
 7. SET and USING: the engine is registered, and takes each option, of a
-   value it accepts. A temporary table names no engine or options.
+   value it accepts; an option of columns names the table's. A temporary table names no engine or options.
 8. A temporary table is altered only while no session's instance of it
    holds a row, the session's own included.
 9. No cursor of the transaction reads the table.

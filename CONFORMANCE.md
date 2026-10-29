@@ -427,9 +427,10 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   TRANSACTIONS.TRACKED_ROWS and TRANSACTIONS.HELD_BYTES; the column store,
   `columnstore`, takes them too, and COLUMNSTORE.GROUP_ROWS,
   COLUMNSTORE.FREEZE_ROWS, COLUMNSTORE.FREEZE_DELAY,
-  COLUMNSTORE.REWRITE_FRACTION and COLUMNSTORE.COMPRESSION: how a table of
-  it freezes its rows into groups of its columns' values, compressed, and
-  writes them again (RULES.md D31). The database
+  COLUMNSTORE.REWRITE_FRACTION, COLUMNSTORE.COMPRESSION and
+  COLUMNSTORE.ORDER: how a table of it freezes its rows into groups of its
+  columns' values, compressed and sorted, and writes them again (RULES.md
+  D31). The database
   declares ENCODINGS for every table: the registered encodings its rows
   pass through, such as LZ4 or AES-256-GCM with its key (RULES.md D48).
 - **Plug-ins** for storage engines, index methods, functions, optimizer

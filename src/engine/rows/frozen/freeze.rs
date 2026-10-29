@@ -11,6 +11,7 @@
 //! only if it is still the one frozen, so a row changed meanwhile keeps
 //! its newer version in the tree, which readers take before the group's.
 
+use std::cmp;
 use std::collections::VecDeque;
 use std::mem;
 use std::ops::Bound;
@@ -20,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use super::{Directory, Entry, Retiring};
 use crate::engine::columns::group::Group;
-use crate::engine::rows::options::Columns;
+use crate::engine::rows::options::{Columns, Order};
 use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
@@ -28,6 +29,7 @@ use crate::error::Result;
 use crate::storage::{Row, RowId};
 use crate::sync::{lock_builtin, read, write};
 use crate::txn::Timestamp;
+use crate::value::sort_cmp;
 
 /// \[DESIGN\] How long a freeze that found too few rows waits before it is
 /// tried again: a second.
@@ -58,6 +60,18 @@ fn delayed(commits: &mut VecDeque<(Timestamp, Instant)>, delay: u32) -> Timestam
         commits.pop_front();
     }
     commits.front().filter(|&&(_, when)| when <= cut).map_or(0, |&(at, _)| at)
+}
+
+/// `rows`, each with its id, sorted by the columns of `order`, ascending,
+/// as ORDER BY sorts them, their ids breaking ties: their ids and rows.
+pub(super) fn ordered(order: &Order, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId>, Vec<Row>) {
+    if !order.places().is_empty() {
+        rows.sort_by(|(a_id, a), (b_id, b)| {
+            let by = |&c: &usize| a.get(c).zip(b.get(c)).map_or(cmp::Ordering::Equal, |(x, y)| sort_cmp(x, y));
+            order.places().iter().map(by).find(|o| o.is_ne()).unwrap_or_else(|| a_id.cmp(b_id))
+        });
+    }
+    rows.into_iter().unzip()
 }
 
 /// A freeze under way, noted from a row id on until it is dropped.
@@ -133,7 +147,7 @@ impl RowTable {
             if entries.len() < fewest {
                 break;
             }
-            self.freeze(entries)?;
+            self.freeze(entries, &columns.order)?;
             froze = true;
         }
         *lock_builtin(&self.frozen.tried) = (!froze).then(Instant::now);
@@ -162,14 +176,14 @@ impl RowTable {
         Ok(found)
     }
 
-    /// Writes `entries`' rows as a group and publishes it.
-    fn freeze(&self, entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
-        let mut ids = Vec::with_capacity(entries.len());
-        let mut rows: Vec<Row> = Vec::with_capacity(entries.len());
+    /// Writes `entries`' rows as a group, sorted as `order` says, and
+    /// publishes it.
+    fn freeze(&self, entries: Vec<(RowId, Vec<u8>)>, order: &Order) -> Result<()> {
+        let mut rows: Vec<(RowId, Row)> = Vec::with_capacity(entries.len());
         for (id, bytes) in &entries {
-            rows.push(self.decode(*id, Version::parse(bytes)?.record, None)?);
-            ids.push(*id);
+            rows.push((*id, self.decode(*id, Version::parse(bytes)?.record, None)?));
         }
+        let (ids, rows) = ordered(order, rows);
         let group = Group::write(&self.group_pages()?, self.format.types(), &ids, &rows)?;
         self.publish((None, Some(group)), entries)
     }

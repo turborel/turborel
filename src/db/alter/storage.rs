@@ -14,7 +14,7 @@ use crate::catalog::{QualifiedName, TableDesc};
 use crate::db::ddl::Dropped;
 use crate::db::{State, rule};
 use crate::error::{At, Code, Result, SqlError};
-use crate::settings::Kind;
+use crate::settings::{Kind, column_names};
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::Txn;
 use crate::value::Value;
@@ -22,6 +22,36 @@ use crate::value::Value;
 /// A Syntax Rule of this extension broken (SQLCODE -103).
 fn refused(message: &str) -> SqlError {
     SqlError::new(Code::SyntaxRule, format!("[EXTENSION] {message}"))
+}
+
+/// The names an option of columns (`Kind::Columns`) gives, `value`.
+pub(in crate::db) fn columns_named(value: &Value) -> Vec<String> {
+    let Value::Char(names) = value else { return Vec::new() };
+    column_names(names).unwrap_or_default()
+}
+
+/// Checks that each option of `declared` that names columns of the table
+/// `next` names its columns, each once.
+///
+/// # Errors
+///
+/// SQLCODE -103 for a name of no column of the table, or one named twice.
+fn named_columns(declared: &[TableOption], next: &TableDesc) -> Result<()> {
+    for (name, value) in &next.options {
+        if !declared.iter().any(|o| o.name == *name && matches!(o.kind, Kind::Columns { .. })) {
+            continue;
+        }
+        let names = columns_named(value);
+        for (n, column) in names.iter().enumerate() {
+            if next.column(column).is_none() {
+                return Err(refused(&format!("{} has no column {column}, for the table option {name}", next.name)));
+            }
+            if names.iter().take(n).any(|c| c == column) {
+                return Err(refused(&format!("the table option {name} names the column {column} twice")));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The value a `<table option>` is written with.
@@ -90,6 +120,7 @@ impl State {
         // A plug-in registered late, or not again, never stops the database
         // opening (RULES.md D41).
         if self.reopening.is_none() {
+            named_columns(&declared, &next)?;
             self.check_encodings(&next)?;
         }
         Ok(next)

@@ -192,11 +192,11 @@ OK
 NOT NULL is a CHECK constraint, as the Information Schema shows it.
 
 Of the column store, its rows frozen a minute after they are committed
-at the soonest *(extension)*:
+at the soonest, each group of them sorted by region *(extension)*:
 
 ```sql
 CREATE TABLE SALES (ID INTEGER PRIMARY KEY, REGION CHAR(8), AMOUNT DECIMAL(9,2))
-    USING columnstore WITH (COLUMNSTORE.FREEZE_DELAY = 60);
+    USING columnstore WITH (COLUMNSTORE.FREEZE_DELAY = 60, COLUMNSTORE.ORDER = 'region');
 COMMIT;
 SELECT ENGINE_NAME, OPTION_NAME, OPTION_VALUE FROM INFORMATION_SCHEMA.TABLE_OPTIONS
     WHERE TABLE_NAME = 'SALES' AND VALUE_SOURCE = 'TABLE' ORDER BY 2;
@@ -208,8 +208,12 @@ OK
  ENGINE_NAME                                                  | OPTION_NAME                                                  | OPTION_VALUE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
  columnstore                                                  | COLUMNSTORE.FREEZE_DELAY                                     | 60
-(1 row)
+ columnstore                                                  | COLUMNSTORE.ORDER                                            | REGION
+(2 rows)
 ```
+
+The option names the column as the table does: `region`, a regular
+identifier, is REGION.
 
 Tables refused:
 
@@ -218,6 +222,7 @@ CREATE TABLE T3 (A INTEGER PRIMARY KEY, B INTEGER PRIMARY KEY);
 CREATE TABLE T5 (A INTEGER REFERENCES EMPLOYEES (NAME));
 CREATE TABLE T9 (A INTEGER DEFAULT 'x');
 CREATE TABLE T7 (A INTEGER) WITH (COLUMNSTORE.GROUP_ROWS = 4096);
+CREATE TABLE T8 (A INTEGER) USING columnstore WITH (COLUMNSTORE.ORDER = 'B');
 ```
 
 ```
@@ -225,6 +230,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T3 has more than one PRIMARY KEY [I
 turborel: SQLCODE -103 (SQLSTATE 2A000): the columns referenced are not those of a unique constraint of ANN.EMPLOYEES [ISO/IEC 9075:1992 §11.8 SR2a] (at character 27)
 turborel: SQLCODE -103 (SQLSTATE 2A000): the default is not a <literal> of INTEGER [ISO/IEC 9075:1992 §11.5 SR3a] (at character 17)
 turborel: SQLCODE -103 (SQLSTATE 2A000): rowstore takes no option COLUMNSTORE.GROUP_ROWS (at character 34)
+turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T8 has no column B, for the table option COLUMNSTORE.ORDER (at character 13)
 ```
 
 ## STANDARD
