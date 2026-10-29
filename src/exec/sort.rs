@@ -4,7 +4,10 @@
 //! worth sorted and written as a run, the runs merged, as many at once as
 //! the work area reads, in passes until one is left. Sorting is stable, a
 //! tie going to the earlier run, so rows of equal keys keep their order.
-//! Split from exec.rs (RULES.md R-SIZE-2).
+//! Rows are sorted by a prefix of their first key, where it has one
+//! (`sort/prefix.rs`). Split from exec.rs (RULES.md R-SIZE-2).
+
+mod prefix;
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -48,8 +51,7 @@ fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> 
         }
     }
     if runs.is_empty() {
-        rows.sort_by(|a, b| compare_rows(&keys, a, b));
-        return Ok(Box::new(rows.into_iter().map(Ok)));
+        return Ok(Box::new(prefix::sorted(&keys, rows).into_iter().map(Ok)));
     }
     if !rows.is_empty() {
         runs.push(written(&keys, rows, work)?);
@@ -74,10 +76,9 @@ fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> 
 }
 
 /// `rows`, sorted by `keys`, written as a run of `work`'s spill area.
-fn written(keys: &[SortKey], mut rows: Vec<Row>, work: &mut Work) -> Result<Box<dyn SpillRun>> {
-    rows.sort_by(|a, b| compare_rows(keys, a, b));
+fn written(keys: &[SortKey], rows: Vec<Row>, work: &mut Work) -> Result<Box<dyn SpillRun>> {
     let mut run = work.run()?;
-    for row in &rows {
+    for row in &prefix::sorted(keys, rows) {
         run.push(&row_record(row))?;
     }
     Ok(run)

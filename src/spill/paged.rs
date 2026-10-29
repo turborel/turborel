@@ -34,7 +34,7 @@ impl Spill for PagedSpill {
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> Result<Box<dyn SpillArea>> {
         let path = temp.path()?;
         let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
-        let pager = Pager::create(&**temp.fs(), &path, hash, temp.pipeline(), DEFAULT_PAGE_SIZE)?;
+        let pager = Pager::create_scratch(&**temp.fs(), &path, hash, temp.pipeline(), DEFAULT_PAGE_SIZE)?;
         let page_size = pager.page_size();
         let made = BufferPool::in_budget(memory, (area.bytes, page_size), "a spill area").map(Arc::new);
         let pool = match made {

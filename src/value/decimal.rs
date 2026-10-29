@@ -168,6 +168,10 @@ impl Decimal {
     /// exactly. A value built outside those limits (the fields are public) is
     /// compared as `f64` rather than panicking.
     pub fn cmp_value(&self, o: &Decimal) -> Ordering {
+        // Of one scale, as two values of a column are, the units compare.
+        if self.scale == o.scale {
+            return self.units.cmp(&o.units);
+        }
         let s = self.scale.max(o.scale);
         match (self.at_scale(s), o.at_scale(s)) {
             (Some(a), Some(b)) => a.cmp(&b),

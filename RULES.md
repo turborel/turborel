@@ -1050,13 +1050,21 @@ catalog to keep in step.
   memory, a setting a session may set for itself: its statements read the
   settings it set over the database's (D36). Past that it spills to an area of as many bytes, reserved of the
   budget: a temporary pager file whose buffer pool is the area, so
-  eviction writes it to disk. In the area it makes tables (byte keys to
+  eviction writes it to disk; its creation not made durable
+  (`Pager::create_scratch`), as nothing reads it after a crash, which
+  saved 7 to 9 ms of each sort that spilled. In the area it makes tables (byte keys to
   values, in the order added) and runs (records read back in order).
   Areas come from a provider, an extension point (`Spill`), given to
   plug-ins through the `Host` too, so one may give partitioned or parallel
   areas.
 - Spilling keeps the orders the planner relies on: a sort is an external
-  merge, stable; grouping and DISTINCT give their rows in the order their
+  merge, stable; the rows held, or each run, sorted by a prefix of the
+  first key, a number in the key's order, beside each row's place, those
+  of equal prefixes compared whole, or by the other keys only if every
+  prefix holds its value whole (`exec/sort/prefix.rs`): of 400,000 rows
+  in memory, by a column of random integers, 95 ms to 40.6, as the rows
+  themselves, each in memory of its own, are no longer read for every
+  comparison; grouping and DISTINCT give their rows in the order their
   first rows came. A hash join is partitioned (Grace), its partitions
   partitioned again while they outgrow the work area, its left rows
   numbered so the joined rows are merged back into the left operand's

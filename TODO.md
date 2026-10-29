@@ -158,6 +158,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   a row's; groups' set functions fed a vector
   at a time, each group's rows gathered first; a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
+- **Spilled sorts**: of 400,000 rows past the default WORK_MEMORY a sort
+  takes 149 ms where held whole it takes 41: each row written as a
+  record, checksummed in its page, read back and allocated again for the
+  merge. Runs of prefixes beside the records, and records read in place,
+  would spare most of it.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
 - **Statistics:** a fetch's cost of pages read from a disk, not the

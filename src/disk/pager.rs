@@ -158,6 +158,35 @@ impl Pager {
     /// `MIN_PAGE_SIZE` to `MAX_PAGE_SIZE`; SQLCODE -915 if the file exists
     /// or cannot be written.
     pub fn create(fs: &dyn FileSystem, path: &Path, hash: Arc<dyn HashFunction>, pipeline: Pipeline, page_size: u32) -> Result<Pager> {
+        Pager::made(fs, path, hash, (pipeline, page_size), true)
+    }
+
+    /// \[DESIGN\] As `create`, its creation not made durable: a scratch
+    /// file, as a spill area's is, that nothing reads once its maker is
+    /// gone, and that a crash leaves among the temporary files cleared as
+    /// the database opens.
+    ///
+    /// # Errors
+    ///
+    /// As `create`'s.
+    pub fn create_scratch(
+        fs: &dyn FileSystem,
+        path: &Path,
+        hash: Arc<dyn HashFunction>,
+        pipeline: Pipeline,
+        page_size: u32,
+    ) -> Result<Pager> {
+        Pager::made(fs, path, hash, (pipeline, page_size), false)
+    }
+
+    /// `create`'s work, made durable if `durable`.
+    fn made(
+        fs: &dyn FileSystem,
+        path: &Path,
+        hash: Arc<dyn HashFunction>,
+        (pipeline, page_size): (Pipeline, u32),
+        durable: bool,
+    ) -> Result<Pager> {
         let size = check_page_size(page_size).ok_or_else(|| {
             SqlError::new(
                 Code::Api,
@@ -166,9 +195,11 @@ impl Pager {
         })?;
         let file = fs.open(path, OpenMode::CreateNew)?;
         file.write_all_at(&format::header(&*hash, &pipeline, page_size, size), 0)?;
-        file.sync(Durability::Full)?;
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            fs.sync_dir(dir)?;
+        if durable {
+            file.sync(Durability::Full)?;
+            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                fs.sync_dir(dir)?;
+            }
         }
         let mut pager = Pager::new(file, path, hash, size);
         pager.pipeline = pipeline;
