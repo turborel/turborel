@@ -43,7 +43,7 @@ fn options(delay: u32) -> TableOptions {
 /// As `options`, groups written again past `fraction` of their rows.
 fn rewriting(delay: u32, fraction: f64) -> TableOptions {
     TableOptions {
-        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: delay, rewrite_fraction: fraction }),
+        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: delay, rewrite_fraction: fraction, compress: true }),
         ..TableOptions::default()
     }
 }
@@ -264,4 +264,53 @@ fn groups_are_written_again() {
     };
     changed(&never, (&more[0..1000], &[]), 30);
     assert_eq!(never.frozen.directory().unwrap().groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048, 2048], "never");
+}
+
+/// The pages of the groups a table of rows `0..4096` of `types`, made by
+/// `make`, freezes, compressed or not; and its values read back.
+fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool) -> (usize, Vec<String>) {
+    let (_, files) = files();
+    let options = TableOptions {
+        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: 0, rewrite_fraction: 0.0, compress }),
+        ..TableOptions::default()
+    };
+    let table = Arc::new(RowTable::create(&files, types, options).unwrap());
+    for n in 0..4096 {
+        table.insert(NO_TRANSACTION, make(n)).unwrap();
+    }
+    table.gc(1, &mut |_, _| {}).unwrap();
+    let pages = table.frozen.directory().unwrap().groups.iter().map(|e| e.group.pages().len()).sum();
+    let all: Vec<usize> = (0..types.len()).collect();
+    let read = Arc::clone(&table)
+        .scan(NO_TRANSACTION, &all)
+        .map(|r| r.unwrap().1.iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
+        .collect();
+    (pages, read)
+}
+
+/// Verifies: [DESIGN] RULES.md D31, compressed groups: rows of numbers of
+/// few values or near one another, and of texts of few values, freeze into
+/// a fraction of the pages compressed that they take plain, and read back
+/// the same.
+#[test]
+fn compressed_groups_take_fewer_pages() {
+    let types = [
+        DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer },
+        DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer },
+        DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Decimal },
+        DataType::Varying { length: 20 },
+    ];
+    let make = |n: i128| {
+        vec![
+            Value::Exact(Decimal::new(n, 0)),
+            Value::Exact(Decimal::new(n.checked_rem(7).unwrap(), 0)),
+            Value::Exact(Decimal::new(n.checked_rem(100).unwrap().checked_mul(100).unwrap().checked_add(50).unwrap(), 2)),
+            Value::Char(format!("status {}", n.checked_rem(5).unwrap())),
+        ]
+    };
+    let (compressed, read) = group_pages_of(&types, make, true);
+    let (plain, plain_read) = group_pages_of(&types, make, false);
+    assert_eq!(read, plain_read, "the same rows");
+    eprintln!("group pages: {compressed} compressed, {plain} not");
+    assert!(compressed.saturating_mul(3) < plain, "{compressed} against {plain}");
 }

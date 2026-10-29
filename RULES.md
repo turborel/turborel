@@ -731,7 +731,14 @@ becomes a trait when it is.
   into a group (`engine/columns`): its row ids, and each column's values
   in chunks of a page each, each chunk's least and greatest values and
   nulls kept (zone maps), every page sealed by the table's ENCODINGS, its
-  number the context. Groups are immutable, their row ids' ranges apart,
+  number the context. A chunk is written in whichever encoding takes
+  fewest bytes, and holds as many values as its page does so: plain, a
+  constant, a frame of reference of 8-byte fields (any such field read as
+  a signed integer, so every type of that width), or a dictionary
+  (`columns/encoded.rs`); COLUMNS.COMPRESSION = NONE keeps them plain.
+  Measured: rows of numbers of few values or near one another, and of
+  texts of few values, freeze into 12 pages where they take 46 plain, and
+  scans run as fast, a value read at a time either way. Groups are immutable, their row ids' ranges apart,
   found through a directory the meta page names. A row's newest state is
   its entry in the tree if it has one, else its group's values, which
   every reader sees: so a frozen row changed is written as any row is,

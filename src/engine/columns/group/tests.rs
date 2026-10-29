@@ -80,7 +80,7 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
 #[test]
 fn groups_read_back() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
     for (first, step) in [(100_u64, 1_u64), (7, 3)] {
         let group = written(&pages, (first, step), 4000);
         assert_eq!(group.ids.is_empty(), step == 1, "ids kept only if not every one");
@@ -102,7 +102,7 @@ fn groups_read_back() {
 #[test]
 fn scans_skip_chunks_a_condition_cannot_match() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain };
+    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true };
     let group = written(&pages, (1, 1), 4000);
     let between = Condition {
         columns: vec![2],
@@ -129,7 +129,7 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 #[test]
 fn what_groups_refuse() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
     assert_eq!(Group::write(&pages, &TYPES, &[], &[]).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
     assert!(Group::write(&pages, &TYPES, &[1], &wrong).is_err(), "not of its types");

@@ -202,7 +202,8 @@ impl RowTable {
     /// Where its groups' pages are, sealed as its rows are.
     pub(super) fn group_pages(&self) -> Result<Pages<'_, Sealing>> {
         let capacity = self.pool.capacity(self.file)?.saturating_sub(self.sealing.overhead()).saturating_sub(LINK);
-        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing })
+        let compress = self.frozen.columns().is_none_or(|c| c.compress);
+        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress })
     }
 
     /// Row `id`'s frozen values, `columns` of them or all, if a group of

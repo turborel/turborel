@@ -5,28 +5,30 @@
 //!
 //! ```text
 //! chunk:     kind u8 | count u32 | nulls, ceil(count / 8) bytes, a bit set
-//!            for each null | values
-//! FIXED:     width u32 | count × width bytes, a null's zeroed
-//! VARYING:   (count + 1) × u32, where each value begins and the last ends,
-//!            from the start of the bytes | the bytes
+//!            for each null | values, as their encoding writes them
+//!            (`encoded.rs`)
 //! ```
 //!
-//! Integers are little-endian. A chunk is fixed when its type has a width
-//! in a record and every value is written in it, else varying. Built on:
+//! Integers are little-endian. Of the encodings that hold a chunk's values,
+//! the one that takes fewest bytes is chosen, and a chunk holds as many
+//! values as its page does so encoded; or, not compressed, fixed if its
+//! type has a width in a record and every value is written in it, else
+//! varying. Built on:
 //!
 //! * `group`: a frozen row group, its row ids, its chunks, the least and
 //!   greatest value and nulls of each, and the pages they are on;
 //! * `scan`: the rows of a group a reader asks for, chunks a condition
 //!   cannot match left unread.
 
+mod encoded;
 pub mod group;
 pub mod scan;
 
 use crate::error::{Code, Result, SqlError};
 use crate::value::{DataType, Value};
 
-const FIXED: u8 = 1;
-const VARYING: u8 = 2;
+use encoded::{Body, Sizer};
+
 /// Bytes of a count, a width or an offset.
 const WORD: usize = 4;
 /// Bytes before the nulls.
@@ -92,33 +94,35 @@ impl Fields {
     }
 
     /// How many of those from `from` on fit a chunk of `capacity` bytes, of
-    /// type `t`; at least one, so a value longer than a chunk has one of its
-    /// own.
-    pub fn fitting(&self, t: &DataType, from: usize, capacity: usize) -> usize {
+    /// type `t`, compressed if `compress`; at least one, so a value longer
+    /// than a chunk has one of its own.
+    pub fn fitting(&self, t: &DataType, from: usize, (capacity, compress): (usize, bool)) -> usize {
         let rest = self.0.get(from..).unwrap_or_default();
-        let fixed = width_of(&self.0, t);
-        // The width, or the first offset.
-        let mut used = HEADER.saturating_add(WORD);
+        let mut sizer = Sizer::new(width_of(&self.0, t), compress);
         for (n, field) in rest.iter().enumerate() {
-            let len = fixed.unwrap_or_else(|| field.as_ref().map_or(0, Vec::len).saturating_add(WORD));
-            used = used.saturating_add(len);
-            if used.saturating_add(nulls_len(n.saturating_add(1))) > capacity {
+            sizer.add(field.as_deref());
+            if sizer.best().1 > capacity {
                 return n.max(1);
             }
         }
         rest.len()
     }
 
-    /// The chunk of those from `from`, `count` of them, of type `t`.
+    /// The chunk of those from `from`, `count` of them, of type `t`, in the
+    /// encoding that takes fewest bytes, compressed if `compress`.
     ///
     /// # Errors
     ///
     /// SQLCODE -900 if it is longer than a count describes.
-    pub fn chunk(&self, t: &DataType, from: usize, count: usize) -> Result<Vec<u8>> {
+    pub fn chunk(&self, t: &DataType, from: usize, (count, compress): (usize, bool)) -> Result<Vec<u8>> {
         let end = from.checked_add(count).ok_or_else(too_large)?;
         let fields = self.0.get(from..end).ok_or_else(|| corrupt("its values are out of range"))?;
-        let fixed = width_of(&self.0, t);
-        let mut out = vec![if fixed.is_some() { FIXED } else { VARYING }];
+        let mut sizer = Sizer::new(width_of(&self.0, t), compress);
+        for f in fields {
+            sizer.add(f.as_deref());
+        }
+        let (plan, _) = sizer.best();
+        let mut out = vec![encoded::kind_of(plan)];
         out.extend_from_slice(&word(count)?);
         let mut nulls = vec![0_u8; nulls_len(count)];
         for (n, field) in fields.iter().enumerate() {
@@ -128,23 +132,7 @@ impl Fields {
             }
         }
         out.extend_from_slice(&nulls);
-        if let Some(width) = fixed {
-            out.extend_from_slice(&word(width)?);
-            for field in fields {
-                match field {
-                    Some(f) => out.extend_from_slice(f),
-                    None => out.resize(out.len().saturating_add(width), 0),
-                }
-            }
-            return Ok(out);
-        }
-        let mut at = 0_usize;
-        out.extend_from_slice(&word(at)?);
-        for field in fields {
-            at = at.checked_add(field.as_ref().map_or(0, Vec::len)).ok_or_else(too_large)?;
-            out.extend_from_slice(&word(at)?);
-        }
-        fields.iter().flatten().for_each(|f| out.extend_from_slice(f));
+        encoded::encode(plan, fields, &mut out)?;
         Ok(out)
     }
 }
@@ -153,10 +141,7 @@ impl Fields {
 pub struct Chunk<'a> {
     count: usize,
     nulls: &'a [u8],
-    /// The width of each value, if fixed; else where each begins.
-    width: Option<usize>,
-    offsets: &'a [u8],
-    values: &'a [u8],
+    body: Body<'a>,
 }
 
 impl<'a> Chunk<'a> {
@@ -170,24 +155,7 @@ impl<'a> Chunk<'a> {
         let count = read_word(bytes, 1)?;
         let nulls_end = HEADER.checked_add(nulls_len(count)).ok_or_else(|| corrupt("its count is too large"))?;
         let nulls = bytes.get(HEADER..nulls_end).ok_or_else(|| corrupt("it is too short"))?;
-        let rest_at = nulls_end.checked_add(WORD).ok_or_else(|| corrupt("it is too short"))?;
-        match kind {
-            FIXED => {
-                let width = read_word(bytes, nulls_end)?;
-                let len = count.checked_mul(width).ok_or_else(|| corrupt("its values are too long"))?;
-                let values = rest_at.checked_add(len).and_then(|end| bytes.get(rest_at..end)).ok_or_else(|| corrupt("it is too short"))?;
-                Ok(Chunk { count, nulls, width: Some(width), offsets: &[], values })
-            }
-            VARYING => {
-                let offsets_len =
-                    count.checked_add(1).and_then(|n| n.checked_mul(WORD)).ok_or_else(|| corrupt("its count is too large"))?;
-                let offsets_end = nulls_end.checked_add(offsets_len).ok_or_else(|| corrupt("it is too short"))?;
-                let offsets = bytes.get(nulls_end..offsets_end).ok_or_else(|| corrupt("it is too short"))?;
-                let values = bytes.get(offsets_end..).unwrap_or_default();
-                Ok(Chunk { count, nulls, width: None, offsets, values })
-            }
-            _ => Err(corrupt("it is of another format")),
-        }
+        Ok(Chunk { count, nulls, body: encoded::body(kind, count, (bytes, nulls_end))? })
     }
 
     /// How many values it holds.
@@ -218,14 +186,7 @@ impl<'a> Chunk<'a> {
         if self.is_null(n) {
             return Ok(Value::Null);
         }
-        let field = if let Some(width) = self.width {
-            n.checked_mul(width).and_then(|at| self.values.get(at..at.checked_add(width)?))
-        } else {
-            let from = read_word(self.offsets, n.saturating_mul(WORD))?;
-            let to = read_word(self.offsets, n.saturating_add(1).saturating_mul(WORD))?;
-            self.values.get(from..to)
-        };
-        field.and_then(|f| t.decode_record(f)).ok_or_else(|| corrupt("a value is not one of its column's type"))
+        self.body.value(n, t)
     }
 }
 

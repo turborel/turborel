@@ -79,6 +79,8 @@ pub struct Pages<'a, S> {
     pub capacity: usize,
     /// How its pages are sealed.
     pub sealing: &'a S,
+    /// Whether chunks written are compressed (`columns/encoded.rs`).
+    pub compress: bool,
 }
 
 impl<S: Seal> Pages<'_, S> {
@@ -195,8 +197,8 @@ fn write_column<S: Seal>(
     let mut zones = Vec::new();
     let mut from = 0_usize;
     while from < fields.len() {
-        let count = fields.fitting(t, from, pages.capacity);
-        let page = pages.put(&fields.chunk(t, from, count)?, written)?;
+        let count = fields.fitting(t, from, (pages.capacity, pages.compress));
+        let page = pages.put(&fields.chunk(t, from, (count, pages.compress))?, written)?;
         let (bounds, nulls) = bounds_of(values.get(from..from.saturating_add(count)).unwrap_or_default());
         zones.push(Zone { run: Run { first: count32(from)?, rows: count32(count)?, page }, nulls, bounds });
         from = from.saturating_add(count);

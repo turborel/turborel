@@ -12,6 +12,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 
 | Option | Default | Values | Changed |
 |---|---|---|---|
+| COLUMNS.COMPRESSION | AUTO | ONE OF AUTO, NONE | in place |
 | COLUMNS.FREEZE_DELAY | 0 | INTEGER FROM 0 TO 31622400 | in place |
 | COLUMNS.FREEZE_ROWS | 0 | INTEGER FROM 0 TO 9223372036854775807 | in place |
 | COLUMNS.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
@@ -28,6 +29,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 
 Each in a sentence:
 
+- **COLUMNS.COMPRESSION**: Whether a table of the COLUMNS layout compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.
 - **COLUMNS.FREEZE_DELAY**: The seconds a row of a table of the COLUMNS layout stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNS.FREEZE_ROWS**: The rows committed past the last group after which a table of the COLUMNS layout freezes them; 0 for COLUMNS.GROUP_ROWS.
 - **COLUMNS.GROUP_ROWS**: The rows of each group a table of the COLUMNS layout freezes; groups frozen before keep theirs.
@@ -52,7 +54,11 @@ still see them otherwise, they are frozen: written again as a group of
 each column's values together, and the least and greatest of each page
 of a column's values kept. A query that reads a few columns of many
 rows then reads only those columns' pages, and a condition on a column
-skips the pages whose values it cannot match. The more of a table's rows
+skips the pages whose values it cannot match. Each page of a column's
+values is compressed, unless COLUMNS.COMPRESSION is NONE: a value the same
+throughout kept once, numbers kept as their differences from the least, or
+few distinct values kept once each, whichever takes fewest bytes, so a
+page holds more of them. The more of a table's rows
 are frozen, and the fewer of its columns a query reads, the faster it
 reads them.
 

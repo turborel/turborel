@@ -40,6 +40,9 @@ const GROUP_ROWS: &str = "COLUMNS.GROUP_ROWS";
 const FREEZE_ROWS: &str = "COLUMNS.FREEZE_ROWS";
 const FREEZE_DELAY: &str = "COLUMNS.FREEZE_DELAY";
 const REWRITE_FRACTION: &str = "COLUMNS.REWRITE_FRACTION";
+const COMPRESSION: &str = "COLUMNS.COMPRESSION";
+/// What COLUMNS.COMPRESSION takes.
+const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// \[DESIGN\] The default of COLUMNS.REWRITE_FRACTION: a fifth of a group's
 /// rows changed, deleted or added to before it is written again, as
 /// Vertica's mergeout purges and SQL Server's guidance has it.
@@ -91,11 +94,20 @@ pub struct Columns {
     /// deleted or added, past which the group is written again with them;
     /// 0 for never.
     pub rewrite_fraction: f64,
+    /// Whether its chunks are compressed, each in the encoding that takes
+    /// fewest bytes (`engine/columns/encoded.rs`).
+    pub compress: bool,
 }
 
 impl Default for Columns {
     fn default() -> Self {
-        Columns { group_rows: DEFAULT_GROUP_ROWS, freeze_rows: 0, freeze_delay: 0, rewrite_fraction: DEFAULT_REWRITE_FRACTION }
+        Columns {
+            group_rows: DEFAULT_GROUP_ROWS,
+            freeze_rows: 0,
+            freeze_delay: 0,
+            rewrite_fraction: DEFAULT_REWRITE_FRACTION,
+            compress: true,
+        }
     }
 }
 
@@ -223,6 +235,11 @@ fn layout_declared(defaults: TableOptions) -> Vec<TableOption> {
             Rebuild::No,
             "The share of a frozen group's rows changed, deleted or added to, past which a table of the COLUMNS layout writes the group again with them; 0 for never.",
         ),
+        TableOption::new(
+            (COMPRESSION, Kind::Choice(COMPRESSIONS), Value::Char(if cols.compress { "AUTO" } else { "NONE" }.into())),
+            Rebuild::No,
+            "Whether a table of the COLUMNS layout compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.",
+        ),
     ]
 }
 
@@ -279,6 +296,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         freeze_rows: count(FREEZE_ROWS).unwrap_or(c.freeze_rows),
         freeze_delay: count(FREEZE_DELAY).and_then(|n| u32::try_from(n).ok()).unwrap_or(c.freeze_delay),
         rewrite_fraction: set(REWRITE_FRACTION).and_then(Value::as_f64).unwrap_or(c.rewrite_fraction),
+        compress: set(COMPRESSION).map_or(c.compress, |v| v.to_string().trim_end() != "NONE"),
     });
     out
 }
