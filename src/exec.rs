@@ -329,6 +329,10 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, 
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
 fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    // Read by batches, if it can be (`exec/batch/project.rs`).
+    if let Some(rows) = batch::projected(&plan, db, tx) {
+        return rows;
+    }
     let Plan::Project { exprs, input, .. } = plan else { return failed(broken("a projection is not one")) };
     let (input, runner) = (execute(*input, db, tx), Runner::new(db, tx));
     Box::new(input.map(move |r| r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &runner)).collect())))

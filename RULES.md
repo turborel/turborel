@@ -768,7 +768,11 @@ becomes a trait when it is.
   filter that cannot raise an error has its conjuncts comparing a column
   with a constant judged over the vectors, and the rest of it judged of
   the rows they keep, each made a row; one that can raise is judged whole
-  a row at a time, as row by row. Groups are held in the work area, given in the order
+  a row at a time, as row by row. A projection of columns and constants of
+  such a scan, of a table that reads by batch (`reads_by_batch`, a COLUMNS
+  table's), makes each row it gives of the vectors, a batch read ahead of
+  what a cursor is given; of any other table it reads a row at a time, as
+  reading ahead would gain nothing (`exec/batch/project.rs`). Groups are held in the work area, given in the order
   their first rows came; past it, the rows of every group not yet held
   are written, numbered, as a pass of `exec/group.rs` writes them, grouped
   as it groups them, and merged with the groups held by number. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)

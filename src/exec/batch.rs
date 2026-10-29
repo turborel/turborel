@@ -9,8 +9,12 @@
 //! order their first rows came; if they outgrow it, the aggregation is
 //! grouped row by row instead, as is any other (`group.rs`), which spills.
 
+mod project;
+
 use std::collections::HashMap;
 use std::sync::Arc;
+
+pub(super) use project::projected;
 
 use super::eval::compared;
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
@@ -44,11 +48,52 @@ struct Read<'p> {
     taken: Vec<Taken>,
     /// Where each grouping column is in a batch.
     groups: Vec<usize>,
-    /// The filter's conjuncts judged over a batch's vectors, each a
-    /// column's place in the batch, an operator and a constant.
+    /// How its filter, if any, is judged.
+    judging: Option<Judging>,
+}
+
+/// How a filter judges a scan's batches: its conjuncts judged over the
+/// vectors, each a column's place in the batch, an operator and a
+/// constant; the rest of it judged a row at a time, each row made of the
+/// scan's columns, as wide as the table.
+struct Judging {
+    columns: Vec<usize>,
     judged: Vec<(usize, CompOp, Value)>,
-    /// The rest of the filter, judged a row at a time.
     rest: Option<Cond>,
+    width: usize,
+}
+
+impl Judging {
+    /// How `cond`, over a scan of `columns`, judges its batches.
+    fn of(cond: &Cond, columns: &[usize]) -> Judging {
+        let (judged, rest) = split(cond, columns);
+        let width = columns.iter().max().map_or(0, |&c| c.saturating_add(1));
+        Judging { columns: columns.to_vec(), judged, rest, width }
+    }
+
+    /// The rows of `batch` the filter keeps: those its conjuncts judged over
+    /// vectors keep, then of those, those the rest keeps.
+    fn kept(&self, batch: &Batch, runner: &Runner) -> Result<Vec<usize>> {
+        let mut kept: Vec<usize> = (0..batch.rows).collect();
+        for (at, op, constant) in &self.judged {
+            let vector = batch.columns.get(*at).map_or(&[][..], Vec::as_slice);
+            kept.retain(|&r| vector.get(r).is_some_and(|v| compared(v, *op, constant) == Truth::True));
+        }
+        let Some(rest) = &self.rest else { return Ok(kept) };
+        let mut row = vec![Value::Null; self.width];
+        let mut out = Vec::with_capacity(kept.len());
+        for r in kept {
+            for (vector, &c) in batch.columns.iter().zip(&self.columns) {
+                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.get(r)) {
+                    slot.clone_from(v);
+                }
+            }
+            if eval_cond(rest, &row, runner)? == Truth::True {
+                out.push(r);
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// The conjuncts of `cond` comparing a column of `columns` with a constant,
@@ -116,8 +161,8 @@ fn read_of(plan: &Plan) -> Option<Read<'_>> {
         if let Plan::Filter { cond, input, .. } = input.as_ref() { (input.as_ref(), Some(cond)) } else { (input.as_ref(), None) };
     let Plan::SeqScan { table, columns, .. } = scan else { return None };
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
-    let (judged, rest) = filter.map_or((Vec::new(), None), |cond| split(cond, columns));
-    Some(Read { table, columns, filter, taken: taken(aggs, columns)?, groups: at, judged, rest })
+    let judging = filter.map(|cond| Judging::of(cond, columns));
+    Some(Read { table, columns, filter, taken: taken(aggs, columns)?, groups: at, judging })
 }
 
 /// The row of the aggregation `plan`, read by batches, if it is one read
@@ -137,9 +182,20 @@ pub(super) fn aggregated(plan: &Plan, db: &Arc<State>, tx: TxId) -> Option<super
 /// The batches `read` reads, as `tx` sees them, each read only while the
 /// statement is not cancelled (RULES.md D44).
 fn batches_of(read: &Read<'_>, db: &Arc<State>, tx: TxId) -> Result<impl Iterator<Item = Result<Batch>> + use<>> {
-    let storage = Arc::clone(db.storage_of(read.table)?);
-    let pushed = read.filter.and_then(simple_conjunct);
-    Ok(checked(storage.scan_batches(tx, read.columns, pushed.as_ref()), db.tx.stop_of(tx)))
+    scanned((read.table, read.columns, read.filter), db, tx)
+}
+
+/// The batches of a scan of `table`'s `columns`, told the simple conjunct
+/// of `filter` if it has one, as `tx` sees them, each read only while the
+/// statement is not cancelled (RULES.md D44).
+fn scanned(
+    (table, columns, filter): (&QualifiedName, &[usize], Option<&Cond>),
+    db: &Arc<State>,
+    tx: TxId,
+) -> Result<impl Iterator<Item = Result<Batch>> + Send + use<>> {
+    let storage = Arc::clone(db.storage_of(table)?);
+    let pushed = filter.and_then(simple_conjunct);
+    Ok(checked(storage.scan_batches(tx, columns, pushed.as_ref()), db.tx.stop_of(tx)))
 }
 
 /// The groups of the rows `read` reads, each its grouping values and the
@@ -162,7 +218,7 @@ fn grouped_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> 
     let runner = Runner::new(db, tx);
     for batch in batches_of(read, db, tx)? {
         let batch = batch?;
-        let rows = if read.filter.is_some() { Some(kept(&batch, &runner, (read, width))?) } else { None };
+        let rows = read.judging.as_ref().map(|j| j.kept(&batch, &runner)).transpose()?;
         groups.feed(&batch, rows.as_deref(), (read, aggs))?;
     }
     let held: Finished = groups
@@ -279,11 +335,9 @@ fn read_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> Res
     let batches = batches_of(read, db, tx)?;
     let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect();
     let runner = Runner::new(db, tx);
-    // A row of the table's width, for the filter to judge.
-    let width = read.columns.iter().max().map_or(0, |&c| c.saturating_add(1));
     for batch in batches {
         let batch = batch?;
-        let rows = if read.filter.is_some() { Some(kept(&batch, &runner, (read, width))?) } else { None };
+        let rows = read.judging.as_ref().map(|j| j.kept(&batch, &runner)).transpose()?;
         fed(&batch, &read.taken, rows.as_deref(), &mut states)?;
     }
     states.iter().map(|s| s.finish()).collect()
@@ -314,31 +368,6 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
         }
     }
     Ok(())
-}
-
-/// The rows of `batch` the filter keeps: those its conjuncts judged over
-/// vectors keep, then of those, those the rest keeps, each made as a row of
-/// the table's `width` to be judged.
-fn kept(batch: &Batch, runner: &Runner, (read, width): (&Read<'_>, usize)) -> Result<Vec<usize>> {
-    let mut kept: Vec<usize> = (0..batch.rows).collect();
-    for (at, op, constant) in &read.judged {
-        let vector = batch.columns.get(*at).map_or(&[][..], Vec::as_slice);
-        kept.retain(|&r| vector.get(r).is_some_and(|v| compared(v, *op, constant) == Truth::True));
-    }
-    let Some(rest) = &read.rest else { return Ok(kept) };
-    let mut row = vec![Value::Null; width];
-    let mut out = Vec::with_capacity(kept.len());
-    for r in kept {
-        for (vector, &c) in batch.columns.iter().zip(read.columns) {
-            if let (Some(slot), Some(v)) = (row.get_mut(c), vector.get(r)) {
-                slot.clone_from(v);
-            }
-        }
-        if eval_cond(rest, &row, runner)? == Truth::True {
-            out.push(r);
-        }
-    }
-    Ok(out)
 }
 
 // Unit tests: which conjuncts of a filter are judged over vectors

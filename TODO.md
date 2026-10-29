@@ -157,8 +157,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
 - **Batch execution, further** (RULES.md D31): of a filter, only
   conjuncts comparing a column with a constant are judged over vectors. To come:
   more of a filter judged so (IS NULL, LIKE, IN of constants),
-  projections and joins of batches, and set functions fed a vector at a
-  time (`Accumulator`).
+  projections of expressions and joins of batches, and set functions fed
+  a vector at a time (`Accumulator`).
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
 - **Statistics:** zone maps of a ROWS table's pages (a COLUMNS table's

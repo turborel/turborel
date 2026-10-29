@@ -428,6 +428,11 @@ impl TableStorage for RowTable {
         self.scan_batches_of(tx, columns, condition.cloned())
     }
 
+    /// A table of the COLUMNS layout does.
+    fn reads_by_batch(&self) -> bool {
+        self.frozen.columns().is_some()
+    }
+
     fn row_count(&self) -> usize {
         self.live.load(Ordering::Acquire)
     }

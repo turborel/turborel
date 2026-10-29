@@ -241,6 +241,13 @@ pub trait TableStorage: Send + Sync {
         };
         batches_of(rows, columns)
     }
+    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
+    /// so a statement given rows a few at a time, a cursor's, reads them by
+    /// batch too, a batch read ahead of what it is given. Default: false,
+    /// its batches being its rows gathered, read ahead for nothing.
+    fn reads_by_batch(&self) -> bool {
+        false
+    }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
     /// `tx` is about to read, by `get`, the rows an index chose by
