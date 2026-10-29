@@ -23,7 +23,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
-use crate::spill::{Records, SpillRun, norm_key, row_bytes};
+use crate::spill::{Records, SpillRun, norm_row, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -185,7 +185,7 @@ impl Grouper {
         for r in rows {
             let (n, row) = r?;
             let values: Row = self.spec.groups.iter().map(|&c| column(&row, c).cloned()).collect::<Result<_>>()?;
-            let key = norm_key(&values.iter().map(Value::norm).collect::<Vec<_>>());
+            let key = norm_row(&values);
             if !found.contains_key(&key) {
                 if bytes > self.work.limit() {
                     overflow.push(&key, &numbered(n, &row), &mut self.work)?;
@@ -230,7 +230,9 @@ fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, (runner,
                 let v = eval(e, row, runner)?;
                 // The group's key, the function's place, and the value: one
                 // key for each value each function of each group took.
-                let taken = || seen.add_new(&[key, &u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes(), &norm_key(&[v.norm()])].concat());
+                let taken = || {
+                    seen.add_new(&[key, &u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes(), &norm_row(std::slice::from_ref(&v))].concat())
+                };
                 if joins_argument(a.distinct, &v, taken)? {
                     acc.update(&v)?;
                 }

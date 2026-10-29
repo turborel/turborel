@@ -8,7 +8,7 @@ use super::{Subqueries, broken};
 use crate::catalog::MatchType;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
-use crate::spill::norm_key;
+use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, arith, cast, compare, like};
 
@@ -237,7 +237,7 @@ pub(super) fn unique(rows: impl IntoIterator<Item = Result<Row>>, first: &mut dy
         if row.iter().any(Value::is_null) {
             continue;
         }
-        if !first(norm_key(&row.iter().map(Value::norm).collect::<Vec<_>>()))? {
+        if !first(norm_row(&row))? {
             return Ok(false);
         }
     }

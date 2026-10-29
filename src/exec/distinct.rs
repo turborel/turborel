@@ -15,9 +15,8 @@ use super::work::{Bag, ENTRY_BYTES, Work};
 use super::{RowIter, failed};
 use crate::db::State;
 use crate::error::Result;
-use crate::spill::{Records, norm_key};
+use crate::spill::{Records, norm_row};
 use crate::storage::Row;
-use crate::value::Value;
 
 /// The rows of `input`, DISTINCT. Never inlined into the caller, whose
 /// frame is on the stack while its input is made (RULES.md R-CF-6).
@@ -28,7 +27,7 @@ pub(super) fn distinct_of(input: RowIter, db: &State) -> RowIter {
 
 /// A row as DISTINCT knows it.
 fn key(row: &Row) -> Vec<u8> {
-    norm_key(&row.iter().map(Value::norm).collect::<Vec<_>>())
+    norm_row(row)
 }
 
 /// DISTINCT, as it is pulled: the keys seen, and their bytes, while they

@@ -15,10 +15,9 @@ use crate::db::State;
 use crate::error::Result;
 use crate::logical::SetOp;
 use crate::physical::Plan;
-use crate::spill::{Records, SpillRun, norm_key};
+use crate::spill::{Records, SpillRun, norm_row};
 use crate::storage::Row;
 use crate::txn::TxId;
-use crate::value::Value;
 
 /// [ISO/IEC 9075:1992 §7.2 GR1, GR2] The table value constructor `plan`:
 /// a row for each of its lists, each expression evaluated over no row.
@@ -37,7 +36,7 @@ pub(super) fn values(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// A row as its duplicates know it [ISO/IEC 9075:1992 §7.10 GR1b i]:
 /// values equal by comparison, nulls identical.
 fn key(row: &Row) -> Vec<u8> {
-    norm_key(&row.iter().map(Value::norm).collect::<Vec<_>>())
+    norm_row(row)
 }
 
 /// [ISO/IEC 9075:1992 §7.10 GR1b] EXCEPT or INTERSECT, `plan`: of a row

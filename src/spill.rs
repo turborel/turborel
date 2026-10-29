@@ -402,6 +402,20 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
     }
 }
 
+/// The key of `values`: the bytes `norm_key` gives of their normalized
+/// values, made without making them.
+pub fn norm_row(values: &[Value]) -> Vec<u8> {
+    // Most values' keys are a tag and 16 bytes or fewer.
+    let mut out = Vec::with_capacity(values.len().saturating_mul(NORM_BYTES));
+    for v in values {
+        put_norm(v, &mut out);
+    }
+    out
+}
+
+/// The bytes `norm_row` makes room for of each value.
+const NORM_BYTES: usize = 24;
+
 /// The key of normalized values `key`: the same bytes exactly when the
 /// values are identical (`Value::norm`).
 pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
