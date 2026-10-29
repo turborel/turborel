@@ -46,7 +46,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Set functions, of no GROUP BY, read by batches where they can be.
-const QUERIES: [&str; 15] = [
+const QUERIES: [&str; 20] = [
     "SELECT COUNT(*), SUM(N) FROM {t} WHERE G = 3 AND S IS NOT NULL AND 100 < K",
     "SELECT COUNT(*) FROM {t} WHERE N >= 100 AND N < 200 AND (S = 's1' OR S = 's2')",
     "SELECT COUNT(*) FROM {t} WHERE G <> 1 AND K > N",
@@ -62,6 +62,11 @@ const QUERIES: [&str; 15] = [
     "SELECT COUNT(*) FROM {t} WHERE N <> 7",
     "SELECT SUM(N + 0), COUNT(DISTINCT G) FROM {t}",
     "SELECT COUNT(*) FROM {t} WHERE S = 'changed'",
+    "SELECT COUNT(*), SUM(N) FROM {t} WHERE G IN (1, 3, 5)",
+    "SELECT COUNT(*) FROM {t} WHERE G NOT IN (1, 3, 5) AND N IS NOT NULL",
+    "SELECT COUNT(*) FROM {t} WHERE S IN ('s1', 's2') OR K = 3",
+    "SELECT COUNT(*) FROM {t} WHERE G NOT IN (1, CAST(NULL AS INTEGER))",
+    "SELECT COUNT(*), MIN(K) FROM {t} WHERE N IS NULL AND G IN (2, 4)",
 ];
 
 /// What `s` reads of table `table` by each query.
@@ -85,6 +90,7 @@ fn set_functions_by_batch_answer_as_row_by_row() {
     let pair: Vec<&str> = sums[0].split(',').collect();
     assert_eq!(pair[0], pair[1], "by batch and row by row");
     assert_eq!(columns[11], vec!["0,NULL".to_owned()], "no row: a count of 0 and a null sum");
+    assert_eq!(columns[18], vec!["0".to_owned()], "NOT IN a list with a null: none");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D29, serializability under batches:

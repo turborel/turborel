@@ -154,10 +154,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   serializability: a table of the row store still reads and decodes
   every row; one of the column store skips frozen chunks the filter cannot match
   (D31).
-- **Batch execution, further** (RULES.md D31): of a filter, only
-  conjuncts comparing a column with a constant are judged over vectors. To come:
-  more of a filter judged so (IS NULL, LIKE, IN of constants),
-  projections of expressions and joins of batches, and set functions fed
+- **Batch execution, further** (RULES.md D31): a filter with LIKE is
+  judged a row at a time, as LIKE can raise an error for a pattern, which
+  a row the filter's other conjuncts reject must still raise; a LIKE
+  whose pattern and escape are constants known not to raise could be
+  judged over vectors. To come: projections of expressions and joins of batches, and set functions fed
   a vector at a time (`Accumulator`).
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).

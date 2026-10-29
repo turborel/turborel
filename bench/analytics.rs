@@ -2,7 +2,7 @@
 //! baseline of a columnar layout: a table of 16 columns and 200,000 rows
 //! counted, summed by one column and by twelve, filtered to 1% by a column
 //! in the order the rows were written and by one scattered, to 10% by an
-//! indexed column, grouped, and
+//! indexed column, to 3 of its 10 groups by IN, grouped, and
 //! two of its columns read whole; and one row fetched by its key, the
 //! transactional work beside them. Rates are of the table's rows read,
 //! but the key's, of queries. Run with `cargo xtask bench`, on the harness
@@ -62,6 +62,7 @@ fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
     );
     bench.measure(case("COUNT of 1% by a scattered column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE C < 2000"));
     bench.measure(case("COUNT of 10% by an indexed column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE H BETWEEN 0 AND 6666"));
+    bench.measure(case("COUNT of 3 groups of 10 by IN", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE G IN (1, 4, 7) AND S IS NOT NULL"));
     bench.measure(case("GROUP BY 10 groups, COUNT, SUM and AVG", "rows"), scan("SELECT G, COUNT(*), SUM(A), AVG(E) FROM {t} GROUP BY G"));
     bench.measure(case("fetch 2 of 16 columns of every row", "rows"), scan("SELECT A, B FROM {t}"));
     bench.measure(case("fetch one row of 16 columns by its key", "queries"), || {

@@ -9,27 +9,28 @@
 //! order their first rows came; if they outgrow it, the aggregation is
 //! grouped row by row instead, as is any other (`group.rs`), which spills.
 
+mod judge;
 mod project;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use judge::Judging;
 pub(super) use project::projected;
 
-use super::eval::compared;
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
-use super::{Runner, eval_cond, failed, simple_conjunct};
+use super::{Runner, failed, simple_conjunct};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::Accumulator;
-use crate::logical::{AggCall, Cond, Expr, Truth};
+use crate::logical::{AggCall, Cond, Expr};
 use crate::physical::Plan;
 use crate::spill::{put_norm, row_bytes};
 use crate::storage::{Batch, Row};
 use crate::txn::{TxId, checked};
-use crate::value::{CompOp, Value};
+use crate::value::Value;
 
 /// What a set function takes of each row: a count of it, or the value of
 /// the column at this place of the batch.
@@ -50,96 +51,6 @@ struct Read<'p> {
     groups: Vec<usize>,
     /// How its filter, if any, is judged.
     judging: Option<Judging>,
-}
-
-/// How a filter judges a scan's batches: its conjuncts judged over the
-/// vectors, each a column's place in the batch, an operator and a
-/// constant; the rest of it judged a row at a time, each row made of the
-/// scan's columns, as wide as the table.
-struct Judging {
-    columns: Vec<usize>,
-    judged: Vec<(usize, CompOp, Value)>,
-    rest: Option<Cond>,
-    width: usize,
-}
-
-impl Judging {
-    /// How `cond`, over a scan of `columns`, judges its batches.
-    fn of(cond: &Cond, columns: &[usize]) -> Judging {
-        let (judged, rest) = split(cond, columns);
-        let width = columns.iter().max().map_or(0, |&c| c.saturating_add(1));
-        Judging { columns: columns.to_vec(), judged, rest, width }
-    }
-
-    /// The rows of `batch` the filter keeps: those its conjuncts judged over
-    /// vectors keep, then of those, those the rest keeps.
-    fn kept(&self, batch: &Batch, runner: &Runner) -> Result<Vec<usize>> {
-        let mut kept: Vec<usize> = (0..batch.rows).collect();
-        for (at, op, constant) in &self.judged {
-            let vector = batch.columns.get(*at).map_or(&[][..], Vec::as_slice);
-            kept.retain(|&r| vector.get(r).is_some_and(|v| compared(v, *op, constant) == Truth::True));
-        }
-        let Some(rest) = &self.rest else { return Ok(kept) };
-        let mut row = vec![Value::Null; self.width];
-        let mut out = Vec::with_capacity(kept.len());
-        for r in kept {
-            for (vector, &c) in batch.columns.iter().zip(&self.columns) {
-                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.get(r)) {
-                    slot.clone_from(v);
-                }
-            }
-            if eval_cond(rest, &row, runner)? == Truth::True {
-                out.push(r);
-            }
-        }
-        Ok(out)
-    }
-}
-
-/// The conjuncts of `cond` comparing a column of `columns` with a constant,
-/// each the column's place, the operator and the constant, judged over a
-/// batch's vectors; and the rest, judged a row at a time: all of it if it
-/// can raise an error, which every row must see raised as it would be
-/// (`simple_conjunct`).
-fn split(cond: &Cond, columns: &[usize]) -> (Vec<(usize, CompOp, Value)>, Option<Cond>) {
-    if cond.can_raise() {
-        return (Vec::new(), Some(cond.clone()));
-    }
-    let (mut judged, mut rest) = (Vec::new(), Vec::new());
-    gather(cond, columns, (&mut judged, &mut rest));
-    (judged, rest.into_iter().reduce(|a, b| Cond::And(Box::new(a), Box::new(b))))
-}
-
-/// Gathers the conjuncts of `cond` into those `split` judges over vectors
-/// and the rest.
-fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<(usize, CompOp, Value)>, &mut Vec<Cond>)) {
-    let place = |c: &usize| columns.iter().position(|x| x == c);
-    match cond {
-        Cond::And(a, b) => {
-            gather(a, columns, (&mut *judged, &mut *rest));
-            gather(b, columns, (judged, rest));
-        }
-        Cond::Compare(Expr::Column(c), op, Expr::Const(v)) => match place(c) {
-            Some(at) => judged.push((at, *op, v.clone())),
-            None => rest.push(cond.clone()),
-        },
-        // "constant op column" is "column op' constant".
-        Cond::Compare(Expr::Const(v), op, Expr::Column(c)) => match place(c) {
-            Some(at) => judged.push((at, op.flip(), v.clone())),
-            None => rest.push(cond.clone()),
-        },
-        Cond::Compare(..)
-        | Cond::Const(_)
-        | Cond::Or(..)
-        | Cond::Not(_)
-        | Cond::Is(..)
-        | Cond::IsNull(..)
-        | Cond::Like(..)
-        | Cond::Exists(_)
-        | Cond::Unique(_)
-        | Cond::Quantified(..)
-        | Cond::Match { .. } => rest.push(cond.clone()),
-    }
 }
 
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
@@ -368,47 +279,4 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
         }
     }
     Ok(())
-}
-
-// Unit tests: which conjuncts of a filter are judged over vectors
-// (RULES.md R-TEST-1).
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::value::ArithOp;
-    use crate::value::Decimal;
-
-    fn int(n: i128) -> Expr {
-        Expr::Const(Value::Exact(Decimal::new(n, 0)))
-    }
-
-    fn compare(a: Expr, op: CompOp, b: Expr) -> Cond {
-        Cond::Compare(a, op, b)
-    }
-
-    /// Verifies: [DESIGN] RULES.md D31, filters by batch: the conjuncts
-    /// comparing a column the batch holds with a constant are judged over
-    /// vectors, a constant first turned around; the others, and those of a
-    /// column the batch lacks, are the rest; a filter that can raise an
-    /// error is all rest.
-    #[test]
-    fn conjuncts_judged_over_vectors() {
-        let and = |a: Cond, b: Cond| Cond::And(Box::new(a), Box::new(b));
-        let cond = and(
-            and(compare(Expr::Column(2), CompOp::Lt, int(5)), compare(int(3), CompOp::Lt, Expr::Column(4))),
-            and(compare(Expr::Column(9), CompOp::Eq, int(1)), Cond::IsNull(Expr::Column(2), false)),
-        );
-        let (judged, rest) = split(&cond, &[4, 2]);
-        let shown: Vec<(usize, CompOp, String)> = judged.iter().map(|(at, op, v)| (*at, *op, v.to_string())).collect();
-        assert_eq!(shown, vec![(1, CompOp::Lt, "5".to_owned()), (0, CompOp::Gt, "3".to_owned())]);
-        assert!(matches!(rest, Some(Cond::And(..))), "the column the batch lacks, and IS NULL");
-        let raising = and(
-            compare(Expr::Column(2), CompOp::Lt, int(5)),
-            compare(Expr::Arith(Box::new(int(1)), ArithOp::Div, Box::new(Expr::Column(2))), CompOp::Gt, int(0)),
-        );
-        let (none_judged, all_rest) = split(&raising, &[2]);
-        assert!(none_judged.is_empty() && all_rest.is_some(), "it can raise");
-        let (one, left) = split(&compare(Expr::Column(2), CompOp::Eq, int(1)), &[2]);
-        assert_eq!((one.len(), left.is_none()), (1, true), "nothing left");
-    }
 }

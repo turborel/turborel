@@ -767,7 +767,8 @@ the format of frozen groups becomes a trait when it is.
   DISTINCT, grouped by columns the scan reads or not at all, of a table's
   scan, filtered or not, feeds them from the vectors (`exec/batch.rs`). A
   filter that cannot raise an error has its conjuncts comparing a column
-  with a constant judged over the vectors, and the rest of it judged of
+  with a constant, testing it IS NULL or IS NOT NULL, or IN or NOT IN a
+  list of constants judged over the vectors (`exec/batch/judge.rs`), and the rest of it judged of
   the rows they keep, each made a row; one that can raise is judged whole
   a row at a time, as row by row. A projection of columns and constants of
   such a scan, of a table that reads by batch (`reads_by_batch`, a column
