@@ -16,17 +16,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use judge::Judging;
-pub(super) use judge::in_list;
 pub(super) use project::projected;
 
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
-use super::{Runner, failed, simple_conjuncts};
+use super::{Runner, failed};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::Accumulator;
-use crate::logical::{AggCall, Cond, Expr};
+use crate::logical::{AggCall, Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::spill::{put_norm, row_bytes};
 use crate::storage::{Batch, Row};
@@ -106,7 +105,7 @@ fn scanned(
     tx: TxId,
 ) -> Result<impl Iterator<Item = Result<Batch>> + Send + use<>> {
     let storage = Arc::clone(db.storage_of(table)?);
-    let pushed = filter.and_then(simple_conjuncts);
+    let pushed = filter.and_then(pushed_conjuncts);
     Ok(checked(storage.scan_batches(tx, columns, pushed.as_ref()), db.tx.stop_of(tx)))
 }
 

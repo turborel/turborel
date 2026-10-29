@@ -432,6 +432,12 @@ impl TableStorage for RowTable {
         self.frozen_scan_cost(columns)
     }
 
+    /// Of the zones (`rows/zones.rs`), or the frozen chunks, its conditions
+    /// may match.
+    fn scan_share(&self, conditions: &Conjunction) -> f64 {
+        if self.frozen.columns().is_some() { self.frozen_read_share(conditions) } else { self.zones.share(conditions) }
+    }
+
     /// The default, more by the share of the rows frozen, each a page a
     /// column.
     fn fetch_cost(&self) -> f64 {

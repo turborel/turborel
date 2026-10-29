@@ -229,22 +229,33 @@ fn frozen_pages_pass_through_the_tables_encodings() {
 
 /// Verifies: [DESIGN] RULES.md D31, D35: the planner's costs of a table of
 /// the column store: a scan of a few of its columns costs less than of a
-/// table of the row store, so a fifth of its rows is counted by a scan where a
-/// table of the row store asks its index; a few rows are asked of the index in
-/// either.
+/// table of the row store, so two sevenths of its rows, by a column whose
+/// values every block holds, are counted by a scan where a table of the
+/// row store asks its index; a seventh is asked of the index in either; and
+/// a fifth of the rows by a column in their order is counted by a scan in
+/// either, each skipping the blocks its zone maps rule out.
 #[test]
 fn a_column_table_is_scanned_where_a_row_table_is_probed() {
     let db = Database::new();
     let a = both(&db);
-    db.create_index("R_N", "A.R", &["N"], "btree").unwrap();
-    db.create_index("C_N", "A.C", &["N"], "btree").unwrap();
+    for (index, table, column) in [("R_G", "A.R", "G"), ("C_G", "A.C", "G"), ("R_N", "A.R", "N"), ("C_N", "A.C", "N")] {
+        db.create_index(index, table, &[column], "btree").unwrap();
+    }
+    db.maintain().unwrap();
     let physical = |sql: &str| physical(&a, sql);
+    let sevenths = "SELECT COUNT(*) FROM {t} WHERE G <= 1";
+    assert!(physical(&sevenths.replace("{t}", "R")).contains("IndexScan"), "rows: the index");
+    assert!(!physical(&sevenths.replace("{t}", "C")).contains("IndexScan"), "columns: a scan");
+    let seventh = "SELECT COUNT(*) FROM {t} WHERE G = 3";
+    for table in ["R", "C"] {
+        assert!(physical(&seventh.replace("{t}", table)).contains("IndexScan"), "{table}: a seventh, the index");
+    }
     // A fifth of the rows: N is k / 10, so N below 100 is k below 1000.
     let fifth = "SELECT COUNT(*) FROM {t} WHERE N BETWEEN 0 AND 99";
-    assert!(physical(&fifth.replace("{t}", "R")).contains("IndexScan"), "rows: the index");
-    assert!(!physical(&fifth.replace("{t}", "C")).contains("IndexScan"), "columns: a scan");
-    let few = "SELECT COUNT(*) FROM {t} WHERE N = 7";
-    assert!(physical(&few.replace("{t}", "C")).contains("IndexScan"), "a few rows: the index");
+    for table in ["R", "C"] {
+        assert!(!physical(&fifth.replace("{t}", table)).contains("IndexScan"), "{table}: zone maps, a scan");
+    }
+    assert_eq!(rows(&a, &sevenths.replace("{t}", "C")), rows(&a, &sevenths.replace("{t}", "R")));
     assert_eq!(rows(&a, &fifth.replace("{t}", "C")), rows(&a, &fifth.replace("{t}", "R")));
 }
 

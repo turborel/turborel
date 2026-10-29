@@ -121,6 +121,26 @@ impl Conjunct {
     }
 }
 
+impl Conjunct {
+    /// As `may_match`, of a conjunct of one column, whose values not null
+    /// are within `range`, if any: no allocation for a comparison or a list.
+    pub fn may_match_range(&self, range: Option<&(Value, Value)>) -> bool {
+        match self {
+            Conjunct::Condition(Condition { probe: Probe::Compare { op, value }, .. }) => range.is_some_and(|r| within(*op, r, value)),
+            Conjunct::In { values, .. } => range.is_some_and(|r| values.iter().any(|v| within(CompOp::Eq, r, v))),
+            Conjunct::Null { not, .. } => !*not || range.is_some(),
+            Conjunct::Condition(c) => {
+                let Some(&column) = c.columns.first() else { return true };
+                let mut bounds = vec![None; column.saturating_add(1)];
+                if let Some(slot) = bounds.get_mut(column) {
+                    *slot = range.cloned();
+                }
+                c.may_match(&bounds)
+            }
+        }
+    }
+}
+
 /// \[DESIGN\] Conditions rows were chosen by, each true of every row
 /// chosen: those of a filter a scan is told (`TableStorage::scan_where`),
 /// or an index's one (`TableStorage::read_by_condition`).
@@ -224,6 +244,17 @@ mod tests {
         assert!(!not_null.may_match(&bounds), "no value in column 0");
         assert!(!listed.may_match(&bounds), "neither 3 nor 7 within 4 to 6");
         assert!(listed.may_match(&[None, Some((n(6), n(9)))]));
+        // Of one column's range alone, as a zone map tests it.
+        let range = (n(4), n(6));
+        let below = Conjunct::Condition(Condition { columns: vec![1], probe: Probe::Compare { op: CompOp::Lt, value: n(5) } });
+        assert!(below.may_match_range(Some(&range)) && !below.may_match_range(None), "no value: none below");
+        assert!(!listed.may_match_range(Some(&range)) && listed.may_match_range(Some(&(n(7), n(9)))));
+        assert!(null.may_match_range(None) && !not_null.may_match_range(None));
+        let ranged = Conjunct::Condition(Condition {
+            columns: vec![1],
+            probe: Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, n(5))), high: Box::new((CompOp::Le, n(9))) },
+        });
+        assert!(ranged.may_match_range(Some(&range)) && !ranged.may_match_range(Some(&(n(10), n(12)))));
         let both = Conjunction(vec![null, listed]);
         assert_eq!(both.columns(), vec![0, 1]);
         assert!(both.matches(&row) && !both.may_match(&bounds));

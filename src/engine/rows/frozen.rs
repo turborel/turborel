@@ -43,8 +43,9 @@ use super::{RowTable, corrupt};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::engine::columns::group::{self, Group, Pages, Seal};
+use crate::engine::columns::scan::candidates;
 use crate::error::Result;
-use crate::storage::{Row, RowId};
+use crate::storage::{Conjunction, Row, RowId};
 use crate::sync::{lock_builtin, read};
 use crate::txn::Timestamp;
 use crate::value::Value;
@@ -338,6 +339,22 @@ impl RowTable {
         let width = f64::from(u32::try_from(self.format.columns()).unwrap_or(u32::MAX)).max(1.0_f64);
         let read = f64::from(u32::try_from(columns.len()).unwrap_or(u32::MAX)).min(width);
         (all - frozen).max(0.0_f64) + frozen * (FROZEN_ROW + FROZEN_COLUMNS * read / width)
+    }
+
+    /// The share of the table's rows a scan told `conditions` reads
+    /// (`TableStorage::scan_share`): every row of the tree, and the frozen
+    /// rows of the chunks they may match (`columns/scan.rs`).
+    pub(super) fn frozen_read_share(&self, conditions: &Conjunction) -> f64 {
+        let Ok(directory) = self.frozen.directory() else { return 1.0_f64 };
+        let (frozen, all) = self.frozen_share();
+        let read: u64 = directory
+            .groups
+            .iter()
+            .flat_map(|e| candidates(&e.group, Some(conditions)))
+            .map(|(from, to)| u64::from(to.saturating_sub(from)))
+            .sum();
+        let read = crate::storage::cost_of(usize::try_from(read).unwrap_or(usize::MAX));
+        if all > 0.0_f64 { ((all - frozen).max(0.0_f64) + read).min(all) / all } else { 1.0_f64 }
     }
 
     /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`).

@@ -29,12 +29,12 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Key, Probe};
-use crate::logical::{Cond, Expr, SortKey, Truth};
+use crate::logical::{Cond, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Condition, Conjunct, Conjunction, Row, RowId, TableStorage, project};
+use crate::storage::{Condition, Row, RowId, TableStorage, project};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
-use crate::value::{CompOp, Value};
+use crate::value::Value;
 
 pub use eval::{eval, eval_cond, quantified};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
@@ -177,62 +177,12 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// The rows of `input`, under a filter on `cond`: a scan is told the
 /// conditions, if it has simple ones (`simple_conjuncts`).
 fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
-    match (input, simple_conjuncts(cond)) {
+    match (input, pushed_conjuncts(cond)) {
         (Plan::SeqScan { table, columns, .. }, Some(condition)) => match db.storage_of(&table) {
             Ok(storage) => Box::new(Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row))),
             Err(e) => failed(e),
         },
         (input, _) => execute(input, db, tx),
-    }
-}
-
-/// The conjuncts of `cond` comparing a column with a constant, testing it
-/// IS NULL or IS NOT NULL, or IN a list of constants, if any, unless `cond`
-/// can raise an error: every row `cond` keeps satisfies each, so a scan
-/// tells its engine (`TableStorage::scan_where`), which may then leave out
-/// the rows they do not match, skip the frozen chunks one cannot match, and
-/// count only the rows they all match as read.
-fn simple_conjuncts(cond: &Cond) -> Option<Conjunction> {
-    // A condition that can raise an error must see every row: a row the
-    // conjunct rejects may still raise it, and whether it does may not
-    // depend on the plan, nor on which rows another transaction changed.
-    if cond.can_raise() {
-        return None;
-    }
-    let mut found = Vec::new();
-    conjuncts(cond, &mut found);
-    if found.is_empty() {
-        return None;
-    }
-    Some(Conjunction(found))
-}
-
-/// The conjuncts of `cond` a scan is told (`simple_conjuncts`).
-fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
-    let compared = |column: usize, op: CompOp, value: &Value| {
-        Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value: value.clone() } })
-    };
-    match cond {
-        Cond::And(a, b) => {
-            conjuncts(a, found);
-            conjuncts(b, found);
-        }
-        Cond::Compare(Expr::Column(c), op, Expr::Const(v)) => found.push(compared(*c, *op, v)),
-        // "constant op column" is "column op' constant", the operator turned around.
-        Cond::Compare(Expr::Const(v), op, Expr::Column(c)) => found.push(compared(*c, op.flip(), v)),
-        Cond::IsNull(Expr::Column(c), not) => found.push(Conjunct::Null { column: *c, not: *not }),
-        // An `<in predicate>` of constants, as the binder writes it.
-        Cond::Or(..) => found.extend(batch::in_list(cond).map(|(column, values)| Conjunct::In { column, values })),
-        Cond::Compare(..)
-        | Cond::Not(_)
-        | Cond::Const(_)
-        | Cond::Is(..)
-        | Cond::IsNull(..)
-        | Cond::Like(..)
-        | Cond::Exists(_)
-        | Cond::Unique(_)
-        | Cond::Quantified(..)
-        | Cond::Match { .. } => {}
     }
 }
 
@@ -301,7 +251,7 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, 
             entries.iter().filter_map(|(key, id)| fetch(&*storage, &columns, tx, key, *id).transpose()).collect()
         }
         Plan::Filter { cond, input, .. } => {
-            let rows = match (*input, simple_conjuncts(&cond)) {
+            let rows = match (*input, pushed_conjuncts(&cond)) {
                 (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
                     Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition).collect::<Result<Vec<_>>>()?
                 }
@@ -431,8 +381,11 @@ mod tests {
     fn columns_outside_the_row_are_reported() {
         let st = Arc::new(state());
         let row = vec![Value::Null];
-        assert_eq!(eval(&Expr::Column(1), &row, &NoSubqueries).err().map(|e| e.code), Some(Code::Api));
-        assert_eq!(eval_cond(&Cond::IsNull(Expr::Column(1), false), &row, &NoSubqueries).err().map(|e| e.code), Some(Code::Api));
+        assert_eq!(eval(&crate::logical::Expr::Column(1), &row, &NoSubqueries).err().map(|e| e.code), Some(Code::Api));
+        assert_eq!(
+            eval_cond(&Cond::IsNull(crate::logical::Expr::Column(1), false), &row, &NoSubqueries).err().map(|e| e.code),
+            Some(Code::Api)
+        );
         let aggregate = Plan::Aggregate { groups: vec![1], aggs: vec![], detail: String::new(), input: Box::new(one_row(row.clone())) };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey { column: 1, descending: false }];

@@ -39,6 +39,8 @@ use crate::value::{DataType, Value, compare};
 pub(super) const ZONE_ROWS: u64 = 1024;
 /// \[DESIGN\] The longest character string a zone keeps the bounds of.
 const SHORT: u32 = 32;
+/// \[DESIGN\] The most zones the planner looks at for a scan's share.
+const SAMPLED: usize = 256;
 /// \[DESIGN\] The most zones one call of the maintenance thread sums up.
 const MOST_SUMMED: usize = 64;
 
@@ -48,6 +50,9 @@ const MOST_SUMMED: usize = 64;
 struct Zone {
     bounds: Vec<Option<(Value, Value)>>,
     nulls: Vec<bool>,
+    /// Its rows, as inserts count them and a sum up counts the newest: a
+    /// deletion counts none until its zone is summed up.
+    rows: u32,
     /// Its changes: a sum made over one is thrown away.
     changes: u64,
     /// Whether it may be wider than its rows, or is not known at all.
@@ -110,7 +115,7 @@ fn widened(bounds: &mut Option<(Value, Value)>, v: &Value) {
 impl Zone {
     /// A zone of no row, known or not, of `columns` kept.
     fn empty(columns: usize, known: bool) -> Zone {
-        Zone { bounds: vec![None; columns], nulls: vec![false; columns], changes: 0, stale: !known, known }
+        Zone { bounds: vec![None; columns], nulls: vec![false; columns], rows: 0, changes: 0, stale: !known, known }
     }
 
     /// Widens it to hold `values`, those of the columns kept.
@@ -179,6 +184,9 @@ impl Zones {
     /// `widen`'s change of `zone`.
     fn change(&self, zone: &mut Zone, row: Option<&Row>, replaces: bool) {
         zone.changes = zone.changes.saturating_add(1);
+        if !replaces {
+            zone.rows = zone.rows.saturating_add(1);
+        }
         if let Some(row) = row {
             zone.hold(self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
         }
@@ -194,9 +202,10 @@ impl Zones {
         let all = vec![(0, None)];
         let (Some(conditions), false) = (conditions, self.kept.is_empty()) else { return all };
         let Ok(map) = read(&self.map) else { return all };
+        let tests = prepared(conditions, &self.kept);
         let mut ranges: Vec<(RowId, Option<RowId>)> = Vec::new();
         for (at, zone) in map.zones.iter().enumerate() {
-            if !self.may_match(&lock_builtin(zone), conditions) {
+            if !passes(&lock_builtin(zone), &tests) {
                 continue;
             }
             let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
@@ -214,10 +223,29 @@ impl Zones {
         ranges
     }
 
-    /// Whether a row of `zone` may be one each of `conditions` matches:
-    /// so if the zone is not known, or a condition reads a column not kept.
-    fn may_match(&self, zone: &Zone, conditions: &Conjunction) -> bool {
-        zone_may_match(zone, conditions, &self.kept)
+    /// The share of the rows a scan told `conditions` reads, by the rows of
+    /// the zones it reads, those not known among them, as blocks of row ids
+    /// are not as full as one another (`TableStorage::scan_share`). Of
+    /// `SAMPLED` zones at most, evenly apart, so planning costs no more as
+    /// a table grows; all read if none is known to hold a row.
+    pub(super) fn share(&self, conditions: &Conjunction) -> f64 {
+        let Ok(map) = read(&self.map) else { return 1.0_f64 };
+        if self.kept.is_empty() || map.zones.is_empty() {
+            return 1.0_f64;
+        }
+        let tests = prepared(conditions, &self.kept);
+        let step = map.zones.len().div_ceil(SAMPLED).max(1);
+        let (mut all, mut read_rows) = (0.0_f64, 0.0_f64);
+        for slot in map.zones.iter().step_by(step) {
+            let zone = lock_builtin(slot);
+            // A zone not known holds as many rows as a block may.
+            let rows = if zone.known { f64::from(zone.rows) } else { f64::from(u32::try_from(ZONE_ROWS).unwrap_or(u32::MAX)) };
+            all += rows;
+            if passes(&zone, &tests) {
+                read_rows += rows;
+            }
+        }
+        if all > 0.0_f64 { read_rows / all } else { 1.0_f64 }
     }
 
     /// Whether a zone is stale or not known.
@@ -226,35 +254,55 @@ impl Zones {
     }
 }
 
-/// Whether a row of `zone`, of the columns `kept`, may be one each of
-/// `conditions` matches (`Zones::may_match`).
-fn zone_may_match(zone: &Zone, conditions: &Conjunction, kept: &[usize]) -> bool {
+/// How a zone is tested for one conjunct, prepared once for every zone.
+enum Test<'c> {
+    /// It reads a column not kept: every zone may match.
+    Any,
+    /// Of one column, kept at this place.
+    One(&'c Conjunct, usize),
+    /// Of several, each kept: each column, and its place.
+    Many(&'c Conjunct, Vec<(usize, usize)>),
+}
+
+/// The tests of `conditions`, of the columns `kept`.
+fn prepared<'c>(conditions: &'c Conjunction, kept: &[usize]) -> Vec<Test<'c>> {
+    let place = |column: &usize| kept.iter().position(|k| k == column);
+    conditions
+        .conjuncts()
+        .iter()
+        .map(|c| {
+            let columns = c.columns();
+            let places: Option<Vec<(usize, usize)>> = columns.iter().map(|col| place(col).map(|at| (*col, at))).collect();
+            match places.as_deref() {
+                None => Test::Any,
+                Some(&[(_, at)]) => Test::One(c, at),
+                Some(_) => Test::Many(c, places.unwrap_or_default()),
+            }
+        })
+        .collect()
+}
+
+/// Whether a row of `zone` may pass each of `tests`: so if the zone is not
+/// known.
+fn passes(zone: &Zone, tests: &[Test<'_>]) -> bool {
     if !zone.known {
         return true;
     }
-    conditions.conjuncts().iter().all(|c| {
-        let places: Option<Vec<usize>> = c.columns().iter().map(|col| kept.iter().position(|k| k == col)).collect();
-        let Some(places) = places else { return true };
-        match (c, places.as_slice()) {
-            (Conjunct::Null { not: false, .. }, [at]) => zone.nulls.get(*at).copied().unwrap_or(true),
-            (Conjunct::Null { not: true, .. }, [at]) => zone.bounds.get(*at).is_none_or(Option::is_some),
-            (Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::Null { .. }, _) => {
-                c.may_match(&bounds_of(zone, &c.columns(), &places))
+    tests.iter().all(|test| match test {
+        Test::Any => true,
+        Test::One(Conjunct::Null { not: false, .. }, at) => zone.nulls.get(*at).copied().unwrap_or(true),
+        Test::One(c, at) => c.may_match_range(zone.bounds.get(*at).and_then(Option::as_ref)),
+        Test::Many(c, places) => {
+            let width = places.iter().map(|&(column, _)| column).max().map_or(0, |last| last.saturating_add(1));
+            let mut bounds: Vec<Option<(Value, Value)>> = vec![None; width];
+            for &(column, at) in places {
+                if let (Some(slot), Some(b)) = (bounds.get_mut(column), zone.bounds.get(at)) {
+                    slot.clone_from(b);
+                }
             }
+            c.may_match(&bounds)
         }
     })
-}
-
-/// The bounds of `zone` of `columns`, kept at `places`, as a row's
-/// columns are placed, the others none.
-fn bounds_of(zone: &Zone, columns: &[usize], places: &[usize]) -> Vec<Option<(Value, Value)>> {
-    let mut bounds: Vec<Option<(Value, Value)>> = vec![None; columns.iter().max().map_or(0, |&c| c.saturating_add(1))];
-    for (&column, &at) in columns.iter().zip(places) {
-        if let (Some(slot), Some(b)) = (bounds.get_mut(column), zone.bounds.get(at)) {
-            slot.clone_from(b);
-        }
-    }
-    bounds
 }
 
 impl RowTable {
@@ -308,6 +356,9 @@ impl RowTable {
         zone.stale = false;
         for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Excluded(&high[..]), Direction::Forward) {
             let (k, newest) = entry?;
+            if !Version::parse(&newest)?.deleted {
+                zone.rows = zone.rows.saturating_add(1);
+            }
             self.hold_versions(&mut zone, row_id(&k)?, newest, horizon)?;
         }
         Ok(zone)

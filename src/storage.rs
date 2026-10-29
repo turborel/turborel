@@ -283,6 +283,14 @@ pub trait TableStorage: Send + Sync {
         cost_of(self.row_count())
     }
 
+    /// \[DESIGN\] The share of its rows a scan told `conditions`
+    /// (`scan_where`) reads, from what the engine keeps of them, such as
+    /// the least and greatest values of blocks of rows (RULES.md D31); the
+    /// planner scales `scan_cost` by it. Default: 1, every row.
+    fn scan_share(&self, _conditions: &Conjunction) -> f64 {
+        1.0_f64
+    }
+
     /// Cost of one `get` by row id. Default: a random read in a row store.
     fn fetch_cost(&self) -> f64 {
         DEFAULT_FETCH_COST

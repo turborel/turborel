@@ -10,7 +10,7 @@
 use crate::error::Result;
 use crate::exec::eval::compared;
 use crate::exec::{Runner, eval_cond};
-use crate::logical::{Cond, Expr, Truth};
+use crate::logical::{Cond, Expr, Truth, compared_with_constant, in_list};
 use crate::storage::Batch;
 use crate::value::{CompOp, Value};
 
@@ -102,42 +102,6 @@ fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
     let (mut judged, mut rest) = (Vec::new(), Vec::new());
     gather(cond, columns, (&mut judged, &mut rest));
     (judged, rest.into_iter().reduce(|a, b| Cond::And(Box::new(a), Box::new(b))))
-}
-
-/// The column and constant `cond` compares by `op`, either way round, the
-/// operator turned around if the constant is first.
-fn compared_with_constant(cond: &Cond) -> Option<(usize, CompOp, &Value)> {
-    match cond {
-        Cond::Compare(Expr::Column(c), op, Expr::Const(v)) => Some((*c, *op, v)),
-        // "constant op column" is "column op' constant".
-        Cond::Compare(Expr::Const(v), op, Expr::Column(c)) => Some((*c, op.flip(), v)),
-        Cond::Compare(..)
-        | Cond::Const(_)
-        | Cond::Or(..)
-        | Cond::And(..)
-        | Cond::Not(_)
-        | Cond::Is(..)
-        | Cond::IsNull(..)
-        | Cond::Like(..)
-        | Cond::Exists(_)
-        | Cond::Unique(_)
-        | Cond::Quantified(..)
-        | Cond::Match { .. } => None,
-    }
-}
-
-/// The column and constants of `cond` if it is an OR of equalities of one
-/// column with constants, as an `<in predicate>` of constants is
-/// (`binder/predicates.rs`).
-pub(in crate::exec) fn in_list(cond: &Cond) -> Option<(usize, Vec<Value>)> {
-    if let Cond::Or(a, b) = cond {
-        let (c, mut list) = in_list(a)?;
-        let (d, more) = in_list(b)?;
-        list.extend(more);
-        return (c == d).then_some((c, list));
-    }
-    let (c, op, v) = compared_with_constant(cond)?;
-    (op == CompOp::Eq).then(|| (c, vec![v.clone()]))
 }
 
 /// Gathers the conjuncts of `cond` into those `split` judges over vectors

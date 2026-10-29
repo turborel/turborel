@@ -756,6 +756,14 @@ the format of frozen groups becomes a trait when it is.
   rows' order, 54.4 ms to 0.9 ms; `B IN (5, 200000, 399000)` 48.4 to 0.4;
   `N IS NULL`, its nulls in two blocks, 45.2 to 0.3; a scan nothing
   skips 2 to 3% slower; an insert 1% slower.
+- The planner prices a scan by the share of the rows the conditions it
+  will be told may match (`TableStorage::scan_share`, `logical::pushed_conjuncts`,
+  the executor's same): the row store's zones' rows they may match, of
+  256 zones at most, evenly apart, so planning costs no more as a table
+  grows; the column store's frozen chunks and every row of its tree. Of
+  400,000 rows, a tenth counted by a range of a column in the rows' order
+  ran by a scan in 6.8 ms where the index took 19.8; a range of a
+  column of scattered values keeps its index.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity. The row store
   gathers them again, once a table has changed enough, as the database's

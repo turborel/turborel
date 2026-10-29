@@ -5,8 +5,8 @@
 use super::estimate::{self, Known};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
 use crate::index::Probe;
-use crate::logical::{Cond, Expr, SortKey, and_all, render_cond};
-use crate::storage::cost_of;
+use crate::logical::{Cond, Expr, SortKey, and_all, pushed_conjuncts, render_cond};
+use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
 /// A way to read a table: its cost, with and without the sort it may still
@@ -84,10 +84,10 @@ impl PhysicalPlanner<'_> {
         let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
         let rows = storage.row_count();
         let descent = cost.index_descent * cost_of(rows.saturating_add(1)).log2();
-        let seq_cost = storage.scan_cost(read.needed);
+        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
         let stats = storage.statistics();
         let all = cost_of(rows);
-        let mut best = Path { total: seq_cost + sort_penalty(all, false), cost: seq_cost, est: all, ..unread };
+        let mut best = Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
 
         // RULES.md D15: a probe reads only the rows its conjuncts select, so the
         // other conjuncts would not be evaluated on the rest. When one of them
@@ -143,6 +143,14 @@ impl PhysicalPlanner<'_> {
         }
         best
     }
+}
+
+/// The cost of a scan of `storage` reading `needed` under `conds`, and the
+/// rows it reads: only the share of them the conditions it is told may
+/// match (`TableStorage::scan_share`).
+fn scan_priced(storage: &dyn TableStorage, needed: &[usize], conds: &[Cond]) -> (f64, f64) {
+    let share = and_all(conds.to_vec()).as_ref().and_then(pushed_conjuncts).map_or(1.0_f64, |c| storage.scan_share(&c));
+    (storage.scan_cost(needed) * share, cost_of(storage.row_count()) * share)
 }
 
 /// The probes of an index on `columns`, of types `types`, that the

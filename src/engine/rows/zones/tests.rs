@@ -75,6 +75,13 @@ fn zones_skip_what_no_reader_can_match() {
     assert!(reads(&table, &text, far), "a column not kept");
     let null = Conjunction(vec![Conjunct::Null { column: 0, not: false }]);
     assert!(!reads(&table, &null, ids[10]), "no null");
+    // The share of the rows a scan reads: those of the zone of 10, out of
+    // the zones' rows; every row for a column not kept.
+    let share = table.scan_share(&equal(0, 10));
+    let in_zone = ids.iter().filter(|&&id| id.checked_div(ZONE_ROWS) == ids[10].checked_div(ZONE_ROWS)).count();
+    let expected = f64::from(u32::try_from(in_zone).unwrap()) / 5000.0_f64;
+    assert!((share - expected).abs() < 1e-9_f64, "{share} of {expected}");
+    assert!((table.scan_share(&text) - 1.0_f64).abs() < 1e-9_f64);
 
     // The least value of the first zone, and the greatest of the next.
     let next_end = ids[0].checked_div(ZONE_ROWS).unwrap().checked_add(2).unwrap().checked_mul(ZONE_ROWS).unwrap();
@@ -114,6 +121,7 @@ fn an_opened_tables_zones_are_known_once_summed() {
     let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
     assert!(table.maintenance_due());
     assert!(reads(&table, &equal(0, 10), ids[2999]), "not known: read");
+    assert!((table.scan_share(&equal(0, 10)) - 1.0_f64).abs() < 1e-9_f64, "not known: every row");
     summed(&table, 1);
     assert!(!reads(&table, &equal(0, 10), ids[2999]), "known: skipped");
     assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 2999)), ["2999"]);
