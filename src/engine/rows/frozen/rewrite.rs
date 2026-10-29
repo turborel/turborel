@@ -25,12 +25,12 @@ use crate::error::Result;
 use crate::storage::{Row, RowId};
 use crate::txn::Timestamp;
 
-/// \[DESIGN\] The most groups one transaction's end writes again.
+/// \[DESIGN\] The most groups one call writes again.
 const MOST_REWRITES: usize = 2;
 
 /// Whether `entries` of a group of `rows` rows are COLUMNSTORE.REWRITE_FRACTION
 /// of them or more, as `columns` says.
-fn due(entries: usize, rows: u32, columns: &Columns) -> bool {
+pub(super) fn due(entries: usize, rows: u32, columns: &Columns) -> bool {
     let entries = f64::from(u32::try_from(entries).unwrap_or(u32::MAX));
     columns.rewrite_fraction > 0.0 && entries >= columns.rewrite_fraction * f64::from(rows)
 }
@@ -38,17 +38,17 @@ fn due(entries: usize, rows: u32, columns: &Columns) -> bool {
 impl RowTable {
     /// Writes again the groups due, if enough frozen rows have been given
     /// entries since they were last looked at, folding in the entries
-    /// committed at or before `cutoff`.
-    pub(in crate::engine::rows) fn rewrite_due(&self, columns: Columns, cutoff: Timestamp) -> Result<()> {
+    /// committed at or before `cutoff`: whether it wrote any.
+    pub(in crate::engine::rows) fn rewrite_due(&self, columns: Columns, cutoff: Timestamp) -> Result<bool> {
         if !due(usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX), columns.group_rows, &columns) {
-            return Ok(());
+            return Ok(false);
         }
         self.frozen.shadowed.store(0, Ordering::Release);
         let directory = self.frozen.directory()?;
         let mut written = 0_usize;
         for entry in &directory.groups {
             if written >= MOST_REWRITES {
-                // Looked at again at a later transaction's end.
+                // Looked at again at a later call.
                 self.frozen.shadow();
                 break;
             }
@@ -58,7 +58,7 @@ impl RowTable {
                 written = written.saturating_add(1);
             }
         }
-        Ok(())
+        Ok(written > 0)
     }
 
     /// The tree's entries in `group`'s range of row ids.

@@ -1,10 +1,15 @@
 //! \[DESIGN\] A column store table's rows by batch (`TableStorage::scan_batches`,
 //! RULES.md D31), in no particular order: first its frozen rows, a vector
-//! at a time, each column's values straight from its chunks, no row made,
-//! leaving out those the tree has an entry for; then the tree's rows, as
-//! the reader sees them. A condition's columns are read first, and the
-//! other columns only of the rows it keeps. Split from frozen.rs (RULES.md
-//! R-SIZE-2).
+//! at a time, each column's values straight from its chunks, no row made;
+//! then the tree's rows, as the reader sees them. A condition's columns are
+//! read first, and the other columns only of the rows it keeps.
+//!
+//! A vector's rows the tree has entries for are read from them as the
+//! vector is, the tree read over its range of row ids, and its range then
+//! left out of the tree's rows read last: a freeze meanwhile may take out
+//! an entry of a row frozen before (`freeze.rs`), whose group's row is the
+//! same, so each row is read once, of the one or the other. Split from
+//! frozen.rs (RULES.md R-SIZE-2).
 
 use std::collections::VecDeque;
 use std::ops::Bound;
@@ -19,7 +24,7 @@ use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Condition, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Condition, Row, RowId};
 use crate::value::Value;
 
 /// \[DESIGN\] A column store table's batches.
@@ -36,6 +41,9 @@ pub(in crate::engine::rows) struct Batched {
     runs: VecDeque<(u32, u32)>,
     /// The tree's entries, once the groups are read.
     delta: Option<Scan<TreeOf>>,
+    /// The ranges of row ids of the tree's entries read with the groups'
+    /// rows, in order, left out of `delta`.
+    read: Vec<(RowId, RowId)>,
 }
 
 impl Batched {
@@ -47,7 +55,18 @@ impl Batched {
         columns: Vec<usize>,
         condition: Option<Condition>,
     ) -> Batched {
-        Batched { table, reader, columns, condition, directory, next_group: 0, group: None, runs: VecDeque::new(), delta: None }
+        Batched {
+            table,
+            reader,
+            columns,
+            condition,
+            directory,
+            next_group: 0,
+            group: None,
+            runs: VecDeque::new(),
+            delta: None,
+            read: Vec::new(),
+        }
     }
 
     /// The group being read.
@@ -74,27 +93,50 @@ impl Batched {
         Ok(true)
     }
 
+    /// The columns a row of the tree is decoded for: those read, and the
+    /// condition's.
+    fn decoded(&self) -> Vec<usize> {
+        let mut decoded = self.columns.clone();
+        decoded.extend(self.condition.iter().flat_map(|c| c.columns.iter().copied()));
+        decoded
+    }
+
+    /// The row of the tree's entry of `id`, `newest`, as the reader sees
+    /// it, `decoded` decoded, if the condition matches it.
+    fn delta_row(&self, (id, newest): (RowId, Vec<u8>), decoded: &[usize]) -> Result<Option<Row>> {
+        let Some(record) = self.table.visible_from(newest, self.reader)? else { return Ok(None) };
+        let row = self.table.decode(id, &record, Some(decoded))?;
+        Ok(self.condition.as_ref().is_none_or(|c| c.matches(&row)).then_some(row))
+    }
+
     /// The positions from `from` to `to` of the group being read whose rows
-    /// the tree has no entry for.
-    fn unshadowed(&self, (from, to): (u32, u32)) -> Result<Vec<u32>> {
-        let Some((_, ids)) = &self.group else { return Ok(Vec::new()) };
+    /// the tree has no entry for; and the rows of the tree's entries in
+    /// their range of row ids, which is noted as read.
+    fn unshadowed(&mut self, (from, to): (u32, u32)) -> Result<(Vec<u32>, Vec<Row>)> {
+        let Some((_, ids)) = &self.group else { return Ok((Vec::new(), Vec::new())) };
         let at = |p: u32| usize::try_from(p).ok().and_then(|p| ids.get(p)).copied();
-        let (Some(first), Some(last)) = (at(from), at(to.saturating_sub(1))) else { return Ok(Vec::new()) };
+        let (Some(first), Some(last)) = (at(from), at(to.saturating_sub(1))) else { return Ok((Vec::new(), Vec::new())) };
         let (low, high) = (key(first), key(last));
-        let mut shadowed = Vec::new();
+        let (mut shadowed, mut rows) = (Vec::new(), Vec::new());
+        let decoded = self.decoded();
         for entry in self.table.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
-            shadowed.push(row_id(&entry?.0)?);
+            let (k, newest) = entry?;
+            let id = row_id(&k)?;
+            shadowed.push(id);
+            rows.extend(self.delta_row((id, newest), &decoded)?);
         }
-        Ok((from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect())
+        let positions = (from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect();
+        self.read.push((first, last));
+        Ok((positions, rows))
     }
 
     /// The batch of the run `from` to `to` of the group being read, if any
-    /// of its rows is given.
-    fn run_batch(&self, (from, to): (u32, u32)) -> Result<Option<Batch>> {
+    /// of its rows is given: of its `positions` the tree has no entry for,
+    /// then the tree's `entries` in its range.
+    fn run_batch(&self, (from, to): (u32, u32), (mut positions, entries): (Vec<u32>, Vec<Row>)) -> Result<Option<Batch>> {
         let Some(group) = self.current() else { return Ok(None) };
         let pages = self.table.group_pages()?;
         let types = self.table.format.types();
-        let mut positions = self.unshadowed((from, to))?;
         if let Some(condition) = &self.condition {
             let keys = condition
                 .columns
@@ -110,7 +152,7 @@ impl Batched {
                 .collect();
             positions = kept;
         }
-        if positions.is_empty() {
+        if positions.is_empty() && entries.is_empty() {
             return Ok(None);
         }
         let whole = u32::try_from(positions.len()).ok() == Some(to.saturating_sub(from));
@@ -129,33 +171,48 @@ impl Batched {
             };
             batch.columns.push(column);
         }
+        for row in &entries {
+            batch.push(row, &self.columns);
+        }
         Ok(Some(batch))
+    }
+
+    /// Whether the tree's entry of `id` was read with the groups' rows.
+    fn was_read(&self, id: RowId) -> bool {
+        let after = self.read.partition_point(|&(first, _)| first <= id);
+        after.checked_sub(1).and_then(|at| self.read.get(at)).is_some_and(|&(_, last)| id <= last)
     }
 
     /// The next batch of the tree's rows the reader sees, if any is left.
     fn delta_batch(&mut self) -> Result<Option<Batch>> {
-        let table = Arc::clone(&self.table);
-        let delta = self.delta.get_or_insert_with(|| RowTable::entries(&table));
-        let mut decoded = self.columns.clone();
-        decoded.extend(self.condition.iter().flat_map(|c| c.columns.iter().copied()));
+        let mut delta = self.delta.take().unwrap_or_else(|| RowTable::entries(&self.table));
+        let decoded = self.decoded();
         let mut batch = Batch::empty(self.columns.len());
+        let mut failed = None;
         while batch.rows < BATCH_ROWS {
             let Some(entry) = delta.next() else { break };
-            let (k, newest) = entry?;
-            let id = row_id(&k)?;
-            let Some(record) = table.visible_from(newest, self.reader)? else { continue };
-            let row = table.decode(id, &record, Some(&decoded))?;
-            if self.condition.as_ref().is_none_or(|c| c.matches(&row)) {
-                batch.push(&row, &self.columns);
+            let found = entry.and_then(|(k, newest)| {
+                let id = row_id(&k)?;
+                if self.was_read(id) { Ok(None) } else { self.delta_row((id, newest), &decoded) }
+            });
+            match found {
+                Ok(Some(row)) => batch.push(&row, &self.columns),
+                Ok(None) => {}
+                Err(e) => {
+                    failed = Some(e);
+                    break;
+                }
             }
         }
-        Ok((batch.rows > 0).then_some(batch))
+        self.delta = Some(delta);
+        failed.map_or(Ok((batch.rows > 0).then_some(batch)), Err)
     }
 
     fn step(&mut self) -> Result<Option<Batch>> {
         loop {
             if let Some(run) = self.runs.pop_front() {
-                match self.run_batch(run)? {
+                let split = self.unshadowed(run)?;
+                match self.run_batch(run, split)? {
                     Some(batch) => return Ok(Some(batch)),
                     None => continue,
                 }

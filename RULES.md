@@ -727,9 +727,9 @@ the format of frozen groups becomes a trait when it is.
   rows, widths, distinct values, nulls, selectivity.
 - The column store: the tree is the table's delta, every row written
   there as in the row store. Once COLUMNSTORE.FREEZE_ROWS rows past the last group are committed
-  before every snapshot (and COLUMNSTORE.FREEZE_DELAY seconds ago), the end of
-  a transaction freezes up to COLUMNSTORE.GROUP_ROWS of them, 2^16 by default,
-  into a group (`engine/columns`): its row ids, and each column's values
+  before every snapshot (and COLUMNSTORE.FREEZE_DELAY seconds ago), the
+  database's maintenance thread freezes up to COLUMNSTORE.GROUP_ROWS of them,
+  2^16 by default, into a group (`engine/columns`): its row ids, and each column's values
   in chunks of a page each, each chunk's least and greatest values and
   nulls kept (zone maps), every page sealed by the table's ENCODINGS, its
   number the context. A chunk is written in whichever encoding takes
@@ -753,16 +753,34 @@ the format of frozen groups becomes a trait when it is.
   group read a vector (2048 rows) at a time, only the chunks a condition
   on one column may match. The entries of rows frozen leave the tree once
   no reader holds the directory from before their group; a checkpoint is
-  not captured during a freeze. The log is unchanged, of whole rows, and
+  not captured during a freeze. A deletion collected while a freeze under
+  way may freeze its row keeps its entry, so the row is not seen again; a
+  write that finds the entry it read taken out is tried once more, its
+  row then its group's.
+- Maintenance (`db/maintenance.rs`): work an engine leaves for later
+  (`TableStorage::maintenance_due`, `maintain`), the column store's
+  freezes, rewrites and entries taken out, so no transaction waits for
+  it: measured over 100 commits of 2048 rows each, in groups of 2^16,
+  the slowest twentieth of commits went from 47 ms to 30 ms. A
+  transaction's end notes a table with work due and asks the database's
+  maintenance thread, started the first time; it has each table noted do
+  some, one at a time, under the gate, so a checkpoint waits for at most
+  a few groups, and goes round again while any did some; a table still
+  due though it did none it looks at again a second later, so a freeze
+  waiting out COLUMNSTORE.FREEZE_DELAY needs no later commit.
+  `Database::maintain` does every table's now. The thread, like the
+  checkpoint thread (`db/background.rs`), holds the database weakly, and
+  ends as it is closed or dropped. The log is unchanged, of whole rows, and
   recovery writes them to the tree. The planner is told a scan's cost by
   the columns it reads: a row of the tree 1, a frozen row 0.25 and 0.75
   more as all its columns are read; and a fetch's 10% more as all the
   rows are frozen, as measured (`bench/analytics.rs`).
 - Batches (`TableStorage::scan_batches`): a scan's rows by vectors of up
   to 2048 of each column's values, in no particular order, by default its
-  rows gathered. A column store table gives each frozen vector the tree has no
-  entry in straight from its chunks, a condition's columns read first and
-  the others only of the rows it keeps, then the tree's rows. An
+  rows gathered. A column store table gives each frozen vector straight
+  from its chunks, a condition's columns read first and the others only
+  of the rows it keeps; the tree's entries in the vector's range of row
+  ids, read with it, in its rows' place; then the tree's other rows. An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the scan reads or not at all, of a table's
   scan, filtered or not, feeds them from the vectors (`exec/batch.rs`). A

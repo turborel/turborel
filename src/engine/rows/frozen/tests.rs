@@ -56,6 +56,14 @@ fn table(files: &TableFiles, delay: u32, rows: i128) -> (Arc<RowTable>, Vec<RowI
     (table, ids)
 }
 
+/// What a transaction's end has the table do: its garbage collected past
+/// `horizon`, then its maintenance, as the database's maintenance thread
+/// does it (`TableStorage::maintain`).
+fn ended(table: &RowTable, horizon: u64) {
+    table.gc(horizon, &mut |_, _| {}).unwrap();
+    while table.maintain(horizon).unwrap() {}
+}
+
 /// The tree's entries.
 fn entries(table: &RowTable) -> usize {
     table.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).count()
@@ -75,10 +83,10 @@ fn scanned(table: &Arc<RowTable>, tx: u64) -> Vec<String> {
 fn rows_are_frozen_when_due() {
     let (_, files) = files();
     let (few, _) = table(&files, 0, 2000);
-    few.gc(1, &mut |_, _| {}).unwrap();
+    ended(&few, 1);
     assert!(few.frozen.directory().unwrap().groups.is_empty(), "too few");
     let (table, ids) = table(&files, 0, 5000);
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     let directory = table.frozen.directory().unwrap();
     assert_eq!(directory.groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048, 2048]);
     assert_eq!(entries(&table), 5000 - 4096, "the frozen rows' entries taken out");
@@ -99,7 +107,7 @@ fn a_scan_begun_before_a_freeze_misses_no_row() {
     let (table, _) = table(&files, 0, 5000);
     let mut scan = Arc::clone(&table).scan(NO_TRANSACTION, &[0]);
     let first = scan.next().unwrap().unwrap();
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     assert_eq!(table.frozen.directory().unwrap().groups.len(), 2);
     assert_eq!(entries(&table), 5000, "kept for the scan");
     assert_eq!(scan.count() + 1, 5000);
@@ -118,7 +126,7 @@ fn a_scan_begun_before_a_freeze_misses_no_row() {
 fn frozen_rows_are_written() {
     let (_, files) = files();
     let (table, ids) = table(&files, 0, 5000);
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     let value = |tx, id| table.get(tx, id).unwrap().map(|r| r[1].to_string());
     table.begin(10, 1).unwrap();
     table.begin(11, 1).unwrap();
@@ -130,7 +138,7 @@ fn frozen_rows_are_written() {
     table.validate(10, 2).unwrap();
     table.commit(10, 2);
     table.commit(11, 2);
-    table.gc(3, &mut |_, _| {}).unwrap();
+    ended(&table, 3);
     assert_eq!((value(NO_TRANSACTION, ids[3]), value(NO_TRANSACTION, ids[4])), (Some("v-3".to_owned()), None));
     assert!(table.tree.get(&key(ids[4])).unwrap().is_some(), "its deletion kept");
     table.begin(12, 3).unwrap();
@@ -154,9 +162,9 @@ fn a_freeze_waits_for_its_horizon_and_its_delay() {
     }
     late.validate(10, 5).unwrap();
     late.commit(10, 5);
-    late.gc(4, &mut |_, _| {}).unwrap();
+    ended(&late, 4);
     assert!(late.frozen.directory().unwrap().groups.is_empty(), "committed after the horizon");
-    late.gc(5, &mut |_, _| {}).unwrap();
+    ended(&late, 5);
     assert!(late.frozen.directory().unwrap().groups.is_empty(), "not tried again at once");
     let (delayed, _) = table(&files, 3600, 0);
     delayed.begin(20, 1).unwrap();
@@ -165,7 +173,7 @@ fn a_freeze_waits_for_its_horizon_and_its_delay() {
     }
     delayed.validate(20, 6).unwrap();
     delayed.commit(20, 6);
-    delayed.gc(7, &mut |_, _| {}).unwrap();
+    ended(&delayed, 7);
     assert!(delayed.frozen.directory().unwrap().groups.is_empty(), "within its delay");
 }
 
@@ -177,7 +185,7 @@ fn a_freeze_waits_for_its_horizon_and_its_delay() {
 fn frozen_rows_are_recovered_and_reopened() {
     let (_, files) = files();
     let (table, ids) = table(&files, 0, 5000);
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     table.apply(ids[1], None).unwrap();
     table.apply(ids[2], Some(row(-2))).unwrap();
     table.apply(ids[1], None).unwrap();
@@ -206,7 +214,7 @@ fn a_dropped_table_frees_its_groups() {
     let in_use = || pager.page_count() - pager.free_pages();
     let before = in_use();
     let (table, _) = table(&files, 0, 5000);
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     assert_eq!(Arc::clone(&table).versions(1, 1, &[0]).count(), 5000);
     assert!(in_use() > before);
     table.discard();
@@ -226,7 +234,7 @@ fn changed(table: &RowTable, (ids, deleted): (&[RowId], &[RowId]), at: u64) {
     }
     table.validate(at, at).unwrap();
     table.commit(at, at);
-    table.gc(at, &mut |_, _| {}).unwrap();
+    ended(table, at);
 }
 
 /// Verifies: [DESIGN] RULES.md D31, groups written again: once a fifth of
@@ -239,7 +247,7 @@ fn changed(table: &RowTable, (ids, deleted): (&[RowId], &[RowId]), at: u64) {
 fn groups_are_written_again() {
     let (_, held) = files();
     let (table, ids) = table(&held, 0, 5000);
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     let before = table.frozen.directory().unwrap();
     changed(&table, (&ids[0..400], &ids[400..500]), 10);
     let after = table.frozen.directory().unwrap();
@@ -259,7 +267,7 @@ fn groups_are_written_again() {
         let (_, others) = files();
         let never = Arc::new(RowTable::create(&others, &TYPES, rewriting(0, 0.0)).unwrap());
         let more: Vec<RowId> = (0..5000).map(|n| never.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
-        never.gc(1, &mut |_, _| {}).unwrap();
+        ended(&never, 1);
         (never, more)
     };
     changed(&never, (&more[0..1000], &[]), 30);
@@ -278,7 +286,7 @@ fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool
     for n in 0..4096 {
         table.insert(NO_TRANSACTION, make(n)).unwrap();
     }
-    table.gc(1, &mut |_, _| {}).unwrap();
+    ended(&table, 1);
     let pages = table.frozen.directory().unwrap().groups.iter().map(|e| e.group.pages().len()).sum();
     let all: Vec<usize> = (0..types.len()).collect();
     let read = Arc::clone(&table)
@@ -313,4 +321,45 @@ fn compressed_groups_take_fewer_pages() {
     assert_eq!(read, plain_read, "the same rows");
     eprintln!("group pages: {compressed} compressed, {plain} not");
     assert!(compressed.saturating_mul(3) < plain, "{compressed} against {plain}");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D29, a deletion as rows are frozen: a
+/// deletion committed and collected while a freeze that may freeze its row
+/// is under way keeps its entry, so the row is not seen again once frozen;
+/// one of a row before those it may freeze, or once none is under way, is
+/// collected.
+#[test]
+fn a_deletion_during_a_freeze_is_kept() {
+    let (_, files) = files();
+    let (table, ids) = table(&files, 0, 100);
+    {
+        let _freezing = super::freeze::Freezing::from(&table.frozen.freezing_from, ids[50]);
+        changed(&table, (&[], &[ids[10], ids[60]]), 10);
+    }
+    assert!(table.tree.get(&key(ids[60])).unwrap().is_some(), "kept: it may be frozen");
+    assert!(table.tree.get(&key(ids[10])).unwrap().is_none(), "collected: it is not");
+    changed(&table, (&[], &[ids[70]]), 12);
+    assert!(table.tree.get(&key(ids[70])).unwrap().is_none(), "collected: no freeze under way");
+    assert!(table.get(NO_TRANSACTION, ids[60]).unwrap().is_none());
+    assert_eq!(entries(&table), 98, "the deletion kept among the rows");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, a read by batch as entries are taken
+/// out: the rows of a group the tree still holds entries for are read
+/// from them with the group's vector, so none is missed nor read twice
+/// when they are taken out before the scan reaches the tree's rows.
+#[test]
+fn a_read_by_batch_misses_no_entry_taken_out() {
+    let (_, files) = files();
+    let (table, _) = table(&files, 0, 5000);
+    let held = table.frozen.directory().unwrap();
+    ended(&table, 1);
+    assert_eq!(entries(&table), 5000, "kept for the directory held");
+    let mut batches = Arc::clone(&table).scan_batches(NO_TRANSACTION, &[0], None);
+    let first = batches.next().unwrap().unwrap().rows;
+    drop(held);
+    table.retire_unread().unwrap();
+    assert_eq!(entries(&table), 5000 - 4096, "taken out as it reads");
+    let rest: usize = batches.map(|b| b.unwrap().rows).sum();
+    assert_eq!(first.checked_add(rest), Some(5000));
 }

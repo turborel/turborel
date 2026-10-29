@@ -4,6 +4,9 @@
 //! recovered as a table of the row store's are.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::error::Code;
@@ -15,8 +18,15 @@ use crate::common::{Scramble, Scratch, after_crash, exec, os, rows, sorted};
 const ROWS: i64 = 5000;
 
 /// The tables R, of the row store, and C, of the column store in
-/// groups of 2048 rows, of schema A, each with `ROWS` rows.
+/// groups of 2048 rows, of schema A, each with `ROWS` rows, C's frozen.
 fn both(db: &Database) -> Session {
+    let a = written(db);
+    db.maintain().unwrap();
+    a
+}
+
+/// As `both`, C's rows left for the maintenance thread to freeze.
+fn written(db: &Database) -> Session {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
@@ -224,15 +234,11 @@ fn frozen_pages_pass_through_the_tables_encodings() {
 /// either.
 #[test]
 fn a_column_table_is_scanned_where_a_row_table_is_probed() {
-    use turborel::params::Params;
     let db = Database::new();
     let a = both(&db);
     db.create_index("R_N", "A.R", &["N"], "btree").unwrap();
     db.create_index("C_N", "A.C", &["N"], "btree").unwrap();
-    let physical = |sql: &str| {
-        let plan = a.explain(sql, &Params::new()).unwrap();
-        plan.split("-- physical:").nth(1).unwrap_or_default().to_owned()
-    };
+    let physical = |sql: &str| physical(&a, sql);
     // A fifth of the rows: N is k / 10, so N below 100 is k below 1000.
     let fifth = "SELECT COUNT(*) FROM {t} WHERE N BETWEEN 0 AND 99";
     assert!(physical(&fifth.replace("{t}", "R")).contains("IndexScan"), "rows: the index");
@@ -240,4 +246,116 @@ fn a_column_table_is_scanned_where_a_row_table_is_probed() {
     let few = "SELECT COUNT(*) FROM {t} WHERE N = 7";
     assert!(physical(&few.replace("{t}", "C")).contains("IndexScan"), "a few rows: the index");
     assert_eq!(rows(&a, &fifth.replace("{t}", "C")), rows(&a, &fifth.replace("{t}", "R")));
+}
+
+/// The plan `s` makes of `sql`, as optimized.
+fn physical(s: &Session, sql: &str) -> String {
+    let plan = s.explain(sql, &turborel::params::Params::new()).unwrap();
+    plan.split("-- physical:").nth(1).unwrap_or_default().to_owned()
+}
+
+/// Verifies: [DESIGN] RULES.md D31: the database's maintenance thread
+/// freezes a table's rows once committed, no call asking it to: a scan of
+/// a fifth of them is then planned where their index was.
+#[test]
+fn rows_are_frozen_in_the_background() {
+    let db = Database::new();
+    let a = written(&db);
+    db.create_index("C_N", "A.C", &["N"], "btree").unwrap();
+    let fifth = "SELECT COUNT(*) FROM C WHERE N BETWEEN 0 AND 99";
+    let until = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
+    while physical(&a, fifth).contains("IndexScan") {
+        assert!(Instant::now() < until, "frozen within 30 seconds");
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(rows(&a, fifth), Ok(vec!["1000".to_owned()]));
+}
+
+/// A table C of schema A, of the column store in groups of 2048 rows:
+/// K, a key; M, K's remainder by 3.
+fn table_c(db: &Database) -> Session {
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TABLE C (K INTEGER PRIMARY KEY, M INTEGER)
+           USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    db.session("A")
+}
+
+/// Inserts into C, by `s`, the rows of K from `first` to `last`.
+fn insert_c(s: &Session, (first, last): (i64, i64)) {
+    let values: Vec<String> = (first..=last).map(|k| format!("({k}, {})", k % 3)).collect();
+    s.run(&format!("INSERT INTO C VALUES {}", values.join(", "))).unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D29: rows changed as they are frozen:
+/// a writer deletes and updates some of the rows it just committed as the
+/// maintenance thread freezes them, never refused; the rows deleted stay
+/// deleted, once their deletions are collected and their groups written.
+#[test]
+fn rows_changed_as_they_are_frozen_stay_changed() {
+    let db = Database::new();
+    let w = table_c(&db);
+    let mut deleted = Vec::new();
+    for round in 0..6_i64 {
+        let first = round.checked_mul(6000).unwrap();
+        insert_c(&w, (first, first.checked_add(5999).unwrap()));
+        w.commit().unwrap();
+        // A few, soon done, of a group the freeze reads after its first.
+        let from = first.checked_add(3000).unwrap();
+        let range = format!("K + 0 BETWEEN {from} AND {}", from.checked_add(199).unwrap());
+        w.run(&format!("DELETE FROM C WHERE {range} AND M = 0")).unwrap();
+        w.run(&format!("UPDATE C SET M = 3 WHERE {range} AND M = 1")).unwrap();
+        w.commit().unwrap();
+        deleted.push(range);
+    }
+    db.maintain().unwrap();
+    let left = format!("SELECT COUNT(*) FROM C WHERE M = 0 AND ({})", deleted.join(" OR "));
+    assert_eq!(rows(&w, &left), Ok(vec!["0".to_owned()]), "deleted");
+    assert_eq!(rows(&w, "SELECT COUNT(*), SUM(M) FROM C"), Ok(vec!["35598,36804".to_owned()]));
+}
+
+/// Whether `got`, a count and a sum of K, is of the rows of K from 0 on,
+/// a multiple of 1000 of them: a state the writer of
+/// `rows_read_as_they_are_frozen_are_read_once` commits.
+fn first_thousands(got: &[String]) -> bool {
+    let Some((count, sum)) = got.first().and_then(|r| r.split_once(',')) else { return false };
+    let Ok(count) = count.parse::<i64>() else { return false };
+    let all = count.checked_mul(count.saturating_sub(1)).and_then(|n| n.checked_div(2));
+    let expected = if count == 0 { Some("NULL".to_owned()) } else { all.map(|n| n.to_string()) };
+    count % 1000 == 0 && expected.as_deref() == Some(sum)
+}
+
+/// Verifies: [DESIGN] RULES.md D31: rows frozen as they are read: a reader
+/// of a table of the column store counts the rows of a state a writer
+/// committed, by batch and row by row alike, none missed nor seen twice,
+/// while the maintenance thread freezes them, and takes out their entries.
+#[test]
+fn rows_read_as_they_are_frozen_are_read_once() {
+    let db = Database::new();
+    let w = table_c(&db);
+    let done = AtomicBool::new(false);
+    thread::scope(|scope| {
+        let reader = scope.spawn(|| {
+            let r = db.session("A");
+            let mut reads = 0_u32;
+            while !done.load(Ordering::Acquire) {
+                let by_batch = rows(&r, "SELECT COUNT(*), SUM(K) FROM C").unwrap();
+                let by_row = rows(&r, "SELECT COUNT(K + 0), SUM(K) FROM C").unwrap();
+                r.commit().unwrap();
+                assert_eq!(by_batch, by_row, "one snapshot, either way");
+                assert!(first_thousands(&by_batch), "a state committed: {by_batch:?}");
+                reads = reads.saturating_add(1);
+            }
+            reads
+        });
+        for round in 0..40_i64 {
+            let first = round.checked_mul(1000).unwrap();
+            insert_c(&w, (first, first.checked_add(999).unwrap()));
+            w.commit().unwrap();
+            thread::sleep(Duration::from_millis(5));
+        }
+        done.store(true, Ordering::Release);
+        assert!(reader.join().unwrap() > 0, "the reader read");
+    });
 }

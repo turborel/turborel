@@ -57,6 +57,7 @@ mod alter;
 mod area;
 mod assertions;
 mod assignment;
+mod background;
 mod catalog_file;
 mod checkpoint;
 mod clock;
@@ -81,6 +82,7 @@ mod index_statements;
 mod indexes;
 mod integrity;
 mod long_texts;
+mod maintenance;
 mod position;
 mod prepared;
 mod recovery;
@@ -416,8 +418,10 @@ impl Session {
             (None, _) => return Ok(()),
         };
         self.temporaries_ended(st, id);
-        // The transaction has ended: a checkpoint may come due.
+        // The transaction has ended: a checkpoint, or maintenance, may
+        // come due.
         self.db.checkpoint_if_due();
+        self.db.maintain_if_due();
         ended
     }
 
@@ -449,6 +453,7 @@ impl Session {
         };
         self.temporaries_ended(st, id);
         self.db.checkpoint_if_due();
+        self.db.maintain_if_due();
         ended
     }
 

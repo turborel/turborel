@@ -128,6 +128,8 @@ fn database() -> Database {
         }
     }
     s.commit().unwrap();
+    // FC's rows frozen, as the maintenance thread would have them.
+    db.maintain().unwrap();
     // H is k / 3: an index finds a tenth of the rows by 6667 of its values.
     db.create_index("F_H", "B.F", &["H"], "btree").unwrap();
     db.create_index("FC_H", "B.FC", &["H"], "btree").unwrap();

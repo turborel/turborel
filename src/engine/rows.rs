@@ -553,12 +553,19 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
-    /// Freezes rows due, too: one that cannot be is left for the next.
     fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
         self.collect(horizon, removed)?;
-        let _ = self.freeze_due(horizon);
         self.gather_if_due();
         Ok(())
+    }
+
+    /// Rows to freeze, groups to write again, entries to take out.
+    fn maintenance_due(&self) -> bool {
+        self.freeze_wanted()
+    }
+
+    fn maintain(&self, horizon: Timestamp) -> Result<bool> {
+        self.freeze_due(horizon)
     }
 
     fn versions(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {

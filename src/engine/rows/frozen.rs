@@ -128,7 +128,7 @@ struct Retiring {
 
 /// \[DESIGN\] A table's frozen row groups, and how its rows are frozen.
 pub(super) struct Frozen {
-    /// How its rows are frozen, if it is the column store'sTORE.
+    /// How its rows are frozen, if it is the column store's.
     columns: RwLock<Option<Columns>>,
     directory: RwLock<Arc<Directory>>,
     /// The first page of the directory as stored, 0 for none.
@@ -145,7 +145,13 @@ pub(super) struct Frozen {
     /// The frozen rows given an entry of the tree since groups were last
     /// looked at for a rewrite (`rewrite.rs`).
     shadowed: AtomicU64,
+    /// The least row id a freeze under way may freeze, `NOT_FREEZING` if
+    /// none is: a deletion of a row from it on is kept (`freeze.rs`).
+    freezing_from: AtomicU64,
 }
+
+/// What `Frozen::freezing_from` holds while no freeze is under way.
+const NOT_FREEZING: u64 = u64::MAX;
 
 impl Frozen {
     /// A table of no groups, freezing as `columns` says, if at all.
@@ -159,6 +165,7 @@ impl Frozen {
             commits: Mutex::default(),
             tried: Mutex::new(None),
             shadowed: AtomicU64::new(0),
+            freezing_from: AtomicU64::new(NOT_FREEZING),
         }
     }
 
@@ -228,9 +235,10 @@ impl RowTable {
         self.frozen_in(&*self.frozen.directory()?, id, columns)
     }
 
-    /// Whether a group's range holds row `id`: a deletion of it is kept.
+    /// Whether a group's range holds row `id`, or a freeze under way may
+    /// freeze it: a deletion of it is kept.
     pub(super) fn frozen_holds(&self, id: RowId) -> bool {
-        self.frozen.directory().is_ok_and(|d| d.holding(id).is_some())
+        id >= self.frozen.freezing_from.load(Ordering::SeqCst) || self.frozen.directory().is_ok_and(|d| d.holding(id).is_some())
     }
 
     /// A version of row `id`, committed before every snapshot, holding its

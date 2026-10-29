@@ -1,7 +1,8 @@
-//! \[DESIGN\] Freezing a table's rows into column groups (RULES.md D31), as
-//! a transaction's end collects its garbage (`TableStorage::gc`): when
-//! COLUMNSTORE.FREEZE_ROWS rows past its last group are committed before every
-//! snapshot, and COLUMNSTORE.FREEZE_DELAY seconds ago, a group of up to
+//! \[DESIGN\] Freezing a table's rows into column groups (RULES.md D31), on
+//! the database's maintenance thread (`TableStorage::maintain`), so no
+//! transaction's end waits for it: when COLUMNSTORE.FREEZE_ROWS rows past
+//! its last group are committed before every snapshot, and
+//! COLUMNSTORE.FREEZE_DELAY seconds ago, a group of up to
 //! COLUMNSTORE.GROUP_ROWS of them is written, published in a new directory,
 //! and their entries taken out of the tree once no reader holds a
 //! directory from before it. Split from frozen.rs (RULES.md R-SIZE-2).
@@ -14,7 +15,7 @@ use std::collections::VecDeque;
 use std::mem;
 use std::ops::Bound;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::{Directory, Entry, Retiring};
@@ -31,8 +32,8 @@ use crate::txn::Timestamp;
 /// \[DESIGN\] How long a freeze that found too few rows waits before it is
 /// tried again: a second.
 const RETRY: Duration = Duration::from_secs(1);
-/// \[DESIGN\] The most groups one transaction's end freezes, so it is not
-/// held long.
+/// \[DESIGN\] The most groups one call freezes, so a checkpoint, which
+/// waits for it, is not held long.
 const MOST_GROUPS: usize = 4;
 /// Commits noted within each 64th of the delay are taken as the first.
 const STEPS: u32 = 64;
@@ -59,36 +60,73 @@ fn delayed(commits: &mut VecDeque<(Timestamp, Instant)>, delay: u32) -> Timestam
     commits.front().filter(|&&(_, when)| when <= cut).map_or(0, |&(at, _)| at)
 }
 
+/// A freeze under way, noted from a row id on until it is dropped.
+pub(super) struct Freezing<'f>(&'f AtomicU64);
+
+impl<'f> Freezing<'f> {
+    /// Notes in `from` a freeze under way of the rows from `first` on.
+    pub(super) fn from(from: &'f AtomicU64, first: RowId) -> Freezing<'f> {
+        from.store(first, Ordering::SeqCst);
+        Freezing(from)
+    }
+}
+
+impl Drop for Freezing<'_> {
+    fn drop(&mut self) {
+        self.0.store(super::NOT_FREEZING, Ordering::SeqCst);
+    }
+}
+
 impl RowTable {
+    /// Whether a freeze, a rewrite or entries to take out may be due: rows
+    /// enough past the last group, and none found too few a moment ago;
+    /// frozen rows enough given entries; or rows frozen whose entries
+    /// remain.
+    pub(in crate::engine::rows) fn freeze_wanted(&self) -> bool {
+        let Ok(Some(columns)) = read(&self.frozen.columns).map(|c| *c) else { return false };
+        let frozen = self.frozen.directory().map_or(0, |d| d.rows());
+        let live = u64::try_from(self.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
+        let waited = lock_builtin(&self.frozen.tried).is_none_or(|at| at.elapsed() >= RETRY);
+        let shadowed = usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX);
+        (waited && live.saturating_sub(frozen) >= columns.due())
+            || super::rewrite::due(shadowed, columns.group_rows, &columns)
+            || !lock_builtin(&self.frozen.retiring).is_empty()
+    }
+
     /// Freezes the rows due, if any, committed at or before `horizon`, and
     /// writes again the groups due (`rewrite.rs`); and takes out the
-    /// entries of rows frozen before that no reader needs.
-    pub(in crate::engine::rows) fn freeze_due(&self, horizon: Timestamp) -> Result<()> {
-        let Some(columns) = *read(&self.frozen.columns)? else { return Ok(()) };
-        let Ok(_one) = self.frozen.freezing.try_lock() else { return Ok(()) };
+    /// entries of rows frozen before that no reader needs: whether it froze
+    /// or wrote a group.
+    pub(in crate::engine::rows) fn freeze_due(&self, horizon: Timestamp) -> Result<bool> {
+        let Some(columns) = *read(&self.frozen.columns)? else { return Ok(false) };
+        let Ok(_one) = self.frozen.freezing.try_lock() else { return Ok(false) };
+        // Not while a checkpoint is captured (`TableFiles::freezes`).
+        let _capturing = read(&self.freezes)?;
         self.retire_unread()?;
         let cutoff = match columns.freeze_delay {
             0 => horizon,
             delay => horizon.min(delayed(&mut lock_builtin(&self.frozen.commits), delay)),
         };
-        // Not while a checkpoint is captured (`TableFiles::freezes`).
-        let _capturing = read(&self.freezes)?;
-        self.freeze_rows(columns, cutoff)?;
-        self.rewrite_due(columns, cutoff)
+        let froze = self.freeze_rows(columns, cutoff)?;
+        Ok(self.rewrite_due(columns, cutoff)? || froze)
     }
 
     /// Freezes rows committed at or before `cutoff` past the last group, if
-    /// as many as `columns` says are.
-    fn freeze_rows(&self, columns: Columns, cutoff: Timestamp) -> Result<()> {
+    /// as many as `columns` says are: whether it froze any.
+    fn freeze_rows(&self, columns: Columns, cutoff: Timestamp) -> Result<bool> {
         let due = columns.due();
         let frozen = self.frozen.directory()?.rows();
         let live = u64::try_from(self.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
         let waited = lock_builtin(&self.frozen.tried).is_none_or(|at| at.elapsed() >= RETRY);
         if live.saturating_sub(frozen) < due || !waited {
-            return Ok(());
+            return Ok(false);
         }
         let fewest = usize::try_from(due.min(u64::from(columns.group_rows))).unwrap_or(usize::MAX);
         let most = usize::try_from(columns.group_rows).unwrap_or(usize::MAX);
+        // Noted before a row is read: a deletion committed after it was,
+        // and collected before its group is published, keeps its entry, so
+        // the row is not seen again (`mvcc/gc.rs`).
+        let _noted = Freezing::from(&self.frozen.freezing_from, self.frozen.directory()?.last().map_or(0, |l| l.saturating_add(1)));
         let mut froze = false;
         for _ in 0..MOST_GROUPS {
             let entries = self.eligible(self.frozen.directory()?.last(), cutoff, most)?;
@@ -99,7 +137,7 @@ impl RowTable {
             froze = true;
         }
         *lock_builtin(&self.frozen.tried) = (!froze).then(Instant::now);
-        Ok(())
+        Ok(froze)
     }
 
     /// The entries of the tree after row `after`, up to `most` of them,

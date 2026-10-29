@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::mem;
 
-use super::{Committing, Joined, Timestamp, TxId, Txn, UndoFailure};
+use super::{Committing, Joined, Timestamp, Transactions, TxId, Txn, UndoFailure};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -166,6 +166,9 @@ impl State {
             // readers a row they check and skip.
             let _ = storage.gc(horizon, &mut |id, row| remove_entries(&indexes, id, &row));
         }
+        if storage.maintenance_due() {
+            self.tx.note_maintenance(table);
+        }
         Some(storage.uncollected())
     }
 
@@ -216,4 +219,22 @@ fn remove_entries(indexes: &[(&dyn Index, &[usize])], id: RowId, row: &Row) {
 /// The tables of `joined`, for garbage collection.
 fn tables(joined: &[Joined]) -> Vec<QualifiedName> {
     joined.iter().map(|j| j.table.clone()).collect()
+}
+
+impl Transactions {
+    /// Notes that `table`'s engine has maintenance due, for the
+    /// database's maintenance thread (`db/maintenance.rs`).
+    pub(crate) fn note_maintenance(&self, table: &QualifiedName) {
+        lock_builtin(&self.maintenance).insert(table.clone());
+    }
+
+    /// Whether a table has maintenance due.
+    pub(crate) fn maintenance_due(&self) -> bool {
+        !lock_builtin(&self.maintenance).is_empty()
+    }
+
+    /// The tables noted with maintenance due, forgotten.
+    pub(crate) fn take_maintenance(&self) -> BTreeSet<QualifiedName> {
+        mem::take(&mut *lock_builtin(&self.maintenance))
+    }
 }

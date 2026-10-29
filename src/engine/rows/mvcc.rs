@@ -339,10 +339,23 @@ impl RowTable {
     /// Makes `record` the new version of row `id` by `tx`, or with none,
     /// deletes it. Outside any transaction, the newest version is replaced
     /// at once, committed, and what it held freed: recovery writes so.
+    ///
+    /// A write that finds the entry it read gone or changed is tried once
+    /// more: a freeze may have taken out the entry of a row frozen, the same
+    /// row then read from its group (`rows/frozen.rs`); else it conflicts.
     pub(super) fn write_version(&self, tx: TxId, id: RowId, record: Option<&[u8]>) -> Result<()> {
         if tx == NO_TRANSACTION {
             return self.write_latest(id, record);
         }
+        if self.try_write(tx, id, record)? || self.try_write(tx, id, record)? {
+            return Ok(());
+        }
+        Err(conflict())
+    }
+
+    /// `write_version`'s work: whether the version was written, not if
+    /// the entry it read was gone or changed by then.
+    fn try_write(&self, tx: TxId, id: RowId, record: Option<&[u8]>) -> Result<bool> {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
@@ -378,14 +391,14 @@ impl RowTable {
                 self.undo.release(at);
             }
             self.free(&thawed.unwrap_or_default());
-            return Err(conflict());
+            return Ok(false);
         }
         if thawed.is_some() {
             self.frozen.shadow();
         }
         let before = appended.is_none().then_some(newest);
         lock_builtin(&open).changes.push(Change { id, before, appended }, &mut encode_change)?;
-        Ok(())
+        Ok(true)
     }
 
     /// Row `id`'s newest version: its entry in the tree; else, if it is

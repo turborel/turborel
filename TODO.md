@@ -199,7 +199,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   - chunks compressed further: run-length, bit-packing below a byte,
     FSST for texts, ALP for approximate numbers; and conditions judged on
     the codes of a dictionary or a frame without decoding each value;
-  - freezing in the background, not at a transaction's end;
   - a condition on two or more columns skipping chunks; bloom filters;
   - groups' headers read as they are needed, not held in memory.
 

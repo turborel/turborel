@@ -37,6 +37,7 @@ fn both(db: &Database) -> Session {
             a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
         }
         a.commit().unwrap();
+        db.maintain().unwrap();
         a.run(&format!("UPDATE {table} SET N = -N, S = 'changed' WHERE K BETWEEN 100 AND 150")).unwrap();
         a.run(&format!("DELETE FROM {table} WHERE K BETWEEN 3000 AND 3100 OR G = 6 AND K < 500")).unwrap();
         a.run(&format!("INSERT INTO {table} VALUES (-1, 1, 'new', 5), (-2, 2, NULL, NULL)")).unwrap();

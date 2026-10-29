@@ -226,6 +226,8 @@ pub(crate) struct Transactions {
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,
+    /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
+    maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// What cancels the statements of each open transaction, for a plan's
     /// scans to look at (`txn/stop.rs`).
     stops: Mutex<HashMap<TxId, Arc<Stop>>>,
@@ -268,6 +270,7 @@ impl Default for Transactions {
             stopped: Mutex::new(None),
             stopping: AtomicBool::new(false),
             uncollected: Mutex::new(BTreeSet::new()),
+            maintenance: Mutex::new(BTreeSet::new()),
             stops: Mutex::new(HashMap::new()),
             names: Mutex::new(HashMap::new()),
         }

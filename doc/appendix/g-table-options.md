@@ -52,7 +52,10 @@ fetching a row by its key cost what they cost there. Once a group's
 worth of them, COLUMNSTORE.GROUP_ROWS, is committed and no transaction may
 still see them otherwise, they are frozen: written again as a group of
 each column's values together, and the least and greatest of each page
-of a column's values kept. A query that reads a few columns of many
+of a column's values kept. The database freezes them in the background,
+soon after, so no transaction waits for it; queries read the table
+meanwhile as before, the rows not yet frozen from where they were
+written. A query that reads a few columns of many
 rows then reads only those columns' pages, and a condition on a column
 skips the pages whose values it cannot match. Each page of a column's
 values is compressed, unless COLUMNSTORE.COMPRESSION is NONE: a value the same

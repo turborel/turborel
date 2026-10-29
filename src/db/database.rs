@@ -7,6 +7,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, Weak};
 use std::thread::{self, ThreadId};
 
 use super::files::DatabaseFiles;
+use super::maintenance::Maintenance;
 use super::stores::Storages;
 use super::users::Credentials;
 use super::{Session, State, qualified_name};
@@ -39,7 +40,7 @@ use crate::value::Value;
 pub struct Database(Arc<Shared>);
 
 /// A handle to a database that does not keep it open: what a thread of the
-/// database's own holds (`db/checkpoint.rs`).
+/// database's own holds (`db/background.rs`).
 #[derive(Clone)]
 pub(super) struct WeakDatabase(Weak<Shared>);
 
@@ -70,6 +71,8 @@ struct Shared {
     storages: Storages,
     /// What makes users' verifiers, if set (`db/users.rs`).
     credentials: RwLock<Option<Arc<dyn Credentials>>>,
+    /// Its maintenance thread (`db/maintenance.rs`).
+    maintenance: Maintenance,
 }
 
 /// One thread's turn to change the definitions. Dropping it ends the turn.
@@ -110,6 +113,7 @@ impl Database {
             diagnostics: RwLock::new(Arc::new(NoDiagnostics)),
             storages: Storages::default(),
             credentials: RwLock::new(None),
+            maintenance: Maintenance::default(),
         }))
     }
 
@@ -150,6 +154,11 @@ impl Database {
     pub(super) fn attach_files(&self, files: DatabaseFiles) -> Result<()> {
         *lock(&self.0.files)? = Some(Arc::new(files));
         Ok(())
+    }
+
+    /// Its maintenance thread.
+    pub(super) fn maintenance(&self) -> &Maintenance {
+        &self.0.maintenance
     }
 
     /// A handle that does not keep the database open.
