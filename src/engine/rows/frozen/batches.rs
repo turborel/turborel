@@ -20,7 +20,7 @@ use std::sync::Arc;
 use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::group::Group;
-use crate::engine::columns::scan::{candidates, ints, values, values_at};
+use crate::engine::columns::scan::{candidates, ints, ints_at, values, values_at};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, key, row_id};
@@ -184,7 +184,10 @@ impl Batched {
                             None => Column::from(values(group, &pages, (c, t), (from, to))?),
                         }
                     } else {
-                        Column::from(values_at(group, &pages, (c, t), &positions)?)
+                        match ints_at(group, &pages, (c, t), &positions)? {
+                            Some(ints) => Column::Ints(ints),
+                            None => Column::from(values_at(group, &pages, (c, t), &positions)?),
+                        }
                     }
                 }
                 None => Column::from(vec![Value::Null; positions.len()]),

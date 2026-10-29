@@ -166,6 +166,47 @@ pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &
     Ok(Some(Ints::new(units, *scale, nulls)))
 }
 
+/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
+/// `positions` of `group`, in increasing order, as integers, as `ints`
+/// gives those of a run: each chunk's span from the first position asked
+/// of it to the last decoded at once, and those asked taken of it.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Ints>> {
+    let DataType::Exact { scale, .. } = t else { return Ok(None) };
+    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
+    let (mut span, mut span_nulls) = (Vec::new(), Vec::new());
+    let mut rest = positions;
+    for zone in zones {
+        let end = zone.run.first.saturating_add(zone.run.rows);
+        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
+        rest = after;
+        let (Some(&low), Some(&high)) = (these.first(), these.last()) else { continue };
+        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
+        span.clear();
+        span_nulls.clear();
+        let held = pages.with(zone.run.page, |bytes| {
+            Ok(Chunk::parse(bytes)?.ints((at(low), at(high).saturating_add(1)), (&mut span, &mut span_nulls)))
+        })?;
+        if held.is_none() {
+            return Ok(None);
+        }
+        for &p in these {
+            let n = at(p).saturating_sub(at(low));
+            units.push(span.get(n).copied().unwrap_or(0));
+            nulls.push(span_nulls.get(n).copied().unwrap_or(true));
+        }
+    }
+    if units.len() != positions.len() {
+        return Ok(None);
+    }
+    let nulls = nulls.contains(&true).then_some(nulls);
+    Ok(Some(Ints::new(units, *scale, nulls)))
+}
+
 /// The values of column `column`, of type `t`, of the rows at `positions`
 /// of `group`, in increasing order.
 ///

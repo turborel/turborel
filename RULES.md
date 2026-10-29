@@ -855,8 +855,9 @@ the format of frozen groups becomes a trait when it is.
   rows gathered. A column's vector is of values, or, of an exact number a
   store keeps as an integer, of those integers, its nulls beside them
   (`storage::Column`, `Ints`), its values made only the first time work
-  asks for them: a run of a frozen group read whole gives an exact
-  column's integers decoded straight from its chunks, each width of a
+  asks for them: a run of a frozen group, read whole or of the rows the
+  tree has no entry for, gives an exact column's integers decoded
+  straight from its chunks, each chunk's span asked of it at once, each width of a
   frame of reference read by a loop of its own (`Body::ints`), and of a
   vector of integers COUNT, SUM, AVG, MIN and MAX are fed, and a column
   compared with constants, IS NULL and IN judged, as integers, scaled
