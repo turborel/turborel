@@ -163,3 +163,50 @@ fn chunks_give_their_integers() {
     assert_eq!(ints_of(&few, true, (0, 300)), None, "a dictionary");
     assert_eq!(ints_of(&fixed, false, (0, 21)), None, "past the end");
 }
+
+/// The texts a chunk of `values` of `t`, compressed, gives of its positions
+/// `from` to `to`, and its values there as they read one at a time, if it
+/// holds text.
+fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Option<(Vec<String>, Vec<String>)> {
+    let fields = Fields::of(t, values.iter().cloned()).unwrap();
+    let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
+    let chunk = Chunk::parse(&bytes).unwrap();
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Vec::new());
+    chunk.texts((from, to), (&mut text, &mut ends, &mut nulls))?;
+    let texts = crate::storage::Texts::new(text, ends, nulls.contains(&true).then_some(nulls));
+    let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
+    let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();
+    Some((made, read))
+}
+
+/// Verifies: [DESIGN] RULES.md D31, a chunk's texts: every encoding of
+/// strings gives, of a range of its positions, the values read one at a
+/// time give, nulls as nulls: of varying fields, some not ASCII, some
+/// empty, some with a trailing space; a dictionary; a constant. Of
+/// integers it gives none, nor past its end.
+#[test]
+fn chunks_give_their_texts() {
+    let varying: Vec<Value> = (0..30_u32)
+        .map(|n| {
+            if n % 7 == 2 {
+                Value::Null
+            } else {
+                Value::Char(
+                    ["", "é", "a ", "text"][usize::try_from(n % 4).unwrap()].repeat(usize::try_from(n % 3 + 1).unwrap()) + &n.to_string(),
+                )
+            }
+        })
+        .collect();
+    let few: Vec<Value> =
+        (0..300).map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].to_owned()) }).collect();
+    let constant: Vec<Value> = (0_u32..20_u32).map(|n| if n % 5 == 0 { Value::Null } else { Value::Char("same".to_owned()) }).collect();
+    for (values, kind) in [(&varying, "varying"), (&few, "a dictionary"), (&constant, "a constant")] {
+        let whole = texts_of(&TEXT, values, (0, values.len())).unwrap();
+        assert_eq!(whole.0, whole.1, "{kind}");
+        let part = texts_of(&TEXT, values, (3, 11)).unwrap();
+        assert_eq!(part.0, part.1, "{kind}, a part");
+    }
+    let numbers: Vec<Value> = (0_i128..10_i128).map(int).collect();
+    assert_eq!(texts_of(&INTEGER, &numbers, (0, 10)), None, "integers");
+    assert_eq!(texts_of(&TEXT, &constant, (0, 21)), None, "past the end");
+}

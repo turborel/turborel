@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::error::{Code, Result, SqlError, fail};
 use crate::lexer::kw;
 use crate::params::ParameterType;
-use crate::storage::Ints;
+use crate::storage::{Ints, Texts};
 use crate::value::Spelled;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value, arith, compare};
 
@@ -129,6 +129,16 @@ pub trait Accumulator {
     /// As `update`.
     fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
         self.update_many(ints.values(), rows)
+    }
+    /// \[DESIGN\] Called with a vector of character strings as their text
+    /// (`Texts`, RULES.md D31), as `update_many` is. Default: `update_many`
+    /// of their values.
+    ///
+    /// # Errors
+    ///
+    /// As `update`.
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
+        self.update_many(texts.values(), rows)
     }
     /// \[DESIGN\] For COUNT(*): called once for `rows` rows, as `update`
     /// is once a row. Default: `update` of a null placeholder for each.
@@ -279,6 +289,14 @@ impl Accumulator for CountAcc {
     }
     fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
         self.update_rows(ints::count(ints, rows))
+    }
+    /// Its texts counted, none made a value.
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
+        let counted = match rows {
+            Some(rows) => rows.iter().filter(|&&n| texts.get(n).is_some()).count(),
+            None => (0..texts.len()).filter(|&n| texts.get(n).is_some()).count(),
+        };
+        self.update_rows(counted)
     }
     fn update_rows(&mut self, rows: usize) -> Result<()> {
         self.0 = self.0.saturating_add(i128::try_from(rows).unwrap_or(i128::MAX));

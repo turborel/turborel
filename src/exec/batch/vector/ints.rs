@@ -82,7 +82,7 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
     match e {
         Expr::Column(c) => match batch.columns.get(*inputs.get(*c)?)? {
             Column::Ints(ints) => Some(Lane::Column(ints, rows)),
-            Column::Values(_) => None,
+            Column::Values(_) | Column::Texts(_) => None,
         },
         Expr::Const(Value::Exact(d)) => Some(Lane::Const(i64::try_from(d.units).ok()?, d.scale)),
         // [X3.135-1986 §5.9 GR4]

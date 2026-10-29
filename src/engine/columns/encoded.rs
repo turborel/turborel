@@ -355,6 +355,50 @@ impl Body<'_> {
     }
 }
 
+impl Body<'_> {
+    /// \[DESIGN\] The text of each value at positions `from` to `to`, a
+    /// character string written as it is, pushed to `text`, and where each
+    /// ends to `ends`, of those `null` says are not nulls (`Texts`): none if
+    /// the encoding is of fixed fields or a frame, or a value is not UTF-8.
+    pub(super) fn texts(
+        &self,
+        (from, to): (usize, usize),
+        (text, ends): (&mut String, &mut Vec<usize>),
+        null: impl Fn(usize) -> bool,
+    ) -> Option<()> {
+        for n in from..to {
+            if !null(n) {
+                text.push_str(std::str::from_utf8(self.field(n)?).ok()?);
+            }
+            ends.push(text.len());
+        }
+        Some(())
+    }
+
+    /// The field of the `n`th value of a varying, constant or dictionary
+    /// encoding, as written.
+    fn field(&self, n: usize) -> Option<&[u8]> {
+        let between = |offsets: &[u8], e: usize| {
+            read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
+        };
+        match self {
+            Body::Varying { offsets, values } => {
+                let (from, to) = between(offsets, n)?;
+                values.get(from..to)
+            }
+            Body::Constant { field } => Some(field),
+            Body::Dictionary { code, offsets, entries, codes } => {
+                let at = n.checked_mul(*code)?;
+                let mut entry = [0_u8; 2];
+                entry.get_mut(..*code)?.copy_from_slice(codes.get(at..at.checked_add(*code)?)?);
+                let (from, to) = between(offsets, usize::from(u16::from_le_bytes(entry)))?;
+                entries.get(from..to)
+            }
+            Body::Fixed { .. } | Body::Frame { .. } => None,
+        }
+    }
+}
+
 /// The values of frame of reference `least` whose differences, of `bytes`
 /// each, are `given`, pushed to `out`. A difference is less than 2^64, and
 /// the value it gives was an integer of 64 bits, so adding it wrapping

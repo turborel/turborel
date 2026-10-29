@@ -2,9 +2,11 @@
 //! RULES.md D31): each column asked for a vector of its values, all of one
 //! length, so work over many rows needs no row made for each. A column's
 //! vector is of values, or, of an exact number a store keeps as an
-//! integer, of those integers, its nulls beside them: work that reads them
-//! as integers reads no value made; any other reads them as values, made
-//! the first time it asks. Split from storage.rs (RULES.md R-SIZE-2).
+//! integer, of those integers, its nulls beside them; or, of a character
+//! string a store keeps as written, of its bytes, one buffer of them all
+//! and where each ends: work that reads them as integers or as text reads
+//! no value made; any other reads them as values, made the first time it
+//! asks. Split from storage.rs (RULES.md R-SIZE-2).
 
 use std::sync::OnceLock;
 
@@ -32,6 +34,59 @@ pub enum Column {
     Values(Vec<Value>),
     /// Exact numbers, as integers.
     Ints(Ints),
+    /// Character strings, as their text.
+    Texts(Texts),
+}
+
+/// \[DESIGN\] Character strings as written, of a VARCHAR column as a store
+/// keeps it: their text in one buffer, and where each ends in it.
+#[derive(Debug, Clone, Default)]
+pub struct Texts {
+    /// Every row's text, one after another, a null's empty.
+    pub text: String,
+    /// Where each row's text ends in `text`.
+    pub ends: Vec<usize>,
+    /// Whether each row's is null, if any is.
+    pub nulls: Option<Vec<bool>>,
+    /// The values, made the first time they are asked for.
+    made: OnceLock<Vec<Value>>,
+}
+
+impl Texts {
+    /// The texts of `text` ending at `ends`, null where `nulls` says.
+    pub fn new(text: String, ends: Vec<usize>, nulls: Option<Vec<bool>>) -> Texts {
+        Texts { text, ends, nulls, made: OnceLock::new() }
+    }
+
+    /// Row `n`'s text, none if it is null or past the end.
+    pub fn get(&self, n: usize) -> Option<&str> {
+        if self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false)) {
+            return None;
+        }
+        let from = n.checked_sub(1).map_or(Some(0), |p| self.ends.get(p).copied())?;
+        self.text.get(from..*self.ends.get(n)?)
+    }
+
+    /// How many rows.
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    /// Whether it has no rows.
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    /// The values, made the first time they are asked for.
+    pub fn values(&self) -> &[Value] {
+        self.made.get_or_init(|| (0..self.len()).map(|n| self.get(n).map_or(Value::Null, |s| Value::Char(s.to_owned()))).collect())
+    }
+
+    /// Its values, owned.
+    fn into_values(self) -> Vec<Value> {
+        self.values();
+        self.made.into_inner().unwrap_or_default()
+    }
 }
 
 /// \[DESIGN\] Exact numbers of one scale, each its units at that scale
@@ -83,6 +138,7 @@ impl Column {
         match self {
             Column::Values(values) => values,
             Column::Ints(ints) => ints.values(),
+            Column::Texts(texts) => texts.values(),
         }
     }
 
@@ -95,6 +151,11 @@ impl Column {
                 *self = Column::Values(made);
                 self.values_mut()
             }
+            Column::Texts(texts) => {
+                let made = std::mem::take(texts).into_values();
+                *self = Column::Values(made);
+                self.values_mut()
+            }
         }
     }
 
@@ -103,6 +164,7 @@ impl Column {
         match self {
             Column::Values(values) => values,
             Column::Ints(ints) => ints.into_values(),
+            Column::Texts(texts) => texts.into_values(),
         }
     }
 }
@@ -166,6 +228,8 @@ pub enum Cell<'b> {
     Value(&'b Value),
     /// An exact number's units, and its scale.
     Exact(i64, u32),
+    /// A character string's text.
+    Text(&'b str),
     /// A null of a vector of integers, or past the end of a vector.
     Null,
 }
@@ -175,7 +239,7 @@ impl Cell<'_> {
     pub fn is_null(&self) -> bool {
         match self {
             Cell::Value(v) => v.is_null(),
-            Cell::Exact(..) => false,
+            Cell::Exact(..) | Cell::Text(_) => false,
             Cell::Null => true,
         }
     }
@@ -185,6 +249,7 @@ impl Cell<'_> {
         match self {
             Cell::Value(v) => (*v).clone(),
             Cell::Exact(units, scale) => Value::Exact(Decimal::new(i128::from(*units), *scale)),
+            Cell::Text(text) => Value::Char((*text).to_owned()),
             Cell::Null => Value::Null,
         }
     }
@@ -197,6 +262,7 @@ impl Batch {
         match self.columns.get(at) {
             Some(Column::Values(values)) => values.get(r).map_or(Cell::Null, Cell::Value),
             Some(Column::Ints(ints)) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
+            Some(Column::Texts(texts)) => texts.get(r).map_or(Cell::Null, Cell::Text),
             None => Cell::Null,
         }
     }

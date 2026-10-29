@@ -22,7 +22,7 @@ mod batch;
 mod condition;
 mod options;
 
-pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Column, Ints, batches_of};
+pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Column, Ints, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
 
 use std::sync::Arc;

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::group::Group;
-use crate::engine::columns::scan::{candidates, ints, ints_at, values, values_at};
+use crate::engine::columns::scan::{candidates, ints, ints_at, texts, texts_at, values, values_at};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, key, row_id};
@@ -179,14 +179,16 @@ impl Batched {
                 // integers if it is of them.
                 Some(t) => {
                     if whole {
-                        match ints(group, &pages, (c, t), (from, to))? {
-                            Some(ints) => Column::Ints(ints),
-                            None => Column::from(values(group, &pages, (c, t), (from, to))?),
+                        match (ints(group, &pages, (c, t), (from, to))?, texts(group, &pages, (c, t), (from, to))?) {
+                            (Some(ints), _) => Column::Ints(ints),
+                            (None, Some(texts)) => Column::Texts(texts),
+                            (None, None) => Column::from(values(group, &pages, (c, t), (from, to))?),
                         }
                     } else {
-                        match ints_at(group, &pages, (c, t), &positions)? {
-                            Some(ints) => Column::Ints(ints),
-                            None => Column::from(values_at(group, &pages, (c, t), &positions)?),
+                        match (ints_at(group, &pages, (c, t), &positions)?, texts_at(group, &pages, (c, t), &positions)?) {
+                            (Some(ints), _) => Column::Ints(ints),
+                            (None, Some(texts)) => Column::Texts(texts),
+                            (None, None) => Column::from(values_at(group, &pages, (c, t), &positions)?),
                         }
                     }
                 }

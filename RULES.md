@@ -863,7 +863,15 @@ the format of frozen groups becomes a trait when it is.
   compared with constants, IS NULL and IN judged, as integers, scaled
   once to one scale, a running sum checked a value at a time as decimals
   check it (of 400,000 rows: `SUM(B)` 5.6 ms to 2.1, `B > 200000` 5.6 to
-  2.3; of the chunks alone, decoded 2.3 ms to 0.04). An expression of
+  2.3; of the chunks alone, decoded 2.3 ms to 0.04). A VARCHAR column's
+  vector, of a run of a frozen group, is its text, one buffer of every
+  row's and where each ends (`storage::Texts`), decoded straight from
+  varying, dictionary and constant chunks, each checked UTF-8: LIKE a
+  constant pattern, comparisons with constant strings, padded as strings
+  compare, IN, IS NULL and COUNT are judged and fed of the text, and
+  grouping keys made of it (`judge/texts.rs`; of 400,000 rows: `S LIKE
+  '%5%'` 11.6 ms to 6.9, `S = 's7'` 13.4 to 7.7, `GROUP BY S` 16.3 to
+  10.8, `COUNT(T)` 9.8 to 5.3). An expression of
   integers and exact constants, negated, summed, subtracted or
   multiplied, is evaluated as integers at the scale decimals give it, a
   result past 18 digits, or a quotient, evaluated of values, which raise

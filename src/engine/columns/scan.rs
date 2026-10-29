@@ -6,7 +6,7 @@
 use super::Chunk;
 use super::group::{Group, Pages, Seal};
 use crate::error::Result;
-use crate::storage::{Conjunct, Conjunction, Ints, Row};
+use crate::storage::{Conjunct, Conjunction, Ints, Row, Texts};
 use crate::value::{DataType, Value};
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
@@ -205,6 +205,74 @@ pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize
     }
     let nulls = nulls.contains(&true).then_some(nulls);
     Ok(Some(Ints::new(units, *scale, nulls)))
+}
+
+/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
+/// `positions` of `group`, in increasing order, as text (`storage::Texts`),
+/// if `t` is a VARCHAR type, which a record writes as its text, and every
+/// chunk's encoding holds text: each position's read in place.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Texts>> {
+    let DataType::Varying { .. } = t else { return Ok(None) };
+    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
+    let mut rest = positions;
+    for zone in zones {
+        let end = zone.run.first.saturating_add(zone.run.rows);
+        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
+        rest = after;
+        if these.is_empty() {
+            continue;
+        }
+        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
+        let held = pages.with(zone.run.page, |bytes| {
+            let chunk = Chunk::parse(bytes)?;
+            Ok(these.iter().try_for_each(|&p| chunk.texts((at(p), at(p).saturating_add(1)), (&mut text, &mut ends, &mut nulls))))
+        })?;
+        if held.is_none() {
+            return Ok(None);
+        }
+    }
+    if ends.len() != positions.len() {
+        return Ok(None);
+    }
+    let nulls = nulls.contains(&true).then_some(nulls);
+    Ok(Some(Texts::new(text, ends, nulls)))
+}
+
+/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
+/// positions `from` to `to` of `group`, as text, as `texts_at` gives them.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn texts<S: Seal>(
+    group: &Group,
+    pages: &Pages<'_, S>,
+    (column, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Option<Texts>> {
+    let DataType::Varying { .. } = t else { return Ok(None) };
+    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Vec::with_capacity(count));
+    for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
+        let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
+        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
+        let held =
+            pages.with(zone.run.page, |bytes| Ok(Chunk::parse(bytes)?.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls))))?;
+        if held.is_none() {
+            return Ok(None);
+        }
+    }
+    if ends.len() != count {
+        return Ok(None);
+    }
+    let nulls = nulls.contains(&true).then_some(nulls);
+    Ok(Some(Texts::new(text, ends, nulls)))
 }
 
 /// The values of column `column`, of type `t`, of the rows at `positions`

@@ -187,6 +187,19 @@ impl<'a> Chunk<'a> {
         Some(())
     }
 
+    /// \[DESIGN\] Its values at positions `from` to `to`, character strings
+    /// written as they are, as text pushed to `text` and where each ends to
+    /// `ends`, and whether each is null to `nulls` (`encoded::Body::texts`):
+    /// none if its encoding does not hold them as text.
+    pub fn texts(&self, (from, to): (usize, usize), (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Vec<bool>)) -> Option<()> {
+        if to > self.count {
+            return None;
+        }
+        self.body.texts((from, to), (text, ends), |n| self.is_null(n))?;
+        nulls.extend((from..to).map(|n| self.is_null(n)));
+        Some(())
+    }
+
     /// Its `n`th value, of type `t`.
     ///
     /// # Errors

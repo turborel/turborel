@@ -67,7 +67,7 @@ fn scaled(scale: u32, constant: &Value) -> Option<(i128, i128)> {
 }
 
 /// Whether `op` holds of an ordering, a null or one too large none.
-fn holds(op: CompOp, ordering: Option<Ordering>) -> bool {
+pub(super) fn holds(op: CompOp, ordering: Option<Ordering>) -> bool {
     let Some(o) = ordering else { return false };
     match op {
         CompOp::Eq => o == Ordering::Equal,

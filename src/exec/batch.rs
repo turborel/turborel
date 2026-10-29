@@ -29,7 +29,7 @@ use crate::error::Result;
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
-use crate::spill::{put_norm, put_norm_exact, row_bytes};
+use crate::spill::{put_norm, put_norm_exact, put_norm_text, row_bytes};
 use crate::storage::{Batch, Cell, Column, Ints, Row};
 use crate::txn::TxId;
 use crate::value::Value;
@@ -213,6 +213,7 @@ fn fed_group(
             (Taken::Column(c), _) => match batch.columns.get(*c) {
                 Some(Column::Ints(ints)) => state.update_ints(ints, Some(read_rows))?,
                 Some(Column::Values(values)) => state.update_many(values, Some(read_rows))?,
+                Some(Column::Texts(texts)) => state.update_texts(texts, Some(read_rows))?,
                 None => {}
             },
             (Taken::Expr(..), Some(Fed::Ints(ints))) => state.update_ints(ints, Some(given))?,
@@ -250,7 +251,7 @@ fn evaluated((e, inputs): (&Expr, &[usize]), scratch: &mut Row, put: impl Fn(usi
 fn put_cell(cell: Cell<'_>, slot: &mut Value) {
     match cell {
         Cell::Value(v) => slot.clone_from(v),
-        exact @ Cell::Exact(..) => *slot = exact.to_value(),
+        made @ (Cell::Exact(..) | Cell::Text(_)) => *slot = made.to_value(),
         Cell::Null => *slot = Value::Null,
     }
 }
@@ -306,6 +307,7 @@ impl Groups {
                 match cell(at) {
                     Cell::Value(v) => put_norm(v, &mut self.key),
                     Cell::Exact(units, scale) => put_norm_exact(i128::from(units), scale, &mut self.key),
+                    Cell::Text(text) => put_norm_text(text, &mut self.key),
                     Cell::Null => put_norm(&Value::Null, &mut self.key),
                 }
             }
@@ -397,6 +399,7 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
             Taken::Column(at) => match batch.columns.get(*at) {
                 Some(Column::Ints(ints)) => state.update_ints(ints, rows)?,
                 Some(Column::Values(values)) => state.update_many(values, rows)?,
+                Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
                 None => state.update_many(&[], rows)?,
             },
             // Its values evaluated a vector at a time (`vector.rs`), or else

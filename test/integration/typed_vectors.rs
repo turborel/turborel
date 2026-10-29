@@ -1,7 +1,8 @@
-//! \[DESIGN\] Exact numbers a batch holds as integers (RULES.md D31,
-//! `storage::Ints`): judged and fed to set functions as integers, they
-//! answer as row by row, of a table of the column store whose rows are
-//! frozen, as a table of the row store answers.
+//! \[DESIGN\] Exact numbers a batch holds as integers, and character
+//! strings it holds as text (RULES.md D31, `storage::Ints`, `Texts`):
+//! judged and fed to set functions so, they answer as row by row, of a
+//! table of the column store whose rows are frozen, as a table of the row
+//! store answers.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -9,8 +10,9 @@ use turborel::error::Code;
 use crate::common::{both_ways, exec, rows, sorted};
 
 /// The rows written: K, a key; D, a DECIMAL(9, 2) of either sign; I, a
-/// SMALLINT, one of 5; N, a NUMERIC(18), near its limits for some rows;
-/// each but K null for every 7th row.
+/// SMALLINT, one of 5; N, a NUMERIC(18), near its limits for some rows; V,
+/// a VARCHAR(12), of 40 values and some not ASCII, a trailing space on
+/// every third; each but K null for every 7th row.
 const ROWS: i64 = 10_000;
 
 /// Tables R, of the row store, and C, of the column store, alike: written,
@@ -18,8 +20,8 @@ const ROWS: i64 = 10_000;
 fn both(db: &Database) -> Session {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
-           CREATE TABLE R (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18))
-           CREATE TABLE C (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18))
+           CREATE TABLE R (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12))
+           CREATE TABLE C (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12))
              USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
@@ -29,7 +31,7 @@ fn both(db: &Database) -> Session {
             let values: Vec<String> = (first..first + 500)
                 .map(|k: i64| {
                     if k % 7 == 0 {
-                        return format!("({k}, NULL, NULL, NULL)");
+                        return format!("({k}, NULL, NULL, NULL, NULL)");
                     }
                     let d = format!("{}.{:02}", (k % 300) - 150, k % 100);
                     let n = match k % 11 {
@@ -37,7 +39,8 @@ fn both(db: &Database) -> Session {
                         1 => "-999999999999999999".to_owned(),
                         _ => (k * 1_000_003).to_string(),
                     };
-                    format!("({k}, {d}, {}, {n})", k % 5)
+                    let v = if k % 17 == 0 { format!("é{}", k % 5) } else { format!("v{}{}", k % 40, if k % 3 == 0 { " " } else { "" }) };
+                    format!("({k}, {d}, {}, {n}, '{v}')", k % 5)
                 })
                 .collect();
             a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
@@ -52,7 +55,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 29] = [
+const QUERIES: [&str; 38] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -81,26 +84,40 @@ const QUERIES: [&str; 29] = [
     "SELECT COUNT(*) FROM {t} WHERE D - 5 < 0 AND K + 1 > 100 AND D <> I",
     "SELECT COUNT(*), MIN(K) FROM {t} WHERE D * D > 1.5 AND -D <= 0.25",
     "SELECT COUNT(*) FROM {t} WHERE K / 2 > 1000 AND D * 2 > 0",
+    "SELECT COUNT(*) FROM {t} WHERE V LIKE 'v1%' AND V NOT LIKE '%5'",
+    "SELECT COUNT(*), MIN(K) FROM {t} WHERE V LIKE '%1 ' OR V LIKE 'é%'",
+    "SELECT COUNT(*) FROM {t} WHERE V = 'v3' OR V = 'v6 '",
+    "SELECT COUNT(*) FROM {t} WHERE V < 'v2' AND V >= 'v10' AND V <> 'v12'",
+    "SELECT COUNT(*) FROM {t} WHERE V > 'é' OR V <= 'v'",
+    "SELECT COUNT(*) FROM {t} WHERE V IN ('v1', 'v2 ', 'é3') AND V NOT IN ('v9', CAST(NULL AS VARCHAR(3)))",
+    "SELECT COUNT(*) FROM {t} WHERE V NOT IN ('v1', 'v2') AND V IS NOT NULL OR V IS NULL AND K < 100",
+    // Not V itself, of which 'v0' and 'v0 ' are one group, nor MIN(V):
+    // which of equal strings either gives is the first row's, and a table
+    // of the column store gives its rows in another order by batch.
+    "SELECT COUNT(*), MIN(K), MAX(K) FROM {t} GROUP BY V",
+    "SELECT COUNT(*) FROM (SELECT DISTINCT V FROM {t} WHERE K > 50) AS X",
     "SELECT D, SUM(CASE WHEN I > 2 THEN I * 10 ELSE 0 END), COUNT(*) FROM {t} WHERE K < 2000 GROUP BY D",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11 GR4,
-/// §5.13, §5.15]: exact numbers judged and fed to set functions as
-/// integers give what they give row by row (EXECUTOR.BATCHES OFF), and
-/// what a table of the row store gives: compared with constants of more
-/// and fewer digits after the point than their scale, of either sign,
-/// one that no value equals; IN and NOT IN lists of either, one holding
-/// a null; numbers near the limits of 18 digits; nulls among them; set
-/// functions grouped and not, of expressions, one with a quotient
-/// evaluated of values; every comparison, a list of an approximate
-/// number; negations, differences and products of scales up to 18; a
-/// running sum, or a product, past 18 digits raising either way, grouped
-/// or not; filters that can raise of comparisons of expressions, one of
-/// a quotient, one past 18 digits raising either way; of a constant, of an approximate number, of a quotient and a
-/// CASE a row at a time; groups past the work area; rows changed and deleted after they were
-/// frozen.
+/// GR5, §5.13, §5.14, §5.15]: exact numbers judged and fed to set
+/// functions as integers, and character strings as text, give what they
+/// give row by row (EXECUTOR.BATCHES OFF), and what a table of the row
+/// store gives: numbers compared with constants of more and fewer digits
+/// after the point than their scale, of either sign, one that no value
+/// equals, by every comparison; IN and NOT IN lists, one holding a null,
+/// one an approximate number; numbers near the limits of 18 digits; set
+/// functions grouped and not, of expressions, negations, differences and
+/// products of scales up to 18, one with a quotient evaluated of values;
+/// a running sum, or a product, past 18 digits raising either way; filters
+/// that can raise of comparisons of expressions, one of a quotient, one
+/// raising; of a constant, of an approximate number, of a CASE a row at a
+/// time; groups past the work area; strings, some not ASCII, some with a
+/// trailing space, LIKE patterns, compared padded, IN and NOT IN, grouped,
+/// distinct, counted; nulls among them all; rows changed and deleted after
+/// they were frozen.
 #[test]
-fn exact_numbers_as_integers_answer_as_row_by_row() {
+fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
     let db = Database::new();
     let a = both(&db);
     for query in QUERIES {

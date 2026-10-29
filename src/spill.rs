@@ -371,7 +371,7 @@ const SPAN_TAG: u8 = 7;
 pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
     match v {
         Value::Null => out.push(NULL_TAG),
-        Value::Char(s) => text(out, CHAR_TAG, s.trim_end_matches(' ')),
+        Value::Char(s) => put_norm_text(s, out),
         Value::Exact(d) => put_norm_exact(d.units, d.scale, out),
         Value::Approx(f) => {
             out.push(APPROX_TAG);
@@ -395,6 +395,13 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             out.extend_from_slice(&e.bytes);
         }
     }
+}
+
+/// Appends the normalized key of the character string `s`, as `put_norm`
+/// writes it of the value: without its trailing spaces, as strings
+/// compare padded [X3.135-1986 §5.11 GR5].
+pub fn put_norm_text(s: &str, out: &mut Vec<u8>) {
+    text(out, CHAR_TAG, s.trim_end_matches(' '));
 }
 
 /// Appends the normalized key of the exact number of `units` at `scale`,

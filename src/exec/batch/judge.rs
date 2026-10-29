@@ -55,10 +55,13 @@ impl Judged {
             Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) => *at,
             Judged::Compared(a, op, b) => return ints::compared((a, *op, b), batch, over),
         };
-        if let Some(Column::Ints(column)) = batch.columns.get(at)
-            && let Some(true_of) = ints::kept(self, column, over)
-        {
-            return Some(true_of);
+        let typed = match batch.columns.get(at) {
+            Some(Column::Ints(column)) => ints::kept(self, column, over),
+            Some(Column::Texts(column)) => texts::kept(self, column, over),
+            Some(Column::Values(_)) | None => None,
+        };
+        if typed.is_some() {
+            return typed;
         }
         let vector = batch.values(at);
         Some(over.iter().copied().filter(|&r| vector.get(r).is_some_and(|v| self.keeps(v))).collect())
@@ -233,6 +236,7 @@ fn compared_of_integers(cond: &Cond, columns: &[usize]) -> Option<Judged> {
 // Unit tests: which conjuncts of a filter are judged over vectors, and
 // what each keeps (RULES.md R-TEST-1).
 mod ints;
+mod texts;
 
 #[cfg(test)]
 mod tests;

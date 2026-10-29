@@ -151,3 +151,48 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
     assert_eq!(ints::kept(&Judged::In(0, vec![Value::Approx(1.5)], false), &ints, &all), None, "a list of an approximate");
     assert_eq!(ints::kept(&Judged::Like(0, None), &ints, &all), None, "LIKE");
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR5, §5.13, §5.14,
+/// §5.15]: a conjunct judged over texts keeps the rows its judgment of
+/// their values keeps: LIKE, of a pattern a null makes unknown too; each
+/// comparison with a string, padded with spaces; IN and NOT IN, of a list
+/// with a null; IS NULL and IS NOT NULL; nulls and strings not ASCII among
+/// them. One with a number, or a list holding one, is not judged so.
+#[test]
+fn conjuncts_judged_over_texts_keep_what_values_keep() {
+    let words = ["ab", "ab ", "", "é", "b", "abc", "a"];
+    let mut text = String::new();
+    let mut ends = Vec::new();
+    for w in words {
+        text.push_str(w);
+        ends.push(text.len());
+    }
+    ends.push(text.len());
+    let mut nulls = vec![false; words.len()];
+    nulls.push(true);
+    let texts = crate::storage::Texts::new(text, ends, Some(nulls));
+    let values = texts.values().to_vec();
+    let all: Vec<usize> = (0..values.len()).collect();
+    let char_of = |s: &str| Value::Char(s.to_owned());
+    let mut judged = vec![
+        Judged::Like(0, constant_pattern(&char_of("a%"), None).unwrap()),
+        Judged::Like(0, constant_pattern(&char_of("_b"), None).unwrap()),
+        Judged::Like(0, None),
+    ];
+    for c in ["ab", "a", "é", ""] {
+        for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {
+            judged.push(Judged::Compare(0, op, char_of(c)));
+        }
+    }
+    for not in [false, true] {
+        judged.push(Judged::In(0, vec![char_of("ab"), char_of("b")], not));
+        judged.push(Judged::In(0, vec![char_of("é"), Value::Null], not));
+        judged.push(Judged::IsNull(0, not));
+    }
+    for j in &judged {
+        let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
+        assert_eq!(texts::kept(j, &texts, &all), Some(by_values), "{j:?}");
+    }
+    assert_eq!(texts::kept(&Judged::Compare(0, CompOp::Eq, number(1)), &texts, &all), None, "a number");
+    assert_eq!(texts::kept(&Judged::In(0, vec![number(1)], false), &texts, &all), None, "a list of a number");
+}
