@@ -353,10 +353,15 @@ fn distinct_by_batch_answers_as_row_by_row() {
     assert_eq!(alike("SELECT DISTINCT G FROM C").len(), 7);
     assert_eq!(alike("SELECT DISTINCT N FROM C WHERE K < -100"), Vec::<String>::new());
     exec(&a, "SET WORK_MEMORY = 65536").unwrap();
-    for table in ["R", "C"] {
-        let all = alike(&format!("SELECT DISTINCT K, S FROM {table}"));
-        assert_eq!(all.len(), 6000 - 101 - 71 + 2, "{table}: every row, past the work area");
+    // Not of K, a key, of which every row is distinct already, and which
+    // so needs no DISTINCT at all.
+    let pairs: Vec<Vec<String>> = ["R", "C"].iter().map(|table| alike(&format!("SELECT DISTINCT N, S FROM {table}"))).collect();
+    assert!(pairs.first().is_some_and(|p| p.len() > 3000), "pairs of N and S, past the work area");
+    let mut sorted_pairs = pairs;
+    for p in &mut sorted_pairs {
+        p.sort();
     }
+    assert_eq!(sorted_pairs.first(), sorted_pairs.get(1), "alike of either store");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.9 GR1, GR4, GR5, §5.8

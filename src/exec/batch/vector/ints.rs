@@ -122,3 +122,7 @@ fn each(count: usize, scale: u32, f: impl Fn(usize) -> Option<Option<i64>>) -> O
     let nulls = nulls.contains(&true).then_some(nulls);
     Some(Ints::new(units, scale, nulls))
 }
+
+// Unit tests: integers evaluated as their values are (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

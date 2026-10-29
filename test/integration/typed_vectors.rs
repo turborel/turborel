@@ -52,7 +52,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 18] = [
+const QUERIES: [&str; 25] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -71,6 +71,13 @@ const QUERIES: [&str; 18] = [
     "SELECT K, D FROM {t} WHERE D BETWEEN 2.5 AND 2.75",
     "SELECT I, SUM(D * 2 - I), MIN(N / 1000), MIN(D + 0.005) FROM {t} GROUP BY I",
     "SELECT I, D, COUNT(*) FROM {t} WHERE K < 900 GROUP BY I, D",
+    "SELECT COUNT(*) FROM {t} WHERE D < 1.5 AND D >= -2 AND I <= 3 AND I <> 2 AND N > -5",
+    "SELECT COUNT(*) FROM {t} WHERE I IN (1.0E0, 2) OR D = 2.5E0",
+    "SELECT SUM(-D), SUM(D - I * 0.5), SUM(I * D * 0.001), MAX(N * 2) FROM {t} WHERE N BETWEEN -100000000000000000 AND 100000000000000000",
+    "SELECT SUM(D * 0.0000000000000001), SUM(K / 2), MIN(I - D) FROM {t} WHERE K < 3000",
+    "SELECT I, SUM(-D + 1), MIN(D * I) FROM {t} GROUP BY I",
+    "SELECT I, SUM(3), COUNT(K / 2), MAX(D * 2.5E0) FROM {t} GROUP BY I",
+    "SELECT D, SUM(CASE WHEN I > 2 THEN I * 10 ELSE 0 END), COUNT(*) FROM {t} WHERE K < 2000 GROUP BY D",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11 GR4,
@@ -81,8 +88,11 @@ const QUERIES: [&str; 18] = [
 /// one that no value equals; IN and NOT IN lists of either, one holding
 /// a null; numbers near the limits of 18 digits; nulls among them; set
 /// functions grouped and not, of expressions, one with a quotient
-/// evaluated of values; a running sum past 18 digits raising either way,
-/// grouped or not; rows changed and deleted after they were
+/// evaluated of values; every comparison, a list of an approximate
+/// number; negations, differences and products of scales up to 18; a
+/// running sum, or a product, past 18 digits raising either way, grouped
+/// or not; of a constant, of an approximate number, of a quotient and a
+/// CASE a row at a time; groups past the work area; rows changed and deleted after they were
 /// frozen.
 #[test]
 fn exact_numbers_as_integers_answer_as_row_by_row() {
@@ -95,10 +105,23 @@ fn exact_numbers_as_integers_answer_as_row_by_row() {
         assert_eq!(batched, sorted(&a, &query.replace("{t}", "R")), "{column}, as the row store");
     }
     assert_eq!(sorted(&a, "SELECT COUNT(*) FROM C WHERE D = 1.515"), vec!["0"], "no value of scale 2 is 1.515");
+    // Groups of integers past the work area, written and made after.
+    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    let spilled = "SELECT K, N, SUM(D), MAX(I) FROM C GROUP BY K, N";
+    let (batched, row) = both_ways(&a, spilled);
+    assert_eq!(batched, row, "{spilled}");
+    assert_eq!(batched, sorted(&a, &spilled.replace(" C ", " R ")), "{spilled}, as the row store");
+    exec(&a, "SET WORK_MEMORY = DEFAULT").unwrap();
     // [X3.135-1986 §5.8 GR4e] a running sum past 18 digits raises, of
     // integers as of decimals, though the sum of all is within them.
-    for (table, grouped) in [("R", ""), ("C", ""), ("R", " GROUP BY I"), ("C", " GROUP BY I")] {
-        let sum = format!("SELECT SUM(N) FROM {table}{grouped}");
+    let raising = [
+        "SELECT SUM(N) FROM {t}",
+        "SELECT SUM(N) FROM {t} GROUP BY I",
+        "SELECT SUM(N * 1000) FROM {t}",
+        "SELECT I, MAX(N * 10) FROM {t} GROUP BY I",
+    ];
+    for (table, query) in ["R", "C"].iter().flat_map(|t| raising.iter().map(move |q| (*t, *q))) {
+        let sum = query.replace("{t}", table);
         assert_eq!(rows(&a, &sum).err(), Some(Code::Data), "{sum}");
         exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
         assert_eq!(rows(&a, &sum).err(), Some(Code::Data), "{sum}, row by row");

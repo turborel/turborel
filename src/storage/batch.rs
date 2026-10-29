@@ -221,3 +221,8 @@ pub fn batches_of(rows: Rows, columns: &[usize]) -> Batches {
         (batch.rows > 0).then_some(Ok(batch))
     }))
 }
+
+// Unit tests: columns of values and of integers, and their cells
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

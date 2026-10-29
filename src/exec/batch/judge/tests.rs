@@ -108,3 +108,46 @@ fn a_like_is_judged_over_vectors() {
     let (none, all) = split(&like(text("a!x"), Some(text("!"))), &[3]);
     assert!(none.is_empty() && all.is_some(), "no partitioning: it may raise");
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13,
+/// §5.15]: a conjunct judged over integers keeps the rows its judgment of
+/// their values keeps: each comparison, with constants of fewer, as many
+/// and more digits after the point, of either sign; IN and NOT IN, of a
+/// list with a null; IS NULL and IS NOT NULL; nulls among the integers.
+/// One with an approximate constant, or a LIKE, is not judged so; nor one
+/// whose constant is too large to scale.
+#[test]
+fn conjuncts_judged_over_integers_keep_what_values_keep() {
+    let exact = |units: i128, scale: u32| Value::Exact(Decimal::new(units, scale));
+    let ints = crate::storage::Ints::new(
+        vec![-150, 0, 151, 250, 0, 99_999, 150, -1],
+        2,
+        Some(vec![false, false, false, false, true, false, false, false]),
+    );
+    let values = ints.values().to_vec();
+    let all: Vec<usize> = (0..values.len()).collect();
+    let constants = [exact(15, 1), exact(1510, 3), exact(-2, 0), exact(0, 0), exact(1505, 3), exact(99_999, 2)];
+    let mut judged = Vec::new();
+    for c in &constants {
+        for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {
+            judged.push(Judged::Compare(0, op, c.clone()));
+        }
+    }
+    let list = vec![exact(15, 1), exact(-15, 1), exact(25, 1)];
+    let with_null = vec![exact(15, 1), Value::Null];
+    for not in [false, true] {
+        judged.push(Judged::In(0, list.clone(), not));
+        judged.push(Judged::In(0, with_null.clone(), not));
+        judged.push(Judged::IsNull(0, not));
+    }
+    for j in &judged {
+        let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
+        assert_eq!(ints::kept(j, &ints, &all), Some(by_values), "{j:?}");
+    }
+    let some: Vec<usize> = vec![1, 3, 4];
+    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Gt, exact(0, 0)), &ints, &some), Some(vec![3]), "of the rows kept before");
+    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, Value::Approx(1.5)), &ints, &all), None, "approximate");
+    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, exact(i128::MAX, 0)), &ints, &all), None, "too large to scale");
+    assert_eq!(ints::kept(&Judged::In(0, vec![Value::Approx(1.5)], false), &ints, &all), None, "a list of an approximate");
+    assert_eq!(ints::kept(&Judged::Like(0, None), &ints, &all), None, "LIKE");
+}

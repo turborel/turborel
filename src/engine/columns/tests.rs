@@ -115,3 +115,51 @@ fn chunks_are_compressed() {
     let many = Fields::of(&INTEGER, (0..10_000).map(|n| int(n % 200))).unwrap();
     assert!(many.fitting(&INTEGER, 0, (4096, true)) > 3 * many.fitting(&INTEGER, 0, (4096, false)), "more fit compressed");
 }
+
+/// The integers a chunk of `values`, compressed if `compress`, gives of
+/// its positions `from` to `to`, and its values there as they read one at
+/// a time, if it holds integers.
+fn ints_of(values: &[Value], compress: bool, (from, to): (usize, usize)) -> Option<(Vec<String>, Vec<String>)> {
+    let fields = Fields::of(&INTEGER, values.iter().cloned()).unwrap();
+    let bytes = fields.chunk(&INTEGER, 0, (fields.len(), compress)).unwrap();
+    let chunk = Chunk::parse(&bytes).unwrap();
+    let (mut units, mut nulls) = (Vec::new(), Vec::new());
+    chunk.ints((from, to), (&mut units, &mut nulls))?;
+    let made = units.iter().zip(&nulls).map(|(u, &null)| if null { "NULL".to_owned() } else { u.to_string() }).collect();
+    let read = (from..to).map(|n| chunk.value(n, &INTEGER).unwrap().to_string()).collect();
+    Some((made, read))
+}
+
+/// Verifies: [DESIGN] RULES.md D31, a chunk's integers: every encoding of
+/// integers gives, of a range of its positions, the values read one at a
+/// time give, nulls as nulls: a frame of reference whose differences take
+/// 1, 2, 3, 4, 5 and 8 bytes, of negative numbers too; fixed fields; a
+/// constant, and one of nulls only. A dictionary gives none, nor a range
+/// past the chunk's end.
+#[test]
+fn chunks_give_their_integers() {
+    let with_nulls = |values: Vec<i128>| -> Vec<Value> {
+        values.into_iter().enumerate().map(|(n, v)| if n % 7 == 3 { Value::Null } else { int(v) }).collect()
+    };
+    let spans: [i128; 6] = [200, 60_000, 16_000_000, 4_000_000_000, 1_000_000_000_000, 9_000_000_000_000_000_000];
+    for span in spans {
+        let (step, half) = (span.checked_div(40).unwrap(), span.checked_div(2).unwrap());
+        let values = with_nulls((0..40_i128).map(|n| (n * 37 % 40) * step - half).collect());
+        let (made, read) = ints_of(&values, true, (0, 40)).unwrap();
+        assert_eq!(made, read, "a frame of span {span}");
+        let (part, read_part) = ints_of(&values, true, (5, 17)).unwrap();
+        assert_eq!(part, read_part, "a part of span {span}");
+    }
+    let fixed = with_nulls((0..20_i128).map(|n| n * 1_000_000_000_007 - 3).collect());
+    let fixed_read = ints_of(&fixed, false, (0, 20)).unwrap();
+    assert_eq!(fixed_read.0, fixed_read.1, "fixed fields");
+    let constant = with_nulls(vec![42; 30]);
+    let constant_read = ints_of(&constant, true, (0, 30)).unwrap();
+    assert_eq!(constant_read.0, constant_read.1, "a constant");
+    let nulls = vec![Value::Null; 12];
+    let nulls_read = ints_of(&nulls, true, (0, 12)).unwrap();
+    assert_eq!(nulls_read.0, nulls_read.1, "nulls only");
+    let few = with_nulls((0..300_i128).map(|n| [5, 900_000_000_000, -7][usize::try_from(n % 3).unwrap()]).collect());
+    assert_eq!(ints_of(&few, true, (0, 300)), None, "a dictionary");
+    assert_eq!(ints_of(&fixed, false, (0, 21)), None, "past the end");
+}
