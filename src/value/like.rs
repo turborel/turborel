@@ -66,44 +66,74 @@ fn specifiers(pattern: &str, escape: Option<char>) -> Result<Vec<Spec>> {
 /// SQLCODE -301 if the pattern has no partitioning by the escape character
 /// [X3.135-1986 §5.14 GR2a ii].
 pub fn like(value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
-    let specs = specifiers(pattern, escape)?;
-    let text: Vec<char> = value.chars().collect();
-    // Matching left to right; on a mismatch, the last `%` takes one more
-    // character and matching resumes after it. Every earlier `%` keeps what
-    // it took, which suffices as each matches any sequence.
+    Ok(LikePattern::new(pattern, escape)?.matches(value))
+}
+
+/// \[DESIGN\] A `<pattern>` split into its specifiers once, to match many
+/// strings by (`exec/batch/judge.rs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LikePattern {
+    specs: Vec<Spec>,
+}
+
+impl LikePattern {
+    /// `pattern`, `escape` its escape character if one was given.
+    ///
+    /// # Errors
+    ///
+    /// As `like`.
+    pub fn new(pattern: &str, escape: Option<char>) -> Result<LikePattern> {
+        Ok(LikePattern { specs: specifiers(pattern, escape)? })
+    }
+
+    /// [X3.135-1986 §5.14 GR5] Whether `value` matches it: an ASCII string
+    /// by its bytes, no character gathered; any other by its characters.
+    pub fn matches(&self, value: &str) -> bool {
+        if value.is_ascii() {
+            return matched(&self.specs, value.as_bytes(), |b, c| u32::from(b) == u32::from(c));
+        }
+        let text: Vec<char> = value.chars().collect();
+        matched(&self.specs, &text, |t, c| t == c)
+    }
+}
+
+/// Whether `text` matches `specs`, `same` telling a unit of it equal to a
+/// character. Matching left to right; on a mismatch, the last `%` takes one
+/// more unit and matching resumes after it. Every earlier `%` keeps what it
+/// took, which suffices as each matches any sequence.
+fn matched<T: Copy>(specs: &[Spec], text: &[T], same: impl Fn(T, char) -> bool) -> bool {
     let (mut at, mut spec) = (0_usize, 0_usize);
     let mut last_any: Option<(usize, usize)> = None;
     while at < text.len() {
-        match specs.get(spec) {
-            Some(Spec::AnyCharacter) => {
-                at = at.saturating_add(1);
-                spec = spec.saturating_add(1);
-            }
-            Some(Spec::Character(c)) if text.get(at) == Some(c) => {
-                at = at.saturating_add(1);
-                spec = spec.saturating_add(1);
-            }
+        let here = text.get(at).copied();
+        let step = match specs.get(spec) {
+            Some(Spec::AnyCharacter) => true,
+            Some(Spec::Character(c)) => here.is_some_and(|t| same(t, *c)),
             Some(Spec::AnyString) => {
                 last_any = Some((spec, at));
                 spec = spec.saturating_add(1);
+                continue;
             }
-            Some(Spec::Character(_)) | None => {
-                let Some((any, from)) = last_any else { return Ok(false) };
-                let from = from.saturating_add(1);
-                last_any = Some((any, from));
-                (at, spec) = (from, any.saturating_add(1));
-            }
+            None => false,
+        };
+        if step {
+            at = at.saturating_add(1);
+            spec = spec.saturating_add(1);
+            continue;
         }
+        let Some((any, from)) = last_any else { return false };
+        let resumed = from.saturating_add(1);
+        last_any = Some((any, resumed));
+        (at, spec) = (resumed, any.saturating_add(1));
     }
-    Ok(specs.get(spec..).unwrap_or_default().iter().all(|s| *s == Spec::AnyString))
+    specs.get(spec..).unwrap_or_default().iter().all(|s| *s == Spec::AnyString)
 }
 
 /// \[DESIGN\] Of a LIKE of constant `pattern` and `escape`, if it cannot
 /// raise an error [X3.135-1986 §5.14 GR2a ii; ISO/IEC 9075:1992 §8.5 GR3a
-/// i]: the characters every string it matches begins with, those its
-/// pattern gives before its first `_` or `%`; none if a null makes every
-/// LIKE of it unknown. Not if it may raise one.
-pub fn constant_prefix(pattern: &Value, escape: Option<&Value>) -> Option<String> {
+/// i]: the pattern, split once; none if a null makes every LIKE of it
+/// unknown [ISO/IEC 9075:1992 §8.5 GR1, GR2]. Not if it may raise one.
+pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Option<LikePattern>> {
     let escape = match escape {
         None => None,
         Some(Value::Char(e)) => {
@@ -111,20 +141,26 @@ pub fn constant_prefix(pattern: &Value, escape: Option<&Value>) -> Option<String
             let (Some(c), None) = (chars.next(), chars.next()) else { return None };
             Some(c)
         }
-        Some(Value::Null) => return Some(String::new()),
+        Some(Value::Null) => return Some(None),
         Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
             return None;
         }
     };
     match pattern {
-        Value::Char(p) => {
-            let specs = specifiers(p, escape).ok()?;
-            let literal = specs.iter().map_while(|s| if let Spec::Character(c) = s { Some(*c) } else { None });
-            Some(literal.collect())
-        }
-        Value::Null => Some(String::new()),
+        Value::Char(p) => LikePattern::new(p, escape).ok().map(Some),
+        Value::Null => Some(None),
         Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => None,
     }
+}
+
+/// \[DESIGN\] Of a LIKE of constant `pattern` and `escape`, if it cannot
+/// raise an error (`constant_pattern`): the characters every string it
+/// matches begins with, those its pattern gives before its first `_` or
+/// `%`; none if a null makes every LIKE of it unknown.
+pub fn constant_prefix(pattern: &Value, escape: Option<&Value>) -> Option<String> {
+    let Some(compiled) = constant_pattern(pattern, escape)? else { return Some(String::new()) };
+    let literal = compiled.specs.iter().map_while(|s| if let Spec::Character(c) = s { Some(*c) } else { None });
+    Some(literal.collect())
 }
 
 // Unit tests: the specifiers, escapes, and padding (RULES.md R-TEST-1,

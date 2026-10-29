@@ -78,3 +78,33 @@ fn what_each_conjunct_keeps() {
     assert!(!nulled.keeps(&number(3)), "a null in the list: unknown");
     assert!(Judged::Compare(0, CompOp::Ge, number(2)).keeps(&number(2)));
 }
+
+fn text(s: &str) -> Value {
+    Value::Char(s.into())
+}
+
+/// Verifies: [X3.135-1986 §5.14 GR4, GR5] a LIKE of a constant pattern is
+/// judged over vectors, after the other conjuncts judged so: its pattern
+/// split once, it keeps what a row's LIKE keeps, of ASCII strings and of
+/// others, a null never, nor any row if the pattern or the escape is
+/// null; a pattern whose escape has no partitioning may raise an error,
+/// so the filter is all rest.
+#[test]
+fn a_like_is_judged_over_vectors() {
+    let like = |pattern: Value, escape: Option<Value>| Cond::Like(Expr::Column(3), Expr::Const(pattern), escape.map(Expr::Const));
+    let cond = and(like(text("a%c_"), None), compare(Expr::Column(1), CompOp::Eq, int(1)));
+    let (judged, rest) = split(&cond, &[1, 3]);
+    assert!(rest.is_none());
+    assert!(matches!(judged.as_slice(), [Judged::Compare(..), Judged::Like(1, Some(_))]), "the LIKE last: {judged:?}");
+    for (value, keeps) in [("abcd", true), ("ac!", true), ("abc", false), ("ä…cd", false), ("aäcé", true), ("a\u{1F600}cz", true)] {
+        assert_eq!(judged[1].keeps(&text(value)), keeps, "{value}");
+        assert_eq!(crate::value::like(value, "a%c_", None).unwrap(), keeps, "{value}: as a row's LIKE");
+    }
+    assert!(!judged[1].keeps(&Value::Null), "unknown of a null");
+    let (nulled, _) = split(&like(Value::Null, None), &[3]);
+    assert!(matches!(nulled.as_slice(), [Judged::Like(0, None)]) && !nulled[0].keeps(&text("a")));
+    let (escaped, _) = split(&like(text("a!%%"), Some(text("!"))), &[3]);
+    assert!(escaped[0].keeps(&text("a%z")) && !escaped[0].keeps(&text("az")));
+    let (none, all) = split(&like(text("a!x"), Some(text("!"))), &[3]);
+    assert!(none.is_empty() && all.is_some(), "no partitioning: it may raise");
+}

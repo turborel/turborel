@@ -852,8 +852,12 @@ the format of frozen groups becomes a trait when it is.
   DISTINCT, grouped by columns the scan reads or not at all, of a table's
   scan, filtered or not, feeds them from the vectors (`exec/batch.rs`). A
   filter that cannot raise an error has its conjuncts comparing a column
-  with a constant, testing it IS NULL or IS NOT NULL, or IN or NOT IN a
-  list of constants judged over the vectors (`exec/batch/judge.rs`), and the rest of it judged of
+  with a constant, testing it IS NULL or IS NOT NULL, IN or NOT IN a
+  list of constants, or LIKE a constant pattern, split once and matched
+  by bytes if the string is ASCII, judged over the vectors, the LIKE last
+  (`exec/batch/judge.rs`): of 400,000 rows, `S LIKE '%5%'` ran in 11.4 ms
+  of the column store where it took 47.8, 52.6 of the row store where it
+  took 85.2. The rest of it is judged of
   the rows they keep, each made a row; one that can raise is judged whole
   a row at a time, as row by row. A projection of columns and constants of
   such a scan, of a table that reads by batch (`reads_by_batch`, a column
