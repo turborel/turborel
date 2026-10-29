@@ -1,8 +1,9 @@
 //! \[DESIGN\] The row store's statistics (RULES.md D31): gathered in one
 //! pass over the newest committed version of every row, decoded whole, its
 //! width the bytes of its record in the leaf. A table opened gathers them
-//! in the pass that counts its rows. After that, they are gathered again
-//! when a transaction that wrote the table ends and the table has had more
+//! in the pass that counts its rows. After that, they are gathered again,
+//! by the database's maintenance thread (`TableStorage::maintain`), once a
+//! transaction that wrote the table ends and the table has had more
 //! changes since the last pass than a share of its rows then, and a number
 //! more, the table's options STATISTICS.REFRESH_FRACTION and REFRESH_ROWS
 //! (`rows/options.rs`): each pass then follows changes in proportion to the
@@ -129,8 +130,14 @@ impl RowTable {
         Ok(stats)
     }
 
+    /// Whether its statistics are due to be gathered again, by the
+    /// database's maintenance thread (`TableStorage::maintain`).
+    pub(super) fn gather_wanted(&self) -> bool {
+        self.gathered.due()
+    }
+
     /// Gathers them if due and no other thread is. A failure leaves them
-    /// for the next transaction to end here.
+    /// for the next call.
     pub(super) fn gather_if_due(&self) {
         if self.gathered.due() && !self.gathered.gathering.swap(true, Ordering::Acquire) {
             let _ = self.gather();

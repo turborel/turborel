@@ -728,7 +728,11 @@ the format of frozen groups becomes a trait when it is.
   read from memory until written.
 - Scans are given the columns needed, and simple filters.
 - The planner asks for statistics through a trait, every answer optional:
-  rows, widths, distinct values, nulls, selectivity.
+  rows, widths, distinct values, nulls, selectivity. The row store
+  gathers them again, once a table has changed enough, as the database's
+  maintenance (below), not in the commit that made it due: a commit of
+  2048 rows into a growing table took 15.6 ms at the 95th percentile
+  with the pass, 1.9 ms without.
 - The column store: the tree is the table's delta, every row written
   there as in the row store. Once COLUMNSTORE.FREEZE_ROWS rows past the last group are committed
   before every snapshot (and COLUMNSTORE.FREEZE_DELAY seconds ago), the
@@ -772,8 +776,8 @@ the format of frozen groups becomes a trait when it is.
   write that finds the entry it read taken out is tried once more, its
   row then its group's.
 - Maintenance (`db/maintenance.rs`): work an engine leaves for later
-  (`TableStorage::maintenance_due`, `maintain`), the column store's
-  freezes, rewrites and entries taken out, so no transaction waits for
+  (`TableStorage::maintenance_due`, `maintain`), statistics gathered
+  again and the column store's freezes, rewrites and entries taken out, so no transaction waits for
   it: measured over 100 commits of 2048 rows each, in groups of 2^16,
   the slowest twentieth of commits went from 47 ms to 30 ms. A
   transaction's end notes a table with work due and asks the database's

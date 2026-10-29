@@ -1,7 +1,8 @@
 //! \[DESIGN\] Maintenance (RULES.md D31): the work an engine leaves for
-//! later, so no transaction's end waits for it: the column store's freezing
-//! of rows into groups, its writing of groups again, and its taking out of
-//! the entries of rows frozen.
+//! later, so no transaction's end waits for it: the row store's gathering
+//! of a table's statistics; the column store's freezing of rows into
+//! groups, its writing of groups again, and its taking out of the entries
+//! of rows frozen.
 //!
 //! As a transaction's end collects a table's garbage (`txn/end.rs`), it
 //! notes the table if its engine has maintenance due

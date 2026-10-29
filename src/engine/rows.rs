@@ -554,17 +554,21 @@ impl TableStorage for RowTable {
     }
 
     fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
-        self.collect(horizon, removed)?;
-        self.gather_if_due();
-        Ok(())
+        self.collect(horizon, removed)
     }
 
-    /// Rows to freeze, groups to write again, entries to take out.
+    /// Statistics to gather; rows to freeze, groups to write again,
+    /// entries to take out.
     fn maintenance_due(&self) -> bool {
-        self.freeze_wanted()
+        self.gather_wanted() || self.freeze_wanted()
     }
 
+    /// Statistics gathered as one call's work, freezing as the next's.
     fn maintain(&self, horizon: Timestamp) -> Result<bool> {
+        if self.gather_wanted() {
+            self.gather_if_due();
+            return Ok(true);
+        }
         self.freeze_due(horizon)
     }
 
