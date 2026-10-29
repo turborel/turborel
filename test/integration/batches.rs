@@ -6,7 +6,7 @@
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 
-use crate::common::{exec, rows, sorted};
+use crate::common::{both_ways, exec, rows, sorted};
 
 /// The rows written: K, a key; G, one of 7 groups; S, a text, null for
 /// every 11th; N, a number in the order the rows were written, null for
@@ -70,6 +70,18 @@ const QUERIES: [&str; 20] = [
     "SELECT COUNT(*), MIN(K) FROM {t} WHERE N IS NULL AND G IN (2, 4)",
 ];
 
+/// Asserts each of `queries`, of either table, gives by batches what it
+/// gives row by row (EXECUTOR.BATCHES OFF).
+fn off_alike(s: &Session, queries: &[&str]) {
+    for query in queries {
+        for table in ["R", "C"] {
+            let sql = query.replace("{t}", table);
+            let (batched, row) = both_ways(s, &sql);
+            assert_eq!(batched, row, "{sql}");
+        }
+    }
+}
+
 /// What `s` reads of table `table` by each query.
 fn answers(s: &Session, table: &str) -> Vec<Vec<String>> {
     QUERIES.iter().map(|q| rows(s, &q.replace("{t}", table)).unwrap()).collect()
@@ -87,6 +99,7 @@ fn set_functions_by_batch_answer_as_row_by_row() {
     let a = both(&db);
     let columns = answers(&a, "C");
     assert_eq!(columns, answers(&a, "R"));
+    off_alike(&a, &QUERIES);
     let sums = rows(&a, "SELECT SUM(N), SUM(N + 0) FROM C").unwrap();
     let pair: Vec<&str> = sums[0].split(',').collect();
     assert_eq!(pair[0], pair[1], "by batch and row by row");
@@ -138,6 +151,7 @@ fn groups_by_batch_answer_as_row_by_row() {
     let grouped = |s: &Session, table: &str| -> Vec<Vec<String>> { GROUPED.iter().map(|q| sorted(s, &q.replace("{t}", table))).collect() };
     let columns = grouped(&a, "C");
     assert_eq!(columns, grouped(&a, "R"));
+    off_alike(&a, &GROUPED);
     assert_eq!(columns[1].len(), 100, "97 texts, 'changed', 'new' and null");
     assert!(columns[4].is_empty(), "no row, no group");
     // One group for each row: past a work area of 64 KiB.
@@ -235,6 +249,7 @@ fn projections_by_batch_answer_as_row_by_row() {
     let projected = |table: &str| -> Vec<Vec<String>> { PROJECTIONS.iter().map(|q| sorted(&a, &q.replace("{t}", table))).collect() };
     let columns = projected("C");
     assert_eq!(columns, projected("R"));
+    off_alike(&a, &PROJECTIONS);
     assert_eq!(columns[0].len(), 6000 - 101 - 71 + 2, "every row");
     assert_eq!(columns[5], Vec::<String>::new());
     assert!(columns[7].iter().any(|r| r.starts_with("none,")) && columns[7].iter().any(|r| r.starts_with("high,")));

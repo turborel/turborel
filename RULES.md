@@ -869,7 +869,11 @@ the format of frozen groups becomes a trait when it is.
   SUM grouped by a column of the 10 rows 36 where 123 (71 where 151). An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the stream holds or not at all, of a
-  stream, feeds them from the vectors (`exec/batch.rs`),
+  stream, feeds them from the vectors (`exec/batch.rs`), each a column's
+  values, or an expression's evaluated as a row's is, of a row of only
+  the values it reads, no subquery in it (`SUM(B * 2)` of 400,000 rows of
+  the column store: 31.0 ms to 11.9; grouped, `SUM(B * 2 + 1)` 72.6 to
+  24.8),
   of no GROUP BY a vector at a time (`Accumulator::update_many`,
   `update_rows`, each by default `update` a value at a time): COUNT
   counting, SUM adding exact values as decimals, nothing cloned, MAX and
@@ -898,7 +902,10 @@ the format of frozen groups becomes a trait when it is.
   as it groups them, and merged with the groups held by number. Measured against the row store row by row (`bench/analytics.rs`): COUNT(*)
   of a column store table some 50 times as fast, a SUM of one column 17, a
   filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
-  made in a buffer kept (`spill::put_norm`).
+  made in a buffer kept (`spill::put_norm`). The setting
+  EXECUTOR.BATCHES, a session's too, ON by default, reads by batches
+  where a query can; OFF, a row at a time throughout, as to compare the
+  two, as the tests of batches do, each answer read both ways.
 *Why:* a row store suits SQL's point reads, updates and cursors, and is
 the base the other layouts build on. Logical row ids stay stable, so
 indexes never need rewriting for them, frozen or not. Columns suit scans

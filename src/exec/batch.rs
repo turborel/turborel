@@ -16,11 +16,12 @@ mod stream;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use project::Place;
 pub(super) use project::{projectable, projected};
 
-use super::failed;
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
+use super::{NoSubqueries, eval, failed};
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::Accumulator;
@@ -31,12 +32,15 @@ use crate::storage::{Batch, Row};
 use crate::txn::TxId;
 use crate::value::Value;
 
-/// What a set function takes of each row: a count of it, or the value of
-/// the column at this place of the batch.
-#[derive(Debug, Clone, Copy)]
+/// What a set function takes of each row: a count of it, the value of the
+/// column at this place of the batch, or that of an expression of a row of
+/// the values at these places, its columns those of the row
+/// (`project::place_of`).
+#[derive(Debug, Clone)]
 enum Taken {
     Count,
     Column(usize),
+    Expr(Expr, Vec<usize>),
 }
 
 /// What an aggregation read by batches reads: the columns of its input's
@@ -50,13 +54,18 @@ struct Read {
 }
 
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
-/// or takes a column the scan reads, and none is DISTINCT.
+/// or takes an expression of columns the batch holds, no subquery in it,
+/// and none is DISTINCT.
 fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
     aggs.iter()
         .map(|a| match (&a.arg, a.distinct) {
             (None, false) => Some(Taken::Count),
-            (Some(Expr::Column(c)), false) => columns.iter().position(|x| x == c).map(Taken::Column),
-            (Some(_), _) | (None, true) => None,
+            (Some(e), false) => Some(match project::place_of(e, columns)? {
+                Place::Column(at) => Taken::Column(at),
+                Place::Const(v) => Taken::Expr(Expr::Const(v), Vec::new()),
+                Place::Expr(e, inputs) => Taken::Expr(e, inputs),
+            }),
+            (Some(_), true) | (None, true) => None,
         })
         .collect()
 }
@@ -109,6 +118,7 @@ fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), bat
         spilling: Spilling::new(spec, db, tx),
         spilled: false,
         width,
+        scratch: Vec::new(),
     };
     for kept in batches {
         let (batch, rows) = kept?;
@@ -129,20 +139,40 @@ fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), bat
 
 /// Feeds `states` one row, as `taken` says, `value` giving its value at
 /// each place of the batch.
-fn take_row<'b>(states: &mut [Box<dyn Accumulator>], taken: &[Taken], value: impl Fn(usize) -> Option<&'b Value>) -> Result<()> {
+fn take_row<'b>(
+    states: &mut [Box<dyn Accumulator>],
+    (taken, scratch): (&[Taken], &mut Row),
+    value: impl Fn(usize) -> Option<&'b Value>,
+) -> Result<()> {
     for (state, take) in states.iter_mut().zip(taken) {
-        match *take {
+        match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update(&Value::Null)?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
             Taken::Column(c) => {
-                if let Some(v) = value(c).filter(|v| !v.is_null()) {
+                if let Some(v) = value(*c).filter(|v| !v.is_null()) {
                     state.update(v)?;
+                }
+            }
+            Taken::Expr(e, inputs) => {
+                let v = evaluated((e, inputs), scratch, |at| value(at).unwrap_or(&Value::Null))?;
+                if !v.is_null() {
+                    state.update(&v)?;
                 }
             }
         }
     }
     Ok(())
+}
+
+/// The value of `e`, of a row of the values at `inputs`, as `value` gives
+/// them, made in `scratch`, its values written over.
+fn evaluated<'b>((e, inputs): (&Expr, &[usize]), scratch: &mut Row, value: impl Fn(usize) -> &'b Value) -> Result<Value> {
+    scratch.resize(inputs.len(), Value::Null);
+    for (slot, &at) in scratch.iter_mut().zip(inputs) {
+        slot.clone_from(value(at));
+    }
+    eval(e, scratch, &NoSubqueries)
 }
 
 /// A group held: its first row's number, its grouping values and its set
@@ -169,6 +199,8 @@ struct Groups {
     spilled: bool,
     /// The width of a table's row, as a row written is made.
     width: usize,
+    /// The row an expression a set function takes is evaluated of.
+    scratch: Row,
 }
 
 impl Groups {
@@ -189,7 +221,7 @@ impl Groups {
             self.rows = self.rows.saturating_add(1);
             let Some(at) = self.place(number, (batch, r), (read, aggs))? else { continue };
             let Some((_, _, states)) = self.held.get_mut(at) else { continue };
-            take_row(states, &read.taken, value)?;
+            take_row(states, (&read.taken, &mut self.scratch), value)?;
         }
         Ok(())
     }
@@ -237,12 +269,22 @@ fn read_all(read: &Read, aggs: &[AggCall], batches: stream::Batches) -> Result<V
 /// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all:
 /// each a vector at a time (`Accumulator::update_many`, `update_rows`).
 fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
+    let mut scratch = Vec::new();
     for (state, take) in states.iter_mut().zip(taken) {
-        match *take {
+        match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update_rows(rows.map_or(batch.rows, <[usize]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            Taken::Column(at) => state.update_many(batch.columns.get(at).map_or(&[][..], Vec::as_slice), rows)?,
+            Taken::Column(at) => state.update_many(batch.columns.get(*at).map_or(&[][..], Vec::as_slice), rows)?,
+            // A vector of its values, of the rows given, made first.
+            Taken::Expr(e, inputs) => {
+                let value = |at: usize, r: usize| batch.columns.get(at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
+                let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
+                for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
+                    values.push(evaluated((e, inputs), &mut scratch, |at| value(at, r))?);
+                }
+                state.update_many(&values, None)?;
+            }
         }
     }
     Ok(())

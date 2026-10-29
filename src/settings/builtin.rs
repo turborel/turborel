@@ -68,7 +68,11 @@ pub const LOCK_TIMEOUT: Key = Key(28);
 pub const SLOW_STATEMENT: Key = Key(29);
 /// See [`DEFAULT_ENGINE`].
 pub const TIME_ZONE: Key = Key(30);
+/// See [`DEFAULT_ENGINE`].
+pub const EXECUTOR_BATCHES: Key = Key(31);
 
+/// The words of `EXECUTOR.BATCHES`.
+pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
 /// The words of `LOCK_WAIT`, `SESSION_END` and `TRANSACTION_POLICY`.
 pub(super) const LOCK_WAITS: &[&str] = &["NO_WAIT", "WAIT"];
 const SESSION_ENDS: &[&str] = &["COMMIT", "ROLLBACK"];
@@ -125,6 +129,11 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.extend(durability());
     all.extend(storage());
     all.extend(limits());
+    all.push(defined(
+        ("EXECUTOR.BATCHES", Kind::Choice(SWITCHES), text("ON")),
+        SESSION,
+        "Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.",
+    ));
     all
 }
 

@@ -24,7 +24,7 @@ use crate::value::Value;
 /// What an expression of the projection gives: the value of the column at
 /// this place of a batch, a constant, or an expression of a row of the
 /// values at these places, its columns those of the row.
-enum Place {
+pub(super) enum Place {
     Column(usize),
     Const(Value),
     Expr(Expr, Vec<usize>),
@@ -45,7 +45,7 @@ fn plain(e: &Expr) -> bool {
 
 /// What `e`, of a scan of `columns`, gives of a batch, if it reads only
 /// columns the scan reads.
-fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
+pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
     let at = |c: &usize| columns.iter().position(|x| x == c);
     match e {
         Expr::Column(c) => at(c).map(Place::Column),

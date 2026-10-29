@@ -21,6 +21,7 @@ starts, or only when the database is made.
 | CHECKPOINT.AFTER_CHANGES | 100000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | DEFAULT_ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
 | LOCK_TIMEOUT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | LOCK_WAIT | NO_WAIT | ONE OF NO_WAIT, WAIT | from the next transaction | *session* |
@@ -55,6 +56,7 @@ Each in a sentence:
 - **CHECKPOINT.AFTER_CHANGES**: The row changes logged after which the end of a transaction takes a checkpoint.
 - **DEFAULT_ENGINE**: The storage engine of tables a schema creates.
 - **DIAGNOSTICS.SLOW_STATEMENT**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
+- **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **LOCK_TIMEOUT**: The milliseconds a statement waits for a lock, under LOCK_WAIT WAIT, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCK_WAIT**: WAIT waits for a lock another transaction holds; NO_WAIT refuses the statement at once.

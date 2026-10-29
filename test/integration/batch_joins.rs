@@ -5,7 +5,7 @@
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 
-use crate::common::{exec, rows, sorted};
+use crate::common::{both_ways, exec, rows};
 
 /// The rows of F, of the column store, and R, of the row store, alike: K,
 /// a key; G, one of 7, null for every 13th; B; S, a CHAR of 'a' or 'b'.
@@ -45,50 +45,33 @@ fn tables(db: &Database) -> Session {
     a
 }
 
-/// Queries of a join, each beside one alike read row by row, its set
-/// functions or expressions over `+ 0`: `{t}` the table, F or R.
-const JOINED: [(&str, &str); 7] = [
-    ("SELECT COUNT(*), SUM({t}.B) FROM {t}, D WHERE {t}.G = D.G", "SELECT COUNT({t}.K + 0), SUM({t}.B + 0) FROM {t}, D WHERE {t}.G = D.G"),
-    (
-        "SELECT D.NAME, COUNT(*), SUM({t}.B), MAX({t}.K) FROM {t}, D WHERE {t}.G = D.G GROUP BY D.NAME",
-        "SELECT D.NAME, COUNT({t}.K + 0), SUM({t}.B + 0), MAX({t}.K + 0) FROM {t}, D WHERE {t}.G = D.G GROUP BY D.NAME",
-    ),
-    (
-        "SELECT COUNT(*) FROM {t}, D WHERE {t}.G = D.G AND {t}.B > D.G * 100",
-        "SELECT COUNT({t}.K + 0) FROM {t}, D WHERE {t}.G = D.G AND {t}.B > D.G * 100",
-    ),
-    (
-        "SELECT D.NAME, SUM({t}.B) FROM {t}, D WHERE {t}.G = D.G AND {t}.K < 2500 AND D.NAME LIKE 't%' GROUP BY D.NAME",
-        "SELECT D.NAME, SUM({t}.B + 0) FROM {t}, D WHERE {t}.G = D.G AND {t}.K < 2500 AND D.NAME LIKE 't%' GROUP BY D.NAME",
-    ),
-    (
-        "SELECT E.TAG, COUNT(*), SUM({t}.B) FROM {t}, D, E WHERE {t}.G = D.G AND D.NAME = E.NAME GROUP BY E.TAG",
-        "SELECT E.TAG, COUNT({t}.K + 0), SUM({t}.B + 0) FROM {t}, D, E WHERE {t}.G = D.G AND D.NAME = E.NAME GROUP BY E.TAG",
-    ),
-    (
-        "SELECT P.N, COUNT(*) FROM {t}, P WHERE {t}.S = P.S GROUP BY P.N",
-        "SELECT P.N, COUNT({t}.K + 0) FROM {t}, P WHERE {t}.S = P.S GROUP BY P.N",
-    ),
-    (
-        "SELECT {t}.K, DC.NAME FROM {t}, DC WHERE {t}.G = DC.G AND {t}.K < 60",
-        "SELECT {t}.K + 0, DC.NAME FROM {t}, DC WHERE {t}.G = DC.G AND {t}.K < 60",
-    ),
+/// Queries of a join: `{t}` the table, F or R.
+const JOINED: [&str; 7] = [
+    "SELECT COUNT(*), SUM({t}.B) FROM {t}, D WHERE {t}.G = D.G",
+    "SELECT D.NAME, COUNT(*), SUM({t}.B), MAX({t}.K) FROM {t}, D WHERE {t}.G = D.G GROUP BY D.NAME",
+    "SELECT COUNT(*), SUM({t}.B * 2 - D.G) FROM {t}, D WHERE {t}.G = D.G AND {t}.B > D.G * 100",
+    "SELECT D.NAME, SUM({t}.B) FROM {t}, D WHERE {t}.G = D.G AND {t}.K < 2500 AND D.NAME LIKE 't%' GROUP BY D.NAME",
+    "SELECT E.TAG, COUNT(*), SUM({t}.B) FROM {t}, D, E WHERE {t}.G = D.G AND D.NAME = E.NAME GROUP BY E.TAG",
+    "SELECT P.N, COUNT(*) FROM {t}, P WHERE {t}.S = P.S GROUP BY P.N",
+    "SELECT {t}.K, DC.NAME FROM {t}, DC WHERE {t}.G = DC.G AND {t}.K < 60",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.20 GR2b, §5.11 GR2]:
 /// an aggregation or a projection over inner hash joins read by batches
-/// gives what one read row by row gives, of a table of either store: a
-/// null key joining nothing, a key of two rows joining each, CHAR keys
-/// equal as their padding makes them, a filter over the join, one told a
-/// scan, three tables, grouped or not.
+/// gives what one read row by row gives (EXECUTOR.BATCHES OFF), of a
+/// table of either store: a null key joining nothing, a key of two rows
+/// joining each, CHAR keys equal as their padding makes them, a filter
+/// over the join, one told a scan, three tables, grouped or not, a set
+/// function of an expression.
 #[test]
 fn joins_by_batch_answer_as_row_by_row() {
     let db = Database::new();
     let a = tables(&db);
-    for (by_batch, by_row) in JOINED {
+    for query in JOINED {
         for table in ["F", "R"] {
-            let (batch, row) = (by_batch.replace("{t}", table), by_row.replace("{t}", table));
-            assert_eq!(sorted(&a, &batch), sorted(&a, &row), "{batch}");
+            let sql = query.replace("{t}", table);
+            let (batched, row) = both_ways(&a, &sql);
+            assert_eq!(batched, row, "{sql}");
         }
     }
     assert_eq!(rows(&a, "SELECT P.N, COUNT(*) FROM F, P WHERE F.S = P.S GROUP BY P.N").map(|r| r.len()), Ok(2), "'b' is 'b    '");
@@ -102,9 +85,8 @@ fn a_partitioned_join_by_batch_answers_as_row_by_row() {
     let db = Database::new();
     let a = tables(&db);
     exec(&a, "SET WORK_MEMORY = 65536").unwrap();
-    let batch = "SELECT F.G, COUNT(*), SUM(R.B) FROM F, R WHERE F.K = R.K GROUP BY F.G";
-    let row = "SELECT F.G, COUNT(F.K + 0), SUM(R.B + 0) FROM F, R WHERE F.K = R.K GROUP BY F.G";
-    assert_eq!(sorted(&a, batch), sorted(&a, row));
+    let (batched, row) = both_ways(&a, "SELECT F.G, COUNT(*), SUM(R.B) FROM F, R WHERE F.K = R.K GROUP BY F.G");
+    assert_eq!(batched, row);
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM F, R WHERE F.K = R.K"), Ok(vec!["6000".to_owned()]));
     let raising = "SELECT COUNT(*) FROM F, D WHERE F.G = D.G AND F.B / (D.G - D.G) > 0";
     assert_eq!(rows(&a, raising).err(), Some(Code::Data), "division by zero");

@@ -151,7 +151,7 @@ fn filtered(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 #[inline(never)]
 fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     // Read by batches, if it can be (`exec/batch.rs`).
-    if batch::aggregable(&plan, db) {
+    if batched(db) && batch::aggregable(&plan, db) {
         return batch::aggregated(plan, db, tx);
     }
     let Plan::Aggregate { groups, aggs, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
@@ -286,12 +286,18 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, 
 #[inline(never)]
 fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     // Read by batches, if it can be (`exec/batch/project.rs`).
-    if batch::projectable(&plan, db) {
+    if batched(db) && batch::projectable(&plan, db) {
         return batch::projected(plan, db, tx);
     }
     let Plan::Project { exprs, input, .. } = plan else { return failed(broken("a projection is not one")) };
     let (input, runner) = (execute(*input, db, tx), Runner::new(db, tx));
     Box::new(input.map(move |r| r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &runner)).collect())))
+}
+
+/// Whether a query reads its tables a batch at a time where it can, as the
+/// setting EXECUTOR.BATCHES says.
+fn batched(db: &State) -> bool {
+    if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHES) { s != "OFF" } else { true }
 }
 
 /// The value of column `i` of `row`.

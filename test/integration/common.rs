@@ -522,3 +522,13 @@ pub fn locked() -> (Database, Session) {
     exec(&holder, "INSERT INTO L VALUES (1)").unwrap();
     (db, holder)
 }
+
+/// The rows of `sql`, sorted, read by batches where it can be, and read
+/// row by row throughout (EXECUTOR.BATCHES OFF).
+pub fn both_ways(s: &Session, sql: &str) -> (Vec<String>, Vec<String>) {
+    let batched = sorted(s, sql);
+    exec(s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    let rows = sorted(s, sql);
+    exec(s, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+    (batched, rows)
+}
