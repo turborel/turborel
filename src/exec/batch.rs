@@ -20,7 +20,7 @@ pub(super) use project::projected;
 
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
-use super::{Runner, failed, simple_conjunct};
+use super::{Runner, failed, simple_conjuncts};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
@@ -96,8 +96,8 @@ fn batches_of(read: &Read<'_>, db: &Arc<State>, tx: TxId) -> Result<impl Iterato
     scanned((read.table, read.columns, read.filter), db, tx)
 }
 
-/// The batches of a scan of `table`'s `columns`, told the simple conjunct
-/// of `filter` if it has one, as `tx` sees them, each read only while the
+/// The batches of a scan of `table`'s `columns`, told the simple conjuncts
+/// of `filter`, if any, as `tx` sees them, each read only while the
 /// statement is not cancelled (RULES.md D44).
 fn scanned(
     (table, columns, filter): (&QualifiedName, &[usize], Option<&Cond>),
@@ -105,7 +105,7 @@ fn scanned(
     tx: TxId,
 ) -> Result<impl Iterator<Item = Result<Batch>> + Send + use<>> {
     let storage = Arc::clone(db.storage_of(table)?);
-    let pushed = filter.and_then(simple_conjunct);
+    let pushed = filter.and_then(simple_conjuncts);
     Ok(checked(storage.scan_batches(tx, columns, pushed.as_ref()), db.tx.stop_of(tx)))
 }
 

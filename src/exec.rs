@@ -31,7 +31,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::index::{Key, Probe};
 use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
-use crate::storage::{Condition, Row, RowId, TableStorage, project};
+use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage, project};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
 use crate::value::{CompOp, Value};
@@ -175,9 +175,9 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 }
 
 /// The rows of `input`, under a filter on `cond`: a scan is told the
-/// condition, if it has a simple one (`simple_conjunct`).
+/// conditions, if it has simple ones (`simple_conjuncts`).
 fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
-    match (input, simple_conjunct(cond)) {
+    match (input, simple_conjuncts(cond)) {
         (Plan::SeqScan { table, columns, .. }, Some(condition)) => match db.storage_of(&table) {
             Ok(storage) => Box::new(Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row))),
             Err(e) => failed(e),
@@ -186,12 +186,12 @@ fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIte
     }
 }
 
-/// A conjunct of `cond` comparing a column with a constant, an equality if
-/// there is one, unless `cond` can raise an error: every row `cond` keeps
-/// satisfies it, so a scan tells its
-/// engine (`TableStorage::scan_where`), which may then count only the rows
-/// it matches as read.
-fn simple_conjunct(cond: &Cond) -> Option<Condition> {
+/// The conjuncts of `cond` comparing a column with a constant, if any,
+/// unless `cond` can raise an error: every row `cond` keeps satisfies each,
+/// so a scan tells its engine (`TableStorage::scan_where`), which may then
+/// leave out the rows they do not match, skip the frozen chunks one cannot
+/// match, and count only the rows they all match as read.
+fn simple_conjuncts(cond: &Cond) -> Option<Conjunction> {
     // A condition that can raise an error must see every row: a row the
     // conjunct rejects may still raise it, and whether it does may not
     // depend on the plan, nor on which rows another transaction changed.
@@ -200,9 +200,14 @@ fn simple_conjunct(cond: &Cond) -> Option<Condition> {
     }
     let mut found = Vec::new();
     conjuncts(cond, &mut found);
-    let best = found.iter().position(|(_, op, _)| *op == CompOp::Eq).unwrap_or_default();
-    let (column, op, value) = found.into_iter().nth(best)?;
-    Some(Condition { columns: vec![column], probe: Probe::Compare { op, value } })
+    if found.is_empty() {
+        return None;
+    }
+    // Equalities first: an engine judging rows by only one judges by one.
+    found.sort_by_key(|(_, op, _)| *op != CompOp::Eq);
+    Some(Conjunction(
+        found.into_iter().map(|(column, op, value)| Condition { columns: vec![column], probe: Probe::Compare { op, value } }).collect(),
+    ))
 }
 
 /// The `column op constant` conjuncts of `cond`, each as the column, the
@@ -295,7 +300,7 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, 
             entries.iter().filter_map(|(key, id)| fetch(&*storage, &columns, tx, key, *id).transpose()).collect()
         }
         Plan::Filter { cond, input, .. } => {
-            let rows = match (*input, simple_conjunct(&cond)) {
+            let rows = match (*input, simple_conjuncts(&cond)) {
                 (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
                     Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition).collect::<Result<Vec<_>>>()?
                 }

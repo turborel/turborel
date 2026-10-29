@@ -149,11 +149,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Scan filters** more precise than one `column op constant`. Even that
-  one only cuts the rows returned and the reads tracked for
-  serializability: a table of the row store still reads and decodes
-  every row; one of the column store skips frozen chunks the filter cannot match
-  (D31).
+- **Scan filters** beyond conjunctions of `column op constant` (D31):
+  IS NULL, IN, LIKE with a constant prefix, OR of one column's ranges,
+  parameters. Those pushed only cut the rows returned and the reads
+  tracked for serializability in the row store, which still reads and
+  decodes every row; zone maps of its pages would let it skip some.
 - **Batch execution, further** (RULES.md D31): a filter with LIKE is
   judged a row at a time, as LIKE can raise an error for a pattern, which
   a row the filter's other conjuncts reject must still raise; a LIKE
@@ -202,7 +202,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   - chunks compressed further: run-length, bit-packing below a byte,
     FSST for texts, ALP for approximate numbers; and conditions judged on
     the codes of a dictionary or a frame without decoding each value;
-  - a condition on two or more columns skipping chunks; bloom filters;
+  - bloom filters, for an equality on a column of many values;
   - groups' headers read as they are needed, not held in memory.
 
 ---

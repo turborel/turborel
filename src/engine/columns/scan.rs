@@ -1,20 +1,51 @@
 //! \[DESIGN\] Reading a frozen row group (RULES.md D31): the runs of its
-//! rows a condition may match, by the least and greatest values of each
-//! chunk of the column it compares (zone maps), and the rows of a run, only
+//! rows the conditions of a scan may match, by the least and greatest values of each
+//! chunk of the column each compares (zone maps), and the rows of a run, only
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
 use super::Chunk;
 use super::group::{Group, Pages, Seal};
 use crate::error::Result;
-use crate::storage::{Condition, Row};
+use crate::storage::{Condition, Conjunction, Row};
 use crate::value::{DataType, Value};
 
+/// The runs of positions of `group`'s rows that each of `conditions` may
+/// match, in order: those every one of them keeps (`kept_by`), every row if
+/// there are none.
+pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Vec<(u32, u32)> {
+    let mut runs = vec![(0, group.rows)];
+    for condition in conditions.iter().flat_map(|c| c.conditions()) {
+        runs = both(&runs, &kept_by(group, condition));
+        if runs.is_empty() {
+            break;
+        }
+    }
+    runs
+}
+
+/// The runs in both `a` and `b`, each in order and apart.
+fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0_usize, 0_usize);
+    while let (Some(&(a_from, a_to)), Some(&(b_from, b_to))) = (a.get(i), b.get(j)) {
+        let (from, to) = (a_from.max(b_from), a_to.min(b_to));
+        if from < to {
+            out.push((from, to));
+        }
+        if a_to <= b_to {
+            i = i.saturating_add(1);
+        } else {
+            j = j.saturating_add(1);
+        }
+    }
+    out
+}
+
 /// The runs of positions of `group`'s rows that `condition` may match, in
-/// order: every row if there is none, or it compares more than one column;
-/// else those of the chunks of its column whose values may match.
-pub fn candidates(group: &Group, condition: Option<&Condition>) -> Vec<(u32, u32)> {
+/// order: every row if it compares more than one column; else those of the
+/// chunks of its column whose values may match.
+fn kept_by(group: &Group, condition: &Condition) -> Vec<(u32, u32)> {
     let all = vec![(0, group.rows)];
-    let Some(condition) = condition else { return all };
     let [column] = condition.columns.as_slice() else { return all };
     let Some(zones) = group.columns.get(*column) else { return all };
     let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];

@@ -1,5 +1,6 @@
-//! \[DESIGN\] The condition rows were chosen by through an index
-//! (`TableStorage::read_by_condition`). Split from storage.rs (RULES.md
+//! \[DESIGN\] The conditions rows were chosen by: through an index
+//! (`TableStorage::read_by_condition`), or those of a filter a scan is
+//! told (`TableStorage::scan_where`). Split from storage.rs (RULES.md
 //! R-SIZE-2).
 
 use std::cmp::Ordering;
@@ -54,6 +55,43 @@ impl Condition {
                     && next.is_some_and(|r| within(low.0, r, &low.1) && within(high.0, r, &high.1))
             }
         }
+    }
+}
+
+/// \[DESIGN\] Conditions rows were chosen by, each true of every row
+/// chosen: those of a filter a scan is told (`TableStorage::scan_where`),
+/// or an index's one (`TableStorage::read_by_condition`).
+#[derive(Debug, Clone)]
+pub struct Conjunction(pub Vec<Condition>);
+
+impl Conjunction {
+    /// The rows `condition` chose.
+    pub fn of(condition: Condition) -> Conjunction {
+        Conjunction(vec![condition])
+    }
+
+    /// Its conditions.
+    pub fn conditions(&self) -> &[Condition] {
+        &self.0
+    }
+
+    /// The columns its conditions read, each once.
+    pub fn columns(&self) -> Vec<usize> {
+        let mut columns: Vec<usize> = self.0.iter().flat_map(|c| c.columns.iter().copied()).collect();
+        columns.sort_unstable();
+        columns.dedup();
+        columns
+    }
+
+    /// Whether `row` may be one chosen: each condition matches it.
+    pub fn matches(&self, row: &Row) -> bool {
+        self.0.iter().all(|c| c.matches(row))
+    }
+
+    /// Whether a row whose every column's value is within `bounds` may be
+    /// one chosen: each condition may match it.
+    pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
+        self.0.iter().all(|c| c.may_match(bounds))
     }
 }
 

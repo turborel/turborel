@@ -78,7 +78,7 @@ use crate::log::Lsn;
 use crate::memory::Host;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::{lock, lock_builtin, write};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 use crate::value::DataType;
@@ -433,13 +433,13 @@ impl TableStorage for RowTable {
 
     /// As `scan`, leaving out the rows `condition` does not match; only
     /// those it matches count as read.
-    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], condition: &Condition) -> Rows {
+    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], condition: &Conjunction) -> Rows {
         self.scan_rows(tx, columns, Some(condition.clone()))
     }
 
     /// A table of the column store gives its frozen rows without making
     /// each (`rows/frozen/batches.rs`).
-    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Condition>) -> crate::storage::Batches {
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> crate::storage::Batches {
         self.scan_batches_of(tx, columns, condition.cloned())
     }
 
@@ -541,7 +541,7 @@ impl TableStorage for RowTable {
     }
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
-        self.note_read(tx, Read::Condition(condition.clone()))
+        self.note_read(tx, Read::Condition(Conjunction::of(condition.clone())))
     }
 
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {

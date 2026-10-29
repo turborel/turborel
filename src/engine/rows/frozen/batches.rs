@@ -25,7 +25,7 @@ use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Condition, Row, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Conjunction, Row, RowId};
 use crate::value::Value;
 
 /// \[DESIGN\] A column store table's batches.
@@ -33,7 +33,7 @@ pub(in crate::engine::rows) struct Batched {
     table: Arc<RowTable>,
     reader: Reader,
     columns: Vec<usize>,
-    condition: Option<Condition>,
+    condition: Option<Conjunction>,
     /// Its groups, taken before its tree is read, held to the end.
     directory: Arc<Directory>,
     next_group: usize,
@@ -57,7 +57,7 @@ impl Batched {
         table: Arc<RowTable>,
         (reader, directory): (Reader, Arc<Directory>),
         columns: Vec<usize>,
-        condition: Option<Condition>,
+        condition: Option<Conjunction>,
     ) -> Batched {
         Batched {
             table,
@@ -103,7 +103,7 @@ impl Batched {
     /// condition's.
     fn decoded(&self) -> Vec<usize> {
         let mut decoded = self.columns.clone();
-        decoded.extend(self.condition.iter().flat_map(|c| c.columns.iter().copied()));
+        decoded.extend(self.condition.iter().flat_map(Conjunction::columns));
         decoded
     }
 
@@ -162,7 +162,11 @@ impl Batched {
         let mut positions = self.unshadowed((from, to));
         let pages = self.table.group_pages()?;
         let types = self.table.format.types();
-        if let Some(condition) = &self.condition {
+        // The rows judged by the first condition only, the filter judging
+        // them whole after: every condition skipped chunks (`candidates`),
+        // and judging the rest twice cost more than it saved (`G = 3 AND K
+        // > 10` of 400,000 rows, 11.6 ms judged by one, 12.9 ms by both).
+        if let Some(condition) = self.condition.iter().flat_map(Conjunction::conditions).next() {
             let keys = condition
                 .columns
                 .iter()

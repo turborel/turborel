@@ -26,7 +26,7 @@ use crate::log::Lsn;
 use crate::memory::MemoryBudget;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
-use crate::storage::{Condition, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{Concurrency, Persistence, ReadMode, TableLock, Timestamp, TxCapabilities, TxId, Undo};
 
@@ -288,7 +288,7 @@ impl TableStorage for Rows_ {
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows {
         self.made().map_or_else(no_rows, |rows| rows.scan(tx, columns))
     }
-    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], condition: &Condition) -> Rows {
+    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], condition: &Conjunction) -> Rows {
         self.made().map_or_else(no_rows, |rows| rows.scan_where(tx, columns, condition))
     }
     fn row_count(&self) -> usize {

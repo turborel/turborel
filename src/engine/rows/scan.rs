@@ -11,7 +11,7 @@ use super::frozen::{Batched, Merged, Merging};
 use super::mvcc::Read;
 use super::{RowTable, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
-use crate::storage::{Batches, Condition, Rows, batches_of};
+use crate::storage::{Batches, Conjunction, Rows, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -35,7 +35,7 @@ impl RowTable {
 
     /// The rows `tx` sees, `columns` decoded, and only those `condition`
     /// matches, if given, which is then what counts as read.
-    pub(super) fn scan_rows(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Condition>) -> Rows {
+    pub(super) fn scan_rows(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Rows {
         let read = condition.clone().map_or(Read::All, Read::Condition);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
@@ -43,7 +43,7 @@ impl RowTable {
         };
         // The condition's columns are decoded too, to check it.
         let mut columns = columns.to_vec();
-        columns.extend(condition.iter().flat_map(|c| c.columns.iter().copied()));
+        columns.extend(condition.iter().flat_map(Conjunction::columns));
         // Its groups as they are before its tree is read (`rows/frozen.rs`).
         let directory = match self.frozen.directory() {
             Ok(directory) => directory,
@@ -69,7 +69,7 @@ impl RowTable {
     /// matches if given, which is then what counts as read: a table that
     /// freezes rows gives its frozen rows straight from their chunks
     /// (`rows/frozen/batches.rs`), any other its scan's rows, gathered.
-    pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Condition>) -> Batches {
+    pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Batches {
         if self.frozen.columns().is_none() {
             let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
             return batches_of(rows, columns);

@@ -726,7 +726,17 @@ the format of frozen groups becomes a trait when it is.
   holds disk, not memory, for what it may go back to. On disk, versions are
   gathered in batches written as one record each (`OpenOptions::undo_batch`),
   read from memory until written.
-- Scans are given the columns needed, and simple filters.
+- Scans are given the columns needed, and the conjuncts of a filter that
+  compare a column with a constant, a BETWEEN as two
+  (`TableStorage::scan_where`, `storage::Conjunction`), unless the filter
+  can raise an error: each true of every row the filter keeps, so an
+  engine may leave out rows they do not match, and count as read only
+  those they all match; the filter still judges every row given. The
+  column store skips a frozen chunk any of them cannot match, and judges
+  rows by the first, an equality if there is one, as judging the rest
+  twice cost more than it saved: of 400,000 rows, `G = 3 AND B < 4000`
+  ran in 1.0 ms where with one conjunct told it took 11.6, `B BETWEEN
+  100000 AND 103999` in 1.2 ms where it took 13.4.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity. The row store
   gathers them again, once a table has changed enough, as the database's
@@ -767,8 +777,8 @@ the format of frozen groups becomes a trait when it is.
   is written again with those of them committed before every snapshot,
   replaced in the directory, and the entries taken out as a freeze takes
   out its rows'. A scan merges the tree and the groups in row id order, a
-  group read a vector (2048 rows) at a time, only the chunks a condition
-  on one column may match; a sorted group's rows read all as it is taken
+  group read a vector (2048 rows) at a time, only the chunks each of
+  the scan's conditions may match; a sorted group's rows read all as it is taken
   up, then put in row id order. The entries of rows frozen leave the tree once
   no reader holds the directory from before their group; a checkpoint is
   not captured during a freeze. A deletion collected while a freeze under

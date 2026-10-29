@@ -8,15 +8,15 @@ use std::cmp::Ordering;
 
 use crate::hash::murmur::MurmurSet;
 use crate::spill::row_bytes;
-use crate::storage::{Condition, Row, RowId};
+use crate::storage::{Conjunction, Row, RowId};
 use crate::value::{Value, compare};
 
 /// What a transaction read.
 pub(in crate::engine::rows) enum Read {
     /// A row, by its id.
     Row(RowId),
-    /// The rows an index chose by a condition.
-    Condition(Condition),
+    /// The rows a scan or an index chose by conditions.
+    Condition(Conjunction),
     /// Every row: a scan.
     All,
 }
@@ -26,7 +26,7 @@ pub(in crate::engine::rows) enum Read {
 #[derive(Default)]
 pub(super) struct Reads {
     pub(super) rows: MurmurSet<RowId>,
-    pub(super) conditions: Vec<Condition>,
+    pub(super) conditions: Vec<Conjunction>,
     pub(super) all: bool,
 }
 
@@ -90,7 +90,7 @@ impl Changed {
     }
 
     /// Whether one of `conditions` matches a row of it, or may.
-    pub(super) fn matched_by(&self, conditions: &[Condition]) -> bool {
+    pub(super) fn matched_by(&self, conditions: &[Conjunction]) -> bool {
         match self {
             Changed::Rows(rows, _) => rows.iter().any(|row| conditions.iter().any(|c| c.matches(row))),
             Changed::Bounds(bounds) => conditions.iter().any(|c| c.may_match(bounds)),

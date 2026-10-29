@@ -94,7 +94,7 @@ impl Judging {
 
 /// The conjuncts of `cond` judged over a batch of `columns`, and the rest,
 /// judged a row at a time: all of it if it can raise an error, which every
-/// row must see raised as it would be (`simple_conjunct`).
+/// row must see raised as it would be (`simple_conjuncts`).
 fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
     if cond.can_raise() {
         return (Vec::new(), Some(cond.clone()));

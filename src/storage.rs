@@ -23,7 +23,7 @@ mod condition;
 mod options;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, batches_of};
-pub use condition::Condition;
+pub use condition::{Condition, Conjunction};
 
 use std::sync::Arc;
 
@@ -222,20 +222,20 @@ pub trait TableStorage: Send + Sync {
     /// it reads (`self`), so it can outlive the call that started it: a
     /// cursor reads its rows as it is fetched from.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows;
-    /// As `scan`, for a statement that keeps only rows `condition` matches,
-    /// and checks every row itself: an engine may leave out rows that do not
-    /// match, and, checking serializability, count only those that do as
-    /// read. Default: `scan`.
-    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _condition: &Condition) -> Rows {
+    /// As `scan`, for a statement that keeps only rows `conditions` all
+    /// match, and checks every row itself: an engine may leave out rows that
+    /// do not match, and, checking serializability, count only those that
+    /// do as read. Default: `scan`.
+    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _conditions: &Conjunction) -> Rows {
         self.scan(tx, columns)
     }
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `condition`, in no particular order, a batch of up to `BATCH_ROWS` of
+    /// `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
     /// them at a time: the values of `columns`, a vector for each, in the
     /// order asked (RULES.md D31). An engine that keeps columns gives them
     /// without making each row. Default: `scan_where`'s rows, gathered.
-    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Condition>) -> Batches {
-        let rows = match condition {
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>) -> Batches {
+        let rows = match conditions {
             Some(c) => self.scan_where(tx, columns, c),
             None => self.scan(tx, columns),
         };

@@ -17,7 +17,7 @@ use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, row_id};
 use crate::engine::tree::Scan;
 use crate::error::Result;
-use crate::storage::{Condition, Row, RowId};
+use crate::storage::{Conjunction, Row, RowId};
 
 /// \[DESIGN\] The rows a scan reads of a group at a time: a vector.
 const VECTOR: u32 = 2048;
@@ -49,7 +49,7 @@ pub(in crate::engine::rows) struct Merged {
     table: Arc<RowTable>,
     merging: Merging,
     columns: Vec<usize>,
-    condition: Option<Condition>,
+    condition: Option<Conjunction>,
     delta: Peekable<Scan<TreeOf>>,
     directory: Arc<Directory>,
     /// The next group to read.
@@ -68,7 +68,7 @@ impl Merged {
         table: Arc<RowTable>,
         (merging, directory): (Merging, Arc<Directory>),
         columns: Vec<usize>,
-        condition: Option<Condition>,
+        condition: Option<Conjunction>,
     ) -> Merged {
         let delta = RowTable::entries(&table).peekable();
         Merged {

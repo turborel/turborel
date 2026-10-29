@@ -10,7 +10,7 @@ use crate::engine::columns::scan::{candidates, rows};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::index::Probe;
 use crate::memory::MemoryBudget;
-use crate::storage::Condition;
+use crate::storage::{Condition, Conjunction};
 use crate::value::{CompOp, Decimal, Spelled};
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
@@ -96,9 +96,10 @@ fn groups_read_back() {
 }
 
 /// Verifies: [DESIGN] RULES.md D31, zone maps: a condition on one column
-/// reads only the runs of the chunks it may match; the rows of a run hold
-/// the columns asked for, the others null; with no condition, or one of
-/// two columns, every row is a candidate.
+/// reads only the runs of the chunks it may match; of two conditions, only
+/// those both may; the rows of a run hold the columns asked for, the
+/// others null; with no condition, or one of two columns, every row is a
+/// candidate.
 #[test]
 fn scans_skip_chunks_a_condition_cannot_match() {
     let (pool, file) = file();
@@ -108,7 +109,7 @@ fn scans_skip_chunks_a_condition_cannot_match() {
         columns: vec![2],
         probe: Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(10))), high: Box::new((CompOp::Le, int(11))) },
     };
-    let runs = candidates(&group, Some(&between));
+    let runs = candidates(&group, Some(&Conjunction::of(between.clone())));
     let read: u32 = runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
     assert!((200..600).contains(&read), "about the 200 rows of 10 and 11: {read}");
     let found: Vec<Row> =
@@ -117,9 +118,19 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     assert!(found.iter().all(|r| r[1].is_null()), "a column not asked for is null");
     assert_eq!(candidates(&group, None), vec![(0, 4000)]);
     let two = Condition { columns: vec![0, 2], probe: Probe::Prefix { equal: vec![int(1)], then: None } };
-    assert_eq!(candidates(&group, Some(&two)), vec![(0, 4000)]);
+    assert_eq!(candidates(&group, Some(&Conjunction::of(two))), vec![(0, 4000)]);
     let none = Condition { columns: vec![2], probe: Probe::Compare { op: CompOp::Gt, value: int(100) } };
-    assert!(candidates(&group, Some(&none)).is_empty(), "no chunk may match");
+    assert!(candidates(&group, Some(&Conjunction::of(none))).is_empty(), "no chunk may match");
+    // Of two conditions, the chunks both may match: K below 1,050 keeps
+    // the runs of 10 and 11 that begin before it.
+    let below = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Lt, value: int(1050) } };
+    let both_runs = candidates(&group, Some(&Conjunction(vec![between.clone(), below.clone()])));
+    let first: u32 = both_runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
+    assert!(first > 0 && first < read, "fewer than of one alone: {first} of {read}");
+    assert!(both_runs.iter().all(|&(from, _)| from < 1050), "{both_runs:?}");
+    let above = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: int(3000) } };
+    assert!(candidates(&group, Some(&Conjunction(vec![between, above]))).is_empty(), "no chunk both may match");
+    assert_eq!(candidates(&group, Some(&Conjunction(Vec::new()))), vec![(0, 4000)], "no condition");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, frozen row groups: a group of no rows,

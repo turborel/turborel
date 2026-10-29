@@ -163,6 +163,27 @@ fn phantoms_are_refused_at_commit() {
     }
 }
 
+/// Verifies: [X3.135-1986 §4.16] serializable execution; [DESIGN] RULES.md
+/// D29, phantoms of a scan by several conditions: the scan reads only the
+/// rows each of its filter's conditions matches, so a row committed
+/// meanwhile that one of them does not match refuses no commit, and one
+/// that each matches does.
+#[test]
+fn a_scan_reads_the_rows_all_its_conditions_match() {
+    let scratch = Scratch::new("mvcc-conjunction");
+    let (_db, _files, a, b) = accounts(&scratch);
+    let _ = values(&a, "SELECT COUNT(*) FROM T WHERE K > 0 AND V < 50");
+    run(&b, "INSERT INTO T VALUES (50, 99)").unwrap();
+    b.commit().unwrap();
+    run(&a, "INSERT INTO T VALUES (100, 1)").unwrap();
+    a.commit().unwrap();
+    let _ = values(&a, "SELECT COUNT(*) FROM T WHERE K > 0 AND V < 50");
+    run(&b, "INSERT INTO T VALUES (60, 5)").unwrap();
+    b.commit().unwrap();
+    run(&a, "INSERT INTO T VALUES (101, 1)").unwrap();
+    assert_eq!(a.commit().map_err(|e| e.code), Err(Code::Conflict), "a row both match");
+}
+
 /// Verifies: [X3.135-1986 §6.4 GR2] UNIQUE; [DESIGN] RULES.md D29: a key
 /// another open transaction has inserted is in doubt, so a second insert of
 /// it is refused with SQLCODE -911; once that transaction commits, the
