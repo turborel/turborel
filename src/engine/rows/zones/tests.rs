@@ -128,3 +128,61 @@ fn an_opened_tables_zones_are_known_once_summed() {
     assert!(!reads(&table, &equal(0, 10), ids[2999]), "known: skipped");
     assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 2999)), ["2999"]);
 }
+
+/// Verifies: [DESIGN] RULES.md D31, zone maps summed up as rows are
+/// written: a zone the maintenance thread sums up as a row is updated or
+/// inserted into it, by a transaction open, either reads the row's new
+/// version or is summed up again, so no scan told the row's value skips
+/// the zone that holds it. Each round sets the thread summing up as it
+/// updates a row and inserts another, as a statement's end wakes the
+/// maintenance thread as the next begins, a little later each round.
+#[test]
+fn zones_summed_up_meanwhile_hold_every_row_written() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let files = files();
+    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let first = table.insert(NO_TRANSACTION, row(0)).unwrap();
+    // Rounds asked for, and done, by the thread summing up; 0 asks it to end.
+    let (asked, done) = (Arc::new(AtomicU64::new(1)), Arc::new(AtomicU64::new(1)));
+    let summing = {
+        let (table, asked, done) = (Arc::clone(&table), Arc::clone(&asked), Arc::clone(&done));
+        std::thread::spawn(move || {
+            loop {
+                let round = asked.load(Ordering::Acquire);
+                if round == 0 {
+                    return;
+                }
+                if round == done.load(Ordering::Acquire) {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                // Begun a little later each round, so it begins at each
+                // point of the insert in turn.
+                for _ in 0..round.checked_rem(64).unwrap_or(0).saturating_mul(16) {
+                    std::hint::spin_loop();
+                }
+                while table.sum_zones(u64::MAX).unwrap() {}
+                done.store(round, Ordering::Release);
+            }
+        })
+    };
+    let written: Vec<i128> = (1_i128..2000_i128).map(|n| n.checked_mul(1_000).unwrap()).collect();
+    let (tx, mut lost) = (10_u64, Vec::new());
+    table.begin(tx, 1).unwrap();
+    for (round, &v) in (2_u64..).zip(&written) {
+        asked.store(round, Ordering::Release);
+        table.update(tx, first, row(-v)).unwrap();
+        table.insert(tx, row(v)).unwrap();
+        while done.load(Ordering::Acquire) != round {
+            std::hint::spin_loop();
+        }
+        let updated = v.checked_neg().unwrap();
+        if found(&table, tx, &equal(0, updated)).is_empty() {
+            lost.push(updated);
+        }
+    }
+    asked.store(0, Ordering::Release);
+    summing.join().unwrap();
+    lost.extend(written.iter().copied().filter(|&v| found(&table, tx, &equal(0, v)).is_empty()));
+    assert_eq!(lost, Vec::<i128>::new(), "rows a scan told their values skips");
+}

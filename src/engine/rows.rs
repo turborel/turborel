@@ -336,9 +336,11 @@ impl TableStorage for RowTable {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
         let id = self.next_id()?;
         let (record, pages) = self.encode(id, &row)?;
-        self.zones.widen(id, Some(&row), false);
         match self.insert_version(tx, id, &record) {
             Ok(true) => {
+                // Widened once written, so a zone summed meanwhile either
+                // read the row or is summed again (`rows/zones.rs`).
+                self.zones.widen(id, Some(&row), false);
                 self.live.fetch_add(1, Ordering::AcqRel);
                 self.gathered.changed();
                 Ok(id)
@@ -356,15 +358,15 @@ impl TableStorage for RowTable {
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
         let (record, pages) = self.encode(id, &row)?;
-        self.zones.widen(id, Some(&row), true);
         self.write_version(tx, id, Some(&record)).inspect_err(|_| self.free(&pages))?;
+        self.zones.widen(id, Some(&row), true);
         self.gathered.changed();
         Ok(())
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.zones.widen(id, None, true);
         self.write_version(tx, id, None)?;
+        self.zones.widen(id, None, true);
         self.live.fetch_sub(1, Ordering::AcqRel);
         self.gathered.changed();
         Ok(())
@@ -378,7 +380,6 @@ impl TableStorage for RowTable {
         self.blocks.clear();
         self.reserve_past(id)?;
         let (record, pages) = self.encode(id, &row)?;
-        self.zones.widen(id, Some(&row), true);
         let restored = match self.insert_version(tx, id, &record) {
             Ok(true) => {
                 self.live.fetch_add(1, Ordering::AcqRel);
@@ -387,7 +388,9 @@ impl TableStorage for RowTable {
             Ok(false) => self.write_version(tx, id, Some(&record)),
             Err(e) => Err(e),
         };
-        restored.inspect_err(|_| self.free(&pages))
+        restored.inspect_err(|_| self.free(&pages))?;
+        self.zones.widen(id, Some(&row), true);
+        Ok(())
     }
 
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
@@ -460,8 +463,9 @@ impl TableStorage for RowTable {
 
     /// Writes the row's newest version outright (`rows/recovery.rs`).
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
+        self.apply_newest(id, row.clone())?;
         self.zones.widen(id, row.as_ref(), true);
-        self.apply_newest(id, row)
+        Ok(())
     }
 
     fn analyze(&self) -> Result<()> {
