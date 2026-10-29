@@ -908,7 +908,12 @@ the format of frozen groups becomes a trait when it is.
   as it groups them, and merged with the groups held by number. Measured against the row store row by row (`bench/analytics.rs`): COUNT(*)
   of a column store table some 50 times as fast, a SUM of one column 17, a
   filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
-  made in a buffer kept (`spill::put_norm`). The setting
+  made in a buffer kept (`spill::put_norm`). A DISTINCT of a projection
+  of columns of a stream is that grouping by every column, no set
+  function (`batch::distinct_grouping`): its groups are DISTINCT's rows, in
+  the order their first came, past the work area too (of 400,000 rows of
+  the column store, `SELECT DISTINCT G` 41.5 ms to 9.0, of `G, S` 60.4 to
+  19.3; of the row store, 88.0 to 46.0). The setting
   EXECUTOR.BATCHES, a session's too, ON by default, reads by batches
   where a query can; OFF, a row at a time throughout, as to compare the
   two, as the tests of batches do, each answer read both ways.

@@ -79,6 +79,39 @@ fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     Some(Read { taken: taken(aggs, &columns)?, groups: at, columns, width })
 }
 
+/// \[DESIGN\] The DISTINCT `plan` as a grouping of its rows by every
+/// column of them, no set function, if it is of a projection of columns of
+/// a subtree whose aggregation reads by batches; else `plan`, as it was.
+/// The groups are its rows: one of each set of duplicates, alike in every
+/// column [X3.135-1986 §5.25 GR2, GR5], in the order their first rows came,
+/// as DISTINCT gives them, none of no rows.
+pub(super) fn distinct_grouping(plan: Plan, db: &State) -> Plan {
+    let Plan::Distinct { input } = plan else { return plan };
+    let Plan::Project { exprs, detail, input: rows } = *input else { return Plan::Distinct { input } };
+    let groups: Option<Vec<usize>> = exprs
+        .iter()
+        .map(|e| match e {
+            Expr::Column(c) => Some(*c),
+            Expr::Const(_)
+            | Expr::Neg(_)
+            | Expr::Arith(..)
+            | Expr::Call(..)
+            | Expr::Outer(..)
+            | Expr::Case(..)
+            | Expr::Cast(..)
+            | Expr::Domain(..)
+            | Expr::Subquery(..) => None,
+        })
+        .collect();
+    // As `read_of` would find it, of no set function.
+    let held = stream::layout(&rows, db).map(|l| l.0);
+    let fits = groups.as_ref().zip(held).is_some_and(|(groups, columns)| groups.iter().all(|g| columns.contains(g)));
+    if let (Some(groups), true) = (groups, fits) {
+        return Plan::Aggregate { groups, aggs: Vec::new(), detail: String::new(), input: rows };
+    }
+    Plan::Distinct { input: Box::new(Plan::Project { exprs, detail, input: rows }) }
+}
+
 /// Whether `plan` is an aggregation read by batches.
 pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
     read_of(plan, db).is_some()

@@ -301,3 +301,52 @@ fn filters_told_a_scan_keep_the_rows_they_would() {
         }
     }
 }
+
+/// DISTINCT queries: `{t}` the table, R or C.
+const DISTINCTS: [&str; 8] = [
+    "SELECT DISTINCT G FROM {t}",
+    "SELECT DISTINCT S, G FROM {t}",
+    "SELECT DISTINCT G, G FROM {t} WHERE K < 100",
+    "SELECT DISTINCT S FROM {t} WHERE S LIKE 's1%' OR S IS NULL",
+    "SELECT DISTINCT N FROM {t} WHERE K < -100",
+    "SELECT DISTINCT G + 1 FROM {t}",
+    "SELECT DISTINCT K, S FROM {t}",
+    "SELECT K FROM {t} WHERE G IN (SELECT DISTINCT G FROM {t} WHERE N > 590)",
+];
+
+/// Verifies: [DESIGN] RULES.md D31, D38 [X3.135-1986 §5.25 GR2, GR5]: a
+/// DISTINCT of columns read by batches, grouped, gives the rows DISTINCT
+/// gives row by row, of a table of either store, in the same order of the
+/// row store's, whose scan gives its rows in one order either way: nulls
+/// alike, a column twice, filtered, none matched, of a subquery; of
+/// an expression, row by row, alike; past the work area, the rows not
+/// held partitioned, alike.
+#[test]
+fn distinct_by_batch_answers_as_row_by_row() {
+    let db = Database::new();
+    let a = both(&db);
+    let alike = |sql: &str| {
+        let mut batched = rows(&a, sql).unwrap();
+        exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+        let mut row = rows(&a, sql).unwrap();
+        exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        if !sql.contains(" FROM R") {
+            batched.sort();
+            row.sort();
+        }
+        assert_eq!(batched, row, "{sql}");
+        batched
+    };
+    for query in DISTINCTS {
+        for table in ["R", "C"] {
+            alike(&query.replace("{t}", table));
+        }
+    }
+    assert_eq!(alike("SELECT DISTINCT G FROM C").len(), 7);
+    assert_eq!(alike("SELECT DISTINCT N FROM C WHERE K < -100"), Vec::<String>::new());
+    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    for table in ["R", "C"] {
+        let all = alike(&format!("SELECT DISTINCT K, S FROM {table}"));
+        assert_eq!(all.len(), 6000 - 101 - 71 + 2, "{table}: every row, past the work area");
+    }
+}

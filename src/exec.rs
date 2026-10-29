@@ -170,7 +170,12 @@ fn sorted(keys: &[SortKey], input: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// duplicates per the comparison rules, nulls identical.
 #[inline(never)]
 fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::Distinct { input } = plan else { return failed(broken("a duplicate elimination is not one")) };
+    // Grouped by batches, if it can be (`batch::distinct_grouping`).
+    let distinct = if batched(db) { batch::distinct_grouping(plan, db) } else { plan };
+    if let grouping @ Plan::Aggregate { .. } = distinct {
+        return grouped(grouping, db, tx);
+    }
+    let Plan::Distinct { input } = distinct else { return failed(broken("a duplicate elimination is not one")) };
     distinct::distinct_of(execute(*input, db, tx), db)
 }
 
