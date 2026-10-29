@@ -7,7 +7,11 @@
 //! replaced in the directory, and the entries folded taken out of the tree
 //! as a freeze takes out its rows' (`freeze.rs`). An entry not yet
 //! committed so stays, before the group's values, which hold its row as it
-//! was. Split from frozen.rs (RULES.md R-SIZE-2).
+//! was. A group whose rows are sorted by other columns than COLUMNSTORE.ORDER
+//! names now, as it was changed, is written again so, sorted as it says,
+//! MOST_REWRITES of them a call, as the maintenance thread calls again
+//! while any is left (`unsorted`). Split from frozen.rs (RULES.md
+//! R-SIZE-2).
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -29,6 +33,12 @@ use crate::txn::Timestamp;
 /// \[DESIGN\] The most groups one call writes again.
 const MOST_REWRITES: usize = 2;
 
+/// Whether one of `groups` is sorted by other columns than `columns`'s
+/// COLUMNSTORE.ORDER names.
+pub(super) fn unsorted(groups: &[Arc<Entry>], columns: &Columns) -> bool {
+    groups.iter().any(|entry| entry.group.order.as_slice() != columns.order.places())
+}
+
 /// Whether `entries` of a group of `rows` rows are COLUMNSTORE.REWRITE_FRACTION
 /// of them or more, as `columns` says.
 pub(super) fn due(entries: usize, rows: u32, columns: &Columns) -> bool {
@@ -41,11 +51,15 @@ impl RowTable {
     /// entries since they were last looked at, folding in the entries
     /// committed at or before `cutoff`: whether it wrote any.
     pub(in crate::engine::rows) fn rewrite_due(&self, columns: Columns, cutoff: Timestamp) -> Result<bool> {
-        if !due(usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX), columns.group_rows, &columns) {
+        let shadowed =
+            due(usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX), columns.group_rows, &columns);
+        let directory = self.frozen.directory()?;
+        if !shadowed && !unsorted(&directory.groups, &columns) {
             return Ok(false);
         }
-        self.frozen.shadowed.store(0, Ordering::Release);
-        let directory = self.frozen.directory()?;
+        if shadowed {
+            self.frozen.shadowed.store(0, Ordering::Release);
+        }
         let mut written = 0_usize;
         for entry in &directory.groups {
             if written >= MOST_REWRITES {
@@ -53,8 +67,12 @@ impl RowTable {
                 self.frozen.shadow();
                 break;
             }
+            let resorted = entry.group.order.as_slice() != columns.order.places();
+            if !shadowed && !resorted {
+                continue;
+            }
             let entries = self.entries_in(&entry.group)?;
-            if due(entries.len(), entry.group.rows, &columns) {
+            if resorted || due(entries.len(), entry.group.rows, &columns) {
                 self.rewrite(entry, (entries, cutoff), &columns.order)?;
                 written = written.saturating_add(1);
             }
@@ -96,7 +114,7 @@ impl RowTable {
             folded.push((id, bytes));
         }
         let (new_ids, new_rows) = ordered(order, kept.into_iter().filter_map(|(id, row)| row.map(|r| (id, r))).collect());
-        let group = if new_ids.is_empty() { None } else { Some(Group::write(&pages, types, &new_ids, &new_rows)?) };
+        let group = if new_ids.is_empty() { None } else { Some(Group::write(&pages, types, (&new_ids, &new_rows), order.places())?) };
         self.publish((Some(entry), group), folded)
     }
 }

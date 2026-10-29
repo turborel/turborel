@@ -33,6 +33,10 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
     put_u64(&mut out, group.first);
     put_u64(&mut out, group.last);
     put_u32(&mut out, group.rows);
+    put_u32(&mut out, count32(group.order.len())?);
+    for &place in &group.order {
+        put_u32(&mut out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
+    }
     for runs in [&group.ids, &group.by_id] {
         put_u32(&mut out, count32(runs.len())?);
         for run in runs {
@@ -122,6 +126,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
         return Err(corrupt("its header is of another format"));
     }
     let (first_id, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
+    let order = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
     let ids = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     let by_id = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     if r.count()? != types.len() {
@@ -135,5 +140,5 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
-    Ok(Group { first: first_id, last, rows, ids, by_id, columns, header })
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, header })
 }

@@ -54,7 +54,7 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
     let ids: Vec<RowId> =
         (0..u64::try_from(count).unwrap()).map(|n| n.checked_mul(step).and_then(|d| d.checked_add(first)).unwrap()).collect();
     let all: Vec<Row> = (0..count).map(row).collect();
-    let group = Group::write(pages, &TYPES, &ids, &all).unwrap();
+    let group = Group::write(pages, &TYPES, (&ids, &all), &[]).unwrap();
     assert_eq!((group.first, group.last, group.rows), (first, *ids.last().unwrap(), u32::try_from(count).unwrap()));
     assert_eq!(group.row_ids(pages).unwrap(), ids);
     assert!(count < 1000 || group.columns.iter().all(|zones| zones.len() > 1), "columns span pages");
@@ -152,9 +152,9 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 fn what_groups_refuse() {
     let (pool, file) = file();
     let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
-    assert_eq!(Group::write(&pages, &TYPES, &[], &[]).err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), &[]).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
-    assert!(Group::write(&pages, &TYPES, &[1], &wrong).is_err(), "not of its types");
+    assert!(Group::write(&pages, &TYPES, (&[1], &wrong), &[]).is_err(), "not of its types");
     let group = written(&pages, (1, 1), 10);
     assert_eq!(read(&pages, group.header[0], &TYPES[..2]).err().map(|e| e.code), Some(Code::Corrupt), "other columns");
     let mut written_pages = Vec::new();
@@ -169,7 +169,8 @@ fn what_groups_refuse() {
 /// another order than their ids', every id between its least and greatest
 /// among them, keeps its ids in its rows' order and its rows' positions by
 /// id: each row found by its id, an id not its found none, its least and
-/// greatest ids its range; read back from its header alike.
+/// greatest ids its range; read back from its header alike, the columns
+/// its rows are sorted by too.
 #[test]
 fn groups_of_rows_out_of_order_read_back() {
     let (pool, file) = file();
@@ -177,7 +178,7 @@ fn groups_of_rows_out_of_order_read_back() {
     let count = 4000_u64;
     let ids: Vec<RowId> = (0..count).map(|n| n.checked_mul(7).unwrap().checked_rem(count).unwrap().checked_add(100).unwrap()).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
-    let group = Group::write(&pages, &TYPES, &ids, &all).unwrap();
+    let group = Group::write(&pages, &TYPES, (&ids, &all), &[1, 0]).unwrap();
     assert_eq!((group.first, group.last), (100, 4099));
     assert!(group.sorted() && !group.ids.is_empty(), "its ids kept, and positions by id");
     assert_eq!(group.row_ids(&pages).unwrap(), ids);
@@ -187,4 +188,5 @@ fn groups_of_rows_out_of_order_read_back() {
     assert_eq!(group.position(&pages, 4100).unwrap(), None);
     let back = read(&pages, group.header[0], &TYPES).unwrap();
     assert_eq!((back.ids.clone(), back.by_id.clone()), (group.ids.clone(), group.by_id.clone()));
+    assert_eq!(back.order, vec![1, 0], "the columns its rows are sorted by");
 }

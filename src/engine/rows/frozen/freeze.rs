@@ -94,7 +94,8 @@ impl Drop for Freezing<'_> {
 impl RowTable {
     /// Whether a freeze, a rewrite or entries to take out may be due: rows
     /// enough past the last group, and none found too few a moment ago;
-    /// frozen rows enough given entries; or rows frozen whose entries
+    /// frozen rows enough given entries; a group sorted by other columns
+    /// than COLUMNSTORE.ORDER names now; or rows frozen whose entries
     /// remain.
     pub(in crate::engine::rows) fn freeze_wanted(&self) -> bool {
         let Ok(Some(columns)) = read(&self.frozen.columns).map(|c| *c) else { return false };
@@ -104,6 +105,7 @@ impl RowTable {
         let shadowed = usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX);
         (waited && live.saturating_sub(frozen) >= columns.due())
             || super::rewrite::due(shadowed, columns.group_rows, &columns)
+            || self.frozen.directory().is_ok_and(|d| super::rewrite::unsorted(&d.groups, &columns))
             || !lock_builtin(&self.frozen.retiring).is_empty()
     }
 
@@ -184,7 +186,7 @@ impl RowTable {
             rows.push((*id, self.decode(*id, Version::parse(bytes)?.record, None)?));
         }
         let (ids, rows) = ordered(order, rows);
-        let group = Group::write(&self.group_pages()?, self.format.types(), &ids, &rows)?;
+        let group = Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), order.places())?;
         self.publish((None, Some(group)), entries)
     }
 

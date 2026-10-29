@@ -413,3 +413,36 @@ fn groups_are_sorted_by_their_order() {
     assert_eq!(table.get(NO_TRANSACTION, ids[3]).unwrap().map(|r| r[1].to_string()), Some("v-3".to_owned()));
     assert!(table.get(NO_TRANSACTION, ids[450]).unwrap().is_none());
 }
+
+/// Verifies: [DESIGN] RULES.md D31, COLUMNSTORE.ORDER changed: groups
+/// frozen in row id order record none; once the table's order names a
+/// column, the maintenance thread writes each group again sorted by it,
+/// a couple a call, until every one records it and holds its rows so;
+/// every row is found by its id and a scan gives them in row id order, as
+/// before; the order named no column again, they are written in row id
+/// order.
+#[test]
+fn groups_are_sorted_again_when_their_order_changes() {
+    let (_, files) = files();
+    let table = Arc::new(RowTable::create(&files, &TYPES, options(0)).unwrap());
+    let ids: Vec<RowId> = (0..7000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    ended(&table, 1);
+    let orders = |t: &RowTable| -> Vec<Vec<usize>> { t.frozen.directory().unwrap().groups.iter().map(|e| e.group.order.clone()).collect() };
+    assert_eq!(orders(&table), vec![Vec::<usize>::new(); 3], "frozen in row id order");
+    let mut sorted = options(0).columns.unwrap();
+    sorted.order = Order::of(&[1]);
+    table.frozen.reconfigure(Some(sorted));
+    assert!(table.maintenance_due(), "groups to sort");
+    assert!(table.maintain(1).unwrap());
+    assert_eq!(orders(&table).iter().filter(|o| o.as_slice() == [1]).count(), 2, "a couple a call");
+    ended(&table, 1);
+    assert_eq!(orders(&table), vec![vec![1]; 3], "every group sorted");
+    assert!(sorted_by_text(&table) && !table.maintenance_due());
+    assert_eq!(table.get(NO_TRANSACTION, ids[4321]).unwrap().map(|r| r[1].to_string()), Some("v4321".to_owned()));
+    let in_order: Vec<String> = (0_i32..7_000_i32).map(|n| n.to_string()).collect();
+    assert_eq!(scanned(&table, NO_TRANSACTION), in_order, "in row id order");
+    table.frozen.reconfigure(options(0).columns);
+    ended(&table, 1);
+    assert_eq!(orders(&table), vec![Vec::<usize>::new(); 3], "in row id order again");
+    assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
+}

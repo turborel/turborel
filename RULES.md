@@ -802,7 +802,10 @@ the format of frozen groups becomes a trait when it is.
   order and its rows' positions by id, so a row is found by its id: a
   hundredth of 200,000 rows counted by a scattered column ran 4.7 times
   as fast sorted by it (`bench/analytics.rs`), a column the rows were in
-  order of a sixth slower, a fetch by key a twentieth. An option naming
+  order of a sixth slower, a fetch by key a twentieth. A group's header
+  records the columns its rows are sorted by; once the option names
+  others, the maintenance thread writes each group again sorted as it
+  says, two a call, until none is left, after a restart too. An option naming
   columns (`Kind::Columns`) names the table's, and a column it names is
   not dropped. Groups are immutable, their row ids' ranges apart,
   found through a directory the meta page names. A row's newest state is

@@ -35,7 +35,7 @@ Each in a sentence:
 - **COLUMNSTORE.FREEZE_DELAY**: The seconds a row of a table of the column store stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNSTORE.FREEZE_ROWS**: The rows committed past the last group after which a table of the column store freezes them; 0 for COLUMNSTORE.GROUP_ROWS.
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
-- **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes from then on, ascending, so a condition on the first skips more of them; none, in the order they were written.
+- **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own. See [Encryption](../operator/07-encryption.md).
 - **OUT_OF_LINE**: Character values longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
@@ -83,8 +83,10 @@ range of them, so a condition on that column skips most pages. Counting
 a hundredth of 200,000 rows by a column whose values are scattered ran
 4.7 times as fast with the table sorted by it; a condition on a column
 the rows were in the order of before ran a sixth slower, and fetching a
-row by its key a twentieth slower. Groups frozen before the option is
-set or changed keep their order. A column the option names is not
+row by its key a twentieth slower. Once the option is set or changed,
+groups frozen before are written again in the background, sorted as it
+says, a few at a time, until every group is; queries read them as before
+meanwhile, in either order. A column the option names is not
 dropped until it names it no more; each is named as an identifier is,
 a regular one in any case, a delimited one in double quotes.
 

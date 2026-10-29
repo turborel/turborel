@@ -267,7 +267,7 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
         TableOption::new(
             (ORDER, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
             Rebuild::No,
-            "The columns, by commas, by which a table of the column store sorts the rows of each group it freezes from then on, ascending, so a condition on the first skips more of them; none, in the order they were written.",
+            "The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.",
         ),
     ]
 }

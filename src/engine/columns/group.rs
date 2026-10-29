@@ -15,6 +15,7 @@
 //! ```text
 //! page:    next page u64 (0 for none) | the header's bytes
 //! header:  GROUP_FORMAT u8 | first id u64 | last id u64 | rows u32 |
+//!          order u32 | each: column u32 |
 //!          id runs u32 | each: run | by id runs u32 | each: run |
 //!          columns u32 | each: runs u32 | each:
 //!          run | nulls u32 | bounds u8 (1 if any) | least | greatest
@@ -165,6 +166,9 @@ pub struct Group {
     pub by_id: Vec<Run>,
     /// Each column's chunks, in order.
     pub columns: Vec<Vec<Zone>>,
+    /// The places of the columns its rows are sorted by, ascending, as
+    /// COLUMNSTORE.ORDER said as it was written; none, in row id order.
+    pub order: Vec<usize>,
     /// The pages of its header.
     pub header: Vec<PageId>,
 }
@@ -263,9 +267,9 @@ impl Group {
     ///
     /// SQLCODE -910 if the rows are not of the types; -900 if there are too
     /// many; an error of the pages; nothing written is kept.
-    pub fn write<S: Seal>(pages: &Pages<'_, S>, types: &[DataType], ids: &[RowId], rows: &[Row]) -> Result<Group> {
+    pub fn write<S: Seal>(pages: &Pages<'_, S>, types: &[DataType], (ids, rows): (&[RowId], &[Row]), order: &[usize]) -> Result<Group> {
         let mut written = Vec::new();
-        let made = Self::write_all(pages, types, (ids, rows), &mut written);
+        let made = Self::write_all(pages, types, (ids, rows, order), &mut written);
         if made.is_err() {
             pages.free(&written);
         }
@@ -275,7 +279,7 @@ impl Group {
     fn write_all<S: Seal>(
         pages: &Pages<'_, S>,
         types: &[DataType],
-        (ids, rows): (&[RowId], &[Row]),
+        (ids, rows, order): (&[RowId], &[Row], &[usize]),
         written: &mut Vec<PageId>,
     ) -> Result<Group> {
         let (Some(&first), Some(&last)) = (ids.iter().min(), ids.iter().max()) else {
@@ -284,7 +288,8 @@ impl Group {
         let id_runs = write_ids(pages, ids, written)?;
         let by_id = write_by_id(pages, ids, written)?;
         let columns = types.iter().enumerate().map(|(c, t)| write_column(pages, t, (rows, c), written)).collect::<Result<Vec<_>>>()?;
-        let mut group = Group { first, last, rows: count32(rows.len())?, ids: id_runs, by_id, columns, header: Vec::new() };
+        let mut group =
+            Group { first, last, rows: count32(rows.len())?, ids: id_runs, by_id, columns, order: order.to_vec(), header: Vec::new() };
         group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
         Ok(group)
     }
