@@ -1,7 +1,8 @@
 //! How fast analytic queries run on the row store (RULES.md D31), the
 //! baseline of a columnar layout: a table of 16 columns and 200,000 rows
 //! counted, summed by one column and by twelve, filtered to 1% by a column
-//! in the order the rows were written and by one scattered, grouped, and
+//! in the order the rows were written and by one scattered, to 10% by an
+//! indexed column, grouped, and
 //! two of its columns read whole; and one row fetched by its key, the
 //! transactional work beside them. Rates are of the table's rows read,
 //! but the key's, of queries. Run with `cargo xtask bench`, on the harness
@@ -60,6 +61,7 @@ fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
         scan("SELECT COUNT(*) FROM {t} WHERE B BETWEEN 100000 AND 101999"),
     );
     bench.measure(case("COUNT of 1% by a scattered column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE C < 2000"));
+    bench.measure(case("COUNT of 10% by an indexed column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE H BETWEEN 0 AND 6666"));
     bench.measure(case("GROUP BY 10 groups, COUNT, SUM and AVG", "rows"), scan("SELECT G, COUNT(*), SUM(A), AVG(E) FROM {t} GROUP BY G"));
     bench.measure(case("fetch 2 of 16 columns of every row", "rows"), scan("SELECT A, B FROM {t}"));
     bench.measure(case("fetch one row of 16 columns by its key", "queries"), || {
@@ -125,5 +127,8 @@ fn database() -> Database {
         }
     }
     s.commit().unwrap();
+    // H is k / 3: an index finds a tenth of the rows by 6667 of its values.
+    db.create_index("F_H", "B.F", &["H"], "btree").unwrap();
+    db.create_index("FC_H", "B.FC", &["H"], "btree").unwrap();
     db
 }

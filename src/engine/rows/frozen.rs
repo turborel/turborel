@@ -49,6 +49,16 @@ use crate::sync::{lock_builtin, read};
 use crate::txn::Timestamp;
 use crate::value::Value;
 
+/// \[DESIGN\] The cost of a frozen row scanned for none of its columns, a
+/// row of the tree's costing 1, and the cost more if all are read
+/// (`bench/analytics.rs`, a pool holding the table: a COUNT(*) read a row at
+/// a time 0.24 of the ROWS table's time, two columns of sixteen 0.32).
+const FROZEN_ROW: f64 = 0.25;
+const FROZEN_COLUMNS: f64 = 0.75;
+/// \[DESIGN\] The share by which fetching a frozen row costs more than a
+/// row of the tree, each column a page of its own (measured 8% slower).
+const FROZEN_FETCH: f64 = 0.1;
+
 /// A frozen page's context for its encodings: its number, the high bit
 /// set, apart from the row ids that are the contexts of rows' values.
 const FROZEN: u64 = 1 << 63;
@@ -309,6 +319,29 @@ impl RowTable {
             return Ok(());
         }
         each(id, row)
+    }
+
+    /// The planner's cost of a scan of `columns` (`TableStorage::scan_cost`):
+    /// each row of the tree 1, each frozen row as `FROZEN_ROW` and
+    /// `FROZEN_COLUMNS` say.
+    pub(super) fn frozen_scan_cost(&self, columns: &[usize]) -> f64 {
+        let (frozen, all) = self.frozen_share();
+        let width = f64::from(u32::try_from(self.format.columns()).unwrap_or(u32::MAX)).max(1.0_f64);
+        let read = f64::from(u32::try_from(columns.len()).unwrap_or(u32::MAX)).min(width);
+        (all - frozen).max(0.0_f64) + frozen * (FROZEN_ROW + FROZEN_COLUMNS * read / width)
+    }
+
+    /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`).
+    pub(super) fn frozen_fetch_cost(&self) -> f64 {
+        let (frozen, all) = self.frozen_share();
+        let share = if all > 0.0_f64 { (frozen / all).min(1.0_f64) } else { 0.0_f64 };
+        crate::storage::DEFAULT_FETCH_COST * (1.0_f64 + FROZEN_FETCH * share)
+    }
+
+    /// The rows frozen, and all the table's rows, as costs.
+    fn frozen_share(&self) -> (f64, f64) {
+        let frozen = self.frozen.directory().map_or(0, |d| d.rows());
+        (crate::storage::cost_of(usize::try_from(frozen).unwrap_or(usize::MAX)), crate::storage::cost_of(self.live.load(Ordering::Acquire)))
     }
 
     /// Notes a commit at `at`, for COLUMNS.FREEZE_DELAY.

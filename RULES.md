@@ -746,7 +746,10 @@ becomes a trait when it is.
   on one column may match. The entries of rows frozen leave the tree once
   no reader holds the directory from before their group; a checkpoint is
   not captured during a freeze. The log is unchanged, of whole rows, and
-  recovery writes them to the tree.
+  recovery writes them to the tree. The planner is told a scan's cost by
+  the columns it reads: a row of the tree 1, a frozen row 0.25 and 0.75
+  more as all its columns are read; and a fetch's 10% more as all the
+  rows are frozen, as measured (`bench/analytics.rs`).
 - Batches (`TableStorage::scan_batches`): a scan's rows by vectors of up
   to 2048 of each column's values, in no particular order, by default its
   rows gathered. A COLUMNS table gives each frozen vector the tree has no

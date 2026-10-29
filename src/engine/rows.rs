@@ -432,6 +432,18 @@ impl TableStorage for RowTable {
         self.live.load(Ordering::Acquire)
     }
 
+    /// A row of the tree costs 1; a frozen row less, the fewer of its
+    /// columns are read (`rows/frozen.rs`).
+    fn scan_cost(&self, columns: &[usize]) -> f64 {
+        self.frozen_scan_cost(columns)
+    }
+
+    /// The default, more by the share of the rows frozen, each a page a
+    /// column.
+    fn fetch_cost(&self) -> f64 {
+        self.frozen_fetch_cost()
+    }
+
     /// A table opened gathers them when first asked (`rows/recovery.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         let stats: Arc<dyn Statistics> = match self.gathered.get() {

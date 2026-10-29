@@ -199,8 +199,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
     dictionary), COLUMNS.COMPRESSION, before their ENCODINGS;
   - the database's setting STORAGE.LAYOUT, of new tables;
   - freezing in the background, not at a transaction's end;
-  - the planner's costs of a scan by the columns read, and of a frozen
-    row fetched, a page a column;
   - a condition on two or more columns skipping chunks; bloom filters;
   - groups' headers read as they are needed, not held in memory.
 

@@ -209,3 +209,28 @@ fn frozen_pages_pass_through_the_tables_encodings() {
     s.commit().unwrap();
     again.close().unwrap();
 }
+
+/// Verifies: [DESIGN] RULES.md D31, D35: the planner's costs of a table of
+/// the COLUMNS layout: a scan of a few of its columns costs less than of a
+/// table of ROWS, so a fifth of its rows is counted by a scan where a
+/// table of ROWS asks its index; a few rows are asked of the index in
+/// either.
+#[test]
+fn a_column_table_is_scanned_where_a_row_table_is_probed() {
+    use turborel::params::Params;
+    let db = Database::new();
+    let a = both(&db);
+    db.create_index("R_N", "A.R", &["N"], "btree").unwrap();
+    db.create_index("C_N", "A.C", &["N"], "btree").unwrap();
+    let physical = |sql: &str| {
+        let plan = a.explain(sql, &Params::new()).unwrap();
+        plan.split("-- physical:").nth(1).unwrap_or_default().to_owned()
+    };
+    // A fifth of the rows: N is k / 10, so N below 100 is k below 1000.
+    let fifth = "SELECT COUNT(*) FROM {t} WHERE N BETWEEN 0 AND 99";
+    assert!(physical(&fifth.replace("{t}", "R")).contains("IndexScan"), "rows: the index");
+    assert!(!physical(&fifth.replace("{t}", "C")).contains("IndexScan"), "columns: a scan");
+    let few = "SELECT COUNT(*) FROM {t} WHERE N = 7";
+    assert!(physical(&few.replace("{t}", "C")).contains("IndexScan"), "a few rows: the index");
+    assert_eq!(rows(&a, &fifth.replace("{t}", "C")), rows(&a, &fifth.replace("{t}", "R")));
+}
