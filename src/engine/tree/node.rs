@@ -1,7 +1,8 @@
 //! \[DESIGN\] The bytes of a B-link tree node (RULES.md D31; Lehman and
 //! Yao, "Efficient Locking for Concurrent Operations on B-Trees", ACM TODS
 //! 6(4), 1981, §3): one page's content, read in place, searched by binary
-//! search over a slot array, and changed in place when an entry fits.
+//! search over a slot array, and changed in place when an entry fits; a
+//! value replaced by one of its length is written over, nothing moved.
 //!
 //! ```text
 //! header (26 bytes, integers little-endian):
@@ -373,6 +374,26 @@ pub(super) fn set_child(content: &mut [u8], at: usize, child: PageId) -> Result<
     };
     let end = start.checked_add(CHILD).ok_or_else(|| corrupt("a field runs past its end"))?;
     content.get_mut(start..end).ok_or_else(|| corrupt("a field runs past its end"))?.copy_from_slice(&child.0.to_le_bytes());
+    Ok(())
+}
+
+/// Writes `value` over the value of entry `at`, of its length, in place:
+/// no byte moves, and the node keeps its garbage and its last insert.
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is not a node, has no entry `at`, or its value is
+/// of another length.
+pub(super) fn overwrite(content: &mut [u8], at: usize, value: &[u8]) -> Result<()> {
+    let start = {
+        let node = Node::parse(content)?;
+        if node.entry(at)?.1.len() != value.len() {
+            return Err(corrupt("a value written over is of another length"));
+        }
+        node.value_at(at)?
+    };
+    let end = start.checked_add(value.len()).ok_or_else(|| corrupt("a field runs past its end"))?;
+    content.get_mut(start..end).ok_or_else(|| corrupt("a field runs past its end"))?.copy_from_slice(value);
     Ok(())
 }
 

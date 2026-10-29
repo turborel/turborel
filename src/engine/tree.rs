@@ -415,6 +415,14 @@ impl BLinkTree {
                 };
                 (node.live(), old, starts_run(&node, slot)?)
             };
+            // A value of the same length, as a version stamped committed:
+            // written over in place, nothing moved.
+            if let Slot::Replace(at) = slot
+                && old == node::entry_size(key, value)
+            {
+                node::overwrite(&mut page, at, value)?;
+                return Ok(None);
+            }
             let added = node::entry_size(key, value);
             if new_run || live.saturating_sub(old).saturating_add(added) > self.capacity {
                 page.clone()

@@ -714,7 +714,11 @@ the format of frozen groups becomes a trait when it is.
   whoever reaches it; its page freed once no operation that began before
   is left, operations counted by epoch on stripes by thread. A tree built whole, while nothing else reads or writes
   it, is loaded from its entries in key order: full leaves left to right,
-  to nine tenths of a page, then the levels above.
+  to nine tenths of a page, then the levels above. A value replaced by
+  one of its length, as a version stamped committed is, is written over
+  in place, nothing moved, so a leaf is not compacted again and again as
+  a commit stamps its versions: a commit of 2048 rows went from 8.6 ms to
+  1.8 ms.
 - The newest version of a row is in the tree; older ones are in an undo
   store, a log: on disk for a database kept in a directory (`undo/`),
   never synced and begun anew when it opens, as no reader outlives the

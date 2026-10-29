@@ -167,3 +167,23 @@ fn leaf_separators_are_truncated() {
     let up = split(&Shape { level: 1, first: PageId(9), ..shape }, &inner, None, PageId(4)).unwrap();
     assert_eq!(up.separator, b"alpha two", "an inner separator is kept whole");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, a value written over in place (a
+/// version stamped committed): its entry reads back with it, the node's
+/// live bytes, garbage and last insert as they were; one of another
+/// length is refused.
+#[test]
+fn values_of_one_length_are_written_over_in_place() {
+    let mut content = leaf(None, None, &[(b"a", b"11"), (b"c", b"33")]);
+    insert(&mut content, 1, b"b", b"22").unwrap();
+    let before = {
+        let node = Node::parse(&content).unwrap();
+        (node.live(), node.garbage, node.last_insert().unwrap(), content.len())
+    };
+    overwrite(&mut content, 1, b"xy").unwrap();
+    let node = Node::parse(&content).unwrap();
+    assert_eq!(node.entry(1).unwrap(), (&b"b"[..], &b"xy"[..]));
+    assert_eq!((node.live(), node.garbage, node.last_insert().unwrap(), content.len()), before);
+    assert_eq!(overwrite(&mut content, 1, b"xyz").err().map(|e| e.code), Some(Code::Corrupt), "another length");
+    assert_eq!(overwrite(&mut content, 3, b"xy").err().map(|e| e.code), Some(Code::Corrupt), "no such entry");
+}
