@@ -154,8 +154,12 @@ The registry, scopes and SET statements exist (D36). Still to do:
 - **Batch execution, further** (RULES.md D31): RIGHT and FULL outer
   joins, and LEFT ones with a condition beyond their keys; products and
   a join's right operand built from batches; a sort, a DISTINCT of
-  expressions, EXCEPT and INTERSECT over streams; expressions evaluated a vector at a time, not
-  a row's; groups' set functions fed a vector
+  expressions, EXCEPT and INTERSECT over streams; typed vectors: a
+  batch's values are each a `Value`, so a filter of an expression
+  evaluated a vector at a time ran as fast as a row at a time (`B * 2 >
+  400000` of 400,000 rows: 11.7 ms either way, `B > 200000` 5.6), the
+  time in decoding values and operating on each; kernels over vectors of
+  integers would spare it; groups' set functions fed a vector
   at a time, each group's rows gathered first; a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
 - **Spilled sorts**: of 400,000 rows past the default WORK_MEMORY a sort

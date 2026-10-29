@@ -12,12 +12,14 @@
 mod judge;
 mod project;
 mod stream;
+mod vector;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use project::Place;
 pub(super) use project::{projectable, projected};
+use vector::Lane;
 
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
@@ -166,8 +168,9 @@ fn take_row<'b>(
     states: &mut [Box<dyn Accumulator>],
     (taken, scratch): (&[Taken], &mut Row),
     value: impl Fn(usize) -> Option<&'b Value>,
+    (lanes, n): (&[Option<Lane<'_>>], usize),
 ) -> Result<()> {
-    for (state, take) in states.iter_mut().zip(taken) {
+    for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
         match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update(&Value::Null)?,
@@ -177,7 +180,16 @@ fn take_row<'b>(
                     state.update(v)?;
                 }
             }
+            // Its value of the batch's evaluated a vector at a time, if
+            // it was (`vector.rs`).
             Taken::Expr(e, inputs) => {
+                if let Some(lane) = lane {
+                    let v = lane.at(n);
+                    if !v.is_null() {
+                        state.update(v)?;
+                    }
+                    continue;
+                }
                 let v = evaluated((e, inputs), scratch, |at| value(at).unwrap_or(&Value::Null))?;
                 if !v.is_null() {
                     state.update(&v)?;
@@ -231,6 +243,7 @@ impl Groups {
     /// set functions `aggs`, as `read` says; a row of a group past the work
     /// area is written, for its group to be made after.
     fn feed(&mut self, batch: &Batch, rows: Option<&[usize]>, (read, aggs): (&Read, &[AggCall])) -> Result<()> {
+        let lanes = lanes(&read.taken, batch, rows);
         for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
             let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
             let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r));
@@ -244,7 +257,7 @@ impl Groups {
             self.rows = self.rows.saturating_add(1);
             let Some(at) = self.place(number, (batch, r), (read, aggs))? else { continue };
             let Some((_, _, states)) = self.held.get_mut(at) else { continue };
-            take_row(states, (&read.taken, &mut self.scratch), value)?;
+            take_row(states, (&read.taken, &mut self.scratch), value, (&lanes, n))?;
         }
         Ok(())
     }
@@ -292,23 +305,40 @@ fn read_all(read: &Read, aggs: &[AggCall], batches: stream::Batches) -> Result<V
 /// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all:
 /// each a vector at a time (`Accumulator::update_many`, `update_rows`).
 fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
-    let mut scratch = Vec::new();
     for (state, take) in states.iter_mut().zip(taken) {
         match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update_rows(rows.map_or(batch.rows, <[usize]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
             Taken::Column(at) => state.update_many(batch.columns.get(*at).map_or(&[][..], Vec::as_slice), rows)?,
-            // A vector of its values, of the rows given, made first.
-            Taken::Expr(e, inputs) => {
-                let value = |at: usize, r: usize| batch.columns.get(at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
-                let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
-                for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
-                    values.push(evaluated((e, inputs), &mut scratch, |at| value(at, r))?);
-                }
-                state.update_many(&values, None)?;
-            }
+            // Its values evaluated a vector at a time (`vector.rs`), or else
+            // a row at a time.
+            Taken::Expr(e, inputs) => match vector::lane(e, inputs, batch, rows) {
+                Some(Lane::Column(values, given)) => state.update_many(values, given)?,
+                Some(Lane::Made(values)) => state.update_many(&values, None)?,
+                Some(Lane::Const(v)) => state.update_many(&vec![v.clone(); rows.map_or(batch.rows, <[usize]>::len)], None)?,
+                None => fed_by_rows(batch, (e, inputs), rows, state)?,
+            },
         }
     }
     Ok(())
+}
+
+/// Feeds `state` the values of `e` of the rows `rows` of `batch`, or all,
+/// each evaluated as a row's is, its columns the vectors at `inputs`.
+fn fed_by_rows(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usize]>, state: &mut Box<dyn Accumulator>) -> Result<()> {
+    let mut scratch = Vec::new();
+    let value = |at: usize, r: usize| batch.columns.get(at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
+    let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
+    for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
+        values.push(evaluated((e, inputs), &mut scratch, |at| value(at, r))?);
+    }
+    state.update_many(&values, None)
+}
+
+/// The values of each of `taken` that is an expression of the rows `rows`
+/// of `batch`, or all, evaluated a vector at a time, where it is
+/// (`vector.rs`).
+fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [usize]>) -> Vec<Option<Lane<'b>>> {
+    taken.iter().map(|t| if let Taken::Expr(e, inputs) = t { vector::lane(e, inputs, batch, rows) } else { None }).collect()
 }

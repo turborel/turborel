@@ -358,3 +358,31 @@ fn distinct_by_batch_answers_as_row_by_row() {
         assert_eq!(all.len(), 6000 - 101 - 71 + 2, "{table}: every row, past the work area");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.9 GR1, GR4, GR5, §5.8
+/// GR1]: set functions of expressions evaluated a vector at a time give
+/// what they give row by row, of a table of either store: arithmetic and
+/// negation, nulls among their operands, grouped or not, filtered; one
+/// nested deeper than a vector's evaluation goes, a row at a time, alike;
+/// one that raises an error of a row raises it, grouped or not.
+#[test]
+fn set_functions_of_vectors_answer_as_row_by_row() {
+    let db = Database::new();
+    let a = both(&db);
+    let deep = format!("SELECT SUM(N{}) FROM {{t}}", " + 1".repeat(20));
+    let queries = [
+        "SELECT SUM(N * 2 - K), MIN(-N), MAX(K / 2), AVG(N + G) FROM {t}",
+        "SELECT G, SUM(N * 3), COUNT(N + 1), MAX(-K) FROM {t} GROUP BY G",
+        "SELECT SUM(K - N) FROM {t} WHERE G = 2",
+        deep.as_str(),
+    ];
+    off_alike(&a, &queries);
+    for table in ["R", "C"] {
+        for raising in [format!("SELECT SUM(K / (G - 3)) FROM {table}"), format!("SELECT G, SUM(K / (G - 3)) FROM {table} GROUP BY G")] {
+            assert_eq!(rows(&a, &raising).err(), Some(Code::Data), "{raising}: division by zero");
+            exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+            assert_eq!(rows(&a, &raising).err(), Some(Code::Data), "{raising}, row by row");
+            exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        }
+    }
+}

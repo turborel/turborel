@@ -879,7 +879,11 @@ the format of frozen groups becomes a trait when it is.
   values, or an expression's evaluated as a row's is, of a row of only
   the values it reads, no subquery in it (`SUM(B * 2)` of 400,000 rows of
   the column store: 31.0 ms to 11.9; grouped, `SUM(B * 2 + 1)` 72.6 to
-  24.8),
+  24.8); one of columns and constants, negated and in arithmetic, no
+  deeper than 16, a vector at a time, each node once over the batch, a
+  value at a time as a row's (`exec/batch/vector.rs`), or the batch's a
+  row at a time if one raises an error, so the error is the row's
+  (`SUM(B * 2)` 12.2 to 9.4, grouped 25.1 to 23.7),
   of no GROUP BY a vector at a time (`Accumulator::update_many`,
   `update_rows`, each by default `update` a value at a time): COUNT
   counting, SUM adding exact values as decimals, nothing cloned, MAX and
