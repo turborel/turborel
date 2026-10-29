@@ -4,7 +4,7 @@
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
 use super::Chunk;
-use super::group::{Group, Pages, Seal, Zone};
+use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
 use crate::error::Result;
 use crate::storage::{Coded, Conjunct, Conjunction, Ints, Row, Texts};
 use crate::value::{DataType, Value};
@@ -43,8 +43,9 @@ fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
 
 /// The runs of positions of `group`'s rows that `condition` may match, in
 /// order: every row if it reads more than one column; else those of the
-/// chunks of its column whose values may match: by their least and
-/// greatest values, or, for IS NULL and IS NOT NULL, their nulls.
+/// parts of its column's chunks, `PART_ROWS` rows each, whose values may
+/// match: by their least and greatest values, or, for IS NULL and IS NOT
+/// NULL, their nulls.
 fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
     let all = vec![(0, group.rows)];
     let columns = condition.columns();
@@ -52,19 +53,25 @@ fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
     let Some(zones) = group.columns.get(*column) else { return all };
     let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];
     let mut runs: Vec<(u32, u32)> = Vec::new();
-    for zone in zones {
+    let parts = zones.iter().flat_map(|zone| {
+        let end = zone.run.first.saturating_add(zone.run.rows);
+        zone.parts.iter().enumerate().map(move |(n, part)| {
+            let from = zone.run.first.saturating_add(u32::try_from(n).unwrap_or(u32::MAX).saturating_mul(PART_ROWS));
+            (part, (from, from.saturating_add(PART_ROWS).min(end)))
+        })
+    });
+    for (part, (from, to)) in parts {
         if let Some(b) = bounds.get_mut(*column) {
-            b.clone_from(&zone.bounds);
+            b.clone_from(&part.bounds);
         }
         let may = match condition {
-            Conjunct::Null { not: false, .. } => zone.nulls > 0,
-            Conjunct::Null { not: true, .. } => zone.nulls < zone.run.rows,
+            Conjunct::Null { not: false, .. } => part.nulls > 0,
+            Conjunct::Null { not: true, .. } => part.nulls < to.saturating_sub(from),
             Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => condition.may_match(&bounds),
         };
         if !may {
             continue;
         }
-        let (from, to) = (zone.run.first, zone.run.first.saturating_add(zone.run.rows));
         // A run that goes on from the one before joins it.
         if let Some(last) = runs.last_mut().filter(|last| last.1 == from) {
             last.1 = to;

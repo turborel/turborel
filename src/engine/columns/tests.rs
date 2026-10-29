@@ -1,6 +1,6 @@
 //! Unit tests of column chunks (`columns.rs`).
 
-use super::encoded::{CONSTANT, DICTIONARY, FIXED, FRAME, VARYING};
+use super::encoded::{CONSTANT, DICTIONARY, FIXED, FRAME, RUNS, VARYING};
 use super::*;
 use crate::value::{Decimal, Spelled};
 
@@ -250,4 +250,35 @@ fn chunks_give_their_codes() {
     let varying: Vec<Value> = (0_u32..30_u32).map(|n| Value::Char(format!("value {n}"))).collect();
     assert_eq!(coded_of(&varying, &[0, 1]), None, "varying fields");
     assert_eq!(coded_of(&few, &[300]), None, "past the end");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, runs of one value: a sorted column of
+/// few values, a null leading and nulls among them, is written as runs,
+/// in fewer bytes than a frame of reference, and reads back as written,
+/// one at a time and of any range of its positions; a run's bytes cut
+/// short, or of differences wider than 64 bits, are refused with SQLCODE
+/// -916.
+#[test]
+fn sorted_chunks_are_runs() {
+    let sorted: Vec<Value> = [Value::Null]
+        .into_iter()
+        .chain((0..2000_i128).map(|n| if n % 97 == 5 { Value::Null } else { int(n.checked_div(250).unwrap() * 1000 - 3000) }))
+        .collect();
+    let (kind, len, back) = compressed(&INTEGER, &sorted);
+    assert_eq!(kind, RUNS);
+    assert!(len < 400, "8 runs and nulls, not 2,001 values: {len}");
+    assert_eq!(back, sorted.iter().map(ToString::to_string).collect::<Vec<_>>());
+    for range in [(0, 2001), (0, 1), (249, 252), (1700, 2001), (7, 7)] {
+        let (made, read) = ints_of(&sorted, true, range).unwrap();
+        assert_eq!(made, read, "{range:?}");
+    }
+    assert_eq!(ints_of(&sorted, true, (0, 2002)), None, "past the end");
+    let fields = Fields::of(&INTEGER, sorted.iter().cloned()).unwrap();
+    let bytes = fields.chunk(&INTEGER, 0, (fields.len(), true)).unwrap();
+    let code = |b: &[u8]| Chunk::parse(b).err().map(|e| e.code);
+    assert_eq!(code(&bytes[..bytes.len().saturating_sub(1)]), Some(Code::Corrupt), "cut short");
+    let at = HEADER.saturating_add(nulls_len(fields.len())).saturating_add(WORD).saturating_add(8);
+    let mut wide = bytes.clone();
+    wide[at] = 65;
+    assert_eq!(code(&wide), Some(Code::Corrupt), "wider than 64 bits");
 }

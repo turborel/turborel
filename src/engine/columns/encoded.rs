@@ -10,6 +10,8 @@
 //! FRAME:       bits u8 | least i64 | count × bits, bit-packed, each value of
 //!              8 bytes as a signed integer less the least, a null's zeroed
 //!              (`packed.rs`)
+//! RUNS:        runs of one value, of 8-byte fields as a frame's
+//!              (`runs.rs`)
 //! DICTIONARY:  code u8 | entries u32 | (entries + 1) × u32, where each
 //!              entry begins and the last ends | the entries | count × code
 //!              bytes, each value's entry, a null's 0
@@ -24,6 +26,7 @@
 use std::collections::HashMap;
 
 use super::packed::{bits_for, get, pack, packed_len, unpack};
+use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
 use crate::error::Result;
 use crate::value::{DataType, Value};
@@ -33,6 +36,7 @@ pub(super) const VARYING: u8 = 2;
 pub(super) const CONSTANT: u8 = 3;
 pub(super) const FRAME: u8 = 4;
 pub(super) const DICTIONARY: u8 = 5;
+pub(super) const RUNS: u8 = 6;
 /// The bytes of a field frame of reference takes.
 const FRAMED: usize = 8;
 /// The most entries of a dictionary: as many as a code of two bytes names.
@@ -50,6 +54,8 @@ pub(super) enum Plan {
     Frame(i64, u32),
     /// A dictionary, each value's entry in a code of this many bytes.
     Dictionary(usize),
+    /// Runs of one value, each less the least in this many bits.
+    Runs(i64, u32),
 }
 
 /// The bytes the values of a chunk take, in each encoding that can hold
@@ -65,6 +71,9 @@ pub(super) struct Sizer<'f> {
     same: bool,
     /// The least and greatest values of 8 bytes, while every one is so.
     range: Option<(i64, i64)>,
+    /// The runs of values alike among them, and the last value.
+    runs: usize,
+    last: Option<i64>,
     framed: bool,
     entries: HashMap<&'f [u8], usize>,
     entry_bytes: usize,
@@ -86,6 +95,8 @@ impl<'f> Sizer<'f> {
             first: None,
             same: true,
             range: None,
+            runs: 0,
+            last: None,
             framed: width == Some(FRAMED),
             entries: HashMap::new(),
             entry_bytes: 0,
@@ -105,7 +116,13 @@ impl<'f> Sizer<'f> {
             Some(first) => self.same = self.same && first == f,
         }
         match (integer(f), self.framed) {
-            (Some(n), true) => self.range = Some(self.range.map_or((n, n), |(lo, hi)| (lo.min(n), hi.max(n)))),
+            (Some(n), true) => {
+                self.range = Some(self.range.map_or((n, n), |(lo, hi)| (lo.min(n), hi.max(n))));
+                if self.last != Some(n) {
+                    self.runs = self.runs.saturating_add(1);
+                    self.last = Some(n);
+                }
+            }
             (None, _) | (_, false) => self.framed = false,
         }
         if self.entries.len() < MOST_ENTRIES && !self.entries.contains_key(f) {
@@ -135,6 +152,8 @@ impl<'f> Sizer<'f> {
             let bits = bits_for(u64::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u64::MAX));
             let packed = packed_len(self.count, bits).unwrap_or(usize::MAX);
             found.push((Plan::Frame(lo, bits), base.saturating_add(1 + FRAMED).saturating_add(packed)));
+            let runs = runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX);
+            found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
         }
         if self.entries.len() < MOST_ENTRIES {
             let code = if self.entries.len() < SMALL_ENTRIES { 1 } else { 2 };
@@ -176,6 +195,7 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], out: &mut Vec<u8>) 
         }
         Plan::Frame(least, bits) => framed(fields, (least, bits), out),
         Plan::Dictionary(code) => dictionary(fields, code, out)?,
+        Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
     }
     Ok(())
 }
@@ -233,6 +253,7 @@ pub(super) enum Body<'a> {
     Constant { field: &'a [u8] },
     Frame { least: i64, bits: u32, deltas: &'a [u8] },
     Dictionary { code: usize, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
+    Runs(Runs<'a>),
 }
 
 /// `bytes` from `at` on, `len` of them.
@@ -282,6 +303,7 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
             )?;
             Ok(Body::Dictionary { code, offsets, entries: held, codes })
         }
+        RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
         _ => Err(corrupt("it is of another format")),
     }
 }
@@ -299,6 +321,7 @@ impl Body<'_> {
                 decoded(values.get(from..to))
             }
             Body::Constant { field } => decoded(Some(field)),
+            Body::Runs(runs) => decoded(runs.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
             Body::Frame { least, bits, deltas } => {
                 let delta = get(deltas, *bits, n).ok_or_else(|| corrupt("a value past its end is asked for"))?;
                 let sum = i128::from(*least).saturating_add(i128::from(delta));
@@ -329,6 +352,7 @@ impl Body<'_> {
         let count = to.checked_sub(from)?;
         match self {
             Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), out),
+            Body::Runs(runs) => runs.ints((from, to), out),
             Body::Fixed { width: FRAMED, values } => {
                 let given = values.get(from.checked_mul(FRAMED)?..to.checked_mul(FRAMED)?)?;
                 out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&w| i64::from_le_bytes(w)));
@@ -410,7 +434,7 @@ impl Body<'_> {
                 let (from, to) = between(offsets, usize::from(self.code(n)?))?;
                 entries.get(from..to)
             }
-            Body::Fixed { .. } | Body::Frame { .. } => None,
+            Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) => None,
         }
     }
 }
@@ -463,5 +487,6 @@ pub(super) fn kind_of(plan: Plan) -> u8 {
         Plan::Constant => CONSTANT,
         Plan::Frame(..) => FRAME,
         Plan::Dictionary(_) => DICTIONARY,
+        Plan::Runs(..) => RUNS,
     }
 }

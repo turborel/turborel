@@ -57,7 +57,9 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
     let group = Group::write(pages, &TYPES, (&ids, &all), &[]).unwrap();
     assert_eq!((group.first, group.last, group.rows), (first, *ids.last().unwrap(), u32::try_from(count).unwrap()));
     assert_eq!(group.row_ids(pages).unwrap(), ids);
-    assert!(count < 1000 || group.columns.iter().all(|zones| zones.len() > 1), "columns span pages");
+    let parts = |zones: &Vec<Zone>| zones.iter().map(|z| z.parts.len()).sum::<usize>();
+    assert!(count < 1000 || group.columns.iter().all(|zones| parts(zones) > 1), "columns span parts");
+    assert!(count < 1000 || group.columns.iter().any(|zones| zones.len() > 1), "a column spans pages");
     for n in [0_usize, 1, 999, ids.len().saturating_sub(1)].into_iter().filter(|&n| n < ids.len()) {
         let at = group.position(pages, ids[n]).unwrap().unwrap();
         assert_eq!(usize::try_from(at).unwrap(), n);
@@ -89,7 +91,8 @@ fn groups_read_back() {
             (back.first, back.last, back.rows, back.ids.clone(), back.header.clone()),
             (group.first, group.last, group.rows, group.ids.clone(), group.header.clone())
         );
-        let bounds = |g: &Group| g.columns.iter().flatten().map(|z| (z.run, z.nulls, format!("{:?}", z.bounds))).collect::<Vec<_>>();
+        let bounds =
+            |g: &Group| g.columns.iter().flatten().map(|z| (z.run, z.nulls, format!("{:?} {:?}", z.bounds, z.parts))).collect::<Vec<_>>();
         assert_eq!(bounds(&back), bounds(&group));
         assert!(group.pages().len() > group.header.len());
     }
@@ -111,8 +114,9 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     };
     let runs = candidates(&group, Some(&Conjunction::of(between.clone())));
     let read: u32 = runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
-    // The chunks holding them, each of hundreds of rows bit-packed.
-    assert!((200..2000).contains(&read), "the 200 rows of 10 and 11 and their chunks', not all 4000: {read}");
+    // The parts holding them, of 1,024 rows each: rows 1,000 to 1,199 lie
+    // in the first two, though a chunk of runs holds thousands of rows.
+    assert_eq!(read, 2048, "the 200 rows of 10 and 11 and their parts', not all 4000");
     let found: Vec<Row> =
         runs.iter().flat_map(|&run| rows(&group, &pages, &TYPES, &[0, 2], run).unwrap()).filter(|r| between.matches(r)).collect();
     assert_eq!(found.len(), 200);
@@ -136,13 +140,13 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     );
     assert_eq!(candidates(&group, Some(&Conjunction(Vec::new()))), vec![(0, 4000)], "no condition");
     // K has no null: IS NULL keeps no chunk, IS NOT NULL every one; IN of
-    // two groups' values keeps their chunks.
+    // two groups' values keeps their parts, each value's in at most two.
     let null = |not| Conjunction(vec![Conjunct::Null { column: 0, not }]);
     assert!(candidates(&group, Some(&null(false))).is_empty(), "no null");
     assert_eq!(candidates(&group, Some(&null(true))), vec![(0, 4000)]);
     let listed = Conjunction(vec![Conjunct::In { column: 2, values: vec![int(10), int(30)] }]);
     let kept: u32 = candidates(&group, Some(&listed)).iter().map(|(from, to)| to.saturating_sub(*from)).sum();
-    assert!((200..2000).contains(&kept), "the chunks of the 200 rows of 10 and 30, not all: {kept}");
+    assert!((200..4000).contains(&kept), "the parts of the 200 rows of 10 and 30, not all: {kept}");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, frozen row groups: a group of no rows,

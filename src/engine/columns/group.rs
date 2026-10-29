@@ -18,7 +18,9 @@
 //!          order u32 | each: column u32 |
 //!          id runs u32 | each: run | by id runs u32 | each: run |
 //!          columns u32 | each: runs u32 | each:
-//!          run | nulls u32 | bounds u8 (1 if any) | least | greatest
+//!          run | nulls u32 | bounds u8 (1 if any) | least | greatest |
+//!          parts u32 | each, of PART_ROWS rows: nulls u32 | bounds u8 |
+//!          least | greatest
 //! run:     first row u32 | rows u32 | page u64
 //! bound:   length u32 | the value as its type writes it in a record
 //! ```
@@ -147,6 +149,23 @@ pub struct Zone {
     pub nulls: u32,
     /// Its least and greatest values that are not null, if any.
     pub bounds: Option<(Value, Value)>,
+    /// Of each `PART_ROWS` of its rows, in order, the last fewer, what a
+    /// scan may skip them by: a chunk compressed holds many more rows than
+    /// a scan should skip at once.
+    pub parts: Vec<Part>,
+}
+
+/// \[DESIGN\] The rows of a chunk a scan skips at once at most: 1024, as a
+/// zone of the row store's.
+pub const PART_ROWS: u32 = 1024;
+
+/// Of `PART_ROWS` rows of a chunk, what a scan may skip them by.
+#[derive(Debug, Clone)]
+pub struct Part {
+    /// How many of their values are null.
+    pub nulls: u32,
+    /// Their least and greatest values that are not null, if any.
+    pub bounds: Option<(Value, Value)>,
 }
 
 /// \[DESIGN\] A frozen row group: its row ids, and its columns' chunks.
@@ -212,8 +231,16 @@ fn write_column<S: Seal>(
     while from < fields.len() {
         let count = fields.fitting(t, from, (pages.capacity, pages.compress));
         let page = pages.put(&fields.chunk(t, from, (count, pages.compress))?, written)?;
-        let (bounds, nulls) = bounds_of(values.get(from..from.saturating_add(count)).unwrap_or_default());
-        zones.push(Zone { run: Run { first: count32(from)?, rows: count32(count)?, page }, nulls, bounds });
+        let held = values.get(from..from.saturating_add(count)).unwrap_or_default();
+        let (bounds, nulls) = bounds_of(held);
+        let parts = held
+            .chunks(usize::try_from(PART_ROWS).unwrap_or(usize::MAX))
+            .map(|part| {
+                let (part_bounds, part_nulls) = bounds_of(part);
+                Part { nulls: part_nulls, bounds: part_bounds }
+            })
+            .collect();
+        zones.push(Zone { run: Run { first: count32(from)?, rows: count32(count)?, page }, nulls, bounds, parts });
         from = from.saturating_add(count);
     }
     Ok(zones)

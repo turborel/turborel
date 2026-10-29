@@ -59,11 +59,12 @@ soon after, so no transaction waits for it; queries read the table
 meanwhile as before, the rows not yet frozen from where they were
 written. A query that reads a few columns of many
 rows then reads only those columns' pages, and a condition on a column
-skips the pages whose values it cannot match. Each page of a column's
-values is compressed, unless COLUMNSTORE.COMPRESSION is NONE: a value the same
-throughout kept once, numbers kept as their differences from the least, or
-few distinct values kept once each, whichever takes fewest bytes, so a
-page holds more of them. The more of a table's rows
+skips, 1,024 rows at a time, the values it cannot match. Each page of a
+column's values is compressed, unless COLUMNSTORE.COMPRESSION is NONE: a
+value the same throughout kept once, numbers kept as their differences
+from the least, a number repeated over rows in a row kept once for them
+all, or few distinct values kept once each, whichever takes fewest bytes,
+so a page holds more of them. The more of a table's rows
 are frozen, and the fewer of its columns a query reads, the faster it
 reads them.
 

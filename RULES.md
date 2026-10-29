@@ -787,14 +787,19 @@ the format of frozen groups becomes a trait when it is.
   database's maintenance thread freezes up to COLUMNSTORE.GROUP_ROWS of them,
   2^16 by default, into a group (`engine/columns`): its row ids, and each column's values
   in chunks of a page each, each chunk's least and greatest values and
-  nulls kept (zone maps), every page sealed by the table's ENCODINGS, its
+  nulls kept (zone maps), and those of each 1024 rows of it (a part,
+  `group.rs` PART_ROWS), so a scan skips a compressed chunk's rows as
+  finely as a plain one's, every page sealed by the table's ENCODINGS, its
   number the context. A chunk is written in whichever encoding takes
   fewest bytes, and holds as many values as its page does so: plain, a
   constant, a frame of reference of 8-byte fields (any such field read as
   a signed integer, so every type of that width), each difference
   bit-packed in the bits its span needs (`columns/packed.rs`: a chunk of
   2048 numbers of 12 values 2318 bytes to 1040, of a flag 2318 to 272, of
-  numbers up to 400,000 8462 to 4880), or a dictionary
+  numbers up to 400,000 8462 to 4880), runs of one value of such fields,
+  each run's value and end bit-packed, a null continuing the run before
+  it (`columns/runs.rs`: a sorted column of 400,000 rows of 80 values
+  summed 2.2 ms to 1.9), or a dictionary
   (`columns/encoded.rs`); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Unpacked a value's 8 bytes at a time, a column of numbers held in
   memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
