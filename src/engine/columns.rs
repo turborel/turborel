@@ -213,7 +213,7 @@ impl<'a> Chunk<'a> {
         if positions.iter().any(|&n| n >= self.count) {
             return None;
         }
-        self.body.coded(positions.iter().copied(), (text, ends, codes), |n| self.is_null(n))?;
+        self.body.coded(positions, (text, ends, codes), |n| self.is_null(n))?;
         nulls.extend(positions.iter().map(|&n| self.is_null(n)));
         Some(())
     }

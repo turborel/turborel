@@ -70,6 +70,7 @@ fn malformed_chunks_are_refused() {
     assert_eq!(code(&[FIXED, 9, 0, 0, 0]), Some(Code::Corrupt), "no nulls");
     assert_eq!(code(&[FIXED, 1, 0, 0, 0, 0, 8, 0, 0, 0, 1]), Some(Code::Corrupt), "a value too short");
     assert_eq!(code(&[VARYING, 1, 0, 0, 0, 0, 0, 0]), Some(Code::Corrupt), "offsets too short");
+    assert_eq!(code(&[DICTIONARY, 1, 0, 0, 0, 0, 17, 1, 0, 0, 0]), Some(Code::Corrupt), "codes wider than 16 bits");
     let bytes = Fields::of(&INTEGER, [int(1)].into_iter()).unwrap().chunk(&INTEGER, 0, (1, false)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
     assert!(!chunk.is_empty());
@@ -90,7 +91,8 @@ fn compressed(t: &DataType, values: &[Value]) -> (u8, usize, Vec<String>) {
 /// holds are written in the encoding that takes fewest bytes, and read
 /// back as written, nulls among them: one value throughout, a constant;
 /// numbers near one another, a frame of reference, each in the bits their
-/// span needs; few texts, a dictionary; values every one apart, and
+/// span needs; few texts, a dictionary, each code in the bits its
+/// entries need, of more than 256 entries too; values every one apart, and
 /// numbers whose span needs 64 bits, as they are; and more values fit a
 /// page compressed.
 #[test]
@@ -108,7 +110,10 @@ fn chunks_are_compressed() {
     let wider: Vec<Value> = (0..100).map(|n| int(-5000 + n * 100)).collect();
     check(&INTEGER, wider, FRAME);
     let few: Vec<Value> = (0..300).map(|n| Value::Char(["red", "green", "blue"][n % 3].to_owned())).collect();
-    assert!(check(&TEXT, few, DICTIONARY) < 400);
+    assert!(check(&TEXT, few, DICTIONARY) < 160, "two bits each");
+    let hundreds: Vec<Value> = (0..3000_u32).map(|n| Value::Char(format!("v{}", n.checked_rem(300).unwrap()))).collect();
+    // 3,375 bytes of codes, 300 entries' offsets and texts.
+    assert!(check(&TEXT, hundreds, DICTIONARY) < 3375 + 300 * 9, "nine bits each");
     let apart: Vec<Value> = (0..50_u32).map(|n| Value::Char(format!("value {n}"))).collect();
     check(&TEXT, apart, VARYING);
     let spread: Vec<Value> = (0..50).map(|n| int(n * 10_000_000_000)).collect();

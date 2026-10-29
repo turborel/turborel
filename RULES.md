@@ -799,8 +799,9 @@ the format of frozen groups becomes a trait when it is.
   numbers up to 400,000 8462 to 4880), runs of one value of such fields,
   each run's value and end bit-packed, a null continuing the run before
   it (`columns/runs.rs`: a sorted column of 400,000 rows of 80 values
-  summed 2.2 ms to 1.9), or a dictionary
-  (`columns/encoded.rs`); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
+  summed 2.2 ms to 1.9), or a dictionary, each value's code bit-packed
+  in the bits its entries need (`columns/encoded.rs`: of 12 texts, 4 bits
+  a code, not a byte, scanned as fast); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Unpacked a value's 8 bytes at a time, a column of numbers held in
   memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
   rows 2.0 ms to 2.3), as its pages are half as many or fewer.

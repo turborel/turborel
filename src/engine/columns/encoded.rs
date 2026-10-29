@@ -12,9 +12,9 @@
 //!              (`packed.rs`)
 //! RUNS:        runs of one value, of 8-byte fields as a frame's
 //!              (`runs.rs`)
-//! DICTIONARY:  code u8 | entries u32 | (entries + 1) × u32, where each
-//!              entry begins and the last ends | the entries | count × code
-//!              bytes, each value's entry, a null's 0
+//! DICTIONARY:  bits u8 | entries u32 | (entries + 1) × u32, where each
+//!              entry begins and the last ends | the entries | count × bits,
+//!              bit-packed, each value's entry, a null's 0
 //! ```
 //!
 //! Integers are little-endian. Each value is as its type writes it in a
@@ -39,10 +39,10 @@ pub(super) const DICTIONARY: u8 = 5;
 pub(super) const RUNS: u8 = 6;
 /// The bytes of a field frame of reference takes.
 const FRAMED: usize = 8;
-/// The most entries of a dictionary: as many as a code of two bytes names.
+/// The most entries of a dictionary: as many as a code of 16 bits names.
 const MOST_ENTRIES: usize = 1 << 16;
-/// Entries a code of one byte names.
-const SMALL_ENTRIES: usize = 1 << 8;
+/// The bits of a code of the most entries.
+const MOST_CODE_BITS: u32 = 16;
 
 /// How a chunk's values are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +52,8 @@ pub(super) enum Plan {
     Constant,
     /// Frame of reference, each value less the least in this many bits.
     Frame(i64, u32),
-    /// A dictionary, each value's entry in a code of this many bytes.
-    Dictionary(usize),
+    /// A dictionary, each value's entry in a code of this many bits.
+    Dictionary(u32),
     /// Runs of one value, each less the least in this many bits.
     Runs(i64, u32),
 }
@@ -156,11 +156,11 @@ impl<'f> Sizer<'f> {
             found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
         }
         if self.entries.len() < MOST_ENTRIES {
-            let code = if self.entries.len() < SMALL_ENTRIES { 1 } else { 2 };
+            let bits = bits_for(u64::try_from(self.entries.len().saturating_sub(1)).unwrap_or(u64::MAX));
             let table = self.entries.len().saturating_add(1).saturating_mul(WORD).saturating_add(self.entry_bytes);
             found.push((
-                Plan::Dictionary(code),
-                base.saturating_add(1 + WORD).saturating_add(table).saturating_add(self.count.saturating_mul(code)),
+                Plan::Dictionary(bits),
+                base.saturating_add(1 + WORD).saturating_add(table).saturating_add(packed_len(self.count, bits).unwrap_or(usize::MAX)),
             ));
         }
         found.into_iter().min_by_key(|&(_, bytes)| bytes).unwrap_or(plain)
@@ -194,7 +194,7 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], out: &mut Vec<u8>) 
             out.extend_from_slice(one);
         }
         Plan::Frame(least, bits) => framed(fields, (least, bits), out),
-        Plan::Dictionary(code) => dictionary(fields, code, out)?,
+        Plan::Dictionary(bits) => dictionary(fields, bits, out)?,
         Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
     }
     Ok(())
@@ -213,11 +213,11 @@ fn framed(fields: &[Option<Vec<u8>>], (least, bits): (i64, u32), out: &mut Vec<u
 }
 
 /// Appends `fields` as a dictionary of their values, each one's entry in a
-/// code of `code` bytes.
-fn dictionary(fields: &[Option<Vec<u8>>], code: usize, out: &mut Vec<u8>) -> Result<()> {
+/// code of `bits`, bit-packed.
+fn dictionary(fields: &[Option<Vec<u8>>], bits: u32, out: &mut Vec<u8>) -> Result<()> {
     let mut places: HashMap<&[u8], usize> = HashMap::new();
     let mut entries: Vec<&[u8]> = Vec::new();
-    let codes: Vec<usize> = fields
+    let codes: Vec<u64> = fields
         .iter()
         .map(|f| {
             f.as_deref().map_or(0, |f| {
@@ -227,8 +227,12 @@ fn dictionary(fields: &[Option<Vec<u8>>], code: usize, out: &mut Vec<u8>) -> Res
                 })
             })
         })
+        .map(|c| u64::try_from(c).unwrap_or(u64::MAX))
         .collect();
-    out.push(u8::try_from(code).unwrap_or(u8::MAX));
+    if entries.len() > MOST_ENTRIES {
+        return Err(too_large());
+    }
+    out.push(u8::try_from(bits).unwrap_or(u8::MAX));
     out.extend_from_slice(&word(entries.len())?);
     let mut at = 0_usize;
     out.extend_from_slice(&word(at)?);
@@ -239,10 +243,7 @@ fn dictionary(fields: &[Option<Vec<u8>>], code: usize, out: &mut Vec<u8>) -> Res
     for e in &entries {
         out.extend_from_slice(e);
     }
-    for c in codes {
-        let bytes = u16::try_from(c).map_err(|_| too_large())?.to_le_bytes();
-        out.extend_from_slice(bytes.get(..code).unwrap_or(&bytes));
-    }
+    pack(codes.into_iter(), bits, out);
     Ok(())
 }
 
@@ -252,7 +253,7 @@ pub(super) enum Body<'a> {
     Varying { offsets: &'a [u8], values: &'a [u8] },
     Constant { field: &'a [u8] },
     Frame { least: i64, bits: u32, deltas: &'a [u8] },
-    Dictionary { code: usize, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
+    Dictionary { bits: u32, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
     Runs(Runs<'a>),
 }
 
@@ -288,7 +289,10 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
             Ok(Body::Frame { least, bits, deltas })
         }
         DICTIONARY => {
-            let code = usize::from(*rest.first().ok_or_else(|| corrupt("it is too short"))?);
+            let bits = u32::from(*rest.first().ok_or_else(|| corrupt("it is too short"))?);
+            if bits > MOST_CODE_BITS {
+                return Err(corrupt("its codes are wider than 16 bits"));
+            }
             let entries = read_word(rest, 1)?;
             let offsets_len =
                 entries.checked_add(1).and_then(|n| n.checked_mul(WORD)).ok_or_else(|| corrupt("its entries are too many"))?;
@@ -299,9 +303,9 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
             let codes = slice(
                 rest,
                 entries_at.saturating_add(entries_len),
-                count.checked_mul(code).ok_or_else(|| corrupt("its codes are too long"))?,
+                packed_len(count, bits).ok_or_else(|| corrupt("its codes are too long"))?,
             )?;
-            Ok(Body::Dictionary { code, offsets, entries: held, codes })
+            Ok(Body::Dictionary { bits, offsets, entries: held, codes })
         }
         RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
         _ => Err(corrupt("it is of another format")),
@@ -328,12 +332,8 @@ impl Body<'_> {
                 let field = i64::try_from(sum).map_err(|_| corrupt("a value is out of its range"))?.to_le_bytes();
                 decoded(Some(&field))
             }
-            Body::Dictionary { code, offsets, entries, codes } => {
-                let at = n.saturating_mul(*code);
-                let mut entry = [0_u8; 2];
-                let given = codes.get(at..at.saturating_add(*code)).ok_or_else(|| corrupt("a value past its end is asked for"))?;
-                entry.get_mut(..given.len()).ok_or_else(|| corrupt("a code is too long"))?.copy_from_slice(given);
-                let e = usize::from(u16::from_le_bytes(entry));
+            Body::Dictionary { offsets, entries, .. } => {
+                let e = usize::from(self.code(n).ok_or_else(|| corrupt("a value past its end is asked for"))?);
                 let (from, to) =
                     (read_word(offsets, e.saturating_mul(WORD))?, read_word(offsets, e.saturating_add(1).saturating_mul(WORD))?);
                 decoded(entries.get(from..to))
@@ -392,33 +392,35 @@ impl Body<'_> {
     /// where each ends to `ends`, then of each of `positions` its entry's
     /// place among all those `ends` holds pushed to `codes`, 0 of those
     /// `null` says are nulls (`Coded`): none if the encoding is not a
-    /// dictionary, or an entry is not UTF-8.
+    /// dictionary, or an entry is not UTF-8. The codes from the first of
+    /// `positions`, in order, to the last are unpacked at once.
     pub(super) fn coded(
         &self,
-        positions: impl Iterator<Item = usize>,
+        positions: &[usize],
         (text, ends, codes): (&mut String, &mut Vec<usize>, &mut Vec<u32>),
         null: impl Fn(usize) -> bool,
     ) -> Option<()> {
-        let Body::Dictionary { offsets, entries, .. } = self else { return None };
+        let Body::Dictionary { bits, offsets, entries, codes: packed } = self else { return None };
         let base = u32::try_from(ends.len()).ok()?;
         for e in 0..(offsets.len().checked_div(WORD)?.checked_sub(1)?) {
             let (from, to) = between(offsets, e)?;
             text.push_str(std::str::from_utf8(entries.get(from..to)?).ok()?);
             ends.push(text.len());
         }
-        for n in positions {
-            codes.push(if null(n) { 0 } else { base.checked_add(u32::from(self.code(n)?))? });
+        let (Some(&first), Some(&last)) = (positions.first(), positions.last()) else { return Some(()) };
+        let mut held = Vec::with_capacity(last.checked_sub(first)?.saturating_add(1));
+        unpack(packed, *bits, (first, last.checked_add(1)?), |c| held.push(c))?;
+        for &n in positions {
+            let code = u32::try_from(*held.get(n.checked_sub(first)?)?).ok()?;
+            codes.push(if null(n) { 0 } else { base.checked_add(code)? });
         }
         Some(())
     }
 
     /// The entry of the `n`th value of a dictionary.
     fn code(&self, n: usize) -> Option<u16> {
-        let Body::Dictionary { code, codes, .. } = self else { return None };
-        let at = n.checked_mul(*code)?;
-        let mut entry = [0_u8; 2];
-        entry.get_mut(..*code)?.copy_from_slice(codes.get(at..at.checked_add(*code)?)?);
-        Some(u16::from_le_bytes(entry))
+        let Body::Dictionary { bits, codes, .. } = self else { return None };
+        u16::try_from(get(codes, *bits, n)?).ok()
     }
 
     /// The field of the `n`th value of a varying, constant or dictionary
