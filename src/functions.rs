@@ -105,6 +105,28 @@ pub trait Accumulator {
     ///
     /// The running result is out of range [X3.135-1986 §5.8 GR4e, GR4f].
     fn update(&mut self, v: &Value) -> Result<()>;
+    /// \[DESIGN\] Called with a vector of the argument's values (RULES.md
+    /// D31): of those at `rows`, or all, each not null, as `update` is.
+    /// Default: `update` of each.
+    ///
+    /// # Errors
+    ///
+    /// As `update`.
+    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+        match rows {
+            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).try_for_each(|v| self.update(v)),
+            None => values.iter().filter(|v| !v.is_null()).try_for_each(|v| self.update(v)),
+        }
+    }
+    /// \[DESIGN\] For COUNT(*): called once for `rows` rows, as `update`
+    /// is once a row. Default: `update` of a null placeholder for each.
+    ///
+    /// # Errors
+    ///
+    /// As `update`.
+    fn update_rows(&mut self, rows: usize) -> Result<()> {
+        (0..rows).try_for_each(|_| self.update(&Value::Null))
+    }
     /// The result for the values seen so far, possibly none.
     ///
     /// # Errors
@@ -236,6 +258,17 @@ impl Accumulator for CountAcc {
         self.0 = self.0.saturating_add(1);
         Ok(())
     }
+    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+        let counted = match rows {
+            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
+            None => values.iter().filter(|v| !v.is_null()).count(),
+        };
+        self.update_rows(counted)
+    }
+    fn update_rows(&mut self, rows: usize) -> Result<()> {
+        self.0 = self.0.saturating_add(i128::try_from(rows).unwrap_or(i128::MAX));
+        Ok(())
+    }
     fn finish(&self) -> Result<Value> {
         Ok(Value::Exact(Decimal::new(self.0, 0)))
     }
@@ -278,6 +311,22 @@ impl Accumulator for SumAcc {
     fn update(&mut self, v: &Value) -> Result<()> {
         self.0 = if self.0.is_null() { v.clone() } else { arith(ArithOp::Add, &self.0, v)? };
         Ok(())
+    }
+    /// Exact numbers summed as decimals, nothing cloned, as `arith` sums
+    /// them (`Decimal::checked_add`); others by `update`.
+    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+        let mut add = |v: &Value| match (&mut self.0, v) {
+            (_, Value::Null) => Ok(()),
+            (Value::Exact(sum), Value::Exact(d)) => {
+                *sum = sum.checked_add(*d)?;
+                Ok(())
+            }
+            (_, _) => self.update(v),
+        };
+        match rows {
+            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).try_for_each(&mut add),
+            None => values.iter().try_for_each(&mut add),
+        }
     }
     /// [ISO/IEC 9075:1992 §6.5 SR9e] an interval in the argument's fields.
     fn finish(&self) -> Result<Value> {
@@ -341,6 +390,14 @@ impl Accumulator for AvgAcc {
         self.count = self.count.saturating_add(1);
         self.sum.update(v)
     }
+    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+        let counted = match rows {
+            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
+            None => values.iter().filter(|v| !v.is_null()).count(),
+        };
+        self.count = self.count.saturating_add(i128::try_from(counted).unwrap_or(i128::MAX));
+        self.sum.update_many(values, rows)
+    }
     fn finish(&self) -> Result<Value> {
         match (&self.sum.0, self.result) {
             (Value::Null, _) => Ok(Value::Null),
@@ -390,9 +447,25 @@ impl Accumulator for ExtremeAcc {
         }
         Ok(())
     }
+    /// The best of the vector found first, by `update`'s rule, then
+    /// cloned once.
+    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+        let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
+        let found = match rows {
+            Some(rows) => best_of(rows.iter().filter_map(|&r| values.get(r)), wanted),
+            None => best_of(values.iter(), wanted),
+        };
+        found.map_or(Ok(()), |v| self.update(v))
+    }
     fn finish(&self) -> Result<Value> {
         Ok(self.best.clone())
     }
+}
+
+/// The value of `values` not null that each one after replaces if it
+/// compares with it as `wanted`, or not at all (`ExtremeAcc::update`).
+fn best_of<'v>(values: impl Iterator<Item = &'v Value>, wanted: std::cmp::Ordering) -> Option<&'v Value> {
+    values.filter(|v| !v.is_null()).reduce(|best, v| if compare(v, best).is_none_or(|o| o == wanted) { v } else { best })
 }
 
 // Unit tests: what the set functions refuse and how they total (RULES.md
@@ -418,5 +491,76 @@ mod tests {
             avg.update(&Value::Approx(x)).unwrap();
         }
         assert!(matches!(avg.finish(), Ok(Value::Approx(a)) if (a - 1.5_f64).abs() < f64::EPSILON));
+    }
+
+    /// The results of `function`'s accumulator of `result` fed `values`, at
+    /// `rows` or all, a value at a time and a vector at a time.
+    fn both_ways(function: &dyn AggregateFunction, result: DataType, (values, rows): (&[Value], Option<&[usize]>)) -> (String, String) {
+        let mut one = function.accumulator(result);
+        let picked: Vec<&Value> = match rows {
+            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).collect(),
+            None => values.iter().collect(),
+        };
+        let first = picked.iter().filter(|v| !v.is_null()).try_for_each(|v| one.update(v)).and_then(|()| one.finish());
+        let mut many = function.accumulator(result);
+        let second = many.update_many(values, rows).and_then(|()| many.finish());
+        (format!("{first:?}"), format!("{second:?}"))
+    }
+
+    /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, GR4]: COUNT,
+    /// SUM, AVG, MAX and MIN fed a vector at a time give what they give a
+    /// value at a time: nulls left out, of the rows asked or all, exact
+    /// values of other scales, approximate ones among them, a sum out of
+    /// range refused alike; COUNT(*) counts rows given at once.
+    #[test]
+    fn set_functions_fed_vectors_total_as_values() {
+        let exact = |u: i128, s: u32| Value::Exact(Decimal::new(u, s));
+        let mixed = vec![exact(15, 1), Value::Null, exact(-3, 0), exact(250, 2), Value::Approx(0.5_f64), exact(7, 0), Value::Null];
+        let numbers = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
+        let approx = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
+        let functions: [(&dyn AggregateFunction, DataType); 5] =
+            [(&Count, numbers), (&Sum, approx), (&Avg, approx), (&Extreme { max: true }, numbers), (&Extreme { max: false }, numbers)];
+        let exacts: Vec<Value> = mixed.iter().filter(|v| !matches!(v, Value::Approx(_))).cloned().collect();
+        for (function, result) in functions {
+            for values in [&mixed, &exacts] {
+                for rows in [None, Some(&[0_usize, 2, 3, 6][..]), Some(&[][..])] {
+                    let (one, many) = both_ways(function, result, (values, rows));
+                    assert_eq!(one, many, "{} of {values:?} at {rows:?}", function.name());
+                }
+            }
+        }
+        let huge = vec![exact(i128::from(u64::MAX).checked_mul(1_000_000_000_000_000_000).unwrap(), 0); 3];
+        let (one, many) = both_ways(&Sum, numbers, (&huge, None));
+        assert!(one.contains("Err") && one == many, "out of range alike: {many}");
+        let mut count = Count.accumulator(numbers);
+        count.update_rows(4).unwrap();
+        count.update(&Value::Null).unwrap();
+        assert_eq!(count.finish().unwrap().to_string(), "5");
+    }
+
+    /// An accumulator of a plug-in's, of `update` and `finish` alone.
+    struct Listed(Vec<String>);
+
+    impl Accumulator for Listed {
+        fn update(&mut self, v: &Value) -> Result<()> {
+            self.0.push(v.to_string());
+            Ok(())
+        }
+        fn finish(&self) -> Result<Value> {
+            Ok(Value::Char(self.0.join(",")))
+        }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D31, extensibility: an accumulator that
+    /// gives only `update` is fed a vector, or rows counted, a value at a
+    /// time, nulls left out, of the rows asked.
+    #[test]
+    fn an_accumulator_of_update_alone_is_fed_vectors() {
+        let one = Value::Exact(Decimal::new(1, 0));
+        let mut listed = Listed(Vec::new());
+        listed.update_many(&[one.clone(), Value::Null, Value::Char("b".into())], None).unwrap();
+        listed.update_many(&[one, Value::Char("c".into())], Some(&[1])).unwrap();
+        listed.update_rows(2).unwrap();
+        assert_eq!(listed.finish().unwrap().to_string(), "1,b,c,NULL,NULL");
     }
 }

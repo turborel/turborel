@@ -850,7 +850,12 @@ the format of frozen groups becomes a trait when it is.
   tree's other rows. An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the scan reads or not at all, of a table's
-  scan, filtered or not, feeds them from the vectors (`exec/batch.rs`). A
+  scan, filtered or not, feeds them from the vectors (`exec/batch.rs`),
+  of no GROUP BY a vector at a time (`Accumulator::update_many`,
+  `update_rows`, each by default `update` a value at a time): COUNT
+  counting, SUM adding exact values as decimals, nothing cloned, MAX and
+  MIN cloning only the best (of the column store, COUNT(*) 142M to 206M
+  rows a second, SUM 47.8M to 62.3M, `bench/analytics.rs`). A
   filter that cannot raise an error has its conjuncts comparing a column
   with a constant, testing it IS NULL or IS NOT NULL, IN or NOT IN a
   list of constants, or LIKE a constant pattern, split once and matched

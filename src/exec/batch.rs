@@ -254,28 +254,15 @@ fn read_all(read: &Read<'_>, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> Res
     states.iter().map(|s| s.finish()).collect()
 }
 
-/// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all.
+/// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all:
+/// each a vector at a time (`Accumulator::update_many`, `update_rows`).
 fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
     for (state, take) in states.iter_mut().zip(taken) {
-        match (*take, rows) {
+        match *take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
-            (Taken::Count, rows) => {
-                for _ in 0..rows.map_or(batch.rows, <[usize]>::len) {
-                    state.update(&Value::Null)?;
-                }
-            }
+            Taken::Count => state.update_rows(rows.map_or(batch.rows, <[usize]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            (Taken::Column(at), None) => {
-                for v in batch.columns.get(at).into_iter().flatten().filter(|v| !v.is_null()) {
-                    state.update(v)?;
-                }
-            }
-            (Taken::Column(at), Some(rows)) => {
-                let vector = batch.columns.get(at).map_or(&[][..], Vec::as_slice);
-                for v in rows.iter().filter_map(|&r| vector.get(r)).filter(|v| !v.is_null()) {
-                    state.update(v)?;
-                }
-            }
+            Taken::Column(at) => state.update_many(batch.columns.get(at).map_or(&[][..], Vec::as_slice), rows)?,
         }
     }
     Ok(())
