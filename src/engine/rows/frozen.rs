@@ -57,10 +57,16 @@ use crate::value::Value;
 const ROW: f64 = 0.8;
 const ROW_COLUMNS: f64 = 0.2;
 /// \[DESIGN\] The cost of a row fetched by id through an index, a row of
-/// all columns scanned costing 1: of the same rows, each fetched of a
-/// twentieth to three tenths of them took 3.8 us, a scan 0.3 us a row, so a
-/// scan was the faster past about a twelfth.
-const ROW_FETCH: f64 = 10.0;
+/// all columns scanned costing 1: of a table the buffer pool holds, and
+/// more as it holds less of it, to that of one it holds none of. Of
+/// 400,000 rows of sixteen columns in a database's files, a fetch took
+/// 1.28 us a row with a pool of 256 MiB, a scan 0.29; with one of 1 MiB,
+/// the file in the system's cache, 5.3 and 0.36.
+const ROW_FETCH_HELD: f64 = 4.4;
+const ROW_FETCH_READ: f64 = 14.6;
+/// \[DESIGN\] Bytes of a row's entry in the tree besides its record: its
+/// key, its version and its slot.
+const ENTRY_BYTES: f64 = 32.0;
 /// \[DESIGN\] The cost of a frozen row scanned for none of its columns, a
 /// row of the tree's costing 1, and the cost more if all are read
 /// (`bench/analytics.rs`, a pool holding the table: a COUNT(*) read a row at
@@ -368,11 +374,25 @@ impl RowTable {
         if all > 0.0_f64 { ((all - frozen).max(0.0_f64) + read).min(all) / all } else { 1.0_f64 }
     }
 
+    /// The share of the table's rows the buffer pool may hold: its bytes,
+    /// of the rows' as their statistics' width says, else as a page each
+    /// holds a hundred, all if it has no row.
+    fn held_share(&self) -> f64 {
+        let count = |n: usize| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+        let page = count(self.pool.capacity(self.file).unwrap_or(4096));
+        let pool = count(self.pool.frames()) * page;
+        let width = self.gathered.get().map_or(page / 100.0_f64, |s| s.width.max(1.0_f64));
+        let table = count(self.live.load(Ordering::Acquire)) * (width + ENTRY_BYTES);
+        if table > 0.0_f64 { (pool / table).min(1.0_f64) } else { 1.0_f64 }
+    }
+
     /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`).
     pub(super) fn frozen_fetch_cost(&self) -> f64 {
         let (frozen, all) = self.frozen_share();
         let share = if all > 0.0_f64 { (frozen / all).min(1.0_f64) } else { 0.0_f64 };
-        ROW_FETCH * (1.0_f64 + FROZEN_FETCH * share)
+        let held = self.held_share();
+        let fetch = ROW_FETCH_HELD + (ROW_FETCH_READ - ROW_FETCH_HELD) * (1.0_f64 - held);
+        fetch * (1.0_f64 + FROZEN_FETCH * share)
     }
 
     /// The rows frozen, and all the table's rows, as costs.

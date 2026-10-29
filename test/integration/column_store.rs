@@ -229,10 +229,10 @@ fn frozen_pages_pass_through_the_tables_encodings() {
 
 /// Verifies: [DESIGN] RULES.md D31, D35: the planner's costs of a table of
 /// the column store: a scan of a few of its columns costs less than of a
-/// table of the row store, so a fourteenth of its rows, by a column whose
-/// values every block holds, are counted by a scan where a table of the
-/// row store asks its index; a hundredth is asked of the index in either;
-/// a seventh is counted by a scan in either; and
+/// table of the row store, so a seventh of its rows, by a column whose
+/// values every block holds, is counted by a scan where a table of the row
+/// store, the pool holding it, asks its index; a hundredth is asked of the
+/// index in either; three sevenths are counted by a scan in either; and
 /// a fifth of the rows by a column in their order is counted by a scan in
 /// either, each skipping the blocks its zone maps rule out.
 #[test]
@@ -246,15 +246,15 @@ fn a_column_table_is_scanned_where_a_row_table_is_probed() {
     }
     db.maintain().unwrap();
     let physical = |sql: &str| physical(&a, sql);
-    // S is 's' and K modulo 97: 's5' and 's50' to 's55', seven of 97.
-    let some = "SELECT COUNT(*) FROM {t} WHERE S BETWEEN 's5' AND 's55'";
+    let some = "SELECT COUNT(*) FROM {t} WHERE G = 3";
     assert!(physical(&some.replace("{t}", "R")).contains("IndexScan"), "rows: the index");
     assert!(!physical(&some.replace("{t}", "C")).contains("IndexScan"), "columns: a scan");
+    // S is 's' and K modulo 97.
     let few = "SELECT COUNT(*) FROM {t} WHERE S = 's5'";
-    let seventh = "SELECT COUNT(*) FROM {t} WHERE G = 3";
+    let sevenths = "SELECT COUNT(*) FROM {t} WHERE G <= 2";
     for table in ["R", "C"] {
         assert!(physical(&few.replace("{t}", table)).contains("IndexScan"), "{table}: a hundredth, the index");
-        assert!(!physical(&seventh.replace("{t}", table)).contains("IndexScan"), "{table}: a seventh, a scan");
+        assert!(!physical(&sevenths.replace("{t}", table)).contains("IndexScan"), "{table}: three sevenths, a scan");
     }
     // A fifth of the rows: N is k / 10, so N below 100 is k below 1000.
     let fifth = "SELECT COUNT(*) FROM {t} WHERE N BETWEEN 0 AND 99";
