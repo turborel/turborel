@@ -245,7 +245,9 @@ fn rows_for(keyed: &Keyed, outer: &[Value], limit: Option<usize>) -> Result<Vec<
         columns.len() == values.len() && columns.iter().zip(&values).all(|(c, v)| compare(c, v) == Some(Ordering::Equal))
     };
     let width = keyed.how.width;
-    let found = lock_builtin(&keyed.rows).bucket(&key)?.into_iter().filter(equal);
+    let built = lock_builtin(&keyed.rows);
+    let bucket = built.bucket_rows(&key)?;
+    let found = bucket.iter().filter(|row| equal(row));
     Ok(found.take(limit.unwrap_or(usize::MAX)).map(|row| row.get(..width).unwrap_or_default().to_vec()).collect())
 }
 

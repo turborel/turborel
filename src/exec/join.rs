@@ -180,13 +180,13 @@ fn key(row: &Row, columns: impl Iterator<Item = usize>) -> Result<Option<Vec<Buc
 fn matches(right: &Built, l: &Row) -> Result<Vec<Row>> {
     let Some(b) = key(l, right.keys.iter().map(|k| k.0))? else { return Ok(Vec::new()) };
     let mut out = Vec::new();
-    for r in right.bucket(&b)? {
+    for r in right.bucket_rows(&b)?.iter() {
         let mut equal = true;
         for &(lc, rc) in &right.keys {
-            equal &= compare(column(l, lc)?, column(&r, rc)?) == Some(Ordering::Equal);
+            equal &= compare(column(l, lc)?, column(r, rc)?) == Some(Ordering::Equal);
         }
         if equal {
-            out.push(l.iter().chain(&r).cloned().collect());
+            out.push(l.iter().chain(r).cloned().collect());
         }
     }
     Ok(out)

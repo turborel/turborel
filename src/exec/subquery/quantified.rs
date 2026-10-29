@@ -131,7 +131,7 @@ impl SubqueryRows {
         }
         let Some(built) = hash.as_ref() else { return Err(super::broken("a hash of a subquery's rows is gone")) };
         let equal = |r: &Row| on.iter().all(|&i| xs.get(i).zip(r.get(i)).is_some_and(|(x, y)| compare(x, y) == Some(Ordering::Equal)));
-        Ok(built.bucket(&key)?.iter().any(equal))
+        Ok(built.bucket_rows(&key)?.iter().any(equal))
     }
 
     /// Its summary, made the first time it is asked for.
