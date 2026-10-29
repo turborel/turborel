@@ -866,7 +866,13 @@ the format of frozen groups becomes a trait when it is.
   the right's; partitioned, the joined rows made row by row and gathered.
   Of 400,000 rows joined with 10, a COUNT(*) of the column store took
   16 ms where row by row it took 79 (the row store's, 50 where 110), and
-  SUM grouped by a column of the 10 rows 36 where 123 (71 where 151). An
+  SUM grouped by a column of the 10 rows 36 where 123 (71 where 151). A
+  LEFT outer join on keys, no other condition, of streams is one too,
+  each left row no right row matches joined with nulls; its right
+  operand, outgrowing the work area, moved to a table of the spill area,
+  so every left row probes it in order: of the same rows, COUNT(*) 20.4
+  ms where 77.8 (54.0 where 110), grouped 33.2 where 110 (67.5 where
+  137). An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the stream holds or not at all, of a
   stream, feeds them from the vectors (`exec/batch.rs`), each a column's
@@ -1663,13 +1669,13 @@ short-circuit `&&` and `||`.
 | R-PROC-2 | Every change **shall** be reviewed against the checklist below. | review |
 | R-PROC-3 | Commits **should** be small and about one thing, the message in the form CONTRIBUTING.md gives (`area: summary`, then why), citing the rules it applies or changes. | review |
 | R-PROC-4 | A change to a threshold **shall** change RULES.md, `clippy.toml` and `xtask` together. | review |
+| R-PROC-5 | A release's crates **shall** be published together at its number, from a pushed commit that passed `cargo xtask verify --coverage`, a dry run first, as VERSIONING.md says. | review |
 | R-TOOL-1 | Project automation **shall** be Rust in `xtask/`, never shell scripts (D7). | review |
 | R-TOOL-2 | `xtask` **shall** follow these rules, use only std, and test its own decisions (`[TOOL]` requirements). | `xtask verify` |
 | R-CM-1 | The toolchain is pinned (D8); changing it **shall** be a commit of its own that passes `cargo xtask verify --coverage`. | review |
 | R-CM-2 | `Cargo.lock` and the baselines **shall** be under version control. | review |
 
 The review checklist:
-| R-PROC-5 | A release's crates **shall** be published together at its number, from a pushed commit that passed `cargo xtask verify --coverage`, a dry run first, as VERSIONING.md says. | review |
 
 - the requirement is cited in the code (R-DOC-4) and in the tests (R-TRACE-1);
 - normal-range and robustness tests (R-TEST-2), and MC/DC pairs for new decisions (R-TEST-8);

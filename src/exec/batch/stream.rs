@@ -2,7 +2,9 @@
 //! given a batch at a time, for an aggregation or a projection over it to
 //! read. A subtree gives them if it is a table's scan; a filter of one,
 //! told the simple conjuncts of its condition (`scanned`), or of any other
-//! stream; or an inner hash join whose left operand is a stream.
+//! stream; an inner hash join whose left operand is a stream; or a LEFT
+//! outer join of streams on keys, no other condition [ISO/IEC 9075:1992
+//! §7.5].
 //!
 //! A batch holds a vector of each column of the subtree's rows it reads,
 //! in order of `Stream::columns`, and the rows of it a filter kept, if one
@@ -11,7 +13,10 @@
 //! left operand's batches each probe it, a batch of the joined rows made
 //! of each, their columns the left's and the right's after them, as a
 //! joined row is. Partitioned, the joined rows are made row by row, as the
-//! row path makes them, and gathered into batches.
+//! row path makes them, and gathered into batches. Of a LEFT outer join,
+//! a left row no right row matches is joined with nulls; its right
+//! operand, outgrowing the work area, moves to a table of the spill area,
+//! not partitions, so every left row probes it in the left's order.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -23,9 +28,9 @@ use crate::error::Result;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
 use crate::exec::work::Work;
 use crate::exec::{Runner, execute};
-use crate::logical::{Cond, pushed_conjuncts};
+use crate::logical::{Cond, OuterJoin, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{BATCH_ROWS, Batch, batches_of};
+use crate::storage::{BATCH_ROWS, Batch, Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::{Bucket, Value, bucket, compare};
 
@@ -49,7 +54,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     match plan {
         Plan::SeqScan { table, columns, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
         Plan::Filter { input, .. } => layout(input, db),
-        Plan::HashJoin { left, right, .. } => {
+        Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, .. } => {
             let (mut columns, left_width) = layout(left, db)?;
             let (right_columns, right_width) = layout(right, db)?;
             columns.extend(right_columns.iter().map(|&c| c.saturating_add(left_width)));
@@ -76,7 +81,9 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     match plan {
         Plan::SeqScan { table, .. } => db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } => reads_by_batch(input, db),
-        Plan::HashJoin { left, right, .. } => reads_by_batch(left, db) && reads_by_batch(right, db),
+        Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, .. } => {
+            reads_by_batch(left, db) && reads_by_batch(right, db)
+        }
         Plan::IndexScan { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
@@ -119,7 +126,8 @@ fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
             };
             Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
         }
-        Plan::HashJoin { left, right, keys, .. } => joined((*left, *right, keys), db, tx),
+        Plan::HashJoin { left, right, keys, .. } => joined((*left, *right, keys), Kind::Inner, db, tx),
+        Plan::OuterJoin { kind: OuterJoin::Left, left, right, keys, cond: None, .. } => joined((*left, *right, keys), Kind::Left, db, tx),
         Plan::IndexScan { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
@@ -163,15 +171,30 @@ fn filtered(inner: Batches, (judging, runner): (Judging, Runner)) -> Batches {
     }))
 }
 
-/// The batches of an inner hash join of `left` and `right` on `keys`.
-fn joined((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), db: &Arc<State>, tx: TxId) -> Result<Batches> {
+/// Which rows a join of streams gives.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// The pairs that match.
+    Inner,
+    /// Those, and each left row no right row matches, with nulls.
+    Left,
+}
+
+/// The batches of a hash join of `left` and `right` on `keys`, as `kind`
+/// says.
+fn joined((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kind: Kind, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let (left_columns, left_width) = layout(&left, db).unwrap_or_default();
     let (right_columns, _) = layout(&right, db).unwrap_or_default();
     let mut work = Work::new(db);
+    let full = match kind {
+        Kind::Inner => Full::Partition,
+        Kind::Left => Full::Table,
+    };
     // The right operand first, as the row path reads it.
-    match Built::of(execute(right, db, tx), keys, (&mut work, Full::Partition))? {
+    match Built::of(execute(right, db, tx), keys, (&mut work, full))? {
         Right::Held(built) => {
-            let probe = Probe { left: batches(left, db, tx)?, left_columns, right_columns, built, ready: VecDeque::new(), _work: work };
+            let left = batches(left, db, tx)?;
+            let probe = Probe { left, left_columns, right_columns, built, kind, ready: VecDeque::new(), _work: work };
             Ok(Box::new(probe))
         }
         Right::Partitioned(parts) => {
@@ -192,6 +215,7 @@ struct Probe {
     /// The columns of the right operand's rows a joined batch holds.
     right_columns: Vec<usize>,
     built: Built,
+    kind: Kind,
     /// Batches of joined rows made, not yet given.
     ready: VecDeque<Batch>,
     /// The work area the right operand is built in, held while it is.
@@ -206,6 +230,7 @@ impl Probe {
             self.built.keys().iter().map(|&(l, r)| self.left_columns.iter().position(|&c| c == l).map(|at| (at, r))).collect();
         let places = places.ok_or_else(|| crate::exec::broken("a join key the left operand's batch lacks"))?;
         let width = self.left_columns.len().saturating_add(self.right_columns.len());
+        let left = self.left_columns.len();
         let mut out = Batch::empty(width);
         let all: Vec<usize>;
         let rows = if let Some(rows) = rows {
@@ -219,25 +244,22 @@ impl Probe {
             let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
             key.clear();
             // A null equals nothing [X3.135-1986 §5.11 GR2].
-            if !places.iter().all(|&(at, _)| bucket(value(at)).map(|b| key.push(b)).is_some()) {
-                continue;
+            let keyed = places.iter().all(|&(at, _)| bucket(value(at)).map(|b| key.push(b)).is_some());
+            let mut found = false;
+            let equal = |right: &&Row| {
+                places.iter().all(|&(at, rc)| right.get(rc).and_then(|v| compare(value(at), v)) == Some(std::cmp::Ordering::Equal))
+            };
+            let candidates = if keyed { self.built.bucket_rows(&key)? } else { std::borrow::Cow::Borrowed(&[][..]) };
+            for right in candidates.iter().filter(equal) {
+                found = true;
+                put(&mut out, (batch, r, left), (Some(right), &self.right_columns));
+                full(&mut out, &mut self.ready, width);
             }
-            for right in self.built.bucket_rows(&key)?.iter() {
-                let equal =
-                    places.iter().all(|&(at, rc)| right.get(rc).and_then(|v| compare(value(at), v)) == Some(std::cmp::Ordering::Equal));
-                if !equal {
-                    continue;
-                }
-                for (vector, at) in out.columns.iter_mut().zip(0..self.left_columns.len()) {
-                    vector.push(value(at).clone());
-                }
-                for (vector, &c) in out.columns.iter_mut().skip(self.left_columns.len()).zip(&self.right_columns) {
-                    vector.push(right.get(c).cloned().unwrap_or(Value::Null));
-                }
-                out.rows = out.rows.saturating_add(1);
-                if out.rows >= BATCH_ROWS {
-                    self.ready.push_back(std::mem::replace(&mut out, Batch::empty(width)));
-                }
+            // [ISO/IEC 9075:1992 §7.5 GR4, GR5b] A LEFT join's left row
+            // no right row matches, with nulls.
+            if !found && matches!(self.kind, Kind::Left) {
+                put(&mut out, (batch, r, left), (None, &self.right_columns));
+                full(&mut out, &mut self.ready, width);
             }
         }
         if out.rows > 0 {
@@ -245,6 +267,26 @@ impl Probe {
         }
         Ok(())
     }
+}
+
+/// Readies `out` in `ready` and starts another of `width` vectors, if it
+/// holds `BATCH_ROWS`.
+fn full(out: &mut Batch, ready: &mut VecDeque<Batch>, width: usize) {
+    if out.rows >= BATCH_ROWS {
+        ready.push_back(std::mem::replace(out, Batch::empty(width)));
+    }
+}
+
+/// Puts in `out` a joined row: of `batch` the values of row `r` in its
+/// first `left` vectors; then of `right` those of `right_columns`, or nulls.
+fn put(out: &mut Batch, (batch, r, left): (&Batch, usize, usize), (right, right_columns): (Option<&Row>, &[usize])) {
+    for (vector, at) in out.columns.iter_mut().zip(0..left) {
+        vector.push(batch.columns.get(at).and_then(|v| v.get(r)).cloned().unwrap_or(Value::Null));
+    }
+    for (vector, &c) in out.columns.iter_mut().skip(left).zip(right_columns) {
+        vector.push(right.and_then(|row| row.get(c)).cloned().unwrap_or(Value::Null));
+    }
+    out.rows = out.rows.saturating_add(1);
 }
 
 impl Iterator for Probe {
