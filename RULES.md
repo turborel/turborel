@@ -908,12 +908,18 @@ the format of frozen groups becomes a trait when it is.
   as it groups them, and merged with the groups held by number. Measured against the row store row by row (`bench/analytics.rs`): COUNT(*)
   of a column store table some 50 times as fast, a SUM of one column 17, a
   filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
-  made in a buffer kept (`spill::put_norm`). A DISTINCT of a projection
-  of columns of a stream is that grouping by every column, no set
-  function (`batch::distinct_grouping`): its groups are DISTINCT's rows, in
-  the order their first came, past the work area too (of 400,000 rows of
-  the column store, `SELECT DISTINCT G` 41.5 ms to 9.0, of `G, S` 60.4 to
-  19.3; of the row store, 88.0 to 46.0). The setting
+  made in a buffer kept (`spill::put_norm`). A projection of columns of a
+  stream is a stream, its batches those columns' vectors, moved; so are
+  the operands of a UNION ALL, each holding every column of its rows
+  alike, read in turn, a chain of them gathered without a frame each. A
+  DISTINCT of a stream holding every column of its rows is that grouping
+  by every column, no set function (`batch::distinct_grouping`): its groups
+  are DISTINCT's rows, in the order their first came, past the work area
+  too (of 400,000 rows of the column store, `SELECT DISTINCT G` 41.5 ms to
+  9.0, of `G, S` 60.4 to 19.3; of the row store, 88.0 to 46.0); a UNION,
+  a DISTINCT of its operands appended, too (`G UNION G` of the column
+  store 39.9 to 18.7, of the row store 131 to 91.4; a COUNT(*) of a UNION
+  ALL 77.4 to 7.2). The setting
   EXECUTOR.BATCHES, a session's too, ON by default, reads by batches
   where a query can; OFF, a row at a time throughout, as to compare the
   two, as the tests of batches do, each answer read both ways.

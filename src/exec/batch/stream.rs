@@ -2,9 +2,13 @@
 //! given a batch at a time, for an aggregation or a projection over it to
 //! read. A subtree gives them if it is a table's scan; a filter of one,
 //! told the simple conjuncts of its condition (`scanned`), or of any other
-//! stream; an inner hash join whose left operand is a stream; or a LEFT
+//! stream; an inner hash join whose left operand is a stream; a LEFT
 //! outer join of streams on keys, no other condition [ISO/IEC 9075:1992
-//! §7.5].
+//! §7.5]; a projection of columns of a stream, its batches the vectors of
+//! those columns, in order, moved; or the rows of two streams each holding
+//! every column of their rows, alike (`Plan::Append`, UNION ALL), a chain
+//! of them gathered without a frame each, every operand's batches in turn,
+//! each opened once those before it are read.
 //!
 //! A batch holds a vector of each column of the subtree's rows it reads,
 //! in order of `Stream::columns`, and the rows of it a filter kept, if one
@@ -28,7 +32,7 @@ use crate::error::Result;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
 use crate::exec::work::Work;
 use crate::exec::{Runner, execute};
-use crate::logical::{Cond, OuterJoin, pushed_conjuncts};
+use crate::logical::{Cond, Expr, OuterJoin, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{BATCH_ROWS, Batch, Row, batches_of};
 use crate::txn::{TxId, checked};
@@ -60,14 +64,28 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
             columns.extend(right_columns.iter().map(|&c| c.saturating_add(left_width)));
             Some((columns, left_width.saturating_add(right_width)))
         }
+        Plan::Project { exprs, input, .. } => {
+            picked(exprs, &layout(input, db)?.0)?;
+            Some(((0..exprs.len()).collect(), exprs.len()))
+        }
+        Plan::Append { .. } => {
+            let mut held = None;
+            for operand in appended(plan) {
+                let made = layout(operand, db)?;
+                // Each operand's batches hold every column of its rows, alike.
+                if !made.0.iter().copied().eq(0..made.1) || held.as_ref().is_some_and(|h| h != &made) {
+                    return None;
+                }
+                held = Some(made);
+            }
+            held
+        }
         Plan::IndexScan { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
-        | Plan::Project { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::Distinct { .. }
-        | Plan::Append { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::DefaultRow { .. }
@@ -75,23 +93,58 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     }
 }
 
+/// The operands of the chain of appends `plan`, in order, gathered on a
+/// stack of their own: a chain is as long as its statement's UNIONs, and
+/// a frame each would overflow the thread's (RULES.md R-CF-6).
+fn appended(plan: &Plan) -> Vec<&Plan> {
+    let (mut stack, mut out) = (vec![plan], Vec::new());
+    while let Some(at) = stack.pop() {
+        if let Plan::Append { left, right } = at {
+            stack.push(right);
+            stack.push(left);
+        } else {
+            out.push(at);
+        }
+    }
+    out
+}
+
+/// `appended`, of a chain owned.
+fn appended_owned(plan: Plan) -> Vec<Plan> {
+    let (mut stack, mut out) = (vec![plan], Vec::new());
+    while let Some(at) = stack.pop() {
+        if let Plan::Append { left, right } = at {
+            stack.push(*right);
+            stack.push(*left);
+        } else {
+            out.push(at);
+        }
+    }
+    out
+}
+
+/// The place among `columns` of each of `exprs`, if each is a column they
+/// hold.
+fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
+    exprs.iter().map(|e| if let Expr::Column(c) = e { columns.iter().position(|held| held == c) } else { None }).collect()
+}
+
 /// Whether every table `plan` scans reads by batch
 /// (`TableStorage::reads_by_batch`).
 pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     match plan {
         Plan::SeqScan { table, .. } => db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
-        Plan::Filter { input, .. } => reads_by_batch(input, db),
+        Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
+        Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
         }
         Plan::IndexScan { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
-        | Plan::Project { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::Distinct { .. }
-        | Plan::Append { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::DefaultRow { .. }
@@ -128,19 +181,46 @@ fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         }
         Plan::HashJoin { left, right, keys, .. } => joined((*left, *right, keys), Kind::Inner, db, tx),
         Plan::OuterJoin { kind: OuterJoin::Left, left, right, keys, cond: None, .. } => joined((*left, *right, keys), Kind::Left, db, tx),
+        Plan::Project { exprs, input, .. } => {
+            let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
+            let picks = picked(&exprs, &columns).ok_or_else(|| crate::exec::broken("a projection that gives no batches"))?;
+            Ok(Box::new(batches(*input, db, tx)?.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows)))))
+        }
+        chain @ Plan::Append { .. } => {
+            // Each operand opened once those before it are read.
+            let later = Arc::clone(db);
+            let operands = appended_owned(chain).into_iter();
+            Ok(Box::new(
+                operands.flat_map(move |operand| batches(operand, &later, tx).unwrap_or_else(|e| Box::new(std::iter::once(Err(e))))),
+            ))
+        }
         Plan::IndexScan { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
-        | Plan::Project { .. }
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::Distinct { .. }
-        | Plan::Append { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::DefaultRow { .. }
         | Plan::System { .. } => Err(crate::exec::broken("a plan that gives no batches")),
     }
+}
+
+/// `batch` with the vectors at `picks`, in order: each moved, or copied if
+/// a later pick takes it too.
+fn pick(batch: Batch, picks: &[usize]) -> Batch {
+    let mut held: Vec<Option<Vec<Value>>> = batch.columns.into_iter().map(Some).collect();
+    let columns = picks
+        .iter()
+        .enumerate()
+        .map(|(n, &at)| {
+            let again = picks.get(n.saturating_add(1)..).is_some_and(|rest| rest.contains(&at));
+            let vector = if again { held.get(at).cloned().flatten() } else { held.get_mut(at).and_then(Option::take) };
+            vector.unwrap_or_default()
+        })
+        .collect();
+    Batch { columns, rows: batch.rows }
 }
 
 /// A scan's batches (`scanned`), no row of them filtered yet.

@@ -154,7 +154,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
 - **Batch execution, further** (RULES.md D31): RIGHT and FULL outer
   joins, and LEFT ones with a condition beyond their keys; products and
   a join's right operand built from batches; a sort, a DISTINCT of
-  expressions and set operations over streams; expressions evaluated a vector at a time, not
+  expressions, EXCEPT and INTERSECT over streams; expressions evaluated a vector at a time, not
   a row's; groups' set functions fed a vector
   at a time, each group's rows gathered first; a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
