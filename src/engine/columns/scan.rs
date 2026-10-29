@@ -6,7 +6,7 @@
 use super::Chunk;
 use super::group::{Group, Pages, Seal};
 use crate::error::Result;
-use crate::storage::{Conjunct, Conjunction, Row};
+use crate::storage::{Conjunct, Conjunction, Ints, Row};
 use crate::value::{DataType, Value};
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
@@ -136,6 +136,34 @@ pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize,
         })?;
     }
     Ok(out)
+}
+
+/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
+/// positions `from` to `to` of `group`, as integers (`storage::Ints`), if
+/// `t` is an exact numeric type, which a record writes as its units in 8
+/// bytes, and every chunk's encoding holds integers.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Option<Ints>> {
+    let DataType::Exact { scale, .. } = t else { return Ok(None) };
+    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
+    let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
+    for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
+        let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
+        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
+        let held = pages.with(zone.run.page, |bytes| Ok(Chunk::parse(bytes)?.ints((at(first), at(end)), (&mut units, &mut nulls))))?;
+        if held.is_none() {
+            return Ok(None);
+        }
+    }
+    if units.len() != count {
+        return Ok(None);
+    }
+    let nulls = nulls.contains(&true).then_some(nulls);
+    Ok(Some(Ints::new(units, *scale, nulls)))
 }
 
 /// The values of column `column`, of type `t`, of the rows at `positions`

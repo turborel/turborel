@@ -20,13 +20,13 @@ use std::sync::Arc;
 use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::group::Group;
-use crate::engine::columns::scan::{candidates, values, values_at};
+use crate::engine::columns::scan::{candidates, ints, values, values_at};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Conjunction, Row, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, Row, RowId};
 use crate::value::Value;
 
 /// \[DESIGN\] A column store table's batches.
@@ -175,15 +175,19 @@ impl Batched {
         let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows: positions.len() };
         for &c in &self.columns {
             let column = match types.get(c) {
-                // A run whole is read a chunk at a time, each value once.
+                // A run whole is read a chunk at a time, each value once, as
+                // integers if it is of them.
                 Some(t) => {
                     if whole {
-                        values(group, &pages, (c, t), (from, to))?
+                        match ints(group, &pages, (c, t), (from, to))? {
+                            Some(ints) => Column::Ints(ints),
+                            None => Column::from(values(group, &pages, (c, t), (from, to))?),
+                        }
                     } else {
-                        values_at(group, &pages, (c, t), &positions)?
+                        Column::from(values_at(group, &pages, (c, t), &positions)?)
                     }
                 }
-                None => vec![Value::Null; positions.len()],
+                None => Column::from(vec![Value::Null; positions.len()]),
             };
             batch.columns.push(column);
         }

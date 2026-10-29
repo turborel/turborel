@@ -127,7 +127,7 @@ impl Projected {
         }
         let r = self.kept.get(self.next).copied().unwrap_or_default();
         self.next = self.next.saturating_add(1);
-        let value = |at: &usize| self.batch.columns.get(*at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
+        let value = |at: &usize| self.batch.value(*at, r).unwrap_or(&Value::Null);
         let mut row = Vec::with_capacity(self.places.len());
         for place in &self.places {
             row.push(match place {

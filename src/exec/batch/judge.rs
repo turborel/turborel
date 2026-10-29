@@ -12,7 +12,7 @@ use crate::error::Result;
 use crate::exec::eval::compared;
 use crate::exec::{Runner, eval_cond};
 use crate::logical::{Cond, Expr, Truth, compared_with_constant, in_list};
-use crate::storage::Batch;
+use crate::storage::{Batch, Column};
 use crate::value::{CompOp, LikePattern, Value, constant_pattern};
 
 /// A conjunct judged over a batch's vectors, of the column at a place of
@@ -85,7 +85,14 @@ impl Judging {
     pub(super) fn kept_of(&self, batch: &Batch, rows: Option<&[usize]>, runner: &Runner) -> Result<Vec<usize>> {
         let mut kept: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
         for judged in &self.judged {
-            let vector = batch.columns.get(judged.place()).map_or(&[][..], Vec::as_slice);
+            // Of integers, judged as integers (`judge/ints.rs`).
+            if let Some(Column::Ints(column)) = batch.columns.get(judged.place())
+                && let Some(true_of) = ints::kept(judged, column, &kept)
+            {
+                kept = true_of;
+                continue;
+            }
+            let vector = batch.values(judged.place());
             kept.retain(|&r| vector.get(r).is_some_and(|v| judged.keeps(v)));
         }
         let Some(rest) = &self.rest else { return Ok(kept) };
@@ -93,7 +100,7 @@ impl Judging {
         let mut out = Vec::with_capacity(kept.len());
         for r in kept {
             for (vector, &c) in batch.columns.iter().zip(&self.columns) {
-                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.get(r)) {
+                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.values().get(r)) {
                     slot.clone_from(v);
                 }
             }
@@ -159,5 +166,7 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
 
 // Unit tests: which conjuncts of a filter are judged over vectors, and
 // what each keeps (RULES.md R-TEST-1).
+mod ints;
+
 #[cfg(test)]
 mod tests;

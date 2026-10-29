@@ -327,6 +327,57 @@ impl Body<'_> {
     }
 }
 
+impl Body<'_> {
+    /// \[DESIGN\] The values at positions `from` to `to`, each an exact
+    /// number's units written as 8 bytes, as integers pushed to `out`, a
+    /// null's 0 (`Ints`): none if the encoding is of varying fields or a
+    /// dictionary. Each frame's width read with a loop of its own, so its
+    /// differences are read as fast as plain integers.
+    pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+        let count = to.checked_sub(from)?;
+        match self {
+            Body::Frame { least, bytes, deltas } => {
+                let given = deltas.get(from.checked_mul(*bytes)?..to.checked_mul(*bytes)?)?;
+                unframed(*least, (*bytes, given), out)
+            }
+            Body::Fixed { width: FRAMED, values } => {
+                let given = values.get(from.checked_mul(FRAMED)?..to.checked_mul(FRAMED)?)?;
+                out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&w| i64::from_le_bytes(w)));
+                Some(())
+            }
+            Body::Constant { field } => {
+                // None if every value is null, its field empty.
+                out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
+                Some(())
+            }
+            Body::Fixed { .. } | Body::Varying { .. } | Body::Dictionary { .. } => None,
+        }
+    }
+}
+
+/// The values of frame of reference `least` whose differences, of `bytes`
+/// each, are `given`, pushed to `out`. A difference is less than 2^64, and
+/// the value it gives was an integer of 64 bits, so adding it wrapping
+/// gives that value.
+fn unframed(least: i64, (bytes, given): (usize, &[u8]), out: &mut Vec<i64>) -> Option<()> {
+    let plus = |d: u64| least.wrapping_add(i64::from_le_bytes(d.to_le_bytes()));
+    match bytes {
+        1 => out.extend(given.iter().map(|&b| plus(u64::from(b)))),
+        2 => out.extend(given.as_chunks::<2>().0.iter().map(|&d| plus(u64::from(u16::from_le_bytes(d))))),
+        3 => out.extend(given.as_chunks::<3>().0.iter().map(|&[a, b, c]| plus(u64::from(u32::from_le_bytes([a, b, c, 0]))))),
+        4 => out.extend(given.as_chunks::<4>().0.iter().map(|&d| plus(u64::from(u32::from_le_bytes(d))))),
+        FRAMED => out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&d| plus(u64::from_le_bytes(d)))),
+        _ => {
+            for d in given.chunks_exact(bytes) {
+                let mut word = [0_u8; FRAMED];
+                word.get_mut(..d.len())?.copy_from_slice(d);
+                out.push(plus(u64::from_le_bytes(word)));
+            }
+        }
+    }
+    Some(())
+}
+
 /// The kind byte of `plan`.
 pub(super) fn kind_of(plan: Plan) -> u8 {
     match plan {

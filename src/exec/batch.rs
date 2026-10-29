@@ -30,7 +30,7 @@ use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
 use crate::spill::{put_norm, row_bytes};
-use crate::storage::{Batch, Row};
+use crate::storage::{Batch, Column, Row};
 use crate::txn::TxId;
 use crate::value::Value;
 
@@ -246,7 +246,7 @@ impl Groups {
         let lanes = lanes(&read.taken, batch, rows);
         for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
             let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
-            let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r));
+            let value = |at: usize| batch.value(at, r);
             // The key made in a buffer kept, no value copied unless its
             // group is new.
             self.key.clear();
@@ -269,7 +269,7 @@ impl Groups {
         if let Some(&at) = self.found.get(self.key.as_slice()) {
             return Ok(Some(at));
         }
-        let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r)).cloned().unwrap_or(Value::Null);
+        let value = |at: usize| batch.value(at, r).cloned().unwrap_or(Value::Null);
         let values: Row = read.groups.iter().map(|&at| value(at)).collect();
         let bytes = self.key.len().saturating_add(row_bytes(&values)).saturating_add(aggs.len().saturating_mul(STATE_BYTES));
         if self.spilled || self.bytes.saturating_add(bytes) > self.limit {
@@ -310,7 +310,11 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update_rows(rows.map_or(batch.rows, <[usize]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            Taken::Column(at) => state.update_many(batch.columns.get(*at).map_or(&[][..], Vec::as_slice), rows)?,
+            Taken::Column(at) => match batch.columns.get(*at) {
+                Some(Column::Ints(ints)) => state.update_ints(ints, rows)?,
+                Some(Column::Values(values)) => state.update_many(values, rows)?,
+                None => state.update_many(&[], rows)?,
+            },
             // Its values evaluated a vector at a time (`vector.rs`), or else
             // a row at a time.
             Taken::Expr(e, inputs) => match vector::lane(e, inputs, batch, rows) {
@@ -328,7 +332,7 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
 /// each evaluated as a row's is, its columns the vectors at `inputs`.
 fn fed_by_rows(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usize]>, state: &mut Box<dyn Accumulator>) -> Result<()> {
     let mut scratch = Vec::new();
-    let value = |at: usize, r: usize| batch.columns.get(at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
+    let value = |at: usize, r: usize| batch.value(at, r).unwrap_or(&Value::Null);
     let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
     for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
         values.push(evaluated((e, inputs), &mut scratch, |at| value(at, r))?);

@@ -34,7 +34,7 @@ use crate::exec::work::Work;
 use crate::exec::{Runner, execute};
 use crate::logical::{Cond, Expr, OuterJoin, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{BATCH_ROWS, Batch, Row, batches_of};
+use crate::storage::{BATCH_ROWS, Batch, Column, Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::{Bucket, Value, bucket, compare};
 
@@ -210,7 +210,7 @@ fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// `batch` with the vectors at `picks`, in order: each moved, or copied if
 /// a later pick takes it too.
 fn pick(batch: Batch, picks: &[usize]) -> Batch {
-    let mut held: Vec<Option<Vec<Value>>> = batch.columns.into_iter().map(Some).collect();
+    let mut held: Vec<Option<Column>> = batch.columns.into_iter().map(Some).collect();
     let columns = picks
         .iter()
         .enumerate()
@@ -321,7 +321,7 @@ impl Probe {
         };
         let mut key: Vec<Bucket> = Vec::with_capacity(places.len());
         for &r in rows {
-            let value = |at: usize| batch.columns.get(at).and_then(|v| v.get(r)).unwrap_or(&Value::Null);
+            let value = |at: usize| batch.value(at, r).unwrap_or(&Value::Null);
             key.clear();
             // A null equals nothing [X3.135-1986 §5.11 GR2].
             let keyed = places.iter().all(|&(at, _)| bucket(value(at)).map(|b| key.push(b)).is_some());
@@ -361,10 +361,10 @@ fn full(out: &mut Batch, ready: &mut VecDeque<Batch>, width: usize) {
 /// first `left` vectors; then of `right` those of `right_columns`, or nulls.
 fn put(out: &mut Batch, (batch, r, left): (&Batch, usize, usize), (right, right_columns): (Option<&Row>, &[usize])) {
     for (vector, at) in out.columns.iter_mut().zip(0..left) {
-        vector.push(batch.columns.get(at).and_then(|v| v.get(r)).cloned().unwrap_or(Value::Null));
+        vector.values_mut().push(batch.value(at, r).cloned().unwrap_or(Value::Null));
     }
     for (vector, &c) in out.columns.iter_mut().skip(left).zip(right_columns) {
-        vector.push(right.and_then(|row| row.get(c)).cloned().unwrap_or(Value::Null));
+        vector.values_mut().push(right.and_then(|row| row.get(c)).cloned().unwrap_or(Value::Null));
     }
     out.rows = out.rows.saturating_add(1);
 }

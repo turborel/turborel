@@ -852,8 +852,18 @@ the format of frozen groups becomes a trait when it is.
   the pool held, 98 ms where the index took 46).
 - Batches (`TableStorage::scan_batches`): a scan's rows by vectors of up
   to 2048 of each column's values, in no particular order, by default its
-  rows gathered. A column store table gives each frozen vector straight
-  from its chunks, a condition's columns read first and the others only
+  rows gathered. A column's vector is of values, or, of an exact number a
+  store keeps as an integer, of those integers, its nulls beside them
+  (`storage::Column`, `Ints`), its values made only the first time work
+  asks for them: a run of a frozen group read whole gives an exact
+  column's integers decoded straight from its chunks, each width of a
+  frame of reference read by a loop of its own (`Body::ints`), and of a
+  vector of integers COUNT, SUM, AVG, MIN and MAX are fed, and a column
+  compared with constants, IS NULL and IN judged, as integers, scaled
+  once to one scale, a running sum checked a value at a time as decimals
+  check it (of 400,000 rows: `SUM(B)` 5.6 ms to 2.1, `B > 200000` 5.6 to
+  2.3; of the chunks alone, decoded 2.3 ms to 0.04). A column store table
+  gives each frozen vector straight from its chunks, a condition's columns read first and the others only
   of the rows it keeps; the tree's entries in its group's range of row
   ids, read once as the group is taken up, in their rows' place; then the
   tree's other rows. A subtree of a plan gives its rows by batch (a

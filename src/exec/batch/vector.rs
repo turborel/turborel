@@ -53,7 +53,7 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
     let deeper = depth.checked_sub(1)?;
     let count = rows.map_or(batch.rows, <[usize]>::len);
     Some(match e {
-        Expr::Column(c) => Ok(Lane::Column(batch.columns.get(*inputs.get(*c)?)?, rows)),
+        Expr::Column(c) => Ok(Lane::Column(batch.columns.get(*inputs.get(*c)?)?.values(), rows)),
         Expr::Const(v) => Ok(Lane::Const(v)),
         // [X3.135-1986 §5.9 GR4]
         Expr::Neg(operand) => {

@@ -174,6 +174,19 @@ impl<'a> Chunk<'a> {
         self.nulls.get(byte).is_some_and(|b| b & (1 << bit) != 0)
     }
 
+    /// \[DESIGN\] Its values at positions `from` to `to`, each an exact
+    /// number's units, as integers pushed to `units`, and whether each is
+    /// null to `nulls` (`encoded::Body::ints`): none if its encoding does
+    /// not hold integers.
+    pub fn ints(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Vec<bool>)) -> Option<()> {
+        if to > self.count {
+            return None;
+        }
+        self.body.ints((from, to), units)?;
+        nulls.extend((from..to).map(|n| self.is_null(n)));
+        Some(())
+    }
+
     /// Its `n`th value, of type `t`.
     ///
     /// # Errors
