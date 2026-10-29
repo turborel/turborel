@@ -7,7 +7,7 @@ have version numbers of their own; this file lists them.
 Contents: [Release numbers](#release-numbers) · [Alpha](#alpha) ·
 [Compatibility](#compatibility) · [Codenames](#codenames) ·
 [Format and protocol versions](#format-and-protocol-versions) ·
-[Where the version is](#where-the-version-is)
+[Where the version is](#where-the-version-is) · [Publishing](#publishing)
 
 ---
 
@@ -91,3 +91,41 @@ which it does (SQLSTATE 08004).
 - Each crate's `Cargo.toml` gives the release's number, the same in all.
 - `turborel::VERSION` is the number, `turborel::CODENAME` the codename,
   and `turborel::product()` both, as `turborel 0.0.0 (alpha)`.
+
+## Publishing
+
+A release's crates are published to [crates.io](https://crates.io) together,
+all at its number:
+
+| Crate | Depends on |
+|---|---|
+| `turborel` | |
+| `turborel-lz4`, `turborel-aes`, `turborel-protocol` | `turborel` |
+| `turborel-client` | `turborel`, `turborel-protocol` |
+| `turborel-server` | `turborel`, `turborel-protocol` |
+| `turboreld` | `turborel`, `turborel-server`, `turborel-lz4`, `turborel-aes` |
+| `turborel-cli` | `turborel`, `turborel-client` |
+
+`turborel-test-support` and `xtask` are not published (`publish = false`).
+
+Every crate carries the license's text: the library's is the repository's
+`LICENSE`, and each other crate's folder links to it, a link `cargo
+package` follows. The release's number is set in each crate's
+`Cargo.toml` and in every dependency of one crate on another, which gives
+its version beside its path, as crates.io requires.
+
+A release is published from a clean checkout of a pushed commit that has
+passed `cargo xtask verify --coverage`, first as a trial, then for good:
+
+```
+cargo publish --workspace --exclude xtask --exclude turborel-test-support --dry-run
+cargo publish --workspace --exclude xtask --exclude turborel-test-support
+```
+
+Cargo publishes the crates in the order of their dependencies and waits
+for each to be available before the next that needs it. crates.io limits
+how many new crates an account publishes in a while; stopped by the
+limit, the rest are published once it allows, each with `-p` and the
+crate's name in the order above. A version published can be yanked, so no
+new dependency takes it, but never deleted or published again: a fix is
+a new release.

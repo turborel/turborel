@@ -1669,6 +1669,7 @@ short-circuit `&&` and `||`.
 | R-CM-2 | `Cargo.lock` and the baselines **shall** be under version control. | review |
 
 The review checklist:
+| R-PROC-5 | A release's crates **shall** be published together at its number, from a pushed commit that passed `cargo xtask verify --coverage`, a dry run first, as VERSIONING.md says. | review |
 
 - the requirement is cited in the code (R-DOC-4) and in the tests (R-TRACE-1);
 - normal-range and robustness tests (R-TEST-2), and MC/DC pairs for new decisions (R-TEST-8);
