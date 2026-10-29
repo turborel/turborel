@@ -186,3 +186,25 @@ fn zones_summed_up_meanwhile_hold_every_row_written() {
     lost.extend(written.iter().copied().filter(|&v| found(&table, tx, &equal(0, v)).is_empty()));
     assert_eq!(lost, Vec::<i128>::new(), "rows a scan told their values skips");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, zone maps of versions put back: a row a
+/// transaction inserted, then deleted, has no version left in its zone
+/// once summed up; the deletion undone, to a savepoint or as a statement
+/// fails, puts the row back and widens its zone to hold it, so a scan
+/// told its value finds it. Without the widening, the zone stayed summed
+/// up without the row (constraints::partial_matches_11_8, of a MATCH
+/// PARTIAL foreign key whose DELETE deleted nothing).
+#[test]
+fn a_version_put_back_is_held_by_its_zone() {
+    let files = files();
+    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let tx = 10_u64;
+    table.begin(tx, 1).unwrap();
+    let id = table.insert(tx, row(77)).unwrap();
+    let before = table.savepoint(tx);
+    table.delete(tx, id).unwrap();
+    summed(&table, u64::MAX);
+    assert!(found(&table, tx, &equal(0, 77)).is_empty(), "deleted");
+    table.rollback_to(tx, before).unwrap();
+    assert_eq!(found(&table, tx, &equal(0, 77)), vec!["77"], "put back, and held by its zone");
+}

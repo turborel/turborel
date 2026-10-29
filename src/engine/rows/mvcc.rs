@@ -460,7 +460,12 @@ impl RowTable {
                 (None, None) => None,
             };
             let replaced = match &before {
-                Some(before) => self.tree.replace(&k, before)?,
+                Some(before) => {
+                    let replaced = self.tree.replace(&k, before)?;
+                    // Widened once put back (`rows/zones.rs`).
+                    self.widen_to(change.id, before)?;
+                    replaced
+                }
                 None => self.tree.delete(&k)?,
             };
             if let Some(appended) = change.appended {

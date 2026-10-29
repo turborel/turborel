@@ -306,6 +306,16 @@ fn passes(zone: &Zone, tests: &[Test<'_>]) -> bool {
 }
 
 impl RowTable {
+    /// Widens the zone of row `id` to hold `version`, a version of it put
+    /// back in its tree, as a write widens it once written: a zone summed
+    /// up while the version was not the row's newest holds it again.
+    pub(super) fn widen_to(&self, id: RowId, version: &[u8]) -> Result<()> {
+        let version = Version::parse(version)?;
+        let row = if version.deleted { None } else { Some(self.decode(id, version.record, Some(&self.zones.kept))?) };
+        self.zones.widen(id, row.as_ref(), true);
+        Ok(())
+    }
+
     /// Sums up again some of the zones stale or not known, of the versions
     /// of their rows a reader at or after `horizon` may read, from where
     /// the last left off: whether one is now up to date. One whose rows
