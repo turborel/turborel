@@ -4,10 +4,15 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "The turborel server's native wire protocol: its messages and their encoding, without I/O, shared by the server and its clients (RULES.md D42)."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["database", "sql", "protocol", "turborel"]
+categories = ["database", "network-programming"]
 autotests = false
 
 [dependencies]
-turborel = { path = ".." }
+turborel = { version = "0.0.0", path = ".." }
 
 [lints]
 workspace = true

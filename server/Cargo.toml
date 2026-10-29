@@ -4,12 +4,17 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "The turborel server, as a library: the database's sessions over a network, for many clients at once, in any program that serves it (RULES.md D42). Its program is `turboreld`."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["database", "sql", "server", "turborel"]
+categories = ["database-implementations", "network-programming"]
 # The test target is declared below, in `test/`.
 autotests = false
 
 [dependencies]
-turborel = { path = ".." }
-turborel-protocol = { path = "../protocol" }
+turborel = { version = "0.0.0", path = ".." }
+turborel-protocol = { version = "0.0.0", path = "../protocol" }
 # Network I/O only (RULES.md D42); statements run on the blocking pool.
 tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time"] }
 # TLS (RULES.md D26, D42): rustls, its cryptography from aws-lc-rs only.
@@ -20,7 +25,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["aws
 aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 
 [dev-dependencies]
-turborel-client = { path = "../client", features = ["tls"] }
+turborel-client = { version = "0.0.0", path = "../client", features = ["tls"] }
 turborel-test-support = { path = "../support", features = ["tls"] }
 
 [lints]

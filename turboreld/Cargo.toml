@@ -4,17 +4,22 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "turboreld, the turborel server's program: a daemon serving a database, configured by its settings (RULES.md D42)."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["database", "sql", "server", "daemon", "turborel"]
+categories = ["database-implementations", "command-line-utilities"]
 # The test target is declared below, in `test/`.
 autotests = false
 
 [dependencies]
-turborel = { path = ".." }
-turborel-server = { path = "../server" }
+turborel = { version = "0.0.0", path = ".." }
+turborel-server = { version = "0.0.0", path = "../server" }
 # Compression for the database's files and tables (RULES.md D48).
-turborel-lz4 = { path = "../lz4" }
+turborel-lz4 = { version = "0.0.0", path = "../lz4" }
 # Encryption for the database's files and tables, its keys from a
 # directory the operator keeps (RULES.md D26, D48).
-turborel-aes = { path = "../aes" }
+turborel-aes = { version = "0.0.0", path = "../aes" }
 # A password typed at a terminal without its echo (RULES.md D46), as the
 # command-line client reads one.
 rpassword = "=7.5.4"
@@ -22,7 +27,7 @@ rpassword = "=7.5.4"
 tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
 
 [dev-dependencies]
-turborel-client = { path = "../client" }
+turborel-client = { version = "0.0.0", path = "../client" }
 turborel-test-support = { path = "../support", features = ["client"] }
 
 [lints]

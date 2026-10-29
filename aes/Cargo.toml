@@ -4,10 +4,15 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "AES-256-GCM encryption for turborel, as an encoding (RULES.md D26, D30, D48): files through STORAGE.ENCODINGS, a table's rows and log records through its option ENCODINGS, keys from a pluggable keyring."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["aes", "encryption", "database", "turborel"]
+categories = ["cryptography", "database"]
 autotests = false
 
 [dependencies]
-turborel = { path = ".." }
+turborel = { version = "0.0.0", path = ".." }
 # AES-256-GCM, HKDF-SHA256 and randomness (RULES.md D26): the same aws-lc-rs
 # as the server's TLS and passwords.
 aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }

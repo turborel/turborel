@@ -4,12 +4,17 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "turborel, the command-line client of the turborel server: SQL typed or read from files, run over a connection, results streamed as tables (RULES.md D46)."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["database", "sql", "cli", "client", "turborel"]
+categories = ["command-line-utilities", "database"]
 # The test target is declared below, in `test/`.
 autotests = false
 
 [dependencies]
-turborel = { path = ".." }
-turborel-client = { path = "../client", features = ["tls"] }
+turborel = { version = "0.0.0", path = ".." }
+turborel-client = { version = "0.0.0", path = "../client", features = ["tls"] }
 # Ctrl-C, to cancel the statement running (RULES.md D46): tokio's signals,
 # on a runtime of one thread.
 tokio = { version = "=1.54.1", default-features = false, features = ["rt", "signal"] }
@@ -18,7 +23,7 @@ rpassword = "=7.5.4"
 
 [dev-dependencies]
 turborel-test-support = { path = "../support", features = ["tls"] }
-turborel-server = { path = "../server" }
+turborel-server = { version = "0.0.0", path = "../server" }
 
 [lints]
 workspace = true

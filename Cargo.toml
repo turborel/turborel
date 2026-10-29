@@ -4,6 +4,10 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "The turborel relational database, as a library: its language SQL-86 and SQL-92 now, as one, extended standard by standard through SQL:2023; transactions that survive a crash; plug-ins. Embedded in a program, or served by turboreld."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+keywords = ["database", "sql", "relational", "sql-92", "embedded"]
+categories = ["database-implementations", "database"]
 readme = "README.md"
 # The test and benchmark targets are declared below, in `test/` and `bench/`.
 autotests = false
