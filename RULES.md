@@ -791,8 +791,14 @@ the format of frozen groups becomes a trait when it is.
   number the context. A chunk is written in whichever encoding takes
   fewest bytes, and holds as many values as its page does so: plain, a
   constant, a frame of reference of 8-byte fields (any such field read as
-  a signed integer, so every type of that width), or a dictionary
+  a signed integer, so every type of that width), each difference
+  bit-packed in the bits its span needs (`columns/packed.rs`: a chunk of
+  2048 numbers of 12 values 2318 bytes to 1040, of a flag 2318 to 272, of
+  numbers up to 400,000 8462 to 4880), or a dictionary
   (`columns/encoded.rs`); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
+  Unpacked a value's 8 bytes at a time, a column of numbers held in
+  memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
+  rows 2.0 ms to 2.3), as its pages are half as many or fewer.
   Measured: rows of numbers of few values or near one another, and of
   texts of few values, freeze into 12 pages where they take 46 plain, and
   scans run as fast, a value read at a time either way. A group's rows are
@@ -860,8 +866,9 @@ the format of frozen groups becomes a trait when it is.
   (`storage::Column`, `Ints`), its values made only the first time work
   asks for them: a run of a frozen group, read whole or of the rows the
   tree has no entry for, gives an exact column's integers decoded
-  straight from its chunks, each chunk's span asked of it at once, each width of a
-  frame of reference read by a loop of its own (`Body::ints`), and of a
+  straight from its chunks, each chunk's span asked of it at once, each
+  whole byte's width of a frame of reference read by a loop of its own
+  and other widths unpacked (`Body::ints`), and of a
   vector of integers COUNT, SUM, AVG, MIN and MAX are fed, and a column
   compared with constants, IS NULL and IN judged, as integers, scaled
   once to one scale, a running sum checked a value at a time as decimals

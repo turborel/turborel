@@ -111,7 +111,8 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     };
     let runs = candidates(&group, Some(&Conjunction::of(between.clone())));
     let read: u32 = runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
-    assert!((200..600).contains(&read), "about the 200 rows of 10 and 11: {read}");
+    // The chunks holding them, each of hundreds of rows bit-packed.
+    assert!((200..2000).contains(&read), "the 200 rows of 10 and 11 and their chunks', not all 4000: {read}");
     let found: Vec<Row> =
         runs.iter().flat_map(|&run| rows(&group, &pages, &TYPES, &[0, 2], run).unwrap()).filter(|r| between.matches(r)).collect();
     assert_eq!(found.len(), 200);

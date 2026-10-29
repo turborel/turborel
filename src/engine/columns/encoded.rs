@@ -7,8 +7,9 @@
 //! VARYING:     (count + 1) × u32, where each value begins and the last ends
 //!              | the bytes
 //! CONSTANT:    width u32 | the one value not null, if any
-//! FRAME:       bytes u8 | least i64 | count × bytes, each value of 8 bytes as
-//!              a signed integer less the least, a null's zeroed
+//! FRAME:       bits u8 | least i64 | count × bits, bit-packed, each value of
+//!              8 bytes as a signed integer less the least, a null's zeroed
+//!              (`packed.rs`)
 //! DICTIONARY:  code u8 | entries u32 | (entries + 1) × u32, where each
 //!              entry begins and the last ends | the entries | count × code
 //!              bytes, each value's entry, a null's 0
@@ -22,6 +23,7 @@
 
 use std::collections::HashMap;
 
+use super::packed::{bits_for, get, pack, packed_len, unpack};
 use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
 use crate::error::Result;
 use crate::value::{DataType, Value};
@@ -44,8 +46,8 @@ pub(super) enum Plan {
     Fixed(usize),
     Varying,
     Constant,
-    /// Frame of reference, each value less the least in this many bytes.
-    Frame(i64, usize),
+    /// Frame of reference, each value less the least in this many bits.
+    Frame(i64, u32),
     /// A dictionary, each value's entry in a code of this many bytes.
     Dictionary(usize),
 }
@@ -66,19 +68,6 @@ pub(super) struct Sizer<'f> {
     framed: bool,
     entries: HashMap<&'f [u8], usize>,
     entry_bytes: usize,
-}
-
-/// The bytes a difference of `span` takes, of 1, 2, 4 or 8.
-fn bytes_for(span: u128) -> usize {
-    if span <= u128::from(u8::MAX) {
-        1
-    } else if span <= u128::from(u16::MAX) {
-        2
-    } else if span <= u128::from(u32::MAX) {
-        4
-    } else {
-        FRAMED
-    }
 }
 
 fn integer(field: &[u8]) -> Option<i64> {
@@ -140,9 +129,12 @@ impl<'f> Sizer<'f> {
         if self.same {
             found.push((Plan::Constant, base.saturating_add(WORD).saturating_add(self.first.map_or(0, <[u8]>::len))));
         }
-        if let (true, Some((lo, hi))) = (self.framed, self.range) {
-            let bytes = bytes_for(u128::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u128::MAX));
-            found.push((Plan::Frame(lo, bytes), base.saturating_add(1 + FRAMED).saturating_add(self.count.saturating_mul(bytes))));
+        // One value throughout is a constant, though a frame of no bits
+        // takes a few bytes fewer.
+        if let (true, false, Some((lo, hi))) = (self.framed, self.same, self.range) {
+            let bits = bits_for(u64::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u64::MAX));
+            let packed = packed_len(self.count, bits).unwrap_or(usize::MAX);
+            found.push((Plan::Frame(lo, bits), base.saturating_add(1 + FRAMED).saturating_add(packed)));
         }
         if self.entries.len() < MOST_ENTRIES {
             let code = if self.entries.len() < SMALL_ENTRIES { 1 } else { 2 };
@@ -182,22 +174,22 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], out: &mut Vec<u8>) 
             out.extend_from_slice(&word(one.len())?);
             out.extend_from_slice(one);
         }
-        Plan::Frame(least, bytes) => framed(fields, (least, bytes), out),
+        Plan::Frame(least, bits) => framed(fields, (least, bits), out),
         Plan::Dictionary(code) => dictionary(fields, code, out)?,
     }
     Ok(())
 }
 
 /// Appends `fields`, of 8 bytes each, as frame of reference of `least`,
-/// each difference in `bytes`.
-fn framed(fields: &[Option<Vec<u8>>], (least, bytes): (i64, usize), out: &mut Vec<u8>) {
-    out.push(u8::try_from(bytes).unwrap_or(u8::MAX));
+/// each difference in `bits`, bit-packed.
+fn framed(fields: &[Option<Vec<u8>>], (least, bits): (i64, u32), out: &mut Vec<u8>) {
+    out.push(u8::try_from(bits).unwrap_or(u8::MAX));
     out.extend_from_slice(&least.to_le_bytes());
-    for field in fields {
+    let deltas = fields.iter().map(|field| {
         let n = field.as_deref().and_then(integer).map_or(0, |n| i128::from(n).saturating_sub(i128::from(least)));
-        let delta = u64::try_from(n).unwrap_or(0).to_le_bytes();
-        out.extend_from_slice(delta.get(..bytes).unwrap_or(&delta));
-    }
+        u64::try_from(n).unwrap_or(0)
+    });
+    pack(deltas, bits, out);
 }
 
 /// Appends `fields` as a dictionary of their values, each one's entry in a
@@ -239,7 +231,7 @@ pub(super) enum Body<'a> {
     Fixed { width: usize, values: &'a [u8] },
     Varying { offsets: &'a [u8], values: &'a [u8] },
     Constant { field: &'a [u8] },
-    Frame { least: i64, bytes: usize, deltas: &'a [u8] },
+    Frame { least: i64, bits: u32, deltas: &'a [u8] },
     Dictionary { code: usize, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
 }
 
@@ -266,10 +258,13 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
         }
         CONSTANT => Ok(Body::Constant { field: slice(rest, WORD, read_word(rest, 0)?)? }),
         FRAME => {
-            let bytes_each = usize::from(*rest.first().ok_or_else(|| corrupt("it is too short"))?);
+            let bits = u32::from(*rest.first().ok_or_else(|| corrupt("it is too short"))?);
+            if bits > u64::BITS {
+                return Err(corrupt("its differences are wider than 64 bits"));
+            }
             let least = integer(slice(rest, 1, FRAMED)?).ok_or_else(|| corrupt("it is too short"))?;
-            let deltas = slice(rest, 1 + FRAMED, count.checked_mul(bytes_each).ok_or_else(|| corrupt("its values are too long"))?)?;
-            Ok(Body::Frame { least, bytes: bytes_each, deltas })
+            let deltas = slice(rest, 1 + FRAMED, packed_len(count, bits).ok_or_else(|| corrupt("its values are too long"))?)?;
+            Ok(Body::Frame { least, bits, deltas })
         }
         DICTIONARY => {
             let code = usize::from(*rest.first().ok_or_else(|| corrupt("it is too short"))?);
@@ -304,12 +299,9 @@ impl Body<'_> {
                 decoded(values.get(from..to))
             }
             Body::Constant { field } => decoded(Some(field)),
-            Body::Frame { least, bytes, deltas } => {
-                let at = n.saturating_mul(*bytes);
-                let mut delta = [0_u8; FRAMED];
-                let given = deltas.get(at..at.saturating_add(*bytes)).ok_or_else(|| corrupt("a value past its end is asked for"))?;
-                delta.get_mut(..given.len()).ok_or_else(|| corrupt("a difference is too long"))?.copy_from_slice(given);
-                let sum = i128::from(*least).saturating_add(i128::from(u64::from_le_bytes(delta)));
+            Body::Frame { least, bits, deltas } => {
+                let delta = get(deltas, *bits, n).ok_or_else(|| corrupt("a value past its end is asked for"))?;
+                let sum = i128::from(*least).saturating_add(i128::from(delta));
                 let field = i64::try_from(sum).map_err(|_| corrupt("a value is out of its range"))?.to_le_bytes();
                 decoded(Some(&field))
             }
@@ -336,10 +328,7 @@ impl Body<'_> {
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         let count = to.checked_sub(from)?;
         match self {
-            Body::Frame { least, bytes, deltas } => {
-                let given = deltas.get(from.checked_mul(*bytes)?..to.checked_mul(*bytes)?)?;
-                unframed(*least, (*bytes, given), out)
-            }
+            Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), out),
             Body::Fixed { width: FRAMED, values } => {
                 let given = values.get(from.checked_mul(FRAMED)?..to.checked_mul(FRAMED)?)?;
                 out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&w| i64::from_le_bytes(w)));
@@ -435,8 +424,20 @@ fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
 /// each, are `given`, pushed to `out`. A difference is less than 2^64, and
 /// the value it gives was an integer of 64 bits, so adding it wrapping
 /// gives that value.
-fn unframed(least: i64, (bytes, given): (usize, &[u8]), out: &mut Vec<i64>) -> Option<()> {
+fn unframed(least: i64, (bits, deltas): (u32, &[u8]), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
     let plus = |d: u64| least.wrapping_add(i64::from_le_bytes(d.to_le_bytes()));
+    // Of whole bytes, read a byte width at a time; of other widths, a
+    // value's window at a time.
+    if bits.checked_rem(8)? != 0 {
+        out.reserve(to.saturating_sub(from));
+        return unpack(deltas, bits, (from, to), |d| out.push(plus(d)));
+    }
+    let bytes = usize::try_from(bits.checked_div(8)?).ok()?;
+    if bytes == 0 {
+        out.extend(std::iter::repeat_n(least, to.checked_sub(from)?));
+        return Some(());
+    }
+    let given = deltas.get(from.checked_mul(bytes)?..to.checked_mul(bytes)?)?;
     match bytes {
         1 => out.extend(given.iter().map(|&b| plus(u64::from(b)))),
         2 => out.extend(given.as_chunks::<2>().0.iter().map(|&d| plus(u64::from(u16::from_le_bytes(d))))),

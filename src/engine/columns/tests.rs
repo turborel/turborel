@@ -89,9 +89,10 @@ fn compressed(t: &DataType, values: &[Value]) -> (u8, usize, Vec<String>) {
 /// Verifies: [DESIGN] RULES.md D31, compressed chunks: the values a chunk
 /// holds are written in the encoding that takes fewest bytes, and read
 /// back as written, nulls among them: one value throughout, a constant;
-/// numbers near one another, a frame of reference, of one byte or two
-/// each; few texts, a dictionary; values every one apart, as they are;
-/// and more values fit a page compressed.
+/// numbers near one another, a frame of reference, each in the bits their
+/// span needs; few texts, a dictionary; values every one apart, and
+/// numbers whose span needs 64 bits, as they are; and more values fit a
+/// page compressed.
 #[test]
 fn chunks_are_compressed() {
     let check = |t: &DataType, values: Vec<Value>, kind: u8| {
@@ -111,7 +112,10 @@ fn chunks_are_compressed() {
     let apart: Vec<Value> = (0..50_u32).map(|n| Value::Char(format!("value {n}"))).collect();
     check(&TEXT, apart, VARYING);
     let spread: Vec<Value> = (0..50).map(|n| int(n * 10_000_000_000)).collect();
-    check(&INTEGER, spread, FIXED);
+    assert!(check(&INTEGER, spread, FRAME) < 50 * 5 + 40, "39 bits each");
+    let ends: Vec<Value> =
+        (0..50_i128).map(|n| int(if n % 2 == 0 { -9_000_000_000_000_000_000 - n } else { 9_000_000_000_000_000_000 + n })).collect();
+    check(&INTEGER, ends, FIXED);
     let many = Fields::of(&INTEGER, (0..10_000).map(|n| int(n % 200))).unwrap();
     assert!(many.fitting(&INTEGER, 0, (4096, true)) > 3 * many.fitting(&INTEGER, 0, (4096, false)), "more fit compressed");
 }

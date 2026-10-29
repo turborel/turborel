@@ -22,6 +22,7 @@
 
 mod encoded;
 pub mod group;
+mod packed;
 pub mod scan;
 
 use crate::error::{Code, Result, SqlError};
