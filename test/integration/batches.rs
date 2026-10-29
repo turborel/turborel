@@ -170,7 +170,8 @@ fn groups_by_batch_answer_as_row_by_row() {
 
 /// Verifies: [DESIGN] RULES.md D31, D38: grouped by batch, datetimes and
 /// intervals make the groups they make row by row: dates, intervals, and
-/// timestamps of one instant written at two time zones, one group.
+/// timestamps of one instant written at two time zones, one group; made
+/// distinct, and joined past the work area, alike.
 #[test]
 fn datetimes_group_by_batch_as_row_by_row() {
     let db = Database::new();
@@ -205,6 +206,19 @@ fn datetimes_group_by_batch_as_row_by_row() {
         assert_eq!(by_batch, by_row, "{column}");
     }
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM (SELECT W FROM T GROUP BY W) X"), Ok(vec!["1".to_owned()]), "one instant");
+    // Row by row as by batch, DISTINCT too, and joined on them past the
+    // work area, partitioned by their keys.
+    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    for column in ["D", "I", "W"] {
+        for sql in [
+            format!("SELECT {column}, COUNT(*) FROM T GROUP BY {column}"),
+            format!("SELECT COUNT(*) FROM (SELECT DISTINCT {column}, K FROM T) AS X"),
+            format!("SELECT COUNT(*) FROM T AS L, T AS M WHERE L.{column} = M.{column} AND L.K < 60 AND M.K < 1500"),
+        ] {
+            let (batched, row) = both_ways(&a, &sql);
+            assert_eq!(batched, row, "{sql}");
+        }
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D31, [X3.135-1986 §5.9 GR5]: a filter that
