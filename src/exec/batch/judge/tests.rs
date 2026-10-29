@@ -157,7 +157,8 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
 /// their values keeps: LIKE, of a pattern a null makes unknown too; each
 /// comparison with a string, padded with spaces; IN and NOT IN, of a list
 /// with a null; IS NULL and IS NOT NULL; nulls and strings not ASCII among
-/// them. One with a number, or a list holding one, is not judged so.
+/// them; of the same as a dictionary's codes, alike. One with a number, or
+/// a list holding one, is not judged so.
 #[test]
 fn conjuncts_judged_over_texts_keep_what_values_keep() {
     let words = ["ab", "ab ", "", "é", "b", "abc", "a"];
@@ -192,6 +193,22 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     for j in &judged {
         let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
         assert_eq!(texts::kept(j, &texts, &all), Some(by_values), "{j:?}");
+    }
+    // The same strings as a dictionary's codes, two entries each used
+    // twice, judged once of each entry.
+    let (mut entry_text, mut entry_ends) = (String::new(), Vec::new());
+    for w in ["ab", "ab ", "", "é", "b", "abc", "a", "zz"] {
+        entry_text.push_str(w);
+        entry_ends.push(entry_text.len());
+    }
+    let entry_of_row = vec![0, 1, 2, 3, 4, 5, 6, 0];
+    let by_entry = crate::storage::Texts::coded(
+        crate::storage::Coded { codes: entry_of_row, entries: crate::storage::Texts::new(entry_text, entry_ends, None) },
+        texts.nulls.clone(),
+    );
+    for j in &judged {
+        let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
+        assert_eq!(texts::kept(j, &by_entry, &all), Some(by_values), "{j:?}, coded");
     }
     assert_eq!(texts::kept(&Judged::Compare(0, CompOp::Eq, number(1)), &texts, &all), None, "a number");
     assert_eq!(texts::kept(&Judged::In(0, vec![number(1)], false), &texts, &all), None, "a list of a number");

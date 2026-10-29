@@ -210,3 +210,40 @@ fn chunks_give_their_texts() {
     assert_eq!(texts_of(&INTEGER, &numbers, (0, 10)), None, "integers");
     assert_eq!(texts_of(&TEXT, &constant, (0, 21)), None, "past the end");
 }
+
+/// The texts a chunk of `values`, compressed, gives of `positions` as a
+/// dictionary's codes, and its values there as they read one at a time,
+/// if it is a dictionary.
+fn coded_of(values: &[Value], positions: &[usize]) -> Option<(Vec<String>, Vec<String>)> {
+    let fields = Fields::of(&TEXT, values.iter().cloned()).unwrap();
+    let bytes = fields.chunk(&TEXT, 0, (fields.len(), true)).unwrap();
+    let chunk = Chunk::parse(&bytes).unwrap();
+    let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Vec::new());
+    chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls))?;
+    let dictionary = crate::storage::Coded { codes, entries: crate::storage::Texts::new(text, ends, None) };
+    let texts = crate::storage::Texts::coded(dictionary, nulls.contains(&true).then_some(nulls));
+    let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
+    let read = positions.iter().map(|&n| chunk.value(n, &TEXT).unwrap().to_string()).collect();
+    Some((made, read))
+}
+
+/// Verifies: [DESIGN] RULES.md D31, a dictionary's codes: a chunk of few
+/// strings, some not ASCII, nulls among them, gives of any of its
+/// positions, all or some, its entries and each one's entry, which read
+/// as the values one at a time; a chunk not a dictionary gives none, nor
+/// a position past its end.
+#[test]
+fn chunks_give_their_codes() {
+    let few: Vec<Value> = (0_usize..300_usize)
+        .map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].to_owned()) })
+        .collect();
+    let all: Vec<usize> = (0..300).collect();
+    let (made, read) = coded_of(&few, &all).unwrap();
+    assert_eq!(made, read, "all");
+    let some = [0_usize, 7, 11, 150, 299];
+    let (made_some, read_some) = coded_of(&few, &some).unwrap();
+    assert_eq!(made_some, read_some, "some");
+    let varying: Vec<Value> = (0_u32..30_u32).map(|n| Value::Char(format!("value {n}"))).collect();
+    assert_eq!(coded_of(&varying, &[0, 1]), None, "varying fields");
+    assert_eq!(coded_of(&few, &[300]), None, "past the end");
+}

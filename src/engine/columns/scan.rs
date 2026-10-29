@@ -4,9 +4,9 @@
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
 use super::Chunk;
-use super::group::{Group, Pages, Seal};
+use super::group::{Group, Pages, Seal, Zone};
 use crate::error::Result;
-use crate::storage::{Conjunct, Conjunction, Ints, Row, Texts};
+use crate::storage::{Coded, Conjunct, Conjunction, Ints, Row, Texts};
 use crate::value::{DataType, Value};
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
@@ -218,6 +218,9 @@ pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize
 pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Texts>> {
     let DataType::Varying { .. } = t else { return Ok(None) };
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    if let Some(coded) = coded_at(zones, pages, positions)? {
+        return Ok(Some(coded));
+    }
     let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
     let mut rest = positions;
     for zone in zones {
@@ -243,6 +246,35 @@ pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usiz
     Ok(Some(Texts::new(text, ends, nulls)))
 }
 
+/// \[DESIGN\] The values at `positions` of a column whose chunks are
+/// `zones`, as their dictionaries' entries and each row's entry among them
+/// (`storage::Coded`), every chunk's entries one after another, if every
+/// chunk asked of is a dictionary.
+fn coded_at<S: Seal>(zones: &[Zone], pages: &Pages<'_, S>, positions: &[u32]) -> Result<Option<Texts>> {
+    let (mut text, mut ends) = (String::new(), Vec::new());
+    let (mut codes, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
+    let mut rest = positions;
+    for zone in zones {
+        let end = zone.run.first.saturating_add(zone.run.rows);
+        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
+        rest = after;
+        if these.is_empty() {
+            continue;
+        }
+        let at: Vec<usize> = these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)).collect();
+        let held =
+            pages.with(zone.run.page, |bytes| Ok(Chunk::parse(bytes)?.coded(&at, (&mut text, &mut ends, &mut codes, &mut nulls))))?;
+        if held.is_none() {
+            return Ok(None);
+        }
+    }
+    if codes.len() != positions.len() {
+        return Ok(None);
+    }
+    let nulls = nulls.contains(&true).then_some(nulls);
+    Ok(Some(Texts::coded(Coded { codes, entries: Texts::new(text, ends, None) }, nulls)))
+}
+
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// positions `from` to `to` of `group`, as text, as `texts_at` gives them.
 ///
@@ -257,6 +289,9 @@ pub fn texts<S: Seal>(
 ) -> Result<Option<Texts>> {
     let DataType::Varying { .. } = t else { return Ok(None) };
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    if let Some(coded) = coded_at(zones, pages, &(from..to).collect::<Vec<u32>>())? {
+        return Ok(Some(coded));
+    }
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Vec::with_capacity(count));
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {

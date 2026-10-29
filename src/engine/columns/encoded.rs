@@ -375,28 +375,60 @@ impl Body<'_> {
         Some(())
     }
 
+    /// \[DESIGN\] Of a dictionary, its entries' text pushed to `text` and
+    /// where each ends to `ends`, then of each of `positions` its entry's
+    /// place among all those `ends` holds pushed to `codes`, 0 of those
+    /// `null` says are nulls (`Coded`): none if the encoding is not a
+    /// dictionary, or an entry is not UTF-8.
+    pub(super) fn coded(
+        &self,
+        positions: impl Iterator<Item = usize>,
+        (text, ends, codes): (&mut String, &mut Vec<usize>, &mut Vec<u32>),
+        null: impl Fn(usize) -> bool,
+    ) -> Option<()> {
+        let Body::Dictionary { offsets, entries, .. } = self else { return None };
+        let base = u32::try_from(ends.len()).ok()?;
+        for e in 0..(offsets.len().checked_div(WORD)?.checked_sub(1)?) {
+            let (from, to) = between(offsets, e)?;
+            text.push_str(std::str::from_utf8(entries.get(from..to)?).ok()?);
+            ends.push(text.len());
+        }
+        for n in positions {
+            codes.push(if null(n) { 0 } else { base.checked_add(u32::from(self.code(n)?))? });
+        }
+        Some(())
+    }
+
+    /// The entry of the `n`th value of a dictionary.
+    fn code(&self, n: usize) -> Option<u16> {
+        let Body::Dictionary { code, codes, .. } = self else { return None };
+        let at = n.checked_mul(*code)?;
+        let mut entry = [0_u8; 2];
+        entry.get_mut(..*code)?.copy_from_slice(codes.get(at..at.checked_add(*code)?)?);
+        Some(u16::from_le_bytes(entry))
+    }
+
     /// The field of the `n`th value of a varying, constant or dictionary
     /// encoding, as written.
     fn field(&self, n: usize) -> Option<&[u8]> {
-        let between = |offsets: &[u8], e: usize| {
-            read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
-        };
         match self {
             Body::Varying { offsets, values } => {
                 let (from, to) = between(offsets, n)?;
                 values.get(from..to)
             }
             Body::Constant { field } => Some(field),
-            Body::Dictionary { code, offsets, entries, codes } => {
-                let at = n.checked_mul(*code)?;
-                let mut entry = [0_u8; 2];
-                entry.get_mut(..*code)?.copy_from_slice(codes.get(at..at.checked_add(*code)?)?);
-                let (from, to) = between(offsets, usize::from(u16::from_le_bytes(entry)))?;
+            Body::Dictionary { offsets, entries, .. } => {
+                let (from, to) = between(offsets, usize::from(self.code(n)?))?;
                 entries.get(from..to)
             }
             Body::Fixed { .. } | Body::Frame { .. } => None,
         }
     }
+}
+
+/// Where the `e`th of the fields `offsets` gives begins and ends.
+fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
+    read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
 }
 
 /// The values of frame of reference `least` whose differences, of `bytes`

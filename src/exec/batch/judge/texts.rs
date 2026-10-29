@@ -2,7 +2,9 @@
 //! strings as their text (`storage::Texts`), no value made of each: LIKE
 //! a constant pattern of each text in place [X3.135-1986 §5.14]; a
 //! comparison with a constant string, IN and NOT IN a list of them, each
-//! padded with spaces as strings compare [§5.11 GR5]; IS NULL [§5.15]. A
+//! padded with spaces as strings compare [§5.11 GR5]; IS NULL [§5.15]; of
+//! a store's dictionaries, each once of each entry, a row then kept by its
+//! entry. A
 //! constant not a string is judged of the values instead. Split from
 //! judge.rs (RULES.md R-SIZE-2).
 
@@ -16,7 +18,16 @@ use crate::value::{Value, compare_strings};
 /// The rows of `kept` that `judged` keeps of `texts`, if it is judged of
 /// text.
 pub(super) fn kept(judged: &Judged, texts: &Texts, kept: &[usize]) -> Option<Vec<usize>> {
-    let keep = |f: &dyn Fn(&str) -> bool| kept.iter().copied().filter(|&n| texts.get(n).is_some_and(f)).collect();
+    let keep = |f: &dyn Fn(&str) -> bool| -> Vec<usize> {
+        // Of a store's dictionaries, judged once of each entry, then of
+        // each row by its entry.
+        if let Some(coded) = &texts.coded {
+            let entries: Vec<bool> = (0..coded.entries.len()).map(|e| coded.entries.get(e).is_some_and(f)).collect();
+            let of = |n: usize| coded.codes.get(n).and_then(|&c| usize::try_from(c).ok()).and_then(|c| entries.get(c).copied());
+            return kept.iter().copied().filter(|&n| !texts.is_null(n) && of(n).unwrap_or(false)).collect();
+        }
+        kept.iter().copied().filter(|&n| texts.get(n).is_some_and(f)).collect()
+    };
     match judged {
         // [X3.135-1986 §5.15 GR2-GR4] never unknown.
         Judged::IsNull(_, not) => Some(kept.iter().copied().filter(|&n| texts.get(n).is_none() != *not).collect()),

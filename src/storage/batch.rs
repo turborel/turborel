@@ -39,7 +39,9 @@ pub enum Column {
 }
 
 /// \[DESIGN\] Character strings as written, of a VARCHAR column as a store
-/// keeps it: their text in one buffer, and where each ends in it.
+/// keeps it: their text in one buffer, and where each ends in it; or, of
+/// a store's dictionaries, each row's entry among theirs (`Coded`), so a
+/// condition is judged once of each entry, not of each row.
 #[derive(Debug, Clone, Default)]
 pub struct Texts {
     /// Every row's text, one after another, a null's empty.
@@ -48,20 +50,48 @@ pub struct Texts {
     pub ends: Vec<usize>,
     /// Whether each row's is null, if any is.
     pub nulls: Option<Vec<bool>>,
+    /// Of a store's dictionaries, each row's entry, and the entries, if the
+    /// rows are so: `text` and `ends` are then empty.
+    pub coded: Option<Box<Coded>>,
     /// The values, made the first time they are asked for.
     made: OnceLock<Vec<Value>>,
+}
+
+/// \[DESIGN\] Character strings of a store's dictionaries: of each row,
+/// its entry's place among `entries`, every dictionary's one after
+/// another.
+#[derive(Debug, Clone, Default)]
+pub struct Coded {
+    /// Each row's entry, a null's 0.
+    pub codes: Vec<u32>,
+    /// The entries.
+    pub entries: Texts,
 }
 
 impl Texts {
     /// The texts of `text` ending at `ends`, null where `nulls` says.
     pub fn new(text: String, ends: Vec<usize>, nulls: Option<Vec<bool>>) -> Texts {
-        Texts { text, ends, nulls, made: OnceLock::new() }
+        Texts { text, ends, nulls, coded: None, made: OnceLock::new() }
+    }
+
+    /// The texts of `coded`'s entries, each row's as its code says, null
+    /// where `nulls` says.
+    pub fn coded(coded: Coded, nulls: Option<Vec<bool>>) -> Texts {
+        Texts { text: String::new(), ends: Vec::new(), nulls, coded: Some(Box::new(coded)), made: OnceLock::new() }
+    }
+
+    /// Whether row `n`'s is null.
+    pub fn is_null(&self, n: usize) -> bool {
+        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false))
     }
 
     /// Row `n`'s text, none if it is null or past the end.
     pub fn get(&self, n: usize) -> Option<&str> {
-        if self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false)) {
+        if self.is_null(n) {
             return None;
+        }
+        if let Some(coded) = &self.coded {
+            return coded.entries.get(usize::try_from(*coded.codes.get(n)?).ok()?);
         }
         let from = n.checked_sub(1).map_or(Some(0), |p| self.ends.get(p).copied())?;
         self.text.get(from..*self.ends.get(n)?)
@@ -69,12 +99,12 @@ impl Texts {
 
     /// How many rows.
     pub fn len(&self) -> usize {
-        self.ends.len()
+        self.coded.as_ref().map_or(self.ends.len(), |coded| coded.codes.len())
     }
 
     /// Whether it has no rows.
     pub fn is_empty(&self) -> bool {
-        self.ends.is_empty()
+        self.len() == 0
     }
 
     /// The values, made the first time they are asked for.

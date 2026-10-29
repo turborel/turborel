@@ -871,7 +871,12 @@ the format of frozen groups becomes a trait when it is.
   compare, IN, IS NULL and COUNT are judged and fed of the text, and
   grouping keys made of it (`judge/texts.rs`; of 400,000 rows: `S LIKE
   '%5%'` 11.6 ms to 6.9, `S = 's7'` 13.4 to 7.7, `GROUP BY S` 16.3 to
-  10.8, `COUNT(T)` 9.8 to 5.3). An expression of
+  10.8, `COUNT(T)` 9.8 to 5.3). Of runs whose chunks are all
+  dictionaries, it is their entries and each row's entry among them
+  (`storage::Coded`), a condition then judged once of each entry and a
+  row kept by its entry's (`S LIKE '%5%'` 6.9 to 2.9, `S = 's7'` 7.7 to
+  2.9, `S IN ('s1', 's2', 's3')` 12.0 to 3.2); making a group's key of
+  an entry once, not of each row, saved nothing, its hashing the cost. An expression of
   integers and exact constants, negated, summed, subtracted or
   multiplied, is evaluated as integers at the scale decimals give it, a
   result past 18 digits, or a quotient, evaluated of values, which raise

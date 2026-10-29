@@ -200,6 +200,22 @@ impl<'a> Chunk<'a> {
         Some(())
     }
 
+    /// \[DESIGN\] Of a dictionary, its entries and the entry of each of
+    /// `positions` pushed to `coded`, and whether each is null to `nulls`
+    /// (`encoded::Body::coded`): none if its encoding is not a dictionary.
+    pub fn coded(
+        &self,
+        positions: &[usize],
+        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
+    ) -> Option<()> {
+        if positions.iter().any(|&n| n >= self.count) {
+            return None;
+        }
+        self.body.coded(positions.iter().copied(), (text, ends, codes), |n| self.is_null(n))?;
+        nulls.extend(positions.iter().map(|&n| self.is_null(n)));
+        Some(())
+    }
+
     /// Its `n`th value, of type `t`.
     ///
     /// # Errors

@@ -158,8 +158,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   a filter's comparisons of expressions over vectors of integers
   (`B * 2 > 400000` 9.5 ms, `B > 200000` 2.3), quotients of them, the
   row store's batches as integers, and of text; CHARACTER columns as
-  text, padded as LIKE sees them; a dictionary's conditions judged once
-  of each entry, its codes then kept; grouping of many groups (`GROUP BY K`
+  text, padded as LIKE sees them; grouping of many groups (`GROUP BY K`
   of 400,000 keys, 382 ms, past the work area); a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
 - **Spilled sorts**: of 400,000 rows past the default WORK_MEMORY a sort
