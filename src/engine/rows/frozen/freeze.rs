@@ -17,8 +17,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use super::{Directory, Retiring};
+use super::{Directory, Entry, Retiring};
 use crate::engine::columns::group::Group;
+use crate::engine::rows::options::Columns;
 use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
@@ -59,12 +60,26 @@ fn delayed(commits: &mut VecDeque<(Timestamp, Instant)>, delay: u32) -> Timestam
 }
 
 impl RowTable {
-    /// Freezes the rows due, if any, committed at or before `horizon`; and
-    /// takes out the entries of rows frozen before that no reader needs.
+    /// Freezes the rows due, if any, committed at or before `horizon`, and
+    /// writes again the groups due (`rewrite.rs`); and takes out the
+    /// entries of rows frozen before that no reader needs.
     pub(in crate::engine::rows) fn freeze_due(&self, horizon: Timestamp) -> Result<()> {
         let Some(columns) = *read(&self.frozen.columns)? else { return Ok(()) };
         let Ok(_one) = self.frozen.freezing.try_lock() else { return Ok(()) };
         self.retire_unread()?;
+        let cutoff = match columns.freeze_delay {
+            0 => horizon,
+            delay => horizon.min(delayed(&mut lock_builtin(&self.frozen.commits), delay)),
+        };
+        // Not while a checkpoint is captured (`TableFiles::freezes`).
+        let _capturing = read(&self.freezes)?;
+        self.freeze_rows(columns, cutoff)?;
+        self.rewrite_due(columns, cutoff)
+    }
+
+    /// Freezes rows committed at or before `cutoff` past the last group, if
+    /// as many as `columns` says are.
+    fn freeze_rows(&self, columns: Columns, cutoff: Timestamp) -> Result<()> {
         let due = columns.due();
         let frozen = self.frozen.directory()?.rows();
         let live = u64::try_from(self.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
@@ -72,14 +87,8 @@ impl RowTable {
         if live.saturating_sub(frozen) < due || !waited {
             return Ok(());
         }
-        let cutoff = match columns.freeze_delay {
-            0 => horizon,
-            delay => horizon.min(delayed(&mut lock_builtin(&self.frozen.commits), delay)),
-        };
         let fewest = usize::try_from(due.min(u64::from(columns.group_rows))).unwrap_or(usize::MAX);
         let most = usize::try_from(columns.group_rows).unwrap_or(usize::MAX);
-        // Not while a checkpoint is captured (`TableFiles::freezes`).
-        let _capturing = read(&self.freezes)?;
         let mut froze = false;
         for _ in 0..MOST_GROUPS {
             let entries = self.eligible(self.frozen.directory()?.last(), cutoff, most)?;
@@ -124,22 +133,29 @@ impl RowTable {
             ids.push(*id);
         }
         let group = Group::write(&self.group_pages()?, self.format.types(), &ids, &rows)?;
-        self.publish(group, entries)
+        self.publish((None, Some(group)), entries)
     }
 
-    /// Adds `group` to the directory, stored, and the tree's `entries` of
-    /// its rows to be taken out.
-    fn publish(&self, group: Group, entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
-        let entry = self.entry(group);
+    /// Puts `group`, if any, in the directory in the place of `old`, if
+    /// any, the directory stored, and the tree's `entries` of its rows to
+    /// be taken out; `old`'s pages freed once no reader holds it.
+    pub(super) fn publish(&self, (old, group): (Option<&Arc<Entry>>, Option<Group>), entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
+        let made = group.map(|g| self.entry(g));
         let before = {
             let mut held = write(&self.frozen.directory)?;
-            let mut groups = held.groups.clone();
-            groups.push(Arc::clone(&entry));
+            let mut groups: Vec<Arc<Entry>> = held.groups.iter().filter(|e| old.is_none_or(|o| !Arc::ptr_eq(e, o))).cloned().collect();
+            groups.extend(made.iter().cloned());
+            groups.sort_by_key(|e| e.group.first);
             let next = Arc::new(Directory { groups });
             if let Err(e) = self.store_directory(&next) {
                 // Freed as it goes: it was never published.
-                entry.retired.store(true, Ordering::Release);
+                if let Some(m) = &made {
+                    m.retired.store(true, Ordering::Release);
+                }
                 return Err(e);
+            }
+            if let Some(o) = old {
+                o.retired.store(true, Ordering::Release);
             }
             mem::replace(&mut *held, next)
         };

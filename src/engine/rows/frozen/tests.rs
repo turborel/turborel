@@ -37,7 +37,15 @@ fn files() -> (Arc<Pager>, TableFiles) {
 
 /// Of the COLUMNS layout, in groups of 2048, frozen after `delay` seconds.
 fn options(delay: u32) -> TableOptions {
-    TableOptions { columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: delay }), ..TableOptions::default() }
+    rewriting(delay, crate::engine::rows::options::DEFAULT_REWRITE_FRACTION)
+}
+
+/// As `options`, groups written again past `fraction` of their rows.
+fn rewriting(delay: u32, fraction: f64) -> TableOptions {
+    TableOptions {
+        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: delay, rewrite_fraction: fraction }),
+        ..TableOptions::default()
+    }
 }
 
 /// A table of `rows` rows, written outside any transaction, so committed
@@ -204,4 +212,56 @@ fn a_dropped_table_frees_its_groups() {
     table.discard();
     drop(table);
     assert_eq!(in_use(), before, "every page freed");
+}
+
+/// Updates rows `ids` of `table` to their negated keys and deletes rows
+/// `deleted`, in a transaction committed at `at`, and collects past it.
+fn changed(table: &RowTable, (ids, deleted): (&[RowId], &[RowId]), at: u64) {
+    table.begin(at, at.saturating_sub(1)).unwrap();
+    for (n, &id) in ids.iter().enumerate() {
+        table.update(at, id, row(i128::try_from(n).unwrap().checked_neg().unwrap())).unwrap();
+    }
+    for &id in deleted {
+        table.delete(at, id).unwrap();
+    }
+    table.validate(at, at).unwrap();
+    table.commit(at, at);
+    table.gc(at, &mut |_, _| {}).unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D31, groups written again: once a fifth of
+/// a group's rows are changed or deleted, the group is written again with
+/// them: the deleted rows gone from it, the updates its values, their
+/// entries out of the tree, the other group as it was; a group whose rows
+/// are all deleted is taken out; reopened, the table reads the same; and
+/// with COLUMNS.REWRITE_FRACTION 0, no group is written again.
+#[test]
+fn groups_are_written_again() {
+    let (_, held) = files();
+    let (table, ids) = table(&held, 0, 5000);
+    table.gc(1, &mut |_, _| {}).unwrap();
+    let before = table.frozen.directory().unwrap();
+    changed(&table, (&ids[0..400], &ids[400..500]), 10);
+    let after = table.frozen.directory().unwrap();
+    assert_eq!(after.groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048 - 100, 2048]);
+    assert!(Arc::ptr_eq(&before.groups[1], &after.groups[1]), "the other group as it was");
+    drop(before);
+    table.retire_unread().unwrap();
+    assert_eq!(entries(&table), 5000 - 4096, "the entries folded in taken out");
+    assert_eq!(table.get(NO_TRANSACTION, ids[3]).unwrap().map(|r| r[0].to_string()), Some("-3".to_owned()));
+    assert!(table.get(NO_TRANSACTION, ids[450]).unwrap().is_none());
+    assert_eq!(scanned(&table, NO_TRANSACTION).len(), 4900);
+    changed(&table, (&[], &ids[2048..4096]), 20);
+    assert_eq!(table.frozen.directory().unwrap().groups.len(), 1, "a group of no rows taken out");
+    let reopened = Arc::new(RowTable::open(&held, table.meta(), &TYPES, options(0)).unwrap());
+    assert_eq!((scanned(&reopened, NO_TRANSACTION).len(), reopened.row_count()), (2852, 2852));
+    let (never, more) = {
+        let (_, others) = files();
+        let never = Arc::new(RowTable::create(&others, &TYPES, rewriting(0, 0.0)).unwrap());
+        let more: Vec<RowId> = (0..5000).map(|n| never.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+        never.gc(1, &mut |_, _| {}).unwrap();
+        (never, more)
+    };
+    changed(&never, (&more[0..1000], &[]), 30);
+    assert_eq!(never.frozen.directory().unwrap().groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048, 2048], "never");
 }

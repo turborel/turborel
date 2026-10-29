@@ -26,6 +26,7 @@
 mod batches;
 mod freeze;
 mod merge;
+mod rewrite;
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -131,6 +132,9 @@ pub(super) struct Frozen {
     /// When a freeze was last tried, so one due is not tried on every
     /// transaction's end.
     tried: Mutex<Option<Instant>>,
+    /// The frozen rows given an entry of the tree since groups were last
+    /// looked at for a rewrite (`rewrite.rs`).
+    shadowed: AtomicU64,
 }
 
 impl Frozen {
@@ -144,7 +148,13 @@ impl Frozen {
             retiring: Mutex::default(),
             commits: Mutex::default(),
             tried: Mutex::new(None),
+            shadowed: AtomicU64::new(0),
         }
+    }
+
+    /// Notes a frozen row given an entry of the tree: changed or deleted.
+    pub(super) fn shadow(&self) {
+        self.shadowed.fetch_add(1, Ordering::AcqRel);
     }
 
     /// The directory, as it is now.

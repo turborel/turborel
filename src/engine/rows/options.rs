@@ -39,6 +39,11 @@ const LAYOUT: &str = "LAYOUT";
 const GROUP_ROWS: &str = "COLUMNS.GROUP_ROWS";
 const FREEZE_ROWS: &str = "COLUMNS.FREEZE_ROWS";
 const FREEZE_DELAY: &str = "COLUMNS.FREEZE_DELAY";
+const REWRITE_FRACTION: &str = "COLUMNS.REWRITE_FRACTION";
+/// \[DESIGN\] The default of COLUMNS.REWRITE_FRACTION: a fifth of a group's
+/// rows changed, deleted or added to before it is written again, as
+/// Vertica's mergeout purges and SQL Server's guidance has it.
+pub const DEFAULT_REWRITE_FRACTION: f64 = 0.2;
 /// The layouts a table may have.
 const LAYOUTS: &[&str] = &["ROWS", "COLUMNS"];
 
@@ -72,7 +77,7 @@ pub struct TableOptions {
 
 /// \[DESIGN\] How a table of the COLUMNS layout freezes its rows into
 /// column groups (RULES.md D31).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Columns {
     /// The rows of each group.
     pub group_rows: u32,
@@ -82,11 +87,15 @@ pub struct Columns {
     /// The seconds a row stays as it was written after its commit before
     /// it may be frozen.
     pub freeze_delay: u32,
+    /// The share of a group's rows the tree has entries for, changed,
+    /// deleted or added, past which the group is written again with them;
+    /// 0 for never.
+    pub rewrite_fraction: f64,
 }
 
 impl Default for Columns {
     fn default() -> Self {
-        Columns { group_rows: DEFAULT_GROUP_ROWS, freeze_rows: 0, freeze_delay: 0 }
+        Columns { group_rows: DEFAULT_GROUP_ROWS, freeze_rows: 0, freeze_delay: 0, rewrite_fraction: DEFAULT_REWRITE_FRACTION }
     }
 }
 
@@ -209,6 +218,11 @@ fn layout_declared(defaults: TableOptions) -> Vec<TableOption> {
             (0, MAX_FREEZE_DELAY.into(), whole(cols.freeze_delay)),
             "The seconds a row of a table of the COLUMNS layout stays as it was written after its commit before it may be frozen, so rows changed soon after are not.",
         ),
+        TableOption::new(
+            (REWRITE_FRACTION, Kind::Number { min: 0.0_f64, max: 1.0_f64 }, Value::Approx(cols.rewrite_fraction)),
+            Rebuild::No,
+            "The share of a frozen group's rows changed, deleted or added to, past which a table of the COLUMNS layout writes the group again with them; 0 for never.",
+        ),
     ]
 }
 
@@ -264,6 +278,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         group_rows: count(GROUP_ROWS).and_then(|n| u32::try_from(n).ok()).unwrap_or(c.group_rows),
         freeze_rows: count(FREEZE_ROWS).unwrap_or(c.freeze_rows),
         freeze_delay: count(FREEZE_DELAY).and_then(|n| u32::try_from(n).ok()).unwrap_or(c.freeze_delay),
+        rewrite_fraction: set(REWRITE_FRACTION).and_then(Value::as_f64).unwrap_or(c.rewrite_fraction),
     });
     out
 }

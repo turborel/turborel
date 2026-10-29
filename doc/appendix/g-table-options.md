@@ -15,6 +15,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 | COLUMNS.FREEZE_DELAY | 0 | INTEGER FROM 0 TO 31622400 | in place |
 | COLUMNS.FREEZE_ROWS | 0 | INTEGER FROM 0 TO 9223372036854775807 | in place |
 | COLUMNS.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
+| COLUMNS.REWRITE_FRACTION | 0.2 | NUMBER FROM 0 TO 1 | in place |
 | ENCODINGS | none | ENCODINGS, BY COMMAS | in place |
 | LAYOUT | ROWS | ONE OF ROWS, COLUMNS | rebuild |
 | OUT_OF_LINE | 0 | INTEGER FROM 0 TO 1073741824 | rebuild |
@@ -30,6 +31,7 @@ Each in a sentence:
 - **COLUMNS.FREEZE_DELAY**: The seconds a row of a table of the COLUMNS layout stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNS.FREEZE_ROWS**: The rows committed past the last group after which a table of the COLUMNS layout freezes them; 0 for COLUMNS.GROUP_ROWS.
 - **COLUMNS.GROUP_ROWS**: The rows of each group a table of the COLUMNS layout freezes; groups frozen before keep theirs.
+- **COLUMNS.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the COLUMNS layout writes the group again with them; 0 for never.
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own. See [Encryption](../operator/07-encryption.md).
 - **LAYOUT**: How the table keeps its rows: ROWS, each row's values together; COLUMNS, rows written kept so until they are frozen into groups, each column's values together.
 - **OUT_OF_LINE**: Character values longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
@@ -55,7 +57,9 @@ are frozen, and the fewer of its columns a query reads, the faster it
 reads them.
 
 A frozen row may be updated or deleted as any other; it is then kept as
-rows written are, its frozen values no longer read. Fetching one frozen
+rows written are, its frozen values no longer read, until a fifth of its
+group's rows are so (COLUMNS.REWRITE_FRACTION): the group is then written
+again with them, the deleted rows gone from it. Fetching one frozen
 row by its key reads a page of each of its columns, so it costs more
 than in a table of the ROWS layout. COLUMNS.FREEZE_DELAY keeps rows that
 are changed soon after they are written from being frozen while they

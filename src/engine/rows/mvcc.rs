@@ -71,6 +71,7 @@ use super::options::Bounds;
 use super::version::{Maker, Version};
 use super::{RowTable, key, no_row};
 use crate::catalog::TableDesc;
+use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::{MurmurMap, MurmurSet};
 use crate::log::Lsn;
@@ -88,6 +89,10 @@ fn conflict() -> SqlError {
         "[DESIGN] a row it would change was changed by a transaction this one does not see, or is being changed; run the transaction again",
     )
 }
+
+/// A row's newest version, and, if it is one made of its frozen values,
+/// the pages of its values out of line (`RowTable::newest_or_frozen`).
+type Found = (Vec<u8>, Option<Vec<PageId>>);
 
 /// Who reads.
 #[derive(Debug, Clone, Copy)]
@@ -341,15 +346,7 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
-        let (newest, thawed) = match self.tree.get(&k)? {
-            Some(newest) => (newest, None),
-            // A frozen row: changed over a version holding its frozen
-            // values (`rows/frozen.rs`), its entry inserted.
-            None => match self.frozen_version(id)? {
-                Some((version, pages)) => (version, Some(pages)),
-                None => return no_row(id),
-            },
-        };
+        let Some((newest, thawed)) = self.newest_or_frozen(id)? else { return no_row(id) };
         let (older, appended) = {
             let version = Version::parse(&newest)?;
             match self.maker(&version) {
@@ -383,9 +380,23 @@ impl RowTable {
             self.free(&thawed.unwrap_or_default());
             return Err(conflict());
         }
+        if thawed.is_some() {
+            self.frozen.shadow();
+        }
         let before = appended.is_none().then_some(newest);
         lock_builtin(&open).changes.push(Change { id, before, appended }, &mut encode_change)?;
         Ok(())
+    }
+
+    /// Row `id`'s newest version: its entry in the tree; else, if it is
+    /// frozen, a version holding its frozen values, to change it over, its
+    /// entry to be inserted (`rows/frozen.rs`), with the pages of its values
+    /// out of line; none if neither.
+    fn newest_or_frozen(&self, id: RowId) -> Result<Option<Found>> {
+        if let Some(newest) = self.tree.get(&key(id))? {
+            return Ok(Some((newest, None)));
+        }
+        Ok(self.frozen_version(id)?.map(|(version, pages)| (version, Some(pages))))
     }
 
     /// Outside any transaction: replaces row `id`'s newest version with
@@ -402,6 +413,7 @@ impl RowTable {
                 return no_row(id);
             }
             self.tree.insert(&k, &version)?;
+            self.frozen.shadow();
             return Ok(());
         };
         self.free_values(id, Version::parse(&old)?.record);

@@ -83,6 +83,7 @@ impl RowTable {
             let old = self.tree.replace(&k, &deletion)?;
             if old.is_none() {
                 self.tree.insert(&k, &deletion)?;
+                self.frozen.shadow();
             }
             old
         } else {

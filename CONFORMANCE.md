@@ -425,9 +425,10 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   takes OUT_OF_LINE, STATISTICS.SAMPLE, STATISTICS.BUCKETS,
   STATISTICS.REFRESH_FRACTION, STATISTICS.REFRESH_ROWS,
   TRANSACTIONS.TRACKED_ROWS, TRANSACTIONS.HELD_BYTES, and LAYOUT, ROWS or
-  COLUMNS, with COLUMNS.GROUP_ROWS, COLUMNS.FREEZE_ROWS and
-  COLUMNS.FREEZE_DELAY, how a table of the COLUMNS layout freezes its rows
-  into groups of its columns' values (RULES.md D31). The database
+  COLUMNS, with COLUMNS.GROUP_ROWS, COLUMNS.FREEZE_ROWS,
+  COLUMNS.FREEZE_DELAY and COLUMNS.REWRITE_FRACTION, how a table of the
+  COLUMNS layout freezes its rows into groups of its columns' values and
+  writes them again (RULES.md D31). The database
   declares ENCODINGS for every table: the registered encodings its rows
   pass through, such as LZ4 or AES-256-GCM with its key (RULES.md D48).
 - **Plug-ins** for storage engines, index methods, functions, optimizer

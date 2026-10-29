@@ -194,10 +194,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   latch (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
   a trait. For COLUMNS:
-  - a group rewritten, its deleted and changed rows' entries folded in,
-    once COLUMNS.REWRITE_FRACTION of it is (a frozen row changed or
-    deleted stays in the tree until then, as does a row id given late,
-    from a thread's block, in its group's range);
   - COLUMNS.ORDER, the columns rows are sorted by as they are frozen;
   - compression of chunks (constant, run-length, frame of reference,
     dictionary), COLUMNS.COMPRESSION, before their ENCODINGS;

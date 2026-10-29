@@ -736,7 +736,12 @@ becomes a trait when it is.
   its entry in the tree if it has one, else its group's values, which
   every reader sees: so a frozen row changed is written as any row is,
   over a version holding its frozen values, and a deletion of one stays in
-  the tree. A scan merges the tree and the groups in row id order, a
+  the tree, until its group is written again: once the tree's entries in
+  a group's range of row ids are COLUMNS.REWRITE_FRACTION of its rows
+  (looked at only after so many frozen rows are given entries), the group
+  is written again with those of them committed before every snapshot,
+  replaced in the directory, and the entries taken out as a freeze takes
+  out its rows'. A scan merges the tree and the groups in row id order, a
   group read a vector (2048 rows) at a time, only the chunks a condition
   on one column may match. The entries of rows frozen leave the tree once
   no reader holds the directory from before their group; a checkpoint is
