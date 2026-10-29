@@ -85,6 +85,9 @@ use crate::value::DataType;
 
 /// The name of the row store.
 pub const ROW_STORE: &str = "rowstore";
+/// \[DESIGN\] The name of the column store: the row store's tables, each
+/// freezing its rows into groups of its columns' values (RULES.md D31).
+pub const COLUMN_STORE: &str = "columnstore";
 /// Row ids reserved at a time: the meta page is written once per block.
 const RESERVE: u64 = 1024;
 /// Bytes before a long value in its page: its row id and column.
@@ -115,11 +118,17 @@ pub struct RowStore {
     /// The database's encodings, once attached: those its tables' option
     /// ENCODINGS names.
     encodings: Mutex<Arc<Encodings>>,
+    /// Its name: `ROW_STORE`, or `COLUMN_STORE`, whose tables freeze their
+    /// rows.
+    name: &'static str,
+    /// Whether it checkpoints its files: not the column store sharing the
+    /// row store's, which checkpoints them for both.
+    checkpoints: bool,
 }
 
 impl StorageEngine for RowStore {
     fn name(&self) -> &'static str {
-        ROW_STORE
+        self.name
     }
     fn seals(&self) -> bool {
         true
@@ -155,6 +164,9 @@ impl StorageEngine for RowStore {
     /// its commit left to `checkpoint_finish`; one not shadowed is synced
     /// now.
     fn checkpoint(&self, at: Lsn) -> Result<()> {
+        if !self.checkpoints {
+            return Ok(());
+        }
         let files = self.files()?;
         // No table's rows half frozen (`rows/frozen.rs`).
         let _frozen = write(&files.freezes)?;
@@ -176,6 +188,9 @@ impl StorageEngine for RowStore {
     /// Commits the batch sealed, so after a crash the file holds exactly
     /// what the checkpoint captured.
     fn checkpoint_finish(&self) -> Result<()> {
+        if !self.checkpoints {
+            return Ok(());
+        }
         let files = self.files()?;
         if let Some(shadows) = &files.shadows {
             shadows.commit_sealed()?;
@@ -213,7 +228,7 @@ pub struct RowTable {
     discarded: AtomicBool,
     /// How its rows are sealed (`rows/sealing.rs`).
     sealing: Sealing,
-    /// Its frozen row groups, of the COLUMNS layout (`rows/frozen.rs`).
+    /// Its frozen row groups, of the column store (`rows/frozen.rs`).
     frozen: Frozen,
     /// Held shared while it freezes rows (`TableFiles::freezes`).
     freezes: Arc<RwLock<()>>,
@@ -422,13 +437,13 @@ impl TableStorage for RowTable {
         self.scan_rows(tx, columns, Some(condition.clone()))
     }
 
-    /// A table of the COLUMNS layout gives its frozen rows without making
+    /// A table of the column store gives its frozen rows without making
     /// each (`rows/frozen/batches.rs`).
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Condition>) -> crate::storage::Batches {
         self.scan_batches_of(tx, columns, condition.cloned())
     }
 
-    /// A table of the COLUMNS layout does.
+    /// A table of the column store does.
     fn reads_by_batch(&self) -> bool {
         self.frozen.columns().is_some()
     }

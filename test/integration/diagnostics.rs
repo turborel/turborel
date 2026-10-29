@@ -38,7 +38,8 @@ fn a_database_tells_its_sink_of_its_life() {
     assert_eq!(
         kept.taken(),
         vec![
-            // Opening registers the engine and methods that keep their data in the directory.
+            // Opening registers the engines and methods that keep their data in the directory.
+            registered(Extension::Engine, "columnstore"),
             registered(Extension::Engine, "rowstore"),
             registered(Extension::IndexMethod, "btree"),
             registered(Extension::IndexMethod, "hash"),

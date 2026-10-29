@@ -424,11 +424,12 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   other plug-ins declare the options (`Database::declare_table_option`). The row store
   takes OUT_OF_LINE, STATISTICS.SAMPLE, STATISTICS.BUCKETS,
   STATISTICS.REFRESH_FRACTION, STATISTICS.REFRESH_ROWS,
-  TRANSACTIONS.TRACKED_ROWS, TRANSACTIONS.HELD_BYTES, and LAYOUT, ROWS or
-  COLUMNS, with COLUMNS.GROUP_ROWS, COLUMNS.FREEZE_ROWS,
-  COLUMNS.FREEZE_DELAY, COLUMNS.REWRITE_FRACTION and COLUMNS.COMPRESSION,
-  how a table of the COLUMNS layout freezes its rows into groups of its
-  columns' values, compressed, and writes them again (RULES.md D31). The database
+  TRANSACTIONS.TRACKED_ROWS and TRANSACTIONS.HELD_BYTES; the column store,
+  `columnstore`, takes them too, and COLUMNSTORE.GROUP_ROWS,
+  COLUMNSTORE.FREEZE_ROWS, COLUMNSTORE.FREEZE_DELAY,
+  COLUMNSTORE.REWRITE_FRACTION and COLUMNSTORE.COMPRESSION: how a table of
+  it freezes its rows into groups of its columns' values, compressed, and
+  writes them again (RULES.md D31). The database
   declares ENCODINGS for every table: the registered encodings its rows
   pass through, such as LZ4 or AES-256-GCM with its key (RULES.md D48).
 - **Plug-ins** for storage engines, index methods, functions, optimizer

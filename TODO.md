@@ -151,8 +151,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 - **Scan filters** more precise than one `column op constant`. Even that
   one only cuts the rows returned and the reads tracked for
-  serializability: a table of the ROWS layout still reads and decodes
-  every row; one of COLUMNS skips frozen chunks the filter cannot match
+  serializability: a table of the row store still reads and decodes
+  every row; one of the column store skips frozen chunks the filter cannot match
   (D31).
 - **Batch execution, further** (RULES.md D31): of a filter, only
   conjuncts comparing a column with a constant are judged over vectors. To come:
@@ -161,7 +161,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   a vector at a time (`Accumulator`).
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
-- **Statistics:** zone maps of a ROWS table's pages (a COLUMNS table's
+- **Statistics:** zone maps of a row store table's pages (a column store's
   frozen chunks have them, D31); the row store's fetch and scan costs,
   measured: it keeps the defaults of
   `TableStorage`, and its scan cost ignores the columns read; wide columns
@@ -193,12 +193,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   four still read less than one, on the frame's latch; a reader-biased
   latch (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
-  a trait. For COLUMNS:
-  - COLUMNS.ORDER, the columns rows are sorted by as they are frozen;
+  a trait. For the column store:
+  - COLUMNSTORE.ORDER, the columns rows are sorted by as they are frozen;
   - chunks compressed further: run-length, bit-packing below a byte,
     FSST for texts, ALP for approximate numbers; and conditions judged on
     the codes of a dictionary or a frame without decoding each value;
-  - the database's setting STORAGE.LAYOUT, of new tables;
   - freezing in the background, not at a transaction's end;
   - a condition on two or more columns skipping chunks; bloom filters;
   - groups' headers read as they are needed, not held in memory.

@@ -75,7 +75,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D28 | Transactions may wait for locks; deadlocks are refused |
 | D29 | Engines own concurrency, at logical timestamps |
 | D30 | A storage foundation of independent components |
-| D31 | The built-in engine keeps rows, or columns |
+| D31 | The built-in engines: a row store and a column store |
 | D34 | Index methods |
 | D35 | The optimizer and planner |
 | D36 | Settings |
@@ -694,15 +694,16 @@ work for the heuristics above it.
 reused; mmap leaves the order of writes to the operating system, which
 breaks write-ahead logging.
 
-**D31. The built-in engine keeps rows, or columns.**
-Whole engines are the extension point; inside the built-in one, a table's
-option LAYOUT chooses how it keeps its rows, every layout sharing one
-value codec, record format, statistics module, buffer pool, MVCC and
-row ids. ROWS keeps each row's values together; COLUMNS keeps rows
-written so, then freezes them into groups of each column's values
-together (below). A hybrid (PAX), each page holding a group's rows'
-columns apart, is the next layout, and the format of frozen groups
-becomes a trait when it is.
+**D31. The built-in engines: a row store and a column store.**
+Whole engines are the extension point. Two are built in, one code over
+one data file, sharing one value codec, record format, statistics
+module, buffer pool, MVCC and row ids: `rowstore` keeps each row's values
+together; `columnstore` keeps rows written so, then freezes them into
+groups of each column's values together (below), its tables' files the
+row store's, which checkpoints them for both. A table chooses by USING,
+else DEFAULT_ENGINE, and moves by ALTER TABLE ... USING. A hybrid (PAX),
+each page holding a group's rows' columns apart, is the next store, and
+the format of frozen groups becomes a trait when it is.
 - A table is a B-link tree (Lehman and Yao, 1981) keyed by a logical 64-bit
   row id, given in blocks per thread. Long values are kept out of line.
   A leaf split keeps as its high key the shortest that parts its halves
@@ -724,10 +725,10 @@ becomes a trait when it is.
 - Scans are given the columns needed, and simple filters.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity.
-- COLUMNS: the tree is the table's delta, every row written there as in
-  ROWS. Once COLUMNS.FREEZE_ROWS rows past the last group are committed
-  before every snapshot (and COLUMNS.FREEZE_DELAY seconds ago), the end of
-  a transaction freezes up to COLUMNS.GROUP_ROWS of them, 2^16 by default,
+- The column store: the tree is the table's delta, every row written
+  there as in the row store. Once COLUMNSTORE.FREEZE_ROWS rows past the last group are committed
+  before every snapshot (and COLUMNSTORE.FREEZE_DELAY seconds ago), the end of
+  a transaction freezes up to COLUMNSTORE.GROUP_ROWS of them, 2^16 by default,
   into a group (`engine/columns`): its row ids, and each column's values
   in chunks of a page each, each chunk's least and greatest values and
   nulls kept (zone maps), every page sealed by the table's ENCODINGS, its
@@ -735,7 +736,7 @@ becomes a trait when it is.
   fewest bytes, and holds as many values as its page does so: plain, a
   constant, a frame of reference of 8-byte fields (any such field read as
   a signed integer, so every type of that width), or a dictionary
-  (`columns/encoded.rs`); COLUMNS.COMPRESSION = NONE keeps them plain.
+  (`columns/encoded.rs`); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Measured: rows of numbers of few values or near one another, and of
   texts of few values, freeze into 12 pages where they take 46 plain, and
   scans run as fast, a value read at a time either way. Groups are immutable, their row ids' ranges apart,
@@ -744,7 +745,7 @@ becomes a trait when it is.
   every reader sees: so a frozen row changed is written as any row is,
   over a version holding its frozen values, and a deletion of one stays in
   the tree, until its group is written again: once the tree's entries in
-  a group's range of row ids are COLUMNS.REWRITE_FRACTION of its rows
+  a group's range of row ids are COLUMNSTORE.REWRITE_FRACTION of its rows
   (looked at only after so many frozen rows are given entries), the group
   is written again with those of them committed before every snapshot,
   replaced in the directory, and the entries taken out as a freeze takes
@@ -759,7 +760,7 @@ becomes a trait when it is.
   rows are frozen, as measured (`bench/analytics.rs`).
 - Batches (`TableStorage::scan_batches`): a scan's rows by vectors of up
   to 2048 of each column's values, in no particular order, by default its
-  rows gathered. A COLUMNS table gives each frozen vector the tree has no
+  rows gathered. A column store table gives each frozen vector the tree has no
   entry in straight from its chunks, a condition's columns read first and
   the others only of the rows it keeps, then the tree's rows. An
   aggregation whose set functions count rows or take a column, none
@@ -769,23 +770,23 @@ becomes a trait when it is.
   with a constant judged over the vectors, and the rest of it judged of
   the rows they keep, each made a row; one that can raise is judged whole
   a row at a time, as row by row. A projection of columns and constants of
-  such a scan, of a table that reads by batch (`reads_by_batch`, a COLUMNS
-  table's), makes each row it gives of the vectors, a batch read ahead of
+  such a scan, of a table that reads by batch (`reads_by_batch`, a column
+  store table's), makes each row it gives of the vectors, a batch read ahead of
   what a cursor is given; of any other table it reads a row at a time, as
   reading ahead would gain nothing (`exec/batch/project.rs`). Groups are held in the work area, given in the order
   their first rows came; past it, the rows of every group not yet held
   are written, numbered, as a pass of `exec/group.rs` writes them, grouped
-  as it groups them, and merged with the groups held by number. Measured against ROWS row by row (`bench/analytics.rs`): COUNT(*)
-  of a COLUMNS table some 50 times as fast, a SUM of one column 17, a
+  as it groups them, and merged with the groups held by number. Measured against the row store row by row (`bench/analytics.rs`): COUNT(*)
+  of a column store table some 50 times as fast, a SUM of one column 17, a
   filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
   made in a buffer kept (`spill::put_norm`).
 *Why:* a row store suits SQL's point reads, updates and cursors, and is
 the base the other layouts build on. Logical row ids stay stable, so
 indexes never need rewriting for them, frozen or not. Columns suit scans
 of a few columns of many rows; keeping new rows as rows keeps writes and
-key lookups as fast as in ROWS, the design of SQL Server's deltastore,
+key lookups as fast as in the row store, the design of SQL Server's deltastore,
 HyPer's Data Blocks and TiFlash's delta tree. Measured on 200,000 rows of
-16 columns in memory, against ROWS (`bench/analytics.rs`): COUNT(*) 3.1
+16 columns in memory, against the row store (`bench/analytics.rs`): COUNT(*) 3.1
 times as fast, a SUM of one column 3.0, a filter of 1% by a column in the
 rows' order 4.8; one row fetched by key 7% slower, as each column is a
 page of its own.

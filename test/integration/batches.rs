@@ -13,7 +13,7 @@ use crate::common::{exec, rows, sorted};
 /// every 13th.
 const ROWS: i64 = 6000;
 
-/// Tables R, of the ROWS layout, and C, of COLUMNS in groups of 2048, of
+/// Tables R, of the row store, and C, of the column store in groups of 2048, of
 /// schema A, alike: written, their rows frozen, then some changed,
 /// deleted and added, in each.
 fn both(db: &Database) -> Session {
@@ -21,7 +21,7 @@ fn both(db: &Database) -> Session {
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
            CREATE TABLE C (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
-             WITH (LAYOUT = 'COLUMNS', COLUMNS.GROUP_ROWS = 2048)",
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
     let a = db.session("A");
@@ -155,7 +155,7 @@ fn datetimes_group_by_batch_as_row_by_row() {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, D DATE, I INTERVAL DAY TO HOUR, W TIMESTAMP WITH TIME ZONE)
-           WITH (LAYOUT = 'COLUMNS', COLUMNS.GROUP_ROWS = 2048)",
+           USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
     let a = db.session("A");
@@ -211,7 +211,7 @@ const PROJECTIONS: [&str; 6] = [
 ];
 
 /// Verifies: [DESIGN] RULES.md D31, projections read by batches: of a table
-/// of the COLUMNS layout, columns and constants give the rows a table of
+/// of the column store, columns and constants give the rows a table of
 /// ROWS gives, frozen rows changed among them, filtered or not, none
 /// matched; one of an expression is made row by row, alike; and a cursor
 /// reading a few of its rows reads them.

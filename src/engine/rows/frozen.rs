@@ -1,6 +1,6 @@
 //! \[DESIGN\] A row-store table's frozen row groups (RULES.md D31): the
-//! COLUMNS layout. Rows are written to the table's tree, its delta, as a
-//! table of the ROWS layout keeps them; once committed before every
+//! column store. Rows are written to the table's tree, its delta, as a
+//! table of the row store keeps them; once committed before every
 //! snapshot, they are frozen into groups of their columns' values
 //! (`engine/columns`), and their entries taken out of the tree.
 //!
@@ -128,7 +128,7 @@ struct Retiring {
 
 /// \[DESIGN\] A table's frozen row groups, and how its rows are frozen.
 pub(super) struct Frozen {
-    /// How its rows are frozen, if its layout is COLUMNS.
+    /// How its rows are frozen, if it is the column store'sTORE.
     columns: RwLock<Option<Columns>>,
     directory: RwLock<Arc<Directory>>,
     /// The first page of the directory as stored, 0 for none.
@@ -137,7 +137,7 @@ pub(super) struct Frozen {
     freezing: Mutex<()>,
     retiring: Mutex<Vec<Retiring>>,
     /// Commit timestamps, each with when it was, so a freeze waits out
-    /// COLUMNS.FREEZE_DELAY (`freeze.rs`).
+    /// COLUMNSTORE.FREEZE_DELAY (`freeze.rs`).
     commits: Mutex<std::collections::VecDeque<(Timestamp, Instant)>>,
     /// When a freeze was last tried, so one due is not tried on every
     /// transaction's end.
@@ -345,7 +345,7 @@ impl RowTable {
         (crate::storage::cost_of(usize::try_from(frozen).unwrap_or(usize::MAX)), crate::storage::cost_of(self.live.load(Ordering::Acquire)))
     }
 
-    /// Notes a commit at `at`, for COLUMNS.FREEZE_DELAY.
+    /// Notes a commit at `at`, for COLUMNSTORE.FREEZE_DELAY.
     pub(super) fn note_commit(&self, at: Timestamp) {
         let Some(columns) = read(&self.frozen.columns).ok().and_then(|c| *c) else { return };
         if columns.freeze_delay > 0 {

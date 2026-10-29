@@ -1,4 +1,4 @@
-//! \[DESIGN\] A COLUMNS table's rows by batch (`TableStorage::scan_batches`,
+//! \[DESIGN\] A column store table's rows by batch (`TableStorage::scan_batches`,
 //! RULES.md D31), in no particular order: first its frozen rows, a vector
 //! at a time, each column's values straight from its chunks, no row made,
 //! leaving out those the tree has an entry for; then the tree's rows, as
@@ -22,7 +22,7 @@ use crate::error::Result;
 use crate::storage::{BATCH_ROWS, Batch, Condition, RowId};
 use crate::value::Value;
 
-/// \[DESIGN\] A COLUMNS table's batches.
+/// \[DESIGN\] A column store table's batches.
 pub(in crate::engine::rows) struct Batched {
     table: Arc<RowTable>,
     reader: Reader,

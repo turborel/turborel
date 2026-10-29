@@ -35,7 +35,7 @@ fn files() -> (Arc<Pager>, TableFiles) {
     (pager, TableFiles::new(pool, file, Arc::new(MemoryLog::new())))
 }
 
-/// Of the COLUMNS layout, in groups of 2048, frozen after `delay` seconds.
+/// Of the column store, in groups of 2048, frozen after `delay` seconds.
 fn options(delay: u32) -> TableOptions {
     rewriting(delay, crate::engine::rows::options::DEFAULT_REWRITE_FRACTION)
 }
@@ -142,7 +142,7 @@ fn frozen_rows_are_written() {
 }
 
 /// Verifies: [DESIGN] RULES.md D31, freezing waits: rows committed after
-/// the horizon, or within COLUMNS.FREEZE_DELAY of now, are not frozen; a
+/// the horizon, or within COLUMNSTORE.FREEZE_DELAY of now, are not frozen; a
 /// freeze that found too few rows is not tried again at once.
 #[test]
 fn a_freeze_waits_for_its_horizon_and_its_delay() {
@@ -234,7 +234,7 @@ fn changed(table: &RowTable, (ids, deleted): (&[RowId], &[RowId]), at: u64) {
 /// them: the deleted rows gone from it, the updates its values, their
 /// entries out of the tree, the other group as it was; a group whose rows
 /// are all deleted is taken out; reopened, the table reads the same; and
-/// with COLUMNS.REWRITE_FRACTION 0, no group is written again.
+/// with COLUMNSTORE.REWRITE_FRACTION 0, no group is written again.
 #[test]
 fn groups_are_written_again() {
     let (_, held) = files();

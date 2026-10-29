@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::options::encodings_of;
-use super::{RowStore, Sealing, TableFiles, TableOptions};
+use super::{COLUMN_STORE, ROW_STORE, RowStore, Sealing, TableFiles, TableOptions};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::disk::encoding::Encodings;
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
@@ -15,6 +15,12 @@ use crate::log::MemoryLog;
 use crate::memory::MemoryBudget;
 use crate::spill::WorkAreas;
 use crate::sync::lock_builtin;
+
+/// `defaults`, its tables freezing their rows as it says, or as the
+/// column store's defaults do.
+fn freezing(defaults: TableOptions) -> TableOptions {
+    TableOptions { columns: Some(defaults.columns.unwrap_or_default()), ..defaults }
+}
 
 impl RowStore {
     /// A row store keeping its tables in `files`, each with `defaults`
@@ -28,7 +34,17 @@ impl RowStore {
             tables: Mutex::new(HashMap::new()),
             work,
             encodings: Mutex::default(),
+            name: ROW_STORE,
+            checkpoints: true,
         }
+    }
+
+    /// \[DESIGN\] The column store over the row store's `files`: its tables
+    /// freeze their rows into groups of their columns' values, each with
+    /// `defaults` unless `configure` says otherwise, their files the row
+    /// store's, which checkpoints them (RULES.md D31).
+    pub fn columns(files: TableFiles, defaults: TableOptions) -> RowStore {
+        RowStore { name: COLUMN_STORE, checkpoints: false, defaults: freezing(defaults), ..RowStore::new(files, defaults) }
     }
 
     /// \[DESIGN\] A row store keeping its tables in memory, in a file system
@@ -50,7 +66,14 @@ impl RowStore {
             tables: Mutex::new(HashMap::new()),
             work: Arc::default(),
             encodings: Mutex::default(),
+            name: ROW_STORE,
+            checkpoints: true,
         }
+    }
+
+    /// As `columns`, its tables in `memory`, which others may share.
+    pub(crate) fn columns_sharing(defaults: TableOptions, memory: Arc<MemoryPages>) -> RowStore {
+        RowStore { name: COLUMN_STORE, defaults: freezing(defaults), ..RowStore::sharing(defaults, memory) }
     }
 
     /// Makes `encodings` those its tables' option ENCODINGS names.

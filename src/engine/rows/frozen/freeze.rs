@@ -1,8 +1,8 @@
 //! \[DESIGN\] Freezing a table's rows into column groups (RULES.md D31), as
 //! a transaction's end collects its garbage (`TableStorage::gc`): when
-//! COLUMNS.FREEZE_ROWS rows past its last group are committed before every
-//! snapshot, and COLUMNS.FREEZE_DELAY seconds ago, a group of up to
-//! COLUMNS.GROUP_ROWS of them is written, published in a new directory,
+//! COLUMNSTORE.FREEZE_ROWS rows past its last group are committed before every
+//! snapshot, and COLUMNSTORE.FREEZE_DELAY seconds ago, a group of up to
+//! COLUMNSTORE.GROUP_ROWS of them is written, published in a new directory,
 //! and their entries taken out of the tree once no reader holds a
 //! directory from before it. Split from frozen.rs (RULES.md R-SIZE-2).
 //!

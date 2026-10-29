@@ -397,6 +397,9 @@ impl Database {
         let file = pool.add_pager(Arc::new(pager));
         let undo = UndoStore::batched(undo_log(place)?, place.options.undo_batch);
         let files = TableFiles::over(Arc::clone(&pool), file, undo).shadowed(Arc::clone(&place.shadows));
+        // The column store's tables in the row store's files, which its
+        // checkpoints keep (RULES.md D31).
+        self.register_engine(Box::new(RowStore::columns(files.clone(), TableOptions::default())))?;
         self.register_engine(Box::new(RowStore::new(files, TableOptions::default())))?;
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(pool, file)))

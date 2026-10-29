@@ -89,8 +89,9 @@ fn storage_contract(engine: &dyn StorageEngine) {
 }
 
 /// Verifies: [DESIGN] `StorageEngine` and `TableStorage` contracts, for the
-/// built-in row store, in memory and on files, and for the test engine of
-/// coordinator-isolated tables the other tests use.
+/// built-in row store, in memory and on files, the column store over its
+/// files (RULES.md D31), and the test engine of coordinator-isolated
+/// tables the other tests use.
 #[test]
 fn the_built_in_engine_keeps_the_storage_contract() {
     storage_contract(&RowStore::in_memory(TableOptions::default()));
@@ -99,7 +100,9 @@ fn the_built_in_engine_keeps_the_storage_contract() {
     let pager = Pager::create(&OsFileSystem, &scratch.path("rows"), crc32c(), Pipeline::none(), 4096).unwrap();
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
-    storage_contract(&RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default()));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    storage_contract(&RowStore::new(files.clone(), TableOptions::default()));
+    storage_contract(&RowStore::columns(files, TableOptions::default()));
 }
 
 /// Verifies: [DESIGN] `Catalog` contract, for `MemoryCatalog`.

@@ -36,7 +36,7 @@ fn main() {
     let db = database();
     let s = db.session("B");
     measure(&bench, &s, ("F", ""));
-    measure(&bench, &s, ("FC", " (COLUMNS)"));
+    measure(&bench, &s, ("FC", " (columnstore)"));
 }
 
 /// Measures each workload on table `table`, its cases' names ending in
@@ -95,7 +95,7 @@ fn database() -> Database {
              N INTEGER, O INTEGER, P INTEGER, S CHAR(16))
            CREATE TABLE FC (K INTEGER PRIMARY KEY, G INTEGER NOT NULL, A INTEGER, B INTEGER, C INTEGER,
              D INTEGER, E DECIMAL(9,2), H INTEGER, I INTEGER, J INTEGER, L INTEGER, M INTEGER,
-             N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) WITH (LAYOUT = 'COLUMNS')",
+             N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) USING columnstore",
     )
     .unwrap();
     let s = db.session("B");

@@ -1,5 +1,5 @@
 //! \[DESIGN\] Frozen row groups written again (RULES.md D31): a group whose
-//! range of row ids the tree has entries for, of COLUMNS.REWRITE_FRACTION
+//! range of row ids the tree has entries for, of COLUMNSTORE.REWRITE_FRACTION
 //! of its rows or more (frozen rows changed or deleted, or rows given ids
 //! in its range late), is written again with them: each entry committed
 //! before every snapshot folded in, a deletion dropping its row, an update
@@ -28,7 +28,7 @@ use crate::txn::Timestamp;
 /// \[DESIGN\] The most groups one transaction's end writes again.
 const MOST_REWRITES: usize = 2;
 
-/// Whether `entries` of a group of `rows` rows are COLUMNS.REWRITE_FRACTION
+/// Whether `entries` of a group of `rows` rows are COLUMNSTORE.REWRITE_FRACTION
 /// of them or more, as `columns` says.
 fn due(entries: usize, rows: u32, columns: &Columns) -> bool {
     let entries = f64::from(u32::try_from(entries).unwrap_or(u32::MAX));

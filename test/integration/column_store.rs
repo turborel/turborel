@@ -1,7 +1,7 @@
-//! \[EXTENSION\] The COLUMNS layout of the row store (RULES.md D31): a
+//! \[EXTENSION\] The column store (RULES.md D31): a
 //! table's rows frozen into groups of their columns' values once committed
 //! before every snapshot, read, changed, indexed, kept unique and
-//! recovered as a table of the ROWS layout's are.
+//! recovered as a table of the row store's are.
 
 use std::path::Path;
 
@@ -14,14 +14,14 @@ use crate::common::{Scramble, Scratch, after_crash, exec, os, rows, sorted};
 /// null for every 11th; N, a number in the order the rows were written.
 const ROWS: i64 = 5000;
 
-/// The tables R, of the ROWS layout, and C, of the COLUMNS layout in
+/// The tables R, of the row store, and C, of the column store in
 /// groups of 2048 rows, of schema A, each with `ROWS` rows.
 fn both(db: &Database) -> Session {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
            CREATE TABLE C (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
-             WITH (LAYOUT = 'COLUMNS', COLUMNS.GROUP_ROWS = 2048)",
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
     let a = db.session("A");
@@ -59,8 +59,8 @@ fn answers(s: &Session, table: &str) -> Vec<Vec<String>> {
     QUERIES.iter().map(|q| sorted(s, &q.replace("{t}", table))).collect()
 }
 
-/// Verifies: [EXTENSION] RULES.md D31, the COLUMNS layout: a table of it
-/// gives every query the rows a table of the ROWS layout gives, its rows
+/// Verifies: [EXTENSION] RULES.md D31, the column store: a table of it
+/// gives every query the rows a table of the row store gives, its rows
 /// frozen into groups: counts and sums, ranges of its key and of another
 /// column, groups, nulls, equalities, a join.
 #[test]
@@ -109,7 +109,7 @@ fn open(dir: &Path) -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] RULES.md D31, D25: a table of the COLUMNS layout
+/// Verifies: [EXTENSION] RULES.md D31, D25: a table of the column store
 /// is recovered: frozen rows and rows changed after, when the database
 /// stopped without closing, and by the checkpoint of a clean close.
 #[test]
@@ -139,23 +139,30 @@ fn column_tables_are_recovered() {
     drop((s, db, a, crashed));
 }
 
-/// Verifies: [EXTENSION] RULES.md D31, D41: LAYOUT takes ROWS or COLUMNS
-/// only; ALTER TABLE SET (LAYOUT = ...) makes the table anew of the other
-/// layout, its rows kept; an index made on a table of frozen rows finds
-/// them.
+/// Verifies: [EXTENSION] RULES.md D31, D41: ALTER TABLE ... USING makes a
+/// table anew in the other store, its rows kept, its options the new
+/// store's; the column store's options are refused of the row store's
+/// table; an index made on a table of frozen rows finds them.
 #[test]
-fn a_table_changes_its_layout() {
+fn a_table_changes_its_store() {
     let db = Database::new();
     let a = both(&db);
-    assert_eq!(exec(&a, "CREATE TABLE X (K INTEGER) WITH (LAYOUT = 'PAGES')").err(), Some(Code::SyntaxRule));
+    assert_eq!(
+        exec(&a, "CREATE TABLE X (K INTEGER) WITH (COLUMNSTORE.GROUP_ROWS = 4096)").err(),
+        Some(Code::SyntaxRule),
+        "not the row store's"
+    );
     db.create_index("C_N", "A.C", &["N"], "btree").unwrap();
     assert_eq!(rows(&a, "SELECT K FROM C WHERE N = 250"), rows(&a, "SELECT K FROM R WHERE N = 250"));
-    a.run("ALTER TABLE C SET (LAYOUT = 'ROWS')").unwrap();
+    a.run("ALTER TABLE C USING rowstore").unwrap();
     a.commit().unwrap();
     assert_eq!(answers(&a, "C"), answers(&a, "R"));
-    a.run("ALTER TABLE R SET (LAYOUT = 'COLUMNS', COLUMNS.GROUP_ROWS = 4096)").unwrap();
+    a.run("ALTER TABLE R USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 4096)").unwrap();
     a.commit().unwrap();
     assert_eq!(answers(&a, "C"), answers(&a, "R"));
+    let engines =
+        rows(&a, "SELECT TABLE_NAME, ENGINE_NAME FROM INFORMATION_SCHEMA.TABLE_OPTIONS WHERE OPTION_NAME = 'COLUMNSTORE.GROUP_ROWS'");
+    assert_eq!(engines, Ok(vec!["R,columnstore".to_owned()]));
 }
 
 /// The bytes of the files of the database in `dir` whose names begin with
@@ -179,7 +186,7 @@ fn sealing(dir: &Path) -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] RULES.md D31, D48: a table of the COLUMNS layout
+/// Verifies: [EXTENSION] RULES.md D31, D48: a table of the column store
 /// whose option ENCODINGS names an encoding seals its groups' pages as it
 /// seals its rows: once its rows are frozen and checkpointed, the data
 /// file holds none of their text, and they read back after a reopening.
@@ -190,7 +197,7 @@ fn frozen_pages_pass_through_the_tables_encodings() {
     let db = sealing(&dir);
     db.schema(
         "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER, S VARCHAR(30))
-           WITH (LAYOUT = 'COLUMNS', COLUMNS.GROUP_ROWS = 2048, ENCODINGS = 'test scramble')",
+           USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, ENCODINGS = 'test scramble')",
     )
     .unwrap();
     let s = db.session("S");
@@ -211,9 +218,9 @@ fn frozen_pages_pass_through_the_tables_encodings() {
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D35: the planner's costs of a table of
-/// the COLUMNS layout: a scan of a few of its columns costs less than of a
-/// table of ROWS, so a fifth of its rows is counted by a scan where a
-/// table of ROWS asks its index; a few rows are asked of the index in
+/// the column store: a scan of a few of its columns costs less than of a
+/// table of the row store, so a fifth of its rows is counted by a scan where a
+/// table of the row store asks its index; a few rows are asked of the index in
 /// either.
 #[test]
 fn a_column_table_is_scanned_where_a_row_table_is_probed() {

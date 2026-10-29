@@ -35,27 +35,24 @@ const REFRESH_FRACTION: &str = "STATISTICS.REFRESH_FRACTION";
 const REFRESH_ROWS: &str = "STATISTICS.REFRESH_ROWS";
 const TRACKED_ROWS: &str = "TRANSACTIONS.TRACKED_ROWS";
 const HELD_BYTES: &str = "TRANSACTIONS.HELD_BYTES";
-const LAYOUT: &str = "LAYOUT";
-const GROUP_ROWS: &str = "COLUMNS.GROUP_ROWS";
-const FREEZE_ROWS: &str = "COLUMNS.FREEZE_ROWS";
-const FREEZE_DELAY: &str = "COLUMNS.FREEZE_DELAY";
-const REWRITE_FRACTION: &str = "COLUMNS.REWRITE_FRACTION";
-const COMPRESSION: &str = "COLUMNS.COMPRESSION";
-/// What COLUMNS.COMPRESSION takes.
+const GROUP_ROWS: &str = "COLUMNSTORE.GROUP_ROWS";
+const FREEZE_ROWS: &str = "COLUMNSTORE.FREEZE_ROWS";
+const FREEZE_DELAY: &str = "COLUMNSTORE.FREEZE_DELAY";
+const REWRITE_FRACTION: &str = "COLUMNSTORE.REWRITE_FRACTION";
+const COMPRESSION: &str = "COLUMNSTORE.COMPRESSION";
+/// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
-/// \[DESIGN\] The default of COLUMNS.REWRITE_FRACTION: a fifth of a group's
+/// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
 /// rows changed, deleted or added to before it is written again, as
 /// Vertica's mergeout purges and SQL Server's guidance has it.
 pub const DEFAULT_REWRITE_FRACTION: f64 = 0.2;
-/// The layouts a table may have.
-const LAYOUTS: &[&str] = &["ROWS", "COLUMNS"];
 
-/// \[DESIGN\] The default of COLUMNS.GROUP_ROWS: the rows of a frozen row
+/// \[DESIGN\] The default of COLUMNSTORE.GROUP_ROWS: the rows of a frozen row
 /// group, 2^16, 32 vectors of 2048 (RULES.md D31).
 pub const DEFAULT_GROUP_ROWS: u32 = 1 << 16;
 /// \[DESIGN\] The fewest rows of a frozen row group: one vector.
 pub const MIN_GROUP_ROWS: u32 = 2048;
-/// \[DESIGN\] The longest COLUMNS.FREEZE_DELAY, in seconds: a year.
+/// \[DESIGN\] The longest COLUMNSTORE.FREEZE_DELAY, in seconds: a year.
 const MAX_FREEZE_DELAY: u32 = 366 * 24 * 60 * 60;
 
 /// \[DESIGN\] How a table of the row store keeps its rows (RULES.md D31), and
@@ -73,12 +70,12 @@ pub struct TableOptions {
     /// The bytes of a transaction's changes held in memory; none for
     /// `DEFAULT_HELD_BYTES`.
     pub held_bytes: Option<usize>,
-    /// How its rows are frozen into column groups, if its layout is
-    /// COLUMNS; none if it is ROWS.
+    /// How its rows are frozen into column groups, if it is the column
+    /// store's; none if the row store's.
     pub columns: Option<Columns>,
 }
 
-/// \[DESIGN\] How a table of the COLUMNS layout freezes its rows into
+/// \[DESIGN\] How a table of the column store freezes its rows into
 /// column groups (RULES.md D31).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Columns {
@@ -202,48 +199,42 @@ pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
         ),
     ]
     .into_iter()
-    .chain(layout_declared(defaults))
+    .chain(defaults.columns.into_iter().flat_map(columns_declared))
     .collect()
 }
 
-/// The options of a table's layout, each defaulting to `defaults`'.
-fn layout_declared(defaults: TableOptions) -> Vec<TableOption> {
-    let cols = defaults.columns.unwrap_or_default();
+/// The column store's options of a table, each defaulting to `cols`'.
+fn columns_declared(cols: Columns) -> Vec<TableOption> {
     vec![
-        TableOption::new(
-            (LAYOUT, Kind::Choice(LAYOUTS), Value::Char(if defaults.columns.is_some() { "COLUMNS" } else { "ROWS" }.into())),
-            Rebuild::Yes,
-            "How the table keeps its rows: ROWS, each row's values together; COLUMNS, rows written kept so until they are frozen into groups, each column's values together.",
-        ),
         columns_option(
             GROUP_ROWS,
             (MIN_GROUP_ROWS.into(), DEFAULT_GROUP_ROWS.into(), whole(cols.group_rows)),
-            "The rows of each group a table of the COLUMNS layout freezes; groups frozen before keep theirs.",
+            "The rows of each group a table of the column store freezes; groups frozen before keep theirs.",
         ),
         columns_option(
             FREEZE_ROWS,
             (0, i128::from(i64::MAX), whole(cols.freeze_rows)),
-            "The rows committed past the last group after which a table of the COLUMNS layout freezes them; 0 for COLUMNS.GROUP_ROWS.",
+            "The rows committed past the last group after which a table of the column store freezes them; 0 for COLUMNSTORE.GROUP_ROWS.",
         ),
         columns_option(
             FREEZE_DELAY,
             (0, MAX_FREEZE_DELAY.into(), whole(cols.freeze_delay)),
-            "The seconds a row of a table of the COLUMNS layout stays as it was written after its commit before it may be frozen, so rows changed soon after are not.",
+            "The seconds a row of a table of the column store stays as it was written after its commit before it may be frozen, so rows changed soon after are not.",
         ),
         TableOption::new(
             (REWRITE_FRACTION, Kind::Number { min: 0.0_f64, max: 1.0_f64 }, Value::Approx(cols.rewrite_fraction)),
             Rebuild::No,
-            "The share of a frozen group's rows changed, deleted or added to, past which a table of the COLUMNS layout writes the group again with them; 0 for never.",
+            "The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.",
         ),
         TableOption::new(
             (COMPRESSION, Kind::Choice(COMPRESSIONS), Value::Char(if cols.compress { "AUTO" } else { "NONE" }.into())),
             Rebuild::No,
-            "Whether a table of the COLUMNS layout compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.",
+            "Whether a table of the column store compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.",
         ),
     ]
 }
 
-/// An option of the COLUMNS layout, a whole number from `min` to `max`,
+/// An option of the column store, a whole number from `min` to `max`,
 /// `default` until set, in place.
 fn columns_option(name: &str, (min, max, default): (i128, i128, Value), doc: &str) -> TableOption {
     TableOption::new((name, Kind::Integer { min, max }, default), Rebuild::No, doc)
@@ -285,13 +276,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
     out.statistics.rows = count(REFRESH_ROWS).unwrap_or(base.statistics.rows);
     out.tracked_rows = size(TRACKED_ROWS).or(base.tracked_rows);
     out.held_bytes = size(HELD_BYTES).or(base.held_bytes);
-    let layout = set(LAYOUT).map(ToString::to_string);
-    let columns = match layout.as_deref().map(str::trim_end) {
-        Some("COLUMNS") => Some(base.columns.unwrap_or_default()),
-        Some(_) => None,
-        None => base.columns,
-    };
-    out.columns = columns.map(|c| Columns {
+    out.columns = base.columns.map(|c| Columns {
         group_rows: count(GROUP_ROWS).and_then(|n| u32::try_from(n).ok()).unwrap_or(c.group_rows),
         freeze_rows: count(FREEZE_ROWS).unwrap_or(c.freeze_rows),
         freeze_delay: count(FREEZE_DELAY).and_then(|n| u32::try_from(n).ok()).unwrap_or(c.freeze_delay),
