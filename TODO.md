@@ -155,12 +155,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   joins, and LEFT ones with a condition beyond their keys; products and
   a join's right operand built from batches; a sort, a DISTINCT of
   expressions, EXCEPT and INTERSECT over streams; typed vectors further:
-  arithmetic and comparisons of expressions over vectors of integers
-  (`B * 2 > 400000` 9.5 ms, `B > 200000` 2.3), grouping keys and groups'
-  set functions of them (`GROUP BY G` 12.0 ms), the row store's and the
-  column store's runs read in part as integers, and texts as bytes and
-  their ends; groups' set functions fed a vector
-  at a time, each group's rows gathered first; a LIKE whose pattern is
+  a filter's comparisons of expressions over vectors of integers
+  (`B * 2 > 400000` 9.5 ms, `B > 200000` 2.3), quotients of them, the
+  row store's and the column store's runs read in part as integers, and
+  texts as bytes and their ends; grouping of many groups (`GROUP BY K`
+  of 400,000 keys, 382 ms, past the work area); a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
 - **Spilled sorts**: of 400,000 rows past the default WORK_MEMORY a sort
   takes 149 ms where held whole it takes 41: each row written as a

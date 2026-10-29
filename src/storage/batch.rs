@@ -158,6 +158,50 @@ impl Batch {
     }
 }
 
+/// \[DESIGN\] One value of a batch: of a vector of values, read in
+/// place; of one of integers, its units and scale; or a null.
+#[derive(Debug, Clone, Copy)]
+pub enum Cell<'b> {
+    /// A value of a vector of values.
+    Value(&'b Value),
+    /// An exact number's units, and its scale.
+    Exact(i64, u32),
+    /// A null of a vector of integers, or past the end of a vector.
+    Null,
+}
+
+impl Cell<'_> {
+    /// Whether it is null.
+    pub fn is_null(&self) -> bool {
+        match self {
+            Cell::Value(v) => v.is_null(),
+            Cell::Exact(..) => false,
+            Cell::Null => true,
+        }
+    }
+
+    /// Its value, made.
+    pub fn to_value(&self) -> Value {
+        match self {
+            Cell::Value(v) => (*v).clone(),
+            Cell::Exact(units, scale) => Value::Exact(Decimal::new(i128::from(*units), *scale)),
+            Cell::Null => Value::Null,
+        }
+    }
+}
+
+impl Batch {
+    /// The value of column `at` of row `r`, read in place: none made of a
+    /// vector of integers.
+    pub fn cell(&self, at: usize, r: usize) -> Cell<'_> {
+        match self.columns.get(at) {
+            Some(Column::Values(values)) => values.get(r).map_or(Cell::Null, Cell::Value),
+            Some(Column::Ints(ints)) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
+            None => Cell::Null,
+        }
+    }
+}
+
 /// \[DESIGN\] Batches of a scan's rows.
 pub type Batches = Box<dyn Iterator<Item = Result<Batch>> + Send>;
 

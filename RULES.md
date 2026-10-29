@@ -862,7 +862,17 @@ the format of frozen groups becomes a trait when it is.
   compared with constants, IS NULL and IN judged, as integers, scaled
   once to one scale, a running sum checked a value at a time as decimals
   check it (of 400,000 rows: `SUM(B)` 5.6 ms to 2.1, `B > 200000` 5.6 to
-  2.3; of the chunks alone, decoded 2.3 ms to 0.04). A column store table
+  2.3; of the chunks alone, decoded 2.3 ms to 0.04). An expression of
+  integers and exact constants, negated, summed, subtracted or
+  multiplied, is evaluated as integers at the scale decimals give it, a
+  result past 18 digits, or a quotient, evaluated of values, which raise
+  of it (`vector/ints.rs`: `SUM(B * 2)` 7.3 ms to 2.8). Grouping makes an
+  integer's key as its value's (`spill::put_norm_exact`), reads a batch's
+  values in place (`storage::Cell`), and gathers each group's rows of a
+  batch in order, a counting sort into one buffer, to feed its set
+  functions a vector at a time (`GROUP BY G` with `SUM(B)` 11.9 ms to
+  8.2, with `SUM(B * 2 + 1)` 19.6 to 10.1, `GROUP BY G, S` 24.2 to 19.0).
+  A column store table
   gives each frozen vector straight from its chunks, a condition's columns read first and the others only
   of the rows it keeps; the tree's entries in its group's range of row
   ids, read once as the group is taken up, in their rows' place; then the

@@ -7,6 +7,8 @@
 //! of which it raises an error. The caller evaluates those a row at a time,
 //! as row by row, so an error raised is the row's it would be.
 
+pub(super) mod ints;
+
 use crate::error::Result;
 use crate::logical::Expr;
 use crate::storage::Batch;
@@ -15,7 +17,7 @@ use crate::value::{Value, arith};
 /// \[DESIGN\] The deepest expression evaluated a vector at a time: one
 /// deeper, rare, is evaluated a row at a time, so no evaluation by vectors
 /// adds a frame for each level of a deep one (RULES.md R-CF-6).
-const DEPTH: usize = 16;
+pub(super) const DEPTH: usize = 16;
 
 /// The null a lane gives past its values, which none of its rows asks.
 static NULL: Value = Value::Null;

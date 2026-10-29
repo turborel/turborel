@@ -52,7 +52,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 16] = [
+const QUERIES: [&str; 18] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -69,6 +69,8 @@ const QUERIES: [&str; 16] = [
     "SELECT I, SUM(D), MAX(N), COUNT(*) FROM {t} GROUP BY I",
     "SELECT SUM(D * 2), MIN(-D), MAX(N / 2) FROM {t} WHERE I = 9 OR K < 50",
     "SELECT K, D FROM {t} WHERE D BETWEEN 2.5 AND 2.75",
+    "SELECT I, SUM(D * 2 - I), MIN(N / 1000), MIN(D + 0.005) FROM {t} GROUP BY I",
+    "SELECT I, D, COUNT(*) FROM {t} WHERE K < 900 GROUP BY I, D",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11 GR4,
@@ -78,8 +80,9 @@ const QUERIES: [&str; 16] = [
 /// and fewer digits after the point than their scale, of either sign,
 /// one that no value equals; IN and NOT IN lists of either, one holding
 /// a null; numbers near the limits of 18 digits; nulls among them; set
-/// functions grouped and not, of expressions; a running sum past 18
-/// digits raising either way; rows changed and deleted after they were
+/// functions grouped and not, of expressions, one with a quotient
+/// evaluated of values; a running sum past 18 digits raising either way,
+/// grouped or not; rows changed and deleted after they were
 /// frozen.
 #[test]
 fn exact_numbers_as_integers_answer_as_row_by_row() {
@@ -94,8 +97,8 @@ fn exact_numbers_as_integers_answer_as_row_by_row() {
     assert_eq!(sorted(&a, "SELECT COUNT(*) FROM C WHERE D = 1.515"), vec!["0"], "no value of scale 2 is 1.515");
     // [X3.135-1986 §5.8 GR4e] a running sum past 18 digits raises, of
     // integers as of decimals, though the sum of all is within them.
-    for table in ["R", "C"] {
-        let sum = format!("SELECT SUM(N) FROM {table}");
+    for (table, grouped) in [("R", ""), ("C", ""), ("R", " GROUP BY I"), ("C", " GROUP BY I")] {
+        let sum = format!("SELECT SUM(N) FROM {table}{grouped}");
         assert_eq!(rows(&a, &sum).err(), Some(Code::Data), "{sum}");
         exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
         assert_eq!(rows(&a, &sum).err(), Some(Code::Data), "{sum}, row by row");

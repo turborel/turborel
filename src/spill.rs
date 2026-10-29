@@ -43,7 +43,7 @@ use crate::memory::MemoryBudget;
 use crate::storage::Row;
 use crate::value::codec::{put_row, row};
 use crate::value::types::TypeRegistry;
-use crate::value::{Bucket, NormKey, Value};
+use crate::value::{Bucket, Decimal, NormKey, Value};
 
 /// \[DESIGN\] The default WORK_MEMORY: what an operator holds in memory
 /// before it spills, 4 MiB.
@@ -372,12 +372,7 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
     match v {
         Value::Null => out.push(NULL_TAG),
         Value::Char(s) => text(out, CHAR_TAG, s.trim_end_matches(' ')),
-        Value::Exact(d) => {
-            let (units, scale) = d.normalized();
-            out.push(EXACT_TAG);
-            out.extend_from_slice(&units.to_le_bytes());
-            out.extend_from_slice(&scale.to_le_bytes());
-        }
+        Value::Exact(d) => put_norm_exact(d.units, d.scale, out),
         Value::Approx(f) => {
             out.push(APPROX_TAG);
             out.extend_from_slice(&(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }).to_le_bytes());
@@ -400,6 +395,16 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
             out.extend_from_slice(&e.bytes);
         }
     }
+}
+
+/// Appends the normalized key of the exact number of `units` at `scale`,
+/// as `put_norm` writes it of the value, so an exact number held as an
+/// integer keys as its value does.
+pub fn put_norm_exact(units: i128, scale: u32, out: &mut Vec<u8>) {
+    let (units, scale) = Decimal::new(units, scale).normalized();
+    out.push(EXACT_TAG);
+    out.extend_from_slice(&units.to_le_bytes());
+    out.extend_from_slice(&scale.to_le_bytes());
 }
 
 /// The key of `values`: the bytes `norm_key` gives of their normalized

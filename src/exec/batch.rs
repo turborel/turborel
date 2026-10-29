@@ -29,8 +29,8 @@ use crate::error::Result;
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
-use crate::spill::{put_norm, row_bytes};
-use crate::storage::{Batch, Column, Row};
+use crate::spill::{put_norm, put_norm_exact, row_bytes};
+use crate::storage::{Batch, Cell, Column, Ints, Row};
 use crate::txn::TxId;
 use crate::value::Value;
 
@@ -144,6 +144,7 @@ fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), bat
         spilled: false,
         width,
         scratch: Vec::new(),
+        slots: Vec::new(),
     };
     for kept in batches {
         let (batch, rows) = kept?;
@@ -162,37 +163,72 @@ fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), bat
     groups.spilling.finish(held)
 }
 
-/// Feeds `states` one row, as `taken` says, `value` giving its value at
-/// each place of the batch.
-fn take_row<'b>(
+/// The rows `placed`, each its group's place among `groups` of them, its
+/// place among the rows given and in the batch, gathered by group in order:
+/// the places among those given, those in the batch, and where each
+/// group's end.
+fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    let mut ends = vec![0_usize; groups];
+    for &(slot, ..) in placed {
+        if let Some(end) = ends.get_mut(slot) {
+            *end = end.saturating_add(1);
+        }
+    }
+    let mut at = 0_usize;
+    let mut next: Vec<usize> = ends
+        .iter_mut()
+        .map(|end| {
+            let first = at;
+            at = at.saturating_add(*end);
+            *end = at;
+            first
+        })
+        .collect();
+    let (mut given, mut read_rows) = (vec![0_usize; placed.len()], vec![0_usize; placed.len()]);
+    for &(slot, n, r) in placed {
+        let Some(to) = next.get_mut(slot) else { continue };
+        if let (Some(g), Some(b)) = (given.get_mut(*to), read_rows.get_mut(*to)) {
+            (*g, *b) = (n, r);
+        }
+        *to = to.saturating_add(1);
+    }
+    (given, read_rows, ends)
+}
+
+/// Feeds `states` the rows of one group of `batch`, as `taken` says: the
+/// `given`th of those given, the rows `read_rows` of the batch; each set
+/// function a vector of them at a time, of values or of integers, but of
+/// an expression not evaluated by vectors, a row at a time.
+fn fed_group(
     states: &mut [Box<dyn Accumulator>],
     (taken, scratch): (&[Taken], &mut Row),
-    value: impl Fn(usize) -> Option<&'b Value>,
-    (lanes, n): (&[Option<Lane<'_>>], usize),
+    (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
+    (given, read_rows): (&[usize], &[usize]),
 ) -> Result<()> {
     for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
-        match take {
+        match (take, lane) {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
-            Taken::Count => state.update(&Value::Null)?,
+            (Taken::Count, _) => state.update_rows(given.len())?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            Taken::Column(c) => {
-                if let Some(v) = value(*c).filter(|v| !v.is_null()) {
-                    state.update(v)?;
+            (Taken::Column(c), _) => match batch.columns.get(*c) {
+                Some(Column::Ints(ints)) => state.update_ints(ints, Some(read_rows))?,
+                Some(Column::Values(values)) => state.update_many(values, Some(read_rows))?,
+                None => {}
+            },
+            (Taken::Expr(..), Some(Fed::Ints(ints))) => state.update_ints(ints, Some(given))?,
+            (Taken::Expr(..), Some(Fed::Values(Lane::Made(values)))) => state.update_many(values, Some(given))?,
+            (Taken::Expr(..), Some(Fed::Values(Lane::Column(values, _)))) => state.update_many(values, Some(read_rows))?,
+            (Taken::Expr(..), Some(Fed::Values(Lane::Const(v)))) => {
+                if !v.is_null() {
+                    (0..given.len()).try_for_each(|_| state.update(v))?;
                 }
             }
-            // Its value of the batch's evaluated a vector at a time, if
-            // it was (`vector.rs`).
-            Taken::Expr(e, inputs) => {
-                if let Some(lane) = lane {
-                    let v = lane.at(n);
+            (Taken::Expr(e, inputs), None) => {
+                for &r in read_rows {
+                    let v = evaluated((e, inputs), scratch, |at, slot| put_cell(batch.cell(at, r), slot))?;
                     if !v.is_null() {
-                        state.update(v)?;
+                        state.update(&v)?;
                     }
-                    continue;
-                }
-                let v = evaluated((e, inputs), scratch, |at| value(at).unwrap_or(&Value::Null))?;
-                if !v.is_null() {
-                    state.update(&v)?;
                 }
             }
         }
@@ -202,12 +238,21 @@ fn take_row<'b>(
 
 /// The value of `e`, of a row of the values at `inputs`, as `value` gives
 /// them, made in `scratch`, its values written over.
-fn evaluated<'b>((e, inputs): (&Expr, &[usize]), scratch: &mut Row, value: impl Fn(usize) -> &'b Value) -> Result<Value> {
+fn evaluated((e, inputs): (&Expr, &[usize]), scratch: &mut Row, put: impl Fn(usize, &mut Value)) -> Result<Value> {
     scratch.resize(inputs.len(), Value::Null);
     for (slot, &at) in scratch.iter_mut().zip(inputs) {
-        slot.clone_from(value(at));
+        put(at, slot);
     }
     eval(e, scratch, &NoSubqueries)
+}
+
+/// Writes `cell`'s value over `slot`.
+fn put_cell(cell: Cell<'_>, slot: &mut Value) {
+    match cell {
+        Cell::Value(v) => slot.clone_from(v),
+        exact @ Cell::Exact(..) => *slot = exact.to_value(),
+        Cell::Null => *slot = Value::Null,
+    }
 }
 
 /// A group held: its first row's number, its grouping values and its set
@@ -236,6 +281,9 @@ struct Groups {
     width: usize,
     /// The row an expression a set function takes is evaluated of.
     scratch: Row,
+    /// Of each group held, one more than its place among the groups a batch
+    /// has rows of, or 0 if the batch has none of them yet.
+    slots: Vec<usize>,
 }
 
 impl Groups {
@@ -244,22 +292,58 @@ impl Groups {
     /// area is written, for its group to be made after.
     fn feed(&mut self, batch: &Batch, rows: Option<&[usize]>, (read, aggs): (&Read, &[AggCall])) -> Result<()> {
         let lanes = lanes(&read.taken, batch, rows);
+        // The groups of the batch's rows, in the order they came, and of each
+        // row its group's place among them, and its place among those given
+        // and in the batch.
+        let (mut groups, mut placed): (Vec<usize>, Vec<(usize, usize, usize)>) = (Vec::new(), Vec::new());
         for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
             let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
-            let value = |at: usize| batch.value(at, r);
+            let cell = |at: usize| batch.cell(at, r);
             // The key made in a buffer kept, no value copied unless its
-            // group is new.
+            // group is new, nor made of an integer.
             self.key.clear();
             for &at in &read.groups {
-                put_norm(value(at).unwrap_or(&Value::Null), &mut self.key);
+                match cell(at) {
+                    Cell::Value(v) => put_norm(v, &mut self.key),
+                    Cell::Exact(units, scale) => put_norm_exact(i128::from(units), scale, &mut self.key),
+                    Cell::Null => put_norm(&Value::Null, &mut self.key),
+                }
             }
             let number = self.rows;
             self.rows = self.rows.saturating_add(1);
-            let Some(at) = self.place(number, (batch, r), (read, aggs))? else { continue };
+            if let (Some(at), false) = (self.place(number, (batch, r), (read, aggs))?, aggs.is_empty()) {
+                placed.push((self.slot_of(at, &mut groups), n, r));
+            }
+        }
+        // Each group's rows gathered, in order, a counting sort into one
+        // buffer, and its set functions fed them a vector at a time.
+        let (given, read_rows, ends) = gathered(&placed, groups.len());
+        let mut from = 0;
+        for (&at, &end) in groups.iter().zip(&ends) {
+            if let Some(slot) = self.slots.get_mut(at) {
+                *slot = 0;
+            }
+            let (these, read_these) = (given.get(from..end).unwrap_or_default(), read_rows.get(from..end).unwrap_or_default());
+            from = end;
             let Some((_, _, states)) = self.held.get_mut(at) else { continue };
-            take_row(states, (&read.taken, &mut self.scratch), value, (&lanes, n))?;
+            fed_group(states, (&read.taken, &mut self.scratch), (batch, &lanes), (these, read_these))?;
         }
         Ok(())
+    }
+
+    /// The place of group `at` among `groups`, the groups the batch has
+    /// rows of, added if it is new.
+    fn slot_of(&mut self, at: usize, groups: &mut Vec<usize>) -> usize {
+        if self.slots.len() <= at {
+            self.slots.resize(at.saturating_add(1), 0);
+        }
+        let Some(slot) = self.slots.get_mut(at) else { return 0 };
+        if let Some(found) = slot.checked_sub(1) {
+            return found;
+        }
+        groups.push(at);
+        *slot = groups.len();
+        groups.len().saturating_sub(1)
     }
 
     /// The place of the group of row `r` of `batch`, the `number`th, its
@@ -269,7 +353,7 @@ impl Groups {
         if let Some(&at) = self.found.get(self.key.as_slice()) {
             return Ok(Some(at));
         }
-        let value = |at: usize| batch.value(at, r).cloned().unwrap_or(Value::Null);
+        let value = |at: usize| batch.cell(at, r).to_value();
         let values: Row = read.groups.iter().map(|&at| value(at)).collect();
         let bytes = self.key.len().saturating_add(row_bytes(&values)).saturating_add(aggs.len().saturating_mul(STATE_BYTES));
         if self.spilled || self.bytes.saturating_add(bytes) > self.limit {
@@ -317,15 +401,25 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
             },
             // Its values evaluated a vector at a time (`vector.rs`), or else
             // a row at a time.
-            Taken::Expr(e, inputs) => match vector::lane(e, inputs, batch, rows) {
-                Some(Lane::Column(values, given)) => state.update_many(values, given)?,
-                Some(Lane::Made(values)) => state.update_many(&values, None)?,
-                Some(Lane::Const(v)) => state.update_many(&vec![v.clone(); rows.map_or(batch.rows, <[usize]>::len)], None)?,
-                None => fed_by_rows(batch, (e, inputs), rows, state)?,
+            Taken::Expr(e, inputs) => match vector::ints::lane(e, inputs, batch, rows) {
+                // Of integers, as integers (`vector/ints.rs`).
+                Some(ints) => state.update_ints(&ints, None)?,
+                None => fed_by_vector(batch, (e, inputs), rows, state)?,
             },
         }
     }
     Ok(())
+}
+
+/// Feeds `state` the values of `e` of the rows `rows` of `batch`, or all,
+/// evaluated a vector at a time (`vector.rs`), or else a row at a time.
+fn fed_by_vector(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usize]>, state: &mut Box<dyn Accumulator>) -> Result<()> {
+    match vector::lane(e, inputs, batch, rows) {
+        Some(Lane::Column(values, given)) => state.update_many(values, given),
+        Some(Lane::Made(values)) => state.update_many(&values, None),
+        Some(Lane::Const(v)) => state.update_many(&vec![v.clone(); rows.map_or(batch.rows, <[usize]>::len)], None),
+        None => fed_by_rows(batch, (e, inputs), rows, state),
+    }
 }
 
 /// Feeds `state` the values of `e` of the rows `rows` of `batch`, or all,
@@ -335,7 +429,7 @@ fn fed_by_rows(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usi
     let value = |at: usize, r: usize| batch.value(at, r).unwrap_or(&Value::Null);
     let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
     for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
-        values.push(evaluated((e, inputs), &mut scratch, |at| value(at, r))?);
+        values.push(evaluated((e, inputs), &mut scratch, |at, slot| slot.clone_from(value(at, r)))?);
     }
     state.update_many(&values, None)
 }
@@ -343,6 +437,16 @@ fn fed_by_rows(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usi
 /// The values of each of `taken` that is an expression of the rows `rows`
 /// of `batch`, or all, evaluated a vector at a time, where it is
 /// (`vector.rs`).
-fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [usize]>) -> Vec<Option<Lane<'b>>> {
-    taken.iter().map(|t| if let Taken::Expr(e, inputs) = t { vector::lane(e, inputs, batch, rows) } else { None }).collect()
+fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [usize]>) -> Vec<Option<Fed<'b>>> {
+    let fed = |e: &'b Expr, inputs: &'b [usize]| {
+        vector::ints::lane(e, inputs, batch, rows).map(Fed::Ints).or_else(|| vector::lane(e, inputs, batch, rows).map(Fed::Values))
+    };
+    taken.iter().map(|t| if let Taken::Expr(e, inputs) = t { fed(e, inputs) } else { None }).collect()
+}
+
+/// An expression's values of a batch, evaluated a vector at a time: as
+/// values, or as integers.
+enum Fed<'b> {
+    Values(Lane<'b>),
+    Ints(Ints),
 }
