@@ -151,8 +151,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 - **Scan filters** (D31): an index probe of a LIKE's prefix, and of an
   OR of one column's ranges, as the scan is told them.
-- **Batch execution, further** (RULES.md D31): projections of
-  expressions and joins of batches; groups' set functions fed a vector
+- **Batch execution, further** (RULES.md D31): joins of batches;
+  expressions evaluated a vector at a time, not a row's; groups' set functions fed a vector
   at a time, each group's rows gathered first; a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
 - **Index-only scans** need what is visible kept beside the index (as

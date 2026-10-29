@@ -864,11 +864,16 @@ the format of frozen groups becomes a trait when it is.
   of the column store where it took 47.8, 52.6 of the row store where it
   took 85.2. The rest of it is judged of
   the rows they keep, each made a row; one that can raise is judged whole
-  a row at a time, as row by row. A projection of columns and constants of
-  such a scan, of a table that reads by batch (`reads_by_batch`, a column
-  store table's), makes each row it gives of the vectors, a batch read ahead of
-  what a cursor is given; of any other table it reads a row at a time, as
-  reading ahead would gain nothing (`exec/batch/project.rs`). Groups are held in the work area, given in the order
+  a row at a time, as row by row. A projection of such a scan whose
+  expressions read only its columns, no subquery among them, of a table
+  that reads by batch (`reads_by_batch`, a column store table's), makes
+  each row it gives of the vectors, a column or a constant as it is, any
+  other expression evaluated as a row's is of a row of only the values it
+  reads, kept and written over (`SELECT K + 1, S` of 400,000 rows: 80.8
+  ms to 69.1; `SELECT B * 2, UPPER(S) ... WHERE G = 3`: 44.4 to 25.6), a
+  batch read ahead of what a cursor is given; of any other table it reads
+  a row at a time, as reading ahead would gain nothing
+  (`exec/batch/project.rs`). Groups are held in the work area, given in the order
   their first rows came; past it, the rows of every group not yet held
   are written, numbered, as a pass of `exec/group.rs` writes them, grouped
   as it groups them, and merged with the groups held by number. Measured against the row store row by row (`bench/analytics.rs`): COUNT(*)

@@ -208,20 +208,26 @@ fn a_filter_that_raises_raises_by_batch() {
 
 /// Projections read by batches where they can be; sorted, as their rows
 /// come in no order an ORDER BY does not give.
-const PROJECTIONS: [&str; 6] = [
+const PROJECTIONS: [&str; 10] = [
     "SELECT K, S FROM {t}",
     "SELECT N, 1, 'x', S FROM {t} WHERE G = 2 AND S IS NOT NULL",
     "SELECT K FROM {t} WHERE K BETWEEN 2000 AND 2100",
     "SELECT S, K FROM {t} WHERE S = 'changed'",
     "SELECT K + 1, S FROM {t} WHERE N > 300",
     "SELECT K FROM {t} WHERE K < -100",
+    "SELECT K * G - N, -K, UPPER(S), CAST(G AS CHAR(3)) FROM {t} WHERE G <> 4",
+    "SELECT CASE WHEN N IS NULL THEN 'none' WHEN N > 300 THEN 'high' ELSE S END, K FROM {t}",
+    "SELECT COALESCE(N, -1), NULLIF(G, 3), K FROM {t} WHERE S LIKE 's1%'",
+    "SELECT K, (SELECT COUNT(*) FROM {t} WHERE K < 3) FROM {t} WHERE K < 5",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31, projections read by batches: of a table
 /// of the column store, columns and constants give the rows a table of
 /// ROWS gives, frozen rows changed among them, filtered or not, none
-/// matched; one of an expression is made row by row, alike; and a cursor
-/// reading a few of its rows reads them.
+/// matched; expressions of them, arithmetic, functions, CAST and CASE,
+/// each of a row of the values it reads, alike, nulls among them; one of a
+/// subquery, made row by row, alike; one that raises an error raises it;
+/// and a cursor reading a few of its rows reads them.
 #[test]
 fn projections_by_batch_answer_as_row_by_row() {
     let db = Database::new();
@@ -231,6 +237,11 @@ fn projections_by_batch_answer_as_row_by_row() {
     assert_eq!(columns, projected("R"));
     assert_eq!(columns[0].len(), 6000 - 101 - 71 + 2, "every row");
     assert_eq!(columns[5], Vec::<String>::new());
+    assert!(columns[7].iter().any(|r| r.starts_with("none,")) && columns[7].iter().any(|r| r.starts_with("high,")));
+    for table in ["R", "C"] {
+        let raising = format!("SELECT K / (G - G) FROM {table} WHERE K > 10");
+        assert_eq!(rows(&a, &raising).err(), Some(Code::Data), "{table}: division by zero");
+    }
     let mut cursor = a.open_cursor("SELECT K, S FROM C").unwrap();
     for _ in 0..3 {
         assert_eq!(cursor.fetch().unwrap().map(|r| r.len()), Some(2));
