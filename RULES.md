@@ -728,18 +728,29 @@ the format of frozen groups becomes a trait when it is.
   read from memory until written.
 - Scans are given the columns needed, and the conjuncts of a filter that
   compare a column with a constant (a BETWEEN as two), test it IS NULL or
-  IS NOT NULL, or test it IN a list of constants (`TableStorage::scan_where`,
-  `storage::Conjunction`), unless the filter can raise an error: each
+  IS NOT NULL, IN or NOT IN a list of constants (none null), OR those of
+  one column, or LIKE a constant pattern, as the bounds of the characters
+  it begins with, the last one less and one more: strings beginning with
+  them are between whatever follows, padded with spaces or not
+  (`TableStorage::scan_where`, `storage::Conjunction`,
+  `logical::pushed_conjuncts`), unless the filter can raise an error,
+  which a LIKE of a constant pattern and escape that partition cannot:
+  each
   true of every row the filter keeps, so an engine may leave out rows
   they do not match, and count as read only those they all match; the
-  filter still judges every row given. The column store skips a frozen
-  chunk any of them cannot match, and leaves the rows of the rest to the
-  filter, as judging them twice cost more than it saved (`G = 3` of
-  400,000 rows: 6.4 ms, 11.1 ms judged in the engine too). Of 400,000
-  rows, `G = 3 AND B < 4000` ran in 1.1 ms where with one conjunct told
-  it took 11.6; `B BETWEEN 100000 AND 103999` in 1.2 ms where it took
-  13.4; `B IN (5, 200000, 399000)` in 1.1 ms where it took 9.0; and
-  `N IS NULL`, its nulls in one chunk, in 0.9 ms where it took 4.2.
+  filter still judges every row given. The row store skips the zones,
+  the column store the frozen chunks, any of them cannot match, and each
+  leaves the rows of the rest to the filter, as judging them twice cost
+  more than it saved (`G NOT IN (1, 2)` of the row store's 400,000 rows:
+  45.9 ms, 53.9 judged in the engine too; `G = 3` of the column
+  store's: 6.4 ms, 11.1). Of the column store's 400,000 rows, `G = 3 AND
+  B < 4000` ran in 1.1 ms where with one conjunct told it took 11.6; `B
+  BETWEEN 100000 AND 103999` in 1.2 ms where it took 13.4; `B IN (5,
+  200000, 399000)` in 1.1 ms where it took 9.0; `N IS NULL`, its nulls in
+  one chunk, in 0.9 ms where it took 4.2; `S LIKE 'k01000%'`, S in the
+  rows' order, in 1.4 ms where it took 53.7 (the row store's: 0.3, where
+  94.7); `B < 1000 OR B > 399000` in 1.3 ms where it took 13.3 (the row
+  store's: 0.4, where 50.8).
 - Zone maps of the row store (`rows/zones.rs`): for each block of 1024
   row ids, of each column of a number, a datetime, an interval or a
   character string of at most 32, its least and greatest value and

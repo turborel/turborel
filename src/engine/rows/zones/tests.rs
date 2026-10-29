@@ -42,9 +42,11 @@ fn equal(column: usize, value: i128) -> Conjunction {
     Conjunction::of(Condition { columns: vec![column], probe: Probe::Compare { op: CompOp::Eq, value: int(value) } })
 }
 
-/// The first values of the rows `tx` reads of `table` where `conditions`.
+/// The first values of the rows `tx` reads of `table` where `conditions`,
+/// judged of the rows the scan gives, as a filter judges them.
 fn found(table: &Arc<RowTable>, tx: u64, conditions: &Conjunction) -> Vec<String> {
-    Arc::clone(table).scan_where(tx, &[0], conditions).map(|r| r.unwrap().1[0].to_string()).collect()
+    let rows = Arc::clone(table).scan_where(tx, &[0], conditions).map(|r| r.unwrap().1);
+    rows.filter(|row| conditions.matches(row)).map(|row| row[0].to_string()).collect()
 }
 
 /// Whether a scan told `conditions` reads the zone of row `id`.

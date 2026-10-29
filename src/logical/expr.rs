@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::Subquery;
 use crate::catalog::{MatchType, QualifiedName};
 use crate::functions::ScalarRef;
-use crate::value::{ArithOp, CompOp, DataType, Value};
+use crate::value::{ArithOp, CompOp, DataType, Value, constant_prefix};
 
 /// [ISO/IEC 9075:1992 §4.10.3, §6.10 GR13] The constraints a value CAST to
 /// a domain must satisfy.
@@ -284,10 +284,14 @@ impl Cond {
     /// through the expressions it compares. Comparison itself cannot fail: it is
     /// unknown if either value is null and otherwise true or false ([X3.135-1986 §5.11 GR2, GR3]).
     /// LIKE can: a pattern with an escape character may have no partitioning
-    /// [X3.135-1986 §5.14 GR2a ii]. A subquery can if its plan can, and a
+    /// [X3.135-1986 §5.14 GR2a ii], unless both are constants that have one. A subquery can if its plan can, and a
     /// comparison with one value can find more [X3.135-1986 §5.11 GR1].
     pub fn can_raise(&self) -> bool {
         let own = match self {
+            // A pattern and an escape character, constants that pass,
+            // cannot (`value::constant_prefix`).
+            Cond::Like(_, Expr::Const(pattern), None) => constant_prefix(pattern, None).is_none(),
+            Cond::Like(_, Expr::Const(pattern), Some(Expr::Const(escape))) => constant_prefix(pattern, Some(escape)).is_none(),
             Cond::Like(..) | Cond::Quantified(_, _, Quantifier::One, _) => true,
             Cond::Or(a, b) | Cond::And(a, b) => a.can_raise() || b.can_raise(),
             Cond::Not(a) | Cond::Is(a, ..) => a.can_raise(),

@@ -149,9 +149,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Scan filters** beyond conjunctions of a column compared with a
-  constant, IS NULL and IN a list (D31): NOT IN, LIKE with a constant
-  prefix, OR of one column's ranges.
+- **Scan filters** (D31): an index probe of a LIKE's prefix, and of an
+  OR of one column's ranges, as the scan is told them.
 - **Batch execution, further** (RULES.md D31): a filter with LIKE is
   judged a row at a time, as LIKE can raise an error for a pattern, which
   a row the filter's other conjuncts reject must still raise; a LIKE

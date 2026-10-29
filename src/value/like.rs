@@ -15,6 +15,7 @@
 //! padding is involved: a `CHARACTER(5)` value 'ABC  ' does not match the
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
+use super::Value;
 use crate::error::{Code, Result, SqlState, fail_with};
 
 /// A substring specifier of a pattern, one character long.
@@ -95,6 +96,35 @@ pub fn like(value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
         }
     }
     Ok(specs.get(spec..).unwrap_or_default().iter().all(|s| *s == Spec::AnyString))
+}
+
+/// \[DESIGN\] Of a LIKE of constant `pattern` and `escape`, if it cannot
+/// raise an error [X3.135-1986 §5.14 GR2a ii; ISO/IEC 9075:1992 §8.5 GR3a
+/// i]: the characters every string it matches begins with, those its
+/// pattern gives before its first `_` or `%`; none if a null makes every
+/// LIKE of it unknown. Not if it may raise one.
+pub fn constant_prefix(pattern: &Value, escape: Option<&Value>) -> Option<String> {
+    let escape = match escape {
+        None => None,
+        Some(Value::Char(e)) => {
+            let mut chars = e.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else { return None };
+            Some(c)
+        }
+        Some(Value::Null) => return Some(String::new()),
+        Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+            return None;
+        }
+    };
+    match pattern {
+        Value::Char(p) => {
+            let specs = specifiers(p, escape).ok()?;
+            let literal = specs.iter().map_while(|s| if let Spec::Character(c) = s { Some(*c) } else { None });
+            Some(literal.collect())
+        }
+        Value::Null => Some(String::new()),
+        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => None,
+    }
 }
 
 // Unit tests: the specifiers, escapes, and padding (RULES.md R-TEST-1,

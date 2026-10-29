@@ -78,6 +78,16 @@ pub enum Conjunct {
         /// The constants.
         values: Vec<Value>,
     },
+    /// [X3.135-1986 §5.13] `column NOT IN (values)`, each a constant not
+    /// null.
+    NotIn {
+        /// The column.
+        column: usize,
+        /// The constants.
+        values: Vec<Value>,
+    },
+    /// [X3.135-1986 §5.18] An OR of conjuncts of one column: any of them.
+    Any(Vec<Conjunct>),
 }
 
 impl Conjunct {
@@ -85,7 +95,13 @@ impl Conjunct {
     pub fn columns(&self) -> Vec<usize> {
         match self {
             Conjunct::Condition(c) => c.columns.clone(),
-            Conjunct::Null { column, .. } | Conjunct::In { column, .. } => vec![*column],
+            Conjunct::Null { column, .. } | Conjunct::In { column, .. } | Conjunct::NotIn { column, .. } => vec![*column],
+            Conjunct::Any(each) => {
+                let mut columns: Vec<usize> = each.iter().flat_map(Conjunct::columns).collect();
+                columns.sort_unstable();
+                columns.dedup();
+                columns
+            }
         }
     }
 
@@ -102,6 +118,11 @@ impl Conjunct {
             Conjunct::Condition(c) => c.matches_key(key),
             Conjunct::Null { not, .. } => key.first().is_some_and(|v| v.is_null() != *not),
             Conjunct::In { values, .. } => key.first().is_some_and(|v| values.iter().any(|c| compare(v, c) == Some(Ordering::Equal))),
+            Conjunct::NotIn { values, .. } => {
+                key.first().is_some_and(|v| values.iter().all(|c| compare(v, c).is_some_and(Ordering::is_ne)))
+            }
+            // Each of one column, the same.
+            Conjunct::Any(each) => each.iter().any(|c| c.matches_key(key)),
         }
     }
 
@@ -117,6 +138,8 @@ impl Conjunct {
             Conjunct::In { column, values } => {
                 bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| values.iter().any(|v| within(CompOp::Eq, r, v)))
             }
+            Conjunct::NotIn { column, values } => bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| !one_of(r, values)),
+            Conjunct::Any(each) => each.iter().any(|c| c.may_match(bounds)),
         }
     }
 }
@@ -129,6 +152,8 @@ impl Conjunct {
             Conjunct::Condition(Condition { probe: Probe::Compare { op, value }, .. }) => range.is_some_and(|r| within(*op, r, value)),
             Conjunct::In { values, .. } => range.is_some_and(|r| values.iter().any(|v| within(CompOp::Eq, r, v))),
             Conjunct::Null { not, .. } => !*not || range.is_some(),
+            Conjunct::NotIn { values, .. } => range.is_some_and(|r| !one_of(r, values)),
+            Conjunct::Any(each) => each.iter().any(|c| c.may_match_range(range)),
             Conjunct::Condition(c) => {
                 let Some(&column) = c.columns.first() else { return true };
                 let mut bounds = vec![None; column.saturating_add(1)];
@@ -176,6 +201,12 @@ impl Conjunction {
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
         self.0.iter().all(|c| c.may_match(bounds))
     }
+}
+
+/// Whether every value from `least` to `greatest` is one of `values`: so
+/// if they are one value, which is.
+fn one_of((least, greatest): &(Value, Value), values: &[Value]) -> bool {
+    compare(least, greatest) == Some(Ordering::Equal) && values.iter().any(|v| compare(least, v) == Some(Ordering::Equal))
 }
 
 /// Whether a value from `least` to `greatest` may compare with `v` by `op`:

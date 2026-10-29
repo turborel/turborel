@@ -238,3 +238,40 @@ fn projections_by_batch_answer_as_row_by_row() {
     drop(cursor);
     a.commit().unwrap();
 }
+
+/// Filters a scan is told, each beside one alike that it is not told, its
+/// columns in expressions: `{c}` the column, `{e}` its expression.
+const TOLD: [&str; 8] = [
+    "{s} LIKE 's1%'",
+    "{s} LIKE 'changed'",
+    "{s} LIKE 's!%%' ESCAPE '!'",
+    "{s} LIKE '%5'",
+    "{k} < 10 OR {k} > 5990 OR {k} = 3000",
+    "{n} IS NULL OR {n} > 590",
+    "{g} NOT IN (1, 3, 5)",
+    "{k} BETWEEN 100 AND 200 AND {s} LIKE 's1%' AND {g} NOT IN (2, 4)",
+];
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.13, §5.14, §5.18]:
+/// LIKE of a constant pattern, an escape among them, NOT IN, and OR of
+/// one column, told a scan, skipping the blocks they cannot match, keep
+/// the rows the same filter keeps of every row, in a table of either
+/// store, its frozen rows changed among them.
+#[test]
+fn filters_told_a_scan_keep_the_rows_they_would() {
+    let db = Database::new();
+    let a = both(&db);
+    db.maintain().unwrap();
+    for filter in TOLD {
+        for table in ["R", "C"] {
+            let told = filter.replace("{s}", "S").replace("{k}", "K").replace("{n}", "N").replace("{g}", "G");
+            let not = filter.replace("{s}", "(S || '')").replace("{k}", "(K + 0)").replace("{n}", "(N + 0)").replace("{g}", "(G + 0)");
+            let count = |f: &str| rows(&a, &format!("SELECT COUNT(*), SUM(K) FROM {table} WHERE {f}"));
+            assert_eq!(count(&told), count(&not), "{table}: {told}");
+            assert_eq!(
+                sorted(&a, &format!("SELECT K FROM {table} WHERE {told}")),
+                sorted(&a, &format!("SELECT K FROM {table} WHERE {not}"))
+            );
+        }
+    }
+}

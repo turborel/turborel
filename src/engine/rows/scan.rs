@@ -90,14 +90,16 @@ impl RowTable {
         if self.frozen.columns().is_some() || !directory.groups.is_empty() {
             return Box::new(Merged::new(Arc::clone(&self), (Merging::Seen(reader), directory), columns, condition));
         }
-        // Only the zones whose rows the conditions may match (`rows/zones.rs`).
+        // Only the zones whose rows the conditions may match (`rows/zones.rs`);
+        // their rows not judged here, the filter judging every row given:
+        // judging twice cost more than it saved (`G NOT IN (1, 2)` of
+        // 400,000 rows, 45.9 ms not judged here, 53.9 ms judged).
         let ranges = self.zones.ranges(condition.as_ref());
         Box::new(Self::ranged(&self, ranges).filter_map(move |entry| {
             let found = entry.and_then(|(key, newest)| {
                 let id = row_id(&key)?;
                 let Some(record) = self.visible_from(newest, reader)? else { return Ok(None) };
-                let row = self.decode(id, &record, Some(&columns))?;
-                Ok(condition.as_ref().is_none_or(|c| c.matches(&row)).then_some((id, row)))
+                Ok(Some((id, self.decode(id, &record, Some(&columns))?)))
             });
             found.transpose()
         }))

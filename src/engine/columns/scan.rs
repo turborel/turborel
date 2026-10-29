@@ -59,7 +59,7 @@ fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
         let may = match condition {
             Conjunct::Null { not: false, .. } => zone.nulls > 0,
             Conjunct::Null { not: true, .. } => zone.nulls < zone.run.rows,
-            Conjunct::Condition(_) | Conjunct::In { .. } => condition.may_match(&bounds),
+            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => condition.may_match(&bounds),
         };
         if !may {
             continue;

@@ -20,7 +20,7 @@ pub use cast::cast;
 pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use datetime::Datetime;
 pub use decimal::{Decimal, pow10};
-pub use like::like;
+pub use like::{constant_prefix, like};
 pub use types::{Descriptor, SqlType};
 
 // ---------------------------------------------------------------------------
