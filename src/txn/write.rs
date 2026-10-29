@@ -31,7 +31,14 @@ impl State {
         let key = Self::index_key(ix, row)?;
         if !key.0.iter().any(Value::is_null) {
             let index = self.index_handle(&ix.name)?;
-            index.insert(key.clone(), id)?;
+            // Of a unique index, whether the key's only entry, so its
+            // constraint need not look for another row (`Txn::alone`).
+            if ix.unique {
+                let alone = index.insert_alone(key.clone(), id)?;
+                tx.note_alone(&ix.name, id, alone)?;
+            } else {
+                index.insert(key.clone(), id)?;
+            }
             tx.log(UndoEntry::IndexInserted { table: ix.table.clone(), index, key, id })?;
         }
         Ok(())
@@ -133,5 +140,30 @@ impl State {
             tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
         }
         Ok(())
+    }
+}
+
+impl Txn {
+    /// Notes whether row `row`'s entry in the unique index `index`, as it
+    /// was inserted, was its key's only one.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the transaction's state is poisoned.
+    pub(crate) fn note_alone(&self, index: &str, row: RowId, alone: bool) -> Result<()> {
+        let mut state = self.state()?;
+        if alone {
+            state.alone.insert((index.to_owned(), row));
+        } else {
+            state.alone.remove(&(index.to_owned(), row));
+        }
+        Ok(())
+    }
+
+    /// Whether row `row`'s entry in the unique index `index`, as it was
+    /// last inserted, was its key's only one: another row of its key,
+    /// inserted after, was not, and is looked for itself.
+    pub(crate) fn alone(&self, index: &str, row: RowId) -> bool {
+        self.state().is_ok_and(|s| s.alone.contains(&(index.to_owned(), row)))
     }
 }

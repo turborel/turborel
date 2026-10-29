@@ -392,7 +392,7 @@ impl State {
             Check::Row { id, .. } => self.check_row(tx, (desc, c), *id, bound),
             Check::Unique { table, ids, .. } => {
                 let ConstraintKind::Unique { columns, primary } = &c.kind else { return Ok(()) };
-                check_key(self, tx.id, table, (columns, *primary), ids)
+                check_key(self, tx, table, (columns, *primary), ids)
             }
             Check::Table { .. } => self.check_table(tx, (desc, c), bound),
             Check::Referenced { old, id, .. } => {

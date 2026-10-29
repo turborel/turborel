@@ -244,3 +244,34 @@ fn prefix_probes_find_what_sql_compares() {
         assert_eq!(index.estimate(&probe), Some(expected.len()), "{probe:?}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D34, `Index::insert_alone`: inserting
+/// entries of keys, many repeated, in an order that spreads them over many
+/// leaves, the index never says an entry is its key's only one when an
+/// entry of another row holds the key; it says so of most that are; an
+/// entry of the same row again, another version's, leaves it alone; and
+/// the method's default, of `insert` and `rows`, says what the truth is.
+#[test]
+fn an_entry_alone_is_its_keys_only_one() {
+    let text = DataType::Varying { length: 40 };
+    let index = index(&[text]);
+    let mut held: std::collections::HashMap<u64, Vec<RowId>> = std::collections::HashMap::new();
+    let (mut alone, mut truly) = (0_u32, 0_u32);
+    for row in 1..=6000_u64 {
+        // Keys scattered, a third of them held by an earlier row too.
+        let k = row.checked_mul(7919).and_then(|n| n.checked_rem(4000)).unwrap();
+        let key = Key(vec![Value::Char(format!("key {k:05} and a long tail to fill leaves"))]);
+        let others = held.get(&k).is_some_and(|rows| !rows.is_empty());
+        let said = index.insert_alone(key, row).unwrap();
+        assert!(!(said && others), "row {row}, key {k}: an entry of another row holds it");
+        truly = truly.saturating_add(u32::from(!others));
+        alone = alone.saturating_add(u32::from(said));
+        held.entry(k).or_default().push(row);
+    }
+    assert!(alone.saturating_mul(2) > truly && alone <= truly, "{alone} of {truly} alone");
+    let again = Key(vec![Value::Char("again".into())]);
+    assert!(!index.insert_alone(again.clone(), 9001).unwrap() || index.rows(&again).unwrap() == vec![9001]);
+    let repeated = index.insert_alone(again.clone(), 9001).unwrap();
+    assert!(!repeated || index.rows(&again).unwrap() == vec![9001], "the same row's other version");
+    assert!(!index.insert_alone(again, 9002).unwrap(), "another row's");
+}

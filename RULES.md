@@ -933,7 +933,15 @@ method] [WITH (...)]`, `DROP INDEX name` and `ALTER INDEX name SET (...)`,
 by the owner of the table's schema. The index is built while transactions
 write the table, so these run outside a transaction, each made at once (as
 PostgreSQL's CREATE INDEX CONCURRENTLY). An index takes no UNIQUE: a UNIQUE
-constraint makes its own. INFORMATION_SCHEMA.INDEXES lists them.
+constraint makes its own. INFORMATION_SCHEMA.INDEXES lists them. Inserting
+into a unique index, a method says whether the entry is its key's only one
+(`Index::insert_alone`), by default by `rows` after `insert`; the B-link
+tree's, under the leaf's lock, of the entries beside the new one, not when
+the leaf before may hold one, nor when the leaf after may, its high key
+beginning with the key. A UNIQUE constraint at a statement's end does not
+read a row whose entry was so: a row of its key inserted after was not,
+and is read itself. An INSERT of 2048 rows with a PRIMARY KEY went from
+6.9 ms to 5.7.
 *Why:* each kind of index excels at different probes, and the planner
 picks by estimate, so a new method needs no change to the planner.
 

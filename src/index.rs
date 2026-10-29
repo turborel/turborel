@@ -279,6 +279,20 @@ pub trait Index: Send + Sync {
     ///
     /// The index cannot hold the entry, or its storage fails.
     fn insert(&self, key: Key, row: RowId) -> Result<()>;
+    /// \[DESIGN\] As `insert`, and whether the index holds no entry of
+    /// another row under `key` once it is in: so a UNIQUE constraint need
+    /// not look for one at the statement's end (`db/assignment.rs`). An
+    /// entry of another row inserted at once must make one of the two say
+    /// not: so the index decides as it inserts, or after. Not when unsure.
+    /// Default: `insert`, then `rows` of `key`.
+    ///
+    /// # Errors
+    ///
+    /// As `insert`, and `rows`.
+    fn insert_alone(&self, key: Key, row: RowId) -> Result<bool> {
+        self.insert(key.clone(), row)?;
+        Ok(self.rows(&key)?.iter().all(|&r| r == row))
+    }
     /// \[DESIGN\] Adds every entry of `entries`, in any order, to the index,
     /// empty, which nothing else reads or writes meanwhile: as `insert`
     /// would, one by one, as the default does; a method may build it whole

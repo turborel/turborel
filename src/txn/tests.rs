@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::catalog::MemoryCatalog;
+use crate::db::State;
 use crate::value::Spelled;
 
 /// Verifies: [DESIGN] commit and rollback reach the storage each

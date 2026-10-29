@@ -114,6 +114,7 @@ mod transaction_memory;
 mod transactions;
 mod trees;
 mod type_contract;
+mod unique_checks;
 mod users;
 mod varying;
 mod views;

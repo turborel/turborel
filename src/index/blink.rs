@@ -324,10 +324,18 @@ impl BLinkIndex {
 
 impl Index for BLinkIndex {
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
+        self.insert_alone(key, row).map(drop)
+    }
+
+    /// Alone if the entries beside its place in its leaf are of other keys
+    /// (`BLinkTree::update_alone`): an entry of another row under the key
+    /// is beside it, as entries are in key order, then row id.
+    fn insert_alone(&self, key: Key, row: RowId) -> Result<bool> {
         let entry = self.entry(&key, row)?;
         // The key's bytes are the same for equal keys (`engine/key.rs`).
-        self.keys.added(entry.get(..entry.len().saturating_sub(ROW_ID)).unwrap_or_default());
-        self.tree.update(&entry, |old| {
+        let prefix = entry.len().saturating_sub(ROW_ID);
+        self.keys.added(entry.get(..prefix).unwrap_or_default());
+        self.tree.update_alone(&entry, prefix, |old| {
             let count = old.map_or(Ok(0), count_of)?;
             Ok(Update::Put(value_of(count.saturating_add(1))))
         })

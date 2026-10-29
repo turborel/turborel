@@ -148,22 +148,47 @@ impl BLinkTree {
     ///
     /// `change`'s errors; as `insert`.
     pub fn update(&self, key: &[u8], change: impl FnOnce(Option<&[u8]>) -> Result<Update>) -> Result<()> {
+        self.update_alone(key, 0, change).map(drop)
+    }
+
+    /// \[DESIGN\] As `update`, and whether, under the leaf's lock, no
+    /// other entry of the tree begins with `key`'s first `prefix` bytes:
+    /// found of the entries beside its place in its leaf; so not if its
+    /// place is first in the leaf, the leaf before beyond reach, nor if it
+    /// is last and the leaf's high key begins with them, an entry of the
+    /// leaf after then possibly so (`Index::insert_alone`).
+    ///
+    /// # Errors
+    ///
+    /// As `update`.
+    pub fn update_alone(&self, key: &[u8], prefix: usize, change: impl FnOnce(Option<&[u8]>) -> Result<Update>) -> Result<bool> {
         let _guard = self.epochs.guard();
         let mut path = Path::default();
         let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
         let mut held = self.locks.lock(leaf)?;
-        let found = self.move_right(&mut held, key, |node| match node.search(key)? {
-            Ok(at) => Ok(Ok((at, node.entry(at)?.1.to_vec()))),
-            Err(at) => Ok(Err(at)),
+        let begins = key.get(..prefix).unwrap_or(key);
+        let (found, alone) = self.move_right(&mut held, key, |node| {
+            let found = match node.search(key)? {
+                Ok(at) => Ok((at, node.entry(at)?.1.to_vec())),
+                Err(at) => Err(at),
+            };
+            let (before, after) = match &found {
+                Ok((at, _)) => (at.checked_sub(1), at.saturating_add(1)),
+                Err(at) => (at.checked_sub(1), *at),
+            };
+            let shares = |at: usize| node.key(at).map(|k| k.starts_with(begins));
+            let none_before = before.map(shares).transpose()?.is_some_and(|s| !s);
+            let none_after = if after < node.len() { !shares(after)? } else { node.high.is_none_or(|h| !h.starts_with(begins)) };
+            Ok((found, none_before && none_after))
         })?;
         let (slot, value) = match (change(found.as_ref().ok().map(|(_, old)| old.as_slice()))?, found) {
-            (Update::Keep, _) | (Update::Remove, Err(_)) => return Ok(()),
-            (Update::Remove, Ok((at, _))) => return self.remove_at(&path, held, at),
+            (Update::Keep, _) | (Update::Remove, Err(_)) => return Ok(alone),
+            (Update::Remove, Ok((at, _))) => return self.remove_at(&path, held, at).map(|()| alone),
             (Update::Put(value), Ok((at, _))) => (Slot::Replace(at), value),
             (Update::Put(value), Err(at)) => (Slot::Insert(at), value),
         };
         self.fits(key, &value)?;
-        self.place(path, held, (key, &value), slot)
+        self.place(path, held, (key, &value), slot).map(|()| alone)
     }
 
     /// Refuses an entry longer than `max_entry`.

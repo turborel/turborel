@@ -14,7 +14,7 @@ use crate::index::Key;
 use crate::logical::{Cond, Truth};
 use crate::params::Params;
 use crate::storage::{Newest, Row, RowId, project};
-use crate::txn::TxId;
+use crate::txn::Txn;
 use crate::value::cast::cast;
 use crate::value::{DataType, Decimal, Value, assign};
 
@@ -110,14 +110,19 @@ fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
 /// transaction is changing, with the key before or after, is in doubt: the
 /// statement is refused with SQLCODE -911, to be run again once that
 /// transaction ends.
-pub(super) fn check_key(st: &State, tx: TxId, table: &QualifiedName, (columns, primary): (&[usize], bool), ids: &[RowId]) -> Result<()> {
+pub(super) fn check_key(st: &State, txn: &Txn, table: &QualifiedName, (columns, primary): (&[usize], bool), ids: &[RowId]) -> Result<()> {
+    let tx = txn.id;
     let desc = table_desc(st, table)?;
     let storage = st.storage_of(table)?;
     let key_of =
         |row: &Row| project(row, columns).map(Key).ok_or_else(|| api(format!("[DESIGN] a row of {table} is shorter than its columns")));
-    // Each row read once, for both rules.
+    let unique: Vec<&str> =
+        st.catalog.indexes(table).into_iter().filter(|ix| ix.unique && ix.columns == columns).map(|ix| ix.name.as_str()).collect();
+    // Each row read once, for both rules; none whose entry was its key's
+    // only one as it was inserted (`Txn::alone`): its key has no null, and
+    // a row of its key inserted after was not, and is read itself.
     let mut keys = Vec::with_capacity(ids.len());
-    for &id in ids {
+    for &id in ids.iter().filter(|&&id| !unique.iter().any(|ix| txn.alone(ix, id))) {
         if let Some(row) = storage.get(tx, id)? {
             keys.push(key_of(&row)?);
         }

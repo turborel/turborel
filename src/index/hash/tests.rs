@@ -101,3 +101,17 @@ fn indexes_reopen_and_are_freed() {
     drop(index);
     assert!(method.open(&[MONEY], &locator).is_err(), "its meta page is freed");
 }
+
+/// Verifies: [DESIGN] RULES.md D34, `Index::insert_alone` by default, of
+/// `insert` and `rows`: an entry is its key's only one if no other row's
+/// holds the key, the same row's other version none.
+#[test]
+fn an_entry_alone_by_default() {
+    let method = HashMethod::in_memory();
+    let index = method.create(&[MONEY]).unwrap();
+    let key = |n: i128| Key(vec![exact(n, 2)]);
+    assert!(index.insert_alone(key(1), 10).unwrap());
+    assert!(index.insert_alone(key(1), 10).unwrap(), "the same row's other version");
+    assert!(!index.insert_alone(key(1), 11).unwrap(), "another row's");
+    assert!(index.insert_alone(key(2), 11).unwrap());
+}
