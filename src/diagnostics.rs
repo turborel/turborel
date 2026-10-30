@@ -6,7 +6,9 @@
 //!
 //! Events are what an operator must know of the database's life and
 //! failures: opening and closing, checkpoints, changes of settings,
-//! plug-ins registered, users and the owner changed, failures beyond a statement's own
+//! plug-ins registered, users and the owner changed, the threads of
+//! background work started, stopped or failing (RULES.md D55), failures
+//! beyond a statement's own
 //! making (a damaged table, corrupt data, an I/O error, a commit that
 //! failed, memory refused), and statements slower than
 //! DIAGNOSTICS.SLOW_STATEMENT. A failure of a statement's own SQL (a syntax
@@ -18,6 +20,7 @@
 
 use crate::db::Opened;
 use crate::error::{Code, SqlError};
+use crate::threads::ThreadChange;
 use crate::value::Value;
 
 /// How much an event matters.
@@ -103,6 +106,15 @@ pub enum Event {
     },
     /// A failure an operator must know of (`Event::of`).
     Failed(SqlError),
+    /// \[DESIGN\] The thread of a job of background work, labelled
+    /// `label`, started, stopped, failed, or went on after a panic (RULES.md
+    /// D55).
+    Thread {
+        /// Its label.
+        label: &'static str,
+        /// What happened.
+        change: ThreadChange,
+    },
     /// A statement whose work took DIAGNOSTICS.SLOW_STATEMENT or longer: a
     /// call, or a cursor's opening and fetches (`db/slow.rs`). Its text is
     /// as its session gave it, values written in it included.
@@ -122,6 +134,11 @@ impl Event {
         match self {
             Event::Opened(Opened::Recovered(_)) | Event::SlowStatement { .. } => Level::Warning,
             Event::Failed(e) => worth(e.code).unwrap_or(Level::Warning),
+            Event::Thread { change, .. } => match change {
+                ThreadChange::Started | ThreadChange::Stopped => Level::Info,
+                ThreadChange::Failed(_) => Level::Warning,
+                ThreadChange::Restarted => Level::Error,
+            },
             Event::Opened(Opened::Created | Opened::Reopened)
             | Event::Closed
             | Event::CheckpointTaken(_)

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::error::Code;
+use turborel::threads::ThreadPolicy;
 
 use crate::common::{Scramble, Scratch, after_crash, exec, os, rows, sorted};
 
@@ -18,8 +19,12 @@ use crate::common::{Scramble, Scratch, after_crash, exec, os, rows, sorted};
 const ROWS: i64 = 5000;
 
 /// The tables R, of the row store, and C, of the column store in
-/// groups of 2048 rows, of schema A, each with `ROWS` rows, C's frozen.
+/// groups of 2048 rows, of schema A, each with `ROWS` rows, C's frozen;
+/// the database's background work done only when a test asks
+/// (THREADS.POLICY MANUAL, RULES.md D55), so what it reads is the same
+/// each run.
 fn both(db: &Database) -> Session {
+    db.set_thread_policy(ThreadPolicy::Manual).unwrap();
     let a = written(db);
     db.maintain().unwrap();
     a
@@ -473,6 +478,7 @@ const APPROXIMATE: [&str; 9] = [
 #[test]
 fn approximate_numbers_answer_alike() {
     let db = Database::new();
+    db.set_thread_policy(ThreadPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE RF (K INTEGER PRIMARY KEY, G INTEGER, P DOUBLE PRECISION, Q REAL)

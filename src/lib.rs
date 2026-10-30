@@ -56,6 +56,7 @@ pub mod stats;
 pub mod storage;
 mod sync;
 pub mod system;
+pub mod threads;
 pub mod txn;
 pub mod value;
 

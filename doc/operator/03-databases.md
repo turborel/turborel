@@ -51,7 +51,24 @@ committed survives.
 ## Checkpoints
 
 A checkpoint writes the changes since the last to the data file, so a
-recovery reads the log only from there. The end of a transaction takes
-one once CHECKPOINT.AFTER_CHANGES row changes have been logged, 100,000
-by default, or CHECKPOINT.AFTER_BYTES bytes written to the data file,
-64 MiB. Each is told to the diagnostics, `checkpoint_taken`.
+recovery reads the log only from there. One is due once
+CHECKPOINT.AFTER_CHANGES row changes have been logged, 100,000 by
+default, or CHECKPOINT.AFTER_BYTES bytes written to the data file,
+64 MiB; the database's checkpoint thread takes it, so no transaction
+waits for it. Each is told to the diagnostics, `checkpoint_taken`.
+
+## Background work
+
+The database does some of its work in the background: its checkpoints,
+and its maintenance, which gathers tables' statistics and freezes the
+rows of the column store. THREADS.POLICY says how: AUTOMATIC, the
+default, on threads of the database's own as the work comes due;
+PAUSED, not at all until it changes, the work due kept; MANUAL, only
+when the program embedding the database asks. It takes effect at once:
+
+```sql
+SET DATABASE THREADS.POLICY = 'PAUSED'
+```
+
+Each thread started or stopped is told to the diagnostics, `thread`, as
+is each failure of its work.

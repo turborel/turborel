@@ -54,7 +54,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::background::Worker;
 use super::files::DatabaseFiles;
 use super::image::Image;
 use super::snapshot::Snapshot;
@@ -67,6 +66,7 @@ use crate::log::{Log, Lsn};
 use crate::settings::{CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES};
 use crate::storage::{Row, RowId, TableStorage, project};
 use crate::sync::{lock, lock_builtin};
+use crate::threads::Turn;
 use crate::txn::{NO_TRANSACTION, Persistence, TableLock, Timestamp};
 use crate::value::Value;
 
@@ -90,7 +90,7 @@ impl Database {
     /// `checkpoint`'s work.
     fn take_checkpoint(&self) -> Result<()> {
         let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files takes checkpoints"))?;
-        let _turn = lock(&files.checkpointer.taking)?;
+        let _turn = files.checkpointer.taking.take("a checkpoint")?;
         let current = self.snapshot()?;
         // Not while an index is built: a checkpoint records only indexes
         // ready to be read (`Database::create_index`).
@@ -142,23 +142,11 @@ impl Database {
         i128::from(current.tx.logged.load(Ordering::Relaxed)) >= changes || i128::from(files.shadows.pending_bytes()) >= bytes
     }
 
-    /// Asks the checkpoint thread for a checkpoint if one is due.
+    /// Asks for the checkpoint job if a checkpoint is due.
     pub(super) fn checkpoint_if_due(&self) {
-        if self.checkpoint_due()
-            && let Ok(Some(files)) = self.files()
-        {
-            files.checkpointer.request();
+        if self.checkpoint_due() {
+            self.request_checkpoint();
         }
-    }
-
-    /// Starts the checkpoint thread.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -915 if the thread cannot be started.
-    pub(super) fn start_checkpointer(&self) -> Result<()> {
-        let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files has a checkpoint thread"))?;
-        files.checkpointer.worker.start("turborel-checkpoint", self.downgrade(), checkpointed)
     }
 
     /// \[DESIGN\] Closes the database cleanly: see the module's
@@ -179,13 +167,21 @@ impl Database {
         closed
     }
 
-    /// `close`'s work.
+    /// `close`'s work: its background work's threads stopped first, and
+    /// let start again if it fails (RULES.md D55).
     fn close_files(&self) -> Result<()> {
+        self.background_closing();
+        let closed = self.close_closing();
+        if closed.is_err() {
+            self.background_reopened();
+        }
+        closed
+    }
+
+    /// `close_files`' work, no background work's thread running.
+    fn close_closing(&self) -> Result<()> {
         let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files is closed"))?;
-        // Its checkpoint and its maintenance end first.
-        files.checkpointer.worker.stop();
-        self.stop_maintenance();
-        let _turn = lock(&files.checkpointer.taking)?;
+        let _turn = files.checkpointer.taking.take("a checkpoint")?;
         let current = self.snapshot()?;
         // Shut before the turn: a definition holds the gate while it waits
         // for the turn.
@@ -209,33 +205,31 @@ impl Database {
     }
 }
 
-/// \[DESIGN\] A database's checkpoint thread, and what checkpoints share.
+/// \[DESIGN\] What a database's checkpoints share.
 #[derive(Default)]
 pub(super) struct Checkpointer {
-    worker: Worker,
-    /// Held while a checkpoint is taken, so checkpoints take turns.
-    taking: Mutex<()>,
+    /// Taken while a checkpoint is, so checkpoints take turns; refusing
+    /// one asked for from within a checkpoint (RULES.md R-ERR-4).
+    taking: Turn,
     taken: AtomicU64,
     failure: Mutex<Option<SqlError>>,
 }
 
-impl Checkpointer {
-    /// Asks the thread for a checkpoint.
-    fn request(&self) {
-        self.worker.request();
-    }
-}
-
-/// The checkpoint thread's work: the checkpoint due, if one still is (one
+/// The checkpoint job's work: the checkpoint due, if one still is (one
 /// taken meanwhile may have made it due no more), its outcome kept.
-fn checkpointed(db: &Database) -> Option<Duration> {
+///
+/// # Errors
+///
+/// The checkpoint's.
+pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
     if db.checkpoint_due() {
-        let outcome = db.checkpoint().err();
+        let outcome = db.checkpoint();
         if let Ok(Some(files)) = db.files() {
-            *lock_builtin(&files.checkpointer.failure) = outcome;
+            *lock_builtin(&files.checkpointer.failure) = outcome.as_ref().err().cloned();
         }
+        outcome?;
     }
-    None
+    Ok(None)
 }
 
 impl State {

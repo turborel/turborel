@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, Weak};
 use std::thread::{self, ThreadId};
 
+use super::background::Background;
 use super::files::DatabaseFiles;
-use super::maintenance::Maintenance;
 use super::stores::Storages;
 use super::users::Credentials;
 use super::{Session, State, qualified_name};
@@ -40,13 +40,13 @@ use crate::value::Value;
 pub struct Database(Arc<Shared>);
 
 /// A handle to a database that does not keep it open: what a thread of the
-/// database's own holds (`db/background.rs`).
+/// database's own holds (`threads.rs`).
 #[derive(Clone)]
-pub(super) struct WeakDatabase(Weak<Shared>);
+pub(crate) struct WeakDatabase(Weak<Shared>);
 
 impl WeakDatabase {
     /// The database, if it is still open somewhere.
-    pub(super) fn upgrade(&self) -> Option<Database> {
+    pub(crate) fn upgrade(&self) -> Option<Database> {
         self.0.upgrade().map(Database)
     }
 }
@@ -71,8 +71,8 @@ struct Shared {
     storages: Storages,
     /// What makes users' verifiers, if set (`db/users.rs`).
     credentials: RwLock<Option<Arc<dyn Credentials>>>,
-    /// Its maintenance thread (`db/maintenance.rs`).
-    maintenance: Maintenance,
+    /// Its background work: checkpoints and maintenance (`db/background.rs`).
+    background: Background,
 }
 
 /// One thread's turn to change the definitions. Dropping it ends the turn.
@@ -113,7 +113,7 @@ impl Database {
             diagnostics: RwLock::new(Arc::new(NoDiagnostics)),
             storages: Storages::default(),
             credentials: RwLock::new(None),
-            maintenance: Maintenance::default(),
+            background: Background::default(),
         }))
     }
 
@@ -156,13 +156,13 @@ impl Database {
         Ok(())
     }
 
-    /// Its maintenance thread.
-    pub(super) fn maintenance(&self) -> &Maintenance {
-        &self.0.maintenance
+    /// Its background work.
+    pub(super) fn background(&self) -> &Background {
+        &self.0.background
     }
 
     /// A handle that does not keep the database open.
-    pub(super) fn downgrade(&self) -> WeakDatabase {
+    pub(crate) fn downgrade(&self) -> WeakDatabase {
         WeakDatabase(Arc::downgrade(&self.0))
     }
 

@@ -20,6 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use turborel::db::Opened;
 use turborel::diagnostics::{Diagnostics, Event, Level};
+use turborel::threads::ThreadChange;
 
 /// \[DESIGN\] A sink writing each event as a line of JSON.
 pub struct Lines {
@@ -73,6 +74,23 @@ fn level(level: Level) -> &'static str {
     }
 }
 
+/// A thread's event (RULES.md D55): its label and what happened, written
+/// to `json`.
+fn thread(json: &mut Json, label: &str, change: &ThreadChange) {
+    json.text("event", "thread");
+    json.text("label", label);
+    match change {
+        ThreadChange::Started => json.text("change", "started"),
+        ThreadChange::Stopped => json.text("change", "stopped"),
+        ThreadChange::Restarted => json.text("change", "restarted"),
+        ThreadChange::Failed(e) => {
+            json.text("change", "failed");
+            json.raw("sqlcode", &e.sqlcode().to_string());
+            json.text("message", &e.to_string());
+        }
+    }
+}
+
 /// `event`'s kind and fields, written to `json`.
 fn fields(json: &mut Json, event: &Event) {
     match event {
@@ -110,6 +128,7 @@ fn fields(json: &mut Json, event: &Event) {
             json.text("sqlstate", e.sqlstate().as_str());
             json.text("message", &e.to_string());
         }
+        Event::Thread { label, change } => thread(json, label, change),
         Event::SlowStatement { user, millis, statement } => {
             json.text("event", "slow_statement");
             json.text("user", user);

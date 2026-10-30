@@ -90,6 +90,7 @@ impl Database {
     pub fn set_setting(&self, name: &str, value: &Value) -> Result<()> {
         self.change(|st| st.define_setting(name, Some(value)))?;
         self.emit(&Event::SettingChanged { name: name.to_ascii_uppercase(), value: Some(value.clone()) });
+        self.apply_thread_policy();
         self.budget_from_settings()
     }
 
@@ -129,6 +130,7 @@ impl Database {
     pub fn reset_setting(&self, name: &str) -> Result<()> {
         self.change(|st| st.define_setting(name, None))?;
         self.emit(&Event::SettingChanged { name: name.to_ascii_uppercase(), value: None });
+        self.apply_thread_policy();
         self.budget_from_settings()
     }
 

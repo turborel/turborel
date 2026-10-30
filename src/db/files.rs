@@ -306,8 +306,8 @@ impl Database {
 
     /// Once it is opened: its settings fixed at creation fixed, those given
     /// before it opened, of those it reads as it does, set again over the
-    /// ones its definitions held, its budget as its settings say, and its
-    /// checkpoints taken as they come due.
+    /// ones its definitions held, and its budget as its settings say. Its
+    /// checkpoints are taken as they come due (`db/background.rs`).
     fn opened(&self, given: &[(String, Value)]) -> Result<()> {
         self.change(|st| {
             st.created = true;
@@ -316,8 +316,7 @@ impl Database {
         for (name, value) in given {
             self.set_setting(name, value)?;
         }
-        self.budget_from_settings()?;
-        self.start_checkpointer()
+        self.budget_from_settings()
     }
 
     /// The log at `place`, of the database's log storage, known durable

@@ -117,6 +117,7 @@ use assignment::{assign_targets, candidate, check_option, check_targets, set_col
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
 pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
+pub(crate) use database::WeakDatabase;
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
 pub use formats::FileFormats;
 pub use image::IMAGE_FORMAT;

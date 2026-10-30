@@ -1,7 +1,7 @@
 //! \[DESIGN\] The built-in settings (RULES.md D36), each at its key's place,
 //! in groups: transactions and definitions, planning, the catalog's name,
 //! memory, the planner's guesses, spilling, durability, storage, limits,
-//! and the executor. A default its subsystem names by a constant is that
+//! the executor, and the threads of background work (RULES.md D55). A default its subsystem names by a constant is that
 //! constant.
 //! Split from settings.rs (RULES.md R-SIZE-2).
 
@@ -72,6 +72,8 @@ pub const SLOW_STATEMENT: Key = Key(29);
 pub const TIME_ZONE: Key = Key(30);
 /// See [`DEFAULT_ENGINE`].
 pub const EXECUTOR_BATCHES: Key = Key(31);
+/// See [`DEFAULT_ENGINE`].
+pub const THREADS_POLICY: Key = Key(32);
 
 /// The words of `EXECUTOR.BATCHES`.
 pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
@@ -136,6 +138,11 @@ pub(super) fn builtin() -> Vec<Definition> {
         ("EXECUTOR.BATCHES", Kind::Choice(SWITCHES), text("ON")),
         SESSION,
         "Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.",
+    ));
+    all.push(defined(
+        ("THREADS.POLICY", Kind::Choice(&crate::threads::ThreadPolicy::WORDS), text("AUTOMATIC")),
+        DATABASE,
+        "How the database's background work, its checkpoints and maintenance, runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
     ));
     all
 }

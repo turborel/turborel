@@ -5,6 +5,7 @@
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
+use turborel::threads::ThreadPolicy;
 
 use crate::common::{both_ways, exec, rows};
 
@@ -14,6 +15,7 @@ use crate::common::{both_ways, exec, rows};
 /// column store, alike; E, a tag of some of the names; P, of CHAR keys
 /// longer.
 fn tables(db: &Database) -> Session {
+    db.set_thread_policy(ThreadPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE F (K INTEGER PRIMARY KEY, G INTEGER, B INTEGER, S CHAR(2)) USING columnstore

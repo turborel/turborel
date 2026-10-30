@@ -21,6 +21,7 @@ event, and what the event is of:
 | `opened` | the database is opened: `how`, created, reopened or recovered, and of a recovery what it did |
 | `closed` | the database is closed cleanly |
 | `checkpoint_taken` | a checkpoint is taken |
+| `thread` | a thread of background work, `label` `turborel-checkpoint` or `turborel-maintenance`, has `change`d: started, stopped, failed, with its error, or restarted after a fault |
 | `setting_changed` | the database's value of a setting is changed |
 | `user_changed`, `owner_changed` | a user is made, given a password or dropped; the database is given an owner |
 | `failed` | a failure an operator must know of: a commit rolled back, a file not read, stored data corrupt |

@@ -5,6 +5,7 @@
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
+use turborel::threads::ThreadPolicy;
 
 use crate::common::{both_ways, exec, rows, sorted};
 
@@ -17,6 +18,7 @@ const ROWS: i64 = 6000;
 /// schema A, alike: written, their rows frozen, then some changed,
 /// deleted and added, in each.
 fn both(db: &Database) -> Session {
+    db.set_thread_policy(ThreadPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
