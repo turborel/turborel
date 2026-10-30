@@ -78,6 +78,45 @@ fn failures_an_operator_must_know_of_are_events() {
     assert!(events[0].1.contains("Resources"), "{events:?}");
 }
 
+/// Verifies: [DESIGN] RULES.md D36, D40: DIAGNOSTICS.LEVEL says the least
+/// level told: INFO, the default, every event; WARNING, warnings and
+/// errors; ERROR, errors alone; its words in any case, others refused.
+/// What a program tells (`Database::tell`), a server's own events, is
+/// filtered alike. The owner sets it in SQL, as the Operator's Guide
+/// shows.
+#[test]
+fn events_below_the_level_are_not_told() {
+    let kept = Kept::default();
+    let db = Database::new();
+    db.set_diagnostics(Box::new(kept.clone()));
+    let (info, warning) = (Event::Listening { addresses: vec![] }, Event::StopHurried { sessions: 1 });
+    let error = Event::AcceptFailed { failures: 1, message: "no file descriptor left".into() };
+    let levels = |kept: &Kept| kept.taken().into_iter().map(|(level, _)| level).collect::<Vec<_>>();
+    let set = |word: &str| db.set_setting("DIAGNOSTICS.LEVEL", &Value::Char(word.into()));
+    for (word, told) in [
+        ("INFO", vec![Level::Info, Level::Warning, Level::Error]),
+        ("warning", vec![Level::Warning, Level::Error]),
+        ("ERROR", vec![Level::Error]),
+    ] {
+        set(word).unwrap();
+        kept.taken();
+        for e in [&info, &warning, &error] {
+            db.tell(e);
+        }
+        assert_eq!(levels(&kept), told, "{word}");
+    }
+    assert_eq!(set("DEBUG").err().map(|e| e.code), Some(Code::Api));
+    set("INFO").unwrap();
+    assert_eq!(levels(&kept), [Level::Info], "the change told, at INFO");
+    // As the Operator's Guide sets it, by the database's owner.
+    db.create_user("ANN", b"x").unwrap();
+    db.set_owner("ANN").unwrap();
+    db.session("ANN").run("SET DATABASE DIAGNOSTICS.LEVEL = 'WARNING'").unwrap();
+    kept.taken();
+    db.tell(&info);
+    assert_eq!(levels(&kept), Vec::<Level>::new());
+}
+
 /// The slow statements `kept` heard of since last asked: who ran each,
 /// and its text.
 fn slow(kept: &Kept) -> Vec<String> {

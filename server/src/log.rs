@@ -1,50 +1,118 @@
 //! \[DESIGN\] The server's diagnostics sink (RULES.md D40, D42): each event
 //! a line of JSON, stamped with the time it was taken, in UTC to the
-//! millisecond (RFC 3339), with its level and its kind, then its fields:
-//! a program routes and filters the lines, a person reads them. They go to
-//! standard error, or are appended to a file.
+//! millisecond (RFC 3339), with its level and its kind, then its fields
+//! (`log/json.rs`): a program routes and filters the lines, a person reads
+//! them. They go to standard error, or are appended to a file.
 //!
 //! ```text
 //! {"time":"2026-10-27T20:15:56.701Z","level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":"SELECT ..."}
 //! ```
 //!
-//! A line that cannot be written is lost: the database never waits on, nor
-//! fails for, its diagnostics.
+//! The database never waits on its diagnostics: an event is made a line
+//! where it is told and queued, and a thread of its own,
+//! `turborel-server-log` (`runtime.rs`), writes the lines queued, flushing
+//! once the queue is empty. A slow disk or a blocked pipe so holds up no
+//! statement: past `QUEUE_LINES` waiting, a line is dropped and counted,
+//! and the count told, a line of its own, as the writer next writes. A
+//! line that cannot be written is lost.
+//!
+//! A file is opened again when the operator asks (`Reopener`), as a log
+//! rotated asks: moved away, then the server told; the lines after go to a
+//! new file at the same path.
 
-use std::fmt::Write as _;
-use std::fs::OpenOptions;
+mod json;
+
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
-use std::sync::{Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::thread::JoinHandle;
+use std::time::SystemTime;
 
-use turborel::db::Opened;
-use turborel::diagnostics::{Diagnostics, Event, Level};
+pub use json::line;
+use turborel::diagnostics::{Diagnostics, Event};
 use turborel::files::Noted;
-use turborel::threads::ThreadChange;
+
+/// \[DESIGN\] The lines waiting for the writer, at most: past them, a line
+/// is dropped rather than its event's teller made to wait.
+const QUEUE_LINES: usize = 1024;
+
+/// What the writer is given.
+enum Message {
+    /// A line to write.
+    Line(String),
+    /// The file its lines are counted writes of (RULES.md D56).
+    Noting(Noted),
+    /// The file to be opened again, before the lines after.
+    Reopen,
+    /// The lines are done with: written, it ends.
+    Stop,
+}
+
+/// What the sink, its reopeners and its writer share.
+#[derive(Default)]
+struct Shared {
+    /// Lines dropped since the writer last told of them.
+    dropped: AtomicU64,
+    /// Whether the file is to be opened again, asked while the queue was
+    /// full.
+    reopen: AtomicBool,
+}
 
 /// \[DESIGN\] A sink writing each event as a line of JSON.
 pub struct Lines {
-    out: Mutex<Box<dyn Write + Send>>,
-    /// The file it appends to, shown among the database's (RULES.md D56).
-    noted: Option<Noted>,
+    queue: SyncSender<Message>,
+    shared: Arc<Shared>,
+    writer: Option<JoinHandle<()>>,
+}
+
+/// \[DESIGN\] What asks a sink to open its file again: any thread may.
+#[derive(Clone)]
+pub struct Reopener {
+    queue: SyncSender<Message>,
+    shared: Arc<Shared>,
+}
+
+impl Reopener {
+    /// Asks the sink to open its file again, at the same path, before its
+    /// next line: once a rotation has moved it away. Of a sink to standard
+    /// error, nothing is done.
+    pub fn reopen(&self) {
+        // In turn, so the lines told before go to the file it had; a queue
+        // full has a line coming, before which the flag is looked at.
+        if let Err(TrySendError::Full(_)) = self.queue.try_send(Message::Reopen) {
+            self.shared.reopen.store(true, Ordering::Release);
+        }
+    }
 }
 
 impl Lines {
     /// Lines written to `out`.
-    pub fn new(out: Box<dyn Write + Send>) -> Lines {
-        Lines { out: Mutex::new(out), noted: None }
+    ///
+    /// # Errors
+    ///
+    /// The writer's thread cannot be made.
+    pub fn new(out: Box<dyn Write + Send>) -> io::Result<Lines> {
+        Lines::started(Target::Stream(out), QUEUE_LINES)
     }
 
     /// The lines, each counted a write of the file `noted` shows (RULES.md
     /// D56).
     #[must_use]
     pub fn noting(self, noted: Noted) -> Lines {
-        Lines { noted: Some(noted), ..self }
+        // The queue is empty as the sink is made, so this waits for none.
+        let _ = self.queue.send(Message::Noting(noted));
+        self
     }
 
     /// Lines written to standard error.
-    pub fn to_stderr() -> Lines {
+    ///
+    /// # Errors
+    ///
+    /// The writer's thread cannot be made.
+    pub fn to_stderr() -> io::Result<Lines> {
         Lines::new(Box::new(io::stderr()))
     }
 
@@ -52,383 +120,145 @@ impl Lines {
     ///
     /// # Errors
     ///
-    /// The file cannot be opened for appending.
+    /// The file cannot be opened for appending, or the writer's thread
+    /// cannot be made.
     pub fn appending(path: &Path) -> io::Result<Lines> {
-        let mut options = OpenOptions::new();
-        // \[DESIGN\] Made its user's alone, as the database's files are
-        // (RULES.md D56).
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        Ok(Lines::new(Box::new(options.create(true).append(true).open(path)?)))
+        Lines::started(Target::File(path.to_path_buf(), appended(path)?), QUEUE_LINES)
+    }
+
+    /// What asks it to open its file again.
+    pub fn reopener(&self) -> Reopener {
+        Reopener { queue: self.queue.clone(), shared: Arc::clone(&self.shared) }
+    }
+
+    /// Lines to `target`, at most `bound` waiting, its writer started.
+    fn started(target: Target, bound: usize) -> io::Result<Lines> {
+        let (queue, taken) = sync_channel(bound);
+        let shared = Arc::new(Shared::default());
+        let writer = Writer { target, noted: None, shared: Arc::clone(&shared) };
+        let thread = crate::runtime::writer(move || writer.run(&taken))?;
+        Ok(Lines { queue, shared, writer: Some(thread) })
     }
 }
 
 impl Diagnostics for Lines {
     fn event(&self, event: &Event) {
-        let text = line(SystemTime::now(), event);
-        // Nothing panics while it is held, so a poisoned lock is whole.
-        let mut out = self.out.lock().unwrap_or_else(PoisonError::into_inner);
-        let _ = writeln!(out, "{text}").and_then(|()| out.flush());
+        match self.queue.try_send(Message::Line(line(SystemTime::now(), event))) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Full(_)) => {
+                self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+impl Drop for Lines {
+    /// Writes the lines queued, then ends the writer.
+    fn drop(&mut self) {
+        let _ = self.queue.send(Message::Stop);
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
+    }
+}
+
+/// The file at `path` opened for appending, made if it is not there.
+fn appended(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    // \[DESIGN\] Made its user's alone, as the database's files are
+    // (RULES.md D56).
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.create(true).append(true).open(path)
+}
+
+/// Where lines go.
+enum Target {
+    /// A stream: standard error, or a program's.
+    Stream(Box<dyn Write + Send>),
+    /// A file, and its path, to open it again by.
+    File(PathBuf, File),
+}
+
+impl Target {
+    fn out(&mut self) -> &mut dyn Write {
+        match self {
+            Target::Stream(out) => out,
+            Target::File(_, file) => file,
+        }
+    }
+
+    /// Its file opened again at its path; if it cannot be, the one it has
+    /// kept, and why said in it.
+    fn reopen(&mut self) {
+        let Target::File(path, file) = self else { return };
+        let _ = file.flush();
+        match appended(path) {
+            Ok(again) => *file = again,
+            Err(e) => {
+                let _ = writeln!(file, "{}", json::not_reopened(SystemTime::now(), &path.display().to_string(), &e.to_string()));
+            }
+        }
+    }
+}
+
+/// The writer's own: where its lines go, and what it counts them to.
+struct Writer {
+    target: Target,
+    noted: Option<Noted>,
+    shared: Arc<Shared>,
+}
+
+impl Writer {
+    /// Writes what `taken` gives until it is stopped, or every sender is
+    /// gone; flushing once nothing more waits.
+    fn run(mut self, taken: &Receiver<Message>) {
+        while let Ok(first) = taken.recv() {
+            let mut next = Some(first);
+            while let Some(message) = next.take() {
+                if !self.take(message) {
+                    self.told_dropped();
+                    let _ = self.target.out().flush();
+                    return;
+                }
+                next = taken.try_recv().ok();
+            }
+            let _ = self.target.out().flush();
+        }
+    }
+
+    /// Does what `message` asks: false once it is to stop.
+    fn take(&mut self, message: Message) -> bool {
+        if self.shared.reopen.swap(false, Ordering::AcqRel) {
+            self.target.reopen();
+        }
+        match message {
+            Message::Line(text) => {
+                self.write(&text);
+                self.told_dropped();
+            }
+            Message::Noting(noted) => self.noted = Some(noted),
+            Message::Reopen => self.target.reopen(),
+            Message::Stop => return false,
+        }
+        true
+    }
+
+    /// Lines dropped since last told, told.
+    fn told_dropped(&mut self) {
+        let dropped = self.shared.dropped.swap(0, Ordering::Relaxed);
+        if dropped > 0 {
+            self.write(&json::dropped(SystemTime::now(), dropped));
+        }
+    }
+
+    fn write(&mut self, text: &str) {
+        let _ = writeln!(self.target.out(), "{text}");
         if let Some(noted) = &self.noted {
             noted.wrote();
         }
     }
 }
 
-/// `event`, taken at `at`, as a line of JSON.
-pub fn line(at: SystemTime, event: &Event) -> String {
-    let mut json = Json::default();
-    json.text("time", &timestamp(at));
-    json.text("level", level(event.level()));
-    fields(&mut json, event);
-    json.done()
-}
-
-fn level(level: Level) -> &'static str {
-    match level {
-        Level::Error => "error",
-        Level::Warning => "warning",
-        Level::Info => "info",
-    }
-}
-
-/// A thread's event (RULES.md D55): its label and what happened, written
-/// to `json`.
-fn thread(json: &mut Json, label: &str, change: &ThreadChange) {
-    json.text("event", "thread");
-    json.text("label", label);
-    match change {
-        ThreadChange::Started => json.text("change", "started"),
-        ThreadChange::Stopped => json.text("change", "stopped"),
-        ThreadChange::Restarted => json.text("change", "restarted"),
-        ThreadChange::Failed(e) => {
-            json.text("change", "failed");
-            json.raw("sqlcode", &e.sqlcode().to_string());
-            json.text("message", &e.to_string());
-        }
-    }
-}
-
-/// `event`'s kind and fields, written to `json`.
-fn fields(json: &mut Json, event: &Event) {
-    match event {
-        Event::Opened(how) => opened(json, how),
-        Event::Closed => json.text("event", "closed"),
-        Event::CheckpointTaken(taken) => {
-            json.text("event", "checkpoint_taken");
-            json.number("taken", *taken);
-        }
-        Event::SettingChanged { name, value } => {
-            json.text("event", "setting_changed");
-            json.text("name", name);
-            match value {
-                Some(value) => json.text("value", &value.to_literal()),
-                None => json.raw("value", "null"),
-            }
-        }
-        Event::UserChanged { name, dropped } => {
-            json.text("event", "user_changed");
-            json.text("name", name);
-            json.raw("dropped", if *dropped { "true" } else { "false" });
-        }
-        Event::OwnerChanged { name } => {
-            json.text("event", "owner_changed");
-            json.text("name", name);
-        }
-        Event::Registered { kind, name } => {
-            json.text("event", "registered");
-            json.text("kind", &format!("{kind:?}"));
-            json.text("name", name);
-        }
-        Event::Failed(e) => {
-            json.text("event", "failed");
-            json.raw("sqlcode", &e.sqlcode().to_string());
-            json.text("sqlstate", e.sqlstate().as_str());
-            json.text("message", &e.to_string());
-        }
-        Event::Thread { label, change } => thread(json, label, change),
-        Event::SlowStatement { user, millis, statement } => slow(json, user, *millis, statement.as_deref()),
-        Event::FilesReopened { reopened, limit } => {
-            json.text("event", "files_reopened");
-            json.number("reopened", *reopened);
-            json.number("limit", *limit);
-        }
-        Event::CheckpointOverdue { changes, cause } => overdue(json, *changes, cause),
-        // An event of a later database than this sink knows: kept whole.
-        other => {
-            json.text("event", "other");
-            json.text("debug", &format!("{other:?}"));
-        }
-    }
-}
-
-/// The fields of checkpoints overdue, the log keeping `changes` row
-/// changes, and why.
-fn overdue(json: &mut Json, changes: u64, cause: &turborel::diagnostics::Overdue) {
-    use turborel::diagnostics::Overdue;
-    json.text("event", "checkpoint_overdue");
-    json.number("changes", changes);
-    match cause {
-        Overdue::Refused(e) => {
-            json.text("cause", "refused");
-            json.raw("sqlcode", &e.sqlcode().to_string());
-            json.text("message", &e.to_string());
-        }
-        Overdue::Transaction(age) => {
-            json.text("cause", "transaction");
-            json.number("seconds", age.as_secs());
-        }
-        Overdue::NotTaken(policy) => {
-            json.text("cause", "not_taken");
-            json.text("policy", policy.word());
-        }
-    }
-}
-
-/// The fields of a statement of `user` whose work took `millis`, its text
-/// `statement` if it may be told.
-fn slow(json: &mut Json, user: &str, millis: u64, statement: Option<&str>) {
-    json.text("event", "slow_statement");
-    json.text("user", user);
-    json.number("millis", millis);
-    match statement {
-        Some(text) => json.text("statement", text),
-        None => json.raw("statement", "null"),
-    }
-}
-
-/// The fields of a database opened `how`.
-fn opened(json: &mut Json, how: &Opened) {
-    json.text("event", "opened");
-    match how {
-        Opened::Created => json.text("how", "created"),
-        Opened::Reopened => json.text("how", "reopened"),
-        Opened::Recovered(report) => {
-            json.text("how", "recovered");
-            json.number("records", report.records);
-            json.number("definitions", report.definitions);
-            json.number("committed", report.committed);
-            json.number("not_committed", report.not_committed);
-            json.number("redone", report.redone);
-            json.number("undone", report.undone);
-            json.number("cut", report.cut);
-        }
-    }
-}
-
-/// A JSON object, written a field at a time.
-#[derive(Default)]
-struct Json(String);
-
-impl Json {
-    /// A field whose value is written as it is: a number or a literal.
-    fn raw(&mut self, name: &str, value: &str) {
-        self.0.push(if self.0.is_empty() { '{' } else { ',' });
-        quoted(&mut self.0, name);
-        self.0.push(':');
-        self.0.push_str(value);
-    }
-
-    fn text(&mut self, name: &str, value: &str) {
-        let mut string = String::new();
-        quoted(&mut string, value);
-        self.raw(name, &string);
-    }
-
-    fn number(&mut self, name: &str, value: u64) {
-        self.raw(name, &value.to_string());
-    }
-
-    fn done(mut self) -> String {
-        self.0.push('}');
-        self.0
-    }
-}
-
-/// `s` as a JSON string, appended to `out` [RFC 8259 §7].
-fn quoted(out: &mut String, s: &str) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{0}'..='\u{1f}' => {
-                let _ = write!(out, "\\u{:04x}", u32::from(c));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-/// `at` in UTC, to the millisecond, as RFC 3339 writes it.
-fn timestamp(at: SystemTime) -> String {
-    let since = at.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let seconds = since.as_secs();
-    let (days, of_day) = (seconds.div_euclid(SECONDS_PER_DAY), seconds.rem_euclid(SECONDS_PER_DAY));
-    let (year, month, day) = civil(days);
-    let (hour, minute, second) = (of_day.div_euclid(3600), of_day.rem_euclid(3600).div_euclid(60), of_day.rem_euclid(60));
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{:03}Z", since.subsec_millis())
-}
-
-const SECONDS_PER_DAY: u64 = 86_400;
-
-/// The year, month and day of `days` since 1970-01-01, in the proleptic
-/// Gregorian calendar: Howard Hinnant's `civil_from_days`, for days on or
-/// after the epoch.
-fn civil(days: u64) -> (u64, u64, u64) {
-    // Days since 0000-03-01, in eras of 400 years of 146 097 days.
-    let z = days.saturating_add(719_468);
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era = day_of_era
-        .saturating_sub(day_of_era.div_euclid(1_460))
-        .saturating_add(day_of_era.div_euclid(36_524))
-        .saturating_sub(day_of_era.div_euclid(146_096))
-        .div_euclid(365);
-    let day_of_year = day_of_era.saturating_sub(
-        year_of_era.saturating_mul(365).saturating_add(year_of_era.div_euclid(4)).saturating_sub(year_of_era.div_euclid(100)),
-    );
-    // Months from March: 0 is March, 11 February.
-    let from_march = day_of_year.saturating_mul(5).saturating_add(2).div_euclid(153);
-    let day = day_of_year.saturating_sub(from_march.saturating_mul(153).saturating_add(2).div_euclid(5)).saturating_add(1);
-    let month = if from_march < 10 { from_march.saturating_add(3) } else { from_march.saturating_sub(9) };
-    let year = era.saturating_mul(400).saturating_add(year_of_era).saturating_add(u64::from(month <= 2));
-    (year, month, day)
-}
-
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use turborel::db::RecoveryReport;
-    use turborel::diagnostics::Extension;
-    use turborel::error::{Code, SqlError};
-    use turborel::value::Value;
-
-    use super::*;
-
-    fn at(seconds: u64, millis: u64) -> SystemTime {
-        UNIX_EPOCH.checked_add(Duration::from_secs(seconds).saturating_add(Duration::from_millis(millis))).unwrap()
-    }
-
-    /// Verifies: [DESIGN] RULES.md D40: times are UTC to the millisecond,
-    /// as RFC 3339 writes them: the epoch, the leap day of 2000, the last
-    /// moment of 1999, and a day of 2026.
-    #[test]
-    fn times_are_utc_as_rfc_3339_writes_them() {
-        assert_eq!(timestamp(at(0, 0)), "1970-01-01T00:00:00.000Z");
-        assert_eq!(timestamp(at(951_782_400, 5)), "2000-02-29T00:00:00.005Z");
-        assert_eq!(timestamp(at(946_684_799, 999)), "1999-12-31T23:59:59.999Z");
-        assert_eq!(timestamp(at(1_793_131_256, 701)), "2026-10-27T20:00:56.701Z");
-    }
-
-    /// Verifies: [DESIGN] RULES.md D40: each event is a line of JSON with
-    /// its time, level, kind and fields, its strings escaped.
-    #[test]
-    fn events_are_lines_of_json() {
-        let shown = |event: &Event| line(at(0, 0), event);
-        let head = r#"{"time":"1970-01-01T00:00:00.000Z","#;
-        let slow = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: Some("SELECT 'a\"b'\n\u{1}".into()) };
-        assert_eq!(
-            shown(&slow),
-            format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":"SELECT 'a\"b'\n\u0001"}}"#)
-        );
-        let untold = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: None };
-        assert_eq!(
-            shown(&untold),
-            format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":null}}"#)
-        );
-        let reopened = Event::FilesReopened { reopened: 3000, limit: 1024 };
-        assert_eq!(shown(&reopened), format!(r#"{head}"level":"warning","event":"files_reopened","reopened":3000,"limit":1024}}"#));
-        let report = RecoveryReport { records: 1, definitions: 2, committed: 3, not_committed: 4, redone: 5, undone: 6, cut: 7 };
-        let cases = [
-            (Event::Opened(Opened::Created), r#""level":"info","event":"opened","how":"created"}"#.to_owned()),
-            (Event::Opened(Opened::Reopened), r#""level":"info","event":"opened","how":"reopened"}"#.to_owned()),
-            (
-                Event::Opened(Opened::Recovered(report)),
-                r#""level":"warning","event":"opened","how":"recovered","records":1,"definitions":2,"committed":3,"not_committed":4,"redone":5,"undone":6,"cut":7}"#.to_owned(),
-            ),
-            (Event::Closed, r#""level":"info","event":"closed"}"#.to_owned()),
-            (Event::CheckpointTaken(7), r#""level":"info","event":"checkpoint_taken","taken":7}"#.to_owned()),
-            (
-                Event::SettingChanged { name: "WORK_MEMORY".into(), value: Some(Value::Char("x".into())) },
-                r#""level":"info","event":"setting_changed","name":"WORK_MEMORY","value":"'x'"}"#.to_owned(),
-            ),
-            (
-                Event::SettingChanged { name: "WORK_MEMORY".into(), value: None },
-                r#""level":"info","event":"setting_changed","name":"WORK_MEMORY","value":null}"#.to_owned(),
-            ),
-            (Event::UserChanged { name: "ANN".into(), dropped: true }, r#""level":"info","event":"user_changed","name":"ANN","dropped":true}"#.to_owned()),
-            (Event::UserChanged { name: "ANN".into(), dropped: false }, r#""level":"info","event":"user_changed","name":"ANN","dropped":false}"#.to_owned()),
-            (Event::OwnerChanged { name: "ANN".into() }, r#""level":"info","event":"owner_changed","name":"ANN"}"#.to_owned()),
-            (
-                Event::Registered { kind: Extension::Encoding, name: "LZ4".into() },
-                r#""level":"info","event":"registered","kind":"Encoding","name":"LZ4"}"#.to_owned(),
-            ),
-        ];
-        for (event, rest) in cases {
-            assert_eq!(shown(&event), format!("{head}{rest}"));
-        }
-        let failed = shown(&Event::Failed(SqlError::new(Code::Io, "[DESIGN] the disk is full\t")));
-        assert!(
-            failed.starts_with(&format!(r#"{head}"level":"error","event":"failed","sqlcode":-915,"sqlstate":"TB915","message":""#)),
-            "{failed}"
-        );
-        assert!(failed.ends_with(r#"the disk is full\t"}"#), "{failed}");
-    }
-
-    /// Verifies: [DESIGN] RULES.md D40, D56: a sink writes each event as a
-    /// line, and one appending to a file adds to what it holds, each line
-    /// counted a write of the file it notes.
-    #[test]
-    fn a_sink_appends_its_lines() {
-        let scratch = turborel_test_support::Scratch::new("server-log");
-        let path = scratch.path("log");
-        std::fs::write(&path, "kept\n").unwrap();
-        let registry = std::sync::Arc::new(turborel::files::Registry::default());
-        let sink = Lines::appending(&path).unwrap().noting(registry.note(&path, true));
-        sink.event(&Event::Closed);
-        sink.event(&Event::CheckpointTaken(1));
-        let shown = registry.infos();
-        assert_eq!(shown.iter().map(|f| (f.noted, f.open, f.writes)).collect::<Vec<_>>(), [(true, true, 2)]);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 3, "{text}");
-        assert_eq!(lines[0], "kept");
-        assert!(lines[1].ends_with(r#""event":"closed"}"#) && lines[2].contains(r#""taken":1"#), "{text}");
-        assert!(Lines::appending(&scratch.path("no/such/dir/log")).is_err());
-    }
-
-    /// Verifies: [DESIGN] RULES.md D25, D40: checkpoints overdue are a
-    /// warning, with the row changes the log keeps and the cause: refused
-    /// with an error, an open transaction and its age in seconds, or none
-    /// taken under the job policy named.
-    #[test]
-    fn checkpoints_overdue_are_lines_of_json() {
-        use turborel::diagnostics::Overdue;
-        let shown = |cause: Overdue| line(at(0, 0), &Event::CheckpointOverdue { changes: 400, cause });
-        let head = r#"{"time":"1970-01-01T00:00:00.000Z","level":"warning","event":"checkpoint_overdue","changes":400,"#;
-        let damaged = SqlError::new(Code::Damaged, "T is damaged");
-        let refused = shown(Overdue::Refused(damaged));
-        assert!(refused.starts_with(&format!(r#"{head}"cause":"refused","sqlcode":-914,"message":""#)), "{refused}");
-        assert_eq!(shown(Overdue::Transaction(Duration::from_millis(90_500))), format!(r#"{head}"cause":"transaction","seconds":90}}"#));
-        let policy = turborel::threads::JobPolicy::Paused;
-        assert_eq!(shown(Overdue::NotTaken(policy)), format!(r#"{head}"cause":"not_taken","policy":"PAUSED"}}"#));
-    }
-
-    /// Verifies: [DESIGN] RULES.md D56: on Unix, a diagnostics log the sink
-    /// makes is its user's alone (0600).
-    #[cfg(unix)]
-    #[test]
-    fn a_log_made_is_its_users_alone() {
-        use std::os::unix::fs::PermissionsExt;
-        let scratch = turborel_test_support::Scratch::new("server-log-mode");
-        let path = scratch.path("log");
-        drop(Lines::appending(&path).unwrap());
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-    }
-}
+mod tests;

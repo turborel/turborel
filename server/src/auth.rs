@@ -38,6 +38,15 @@ impl Peer {
         Peer { origin: Origin::Local, secure: true }
     }
 
+    /// Where from, as the server shows and tells it: its address, or
+    /// `local`.
+    pub fn name(&self) -> String {
+        match self.origin {
+            Origin::Tcp(address) => address.to_string(),
+            Origin::Local => "local".to_owned(),
+        }
+    }
+
     /// Whether the client is on the server's own machine: a loopback
     /// address, an IPv4 one written as IPv6 too, or a Unix socket.
     pub fn is_local(&self) -> bool {
@@ -129,7 +138,8 @@ mod tests {
     /// Verifies: [DESIGN] RULES.md D42: a peer is local at a loopback
     /// address, IPv4 or IPv6, an IPv4 one written as IPv6 too, and on a
     /// Unix socket; not at any other address. A Unix socket is secure; a
-    /// TCP connection is not until TLS secures it.
+    /// TCP connection is not until TLS secures it. A peer is named by its
+    /// address, or `local`.
     #[test]
     fn a_peer_is_local_on_loopback_or_a_unix_socket() {
         for (address, local) in [
@@ -143,6 +153,7 @@ mod tests {
         }
         assert!(Peer::local().is_local() && Peer::local().secure);
         assert!(!Peer::tcp("127.0.0.1:1".parse().unwrap()).secure, "not secured yet");
+        assert_eq!((Peer::tcp("[::1]:9".parse().unwrap()).name(), Peer::local().name()), ("[::1]:9".to_owned(), "local".to_owned()));
     }
 
     /// Verifies: [DESIGN] RULES.md D42: trust accepts a named user from

@@ -18,6 +18,12 @@
 //! statement's text, and no wall-clock time: the sink stamps them as it
 //! takes them. What is counted (I/O, pool hits) stays in
 //! counters, read when wanted.
+//!
+//! A server tells what it does itself through the database it serves
+//! (`Database::tell`): where it listens, that it stops, connections it
+//! could not take, TLS and logins that failed. DIAGNOSTICS.LEVEL, the
+//! database's, says the least level told: events below it are dropped
+//! before any sink sees them.
 
 use std::time::Duration;
 
@@ -35,6 +41,23 @@ pub enum Level {
     Warning,
     /// The database's life: opened, checkpointed, configured.
     Info,
+}
+
+impl Level {
+    /// The words DIAGNOSTICS.LEVEL takes, most severe first, in the order
+    /// of the levels.
+    pub const WORDS: [&'static str; 3] = ["ERROR", "WARNING", "INFO"];
+
+    /// The level `word` names, INFO for any other.
+    pub fn of(word: &str) -> Level {
+        if word.eq_ignore_ascii_case("ERROR") {
+            Level::Error
+        } else if word.eq_ignore_ascii_case("WARNING") {
+            Level::Warning
+        } else {
+            Level::Info
+        }
+    }
 }
 
 /// A kind of plug-in.
@@ -151,6 +174,62 @@ pub enum Event {
         /// Why.
         cause: Overdue,
     },
+    /// \[DESIGN\] A server began to take connections (RULES.md D42).
+    Listening {
+        /// Where: each address, or Unix socket's path.
+        addresses: Vec<String>,
+    },
+    /// \[DESIGN\] A server was told to stop: it takes no connection, and
+    /// lets each finish its statement until SERVER.SHUTDOWN_TIMEOUT.
+    Stopping {
+        /// The connections it had.
+        connections: u64,
+    },
+    /// \[DESIGN\] A server stopping went past SERVER.SHUTDOWN_TIMEOUT, or
+    /// was told to stop again: the statements its sessions ran were
+    /// cancelled, and its connections closed, their sessions rolled back.
+    StopHurried {
+        /// The sessions whose statements were cancelled.
+        sessions: u64,
+    },
+    /// \[DESIGN\] A server's listener failed to take a connection, as
+    /// when the process has no file descriptor left. Told at most once a
+    /// minute.
+    AcceptFailed {
+        /// The failures since the last told, this one among them.
+        failures: u64,
+        /// What failed.
+        message: String,
+    },
+    /// \[DESIGN\] A client's TLS handshake failed, or did not end within
+    /// SERVER.LOGIN_TIMEOUT.
+    TlsFailed {
+        /// Who: an address, or `local`.
+        peer: String,
+        /// Why.
+        message: String,
+    },
+    /// \[EXTENSION\] A client was refused as the user it named: for an
+    /// audit of who tried to connect (RULES.md D43). Never with what it
+    /// proved by.
+    LoginFailed {
+        /// The authorization identifier it named.
+        user: String,
+        /// Who: an address, or `local`.
+        peer: String,
+        /// The mechanism of authentication it asked for.
+        mechanism: String,
+        /// Why, as the client was told.
+        message: String,
+    },
+    /// \[DESIGN\] Connections refused past SERVER.MAX_CONNECTIONS. Told at
+    /// most once a minute.
+    ConnectionsRefused {
+        /// The connections refused since the last told, this one among them.
+        refused: u64,
+        /// SERVER.MAX_CONNECTIONS.
+        limit: u64,
+    },
 }
 
 /// \[DESIGN\] Why checkpoints let the log grow (`Event::CheckpointOverdue`).
@@ -174,7 +253,12 @@ impl Event {
             Event::Opened(Opened::Recovered(_))
             | Event::SlowStatement { .. }
             | Event::FilesReopened { .. }
-            | Event::CheckpointOverdue { .. } => Level::Warning,
+            | Event::CheckpointOverdue { .. }
+            | Event::StopHurried { .. }
+            | Event::TlsFailed { .. }
+            | Event::LoginFailed { .. }
+            | Event::ConnectionsRefused { .. } => Level::Warning,
+            Event::AcceptFailed { .. } => Level::Error,
             Event::Failed(e) => worth(e.code).unwrap_or(Level::Warning),
             Event::Thread { change, .. } => match change {
                 ThreadChange::Started | ThreadChange::Stopped => Level::Info,
@@ -187,7 +271,9 @@ impl Event {
             | Event::SettingChanged { .. }
             | Event::UserChanged { .. }
             | Event::OwnerChanged { .. }
-            | Event::Registered { .. } => Level::Info,
+            | Event::Registered { .. }
+            | Event::Listening { .. }
+            | Event::Stopping { .. } => Level::Info,
         }
     }
 

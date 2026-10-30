@@ -7,6 +7,11 @@
 //! Where the server listens and its limits are the database's settings
 //! (RULES.md D36), as all its configuration is: `--set NAME=VALUE` sets
 //! one as the program starts, kept with the database as any setting is.
+//!
+//! Signals (Unix): SIGTERM, as Ctrl-C everywhere, stops the server, and a
+//! second hurries it (`Server::serve_until`); SIGHUP opens the `--log`
+//! file again, for a rotation that has moved it away. Windows has no
+//! SIGHUP: a log there is rotated with the server stopped.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -20,9 +25,10 @@ use turborel::value::{Decimal, Value};
 use turborel_aes::{AesGcm, KEY_BYTES, KeyDirectory, Keyring};
 use turborel_lz4::Lz4;
 
+use tokio::runtime::Runtime;
 use turborel_server::auth::Trust;
 use turborel_server::listening;
-use turborel_server::log::Lines;
+use turborel_server::log::{Lines, Reopener};
 use turborel_server::native::Native;
 use turborel_server::password::{Password, Pbkdf2};
 use turborel_server::server::{Protocol, Server};
@@ -63,6 +69,8 @@ The server's settings, beside the database's:
   SERVER.LOGIN_TIMEOUT   milliseconds a client has to authenticate (default 60000; 0 for no limit)
   SERVER.IDLE_TIMEOUT    milliseconds the server waits on a client, for a request or to
                          take its rows, before closing it and rolling it back (default 0, none)
+  SERVER.SHUTDOWN_TIMEOUT  milliseconds a server told to stop lets statements finish,
+                         before it cancels them (default 30000; 0 for no limit)
   SERVER.MAX_CONNECTIONS connections taken at once (default 256)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)
@@ -84,7 +92,10 @@ SERVER.TRUST LOCAL, a client of this machine is trusted instead. The database's
 owner manages users in SQL (CREATE USER, ALTER USER, DROP USER), and sets the database's
 settings, the server's among them, on a running server: SET DATABASE NAME = VALUE.
 Ctrl-C, or SIGTERM on Unix, stops the server: each connection finishes its statement,
-then the database is closed.
+then the database is closed. Past SERVER.SHUTDOWN_TIMEOUT milliseconds (default 30000;
+0 for no limit), or at a second Ctrl-C or SIGTERM, running statements are cancelled
+and connections closed, rolled back. SIGHUP (Unix) opens the --log file again, as
+a log rotation asks.
 A table's rows may pass through encodings of their own, compressed or encrypted:
 CREATE TABLE ... WITH (ENCODINGS = 'LZ4,AES-256-GCM:KEY'), or ALTER TABLE ... SET (...).
 An encrypted table is indexed only where STORAGE.ENCODINGS encrypts the files too.";
@@ -178,15 +189,22 @@ fn setting(text: &str) -> Result<(String, Value), String> {
     Ok((name.trim().to_owned(), value))
 }
 
-/// Serves `config` until `stop` is done, then closes the database, if it
-/// is kept somewhere. `ready` is given where it listens, once it does.
+/// Serves `config` until `stop` is done, hurried once `hurry` is
+/// (`Server::serve_until`), then closes the database, if it is kept
+/// somewhere. `ready` is given where it listens, once it does. From the
+/// start, SIGHUP opens the log file again (Unix).
 ///
 /// # Errors
 ///
 /// What failed, for the operator: opening or closing the database, or
 /// listening.
-pub fn run(config: &Config, ready: impl FnOnce(&[String]), stop: impl Future<Output = ()>) -> Result<(), String> {
-    within(config, |mut server| {
+pub fn run(
+    config: &Config,
+    ready: impl FnOnce(&[String]),
+    (stop, hurry): (impl Future<Output = ()>, impl Future<Output = ()>),
+) -> Result<(), String> {
+    let runtime = turborel_server::runtime::runtime(None).map_err(|e| format!("cannot start: {e}"))?;
+    within(config, Some(&runtime), |mut server| {
         let db = server.database().clone();
         server
             .add_authenticator(Arc::new(Password::new(db.clone(), &Pbkdf2::of(&db)).map_err(|e| e.to_string())?))
@@ -194,28 +212,31 @@ pub fn run(config: &Config, ready: impl FnOnce(&[String]), stop: impl Future<Out
         if settings::text(&db, TRUST) == "LOCAL" {
             server.add_authenticator(Arc::new(Trust)).map_err(|e| e.to_string())?;
         }
-        let runtime = turborel_server::runtime::runtime(None).map_err(|e| format!("cannot start: {e}"))?;
-        runtime.block_on(serve(server, ready, stop))
+        runtime.block_on(serve(server, ready, (stop, hurry)))
     })
 }
 
 /// Does `work` with a server of `config`'s database, its settings set as
 /// `config` says; then closes the database, if it is kept somewhere,
-/// whether `work` failed or not.
+/// whether `work` failed or not. On `runtime`, if given, SIGHUP opens the
+/// log file again from the start.
 ///
 /// # Errors
 ///
 /// What failed, for the operator: opening or closing the database, setting
 /// a setting, or `work`.
-fn within(config: &Config, work: impl FnOnce(Server) -> Result<(), String>) -> Result<(), String> {
+fn within(config: &Config, runtime: Option<&Runtime>, work: impl FnOnce(Server) -> Result<(), String>) -> Result<(), String> {
     let db = Database::new();
     // Before the database opens, so its opening is told too.
     let sink = match &config.log {
         Some(path) => {
             Lines::appending(path).map_err(|e| format!("cannot open the log {}: {e}", path.display()))?.noting(noted(&db, path, true)?)
         }
-        None => Lines::to_stderr(),
+        None => Lines::to_stderr().map_err(|e| format!("cannot write the log: {e}"))?,
     };
+    if let Some(runtime) = runtime {
+        hangups(runtime, sink.reopener())?;
+    }
     db.set_diagnostics(Box::new(sink));
     db.register_encoding(Box::new(Lz4)).map_err(|e| format!("cannot register LZ4: {e}"))?;
     let keyring: Arc<dyn Keyring> = match &config.keys {
@@ -291,18 +312,51 @@ fn read_as_opened(db: &Database, name: &str) -> bool {
         .any(|l| l.definition.name.eq_ignore_ascii_case(name.trim()) && matches!(l.definition.effect, Effect::Creation | Effect::Start))
 }
 
-async fn serve(server: Server, ready: impl FnOnce(&[String]), stop: impl Future<Output = ()>) -> Result<(), String> {
+async fn serve(
+    server: Server,
+    ready: impl FnOnce(&[String]),
+    (stop, hurry): (impl Future<Output = ()>, impl Future<Output = ()>),
+) -> Result<(), String> {
     let native: Arc<dyn Protocol> = Arc::new(Native);
     let endpoints = listening::bind(server.database(), &native).await.map_err(|e| e.to_string())?;
     let names: Vec<String> = endpoints.iter().map(|e| e.listener.address()).collect();
     ready(&names);
-    server.serve(endpoints, stop).await;
+    server.serve_until(endpoints, stop, hurry).await;
     Ok(())
 }
 
-/// Done when the program is told to stop: Ctrl-C, or SIGTERM on Unix. If
-/// it cannot be told, it is done at once, rather than serve with no way
-/// to stop cleanly.
+/// \[DESIGN\] On Unix, SIGHUP heard on `runtime` from now on, each asking
+/// `reopener` to open the log file again: for a rotation, which moves the
+/// file away and then signals; and no longer the end of the process it is
+/// by default.
+///
+/// # Errors
+///
+/// The signal cannot be heard.
+#[cfg(unix)]
+fn hangups(runtime: &Runtime, reopener: Reopener) -> Result<(), String> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let _entered = runtime.enter();
+    let mut hangup = signal(SignalKind::hangup()).map_err(|e| format!("cannot hear SIGHUP: {e}"))?;
+    runtime.spawn(async move {
+        while hangup.recv().await.is_some() {
+            reopener.reopen();
+        }
+    });
+    Ok(())
+}
+
+/// Off Unix there is no SIGHUP: a log is rotated with the server stopped.
+#[cfg(not(unix))]
+#[expect(clippy::unnecessary_wraps, reason = "fails as on Unix, where the signal may not be heard")]
+fn hangups(_: &Runtime, reopener: Reopener) -> Result<(), String> {
+    drop(reopener);
+    Ok(())
+}
+
+/// Done when the program is told to stop, or, polled once it has been, to
+/// hurry: Ctrl-C, or SIGTERM on Unix. If it cannot be told, it is done at
+/// once, rather than serve with no way to stop cleanly.
 pub async fn signalled() {
     #[cfg(unix)]
     {

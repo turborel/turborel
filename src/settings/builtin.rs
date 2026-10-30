@@ -76,6 +76,8 @@ pub const EXECUTOR_BATCHES: Key = Key(31);
 pub const JOBS_POLICY: Key = Key(32);
 /// See [`DEFAULT_ENGINE`].
 pub const FILES_MAX_OPEN: Key = Key(33);
+/// See [`DEFAULT_ENGINE`].
+pub const DIAGNOSTICS_LEVEL: Key = Key(34);
 
 /// The words of `EXECUTOR.BATCHES`.
 pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
@@ -150,6 +152,11 @@ pub(super) fn builtin() -> Vec<Definition> {
         ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
         DATABASE,
         "The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.",
+    ));
+    all.push(defined(
+        ("DIAGNOSTICS.LEVEL", Kind::Choice(&crate::diagnostics::Level::WORDS), text("INFO")),
+        DATABASE,
+        "The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.",
     ));
     all
 }

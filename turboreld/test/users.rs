@@ -78,7 +78,9 @@ fn a_verifier_takes_the_iterations_set_as_it_starts() {
     let served = config(&line);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let (tell, told) = std::sync::mpsc::channel();
-    let thread = std::thread::spawn(move || turboreld::run(&served, |_| tell.send(()).unwrap(), async { drop(stopped.await) }));
+    let thread = std::thread::spawn(move || {
+        turboreld::run(&served, |_| tell.send(()).unwrap(), (async { drop(stopped.await) }, std::future::pending()))
+    });
     told.recv().unwrap();
     let mut c = connection::connect_local(&socket, "ann", &mut Password("ann's".into())).unwrap();
     c.query("CREATE USER bob PASSWORD 'bob''s'").unwrap();
@@ -112,7 +114,9 @@ fn users_an_operator_added_connect_by_password() {
     let served = config(&line);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let (tell, told) = std::sync::mpsc::channel();
-    let thread = std::thread::spawn(move || turboreld::run(&served, |_| tell.send(()).unwrap(), async { drop(stopped.await) }));
+    let thread = std::thread::spawn(move || {
+        turboreld::run(&served, |_| tell.send(()).unwrap(), (async { drop(stopped.await) }, std::future::pending()))
+    });
     told.recv().unwrap();
     let c = connection::connect_local(&socket, "ann", &mut Password("ann's".into())).unwrap();
     assert_eq!(c.authorization(), "ANN");

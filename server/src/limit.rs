@@ -46,8 +46,7 @@ impl Limit {
     }
 
     /// How many are held.
-    #[cfg(test)]
-    fn held(&self) -> usize {
+    pub(crate) fn held(&self) -> usize {
         *self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }

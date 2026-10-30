@@ -6,6 +6,9 @@
 //! statements run, may grow to MAX_WORKERS and a few spare, but is made
 //! only as statements need it, and no more than SERVER.WORKERS run at once
 //! (`server.rs`). `turboreld` and the tests' servers are made by it alike.
+//! The thread writing the diagnostics' lines (`log.rs`) is made here too,
+//! `turborel-server-log`, so a sink set before the runtime is made, as the
+//! database opens, has its writer.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,6 +24,16 @@ const BLOCKING_SPARE: usize = 4;
 
 /// The prefix of the names of the server's threads.
 const LABEL: &str = "turborel-server";
+
+/// \[DESIGN\] The thread that writes the diagnostics' lines (`log.rs`),
+/// running `work`.
+///
+/// # Errors
+///
+/// The thread cannot be made.
+pub(crate) fn writer(work: impl FnOnce() + Send + 'static) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new().name(format!("{LABEL}-log")).spawn(work)
+}
 
 /// The server's runtime: I/O threads as many as `io_threads` says, else
 /// one for each processor.

@@ -33,6 +33,7 @@ mod common;
 mod agents;
 mod authentication;
 mod connections;
+mod diagnostics;
 mod passwords;
 mod prepared;
 mod settings;

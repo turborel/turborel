@@ -22,7 +22,7 @@ use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
 use turborel::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
-use crate::auth::{Origin, Peer};
+use crate::auth::Peer;
 
 /// What the server shows: its connections, and its counts.
 #[derive(Default)]
@@ -60,11 +60,7 @@ impl Shown {
     /// The row of a connection taken from `peer`, logging in.
     pub(crate) fn connected(self: &Arc<Self>, peer: &Peer) -> Present {
         let id = self.next.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-        let from = match peer.origin {
-            Origin::Tcp(address) => address.to_string(),
-            Origin::Local => "local".to_owned(),
-        };
-        let entry = Entry { user: None, peer: from, secure: peer.secure, state: "LOGIN" };
+        let entry = Entry { user: None, peer: peer.name(), secure: peer.secure, state: "LOGIN" };
         self.locked().insert(id, entry);
         Present { shown: Arc::clone(self), id }
     }
@@ -181,7 +177,7 @@ mod tests {
     #[test]
     fn a_connection_is_shown_while_it_is_served() {
         let shown = Arc::new(Shown::default());
-        let present = shown.connected(&Peer { origin: Origin::Local, secure: true });
+        let present = shown.connected(&Peer::local());
         let row = |of: &Shown| of.locked().values().next().map(|e| (e.user.clone(), e.peer.clone(), e.secure, e.state));
         assert_eq!(row(&shown), Some((None, "local".to_owned(), true, "LOGIN")));
         present.authenticated("ANN");

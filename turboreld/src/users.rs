@@ -136,5 +136,5 @@ pub fn run_user(config: &Config, command: &UserCommand, (input, out): (&mut dyn 
     if config.store == Store::Memory {
         return Err("user works on a database kept in a directory: name it with --dir".into());
     }
-    within(config, |server| act(server.database(), command, (input, out)))
+    within(config, None, |server| act(server.database(), command, (input, out)))
 }

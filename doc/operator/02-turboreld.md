@@ -45,8 +45,9 @@ turboreld: listening at 0.0.0.0:7422
 
 The server opens the database, recovering it if it stopped without
 closing ([Databases](03-databases.md)), and says where it listens once it
-takes connections. By default it listens at 127.0.0.1, port 7422: only
-clients of its own machine reach it, and each proves it is a user.
+takes connections, which the diagnostics tell too, as `listening`. By
+default it listens at 127.0.0.1, port 7422: only clients of its own
+machine reach it, and each proves it is a user.
 
 One server holds a database at a time: another started on the same
 directory, or a user command, is refused while one does:
@@ -58,10 +59,31 @@ turboreld: cannot open /var/lib/turborel/main: SQLCODE -915 (SQLSTATE TB915): /v
 ## Signals
 
 Ctrl-C, or SIGTERM on Unix, stops the server: it takes no new
-connections, each connection finishes the statement it runs, and the
-database is closed cleanly, which the diagnostics tell as `closed`. A
-server killed without closing, as by SIGKILL or a crash, loses no
+connections, each connection finishes the statement it runs, its
+transaction rolled back, and the database is closed cleanly, which the
+diagnostics tell as `stopping`, then `closed`.
+
+A statement that runs on is given SERVER.SHUTDOWN_TIMEOUT, 30,000
+milliseconds by default, 0 for no limit. Past it, or at a second Ctrl-C
+or SIGTERM, the server hurries, told as `stop_hurried`: the statement
+each session runs is cancelled, as a client's cancel does, every
+connection is closed, its transaction rolled back, and the database is
+then closed cleanly as before:
+
+```
+$ turboreld --dir /var/lib/turborel/main --set SERVER.SHUTDOWN_TIMEOUT=5000
+turboreld: listening at 127.0.0.1:7422
+```
+
+A server killed without closing, as by SIGKILL or a crash, loses no
 committed transaction: the database is recovered as it is next opened.
+
+SIGHUP, on Unix, opens the `--log` file again: a log rotation moves the
+file away, then sends SIGHUP, and the lines after go to a new file at
+the same path, made the server's user's alone
+([Diagnostics](08-diagnostics.md#rotating-the-log)). It does not stop
+the server. Windows has no such signal: there, a log
+is rotated with the server stopped.
 
 The server's threads are named `turborel-server-<n>`: its I/O threads,
 one for each processor, and the threads statements run on, made as they

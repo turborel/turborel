@@ -20,7 +20,8 @@ fn main() -> ExitCode {
             Ok(())
         }
         Command::Serve(config) => {
-            turboreld::run(&config, |at| eprintln!("turboreld: listening at {}", at.join(", ")), turboreld::signalled())
+            let signals = (turboreld::signalled(), turboreld::signalled());
+            turboreld::run(&config, |at| eprintln!("turboreld: listening at {}", at.join(", ")), signals)
         }
         Command::User(config, user) => {
             let mut input = password_input(&user)?;

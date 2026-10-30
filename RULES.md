@@ -1491,7 +1491,14 @@ with `Database::set_diagnostics`; by default they are dropped.
   DIAGNOSTICS.SLOW_STATEMENT or longer, with who ran it and its text, as
   written, values in it included. A statement's work is its call; a
   cursor's, its opening and its fetches, told once it is done with, not
-  the time between, which is its client's.
+  the time between, which is its client's. A server tells what it does
+  itself through the database it serves (`Database::tell`): where it
+  listens, that it stops and hurries, accepts that failed, TLS
+  handshakes and logins that failed (the user, peer and mechanism, never
+  the proof), and connections refused past SERVER.MAX_CONNECTIONS; what
+  may come in floods, at most once a minute, counted.
+- DIAGNOSTICS.LEVEL, the database's, ERROR, WARNING or INFO (the
+  default), is the least level told: an event below it reaches no sink.
 - Not events: a failure of a statement's own SQL (syntax, privileges,
   constraints, conflicts), which is returned to its client; and what is
   counted (I/O, pool hits), which counters keep.
@@ -1624,15 +1631,24 @@ make.
 - Diagnostics (D40): `log::Lines`, a sink writing each event as a line of
   JSON stamped with the time in UTC, to standard error or appended to a
   file; `turboreld --log FILE` names the file, the sink set before the
-  database opens, so its opening is told too.
+  database opens, so its opening is told too. The lines are queued,
+  bounded, and written by a thread of their own, `turborel-server-log`,
+  made by the server's runtime module (D55): a slow disk or a blocked
+  pipe holds up no statement; a line past the bound is dropped, counted,
+  and the count told. SIGHUP (Unix) opens the file again, for a log
+  rotation; off Unix a log is rotated with the server stopped.
 - The server's own errors are SQLCODE -919, a connection exception: SQLSTATE
   08004 for a connection refused, 08006 for one failed, 28000 for
   credentials refused [ISO/IEC 9075:1992 §22.1, Table 23].
 - Portable: TCP everywhere; Unix sockets on Unix, a setting of one refused
-  elsewhere; Ctrl-C everywhere, SIGTERM on Unix.
+  elsewhere; Ctrl-C everywhere, SIGTERM and SIGHUP on Unix.
 - Told to stop, the server takes no connection, lets each finish its
   statement, rolls its session back and closes it; then the database is
-  closed.
+  closed. Past SERVER.SHUTDOWN_TIMEOUT (30 s by default, 0 for no
+  limit), or told to stop again, it hurries: each session's statement is
+  cancelled (D44), and every wait on a client ends, so each connection
+  is closed, its session rolled back; the database is then closed as
+  before.
 *Why:* one core serves every mode, so the embedded and the served database
 are the same database; I/O that waits must not hold a thread, and a
 statement that waits must not hold an I/O thread; and a server's behaviour

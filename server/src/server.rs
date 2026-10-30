@@ -11,17 +11,26 @@
 //! The server stops when told: no connection is taken after that, each
 //! connection finishes the statement it runs and is closed, and `serve`
 //! returns once every one is; the database is then the caller's, to close.
+//! Past SERVER.SHUTDOWN_TIMEOUT, or told to stop again, it hurries: the
+//! statements its sessions run are cancelled (RULES.md D44), and every
+//! wait on a client ends, so each connection is closed, its session rolled
+//! back.
+//!
+//! It tells what it does (`told.rs`): where it listens, that it stops or
+//! hurries, accepts that failed, TLS and logins that failed, and
+//! connections refused past SERVER.MAX_CONNECTIONS.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use turborel::db::Database;
+use turborel::diagnostics::Event;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::txn::Stop;
 use turborel_protocol::{CancelKey, KEY_BYTES, broken};
@@ -29,9 +38,10 @@ use turborel_protocol::{CancelKey, KEY_BYTES, broken};
 use crate::auth::{Authenticator, Peer};
 use crate::limit::{Held, Limit};
 use crate::password::Pbkdf2;
-use crate::settings::{IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, WORKERS, count, declare, millis};
+use crate::settings::{IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, SHUTDOWN_TIMEOUT, WORKERS, count, declare, millis};
 use crate::shown::{self, Present, Shown};
 use crate::tls::{Secured, Tls};
+use crate::told::{Throttle, Told};
 use crate::transport::{Listener, Transport};
 
 /// \[DESIGN\] How long a listener waits after failing to accept, so a
@@ -45,6 +55,22 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// closed at once, telling it nothing, so clients that flood the server
 /// hold no more of it than this (RULES.md D55).
 const REFUSALS_IN_FLIGHT: usize = 16;
+
+/// \[DESIGN\] How often a server hurrying cancels its sessions' statements
+/// again, so one begun as it hurried is cancelled too.
+const RECANCEL: Duration = Duration::from_millis(100);
+
+/// How far a server has come to stopping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// Taking connections.
+    Serving,
+    /// Told to stop: each connection finishes its statement.
+    Stopping,
+    /// Past SERVER.SHUTDOWN_TIMEOUT, or told again: statements cancelled,
+    /// waits on clients ended.
+    Hurried,
+}
 
 /// A connection's place: under SERVER.MAX_CONNECTIONS, served; or among
 /// the refusals in flight, refused.
@@ -110,11 +136,13 @@ struct Shared {
     db: Database,
     authenticators: Vec<Arc<dyn Authenticator>>,
     workers: Arc<Limit>,
-    stop: watch::Receiver<bool>,
+    stop: watch::Receiver<Stage>,
     /// What cancels each connection's statements, by its key (RULES.md D45).
     cancels: Mutex<HashMap<CancelKey, Arc<Stop>>>,
     /// What it shows of itself (`shown.rs`).
     shown: Arc<Shown>,
+    /// Failed accepts, and connections refused, told at most once a minute.
+    throttles: (Throttle, Throttle),
 }
 
 /// \[DESIGN\] A connection's cancel key, registered until this is dropped.
@@ -136,9 +164,11 @@ impl Services {
         &self.0.db
     }
 
-    /// The authenticator of `mechanism`, if the server has one.
+    /// The authenticator of `mechanism`, if the server has one: its
+    /// refusals told, for an audit of who tried to connect.
     pub fn authenticator(&self, mechanism: &str) -> Option<Arc<dyn Authenticator>> {
-        self.0.authenticators.iter().find(|a| a.mechanism() == mechanism).cloned()
+        let inner = self.0.authenticators.iter().find(|a| a.mechanism() == mechanism).cloned()?;
+        Some(Arc::new(Told { inner, db: self.0.db.clone() }))
     }
 
     /// Runs `work` on a worker, once one is free: once fewer statements
@@ -167,7 +197,7 @@ impl Services {
     ///
     /// `work`'s; a connection failure if the time ran out.
     pub async fn login<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        bounded(self.database(), LOGIN_TIMEOUT, work, "to begin TLS and authenticate").await
+        self.bounded(LOGIN_TIMEOUT, work, "to begin TLS and authenticate").await
     }
 
     /// `work`, if it is done within SERVER.IDLE_TIMEOUT: as the server waits
@@ -177,14 +207,60 @@ impl Services {
     ///
     /// `work`'s; a connection failure if the time ran out.
     pub async fn idle<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        bounded(self.database(), IDLE_TIMEOUT, work, "with nothing from or to the client").await
+        self.bounded(IDLE_TIMEOUT, work, "with nothing from or to the client").await
+    }
+
+    /// `work`, if it is done within the milliseconds of the setting `name`;
+    /// none of 0, no limit; and before the server hurries. The connection
+    /// fails once the time runs out, having waited `waiting`, or the
+    /// server hurries.
+    async fn bounded<T>(&self, name: &str, work: impl Future<Output = Result<T>>, waiting: &str) -> Result<T> {
+        let timed = async {
+            let Some(limit) = millis(self.database(), name) else { return work.await };
+            tokio::time::timeout(limit, work).await.unwrap_or_else(|_| {
+                Err(broken(format!("[DESIGN] the connection went past {name}, {} ms, {waiting}: closed", limit.as_millis())))
+            })
+        };
+        tokio::select! {
+            done = timed => done,
+            () = self.hurried() => Err(broken("[DESIGN] the server is stopping, past SERVER.SHUTDOWN_TIMEOUT or told again: closed")),
+        }
     }
 
     /// Done once the server stops.
     pub async fn stopping(&self) {
         let mut stop = self.0.stop.clone();
         // An error means the server is gone: stopped, too.
-        let _ = stop.wait_for(|stopped| *stopped).await;
+        let _ = stop.wait_for(|stage| *stage != Stage::Serving).await;
+    }
+
+    /// Done once the server hurries.
+    async fn hurried(&self) {
+        let mut stop = self.0.stop.clone();
+        let _ = stop.wait_for(|stage| *stage == Stage::Hurried).await;
+    }
+
+    /// Cancels the statement every session runs: the sessions'.
+    fn cancel_all(&self) -> u64 {
+        let cancels = lock_builtin(&self.0.cancels);
+        cancels.values().for_each(|stop| stop.cancel());
+        u64::try_from(cancels.len()).unwrap_or(u64::MAX)
+    }
+
+    /// One more connection refused past SERVER.MAX_CONNECTIONS: told at
+    /// most once a minute.
+    fn refused(&self) {
+        if let Some(refused) = self.0.throttles.1.one(Instant::now()) {
+            let limit = u64::try_from(count(self.database(), MAX_CONNECTIONS)).unwrap_or(u64::MAX);
+            self.database().tell(&Event::ConnectionsRefused { refused, limit });
+        }
+    }
+
+    /// One more accept that failed, for `why`: told at most once a minute.
+    fn accept_failed(&self, why: &std::io::Error) {
+        if let Some(failures) = self.0.throttles.0.one(Instant::now()) {
+            self.database().tell(&Event::AcceptFailed { failures, message: why.to_string() });
+        }
     }
 
     /// \[DESIGN\] A new key, of the system's randomness, that cancels
@@ -209,16 +285,6 @@ impl Services {
             stop.cancel();
         }
     }
-}
-
-/// `work`, if it is done within the milliseconds of the setting `name`;
-/// none of 0, no limit. The connection fails once the time runs out,
-/// having waited `waiting`.
-async fn bounded<T>(db: &Database, name: &str, work: impl Future<Output = Result<T>>, waiting: &str) -> Result<T> {
-    let Some(limit) = millis(db, name) else { return work.await };
-    tokio::time::timeout(limit, work)
-        .await
-        .unwrap_or_else(|_| Err(broken(format!("[DESIGN] the connection went past {name}, {} ms, {waiting}: closed", limit.as_millis()))))
 }
 
 /// A lock whose holder cannot leave it broken: what it guards is read or
@@ -288,27 +354,61 @@ impl Server {
         Ok(())
     }
 
+    /// Serves `endpoints` until `stop` is done, as `serve_until` does, with
+    /// no second telling to hurry it.
+    pub async fn serve(self, endpoints: Vec<Endpoint>, stop: impl Future<Output = ()>) {
+        self.serve_until(endpoints, stop, std::future::pending()).await;
+    }
+
     /// Serves `endpoints` until `stop` is done; then takes no connection,
     /// lets each finish its statement and closes it, and returns once all
-    /// are. It runs on the caller's runtime, whose blocking threads should
-    /// be as many as SERVER.WORKERS may say (`settings::MAX_WORKERS`).
-    pub async fn serve(self, endpoints: Vec<Endpoint>, stop: impl Future<Output = ()>) {
-        let (announce, heard) = watch::channel(false);
-        let connections = Arc::new(Limit::default());
-        let refusals = Arc::new(Limit::default());
-        let cancels = Mutex::new(HashMap::new());
-        let shared =
-            Shared { db: self.db, authenticators: self.authenticators, workers: Arc::default(), stop: heard, cancels, shown: self.shown };
-        let services = Services(Arc::new(shared));
+    /// are. Past SERVER.SHUTDOWN_TIMEOUT, or once `hurry` is done, which is
+    /// first polled once `stop` is, so a signal it waits for is the next
+    /// one, it hurries: cancels every session's statement and ends every
+    /// wait on a client. It runs on the caller's runtime, whose blocking
+    /// threads should be as many as SERVER.WORKERS may say
+    /// (`settings::MAX_WORKERS`).
+    pub async fn serve_until(self, endpoints: Vec<Endpoint>, stop: impl Future<Output = ()>, hurry: impl Future<Output = ()>) {
+        let (announce, heard) = watch::channel(Stage::Serving);
+        let limits = (Arc::new(Limit::default()), Arc::new(Limit::default()));
+        let (cancels, throttles) = (Mutex::new(HashMap::new()), (Throttle::default(), Throttle::default()));
+        let (db, authenticators, shown) = (self.db, self.authenticators, self.shown);
+        let services = Services(Arc::new(Shared { db, authenticators, workers: Arc::default(), stop: heard, cancels, shown, throttles }));
+        let addresses = endpoints.iter().map(|e| e.listener.address()).collect();
         let mut listening = JoinSet::new();
         for endpoint in endpoints {
-            listening.spawn(listen(endpoint, services.clone(), (Arc::clone(&connections), Arc::clone(&refusals))));
+            listening.spawn(listen(endpoint, services.clone(), (Arc::clone(&limits.0), Arc::clone(&limits.1))));
         }
+        services.database().tell(&Event::Listening { addresses });
         stop.await;
         // Nothing can fail to hear it: every receiver is in `services`.
-        let _ = announce.send(true);
-        while listening.join_next().await.is_some() {}
+        let _ = announce.send(Stage::Stopping);
+        services.database().tell(&Event::Stopping { connections: u64::try_from(limits.0.held()).unwrap_or(u64::MAX) });
+        let deadline = async {
+            match millis(services.database(), SHUTDOWN_TIMEOUT) {
+                Some(limit) => tokio::time::sleep(limit).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            () = drained(&mut listening) => return,
+            () = deadline => {}
+            () = hurry => {}
+        }
+        let _ = announce.send(Stage::Hurried);
+        services.database().tell(&Event::StopHurried { sessions: services.cancel_all() });
+        loop {
+            tokio::select! {
+                () = drained(&mut listening) => return,
+                () = tokio::time::sleep(RECANCEL) => { services.cancel_all(); }
+            }
+        }
     }
+}
+
+/// Done once every task of `tasks` is.
+async fn drained(tasks: &mut JoinSet<()>) {
+    while tasks.join_next().await.is_some() {}
 }
 
 /// Takes `endpoint`'s connections, each served, or refused, on a task of its
@@ -328,10 +428,14 @@ async fn listen(endpoint: Endpoint, services: Services, (connections, refusals):
                         open.spawn(arrival.welcome(transport, peer, place));
                     } else {
                         services.0.shown.closed.fetch_add(1, Ordering::Relaxed);
+                        services.refused();
                         drop(transport);
                     }
                 }
-                Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
+                Err(e) => {
+                    services.accept_failed(&e);
+                    tokio::time::sleep(ACCEPT_BACKOFF).await;
+                }
             },
         }
     }
@@ -361,6 +465,7 @@ impl Arrival {
             }
             Place::Refused(held) => {
                 self.services.0.shown.refused.fetch_add(1, Ordering::Relaxed);
+                self.services.refused();
                 self.protocol.refuse(transport, too_many()).await;
                 drop(held);
             }
@@ -373,6 +478,7 @@ impl Arrival {
     async fn secured(&self, transport: Box<dyn Transport>, peer: Peer) -> Option<(Box<dyn Transport>, Peer)> {
         let Some(tls) = &self.tls else { return Some((transport, peer)) };
         let handshake = self.services.login(async { tls.secure(transport).await.map_err(|e| broken(e.to_string())) });
+        let told = |e: &SqlError| self.services.database().tell(&Event::TlsFailed { peer: peer.name(), message: e.msg.clone() });
         match handshake.await {
             Ok(Secured::Tls(secured)) => Some((secured, Peer { secure: true, ..peer })),
             Ok(Secured::Plain(plain)) => {
@@ -383,8 +489,11 @@ impl Arrival {
                 Some((plain, peer))
             }
             // A client whose handshake failed cannot be told why in the
-            // protocol: TLS has told it.
-            Err(_) => None,
+            // protocol: TLS has told it. The operator is.
+            Err(e) => {
+                told(&e);
+                None
+            }
         }
     }
 }

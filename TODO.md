@@ -60,8 +60,10 @@ RULES.md when its design settles.
 - **The database's owner given in SQL**, by the owner, so it is handed on
   without stopping the server: today `Database::set_owner` and `turboreld
   user owner` give it.
-- **Diagnostics, further** (D40): the log file reopened on a signal, or
-  rotated, for an operator's log rotation; levels filtered.
+- **Logins refused before an authenticator, told** (D40): a Hello of a
+  protocol version not served, of a user name that is no identifier, or
+  of a mechanism not served is refused by the native protocol before
+  any authenticator runs, so no `login_failed` is told of it.
 - **Import**, on the client: rows read from a source and inserted into a
   table over a connection, the source pluggable (a trait any program may
   implement, built-in ones for common formats), so the command-line client

@@ -3,7 +3,8 @@
 //! is, kept with the database's definitions, and listed with the others.
 //! The server reads each when it needs it: where it listens, TLS, trust
 //! and passwords' iterations as it starts; its limits as statements and
-//! connections begin, so a change of one takes effect with no restart.
+//! connections begin, and its time to stop as it is told to, so a change
+//! of one takes effect with no restart.
 
 use std::num::NonZeroUsize;
 
@@ -63,6 +64,14 @@ pub const DEFAULT_LOGIN_TIMEOUT: usize = 60_000;
 /// to take what it is sent, before it closes the connection; 0 for no
 /// limit.
 pub const IDLE_TIMEOUT: &str = "SERVER.IDLE_TIMEOUT";
+/// The milliseconds a server told to stop lets its connections finish
+/// their statements, before it cancels them and closes the connections; 0
+/// for no limit.
+pub const SHUTDOWN_TIMEOUT: &str = "SERVER.SHUTDOWN_TIMEOUT";
+/// \[DESIGN\] The default of `SHUTDOWN_TIMEOUT`: half a minute, so a
+/// statement near its end finishes, and a stop asked by a service manager
+/// ends before it gives up and kills the server.
+pub const DEFAULT_SHUTDOWN_TIMEOUT: usize = 30_000;
 
 /// \[DESIGN\] The most workers: the blocking threads a server's runtime
 /// should allow.
@@ -154,7 +163,7 @@ fn started() -> [Definition; 8] {
 }
 
 /// The limits, read as statements and connections begin.
-fn limits() -> [Definition; 7] {
+fn limits() -> [Definition; 8] {
     let processors = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let most = i128::from(u32::MAX);
     [
@@ -184,6 +193,12 @@ fn limits() -> [Definition; 7] {
             (0, most),
             0,
             "The milliseconds the server waits on a client, for its next request or to take what it is sent, before it closes the connection, its transaction rolled back; 0 for no limit.",
+        ),
+        limit(
+            SHUTDOWN_TIMEOUT,
+            (0, most),
+            DEFAULT_SHUTDOWN_TIMEOUT,
+            "The milliseconds a server told to stop lets each connection finish its statement, before it cancels the statements and closes the connections, their transactions rolled back; 0 for no limit.",
         ),
     ]
 }

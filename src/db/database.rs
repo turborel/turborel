@@ -17,7 +17,7 @@ use super::stores::Storages;
 use super::users::Credentials;
 use super::{Session, State, qualified_name};
 use crate::catalog::{Catalog, MemoryCatalog, QualifiedName};
-use crate::diagnostics::{Diagnostics, Event, Extension, NoDiagnostics};
+use crate::diagnostics::{Diagnostics, Event, Extension, Level, NoDiagnostics};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::functions::{AggregateFunction, ScalarFunction};
 use crate::index::{IndexMethod, KeyOrder, Probe};
@@ -247,10 +247,21 @@ impl Database {
         &self.0.credentials
     }
 
-    /// Gives `event` to its sink, holding no lock while the sink runs.
+    /// \[DESIGN\] Gives `event` to its sink, as a program serving it tells
+    /// what it does itself (RULES.md D40, D42); dropped if below
+    /// DIAGNOSTICS.LEVEL. The sink runs with no lock held.
+    pub fn tell(&self, event: &Event) {
+        self.emit(event);
+    }
+
+    /// Gives `event` to its sink unless it is below DIAGNOSTICS.LEVEL,
+    /// holding no lock while the sink runs.
     pub(crate) fn emit(&self, event: &Event) {
-        let sink = Arc::clone(&self.0.diagnostics.read().unwrap_or_else(PoisonError::into_inner));
-        sink.event(event);
+        let least = read(&self.0.current).map_or(Level::Info, |st| Level::of(st.settings.word(settings::DIAGNOSTICS_LEVEL)));
+        if event.level() <= least {
+            let sink = Arc::clone(&self.0.diagnostics.read().unwrap_or_else(PoisonError::into_inner));
+            sink.event(event);
+        }
     }
 
     /// `result`, its failure given to the sink first if an operator must
