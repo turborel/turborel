@@ -44,7 +44,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::binder::OutColumn;
-use crate::catalog::{QualifiedName, TableDesc};
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState, fail};
 use crate::logical::LogicalPlan;
 use crate::optimizer::RuleContext;
@@ -294,10 +294,6 @@ fn plan(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Pl
     let (optimized, trace) = st.optimizer.optimize(logical, &RuleContext { db: st });
     let physical = PhysicalPlanner::new(st).plan(&optimized);
     (optimized, trace, physical)
-}
-
-fn table_desc(st: &State, name: &QualifiedName) -> Result<TableDesc> {
-    st.catalog.table(name).cloned().ok_or_else(|| rule(format!("[X3.135-1986 §5.4 SR5] table {name} is not defined")))
 }
 
 impl Session {

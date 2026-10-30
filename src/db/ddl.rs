@@ -230,11 +230,11 @@ impl Session {
         let (_, made, reshape) = next.alter_table((&qn, &schema, zone), action, (None, Some(tx)))?;
         let next = Arc::new(next);
         let checked = match (reshape, action) {
-            (Some(reshape), _) => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects())),
+            (Some(reshape), _) => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects(&next))),
             // [§11.12 GR1] a default changes no row, nor does an option
             // changed in place.
             (None, AlterAction::AlterColumn { .. } | AlterAction::Storage(_)) => Ok(()),
-            (None, _) => validate_rows(&next, tx, &qn, self.effects()),
+            (None, _) => validate_rows(&next, tx, &qn, self.effects(&next)),
         };
         if let Err(e) = checked {
             made.discard();
@@ -347,7 +347,7 @@ fn copy_rows(
                 *slot = value.clone();
             }
         }
-        effects.inserted(table, next.insert_row(tx, table, &new)?);
+        effects.inserted(table, next.insert_row(tx, table, &new)?)?;
     }
     // The table's constraints, those of a column added among them, hold of
     // the rows copied.
@@ -364,7 +364,7 @@ pub(super) fn validate_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, 
     let columns: Vec<usize> = (0..desc.columns.len()).collect();
     for read in Arc::clone(next.storage_of(table)?).scan(tx.id, &columns) {
         let (id, _) = read?;
-        effects.inserted(table, id);
+        effects.inserted(table, id)?;
     }
     next.end_statement(tx, effects)
 }

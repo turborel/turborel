@@ -18,19 +18,28 @@
 //! Every table read is read under the transaction's locks, or checked at
 //! commit by its engine, at every isolation level, so the checks are
 //! serializable with what others write [§4.28] (RULES.md D29).
+//!
+//! What a statement did, each row's id and an UPDATE's or DELETE's old
+//! values, the checks gathered of it, and the checks of deferred
+//! constraints waiting, are held as lists that spill past WORK_MEMORY
+//! (`integrity/held.rs`, RULES.md D38): read back in order, the rows of
+//! each UNIQUE constraint checked as they come (`integrity/keys.rs`).
 
+mod held;
+mod keys;
 mod references;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::assignment::check_key;
+use self::keys::KeyCheck;
 use super::{State, api, plan};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
 use crate::error::{Code, Result, SqlError, Subject, fail};
-use crate::exec::{Heard, eval_cond, execute};
+use crate::exec::{Heard, HeldRows, eval_cond, execute};
 use crate::logical::{Cond, LogicalPlan, Truth};
+use crate::spill::ListSpace;
 use crate::storage::{Row, RowId, project};
 use crate::txn::Txn;
 use crate::value::Value;
@@ -57,13 +66,15 @@ enum Effect {
 }
 
 /// What a statement did to rows, in order, for the constraints checked at
-/// its end; the authorization identifier it runs under, CURRENT_USER to a
-/// default its referential actions give [§11.5 GR1c]; and its session's
-/// constraint modes, where the checks of deferred constraints wait; the
-/// rows its session changed through cursors still open, and where to note
-/// a referential action on one [§11.8 GR8].
+/// its end, held as a list that spills (`integrity/held.rs`), and where its
+/// lists spill; the authorization identifier it runs under, CURRENT_USER
+/// to a default its referential actions give [§11.5 GR1c]; and its
+/// session's constraint modes, where the checks of deferred constraints
+/// wait; the rows its session changed through cursors still open, and
+/// where to note a referential action on one [§11.8 GR8].
 pub(super) struct Effects<'a> {
-    done: Vec<Effect>,
+    done: HeldRows<Effect>,
+    space: ListSpace,
     user: String,
     /// The statement's instant and its session's time zone, of the
     /// defaults its referential actions give.
@@ -93,9 +104,11 @@ impl Cursored<'_> {
 
 impl<'a> Effects<'a> {
     /// Nothing yet done by a statement run under `user`, in a session whose
-    /// constraint modes are `deferral`'s, and whose cursors `cursors` say.
-    pub(super) fn new(user: &str, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>) -> Effects<'a> {
-        Effects { done: Vec::new(), user: user.to_string(), now: crate::value::datetime::Now::default(), deferral, cursors }
+    /// constraint modes are `deferral`'s, and whose cursors `cursors` say,
+    /// what it did held in `space`.
+    pub(super) fn new(user: &str, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
+        let now = crate::value::datetime::Now::default();
+        Effects { done: HeldRows::new(space.clone()), space, user: user.to_string(), now, deferral, cursors }
     }
 
     /// The authorization identifier the statement runs under.
@@ -104,18 +117,30 @@ impl<'a> Effects<'a> {
     }
 
     /// Row `id` of `table` inserted.
-    pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId) {
-        self.done.push(Effect::Inserted { table: table.clone(), id });
+    ///
+    /// # Errors
+    ///
+    /// The spill area's, SQLCODE -918 if it cannot be reserved.
+    pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId) -> Result<()> {
+        self.done.push(Effect::Inserted { table: table.clone(), id })
     }
 
     /// Row `id` of `table` updated from `old`, giving values to `columns`.
-    pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, old: Row, columns: &[usize]) {
-        self.done.push(Effect::Updated { table: table.clone(), id, old, columns: columns.to_vec() });
+    ///
+    /// # Errors
+    ///
+    /// As `inserted`.
+    pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, old: Row, columns: &[usize]) -> Result<()> {
+        self.done.push(Effect::Updated { table: table.clone(), id, old, columns: columns.to_vec() })
     }
 
     /// Row `id` of `table`, `old`, deleted.
-    pub(super) fn deleted(&mut self, table: &QualifiedName, id: RowId, old: Row) {
-        self.done.push(Effect::Deleted { table: table.clone(), id, old });
+    ///
+    /// # Errors
+    ///
+    /// As `inserted`.
+    pub(super) fn deleted(&mut self, table: &QualifiedName, id: RowId, old: Row) -> Result<()> {
+        self.done.push(Effect::Deleted { table: table.clone(), id, old })
     }
 }
 
@@ -126,8 +151,9 @@ pub(super) enum Check {
     /// NOT NULL, a CHECK without a subquery, or a FOREIGN KEY, of row `id`
     /// of `table`.
     Row { table: QualifiedName, constraint: QualifiedName, id: RowId },
-    /// UNIQUE or PRIMARY KEY, of rows `ids` of `table`.
-    Unique { table: QualifiedName, constraint: QualifiedName, ids: Vec<RowId> },
+    /// UNIQUE or PRIMARY KEY, of row `id` of `table`: the rows of one
+    /// constraint, one after another, checked together (`KeyCheck`).
+    Unique { table: QualifiedName, constraint: QualifiedName, id: RowId },
     /// A CHECK with a subquery, over all of `table`.
     Table { table: QualifiedName, constraint: QualifiedName },
     /// FOREIGN KEY `constraint` of `child`, once `old`, a row it references,
@@ -161,8 +187,8 @@ impl Check {
 
 /// [ISO/IEC 9075:1992 §4.28, §14.2] The constraint mode of each constraint
 /// in a session's transaction, as SET CONSTRAINTS left it, and the checks
-/// of deferred constraints not yet made.
-#[derive(Default)]
+/// of deferred constraints not yet made, held as a list that spills, until
+/// they are made or the transaction ends (RULES.md D38).
 pub(super) struct Deferral {
     /// The mode SET CONSTRAINTS ALL gave every deferrable constraint, last:
     /// deferred or not.
@@ -170,7 +196,14 @@ pub(super) struct Deferral {
     /// The mode SET CONSTRAINTS gave each constraint it named since.
     pub(super) named: HashMap<QualifiedName, bool>,
     /// The checks waiting.
-    pub(super) pending: Vec<Check>,
+    pub(super) pending: HeldRows<Check>,
+}
+
+impl Default for Deferral {
+    /// None waiting, and no mode set: as a transaction begins.
+    fn default() -> Deferral {
+        Deferral { all: None, named: HashMap::new(), pending: HeldRows::new(ListSpace::default()) }
+    }
 }
 
 impl Deferral {
@@ -179,55 +212,41 @@ impl Deferral {
     pub(super) fn deferred(&self, c: &ConstraintDesc) -> bool {
         c.attributes.deferrable && self.named.get(mode_name(c)).copied().or(self.all).unwrap_or(c.attributes.initially_deferred)
     }
+
+    /// `more` checks to wait, after those waiting.
+    pub(super) fn defer(&mut self, more: HeldRows<Check>) {
+        if self.pending.is_empty() {
+            self.pending = more;
+        } else {
+            self.pending.append(more);
+        }
+    }
+}
+
+/// What the checks of a statement, or those made at once, keep as they
+/// are made: each CHECK condition bound once, and the check of the rows of
+/// one UNIQUE constraint, given one after another.
+#[derive(Default)]
+pub(super) struct Checking<'s> {
+    bound: HashMap<QualifiedName, Cond>,
+    key: Option<KeyCheck<'s>>,
+}
+
+impl Checking<'_> {
+    /// The end of the rows of the UNIQUE constraint being checked, if any.
+    ///
+    /// # Errors
+    ///
+    /// Its failure held back (`KeyCheck::finish`).
+    pub(super) fn finish(&mut self) -> Result<()> {
+        self.key.take().map_or(Ok(()), KeyCheck::finish)
+    }
 }
 
 /// The name SET CONSTRAINTS gives constraint `c` by: of a domain's
 /// constraint on a column, the domain constraint's [§11.21 GR5].
 pub(super) fn mode_name(c: &ConstraintDesc) -> &QualifiedName {
     c.domain.as_ref().unwrap_or(&c.name)
-}
-
-/// The checks of what a statement did, as they are gathered: those found,
-/// the rows of each table and constraint whose UNIQUE is checked, and the
-/// tables written.
-#[derive(Default)]
-struct Gathered {
-    out: Vec<Check>,
-    seen: HashSet<(QualifiedName, RowId)>,
-    keys: HashMap<(QualifiedName, QualifiedName), Vec<RowId>>,
-    changed: Vec<QualifiedName>,
-}
-
-impl Gathered {
-    /// `table` written.
-    fn change(&mut self, table: &QualifiedName) {
-        if !self.changed.contains(table) {
-            self.changed.push(table.clone());
-        }
-    }
-
-    /// Row `id` of `desc` written, giving values to `columns`, or to every
-    /// column if none: the checks of the constraints of its table on a
-    /// column given a value, and of its CHECKs without a subquery.
-    fn row(&mut self, desc: &TableDesc, id: RowId, columns: Option<&[usize]>) {
-        let assigned = |of: &[usize]| columns.is_none_or(|set| of.iter().any(|x| set.contains(x)));
-        for c in &desc.constraints {
-            let of_row = match &c.kind {
-                ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at)),
-                ConstraintKind::ForeignKey(fk) => assigned(&fk.columns),
-                ConstraintKind::Check { reads, .. } => reads.is_empty(),
-                ConstraintKind::Unique { columns: of, .. } => {
-                    if assigned(of) {
-                        self.keys.entry((desc.name.clone(), c.name.clone())).or_default().push(id);
-                    }
-                    false
-                }
-            };
-            if of_row && self.seen.insert((c.name.clone(), id)) {
-                self.out.push(Check::Row { table: desc.name.clone(), constraint: c.name.clone(), id });
-            }
-        }
-    }
 }
 
 impl State {
@@ -274,20 +293,23 @@ impl State {
     /// `end_statement`'s work, its reads checked.
     fn checked(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'_>) -> Result<()> {
         self.referential_actions(tx, &mut effects)?;
-        let mut deferred = Vec::new();
+        let checks = self.checks(&mut effects)?;
+        let mut deferred = HeldRows::new(effects.space.clone());
         {
             let deferral = effects.deferral.borrow();
-            let mut bound = HashMap::new();
-            for check in self.checks(&effects) {
+            let mut checking = Checking::default();
+            for check in checks {
+                let check = check?;
                 let Some(c) = self.constraint_of(&check) else { continue };
                 if deferral.deferred(c) {
-                    deferred.push(check);
+                    deferred.push(check)?;
                 } else {
-                    self.check(tx, &check, &mut bound)?;
+                    self.check(tx, &check, &mut checking)?;
                 }
             }
+            checking.finish()?;
         }
-        effects.deferral.borrow_mut().pending.extend(deferred);
+        effects.deferral.borrow_mut().defer(deferred);
         Ok(())
     }
 
@@ -298,77 +320,116 @@ impl State {
         self.catalog.table(table)?.constraints.iter().find(|c| c.name == *name)
     }
 
-    /// The checks of what `effects` did: of each row inserted, every
-    /// constraint of its table; of each updated, those on a column given a
-    /// value, and its CHECKs; of each deleted or re-keyed, the foreign keys
-    /// that reference it; each CHECK with a subquery of a table written, or
-    /// reading one; and each assertion reading one.
-    fn checks(&self, effects: &Effects<'_>) -> Vec<Check> {
-        let mut g = Gathered::default();
-        for effect in &effects.done {
-            match effect {
-                Effect::Inserted { table, id } => {
-                    g.change(table);
-                    if let Some(desc) = self.catalog.table(table) {
-                        g.row(desc, *id, None);
-                    }
-                }
+    /// The checks of what `effects` did, held as it holds them: of each row
+    /// inserted, every constraint of its table; of each updated, those on a
+    /// column given a value, and its CHECKs; of each deleted or re-keyed,
+    /// the foreign keys that reference it; each CHECK with a subquery of a
+    /// table written, or reading one; and each assertion reading one. The
+    /// rows of each UNIQUE constraint come one after another, read in a
+    /// pass of their own over what it did.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    fn checks(&self, effects: &mut Effects<'_>) -> Result<HeldRows<Check>> {
+        let mut out = HeldRows::new(effects.space.clone());
+        let mut changed: Vec<QualifiedName> = Vec::new();
+        effects.done.visit(&mut |effect| {
+            let (table, id, columns) = match effect {
+                Effect::Inserted { table, id } => (table, Some(*id), None),
                 Effect::Updated { table, id, columns, old } => {
-                    g.change(table);
-                    self.referenced_checks(table, Some(columns), (old, Some(*id)), &mut g.out);
-                    if let Some(desc) = self.catalog.table(table) {
-                        g.row(desc, *id, Some(columns));
-                    }
+                    self.referenced_checks(table, Some(columns), (old, Some(*id)), &mut out)?;
+                    (table, Some(*id), Some(columns.as_slice()))
                 }
                 Effect::Deleted { table, old, .. } => {
-                    g.change(table);
-                    self.referenced_checks(table, None, (old, None), &mut g.out);
+                    self.referenced_checks(table, None, (old, None), &mut out)?;
+                    (table, None, None)
                 }
+            };
+            if !changed.contains(table) {
+                changed.push(table.clone());
             }
-        }
-        let Gathered { mut out, keys, changed, .. } = g;
-        for ((table, constraint), ids) in keys {
-            out.push(Check::Unique { table, constraint, ids });
-        }
+            match (id, self.catalog.table(table)) {
+                (Some(id), Some(desc)) => row_checks(desc, id, columns, &mut out),
+                (None, _) | (_, None) => Ok(()),
+            }
+        })?;
+        self.unique_checks(effects, &changed, &mut out)?;
         for desc in self.catalog.tables() {
             for c in &desc.constraints {
                 let ConstraintKind::Check { reads, .. } = &c.kind else { continue };
                 if !reads.is_empty() && (changed.contains(&desc.name) || reads.iter().any(|t| changed.contains(t))) {
-                    out.push(Check::Table { table: desc.name.clone(), constraint: c.name.clone() });
+                    out.push(Check::Table { table: desc.name.clone(), constraint: c.name.clone() })?;
                 }
             }
         }
         for a in self.catalog.assertions() {
             let ConstraintKind::Check { reads, .. } = &a.kind else { continue };
             if reads.iter().any(|t| changed.contains(t)) {
-                out.push(Check::Assertion { constraint: a.name.clone() });
+                out.push(Check::Assertion { constraint: a.name.clone() })?;
             }
         }
-        out
+        Ok(out)
+    }
+
+    /// Adds to `out` the checks of each UNIQUE constraint of the tables
+    /// `changed`, of each row `effects` inserted, or updated giving a value
+    /// to one of its columns: one pass over what it did for each, so the
+    /// rows of a constraint come one after another.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    fn unique_checks(&self, effects: &mut Effects<'_>, changed: &[QualifiedName], out: &mut HeldRows<Check>) -> Result<()> {
+        for desc in changed.iter().filter_map(|t| self.catalog.table(t)) {
+            for c in &desc.constraints {
+                let ConstraintKind::Unique { columns: of, .. } = &c.kind else { continue };
+                effects.done.visit(&mut |effect| match keyed(effect, desc, of) {
+                    Some(id) => out.push(Check::Unique { table: desc.name.clone(), constraint: c.name.clone(), id }),
+                    None => Ok(()),
+                })?;
+            }
+        }
+        Ok(())
     }
 
     /// Adds to `out` the NO ACTION checks of the foreign keys that
     /// reference `table`, a row of which, `old`, was deleted, or (with its
     /// `id`) updated, giving values to `columns`: of those whose referenced
     /// columns it gave values to.
-    fn referenced_checks(&self, table: &QualifiedName, columns: Option<&[usize]>, (old, id): (&Row, Option<RowId>), out: &mut Vec<Check>) {
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    fn referenced_checks(
+        &self,
+        table: &QualifiedName,
+        columns: Option<&[usize]>,
+        (old, id): (&Row, Option<RowId>),
+        out: &mut HeldRows<Check>,
+    ) -> Result<()> {
         for child in self.catalog.tables() {
             for (name, fk) in child.foreign_keys().filter(|(_, fk)| fk.table == *table) {
                 if columns.is_none_or(|set| fk.referenced.iter().any(|r| set.contains(r))) {
-                    out.push(Check::Referenced { child: child.name.clone(), constraint: name.clone(), old: old.clone(), id });
+                    out.push(Check::Referenced { child: child.name.clone(), constraint: name.clone(), old: old.clone(), id })?;
                 }
             }
         }
+        Ok(())
     }
 
-    /// Makes `check`, in transaction `tx`, binding each CHECK condition
-    /// once into `bound`.
+    /// Makes `check`, in transaction `tx`, with what `checking` keeps:
+    /// each CHECK condition bound once, and the rows of a UNIQUE constraint
+    /// checked together, those of the one before ended first.
     ///
     /// # Errors
     ///
     /// SQLCODE -201, SQLSTATE 23000, if the constraint is not satisfied:
     /// about the constraint and its table [ISO/IEC 9075:1992 §18.1 GR3f].
-    pub(super) fn check(self: &Arc<Self>, tx: &Txn, check: &Check, bound: &mut HashMap<QualifiedName, Cond>) -> Result<()> {
+    pub(super) fn check<'s>(self: &'s Arc<Self>, tx: &'s Txn, check: &Check, checking: &mut Checking<'s>) -> Result<()> {
+        if !matches!(check, Check::Unique { .. }) {
+            checking.finish()?;
+        }
         let Some(table) = check.table() else { return self.check_assertion(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
         let broken = |e: SqlError| {
@@ -378,24 +439,29 @@ impl State {
                 e
             }
         };
-        self.check_one(tx, check, (desc, c), bound).map_err(broken)
+        self.check_one(tx, check, (desc, c), checking).map_err(broken)
     }
 
     /// `check`'s, of constraint `c` of `desc`.
-    fn check_one(
-        self: &Arc<Self>,
-        tx: &Txn,
+    fn check_one<'s>(
+        self: &'s Arc<Self>,
+        tx: &'s Txn,
         check: &Check,
-        (desc, c): (&TableDesc, &ConstraintDesc),
-        bound: &mut HashMap<QualifiedName, Cond>,
+        (desc, c): (&'s TableDesc, &'s ConstraintDesc),
+        checking: &mut Checking<'s>,
     ) -> Result<()> {
         match check {
-            Check::Row { id, .. } => self.check_row(tx, (desc, c), *id, bound),
-            Check::Unique { table, ids, .. } => {
-                let ConstraintKind::Unique { columns, primary } = &c.kind else { return Ok(()) };
-                check_key(self, tx, table, (columns, *primary), ids)
+            Check::Row { id, .. } => self.check_row(tx, (desc, c), *id, &mut checking.bound),
+            Check::Unique { id, .. } => {
+                if checking.key.as_ref().is_some_and(|key| !key.checks(&c.name)) {
+                    checking.finish()?;
+                }
+                if checking.key.is_none() {
+                    checking.key = KeyCheck::new((self, tx), desc, (&c.name, &c.kind))?;
+                }
+                checking.key.as_mut().map_or(Ok(()), |key| key.row(*id))
             }
-            Check::Table { .. } => self.check_table(tx, (desc, c), bound),
+            Check::Table { .. } => self.check_table(tx, (desc, c), &mut checking.bound),
             Check::Referenced { old, id, .. } => {
                 let ConstraintKind::ForeignKey(fk) = &c.kind else { return Ok(()) };
                 self.check_referenced(tx, (desc, &c.name, fk), old, *id)
@@ -483,4 +549,44 @@ impl State {
         }
         Ok(())
     }
+}
+
+/// Whether `columns` given values, or every column if none, include one of
+/// `of`.
+fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
+    columns.is_none_or(|set| of.iter().any(|x| set.contains(x)))
+}
+
+/// Adds to `out` the checks of row `id` of `desc` written, giving values
+/// to `columns`, or to every column if none: of the constraints of its
+/// table on a column given a value, but UNIQUE ones (`State::checks`), and
+/// of its CHECKs without a subquery.
+///
+/// # Errors
+///
+/// The spill area's.
+fn row_checks(desc: &TableDesc, id: RowId, columns: Option<&[usize]>, out: &mut HeldRows<Check>) -> Result<()> {
+    for c in &desc.constraints {
+        let of_row = match &c.kind {
+            ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
+            ConstraintKind::ForeignKey(fk) => assigned(&fk.columns, columns),
+            ConstraintKind::Check { reads, .. } => reads.is_empty(),
+            ConstraintKind::Unique { .. } => false,
+        };
+        if of_row {
+            out.push(Check::Row { table: desc.name.clone(), constraint: c.name.clone(), id })?;
+        }
+    }
+    Ok(())
+}
+
+/// The row of `desc` `effect` inserted, or updated giving a value to one of
+/// the columns `of`, if it did.
+fn keyed(effect: &Effect, desc: &TableDesc, of: &[usize]) -> Option<RowId> {
+    let (table, id, columns) = match effect {
+        Effect::Inserted { table, id } => (table, *id, None),
+        Effect::Updated { table, id, columns, .. } => (table, *id, Some(columns.as_slice())),
+        Effect::Deleted { .. } => return None,
+    };
+    (*table == desc.name && assigned(of, columns)).then_some(id)
 }

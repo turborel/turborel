@@ -147,12 +147,12 @@ impl Session {
             SqlStatement::UpdateSearched { table, set, where_clause } => {
                 let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdateSearched, &table, &set, where_clause.as_ref()))?;
                 self.settle_cursors(st, &w.table);
-                update_searched(StatementContext { st, tx }, &w, self.effects()).map(|n| self.affected(n))
+                update_searched(StatementContext { st, tx }, &w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::DeleteSearched { table, where_clause } => {
                 let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::DeleteSearched, &table, &[], where_clause.as_ref()))?;
                 self.settle_cursors(st, &w.table);
-                delete_searched(StatementContext { st, tx }, &w, self.effects()).map(|n| self.affected(n))
+                delete_searched(StatementContext { st, tx }, &w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::UpdatePositioned { table, set, cursor } => {
                 let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdatePositioned, &table, &set, None))?;

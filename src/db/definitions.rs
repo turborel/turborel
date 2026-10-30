@@ -73,7 +73,7 @@ impl Session {
             if wanted.is_empty() {
                 let next = Arc::new(next);
                 for table in &defined.validate {
-                    validate_rows(&next, tx, table, self.effects())?;
+                    validate_rows(&next, tx, table, self.effects(&next))?;
                 }
                 if let Some(a) = &defined.asserted {
                     next.check_assertion(tx, a)?;

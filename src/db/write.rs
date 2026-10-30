@@ -78,10 +78,9 @@ impl Session {
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
-        let mut effects = self.effects();
+        let mut effects = self.effects(st);
         rows.visit(&mut |row| {
-            effects.inserted(&target.name, st.insert_row(tx, &target.name, row)?); // [X3.135-1986 §8.7 GR1c]
-            Ok(())
+            effects.inserted(&target.name, st.insert_row(tx, &target.name, row)?) // [X3.135-1986 §8.7 GR1c]
         })?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
@@ -224,8 +223,7 @@ pub(super) fn update_searched(
     }
     changes.visit(&mut |(id, old, new)| {
         st.update_row(tx, &w.table, *id, new)?;
-        effects.updated(&w.table, *id, old.clone(), &columns);
-        Ok(())
+        effects.updated(&w.table, *id, old.clone(), &columns)
     })?;
     if !w.checks.is_empty() {
         changes.visit(&mut |(_, _, new)| check_option(&w.checks, [new], ("§8.12 GR4", &runner)))?;
@@ -250,7 +248,7 @@ pub(super) fn delete_searched(
     for object in objects {
         let (id, old) = object?;
         st.delete_row(tx, &w.table, id)?;
-        effects.deleted(&w.table, id, old);
+        effects.deleted(&w.table, id, old)?;
     }
     st.end_statement(tx, effects)?;
     Ok(count)

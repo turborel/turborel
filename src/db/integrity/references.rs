@@ -170,19 +170,28 @@ impl State {
 
     /// [§11.8 GR5, GR6] The referential actions of the rows `effects`
     /// deleted and updated, each adding what it does to `effects`, until
-    /// none is left to run.
+    /// none is left to run: none, and what it did not read again, if no
+    /// foreign key has an action. The values the statement gave are kept
+    /// [GR7] only of the tables an action may give values to.
     pub(super) fn referential_actions(&self, tx: &Txn, effects: &mut Effects<'_>) -> Result<()> {
-        let mut acting = Acting::default();
-        for effect in &effects.done {
-            if let Effect::Updated { table, id, columns, .. } = effect {
-                let now = self.storage_of(table)?.get(tx.id, *id)?.unwrap_or_default();
-                for &c in columns {
-                    acting.given.insert((table.clone(), *id, c), now.get(c).cloned().unwrap_or(Value::Null));
-                }
-            }
+        let acted: Vec<&QualifiedName> = self.catalog.tables().into_iter().filter(|t| acts_on(t)).map(|t| &t.name).collect();
+        if acted.is_empty() {
+            return Ok(());
         }
+        let mut acting = Acting::default();
+        effects.done.visit(&mut |effect| {
+            let Effect::Updated { table, id, columns, .. } = effect else { return Ok(()) };
+            if !acted.contains(&table) {
+                return Ok(());
+            }
+            let now = self.storage_of(table)?.get(tx.id, *id)?.unwrap_or_default();
+            for &c in columns {
+                acting.given.insert((table.clone(), *id, c), now.get(c).cloned().unwrap_or(Value::Null));
+            }
+            Ok(())
+        })?;
         let mut at = 0_usize;
-        while let Some(effect) = effects.done.get(at).cloned() {
+        while let Some(effect) = effects.done.get(at)? {
             at = at.saturating_add(1);
             let (parent, old, row, updated) = match &effect {
                 Effect::Deleted { table, old, id } => (table, old, *id, false),
@@ -223,13 +232,8 @@ impl State {
         let defaults = if action == ReferentialAction::SetDefault { default_row(child, &effects.user, effects.now)? } else { Vec::new() };
         let partial = fk.match_type == MatchType::Partial;
         let before = if partial { self.before_statement(tx, change.parent, effects)? } else { Vec::new() };
+        // None the statement deleted: the transaction reads its own changes.
         for (row_id, row) in self.matching_rows(tx, (child, fk), &key)? {
-            let gone = effects.done.iter().any(|e| {
-                if let Effect::Deleted { table, id: deleted, .. } = e { *table == child.name && *deleted == row_id } else { false }
-            });
-            if gone {
-                continue;
-            }
             let values = project(&row, &fk.columns).ok_or_else(|| api(format!("[DESIGN] a row of {} is short", child.name)))?;
             let associated: Vec<RowId> = before
                 .iter()
@@ -244,7 +248,7 @@ impl State {
             if action == ReferentialAction::Cascade && !updated {
                 // [GR5a i, GR5b i] the matching rows deleted.
                 self.delete_row(tx, &child.name, row_id)?;
-                effects.deleted(&child.name, row_id, row);
+                effects.deleted(&child.name, row_id, row)?;
                 continue;
             }
             if partial && action == ReferentialAction::Cascade {
@@ -253,7 +257,7 @@ impl State {
             let (next, columns) = acted((fk, action, &defaults), &row, (change.old, new_key.as_deref(), updated));
             give((&child.name, row_id), &next, &columns, &mut acting.given)?;
             self.update_row(tx, &child.name, row_id, &next)?;
-            effects.updated(&child.name, row_id, row, &columns);
+            effects.updated(&child.name, row_id, row, &columns)?;
         }
         Ok(())
     }
@@ -261,11 +265,11 @@ impl State {
     /// [§11.8 GR4] The rows of `table` as they were before the statement
     /// that did `effects`: as they are, but for the rows it inserted, gone,
     /// and those it updated or deleted, as they were first.
-    fn before_statement(&self, tx: &Txn, table: &QualifiedName, effects: &Effects<'_>) -> Result<Vec<(RowId, Row)>> {
+    fn before_statement(&self, tx: &Txn, table: &QualifiedName, effects: &mut Effects<'_>) -> Result<Vec<(RowId, Row)>> {
         let mut rows: HashMap<RowId, Option<Row>> =
             self.rows_where(tx, table, &|_| true)?.into_iter().map(|(id, r)| (id, Some(r))).collect();
         let mut seen = Vec::new();
-        for effect in &effects.done {
+        effects.done.visit(&mut |effect| {
             let (t, id, was) = match effect {
                 Effect::Inserted { table: t, id } => (t, *id, None),
                 Effect::Updated { table: t, id, old, .. } | Effect::Deleted { table: t, id, old } => (t, *id, Some(old.clone())),
@@ -274,7 +278,8 @@ impl State {
                 seen.push(id);
                 rows.insert(id, was);
             }
-        }
+            Ok(())
+        })?;
         let mut out: Vec<(RowId, Row)> = rows.into_iter().filter_map(|(id, r)| r.map(|r| (id, r))).collect();
         out.sort_by_key(|(id, _)| *id);
         Ok(out)
@@ -289,15 +294,19 @@ impl State {
         &self,
         tx: &Txn,
         (fk, parent): (&ForeignKey, &QualifiedName),
-        (associated, effects): (&[RowId], &Effects<'_>),
+        (associated, effects): (&[RowId], &mut Effects<'_>),
         (key, new): (&[Value], Option<&[Value]>),
     ) -> Result<()> {
-        let updated: Vec<RowId> = effects
-            .done
-            .iter()
-            .filter_map(|e| if let Effect::Updated { table, id, .. } = e { (table == parent).then_some(*id) } else { None })
-            .filter(|id| associated.contains(id))
-            .collect();
+        let mut updated: Vec<RowId> = Vec::new();
+        effects.done.visit(&mut |e| {
+            if let Effect::Updated { table, id, .. } = e
+                && table == parent
+                && associated.contains(id)
+            {
+                updated.push(*id);
+            }
+            Ok(())
+        })?;
         for id in updated {
             let now = self.storage_of(parent)?.get(tx.id, id)?.and_then(|r| project(&r, &fk.referenced));
             let agrees = now.as_ref().is_some_and(|now| {
@@ -436,4 +445,11 @@ fn same_value(a: &Value, b: &Value) -> bool {
 /// Whether the values `a` and `b` are not distinct, each pair.
 fn same(a: &[Value], b: &[Value]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| same_value(x, y))
+}
+
+/// Whether a foreign key of `child` has a referential action, by which a
+/// change to the table it references may give values to `child`'s rows or
+/// delete them [§11.8 GR5, GR6].
+fn acts_on(child: &TableDesc) -> bool {
+    child.foreign_keys().any(|(_, fk)| fk.on_delete != ReferentialAction::NoAction || fk.on_update != ReferentialAction::NoAction)
 }

@@ -6,22 +6,28 @@
 //! IMMEDIATE ran [§14.3 GR4], and rolls back if one is not satisfied
 //! [GR5a]. The checks wait in the session (`integrity::Deferral`).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::integrity::{Check, Cursored, Effects, mode_name};
+use super::integrity::{Check, Checking, Cursored, Effects, mode_name};
 use super::{Call, Completion, Session, State, rule};
 use crate::ast::TableName;
 use crate::binder::qualify;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState};
+use crate::exec::HeldRows;
 use crate::txn::Txn;
+
+/// Which waiting checks are made: those of the constraints named, or of
+/// all; and which are dropped first.
+type Chosen<'a> = (Option<&'a [QualifiedName]>, &'a dyn Fn(&Check) -> bool);
 
 impl Session {
     /// What a statement of this session does, nothing yet: run under its
-    /// authorization identifier, with its constraint modes.
-    pub(super) fn effects(&self) -> Effects<'_> {
-        let mut effects = Effects::new(&self.auth(), &self.deferral, Cursored { rows: self.cursor_changes(), conflict: &self.conflict });
+    /// authorization identifier, with its constraint modes, held in the
+    /// work areas of `st` (RULES.md D38).
+    pub(super) fn effects(&self, st: &State) -> Effects<'_> {
+        let cursors = Cursored { rows: self.cursor_changes(), conflict: &self.conflict };
+        let mut effects = Effects::new(&self.auth(), &self.deferral, cursors, st.list_space());
         effects.now = self.now.get();
         effects
     }
@@ -42,7 +48,7 @@ impl Session {
         if let (false, Some(tx)) = (deferred, tx) {
             call.runs(&tx);
             tx.begin_statement(|| !self.cursors_open())?;
-            self.check_deferred(st, &tx, chosen.as_deref())?;
+            self.check_deferred(st, &tx, (chosen.as_deref(), &|_| false))?;
         }
         let mut deferral = self.deferral.borrow_mut();
         match chosen {
@@ -74,24 +80,35 @@ impl Session {
     }
 
     /// The waiting checks of the constraints `named`, or of all, made, in
-    /// transaction `tx`: done with if they hold, else kept.
+    /// transaction `tx`: done with if they hold, else kept; those `gone`
+    /// says dropped first. The checks are read back from the list they
+    /// wait in, which is kept until they are done with, so none is lost if
+    /// one cannot be read.
     ///
     /// # Errors
     ///
-    /// SQLCODE -201, SQLSTATE 23000, for the first that does not hold.
-    fn check_deferred(&self, st: &Arc<State>, tx: &Txn, named: Option<&[QualifiedName]>) -> Result<()> {
-        let pending = std::mem::take(&mut self.deferral.borrow_mut().pending);
-        let (now, later): (Vec<Check>, Vec<Check>) =
-            pending.into_iter().partition(|c| named.is_none_or(|n| st.constraint_of(c).is_some_and(|d| n.contains(mode_name(d)))));
-        let mut bound = HashMap::new();
+    /// SQLCODE -201, SQLSTATE 23000, for the first that does not hold; the
+    /// spill area's.
+    fn check_deferred(&self, st: &Arc<State>, tx: &Txn, (named, gone): Chosen<'_>) -> Result<()> {
+        let (mut now, mut later) = (HeldRows::new(st.list_space()), HeldRows::new(st.list_space()));
+        self.deferral.borrow_mut().pending.visit(&mut |c| {
+            if gone(c) {
+                Ok(())
+            } else if named.is_none_or(|n| st.constraint_of(c).is_some_and(|d| n.contains(mode_name(d)))) {
+                now.push(c.clone())
+            } else {
+                later.push(c.clone())
+            }
+        })?;
+        let mut checking = Checking::default();
         // [ISO/IEC 9075:1992 §4.28] serializable at every level.
-        let checked = tx.check_reads(true).and_then(|()| now.iter().try_for_each(|check| st.check(tx, check, &mut bound)));
+        let checked =
+            tx.check_reads(true).and_then(|()| now.visit(&mut |check| st.check(tx, check, &mut checking))).and_then(|()| checking.finish());
         let checked = checked.and(tx.check_reads(false));
-        let mut deferral = self.deferral.borrow_mut();
-        deferral.pending = later;
         if checked.is_err() {
-            deferral.pending.extend(now);
+            later.append(now);
         }
+        self.deferral.borrow_mut().pending = later;
         checked
     }
 
@@ -111,8 +128,7 @@ impl Session {
         // are deleted first, so what they would break holds; and no table
         // that keeps its rows refers to one [§11.8 SR5, §11.9 SR4].
         let deleted = |c: &Check| c.table().and_then(|t| st.catalog.table(t)).is_some_and(|d| d.temporary.is_some_and(|t| t.delete_rows));
-        self.deferral.borrow_mut().pending.retain(|c| !deleted(c));
-        self.check_deferred(st, tx, None).map_err(|e| {
+        self.check_deferred(st, tx, (None, &deleted)).map_err(|e| {
             SqlError::new(Code::CommitFailed, format!("[ISO/IEC 9075:1992 §14.3 GR5a] the transaction is rolled back: {}", e.described()))
                 .with_state(SqlState::TRANSACTION_ROLLBACK_INTEGRITY)
         })

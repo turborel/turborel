@@ -103,6 +103,7 @@ mod scroll_cursors;
 mod served;
 mod set_statements;
 mod settings;
+mod spilled_checks;
 mod spilled_rows;
 mod spilling;
 mod statements;

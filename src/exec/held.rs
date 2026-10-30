@@ -3,7 +3,8 @@
 //! changes a table it reads, and a SCROLL cursor's as it reads them; the
 //! object rows of a searched UPDATE or DELETE and the candidate rows of an
 //! INSERT, each chosen before any is changed; an updatable cursor's rows,
-//! in its order. Held up to WORK_MEMORY, as an operator's are, then written
+//! in its order; what a data-changing statement did, and the checks of its
+//! constraints (`db/integrity/held.rs`). Held up to WORK_MEMORY, as an operator's are, then written
 //! to runs of a spill area: a list that spills (`spill/list.rs`), read back
 //! in order, a run's pages given back as it is read, or by place, a
 //! segment at a time. Split from exec.rs (RULES.md R-SIZE-2).
@@ -173,6 +174,12 @@ impl<T: Holdable> HeldRows<T> {
             self.window = Some((segment, items));
         }
         Ok(self.window.as_ref().and_then(|(_, items)| items.get(at)).cloned())
+    }
+
+    /// Appends the items of `other` after its own, as they are: held, or in
+    /// their runs.
+    pub fn append(&mut self, other: HeldRows<T>) {
+        self.list.append(other.list);
     }
 
     /// Calls `each` with every one, in order, kept: a run read back a

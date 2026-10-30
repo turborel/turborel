@@ -1,21 +1,18 @@
-//! The rows a statement writes and the values it returns: UNIQUE checks
-//! [X3.135-1986 §4.5, §6.4] (`db/integrity.rs` checks NOT NULL and calls
-//! them), WITH CHECK OPTION [X3.135-1986
-//! §6.5 GR3], the candidate row of an UPDATE
+//! The rows a statement writes and the values it returns: WITH CHECK
+//! OPTION [X3.135-1986 §6.5 GR3] (`db/integrity.rs` checks the
+//! constraints), the candidate row of an UPDATE
 //! [X3.135-1986 §8.11, §8.12], and assignment to FETCH and SELECT targets
 //! [X3.135-1986 §8.6, §8.10]. Split from db.rs (RULES.md R-SIZE-2).
 
-use super::{Completion, State, api, rule, table_desc};
+use super::{Completion, api, rule};
 use crate::ast::ParameterSpecification;
 use crate::binder::{self, OutColumn, ViewCheck};
-use crate::catalog::{CheckLevels, ConstraintKind, QualifiedName, TableDesc};
-use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail, fail_with};
+use crate::catalog::CheckLevels;
+use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
 use crate::exec::{Subqueries, eval, eval_cond};
-use crate::index::Key;
 use crate::logical::{Cond, Truth};
 use crate::params::Params;
-use crate::storage::{Newest, Row, RowId, project};
-use crate::txn::Txn;
+use crate::storage::Row;
 use crate::value::cast::cast;
 use crate::value::{DataType, Decimal, Value, assign};
 
@@ -58,104 +55,6 @@ fn check_row(check: &ViewCheck, row: &Row, rule: &str, subqueries: &dyn Subqueri
         format!("[ISO/IEC 9075:1992 §11.19 GR11; X3.135-1986 {rule}] the row is not in view {view}, defined WITH {levels} CHECK OPTION");
     // [§18.1 GR3i] about the view.
     Err(SqlError::new(Code::Constraint, msg).with_state(SqlState::WITH_CHECK_OPTION_VIOLATION).about(Subject::table(view.parts())))
-}
-
-/// Whether a row whose newest state is `newest` holds `key`, as `key_of`
-/// finds it; refused with SQLCODE -911 while another transaction's change
-/// to it leaves it in doubt.
-fn holds<F: Fn(&Row) -> Result<Key>>(newest: &Newest, key: &Key, key_of: &F) -> Result<bool> {
-    let has = |row: &Option<Row>| row.as_ref().map(key_of).transpose().map(|k| k.as_ref() == Some(key));
-    let doubt = match &newest.pending {
-        Some(pending) => has(&newest.row)? || has(pending)?,
-        None => false,
-    };
-    if doubt {
-        return fail(
-            Code::Conflict,
-            "[DESIGN] another transaction is changing a row with the same key; run the statement again".to_owned(),
-        );
-    }
-    has(&newest.row)
-}
-
-/// The message of a duplicate of `columns` of the table `desc`: its
-/// UNIQUE or PRIMARY KEY constraint named, as GET DIAGNOSTICS names it.
-fn duplicated(desc: &TableDesc, columns: &[usize]) -> String {
-    let names: Vec<&str> = columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
-    let constraint = desc.constraints.iter().find_map(|c| match &c.kind {
-        ConstraintKind::Unique { columns: on, primary } => {
-            (on == columns).then_some((if *primary { "PRIMARY KEY" } else { "UNIQUE" }, &c.name))
-        }
-        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
-    });
-    let (kind, constraint_name) = constraint.map_or(("UNIQUE", String::new()), |(k, n)| (k, format!(" {n}")));
-    format!(
-        "[X3.135-1986 §6.4 GR2] {kind}{constraint_name} ({}) of {} would be violated: a row of these values is there",
-        names.join(", "),
-        desc.name
-    )
-}
-
-/// [X3.135-1986 §6.4 GR2] UNIQUE on `columns` of `table`, "effectively
-/// checked after the execution of each `<SQL statement>`" [X3.135-1986
-/// §4.5], or deferred [ISO/IEC 9075:1992 §10.6]: rows may pass through
-/// duplicate keys meanwhile (as in SET ID = ID + 1), but not end with
-/// them. `ids` are the rows written, through the index of the constraint.
-/// Of a PRIMARY KEY, first, none has a null in its columns [ISO/IEC
-/// 9075:1992 §11.7 SR3a]. Each row is read once; a key whose index holds
-/// only the row's own entry is no duplicate, and needs no more.
-///
-/// \[DESIGN\] The rows counted are those whose newest version has the key,
-/// whichever transaction committed it, as `tx` must not commit a duplicate
-/// of a row it cannot see (RULES.md D29). A row that another open
-/// transaction is changing, with the key before or after, is in doubt: the
-/// statement is refused with SQLCODE -911, to be run again once that
-/// transaction ends.
-pub(super) fn check_key(st: &State, txn: &Txn, table: &QualifiedName, (columns, primary): (&[usize], bool), ids: &[RowId]) -> Result<()> {
-    let tx = txn.id;
-    let desc = table_desc(st, table)?;
-    let storage = st.storage_of(table)?;
-    let key_of =
-        |row: &Row| project(row, columns).map(Key).ok_or_else(|| api(format!("[DESIGN] a row of {table} is shorter than its columns")));
-    let unique: Vec<&str> =
-        st.catalog.indexes(table).into_iter().filter(|ix| ix.unique && ix.columns == columns).map(|ix| ix.name.as_str()).collect();
-    // Each row read once, for both rules; none whose entry was its key's
-    // only one as it was inserted (`Txn::alone`): its key has no null, and
-    // a row of its key inserted after was not, and is read itself.
-    let mut keys = Vec::with_capacity(ids.len());
-    for &id in ids.iter().filter(|&&id| !unique.iter().any(|ix| txn.alone(ix, id))) {
-        if let Some(row) = storage.get(tx, id)? {
-            keys.push(key_of(&row)?);
-        }
-    }
-    if primary {
-        let null = keys.iter().find_map(|k| k.0.iter().position(Value::is_null));
-        if let Some(column) = null.and_then(|at| columns.get(at)).and_then(|&c| desc.columns.get(c)) {
-            return fail(
-                Code::Constraint,
-                format!("[ISO/IEC 9075:1992 §11.7 SR3a] PRIMARY KEY column {} of {} is null", column.name, desc.name),
-            );
-        }
-    }
-    for ix in st.catalog.indexes(table).into_iter().filter(|ix| ix.unique && ix.columns == columns) {
-        let index = st.index_of(&ix.name)?;
-        // A key with a null is never a duplicate [X3.135-1986 §6.4 GR2].
-        for key in keys.iter().filter(|k| !k.0.iter().any(Value::is_null)) {
-            let found = index.rows(key)?;
-            // The row's own entry alone: no other row may hold the key.
-            if found.len() < 2 {
-                continue;
-            }
-            let mut holders = 0_usize;
-            for other in found {
-                holders = holders.saturating_add(usize::from(holds(&storage.newest(tx, other)?, key, &key_of)?));
-            }
-            if holders > 1 {
-                return fail(Code::Constraint, duplicated(&desc, columns));
-            }
-        }
-    }
-    Ok(())
 }
 
 /// The columns the `<set clause>`s of `w` give values to.
@@ -333,7 +232,7 @@ pub(super) fn declared_type(params: &Params, name: &str) -> Result<DataType> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{ColumnDesc, TableDesc};
+    use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
     use crate::engine::rows::ROW_STORE;
     use crate::exec::NoSubqueries;
     use crate::logical::LogicalPlan;

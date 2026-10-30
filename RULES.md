@@ -1435,7 +1435,12 @@ catalog to keep in step.
   updatable cursor's row ids, in its order, its rows sorted as ORDER BY
   sorts them; the object rows of a searched UPDATE or DELETE, with an
   UPDATE's new values, and the candidate rows of an INSERT, each chosen
-  before any row is changed. A scan planned in an order its table no
+  before any row is changed; what a data-changing statement did, each
+  row's id and an UPDATE's or DELETE's old values, and the checks of its
+  constraints gathered of it, kept for its end, the rows of a UNIQUE
+  constraint checked one at a time as they are read back; and the checks
+  of deferred constraints, kept until they are made, the transaction's
+  end freeing them. A scan planned in an order its table no
   longer gives is sorted as ORDER BY sorts.
 - A database kept in a directory keeps its areas' files in `tmp/` there,
   cleared when it opens; one in memory, in the system's temporary

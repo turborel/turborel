@@ -543,8 +543,8 @@ impl Session {
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
         st.update_row(tx, &w.table, id, &new)?;
         check_option(&w.checks, [&new], ("§8.11 GR5", &runner))?;
-        let mut effects = self.effects();
-        effects.updated(&w.table, id, old, &set_columns(w));
+        let mut effects = self.effects(st);
+        effects.updated(&w.table, id, old, &set_columns(w))?;
         st.end_statement(tx, effects)?;
         self.changed_through(cursor, id);
         Ok(Completion::Success)
@@ -557,8 +557,8 @@ impl Session {
         let id = self.positioned_row(cx, cursor, w, "§8.4").or_at(at)?;
         let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;
         st.delete_row(tx, &w.table, id)?;
-        let mut effects = self.effects();
-        effects.deleted(&w.table, id, old);
+        let mut effects = self.effects(st);
+        effects.deleted(&w.table, id, old)?;
         st.end_statement(tx, effects)?;
         // [X3.135-1986 §4.12] the cursor is now before the next row.
         if let Some(DeclaredCursor { open: Some(OpenCursor { rows: CursorRows::Updatable(u), .. }), .. }) =

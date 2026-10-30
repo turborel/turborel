@@ -110,7 +110,7 @@ pub const MUTATIONS: [Mutation; 12] = [
     Mutation {
         name: "unique",
         breaks: "UNIQUE: two rows of one key are let in",
-        file: "src/db/assignment.rs",
+        file: "src/db/integrity/keys.rs",
         original: "if holders > 1 {",
         replacement: "if holders > 2 {",
         integration: &[

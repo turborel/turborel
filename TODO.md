@@ -218,11 +218,13 @@ The registry, scopes and SET statements exist (D36). Still to do:
   ChaCha20-Poly1305 for machines without AES instructions.
 - **Spills, further:** compressed, through the database's compression,
   where the disk is slower than the CPU; and a spill file made before a
-  table is encrypted stays as it was until its operator ends. What a
-  data-changing statement did, kept for its constraints' checks at its
-  end (each row's id, and an UPDATE's or DELETE's old values,
-  `db/integrity.rs`), is held in memory, and should spill past
-  WORK_MEMORY as an operator's rows do.
+  table is encrypted stays as it was until its operator ends. A
+  referential action gathers the rows that match each row it acts for in
+  memory (`State::matching_rows`, `db/integrity/references.rs`), as MATCH
+  PARTIAL does the referenced table as it was before the statement, and
+  the values a statement gave each row of a table an action may change
+  [ISO/IEC 9075:1992 §11.8 GR7]: they should spill as the statement's
+  effects do.
   DISTINCT read row by row (`exec/distinct.rs`) is not told its statement,
   so its passes over partitions look for no cancel (D44), as the others'
   do: `exec.rs` should hand it the transaction, for `Work::of`. And it,
