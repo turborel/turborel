@@ -483,7 +483,7 @@ impl State {
         for ix in self.catalog.indexes(&change.table).into_iter().filter(|ix| kept(ix)) {
             let index = self.index_of(&ix.name)?;
             for key in change.before.iter().chain(&change.after).filter_map(|r| key_of(r, &ix.columns)) {
-                take_back(index, &key, change.row)?;
+                take_back(&**index, &key, change.row)?;
             }
         }
         Ok(())

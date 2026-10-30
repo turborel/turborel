@@ -20,7 +20,7 @@ use crate::catalog::{Catalog, MemoryCatalog, QualifiedName};
 use crate::diagnostics::{Diagnostics, Event, Extension, NoDiagnostics};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::functions::{AggregateFunction, ScalarFunction};
-use crate::index::{IndexMethod, Probe};
+use crate::index::{IndexMethod, KeyOrder, Probe};
 use crate::log::Log;
 use crate::memory::Host;
 use crate::optimizer::Optimizer;
@@ -548,7 +548,8 @@ impl Database {
     ///
     /// SQLCODE -910 if there is no such index; the index's errors.
     pub fn index_entries(&self, name: &str) -> Result<usize> {
-        Ok(self.snapshot()?.index_of(name)?.search(&Probe::All)?.len())
+        let entries = Arc::clone(self.snapshot()?.index_of(name)?).search(&Probe::All, KeyOrder::Ascending);
+        entries.into_iter().try_fold(0_usize, |n, entry| entry.map(|_| n.saturating_add(1)))
     }
 }
 

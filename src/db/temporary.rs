@@ -22,7 +22,7 @@ use super::{Session, State, api, rule};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc, TemporaryKind};
 use crate::engine::rows::{RowStore, TableOptions};
 use crate::error::{Code, Result, SqlError};
-use crate::index::{BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, Probe};
+use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
 use crate::log::Lsn;
 use crate::memory::MemoryBudget;
 use crate::spill::{Area, WorkAreas};
@@ -408,7 +408,10 @@ impl Index for Entries {
     fn distinct_keys(&self) -> Option<f64> {
         self.made().and_then(|entries| entries.distinct_keys())
     }
-    fn search(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        self.made().map_or(Ok(Vec::new()), |entries| entries.search(probe))
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> index::Entries {
+        match self.made() {
+            Some(entries) => entries.search(probe, order),
+            None => Box::new(std::iter::empty()),
+        }
     }
 }

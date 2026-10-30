@@ -2,8 +2,15 @@
 //! it reads, as its cursor is fetched from, and as it waits for a lock;
 //! and by STATEMENT_TIMEOUT and LOCK_TIMEOUT.
 
-use turborel::db::Session;
-use turborel::error::Code;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use turborel::db::{Database, Session};
+use turborel::error::{Code, Result};
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
+use turborel::storage::RowId;
+use turborel::txn::Stop;
+use turborel::value::{CompOp, DataType};
 
 use crate::common::{arm, gated, locked, rows};
 
@@ -85,6 +92,88 @@ fn a_fetch_cancelled_as_it_reads_fails() {
     assert_eq!(cursor.fetch().err().map(|e| e.code), Some(Code::Cancelled), "cut short");
     drop(cursor);
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM G"), Ok(vec!["3".into()]));
+}
+
+/// An index method, the B-link tree's, whose searches count the entries
+/// read and, as the second is, cancel the statement `stop` holds.
+struct Halting {
+    inner: BTreeMethod,
+    read: Arc<AtomicUsize>,
+    stop: Arc<Mutex<Option<Arc<Stop>>>>,
+}
+
+/// An index of `Halting`.
+struct HaltingIndex {
+    inner: Arc<dyn Index>,
+    read: Arc<AtomicUsize>,
+    stop: Arc<Mutex<Option<Arc<Stop>>>>,
+}
+
+impl IndexMethod for Halting {
+    fn name(&self) -> &'static str {
+        "halting"
+    }
+    fn supports(&self, op: CompOp) -> bool {
+        self.inner.supports(op)
+    }
+    fn ordered(&self) -> bool {
+        true
+    }
+    fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
+        let inner = Arc::from(self.inner.create(columns)?);
+        Ok(Box::new(HaltingIndex { inner, read: Arc::clone(&self.read), stop: Arc::clone(&self.stop) }))
+    }
+}
+
+impl Index for HaltingIndex {
+    fn insert(&self, key: Key, row: RowId) -> Result<()> {
+        self.inner.insert(key, row)
+    }
+    fn remove(&self, key: &Key, row: RowId) -> Result<()> {
+        self.inner.remove(key, row)
+    }
+    fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
+        self.inner.rows(key)
+    }
+    fn estimate(&self, probe: &Probe) -> Option<usize> {
+        self.inner.estimate(probe)
+    }
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        let entries = Arc::clone(&self.inner).search(probe, order);
+        Box::new(entries.inspect(move |_| {
+            if self.read.fetch_add(1, Ordering::SeqCst) == 1 {
+                self.stop.lock().unwrap().as_ref().unwrap().cancel();
+            }
+        }))
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D34, D44: an index search is read as its
+/// entries are taken, the statement looking for a cancel as each is read:
+/// a query in the order of an index of 500 rows, cancelled as the second
+/// entry is read, fails (SQLCODE -920) having read no more than the entries
+/// before. Regression test (R-TEST-7): a search read every entry of the
+/// index before the first was taken, and no cancel was looked for meanwhile.
+#[test]
+fn an_index_search_cancelled_as_it_reads_stops_reading() {
+    let (read, stop) = (Arc::new(AtomicUsize::new(0)), Arc::new(Mutex::new(None)));
+    let db = Database::new();
+    let method = Halting { inner: BTreeMethod::in_memory(), read: Arc::clone(&read), stop: Arc::clone(&stop) };
+    db.register_index_method(Box::new(method)).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER NOT NULL, V INTEGER)").unwrap();
+    let s = db.session("X");
+    for k in 0..500 {
+        s.run(&format!("INSERT INTO T VALUES ({k}, {k})")).unwrap();
+    }
+    s.commit().unwrap();
+    s.run("CREATE INDEX T_K ON T (K) USING HALTING").unwrap();
+    // A sort dear enough that the whole index is read for its order.
+    db.with_cost_model(|c| c.sort_compare = 100.0_f64).unwrap();
+    let plan = s.explain("SELECT K FROM T ORDER BY K", &turborel::params::Params::new()).unwrap();
+    assert!(plan.contains("T_K"), "{plan}");
+    *stop.lock().unwrap() = Some(s.canceller());
+    assert_eq!(rows(&s, "SELECT K FROM T ORDER BY K"), Err(Code::Cancelled));
+    assert!(read.load(Ordering::SeqCst) <= 3, "{} entries read", read.load(Ordering::SeqCst));
 }
 
 /// Verifies: [DESIGN] RULES.md D28, D44: a statement waiting for a lock

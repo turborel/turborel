@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::error::Code;
-use crate::index::Probe;
+use crate::index::{Entries, KeyOrder, Probe};
 use crate::spill::Spill;
 use crate::spill::testing::{Held, areas};
 use crate::storage::Rows;
@@ -67,8 +67,8 @@ impl Index for Recorder {
     fn estimate(&self, _probe: &Probe) -> Option<usize> {
         None
     }
-    fn search(&self, _probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        Ok(Vec::new())
+    fn search(self: Arc<Self>, _probe: &Probe, _order: KeyOrder) -> Entries {
+        Box::new(std::iter::empty())
     }
 }
 

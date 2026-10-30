@@ -28,7 +28,9 @@
 //!   memory), then the chain a page at a time under the pool's latch, and
 //!   check the shape's version is as it was: a split or merge, which moves
 //!   entries between pages and frees pages, makes the version odd while it
-//!   does, and a reader that overlapped one reads again.
+//!   does, and a reader that overlapped one reads again. A scan of every
+//!   entry reads a bucket at a time, the shape not changing while it
+//!   lives (`hash/scan.rs`).
 //! * **Writers** of a bucket hold its stripe's lock, so writers of
 //!   different stripes go on together; a split or merge holds the locks of
 //!   the buckets it changes, and one change of shape is made at a time,
@@ -42,6 +44,7 @@
 
 mod bucket;
 mod directory;
+mod scan;
 mod shape;
 #[cfg(test)]
 mod tests;
@@ -115,6 +118,9 @@ pub struct HashTable {
     /// The directory pages; held while the shape changes.
     directory: Mutex<Vec<PageId>>,
     stripes: Box<[Stripe]>,
+    /// Scans of every bucket under way (`hash/scan.rs`): while any is, the
+    /// shape does not change.
+    scans: AtomicU64,
 }
 
 /// Entries, each with its key's hash.
@@ -211,7 +217,7 @@ impl HashTable {
         let heads = (0..max_buckets.div_ceil(SEGMENT).max(1)).map(|_| OnceLock::new()).collect();
         let stripes = (0..STRIPES).map(|_| Stripe::default()).collect();
         let (shape, version, directory) = (AtomicU64::new(shape.packed()), AtomicU64::new(0), Mutex::new(directory));
-        Ok(HashTable { pool, file, meta, capacity, shape, version, heads, directory, stripes })
+        Ok(HashTable { pool, file, meta, capacity, shape, version, heads, directory, stripes, scans: AtomicU64::new(0) })
     }
 
     fn new_page(pool: &BufferPool, file: FileId, content: Vec<u8>) -> Result<PageId> {
@@ -408,48 +414,6 @@ impl HashTable {
         Ok(removed)
     }
 
-    /// Every entry, bucket by bucket, each bucket's in the order added.
-    ///
-    /// # Errors
-    ///
-    /// As `get`.
-    pub fn scan(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        let _changing = lock_builtin(&self.directory);
-        let all: Vec<u64> = (0..STRIPES).collect();
-        let _locked = self.lock(&all);
-        let mut out = Vec::new();
-        for b in 0..self.current().buckets() {
-            out.extend(self.chain(self.head(b)?)?.1.into_iter().map(|(_, e)| e));
-        }
-        Ok(out)
-    }
-
-    /// Every entry's key, bucket by bucket, each bucket read under its
-    /// stripe's lock alone, so writers go on meanwhile: for statistics, as
-    /// a bucket split during the scan may move an entry past it, or before.
-    pub fn keys(&self) -> impl Iterator<Item = Result<Vec<u8>>> + '_ {
-        let (mut b, mut pending) = (0_u64, Vec::new().into_iter());
-        std::iter::from_fn(move || {
-            loop {
-                if let Some(key) = pending.next() {
-                    return Some(Ok(key));
-                }
-                if b >= self.current().buckets() {
-                    return None;
-                }
-                let read = {
-                    let _locked = self.lock(&[b]);
-                    self.head(b).and_then(|head| self.chain(head))
-                };
-                b = b.saturating_add(1);
-                match read {
-                    Ok((_, entries)) => pending = entries.into_iter().map(|(_, (key, _))| key).collect::<Vec<_>>().into_iter(),
-                    Err(e) => return Some(Err(e)),
-                }
-            }
-        })
-    }
-
     /// The pages of the chain that begins at `head`, and its entries, each
     /// with its key's hash.
     fn chain(&self, head: PageId) -> Result<(Vec<PageId>, Hashed)> {
@@ -513,10 +477,10 @@ impl HashTable {
     }
 
     /// Splits buckets while the entries fill too many pages, unless another
-    /// change of shape is under way.
+    /// change of shape, or a scan, is under way.
     fn grow(&self) -> Result<()> {
         let Ok(mut directory) = self.directory.try_lock() else { return Ok(()) };
-        while self.fill(self.buckets()).0 && self.buckets() < self.max_buckets() {
+        while !self.scanned() && self.fill(self.buckets()).0 && self.buckets() < self.max_buckets() {
             self.split(&mut directory)?;
         }
         Ok(())
@@ -542,10 +506,10 @@ impl HashTable {
     }
 
     /// Merges buckets back while the entries fill too few pages, unless
-    /// another change of shape is under way.
+    /// another change of shape, or a scan, is under way.
     fn shrink(&self) -> Result<()> {
         let Ok(mut directory) = self.directory.try_lock() else { return Ok(()) };
-        while self.fill(self.buckets()).1 && self.buckets() > 1 {
+        while !self.scanned() && self.fill(self.buckets()).1 && self.buckets() > 1 {
             self.merge(&mut directory)?;
         }
         Ok(())

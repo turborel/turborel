@@ -329,8 +329,8 @@ impl State {
     }
 
     /// The index named `name`.
-    pub(crate) fn index_of(&self, name: &str) -> Result<&dyn Index> {
-        self.indexes.get(name).map(AsRef::as_ref).ok_or_else(|| api(format!("[DESIGN] the index {name} does not exist")))
+    pub(crate) fn index_of(&self, name: &str) -> Result<&Arc<dyn Index>> {
+        self.indexes.get(name).ok_or_else(|| api(format!("[DESIGN] the index {name} does not exist")))
     }
 }
 
@@ -401,7 +401,7 @@ mod tests {
         drop(tx);
         assert_eq!((st.tx.active(), st.damaged_tables()), (0, vec![]));
         assert_eq!(Arc::clone(&storage).scan(crate::txn::NO_TRANSACTION, &[0]).count(), 0, "the row undone");
-        assert!(index.search(&crate::index::Probe::All).unwrap().is_empty(), "its entry undone");
+        assert_eq!(index.search(&crate::index::Probe::All, crate::index::KeyOrder::Ascending).count(), 0, "its entry undone");
     }
 
     /// Verifies: [DESIGN] attaching a catalog whose index names an index method

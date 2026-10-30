@@ -11,14 +11,15 @@
 //! remove takes back one. A probe value of its column's type is looked up
 //! by its key; one not exactly of it (a number of a finer scale, a string
 //! longer than the column) by its anchor, each entry found checked; one of
-//! another kind is checked against every entry.
+//! another kind is checked against every entry, a bucket at a time as the
+//! entries are taken (`engine/hash/scan.rs`).
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::stats::KeyCounts;
-use super::{HASH_METHOD, Index, IndexMethod, Key, Probe};
+use super::{Entries, HASH_METHOD, Index, IndexMethod, Key, KeyOrder, Probe};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
@@ -225,40 +226,39 @@ impl HashIndex {
         Lookup::Key { key, checked }
     }
 
-    /// The (key, row) pairs `probe` selects, each once, their keys decoded.
-    fn pairs(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        match self.lookup(probe) {
-            Lookup::Nothing => Ok(Vec::new()),
-            Lookup::Key { key, checked } => {
-                // One key: decoded once, its rows each once.
-                let rows = once_each(self.table.get(&key)?.iter().map(|v| row_of(v)).collect::<Result<_>>()?);
-                if rows.is_empty() {
-                    return Ok(Vec::new());
-                }
-                let decoded = Key(decode_key(&key, &self.types)?);
-                if checked && !probe.answers(&decoded.0) {
-                    return Ok(Vec::new());
-                }
-                Ok(rows.into_iter().map(|r| (decoded.clone(), r)).collect())
-            }
-            Lookup::Every => {
-                let mut seen = BTreeSet::new();
-                let mut out = Vec::new();
-                for (k, v) in self.table.scan()? {
-                    let row = row_of(&v)?;
-                    if !seen.insert((row, k.clone())) {
-                        continue;
-                    }
-                    let key = Key(decode_key(&k, &self.types)?);
-                    // Every entry, unchecked, only for `Probe::All`.
-                    if matches!(probe, Probe::All) || probe.answers(&key.0) {
-                        out.push((key, row));
-                    }
-                }
-                Ok(out)
-            }
+    /// The (key, row) pairs under `key`, each once, its key decoded: none
+    /// if `checked` and the key does not answer `probe`.
+    fn keyed(&self, key: &[u8], checked: bool, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
+        let rows = once_each(self.table.get(key)?.iter().map(|v| row_of(v)).collect::<Result<_>>()?);
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let decoded = Key(decode_key(key, &self.types)?);
+        if checked && !probe.answers(&decoded.0) {
+            return Ok(Vec::new());
+        }
+        Ok(rows.into_iter().map(|r| (decoded.clone(), r)).collect())
+    }
+}
+
+/// The (key, row) pairs of `bucket` that answer `probe`, each once (a
+/// pair's entries are all in its key's bucket), their keys decoded as
+/// `types` say.
+fn answering(bucket: Vec<(Vec<u8>, Vec<u8>)>, types: &[DataType], probe: &Probe) -> Result<Vec<(Key, RowId)>> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for (k, v) in bucket {
+        let row = row_of(&v)?;
+        if !seen.insert((row, k.clone())) {
+            continue;
+        }
+        let key = Key(decode_key(&k, types)?);
+        // Every entry, unchecked, only for `Probe::All`.
+        if matches!(probe, Probe::All) || probe.answers(&key.0) {
+            out.push((key, row));
         }
     }
+    Ok(out)
 }
 
 impl Index for HashIndex {
@@ -302,14 +302,31 @@ impl Index for HashIndex {
             Lookup::Key { key, checked: false } => {
                 self.table.get(&key).ok().map(|v| once_each(v.iter().filter_map(|v| row_of(v).ok()).collect()).len())
             }
-            Lookup::Key { checked: true, .. } => self.pairs(probe).ok().map(|p| p.len()),
+            Lookup::Key { key, checked: true } => self.keyed(&key, true, probe).ok().map(|p| p.len()),
             // Only `Probe::All` is answered by every entry unchecked.
             Lookup::Every => matches!(probe, Probe::All).then(|| usize::try_from(self.table.len()).ok()).flatten(),
         }
     }
 
-    fn search(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        self.pairs(probe)
+    /// One key's entries, a lookup; or every entry, a bucket at a time,
+    /// the table's shape held meanwhile (`engine/hash/scan.rs`). In no
+    /// order: `order` is not asked of a method not ordered.
+    fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
+        match self.lookup(probe) {
+            Lookup::Nothing => Box::new(std::iter::empty()),
+            Lookup::Key { key, checked } => match self.keyed(&key, checked, probe) {
+                Ok(found) => Box::new(found.into_iter().map(Ok)),
+                Err(e) => Box::new(std::iter::once(Err(e))),
+            },
+            Lookup::Every => {
+                let (types, probe) = (self.types.clone(), probe.clone());
+                let buckets = Arc::clone(&self.table).scan();
+                Box::new(buckets.flat_map(move |bucket| match bucket.and_then(|b| answering(b, &types, &probe)) {
+                    Ok(found) => found.into_iter().map(Ok).collect::<Vec<_>>(),
+                    Err(e) => vec![Err(e)],
+                }))
+            }
+        }
     }
 
     /// Its table's entries and their bytes, u64 each, little-endian; then

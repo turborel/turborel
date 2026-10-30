@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use turborel::db::Database;
 use turborel::error::{self, Code};
-use turborel::index::{BTreeMethod, Index, IndexMethod, Key, Probe};
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::storage::RowId;
 use turborel::value::{CompOp, DataType};
 
@@ -21,7 +21,7 @@ struct Counting {
 
 /// An index of `Counting`.
 struct CountingIndex {
-    inner: Box<dyn Index>,
+    inner: Arc<dyn Index>,
     checks: Arc<AtomicUsize>,
 }
 
@@ -36,7 +36,7 @@ impl IndexMethod for Counting {
         self.inner.ordered()
     }
     fn create(&self, columns: &[DataType]) -> error::Result<Box<dyn Index>> {
-        Ok(Box::new(CountingIndex { inner: self.inner.create(columns)?, checks: Arc::clone(&self.checks) }))
+        Ok(Box::new(CountingIndex { inner: Arc::from(self.inner.create(columns)?), checks: Arc::clone(&self.checks) }))
     }
 }
 
@@ -57,8 +57,8 @@ impl Index for CountingIndex {
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.inner.estimate(probe)
     }
-    fn search(&self, probe: &Probe) -> error::Result<Vec<(Key, RowId)>> {
-        self.inner.search(probe)
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        Arc::clone(&self.inner).search(probe, order)
     }
 }
 

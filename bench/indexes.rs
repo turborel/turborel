@@ -21,7 +21,7 @@ mod harness;
 use std::sync::Arc;
 
 use harness::{Bench, Case, on_threads, scatter};
-use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, Probe};
+use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::value::Spelled;
 use turborel::value::{CompOp, DataType, Decimal, Value};
 
@@ -52,10 +52,13 @@ fn workloads(bench: &Bench, method: &str, threads: usize) {
         || index(bench, method),
         |index| insert(&*index, threads, scattered),
     );
-    let full = index(bench, method);
+    let full: Arc<dyn Index> = Arc::from(index(bench, method));
     insert(&*full, threads, scattered);
     let probed = |t: usize| {
-        (0..ENTRIES).all(|n| full.search(&Probe::Compare { op: CompOp::Eq, value: number(scattered(t, n)) }).unwrap().len() == 1)
+        (0..ENTRIES).all(|n| {
+            let probe = Probe::Compare { op: CompOp::Eq, value: number(scattered(t, n)) };
+            Arc::clone(&full).search(&probe, KeyOrder::Ascending).map(Result::unwrap).count() == 1
+        })
     };
     bench.measure(Case::new(format!("search, equality, {method}"), "probes").threads(threads), || {
         on_threads(threads, |t| assert!(probed(t)));

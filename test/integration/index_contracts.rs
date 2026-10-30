@@ -8,7 +8,8 @@ use turborel::disk::buffer::{BufferPool, Clock};
 use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::OsFileSystem;
 use turborel::disk::pager::Pager;
-use turborel::index::{BTreeMethod, HashMethod, IndexMethod, Key, Probe};
+use turborel::error::Result;
+use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::storage::RowId;
 use turborel::value::{CompOp, DataType, Spelled, compare};
 
@@ -24,6 +25,18 @@ fn key(n: i128) -> Key {
     Key(vec![number(n)])
 }
 
+/// Every entry `probe` selects in `index`, in ascending key order if its
+/// method is ordered: its search read whole.
+fn searched(index: &Arc<dyn Index>, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
+    Arc::clone(index).search(probe, KeyOrder::Ascending).collect()
+}
+
+/// The ids `probe` selects in `index`, its search asked for descending
+/// keys.
+fn descending(index: &Arc<dyn Index>, probe: &Probe) -> Vec<RowId> {
+    Arc::clone(index).search(probe, KeyOrder::Descending).map(|entry| entry.unwrap().1).collect()
+}
+
 /// The ids whose key satisfies `key op value`, by the comparison rules.
 fn expected(op: CompOp, value: i128) -> Vec<RowId> {
     ENTRIES.iter().filter(|(k, _)| compare(&number(*k), &number(value)).is_some_and(|o| op.holds(o))).map(|(_, id)| *id).collect()
@@ -31,12 +44,12 @@ fn expected(op: CompOp, value: i128) -> Vec<RowId> {
 
 /// Checks the `IndexMethod` and `Index` contracts on `method`.
 fn index_contract(method: &dyn IndexMethod) {
-    let index = method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }]).unwrap();
-    assert!(index.search(&Probe::All).unwrap().is_empty(), "a new index is empty");
+    let index: Arc<dyn Index> = Arc::from(method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }]).unwrap());
+    assert!(searched(&index, &Probe::All).unwrap().is_empty(), "a new index is empty");
     for (k, id) in ENTRIES {
         index.insert(key(k), id).unwrap();
     }
-    let ids = |probe: &Probe| index.search(probe).unwrap().into_iter().map(|(_, id)| id).collect::<Vec<_>>();
+    let ids = |probe: &Probe| searched(&index, probe).unwrap().into_iter().map(|(_, id)| id).collect::<Vec<_>>();
     let key_of = |id: RowId| ENTRIES.iter().find(|(_, i)| *i == id).map(|(k, _)| *k).unwrap();
     for op in OPERATORS.into_iter().filter(|op| method.supports(*op)) {
         for value in PROBES {
@@ -46,7 +59,7 @@ fn index_contract(method: &dyn IndexMethod) {
             sorted.sort_unstable();
             assert_eq!(sorted, expected(op, value), "{} {op:?} {value}", method.name());
             assert!(
-                index.search(&probe).unwrap().iter().all(|(k, id)| *k == key(key_of(*id))),
+                searched(&index, &probe).unwrap().iter().all(|(k, id)| *k == key(key_of(*id))),
                 "{} returns each entry's key",
                 method.name()
             );
@@ -54,6 +67,8 @@ fn index_contract(method: &dyn IndexMethod) {
             assert!(estimate.is_none_or(|n| n == found.len()), "{} {op:?} {value}: an estimate known cheaply is exact here", method.name());
             if method.ordered() {
                 assert!(found.windows(2).all(|w| key_of(w[0]) <= key_of(w[1])), "{} {op:?} {value} in key order", method.name());
+                let reversed: Vec<RowId> = found.iter().rev().copied().collect();
+                assert_eq!(descending(&index, &probe), reversed, "{} {op:?} {value} descending", method.name());
             }
         }
     }
@@ -84,7 +99,7 @@ fn index_contract(method: &dyn IndexMethod) {
 /// answers it, in key order if the method is ordered.
 fn prefix_contract(method: &dyn IndexMethod) {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index = method.create(&[exact, exact]).unwrap();
+    let index: Arc<dyn Index> = Arc::from(method.create(&[exact, exact]).unwrap());
     let keys: Vec<Key> = (0..4).flat_map(|a| (0..4).map(move |b| Key(vec![number(a), number(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
         index.insert(k.clone(), id).unwrap();
@@ -97,7 +112,7 @@ fn prefix_contract(method: &dyn IndexMethod) {
         for (a, b) in (0..5).flat_map(|a| (0..5).map(move |b| (a, b))) {
             let values = [number(a), number(b)];
             let probe = Probe::Prefix { equal: values.get(..equal).unwrap().to_vec(), then: then.map(|op| (op, number(b))) };
-            let found: Vec<RowId> = index.search(&probe).unwrap().into_iter().map(|(_, id)| id).collect();
+            let found: Vec<RowId> = searched(&index, &probe).unwrap().into_iter().map(|(_, id)| id).collect();
             let mut sorted = found.clone();
             sorted.sort_unstable();
             let expected: Vec<RowId> = (1..).zip(&keys).filter(|(_, k)| probe.answers(&k.0)).map(|(id, _)| id).collect();
@@ -115,7 +130,7 @@ fn prefix_contract(method: &dyn IndexMethod) {
 /// exactly the entries whose key answers it, in key order.
 fn range_contract(method: &dyn IndexMethod) {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let index = method.create(&[exact, exact]).unwrap();
+    let index: Arc<dyn Index> = Arc::from(method.create(&[exact, exact]).unwrap());
     let keys: Vec<Key> = (0..4).flat_map(|a| (0..6).map(move |b| Key(vec![number(a), number(b)]))).collect();
     for (id, k) in (1..).zip(&keys) {
         index.insert(k.clone(), id).unwrap();
@@ -130,19 +145,22 @@ fn range_contract(method: &dyn IndexMethod) {
         {
             let probe =
                 Probe::Range { equal: vec![number(2); equal], low: Box::new((low, number(lo))), high: Box::new((high, number(hi))) };
-            let found: Vec<RowId> = index.search(&probe).unwrap().into_iter().map(|(_, id)| id).collect();
+            let found: Vec<RowId> = searched(&index, &probe).unwrap().into_iter().map(|(_, id)| id).collect();
             let expected: Vec<RowId> = (1..).zip(&keys).filter(|(_, k)| probe.answers(&k.0)).map(|(id, _)| id).collect();
             assert_eq!(found, expected, "{} {probe:?}", method.name());
+            let reversed: Vec<RowId> = expected.iter().rev().copied().collect();
+            assert_eq!(descending(&index, &probe), reversed, "{} {probe:?} descending", method.name());
         }
     }
 }
 
 /// Verifies: [EXTENSION] `IndexMethod` and `Index` contracts, for the built-in
 /// btree (in memory and in a pager file) and hash methods: every supported
-/// probe, of one column, a prefix of two, or a range (RULES.md D34), returns exactly
-/// the matching entries, with their keys, in key order if the method is
-/// ordered; an estimate known cheaply is exact; entries are counted, a pair
-/// inserted twice staying until removed twice.
+/// probe, of one column, a prefix of two, or a range (RULES.md D34), returns
+/// exactly the matching entries, with their keys, in the key order asked,
+/// ascending or descending, if the method is ordered; an estimate known
+/// cheaply is exact; entries are counted, a pair inserted twice staying
+/// until removed twice.
 #[test]
 fn built_in_index_methods_keep_the_index_contract() {
     let scratch = Scratch::new("contract-btree");

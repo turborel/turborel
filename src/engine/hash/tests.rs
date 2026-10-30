@@ -44,7 +44,7 @@ fn next(state: &mut u64) -> u64 {
 #[test]
 fn it_holds_what_a_model_holds() {
     let (pool, file) = pool(8);
-    let table = HashTable::create(pool, file).unwrap();
+    let table = Arc::new(HashTable::create(pool, file).unwrap());
     let mut model: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
     let mut state = 0x9E37_79B9_7F4A_7C15_u64;
     let mut most = 0;
@@ -65,7 +65,7 @@ fn it_holds_what_a_model_holds() {
         assert_eq!(&table.get(k).unwrap(), values);
     }
     assert_eq!(table.len(), u64::try_from(model.values().map(Vec::len).sum::<usize>()).unwrap());
-    assert_eq!(u64::try_from(table.scan().unwrap().len()).unwrap(), table.len());
+    assert_eq!(u64::try_from(Arc::clone(&table).scan().map(|b| b.unwrap().len()).sum::<usize>()).unwrap(), table.len());
     assert!(most > 8, "it grew: {most} buckets");
     for (k, values) in &model {
         for v in values {
@@ -221,4 +221,35 @@ fn it_reopens_counting_what_it_holds() {
         assert!(again.remove(&key(n), &n.to_le_bytes()).unwrap());
     }
     assert_eq!((again.len(), again.buckets()), (0, 1));
+}
+
+/// Verifies: [DESIGN] `hash/scan.rs`: a scan reads a bucket at a time, and
+/// while it lives the shape does not change, so every entry held
+/// throughout is given once though writers fill the table meanwhile; once
+/// it is dropped, the table grows again.
+#[test]
+fn a_scan_holds_the_shape_while_writers_go_on() {
+    let (pool, file) = pool(64);
+    let table = Arc::new(HashTable::create(pool, file).unwrap());
+    for n in 0..200_u64 {
+        table.insert(&key(n), b"held").unwrap();
+    }
+    let before = table.buckets();
+    let mut scan = Arc::clone(&table).scan();
+    let mut seen: Vec<Vec<u8>> = scan.next().unwrap().unwrap().into_iter().map(|(k, _)| k).collect();
+    for n in 200..2_000_u64 {
+        table.insert(&key(n), b"added").unwrap();
+    }
+    assert_eq!(table.buckets(), before, "no split while a scan lives");
+    for bucket in scan {
+        seen.extend(bucket.unwrap().into_iter().filter(|(_, v)| v.as_slice() == b"held").map(|(k, _)| k));
+    }
+    seen.sort_unstable();
+    let mut held: Vec<Vec<u8>> = (0..200_u64).map(key).collect();
+    held.sort_unstable();
+    assert_eq!(seen, held, "each entry held throughout, once");
+    for n in 2_000..2_200_u64 {
+        table.insert(&key(n), b"added").unwrap();
+    }
+    assert!(table.buckets() > before, "it grows again once the scan is gone");
 }

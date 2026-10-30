@@ -7,6 +7,7 @@ use std::thread;
 
 use super::*;
 use crate::engine::memory_file;
+use crate::index::searched;
 use crate::value::Spelled;
 use crate::value::{Decimal, Value, compare};
 
@@ -17,14 +18,14 @@ fn exact(units: i128, scale: u32) -> Value {
 }
 
 /// An index on columns of `types`, in memory.
-fn index(types: &[DataType]) -> BLinkIndex {
+fn index(types: &[DataType]) -> Arc<BLinkIndex> {
     let (pool, file) = memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 4_i32), "a test").unwrap();
-    BLinkIndex::with(BLinkTree::create(pool, file).unwrap(), types, KeyCounts::new())
+    Arc::new(BLinkIndex::with(BLinkTree::create(pool, file).unwrap(), types, KeyCounts::new()))
 }
 
 /// The rows `probe` finds in `index`, in the order found.
-fn found(index: &BLinkIndex, op: CompOp, value: Value) -> Vec<RowId> {
-    index.search(&Probe::Compare { op, value }).unwrap().into_iter().map(|(_, row)| row).collect()
+fn found(index: &Arc<BLinkIndex>, op: CompOp, value: Value) -> Vec<RowId> {
+    searched(index, &Probe::Compare { op, value }).unwrap().into_iter().map(|(_, row)| row).collect()
 }
 
 /// Verifies: [X3.135-1986 §5.11 GR2, GR3]; [DESIGN] RULES.md D31, probes:
@@ -68,7 +69,7 @@ fn strings_longer_than_the_column_are_compared_padded() {
     assert_eq!(found(&index, CompOp::Gt, chars("abcd")), [3]);
     assert_eq!(found(&index, CompOp::Le, chars("abcd")), [1, 2]);
     assert_eq!(found(&index, CompOp::Eq, chars("abcd")), Vec::<RowId>::new());
-    let (key, _) = index.search(&Probe::All).unwrap().remove(0);
+    let (key, _) = searched(&index, &Probe::All).unwrap().remove(0);
     assert_eq!(format!("{:?}", key.0), "[Char(\"ab \")]");
 }
 
@@ -84,7 +85,7 @@ fn many_entries_stay_in_key_order() {
         index.insert(Key(vec![exact(units, 0)]), row).unwrap();
     }
     assert!(index.tree.height().unwrap() > 1);
-    let all = index.search(&Probe::All).unwrap();
+    let all = searched(&index, &Probe::All).unwrap();
     assert_eq!(all.len(), 20_000);
     assert!(all.windows(2).all(|w| w[0].0 < w[1].0 || (w[0].0 == w[1].0 && w[0].1 < w[1].1)));
     assert_eq!(index.rows(&Key(vec![exact(7, 0)])).unwrap(), (0..40).map(|i| 7 + 500 * i).collect::<Vec<_>>());
@@ -95,6 +96,29 @@ fn many_entries_stay_in_key_order() {
         index.remove(&Key(vec![exact(7, 0)]), row).unwrap();
     }
     assert_eq!(index.rows(&Key(vec![exact(7, 0)])).unwrap(), Vec::<RowId>::new());
+}
+
+/// Verifies: [DESIGN] RULES.md D34, `Index::search`: a search reads a leaf
+/// at a time as its entries are taken, forward or backward, so a key
+/// inserted at the far end of a tree of many leaves after its first entry
+/// is taken is found as it reaches that leaf; the search holds its index,
+/// outliving the reference it was asked through. Regression test
+/// (R-TEST-7): a search read every entry before giving the first.
+#[test]
+fn a_search_reads_as_its_entries_are_taken() {
+    let index = index(&[MONEY]);
+    for row in 1..3_000_u64 {
+        index.insert(Key(vec![exact(i128::from(row), 0)]), row).unwrap();
+    }
+    assert!(index.tree.height().unwrap() > 1, "many leaves");
+    let mut up = Arc::clone(&index).search(&Probe::All, KeyOrder::Ascending);
+    let mut down = Arc::clone(&index).search(&Probe::All, KeyOrder::Descending);
+    assert_eq!((up.next().unwrap().unwrap().1, down.next().unwrap().unwrap().1), (1, 2_999));
+    index.insert(Key(vec![exact(5_000, 0)]), 5_000).unwrap();
+    index.insert(Key(vec![exact(0, 0)]), 0).unwrap();
+    drop(index);
+    assert_eq!(up.map(|e| e.unwrap().1).last(), Some(5_000), "the far end's new key, ascending");
+    assert_eq!(down.map(|e| e.unwrap().1).last(), Some(0), "and descending");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, counts: threads inserting and removing
@@ -135,9 +159,9 @@ fn long_and_malformed_entries_are_refused() {
     let index = index(&[DataType::Character { length }]);
     let long = Key(vec![Value::Char("x".repeat(most))]);
     assert_eq!(index.insert(long, 1).err().map(|e| e.code), Some(Code::Unsupported));
-    assert_eq!(index.search(&Probe::All).unwrap().len(), 0);
+    assert_eq!(searched(&index, &Probe::All).unwrap().len(), 0);
     index.tree.insert(&[1, b'a'], &[]).unwrap();
-    assert_eq!(index.search(&Probe::All).err().map(|e| e.code), Some(Code::Corrupt), "a key shorter than a row id");
+    assert_eq!(searched(&index, &Probe::All).err().map(|e| e.code), Some(Code::Corrupt), "a key shorter than a row id");
     assert_eq!(index.estimate(&Probe::All), None, "an estimate that fails is not known");
     let numbers = self::index(&[MONEY]);
     let entry = numbers.entry(&Key(vec![exact(1, 0)]), 5).unwrap();
@@ -153,10 +177,11 @@ fn long_and_malformed_entries_are_refused() {
 fn the_method_makes_indexes() {
     let method = BTreeMethod::in_memory();
     assert_eq!((method.name(), method.ordered(), method.supports(CompOp::Ne), method.supports(CompOp::Le)), ("btree", true, false, true));
-    let (a, b) = (method.create(&[MONEY]).unwrap(), method.create(&[MONEY]).unwrap());
+    let (a, b): (Arc<dyn Index>, Arc<dyn Index>) =
+        (Arc::from(method.create(&[MONEY]).unwrap()), Arc::from(method.create(&[MONEY]).unwrap()));
     a.insert(Key(vec![exact(1, 0)]), 1).unwrap();
-    assert_eq!(b.search(&Probe::All).unwrap().len(), 0, "each index its own tree");
-    assert_eq!(a.search(&Probe::All).unwrap().len(), 1);
+    assert_eq!(searched(&b, &Probe::All).unwrap().len(), 0, "each index its own tree");
+    assert_eq!(searched(&a, &Probe::All).unwrap().len(), 1);
 }
 
 /// Verifies: [EXTENSION] RULES.md D34, a dropped index: its pages, every
@@ -197,7 +222,7 @@ fn a_discarded_index_frees_its_pages_when_it_goes() {
     dropped.discard();
     drop(dropped);
     assert_eq!(pager.free_pages(), free, "a reader still holds it");
-    assert_eq!(reader.search(&Probe::Compare { op: CompOp::Eq, value: exact(42, 2) }).unwrap().len(), 1);
+    assert_eq!(searched(&reader, &Probe::Compare { op: CompOp::Eq, value: exact(42, 2) }).unwrap().len(), 1);
     drop(reader);
     let freed = pager.free_pages() - free;
     assert_eq!(size - free - freed, in_use, "every page of the dropped tree freed");
@@ -239,7 +264,7 @@ fn prefix_probes_find_what_sql_compares() {
     }
     for probe in probes {
         let expected: Vec<RowId> = (1..).zip(&keys).filter(|(_, k)| probe.answers(&k.0)).map(|(r, _)| r).collect();
-        let got: Vec<RowId> = index.search(&probe).unwrap().into_iter().map(|(_, row)| row).collect();
+        let got: Vec<RowId> = searched(&index, &probe).unwrap().into_iter().map(|(_, row)| row).collect();
         assert_eq!(got, expected, "{probe:?}");
         assert_eq!(index.estimate(&probe), Some(expected.len()), "{probe:?}");
     }

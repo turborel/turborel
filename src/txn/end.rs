@@ -159,7 +159,7 @@ impl State {
                 .catalog
                 .indexes(table)
                 .into_iter()
-                .filter_map(|ix| Some((self.index_of(&ix.name).ok()?, ix.columns.as_slice())))
+                .filter_map(|ix| Some((&**self.index_of(&ix.name).ok()?, ix.columns.as_slice())))
                 .collect();
             // Each version's entries go as it is removed. A failure leaves
             // the rest for a later call; an entry left behind only costs

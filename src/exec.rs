@@ -33,7 +33,7 @@ use std::sync::Arc;
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Key, Probe};
+use crate::index::{Entries as IndexEntries, Key, KeyOrder, Probe};
 use crate::logical::{Cond, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage, project};
@@ -209,9 +209,9 @@ fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     match probe_index(db, &table, &index, &probe, reverse) {
         Ok(Found { storage, columns, entries }) => match storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe }) {
             Ok(()) => {
-                let rows = entries
-                    .into_iter()
-                    .filter_map(move |(key, id)| fetch(&*storage, &columns, tx, &key, id).transpose().map(|r| r.map(|(_, row)| row)));
+                let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+                    entry.and_then(|(key, id)| fetch(&*storage, &columns, tx, &key, id)).transpose().map(|r| r.map(|(_, row)| row))
+                });
                 Box::new(checked(rows, db.tx.stop_of(tx)))
             }
             Err(e) => failed(e),
@@ -285,8 +285,8 @@ struct Found {
     storage: Arc<dyn TableStorage>,
     /// The index's columns.
     columns: Vec<usize>,
-    /// The entries, in index order or reversed.
-    entries: Vec<(Key, RowId)>,
+    /// The entries, in index order or reversed, read as they are taken.
+    entries: IndexEntries,
 }
 
 /// Row `id` of `storage`, as `tx` sees it, if that version has `key` in the
@@ -298,9 +298,10 @@ fn fetch(storage: &dyn TableStorage, columns: &[usize], tx: TxId, key: &Key, id:
     Ok(seen.filter(|seen| seen == key).map(|_| (id, row)))
 }
 
-/// What `index` finds for `probe`, in index order, or reversed. The rows
-/// are chosen by a condition: callers tell the table's engine
-/// (`TableStorage::read_by_condition`).
+/// What `index` finds for `probe`, in index order, or reversed, read as
+/// it is taken: callers look for a cancel as each entry is read (RULES.md
+/// D44). The rows are chosen by a condition: callers tell the table's
+/// engine (`TableStorage::read_by_condition`).
 fn probe_index(db: &State, table: &QualifiedName, index: &str, probe: &Probe, reverse: bool) -> Result<Found> {
     let storage = Arc::clone(db.storage_of(table)?);
     let columns = db
@@ -308,10 +309,8 @@ fn probe_index(db: &State, table: &QualifiedName, index: &str, probe: &Probe, re
         .index(index)
         .map(|ix| ix.columns.clone())
         .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
-    let mut entries = db.index_of(index)?.search(probe)?;
-    if reverse {
-        entries.reverse();
-    }
+    let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
+    let entries = Arc::clone(db.index_of(index)?).search(probe, order);
     Ok(Found { storage, columns, entries })
 }
 

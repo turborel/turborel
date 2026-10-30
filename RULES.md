@@ -1147,6 +1147,14 @@ the buffer pool, so an index larger than memory lives in its file:
 - `hash`, a linear hash table (Litwin, 1980) keyed by the encoded key:
   equality only, growing and shrinking a bucket at a time, readers locking
   nothing.
+A search gives its entries as it reads them (`Index::search`, an iterator
+holding its index, so a cursor may outlive the call): the B-link tree's a
+leaf at a time, backward for descending keys; the hash table's one key's,
+or, for a probe of every entry, a bucket at a time, its shape held while
+the search lives, so each entry is found once, a split or merge due
+meanwhile left to the writers after. So a read of a whole index, as an
+ORDER BY in its order is, holds a leaf or a bucket of it, not the index,
+and the statement looks for a cancel as each entry is read (D44).
 A probe value not of the column's type is placed by its anchor and each
 entry found checked, so an index finds exactly what SQL compares.
 An index built from its table while nothing else writes it (rebuilt as a

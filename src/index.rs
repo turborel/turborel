@@ -14,6 +14,7 @@ mod hash;
 mod stats;
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 pub use blink::BTreeMethod;
 pub use hash::HashMethod;
@@ -64,6 +65,21 @@ impl PartialEq for Key {
 }
 
 impl Eq for Key {}
+
+/// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
+/// are taken (`Index::search`).
+pub type Entries = Box<dyn Iterator<Item = Result<(Key, RowId)>> + Send>;
+
+/// \[DESIGN\] The order an ordered method's search gives its entries in
+/// (`IndexMethod::ordered`); a method that is not ordered gives them in
+/// its own, whichever is asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOrder {
+    /// Ascending keys, by the [X3.135-1986 §5.11] comparison rules.
+    Ascending,
+    /// Descending keys.
+    Descending,
+}
 
 /// What an index is asked for.
 #[derive(Debug, Clone)]
@@ -135,8 +151,8 @@ impl Probe {
 ///   `supports_prefix(columns, equal, then)` only if every index it creates
 ///   on `columns` columns answers exactly a `Probe::Prefix` of `equal`
 ///   values and a comparison by `then`.
-/// * `ordered()` is true only if `search` returns ids in ascending key order by
-///   the [X3.135-1986 §5.11] comparison rules.
+/// * `ordered()` is true only if `search` gives its entries in the key
+///   order asked (`KeyOrder`), by the [X3.135-1986 §5.11] comparison rules.
 /// * `create` returns an empty index on columns of the types given.
 /// * `open` returns the index whose `locator` it gave, holding the entries
 ///   it held at the last `checkpoint`, or `None` if it keeps nothing between
@@ -172,8 +188,9 @@ pub trait IndexMethod: Send + Sync {
     fn supports_range(&self, _columns: usize, _equal: usize) -> bool {
         false
     }
-    /// Does `search` return row ids in ascending key order (by the [X3.135-1986 §5.11]
-    /// comparison rules)? If so, the planner may use it to satisfy ORDER BY.
+    /// Does `search` give its entries in the key order asked (by the
+    /// [X3.135-1986 §5.11] comparison rules)? If so, the planner may use it
+    /// to satisfy ORDER BY.
     fn ordered(&self) -> bool {
         false
     }
@@ -233,7 +250,8 @@ pub trait IndexMethod: Send + Sync {
     }
 }
 
-/// Methods take `&self`: an index guards its own state (see storage.rs).
+/// Methods take `&self`, `search` the index held: an index guards its own
+/// state (see storage.rs).
 /// Changes are recorded in the coordinator's undo log, so an index needs no
 /// transaction support of its own. A change that fails has not been made:
 /// the statement fails, and an undo that fails marks the table damaged
@@ -251,9 +269,15 @@ pub trait IndexMethod: Send + Sync {
 /// Contract (RULES.md R-SAFE-3; checked by `test/integration/index_contracts.rs`):
 /// * Callers never insert a key containing a null, and probe only with
 ///   operators the method `supports`.
-/// * `search` returns exactly the (key, id) pairs inserted more often than
+/// * `search` gives exactly the (key, id) pairs inserted more often than
 ///   removed whose key satisfies the probe by the [X3.135-1986 §5.11]
-///   comparison rules (`Probe::All`: every pair), each once.
+///   comparison rules (`Probe::All`: every pair), each once, as it is read:
+///   holding no more of them in memory than a page's, or a bucket's, so a
+///   probe of a whole index costs what is read of it, and the caller
+///   looks for a cancel between entries (RULES.md D34, D44). A pair
+///   inserted or removed while it reads may or may not be given; one held
+///   throughout is given once. An error of its storage is given as an
+///   entry is; callers read no further.
 /// * `rows(key)` returns the ids of the pairs with a key equal to `key`,
 ///   each once.
 /// * `remove` takes back one insert of that (key, id) pair; removing a pair
@@ -340,12 +364,12 @@ pub trait Index: Send + Sync {
     fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
         None
     }
-    /// The entries the probe selects, each (key, row) pair once.
-    ///
-    /// # Errors
-    ///
-    /// Its storage fails.
-    fn search(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>>;
+    /// The entries the probe selects, each (key, row) pair once, read as
+    /// they are taken: in `order` if the method is ordered. It holds the
+    /// index (`self: Arc<Self>`), so what it gives may outlive the call
+    /// that asked, as a cursor's rows do; an error of its storage is one
+    /// of the entries.
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries;
     /// What finds this index again when the database is opened
     /// (`IndexMethod::open`), kept in the catalog. Default: nothing.
     fn locator(&self) -> Vec<u8> {
@@ -360,6 +384,13 @@ pub trait Index: Send + Sync {
     /// changed: `on` holds them now (RULES.md D41), as for
     /// `TableStorage::reconfigure`. Default: nothing.
     fn reconfigure(&self, _on: (&TableDesc, &IndexDesc)) {}
+}
+
+/// Every entry `probe` selects in `index`, in ascending key order if its
+/// method is ordered: a search read whole, for tests.
+#[cfg(test)]
+pub(crate) fn searched<I: Index + ?Sized>(index: &Arc<I>, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
+    Index::search(Arc::clone(index), probe, KeyOrder::Ascending).collect()
 }
 
 /// The name of `BTreeMethod`, which also enforces UNIQUE constraints unless told otherwise.

@@ -15,21 +15,23 @@
 //! A probe reads the keys from its value's anchor (`engine/key.rs`) on, or
 //! up to it, and checks each key's first value against the probe by SQL's
 //! comparison rules, so a value not of the column's type finds exactly the
-//! keys it should. An estimate counts the entries a probe selects up to
+//! keys it should. A search reads a leaf at a time as its entries are
+//! taken (`engine/tree/scan.rs`), forward, or backward for descending keys.
+//! An estimate counts the entries a probe selects up to
 //! `COUNTED`: past that, it is not cheap, and the planner estimates from
 //! the table's statistics instead.
 
-use std::ops::Bound;
+use std::ops::{Bound, Deref};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::stats::KeyCounts;
-use super::{BTREE_METHOD, Index, IndexMethod, Key, Probe};
+use super::{BTREE_METHOD, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
 use crate::engine::key::{anchor, decode_key, encode_key};
-use crate::engine::tree::{BLinkTree, Direction, Update};
+use crate::engine::tree::{BLinkTree, Direction, Update, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
@@ -300,18 +302,24 @@ impl BLinkIndex {
         Some(Range { lower, upper, checked: checked || !exact })
     }
 
-    /// The entries `probe` selects, in key order: their keys, decoded if
-    /// `decoded` or checked, and rows.
-    fn entries<'a>(&'a self, probe: &'a Probe, decoded: bool) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + 'a {
+    /// The entries `probe` selects, read through `tree`, its own, in
+    /// `direction`: their keys, decoded if `decoded` or checked, and rows.
+    /// What it gives holds `tree` and its own copies of the probe and the
+    /// key's types, so it lives as long as `tree` does.
+    fn entries<T: Deref<Target = BLinkTree>>(
+        &self,
+        tree: T,
+        probe: &Probe,
+        (decoded, direction): (bool, Direction),
+    ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
         let range = self.range(probe);
         let checked = range.as_ref().is_some_and(|r| r.checked);
-        let scan = range
-            .as_ref()
-            .map(|r| self.tree.scan(r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), Direction::Forward));
+        let scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
+        let (probe, types) = (probe.clone(), self.types.clone());
         scan.into_iter().flatten().filter_map(move |entry| {
             let found = entry.and_then(|(entry, _)| {
                 let (key, row) = split(&entry)?;
-                let key = (decoded || checked).then(|| decode_key(key, &self.types).map(Key)).transpose()?;
+                let key = (decoded || checked).then(|| decode_key(key, &types).map(Key)).transpose()?;
                 Ok((key, row))
             });
             match found {
@@ -319,6 +327,17 @@ impl BLinkIndex {
                 Err(e) => Some(Err(e)),
             }
         })
+    }
+}
+
+/// An index's tree, reached through the index it holds: what a search
+/// reads, so the index outlives the search.
+struct Held(Arc<BLinkIndex>);
+
+impl Deref for Held {
+    type Target = BLinkTree;
+    fn deref(&self) -> &BLinkTree {
+        &self.0.tree
     }
 }
 
@@ -384,7 +403,7 @@ impl Index for BLinkIndex {
 
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         let mut counted = 0_usize;
-        for entry in self.entries(probe, false) {
+        for entry in self.entries(&self.tree, probe, (false, Direction::Forward)) {
             entry.ok()?;
             counted = counted.saturating_add(1);
             if counted > COUNTED {
@@ -416,8 +435,15 @@ impl Index for BLinkIndex {
         self.keys.locator(self.tree.meta().0)
     }
 
-    fn search(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        self.entries(probe, true).map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))).collect()
+    /// Read a leaf at a time (`engine/tree/scan.rs`), backward for
+    /// descending keys.
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        let direction = match order {
+            KeyOrder::Ascending => Direction::Forward,
+            KeyOrder::Descending => Direction::Backward,
+        };
+        let found = self.entries(Held(Arc::clone(&self)), probe, (true, direction));
+        Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
     }
 }
 

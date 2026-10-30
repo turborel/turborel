@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use turborel::catalog::{IndexDesc, TableDesc};
 use turborel::db::{Database, OpenOptions};
 use turborel::error::{Code, Result};
-use turborel::index::{BTreeMethod, Index, IndexMethod, Key, Probe};
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::settings::Kind;
 use turborel::storage::{Rebuild, Row, RowId, Rows, StorageEngine, TableOption, TableStorage};
 use turborel::txn::TxId;
@@ -278,12 +278,12 @@ impl IndexMethod for Noted {
     }
     fn create_on(&self, columns: &[DataType], (table, index): (&TableDesc, &IndexDesc)) -> Result<Box<dyn Index>> {
         self.1.note_index("index", (table, &index.options));
-        Ok(Box::new(NotedIndex(self.0.create(columns)?, self.1.clone())))
+        Ok(Box::new(NotedIndex(Arc::from(self.0.create(columns)?), self.1.clone())))
     }
 }
 
 /// An index of `Noted`.
-struct NotedIndex(Box<dyn Index>, Calls);
+struct NotedIndex(Arc<dyn Index>, Calls);
 
 impl Index for NotedIndex {
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
@@ -298,8 +298,8 @@ impl Index for NotedIndex {
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.0.estimate(probe)
     }
-    fn search(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        self.0.search(probe)
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        Arc::clone(&self.0).search(probe, order)
     }
     fn reconfigure(&self, (table, index): (&TableDesc, &IndexDesc)) {
         self.1.note_index("index told", (table, &index.options));

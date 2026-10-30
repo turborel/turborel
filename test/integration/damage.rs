@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use turborel::catalog::{QualifiedName, TableDesc};
 use turborel::db::{Database, OpenOptions, Opened};
 use turborel::error::{Code, Result, fail};
-use turborel::index::{BTreeMethod, Index, IndexMethod, Key, Probe};
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::threads::JobPolicy;
 use turborel::txn::{Concurrency, TxCapabilities, TxId, Undo};
@@ -77,7 +77,7 @@ struct FlakyIndexes {
 }
 
 struct FlakyIndex {
-    inner: Box<dyn Index>,
+    inner: Arc<dyn Index>,
     failing: Arc<AtomicBool>,
 }
 
@@ -92,7 +92,7 @@ impl IndexMethod for FlakyIndexes {
         self.inner.ordered()
     }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
-        Ok(Box::new(FlakyIndex { inner: self.inner.create(columns)?, failing: Arc::clone(&self.failing) }))
+        Ok(Box::new(FlakyIndex { inner: Arc::from(self.inner.create(columns)?), failing: Arc::clone(&self.failing) }))
     }
 }
 
@@ -112,8 +112,8 @@ impl Index for FlakyIndex {
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.inner.estimate(probe)
     }
-    fn search(&self, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        self.inner.search(probe)
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        Arc::clone(&self.inner).search(probe, order)
     }
 }
 
