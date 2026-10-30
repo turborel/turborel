@@ -57,6 +57,7 @@ impl Judged {
         };
         let typed = match batch.columns.get(at) {
             Some(Column::Ints(column)) => ints::kept(self, column, over),
+            Some(Column::Floats(column)) => floats::kept(self, column, over),
             Some(Column::Texts(column)) => texts::kept(self, column, over),
             Some(Column::Values(_)) | None => None,
         };
@@ -235,6 +236,7 @@ fn compared_of_integers(cond: &Cond, columns: &[usize]) -> Option<Judged> {
 
 // Unit tests: which conjuncts of a filter are judged over vectors, and
 // what each keeps (RULES.md R-TEST-1).
+mod floats;
 mod ints;
 mod texts;
 

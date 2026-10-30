@@ -373,10 +373,7 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
         Value::Null => out.push(NULL_TAG),
         Value::Char(s) => put_norm_text(s, out),
         Value::Exact(d) => put_norm_exact(d.units, d.scale, out),
-        Value::Approx(f) => {
-            out.push(APPROX_TAG);
-            out.extend_from_slice(&(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }).to_le_bytes());
-        }
+        Value::Approx(f) => put_norm_approx(*f, out),
         Value::Bits(b) => {
             out.push(BITS_TAG);
             b.put_key(out);
@@ -402,6 +399,13 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
 /// compare padded [X3.135-1986 §5.11 GR5].
 pub fn put_norm_text(s: &str, out: &mut Vec<u8>) {
     text(out, CHAR_TAG, s.trim_end_matches(' '));
+}
+
+/// Appends the normalized key of the approximate number `f`, as
+/// `put_norm` writes it of the value: -0 as 0, as they compare equal.
+pub fn put_norm_approx(f: f64, out: &mut Vec<u8>) {
+    out.push(APPROX_TAG);
+    out.extend_from_slice(&(if f == 0.0 { 0f64.to_bits() } else { f.to_bits() }).to_le_bytes());
 }
 
 /// Appends the normalized key of the exact number of `units` at `scale`,

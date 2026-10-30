@@ -2,7 +2,8 @@
 //! RULES.md D31): each column asked for a vector of its values, all of one
 //! length, so work over many rows needs no row made for each. A column's
 //! vector is of values, or, of an exact number a store keeps as an
-//! integer, of those integers, its nulls beside them; or, of a character
+//! integer, of those integers, its nulls beside them; or, of an
+//! approximate number, of those numbers; or, of a character
 //! string a store keeps as written, of its bytes, one buffer of them all
 //! and where each ends: work that reads them as integers or as text reads
 //! no value made; any other reads them as values, made the first time it
@@ -34,6 +35,8 @@ pub enum Column {
     Values(Vec<Value>),
     /// Exact numbers, as integers.
     Ints(Ints),
+    /// Approximate numbers, as `f64`s.
+    Floats(Floats),
     /// Character strings, as their text.
     Texts(Texts),
 }
@@ -161,6 +164,46 @@ impl Ints {
     }
 }
 
+/// \[DESIGN\] Approximate numbers [X3.135-1986 §4.2.2]: a column of an
+/// approximate numeric type, as a store keeps it.
+#[derive(Debug, Clone, Default)]
+pub struct Floats {
+    /// Each row's number, a null's 0.
+    pub numbers: Vec<f64>,
+    /// Whether each row's is null, if any is.
+    pub nulls: Option<Vec<bool>>,
+    /// The values, made the first time they are asked for.
+    made: OnceLock<Vec<Value>>,
+}
+
+impl Floats {
+    /// The approximate numbers `numbers`, null where `nulls` says.
+    pub fn new(numbers: Vec<f64>, nulls: Option<Vec<bool>>) -> Floats {
+        Floats { numbers, nulls, made: OnceLock::new() }
+    }
+
+    /// Whether row `n`'s is null.
+    pub fn is_null(&self, n: usize) -> bool {
+        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false))
+    }
+
+    /// Row `n`'s number, none if it is null or past the end.
+    pub fn get(&self, n: usize) -> Option<f64> {
+        self.numbers.get(n).copied().filter(|_| !self.is_null(n))
+    }
+
+    /// The values, made the first time they are asked for.
+    pub fn values(&self) -> &[Value] {
+        self.made.get_or_init(|| (0..self.numbers.len()).map(|n| self.get(n).map_or(Value::Null, Value::Approx)).collect())
+    }
+
+    /// Its values, owned.
+    fn into_values(self) -> Vec<Value> {
+        self.values();
+        self.made.into_inner().unwrap_or_default()
+    }
+}
+
 impl Column {
     /// Its values, made the first time they are asked for if they are
     /// integers.
@@ -168,6 +211,7 @@ impl Column {
         match self {
             Column::Values(values) => values,
             Column::Ints(ints) => ints.values(),
+            Column::Floats(floats) => floats.values(),
             Column::Texts(texts) => texts.values(),
         }
     }
@@ -178,6 +222,11 @@ impl Column {
             Column::Values(values) => values,
             Column::Ints(ints) => {
                 let made = std::mem::take(ints).into_values();
+                *self = Column::Values(made);
+                self.values_mut()
+            }
+            Column::Floats(floats) => {
+                let made = std::mem::take(floats).into_values();
                 *self = Column::Values(made);
                 self.values_mut()
             }
@@ -194,6 +243,7 @@ impl Column {
         match self {
             Column::Values(values) => values,
             Column::Ints(ints) => ints.into_values(),
+            Column::Floats(floats) => floats.into_values(),
             Column::Texts(texts) => texts.into_values(),
         }
     }
@@ -258,6 +308,8 @@ pub enum Cell<'b> {
     Value(&'b Value),
     /// An exact number's units, and its scale.
     Exact(i64, u32),
+    /// An approximate number.
+    Approx(f64),
     /// A character string's text.
     Text(&'b str),
     /// A null of a vector of integers, or past the end of a vector.
@@ -269,7 +321,7 @@ impl Cell<'_> {
     pub fn is_null(&self) -> bool {
         match self {
             Cell::Value(v) => v.is_null(),
-            Cell::Exact(..) | Cell::Text(_) => false,
+            Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) => false,
             Cell::Null => true,
         }
     }
@@ -279,6 +331,7 @@ impl Cell<'_> {
         match self {
             Cell::Value(v) => (*v).clone(),
             Cell::Exact(units, scale) => Value::Exact(Decimal::new(i128::from(*units), *scale)),
+            Cell::Approx(f) => Value::Approx(*f),
             Cell::Text(text) => Value::Char((*text).to_owned()),
             Cell::Null => Value::Null,
         }
@@ -292,6 +345,7 @@ impl Batch {
         match self.columns.get(at) {
             Some(Column::Values(values)) => values.get(r).map_or(Cell::Null, Cell::Value),
             Some(Column::Ints(ints)) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
+            Some(Column::Floats(floats)) => floats.get(r).map_or(Cell::Null, Cell::Approx),
             Some(Column::Texts(texts)) => texts.get(r).map_or(Cell::Null, Cell::Text),
             None => Cell::Null,
         }

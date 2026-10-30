@@ -293,8 +293,9 @@ const DOUBLE: DataType = DataType::Approximate { precision: 53, spelled: Spelled
 /// Verifies: [DESIGN] RULES.md D31, ALP: approximate numbers of two
 /// decimal digits, nulls among them, are written as decimals in about the
 /// bits their digits need, and read back bit for bit; those that are not
-/// such decimals, -0 and a third among them, are kept as they are; values
-/// of no decimal at all are written otherwise.
+/// such decimals, -0 and a third among them, are kept as they are, and a
+/// range of them read at once gives what each read alone gives; values of
+/// no decimal at all are written otherwise.
 #[test]
 fn approximate_numbers_are_decimals() {
     let bits = |values: &[Value]| -> Vec<String> {
@@ -306,6 +307,17 @@ fn approximate_numbers_are_decimals() {
         let chunk = Chunk::parse(&bytes).unwrap();
         let back: Vec<Value> = (0..chunk.len()).map(|n| chunk.value(n, &DOUBLE).unwrap()).collect();
         assert_eq!(bits(&back), bits(&values));
+        // Of every range, a run at a time, as a value at a time.
+        for (from, to) in [(0, chunk.len()), (1, chunk.len().saturating_sub(1)), (2, 3)] {
+            let (mut words, mut nulls) = (Vec::new(), Vec::new());
+            chunk.ints((from, to), (&mut words, &mut nulls)).unwrap();
+            let made: Vec<Value> = words
+                .iter()
+                .zip(&nulls)
+                .map(|(&w, &null)| if null { Value::Null } else { Value::Approx(f64::from_bits(u64::from_le_bytes(w.to_le_bytes()))) })
+                .collect();
+            assert_eq!(bits(&made), bits(&values[from..to]), "{from} to {to}");
+        }
         (bytes[0], bytes.len())
     };
     let prices: Vec<Value> = (0_i32..1000_i32)

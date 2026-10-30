@@ -450,3 +450,59 @@ fn groups_with_bloom_filters_answer_alike() {
     assert_eq!(equalities("F"), equalities("R"), "groups written again");
     assert_eq!(sorted(&a, "SELECT N FROM F WHERE G = 3 AND K = 3"), sorted(&a, "SELECT N FROM R WHERE G = 3 AND K = 3"));
 }
+
+/// Queries of approximate numbers, `{t}` the table.
+const APPROXIMATE: [&str; 9] = [
+    "SELECT SUM(P), AVG(P), MIN(P), MAX(P), COUNT(P), COUNT(*) FROM {t}",
+    "SELECT COUNT(*) FROM {t} WHERE P > 50.25E0",
+    "SELECT K FROM {t} WHERE P = 12.5E0",
+    "SELECT K FROM {t} WHERE P = 12.5",
+    "SELECT COUNT(*) FROM {t} WHERE P IN (1.25E0, 3, 0) OR P IS NULL",
+    "SELECT COUNT(*) FROM {t} WHERE P NOT IN (1.25E0, 3)",
+    "SELECT G, SUM(P), MIN(P), COUNT(P) FROM {t} GROUP BY G",
+    "SELECT P, COUNT(*) FROM {t} WHERE K < 300 GROUP BY P",
+    "SELECT MAX(Q), MIN(Q), SUM(Q) FROM {t}",
+];
+
+/// Verifies: [EXTENSION] RULES.md D31, approximate numbers by batch: a
+/// table of the column store of approximate numbers, decimals of few
+/// digits, nulls, -0 and numbers of no few digits among them, gives what
+/// a table of the row store gives: sums, averages, extremes and counts,
+/// comparisons with approximate and exact constants, IN and NOT IN,
+/// groups by them and of them [X3.135-1986 §5.8, §5.11 GR4, §5.13].
+#[test]
+fn approximate_numbers_answer_alike() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE RF (K INTEGER PRIMARY KEY, G INTEGER, P DOUBLE PRECISION, Q REAL)
+           CREATE TABLE CF (K INTEGER PRIMARY KEY, G INTEGER, P DOUBLE PRECISION, Q REAL) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    for table in ["RF", "CF"] {
+        let values: Vec<String> = (0..5000_i64)
+            .map(|k| {
+                let p = match k % 97 {
+                    0 => "NULL".to_owned(),
+                    1 => "-0.0E0".to_owned(),
+                    2 => "3.3333333333333335E-1".to_owned(),
+                    _ => format!("{}.{}E0", k % 101, [0, 25, 5, 75][usize::try_from(k % 4).unwrap()]),
+                };
+                format!("({k}, {}, {p}, {}.1E0)", k % 7, k % 13)
+            })
+            .collect();
+        a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    for q in APPROXIMATE {
+        assert_eq!(sorted(&a, &q.replace("{t}", "CF")), sorted(&a, &q.replace("{t}", "RF")), "{q}");
+    }
+    a.run("UPDATE CF SET P = 1.25E0 WHERE K < 50").unwrap();
+    a.run("UPDATE RF SET P = 1.25E0 WHERE K < 50").unwrap();
+    a.commit().unwrap();
+    for q in APPROXIMATE {
+        assert_eq!(sorted(&a, &q.replace("{t}", "CF")), sorted(&a, &q.replace("{t}", "RF")), "after updates: {q}");
+    }
+}

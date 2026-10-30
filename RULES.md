@@ -806,8 +806,10 @@ the format of frozen groups becomes a trait when it is.
   leaving fewest exceptions, kept as they are, n / 10^e checked to be the
   value bit for bit (ALP, Afroozeh et al., SIGMOD 2023; `columns/alp.rs`:
   no cast, integers made exact up to 2^53; 65,536 prices of two decimals
-  44 pages to 134, measures of one 29, `SUM` of 393,216 in memory 6.1 ms
-  to 6.5, a comparison 3.3 to 4.0, each value decoded alone); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
+  44 pages to 134, measures of one 29; read a run at a time as a scan's
+  vector of approximate numbers, `Floats`, a `SUM` of 393,216 in memory
+  1.65 ms where plain it takes 2.26, and either took 6.1 a value at a
+  time); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Unpacked a value's 8 bytes at a time, a column of numbers held in
   memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
   rows 2.0 ms to 2.3), as its pages are half as many or fewer.
@@ -907,7 +909,17 @@ the format of frozen groups becomes a trait when it is.
   compared with constants, IS NULL and IN judged, as integers, scaled
   once to one scale, a running sum checked a value at a time as decimals
   check it (of 400,000 rows: `SUM(B)` 5.6 ms to 2.1, `B > 200000` 5.6 to
-  2.3; of the chunks alone, decoded 2.3 ms to 0.04). A VARCHAR column's
+  2.3; of the chunks alone, decoded 2.3 ms to 0.04). An approximate
+  column's vector, of such a run, is of its numbers as `f64`s
+  (`storage::Floats`), each chunk's 8-byte fields read as an exact
+  column's are, its bits the number's, and of ALP a run at a time: of it
+  COUNT, SUM, AVG, MIN and MAX are fed, SUM adding in the order a row at
+  a time does, so the same total, and checked as `arith` checks it, a
+  sum out of range given again a value at a time so it raises alike;
+  comparisons with constants, IN and IS NULL judged of it, an exact
+  constant compared as `value::compare` compares it (`judge/floats.rs`),
+  and grouping keys made of it (of 393,216 rows: `SUM(P)` 6.1 ms to
+  1.65, `P > 9990.0E0` 3.3 to 1.5, `MAX(M), MIN(P)` 8.5 to 3.4). A VARCHAR column's
   vector, of a run of a frozen group, is its text, one buffer of every
   row's and where each ends (`storage::Texts`), decoded straight from
   varying, dictionary and constant chunks, each checked UTF-8: LIKE a

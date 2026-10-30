@@ -19,14 +19,16 @@ use std::sync::Arc;
 
 use super::Directory;
 use super::merge::VECTOR_ROWS;
-use crate::engine::columns::group::{Group, Summary};
-use crate::engine::columns::scan::{ints, ints_at, read_candidates, texts, texts_at, values, values_at};
+use crate::engine::columns::group::{Group, Pages, Summary};
+use crate::engine::columns::scan::{floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
+use crate::engine::rows::sealing::Sealing;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
 use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, Row, RowId};
+use crate::value::DataType;
 use crate::value::Value;
 
 /// \[DESIGN\] A column store table's batches.
@@ -188,17 +190,9 @@ impl Batched {
                 // integers if it is of them.
                 Some(t) => {
                     if whole {
-                        match (ints(group, &pages, (c, t), (from, to))?, texts(group, &pages, (c, t), (from, to))?) {
-                            (Some(ints), _) => Column::Ints(ints),
-                            (None, Some(texts)) => Column::Texts(texts),
-                            (None, None) => Column::from(values(group, &pages, (c, t), (from, to))?),
-                        }
+                        run_column(group, &pages, (c, t), (from, to))?
                     } else {
-                        match (ints_at(group, &pages, (c, t), &positions)?, texts_at(group, &pages, (c, t), &positions)?) {
-                            (Some(ints), _) => Column::Ints(ints),
-                            (None, Some(texts)) => Column::Texts(texts),
-                            (None, None) => Column::from(values_at(group, &pages, (c, t), &positions)?),
-                        }
+                        positions_column(group, &pages, (c, t), &positions)?
                     }
                 }
                 None => Column::from(vec![Value::Null; positions.len()]),
@@ -256,6 +250,36 @@ impl Batched {
             return self.delta_batch();
         }
     }
+}
+
+/// Column `c`, of type `t`, of the rows at positions `from` to `to` of
+/// `group`: as integers, approximate numbers or text if it is of them,
+/// else as values.
+fn run_column(group: &Group, pages: &Pages<'_, Sealing>, (c, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Column> {
+    if let Some(ints) = ints(group, pages, (c, t), (from, to))? {
+        return Ok(Column::Ints(ints));
+    }
+    if let Some(floats) = floats(group, pages, (c, t), (from, to))? {
+        return Ok(Column::Floats(floats));
+    }
+    if let Some(texts) = texts(group, pages, (c, t), (from, to))? {
+        return Ok(Column::Texts(texts));
+    }
+    Ok(Column::from(values(group, pages, (c, t), (from, to))?))
+}
+
+/// As `run_column`, of the rows at `positions`.
+fn positions_column(group: &Group, pages: &Pages<'_, Sealing>, (c, t): (usize, &DataType), positions: &[u32]) -> Result<Column> {
+    if let Some(ints) = ints_at(group, pages, (c, t), positions)? {
+        return Ok(Column::Ints(ints));
+    }
+    if let Some(floats) = floats_at(group, pages, (c, t), positions)? {
+        return Ok(Column::Floats(floats));
+    }
+    if let Some(texts) = texts_at(group, pages, (c, t), positions)? {
+        return Ok(Column::Texts(texts));
+    }
+    Ok(Column::from(values_at(group, pages, (c, t), positions)?))
 }
 
 impl Iterator for Batched {

@@ -69,8 +69,8 @@ all, an approximate number written as a decimal of few digits kept as
 those digits, or few distinct values kept once each, whichever takes
 fewest bytes, so a page holds more of them. Approximate numbers so kept
 are read back exactly as written; 65,536 prices of two decimal places
-take 44 pages where they take 134 plain, and are summed about a tenth
-more slowly while their pages are in memory. The more of a table's rows
+take 44 pages where they take 134 plain, and 393,216 of them are summed
+in 1.7 milliseconds where plain they take 2.3. The more of a table's rows
 are frozen, and the fewer of its columns a query reads, the faster it
 reads them.
 

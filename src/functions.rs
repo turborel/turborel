@@ -21,10 +21,11 @@ use std::sync::Arc;
 use crate::error::{Code, Result, SqlError, fail};
 use crate::lexer::kw;
 use crate::params::ParameterType;
-use crate::storage::{Ints, Texts};
+use crate::storage::{Floats, Ints, Texts};
 use crate::value::Spelled;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value, arith, compare};
 
+mod floats;
 mod ints;
 mod strings;
 
@@ -129,6 +130,16 @@ pub trait Accumulator {
     /// As `update`.
     fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
         self.update_many(ints.values(), rows)
+    }
+    /// \[DESIGN\] Called with a vector of approximate numbers (`Floats`,
+    /// RULES.md D31), as `update_many` is. Default: `update_many` of their
+    /// values.
+    ///
+    /// # Errors
+    ///
+    /// As `update`.
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+        self.update_many(floats.values(), rows)
     }
     /// \[DESIGN\] Called with a vector of character strings as their text
     /// (`Texts`, RULES.md D31), as `update_many` is. Default: `update_many`
@@ -290,6 +301,9 @@ impl Accumulator for CountAcc {
     fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
         self.update_rows(ints::count(ints, rows))
     }
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+        self.update_rows(floats::count(floats, rows))
+    }
     /// Its texts counted, none made a value.
     fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
         let counted = match rows {
@@ -380,6 +394,23 @@ impl Accumulator for SumAcc {
         }
         Ok(())
     }
+    /// The numbers added as `f64`s, in order; if a running sum is not
+    /// finite, by `update_many`, which raises of it.
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+        let start = match &self.0 {
+            Value::Null => None,
+            Value::Approx(s) => Some(*s),
+            Value::Char(_) | Value::Exact(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
+                return self.update_many(floats.values(), rows);
+            }
+        };
+        match floats::sum_from(start, floats, rows) {
+            Some((total, true)) => self.0 = Value::Approx(total),
+            Some((_, false)) => {}
+            None => self.update_many(floats.values(), rows)?,
+        }
+        Ok(())
+    }
     /// [ISO/IEC 9075:1992 §6.5 SR9e] an interval in the argument's fields.
     fn finish(&self) -> Result<Value> {
         in_fields(self.0.clone(), self.1)
@@ -454,6 +485,10 @@ impl Accumulator for AvgAcc {
         self.count = self.count.saturating_add(i128::try_from(ints::count(ints, rows)).unwrap_or(i128::MAX));
         self.sum.update_ints(ints, rows)
     }
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+        self.count = self.count.saturating_add(i128::try_from(floats::count(floats, rows)).unwrap_or(i128::MAX));
+        self.sum.update_floats(floats, rows)
+    }
     fn finish(&self) -> Result<Value> {
         match (&self.sum.0, self.result) {
             (Value::Null, _) => Ok(Value::Null),
@@ -515,6 +550,9 @@ impl Accumulator for ExtremeAcc {
     }
     fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
         ints::extreme(ints, rows, self.max).map_or(Ok(()), |v| self.update(&v))
+    }
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+        floats::extreme(floats, rows, self.max).map_or(Ok(()), |v| self.update(&v))
     }
     fn finish(&self) -> Result<Value> {
         Ok(self.best.clone())

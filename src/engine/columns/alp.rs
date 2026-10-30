@@ -16,7 +16,7 @@
 //!       least, an exception's and a null's 0
 //! ```
 
-use super::packed::{bits_for, get, pack, packed_len};
+use super::packed::{bits_for, get, pack, packed_len, unpack};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
@@ -224,6 +224,28 @@ impl<'a> Alp<'a> {
         let deltas_len = packed_len(count, bits).ok_or_else(|| corrupt("its values are too long"))?;
         let deltas = rest.get(deltas_at..deltas_at.saturating_add(deltas_len)).ok_or_else(short)?;
         Ok(Alp { power, least, bits, exceptions, deltas })
+    }
+
+    /// The values at positions `from` to `to`, each its bits as a signed
+    /// integer pushed to `out`: the digits unpacked a run at a time, then
+    /// the exceptions among them put in their places.
+    pub(super) fn words(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+        let start = out.len();
+        out.reserve(to.checked_sub(from)?);
+        let (least, power) = (self.least, self.power);
+        let mut ok = true;
+        unpack(self.deltas, self.bits, (from, to), |d| {
+            let v = i64::try_from(d).ok().and_then(|d| least.checked_add(d)).and_then(exact).map(|n| n / power);
+            ok = ok && v.is_some();
+            out.push(i64::from_le_bytes(v.unwrap_or(0.0_f64).to_bits().to_le_bytes()));
+        })?;
+        let entries = self.exceptions.as_chunks::<EXCEPTION>().0;
+        let position = |e: &[u8; EXCEPTION]| read_word(e, 0).unwrap_or(usize::MAX);
+        for e in entries.iter().skip(entries.partition_point(|e| position(e) < from)).take_while(|e| position(e) < to) {
+            let bits = <[u8; FIELD]>::try_from(e.get(WORD..)?).ok()?;
+            *out.get_mut(start.checked_add(position(e).checked_sub(from)?)?)? = i64::from_le_bytes(bits);
+        }
+        ok.then_some(())
     }
 
     /// The `n`th value, as its field's bytes.

@@ -364,16 +364,17 @@ impl Body<'_> {
 }
 
 impl Body<'_> {
-    /// \[DESIGN\] The values at positions `from` to `to`, each an exact
-    /// number's units written as 8 bytes, as integers pushed to `out`, a
-    /// null's 0 (`Ints`): none if the encoding is of varying fields or a
-    /// dictionary. Each frame's width read with a loop of its own, so its
+    /// \[DESIGN\] The values at positions `from` to `to`, each 8 bytes, an
+    /// exact number's units or an approximate number's bits, as integers
+    /// pushed to `out`, a null's 0 (`Ints`, `Floats`): none if the
+    /// encoding is of varying fields or a dictionary. Each frame's width read with a loop of its own, so its
     /// differences are read as fast as plain integers.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         let count = to.checked_sub(from)?;
         match self {
             Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), out),
             Body::Runs(runs) => runs.ints((from, to), out),
+            Body::Alp(alp) => alp.words((from, to), out),
             Body::Fixed { width: FRAMED, values } => {
                 let given = values.get(from.checked_mul(FRAMED)?..to.checked_mul(FRAMED)?)?;
                 out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&w| i64::from_le_bytes(w)));
@@ -384,7 +385,7 @@ impl Body<'_> {
                 out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
                 Some(())
             }
-            Body::Fixed { .. } | Body::Varying { .. } | Body::Dictionary { .. } | Body::Alp(_) => None,
+            Body::Fixed { .. } | Body::Varying { .. } | Body::Dictionary { .. } => None,
         }
     }
 }

@@ -6,7 +6,7 @@
 use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
 use super::{Chunk, bloom};
 use crate::error::Result;
-use crate::storage::{Coded, Conjunct, Conjunction, Ints, Row, Texts};
+use crate::storage::{Coded, Conjunct, Conjunction, Floats, Ints, Row, Texts};
 use crate::value::{DataType, Value};
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
@@ -165,6 +165,21 @@ pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize,
     Ok(out)
 }
 
+/// The 8-byte fields of a column, each as a signed integer, and whether
+/// each is null: none if one of them is not so.
+type Words = Option<(Vec<i64>, Vec<bool>)>;
+
+/// Of nulls, none if none is null.
+fn nulls_of(nulls: Vec<bool>) -> Option<Vec<bool>> {
+    nulls.contains(&true).then_some(nulls)
+}
+
+/// `word`, an approximate number's 8 bytes as a signed integer, as the
+/// number.
+fn float_of(word: i64) -> f64 {
+    f64::from_bits(u64::from_le_bytes(word.to_le_bytes()))
+}
+
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// positions `from` to `to` of `group`, as integers (`storage::Ints`), if
 /// `t` is an exact numeric type, which a record writes as its units in 8
@@ -175,6 +190,47 @@ pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize,
 /// As `rows`.
 pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
+    Ok(words(group, pages, column, (from, to))?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
+}
+
+/// \[DESIGN\] As `ints`, as approximate numbers (`storage::Floats`), if `t`
+/// is an approximate numeric type, which a record writes as its bits in 8
+/// bytes.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn floats<S: Seal>(
+    group: &Group,
+    pages: &Pages<'_, S>,
+    (column, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Option<Floats>> {
+    let DataType::Approximate { .. } = t else { return Ok(None) };
+    Ok(words(group, pages, column, (from, to))?
+        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
+}
+
+/// \[DESIGN\] As `ints_at`, as approximate numbers, as `floats` gives
+/// those of a run.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn floats_at<S: Seal>(
+    group: &Group,
+    pages: &Pages<'_, S>,
+    (column, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Option<Floats>> {
+    let DataType::Approximate { .. } = t else { return Ok(None) };
+    Ok(words_at(group, pages, column, positions)?
+        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
+}
+
+/// The 8-byte fields of column `column` of the rows at positions `from` to
+/// `to`, each chunk's read at once.
+fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to): (u32, u32)) -> Result<Words> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
@@ -189,8 +245,7 @@ pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &
     if units.len() != count {
         return Ok(None);
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Ints::new(units, *scale, nulls)))
+    Ok(Some((units, nulls)))
 }
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
@@ -203,6 +258,13 @@ pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &
 /// As `rows`.
 pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
+    Ok(words_at(group, pages, column, positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
+}
+
+/// The 8-byte fields of column `column` of the rows at `positions`, in
+/// increasing order, each chunk's span from the first asked of it to the
+/// last read at once.
+fn words_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, positions: &[u32]) -> Result<Words> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
     let (mut span, mut span_nulls) = (Vec::new(), Vec::new());
@@ -230,8 +292,7 @@ pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize
     if units.len() != positions.len() {
         return Ok(None);
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Ints::new(units, *scale, nulls)))
+    Ok(Some((units, nulls)))
 }
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at

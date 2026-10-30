@@ -91,3 +91,34 @@ fn an_accumulator_of_update_alone_is_fed_vectors() {
     listed.update_rows(2).unwrap();
     assert_eq!(listed.finish().unwrap().to_string(), "1,b,c,NULL,NULL");
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, GR4, §5.9 SR5]:
+/// COUNT, SUM, AVG, MAX and MIN fed approximate numbers as a vector
+/// (`Floats`) give what they give a value at a time: nulls left out, of
+/// the rows asked or all, -0 and 0 alike, after a sum begun; a sum out of
+/// range refused alike.
+#[test]
+fn set_functions_fed_floats_total_as_values() {
+    let numbers = vec![1.5_f64, 0.0_f64, -2.25_f64, 0.1_f64, -0.0_f64, 7.0_f64, 0.0_f64];
+    let nulls = vec![false, true, false, false, false, false, true];
+    let floats = Floats::new(numbers, Some(nulls));
+    let approx = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
+    let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
+    for function in functions {
+        for rows in [None, Some(&[0_usize, 2, 3, 4][..]), Some(&[1_usize, 6][..])] {
+            let mut by_values = function.accumulator(approx);
+            by_values.update(&Value::Approx(10.0_f64)).unwrap();
+            by_values.update_many(floats.values(), rows).unwrap();
+            let mut by_floats = function.accumulator(approx);
+            by_floats.update(&Value::Approx(10.0_f64)).unwrap();
+            by_floats.update_floats(&floats, rows).unwrap();
+            assert_eq!(format!("{:?}", by_values.finish()), format!("{:?}", by_floats.finish()), "{} at {rows:?}", function.name());
+        }
+    }
+    let huge = Floats::new(vec![f64::MAX, f64::MAX], None);
+    let mut sum = Sum.accumulator(approx);
+    let refused = sum.update_floats(&huge, None).err().map(|e| e.code);
+    let mut by_values = Sum.accumulator(approx);
+    assert_eq!(refused, by_values.update_many(huge.values(), None).err().map(|e| e.code));
+    assert!(refused.is_some(), "out of range");
+}
