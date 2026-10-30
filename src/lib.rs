@@ -61,6 +61,12 @@ pub mod threads;
 pub mod txn;
 pub mod value;
 
+/// The manual's chapter on embedding the database (`doc/client/`), whose
+/// examples run as its doc tests (RULES.md R-DOC-8).
+#[cfg(doctest)]
+#[doc = include_str!("../doc/client/03-embedding.md")]
+pub struct EmbeddedLibraryChapter;
+
 /// The version of turborel, every crate of it at once (VERSIONING.md).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

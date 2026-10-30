@@ -32,5 +32,6 @@
 mod args;
 mod common;
 mod connections;
+mod manual;
 mod program;
 mod sessions;

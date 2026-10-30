@@ -42,8 +42,10 @@ not in a program's procedures.
 **domain**: a data type with a default and constraints, that columns
 may be of. [CREATE DOMAIN](../sql/statements/create-domain.md).
 
-**engine**: what keeps a table's rows: the row store, or one a plug-in
-registers.
+**engine**: what keeps a table's rows: the row store, `rowstore`, the
+default; the column store, `columnstore`, named by CREATE TABLE ...
+USING; or one a plug-in registers.
+[Table Options](g-table-options.md).
 
 **extension**: what turborel has that the standards do not, marked
 *(extension)* in this manual.

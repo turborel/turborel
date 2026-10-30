@@ -24,6 +24,15 @@ CREATE VIEW ENGINEERS AS SELECT ID, NAME FROM EMPLOYEES WHERE DEPT = 'ENG';
 SELECT * FROM ENGINEERS ORDER BY ID;
 ```
 
+```
+OK
+           ID | NAME
+--------------+--------------------------------
+            1 | Ada
+            2 | Grace
+(2 rows)
+```
+
 A view of one table's rows and columns, as this one is, may be changed
 through: an UPDATE of ENGINEERS changes EMPLOYEES
 ([CREATE VIEW](../sql/statements/create-view.md)).
@@ -53,6 +62,10 @@ it back, with what it allowed ([GRANT](../sql/statements/grant.md),
 
 ```sql
 GRANT SELECT ON ENGINEERS TO BOB;
+```
+
+```
+OK
 ```
 
 BOB may now read ENGINEERS, and so the engineers' names, but not

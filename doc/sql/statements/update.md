@@ -70,8 +70,7 @@ A statement that fails changes no row.
 
 ## EXAMPLES
 
-Of the table PARTS of [INSERT](insert.md), its rows 1, 'bolt', 100;
-2, 'nut', 0; 3, 'washer', 0; 11, 'unnamed', 0:
+Of the table PARTS as the examples of [INSERT](insert.md) leave it:
 
 ```sql
 UPDATE PARTS SET QTY = QTY + 5 WHERE ID > 10;
@@ -87,9 +86,12 @@ OK
 --------------+----------------------+--------------
             1 | bolt                 |          100
             2 | unnamed              |         NULL
-            3 | washer               |            0
+            3 | unnamed              |            0
            11 | unnamed              |            5
-(4 rows)
+           12 | unnamed              |            5
+           13 | unnamed              |            5
+           50 | fits                 |            5
+(7 rows)
 no data
 ```
 

@@ -24,7 +24,7 @@ come with.
 | [I. User's Guide](user/README.md) | Anyone who writes SQL against turborel | Concepts, and how to use them, chapter by chapter |
 | [II. SQL Reference Manual](sql/README.md) | The same, looking something up | The language element by element; each statement on a page of its own |
 | [III. Operator's Guide](operator/README.md) | Whoever installs and runs a server | Installing, running `turboreld`, databases, settings, users, connections |
-| [IV. Client Reference](client/README.md) | Users of the client, and programs that connect | The `turborel` command, and the client library |
+| [IV. Client Reference](client/README.md) | Users of the client, and programs that connect or embed | The `turborel` command, the client library, and the embedded library |
 | [Appendices](appendix/README.md) | Everyone | SQLSTATEs, key words, settings, limits, implementation-defined choices, versions, table options, a glossary |
 
 Read the User's Guide from the start to learn turborel; turn to the
@@ -50,6 +50,11 @@ case, names in upper case unless delimited, as the standard folds them:
 ```sql
 SELECT NAME, SALARY FROM STAFF WHERE SALARY > 50000;
 ```
+
+**Results** of examples follow them, as the command-line client,
+`turborel`, shows them, run with `--null NULL`: a null value is shown as
+NULL, where by default the client shows nothing
+([The turborel Command](client/01-turborel.md)).
 
 **Citations** name the clause of a standard a rule comes from:
 [ISO/IEC 9075:1992 §11.3] is clause 11.3 of SQL-92; [X3.135-1986 §8.7]

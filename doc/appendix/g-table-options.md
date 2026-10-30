@@ -69,11 +69,9 @@ all, an approximate number written as a decimal of few digits kept as
 those digits, character strings alike in their parts, as addresses,
 names or paths are, kept as codes of those parts, or few distinct values
 kept once each, whichever takes fewest bytes, so a page holds more of
-them. 65,536 such strings take 125 pages where they take 361 plain, and
-are read as fast. Approximate numbers so kept
-are read back exactly as written; 65,536 prices of two decimal places
-take 44 pages where they take 134 plain, and 393,216 of them are summed
-in 1.7 milliseconds where plain they take 2.3. The more of a table's rows
+them. Strings so coded take far fewer pages than plain, and are read as
+fast. Approximate numbers so kept are read back exactly as written, in
+fewer pages than plain. The more of a table's rows
 are frozen, and the fewer of its columns a query reads, the faster it
 reads them.
 
@@ -92,15 +90,15 @@ puts them: each page of the first column's values then holds a narrow
 range of them, so a condition on that column skips most pages. A
 condition on a column the rows were in the order of before then skips
 fewer, and fetching a row by its key costs a little more. Once the
-option is set or changed, groups frozen before are written again in the background, sorted as it
-says, a few at a time, until every group is; queries read them as before
-meanwhile, in either order. A query ordered by the first columns the
-option names, each ascending, ORDER BY S or ORDER BY S, G of an option
-naming S and G, reads the rows in that order as it scans them, merging
-the groups', and needs no sort: of 393,216 rows sorted by S, ORDER BY S
-ran in 92 milliseconds where it took 184 sorted. A column the option
-names is not dropped until it names it no more; each is named as an identifier is,
-a regular one in any case, a delimited one in double quotes.
+option is set or changed, groups frozen before are written again in the
+background, sorted as it says, a few at a time, until every group is;
+queries read them as before meanwhile, in either order. A query ordered
+by the first columns the option names, each ascending, ORDER BY S or
+ORDER BY S, G of an option naming S and G, reads the rows in that order
+as it scans them, merging the groups', and needs no sort. A column the
+option names is not dropped until it names it no more; each is named as
+an identifier is, a regular one in any case, a delimited one in double
+quotes.
 
 COLUMNSTORE.BLOOM keeps, of each 1,024 frozen rows of each column it
 names, a Bloom filter: about 10 bits for each row, from which a query
@@ -108,16 +106,15 @@ learns that a value is surely not among those rows, or may be. A
 condition `column = value`, or `column IN (...)`, of a column so named
 then reads only the rows that may hold one of its values, though they
 lie scattered through the table, where its least and greatest values
-skip none. Of 393,216 frozen rows of distinct values in no order,
-finding one by a number ran in 80 microseconds where it ran in 2.1
-milliseconds without, and by a text of up to 20 characters in 157
-microseconds where it ran in 13.2 milliseconds; a value not among the
-rows is taken as perhaps among them about once in 120 times, and those
-rows are then read and judged as any are. The filters take about 1.25
-bytes for each row, a sixth as many again as a column of numbers of 8
-bytes plain, so name only the columns a query looks up by equality; a
-column of few values, each among most 1,024 rows, gains nothing. Rows
-not yet frozen are read as before.
+skip none: of many frozen rows of distinct values in no order, finding
+one value reads only the few that may hold it, where without the filters
+it reads them all. A value not among the rows is taken as perhaps among
+them about once in 120 times, and those rows are then read and judged
+as any are. The filters take about 1.25 bytes for each row, a sixth as
+many again as a column of numbers of 8 bytes plain, so name only the
+columns a query looks up by equality; a column of few values, each
+among most 1,024 rows, gains nothing. Rows not yet frozen are read as
+before.
 Once the option is set or changed, groups frozen before are written
 again in the background, as for COLUMNSTORE.ORDER, and it names columns
 as that option does.

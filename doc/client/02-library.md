@@ -6,7 +6,7 @@ The crate `turborel-client` connects a Rust program to a turborel
 server, over the native protocol: blocking, on the standard library
 alone, and over TLS with its feature `tls`. A program that embeds the
 database uses the crate `turborel` instead, and its `Database` and
-`Session`.
+`Session` ([The Embedded Library](03-embedding.md)).
 
 ## Connecting
 

@@ -34,7 +34,13 @@ the program's module, not to a statement it runs, so it is declared
 through the Rust API, `Session::declare_cursor`, not by
 `Session::execute`; the statements that use it run by
 `Session::execute`, with the program's parameters. Direct SQL, and so
-the client, has no cursors: a query's rows are sent whole.
+the client, declares no cursor: DECLARE CURSOR given there is refused
+(SQLCODE -102), and OPEN, FETCH, CLOSE and a positioned UPDATE or
+DELETE find no cursor of the name (SQLCODE -103). A query given there
+is read by a cursor of its own all the same, unnamed: its rows are sent
+a batch at a time as they are fetched, never held whole first
+([The Embedded Library](../../client/03-embedding.md),
+[The Client Library](../../client/02-library.md)).
 
 The cursor specification is kept as written, and bound when the cursor
 is opened: a name in it that is a parameter's is the parameter, as of

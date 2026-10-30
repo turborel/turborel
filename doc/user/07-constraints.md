@@ -7,6 +7,22 @@ is refused, SQLSTATE 23000, the statement undone. Constraints are
 written with a table ([CREATE TABLE](../sql/statements/create-table.md)),
 added and dropped by [ALTER TABLE](../sql/statements/alter-table.md).
 
+The examples are of the tables of [Getting Started](02-getting-started.md),
+and of teams and their members:
+
+```sql
+CREATE TABLE TEAMS (ID INTEGER PRIMARY KEY, LEAD INTEGER NOT NULL);
+CREATE TABLE MEMBERS (ID INTEGER PRIMARY KEY, TEAM INTEGER NOT NULL,
+    CONSTRAINT IN_TEAM FOREIGN KEY (TEAM) REFERENCES TEAMS DEFERRABLE INITIALLY DEFERRED);
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+```
+
 ## NOT NULL and UNIQUE
 
 NOT NULL refuses the null value. UNIQUE refuses two rows of the same
@@ -29,19 +45,18 @@ to the rows that refer to one deleted or changed: refused, the default;
 CASCADE, deleted or changed with it; SET NULL or SET DEFAULT.
 
 ```sql
-CREATE TABLE TEAMS (ID INTEGER PRIMARY KEY, LEAD INTEGER NOT NULL);
-CREATE TABLE MEMBERS (ID INTEGER PRIMARY KEY, TEAM INTEGER NOT NULL,
-    CONSTRAINT IN_TEAM FOREIGN KEY (TEAM) REFERENCES TEAMS DEFERRABLE INITIALLY DEFERRED);
-COMMIT;
+INSERT INTO TEAMS VALUES (1, 10);
 INSERT INTO TEAMS VALUES (1, 11);
 ```
 
 ```
+OK
 turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.TEAMS_PRIMARY1 (ID) of ANN.TEAMS would be violated: a row of these values is there [X3.135-1986 §6.4 GR2]
 ```
 
-TEAMS already has a team 1, inserted in [Deferred checking](#deferred-checking). A constraint not named is given a
-name, as `TEAMS_PRIMARY1`.
+TEAMS has a team 1 already when the second is inserted. A constraint
+not named is given a name, as `TEAMS_PRIMARY1`. The foreign key IN_TEAM
+is checked at COMMIT ([Deferred checking](#deferred-checking)).
 
 ## CHECK constraints
 
@@ -73,13 +88,13 @@ or makes one deferred IMMEDIATE. So rows that refer to each other may be
 inserted in either order:
 
 ```sql
-INSERT INTO MEMBERS VALUES (10, 1);
-INSERT INTO TEAMS VALUES (1, 10);
+INSERT INTO MEMBERS VALUES (20, 2);
+INSERT INTO TEAMS VALUES (2, 20);
 COMMIT;
-INSERT INTO MEMBERS VALUES (11, 2);
+INSERT INTO MEMBERS VALUES (21, 3);
 COMMIT;
 SET CONSTRAINTS IN_TEAM IMMEDIATE;
-INSERT INTO MEMBERS VALUES (12, 3);
+INSERT INTO MEMBERS VALUES (22, 4);
 ```
 
 ```
@@ -92,7 +107,7 @@ OK
 turborel: SQLCODE -201 (SQLSTATE 23000): a row of ANN.MEMBERS references no row of ANN.TEAMS: FOREIGN KEY ANN.IN_TEAM [ISO/IEC 9075:1992 §11.8 GR2]
 ```
 
-Member 10 came before its team, and was checked as the transaction
-committed. Member 11's team 2 never came: the COMMIT failed, and rolled
-the transaction back. Made IMMEDIATE, the constraint refused member 12
-at once.
+Member 20 came before its team, and was checked as the transaction
+committed, team 1 with it. Member 21's team 3 never came: the COMMIT
+failed, and rolled the transaction back. Made IMMEDIATE, the constraint
+refused member 22 at once.

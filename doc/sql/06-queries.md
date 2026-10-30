@@ -13,6 +13,11 @@ CREATE TABLE DEPT (DEPT CHAR(3) PRIMARY KEY, TITLE VARCHAR(20));
 INSERT INTO DEPT VALUES ('ENG', 'Engineering'), ('HR', 'People');
 ```
 
+```
+OK
+OK
+```
+
 ## Table references and joins
 
 The FROM clause names the tables a query reads. Of more than one, it

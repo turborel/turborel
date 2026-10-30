@@ -52,7 +52,7 @@ turborel 0.0.0 (alpha), the command-line client
 Copyright 2026, Turborel contributors.
 Distributed under the BSD 2-Clause License.
 
-Connected to turborel 0.0.0 (alpha) at 127.0.0.1:7491, as ANN.
+Connected to turborel 0.0.0 (alpha) at 127.0.0.1:7422, as ANN.
 End each statement with a semicolon; end of input (Ctrl-D) quits.
 
 turborel> SELECT ID, NAME

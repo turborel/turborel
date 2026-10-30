@@ -21,7 +21,9 @@ turborel>
 ```
 
 `-W` asks for the password. Each statement runs once a semicolon ends
-it; it may go over many lines.
+it; it may go over many lines. The examples of this guide show a null
+value as NULL, as the client shows it run with `--null NULL`; by
+default it shows nothing there.
 
 ## A first schema
 

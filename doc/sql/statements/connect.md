@@ -73,52 +73,7 @@ The server's: the user proves who it is, as the server asks.
 | 2A000 | -102 | A name is not a character string literal |
 | 0A000 | -900 | Run by a session of an embedded database |
 
-## ```sql
-VALUES CURRENT_USER;
-COMMIT;
-CONNECT TO 'localhost:7492' AS 'OWNERDB' USER 'BOB';
-VALUES CURRENT_USER;
-SET CONNECTION DEFAULT;
-```
-
-```
-
------
- ANN
-(1 row)
-OK
-OK
-
------
- BOB
-(1 row)
-turborel: SQLCODE -900 (SQLSTATE 0A001): the current connection's transaction is active, and none spans servers [ISO/IEC 9075:1992 §15.1 GR1, §15.2 GR1]
-```
-
-The VALUES began a transaction on OWNERDB, so it must end before
-another connection is made current. Connections refused, none current
-in a transaction:
-
-```sql
-CONNECT TO 'localhost:7492' AS 'OWNERDB';
-CONNECT TO 'localhost:7492';
-CONNECT TO 'localhost:1' AS 'NOWHERE';
-CONNECT TO 'localhost:7492' AS 'bad name';
-CONNECT TO 'localhost:7492' AS 'X2' USER '1x';
-CONNECT TO 'localhost:7492' AS OWNERDB;
-```
-
-```
-turborel: SQLCODE -919 (SQLSTATE 08002): the connection OWNERDB is established [ISO/IEC 9075:1992 §15.1 GR7]
-turborel: SQLCODE -919 (SQLSTATE 2E000): 'localhost:7492' is not an <identifier> [ISO/IEC 9075:1992 §15.1 GR6]
-turborel: SQLCODE -919 (SQLSTATE 08001): cannot connect: Connection refused (os error 61) [ISO/IEC 9075:1992 §15.1 GR10, GR11]
-turborel: SQLCODE -919 (SQLSTATE 2E000): 'bad name' is not an <identifier> [ISO/IEC 9075:1992 §15.1 GR6]
-turborel: SQLCODE -104 (SQLSTATE 28000): '1x' is not an <authorization identifier> [ISO/IEC 9075:1992 §15.1 GR3]
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected a <literal>, found OWNERDB (at character 31)
-```
-
-The text of an error the system gives, as "Connection refused (os error
-61)", is the operating system's.S
+## EXAMPLES
 
 In the client, connected as ANN to one server, and BOB a user of another
 at port 7492:

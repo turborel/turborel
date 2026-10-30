@@ -21,8 +21,20 @@ turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
 
 `user COMMAND` manages the users of a database no server holds
 ([Users](05-users.md)). The settings `--set` sets are those of
-[Settings](../appendix/c-settings.md); a setting fixed when the database
-is made is set so only as it is made.
+[Settings](../appendix/c-settings.md), each set before the database is
+opened if it is read as the database opens, after if not, and kept with
+the database. A setting fixed when the database is made (TAKES_EFFECT
+CREATION, [Settings](04-settings.md#when-a-change-takes-effect)) takes
+the value given as `--dir` names a directory of no database, which it
+then makes. Of a directory that holds a database already, it may be
+given only as the database was made: so given, it changes nothing;
+given otherwise, the database is not opened, and the server does not
+start:
+
+```
+$ turboreld --dir /var/lib/turborel/main --set STORAGE.PAGE_SIZE=4096
+turboreld: cannot open /var/lib/turborel/main: SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_SIZE = 8192, fixed then: it cannot be 4096
+```
 
 ## Starting and stopping
 

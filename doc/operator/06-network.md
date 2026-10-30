@@ -73,9 +73,22 @@ no more of it than that.
 
 The database's owner sees the connections served, and the server's
 counts, in INFORMATION_SCHEMA.CONNECTIONS and INFORMATION_SCHEMA.SERVER
-([Information Schema](../sql/information-schema.md)):
+([Information Schema](../sql/information-schema.md)). Of a server whose
+one connection is the owner's own, over TCP without TLS, its statement
+the one running:
 
 ```sql
 SELECT ID, USER_NAME, SECURE, STATE FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY ID;
 SELECT WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD FROM INFORMATION_SCHEMA.SERVER;
+```
+
+```
+                   ID | USER_NAME                                                    | SECURE | STATE
+----------------------+--------------------------------------------------------------+--------+---------
+                    1 | ANN                                                          | NO     | RUNNING
+(1 row)
+         WORKERS_BUSY |   STATEMENTS_WAITING |          CONNECTIONS |              REFUSED |        CLOSED_UNTOLD
+----------------------+----------------------+----------------------+----------------------+----------------------
+                    1 |                    0 |                    1 |                    0 |                    0
+(1 row)
 ```

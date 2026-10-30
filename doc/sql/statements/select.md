@@ -120,8 +120,7 @@ INSERT INTO STAFF VALUES
 COMMIT;
 ```
 
-Rows chosen and sorted (the client run with `--null NULL`, to show the
-null value):
+Rows chosen and sorted:
 
 ```sql
 SELECT NAME, SALARY FROM STAFF WHERE SALARY > 6000 ORDER BY SALARY DESC;

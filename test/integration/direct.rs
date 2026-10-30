@@ -58,3 +58,24 @@ fn a_session_creates_its_own_schema_only() {
     assert_eq!(direct(&s, "SELECT K FROM T"), Ok(Ok(vec!["1".into()])));
     assert_eq!(direct(&s, "CREATE SCHEMA AUTHORIZATION X"), Err(Code::SyntaxRule));
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1]: direct SQL declares no
+/// cursor: DECLARE CURSOR, not a `<directly executable statement>`, is
+/// refused (SQLCODE -102), so OPEN, FETCH, CLOSE and a positioned UPDATE or
+/// DELETE name no cursor declared; a query's rows are read by a cursor of
+/// its own, fetched a row at a time.
+#[test]
+fn direct_sql_declares_no_cursor_but_reads_a_query_by_one() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER)").unwrap();
+    let s = db.session("X");
+    s.run("INSERT INTO T VALUES (1), (2)").unwrap();
+    assert_eq!(direct(&s, "DECLARE C CURSOR FOR SELECT K FROM T"), Err(Code::Syntax));
+    for named in ["OPEN C", "FETCH C INTO P", "CLOSE C", "UPDATE T SET K = 3 WHERE CURRENT OF C", "DELETE FROM T WHERE CURRENT OF C"] {
+        assert_eq!(direct(&s, named), Err(Code::SyntaxRule), "{named}");
+    }
+    let Direct::Rows(mut rows) = s.direct("SELECT K FROM T ORDER BY K").unwrap() else { panic!("a query gives rows") };
+    assert_eq!(rows.fetch().unwrap().map(|r| r[0].to_string()), Some("1".into()));
+    assert_eq!(rows.fetch().unwrap().map(|r| r[0].to_string()), Some("2".into()));
+    assert!(rows.fetch().unwrap().is_none(), "after the last row");
+}

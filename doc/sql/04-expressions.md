@@ -12,6 +12,11 @@ INSERT INTO STAFF VALUES (1, 'Ada', 'ENG', 7200), (2, 'Grace', 'ENG', 8100),
                          (3, 'Edsger', 'OPS', 5400), (4, 'Barbara', NULL, NULL);
 ```
 
+```
+OK
+OK
+```
+
 ## Value specifications
 
 The simplest values are:

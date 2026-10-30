@@ -12,6 +12,14 @@ A query says what to select, from which tables, of which rows:
 SELECT NAME, SALARY FROM EMPLOYEES WHERE DEPT = 'ENG' ORDER BY SALARY DESC;
 ```
 
+```
+ NAME                           |      SALARY
+--------------------------------+-------------
+ Grace                          |     8100.00
+ Ada                            |     7200.00
+(2 rows)
+```
+
 SELECT names the columns of the result, or `*` for all; FROM the
 tables; WHERE the condition each row kept meets
 ([Predicates](../sql/05-predicates.md)). GROUP BY makes a row of each
@@ -28,6 +36,14 @@ of one or both that pair with none, the other's columns null.
 SELECT D.NAME, COUNT(*) AS STAFF, AVG(E.SALARY) AS AVERAGE
   FROM DEPARTMENTS D JOIN EMPLOYEES E ON E.DEPT = D.CODE
  GROUP BY D.NAME ORDER BY D.NAME;
+```
+
+```
+ NAME                           |                STAFF |              AVERAGE
+--------------------------------+----------------------+----------------------
+ Engineering                    |                    2 |            7650.0000
+ Operations                     |                    1 |            5400.0000
+(2 rows)
 ```
 
 ## Subqueries

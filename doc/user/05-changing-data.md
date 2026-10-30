@@ -11,6 +11,10 @@ defaults, or null:
 INSERT INTO EMPLOYEES (ID, NAME, DEPT) VALUES (4, 'Barbara', 'OPS');
 ```
 
+```
+OK
+```
+
 A row a constraint refuses is not added: the statement is undone whole,
 and the transaction goes on ([INSERT](../sql/statements/insert.md)).
 
@@ -25,7 +29,6 @@ SELECT ID, NAME, SALARY FROM EMPLOYEES ORDER BY ID;
 ```
 
 ```
-OK
 OK
            ID | NAME                           |      SALARY
 --------------+--------------------------------+-------------
@@ -61,6 +64,9 @@ delete.
 ## Cursors
 
 A program that embeds turborel may read a query's rows one at a time,
-by a cursor, and change the row it is on
+by a cursor it declares, and change the row the cursor is on
 ([DECLARE CURSOR](../sql/statements/declare-cursor.md)). The client
-reads a query's rows whole, as they come.
+declares no cursor, so it runs no FETCH, and no UPDATE or DELETE ...
+WHERE CURRENT OF; but a query it runs is read by a cursor of its own all
+the same, its rows sent and shown a batch at a time as they are
+fetched, not held whole first.

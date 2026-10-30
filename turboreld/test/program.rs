@@ -40,7 +40,7 @@ fn running(config: Config) -> (Vec<String>, tokio::sync::oneshot::Sender<()>, st
 /// serves what was committed, its files as the settings fixed at its
 /// creation say: through LZ4 and AES-256-GCM, which it registers, the key
 /// from `--keys`, as T's rows are, and refused without it; one given again
-/// otherwise is refused. Its diagnostics are lines appended to
+/// otherwise is refused, saying why, and the same taken. Its diagnostics are lines appended to
 /// the file `--log` names.
 #[test]
 fn the_program_serves_a_kept_database_until_told_to_stop() {
@@ -82,7 +82,13 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     assert!(without.contains("cannot open") && without.contains("--keys"), "{without}");
     let changed = config(&["--dir".into(), dir.clone(), "--keys".into(), keys.clone(), "--set".into(), "STORAGE.PAGE_SIZE=4096".into()]);
     let refused = turboreld::run(&changed, |_| panic!("not ready"), async {}).unwrap_err();
-    assert!(refused.contains("cannot open") && refused.contains("STORAGE.PAGE_SIZE"), "{refused}");
+    // As the Operator's Guide shows it, of a database made with 16384.
+    let fixed = "SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_SIZE = 16384, fixed then: it cannot be 4096";
+    assert_eq!(refused, format!("cannot open {dir}: {fixed}"));
+    let same = config(&["--dir".into(), dir.clone(), "--keys".into(), keys.clone(), "--set".into(), "STORAGE.PAGE_SIZE=16384".into()]);
+    let (_, stop, thread) = running(same);
+    drop(stop);
+    thread.join().unwrap().unwrap();
     let (at, stop, thread) = running(config(&["--dir".into(), dir, "--keys".into(), keys]));
     assert_eq!(at.len(), if cfg!(unix) { 2 } else { 1 }, "kept: {at:?}");
     let mut c = connection::connect(at[0].parse::<SocketAddr>().unwrap(), "X", &mut Trust).unwrap();
@@ -135,6 +141,21 @@ fn the_program_prints_its_usage_or_what_is_wrong() {
     let wrong = std::process::Command::new(program).arg("--verbose").output().unwrap();
     assert!(!wrong.status.success());
     assert!(String::from_utf8(wrong.stderr).unwrap().contains("turboreld: --verbose is not an option"));
+}
+
+/// Verifies: [DESIGN] RULES.md D42, D36: the usage names each setting of
+/// the server's own, as the server declares them.
+/// Regression test (R-TEST-7): SERVER.MAX_STATEMENTS was not named.
+#[test]
+fn the_usage_names_every_setting_of_the_server() {
+    let db = turborel::db::Database::new();
+    turborel_server::server::Server::new(db.clone()).unwrap();
+    let names: Vec<String> =
+        db.settings().unwrap().into_iter().map(|l| l.definition.name.clone()).filter(|n| n.starts_with("SERVER.")).collect();
+    assert!(names.len() > 10, "{names:?}");
+    for name in names {
+        assert!(turboreld::USAGE.contains(&format!("  {name} ")), "{name} is not in the usage");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D42: `turboreld` serves until SIGTERM, then
