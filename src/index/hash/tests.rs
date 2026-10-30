@@ -102,6 +102,26 @@ fn indexes_reopen_and_are_freed() {
     assert!(method.open(&[MONEY], &locator).is_err(), "its meta page is freed");
 }
 
+/// Verifies: [DESIGN] RULES.md D25, D34, `Index::locator`: an index opened
+/// by the locator a checkpoint takes, its method not checkpointed since it
+/// last grew, counts every entry it holds, and none once all are removed;
+/// a locator too short to hold its counts is refused (SQLCODE -916).
+#[test]
+fn indexes_reopen_counting_their_entries() {
+    let method = HashMethod::in_memory();
+    let index = method.create(&[MONEY]).unwrap();
+    for row in 0..2_000 {
+        index.insert(Key(vec![exact(i128::from(row), 0)]), row).unwrap();
+    }
+    let again = method.open(&[MONEY], &index.locator()).unwrap().unwrap();
+    assert_eq!(again.estimate(&Probe::All), Some(2_000));
+    for row in 0..2_000 {
+        again.remove(&Key(vec![exact(i128::from(row), 0)]), row).unwrap();
+    }
+    assert_eq!(again.estimate(&Probe::All), Some(0));
+    assert_eq!(method.open(&[MONEY], &[0; 12]).err().map(|e| e.code), Some(Code::Corrupt));
+}
+
 /// Verifies: [DESIGN] RULES.md D34, `Index::insert_alone` by default, of
 /// `insert` and `rows`: an entry is its key's only one if no other row's
 /// holds the key, the same row's other version none.

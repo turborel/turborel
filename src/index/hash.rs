@@ -43,7 +43,8 @@ pub struct HashMethod {
     /// Its pages in memory, for a file made in memory: of a budget of its
     /// own until it is attached to a database's (`attach`).
     memory: Arc<MemoryPages>,
-    /// Its indexes not yet dropped, whose counts a checkpoint writes.
+    /// Its indexes not yet dropped, whose counts a close writes to their
+    /// meta pages.
     tables: Mutex<Vec<Weak<HashTable>>>,
 }
 
@@ -113,12 +114,17 @@ impl IndexMethod for HashMethod {
         let (pool, file) = self.files()?;
         Ok(self.index((HashTable::create(pool, file)?, KeyCounts::new()), columns))
     }
-    /// The index whose table's meta page the locator names, with the key
-    /// counts it holds.
+    /// The index whose table's meta page the locator names, counting the
+    /// entries and the keys it holds (`HashIndex::locator`).
     fn open(&self, columns: &[DataType], locator: &[u8]) -> Result<Option<Box<dyn Index>>> {
-        let (meta, keys) = KeyCounts::located(locator)?;
+        let u64_at = |at: usize| locator.get(at..at.saturating_add(8)).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
+        let (Some(entries), Some(bytes), Some(located)) = (u64_at(0), u64_at(8), locator.get(16..)) else {
+            return Err(SqlError::new(Code::Corrupt, "[DESIGN] a hash index's locator is malformed".to_owned()));
+        };
+        let (meta, keys) = KeyCounts::located(located)?;
         let (pool, file) = self.files()?;
-        Ok(Some(self.index((HashTable::open(pool, file, PageId(meta))?, keys), columns)))
+        let table = HashTable::open(pool, file, PageId(meta))?.counted((entries, bytes));
+        Ok(Some(self.index((table, keys), columns)))
     }
     /// Writes each index's counts, then writes back every page and syncs
     /// the file.
@@ -306,9 +312,14 @@ impl Index for HashIndex {
         self.pairs(probe)
     }
 
-    /// Its table's meta page, and its key counts (`index/stats.rs`).
+    /// Its table's entries and their bytes, u64 each, little-endian; then
+    /// its meta page and its key counts (`index/stats.rs`). A checkpoint
+    /// takes it with its pages, under the gate, so an index opened from the
+    /// checkpoint counts what those pages hold: its meta page's counts are
+    /// written only as it grows or shrinks, and at a close.
     fn locator(&self) -> Vec<u8> {
-        self.keys.locator(self.table.meta().0)
+        let (entries, bytes) = self.table.counts();
+        [entries.to_le_bytes().as_slice(), &bytes.to_le_bytes(), &self.keys.locator(self.table.meta().0)].concat()
     }
 
     fn discard(&self) {

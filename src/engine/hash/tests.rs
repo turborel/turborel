@@ -202,3 +202,23 @@ fn the_longest_entry_is_as_documented() {
         assert_eq!(HashTable::create(pool, file).unwrap().max_entry(), most);
     }
 }
+
+/// Verifies: [DESIGN] `HashTable::counted`: a table not persisted since it
+/// last changed, as a checkpoint leaves it, opened with the counts taken
+/// with its pages, counts the entries it holds, and removing them all
+/// leaves it empty, shrunk back to one bucket.
+#[test]
+fn it_reopens_counting_what_it_holds() {
+    let (pool, file) = pool(16);
+    let table = HashTable::create(Arc::clone(&pool), file).unwrap();
+    for n in 0..2_000_u64 {
+        table.insert(&key(n), &n.to_le_bytes()).unwrap();
+    }
+    let again = HashTable::open(Arc::clone(&pool), file, table.meta()).unwrap().counted(table.counts());
+    assert_eq!(again.counts(), table.counts());
+    assert_eq!(again.len(), 2_000);
+    for n in 0..2_000_u64 {
+        assert!(again.remove(&key(n), &n.to_le_bytes()).unwrap());
+    }
+    assert_eq!((again.len(), again.buckets()), (0, 1));
+}

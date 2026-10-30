@@ -182,6 +182,28 @@ impl HashTable {
         Ok(table)
     }
 
+    /// It, counting `entries` entries taking `bytes` bytes: those recorded
+    /// with its pages at a checkpoint (`counts`), which its meta page,
+    /// written only as it grows or shrinks and when persisted, may hold
+    /// older.
+    #[must_use]
+    pub fn counted(self, (entries, bytes): (u64, u64)) -> HashTable {
+        for s in &self.stripes {
+            s.entries.store(0, Ordering::Release);
+            s.bytes.store(0, Ordering::Release);
+        }
+        if let Some(first) = self.stripes.first() {
+            first.entries.store(entries, Ordering::Release);
+            first.bytes.store(bytes, Ordering::Release);
+        }
+        self
+    }
+
+    /// Its entries and the bytes they take, for `counted`.
+    pub fn counts(&self) -> (u64, u64) {
+        (self.len(), self.bytes())
+    }
+
     fn with(pool: Arc<BufferPool>, (file, meta): (FileId, PageId), shape: Shape, directory: Vec<PageId>) -> Result<HashTable> {
         let capacity = pool.capacity(file)?;
         let per_page = capacity.checked_div(8).unwrap_or(0);
