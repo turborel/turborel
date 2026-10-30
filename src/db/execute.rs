@@ -7,8 +7,8 @@ use std::sync::Arc;
 use super::write::{delete_searched, update_searched};
 use super::{Call, Completion, Session, State, StatementContext, slow};
 use crate::ast::{
-    ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, SqlStatement, TableName,
-    UserStatement,
+    ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, ServedStatement, SqlStatement,
+    TableName, UserStatement,
 };
 use crate::binder::{WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
@@ -112,6 +112,7 @@ impl Session {
             }
             SqlStatement::Index(index) => return self.index_statement(st, &index),
             SqlStatement::User(user) => return self.user_statement(&user),
+            SqlStatement::Served(served) => return self.served_statement(&served),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::GetDiagnostics(get) => return self.get_diagnostics(st, &get, params),
             // [ISO/IEC 9075:1992 §13.11 GR4] for the session, in no
@@ -186,6 +187,7 @@ impl Session {
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
+            | SqlStatement::Served(_)
             | SqlStatement::GetDiagnostics(_)
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
         }
@@ -231,6 +233,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetTimeZone(_)
         | SqlStatement::SetSessionAuthorization(_)
         | SqlStatement::Connection(_)
+        | SqlStatement::Served(_)
         | SqlStatement::SetSetting { .. }
         | SqlStatement::SetDatabase { .. }
         | SqlStatement::User(_)
@@ -292,5 +295,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::User(UserStatement::Create { .. }) => "CREATE USER",
         SqlStatement::User(UserStatement::Alter { .. }) => "ALTER USER",
         SqlStatement::User(UserStatement::Drop { .. }) => "DROP USER",
+        SqlStatement::Served(ServedStatement::End { .. }) => "END CONNECTION",
+        SqlStatement::Served(ServedStatement::Cancel { .. }) => "CANCEL CONNECTION",
     }
 }

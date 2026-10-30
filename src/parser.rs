@@ -34,6 +34,8 @@ mod names;
 mod primary;
 mod query;
 mod schema;
+mod served;
+pub(crate) use served::CANCEL;
 mod session;
 mod users;
 
@@ -478,11 +480,17 @@ impl Parser {
     /// The text is not an `<SQL statement>`, or is a `<declare cursor>`, which
     /// belongs to the module.
     pub fn sql_statement(&mut self) -> Result<SqlStatement> {
+        // \[EXTENSION\] CANCEL is no key word: a word, matched as one.
+        if self.at_cancel_connection() {
+            return self.served_statement().and_then(|stmt| self.end().map(|()| stmt));
+        }
         let stmt = match self.peek() {
             Tok::KeyWord(kw::CLOSE | kw::OPEN) => self.open_or_close()?,
             // [ISO/IEC 9075:1992 §15.1, §15.3]
             Tok::KeyWord(kw::CONNECT) => self.connect_statement()?,
             Tok::KeyWord(kw::DISCONNECT) => self.disconnect_statement()?,
+            // \[EXTENSION\] RULES.md D42.
+            Tok::KeyWord(kw::END) => self.served_statement()?,
             // [ISO/IEC 9075:1992 §17] dynamic SQL in SQL text: refused.
             Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
             Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,

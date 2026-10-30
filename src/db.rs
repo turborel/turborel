@@ -25,6 +25,7 @@
 //! | `Diagnostics`       | none: events dropped  | the database's events (RULES.md D40) |
 //! | `Spill`             | `PagedSpill`          | operators past WORK_MEMORY (RULES.md D38) |
 //! | `Credentials`       | none: no password kept | CREATE and ALTER USER (RULES.md D43) |
+//! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a
@@ -90,6 +91,7 @@ mod revoke;
 mod schema;
 mod scroll;
 mod sealing;
+mod served;
 mod session;
 mod settings;
 mod slow;
@@ -108,6 +110,7 @@ mod write;
 
 pub use prepared::Prepared;
 use scroll::{Kept, Updatable};
+pub use served::ServedConnections;
 pub use state::State;
 use stream::Stream;
 pub use stream::{Cursor, Direct};

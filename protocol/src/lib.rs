@@ -213,10 +213,13 @@ impl Failure {
     /// Whether the connection it came on is lost: a connection exception
     /// (SQLSTATE class 08), or credentials refused as it is made (28, of a
     /// connection exception's SQLCODE), after which the server closes it.
-    /// A statement's 28000 [ISO/IEC 9075:1992 §16.4 GR3, GR5] leaves it.
+    /// A statement's 28000 [ISO/IEC 9075:1992 §16.4 GR3, GR5] leaves it;
+    /// so does 08003, connection does not exist, which names another
+    /// connection, as END CONNECTION of one not served does.
     pub fn ends_connection(&self) -> bool {
         let connecting = self.sqlcode == SqlError::new(Code::Connection, "").sqlcode();
-        self.sqlstate.starts_with("08") || (connecting && self.sqlstate.starts_with("28"))
+        let another = self.sqlstate == SqlState::CONNECTION_DOES_NOT_EXIST.as_str();
+        (self.sqlstate.starts_with("08") && !another) || (connecting && self.sqlstate.starts_with("28"))
     }
 }
 

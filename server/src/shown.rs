@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tokio::sync::watch;
 
 use turborel::catalog::ColumnDesc;
+use turborel::db::ServedConnections;
 use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
@@ -76,6 +77,15 @@ impl Shown {
         let entry = Entry { user: None, peer: peer.name(), secure: peer.secure, state: "LOGIN", end: Arc::new(end), stop: None };
         self.locked().insert(id, entry);
         Present { shown: Arc::clone(self), id, ended }
+    }
+
+    /// Cancels what the connection `id` runs, if it is served.
+    fn cancel(&self, id: u64) -> bool {
+        let Some(entry) = self.locked().get(&id).cloned() else { return false };
+        if let Some(stop) = &entry.stop {
+            stop.cancel();
+        }
+        true
     }
 
     /// Ends the connection `id`, if it is served: what it runs cancelled.
@@ -161,10 +171,33 @@ impl Operator {
         self.0.end(id)
     }
 
+    /// Cancels the statement the connection `id` runs, if one runs
+    /// (SQLCODE -920), as its client's cancel does (RULES.md D44): its
+    /// session goes on. False if no connection of that ID is served.
+    pub fn cancel(&self, id: u64) -> bool {
+        self.0.cancel(id)
+    }
+
     /// The IDs of the connections served, and their users once
     /// authenticated, in order of ID.
     pub fn connections(&self) -> Vec<(u64, Option<String>)> {
         self.0.locked().iter().map(|(id, e)| (*id, e.user.clone())).collect()
+    }
+}
+
+/// \[EXTENSION\] END CONNECTION and CANCEL CONNECTION reach the server's
+/// connections through it (RULES.md D42).
+impl ServedConnections for Operator {
+    fn name(&self) -> &'static str {
+        "server"
+    }
+
+    fn end(&self, id: u64) -> bool {
+        Operator::end(self, id)
+    }
+
+    fn cancel(&self, id: u64) -> bool {
+        Operator::cancel(self, id)
     }
 }
 

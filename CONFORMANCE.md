@@ -441,6 +441,13 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   through Rust, `Database::create_user`, `set_verifier`, `drop_user` and
   `set_owner`; INFORMATION_SCHEMA.USERS. A `Credentials` plug-in makes a
   verifier of a password; the server's is PBKDF2-HMAC-SHA256.
+- **A server's connections** (RULES.md D42), which neither standard has:
+  `END CONNECTION id` ends the connection of an ID of
+  INFORMATION_SCHEMA.CONNECTIONS, what it runs cancelled, its session
+  rolled back; `CANCEL CONNECTION id` cancels what it runs; by the
+  database's owner, in a transaction or not; SQLSTATE 08003 for an ID of
+  none served. The server reaches them through a `ServedConnections` it
+  registers (`Database::set_served_connections`); CANCEL is no key word.
 - **Settings** (RULES.md D36): `SET name = value` and `SET name TO DEFAULT`
   for a session's own values; `SET DATABASE name = value` and `SET
   DATABASE name TO DEFAULT` for the database's, by its owner (D43), outside

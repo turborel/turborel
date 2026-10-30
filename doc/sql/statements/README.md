@@ -8,6 +8,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER TABLE](alter-table.md): change a base table
 - [ALTER USER](alter-user.md): change a user's password
+- [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
 - [CLOSE](close.md): close a cursor
 - [COMMIT](commit.md): end a transaction, keeping its changes
 - [CONNECT](connect.md): connect to a server
@@ -29,6 +30,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP TABLE](drop-table.md): drop a base table
 - [DROP USER](drop-user.md): drop a user
 - [DROP VIEW](drop-view.md): drop a view
+- [END CONNECTION](end-connection.md): end a connection of the server
 - [FETCH](fetch.md): move a cursor and read its row
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area
 - [GRANT](grant.md): grant privileges

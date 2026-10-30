@@ -351,8 +351,9 @@ impl Server {
     /// A server of `db`, with no authenticator yet; the server's settings
     /// declared on `db`, unless they are already, and its passwords'
     /// verifiers made as they say (`password::Pbkdf2`), for the users SQL
-    /// creates; and its tables, CONNECTIONS and SERVER, registered with it
-    /// (`shown.rs`), in place of any of a server before.
+    /// creates; and its tables, CONNECTIONS and SERVER, and what END and
+    /// CANCEL CONNECTION reach its connections by (`Operator`), registered
+    /// with it (`shown.rs`), in place of any of a server before.
     ///
     /// # Errors
     ///
@@ -363,6 +364,7 @@ impl Server {
         let shown = Arc::new(Shown::default());
         db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;
         db.register_system_table(Box::new(shown::Server(Arc::clone(&shown))))?;
+        db.set_served_connections(Box::new(Operator::of(&shown)));
         Ok(Server { db, authenticators: Vec::new(), shown })
     }
 

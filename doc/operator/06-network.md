@@ -114,11 +114,14 @@ turborel: SQLCODE -919 (SQLSTATE 08006): the connection went past SERVER.IDLE_IN
 
 ## Ending a connection
 
-A program that serves a database ends a connection by its ID in
-INFORMATION_SCHEMA.CONNECTIONS, through `Server::operator`, taken before
-it serves: `Operator::end(ID)` cancels the statement the connection runs,
-as a client's cancel does, then closes it, its session rolled back; the
-client is told:
+The database's owner ends a connection by its ID in
+INFORMATION_SCHEMA.CONNECTIONS, [END CONNECTION](../sql/statements/end-connection.md),
+or cancels the statement it runs, [CANCEL
+CONNECTION](../sql/statements/cancel-connection.md); a program that serves
+a database does so through `Server::operator`, taken before it serves,
+`Operator::end(ID)` and `Operator::cancel(ID)`. Ending one cancels the
+statement it runs, as a client's cancel does, then closes it, its
+session rolled back; the client is told:
 
 ```
 turborel: SQLCODE -919 (SQLSTATE 08006): the server's operator ended the connection

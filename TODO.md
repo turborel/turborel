@@ -64,11 +64,6 @@ RULES.md when its design settles.
   protocol version not served, of a user name that is no identifier, or
   of a mechanism not served is refused by the native protocol before
   any authenticator runs, so no `login_failed` is told of it.
-- **A connection ended in SQL**, by the owner, by its ID in
-  INFORMATION_SCHEMA.CONNECTIONS: today a program serving the database
-  ends one through `Server::operator`; the statement's BNF, an
-  extension, is to be agreed, and the core given a way to reach the
-  server that serves it.
 - **TCP keepalive's times as settings** (idle, interval, probes), so a
   client gone is found out sooner than the system's default: tokio sets
   keepalive on or off only; the times need a socket option of the

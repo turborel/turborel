@@ -100,6 +100,7 @@ mod rowstore;
 mod schema_statements;
 mod schema_transactions;
 mod scroll_cursors;
+mod served;
 mod set_statements;
 mod settings;
 mod spilled_rows;

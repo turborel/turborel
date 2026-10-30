@@ -191,7 +191,8 @@ impl Session {
             | SqlStatement::AlterTable { .. }
             | SqlStatement::Schema { .. }
             | SqlStatement::Index(_)
-            | SqlStatement::User(_) => {}
+            | SqlStatement::User(_)
+            | SqlStatement::Served(_) => {}
         }
         Ok(())
     }

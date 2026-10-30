@@ -7,7 +7,7 @@ use super::{Completion, Direct, Session};
 use crate::ast::AccessMode;
 use crate::error::{Code, Result, fail};
 use crate::lexer::{Tok, lex};
-use crate::parser::Parser;
+use crate::parser::{CANCEL, Parser};
 
 impl Session {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1, §20.2] A `<direct SQL
@@ -28,8 +28,12 @@ impl Session {
         let mut words = tokens.iter().map(|t| &t.tok);
         let (first, second) = (words.next(), words.next());
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
-        // name too, MODULE's: no other statement begins so.
-        let joined = matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_)))
+        // name too, MODULE's: no other statement begins so, but
+        // \[EXTENSION\] CANCEL CONNECTION, whose CONNECTION, reserved, no
+        // table's name is followed by.
+        let named_cancel = if let Some(Tok::Identifier(w)) = first { w == CANCEL } else { false };
+        let cancel = named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")));
+        let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel)
             || matches!((first, second), (Some(Tok::KeyWord("MODULE")), Some(Tok::Delimiter("."))));
         if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE") | Tok::Delimiter("("))) {
             return self.open_cursor(sql).map(Direct::Rows);

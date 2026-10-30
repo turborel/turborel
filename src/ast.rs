@@ -29,8 +29,9 @@ mod diagnostics;
 mod expression;
 mod query;
 mod schema;
+mod users;
 
-pub use connection::{ConnectionStatement, Disconnected};
+pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
 pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
@@ -48,6 +49,7 @@ pub use schema::{
     ReferentialAction, RevokeStatement, Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement,
     TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
+pub use users::UserStatement;
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.7] <insert statement>
@@ -320,6 +322,9 @@ pub enum SqlStatement {
     Index(IndexStatement),
     /// \[EXTENSION\] A statement of users (RULES.md D43).
     User(UserStatement),
+    /// \[EXTENSION\] A statement that ends a connection a server serves, or
+    /// cancels what it runs (RULES.md D42).
+    Served(ServedStatement),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §14.2] `<set constraints mode
     /// statement>` ::= SET CONSTRAINTS `<constraint name list>` {DEFERRED |
     /// IMMEDIATE}
@@ -395,35 +400,6 @@ pub enum AlterAction {
     /// \[EXTENSION\] `<alter table storage>` ::= SET `<table options>` |
     /// USING `<engine name>` \[WITH `<table options>`\] (RULES.md D41)
     Storage(TableStorage),
-}
-
-/// \[EXTENSION\] A statement of users (RULES.md D43), run outside a
-/// transaction by the database's owner. ISO/IEC 9075:1992 has none: which
-/// identifiers are authorization identifiers is implementation-defined
-/// [§5.4; Annex B, item 41].
-#[derive(Debug)]
-pub enum UserStatement {
-    /// `<user definition>` ::= CREATE USER `<authorization identifier>`
-    /// \[WITH\] PASSWORD `<character string literal>`
-    Create {
-        /// The `<authorization identifier>`, and where it begins.
-        name: (String, usize),
-        /// The password, the literal's value.
-        password: String,
-    },
-    /// `<alter user statement>` ::= ALTER USER `<authorization identifier>`
-    /// \[WITH\] PASSWORD `<character string literal>`
-    Alter {
-        /// The `<authorization identifier>`, and where it begins.
-        name: (String, usize),
-        /// The new password.
-        password: String,
-    },
-    /// `<drop user statement>` ::= DROP USER `<authorization identifier>`
-    Drop {
-        /// The `<authorization identifier>`, and where it begins.
-        name: (String, usize),
-    },
 }
 
 /// \[EXTENSION\] A statement of indexes (RULES.md D34, D41), run outside a

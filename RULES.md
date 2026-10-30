@@ -1608,7 +1608,14 @@ make.
 - An operator ends a connection by its ID in
   INFORMATION_SCHEMA.CONNECTIONS (`Server::operator`, `Operator::end`):
   what it runs is cancelled (D44), again until it stops, and it is
-  closed, told so (SQLSTATE 08006), its session rolled back.
+  closed, told so (SQLSTATE 08006), its session rolled back. In SQL, by
+  the database's owner alone (SQLCODE -104), in a transaction or not, as
+  neither is a definition or logged: `END CONNECTION id` so ends one, and
+  `CANCEL CONNECTION id` cancels what it runs, its session going on; an
+  ID of none served is SQLSTATE 08003, which leaves the connection that
+  ran it (`parser/served.rs` gives their BNF). The core reaches the server
+  through an extension point, `ServedConnections`, which the server
+  registers on the database it serves (R-SAFE-3).
 - The client waits on its server as its `Timeouts` say: to connect,
   begin TLS and for each step of the login 30 seconds by default; for
   each reply after, no limit by default; for Terminate's close, the

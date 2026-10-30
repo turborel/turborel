@@ -89,6 +89,8 @@ pub enum Extension {
     Credentials,
     /// \[EXTENSION\] A data type beyond the standard (`Database::register_type`).
     DataType,
+    /// \[EXTENSION\] A `ServedConnections` (`Database::set_served_connections`).
+    ServedConnections,
 }
 
 /// \[DESIGN\] An event of the database's.

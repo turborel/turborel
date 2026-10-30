@@ -17,8 +17,9 @@ DROP USER: drop a user of the database *(extension)*
 DROP USER drops a user: no client may sign in as it by a password from
 then on. What its authorization identifier owns stays, as do the
 privileges granted to it: an identifier is a name, not a user, and a
-user of the identifier made again has them. Sessions already signed in
-go on.
+user of the identifier made again has them. Each session signed in as
+it ends at its next statement, refused (SQLSTATE 28000), its transaction
+rolled back and its connection closed.
 
 It is made at once, apart from any transaction: no ROLLBACK undoes it.
 

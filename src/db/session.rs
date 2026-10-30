@@ -132,6 +132,7 @@ impl Session {
             | SqlStatement::SetDatabase { .. }
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
+            | SqlStatement::Served(_)
             | SqlStatement::GetDiagnostics(_)
             | SqlStatement::DeclareTable(_) => (false, ""),
         };

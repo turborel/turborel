@@ -18,6 +18,21 @@ use crate::common::{Running, command, options, start};
 /// What the manual's examples show a null value as.
 const NULL_SHOWN: &str = "NULL";
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D42: the examples of CANCEL
+/// CONNECTION and END CONNECTION run as printed, by the database's owner,
+/// ANN, as connection 1, beside BOB's, connection 2.
+#[test]
+fn the_connection_statements_run_as_printed() {
+    let db = Database::new();
+    db.create_user("ANN", b"x").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    let bob = ann.server.connect("BOB");
+    for page in ["sql/statements/cancel-connection.md", "sql/statements/end-connection.md"] {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+    drop(bob);
+}
+
 /// The fence that begins a block of SQL.
 const SQL_FENCE: &str = "```sql";
 /// The fence that begins a block of output, and ends any block.

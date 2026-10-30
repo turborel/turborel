@@ -16,7 +16,8 @@ ALTER USER: give a user a new password *(extension)*
 ## DESCRIPTION
 
 ALTER USER gives a user a new password: the clients that sign in as it
-from then on prove it by that one. Sessions already signed in go on.
+from then on prove it by that one. Sessions already signed in go
+on: they proved who they are as they signed in.
 
 It is made at once, apart from any transaction: no ROLLBACK undoes it.
 

@@ -13,6 +13,7 @@ pub(crate) use handles::WeakDatabase;
 
 use super::background::Background;
 use super::files::DatabaseFiles;
+use super::served::ServedConnections;
 use super::stores::Storages;
 use super::users::Credentials;
 use super::{Session, State, qualified_name};
@@ -73,6 +74,8 @@ struct Shared {
     storages: Storages,
     /// What makes users' verifiers, if set (`db/users.rs`).
     credentials: RwLock<Option<Arc<dyn Credentials>>>,
+    /// What ends a serving server's connections, if set (`db/served.rs`).
+    served: RwLock<Option<Arc<dyn ServedConnections>>>,
     /// Its background work: checkpoints and maintenance (`db/background.rs`).
     background: Background,
     /// What the program's handles share, while one is held (`handles.rs`).
@@ -118,6 +121,7 @@ impl Database {
             diagnostics: RwLock::new(Arc::new(NoDiagnostics)),
             storages: Storages::default(),
             credentials: RwLock::new(None),
+            served: RwLock::new(None),
             background,
             program,
         })
@@ -252,6 +256,12 @@ impl Database {
     /// DIAGNOSTICS.LEVEL. The sink runs with no lock held.
     pub fn tell(&self, event: &Event) {
         self.emit(event);
+    }
+
+    /// Where what ends a serving server's connections is kept
+    /// (`db/served.rs`).
+    pub(super) fn served_slot(&self) -> &RwLock<Option<Arc<dyn ServedConnections>>> {
+        &self.0.served
     }
 
     /// Gives `event` to its sink unless it is below DIAGNOSTICS.LEVEL,
@@ -567,27 +577,4 @@ impl Database {
 // Unit tests: what a session does when the snapshot cannot be taken
 // (RULES.md R-TEST-2 robustness).
 #[cfg(test)]
-mod tests {
-    use std::thread;
-
-    use super::*;
-
-    /// Verifies: [DESIGN] RULES.md D27: if a thread panicked while publishing
-    /// a snapshot, every call reports SQLCODE -910 (the definitions cannot be
-    /// trusted), and a failed call does not leave its session marked busy.
-    #[test]
-    fn a_poisoned_snapshot_is_reported() {
-        let db = Database::new();
-        let shared = Arc::clone(&db.0);
-        let poisoned = thread::spawn(move || {
-            let _held = shared.current.write();
-            panic!("a thread panicked while publishing");
-        });
-        assert!(poisoned.join().is_err());
-        let s = db.session("A");
-        for attempt in ["first call", "second call"] {
-            let failed = s.run("COMMIT WORK").err();
-            assert!(failed.is_some_and(|e| e.code == Code::Api && e.msg.contains("panicked")), "{attempt}: not refused as busy");
-        }
-    }
-}
+mod tests;

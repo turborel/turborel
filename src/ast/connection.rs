@@ -36,3 +36,22 @@ pub enum Disconnected {
     /// CURRENT.
     Current,
 }
+
+/// \[EXTENSION\] A statement of a connection a server serves (RULES.md
+/// D42), by the database's owner, its connection named by its ID in
+/// INFORMATION_SCHEMA.CONNECTIONS. ISO/IEC 9075:1992 has none.
+#[derive(Debug)]
+pub enum ServedStatement {
+    /// `<end connection statement>` ::= END CONNECTION `<connection
+    /// identifier>`
+    End {
+        /// The `<connection identifier>`, and where it begins.
+        id: (u64, usize),
+    },
+    /// `<cancel connection statement>` ::= CANCEL CONNECTION `<connection
+    /// identifier>`
+    Cancel {
+        /// The `<connection identifier>`, and where it begins.
+        id: (u64, usize),
+    },
+}
