@@ -241,13 +241,20 @@ restriction is lifted.
 ### Queries and expressions
 
 - **CASE, NULLIF, COALESCE** [§6.9], **CAST** among the supported types
-  [§6.10], the **string functions** and `||` [§6.6, §6.7, §6.13].
+  [§6.10], the **string functions** and `||` [§6.6, §6.7, §6.13]. A CAST
+  that cuts a string, a character not a space or any bit, completes its
+  statement with the warning 01004, and one that pads a bit string with
+  0 bits with 01008 [§6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7b, GR7c,
+  GR8b]; a constant is not folded where its CAST warns, so the warning is
+  the statement's that runs it.
 - **Scalar and row subqueries** [§7.11], **row value constructors** [§7.1]
   in comparisons, BETWEEN, IN, IS NULL, quantified comparisons and MATCH.
 - **Predicates:** LIKE of any character strings [§8.5]; IS TRUE, FALSE and
   UNKNOWN [§8.12]; UNIQUE and MATCH [§8.9, §8.10].
 - **Set functions** [§6.5] of any value expression, including over outer
-  references [SR4, SR5].
+  references [SR4, SR5]. One that eliminates a null completes its
+  statement with the warning null value eliminated in set function,
+  01003 [GR1b], read by batches or row by row.
 - **Joined tables** [§7.5]: CROSS, INNER, LEFT, RIGHT, FULL and UNION
   joins, with ON, NATURAL or USING, nested and in parentheses; derived
   tables with AS and column lists [§6.3].
@@ -333,7 +340,8 @@ restriction is lifted.
   GR8], not numbers [SR4]; a default of a bit string literal [§11.5 SR3a
   ii, GR1b iv, v]. Retrieved into a parameter, a bit string is cut to
   fit, with the warning 01004, or a BIT one padded with 0 bits, with
-  01008 [§9.1 GR3f-GR3j]; CAST raises neither warning.
+  01008 [§9.1 GR3f-GR3j]; CAST raises them as it cuts or pads [§6.10
+  GR7, GR8].
 - **Domains** [§11.21–§11.27] (RULES.md D50): CREATE DOMAIN, in a schema
   definition too, with a default and CHECK constraints over VALUE; a
   column of one [§11.4], taking its type, default and constraints; ALTER
@@ -506,6 +514,7 @@ file that implements it.
 | ISO/IEC 9075:1992 §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | an exact number's extra fraction digits truncated; an approximate number rounded to the scale | `value.rs`, `value/cast.rs` |
 | ISO/IEC 9075:1992 §22.1 SQLSTATE classes | statements are invoked directly, so a Format, Syntax Rule or Access Rule error is class 2A [§20.1 GR5]; this implementation's own conditions are class TB, the subclass the SQLCODE's digits; a server's are class 08, 08004 for a connection refused and 08006 for one failed, and 28000 for credentials refused; while preparing, a Format, Syntax Rule or Access Rule error is class 37 [§17.6 GR4a]; a conflict that undoes a statement is TB911, one that rolls back a commit 40001; a warning is a completion, its SQLCODE 0 [§22.2] | `error/state.rs`, `db/completion.rs` |
 | ISO/IEC 9075:1992 §4.19 the size of the diagnostics area, and the order of its conditions | one condition, the statement's, successful completion too [§4.18]; MORE is always N | `db/area.rs` |
+| ISO/IEC 9075:1992 §3.3.4.1 more than one condition of a statement | one is made available: an exception if one is raised; else no data if the statement found none; else a warning of its own rules, as of an assignment or a privilege; else the first warning an expression raised. A query's rows that can raise a condition are read as its cursor opens (RULES.md D15), so its warnings are its OPEN's, or, over the protocol, its Complete's once its rows are sent | `error/warnings.rs`, `db/completion.rs` |
 | ISO/IEC 9075:1992 §18.1 GR1e ROW_COUNT after other statements; Table 21's L; GR3b, GR3c an implementation's class origin; GR3k MESSAGE_TEXT | 0; the longest character string (L is never reached); TURBOREL for class TB; the error's message with its rule, empty for a completion | `db/area.rs` |
 | ISO/IEC 9075:1992 §14.1 GR5 isolation level | SERIALIZABLE as itself; REPEATABLE READ as snapshot isolation; READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open; each as SERIALIZABLE on an engine that does not read below it | `db/session.rs`, `txn.rs` |
 | ISO/IEC 9075:1992 §14.1 GR6, GR7 diagnostics area limit | a statement reports one condition, its error, so any limit of 1 or more holds | `db/session.rs` |

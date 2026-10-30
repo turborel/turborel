@@ -6,7 +6,7 @@ use super::{Session, State};
 use crate::ast::ValueExpression;
 use crate::binder::{self, displacement_of, is_displacement};
 use crate::error::{Code, Result, SqlState, fail, fail_with};
-use crate::exec::{NoSubqueries, eval};
+use crate::exec::{Heard, eval};
 use crate::params::Params;
 use crate::settings::TIME_ZONE;
 use crate::value::{Datetime, Value};
@@ -26,7 +26,7 @@ impl Session {
                 format!("[ISO/IEC 9075:1992 §16.5 SR1] SET TIME ZONE takes an INTERVAL HOUR TO MINUTE, not {t}"),
             );
         }
-        let value = eval(&e, &Vec::new(), &NoSubqueries)?;
+        let value = eval(&e, &Vec::new(), &Heard(self.stop.warnings()))?;
         let Some(zone) = displacement_of(&value) else {
             let msg =
                 format!("[ISO/IEC 9075:1992 §16.5 GR1b ii] {} is no time zone displacement from -12:59 to +13:00", value.to_literal());

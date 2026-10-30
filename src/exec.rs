@@ -42,7 +42,7 @@ use crate::txn::{TxId, checked};
 use crate::value::Value;
 
 pub use entries::{Entries, row_entries, table_entries};
-pub use eval::{eval, eval_cond, quantified};
+pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub use sort::compare_rows;
@@ -503,5 +503,24 @@ mod tests {
         assert_eq!(code(set::values(distinct, &st, NO_TRANSACTION)), Some(Code::Api));
         assert!(!batch::aggregable(&other(), &st) && batch::distinct_groupable(&other(), &st).is_none());
         assert!(matches!(batch::distinct_grouping(other(), 1_usize), Plan::Values { .. }), "not a DISTINCT: left as it is");
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §3.3.4.1, §6.10 GR5c ii]
+    /// where no subquery can be, a warning an expression raises is heard
+    /// only by what holds `Warnings` (`Heard`), and lost to `NoSubqueries`;
+    /// neither runs a subquery (SQLCODE -910).
+    #[test]
+    fn warnings_are_heard_where_they_are_held() {
+        use crate::error::{SqlState, Warnings};
+        use crate::logical::{Expr, LogicalPlan, Subquery};
+        use crate::value::DataType;
+        let cut = Expr::Cast(Box::new(Expr::Const(Value::Char("ABC".into()))), DataType::Character { length: 1 });
+        assert_eq!(eval(&cut, &Vec::new(), &NoSubqueries).unwrap().to_string(), "A");
+        let warnings = Warnings::default();
+        assert_eq!(eval(&cut, &Vec::new(), &Heard(&warnings)).unwrap().to_string(), "A");
+        assert_eq!(warnings.take(), Some(SqlState::STRING_TRUNCATED));
+        let plan = LogicalPlan::Scan { table: missing_table(), names: vec![], needed: vec![] };
+        let scalar = Expr::Subquery(Arc::new(Subquery { plan, outer: vec![] }), 0);
+        assert_eq!(eval(&scalar, &Vec::new(), &Heard(&warnings)).err().map(|e| e.code), Some(Code::Api));
     }
 }

@@ -77,14 +77,16 @@ impl<'a> Table<'a> {
         Table { out, null, shapes: Vec::new(), failed: None }
     }
 
-    /// Ends the table, `count` rows shown.
+    /// Ends the table, `count` rows shown, and the SQLSTATE of the warning
+    /// its query completed with, if any [ISO/IEC 9075:1992 §22.1].
     ///
     /// # Errors
     ///
     /// The first failure to write the table.
-    pub fn finish(mut self, count: u64) -> io::Result<()> {
+    pub fn finish(mut self, count: u64, warning: Option<&str>) -> io::Result<()> {
         let plural = if count == 1 { "" } else { "s" };
-        self.write(&format!("({count} row{plural})"));
+        let warned = warning.map_or_else(String::new, |state| format!(", with a warning: SQLSTATE {state}"));
+        self.write(&format!("({count} row{plural}{warned})"));
         self.failed.map_or(Ok(()), Err)
     }
 
@@ -164,7 +166,7 @@ mod tests {
         table.columns(&columns);
         let row = vec![Value::Char("ab".into()), Value::Exact(Decimal::new(-125, 1)), Value::Null, Value::Char("x".into())];
         table.rows(&[row]);
-        table.finish(1).unwrap();
+        table.finish(1, None).unwrap();
         let text = String::from_utf8(out).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4);
@@ -172,6 +174,20 @@ mod tests {
         assert_eq!(lines[1], format!("------+-------+{}+{}", "-".repeat(26), "-".repeat(MAX_WIDTH + 2)));
         assert_eq!(lines[2], format!(" ab   | -12.5 | {:>24} | x", "?"));
         assert_eq!(lines[3], "(1 row)");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D46; [ISO/IEC 9075:1992 §22.1] a query
+    /// that completed with a warning says so after its count, with its
+    /// SQLSTATE.
+    #[test]
+    fn a_warning_follows_the_count() {
+        let mut out = Vec::new();
+        let mut table = Table::new(&mut out, "");
+        table.columns(&[column(Some("A"), DataType::Character { length: 1 })]);
+        table.rows(&[vec![Value::Char("a".into())], vec![Value::Char("b".into())]]);
+        table.finish(2, Some("01004")).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.lines().last(), Some("(2 rows, with a warning: SQLSTATE 01004)"));
     }
 
     /// Verifies: [DESIGN] RULES.md D46; [ISO/IEC 9075:1992 §6.1 SR27] a
@@ -212,6 +228,6 @@ mod tests {
         let mut table = Table::new(&mut out, "");
         table.columns(&[column(Some("A"), DataType::Character { length: 1 })]);
         table.rows(&[vec![Value::Char("a".into())]]);
-        assert_eq!(table.finish(2).unwrap_err().to_string(), "closed");
+        assert_eq!(table.finish(2, None).unwrap_err().to_string(), "closed");
     }
 }

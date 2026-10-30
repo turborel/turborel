@@ -502,7 +502,10 @@ impl Session {
         let call = self.enter()?;
         self.emptied(command);
         let opened = self.open_in(&call, sql, params);
-        self.diagnosed(opened, |_| SqlState::SUCCESSFUL_COMPLETION)
+        // [ISO/IEC 9075:1992 §3.3.4.1] with a warning its rows raised as it
+        // opened (`Session::warning`).
+        let warned = Completion::Success.warned(self.raised());
+        self.diagnosed(opened, |_| warned.sqlstate())
     }
 
     /// `open_with`'s cursor, in the call `call`.

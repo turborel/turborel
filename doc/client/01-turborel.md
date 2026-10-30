@@ -75,6 +75,10 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1
 OK, with a warning: SQLSTATE 01007
 ```
 
+A query that completes with a warning, as a set function that leaves
+out a null does, says so after its count of rows: `(1 row, with a
+warning: SQLSTATE 01003)`.
+
 A statement left without its semicolon at the end of the input runs as
 the input ends. Semicolons in strings, delimited identifiers and
 comments do not end a statement.

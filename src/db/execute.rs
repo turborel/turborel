@@ -65,8 +65,14 @@ impl Session {
         // [ISO/IEC 9075:1992 §11.8 GR8] a referential action on a row a
         // cursor changed: a warning, about the cursor [§18.1 GR3e].
         let conflict = self.conflict.borrow_mut().take();
+        // [ISO/IEC 9075:1992 §3.3.4.1] else one an expression raised.
+        let raised = self.raised();
         let outcome = outcome.map(|done| {
-            if conflict.is_some() && done == Completion::Success { Completion::Warning(SqlState::CURSOR_OPERATION_CONFLICT) } else { done }
+            if conflict.is_some() && done == Completion::Success {
+                Completion::Warning(SqlState::CURSOR_OPERATION_CONFLICT)
+            } else {
+                done.warned(raised)
+            }
         });
         let diagnosed = self.diagnosed(outcome, |done| done.sqlstate());
         if let Some(cursor) = conflict {

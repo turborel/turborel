@@ -5,11 +5,13 @@
 
 mod state;
 mod subject;
+mod warnings;
 
 use std::fmt;
 
 pub use state::SqlState;
 pub use subject::Subject;
+pub use warnings::Warnings;
 
 /// The kinds of error, each with its negative SQLCODE as its discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

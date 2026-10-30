@@ -20,6 +20,18 @@ pub fn cast(v: Value, to: &DataType) -> Result<Value> {
     to.kind().cast(v, to)
 }
 
+/// [ISO/IEC 9075:1992 §6.10] `cast`, and the warning the cast raises, a
+/// completion condition [§3.3.4.1], if it raises one: of a string cut, or
+/// a bit string padded with 0 bits \[GR5c ii, GR5d, GR6c ii, GR6d, GR7,
+/// GR8\], as the target type's kind says (`SqlType::cast_warned`).
+///
+/// # Errors
+///
+/// As `cast`.
+pub fn cast_warned(v: Value, to: &DataType) -> Result<(Value, Option<SqlState>)> {
+    to.kind().cast_warned(v, to)
+}
+
 /// [ISO/IEC 9075:1992 §6.10 SR4] `v` has no value of `t`: of a kind CAST
 /// does not take to `t`, as a plug-in function might give.
 ///

@@ -46,7 +46,7 @@ SELECT NAME FROM STAFF WHERE ID = (SELECT ID FROM STAFF);
  NAME
 --------------------------------
  Grace
-(1 row)
+(1 row, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -811 (SQLSTATE 21000): a <scalar subquery> or <row subquery> gives more than one row [ISO/IEC 9075:1992 §7.11 GR1]
 ```
 
@@ -180,7 +180,10 @@ a query reads, or of each group of its GROUP BY.
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
 each value of x once: `COUNT(DISTINCT DEPT)`. Of no rows, COUNT is 0
-and the others null.
+and the others null. A query whose set function left out a null
+completes with a warning, SQLSTATE 01003, null value eliminated in set
+function: so does the scalar subquery above, as Barbara's salary is
+null.
 
 ```sql
 SELECT COUNT(*), COUNT(DEPT), COUNT(DISTINCT DEPT), SUM(SALARY), AVG(SALARY), MIN(NAME), MAX(SALARY) FROM STAFF;
@@ -192,13 +195,13 @@ SELECT SUM(SALARY) FROM STAFF WHERE 1 = 0;
                       |                      |                      |                      |                      |                                |
 ----------------------+----------------------+----------------------+----------------------+----------------------+--------------------------------+-------------
                     4 |                    3 |                    2 |             20700.00 |            6900.0000 | Ada                            |     8100.00
-(1 row)
+(1 row, with a warning: SQLSTATE 01003)
  DEPT |                      |
 ------+----------------------+----------------------
  ENG  |                    2 |            7650.0000
  OPS  |                    1 |            5400.0000
  NULL |                    1 |                 NULL
-(3 rows)
+(3 rows, with a warning: SQLSTATE 01003)
 
 ----------------------
                  NULL

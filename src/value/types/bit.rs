@@ -67,17 +67,19 @@ fn of_text(s: &str) -> Bits {
 impl Bit {
     /// [§6.10 GR7, GR8] `b` as a value of `t`: of a fixed length, its
     /// first bits, or it extended with 0 bits; of a variable length, its
-    /// first bits at most. The warnings of truncating and of padding are
-    /// not raised.
-    fn fitted(&self, b: &Bits, t: &DataType) -> Value {
+    /// first bits at most. With the warning string data, right truncation
+    /// if bits are cut \[GR7b, GR8b\], implicit zero-bit padding if bits are
+    /// added \[GR7c\].
+    fn fitted(&self, b: &Bits, t: &DataType) -> (Value, Option<SqlState>) {
         let length = length_of(t);
         let cut = b.substring(1, length);
+        let warning = (b.len() > length).then_some(SqlState::STRING_TRUNCATED);
         if self.varying || cut.len() == length {
-            return Value::Bits(cut);
+            return (Value::Bits(cut), warning);
         }
         let mut bytes = cut.bytes().to_vec();
         bytes.resize(bytes_for(length), 0);
-        Value::Bits(Bits::new(bytes, length).unwrap_or_default())
+        (Value::Bits(Bits::new(bytes, length).unwrap_or_default()), Some(SqlState::ZERO_BIT_PADDING))
     }
 }
 
@@ -124,14 +126,23 @@ impl SqlType for Bit {
         Ok(v)
     }
 
-    /// [ISO/IEC 9075:1992 §6.10 GR7, GR8] A bit string, or a character
-    /// string's bits, fitted to the type; no number \[SR4\].
+    /// [ISO/IEC 9075:1992 §6.10 GR7, GR8] As `cast_warned`, its warning
+    /// not raised.
     fn cast(&self, v: Value, t: &DataType) -> Result<Value> {
+        self.cast_warned(v, t).map(|(cast, _)| cast)
+    }
+
+    /// [ISO/IEC 9075:1992 §6.10 GR7, GR8] A bit string, or a character
+    /// string's bits, fitted to the type, with its warning (`fitted`); no
+    /// number \[SR4\].
+    fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
         match &v {
-            Value::Null => Ok(Value::Null),
+            Value::Null => Ok((Value::Null, None)),
             Value::Bits(b) => Ok(self.fitted(b, t)),
             Value::Char(s) => Ok(self.fitted(&of_text(s), t)),
-            Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
+                uncastable(&v, t).map(|cast| (cast, None))
+            }
         }
     }
 

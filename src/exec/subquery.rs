@@ -28,7 +28,7 @@
 
 mod quantified;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -37,14 +37,14 @@ use super::join::{Built, Full, Rescanned, Right};
 use super::work::{Bag, ENTRY_BYTES, Work};
 use super::{RowIter, broken, execute};
 use crate::db::State;
-use crate::error::Result;
+use crate::error::{Result, Warnings};
 use crate::logical::{Decorrelated, LogicalPlan, Subquery};
 use crate::optimizer::RuleContext;
 use crate::physical::PhysicalPlanner;
 use crate::spill::heap_bytes;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
-use crate::txn::TxId;
+use crate::txn::{Stop, TxId};
 use crate::value::{Bucket, NormKey, Value, bucket, compare};
 
 /// \[DESIGN\] The default of EXECUTOR.DECORRELATE_AFTER: the runs of a
@@ -121,6 +121,12 @@ pub trait Subqueries {
     ///
     /// The subquery's own.
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows>;
+
+    /// [ISO/IEC 9075:1992 §3.3.4.1] What hears the warnings the conditions
+    /// raise, the statement's, if any does (`error::Warnings`).
+    fn warnings(&self) -> Option<&Warnings> {
+        None
+    }
 }
 
 /// Where no subquery can be: refuses to run one (SQLCODE -910).
@@ -176,13 +182,16 @@ pub struct Runner {
     /// memory, and the areas of those that spilled.
     kept: Cell<usize>,
     seen: RefCell<HashMap<usize, Seen>>,
+    /// Its transaction's session's, whose warnings it hears, found the
+    /// first time one is raised.
+    stop: OnceCell<Option<Arc<Stop>>>,
 }
 
 impl Runner {
     /// A runner for transaction `tx` in `db`.
     pub fn new(db: &Arc<State>, tx: TxId) -> Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
-        Runner { db: Arc::clone(db), tx, done, kept: Cell::new(0), seen }
+        Runner { db: Arc::clone(db), tx, done, kept: Cell::new(0), seen, stop: OnceCell::new() }
     }
 
     /// The rows of `plan`, optimized and planned.
@@ -296,6 +305,10 @@ impl Subqueries for Runner {
         // for each set of outer values.
         self.keep(key, outer, &found);
         Ok(found)
+    }
+
+    fn warnings(&self) -> Option<&Warnings> {
+        self.stop.get_or_init(|| self.db.tx.stop_of(self.tx)).as_deref().map(Stop::warnings)
     }
 }
 

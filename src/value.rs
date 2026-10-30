@@ -16,7 +16,7 @@ mod like;
 pub mod types;
 
 pub use bits::{BYTE_BITS, Bits};
-pub use cast::cast;
+pub use cast::{cast, cast_warned};
 pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use datetime::Datetime;
 pub use decimal::{Decimal, pow10};

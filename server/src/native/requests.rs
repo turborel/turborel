@@ -30,11 +30,13 @@ pub(super) enum Work {
     Deallocate(u32),
 }
 
-/// A cursor of a prepared statement, open between requests, and the row
-/// read past the last sent, which showed it had more.
+/// A cursor of a prepared statement, open between requests, the row read
+/// past the last sent, which showed it had more, and the warning its rows
+/// raised as it was opened, its completion's once all are sent.
 struct Open {
     cursor: Cursor,
     next: Option<Row>,
+    warning: Option<SqlState>,
 }
 
 /// A connection's session and what it holds between requests: moved to the
@@ -103,7 +105,7 @@ impl Held {
             Work::Query(sql) => match self.session.direct(&sql).map_err(failed)? {
                 Direct::Done(completion) => Ok(Some(Reply::Complete(completion.into()))),
                 Direct::Rows(cursor) => {
-                    let mut open = Open { cursor, next: None };
+                    let mut open = Open { cursor, next: None, warning: self.session.warning() };
                     describe(&open.cursor, sending)?;
                     send_rows(&mut open, 0, sending).map(|ended| Some(ended.reply()))
                 }
@@ -161,7 +163,8 @@ impl Held {
         }
         let cursor = self.session.open_prepared(prepared, values).map_err(Cut::Failed)?;
         describe(&cursor, sending)?;
-        self.sent(n, Open { cursor, next: None }, (rows, sending))
+        let warning = self.session.warning();
+        self.sent(n, Open { cursor, next: None, warning }, (rows, sending))
     }
 
     /// [§17.15] At most `rows` more rows of statement `n`'s cursor: SQLSTATE
@@ -187,17 +190,19 @@ impl Held {
 enum Ended {
     /// The cursor has more.
     More,
-    /// It has no more: whether any were sent [ISO/IEC 9075:1992 §20.2 GR3].
-    Done(bool),
+    /// It has no more: whether any were sent [ISO/IEC 9075:1992 §20.2 GR3],
+    /// and the warning its rows raised, if any.
+    Done(bool, Option<SqlState>),
 }
 
 impl Ended {
-    /// The reply that says so.
+    /// The reply that says so: a completion with the warning, if any
+    /// [ISO/IEC 9075:1992 §3.3.4.1], where rows were sent.
     fn reply(&self) -> Reply {
         match self {
             Ended::More => Reply::Suspended,
-            Ended::Done(true) => Reply::Complete(Completion::Success.into()),
-            Ended::Done(false) => Reply::Complete(Completion::NoData.into()),
+            Ended::Done(true, warning) => Reply::Complete(Completion::Success.warned(*warning).into()),
+            Ended::Done(false, _) => Reply::Complete(Completion::NoData.into()),
         }
     }
 }
@@ -232,7 +237,7 @@ fn send_rows(open: &mut Open, limit: u32, (sender, batch): Sending<'_>) -> std::
         }
     }
     flush(&mut rows, sender)?;
-    Ok(Ended::Done(sent > 0))
+    Ok(Ended::Done(sent > 0, open.warning))
 }
 
 /// Sends the rows of `rows`, if any.

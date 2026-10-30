@@ -32,6 +32,19 @@ impl Completion {
         }
     }
 
+    /// [ISO/IEC 9075:1992 §3.3.4.1] This completion, but with `warning`, if
+    /// one was raised, where it would be successful: a statement that found
+    /// no data, or warned already, is left so, as it is
+    /// implementation-dependent whether more than one condition is made
+    /// available.
+    #[must_use]
+    pub fn warned(self, warning: Option<SqlState>) -> Completion {
+        match self {
+            Completion::Success => warning.map_or(Completion::Success, Completion::Warning),
+            Completion::NoData | Completion::Warning(_) => self,
+        }
+    }
+
     /// \[EXTENSION\] The SQLSTATE value [ISO/IEC 9075:1992 §22.1].
     pub fn sqlstate(self) -> SqlState {
         match self {

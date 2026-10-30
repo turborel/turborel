@@ -122,4 +122,5 @@ mod unique_checks;
 mod users;
 mod varying;
 mod views;
+mod warnings;
 mod working_tables;

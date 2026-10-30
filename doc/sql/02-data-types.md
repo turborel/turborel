@@ -289,6 +289,35 @@ turborel: SQLCODE -301 (SQLSTATE 22001): '12345' is longer than CHARACTER(3) [IS
 turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of NUMERIC(1,0) to BIT(8) is not valid [ISO/IEC 9075:1992 §6.10 SR4] (at character 7)
 ```
 
+A string CAST to a shorter character type is cut to its length, the
+statement completing with the warning 01004 if a character cut is not
+a space. A bit string CAST to a shorter bit type is cut, with the
+warning 01004, and to a longer BIT padded with 0 bits, with the warning
+01008. A bit string CAST to characters warns of 0 bits added, 01008, as
+its last character or a fixed length is filled out, and of characters
+cut, 01004.
+
+```sql
+VALUES CAST('abcdef' AS CHAR(3));
+VALUES CAST('abc   ' AS VARCHAR(3));
+VALUES CAST(B'1' AS BIT(4));
+```
+
+```
+
+-----
+ abc
+(1 row, with a warning: SQLSTATE 01004)
+
+-----
+ abc
+(1 row)
+
+------
+ 1000
+(1 row, with a warning: SQLSTATE 01008)
+```
+
 The standard: ISO/IEC 9075:1992 §4.2–§4.5 and §6.1 the types, §6.10
 CAST, §9.1 and §9.2 assignment, §10.1 the interval qualifier; X3.135-1986
 §5.5, whose types are CHARACTER and the numbers.

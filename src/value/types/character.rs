@@ -12,7 +12,7 @@ use super::{Descriptor, SqlType};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_literal, padded};
-use crate::value::{Bits, Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
+use crate::value::{BYTE_BITS, Bits, Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
 
 /// The kind of CHARACTER(length).
 #[derive(Debug)]
@@ -37,8 +37,7 @@ pub(super) fn string(v: &Value) -> Option<&str> {
 
 /// [ISO/IEC 9075:1992 §6.10 GR5d, GR6d] The characters `b`'s bits are,
 /// of the form-of-use UTF-8, whose least character is of 8 bits: its
-/// bytes, its last extended with 0 bits; the warning of that padding not
-/// raised.
+/// bytes, its last extended with 0 bits.
 ///
 /// # Errors
 ///
@@ -52,6 +51,45 @@ pub(super) fn of_bits(b: &Bits) -> Result<String> {
             format!("[ISO/IEC 9075:1992 §6.10 GR5d, GR6d] the bit string B'{b}' is not characters of UTF-8"),
         )
     })
+}
+
+/// A value cast with no warning.
+pub(super) fn unwarned(v: Value) -> (Value, Option<SqlState>) {
+    (v, None)
+}
+
+/// [ISO/IEC 9075:1992 §6.10 GR5c ii, GR6c ii] The first `length`
+/// characters of `s`, and the warning string data, right truncation if
+/// any after them is not a space.
+pub(super) fn cut(s: &str, length: u32) -> (String, Option<SqlState>) {
+    let fits = usize::try_from(length).unwrap_or(usize::MAX);
+    let lost = s.chars().skip(fits).any(|c| c != ' ');
+    (s.chars().take(fits).collect(), lost.then_some(SqlState::STRING_TRUNCATED))
+}
+
+/// [ISO/IEC 9075:1992 §6.10 GR5d, GR6d] The bit string `b` cast to a
+/// character string of length `length`, `fixed`, or of that maximum
+/// length: its characters (`of_bits`), cut to the length, or, `fixed`,
+/// extended to it with characters of 0 bits. The warning raised is the
+/// first of: implicit zero-bit padding, its last character extended with
+/// 0 bits, its bits not a multiple of 8; string data, right truncation,
+/// characters cut \[GR5d i, GR6d ii\]; implicit zero-bit padding,
+/// characters added \[GR5d ii\].
+///
+/// # Errors
+///
+/// As `of_bits`.
+pub(super) fn bits_as_characters(b: &Bits, length: u32, fixed: bool) -> Result<(Value, Option<SqlState>)> {
+    let text = of_bits(b)?;
+    let (count, fits) = (text.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
+    let added = if fixed { fits.saturating_sub(count) } else { 0 };
+    let warning = if !b.len().is_multiple_of(BYTE_BITS) || added > 0 {
+        Some(SqlState::ZERO_BIT_PADDING)
+    } else {
+        (count > fits).then_some(SqlState::STRING_TRUNCATED)
+    };
+    let cast = text.chars().chain(std::iter::repeat_n('\0', added)).take(fits).collect();
+    Ok((Value::Char(cast), warning))
 }
 
 /// A value not of a column of `t`'s type.
@@ -106,30 +144,33 @@ impl SqlType for Character {
         )
     }
 
-    /// [ISO/IEC 9075:1992 §6.10 GR5] A number's shortest literal, padded
-    /// \[GR5a, GR5b\]; a string truncated or padded \[GR5c\]. The warning of
-    /// truncating a character not a space \[GR5c ii\] is not raised.
+    /// [ISO/IEC 9075:1992 §6.10 GR5] As `cast_warned`, its warning not
+    /// raised.
     fn cast(&self, v: Value, t: &DataType) -> Result<Value> {
+        self.cast_warned(v, t).map(|(cast, _)| cast)
+    }
+
+    /// [ISO/IEC 9075:1992 §6.10 GR5] A number's shortest literal, padded
+    /// \[GR5a, GR5b\]; a string cut or padded \[GR5c\], with the warning
+    /// string data, right truncation if a character cut is not a space
+    /// \[GR5c ii\]; a bit string's characters, cut or padded, with their
+    /// warnings \[GR5d\] (`bits_as_characters`).
+    fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
         let length = length_of(t);
         match v {
-            Value::Null => Ok(Value::Null),
-            Value::Exact(d) => padded(&d.to_string(), length),
-            Value::Approx(x) => padded(&approximate_literal(x), length),
+            Value::Null => Ok((Value::Null, None)),
+            Value::Exact(d) => padded(&d.to_string(), length).map(unwarned),
+            Value::Approx(x) => padded(&approximate_literal(x), length).map(unwarned),
             // A value of a kind beyond the standard, as its kind shows it.
-            Value::Extension(ref e) => padded(&e.kind.text(&v), length),
+            Value::Extension(ref e) => padded(&e.kind.text(&v), length).map(unwarned),
             Value::Char(s) => {
-                let kept: String = s.chars().take(usize::try_from(length).unwrap_or(usize::MAX)).collect();
-                self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")
+                let (kept, warning) = cut(&s, length);
+                Ok((self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")?, warning))
             }
             // [GR5e] its literal's string, as it shows, padded.
-            Value::Datetime(d) => super::datetime::as_string(&d, length, true),
-            Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true),
-            // [GR5d] its characters, then characters of 0 bits to the
-            // length, cut to it; the warnings not raised.
-            Value::Bits(b) => {
-                let fits = usize::try_from(length).unwrap_or(usize::MAX);
-                Ok(Value::Char(of_bits(&b)?.chars().chain(std::iter::repeat('\0')).take(fits).collect()))
-            }
+            Value::Datetime(d) => super::datetime::as_string(&d, length, true).map(unwarned),
+            Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true).map(unwarned),
+            Value::Bits(b) => bits_as_characters(&b, length, true),
         }
     }
 

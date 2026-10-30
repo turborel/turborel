@@ -12,6 +12,7 @@ use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::SessionEnd;
 use turborel::txn::TxId;
 use turborel::value::{Decimal, Value};
+use turborel_client::connection::{Outcome, Sink, Streamed};
 use turborel_protocol::{Completed, Failure, Reply, Request};
 use turborel_server::settings::{BATCH_BYTES, DEFAULT_BATCH_BYTES, WORKERS};
 
@@ -51,7 +52,7 @@ fn a_client_runs_direct_statements() {
     assert_eq!(done(&c.query("INSERT INTO T (K) VALUES (2)").unwrap()), 0);
     let out = c.query("SELECT K, C, F FROM T ORDER BY K DESC").unwrap();
     assert_eq!(rows(&out), ["2,NULL,NULL", "1,AB ,1.5E0"]);
-    let turborel_client::connection::Outcome::Rows { columns, .. } = &out else { panic!("no rows") };
+    let Outcome::Rows { columns, .. } = &out else { panic!("no rows") };
     let named: Vec<_> = columns.iter().map(|c| (c.name.as_deref(), c.data_type.is_character(), c.not_null)).collect();
     assert_eq!(named, [(Some("K"), false, true), (Some("C"), true, false), (Some("F"), false, false)]);
     assert_eq!(done(&c.query("DELETE FROM T WHERE K = 9").unwrap()), 100);
@@ -266,4 +267,44 @@ fn many_clients_run_at_once() {
         }
     });
     assert_eq!(embedded(&db, "SELECT COUNT(*) FROM T"), ["100"]);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, §6.10 GR5c ii,
+/// §3.3.4.1, §22.1]; [DESIGN] RULES.md D45: a warning an expression
+/// raises reaches the client: its SQLSTATE in a statement's Complete, and,
+/// once a query's rows are all read, in the Complete that ends them, of a
+/// query run directly, streamed, or prepared; none of a statement that
+/// raises none.
+#[test]
+fn a_client_hears_the_warnings_of_expressions() {
+    let db = database();
+    let server = start(&db, &[(WORKERS, 1)]);
+    let mut c = server.connect("X");
+    let Ok(Outcome::Done(inserted)) = c.query("INSERT INTO T VALUES (1, CAST('ABCD' AS CHAR(3)), NULL), (2, 'A', 1.5E0)") else {
+        panic!("not done")
+    };
+    assert_eq!((inserted.sqlcode, inserted.sqlstate.as_str(), inserted.is_warning()), (0_i32, "01004", true));
+    assert_eq!(rows(&c.query("SELECT COUNT(F) FROM T").unwrap()), ["1"]);
+    assert_eq!(c.warning(), Some("01003"), "a null eliminated");
+    assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["2"]);
+    assert_eq!(c.warning(), None);
+    let mut kept = Kept(0_usize);
+    assert_eq!(c.query_into("SELECT CAST(C AS CHAR(1)) FROM T", &mut kept).unwrap(), Streamed::Rows(2_u64));
+    assert_eq!((kept.0, c.warning()), (2_usize, Some("01004")), "streamed");
+    let query = c.prepare("SELECT SUM(F) FROM T WHERE K > ?").unwrap();
+    assert_eq!(rows(&c.execute(&query, &[Value::Exact(Decimal::new(0_i128, 0_u32))]).unwrap()), ["1.5E0"]);
+    assert_eq!(c.warning(), Some("01003"), "prepared");
+    assert_eq!(rows(&c.execute(&query, &[Value::Exact(Decimal::new(1_i128, 0_u32))]).unwrap()), ["1.5E0"]);
+    assert_eq!(c.warning(), None, "no null of K > 1");
+    c.terminate().unwrap();
+}
+
+/// A sink that counts the rows it is given.
+struct Kept(usize);
+
+impl Sink for Kept {
+    fn columns(&mut self, _: &[turborel_protocol::Column]) {}
+    fn rows(&mut self, rows: &[Row]) {
+        self.0 = self.0.saturating_add(rows.len());
+    }
 }

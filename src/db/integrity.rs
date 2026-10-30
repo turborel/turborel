@@ -29,7 +29,7 @@ use super::assignment::check_key;
 use super::{State, api, plan};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
 use crate::error::{Code, Result, SqlError, Subject, fail};
-use crate::exec::{NoSubqueries, eval_cond, execute};
+use crate::exec::{Heard, eval_cond, execute};
 use crate::logical::{Cond, LogicalPlan, Truth};
 use crate::storage::{Row, RowId, project};
 use crate::txn::Txn;
@@ -425,7 +425,7 @@ impl State {
             }
             ConstraintKind::Check { text, names, horizon, .. } => {
                 let cond = self.bound(table, (c, (text, names, horizon)), bound)?;
-                if eval_cond(&cond, &row, &NoSubqueries)? == Truth::False {
+                if eval_cond(&cond, &row, &Heard(tx.stop.warnings()))? == Truth::False {
                     return fail(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.6 GR3] CHECK {} of {table} is false for a row", c.name));
                 }
             }

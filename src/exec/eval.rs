@@ -4,13 +4,36 @@
 //! 9075:1992 §8.12], the subqueries among them run by `Subqueries`. Split
 //! from exec.rs (RULES.md R-SIZE-2).
 
-use super::{Subqueries, broken};
+use super::{NoSubqueries, Subqueries, SubqueryRows, broken};
 use crate::catalog::MatchType;
-use crate::error::{Code, Result, SqlState, fail, fail_with};
+use crate::error::{Code, Result, SqlState, Warnings, fail, fail_with};
 use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
-use crate::value::{CompOp, Value, arith, cast, compare, like};
+use crate::value::{CompOp, Value, arith, cast_warned, compare, like};
+
+/// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
+/// by the `Warnings` it holds: a session's, or the optimizer's own, to
+/// learn whether an expression raises one.
+pub struct Heard<'w>(pub &'w Warnings);
+
+impl Subqueries for Heard<'_> {
+    fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
+        NoSubqueries.rows(subquery, outer, limit)
+    }
+
+    fn warnings(&self) -> Option<&Warnings> {
+        Some(self.0)
+    }
+}
+
+/// [ISO/IEC 9075:1992 §3.3.4.1] Raises the warning `state` of the
+/// statement `subqueries` evaluates for, if any hears it.
+pub fn warn(subqueries: &dyn Subqueries, state: SqlState) {
+    if let Some(warnings) = subqueries.warnings() {
+        warnings.raise(state);
+    }
+}
 
 /// The value of column `i` of `row`.
 fn column(row: &Row, i: usize) -> Result<&Value> {
@@ -46,7 +69,14 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
             }
             eval(otherwise, row, subqueries)
         }
-        Expr::Cast(x, to) => cast(eval(x, row, subqueries)?, to),
+        // [ISO/IEC 9075:1992 §6.10] with the warning it raises, if any.
+        Expr::Cast(x, to) => {
+            let (v, warning) = cast_warned(eval(x, row, subqueries)?, to)?;
+            if let Some(state) = warning {
+                warn(subqueries, state);
+            }
+            Ok(v)
+        }
         Expr::Domain(x, d) => checked(eval(x, row, subqueries)?, d, subqueries),
         // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.

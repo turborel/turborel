@@ -146,7 +146,7 @@ SELECT DEPT, COUNT(*) AS PEOPLE, AVG(SALARY) FROM STAFF GROUP BY DEPT ORDER BY 1
  ENG  |                    2 |            7650.0000
  OPS  |                    1 |            5400.0000
  NULL |                    1 |                 NULL
-(3 rows)
+(3 rows, with a warning: SQLSTATE 01003)
 ```
 
 A whole table, and rows written out:

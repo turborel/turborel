@@ -169,6 +169,9 @@ pub struct Connection<S: Read + Write> {
     /// Whether its session's transaction is active, as the server last
     /// said [ISO/IEC 9075:1992 §4.28].
     active: bool,
+    /// The SQLSTATE of the warning the last statement completed with, if
+    /// it did [ISO/IEC 9075:1992 §22.1].
+    warning: Option<String>,
 }
 
 /// Connects to the server at `address` as `user`, authenticated by
@@ -225,6 +228,7 @@ impl<S: Read + Write> Connection<S> {
             reach: None,
             next_statement: 0,
             active: false,
+            warning: None,
         };
         let hello = Request::Hello {
             version: VERSION,
@@ -271,6 +275,13 @@ impl<S: Read + Write> Connection<S> {
     /// connection statements may refuse to leave it [§15.1 GR1, §15.3 GR6].
     pub fn in_transaction(&self) -> bool {
         self.active
+    }
+
+    /// The SQLSTATE of the warning the last statement completed with, if it
+    /// did [ISO/IEC 9075:1992 §22.1, class 01], as its Complete said: of a
+    /// query too, once all its rows were read, its outcome being its rows.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
     }
 
     /// How to reach the server again: so a `Canceller` connects to it.
@@ -426,11 +437,12 @@ impl<S: Read + Write> Connection<S> {
         }
         let reply = Reply::decode(kind, &body).map_err(|e| self.failed(Failure::from(&e)))?;
         // A query's rows are read in a transaction; a statement's end says
-        // whether it goes on.
+        // whether it goes on, and whether it warned.
         match &reply {
-            Reply::Complete(c) => self.active = c.active,
-            Reply::Error(f) => self.active = f.active,
-            Reply::Description(_) | Reply::Rows(_) | Reply::Suspended => self.active = true,
+            Reply::Complete(c) => (self.active, self.warning) = (c.active, c.is_warning().then(|| c.sqlstate.clone())),
+            Reply::Error(f) => (self.active, self.warning) = (f.active, None),
+            Reply::Description(_) => (self.active, self.warning) = (true, None),
+            Reply::Rows(_) | Reply::Suspended => self.active = true,
             Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } => {}
         }
         Ok(reply)

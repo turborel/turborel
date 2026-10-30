@@ -35,10 +35,14 @@ impl SqlState {
     /// 9075:1992 §11.19 GR13].
     pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState("0100A");
     /// Warning: string data, right truncation [ISO/IEC 9075:1992 §9.1
-    /// GR3b, GR3e].
+    /// GR3b, GR3e; §6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7b, GR8b].
     pub const STRING_TRUNCATED: SqlState = SqlState("01004");
-    /// Warning: implicit zero-bit padding [ISO/IEC 9075:1992 §9.1 GR3h].
+    /// Warning: implicit zero-bit padding [ISO/IEC 9075:1992 §9.1 GR3h,
+    /// §6.10 GR5d, GR6d, GR7c].
     pub const ZERO_BIT_PADDING: SqlState = SqlState("01008");
+    /// Warning: null value eliminated in set function [ISO/IEC 9075:1992
+    /// §6.5 GR1b].
+    pub const NULL_VALUE_ELIMINATED: SqlState = SqlState("01003");
     /// Dependent privilege descriptors still exist [ISO/IEC 9075:1992
     /// §11.37 GR2b].
     pub const DEPENDENT_PRIVILEGES: SqlState = SqlState("2B000");

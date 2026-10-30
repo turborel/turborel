@@ -19,9 +19,9 @@ use std::sync::Arc;
 
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, Work};
-use super::{RowIter, Runner, column, eval, failed};
+use super::{RowIter, Runner, column, eval, failed, warn};
 use crate::db::State;
-use crate::error::Result;
+use crate::error::{Result, SqlState};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
 use crate::spill::{Records, SpillRun, norm_row, row_bytes};
@@ -238,6 +238,10 @@ fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, (runner,
             None => acc.update(&Value::Null)?,
             Some(e) => {
                 let v = eval(e, row, runner)?;
+                // [ISO/IEC 9075:1992 §6.5 GR1b] a null eliminated warns.
+                if v.is_null() {
+                    warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+                }
                 // The group's key, the function's place, and the value: one
                 // key for each value each function of each group took.
                 let taken = || {

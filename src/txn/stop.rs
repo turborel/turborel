@@ -17,11 +17,15 @@
 //! and fails saying so. The clock is read every `CLOCK_EVERY` looks as rows
 //! are read, so a row costs no more than a count, and at every look while
 //! a lock is waited for.
+//!
+//! It holds the warnings the session's statements raise as they evaluate
+//! expressions, too (`error::Warnings`): what a statement reaches through
+//! its transaction, as it reaches the flag, wherever its rows are pulled.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
-use crate::error::{Code, Result, SqlError};
+use crate::error::{Code, Result, SqlError, Warnings};
 
 /// The flag a session's statements look at.
 #[derive(Debug)]
@@ -45,6 +49,9 @@ pub struct Stop {
     /// The looks since the clock was last read.
     looks: AtomicU64,
     epoch: Instant,
+    /// The warnings the statement running raised [ISO/IEC 9075:1992
+    /// §3.3.4.1].
+    warnings: Warnings,
 }
 
 /// \[DESIGN\] Looks at a `Stop` as rows are read between two readings of
@@ -64,6 +71,7 @@ impl Default for Stop {
             deadline: AtomicU64::new(0),
             looks: AtomicU64::new(0),
             epoch: Instant::now(),
+            warnings: Warnings::default(),
         }
     }
 }
@@ -106,6 +114,12 @@ impl Stop {
     pub(crate) fn lock_timeout(&self) -> Option<std::time::Duration> {
         let millis = self.lock_timeout.load(Ordering::SeqCst);
         (millis > 0).then(|| std::time::Duration::from_millis(millis))
+    }
+
+    /// The warnings the session's statement raises as it runs, taken as it
+    /// completes.
+    pub(crate) fn warnings(&self) -> &Warnings {
+        &self.warnings
     }
 
     /// Nanoseconds since `epoch`, never 0.

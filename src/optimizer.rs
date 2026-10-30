@@ -23,7 +23,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::db::State;
-use crate::exec::{NoSubqueries, eval, eval_cond};
+use crate::error::Warnings;
+use crate::exec::{Heard, NoSubqueries, eval, eval_cond};
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
 use crate::settings::OPTIMIZER_MAX_PASSES;
 
@@ -171,9 +172,10 @@ impl Optimizer {
 // ===========================================================================
 
 /// Evaluate column-free subexpressions once, at planning time. A subexpression
-/// whose evaluation fails ("1/0") is left for run time, so the error is still
-/// raised exactly when the standard requires. Calls are folded only for
-/// functions that declare themselves deterministic.
+/// whose evaluation fails ("1/0"), or raises a warning (a CAST that cuts a
+/// string [ISO/IEC 9075:1992 §6.10 GR5c ii]), is left for run time, so the
+/// condition is still raised exactly when the standard requires. Calls are
+/// folded only for functions that declare themselves deterministic.
 pub struct ConstantFolding;
 
 /// The folded form of `e`, or `None` if nothing in it folds: its parts
@@ -189,8 +191,11 @@ fn fold_expr(e: &Expr) -> Option<Expr> {
     });
     if computable(&folded) {
         // A failing subexpression is left for run time, which raises the error
-        // when the standard requires it [X3.135-1986 §3.3].
-        if let Ok(v) = eval(&folded, &Vec::new(), &NoSubqueries) {
+        // when the standard requires it [X3.135-1986 §3.3]; one that warns
+        // too, for the statement that runs it to complete with the warning
+        // [ISO/IEC 9075:1992 §3.3.4.1].
+        let warnings = Warnings::default();
+        if let (Ok(v), None) = (eval(&folded, &Vec::new(), &Heard(&warnings)), warnings.take()) {
             return Some(Expr::Const(v));
         }
     }

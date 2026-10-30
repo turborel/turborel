@@ -11,7 +11,8 @@
 //! values and their set functions, given in the order their first rows
 //! came; the rows of groups past it are written, grouped as `group.rs`
 //! groups them, which spills, and merged by number with those held
-//! (`group::Spilling`).
+//! (`group::Spilling`). A null a set function's argument takes out raises
+//! its warning [ISO/IEC 9075:1992 §6.5 GR1b], as a row at a time does.
 
 mod judge;
 mod project;
@@ -27,14 +28,14 @@ use vector::Lane;
 
 use super::group::{Finished, STATE_BYTES, Spec, Spilling};
 use super::work::Work;
-use super::{NoSubqueries, eval, failed};
+use super::{Runner, eval, failed, warn};
 use crate::db::State;
-use crate::error::Result;
+use crate::error::{Result, SqlState};
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
 use crate::spill::{put_norm, put_norm_approx, put_norm_exact, put_norm_text, row_bytes};
-use crate::storage::{Batch, Cell, Column, Ints, Row};
+use crate::storage::{Batch, Cell, Column, Floats, Ints, Row, Texts};
 use crate::txn::TxId;
 use crate::value::Value;
 
@@ -123,7 +124,7 @@ pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIte
         Err(e) => return failed(e),
     };
     if read.groups.is_empty() {
-        return match read_all(&read, &aggs, stream.batches) {
+        return match read_all(&read, &aggs, stream.batches, &Runner::new(db, tx)) {
             Ok(row) => Box::new(std::iter::once(Ok(row))),
             Err(e) => failed(e),
         };
@@ -149,6 +150,7 @@ fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), bat
         width,
         scratch: Vec::new(),
         slots: Vec::new(),
+        runner: Runner::new(db, tx),
     };
     for kept in batches {
         let (batch, rows) = kept?;
@@ -205,11 +207,12 @@ fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec
 /// an expression not evaluated by vectors, a row at a time.
 fn fed_group(
     states: &mut [Box<dyn Accumulator>],
-    (taken, scratch): (&[Taken], &mut Row),
+    (taken, scratch, runner): (&[Taken], &mut Row, &Runner),
     (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
     (given, read_rows): (&[usize], &[usize]),
 ) -> Result<()> {
     for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
+        eliminated(group_nulled((take, lane), batch, (given, read_rows)), runner);
         match (take, lane) {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             (Taken::Count, _) => state.update_rows(given.len())?,
@@ -231,7 +234,8 @@ fn fed_group(
             }
             (Taken::Expr(e, inputs), None) => {
                 for &r in read_rows {
-                    let v = evaluated((e, inputs), scratch, |at, slot| put_cell(batch.cell(at, r), slot))?;
+                    let v = evaluated((e, inputs), (scratch, runner), |at, slot| put_cell(batch.cell(at, r), slot))?;
+                    eliminated(v.is_null(), runner);
                     if !v.is_null() {
                         state.update(&v)?;
                     }
@@ -243,13 +247,68 @@ fn fed_group(
 }
 
 /// The value of `e`, of a row of the values at `inputs`, as `put` writes
-/// them, made in `scratch`, its values written over.
-fn evaluated((e, inputs): (&Expr, &[usize]), scratch: &mut Row, put: impl Fn(usize, &mut Value)) -> Result<Value> {
+/// them, made in `scratch`, its values written over; its warnings heard
+/// by `runner`.
+fn evaluated((e, inputs): (&Expr, &[usize]), (scratch, runner): (&mut Row, &Runner), put: impl Fn(usize, &mut Value)) -> Result<Value> {
     scratch.resize(inputs.len(), Value::Null);
     for (slot, &at) in scratch.iter_mut().zip(inputs) {
         put(at, slot);
     }
-    eval(e, scratch, &NoSubqueries)
+    eval(e, scratch, runner)
+}
+
+/// [ISO/IEC 9075:1992 §6.5 GR1b] Raises the warning null value eliminated
+/// in set function, heard by `runner`, if a set function's argument took
+/// out a null: `any`.
+fn eliminated(any: bool, runner: &Runner) {
+    if any {
+        warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+    }
+}
+
+/// Whether any of `values` at `rows`, or any at all, is null.
+fn values_nulled(values: &[Value], rows: Option<&[usize]>) -> bool {
+    match rows {
+        Some(rows) => rows.iter().any(|&r| values.get(r).is_some_and(Value::is_null)),
+        None => values.iter().any(Value::is_null),
+    }
+}
+
+/// Whether any of the rows `rows`, or any at all, is null, as `nulls`
+/// marks them, if any is.
+fn marked(nulls: Option<&[bool]>, rows: Option<&[usize]>) -> bool {
+    nulls.is_some_and(|marks| match rows {
+        Some(rows) => rows.iter().any(|&r| marks.get(r).copied().unwrap_or(false)),
+        None => marks.contains(&true),
+    })
+}
+
+/// Whether any of the rows `rows` of `column`, or any at all, is null.
+fn column_nulled(column: &Column, rows: Option<&[usize]>) -> bool {
+    match column {
+        Column::Values(values) => values_nulled(values, rows),
+        Column::Ints(Ints { nulls, .. }) | Column::Floats(Floats { nulls, .. }) | Column::Texts(Texts { nulls, .. }) => {
+            marked(nulls.as_deref(), rows)
+        }
+    }
+}
+
+/// Whether the value of `lane` of any of the rows given `given` is null.
+fn lane_nulled(lane: &Lane<'_>, mut given: impl Iterator<Item = usize>) -> bool {
+    given.any(|n| lane.at(n).is_null())
+}
+
+/// Whether a set function that takes `take`, of `lane` if evaluated by
+/// vectors, takes a null of the rows of one group of `batch`: the `given`th
+/// of those given, the rows `read_rows` of the batch. One evaluated a row
+/// at a time is told as it is.
+fn group_nulled((take, lane): (&Taken, &Option<Fed<'_>>), batch: &Batch, (given, read_rows): (&[usize], &[usize])) -> bool {
+    match (take, lane) {
+        (Taken::Count, _) | (Taken::Expr(..), None) => false,
+        (Taken::Column(c), _) => batch.columns.get(*c).is_some_and(|column| column_nulled(column, Some(read_rows))),
+        (Taken::Expr(..), Some(Fed::Ints(ints))) => marked(ints.nulls.as_deref(), Some(given)),
+        (Taken::Expr(..), Some(Fed::Values(lane))) => lane_nulled(lane, given.iter().copied()),
+    }
 }
 
 /// Writes `cell`'s value over `slot`.
@@ -290,6 +349,8 @@ struct Groups {
     /// Of each group held, one more than its place among the groups a batch
     /// has rows of, or 0 if the batch has none of them yet.
     slots: Vec<usize>,
+    /// What hears the warnings the set functions raise.
+    runner: Runner,
 }
 
 impl Groups {
@@ -334,7 +395,7 @@ impl Groups {
             let (these, read_these) = (given.get(from..end).unwrap_or_default(), read_rows.get(from..end).unwrap_or_default());
             from = end;
             let Some((_, _, states)) = self.held.get_mut(at) else { continue };
-            fed_group(states, (&read.taken, &mut self.scratch), (batch, &lanes), (these, read_these))?;
+            fed_group(states, (&read.taken, &mut self.scratch, &self.runner), (batch, &lanes), (these, read_these))?;
         }
         Ok(())
     }
@@ -384,37 +445,44 @@ impl Groups {
 }
 
 /// The finished set functions `aggs` of the rows of `batches`, as `read`
-/// says.
-fn read_all(read: &Read, aggs: &[AggCall], batches: stream::Batches) -> Result<Vec<Value>> {
+/// says, their warnings heard by `runner`.
+fn read_all(read: &Read, aggs: &[AggCall], batches: stream::Batches, runner: &Runner) -> Result<Vec<Value>> {
     let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect();
     for kept in batches {
         let (batch, rows) = kept?;
-        fed(&batch, &read.taken, rows.as_deref(), &mut states)?;
+        fed(&batch, (&read.taken, runner), rows.as_deref(), &mut states)?;
     }
     states.iter().map(|s| s.finish()).collect()
 }
 
 /// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all:
-/// each a vector at a time (`Accumulator::update_many`, `update_rows`).
-fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
+/// each a vector at a time (`Accumulator::update_many`, `update_rows`);
+/// the warnings raised heard by `runner`.
+fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[usize]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
     for (state, take) in states.iter_mut().zip(taken) {
         match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update_rows(rows.map_or(batch.rows, <[usize]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            Taken::Column(at) => match batch.columns.get(*at) {
-                Some(Column::Ints(ints)) => state.update_ints(ints, rows)?,
-                Some(Column::Floats(floats)) => state.update_floats(floats, rows)?,
-                Some(Column::Values(values)) => state.update_many(values, rows)?,
-                Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
-                None => state.update_many(&[], rows)?,
-            },
+            Taken::Column(at) => {
+                eliminated(batch.columns.get(*at).is_some_and(|column| column_nulled(column, rows)), runner);
+                match batch.columns.get(*at) {
+                    Some(Column::Ints(ints)) => state.update_ints(ints, rows)?,
+                    Some(Column::Floats(floats)) => state.update_floats(floats, rows)?,
+                    Some(Column::Values(values)) => state.update_many(values, rows)?,
+                    Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
+                    None => state.update_many(&[], rows)?,
+                }
+            }
             // Its values evaluated a vector at a time (`vector.rs`), or else
             // a row at a time.
             Taken::Expr(e, inputs) => match vector::ints::lane(e, inputs, batch, rows) {
                 // Of integers, as integers (`vector/ints.rs`).
-                Some(ints) => state.update_ints(&ints, None)?,
-                None => fed_by_vector(batch, (e, inputs), rows, state)?,
+                Some(ints) => {
+                    eliminated(marked(ints.nulls.as_deref(), None), runner);
+                    state.update_ints(&ints, None)?;
+                }
+                None => fed_by_vector(batch, (e, inputs, runner), rows, state)?,
             },
         }
     }
@@ -422,25 +490,40 @@ fn fed(batch: &Batch, taken: &[Taken], rows: Option<&[usize]>, states: &mut [Box
 }
 
 /// Feeds `state` the values of `e` of the rows `rows` of `batch`, or all,
-/// evaluated a vector at a time (`vector.rs`), or else a row at a time.
-fn fed_by_vector(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usize]>, state: &mut Box<dyn Accumulator>) -> Result<()> {
-    match vector::lane(e, inputs, batch, rows) {
-        Some(Lane::Column(values, given)) => state.update_many(values, given),
-        Some(Lane::Made(values)) => state.update_many(&values, None),
-        Some(Lane::Const(v)) => state.update_many(&vec![v.clone(); rows.map_or(batch.rows, <[usize]>::len)], None),
-        None => fed_by_rows(batch, (e, inputs), rows, state),
+/// evaluated a vector at a time (`vector.rs`), or else a row at a time;
+/// the warnings raised heard by `runner`.
+fn fed_by_vector(
+    batch: &Batch,
+    (e, inputs, runner): (&Expr, &[usize], &Runner),
+    rows: Option<&[usize]>,
+    state: &mut Box<dyn Accumulator>,
+) -> Result<()> {
+    let count = rows.map_or(batch.rows, <[usize]>::len);
+    let Some(lane) = vector::lane(e, inputs, batch, rows) else { return fed_by_rows(batch, (e, inputs, runner), rows, state) };
+    eliminated(lane_nulled(&lane, 0..count), runner);
+    match lane {
+        Lane::Column(values, given) => state.update_many(values, given),
+        Lane::Made(values) => state.update_many(&values, None),
+        Lane::Const(v) => state.update_many(&vec![v.clone(); count], None),
     }
 }
 
 /// Feeds `state` the values of `e` of the rows `rows` of `batch`, or all,
-/// each evaluated as a row's is, its columns the vectors at `inputs`.
-fn fed_by_rows(batch: &Batch, (e, inputs): (&Expr, &[usize]), rows: Option<&[usize]>, state: &mut Box<dyn Accumulator>) -> Result<()> {
+/// each evaluated as a row's is, its columns the vectors at `inputs`; the
+/// warnings raised heard by `runner`.
+fn fed_by_rows(
+    batch: &Batch,
+    (e, inputs, runner): (&Expr, &[usize], &Runner),
+    rows: Option<&[usize]>,
+    state: &mut Box<dyn Accumulator>,
+) -> Result<()> {
     let mut scratch = Vec::new();
     let value = |at: usize, r: usize| batch.value(at, r).unwrap_or(&Value::Null);
     let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
     for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
-        values.push(evaluated((e, inputs), &mut scratch, |at, slot| slot.clone_from(value(at, r)))?);
+        values.push(evaluated((e, inputs), (&mut scratch, runner), |at, slot| slot.clone_from(value(at, r)))?);
     }
+    eliminated(values_nulled(&values, None), runner);
     state.update_many(&values, None)
 }
 

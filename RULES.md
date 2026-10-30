@@ -1694,7 +1694,9 @@ operator must be able to bound what any statement takes.
   prepared [§17.10 GR1], 07001 for values not one for each parameter
   [§17.9 GR5a].
 - A Complete gives the statement's SQLCODE and its SQLSTATE, so a
-  completion with a warning reaches the client (D47). A Complete and an
+  completion with a warning reaches the client (D47); the Complete that
+  ends a query's rows, the warning they raised, as a set function or a
+  CAST may [ISO/IEC 9075:1992 §6.5 GR1b, §6.10]. A Complete and an
   Error end with a byte saying whether the session's transaction is
   active after the statement: an SQL-agent refuses to leave a connection
   whose transaction is active, or to end it (D46).
@@ -1726,7 +1728,8 @@ cannot have.
   column is as wide as its type's values, at most 60 characters, or its
   name; numbers align right. A null is shown as `--null` says, nothing by
   default. Another statement says OK, OK with a warning and its SQLSTATE,
-  or no data.
+  or no data; a query that completes with a warning says so, with its
+  SQLSTATE, after its count of rows.
 - A typed session begins with a banner on standard output: the client's
   version, its copyright and licence, the server's product and version as
   Ready gives them, where it is reached and as whom, and how to end. A run

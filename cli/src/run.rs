@@ -69,6 +69,10 @@ pub trait Statements {
 
     /// Whether the connection statements run over is lost.
     fn is_lost(&self) -> bool;
+
+    /// The SQLSTATE of the warning the last statement completed with, if
+    /// it did.
+    fn warning(&self) -> Option<&str>;
 }
 
 impl<S: Read + Write> Statements for Connection<S> {
@@ -83,6 +87,10 @@ impl<S: Read + Write> Statements for Connection<S> {
     fn is_lost(&self) -> bool {
         Connection::is_lost(self)
     }
+
+    fn warning(&self) -> Option<&str> {
+        Connection::warning(self)
+    }
 }
 
 impl<C: Connector> Statements for Agent<C> {
@@ -96,6 +104,10 @@ impl<C: Connector> Statements for Agent<C> {
 
     fn is_lost(&self) -> bool {
         Agent::is_lost(self)
+    }
+
+    fn warning(&self) -> Option<&str> {
+        Agent::warning(self)
     }
 }
 
@@ -211,7 +223,7 @@ impl<S: Statements + ?Sized> Shell<'_, S> {
     fn ran(&mut self, sql: &str) -> Result<(), Wrong> {
         let mut table = Table::new(self.out, &self.options.null);
         match self.connection.query_into(sql, &mut table).map_err(Wrong::Failed)? {
-            Streamed::Rows(count) => table.finish(count).map_err(Wrong::Unwritten),
+            Streamed::Rows(count) => table.finish(count, self.connection.warning()).map_err(Wrong::Unwritten),
             Streamed::Done(completed) => {
                 drop(table);
                 let said = match (completed.sqlcode, completed.is_warning()) {

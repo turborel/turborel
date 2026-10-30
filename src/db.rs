@@ -225,7 +225,8 @@ pub struct Session {
     /// The modes of its active transaction, and of the next [§14.1].
     mode: Cell<TransactionMode>,
     next: Cell<TransactionMode>,
-    /// What cancels its statements (RULES.md D44).
+    /// What cancels its statements (RULES.md D44), and hears the warnings
+    /// they raise as they run [ISO/IEC 9075:1992 §3.3.4.1].
     stop: Arc<Stop>,
     /// Its instances of the temporary tables [ISO/IEC 9075:1992 §4.9].
     temporaries: temporary::Temporaries,

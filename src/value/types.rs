@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use super::{Bucket, DataType, Value};
 use crate::bytes::Reader;
-use crate::error::{Code, Result, SqlError};
+use crate::error::{Code, Result, SqlError, SqlState};
 
 mod approximate;
 mod bit;
@@ -113,6 +113,18 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     ///
     /// A data exception if `v` has no value of `t`.
     fn cast(&self, v: Value, t: &DataType) -> Result<Value>;
+
+    /// [ISO/IEC 9075:1992 §6.10] `cast`, and the warning it raises, a
+    /// completion condition [§3.3.4.1], if it raises one: as a string is
+    /// cut or a bit string padded \[GR5c ii, GR5d, GR6c ii, GR6d, GR7,
+    /// GR8\]. By default, `cast`, raising none.
+    ///
+    /// # Errors
+    ///
+    /// As `cast`.
+    fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
+        self.cast(v, t).map(|cast| (cast, None))
+    }
 
     /// How `v`, of its kind, is written as a `<literal>`.
     fn literal(&self, v: &Value) -> String;

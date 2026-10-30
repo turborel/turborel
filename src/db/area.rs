@@ -8,6 +8,11 @@
 //! statement raises no other: MORE is always N. What the condition is
 //! about, a constraint, table, column or cursor, is what its error names
 //! (`error::Subject`).
+//!
+//! A warning an expression raises as the statement runs, of a CAST
+//! [§6.10] or a set function [§6.5 GR1b], is heard by the session's
+//! `error::Warnings`, emptied as the area is, and is the statement's
+//! completion if it would be successful (`Completion::warned`).
 
 use super::assignment::{assign_targets, declared_type};
 use super::{Completion, Session, State, rule};
@@ -29,6 +34,8 @@ const DECLARED_CATALOG: &str = " ";
 /// [ISO/IEC 9075:1992 §18.1 GR3b, GR3c] The naming authority of the
 /// conditions the standard defines.
 const STANDARD: &str = "ISO 9075";
+/// [ISO/IEC 9075:1992 §22.1, Table 23] The class of a warning.
+const WARNING_CLASS: &str = "01";
 
 /// \[DESIGN\] [ISO/IEC 9075:1992 §4.19] What the last statement but GET
 /// DIAGNOSTICS raised.
@@ -62,6 +69,22 @@ impl Session {
     /// statement `dynamic` names, if one.
     pub(super) fn emptied(&self, (command, dynamic): (&'static str, &'static str)) {
         self.inner.borrow_mut().area = Area { command, dynamic, ..Area::default() };
+        self.stop.warnings().take();
+    }
+
+    /// [ISO/IEC 9075:1992 §3.3.4.1] The warning the statement raised as it
+    /// ran, if it raised one: the first, taken.
+    pub(super) fn raised(&self) -> Option<SqlState> {
+        self.stop.warnings().take()
+    }
+
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §4.19] The warning the last
+    /// statement but GET DIAGNOSTICS completed with, if it did, as the
+    /// diagnostics area holds it: of a query whose rows a `Cursor` reads,
+    /// the warning its rows raised as it was opened, as they were read then
+    /// if they could raise one (RULES.md D15).
+    pub fn warning(&self) -> Option<SqlState> {
+        self.inner.borrow().area.condition.as_ref().map(|c| c.state).filter(|state| state.class() == WARNING_CLASS)
     }
 
     /// [ISO/IEC 9075:1992 §18.1 GR1e] The statement changed `rows` rows:

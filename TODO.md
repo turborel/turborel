@@ -105,10 +105,9 @@ RULES.md when its design settles.
   MEMORY_BUDGET, so an instance larger than the budget leaves is refused
   (SQLCODE -918): it should spill to the session's temporary files past
   WORK_MEMORY instead.
-- **CAST warnings** [§6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7, GR8]: a
-  CAST that cuts a string, or pads a bit string with 0 bits, raises no
-  warning, SQLSTATE 01004 or 01008, where SQL-92 raises one; a warning
-  of an expression needs a way to reach the statement's completion.
+- **Default warnings** [§11.5 GR1b v]: a BIT column's default shorter
+  than the column is kept padded with 0 bits, and a statement that takes
+  it raises no warning 01008, implicit zero-bit padding.
 - **Plug-in data types, further** (RULES.md D53): no privilege is needed
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's

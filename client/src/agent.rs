@@ -108,6 +108,12 @@ impl<C: Connector> Agent<C> {
         self.held.get(self.current?)?.connection.canceller()
     }
 
+    /// The SQLSTATE of the warning the current connection's last statement
+    /// completed with, if it did (`Connection::warning`).
+    pub fn warning(&self) -> Option<&str> {
+        self.held.get(self.current?)?.connection.warning()
+    }
+
     /// Whether the current connection is lost: none is not.
     pub fn is_lost(&self) -> bool {
         self.current.and_then(|i| self.held.get(i)).is_some_and(|h| h.connection.is_lost())

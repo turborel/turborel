@@ -47,6 +47,23 @@ fn statements_run_and_show_their_results() {
     assert_eq!(run.err, "");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, §6.10 GR5c ii,
+/// §22.1]; [DESIGN] RULES.md D46: a warning an expression raises is shown
+/// as other warnings are: OK with a warning's SQLSTATE, or, of a query,
+/// after its count of rows.
+#[test]
+fn the_warnings_of_expressions_are_shown() {
+    let (_db, server) = served();
+    let given = options(
+        &server,
+        vec![command("INSERT INTO T VALUES (1, CAST('abcdef' AS CHAR(5))), (2, NULL); SELECT COUNT(S) FROM T; SELECT COUNT(*) FROM T")],
+    );
+    let run = ran(&given, "", false);
+    assert!(run.succeeded, "{}", run.err);
+    let shown: Vec<&str> = run.out.lines().filter(|line| !line.is_empty() && !line.starts_with(' ') && !line.starts_with('-')).collect();
+    assert_eq!(shown, ["OK, with a warning: SQLSTATE 01004", "(1 row, with a warning: SQLSTATE 01003)", "(1 row)"]);
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1]; [DESIGN] RULES.md D46: a statement
 /// that fails is told, and the run goes on, then fails; with
 /// `--stop-on-error`, it stops there.
