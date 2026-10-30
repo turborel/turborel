@@ -1243,7 +1243,12 @@ catalog to keep in step.
 **D38. The memory budget, and spilling.**
 - A database has one budget, in bytes (MEMORY_BUDGET). Every buffer pool
   reserves its pages of it when made and gives them back when dropped; a
-  reservation past the budget is refused (SQLCODE -918).
+  reservation past the budget is refused (SQLCODE -918). A page wanted
+  while every frame of its pool is held is refused too, -918, at once,
+  never waited for: the pool, below every engine (D30), knows no
+  statement to bound a wait by, and threads each holding pages while
+  waiting for one more would wait for each other; the pool is too small
+  for the work.
 - Plug-ins are given the budget when they are registered
   (`StorageEngine::attach`, `IndexMethod::attach`), so their caches draw on
   the same limit. Each owner keeps its own pool and eviction policy. A

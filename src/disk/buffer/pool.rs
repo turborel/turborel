@@ -222,9 +222,10 @@ impl BufferPool {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if `file` is not registered, the page is not allocated,
-    /// or every frame is held; the errors of reading the page or block, or
-    /// of writing back the page whose frame it takes.
+    /// SQLCODE -910 if `file` is not registered, or the page is not
+    /// allocated; -918 if every frame is held, refused at once, never
+    /// waited for (RULES.md D38); the errors of reading the page or block,
+    /// or of writing back the page whose frame it takes.
     pub fn read(&self, file: FileId, id: u64) -> Result<PageRef<'_>> {
         let key = Key { file, id };
         if let Some(page) = self.read_hinted(key) {
@@ -252,10 +253,10 @@ impl BufferPool {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if `file` is not a registered pager file, or every frame
-    /// is held; SQLCODE -918 if its file is kept in memory of a budget with
-    /// no room for the page (`Pager::reserve`); the errors of writing back
-    /// the page whose frame it takes.
+    /// SQLCODE -910 if `file` is not a registered pager file; SQLCODE -918
+    /// if every frame is held, or its file is kept in memory of a budget
+    /// with no room for the page (`Pager::reserve`); the errors of writing
+    /// back the page whose frame it takes.
     pub fn new_page(&self, file: FileId) -> Result<(PageId, PageMut<'_>)> {
         let pager = self.pager(file)?;
         let id = pager.allocate(1).first().map_or(PageId(0), |e| e.start);
@@ -415,11 +416,14 @@ impl BufferPool {
                 }
             }
             let evictable = |index: usize| self.frames.get(index).is_some_and(|f| f.pins.load(Ordering::Acquire) == 0 && f.key().is_some());
+            // Refused rather than waited for: the pool knows no statement
+            // to bound a wait by, and threads each holding pages while
+            // waiting for one more would wait for each other (RULES.md D38).
             let Some(index) = self.eviction.victim(&evictable) else {
                 return Err(SqlError::new(
-                    Code::Api,
+                    Code::Resources,
                     format!(
-                        "[DESIGN] all {} frames of the buffer pool are held: it is too small for the pages held at once",
+                        "[DESIGN] RULES.md D38: all {} frames of the buffer pool are held at once: it is too small for the work (STORAGE.POOL_BYTES, or WORK_MEMORY for a spill area)",
                         self.frames.len()
                     ),
                 ));

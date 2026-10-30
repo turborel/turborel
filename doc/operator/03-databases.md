@@ -39,6 +39,12 @@ system's temporary directory: a statement that needs a page past the
 budget is refused with SQLCODE -918, and what was written before it
 stays.
 
+The data file's pages are read through a buffer pool of
+STORAGE.POOL_BYTES, and what a query spills through one of WORK_MEMORY.
+A page wanted while every page of its pool is held at once, as by a
+pool set too small for the work, is refused with SQLCODE -918 too, at
+once, never waited for.
+
 ## Opening and closing
 
 As it opens, a database is **created**, if its directory holds no

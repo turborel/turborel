@@ -85,9 +85,10 @@ fn eviction_writes_back_dirty_pages() {
 }
 
 /// Verifies: [DESIGN] RULES.md D30, buffer pool: a held page pins its frame:
-/// with every frame held, another page cannot be read (SQLCODE -910) until
-/// one is released; a held page cannot be freed; a freed page leaves the
-/// pool and its file.
+/// with every frame held, another page cannot be read (SQLCODE -918, D38:
+/// the pool too small for the work, refused at once) until one is
+/// released; a held page cannot be freed; a freed page leaves the pool and
+/// its file.
 #[test]
 fn held_pages_pin_their_frames() {
     let scratch = Scratch::new("buffer-pins");
@@ -97,7 +98,9 @@ fn held_pages_pin_their_frames() {
     let b = put(&pool, file, b"b");
     let held = pool.read(file, a.0).unwrap();
     assert_eq!(&*held, b"a");
-    assert_eq!(pool.read(file, b.0).err().map(|e| e.code), Some(Code::Api), "the only frame is held");
+    let full = pool.read(file, b.0).err();
+    assert_eq!(full.as_ref().map(|e| e.code), Some(Code::Resources), "the only frame is held");
+    assert!(full.is_some_and(|e| e.msg.contains("STORAGE.POOL_BYTES")), "names what to raise");
     assert_eq!(pool.free(file, a).err().map(|e| e.code), Some(Code::Api), "held");
     drop(held);
     assert_eq!(get(&pool, file, b).unwrap(), b"b");

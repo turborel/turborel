@@ -50,7 +50,7 @@ pub enum Code {
     /// transaction while one is active.
     TransactionState = -917,
     /// \[DESIGN\] The memory budget cannot grant what the statement needs
-    /// (RULES.md D38, `memory.rs`).
+    /// (RULES.md D38, `memory.rs`), or a buffer pool has every frame held.
     Resources = -918,
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §22.1, Table 23] A connection
     /// exception: a server refused a connection or its credentials, or the
