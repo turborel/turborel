@@ -239,3 +239,41 @@ fn groups_skip_parts_by_their_filters() {
     let of_two = Conjunction::of(unfiltered);
     assert_eq!(read_candidates(&group, &pages, Some(&of_two)).unwrap(), candidates(&group, Some(&of_two)), "no filters");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, a group's summary: written as a
+/// directory holds it, it reads back alike, its bounds of the group's
+/// chunks; two one after another read back as two; one cut short, of
+/// other columns, or of bounds of another format, is refused with SQLCODE
+/// -916; a group no condition may match by it is told so.
+#[test]
+fn summaries_read_back() {
+    let (pool, file) = file();
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let group =
+        Group::write(&pages, &TYPES, (&(1..=4000_u64).collect::<Vec<_>>(), &(0..4000).map(row).collect::<Vec<_>>()), (&[1], &[0])).unwrap();
+    let summary = Summary::of(&group, group.header[0]);
+    let mut bytes = Vec::new();
+    put_summary(&mut bytes, &summary, &TYPES).unwrap();
+    put_summary(&mut bytes, &summary, &TYPES).unwrap();
+    let back = read_summaries(&bytes, &TYPES).unwrap();
+    assert_eq!(back.len(), 2);
+    assert_eq!(format!("{:?}", back[0]), format!("{summary:?}"));
+    assert_eq!((back[0].order.clone(), back[0].blooms.clone(), back[0].rows), (vec![1], vec![0], 4000));
+    assert_eq!(back[0].columns[0].bounds.as_ref().map(|(l, g)| (l.to_string(), g.to_string())), Some(("0".to_owned(), "3999".to_owned())));
+    let code = |b: &[u8], types: &[DataType]| read_summaries(b, types).err().map(|e| e.code);
+    assert_eq!(code(&bytes[..bytes.len().saturating_sub(3)], &TYPES), Some(Code::Corrupt), "cut short");
+    assert_eq!(code(&bytes, &TYPES[..2]), Some(Code::Corrupt), "other columns");
+    let one = bytes.len() >> 1_u32;
+    // The first column's bounds flag: after header page, ids, rows, order
+    // of one, blooms of one, and the column count and its nulls.
+    let flag = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
+    let mut other = bytes[..one].to_vec();
+    other[flag] = 2;
+    assert_eq!(code(&other, &TYPES), Some(Code::Corrupt), "bounds of another format");
+    let above = Conjunction::of(Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: int(5000) } });
+    assert!(!summary.may_match(Some(&above)) && summary.may_match(None));
+    let null = Conjunction(vec![Conjunct::Null { column: 0, not: false }]);
+    assert!(!summary.may_match(Some(&null)), "K has no null");
+    let two = Conjunction::of(Condition { columns: vec![0, 2], probe: Probe::Prefix { equal: vec![int(1)], then: None } });
+    assert!(summary.may_match(Some(&two)), "of two columns, not judged");
+}

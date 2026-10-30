@@ -59,3 +59,23 @@ fn columns_of_integers_changed_become_of_values() {
     assert!(Column::default().into_values().is_empty());
     assert!(Ints::default().values().is_empty());
 }
+
+/// Verifies: [DESIGN] RULES.md D31, a batch's approximate numbers: their
+/// values, nulls as nulls, made once; their cells their numbers, read in
+/// place; changed, a column of them becomes one of values; owned, their
+/// values are their own.
+#[test]
+fn columns_of_approximate_numbers() {
+    let floats = Floats::new(vec![1.5_f64, -0.0_f64, 0.0_f64], Some(vec![false, false, true]));
+    assert_eq!(shown(floats.values()), ["1.5E0", "-0E0", "NULL"]);
+    assert_eq!((floats.get(0), floats.get(2), floats.get(9)), (Some(1.5_f64), None, None));
+    let mut batch = Batch { columns: vec![Column::Floats(floats.clone())], rows: 3 };
+    assert!(matches!(batch.cell(0, 0), Cell::Approx(f) if f.to_bits() == 1.5_f64.to_bits()) && !batch.cell(0, 0).is_null());
+    assert!(batch.cell(0, 2).is_null());
+    assert_eq!(batch.cell(0, 1).to_value().to_string(), "-0E0");
+    batch.push(&vec![Value::Approx(2.0_f64)], &[0]);
+    assert!(matches!(batch.columns.first(), Some(Column::Values(_))), "of values once changed");
+    assert_eq!(shown(batch.values(0)), ["1.5E0", "-0E0", "NULL", "2E0"]);
+    assert_eq!(shown(&Column::Floats(floats).into_values()), ["1.5E0", "-0E0", "NULL"]);
+    assert!(Floats::default().values().is_empty());
+}

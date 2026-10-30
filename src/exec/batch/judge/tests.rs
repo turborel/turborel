@@ -1,6 +1,7 @@
 //! Unit tests of filters judged over vectors (`judge.rs`).
 
 use super::*;
+use crate::storage::Floats;
 use crate::value::{ArithOp, Decimal};
 
 fn int(n: i128) -> Expr {
@@ -212,4 +213,38 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     }
     assert_eq!(texts::kept(&Judged::Compare(0, CompOp::Eq, number(1)), &texts, &all), None, "a number");
     assert_eq!(texts::kept(&Judged::In(0, vec![number(1)], false), &texts, &all), None, "a list of a number");
+}
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13,
+/// §5.15]: a conjunct judged over approximate numbers (`judge/floats.rs`)
+/// keeps the rows it keeps of their values: comparisons of every operator
+/// with approximate and exact constants, -0 equal to 0, one with a string
+/// true of none; IS NULL and IS NOT NULL; IN and NOT IN, a null among
+/// them; LIKE not judged of them.
+#[test]
+fn conjuncts_judged_over_floats_keep_as_values() {
+    let numbers = vec![1.5_f64, 0.0_f64, -2.25_f64, -0.0_f64, 3.0_f64, 7.0_f64];
+    let floats = Floats::new(numbers, Some(vec![false, true, false, false, false, false]));
+    let of_floats = Batch { columns: vec![Column::Floats(floats.clone())], rows: 6 };
+    let of_values = Batch { columns: vec![Column::from(floats.values().to_vec())], rows: 6 };
+    let mut judged = vec![
+        Judged::IsNull(0, false),
+        Judged::IsNull(0, true),
+        Judged::In(0, vec![Value::Approx(1.5_f64), number(3), Value::Null], false),
+        Judged::In(0, vec![Value::Approx(1.5_f64), number(3)], true),
+        Judged::In(0, vec![Value::Approx(1.5_f64), Value::Null], true),
+        Judged::Compare(0, CompOp::Eq, Value::Char("x".into())),
+    ];
+    for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {
+        judged.extend([
+            Judged::Compare(0, op, Value::Approx(0.0_f64)),
+            Judged::Compare(0, op, number(3)),
+            Judged::Compare(0, op, Value::Approx(1.5_f64)),
+        ]);
+    }
+    let over: Vec<usize> = (0..6).collect();
+    for j in &judged {
+        assert_eq!(j.kept(&of_floats, &over), j.kept(&of_values, &over), "{j:?}");
+    }
+    assert_eq!(floats::kept(&Judged::Like(0, None), &floats, &over), None, "not of numbers");
 }
