@@ -59,6 +59,42 @@ fn an_operator_manages_users() {
     assert!(refused.contains("--dir"), "{refused}");
 }
 
+/// Verifies: [DESIGN] RULES.md D43: the verifiers a server makes, of the
+/// users SQL creates, take the iterations SERVER.PASSWORD_ITERATIONS is
+/// set to on its command line, over what the database keeps, as an
+/// operator's do.
+#[cfg(unix)]
+#[test]
+fn a_verifier_takes_the_iterations_set_as_it_starts() {
+    let scratch = Scratch::new("turboreld-iterations");
+    let dir = scratch.path("db");
+    let socket = scratch.path("s");
+    user(&dir, &UserCommand::Add { name: "ann".into(), owner: true }, "ann's").unwrap();
+    let line = format!(
+        "--dir {} --set SERVER.HOST= --set SERVER.SOCKET={} --set SERVER.PASSWORD_ITERATIONS=20000",
+        dir.display(),
+        socket.display()
+    );
+    let served = config(&line);
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (tell, told) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || turboreld::run(&served, |_| tell.send(()).unwrap(), async { drop(stopped.await) }));
+    told.recv().unwrap();
+    let mut c = connection::connect_local(&socket, "ann", &mut Password("ann's".into())).unwrap();
+    c.query("CREATE USER bob PASSWORD 'bob''s'").unwrap();
+    c.terminate().unwrap();
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+    let db = turborel::db::Database::new();
+    let fs: std::sync::Arc<dyn turborel::disk::io::FileSystem> = std::sync::Arc::new(turborel::disk::io::OsFileSystem);
+    db.open_files(&fs, &dir, &turborel::db::OpenOptions::default()).unwrap();
+    for (name, iterations) in [("ANN", 10_000), ("BOB", 20_000)] {
+        let verifier = String::from_utf8(db.verifier(name).unwrap().unwrap()).unwrap();
+        assert!(verifier.starts_with(&format!("$pbkdf2-sha256$i={iterations}$")), "{name}: {verifier}");
+    }
+    db.close().unwrap();
+}
+
 /// Verifies: [DESIGN] RULES.md D43: a database whose users an operator
 /// added is served: with SERVER.TRUST OFF, its default, a client proves
 /// itself by its password over a Unix socket, and trust is not served

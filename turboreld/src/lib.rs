@@ -236,7 +236,11 @@ fn within(config: &Config, work: impl FnOnce(Server) -> Result<(), String>) -> R
         db.open_files(&fs, dir, &OpenOptions::default()).map_err(|e| format!("cannot open {}: {e}", dir.display()))?;
     }
     let outcome = Server::new(db.clone()).map_err(|e| e.to_string()).and_then(|server| {
+        // The server's own, declared by `Server::new`, are set once it is
+        // made; the verifiers it makes of the users SQL creates are made
+        // again, so they take SERVER.PASSWORD_ITERATIONS as given here.
         late.iter().try_for_each(set)?;
+        db.set_credentials(Box::new(Pbkdf2::of(&db)));
         work(server)
     });
     let closed = match &config.store {
