@@ -9,11 +9,12 @@
 //! one as the program starts, kept with the database as any setting is.
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use turborel::db::{Database, OpenOptions};
 use turborel::disk::io::{FileSystem, OsFileSystem};
+use turborel::files::Noted;
 use turborel::settings::Effect;
 use turborel::value::{Decimal, Value};
 use turborel_aes::{AesGcm, KEY_BYTES, KeyDirectory, Keyring};
@@ -209,13 +210,15 @@ fn within(config: &Config, work: impl FnOnce(Server) -> Result<(), String>) -> R
     let db = Database::new();
     // Before the database opens, so its opening is told too.
     let sink = match &config.log {
-        Some(path) => Lines::appending(path).map_err(|e| format!("cannot open the log {}: {e}", path.display()))?,
+        Some(path) => {
+            Lines::appending(path).map_err(|e| format!("cannot open the log {}: {e}", path.display()))?.noting(noted(&db, path, true)?)
+        }
         None => Lines::to_stderr(),
     };
     db.set_diagnostics(Box::new(sink));
     db.register_encoding(Box::new(Lz4)).map_err(|e| format!("cannot register LZ4: {e}"))?;
     let keyring: Arc<dyn Keyring> = match &config.keys {
-        Some(dir) => Arc::new(KeyDirectory::new(dir)),
+        Some(dir) => Arc::new(NotedKeys { keys: KeyDirectory::new(dir), noted: noted(&db, dir, false)? }),
         None => Arc::new(NoKeys),
     };
     db.register_encoding(Box::new(AesGcm::new(keyring))).map_err(|e| format!("cannot register AES-256-GCM: {e}"))?;
@@ -240,6 +243,29 @@ fn within(config: &Config, work: impl FnOnce(Server) -> Result<(), String>) -> R
         Store::Memory => Ok(()),
     };
     outcome.and(closed)
+}
+
+/// The file or directory at `path`, the server's, shown among `db`'s files
+/// (RULES.md D56), held open now if `open`.
+fn noted(db: &Database, path: &Path, open: bool) -> Result<Noted, String> {
+    db.note_file(path, open).map_err(|e| format!("cannot note {}: {e}", path.display()))
+}
+
+/// The keyring of `--keys`, its directory shown among the database's files,
+/// each key read counted.
+struct NotedKeys {
+    keys: KeyDirectory,
+    noted: Noted,
+}
+
+impl Keyring for NotedKeys {
+    fn name(&self) -> &'static str {
+        self.keys.name()
+    }
+    fn key(&self, name: &str) -> turborel::error::Result<Option<[u8; KEY_BYTES]>> {
+        self.noted.read();
+        self.keys.key(name)
+    }
 }
 
 /// The keyring of a server given no `--keys`: it has none, and says how

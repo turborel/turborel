@@ -51,6 +51,8 @@ pub struct Registry {
     waiting: Mutex<()>,
     /// Set as the database closes: no file is opened after.
     shut: AtomicBool,
+    /// The files noted, not the database's (`noted.rs`).
+    noted: Mutex<HashMap<u64, Weak<noted::Entry>>>,
 }
 
 /// \[DESIGN\] A file, as INFORMATION_SCHEMA.FILES shows it.
@@ -66,6 +68,9 @@ pub struct FileInfo {
     pub writes: u64,
     /// See `reads`.
     pub syncs: u64,
+    /// Whether it is not the database's, but noted as another's: a
+    /// server's (`Registry::note`).
+    pub noted: bool,
 }
 
 /// A file of the manager's: where it is, how it is opened again, and its
@@ -110,6 +115,8 @@ impl Registry {
     pub fn infos(&self) -> Vec<FileInfo> {
         let handles: Vec<Arc<Handle>> = self.locked().values().filter_map(Weak::upgrade).collect();
         let mut infos: Vec<FileInfo> = handles.iter().map(|h| h.info()).collect();
+        let noted: Vec<Arc<noted::Entry>> = self.notes().values().filter_map(Weak::upgrade).collect();
+        infos.extend(noted.iter().map(|n| n.info()));
         infos.sort_by(|a, b| a.path.cmp(&b.path));
         infos
     }
@@ -129,6 +136,11 @@ impl Registry {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} is not opened: its database is closed", path.display())));
         }
         Ok(())
+    }
+
+    fn notes(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Weak<noted::Entry>>> {
+        // Entries are added and removed whole, so a poisoned map is whole.
+        self.noted.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn locked(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Weak<Handle>>> {
@@ -224,7 +236,14 @@ impl Handle {
     fn info(&self) -> FileInfo {
         let count = |u: Use| self.counts.get(u.at()).map_or(0, |c| c.load(Ordering::Relaxed));
         let open = self.file.try_read().map_or(true, |f| f.is_some());
-        FileInfo { path: self.path.clone(), open, reads: count(Use::Read), writes: count(Use::Write), syncs: count(Use::Sync) }
+        FileInfo {
+            path: self.path.clone(),
+            open,
+            reads: count(Use::Read),
+            writes: count(Use::Write),
+            syncs: count(Use::Sync),
+            noted: false,
+        }
     }
 }
 
@@ -329,7 +348,10 @@ impl FileSystem for FileManager {
     }
 }
 
+mod noted;
 pub mod plugins;
+
+pub use noted::Noted;
 
 // Unit tests: the limit kept by closing the file used least recently,
 // files opened again as used, and the counts (RULES.md R-TEST-1).

@@ -200,6 +200,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   open of the directory just after the drop may find it locked. The
   program's handles counted apart from the jobs', its last stopping and
   joining them before the database goes.
+- **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
+  through `Host`, is kept as the plug-in writes it, which makes its files
+  durable itself. A directory it declares shadowed would have its writes
+  kept aside and committed at each checkpoint with the data file, as the
+  built-in engines' are, which needs a checkpoint contract for it.
 - **Hash functions:** cryptographic ones (D26), as `HashFunction`
   plug-ins from vetted crates, for checksums a forger cannot match. A
   digest holds 256 bits at most (`MAX_DIGEST_BYTES`), so SHA-512 would

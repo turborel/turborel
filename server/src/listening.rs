@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use turborel::db::Database;
 use turborel::error::{Code, Result, SqlError};
+use turborel::files::Noted;
 
 use crate::server::{Endpoint, Protocol};
 use crate::settings::{self, HOST, PORT, SOCKET, TLS, TLS_CERTIFICATE, TLS_KEY};
@@ -60,7 +61,11 @@ pub fn tls(db: &Database) -> Result<Option<Arc<Tls>>> {
         return Err(unable(format!("[DESIGN] SERVER.TLS is {mode}, so SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY name its files")));
     }
     let secured = Tls::from_files(Path::new(&chain), Path::new(&key), mode == "REQUIRED");
-    Ok(Some(Arc::new(secured.map_err(|e| unable(format!("[DESIGN] cannot take TLS: {e}")))?)))
+    let secured = secured.map_err(|e| unable(format!("[DESIGN] cannot take TLS: {e}")))?;
+    // Read once, as TLS is taken, and shown while it is (RULES.md D56).
+    let notes = [chain, key].iter().map(|f| db.note_file(Path::new(f), false)).collect::<Result<Vec<_>>>()?;
+    notes.iter().for_each(Noted::read);
+    Ok(Some(Arc::new(secured.noting(notes))))
 }
 
 /// The endpoints `db`'s settings ask for, listening, each served by
@@ -80,7 +85,7 @@ pub async fn bind(db: &Database, protocol: &Arc<dyn Protocol>) -> Result<Vec<End
     }
     let socket = settings::text(db, SOCKET);
     if !socket.is_empty() {
-        endpoints.push(Endpoint { listener: local(&socket).await?, protocol: Arc::clone(protocol), tls: None });
+        endpoints.push(Endpoint { listener: local(db, &socket).await?, protocol: Arc::clone(protocol), tls: None });
     }
     if endpoints.is_empty() {
         return Err(unable("[DESIGN] SERVER.HOST and SERVER.SOCKET name nowhere to listen".into()));
@@ -88,17 +93,19 @@ pub async fn bind(db: &Database, protocol: &Arc<dyn Protocol>) -> Result<Vec<End
     Ok(endpoints)
 }
 
-/// A listener at the Unix socket `path`.
+/// A listener at the Unix socket `path`, shown among `db`'s files while
+/// it listens (RULES.md D56).
 #[cfg(unix)]
-async fn local(path: &str) -> Result<Box<dyn Listener>> {
+async fn local(db: &Database, path: &str) -> Result<Box<dyn Listener>> {
     let bound = crate::transport::Local::bind(Path::new(path)).await;
-    Ok(Box::new(bound.map_err(|e| unable(format!("[DESIGN] cannot listen at {path}: {e}")))?))
+    let bound = bound.map_err(|e| unable(format!("[DESIGN] cannot listen at {path}: {e}")))?;
+    Ok(Box::new(bound.noting(db.note_file(Path::new(path), true)?)))
 }
 
 /// No Unix socket, off Unix.
 #[cfg(not(unix))]
 #[expect(clippy::unused_async, reason = "awaited as on Unix, where it listens")]
-async fn local(_: &str) -> Result<Box<dyn Listener>> {
+async fn local(_: &Database, _: &str) -> Result<Box<dyn Listener>> {
     Err(unable("[DESIGN] SERVER.SOCKET: Unix sockets are not on this platform".into()))
 }
 

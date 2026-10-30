@@ -3,10 +3,11 @@
 //! INFORMATION_SCHEMA.SERVER, to the database's owner.
 
 use turborel::db::Database;
+use turborel::value::Value;
 use turborel_client::connection::{self, Trust};
-use turborel_server::settings::MAX_CONNECTIONS;
+use turborel_server::settings::{MAX_CONNECTIONS, SOCKET};
 
-use crate::common::{rows, start, state};
+use crate::common::{pki, rows, secured, start, state};
 
 /// Verifies: [DESIGN] RULES.md D42, D55, D43: a server shows the
 /// database's owner each connection it serves, its user, whether it is
@@ -29,4 +30,27 @@ fn a_server_shows_its_connections_to_the_owner() {
     assert_eq!(rows(&owner.query(counts).unwrap()), ["1,0,2,1,0"], "the owner's statement runs");
     assert_eq!(rows(&other.query(connections).unwrap()), Vec::<String>::new(), "not the owner");
     assert_eq!(rows(&other.query(counts).unwrap()), Vec::<String>::new());
+}
+
+/// Verifies: [DESIGN] RULES.md D56, D43: a server's own files are shown to
+/// the database's owner in INFORMATION_SCHEMA.FILES, of KIND SERVER: its
+/// TLS certificate chain and key, read once as it took TLS and closed;
+/// on Unix its socket, open while it listens. Another user sees none.
+#[test]
+fn a_server_shows_its_files_to_the_owner() {
+    let pki = pki("shown-files");
+    let db = Database::new();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    secured(&db, &pki, "ON");
+    let mut expected = vec![format!("{},NO,1", pki.chain.display()), format!("{},NO,1", pki.key.display())];
+    if cfg!(unix) {
+        let socket = pki.scratch.path("s");
+        db.set_setting(SOCKET, &Value::Char(socket.display().to_string())).unwrap();
+        expected.push(format!("{},YES,0", socket.display()));
+    }
+    let server = start(&db, &[]);
+    let files = "SELECT PATH, IS_OPEN, READS FROM INFORMATION_SCHEMA.FILES WHERE KIND = 'SERVER' ORDER BY PATH";
+    assert_eq!(rows(&server.connect("OWNER").query(files).unwrap()), expected);
+    assert_eq!(rows(&server.connect("X").query(files).unwrap()), Vec::<String>::new(), "not the owner");
 }

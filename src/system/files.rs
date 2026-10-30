@@ -82,7 +82,16 @@ impl SystemTable for Files {
             .files
             .infos()
             .into_iter()
-            .map(|f| vec![shown(&f.path), text(kind(&f.path)), yes(f.open), count(f.reads), count(f.writes), count(f.syncs)])
+            .map(|f| {
+                vec![
+                    shown(&f.path),
+                    text(if f.noted { "SERVER" } else { kind(&f.path) }),
+                    yes(f.open),
+                    count(f.reads),
+                    count(f.writes),
+                    count(f.syncs),
+                ]
+            })
             .collect())
     }
 }

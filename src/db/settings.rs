@@ -3,6 +3,9 @@
 //! definition: logged, outside any transaction, and replayed with the
 //! others (`db/recovery.rs`). Split from db.rs (RULES.md R-SIZE-2).
 
+use std::path::Path;
+use std::sync::Arc;
+
 use super::{Database, Session, State};
 use crate::binder::Context;
 use crate::diagnostics::{Event, Extension};
@@ -14,8 +17,6 @@ use crate::storage::TableOption;
 use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
 use crate::value::Value;
-
-use std::sync::Arc;
 
 impl State {
     /// Sets the database's value of the setting `name`, or its default
@@ -108,6 +109,19 @@ impl Database {
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
         Ok(())
+    }
+
+    /// \[EXTENSION\] Notes the file at `path`, which the database does not
+    /// open, but shows in INFORMATION_SCHEMA.FILES as KIND SERVER until the
+    /// note is dropped: a server's own, as its diagnostics log (RULES.md
+    /// D56). Whether it is open, and its reads and writes, are as the note
+    /// is told; it is not under FILES.MAX_OPEN.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub fn note_file(&self, path: &Path, open: bool) -> Result<crate::files::Noted> {
+        Ok(self.snapshot()?.files.note(path, open))
     }
 
     /// \[DESIGN\] The bytes its memory budget allows, and those its buffer

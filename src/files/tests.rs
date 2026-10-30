@@ -88,3 +88,21 @@ fn closing_closes_every_file_and_opens_none_after() {
     assert_eq!(registry.close_all(), Vec::<PathBuf>::new());
     assert_eq!(registry.open.load(Ordering::Acquire), 0);
 }
+
+/// Verifies: [DESIGN] RULES.md D56: a file noted, not the database's, is
+/// shown as noted while its note lives, open as told, with the reads,
+/// writes and syncs it is told; not under the limit; gone as it is dropped.
+#[test]
+fn a_file_noted_is_shown_while_its_note_lives() {
+    let (_, registry) = manager(1);
+    let noted = registry.note(Path::new("/server.log"), true);
+    noted.read();
+    noted.wrote();
+    noted.synced();
+    noted.set_open(false);
+    let shown = registry.infos();
+    assert_eq!(shown.iter().map(|f| (f.noted, f.open, f.reads, f.writes, f.syncs)).collect::<Vec<_>>(), [(true, false, 1, 1, 1)]);
+    assert_eq!(registry.open.load(Ordering::Acquire), 0, "not under the limit");
+    drop(noted);
+    assert_eq!(registry.infos(), Vec::<FileInfo>::new());
+}

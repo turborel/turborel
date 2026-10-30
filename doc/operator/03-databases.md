@@ -83,7 +83,10 @@ allows a process. Past it, the file used least recently is closed, and
 opened again as it is next used; while every open file is being read or
 written, the next waits for one. The database's owner sees each file in
 INFORMATION_SCHEMA.FILES, its kind, whether it is open, and its reads,
-writes and syncs:
+writes and syncs. The server's own files are there too, of KIND SERVER,
+though not under the limit: the `--log` file and the socket while they
+are open, the TLS certificate chain and key, read as the server starts,
+and the `--keys` directory, a read for each key taken from it:
 
 ```sql
 SELECT KIND, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND;

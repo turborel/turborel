@@ -23,6 +23,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsAcceptor;
 
+use turborel::files::Noted;
+
 use crate::transport::Transport;
 
 /// \[DESIGN\] The first byte of a TLS record of a handshake: its content
@@ -41,6 +43,8 @@ pub enum Secured {
 pub struct Tls {
     acceptor: TlsAcceptor,
     required: bool,
+    /// Its files, shown while it is taken (RULES.md D56).
+    _notes: Vec<Noted>,
 }
 
 /// The configuration of a server whose certificate chain is `chain`, the
@@ -63,7 +67,13 @@ fn invalid(what: &Path, e: impl std::fmt::Display) -> io::Error {
 impl Tls {
     /// TLS by `config`; `required` if a client in the clear is refused.
     pub fn new(config: Arc<ServerConfig>, required: bool) -> Tls {
-        Tls { acceptor: TlsAcceptor::from(config), required }
+        Tls { acceptor: TlsAcceptor::from(config), required, _notes: Vec::new() }
+    }
+
+    /// It, its files shown as `notes` say while it is taken.
+    #[must_use]
+    pub fn noting(self, notes: Vec<Noted>) -> Tls {
+        Tls { _notes: notes, ..self }
     }
 
     /// TLS with the certificate chain in the PEM file `chain` and the

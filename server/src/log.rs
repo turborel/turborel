@@ -20,17 +20,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use turborel::db::Opened;
 use turborel::diagnostics::{Diagnostics, Event, Level};
+use turborel::files::Noted;
 use turborel::threads::ThreadChange;
 
 /// \[DESIGN\] A sink writing each event as a line of JSON.
 pub struct Lines {
     out: Mutex<Box<dyn Write + Send>>,
+    /// The file it appends to, shown among the database's (RULES.md D56).
+    noted: Option<Noted>,
 }
 
 impl Lines {
     /// Lines written to `out`.
     pub fn new(out: Box<dyn Write + Send>) -> Lines {
-        Lines { out: Mutex::new(out) }
+        Lines { out: Mutex::new(out), noted: None }
+    }
+
+    /// The lines, each counted a write of the file `noted` shows (RULES.md
+    /// D56).
+    #[must_use]
+    pub fn noting(self, noted: Noted) -> Lines {
+        Lines { noted: Some(noted), ..self }
     }
 
     /// Lines written to standard error.
@@ -59,6 +69,9 @@ impl Diagnostics for Lines {
         // Nothing panics while it is held, so a poisoned lock is whole.
         let mut out = self.out.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = writeln!(out, "{text}").and_then(|()| out.flush());
+        if let Some(noted) = &self.noted {
+            noted.wrote();
+        }
     }
 }
 
@@ -332,16 +345,20 @@ mod tests {
         assert!(failed.ends_with(r#"the disk is full\t"}"#), "{failed}");
     }
 
-    /// Verifies: [DESIGN] RULES.md D40: a sink writes each event as a line,
-    /// and one appending to a file adds to what it holds.
+    /// Verifies: [DESIGN] RULES.md D40, D56: a sink writes each event as a
+    /// line, and one appending to a file adds to what it holds, each line
+    /// counted a write of the file it notes.
     #[test]
     fn a_sink_appends_its_lines() {
         let scratch = turborel_test_support::Scratch::new("server-log");
         let path = scratch.path("log");
         std::fs::write(&path, "kept\n").unwrap();
-        let sink = Lines::appending(&path).unwrap();
+        let registry = std::sync::Arc::new(turborel::files::Registry::default());
+        let sink = Lines::appending(&path).unwrap().noting(registry.note(&path, true));
         sink.event(&Event::Closed);
         sink.event(&Event::CheckpointTaken(1));
+        let shown = registry.infos();
+        assert_eq!(shown.iter().map(|f| (f.noted, f.open, f.writes)).collect::<Vec<_>>(), [(true, true, 2)]);
         let text = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "{text}");

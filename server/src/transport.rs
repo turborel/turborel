@@ -86,6 +86,8 @@ impl Listener for Tcp {
 pub struct Local {
     listener: tokio::net::UnixListener,
     path: std::path::PathBuf,
+    /// Its socket file, shown while it listens (RULES.md D56).
+    noted: Option<turborel::files::Noted>,
 }
 
 #[cfg(unix)]
@@ -105,7 +107,14 @@ impl Local {
             }
             std::fs::remove_file(path)?;
         }
-        Ok(Local { listener: tokio::net::UnixListener::bind(path)?, path: path.to_path_buf() })
+        Ok(Local { listener: tokio::net::UnixListener::bind(path)?, path: path.to_path_buf(), noted: None })
+    }
+
+    /// It, its socket file shown as `noted` says while it listens.
+    #[must_use]
+    pub fn noting(mut self, noted: turborel::files::Noted) -> Local {
+        self.noted = Some(noted);
+        self
     }
 }
 
