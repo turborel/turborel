@@ -674,6 +674,15 @@ the work at a time of its own choosing.
   needs a descriptor while every one is so held waits for one to be
   given back. A file that cannot be opened again is an error of the
   statement or job that needs it, told as an event.
+- A file is closed for another only with its writes synced: a file
+  with writes not yet synced is closed after those without, and synced
+  (`Durability::Data`) first, as a writeback error seen by no sync is
+  lost with the descriptor (on Linux, a sync through a descriptor opened
+  after the error need not report it). If that sync fails, the file
+  stays open and the failure is told, and kept: the file's next sync of
+  some durability returns it, so no later sync stands for the writes
+  lost. At close, such a file is synced before it is closed, a failure
+  told.
 - Engines and index methods take the manager through `Host`, as they take
   the memory budget (D38): a directory of their own under the
   database's, shadowed or not as they declare, and scratch files; what

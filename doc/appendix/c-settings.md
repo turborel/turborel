@@ -60,7 +60,7 @@ Each in a sentence:
 - **DIAGNOSTICS.SLOW_STATEMENT**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
-- **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed, and opened again as it is next used.
+- **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
 - **LOCK_TIMEOUT**: The milliseconds a statement waits for a lock, under LOCK_WAIT WAIT, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCK_WAIT**: WAIT waits for a lock another transaction holds; NO_WAIT refuses the statement at once.
 - **LOG.SEGMENT_SIZE**: The bytes after which a segment of the log is ended and the next begun.

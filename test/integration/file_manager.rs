@@ -7,14 +7,16 @@ use std::sync::{Arc, Mutex};
 
 use turborel::catalog::TableDesc;
 use turborel::db::{Database, OpenOptions};
-use turborel::disk::io::{DiskFile, Durability, OpenMode};
+use turborel::disk::io::{DiskFile, Durability, FileSystem, OpenMode};
 use turborel::engine::rows::{RowStore, TableOptions};
 use turborel::error::{Code, Result};
+use turborel::files::{FileManager, Registry};
 use turborel::memory::Host;
 use turborel::storage::{StorageEngine, TableStorage};
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Kept, Scratch, os, rows, small_segments};
+use crate::faults::{FaultyFs, Op, Rule};
 
 /// Verifies: [DESIGN] RULES.md D56, D36: a database of more files than
 /// FILES.MAX_OPEN, its log and its older rows' in many small segments,
@@ -185,4 +187,39 @@ fn plug_ins_keep_files_of_their_own() {
     let refused = |name: &str| host.files.directory(name).err().map(|e| e.code);
     assert_eq!((refused("../up"), refused("")), (Some(Code::Api), Some(Code::Api)));
     assert_eq!(refused("fine_name-1"), None);
+}
+
+/// Verifies: [DESIGN] RULES.md D56, D30: over the operating system's file
+/// system, a file with writes not yet synced whose sync fails as it is to
+/// be closed for another stays open, its failure told, until a sync of it
+/// succeeds and it is closed; its next sync, opened again, returns that
+/// failure, though the fault has passed, so no sync stands for the writes
+/// lost; the one after succeeds, and what was written is there. Regression
+/// test (R-TEST-7): the file was closed unsynced, and a sync of it opened
+/// again succeeded.
+#[test]
+fn a_failed_sync_before_closing_fails_the_files_next_sync() {
+    let scratch = Scratch::new("file-lost-sync");
+    let (inner, faults) = FaultyFs::with_faults();
+    let registry = Arc::new(Registry::default());
+    registry.set_limit(1);
+    let kept = Kept::default();
+    registry.telling(Arc::new(kept.clone()));
+    let fs = FileManager::over(inner, Arc::clone(&registry));
+    let written = fs.open(&scratch.path("written"), OpenMode::CreateNew).unwrap();
+    written.write_all_at(b"data", 0).unwrap();
+    faults.inject(Rule::fail(Op::Sync).on("written").times(1));
+    let other = fs.open(&scratch.path("other"), OpenMode::CreateNew);
+    assert_eq!(faults.injected(), 1, "synced before it was closed");
+    let told: Vec<String> = kept.taken().into_iter().map(|(_, e)| e).collect();
+    assert!(told.len() == 1 && told[0].contains("injected: Sync"), "{told:?}");
+    assert!(registry.infos().iter().any(|i| i.path.ends_with("written") && !i.open), "closed once synced");
+    let lost = written.sync(Durability::Full).unwrap_err();
+    assert_eq!(lost.code, Code::Io);
+    assert!(lost.msg.contains("injected: Sync"), "{}", lost.msg);
+    written.sync(Durability::Full).unwrap();
+    let mut back = [0_u8; 4];
+    written.read_exact_at(&mut back, 0).unwrap();
+    assert_eq!(&back, b"data");
+    drop((written, other));
 }

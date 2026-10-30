@@ -81,7 +81,12 @@ A database holds at most FILES.MAX_OPEN of its files open at once, 1024
 by default, 0 for no limit, so a server stays within what the system
 allows a process. Past it, the file used least recently is closed, and
 opened again as it is next used; while every open file is being read or
-written, the next waits for one. If more files are opened again in a
+written, the next waits for one. A file with writes not yet on disk is
+closed only after those without, and its writes are synced first: if
+that sync fails, the file is kept open, the failure is told as a
+`failed` event, and the file's next sync fails with it, so the
+statement, commit or checkpoint that needs the file on disk fails
+rather than succeed over writes lost. If more files are opened again in a
 minute than the limit, it is too low for the work, and a
 `files_reopened` warning says so, at most once a minute
 ([Diagnostics](08-diagnostics.md)). The database's owner sees each file in

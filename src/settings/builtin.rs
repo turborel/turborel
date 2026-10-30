@@ -149,7 +149,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(defined(
         ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
         DATABASE,
-        "The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed, and opened again as it is next used.",
+        "The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.",
     ));
     all
 }
