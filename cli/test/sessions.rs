@@ -154,7 +154,8 @@ pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
 /// Verifies: [DESIGN] RULES.md D26, D43, D46: a user proves who they are by
 /// a password, typed or from the environment, over TLS, the server's
 /// certificate checked against its name, or on Unix over a socket; a wrong
-/// one is refused, saying why.
+/// one is refused, saying why; over plain TCP none is sent, the client
+/// refusing it (SQLSTATE 28000), saying to use TLS or a Unix socket.
 #[test]
 fn a_password_is_sent_securely() {
     let pki = pki("cli-passwords");
@@ -174,6 +175,9 @@ fn a_password_is_sent_securely() {
     let untyped = turborel_cli::connect(&given, || Err(io::Error::other("no terminal"))).err().unwrap();
     assert_eq!(untyped, "cannot read the password: no terminal");
     given.credentials = Credentials::Given(Password("ann's".into()));
+    given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: None };
+    let clear = turborel_cli::connect(&given, || panic!("not typed")).err().unwrap();
+    assert!(clear.contains("SQLSTATE 28000") && clear.contains("TLS or a Unix socket, never over plain TCP"), "{clear}");
     #[cfg(unix)]
     {
         given.server = Server::Socket(pki.scratch.path("s"));

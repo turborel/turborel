@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-use crate::connection::{Connection, Mechanism, Result, failed};
+use crate::connection::{Connection, Mechanism, Result, failed, in_the_clear};
 
 /// A stream that reads and writes, of any transport.
 pub trait Duplex: Read + Write + Send {}
@@ -102,7 +102,12 @@ fn connected(address: &SocketAddr, limit: Option<Duration>) -> Result<TcpStream>
 ///
 /// # Errors
 ///
-/// As `Connection::open`; those of `Target::stream`.
+/// As `Connection::open`; those of `Target::stream`; SQLSTATE 28000,
+/// before a connection is made, for a secret mechanism, as `Password`, to
+/// a `Target::Tcp`.
 pub fn connect_to(target: &Target, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<Box<dyn Duplex>>> {
+    if matches!(target, Target::Tcp(_)) {
+        in_the_clear(mechanism)?;
+    }
     Ok(Connection::open(target.stream()?, user, mechanism)?.reached_by(target.clone()))
 }

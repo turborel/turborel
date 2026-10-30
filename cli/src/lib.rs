@@ -55,7 +55,7 @@ Enter on Windows) quits. The last statement of a file needs no semicolon.
 A password may be given in the environment variable TURBOREL_PASSWORD instead;
 without either, the server is asked to trust the user, as one with SERVER.TRUST
 LOCAL does a client of its own machine. A password is sent only over TLS or a
-Unix socket.
+Unix socket: over plain TCP the client refuses to send it.
 Ctrl-C cancels the statement running. The program exits with 1 if any
 statement failed.";
 

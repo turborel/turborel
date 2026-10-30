@@ -1509,8 +1509,11 @@ is configured, seen and changed like the database's.
   and iterations, so verifiers made before a change of either still check.
 - The authenticator `password` takes a password only over a secure
   connection (`Peer::secure`: TLS, or a Unix socket), as the password
-  travels whole. A user not there is refused as a wrong password is, after
-  as long, the check made against a decoy verifier.
+  travels whole. The client's side refuses it first: a connection to a
+  server over plain TCP sends no Hello of a mechanism that says it is
+  secret (`Mechanism::secret`), as `password` does. A user not there is
+  refused as a wrong password is, after as long, the check made against
+  a decoy verifier.
 - The authenticator `trust` takes a client as the user it names, of the
   server's own machine alone, and only if SERVER.TRUST is LOCAL. It is
   OFF by default, so every client proves who it is unless the operator

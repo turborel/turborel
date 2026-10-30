@@ -22,7 +22,7 @@ authorization identifier ([GRANT](../sql/statements/grant.md)).
 ## Passwords
 
 A password is sent only over TLS or a Unix socket, never in the clear
-over TCP. A client gives a wrong user or password the same answer, after
+over TCP: the client refuses to send it so, and the server to take it. A client gives a wrong user or password the same answer, after
 as long: `the user or the password is wrong`, SQLSTATE 28000.
 
 ## Trusted local clients

@@ -13,7 +13,10 @@ database uses the crate `turborel` instead, and its `Database` and
 `connect` connects over TCP, `connect_local` over a Unix socket, and
 `target::connect_to` to a `Target`, which may be either, over TLS or
 not. Each takes the user to connect as and a `Mechanism` that proves it:
-`Password`, of a password, sent only over TLS or a Unix socket; or
+`Password`, of a password, sent only over TLS or a Unix socket: to a
+server over plain TCP, `connect` and `connect_to` refuse it before they
+connect (SQLSTATE 28000), and of a stream given to `Connection::open`
+the caller answers for its privacy; or
 `Trust`, which asks the server to trust the user as it names itself, as
 a server does only of a client of its own machine, and only if its
 setting SERVER.TRUST is LOCAL, not its default.

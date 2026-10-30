@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use turborel::db::Database;
 use turborel_client::connection::{self, Password, Trust};
+use turborel_client::target::{Target, connect_to};
 use turborel_client::tls;
 use turborel_protocol::Request;
 use turborel_server::password::{self as pbkdf2, Pbkdf2};
@@ -66,6 +67,36 @@ fn a_user_proves_itself_by_its_password() {
     {
         let local = connection::connect_local(&pki.scratch.path("s"), "bob", &mut Password("bob's".into())).unwrap();
         assert_eq!(local.authorization(), "BOB");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D26, D42, D43: a client refuses to send a
+/// password over plain TCP, by `connect` or `connect_to`, before it makes
+/// a connection (SQLSTATE 28000, saying to use TLS or a Unix socket): a
+/// listener is never reached. Regression test (R-TEST-7): the password
+/// crossed the network in Hello, and only the server refused it.
+#[test]
+fn a_password_never_leaves_over_plain_tcp() {
+    let pki = pki("passwords-clear");
+    let (_db, server) = served(&pki);
+    let told = connection::connect(server.address, "ann", &mut Password("ann's".into())).err().unwrap();
+    assert_eq!(state(&told), ("28000", -919));
+    assert!(told.message.contains("TLS or a Unix socket, never over plain TCP"), "the client's own refusal: {told}");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let direct = connection::connect(address, "ann", &mut Password("ann's".into())).err().unwrap();
+    let targeted = connect_to(&Target::Tcp(address), "ann", &mut Password("ann's".into())).err().unwrap();
+    assert_eq!((state(&direct), state(&targeted)), (("28000", -919), ("28000", -919)));
+    let reached = listener.accept().err().unwrap();
+    assert_eq!(reached.kind(), std::io::ErrorKind::WouldBlock, "no connection made");
+    let config = tls::trusting(&pki.authority).unwrap();
+    let secured = Target::Tls(server.address, "localhost".into(), config);
+    assert_eq!(connect_to(&secured, "ann", &mut Password("ann's".into())).unwrap().authorization(), "ANN", "over TLS");
+    #[cfg(unix)]
+    {
+        let local = Target::Local(pki.scratch.path("s"));
+        assert_eq!(connect_to(&local, "bob", &mut Password("bob's".into())).unwrap().authorization(), "BOB", "over a socket");
     }
 }
 

@@ -11,6 +11,7 @@
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 
+use turborel::error::{Code, SqlError, SqlState};
 use turborel::storage::Row;
 
 use turborel_protocol::{CancelKey, Column, Completed, Failure, HEADER, MAX_BODY, Reply, Request, VERSION, broken};
@@ -35,6 +36,13 @@ pub trait Mechanism {
     ///
     /// If it has none: the connection is then given up.
     fn answer(&mut self, challenge: &[u8]) -> Result<Vec<u8>>;
+    /// Whether what it sends gives away what proves the user, as a
+    /// password does: if so, a connection over plain TCP refuses it before
+    /// anything is sent (`connect`, `target::connect_to`). None does by
+    /// default.
+    fn secret(&self) -> bool {
+        false
+    }
 }
 
 /// \[DESIGN\] The client's side of `trust`: nothing to prove, so a server
@@ -58,7 +66,8 @@ impl Mechanism for Trust {
 }
 
 /// \[DESIGN\] The client's side of `password`: the password, sent whole,
-/// so only over TLS or a Unix socket, which the server insists on.
+/// so only over TLS or a Unix socket. A connection over plain TCP refuses
+/// it before it sends anything, as the server would after.
 #[derive(Clone)]
 pub struct Password(pub String);
 
@@ -81,6 +90,9 @@ impl Mechanism for Password {
     }
     fn answer(&mut self, _: &[u8]) -> Result<Vec<u8>> {
         Err(failed("[DESIGN] password has no answer to a challenge"))
+    }
+    fn secret(&self) -> bool {
+        true
     }
 }
 
@@ -122,6 +134,21 @@ pub(crate) fn failed(msg: &str) -> Failure {
     Failure::from(&broken(msg))
 }
 
+/// \[DESIGN\] RULES.md D43: `mechanism` refused over plain TCP, before a
+/// connection is made, if what it sends is secret (SQLSTATE 28000, as the
+/// server refuses it); else nothing.
+///
+/// # Errors
+///
+/// SQLSTATE 28000 if `mechanism` is secret.
+pub(crate) fn in_the_clear(mechanism: &dyn Mechanism) -> Result<()> {
+    if !mechanism.secret() {
+        return Ok(());
+    }
+    let msg = format!("[DESIGN] {} is sent only over TLS or a Unix socket, never over plain TCP", mechanism.name());
+    Err(Failure::from(&SqlError::new(Code::Connection, msg).with_state(SqlState::INVALID_AUTHORIZATION)))
+}
+
 /// A connection over `S`.
 pub struct Connection<S: Read + Write> {
     stream: BufReader<S>,
@@ -149,8 +176,11 @@ pub struct Connection<S: Read + Write> {
 ///
 /// # Errors
 ///
-/// As `Connection::open`; a connection failure if none can be made.
+/// As `Connection::open`; a connection failure if none can be made;
+/// SQLSTATE 28000, before any is made, for a secret mechanism, as
+/// `Password`, over plain TCP.
 pub fn connect(address: impl ToSocketAddrs, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<TcpStream>> {
+    in_the_clear(mechanism)?;
     let stream = TcpStream::connect(address).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
     stream.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
     let server = stream.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
@@ -175,7 +205,10 @@ pub fn connect_local(
 
 impl<S: Read + Write> Connection<S> {
     /// Opens a connection over `stream` as `user`, authenticated by
-    /// `mechanism`.
+    /// `mechanism`. Of a stream given, the caller answers for whether it
+    /// keeps a secret mechanism's bytes, as a password, private: `connect`,
+    /// `connect_local`, `target::connect_to` and `tls::connect` know their
+    /// transport, and refuse one over plain TCP.
     ///
     /// # Errors
     ///
