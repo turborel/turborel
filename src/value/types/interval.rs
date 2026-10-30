@@ -188,7 +188,8 @@ impl SqlType for IntervalKind {
         v.to_string()
     }
 
-    /// Its units, approximately.
+    /// Its units as a number of its least significant field (`as_number`),
+    /// approximately.
     fn position(&self, v: &Value) -> Option<f64> {
         interval(v).map(|i| as_number(i).to_f64())
     }

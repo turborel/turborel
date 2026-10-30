@@ -112,12 +112,13 @@ fn a_function_gives_its_parameters_their_types() {
     assert_eq!(p.parameters(), [ParameterType::Varying]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5o, p, w; §17.10]: a
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5o, p, u, w; §17.10]: a
 /// `?` of a table value constructor takes the type of the first row's
 /// value in its place that is not one [o]; one in its place in every row
 /// of an INSERT's, the column's [p]; an UPDATE's SET `?` its column's [w];
-/// each executed as often as asked, its completion as `execute` gives
-/// it; a schema definition, prepared, is processed as `direct` does.
+/// SET SCHEMA's, CHARACTER VARYING [u]; each executed as often as asked,
+/// its completion as `execute` gives it; a schema definition, prepared, is
+/// processed as `direct` does.
 #[test]
 fn prepared_writes_take_their_columns_types() {
     let (db, s) = session();
@@ -188,8 +189,8 @@ fn a_parameter_with_no_type_is_refused() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.2 SR2, §17.6 GR4a, §17.9
 /// GR5a, f, §17.10 GR2, §17.13 GR2]: a `?` outside a prepared statement is
-/// refused (SQLCODE -103); OPEN, FETCH, CLOSE and SELECT ... INTO are not
-/// preparable (37000); values not one for each parameter (07001), a query
+/// refused (SQLCODE -103); OPEN, FETCH and CLOSE are not preparable
+/// (37000); values not one for each parameter (07001), a query
 /// executed (07003) and another statement opened as a cursor (07005) are
 /// dynamic SQL errors (SQLCODE -921); a value CAST cannot make of the type,
 /// CAST's error.

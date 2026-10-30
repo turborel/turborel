@@ -1,5 +1,5 @@
-//! UNIQUE checked after a statement [X3.135-1986 §4.5, §6.4 GR2, §8.12
-//! GR6]: the checks an UPDATE makes, counted through an index method.
+//! UNIQUE checked after a statement [X3.135-1986 §4.5, §6.4 GR2, §8.12]:
+//! the checks an UPDATE makes, counted through an index method.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,7 +62,7 @@ impl Index for CountingIndex {
     }
 }
 
-/// Verifies: [X3.135-1986 §4.5, §6.4 GR2, §8.12 GR6] UPDATE enforces
+/// Verifies: [X3.135-1986 §4.5, §6.4 GR2, §8.12] UPDATE enforces
 /// UNIQUE after the statement: keys may pass through duplicates (SET K =
 /// K + 1) but not end with them, a constraint of two columns checked when
 /// either is assigned; [DESIGN] an UPDATE that assigns no column of a

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A table's rows sealed through the encodings its option
-//! ENCODINGS names (RULES.md D30, D41), such as a compression: its records
+//! ENCODINGS names (RULES.md D30, D41, D48), such as a compression: its records
 //! and its values out of line, each with the row's id as the context.
 //!
 //! ```text

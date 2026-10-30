@@ -1,6 +1,6 @@
-//! Where a database kept in a directory keeps its parts (RULES.md D25,
-//! D39): its catalog, the definitions as they are, not every one made, where
-//! its catalog storage keeps it; and its log, where its log storage does.
+//! Where a database kept in a directory keeps its parts (RULES.md D25):
+//! its catalog, the definitions as they are, not every one made, where its
+//! catalog storage keeps it; and its log, where its log storage does.
 
 use std::path::Path;
 
@@ -70,7 +70,7 @@ fn the_catalog_holds_the_definitions_as_they_are() {
     assert_eq!(listed, [((1 << 20) + 99).to_string()]);
 }
 
-/// Verifies: [EXTENSION] RULES.md D25, D39: a database kept in a directory
+/// Verifies: [EXTENSION] RULES.md D25: a database kept in a directory
 /// keeps its catalog with the storage it is given, none in the directory:
 /// closed, it is reopened in place from it, and stopped, recovered from it;
 /// opened with another, which finds no catalog, it is refused, as its files
@@ -108,7 +108,7 @@ fn a_catalog_is_kept_where_its_storage_keeps_it() {
     assert!(refused.msg.contains("files, finds no catalog"), "{refused}");
 }
 
-/// Verifies: [EXTENSION] RULES.md D25, D39: a database kept in a directory
+/// Verifies: [EXTENSION] RULES.md D25: a database kept in a directory
 /// keeps its log with the log storage it is given, and its catalog with the
 /// catalog storage, neither in the directory: closed, it is reopened in
 /// place from them, and stopped, recovered from its log; given its catalog's

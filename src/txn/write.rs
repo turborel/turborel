@@ -59,8 +59,9 @@ impl State {
         self.indexes.get(name).map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {name} does not exist")))
     }
 
-    /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under an
-    /// exclusive lock, logging what undoes it [X3.135-1986 §4.16, §7.3 GR3b i].
+    /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under its
+    /// table's lock (`prepare_write`), logging what undoes it [X3.135-1986
+    /// §4.16, §7.3 GR3b i].
     pub(crate) fn insert_row(&self, tx: &Txn, table: &QualifiedName, row: &Row) -> Result<RowId> {
         self.prepare_write(tx, table)?;
         // After any wait for a lock: a checkpoint never waits on a waiter.

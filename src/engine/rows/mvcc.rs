@@ -526,8 +526,9 @@ impl RowTable {
         Ok(Newest { row, pending: Some(pending) })
     }
 
-    /// Every committed version of row `id`, whose newest version is
-    /// `newest`, that a reader at or after `horizon` may read.
+    /// Every version of row `id`, whose newest version is `newest`,
+    /// committed at or before `as_of`, that a reader at or after `horizon`
+    /// may read.
     pub(super) fn versions_of(
         &self,
         id: RowId,

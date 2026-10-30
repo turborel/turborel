@@ -496,7 +496,7 @@ file that implements it.
 | ISO/IEC 9075:1992 §6.10 GR5d, GR6d a bit string CAST to a character string | its bytes as UTF-8, the form-of-use, whose least character is 8 bits; bytes not UTF-8 are refused (SQLSTATE 22018), as a string holds characters | `value/types/character.rs` |
 | ISO/IEC 9075:1992 §6.10 GR7, GR8 a character string CAST to a bit string | the bits of its UTF-8 | `value/types/bit.rs` |
 | ISO/IEC 9075:1992 §6.1 SR26 the greatest `<time fractional seconds precision>` | 6: microseconds | `value/datetime.rs` |
-| ISO/IEC 9075:1992 §4.5.1, §6.1 SR5, §16.5 GR1a an SQL-session's time zone displacement, and the one it begins with | the setting TIME_ZONE: the database's, `+00:00` by default, or the session's own, which SET TIME ZONE sets; LOCAL takes the database's again (RULES.md D54) | `settings/builtin.rs`, `db/clock.rs`, `db/time_zone.rs` |
+| ISO/IEC 9075:1992 §4.5.1, §6.1 GR5, §16.5 GR1a an SQL-session's time zone displacement, and the one it begins with | the setting TIME_ZONE: the database's, `+00:00` by default, or the session's own, which SET TIME ZONE sets; LOCAL takes the database's again (RULES.md D54) | `settings/builtin.rs`, `db/clock.rs`, `db/time_zone.rs` |
 | ISO/IEC 9075:1992 §10.1 SR3, SR4 the greatest `<interval leading field precision>` and `<interval fractional seconds precision>` | 9 and 6 | `value/interval.rs` |
 | ISO/IEC 9075:1992 §6.15 GR4, GR5 the leading precision of an interval computed | of a sum or difference, one digit more than its operands' greatest; of a product or quotient, 9; a result past it raises 22015 | `value/interval/arith.rs`, `binder/interval.rs` |
 | ISO/IEC 9075:1992 §6.15 GR6b whether the difference of two datetimes is rounded or truncated | truncated, toward 0, to the qualifier's least field | `value/interval/arith.rs` |
@@ -567,7 +567,7 @@ SQLCODE -900 (RULES.md D18).
   keeps its bits, so a BIT(3) value inserted into a BIT(4) column through
   VALUES is refused (SQLSTATE 22026), as it is alone [§9.2 GR3h].
 - **A time or timestamp without time zone** [ISO/IEC 9075:1992 §4.5.1,
-  §6.1 SR5]: SQL-92 keeps it in UTC, the session's displacement implied,
+  §6.1 GR5]: SQL-92 keeps it in UTC, the session's displacement implied,
   so it is kept so, and a value retrieved shows in the displacement of the
   session that retrieves it (RULES.md D54); stored in a column WITH TIME
   ZONE, it takes that displacement. A datetime literal in a `<default

@@ -12,7 +12,8 @@ use crate::common::{Scratch, after_crash, exec, rows, sorted};
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.5 SR3, GR1, GR2; §6.2 SR3,
 /// GR9-GR11]: what a `<default clause>` refuses: a string longer than its
 /// column, a number of another type or losing a digit, a string for a
-/// number, an authorization identifier for a column shorter than 128; and
+/// number and a number for a string, an authorization identifier for a
+/// number or a column shorter than 128; and
 /// the defaults it gives: a literal, padded; a number converted; NULL;
 /// USER, CURRENT_USER, SESSION_USER and SYSTEM_USER, each the session's
 /// authorization identifier.

@@ -1,6 +1,6 @@
 //! \[DESIGN\] The connections CONNECT makes (RULES.md D46): a `<SQL-server
-//! name>` [ISO/IEC 9075:1992 §15.1] is an address, 'host:port' or, on
-//! Unix, a socket's path beginning '/'; DEFAULT is the server the command
+//! name>` [ISO/IEC 9075:1992 §15.1] is an address, 'host', 'host:port' or,
+//! on Unix, a socket's path beginning '/'; DEFAULT is the server the command
 //! line names. A connection is proved as the command line says: a password
 //! typed is asked for again, for each. Split from lib.rs (RULES.md
 //! R-SIZE-4).

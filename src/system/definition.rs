@@ -23,7 +23,9 @@
 //! Information Schema; and the one character set, SQL_TEXT [§10.4 SR3],
 //! and its collation [§21.3.23, §21.3.24]. The constraint tables are in
 //! `definition/constraints.rs`, the privilege tables and USERS in
-//! `definition/privileges.rs` (RULES.md R-SIZE-2).
+//! `definition/privileges.rs`, and \[EXTENSION\] the tables of table and
+//! index options and of indexes in `definition/options.rs` (RULES.md
+//! R-SIZE-2).
 
 mod constraints;
 mod options;
@@ -340,7 +342,7 @@ fn default_text(default: Option<&ColumnDefault>) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// [§21.3.19] ASSERTIONS; [§21.3.25, §21.3.26] of what there is none
+// [§21.3.19] ASSERTIONS, [§21.3.25] TRANSLATIONS, [§21.3.26] SQL_LANGUAGES
 // ---------------------------------------------------------------------------
 
 fn assertions_columns() -> Vec<ColumnDesc> {

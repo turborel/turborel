@@ -68,7 +68,7 @@ impl State {
     ///
     /// SQLCODE -103 if the column is not one of the table, or its only one
     /// [SR3], or a constraint refers to it and other columns and
-    /// `behavior` is RESTRICT [SR4].
+    /// `behavior` is RESTRICT [SR4], or a table option names it.
     pub(in crate::db) fn drop_column(
         &self,
         desc: &TableDesc,

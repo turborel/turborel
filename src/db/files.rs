@@ -4,8 +4,9 @@
 //!
 //! ```text
 //! catalog.0, .1      the catalog file (`db/catalog_file.rs`)
-//! data               the pager file of the row store's tables and the
-//!                    B-link indexes, shadowed (`disk/shadow.rs`)
+//! data               the pager file of the row and column stores' tables
+//!                    and the B-link and hash indexes, shadowed
+//!                    (`disk/shadow.rs`)
 //! data.shadow0, 1    what was written to it since the last checkpoint
 //! log/               the log (`log/file.rs`)
 //! tmp/               the files of spill areas (`spill.rs`), removed when
@@ -377,7 +378,8 @@ impl Database {
     }
 
     /// Makes or opens the data file at `place`, as `how` says, in a buffer
-    /// pool, and registers the row store and the B-link index method on it:
+    /// pool, and registers the column and row stores and the B-link and
+    /// hash index methods on it:
     /// tables and indexes in one shadowed file, so one commit holds both. A
     /// file made replaces any there.
     fn attach_pager(&self, place: &Place<'_>, how: Pagers) -> Result<()> {
@@ -474,11 +476,6 @@ impl State {
         Ok(Arc::from(engine.create_table(desc)?))
     }
 
-    /// The index `name` of `method` on columns of `types`, of a table of
-    /// generation `generation`: reopened by its
-    /// locator while the database is reopened and the method can, else new;
-    /// and whether it holds its entries, which a new one does not, unless
-    /// it is built once the database is reopened.
     /// Whether the database is being opened from its files, index `name`
     /// then left to be built once its tables are (`Database::reopen`).
     pub(super) fn leave_unbuilt(&mut self, name: &str) -> bool {
@@ -489,6 +486,11 @@ impl State {
         true
     }
 
+    /// The structure of index `index` of `method` on columns of `types`,
+    /// of table `table` as of its generation: reopened by its locator
+    /// while the database is reopened and the method can, else new; and
+    /// whether it holds its entries, which a new one does not, unless it
+    /// is built once the database is reopened.
     pub(super) fn index_structure(
         &mut self,
         method: &dyn IndexMethod,

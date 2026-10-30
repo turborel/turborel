@@ -1,6 +1,7 @@
-//! The SET statements of a session [ISO/IEC 9075:1992 §14.1, §16.2]: SET
-//! TRANSACTION, the modes of the next transaction, and SET SCHEMA, the
-//! default schema of unqualified names.
+//! The SET statements of a session [ISO/IEC 9075:1992 §14.1, §16.1, §16.2]:
+//! SET TRANSACTION, the modes of the next transaction; SET CATALOG, of the
+//! one catalog; and SET SCHEMA, the default schema of unqualified names.
+//! And SET of a setting (RULES.md D36), its refusals told in words.
 
 use turborel::ast::{AccessMode, IsolationLevel};
 use turborel::db::{Completion, Session, TransactionMode};

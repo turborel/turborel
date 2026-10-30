@@ -136,9 +136,9 @@ fn the_log_is_truncated_behind_the_checkpoint() {
 }
 
 /// Verifies: [DESIGN] RULES.md D25, checkpoints taken as the database runs:
-/// after `checkpoint_after` row changes, a transaction's end takes one, so
-/// recovery reads little of the log; threads writing while checkpoints
-/// are taken lose no committed row and keep no uncommitted one.
+/// after CHECKPOINT.AFTER_CHANGES row changes, a transaction's end has one
+/// taken, so recovery reads little of the log; threads writing while
+/// checkpoints are taken lose no committed row and keep no uncommitted one.
 #[test]
 fn checkpoints_are_taken_as_writers_run() {
     let scratch = Scratch::new("checkpoint-threads");

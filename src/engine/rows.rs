@@ -27,12 +27,16 @@
 //!   (`rows/mvcc.rs`), serializably, or below SERIALIZABLE as each is told;
 //!   it undoes its own changes.
 //! * **Scans** decode only the columns asked for, and fetch only their
-//!   values out of line.
+//!   values out of line. A table of the row store skips the blocks of row
+//!   ids its zone maps say a scan's conditions cannot match
+//!   (`rows/zones.rs`); one of the column store freezes its rows into
+//!   groups of their columns' values (`rows/frozen.rs`).
 //!
 //! Durability is the log's (D25): the table is `Logged`, durable through
 //! the store's last checkpoint (`StorageEngine::checkpoint`), taken when
-//! the database is closed cleanly; its locator, the meta page and that
-//! position, finds it again in its file (`StorageEngine::open_table`).
+//! asked, when one comes due, and when the database is closed
+//! (`db/checkpoint.rs`); its locator, the meta page and that position,
+//! finds it again in its file (`StorageEngine::open_table`).
 
 mod discard;
 mod files;
@@ -352,8 +356,8 @@ impl TableStorage for RowTable {
         self.live.load(Ordering::Acquire)
     }
 
-    /// A row of the tree costs 1; a frozen row less, the fewer of its
-    /// columns are read (`rows/frozen.rs`).
+    /// A row of the tree costs 0.8, up to 1 as all its columns are read; a
+    /// frozen row 0.25, up to 1 (`rows/frozen.rs`).
     fn scan_cost(&self, columns: &[usize]) -> f64 {
         self.frozen_scan_cost(columns)
     }
@@ -364,8 +368,9 @@ impl TableStorage for RowTable {
         if self.frozen.columns().is_some() { self.frozen_read_share(conditions) } else { self.zones.share(conditions) }
     }
 
-    /// The default, more by the share of the rows frozen, each a page a
-    /// column.
+    /// 4.4 of a table the buffer pool holds, more as it holds less of it, to
+    /// 14.6; more by the share of the rows frozen, each a page a column
+    /// (`rows/frozen.rs`).
     fn fetch_cost(&self) -> f64 {
         self.frozen_fetch_cost()
     }
@@ -506,7 +511,9 @@ impl TableStorage for RowTable {
 }
 
 // Unit tests: a long value's page is checked against its row and column,
-// a meta page against its format, and an undone change keeps its older
-// version for open readers (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
+// a meta page against its format, an undone change keeps its older
+// version for open readers, deleted rows are not written, versions and
+// garbage are read as of a time, and a dropped table frees its pages
+// (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
 #[cfg(test)]
 mod tests;

@@ -195,7 +195,8 @@ fn a_refused_validation_rolls_back_every_participant() {
 /// Verifies: [DESIGN] RULES.md D29: writers of a table whose engine isolates
 /// transactions share its lock, so they do not exclude each other; an index
 /// created while they are open refuses their commits (SQLCODE -911), as it
-/// has no entries for what they wrote, and their rows are written again.
+/// has no entries for what they wrote, and a refused writer's row can be
+/// written again.
 #[test]
 fn writers_of_an_isolating_engine_share_the_table() {
     let (db, _, _) = isolating();

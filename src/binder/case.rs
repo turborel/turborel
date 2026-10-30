@@ -22,12 +22,15 @@ use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Valu
 /// of the greatest scale, if all are exact [SR3c], with as many digits
 /// before the point as any has, up to `MAX_EXACT_PRECISION`, the
 /// implementation-defined precision; else approximate, of
-/// `DOUBLE_PRECISION` [SR3d]. `clause` is the rule to cite.
+/// `DOUBLE_PRECISION` [SR3d]; datetimes and intervals as `datetime_set_type`
+/// and `interval_set_type` give [SR3e, SR3f]. `clause` is the rule to cite.
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if a character string is among numbers [SR2, SR3a], or a
-/// bit string among other values [SR3b].
+/// SQLCODE -103 if a character string is among numbers [SR2, SR3a], a
+/// bit string among other values [SR3b], a datetime or interval among
+/// values not comparable with it [SR3e, SR3f], or a value of a type beyond
+/// the standard among values of another type.
 pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     // \[EXTENSION\] Values of a type beyond the standard come together
     // only with values of the same type (RULES.md D53).

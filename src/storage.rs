@@ -14,9 +14,11 @@
 //! engine with its own concurrency control (say, multi-versioning) can show
 //! each transaction what it should see.
 //!
-//! One engine is built in, the default: "rowstore" (`engine/rows.rs`, RULES.md
-//! D31), which isolates transactions itself, with versions, and undoes its
-//! own changes; a database made with `Database::new` keeps it in memory.
+//! Two engines are built in, one code (`engine/rows.rs`, RULES.md D31):
+//! "rowstore", the default, and "columnstore", which freezes its tables'
+//! rows into groups of each column's values. Both isolate transactions
+//! themselves, with versions, and undo their own changes; a database made
+//! with `Database::new` keeps them in memory.
 
 mod batch;
 mod condition;

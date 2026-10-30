@@ -391,9 +391,10 @@ impl Body<'_> {
 impl Body<'_> {
     /// \[DESIGN\] The values at positions `from` to `to`, each 8 bytes, an
     /// exact number's units or an approximate number's bits, as integers
-    /// pushed to `out`, a null's 0 (`Ints`, `Floats`): none if the
-    /// encoding is of varying fields or a dictionary of them. Each frame's width read with a loop of its own, so its
-    /// differences are read as fast as plain integers.
+    /// pushed to `out`, a null's of no meaning (`Ints`, `Floats`): none if
+    /// the fields are not of 8 bytes, or texts coded. Each frame's width
+    /// read with a loop of its own, so its differences are read as fast as
+    /// plain integers.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         let count = to.checked_sub(from)?;
         match self {
@@ -420,7 +421,8 @@ impl Body<'_> {
     /// \[DESIGN\] The text of each value at positions `from` to `to`, a
     /// character string written as it is, pushed to `text`, and where each
     /// ends to `ends`, of those `null` says are not nulls (`Texts`): none if
-    /// the encoding is of fixed fields or a frame, or a value is not UTF-8.
+    /// the encoding is of fixed fields, a frame, runs or decimals, or a
+    /// value is not UTF-8.
     pub(super) fn texts(
         &self,
         (from, to): (usize, usize),
@@ -519,8 +521,8 @@ fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
     read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
 }
 
-/// The values of frame of reference `least` whose differences, of `bytes`
-/// each, are `given`, pushed to `out`. A difference is less than 2^64, and
+/// The values at positions `from` to `to` of frame of reference `least`
+/// whose differences, of `bits` each, are `deltas`, pushed to `out`. A difference is less than 2^64, and
 /// the value it gives was an integer of 64 bits, so adding it wrapping
 /// gives that value.
 fn unframed(least: i64, (bits, deltas): (u32, &[u8]), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {

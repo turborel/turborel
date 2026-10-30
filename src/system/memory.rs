@@ -1,8 +1,8 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §21.1] INFORMATION_SCHEMA.MEMORY_RESERVATIONS:
 //! what holds the memory budget's reservations, and their bytes (RULES.md
 //! D38), an object "associated with INFORMATION_SCHEMA" this
-//! implementation adds: the buffer pools, and the spill areas of the
-//! statements spilling. The database's owner sees them; any other, none,
+//! implementation adds: the buffer pools, plug-ins' caches, and the spill
+//! areas of the statements spilling. The database's owner sees them; any other, none,
 //! as a spill area tells what others' statements do. Split from system.rs
 //! (RULES.md R-SIZE-2).
 

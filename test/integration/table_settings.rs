@@ -196,8 +196,8 @@ fn options_change_in_place_or_by_a_rebuild() {
 
 /// Verifies: [EXTENSION] RULES.md D41: ALTER TABLE ... USING moves a table
 /// to another engine, with the options given and no other, its rows and
-/// constraints with it; the row store's own options are listed, and a
-/// change of its statistics' sampling is made in place.
+/// constraints with it; the row store's own options are listed, and may be
+/// changed; moved back, the table lists none of them.
 #[test]
 fn a_table_moves_between_engines() {
     let (db, calls) = database();

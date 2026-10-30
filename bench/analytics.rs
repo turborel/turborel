@@ -1,11 +1,12 @@
-//! How fast analytic queries run on the row store (RULES.md D31), the
-//! baseline of a columnar layout: a table of 16 columns and 200,000 rows
-//! counted, summed by one column and by twelve, filtered to 1% by a column
+//! How fast analytic queries run on the row store and on the column store
+//! (RULES.md D31), the same rows in each: a table of 16 columns and 200,000
+//! rows counted, summed by one column and by twelve, filtered to 1% by a column
 //! in the order the rows were written and by one scattered, to 10% by an
 //! indexed column, to 3 of its 10 groups by IN, grouped, and
 //! two of its columns read whole; and one row fetched by its key, the
-//! transactional work beside them. Rates are of the table's rows read,
-//! but the key's, of queries. Run with `cargo xtask bench`, on the harness
+//! transactional work beside them. Each is measured on F, a row store
+//! table, then on FC, a column store one. Rates are of the table's rows
+//! read, but the key's, of queries. Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
 #![allow(
@@ -84,7 +85,8 @@ fn fetched(s: &Session, sql: &str) -> u64 {
     rows
 }
 
-/// Schema B with table F of `ROWS` rows: K its key; G one of 10 groups; B
+/// Schema B with tables F, in the row store, and FC, in the column store,
+/// each of the same `ROWS` rows: K its key; G one of 10 groups; B
 /// in the order the rows are written, C scattered; the others numbers of
 /// a few distributions, E exact with a fraction, and S text.
 fn database() -> Database {

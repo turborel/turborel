@@ -101,9 +101,9 @@ fn the_format_is_fixed() {
 /// Verifies: [DESIGN] RULES.md D25, log records: bytes that are not a
 /// whole record are refused with SQLCODE -916, never misread: a record
 /// cut at any byte, one with a byte after its end, an unknown version,
-/// kind of record, value or object dropped, a string that is not UTF-8, and a
-/// count of values far beyond what follows (refused without allocating
-/// for it).
+/// kind of record, value or object dropped, a string that is not UTF-8, a
+/// time zone displacement out of range, and a count of values far beyond
+/// what follows (refused without allocating for it).
 #[test]
 fn what_is_not_a_record_is_refused() {
     let corrupt = |bytes: &[u8]| Record::decode(bytes, &TypeRegistry::default()).err().map(|e| e.code);

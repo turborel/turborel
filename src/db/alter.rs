@@ -1,8 +1,11 @@
 //! \[EXTENSION\] ALTER TABLE [ISO/IEC 9075:1992 §11.10]: ADD COLUMN
-//! [§11.11] and DROP COLUMN [§11.15], in a transaction (`db/ddl.rs`). Split
-//! from db/ddl.rs (RULES.md R-SIZE-2).
+//! [§11.11] and DROP COLUMN [§11.15]; ALTER COLUMN [§11.12]
+//! (`db/defaults.rs`); ADD and DROP of a table constraint [§11.16, §11.17]
+//! (`db/alter/constraints.rs`); and the table's storage
+//! (`db/alter/storage.rs`); in a transaction (`db/ddl.rs`). Split from
+//! db/ddl.rs (RULES.md R-SIZE-2).
 //!
-//! The table is given a new generation of its storage
+//! A column added or dropped gives the table a new generation of its storage
 //! (`TableDesc::generation`), and its rows are copied there, each with the
 //! column added (its default [§11.11 GR2]) or removed [§11.15 GR4], by the
 //! transaction's own writes: logged, under

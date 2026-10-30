@@ -140,11 +140,12 @@ pub enum Privilege {
     References(usize),
 }
 
-/// [X3.135-1986 §6.6] What one `<privilege definition>` grants one
-/// `<grantee>`.
+/// [X3.135-1986 §6.6] What one `<privilege definition>`, or `<grant
+/// statement>` [ISO/IEC 9075:1992 §11.36], grants one `<grantee>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivilegeDesc {
-    /// The `<authorization identifier>` of the `<schema>` that granted it.
+    /// The `<authorization identifier>` that granted it: of the `<schema>`
+    /// it is granted in, or the current one of the `<grant statement>`.
     pub grantor: String,
     /// The `<grantee>`: an `<authorization identifier>`, or none for PUBLIC.
     pub grantee: Option<String>,

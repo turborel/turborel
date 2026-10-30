@@ -2,8 +2,9 @@
 //! each row change as it is made, with its images; a statement's changes,
 //! when it fails, marked undone; and the transaction's end. A transaction
 //! commits when its commit record is durable: `sync` of it returns.
-//! Definitions changed outside any transaction are logged and synced before
-//! they are published. Split from txn.rs (RULES.md R-SIZE-4).
+//! Definitions changed outside the transactions of sessions (settings,
+//! users, schemas, indexes) are logged and synced before they are
+//! published. Split from txn.rs (RULES.md R-SIZE-4).
 //!
 //! \[DESIGN\] A failed sync of the log stops the database's changes (RULES.md
 //! D25): what the log held may be lost, and a later sync may succeed
@@ -154,9 +155,10 @@ impl Txn {
 
 impl State {
     /// Records `change`, a change of definitions made outside any
-    /// transaction, among the definitions, and writes it to the log, and
-    /// syncs it: called before the change is published, so a definition
-    /// the log does not hold never is.
+    /// transaction, or by `tx`, a transaction of its own (an index's,
+    /// `db/indexes.rs`), among the definitions, and writes it to the log,
+    /// and syncs it: called before the change is published, so a
+    /// definition the log does not hold never is.
     ///
     /// # Errors
     ///

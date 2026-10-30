@@ -1,5 +1,6 @@
-//! The rows a statement writes and the values it returns: NOT NULL and UNIQUE
-//! checks [X3.135-1986 §4.5, §6.3, §6.4], WITH CHECK OPTION [X3.135-1986
+//! The rows a statement writes and the values it returns: UNIQUE checks
+//! [X3.135-1986 §4.5, §6.4] (`db/integrity.rs` checks NOT NULL and calls
+//! them), WITH CHECK OPTION [X3.135-1986
 //! §6.5 GR3], the candidate row of an UPDATE
 //! [X3.135-1986 §8.11, §8.12], and assignment to FETCH and SELECT targets
 //! [X3.135-1986 §8.6, §8.10]. Split from db.rs (RULES.md R-SIZE-2).

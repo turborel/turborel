@@ -156,7 +156,8 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
 /// \[DESIGN\] Of a LIKE of constant `pattern` and `escape`, if it cannot
 /// raise an error (`constant_pattern`): the characters every string it
 /// matches begins with, those its pattern gives before its first `_` or
-/// `%`; none if a null makes every LIKE of it unknown.
+/// `%`; none if it may raise one; empty if a null makes every LIKE of it
+/// unknown.
 pub fn constant_prefix(pattern: &Value, escape: Option<&Value>) -> Option<String> {
     let Some(compiled) = constant_pattern(pattern, escape)? else { return Some(String::new()) };
     let literal = compiled.specs.iter().map_while(|s| if let Spec::Character(c) = s { Some(*c) } else { None });

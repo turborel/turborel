@@ -22,7 +22,7 @@ pub(super) struct Work {
     limit: usize,
     /// The bytes of rows a run gathers before it writes them.
     batch: usize,
-    /// The most partitions a hash join writes at once, and the most times
+    /// The most partitions an operator writes at once, and the most times
     /// it partitions one again.
     partitions: (usize, usize),
     areas: Arc<WorkAreas>,

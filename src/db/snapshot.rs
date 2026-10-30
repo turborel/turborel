@@ -1,10 +1,10 @@
 //! \[DESIGN\] The definitions as they are (RULES.md D25): what a checkpoint's
 //! image records of them, so a database is opened from them, each table
 //! and index reopened by its locator, and only the definitions logged since
-//! replayed; not from every definition ever made. The schemas, tables with
-//! their generations, views, indexes and privileges of the catalog, the
-//! database's settings, in the forms of `catalog/codec.rs`; and its users
-//! and owner (`db/users.rs`).
+//! replayed; not from every definition ever made. The schemas, domains,
+//! assertions, tables with their generations, views, indexes and
+//! privileges of the catalog, the database's settings, in the forms of
+//! `catalog/codec.rs`; and its users and owner (`db/users.rs`).
 //!
 //! ```text
 //! snapshot: schemas (count u32, each its name and its owner, str),

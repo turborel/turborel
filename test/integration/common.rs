@@ -24,8 +24,8 @@ pub fn setup() -> Database {
     fill(Database::new())
 }
 
-/// Schema D: tables T and U, views V over T and W over V, X over U, S all
-/// of T; P may read T and V.
+/// Schema D: tables T (btree index on N) and U, each holding 1-3; views V
+/// over T and W over V, X over U, S all of T; P may read T and V.
 pub fn with_views() -> Database {
     let db = Database::new();
     db.schema(
@@ -104,7 +104,8 @@ pub fn code(s: &Session, sql: &str) -> Code {
     rows(s, sql).expect_err(sql)
 }
 
-/// T with 60 rows: ID 1..60, NAME null for every 10th, AMT = ID mod 7.
+/// `setup` with T at 60 rows and a hash index on ID: rows 4-60 have NAME
+/// `N` and the ID, null for every 10th, AMT = ID mod 7, and F 0.
 pub fn big() -> Database {
     more_rows(setup())
 }
@@ -422,8 +423,9 @@ fn key(context: u64, i: usize) -> u8 {
     u8::try_from((context.wrapping_mul(31).wrapping_add(i as u64 * 7) + 0x5A) % 256).unwrap()
 }
 
-/// A table's gate: the first scan to reach its second row says so, and
-/// waits to be told to go on; scans after pass.
+/// A table's gate: once armed, the first scan to reach its second row says
+/// so, and waits to be told to go on; scans after pass until it is armed
+/// again.
 #[derive(Clone)]
 pub struct Gate {
     armed: Arc<std::sync::atomic::AtomicBool>,

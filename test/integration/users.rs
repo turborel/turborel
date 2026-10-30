@@ -71,8 +71,9 @@ fn users_are_kept_with_their_verifiers() {
 }
 
 /// Verifies: [DESIGN] RULES.md D25, D43: users and the owner are kept with
-/// the definitions: those made before a checkpoint come back from it, those
-/// made after from the log; after a crash as after a close.
+/// the definitions: after a crash, those made before a checkpoint come back
+/// from it, those made after from the log; and all from a checkpoint taken
+/// once recovered, after a second crash.
 #[test]
 fn users_survive_a_crash() {
     let scratch = Scratch::new("users-crash");

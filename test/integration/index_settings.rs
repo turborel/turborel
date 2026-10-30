@@ -49,7 +49,7 @@ fn indexed() -> (Database, Calls) {
 /// index is made with (`IndexMethod::create_on`); the planner probes it,
 /// INDEXES and INDEX_OPTIONS list it, and DROP INDEX takes it away. They
 /// run outside a transaction (SQLCODE -917), by the owner of the table's
-/// schema (-104); a column, method, index or option not there, a name
+/// schema (-104); a table, column, method, index or option not there, a name
 /// taken, an option twice, a value not of its kind, or an index of a
 /// UNIQUE constraint dropped is a Syntax Rule broken (-103).
 #[test]

@@ -48,8 +48,8 @@ pub(super) fn get(bytes: &[u8], bits: u32, n: usize) -> Option<u64> {
 
 /// Each value from the `from`th to the `to`th of `bits` bits packed in
 /// `bytes`, in order, given to `each`: each read of the 8 bytes it begins
-/// in, but one past their end or of more than 56 bits, read as `get`
-/// reads it. None if `bytes` hold fewer.
+/// in, but one those bytes do not hold whole, past the end of `bytes` or
+/// of their 64 bits, read as `get` reads it. None if `bytes` hold fewer.
 pub(super) fn unpack(bytes: &[u8], bits: u32, (from, to): (usize, usize), mut each: impl FnMut(u64)) -> Option<()> {
     if bytes.len() < packed_len(to, bits)? {
         return None;

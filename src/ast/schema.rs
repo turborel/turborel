@@ -1,4 +1,5 @@
-//! Abstract syntax of the schema definition language [X3.135-1986 §6].
+//! Abstract syntax of the schema definition language [X3.135-1986 §6;
+//! ISO/IEC 9075:1992 §11].
 //! Split from ast.rs (RULES.md R-SIZE-2).
 
 use super::{DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, TableName, UserFunction};
@@ -9,7 +10,9 @@ use crate::value::DataType;
 /// `<schema name clause>` ::= `<schema name>` | AUTHORIZATION `<schema
 /// authorization identifier>` | `<schema name>` AUTHORIZATION `<schema
 /// authorization identifier>`
-/// `<schema element>` ::= `<table definition>` | `<view definition>` | `<privilege definition>`
+/// `<schema element>` ::= `<domain definition>` | `<table definition>` | `<view definition>`
+///   | `<grant statement>` | `<assertion definition>`; a character set, collation or translation
+///   definition is read, then refused.
 #[derive(Debug)]
 pub struct Schema {
     /// The `<catalog name>` of its `<schema name>`, if written.
@@ -35,8 +38,9 @@ pub struct Schema {
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] An `<SQL schema statement>` of
 /// those implemented outside a `<schema definition>`, run in a transaction
 /// (RULES.md D33): a `<table definition>` [§11.3], a `<view definition>`
-/// [§11.19], a `<grant statement>` [§11.36] or a `<revoke statement>`
-/// [§11.37].
+/// [§11.19], a `<grant statement>` [§11.36], a `<revoke statement>`
+/// [§11.37], a `<domain definition>` [§11.21], an `<alter domain
+/// statement>` [§11.22] or an `<assertion definition>` [§11.34].
 #[derive(Debug)]
 pub enum SchemaStatement {
     /// A `<table definition>`.
@@ -138,7 +142,7 @@ pub struct RevokeStatement {
     pub actions: Option<Vec<Action>>,
     /// The `<table name>` of the `<object name>`, or its `<domain name>`.
     pub table: TableName,
-    /// The `<object name>` is DOMAIN's [§10.3].
+    /// The `<object name>` is DOMAIN's [§11.36].
     pub domain: bool,
     /// The `<grantee>`s: an `<authorization identifier>`, or none for PUBLIC.
     pub grantees: Vec<Option<String>>,
@@ -193,7 +197,8 @@ pub struct PrivilegeDefinition {
 }
 
 /// [X3.135-1986 §6.6] `<action>` ::= SELECT | INSERT | DELETE | UPDATE
-/// \[(`<grant column list>`)\]
+/// \[(`<grant column list>`)\]; [ISO/IEC 9075:1992 §10.3] INSERT and
+/// REFERENCES of a `<privilege column list>`, and USAGE.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// SELECT.
@@ -273,11 +278,11 @@ pub enum TableElement {
     Constraint(TableConstraint),
 }
 
-/// [X3.135-1986 §6.3] `<column definition>` ::= `<column name>` `<data type>`
+/// [X3.135-1986 §6.3] `<column definition>` ::= `<column name>` {`<data type>` | `<domain name>`}
 /// \[`<default clause>`\] \[`<column constraint definition>`...\] [ISO/IEC
 /// 9075:1992 §11.4]
 ///
-/// Not implemented: `<domain name>`, `<collate clause>`.
+/// Read and refused: `<collate clause>`.
 #[derive(Debug)]
 pub struct ColumnDefinition {
     /// The `<column name>`.

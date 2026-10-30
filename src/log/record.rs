@@ -2,35 +2,47 @@
 //! log, engine-neutral, as `TableStorage` speaks: the row changes of a
 //! transaction, with the row id and the before- and after-images that redo
 //! and undo need; its end, committed with its commit timestamp (D29) or
-//! aborted; and changes of definitions. The format is the database's, the
-//! same on every platform, and versioned:
+//! aborted; changes of definitions, settings and users; and what
+//! checkpoints log. The format is the database's, the same on every
+//! platform, and versioned:
 //!
 //! ```text
 //! record:  version u8 | kind u8 | transaction u64 | body
-//! insert:  table | row id u64 | after-image row
-//! update:  table | row id u64 | before-image row | after-image row
-//! delete:  table | row id u64 | before-image row
-//! commit:  commit timestamp u64
-//! abort:   (nothing)
-//! checkpoint: (nothing)
-//! undone:  position u64 of the statement's first change
-//! schema:  owner | the `<schema>` text | tables (count u32, each:
-//!          identifier, engine)
-//! index:   name | table | columns (count u32, names) | method
-//! setting: name | value, null for its default again
-//! user:    authorization identifier | kept u8 | verifier bytes, if kept
-//! owner:   authorization identifier
+//! insert (1):  table | generation u32 | row id u64 | after-image row
+//! update (2):  table | generation u32 | row id u64 | before-image row | after-image row
+//! delete (3):  table | generation u32 | row id u64 | before-image row
+//! commit (4):  commit timestamp u64
+//! abort (5):   (nothing)
+//! schema (6):  owner | the `<schema>` text | tables (count u32, each:
+//!              identifier, engine) | zone
+//! create index (7): name | table | columns (count u32, names) | method |
+//!              options
+//! undone (8):  position u64 of the statement's first change
+//! checkpoint (9): (nothing)
+//! drop index (10): name
+//! drop (11):   object u8 (1 table, 2 view, 3 schema, 4 domain, 5 assertion)
+//!              | table, view, domain or assertion, or the schema's name |
+//!              cascade u8
+//! alter table (12): table | the `<alter table action>` text | default
+//!              schema | zone
+//! setting (13): name | value, null for its default again
+//! alter index (14): name | options
+//! stale (15):  checkpoint's position u64 | index | row id u64 | key row
+//! user (16):   authorization identifier | kept u8 | verifier bytes, if kept
+//! owner (17):  authorization identifier
+//! defined (18): authorization identifier | default schema | the
+//!              statement's text | placed u8, 1 for a table created, then
+//!              its engine and its storage's generation u32 | zone
 //! table:   authorization identifier | identifier
-//! drop:    object u8 (1 table, 2 view, 3 schema, 4 domain) | table, view
-//!          or domain, or the schema's name | cascade u8
-//! defined: authorization identifier | default schema | the statement's
-//!          text | placed u8, 1 for a table created, then its engine and
-//!          its storage's generation u32
-//! stale:   checkpoint's position u64 | index | row id u64 | key row
+//! options: count u32, each: name | value
+//! zone:    time zone displacement in minutes, i128
 //! ```
 //!
-//! Strings are a length and UTF-8; rows and values as in `value/codec.rs`.
-//! A record needs no checksum of its own: the block holding it has one.
+//! A row change's generation is that of its table's storage
+//! (`TableDesc::generation`). Integers are little-endian; strings and
+//! bytes a length u32 and the bytes (UTF-8 for strings); rows and values
+//! as in `value/codec.rs`. A record needs no checksum of its own: the
+//! block holding it has one.
 
 use super::Lsn;
 use crate::bytes::{Put, Reader};
@@ -139,8 +151,11 @@ pub enum Change {
         /// The position of the statement's first change.
         from: Lsn,
     },
-    /// \[DESIGN\] Every engine holds every change logged before it: written
-    /// when the database is closed cleanly (`Database::close`).
+    /// \[DESIGN\] A checkpoint, logged and synced so that every record
+    /// before it is durable before the pages holding what they record are
+    /// (`db/checkpoint.rs`). One taken as the database is closed cleanly
+    /// (`Database::close`) is logged before the engines capture what they
+    /// hold, which then is every change logged before it; recovery skips it.
     Checkpoint,
     /// \[DESIGN\] An index entry of a version awaiting collection when the
     /// checkpoint holding every change before `through` was taken: recovery
@@ -212,19 +227,20 @@ pub enum Change {
         /// one: the session's [ISO/IEC 9075:1992 §5.3 SR18].
         zone: i16,
     },
-    /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] A table,
-    /// view or schema dropped by its transaction, which the definitions
-    /// hold once it commits.
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27,
+    /// §11.35] A table, view, schema, domain or assertion dropped by its
+    /// transaction, which the definitions hold once it commits.
     Drop {
         /// What was dropped.
         object: DropTarget,
         /// CASCADE was written: what depends on it went with it.
         cascade: bool,
     },
-    /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.3, §11.19, §11.36, §11.37] A
-    /// table or view defined, or privileges granted or revoked, by a
-    /// statement of its transaction (`ast::SchemaStatement`), which the
-    /// definitions hold once it commits: made again from its text.
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.3, §11.19, §11.21, §11.22,
+    /// §11.34, §11.36, §11.37] A table, view, domain or assertion defined,
+    /// a domain altered, or privileges granted or revoked, by a statement
+    /// of its transaction (`ast::SchemaStatement`), which the definitions
+    /// hold once it commits: made again from its text.
     Defined {
         /// The authorization identifier that ran it.
         auth: String,

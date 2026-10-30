@@ -5,9 +5,10 @@
 //! calls it with its operands in order (`parser/expression.rs`). Split from
 //! functions.rs (RULES.md R-SIZE-2).
 //!
-//! Without VARCHAR, a string function's result has the CHARACTER type of
-//! its greatest length, and its value its own length: a value is padded
-//! only when stored [X3.135-1986 §8.7 GR7a].
+//! A result is of the type its Syntax Rules give: CHARACTER VARYING of
+//! SUBSTRING and TRIM [§6.7 SR2a, SR6e], the string's type of UPPER and
+//! LOWER [§6.7 SR3a], and of `||` fixed or varying as its operands are
+//! [§6.13 SR3a].
 
 use std::sync::Arc;
 

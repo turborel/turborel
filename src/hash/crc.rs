@@ -164,8 +164,8 @@ pub const CATALOGUE: [CrcParams; 9] =
 const BYTE_BITS: u32 = u8::BITS;
 /// Entries in a table: one per byte value.
 const TABLE_LEN: usize = 256;
-/// Tables, and so bytes consumed per step: slicing-by-16, which measured
-/// faster than slicing-by-8 (`bench/hash.rs`).
+/// Tables, and so bytes consumed per step: slicing-by-16, chosen over
+/// slicing-by-8 by `bench/hash.rs`.
 const SLICES: usize = 16;
 
 /// One table: the register change each byte value causes.

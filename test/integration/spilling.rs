@@ -21,8 +21,8 @@ fn bytes(n: usize) -> Value {
 }
 
 /// Schema `S` with tables `T` and `U`, each `ROWS` rows: `K` from 0, `G` of
-/// 1000 values and `S` of 701 in `T`, of 2500 in `U`; in `U` a null `G` every 100th
-/// row; `V` of `SKEWED` rows, `C` 0 in every other one; and `W` of four,
+/// 1000 values and `S` of 701 in `T`, of 2505 in `U`; in `U` a null `G` every 100th
+/// row, its `S` from its `K`; `V` of `SKEWED` rows, `C` 0 in every other one; and `W` of four,
 /// 0 to 3.
 fn filled(db: &Database) {
     db.schema(

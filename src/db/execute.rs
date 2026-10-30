@@ -123,8 +123,8 @@ impl Session {
         self.db.noted(self.run_statement(st, &tx, stmt, params).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e)))
     }
 
-    /// Runs a statement other than COMMIT and ROLLBACK, which `execute` ends
-    /// the transaction for.
+    /// Runs a statement that runs in the transaction `tx`: not COMMIT,
+    /// ROLLBACK or another that `execute_parsed` runs itself.
     fn run_statement(&self, st: &Arc<State>, tx: &Txn, stmt: SqlStatement, params: &mut Params) -> Result<Completion> {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(st, tx, &ins, params).map(|n| self.affected(n)),
@@ -157,7 +157,7 @@ impl Session {
             SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, &object, behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (&table, &action, &text)),
             SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, &statement, &text),
-            // `execute` runs these itself, and never here.
+            // `execute_parsed` runs these itself, and never here.
             SqlStatement::Commit
             | SqlStatement::Rollback
             | SqlStatement::SetConstraints { .. }

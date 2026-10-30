@@ -1,8 +1,8 @@
 //! Statistics for the optimizer (RULES.md D31): the planner estimates the
 //! rows a condition keeps from what a table's engine knows of its rows,
 //! and from defaults where it knows nothing; the row store gathers its
-//! statistics when a table is opened, when it has changed enough, and when
-//! asked; optimizer rules can read them.
+//! statistics when a table opened is first asked for them, when it has
+//! changed enough, and when told to; optimizer rules can read them.
 
 use std::sync::{Arc, Mutex};
 
@@ -192,8 +192,8 @@ fn rules_read_statistics() {
 
 /// Verifies: [DESIGN] RULES.md D31, the row store: a new table has no
 /// statistics until gathered; `analyze` gathers them; a table opened again
-/// has them, gathered in the pass that counts its rows, from its newest
-/// committed rows.
+/// has them, gathered when first asked for, from its newest committed
+/// rows.
 #[test]
 fn tables_opened_have_statistics() {
     let scratch = Scratch::new("statistics-open");

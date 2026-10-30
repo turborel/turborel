@@ -311,8 +311,8 @@ impl Parser {
 
     /// [X3.135-1986 §5.20; ISO/IEC 9075:1992 §6.3, §7.5] `<table
     /// reference>`: a table, derived table or parenthesized joined table,
-    /// then the joins after it, each joining what is before it, as it
-    /// counts one level toward the nesting limit.
+    /// then the joins after it, each joining what is before it and
+    /// counting one level toward the nesting limit.
     pub(super) fn table_reference(&mut self) -> Result<TableReference> {
         let first = self.table_primary()?;
         self.joins(first)

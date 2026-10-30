@@ -83,8 +83,8 @@ fn system_tables_are_read_only_21_1() {
     assert_eq!(code(&s, "SELECT * FROM INFORMATION_SCHEMA.NO_SUCH"), Code::SyntaxRule);
 }
 
-/// A plug-in's system table: the names of the users that read it, once, or
-/// rows that break the contract.
+/// A plug-in's system table: one row, the name of the user reading it, or
+/// a row given that may break the contract.
 struct Readers(Option<Row>);
 
 impl SystemTable for Readers {
@@ -105,7 +105,7 @@ impl SystemTable for Readers {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D30, `SystemTable`: a plug-in adds a system
+/// Verifies: [DESIGN] RULES.md D37, `SystemTable`: a plug-in adds a system
 /// table, which a statement reads as its user sees it, its values padded to
 /// its columns; one that gives a row of the wrong degree, a null for a NOT
 /// NULL column, or a value too long, is refused with SQLCODE -910.

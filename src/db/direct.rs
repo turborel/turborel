@@ -20,8 +20,9 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// As for `open_cursor`, `Database::schema` or `execute`; SQLCODE -104
-    /// for a schema of another authorization identifier.
+    /// As for `open_cursor` or `run`, or for a `<schema definition>` made
+    /// in a transaction; SQLCODE -104 for a schema of another authorization
+    /// identifier; -917 for one in a READ ONLY transaction.
     pub fn direct(&self, sql: &str) -> Result<Direct> {
         let tokens = lex(sql)?;
         let mut words = tokens.iter().map(|t| &t.tok);

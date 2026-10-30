@@ -1,6 +1,7 @@
 //! Comparison of values [X3.135-1986 §5.11]: character strings with padding,
-//! and numbers by algebraic value, exact and approximate alike. Split from
-//! value.rs (RULES.md R-SIZE-2).
+//! and numbers by algebraic value, exact and approximate alike; bit strings,
+//! datetimes and intervals as [ISO/IEC 9075:1992 §8.2] says; a value beyond
+//! the standard as its kind says. Split from value.rs (RULES.md R-SIZE-2).
 
 use std::cmp::Ordering;
 
@@ -20,13 +21,13 @@ fn padded(s: &str, length: usize) -> impl Iterator<Item = char> + '_ {
 }
 
 /// [X3.135-1986 §5.11] compare two values. `None` means the comparison is unknown
-/// because one side is null ([X3.135-1986 §5.11 GR2]).
+/// because one side is null ([X3.135-1986 §5.11 GR2]), or the values are not comparable.
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
         // bit string with either: bit strings are with each other [ISO/IEC
-        // 9075:1992 §4.3.1].
+        // 9075:1992 §4.3.1]; nor a datetime or an interval with another kind.
         (Value::Null, _)
         | (_, Value::Null)
         | (Value::Char(_), Value::Exact(_))
@@ -71,7 +72,7 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
 /// equal [X3.135-1986 §5.11 GR4, GR5]: a string without trailing spaces, or
 /// a number's nearest `f64`, as an exact and an approximate number compare
 /// equal only if the exact one's nearest `f64` is the approximate one
-/// (`compare_exact_approximate`). Values that are not equal may share it
+/// (`compare_exact_approximate`); of the other kinds, as each variant says. Values that are not equal may share it
 /// (two exact numbers nearest the same `f64`), so a hash join compares the
 /// values it pairs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

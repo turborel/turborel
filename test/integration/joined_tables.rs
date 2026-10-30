@@ -118,8 +118,8 @@ fn views_of_joined_tables_7_5() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.5 F]: a join's second
 /// operand is a `<table reference>`, so a joined table: in "A JOIN B LEFT
 /// JOIN C ON c1 ON c2" the LEFT join of B and C is the second operand, the
-/// first ON its, the second the outer join's; without the inner ON, the
-/// joins are taken left to right.
+/// first ON its, the second that of the join of A and it; without the inner
+/// ON, the joins are taken left to right.
 #[test]
 fn a_joined_table_is_a_second_operand_7_5() {
     let db = setup();

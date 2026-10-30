@@ -10,7 +10,8 @@ fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))
 }
 
-/// Ten columns of every type, so the null bitmap takes two bytes.
+/// Ten columns, exact, approximate and CHARACTER, so the null bitmap takes
+/// two bytes.
 fn types() -> Vec<DataType> {
     let mut t = vec![
         DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric },
@@ -39,11 +40,11 @@ fn shown(row: &Row) -> Vec<String> {
     row.iter().map(|v| format!("{v:?}")).collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D31, record format: a row of every type,
-/// NULLs among them, reads back as written, whole, column by column, or
-/// only the columns asked for (the others NULL); character strings are
-/// stored without their trailing spaces and read back padded to their
-/// column's length.
+/// Verifies: [DESIGN] RULES.md D31, record format: a row of exact,
+/// approximate and CHARACTER columns, NULLs among them, reads back as
+/// written, whole, column by column, or only the columns asked for (the
+/// others NULL); character strings are stored without their trailing
+/// spaces and read back padded to their column's length.
 #[test]
 fn rows_read_back_as_written() {
     let format = RecordFormat::new(&types());

@@ -128,7 +128,8 @@ impl SqlType for Exact {
     /// [ISO/IEC 9075:1992 §6.10 GR3] A string's `<signed numeric literal>`,
     /// its spaces trimmed, cast \[GR3b\]; a number's extra digits truncated,
     /// as store assignment does, an approximate one rounded \[GR3a,
-    /// implementation-defined\].
+    /// implementation-defined\]; an interval of one field, as a number of
+    /// it \[GR3c\].
     fn cast(&self, v: Value, t: &DataType) -> Result<Value> {
         match v {
             Value::Null => Ok(Value::Null),

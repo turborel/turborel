@@ -125,7 +125,7 @@ pub struct Cursor {
     pub(super) timed: Option<super::slow::Timed<String>>,
     /// Its session's time zone displacement as it was opened, its times
     /// and timestamps without time zone shown in [ISO/IEC 9075:1992 §6.1
-    /// SR5].
+    /// GR5].
     pub(super) zone: i16,
 }
 

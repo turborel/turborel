@@ -181,7 +181,8 @@ fn keys_added_in_order_fill_their_nodes() {
     };
     let n = 20_000_u64;
     // An entry takes 106 bytes (8-byte key, 92-byte value, 6 of overhead):
-    // 38 fit a 4 KiB page's 4,056 bytes after the node's header.
+    // 38 fit the 4,034 bytes a 4 KiB page holds after the pager's and the
+    // node's headers; a leaf's 8-byte high key leaves room for 37.
     let leaves = n.div_ceil(38);
     let in_order = pages(&mut (0..n));
     assert!(in_order * 20 <= leaves * 21, "{in_order} pages for {leaves} full leaves");

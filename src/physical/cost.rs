@@ -40,8 +40,8 @@ pub struct CostModel {
     pub sort_compare: f64,
     /// The fraction an equality keeps when the statistics do not tell.
     pub equal_selectivity: f64,
-    /// The fraction an order comparison, a pattern or a subquery keeps when
-    /// the statistics do not tell.
+    /// The fraction an order comparison, a pattern, a truth test or a
+    /// subquery predicate keeps when the statistics do not tell.
     pub range_selectivity: f64,
     /// The fraction of a column's values null when the statistics do not
     /// tell.

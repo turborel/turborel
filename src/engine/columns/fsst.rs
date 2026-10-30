@@ -1,15 +1,16 @@
 //! \[DESIGN\] Texts compressed by a table of their common substrings
 //! (RULES.md D31), after FSST (Boncz, Neumann and Leis, "FSST: Fast Random
-//! Access String Compression", VLDB 2020): of a chunk's texts, at most
-//! `MOST_SYMBOLS` symbols of 1 to 8 bytes, each written as a one-byte
-//! code, and a byte no symbol begins as `ESCAPE` and the byte itself; so a
-//! value is decoded alone, by its codes, and a text of many values alike
-//! in their parts, as names, addresses or paths are, takes a part of its
-//! bytes. The table is chosen of the chunk's first values, `SAMPLE` bytes
-//! of them, in `ROUNDS` rounds, as FSST chooses it: each round the texts
-//! are encoded with the table so far, and the symbols and the pairs of
-//! symbols next to each other that save the most bytes kept. Split from
-//! encoded.rs (RULES.md R-SIZE-2).
+//! Access String Compression", VLDB 2020): of a column's texts in a frozen
+//! row group, at most `MOST_SYMBOLS` symbols of 1 to 8 bytes, each written
+//! as a one-byte code, and a byte no symbol matches at as `ESCAPE` and the
+//! byte itself; so a value is decoded alone, by its codes, and a text of
+//! many values alike in their parts, as names, addresses or paths are,
+//! takes a part of its bytes. The table is chosen once of all the column's
+//! texts in the group, about `SAMPLE` bytes of them in `BLOCKS` runs taken
+//! evenly through them, in `ROUNDS` rounds, as FSST chooses it, and written
+//! in each chunk: each round the texts are encoded with the table so far,
+//! and the symbols and the pairs of symbols next to each other that save
+//! the most bytes kept. Split from encoded.rs (RULES.md R-SIZE-2).
 //!
 //! ```text
 //! FSST:  symbols u8 | each: length u8 | its bytes | (count + 1) × u32,
@@ -21,8 +22,8 @@ use std::collections::HashMap;
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
-/// \[DESIGN\] The most symbols of a table: 64 of 8 bytes take 576, a
-/// fourteenth of a page of 8 KiB.
+/// \[DESIGN\] The most symbols of a table: 64 of 8 bytes take 577 with
+/// their lengths and count, a fourteenth of a page of 8 KiB.
 const MOST_SYMBOLS: usize = 64;
 /// \[DESIGN\] The longest symbol.
 const LONGEST: usize = 8;

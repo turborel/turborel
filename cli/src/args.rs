@@ -176,7 +176,7 @@ pub(crate) fn socket_server(path: PathBuf) -> Result<Server, String> {
     Ok(Server::Socket(path))
 }
 
-/// The server at the Unix socket `path`, on Unix.
+/// None off Unix: a Unix socket is reached on Unix only.
 #[cfg(not(unix))]
 pub(crate) fn socket_server(_: PathBuf) -> Result<Server, String> {
     Err("--socket: a Unix socket is reached on Unix only".into())

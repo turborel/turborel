@@ -1,6 +1,8 @@
 //! \[EXTENSION\] SQL-schema statements outside a `<schema definition>`
 //! [ISO/IEC 9075:1992 §20.1], in a transaction (RULES.md D33, D47): CREATE
-//! TABLE [§11.3], CREATE VIEW [§11.19], GRANT [§11.36] and REVOKE [§11.37]
+//! TABLE [§11.3], CREATE VIEW [§11.19], CREATE and ALTER DOMAIN [§11.21,
+//! §11.22] (`db/domains.rs`), CREATE ASSERTION [§11.34]
+//! (`db/assertions.rs`), GRANT [§11.36] and REVOKE [§11.37]
 //! (`db/revoke.rs`).
 //!
 //! An object is defined by the owner of its schema, its own name and the
@@ -88,13 +90,13 @@ impl Session {
         }
     }
 
-    /// The table or view `statement` defines, or grants or revokes
+    /// The object `statement` defines or alters, or grants or revokes
     /// privileges on, its name qualified by `schema`.
     ///
     /// # Errors
     ///
-    /// For an object defined: SQLCODE -104 if its schema is not the
-    /// session's own.
+    /// For an object defined or a domain altered: SQLCODE -104 if its
+    /// schema is not the session's own.
     fn object_of(&self, st: &State, statement: &SchemaStatement, schema: &str) -> Result<QualifiedName> {
         match statement {
             SchemaStatement::Table(t) => self.own_object(st, &t.name, (schema, "§11.3 AR1")),

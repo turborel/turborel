@@ -202,7 +202,7 @@ impl ScalarFunction for TooLong {
     }
 }
 
-/// Verifies: [X3.135-1986 §8.7 GR7, §7.3 GR3b]; [EXTENSION] a function whose
+/// Verifies: [X3.135-1986 §8.12 GR6, §7.3 GR3b]; [EXTENSION] a function whose
 /// value is longer than its declared type gets a data exception, not a panic,
 /// and the failed statement has no effect.
 ///

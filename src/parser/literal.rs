@@ -1,6 +1,8 @@
 //! The `<value specification>` and `<literal>` grammar [X3.135-1986 §5.2,
-//! §5.6]: USER, character strings and exact and approximate numbers, with this
-//! implementation's limits on them (RULES.md D18). Split from parser.rs (RULES.md
+//! §5.6]: USER and the other user functions, parameters, character and bit
+//! strings and exact and approximate numbers, with this implementation's limits
+//! on them (RULES.md D18); datetime and interval literals are read in
+//! `parser/datetime.rs` and `parser/interval.rs`. Split from parser.rs (RULES.md
 //! R-SIZE-2).
 
 use super::Parser;
@@ -11,7 +13,9 @@ use crate::value::{Decimal, MAX_EXACT_PRECISION};
 
 impl Parser {
     /// [X3.135-1986 §5.6] `<value specification>` ::= `<literal>` | USER
-    /// | CURRENT_USER | SESSION_USER | SYSTEM_USER [ISO/IEC 9075:1992 §6.2]
+    /// | CURRENT_USER | SESSION_USER | SYSTEM_USER | `<parameter
+    /// specification>` | `<dynamic parameter specification>` [ISO/IEC
+    /// 9075:1992 §6.2]
     pub(super) fn value_specification(&mut self) -> Result<ValueSpecification> {
         if let Some(user) = self.user_function() {
             return Ok(ValueSpecification::User(user));
@@ -70,8 +74,8 @@ impl Parser {
     }
 
     /// `<literal>` ::= `<character string literal>` | `<numeric literal>` |
-    /// `<bit string literal>` | `<hex string literal>` [ISO/IEC 9075:1992
-    /// §5.3]
+    /// `<bit string literal>` | `<hex string literal>` | `<datetime literal>`
+    /// | `<interval literal>` [ISO/IEC 9075:1992 §5.3]
     pub(super) fn literal(&mut self) -> Result<Literal> {
         if self.at_datetime_literal() {
             return self.datetime_literal();

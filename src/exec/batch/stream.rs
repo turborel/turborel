@@ -2,7 +2,7 @@
 //! given a batch at a time, for an aggregation or a projection over it to
 //! read. A subtree gives them if it is a table's scan; a filter of one,
 //! told the simple conjuncts of its condition (`scanned`), or of any other
-//! stream; an inner hash join whose left operand is a stream; a LEFT
+//! stream; an inner hash join of streams; a LEFT
 //! outer join of streams on keys, no other condition [ISO/IEC 9075:1992
 //! §7.5]; a projection of columns of a stream, its batches the vectors of
 //! those columns, in order, moved; or the rows of two streams each holding

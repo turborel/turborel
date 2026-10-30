@@ -43,8 +43,8 @@ pub const SOURCE_DIRS: &[&str] = &[
 /// The extension of a Rust source file.
 pub const RUST_EXTENSION: &str = "rs";
 /// Deepest directory nesting searched below a source directory (R-CF-6). The
-/// project's deepest is 1 (`src/parser/`); past this, the walk fails rather than
-/// recursing without bound.
+/// project's deepest is 4 (`src/exec/batch/vector/ints/`); past this, the walk
+/// fails rather than recursing without bound.
 const MAX_DIR_DEPTH: usize = 8;
 
 /// Every `.rs` file under `SOURCE_DIRS`, as sorted `/`-separated paths

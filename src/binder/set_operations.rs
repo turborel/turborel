@@ -53,7 +53,7 @@ pub fn bind_insert_query(cx: Context<'_>, query: &QueryExpression, columns: &[Ob
     let now = cx.now;
     let bound = bind_query_expression(cx, query, &Nesting::Source { columns })?;
     // A time or timestamp without time zone, of the session's displacement
-    // as a column WITH TIME ZONE takes it [§6.1 SR5].
+    // as a column WITH TIME ZONE takes it [§6.1 GR5].
     let wanted =
         columns.len() == bound.columns.len() && bound.columns.iter().zip(columns).any(|(c, o)| takes_zone(c.data_type, o.desc.data_type));
     if !wanted {

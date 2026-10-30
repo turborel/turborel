@@ -23,9 +23,10 @@ impl State {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if there is no such setting, the value is not of its
-    /// kind, or it names an engine or index method not registered; the
-    /// log's errors.
+    /// SQLCODE -910 if there is no such setting, it is fixed once the
+    /// database is created, the value is not of its kind, or it names an
+    /// engine, index method, hash function or encodings not registered;
+    /// the log's errors.
     pub(super) fn define_setting(&mut self, name: &str, value: Option<&Value>) -> Result<()> {
         let key = self.settings.known(name)?;
         let definition = self.settings.definition(key).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a setting lost its definition"))?;
@@ -82,8 +83,10 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if there is no such setting, the value is not of its
-    /// kind or range, or names an engine or index method not registered.
+    /// SQLCODE -910 if there is no such setting, it is fixed once the
+    /// database is created, the value is not of its kind or range, or it
+    /// names an engine, index method, hash function or encodings not
+    /// registered.
     pub fn set_setting(&self, name: &str, value: &Value) -> Result<()> {
         self.change(|st| st.define_setting(name, Some(value)))?;
         self.emit(&Event::SettingChanged { name: name.to_ascii_uppercase(), value: Some(value.clone()) });
@@ -121,7 +124,8 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if there is no such setting.
+    /// SQLCODE -910 if there is no such setting, or it is fixed once the
+    /// database is created.
     pub fn reset_setting(&self, name: &str) -> Result<()> {
         self.change(|st| st.define_setting(name, None))?;
         self.emit(&Event::SettingChanged { name: name.to_ascii_uppercase(), value: None });

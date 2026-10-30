@@ -1,6 +1,7 @@
-//! The `<data type>` grammar [X3.135-1986 §5.5], with the implementor-defined
-//! precisions and the \[DESIGN\] limits it applies. Split from parser.rs
-//! (RULES.md R-SIZE-2).
+//! The `<data type>` grammar [X3.135-1986 §5.5], with SQL-92's national
+//! character, bit string, datetime and interval types [ISO/IEC 9075:1992
+//! §6.1], the implementor-defined precisions and the \[DESIGN\] limits it
+//! applies. Split from parser.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
 use crate::error::{Code, Result, SqlError};

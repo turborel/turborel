@@ -28,7 +28,7 @@
 //!    (`StorageEngine::checkpoint_finish`): the row store commits the sealed
 //!    batch, so after a crash its tables are as they were at L;
 //! 6. records the image in the catalog file: the definitions, each table's
-//!    locator, L, and the position of the first record of the oldest
+//!    and index's locator, L, and the position of the first record of the oldest
 //!    transaction open at L, from which recovery reads the log;
 //! 7. truncates the log before that position, or before the oldest
 //!    position any table's engine still needs, whichever is earlier.
@@ -46,9 +46,9 @@
 //! database is closed or dropped.
 //!
 //! Closing, with no transaction open, is a checkpoint that also collects
-//! every table's garbage first and checkpoints every index method, and
-//! records the image as clean, with each index's locator; every call after
-//! is refused.
+//! every table's garbage first and checkpoints every index method, logs
+//! and syncs its checkpoint record before step 1, and records the image as
+//! clean; every call after is refused.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

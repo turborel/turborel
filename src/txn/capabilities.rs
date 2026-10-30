@@ -33,8 +33,8 @@ pub enum Concurrency {
 pub enum Persistence {
     /// Recovered by the database, replaying the log from the position the
     /// engine is durable through (`TableStorage::durable_through`): as
-    /// durable as the log. The built-in row store is durable through 0 until
-    /// checkpoints (RULES.md D25): everything is replayed.
+    /// durable as the log. The built-in row store is durable through its
+    /// last checkpoint (RULES.md D25): the log is replayed from there.
     Logged,
     /// The engine makes its own writes durable when a transaction ends,
     /// committed or rolled back (a rollback's undo is written through the

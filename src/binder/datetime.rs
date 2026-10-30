@@ -1,9 +1,10 @@
 //! [ISO/IEC 9075:1992 §5.3, §6.6, §6.8, §6.10] Datetimes as a statement
 //! binds them: a `<datetime literal>`, of the SQL-session's time zone
 //! displacement if it writes none; CURRENT_DATE, CURRENT_TIME and
-//! CURRENT_TIMESTAMP, each the statement's one instant [§6.8 GR3]; EXTRACT;
-//! and CAST to or from a datetime, given the session's displacement and
-//! the current date, which its rules read.
+//! CURRENT_TIMESTAMP, each the statement's one instant [§6.8 GR3]; EXTRACT,
+//! of a datetime or an interval; and CAST to or from a datetime or an
+//! interval, given the session's displacement and the current date, which
+//! its rules read.
 
 use std::sync::Arc;
 
@@ -40,14 +41,14 @@ pub(super) fn type_of(moment: Moment, precision: u32, zoned: bool) -> DataType {
 /// # Errors
 ///
 /// SQLSTATE 22007 if its instant's year in UTC leaves 0001 to 9999 [§6.1
-/// SR6].
+/// GR6].
 pub(crate) fn literal(w: &Written, now: Now) -> Result<(Value, DataType)> {
     let d = Datetime::of_local(w.moment, w.local, w.zone.unwrap_or(now.zone), w.zone.is_some(), w.precision);
     if !d.in_range() {
         return fail_with(
             Code::Data,
             SqlState::INVALID_DATETIME_FORMAT,
-            format!("[ISO/IEC 9075:1992 §6.1 SR6] {d} is not of a year from 0001 to 9999 in UTC"),
+            format!("[ISO/IEC 9075:1992 §6.1 GR6] {d} is not of a year from 0001 to 9999 in UTC"),
         );
     }
     Ok((Value::Datetime(d), type_of(w.moment, w.precision, w.zone.is_some())))
@@ -74,7 +75,7 @@ impl ScalarFunction for CastAt {
 }
 
 /// `e`, of type `from`, as the SQL-session `now` gives shows it: a datetime
-/// without time zone in its displacement [§6.1 SR5], so its fields are
+/// without time zone in its displacement [§6.1 GR5], so its fields are
 /// read as shown; any other as it is.
 pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
     match from {
@@ -95,7 +96,7 @@ pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
     }
 }
 
-/// [ISO/IEC 9075:1992 §9.2 GR3l, §6.1 SR5] `e`, of type `from`, as stored
+/// [ISO/IEC 9075:1992 §9.2 GR3l, §6.1 GR5] `e`, of type `from`, as stored
 /// in a column of type `to`: a time or timestamp without time zone, in one
 /// WITH TIME ZONE, of the session's displacement, `now`'s, which it
 /// implies; any other as it is.
@@ -294,7 +295,7 @@ impl Binder<'_> {
     }
 
     /// [ISO/IEC 9075:1992 §6.10] CAST of `e`, of type `from`, to `to`, one
-    /// of them a datetime type: of the session's displacement and date.
+    /// of them a datetime or interval type: of the session's displacement and date.
     ///
     /// # Errors
     ///

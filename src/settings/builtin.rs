@@ -1,6 +1,8 @@
 //! \[DESIGN\] The built-in settings (RULES.md D36), each at its key's place,
-//! in groups: transactions and definitions, planning, memory, and
-//! durability. Each default is the constant its subsystem names it by.
+//! in groups: transactions and definitions, planning, the catalog's name,
+//! memory, the planner's guesses, spilling, durability, storage, limits,
+//! and the executor. A default its subsystem names by a constant is that
+//! constant.
 //! Split from settings.rs (RULES.md R-SIZE-2).
 
 use super::{Definition, Effect, Key, Kind};
@@ -73,7 +75,8 @@ pub const EXECUTOR_BATCHES: Key = Key(31);
 
 /// The words of `EXECUTOR.BATCHES`.
 pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
-/// The words of `LOCK_WAIT`, `SESSION_END` and `TRANSACTION_POLICY`.
+/// The words of `LOCK_WAIT`; below it, those of `SESSION_END` and
+/// `TRANSACTION_POLICY`.
 pub(super) const LOCK_WAITS: &[&str] = &["NO_WAIT", "WAIT"];
 const SESSION_ENDS: &[&str] = &["COMMIT", "ROLLBACK"];
 const POLICIES: &[&str] = &["STRICT", "PERMISSIVE"];
@@ -307,7 +310,7 @@ fn guesses() -> [Definition; 5] {
     ]
 }
 
-/// How a spilled hash join is partitioned.
+/// How a spilled operator is partitioned.
 fn spilling() -> [Definition; 2] {
     use crate::exec::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
     [

@@ -74,14 +74,15 @@ fn set_functions_eliminate_nulls_5_8() {
     );
 }
 
-/// Verifies: [X3.135-1986 §5.8 SR9b] SUM keeps the scale of its argument; AVG's
-/// implementor-defined scale is the argument's plus `AVG_EXTRA_SCALE`.
+/// Verifies: [X3.135-1986 §5.8 SR9b, SR9c] AVG's implementor-defined scale is the
+/// argument's plus `AVG_EXTRA_SCALE`, where SUM keeps the scale of its argument
+/// (asserted in `set_functions_eliminate_nulls_5_8`).
 #[test]
 fn sum_keeps_the_scale_and_avg_adds_extra_scale_5_8() {
     let db = setup();
     let s = db.session("APP");
-    // [X3.135-1986 §5.8 SR9b] SUM keeps the scale. AVG's scale is implementor-defined:
-    // the argument's plus AVG_EXTRA_SCALE.
+    // [X3.135-1986 §5.8 SR9b] SUM keeps the scale. AVG's scale is implementor-defined
+    // [SR9c]: the argument's plus AVG_EXTRA_SCALE.
     let avg = |value: f64, scale: u32| format!("{value:.*}", usize::try_from(scale + AVG_EXTRA_SCALE).unwrap());
     assert_eq!(rows(&s, "SELECT AVG(AMT), AVG(ID), AVG(F) FROM T"), Ok(vec![format!("{},{},1.75E0", avg(3.75, 2), avg(2.0, 0))]));
 }

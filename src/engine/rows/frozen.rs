@@ -58,17 +58,14 @@ use crate::txn::Timestamp;
 use crate::value::Value;
 
 /// \[DESIGN\] The cost of a row of the tree scanned for none of its
-/// columns, and the cost more if all are read: a row of all costing 1. Of
-/// 400,000 rows of sixteen columns, a pool holding them, a COUNT(*) read a
-/// row in 0.27 us, fourteen columns more 0.06 us besides their sums.
+/// columns, and the cost more if all are read: a row of all costing 1
+/// (`bench/analytics.rs`).
 const ROW: f64 = 0.8;
 const ROW_COLUMNS: f64 = 0.2;
 /// \[DESIGN\] The cost of a row fetched by id through an index, a row of
 /// all columns scanned costing 1: of a table the buffer pool holds, and
-/// more as it holds less of it, to that of one it holds none of. Of
-/// 400,000 rows of sixteen columns in a database's files, a fetch took
-/// 1.28 us a row with a pool of 256 MiB, a scan 0.29; with one of 1 MiB,
-/// the file in the system's cache, 5.3 and 0.36.
+/// more as it holds less of it, to that of one it holds none of
+/// (`bench/analytics.rs`).
 const ROW_FETCH_HELD: f64 = 4.4;
 const ROW_FETCH_READ: f64 = 14.6;
 /// \[DESIGN\] Bytes of a row's entry in the tree besides its record: its
@@ -76,12 +73,11 @@ const ROW_FETCH_READ: f64 = 14.6;
 const ENTRY_BYTES: f64 = 32.0;
 /// \[DESIGN\] The cost of a frozen row scanned for none of its columns, a
 /// row of the tree's costing 1, and the cost more if all are read
-/// (`bench/analytics.rs`, a pool holding the table: a COUNT(*) read a row at
-/// a time 0.24 of the ROWS table's time, two columns of sixteen 0.32).
+/// (`bench/analytics.rs`).
 const FROZEN_ROW: f64 = 0.25;
 const FROZEN_COLUMNS: f64 = 0.75;
 /// \[DESIGN\] The share by which fetching a frozen row costs more than a
-/// row of the tree, each column a page of its own (measured 8% slower).
+/// row of the tree, each column a page of its own.
 const FROZEN_FETCH: f64 = 0.1;
 
 /// A frozen page's context for its encodings: its number, the high bit
@@ -461,7 +457,9 @@ impl RowTable {
     }
 }
 
-// Unit tests: the directory finds the group holding a row id, or none
-// (RULES.md R-TEST-1).
+// Unit tests: rows frozen when due, under readers and as rows are deleted;
+// frozen rows written, recovered and reopened; groups dropped, written
+// again, compressed and sorted; headers read as they are needed (RULES.md
+// R-TEST-1).
 #[cfg(test)]
 mod tests;

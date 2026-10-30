@@ -1,13 +1,17 @@
-//! \[DESIGN\] Set functions over a table read a batch at a time (RULES.md
+//! \[DESIGN\] Set functions over tables read a batch at a time (RULES.md
 //! D31, `TableStorage::scan_batches`): an aggregation whose set functions
-//! each count rows or take a column, none DISTINCT, grouped by columns
-//! the scan reads or not at all, of a table's scan, filtered or not. Each
-//! function is given its column's values straight from the batch; under a
-//! filter, a row is made only of the rows the scan's pushed condition
-//! keeps, for the rest of the filter to judge. Groups are held in the work
-//! area, each the grouping values and their set functions, given in the
-//! order their first rows came; if they outgrow it, the aggregation is
-//! grouped row by row instead, as is any other (`group.rs`), which spills.
+//! each count rows or take an expression of columns the batches hold, no
+//! subquery in it, none DISTINCT, grouped by such columns or not at all,
+//! of a subtree that gives batches (`stream.rs`); and DISTINCT, as a
+//! grouping by every column (`distinct_grouping`). Projections are read
+//! so too (`project.rs`). Each function is given its column's values
+//! straight from the batch, an expression's evaluated a vector at a time
+//! where it can be (`vector.rs`); under a filter, only of the rows it
+//! keeps (`judge.rs`). Groups are held in the work area, each the grouping
+//! values and their set functions, given in the order their first rows
+//! came; the rows of groups past it are written, grouped as `group.rs`
+//! groups them, which spills, and merged by number with those held
+//! (`group::Spilling`).
 
 mod judge;
 mod project;
@@ -238,7 +242,7 @@ fn fed_group(
     Ok(())
 }
 
-/// The value of `e`, of a row of the values at `inputs`, as `value` gives
+/// The value of `e`, of a row of the values at `inputs`, as `put` writes
 /// them, made in `scratch`, its values written over.
 fn evaluated((e, inputs): (&Expr, &[usize]), scratch: &mut Row, put: impl Fn(usize, &mut Value)) -> Result<Value> {
     scratch.resize(inputs.len(), Value::Null);
@@ -279,7 +283,7 @@ struct Groups {
     /// Whether a group has been past it: every group not yet held is then,
     /// so no group is both held and written.
     spilled: bool,
-    /// The width of a table's row, as a row written is made.
+    /// The width of the input's rows, as a row written is made.
     width: usize,
     /// The row an expression a set function takes is evaluated of.
     scratch: Row,

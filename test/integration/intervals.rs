@@ -59,7 +59,8 @@ fn interval_types_10_1() {
 /// Table 7; §10.1 SR5] an interval literal is INTERVAL, a sign, a string
 /// of the qualifier's fields, each but the leading in its range, the
 /// leading of no more digits than its precision; one otherwise is refused
-/// (SQLCODE -103); it is shown as written.
+/// (SQLCODE -103); it is shown with each field but the leading of two
+/// digits, and a fraction of as many as its precision.
 #[test]
 fn interval_literals_5_3() {
     let db = intervals();
@@ -210,7 +211,8 @@ fn intervals_are_cast_6_10() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.6 SR3, SR4, GR3a i] EXTRACT
 /// of a field of an interval, of the interval's sign, SECOND of the scale
 /// of its fraction; of a field it has not, or of a time zone's, refused
-/// (SQLCODE -103), the field named by its key word.
+/// (SQLCODE -103), the field named by its key word, as an operation
+/// refused is by its operator's symbol.
 #[test]
 fn extract_of_intervals_6_6() {
     let db = intervals();

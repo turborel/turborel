@@ -7,10 +7,12 @@
 //! [X3.135-1986 §5.18].
 //!
 //! \[DESIGN\] Each plan node becomes an iterator over rows (the Volcano /
-//! iterator model). Rows are pulled one at a time from the top. Operators
-//! that must hold rows (sorts, grouping, DISTINCT, hash joins, EXCEPT and
-//! INTERSECT) hold up to WORK_MEMORY of them in memory and spill the rest
-//! (`exec/work.rs`, RULES.md D38).
+//! iterator model). Rows are pulled one at a time from the top; an
+//! aggregation or projection of tables' scans reads them a batch at a time
+//! where it can (`exec/batch.rs`, EXECUTOR.BATCHES). Operators that must
+//! hold rows (sorts, grouping, DISTINCT, joins and products, EXCEPT and
+//! INTERSECT, subqueries' rows) hold up to WORK_MEMORY of them in memory
+//! and spill the rest (`exec/work.rs`, RULES.md D38).
 
 mod batch;
 mod distinct;
@@ -265,7 +267,7 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 }
 
 /// The rows of `input`, under a filter on `cond`: a scan is told the
-/// conditions, if it has simple ones (`simple_conjuncts`).
+/// conditions, if it has simple ones (`logical::pushed_conjuncts`).
 fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
     match (input, pushed_conjuncts(cond)) {
         (Plan::SeqScan { table, columns, order, .. }, Some(condition)) => {

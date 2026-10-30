@@ -1,6 +1,7 @@
-//! Schema definition: `<schema>` and the tables, columns, UNIQUE
-//! constraints and privileges it defines [X3.135-1986 §6.1-§6.4, §6.6], and
-//! the \[EXTENSION\] `create_index`. Split from db.rs (RULES.md R-SIZE-2).
+//! Schema definition: `<schema>` and the domains, tables, columns,
+//! constraints and privileges it defines [X3.135-1986 §6.1-§6.4, §6.6;
+//! ISO/IEC 9075:1992 §11.1], and the \[EXTENSION\] `create_index`. Split
+//! from db.rs (RULES.md R-SIZE-2).
 
 use std::mem;
 use std::sync::Arc;
@@ -22,9 +23,10 @@ use crate::storage::chosen;
 use crate::txn::Timestamp;
 use crate::value::Value;
 
-/// [X3.135-1986 §6.6 SR1, SR2] The privileges the `<action>`s `list`
-/// specify on `table`: UPDATE on each column of a `<grant column list>`,
-/// which are columns of the table, or on every column without one.
+/// [X3.135-1986 §6.6 SR1, SR2; ISO/IEC 9075:1992 §10.3 SR4] The
+/// privileges the `<action>`s `list` specify on `table`: INSERT, UPDATE or
+/// REFERENCES on each column of a column list, which are columns of the
+/// table, or on every column without one.
 pub(super) fn granted_actions(list: &[Action], table: &TableDesc) -> Result<Actions> {
     let mut actions = Actions::default();
     for a in list {

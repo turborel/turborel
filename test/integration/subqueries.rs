@@ -90,7 +90,7 @@ fn comparison_with_a_subquery_5_11() {
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID = (SELECT ID FROM U WHERE CODE = 'Z')"), expected(&[]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE NOT (ID = (SELECT ID FROM U WHERE CODE = 'Z'))"), expected(&[]), "unknown");
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = (SELECT ID FROM U)"), Code::Cardinality);
-    // [ISO/IEC 9075:1992 §8.2, Leveling Rules] grouped: Entry SQL refuses it, SQL-92 does not.
+    // [ISO/IEC 9075:1992 §7.11, Leveling Rules] grouped: Entry SQL refuses it, SQL-92 does not.
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID = (SELECT ID FROM U GROUP BY ID)"), expected(&["1"]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID = (SELECT COUNT(*) FROM U HAVING COUNT(*) > 0)"), expected(&["2"]));
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = (SELECT 1 / 0 FROM U WHERE CODE = 'A')"), Code::Data);
@@ -359,7 +359,7 @@ fn decorrelated_subqueries_give_what_each_run_gives_5_21() {
     assert_eq!(code(&s, "SELECT K FROM T WHERE V = (SELECT W FROM U WHERE U.K = T.K)"), Code::Cardinality, "key 4 has two rows");
 }
 
-/// Verifies: [X3.135-1986 §5.13 GR3, §5.16 GR2; ISO/IEC 9075:1992 §8.7
+/// Verifies: [X3.135-1986 §5.13 GR2, §5.16 GR2; ISO/IEC 9075:1992 §8.7
 /// GR2] IN, NOT IN, and ALL and SOME with each operator, for one value
 /// against a subquery's column (answered by a hash of its rows, or by its
 /// least and greatest values, RULES.md D38): true, false or unknown as the

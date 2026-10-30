@@ -1,9 +1,9 @@
 //! \[DESIGN\] The server's settings (RULES.md D36, D42): declared on the
 //! database it serves, as a plug-in's are, so they are set as any setting
 //! is, kept with the database's definitions, and listed with the others.
-//! The server reads each when it needs it: where it listens as it starts;
-//! its limits as statements and connections begin, so a change of one
-//! takes effect with no restart.
+//! The server reads each when it needs it: where it listens, TLS, trust
+//! and passwords' iterations as it starts; its limits as statements and
+//! connections begin, so a change of one takes effect with no restart.
 
 use std::num::NonZeroUsize;
 
@@ -32,7 +32,8 @@ pub const TLS_MODES: &[&str] = &["OFF", "ON", "REQUIRED"];
 pub const TRUST: &str = "SERVER.TRUST";
 /// The words of `TRUST`.
 pub const TRUST_MODES: &[&str] = &["LOCAL", "OFF"];
-/// The PBKDF2 iterations of a password's verifier made from now on.
+/// The PBKDF2 iterations of a password's verifier made from the server's
+/// start on.
 pub const PASSWORD_ITERATIONS: &str = "SERVER.PASSWORD_ITERATIONS";
 /// \[DESIGN\] The default of `PASSWORD_ITERATIONS`: OWASP's least for
 /// PBKDF2-HMAC-SHA256.
@@ -100,8 +101,8 @@ fn definitions() -> Vec<Definition> {
     all
 }
 
-/// The settings read as the server starts: where it listens, TLS, and who
-/// it trusts.
+/// The settings read as the server starts: where it listens, TLS, who it
+/// trusts, and its passwords' iterations.
 fn started() -> [Definition; 8] {
     let text = Kind::Text { max: MAX_TEXT };
     [

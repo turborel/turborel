@@ -1,5 +1,6 @@
 //! The memory budget (RULES.md D38): a database's limit on the bytes its
-//! buffer pools reserve, the setting MEMORY_BUDGET's.
+//! buffer pools, and its plug-ins' caches, reserve, the setting
+//! MEMORY_BUDGET's.
 
 use std::sync::{Arc, Mutex};
 

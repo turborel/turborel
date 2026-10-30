@@ -22,15 +22,19 @@ pub enum Code {
     SyntaxRule = -103,
     /// The applicable `<privileges>` do not include the needed action [X3.135-1986 §6.6].
     Privilege = -104,
-    /// A NOT NULL or UNIQUE integrity constraint would be violated [X3.135-1986 §4.5],
-    /// or a row would leave a view WITH CHECK OPTION [X3.135-1986 §6.5 GR3a].
+    /// An integrity constraint would be violated [X3.135-1986 §4.5]: NOT NULL,
+    /// UNIQUE or PRIMARY KEY, CHECK, FOREIGN KEY, a domain's or an assertion
+    /// [ISO/IEC 9075:1992 §4.10]; or a row would leave a view WITH CHECK
+    /// OPTION [X3.135-1986 §6.5 GR3a].
     Constraint = -201,
     /// A General Rule "shall" failed at run time (overflow, division by zero).
     Data = -301,
     /// The cursor is not in the state or position the statement requires
     /// [X3.135-1986 §8.1 GR1, §8.4 GR1, §8.6 GR1, §8.8 GR1, §8.11 GR1].
     Cursor = -501,
-    /// A single-row SELECT found more than one row [X3.135-1986 §8.10 GR2].
+    /// A single-row SELECT found more than one row [X3.135-1986 §8.10 GR2],
+    /// or a subquery that may give at most one row gave more [X3.135-1986 §5.11 GR1]
+    /// [ISO/IEC 9075:1992 §7.11 GR1].
     Cardinality = -811,
     /// \[DESIGN\] The transaction conflicted with another: a lock it could not
     /// have or wait for, or a write or commit its engine refused (RULES.md
@@ -40,8 +44,10 @@ pub enum Code {
     Policy = -912,
     /// [ISO/IEC 9075:1992 §14.1 GR1, §13.6-§13.10 GR1, §12.3 GR6c v] The
     /// statement is not allowed in the transaction's state: SET
-    /// TRANSACTION while one is active, a change of data or schemas in a
-    /// READ ONLY one.
+    /// TRANSACTION, SET SESSION AUTHORIZATION [§16.4 GR1] or DISCONNECT
+    /// [§15.3 GR6] while one is active, a change of data or schemas in a
+    /// READ ONLY one; \[EXTENSION\] or a statement that runs outside a
+    /// transaction while one is active.
     TransactionState = -917,
     /// \[DESIGN\] The memory budget cannot grant what the statement needs
     /// (RULES.md D38, `memory.rs`).

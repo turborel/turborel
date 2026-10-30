@@ -1,4 +1,4 @@
-//! RULES.md R-BENCH-1: `cargo xtask bench` runs the benchmarks in `benches/`,
+//! RULES.md R-BENCH-1: `cargo xtask bench` runs the benchmarks in `bench/`,
 //! built optimized, keeps their results, and compares two runs.
 //!
 //! Each benchmark appends its results to the file named by `OUT_VAR`

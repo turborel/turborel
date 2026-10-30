@@ -1,14 +1,15 @@
 //! RULES.md R-COV: structural coverage of the product's crates (the
-//! library, the wire protocol, the client, the server and its program) by
-//! their tests, measured with rustc's
+//! library, the wire protocol, the client, the server and its program, the
+//! command-line client, and the LZ4 and AES-256-GCM plug-ins) by their
+//! tests, measured with rustc's
 //! source-based coverage (`-C instrument-coverage`) and the LLVM tools of the
 //! pinned toolchain.
 //!
 //! What is measured is the code under each crate's `src`, named to
 //! `llvm-cov` as the source directories, so the location of the checkout
 //! does not matter; the test support crate is not the product, and is not
-//! measured. The server's program, run by its tests, writes profiles too,
-//! as the test processes do.
+//! measured. The programs, `turboreld` and `turborel`, run by their tests,
+//! write profiles too, as the test processes do.
 //! Two limits of the stable toolchain apply. Doc tests are not run under
 //! coverage, because collecting their profiles needs a nightly rustdoc flag.
 //! Unit-test modules inside `src` count as covered code, because excluding them
@@ -65,8 +66,8 @@ const LINE_COVER_COLUMN: usize = 9;
 /// Where cargo's JSON messages name a built executable.
 const EXECUTABLE_KEY: &str = "\"executable\":\"";
 
-/// Builds the crate with coverage, runs its tests, writes an HTML report and
-/// fails if coverage is below the floors in `baseline`.
+/// Builds the measured crates with coverage, runs their tests, writes an
+/// HTML report and fails if coverage is below the floors in `baseline`.
 pub fn run(root: &Path) -> Result<()> {
     let tools = LlvmTools::find(root)?;
     let out = root.join(OUT_DIR);

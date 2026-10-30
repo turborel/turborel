@@ -78,10 +78,6 @@ impl State {
         Ok(built)
     }
 
-    /// The index `name` of a unique constraint on `columns` of `qn`, filled
-    /// with the rows `tx` sees, which are those every snapshot sees once it
-    /// commits, as it holds the table's exclusive lock; or, without `tx`,
-    /// with every version of its rows.
     /// The descriptor of index `name` of a UNIQUE constraint on `columns`
     /// of `qn`.
     fn constraint_index(&self, qn: &QualifiedName, name: &str, columns: Vec<usize>) -> IndexDesc {
@@ -89,6 +85,11 @@ impl State {
         IndexDesc { name: name.to_owned(), table: qn.clone(), columns, method, unique: true, options: Vec::new() }
     }
 
+    /// The index `name` of a unique constraint on `columns` of `qn`, filled
+    /// with the rows `tx` sees, which are those every snapshot sees once it
+    /// commits, as it holds the table's exclusive lock; or, without `tx`,
+    /// with every version of its rows, unless the database is being opened
+    /// from its files, which reopens or builds it (`index_structure`).
     fn unique_index(&mut self, qn: &QualifiedName, name: &str, columns: &[usize], tx: Option<&Txn>) -> Result<Arc<dyn Index>> {
         let desc = self.base_table(qn)?;
         let ix = self.constraint_index(qn, name, columns.to_vec());

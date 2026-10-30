@@ -1,10 +1,10 @@
 //! Lexical analysis: [X3.135-1986 §5.1] `<character>`, [X3.135-1986 §5.2] `<literal>`, [X3.135-1986 §5.3] `<token>`,
 //! with the identifiers and key words of [ISO/IEC 9075:1992 §5.2], which
-//! where the two differ takes priority (README).
+//! where the two differ takes priority (CONFORMANCE.md).
 //!
 //! Notable consequences:
 //! * A `<regular identifier>` is a letter, then letters, digits and
-//!   underscores, at most 128 of them [ISO/IEC 9075:1992 §5.2 SR1, SR8];
+//!   underscores, at most 128 letters and digits [ISO/IEC 9075:1992 §5.2 SR1, SR8];
 //!   its lower case letters are the upper case ones \[SR10\], and a `<key
 //!   word>` is one in any case \[SR15\]. A `<delimited identifier>`, in
 //!   double quotes, keeps its case and may be a key word \[SR9, SR14\].
@@ -218,9 +218,12 @@ fn error(code: Code, pos: usize, msg: impl Into<String>) -> SqlError {
 ///
 /// # Errors
 ///
-/// A character that cannot start a `<token>`, an unterminated `<comment>` or
-/// `<character string literal>`, a token not followed by a separator or
-/// delimiter, or an `<identifier>` too long.
+/// A character that cannot start a `<token>`, an unterminated `<comment>`,
+/// `<character string literal>` or `<delimited identifier>`, a `<newline>`
+/// inside either of the last two, an empty `<delimited identifier>`, a
+/// `<bit string literal>` or `<hex string literal>` holding a character not
+/// its own, a token not followed by a separator or delimiter, or an
+/// `<identifier>` too long.
 pub fn lex(src: &str) -> Result<Vec<Token>> {
     let mut s = Scanner { c: src.chars().collect(), at: 0 };
     let mut toks = Vec::new();
@@ -245,7 +248,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>> {
 ///
 /// # Errors
 ///
-/// SQLCODE -101 if `text` is not made of tokens; -102 if it is not one
+/// The error of [`lex`] if `text` is not made of tokens; SQLCODE -102 if it is not one
 /// `<identifier>` alone, as a key word is not.
 pub fn authorization_identifier(text: &str) -> Result<String> {
     match lex(text)?.as_slice() {

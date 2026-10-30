@@ -220,7 +220,6 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
         return Err(rule(format!("[X3.135-1986 {}] column {} is set twice", rules.column, sc.column)));
     }
     let value = match &sc.value {
-        // SR a: NULL only for a column that allows nulls.
         // NULL: SQL-86 refuses it for a NOT NULL column [X3.135-1986 §8.11
         // SR8a, §8.12 SR6a]; SQL-92 has no such rule, NOT NULL being a CHECK
         // constraint [ISO/IEC 9075:1992 §11.4 SR9a], checked as the statement

@@ -223,7 +223,8 @@ impl Histogram {
 
     /// The fraction of the values below `value`, if the histogram has any:
     /// whole buckets below it, and within its bucket, a share interpolated
-    /// between the bounds for numbers, half for strings.
+    /// between the bounds for a kind with a position (`SqlType::position`:
+    /// numbers, datetimes, intervals), half for others, as strings.
     pub fn below(&self, value: &Value) -> Option<f64> {
         let (first, last) = (self.bounds.first()?, self.bounds.last()?);
         let buckets = self.bounds.len().saturating_sub(1);

@@ -29,8 +29,9 @@ fn insert_enforces_unique_and_not_null_4_5() {
 
 /// Verifies: [X3.135-1986 §8.7 SR6, GR7a, GR7c] an inserted value must fit its
 /// column's type, length and precision; values exactly at the limits are
-/// stored. [ISO/IEC 9075:1992 §9.2 GR3b, GR3k] A string too long and an
-/// approximate number into an exact column are checked as they are stored.
+/// stored. [ISO/IEC 9075:1992 §9.2 SR2, GR3b, GR3k] A number is not stored in
+/// a character column; a string too long, and a number past its column's
+/// range, are data exceptions as they are stored.
 #[test]
 fn insert_values_must_fit_their_columns_8_7() {
     let db = setup();
@@ -63,7 +64,7 @@ fn insert_values_must_match_the_column_list_8_7() {
 /// 100; its degree matches the column list [SR5b] and its types the columns
 /// [SR6]; the query may read the target, SR2 being Intermediate SQL's
 /// [ISO/IEC 9075:1992 §13.8, Leveling Rules]; a key duplicated among, or with, the rows is a
-/// constraint violation and inserts none of them [§7.3 GR3b].
+/// constraint violation and inserts none of them [X3.135-1986 §7.3 GR3b].
 #[test]
 fn insert_from_a_query_8_7() {
     let db = setup();
@@ -93,7 +94,8 @@ fn insert_from_a_query_8_7() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §13.8, §7.1] an inserted value
-/// is a `<value expression>`: SQL-86's `<insert value>`, a `<literal>`, so
+/// is a `<value expression>`: SQL-86's `<insert value>`, a `<value
+/// specification>` or NULL, so
 /// that "- 9" is none [X3.135-1986 §8.7], is Entry SQL's alone [§13.8,
 /// Leveling Rules].
 #[test]
@@ -367,8 +369,8 @@ fn with_schema_b() -> Database {
 }
 
 /// Verifies: [X3.135-1986 §4.15, §8.5 SR1, §8.7 SR1, §8.12 SR1] with no
-/// `<privilege definition>` (§6.6, not implemented), a user who does not own a
-/// table may not select, insert, update or delete.
+/// `<privilege definition>` [§6.6] granting it a privilege, a user who does
+/// not own a table may not select, insert, update or delete.
 #[test]
 fn a_non_owner_has_no_privileges_4_15() {
     let db = with_schema_b();
@@ -479,9 +481,11 @@ fn delete_without_where_deletes_every_row_8_5() {
     assert_eq!(count(&s, "SELECT ID FROM T"), 0);
 }
 
-/// Verifies: [X3.135-1986 §8.7 SR3] the columns of an INSERT exist; [DESIGN]
-/// valid SQL-86 that is not implemented gets SQLCODE -900, and text that is
-/// not an <SQL statement> a syntax error.
+/// Verifies: [X3.135-1986 §8.7 SR3] the columns of an INSERT exist; an
+/// INSERT may read its own table, SR2 being Intermediate SQL's, and is
+/// refused for the keys it duplicates; [DESIGN] a `<declare cursor>`, which
+/// is not an `<SQL statement>` to execute [§7.3 Format], and text that is
+/// not an `<SQL statement>` are syntax errors.
 #[test]
 fn statements_that_cannot_run() {
     let db = setup();

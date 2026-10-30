@@ -101,8 +101,8 @@ impl Params {
     }
 
     /// [X3.135-1986 §7.3 SR2] names are distinct, and each is an `<identifier>`
-    /// [X3.135-1986 §5.4] `<parameter name>` ::= `<identifier>`. A CHARACTER
-    /// parameter is no longer than `MAX_CHARACTER_LENGTH`, as for a column:
+    /// [X3.135-1986 §5.4] `<parameter name>` ::= `<identifier>`. A character
+    /// string parameter is no longer than `MAX_CHARACTER_LENGTH`, as for a column:
     /// `declare` cannot report it, so it is checked here.
     pub(crate) fn validate(&self) -> Result<()> {
         for (i, p) in self.list.iter().enumerate() {

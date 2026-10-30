@@ -11,7 +11,8 @@ use crate::common::{both_ways, exec, rows};
 /// The rows of F, of the column store, and R, of the row store, alike: K,
 /// a key; G, one of 7, null for every 13th; B; S, a CHAR of 'a' or 'b'.
 /// D, of the row store, two names for G = 1 and none for G = 6; DC, of the
-/// column store, alike; E, a tag of each name; P, of CHAR keys longer.
+/// column store, alike; E, a tag of some of the names; P, of CHAR keys
+/// longer.
 fn tables(db: &Database) -> Session {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A

@@ -39,7 +39,8 @@ fn all(log: &dyn Log, from: Lsn) -> Vec<(Lsn, Vec<u8>)> {
 /// not overlap; `read_from` yields exactly what was appended, in order,
 /// from any position given, or one record at a position; `sync` accepts
 /// the positions given and refuses others; `truncate_before` never removes a record at or after its
-/// position.
+/// position; each record appended from other threads is read once, each
+/// thread's in order.
 fn contract(log: &dyn Log) {
     let start = log.end();
     assert!(all(log, Lsn(0)).is_empty() && all(log, start).is_empty(), "a new log is empty");

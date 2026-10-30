@@ -1,7 +1,7 @@
 //! Domains [ISO/IEC 9075:1992 §11.21–§11.27]: `<domain definition>`,
 //! `<alter domain statement>`, and a `<data type>` or `<domain name>`
-//! where either may be written. Split from parser/schema.rs (RULES.md
-//! R-SIZE-2).
+//! where either may be written; and `<assertion definition>` [§11.34].
+//! Split from parser/schema.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
 use crate::ast::ColumnSpecification;

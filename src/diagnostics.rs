@@ -6,7 +6,7 @@
 //!
 //! Events are what an operator must know of the database's life and
 //! failures: opening and closing, checkpoints, changes of settings,
-//! plug-ins registered, users changed, failures beyond a statement's own
+//! plug-ins registered, users and the owner changed, failures beyond a statement's own
 //! making (a damaged table, corrupt data, an I/O error, a commit that
 //! failed, memory refused), and statements slower than
 //! DIAGNOSTICS.SLOW_STATEMENT. A failure of a statement's own SQL (a syntax

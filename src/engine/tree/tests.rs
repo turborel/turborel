@@ -1,9 +1,10 @@
 //! Unit tests of the B-link tree's concurrent paths, made deterministic: a
 //! writer whose path was read before the tree changed, and a reader that
 //! began at an old root, are set up on one thread, as the interleavings
-//! that make them would leave them (RULES.md R-TEST-1, R-TEST-5). And
-//! malformed trees are refused (R-TEST-2 robustness). Split from tree.rs
-//! (RULES.md R-SIZE-2).
+//! that make them would leave them (RULES.md R-TEST-1, R-TEST-5); so are a
+//! writer, a deleter and a scan that meet a leaf taken out. And where runs
+//! of keys split, bulk loading, the longest entry, and malformed trees
+//! refused (R-TEST-2 robustness). Split from tree.rs (RULES.md R-SIZE-2).
 
 use std::ops::Bound;
 

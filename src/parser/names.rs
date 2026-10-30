@@ -16,7 +16,8 @@ impl Parser {
         if self.accept_delim(delim::PERIOD) {
             let ident = self.identifier()?;
             // [ISO/IEC 9075:1992 §5.4] <schema name> ::= [<catalog name> .]
-            // <unqualified schema name>: a name of three parts, refused.
+            // <unqualified schema name>: a name of three parts, its first
+            // the <catalog name>, taken as `catalog_named` says.
             if self.is_delim(delim::PERIOD) && matches!(self.peek_at(1), Tok::Identifier(_)) {
                 self.advance();
                 self.catalog_named(&first, at)?;

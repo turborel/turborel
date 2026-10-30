@@ -325,7 +325,7 @@ impl DiskFile for OsFile {
         Ok(done)
     }
     fn write_all_at(&self, data: &[u8], offset: u64) -> Result<()> {
-        // Refused before anything is written, so a failed write changes nothing.
+        // Refused before anything is written, so a write past 2^64 bytes changes nothing.
         advance(offset, data.len(), &self.path)?;
         let mut done = 0;
         while let Some(rest) = data.get(done..).filter(|rest| !rest.is_empty()) {

@@ -34,7 +34,7 @@ fn direct(s: &turborel::db::Session, sql: &str) -> Result<(), Code> {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.1 GR2, GR3; §5.4 SR] a
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.1 GR2, GR3; §5.4 SR8a] a
 /// schema's tables and views are named by the schema, its unqualified
 /// names inside it being of it: a view, a foreign key and a CHECK of the
 /// schema read its own tables; its owner holds every privilege on them,
@@ -147,7 +147,7 @@ fn owners_are_logged() {
 /// qualifier's, a `<qualifier>.*`'s, in a statement run, prepared, a
 /// cursor declared and opened, explained, or a schema defined; it names
 /// what the name without it does. Another catalog's name is refused
-/// (SQLCODE -103; in direct SQL, SQLSTATE 2A000 [§20.1 GR5]). A definition read again keeps the
+/// (SQLCODE -103, SQLSTATE 3D000). A definition read again keeps the
 /// names it was checked with, though the catalog is renamed since.
 #[test]
 fn a_name_is_qualified_by_the_one_catalog() {

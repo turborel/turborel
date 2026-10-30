@@ -89,7 +89,7 @@ pub enum Probe {
     /// The keys whose first columns equal `equal`, one value for each, if
     /// any, and whose next column lies between two bounds: above `low` by
     /// its operator, `>` or `>=`, and below `high` by its, `<` or `<=`; as
-    /// BETWEEN gives [ISO/IEC 9075:1992 §8.3 GR1], or two comparisons
+    /// BETWEEN gives [ISO/IEC 9075:1992 §8.3 SR6], or two comparisons
     /// (`IndexMethod::supports_range`).
     Range {
         /// The values of the key's first columns.

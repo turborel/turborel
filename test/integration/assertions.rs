@@ -123,12 +123,11 @@ fn drop_assertion_11_35() {
     assert_eq!(count(&a, "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.ASSERTIONS"), 0, "its assertions went with it");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 SR1, SR2, SR4, SR5,
-/// SR6, SR7, AR1, AR2] an assertion's name is no other constraint's of its
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 SR1, SR2, SR5, SR6,
+/// SR7, AR1, AR2] an assertion's name is no other constraint's of its
 /// schema, and its schema's in a `<schema definition>`; its condition
-/// reads no temporary table, names no parameter, no CURRENT_USER and no
-/// CURRENT_DATE; it is
-/// defined by its schema's owner, who holds REFERENCES on what it reads.
+/// reads no temporary table, names no CURRENT_USER and no CURRENT_DATE; it
+/// is defined by its schema's owner, who holds REFERENCES on what it reads.
 #[test]
 fn the_rules_of_an_assertion_11_34() {
     let db = asserted();

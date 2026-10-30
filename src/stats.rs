@@ -5,7 +5,8 @@
 //! What an engine knows about its rows depends on how it stores them, so
 //! the planner asks through a trait, `Statistics`, every answer optional:
 //! an engine answers what it knows and the planner falls back to defaults
-//! for the rest. A row store samples whole rows in a pass; a columnar
+//! for the rest. A row store samples whole rows in a pass, as the built-in
+//! one does, its column store's frozen rows among them; a columnar
 //! engine may know distinct values exactly from its dictionaries, least and
 //! greatest values from each segment, and the width of each column apart,
 //! and answers from those.

@@ -1,11 +1,13 @@
-//! The catalog: descriptions of schemas, tables, views, columns, indexes
-//! and privileges.
+//! The catalog: descriptions of schemas, tables, views, columns,
+//! constraints, domains, assertions, indexes and privileges.
 //!
 //! [X3.135-1986 §4.6] a `<schema>` is a "persistent object" created by implementor-defined
 //! mechanisms, so where descriptions live is up to us. The `Catalog` trait is
-//! the extension point; `MemoryCatalog` is the simplest implementation. A
-//! persistent catalog would implement the same trait over files, or over
-//! ordinary tables in one of the storage engines, as PostgreSQL does.
+//! the extension point; `MemoryCatalog`, held in memory, is the one built
+//! in, made durable by the log and a checkpoint's image of it
+//! (`catalog/codec.rs`). Another catalog would implement the same trait
+//! over files, or over ordinary tables in one of the storage engines, as
+//! PostgreSQL does.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -189,7 +191,7 @@ impl Horizon {
         self.0.iter().find(|(t, _)| t == table).map(|(_, w)| *w)
     }
 
-    /// It once the column at `at` of `table` is dropped [§11.15 GR4]: one
+    /// It once the column at `at` of `table` is dropped [§11.15 GR4, GR6]: one
     /// fewer seen, if the column was.
     #[must_use]
     pub fn without(&self, table: &QualifiedName, at: usize) -> Horizon {
@@ -243,8 +245,8 @@ pub struct Underlying {
 }
 
 /// \[EXTENSION\] An index. X3.135-1986 has no CREATE INDEX; an implementation
-/// may add facilities [X3.135-1986 §3.4], and here they are created through the Rust API or
-/// automatically to enforce UNIQUE.
+/// may add facilities [X3.135-1986 §3.4], and here they are created by CREATE INDEX
+/// (RULES.md D34), through the Rust API, or automatically to enforce UNIQUE.
 #[derive(Debug, Clone)]
 pub struct IndexDesc {
     /// The index's name, unique in the catalog.

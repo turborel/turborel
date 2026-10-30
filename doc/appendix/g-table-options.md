@@ -89,12 +89,10 @@ still are.
 COLUMNSTORE.ORDER sorts the rows of each group as it is frozen, or
 written again, by the columns it names, ascending, nulls as ORDER BY
 puts them: each page of the first column's values then holds a narrow
-range of them, so a condition on that column skips most pages. Counting
-a hundredth of 200,000 rows by a column whose values are scattered ran
-4.7 times as fast with the table sorted by it; a condition on a column
-the rows were in the order of before ran a sixth slower, and fetching a
-row by its key a twentieth slower. Once the option is set or changed,
-groups frozen before are written again in the background, sorted as it
+range of them, so a condition on that column skips most pages. A
+condition on a column the rows were in the order of before then skips
+fewer, and fetching a row by its key costs a little more. Once the
+option is set or changed, groups frozen before are written again in the background, sorted as it
 says, a few at a time, until every group is; queries read them as before
 meanwhile, in either order. A query ordered by the first columns the
 option names, each ascending, ORDER BY S or ORDER BY S, G of an option

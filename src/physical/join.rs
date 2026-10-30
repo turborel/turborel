@@ -8,7 +8,8 @@
 //! matches in the order of the right operand. The equalities are evaluated
 //! only on the pairs they could hold for, and the rest of the condition only
 //! on the pairs they keep, so the condition must not be able to raise an
-//! error (RULES.md D15).
+//! error (RULES.md D15). An outer join is planned the same way, on the
+//! equalities of its `<join condition>`.
 
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, render_cond, split_and};

@@ -18,9 +18,10 @@
 //! table's shard, and a pin. Which frame is evicted is
 //! an extension point (`Eviction`); CLOCK is built in.
 //!
-//! No lock is held during I/O or a call into the eviction policy (RULES.md
-//! R-ERR-4): a frame being filled or emptied is marked loading, and threads
-//! wanting its page wait for it on a condition variable.
+//! No lock is held during I/O, nor during a call into the eviction policy
+//! but a read hit by its hint, which holds its frame's shared latch then
+//! (RULES.md R-ERR-4): a frame being filled or emptied is marked loading,
+//! and threads wanting its page wait for it on a condition variable.
 
 mod eviction;
 mod hits;
@@ -83,8 +84,8 @@ struct Counters {
 }
 
 /// \[DESIGN\] Shards of the page table: threads hitting different pages
-/// lock different shards. 256 measured best (`bench/buffer.rs`): 64
-/// let four threads collide, 1,024 cost one thread its cache.
+/// lock different shards. Fewer let threads collide; more no longer
+/// stay in a thread's cache (`bench/buffer.rs` compares them).
 const SHARDS: usize = 256;
 
 /// One shard of the page table, with its own hit counters, alone on its

@@ -40,9 +40,10 @@ fn a_column_of_a_domain_11_21() {
     assert_eq!(exec(&a, "UPDATE U SET M = -2").err(), Some(Code::Constraint), "a column added of it");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 GR5; §14.2 SR1, GR3b]
-/// SET CONSTRAINTS names a domain's constraint, and sets it on each column
-/// of the domain: deferred, a row breaking it is refused at commit.
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 GR5; §14.2 SR1, GR2b,
+/// GR3b; §10.6 GR3] SET CONSTRAINTS names a domain's constraint, and sets
+/// it on each column of the domain: deferred, a row may break it; set
+/// immediate, it is checked then, and refused while a row breaks it.
 #[test]
 fn set_constraints_of_a_domain_14_2() {
     let db = Database::new();

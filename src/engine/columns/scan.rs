@@ -1,6 +1,7 @@
 //! \[DESIGN\] Reading a frozen row group (RULES.md D31): the runs of its
-//! rows the conditions of a scan may match, by the least and greatest values of each
-//! chunk of the column each compares (zone maps), and the rows of a run, only
+//! rows the conditions of a scan may match, by the least and greatest values
+//! and the nulls of each part of each chunk of the column each compares
+//! (zone maps), and by the parts' Bloom filters; and the rows of a run, only
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
 use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
@@ -298,7 +299,9 @@ fn words_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, positio
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// `positions` of `group`, in increasing order, as text (`storage::Texts`),
 /// if `t` is a VARCHAR type, which a record writes as its text, and every
-/// chunk's encoding holds text: each position's read in place.
+/// chunk's encoding holds text: as their dictionaries' codes if every chunk
+/// asked of is a dictionary (`coded_at`), else each position's read in
+/// place.
 ///
 /// # Errors
 ///

@@ -1,5 +1,5 @@
 //! The encoding pipeline (RULES.md D30) in the block manager and the pager,
-//! with two test encodings standing in for the plug-ins to come: a
+//! with two test encodings standing in for the plug-ins (RULES.md D48): a
 //! run-length compression that stores input raw when compressing would not
 //! shrink it, and a scrambling bound to its context, standing in for an
 //! authenticated encryption.

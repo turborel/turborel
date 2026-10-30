@@ -1,11 +1,12 @@
-//! \[DESIGN\] A filter over a scan's batches (RULES.md D31): the conjuncts
+//! \[DESIGN\] A filter over a stream's batches (RULES.md D31): the conjuncts
 //! it can judge over a batch's vectors, by the rules a row's judgment uses
 //! (`exec/eval.rs`), each keeping the rows it is true of; and the rest,
 //! judged of the rows they keep, each made a row. Judged so: a column
 //! compared with a constant; a column IS NULL or IS NOT NULL; a column IN,
 //! or NOT IN, a list of constants; a column LIKE a constant pattern, split
-//! once; two expressions of columns and exact constants compared, each
-//! evaluated as integers (`vector/ints.rs`). A filter that can raise an
+//! once; of a filter that can raise an error, two expressions of columns
+//! and exact constants compared, each evaluated as integers
+//! (`vector/ints.rs`). A filter that can raise an
 //! error is judged over vectors only if all of it can be, each conjunct of
 //! every row given, so it is judged of every row the filter row by row
 //! would judge it of; one of whose expressions no integers are made, as
@@ -94,7 +95,7 @@ impl Judged {
 
 /// How a filter judges a scan's batches: its conjuncts judged over the
 /// vectors; the rest of it judged a row at a time, each row made of the
-/// scan's columns, as wide as the table.
+/// columns the batches hold, as wide as the last of them.
 pub(super) struct Judging {
     columns: Vec<usize>,
     judged: Vec<Judged>,
@@ -171,7 +172,7 @@ fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
         return (Vec::new(), Some(cond.clone()));
     }
     // A LIKE last: it costs more a row than the rest, which may leave it
-    // fewer (`S LIKE '%5%' AND G = 3` of 400,000 rows: 29.7 ms LIKE first).
+    // fewer.
     judged.sort_by_key(|j| matches!(j, Judged::Like(..)));
     (judged, rest.into_iter().reduce(|a, b| Cond::And(Box::new(a), Box::new(b))))
 }

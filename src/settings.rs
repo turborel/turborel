@@ -133,8 +133,9 @@ fn canonical(name: &str) -> String {
     name.trim().to_ascii_uppercase()
 }
 
-/// `value` as a value of `kind`, for the setting `name`: an exact number of
-/// scale 0, an approximate number, an upper-case word, or a name.
+/// `value` as a value of `kind`, for the setting `name`: a whole number as
+/// an exact number of scale 0, a number as an approximate one, a word upper
+/// case, or a name, names or text as a character string, its ends trimmed.
 ///
 /// # Errors
 ///

@@ -17,8 +17,9 @@ use crate::value::{CompOp, Value};
 /// \[DESIGN\] A bound subquery.
 #[derive(Debug, Clone)]
 pub struct Subquery {
-    /// Its plan: one column, its `<result specification>`, or any under
-    /// EXISTS.
+    /// Its plan: one column, its `<result specification>`; a row
+    /// subquery's, of the degree of the row it is compared with or read
+    /// from; or any under EXISTS or UNIQUE.
     pub plan: LogicalPlan,
     /// The expressions, over the rows it is applied to, whose values its
     /// outer reference slots take.
@@ -36,8 +37,8 @@ fn bound_expr(e: Expr, values: &[Value]) -> Expr {
 
 /// `plan` with every outer reference slot replaced by its value: in its
 /// conditions, among them the outer expressions of the subqueries nested in
-/// it, which are over its rows; in its select list; and in its set
-/// functions' arguments.
+/// it, which are over its rows; in its select list; in its set
+/// functions' arguments; and in the rows of its VALUES.
 fn bound_plan(plan: LogicalPlan, values: &[Value]) -> LogicalPlan {
     let bound = |e: Expr| bound_expr(e, values);
     let node = match plan {

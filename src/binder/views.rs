@@ -55,7 +55,7 @@ pub(super) enum Source {
     Derived(LogicalPlan),
     /// The common columns of a NATURAL or USING join (`binder/from.rs`).
     Common,
-    /// A system table of INFORMATION_SCHEMA, its rows made as it is read
+    /// A system table, of INFORMATION_SCHEMA or DEFINITION_SCHEMA, its rows made as it is read
     /// (`system.rs`).
     System(Arc<dyn SystemTable>),
 }

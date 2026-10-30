@@ -11,10 +11,12 @@
 //! (RULES.md R-ERR-4). Syncs are grouped: one thread syncs while the others
 //! wait, and finds their records durable too (group commit).
 //!
-//! On open, the segments are opened in order and a torn end of each cut
-//! off; a segment a crash left half created (shorter than a block file's
-//! header) holds no record and is removed; a missing segment between two
-//! others is refused as corruption.
+//! On open, the segments are opened in order, those before the position
+//! known durable taken unchecked, and a torn end cut off: a segment cut
+//! short ends the log, and the segments after it are removed. A last
+//! segment a crash left half created (shorter than a block file's header)
+//! holds no record and is removed; a missing segment between two others is
+//! refused as corruption.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

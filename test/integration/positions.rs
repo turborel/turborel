@@ -64,11 +64,12 @@ fn query_errors_are_placed_at_their_construct() {
 
 /// Verifies: [DESIGN] error positions: errors of the rules of the statements
 /// that change data or define them are placed at what they are about: a
-/// SET clause's unknown column [X3.135-1986 §8.12 SR4], an inserted
+/// SET clause's unknown column [X3.135-1986 §8.12 SR4] or value of another
+/// type [§8.12 SR6], an inserted
 /// column [§8.7 SR3] or value [§8.7 SR6], the table changed [§5.4 SR5], a
 /// column defined twice [§6.3 SR1], a SELECT INTO target [§8.10 SR4], the
 /// table altered [ISO/IEC 9075:1992 §11.10 SR2], the domain altered
-/// [§11.22 SR1], the object dropped [§11.18 SR2, §11.2 SR2], a schema
+/// [§11.22 SR1], the object dropped [§11.20 SR2, §11.2 SR2], a schema
 /// not there refused as not there, not as another's.
 #[test]
 fn statement_errors_are_placed_at_their_construct() {

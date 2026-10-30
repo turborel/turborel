@@ -1,7 +1,8 @@
 //! [X3.135-1986 §5.9; ISO/IEC 9075:1992 §6.11] `<value expression>`, bound
 //! and typed: its primaries, operators, set functions [§6.5], the string
 //! functions [§6.6, §6.7, §6.13], and the \[EXTENSION\] function call;
-//! CASE, CAST and scalar subqueries in `binder/case.rs`. Split from
+//! CASE, CAST and scalar subqueries in `binder/case.rs`, datetimes and
+//! intervals in `binder/datetime.rs` and `binder/interval.rs`. Split from
 //! binder.rs (RULES.md R-SIZE-2).
 
 use super::set_functions::column_specifications;

@@ -4,22 +4,29 @@
 //!
 //! ```text
 //! record:  header u8 | null bitmap | fixed part | ends | variable bytes
-//! header:  0, reserved for the versions of MVCC (RULES.md D29)
+//! header:  0, this format (a version's stamps come before the record,
+//!          `rows/version.rs`)
 //! bitmap:  a bit per column, set if NULL, column 0 the lowest of byte 0
-//! fixed:   for each exact or approximate column, in column order, 8 bytes:
-//!          the units at the column's scale (i64), or the IEEE-754 bits;
-//!          zeros for NULL
-//! ends:    for each character column, in column order, u32: where its
-//!          bytes end, counted from the start of the variable bytes; the
-//!          top bit set if the column is kept out of line
-//! variable: each character column's UTF-8, without trailing spaces; or,
-//!          for a column kept out of line, a reference: where the value is
-//!          (u64, the layout's to interpret), its length in bytes (u32),
-//!          and its first bytes, up to 16, cut at a character's boundary
+//! fixed:   for each column whose type has a width in a record
+//!          (`SqlType::record_width`), in column order, its bytes as its
+//!          type writes them: an exact number's units at the column's
+//!          scale (i64), an approximate number's IEEE-754 bits, a
+//!          datetime's instant in UTC (i64, a zone i16 after it if zoned),
+//!          an interval's units (i128), a BIT string's bytes; zeros for
+//!          NULL
+//! ends:    for each column of varying width, in column order, u32: where
+//!          its bytes end, counted from the start of the variable bytes;
+//!          the top bit set if the column is kept out of line
+//! variable: each such column's bytes as its type writes them, a
+//!          CHARACTER string's UTF-8 without trailing spaces, a VARCHAR's
+//!          as it is; or, for a column kept out of line, a reference:
+//!          where the value is (u64, the layout's to interpret), its length
+//!          in bytes (u32), and its first bytes, up to 16, cut at a
+//!          character's boundary
 //! ```
 //!
 //! Every column is found from the format alone, without decoding the
-//! others. A character string is stored without its trailing spaces and
+//! others. A CHARACTER string is stored without its trailing spaces and
 //! padded again on read [X3.135-1986 §8.7 GR7b], so short values in long
 //! columns take only their own bytes.
 //!
@@ -56,7 +63,7 @@ enum Place {
     /// At this offset in the fixed part, of this width, as its type's kind
     /// says (`SqlType::record_width`).
     Fixed(usize, usize),
-    /// The `n`-th character column.
+    /// The `n`-th column of varying width.
     Variable(usize),
 }
 
@@ -65,8 +72,8 @@ enum Place {
 pub struct RecordFormat {
     types: Vec<DataType>,
     places: Vec<Place>,
-    /// Bytes of the null bitmap and of the fixed part, and character
-    /// columns, each with an end.
+    /// Bytes of the null bitmap and of the fixed part, and columns of
+    /// varying width, each with an end.
     bitmap: usize,
     fixed: usize,
     variable_columns: usize,
@@ -384,8 +391,8 @@ impl RecordFormat {
         }
     }
 
-    /// The bytes of the `n`-th character column of a record, and whether
-    /// they are a reference to a value out of line.
+    /// The bytes of the `n`-th column of varying width of a record, and
+    /// whether they are a reference to a value out of line.
     fn variable_field<'a>(&self, bytes: &'a [u8], n: usize) -> Option<(&'a [u8], bool)> {
         let end_of = |k: usize| -> Option<u32> {
             let at = self.ends_at().checked_add(k.checked_mul(END_BYTES)?)?;

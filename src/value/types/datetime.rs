@@ -10,7 +10,7 @@
 //!
 //! CAST to or from one needs what the SQL-session gives: its time zone
 //! displacement, implied by a value of a type without time zone [§6.1
-//! SR5], and the current date [§6.10 GR11c]. The binder gives them
+//! GR5], and the current date [§6.10 GR11c]. The binder gives them
 //! (`cast_at`); `SqlType::cast`, given none, takes UTC and 0001-01-01.
 
 use std::cmp::Ordering;
@@ -80,7 +80,7 @@ fn mismatch(v: &Value, t: &DataType) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {v} is not a value of a column of type {t}"))
 }
 
-/// [ISO/IEC 9075:1992 §6.1 SR6] `d`, if its year is from 0001 to 9999.
+/// [ISO/IEC 9075:1992 §6.1 GR6] `d`, if its year is from 0001 to 9999.
 ///
 /// # Errors
 ///
@@ -89,11 +89,11 @@ fn in_range(d: Datetime) -> Result<Value> {
     if d.in_range() {
         return Ok(Value::Datetime(d));
     }
-    fail_with(Code::Data, SqlState::INVALID_DATETIME_FORMAT, format!("[ISO/IEC 9075:1992 §6.1 SR6] {d} is not of a year from 0001 to 9999"))
+    fail_with(Code::Data, SqlState::INVALID_DATETIME_FORMAT, format!("[ISO/IEC 9075:1992 §6.1 GR6] {d} is not of a year from 0001 to 9999"))
 }
 
 /// `d` shown as the SQL-session shows it: of a type without time zone, in
-/// the session's displacement, `now`'s [§6.1 SR5].
+/// the session's displacement, `now`'s [§6.1 GR5].
 pub fn shown(d: &Datetime, now: Now) -> Datetime {
     if d.zoned || d.moment == Moment::Date { *d } else { Datetime { zone: now.zone, ..*d } }
 }
@@ -292,8 +292,8 @@ impl SqlType for Chronon {
         Descriptor { datetime_precision: Some(shape(t).map_or(0, |s| s.1)), ..Descriptor::of(self.name()) }
     }
 
-    /// Its fields' kind, its precision and its displacement, then its
-    /// instant.
+    /// Whether it is WITH TIME ZONE, its precision and its displacement,
+    /// then its instant: its fields are its tag's (`value::codec`).
     fn put_value(&self, v: &Value, out: &mut Vec<u8>) {
         let d = datetime(v).copied().unwrap_or_else(|| Datetime::of_local(self.moment, 0, 0, self.zoned, 0));
         out.put_u8(u8::from(d.zoned));

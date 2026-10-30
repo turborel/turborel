@@ -14,7 +14,8 @@ pub enum Completion {
     /// SQLCODE 0.
     #[default]
     Success,
-    /// SQLCODE 100: no row was found to fetch, select, update or delete.
+    /// SQLCODE 100: no row was found to fetch, select, insert, update or
+    /// delete.
     NoData,
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §22.1, §22.2] A completion
     /// condition of class 01, warning: SQLCODE 0, as Table 24 gives none

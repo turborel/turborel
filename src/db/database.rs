@@ -120,8 +120,8 @@ impl Database {
     /// \[DESIGN\] A database over a `Catalog` plug-in. Every table and index the
     /// catalog already holds gets its storage and index structure, from the
     /// built-in engines and index methods (the only ones registered yet).
-    /// Storage engines keep no data between runs (RULES.md D25), so those tables
-    /// start empty.
+    /// The built-in engines keep a database not opened from its files in
+    /// memory alone, so those tables start empty.
     ///
     /// # Errors
     ///

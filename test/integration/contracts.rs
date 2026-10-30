@@ -402,7 +402,7 @@ fn catalog_storage_contract(storage: &dyn CatalogStorage, dir: &std::path::Path)
     assert_eq!(storage.open(&place).unwrap().unwrap().last(), Some(9_u32.to_le_bytes().to_vec()), "{}: opened again", storage.name());
 }
 
-/// Verifies: [EXTENSION] RULES.md D25, D39, R-SAFE-3: the built-in catalog
+/// Verifies: [EXTENSION] RULES.md D25, R-SAFE-3: the built-in catalog
 /// store, and one kept apart from the directory, keep the catalog store
 /// contract (`db/stores.rs`).
 #[test]
@@ -459,7 +459,7 @@ fn log_storage_contract(storage: &dyn LogStorage, dir: &std::path::Path) {
     assert_eq!(read, (0_u32..5_u32).map(|n| n.to_le_bytes().to_vec()).collect::<Vec<_>>(), "{}: opened again", storage.name());
 }
 
-/// Verifies: [EXTENSION] RULES.md D25, D39, R-SAFE-3: the built-in log
+/// Verifies: [EXTENSION] RULES.md D25, R-SAFE-3: the built-in log
 /// storage, and one kept apart from the directory, keep the log storage
 /// contract (`db/stores.rs`).
 #[test]

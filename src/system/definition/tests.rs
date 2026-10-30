@@ -31,7 +31,7 @@ fn rows_of(db: &Database, name: &str) -> Vec<String> {
     read.rows(&st).unwrap().into_iter().map(shown).collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D30, `SystemTable`: each table of the
+/// Verifies: [DESIGN] RULES.md D37, `SystemTable`: each table of the
 /// Definition Schema gives rows of its columns' degree and types, none null
 /// in a NOT NULL column (`SystemRead::rows` checks).
 #[test]

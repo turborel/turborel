@@ -420,8 +420,8 @@ impl ShadowFileSystem {
         ShadowFileSystem { inner, hash, files: Mutex::new(Vec::new()) }
     }
 
-    /// The bytes written to the side files of the files open since their
-    /// last commits.
+    /// The bytes appended to the side files the files open write to, since
+    /// they were last sealed; writes held in memory are not counted.
     pub fn pending_bytes(&self) -> u64 {
         let open: Vec<Arc<Shadow>> = lock_builtin(&self.files).iter().filter_map(Weak::upgrade).collect();
         open.iter().filter_map(|s| read(&s.pending).ok().map(|p| p.active.blocks.end().0.saturating_sub(p.active.blocks.first().0))).sum()

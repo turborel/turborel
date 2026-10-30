@@ -1,32 +1,43 @@
 //! \[DESIGN\] The catalog's descriptions in bytes (RULES.md D25): what a
 //! checkpoint's image records of the definitions as they are, so a
 //! database opens from them, not from every definition ever made
-//! (`db/catalog_file.rs`). Fields are written through `bytes.rs`, values
+//! (`db/snapshot.rs`). Fields are written through `bytes.rs`, values
 //! and rows as in `value/codec.rs`.
 //!
 //! ```text
 //! name:       auth (str), ident (str)
 //! positions:  count u32, each u32
-//! type:       0 character, length u32 | 1 exact, precision u32, scale u32
-//!             | 2 approximate, precision u32
-//! column:     name (str), type, not null u8, default: 0 none | 1 value
-//!             | 2 the user
+//! type:       a tag u8 of its kind, then its parameters (catalog/codec/types.rs)
+//! default:    0 none | 1 value | 2 the user | 3 a datetime value function,
+//!             0 date, 1 time or 2 timestamp u8, precision u32
+//! column:     name (str), type, not null u8, default, domain (0, or 1, a
+//!             name and its default)
 //! table:      name, columns (count u32, each a column), constraints (count
-//!             u32, each: name, kind, deferrable u8, initially deferred u8),
-//!             engine (str), options (count u32, each str and value),
-//!             generation u32
+//!             u32, each a constraint), engine (str), options (count u32,
+//!             each str and value), generation u32, temporary u8 (0
+//!             persistent; 1 global, 2 created local or 3 declared, then
+//!             on commit delete rows u8)
+//! constraint: name, kind, deferrable u8, initially deferred u8, domain (0,
+//!             or 1 and the name of the domain it is a copy of)
 //! kind:       0 not null, position u32 | 1 unique, positions, primary u8
-//!             | 2 foreign key, positions, table name, positions, match u8,
-//!             on update u8, on delete u8 | 3 check, text (str), reads
-//!             (count u32, names), horizon
+//!             | 2 foreign key, positions, table name, positions, match u8
+//!             (0 simple, 1 partial, 2 full), on update u8, on delete u8 (0
+//!             cascade, 1 set null, 2 set default, 3 no action) | 3 check,
+//!             text (str), names (str), reads (count u32, names), horizon
 //! horizon:    count u32, each a name and its degree u32
-//! view:       name, columns, query (str), check option u8 (0 none, 1
-//!             cascaded, 2 local), grouped u8, updates (0, or 1, a name and
-//!             positions), reads (count u32, names), horizon
+//! domain:     name, type, default, constraints (count u32, each a
+//!             constraint), usage (count u32, each grantor (str), grantee
+//!             (0 PUBLIC, or 1 and str), grantable u8)
+//! view:       name, columns, query (str), names (str), check option u8 (0
+//!             none, 1 cascaded, 2 local), grouped u8, updates (0, or 1, a
+//!             name and positions), reads (count u32, names), horizon,
+//!             underlying (0, or 1, leaves (count u32, names), and for each
+//!             column (count u32) the columns it is drawn from (count u32,
+//!             each a name and str))
 //! index:      name (str), table name, positions, method (str), unique u8,
 //!             options
 //! privilege:  grantor (str), grantee (0 PUBLIC, or 1 and str), table name,
-//!             select u8, insert u8, delete u8, update positions,
+//!             select u8, delete u8, insert positions, update positions,
 //!             references positions, grantable u8
 //! ```
 

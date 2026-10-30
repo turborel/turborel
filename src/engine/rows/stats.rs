@@ -1,7 +1,9 @@
 //! \[DESIGN\] The row store's statistics (RULES.md D31): gathered in one
 //! pass over the newest committed version of every row, decoded whole, its
-//! width the bytes of its record in the leaf. A table opened gathers them
-//! in the pass that counts its rows. After that, they are gathered again,
+//! width the bytes of its record in the leaf, and over the frozen rows no
+//! entry of the tree stands for. A table opened counts its rows as it
+//! opens, and gathers them when first asked for, once recovery is done
+//! (`rows/recovery.rs`). After that, they are gathered again,
 //! by the database's maintenance thread (`TableStorage::maintain`), once a
 //! transaction that wrote the table ends and the table has had more
 //! changes since the last pass than a share of its rows then, and a number

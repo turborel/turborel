@@ -1,13 +1,14 @@
-//! \[DESIGN\] The built-in storage engine (RULES.md D31): a row store first,
-//! its layout to be made pluggable once a second exists, over the storage
-//! foundation (D30). Built
-//! bottom up:
+//! \[DESIGN\] The built-in storage engines (RULES.md D31): a row store and a
+//! column store, which freezes rows written to the row store into groups of
+//! each column's values, over the storage foundation (D30). Built bottom up:
 //!
 //! * `record`: a row's bytes, by its columns' types, any column found
 //!   without decoding the rest;
 //! * `key`: index keys as bytes that sort as SQL compares their values;
 //! * `tree`: a B-link tree over the buffer pool, keyed by bytes, for
 //!   tables (by row id) and indexes (by key, then row id);
+//! * `hash`: a hash table over the buffer pool, by linear hashing, for the
+//!   hash index method and operators that spill;
 //! * `rows`: the row-store layout, a table as a tree of records keyed by
 //!   row id, long values out of line;
 //! * `columns`: the column layout's frozen row groups, each column's

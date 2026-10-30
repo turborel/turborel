@@ -6,8 +6,8 @@ use super::*;
 use crate::value::Spelled;
 use crate::value::datetime::{Written, parse};
 
-/// The value `text` writes, of `moment`, of its own displacement, or of
-/// `zone` WITH TIME ZONE if `zoned`, else implied.
+/// The value `text` writes, of `moment`: WITH TIME ZONE, of its own
+/// displacement, if it writes one; else without, in UTC.
 fn of(moment: Moment, text: &str) -> Value {
     let Written { local, zone, precision, .. } = parse(moment, text).unwrap();
     Value::Datetime(Datetime::of_local(moment, local, zone.unwrap_or(0), zone.is_some(), precision))
@@ -43,7 +43,7 @@ fn casts_in_a_session() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR5e, GR6e, GR9-GR11,
-/// SR4; §6.1 SR6] in a session: a date is a timestamp at its midnight in
+/// SR4; §6.1 GR6] in a session: a date is a timestamp at its midnight in
 /// the session's displacement; a string is the datetime it writes, of the
 /// instant its displacement gives; a
 /// datetime CAST to a string its literal's string; a date to a time, a

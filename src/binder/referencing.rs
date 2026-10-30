@@ -53,7 +53,7 @@ impl Referencing {
     }
 }
 
-/// \[AR1\] `cx`'s refusal of `name`, read by a constraint without REFERENCES.
+/// \[AR1\] The refusal of `name` to `auth`, read by a constraint without REFERENCES.
 fn unreferenced(auth: &str, name: &QualifiedName) -> SqlError {
     SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.9 AR1] {auth} has no REFERENCES privilege on {name}"))
         .about(Subject::table(name.parts()))

@@ -270,6 +270,7 @@ impl State {
 }
 
 // Unit tests: entries spilled and read back, a refused area, a run that
-// cannot be read (RULES.md R-TEST-1, R-TEST-2 robustness).
+// cannot be read, a record not of an entry (RULES.md R-TEST-1, R-TEST-2
+// robustness).
 #[cfg(test)]
 mod tests;

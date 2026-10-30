@@ -35,7 +35,6 @@ pub(super) fn string(v: &Value) -> Option<&str> {
     if let Value::Char(s) = v { Some(s) } else { None }
 }
 
-/// A value not of a column of `t`'s type.
 /// [ISO/IEC 9075:1992 §6.10 GR5d, GR6d] The characters `b`'s bits are,
 /// of the form-of-use UTF-8, whose least character is of 8 bits: its
 /// bytes, its last extended with 0 bits; the warning of that padding not
@@ -55,6 +54,7 @@ pub(super) fn of_bits(b: &Bits) -> Result<String> {
     })
 }
 
+/// A value not of a column of `t`'s type.
 fn mismatch(v: &Value, t: &DataType) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {v} is not a value of a column of type {t}"))
 }

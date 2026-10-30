@@ -100,8 +100,9 @@ fn bit_strings_compare_8_2() {
 /// §6.6 GR4-GR6] || joins bit strings, BIT if both are, else BIT VARYING;
 /// SUBSTRING of a bit string is BIT VARYING, of its bits from S, L of them
 /// (SQLSTATE 22011 if L is negative); CHAR_LENGTH and OCTET_LENGTH are
-/// the octets its bits fill, BIT_LENGTH its bits; POSITION, UPPER and TRIM
-/// take character strings alone.
+/// the octets its bits fill, BIT_LENGTH its bits; POSITION and UPPER take
+/// character strings alone; || joins no bit string with a character
+/// string, and + takes none.
 #[test]
 fn operations_on_bit_strings_6_7() {
     let db = bits();

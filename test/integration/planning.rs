@@ -370,8 +370,8 @@ fn plans_are_shown_with_their_parameters() {
 }
 
 /// Schema M: table M of 400 rows, A and B NOT NULL and C nullable, with a
-/// B-link index on (A, B) and a hash index on (A, C); table N, the same
-/// rows, with a B-link index on (A, C) only.
+/// B-link index on (A, B) and a hash index on (A, C); table N, those rows'
+/// A and C, with a B-link index on (A, C) only.
 fn two_column_indexes() -> Database {
     let db = Database::new();
     db.schema(

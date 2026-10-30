@@ -6,9 +6,10 @@
 //! split or are taken out.
 //!
 //! A zone covers every version of its rows a snapshot may read: a write
-//! widens it before it is made, and nothing else changes it but the
-//! database's maintenance thread (`TableStorage::maintain`). That narrows a
-//! zone an update or a deletion left wider than its rows, summing it up
+//! widens it once it is made, before it is committed, and nothing else
+//! changes it but the database's maintenance thread
+//! (`TableStorage::maintain`). That narrows a zone an update or a deletion
+//! left wider than its rows, summing it up
 //! again from every version of its rows a reader at or after the horizon
 //! may read, an open transaction's among them; a write meanwhile counts a
 //! change of the zone, and its sum is then thrown away. A zone is never
@@ -152,7 +153,7 @@ impl Zones {
         self.stale.store(count, AtomicOrdering::Release);
     }
 
-    /// Widens the zone of row `id` to hold `row`, before it is written;
+    /// Widens the zone of row `id` to hold `row`, once it is written;
     /// marked stale if the row replaces another, which it may then be
     /// wider than.
     pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaces: bool) {
@@ -401,8 +402,9 @@ impl RowTable {
     }
 }
 
-// Unit tests: zones skip blocks, keep old versions for open readers, and
-// are known only once summed up after a table is opened (RULES.md
+// Unit tests: zones skip blocks, keep old versions for open readers, are
+// known only once summed up after a table is opened, hold every row
+// written while they are summed up, and hold a version put back (RULES.md
 // R-TEST-1).
 #[cfg(test)]
 mod tests;

@@ -2,8 +2,8 @@
 //! constraint of a schema, on no table, not satisfied if and only if its
 //! search condition is false.
 //!
-//! An assertion is bound as the query `SELECT 1 FROM (VALUES (1)) WHERE
-//! NOT (condition)`, as its schema's owner, as a constraint
+//! An assertion is bound as the query `SELECT 1 FROM (VALUES (1)) AS
+//! ASSERTED (ONE) WHERE NOT (condition)`, as its schema's owner, as a constraint
 //! (`Purpose::Constraint`): REFERENCES on what it reads [AR2], no
 //! authorization identifier [SR6], nothing possibly non-deterministic
 //! [SR8]. A row of it is the assertion broken. It is checked at the end

@@ -1,7 +1,8 @@
 //! Commit through the log (RULES.md D25): a transaction's
 //! row changes are logged as made, and it commits when its commit record is
 //! durable; a rollback, a failed statement and changes of definitions are
-//! logged too; and what a failing log does to each.
+//! logged too; what a failing log does to each; and the engines'
+//! persistence: whose changes are logged, and what `Strict` refuses.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

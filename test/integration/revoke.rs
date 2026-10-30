@@ -8,7 +8,7 @@ use turborel::error::{Code, SqlState};
 
 use crate::common::{code, exec, rows};
 
-/// Schema A with table T, holding 1; schemas B and C, empty.
+/// Schema A with table T, holding 1; schemas B, C and D, empty.
 fn owned() -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL PRIMARY KEY)").unwrap();

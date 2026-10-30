@@ -205,8 +205,8 @@ impl Floats {
 }
 
 impl Column {
-    /// Its values, made the first time they are asked for if they are
-    /// integers.
+    /// Its values, made the first time they are asked for if it is not a
+    /// vector of values.
     pub fn values(&self) -> &[Value] {
         match self {
             Column::Values(values) => values,
@@ -216,7 +216,8 @@ impl Column {
         }
     }
 
-    /// Its values, to change: of integers, made, it then of values.
+    /// Its values, to change: of integers, numbers or texts, made, it then
+    /// of values.
     pub fn values_mut(&mut self) -> &mut Vec<Value> {
         match self {
             Column::Values(values) => values,
@@ -301,7 +302,8 @@ impl Batch {
 }
 
 /// \[DESIGN\] One value of a batch: of a vector of values, read in
-/// place; of one of integers, its units and scale; or a null.
+/// place; of one of integers, its units and scale; of one of approximate
+/// numbers, its number; of one of texts, its text; or a null.
 #[derive(Debug, Clone, Copy)]
 pub enum Cell<'b> {
     /// A value of a vector of values.
@@ -312,7 +314,8 @@ pub enum Cell<'b> {
     Approx(f64),
     /// A character string's text.
     Text(&'b str),
-    /// A null of a vector of integers, or past the end of a vector.
+    /// A null of a vector of integers, numbers or texts, or past the end of
+    /// a vector.
     Null,
 }
 
@@ -340,7 +343,7 @@ impl Cell<'_> {
 
 impl Batch {
     /// The value of column `at` of row `r`, read in place: none made of a
-    /// vector of integers.
+    /// vector of integers, numbers or texts.
     pub fn cell(&self, at: usize, r: usize) -> Cell<'_> {
         match self.columns.get(at) {
             Some(Column::Values(values)) => values.get(r).map_or(Cell::Null, Cell::Value),
@@ -372,7 +375,7 @@ pub fn batches_of(rows: Rows, columns: &[usize]) -> Batches {
     }))
 }
 
-// Unit tests: columns of values and of integers, and their cells
-// (RULES.md R-TEST-1).
+// Unit tests: columns of values, of integers and of approximate numbers,
+// and their cells (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests;

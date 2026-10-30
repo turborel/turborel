@@ -9,11 +9,12 @@ use crate::storage::{Condition, Conjunct, Conjunction};
 use crate::value::{CompOp, Value, constant_prefix};
 
 /// The conjuncts of `cond` comparing a column with a constant, testing it
-/// IS NULL or IS NOT NULL, or IN a list of constants, if any, unless `cond`
-/// can raise an error: every row `cond` keeps satisfies each, so a scan
-/// tells its engine (`TableStorage::scan_where`), which may then leave out
-/// the rows they do not match, skip the frozen chunks one cannot match, and
-/// count only the rows they all match as read.
+/// IS NULL or IS NOT NULL, IN or NOT IN a list of constants, LIKE a
+/// constant pattern (as the bounds of its prefix), or an OR of these of one
+/// column, if any, unless `cond` can raise an error: every row `cond` keeps
+/// satisfies each, so a scan tells its engine (`TableStorage::scan_where`),
+/// which may then leave out the rows they do not match, skip the blocks of
+/// rows one cannot match, and count only the rows they all match as read.
 pub fn pushed_conjuncts(cond: &Cond) -> Option<Conjunction> {
     // A condition that can raise an error must see every row: a row the
     // conjunct rejects may still raise it, and whether it does may not

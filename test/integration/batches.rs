@@ -91,8 +91,7 @@ fn answers(s: &Session, table: &str) -> Vec<Vec<String>> {
 /// SUM, AVG, MIN and MAX of no GROUP BY, of a table of each layout, give
 /// what they give row by row: nulls left out, frozen rows changed, deleted
 /// and added to, under filters a scan is told and not, none matched; and
-/// a SUM over an expression, grouped row by row, agrees with one over the
-/// column.
+/// a SUM over an expression agrees with one over the column.
 #[test]
 fn set_functions_by_batch_answer_as_row_by_row() {
     let db = Database::new();
@@ -285,7 +284,8 @@ fn projections_by_batch_answer_as_row_by_row() {
 }
 
 /// Filters a scan is told, each beside one alike that it is not told, its
-/// columns in expressions: `{c}` the column, `{e}` its expression.
+/// columns in expressions: `{s}`, `{k}`, `{n}` and `{g}` the columns S, K,
+/// N and G.
 const TOLD: [&str; 8] = [
     "{s} LIKE 's1%'",
     "{s} LIKE 'changed'",

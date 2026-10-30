@@ -38,12 +38,13 @@ mod session;
 mod users;
 
 /// \[DESIGN\] The deepest syntax tree the parser builds. Each nested `<search
-/// condition>`, `<boolean term>`, `<value expression>`, `<term>` or `<query expression>`
-/// counts one level, and so does each further operator of a chain (`OR`, `AND`,
-/// `+`, `-`, `*`, `/`, `UNION`), since a chain builds one tree level per operator,
-/// and each `<table reference>` after the first, since the plan joins them one
-/// level each. Rewrites gather conjuncts with `logical::and_all`, which builds
-/// a balanced tree, so no plan gets much deeper than the statement.
+/// condition>`, `<boolean term>`, `<value expression>`, `<term>`, `<query expression>`
+/// or `<subquery>` counts one level, and so does each further operator of a chain
+/// (`OR`, `AND`, `+`, `-`, `||`, `*`, `/`, `UNION`, `EXCEPT`, `INTERSECT`, a join),
+/// since a chain builds one tree level per operator, and each `<table reference>`
+/// of a `<from clause>` after the first, since the plan joins them one level each.
+/// Rewrites gather conjuncts with `logical::and_all`, which builds a balanced tree,
+/// so no plan gets much deeper than the statement.
 ///
 /// X3.135-1986 specifies no such limit ([X3.135-1986 §3.4] requires conforming
 /// language to be processed according to the General Rules), so a deeper statement
@@ -51,10 +52,9 @@ mod users;
 /// limit keeps every later recursive walk of the tree (binding, optimization,
 /// execution, drop) within the stack (RULES.md R-CF-6).
 ///
-/// Measured on 2026-10-23 (debug build, the worst case): at this limit the
-/// deepest accepted statement of each shape needs under 512 KiB of stack, and a
-/// chain of `UNION`s under 1 MiB, half of Rust's default 2 MiB thread stack.
-/// `nesting_beyond_the_limit_is_rejected_not_a_crash` checks this on a 1 MiB thread.
+/// `nesting_beyond_the_limit_is_rejected_not_a_crash` checks that the deepest
+/// accepted statement of each shape runs on a 1 MiB thread, half of Rust's
+/// default 2 MiB thread stack.
 pub const MAX_NESTING_DEPTH: usize = 64;
 
 /// A parser over one piece of SQL text, which it lexes first.
@@ -121,7 +121,7 @@ fn furthest(a: SqlError, b: SqlError) -> SqlError {
 }
 
 impl Parser {
-    /// A parser for standard SQL-86 only.
+    /// A parser for standard SQL, without the \[EXTENSION\] function call syntax.
     ///
     /// # Errors
     ///

@@ -48,7 +48,7 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
         }
         Expr::Cast(x, to) => cast(eval(x, row, subqueries)?, to),
         Expr::Domain(x, d) => checked(eval(x, row, subqueries)?, d, subqueries),
-        // [ISO/IEC 9075:1992 §7.11 GR1, GR2] the value of its one row, null
+        // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {
             let rows = subqueries.rows(s, &outer_values(s, row, subqueries)?, Some(2))?.first(2)?;
@@ -61,7 +61,6 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
     }
 }
 
-/// The values of `s`'s outer expressions for `row`.
 /// [ISO/IEC 9075:1992 §6.10 GR13] `v`, CAST to the domain `d`, if none of
 /// its constraints is false of it [§4.10.3].
 fn checked(v: Value, d: &DomainChecks, subqueries: &dyn Subqueries) -> Result<Value> {
@@ -77,6 +76,7 @@ fn checked(v: Value, d: &DomainChecks, subqueries: &dyn Subqueries) -> Result<Va
     Ok(row.into_iter().next().unwrap_or(Value::Null))
 }
 
+/// The values of `s`'s outer expressions for `row`.
 fn outer_values(s: &Subquery, row: &Row, subqueries: &dyn Subqueries) -> Result<Vec<Value>> {
     s.outer.iter().map(|e| eval(e, row, subqueries)).collect()
 }
@@ -120,7 +120,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
             False => True,
             Unknown => Unknown,
         },
-        // [ISO/IEC 9075:1992 §8.12 GR2, Table 4] IS is never unknown.
+        // [ISO/IEC 9075:1992 §8.12 GR2, Table 15] IS is never unknown.
         Cond::Is(a, value, not) => truth((eval_cond(a, row, subqueries)? == *value) != *not),
         // [X3.135-1986 §5.11 GR2, GR3]
         Cond::Compare(a, op, b) => compared(&eval(a, row, subqueries)?, *op, &eval(b, row, subqueries)?),

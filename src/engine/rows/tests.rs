@@ -1,7 +1,9 @@
 //! Unit tests of the row store: a long value's page checked against its
-//! row and column, a meta page against its format, and an undone change's
-//! older version kept for open readers (RULES.md R-TEST-1, R-TEST-2,
-//! R-TEST-7). Split from rows.rs (RULES.md R-SIZE-2).
+//! row and column, a meta page against its format, an undone change's
+//! older version kept for open readers, deleted rows not written, the
+//! versions and the garbage read as of a time, and a dropped table's
+//! pages freed (RULES.md R-TEST-1, R-TEST-2, R-TEST-7). Split from rows.rs
+//! (RULES.md R-SIZE-2).
 
 use turborel_test_support::Scratch;
 

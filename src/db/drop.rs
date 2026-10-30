@@ -1,5 +1,7 @@
-//! \[EXTENSION\] DROP SCHEMA [ISO/IEC 9075:1992 §11.2], DROP TABLE [§11.18]
-//! and DROP VIEW [§11.20], in a transaction (RULES.md D33): each staged as
+//! \[EXTENSION\] DROP SCHEMA [ISO/IEC 9075:1992 §11.2], DROP TABLE [§11.18],
+//! DROP VIEW [§11.20], DROP DOMAIN [§11.27] (`db/domains.rs`) and DROP
+//! ASSERTION [§11.35] (`db/assertions.rs`), in a transaction (RULES.md
+//! D33): each staged as
 //! one change (`Change::Drop`), made again on the definitions published
 //! when it commits, and by recovery. Split from db/ddl.rs (RULES.md
 //! R-SIZE-2).
@@ -106,7 +108,7 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such schema [SR2] (SQLSTATE 3F000), or,
-    /// not `cascade`, it holds a table or view [SR3].
+    /// not `cascade`, it holds a table, view, domain or assertion [SR3].
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -149,8 +151,9 @@ impl State {
     /// What depends on `qn`, a table or view dropped, dropped with it if
     /// `cascade`: the views that read it, directly or through others, and
     /// the constraints of other tables that reference or read it or them,
-    /// with the privileges on the views. The names of the views and of
-    /// the tables changed are among what it took away.
+    /// and the assertions that read it or them, with the privileges on the
+    /// views. The names of the views, of the tables changed and of the
+    /// assertions are among what it took away.
     ///
     /// # Errors
     ///
@@ -215,9 +218,10 @@ impl State {
 }
 
 impl Session {
-    /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] DROP SCHEMA, TABLE or
-    /// VIEW, in transaction `tx`: made once the locks of all it drops or
-    /// changes are held, on the definitions then.
+    /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27, §11.35] DROP
+    /// SCHEMA, TABLE, VIEW, DOMAIN or ASSERTION, in transaction `tx`: made
+    /// once the locks of all it drops or changes are held, on the
+    /// definitions then.
     pub(super) fn drop_object(&self, st: &Arc<State>, tx: &Txn, object: &DropObject, behavior: DropBehavior) -> Result<Completion> {
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
@@ -246,8 +250,10 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// SQLCODE -551 if it does not [§11.2 AR1, §11.18 AR1, §11.20 AR1];
-    /// -103 if a schema is named in another catalog [§11.2 SR2].
+    /// SQLCODE -104 if it does not [§11.2 AR1, §11.18 AR1, §11.20 AR1,
+    /// §11.27 AR1, §11.35 AR1]; -103 if a schema is named in another
+    /// catalog [§11.2 SR2], or a table is a declared local temporary table
+    /// [§11.18 SR3].
     fn drop_target(&self, st: &State, object: &DropObject) -> Result<DropTarget> {
         match object {
             DropObject::Table(table) => {

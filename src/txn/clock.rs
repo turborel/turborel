@@ -1,9 +1,8 @@
 //! \[DESIGN\] The database's logical clock (RULES.md D29): transaction ids,
 //! commit timestamps, the stable timestamp snapshots read at, and the
 //! horizon, the oldest open snapshot. Every transaction uses it, so no
-//! global lock is taken on its way: a profile of eight threads writing
-//! their own tables found them waiting, most of the time, on the one lock
-//! this replaced.
+//! global lock is taken on its way: transactions writing tables of their
+//! own would otherwise wait on that one lock.
 //!
 //! * **Ids** come from one counter, unique; they order nothing.
 //! * **Commit timestamps** come from another, so they are dense: 1, 2, 3,

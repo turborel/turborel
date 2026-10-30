@@ -36,8 +36,8 @@ fn a_drop_is_its_transactions_until_it_commits() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.18 SR4, GR1] RESTRICT
 /// refuses a table a view reads; CASCADE drops it with the views reading
-/// it, directly or through another, and the privileges on all of them; a
-/// view over another table stays; its index goes with it.
+/// it, directly or through another; a view over another table stays; its
+/// index goes with it.
 #[test]
 fn restrict_and_cascade_11_18() {
     let db = with_views();
@@ -144,7 +144,7 @@ fn what_add_column_refuses_11_11() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.15 SR3, SR4, GR2, GR4,
 /// GR6] a column dropped: its values with it, the columns after it one
-/// place on; its index and its own UNIQUE constraint with it; RESTRICT
+/// place on, their indexes with them; its own UNIQUE constraint with it; RESTRICT
 /// refused while a view refers to it, CASCADE dropping those views and
 /// those over them; not the only column.
 #[test]

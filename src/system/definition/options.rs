@@ -15,7 +15,7 @@ use crate::storage::{Rebuild, Row, TableOption, option_value};
 use crate::system::{Rows, Seen, SystemTable, catalog_name, text, yes};
 use crate::value::Value;
 
-/// The table.
+/// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     vec![
         defined("TABLE_OPTIONS", table_options_columns, Rows::Infallible(table_options)),

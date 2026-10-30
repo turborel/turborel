@@ -85,15 +85,15 @@ impl RowTable {
             Ok(directory) => directory,
             Err(e) => return Box::new(iter::once(Err(e))),
         };
-        // A table that freezes rows reads through the directory it holds,
-        // so the entries of rows frozen as it reads are kept for it.
+        // A table that freezes rows, or still holds groups, reads through
+        // the directory it holds, so the entries of rows frozen as it reads
+        // are kept for it.
         if self.frozen.columns().is_some() || !directory.groups.is_empty() {
             return Box::new(Merged::new(Arc::clone(&self), (Merging::Seen(reader), directory), columns, condition));
         }
         // Only the zones whose rows the conditions may match (`rows/zones.rs`);
         // their rows not judged here, the filter judging every row given:
-        // judging twice cost more than it saved (`G NOT IN (1, 2)` of
-        // 400,000 rows, 45.9 ms not judged here, 53.9 ms judged).
+        // judging twice cost more than it saved.
         let ranges = self.zones.ranges(condition.as_ref());
         Box::new(Self::ranged(&self, ranges).filter_map(move |entry| {
             let found = entry.and_then(|(key, newest)| {

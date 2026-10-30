@@ -176,8 +176,7 @@ impl Batched {
         // A frozen row is not judged here, the filter judging every row
         // given over its vectors (`exec/batch/judge.rs`): the conditions
         // skipped the chunks they cannot match (`candidates`), and judging
-        // a row here too cost more than it saved (`G = 3` of 400,000 rows,
-        // 6.4 ms not judged here, 11.1 ms judged).
+        // a row here too cost more than it saved.
         let positions = self.unshadowed((from, to));
         if positions.is_empty() {
             return Ok(None);
@@ -187,7 +186,7 @@ impl Batched {
         for &c in &self.columns {
             let column = match types.get(c) {
                 // A run whole is read a chunk at a time, each value once, as
-                // integers if it is of them.
+                // integers, approximate numbers or text if it is of them.
                 Some(t) => {
                     if whole {
                         run_column(group, &pages, (c, t), (from, to))?

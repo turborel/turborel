@@ -38,7 +38,7 @@ use crate::system::SystemRead;
 /// EXPLAIN shows of it.
 #[derive(Debug)]
 pub enum Plan {
-    /// Every row of a table, in the engine's order.
+    /// Every row of a table, in the engine's order, or in that of `order`.
     SeqScan {
         /// The table read.
         table: QualifiedName,
@@ -272,7 +272,7 @@ impl<'a> PhysicalPlanner<'a> {
                     groups.iter().map(|&g| column_name(&names, g)).collect::<Vec<_>>().join(", "),
                     aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
                 );
-                // Groups come in the order of their first rows (`exec::aggregate`),
+                // Groups come in the order of their first rows (`exec/group.rs`),
                 // so rows in order of grouping columns give groups in that order.
                 let inner: Vec<SortKey> = want
                     .iter()

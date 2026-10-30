@@ -28,8 +28,8 @@ fn diagnosed() -> Database {
     db
 }
 
-/// Targets: NUM, exact; TXT, CHARACTER(128); and J, 1, the condition
-/// number.
+/// Targets: NUM, exact; TXT, CHARACTER(128); J, 1, the condition number;
+/// and Q, exact of scale 2.
 fn targets() -> Params {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     Params::new()
@@ -59,9 +59,11 @@ fn condition(s: &Session, item: &str) -> String {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.19, §18.1 GR1] before any
 /// statement the area holds no condition; after each, one, MORE being N;
-/// COMMAND_FUNCTION names the statement (Table 22); ROW_COUNT is the rows
-/// an INSERT, a searched UPDATE or DELETE changed, all of the table with
-/// no WHERE, 0 for none; GET DIAGNOSTICS changes nothing of the area.
+/// COMMAND_FUNCTION names the statement (Table 22), none for one that is
+/// not SQL, and DYNAMIC_FUNCTION the prepared statement an EXECUTE ran;
+/// ROW_COUNT is the rows an INSERT, a searched UPDATE or DELETE changed,
+/// all of the table with no WHERE, 0 for none; GET DIAGNOSTICS changes
+/// nothing of the area.
 #[test]
 fn statement_information_18_1() {
     let db = diagnosed();
@@ -226,7 +228,7 @@ fn an_inaccessible_column_is_named_18_1() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §9.1 GR3b, §18.1 GR1a] a string
-/// a FETCH or SELECT INTO cuts to fit its target is a warning, 01004, which
+/// a SELECT INTO cuts to fit its target is a warning, 01004, which
 /// the area keeps; GET DIAGNOSTICS cutting one into its own target
 /// completes with that warning too, and leaves the area as it was.
 #[test]

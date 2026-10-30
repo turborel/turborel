@@ -1,7 +1,8 @@
 //! Unit tests of the kinds' refusals (RULES.md R-TEST-1, R-TEST-2): a
 //! value of another kind given to each, a malformed key, and what a value
-//! of a type not registered here is and is not. Split from types.rs
-//! (RULES.md R-SIZE-2).
+//! of a type not registered here is and is not; with the bit kinds' bytes
+//! and literals, registries and parameters, and CHARACTER VARYING's keys.
+//! Split from types.rs (RULES.md R-SIZE-2).
 
 use super::*;
 use crate::bytes::Put;

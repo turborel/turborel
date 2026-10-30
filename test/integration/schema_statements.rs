@@ -1,7 +1,8 @@
 //! \[EXTENSION\] SQL-schema statements outside a `<schema definition>`
 //! [ISO/IEC 9075:1992 §20.1], in transactions (RULES.md D33, D47): CREATE
 //! TABLE [§11.3], CREATE VIEW [§11.19] and GRANT [§11.36]; REVOKE is
-//! `revoke.rs`'s.
+//! `revoke.rs`'s. And the warning of any definition too long for the
+//! Information Schema to show [§11.9 GR2, §11.19 GR13, §11.34 GR4].
 
 use std::path::Path;
 

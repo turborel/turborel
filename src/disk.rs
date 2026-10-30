@@ -10,6 +10,8 @@
 //!   encryption) that the block manager and the pager pass data through;
 //! * `block`: the block manager, an append-only file of checksummed blocks;
 //! * `pager`: a file of fixed-size checksummed pages, updated in place;
+//! * `shadow`: a file system whose files change only a committed batch of
+//!   writes at a time, kept in side files of blocks until then;
 //! * `buffer`: the buffer pool, caching the pages of pager files and the
 //!   blocks of block files in memory, with a pluggable eviction policy.
 //!

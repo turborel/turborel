@@ -1,7 +1,9 @@
 //! The primaries of a `<value expression>` [X3.135-1986 §5.9; ISO/IEC
 //! 9075:1992 §6.11]: value specifications, columns, set functions
 //! [§6.5], CASE [§6.9], CAST [§6.10], scalar subqueries [§7.11], the string
-//! functions [§6.6, §6.7], and the \[EXTENSION\] function call. Split from
+//! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
+//! [§6.8], VALUE of a domain constraint [§6.2], and the \[EXTENSION\]
+//! function call. Split from
 //! parser/expression.rs (RULES.md R-SIZE-2); the methods extend the same
 //! `Parser`.
 
@@ -15,7 +17,7 @@ impl Parser {
     ///   | `<set function specification>` | (`<value expression>`)
     ///   | `<case expression>` | `<cast specification>` | `<scalar
     ///   subquery>` | `<numeric value function>` | `<string value function>`
-    ///   [ISO/IEC 9075:1992 §6.11]
+    ///   | `<datetime value function>` [ISO/IEC 9075:1992 §6.11]
     pub(super) fn primary(&mut self) -> Result<ValueExpression> {
         match self.peek() {
             Tok::Delimiter(delim::LEFT_PAREN) => {

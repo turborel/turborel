@@ -42,14 +42,16 @@ pub fn add(a: &Interval, b: &Interval, subtract: bool) -> Result<Value> {
     within(units, q, "the sum")
 }
 
-/// [ISO/IEC 9075:1992 §6.15 GR4] `a` times, or divided by, the number
-/// `y`: of its fields, in units of its least, truncated, its leading
-/// field of `MAX_LEADING_PRECISION` digits.
+/// [ISO/IEC 9075:1992 §6.15 GR4] `interval` times, or divided by, the
+/// number `factor`: of its fields, in units of its least, truncated, its
+/// leading field of `MAX_LEADING_PRECISION` digits.
 ///
 /// # Errors
 ///
 /// SQLSTATE 22012 for a divisor 0; 22015 if the result leaves its
-/// leading field.
+/// leading field; 22003 if an approximate factor does not fit
+/// `MAX_EXACT_PRECISION` digits at scale `FACTOR_SCALE`; 22000 if `factor`
+/// is no number.
 pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> {
     let result = Qualifier { leading: u8::try_from(MAX_LEADING_PRECISION).unwrap_or(9), ..interval.qualifier };
     let exact = match factor {

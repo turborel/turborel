@@ -11,7 +11,7 @@ use turborel::error::Code;
 use crate::common::{exec, rows};
 
 /// The levels below SERIALIZABLE a transaction may write at: READ
-/// UNCOMMITTED is READ ONLY [ISO/IEC 9075:1992 §14.1 SR3].
+/// UNCOMMITTED is READ ONLY [ISO/IEC 9075:1992 §14.1 SR3, SR4].
 const WEAKER: [&str; 2] = ["READ COMMITTED", "REPEATABLE READ"];
 
 /// A database of `T (K, V)` holding (1, 10) and (2, 20), committed.

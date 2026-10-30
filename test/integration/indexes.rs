@@ -143,7 +143,7 @@ fn indexes_are_dropped() {
 }
 
 /// Verifies: [DESIGN] access path selection; [EXTENSION] indexes; [ISO/IEC
-/// 9075:1992 §8.3 GR1] a lower and an upper bound of a B-link index's
+/// 9075:1992 §8.3 SR6] a lower and an upper bound of a B-link index's
 /// column are one probe, of both, so the keys past the upper are not read:
 /// BETWEEN, two comparisons, inclusive or not, after an equality of the
 /// index's first column too; the rows those of a scan.

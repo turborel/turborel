@@ -6,8 +6,9 @@
 //! user, a mechanism of authentication with its first bytes, and the
 //! capabilities the client has. The server answers each step of the
 //! exchange with a Challenge, the client each Challenge with an Answer,
-//! until the server sends Ready, with the key that cancels the session's
-//! statements and the capabilities both have; or an Error, and closes.
+//! until the server sends Ready, with the session's authorization
+//! identifier, the key that cancels its statements, the capabilities both
+//! have and the server's product; or an Error, and closes.
 //!
 //! Then the client sends requests, and may send one before the last is
 //! answered: each is answered in turn, in order.
@@ -31,13 +32,26 @@
 //!             bytes their length u32 then the bytes; lists their count
 //!             u32 then each
 //! value:      tag u8: 0 null; 1 character, a string; 2 exact, units i128
-//!             then scale u32; 3 approximate, the f64's bits u64
-//! data type:  tag u8: 1 character, length u32; 2 exact, precision u32
-//!             then scale u32; 3 approximate, precision u32
+//!             then scale u32; 3 approximate, the f64's bits u64; 4 of a
+//!             type beyond the standard (RULES.md D53), its type's name, its
+//!             text, then its bytes; 6 a bit string, its length in bits u32,
+//!             then its bytes; 8 date, 9 time, 11 timestamp, each zoned u8,
+//!             precision u8, the zone's displacement in minutes, an i16's
+//!             bits in a u32, then the instant, microseconds in UTC, i64 as
+//!             u64; 13 interval, its qualifier
+//!             as its data type's, then units i128
+//! data type:  tag u8: 1 character, 5 character varying, 6 bit, 7 bit
+//!             varying, each length u32; 2 exact, precision u32 then scale
+//!             u32; 3 approximate, precision u32; 4 beyond the standard, its
+//!             name, then its parameters, a list of u32; 8 date, 9 time,
+//!             10 time with time zone, 11 timestamp, 12 timestamp with time
+//!             zone, each precision u32; 13 interval, start field, end field,
+//!             leading precision and fractional precision, each u32
 //! parameter:  varying u8 (CHARACTER VARYING if 1); data type
 //! column:     named u8, its name if 1; data type; not null u8
 //! failure:    sqlcode i32 as u32; sqlstate, a string of 5; message;
-//!             cited u8, the rule if 1; placed u8, the position u64 if 1
+//!             cited u8, the rule if 1; placed u8, the position u64 if 1;
+//!             active u8 (the transaction active after it if 1)
 //! key:        16 bytes
 //!
 //! client      'H' hello: version u32, user, mechanism, initial bytes,
@@ -52,12 +66,14 @@
 //!             'Z' cancel: key
 //!             'X' terminate
 //! server      'C' challenge: bytes
-//!             'R' ready: authorization identifier, key, capabilities
+//!             'R' ready: authorization identifier, key, capabilities, the
+//!                 server's product and version
 //!             'P' prepared: statement u32, parameters, columns
 //!             'D' description: columns
 //!             'B' rows: each row's values
 //!             'S' suspended
-//!             'K' complete: sqlcode i32 as u32; sqlstate, a string of 5
+//!             'K' complete: sqlcode i32 as u32; sqlstate, a string of 5;
+//!                 active u8, as a failure's
 //!             'E' error: failure
 //! ```
 

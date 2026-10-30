@@ -182,7 +182,7 @@ impl Expr {
 
     /// Whether evaluating this expression can raise a run-time error.
     /// Arithmetic can ([X3.135-1986 §5.9 GR5, GR6]), and so can a function,
-    /// a CAST [ISO/IEC 9075:1992 §6.10 GR], to a domain too, and a scalar subquery with more
+    /// a CAST [ISO/IEC 9075:1992 §6.10], to a domain too, and a scalar subquery with more
     /// than one row [§7.11 GR1]; a column, a constant and monadic minus
     /// cannot (exact values never exceed `MAX_EXACT_PRECISION` digits, so
     /// negation cannot overflow), and CASE only through its parts.
@@ -284,7 +284,8 @@ impl Cond {
     /// through the expressions it compares. Comparison itself cannot fail: it is
     /// unknown if either value is null and otherwise true or false ([X3.135-1986 §5.11 GR2, GR3]).
     /// LIKE can: a pattern with an escape character may have no partitioning
-    /// [X3.135-1986 §5.14 GR2a ii], unless both are constants that have one. A subquery can if its plan can, and a
+    /// [X3.135-1986 §5.14 GR2a ii], unless its pattern and escape character, if any, are constants that pass
+    /// (`value::constant_prefix`). A subquery can if its plan can, and a
     /// comparison with one value can find more [X3.135-1986 §5.11 GR1].
     pub fn can_raise(&self) -> bool {
         let own = match self {

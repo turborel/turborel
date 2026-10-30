@@ -164,8 +164,9 @@ impl<'a> Context<'a> {
 }
 
 /// [X3.135-1986 §5.4 SR2] a `<table name>` without an `<authorization identifier>` implicitly
-/// has the one of the enclosing `<schema>` or `<module>`. In direct invocation we
-/// use the session's authorization identifier, as a `<module>` would.
+/// has the one of the enclosing `<schema>` or `<module>`. In direct invocation `auth` is the
+/// session's default schema (`Context::schema`): its authorization identifier's, unless SET
+/// SCHEMA set another.
 pub fn qualify(name: &TableName, auth: &str) -> QualifiedName {
     QualifiedName { auth: name.auth.clone().unwrap_or_else(|| auth.to_string()), ident: name.ident.clone() }
 }
@@ -396,7 +397,7 @@ struct Binder<'a> {
     outer: Option<&'a Outer<'a>>,
     /// What the query is bound for.
     purpose: Purpose,
-    /// The columns of `items` it sees unqualified, in order (`From::visible`).
+    /// The columns of `items` it sees unqualified, in order (`From::visible_of`).
     visible: Vec<(usize, usize)>,
     /// The columns it sees of the tables it reads (`Context::horizon`).
     horizon: &'a Horizon,
@@ -422,7 +423,7 @@ struct Binder<'a> {
 }
 
 /// The FROM row a binder sees: its items, the display names of its
-/// columns, and those seen unqualified (`From::visible`).
+/// columns, and those seen unqualified (`From::visible_of`).
 type Row = (Vec<FromItem>, Vec<String>, Vec<(usize, usize)>);
 
 impl<'a> Binder<'a> {
@@ -545,8 +546,8 @@ impl Binder<'_> {
 
     /// The position of FROM-row column `pos`, of type `t`, in the rows
     /// `scope` sees. In a group it must be a grouping column [X3.135-1986
-    /// §5.25 SR7, §5.23 SR1]; in a constraint, not a character string one
-    /// [ISO/IEC 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9 SR13c ii].
+    /// §5.25 SR7, §5.23 SR1]; in a constraint, a grouping column not a
+    /// character string one [ISO/IEC 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9 SR13c ii].
     fn column_in(&self, pos: usize, t: DataType, scope: Scope<'_>) -> Result<usize> {
         let Scope::Groups(g, why) = scope else { return Ok(pos) };
         let at = g

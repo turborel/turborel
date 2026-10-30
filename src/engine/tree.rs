@@ -39,8 +39,10 @@
 //!
 //! One `BLinkTree` value works a tree at a time: it keeps the root's page
 //! number and the node locks. The pages reach the disk as the buffer pool
-//! writes them back; making a split survive a crash, the right half before
-//! the left, is the log's work, with full page images (RULES.md D25).
+//! writes them back; a database kept in a directory keeps its trees in its
+//! data file, shadowed, so after a crash the file is exactly as the last
+//! checkpoint left it, no split half written, and the log redoes what came
+//! after (`disk/shadow.rs`, RULES.md D25).
 
 mod load;
 mod locks;
@@ -534,7 +536,8 @@ impl BLinkTree {
     }
 }
 
-// Unit tests: the concurrent paths, set up on one thread, and malformed
-// trees (RULES.md R-TEST-1, R-TEST-2).
+// Unit tests: the concurrent paths, set up on one thread; where runs of
+// keys split; bulk loading; leaves taken out; the longest entry; and
+// malformed trees (RULES.md R-TEST-1, R-TEST-2).
 #[cfg(test)]
 mod tests;

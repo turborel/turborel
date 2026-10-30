@@ -3,10 +3,9 @@
 //! deduced from where it stands as the statement is bound [§17.6 GR5], and,
 //! as it is executed, its value, cast to that type [§17.9 GR5].
 //!
-//! CHARACTER VARYING, which GR5 gives a `?` in a string context, is not
-//! implemented: such a `?` is described as CHARACTER of the longest length,
-//! and its value taken as given, not padded. Split from params.rs (RULES.md
-//! R-SIZE-4).
+//! A `?` in a string context takes CHARACTER VARYING of the longest length,
+//! `MAX_CHARACTER_LENGTH` [§17.6 GR5b-d], and its value, cast to it, is kept
+//! as given, not padded. Split from params.rs (RULES.md R-SIZE-4).
 
 use std::cell::RefCell;
 

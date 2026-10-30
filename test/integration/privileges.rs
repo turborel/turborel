@@ -213,7 +213,7 @@ fn references_on_a_view_11_19() {
     b.commit().unwrap();
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.9 AR1, §11.21 SR6, §11.34
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.9 AR1, §11.21, §11.34
 /// AR2]: a constraint's condition needs REFERENCES on each column it names
 /// of each table it reads [AR1a]; where it names no column at all, on one
 /// column at least of each [AR1b]. A table it reads but names no column

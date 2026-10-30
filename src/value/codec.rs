@@ -1,14 +1,18 @@
 //! \[DESIGN\] A self-describing byte form of values and rows (RULES.md D25,
 //! D31), the same on every platform: each value a tag, then its bytes. For
 //! formats that stand alone, such as log records, which must be read
-//! without the catalog's column types; the row format of the storage engine
-//! (D31), which knows them, will be its own.
+//! without the catalog's column types; the record format of the storage
+//! engine (D31, `engine/record.rs`), which knows them, is its own.
 //!
 //! ```text
 //! value: 0 (null) | 1 (character) string | 2 (exact) units i128, scale u32 |
 //!        3 (approximate) IEEE-754 bits u64 |
 //!        4 (beyond the standard) its kind's name, then its kind's bytes |
-//!        5 (bit string) its length in bits u32, then its bytes
+//!        5 (bit string) its length in bits u32, then its bytes |
+//!        6 (date) | 7 (time) | 8 (timestamp): with time zone u8, precision u8,
+//!          displacement in minutes u32, microseconds in UTC u64 |
+//!        9 (interval) its fields' ranks, then its precisions, each u32,
+//!          then its units i128
 //! row:   values u32, then each value
 //! ```
 

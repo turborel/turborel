@@ -43,7 +43,7 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if the database is poisoned.
+    /// SQLCODE -910 if the database is closed, or a lock is poisoned.
     pub fn types(&self) -> Result<TypeRegistry> {
         Ok(self.snapshot()?.types.clone())
     }

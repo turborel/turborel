@@ -8,10 +8,12 @@
 //!
 //! It knows nothing of what the pages hold, of caching (the buffer pool,
 //! above it), or of logging: two writers of one page are coordinated above
-//! it, and a torn page is repaired above it, from the log's full page
-//! images. The free list on disk is the one of the last `sync`; pages
-//! allocated or freed since are, after a crash, as they were then, and the
-//! log above keeps the pages that refer to them consistent with that.
+//! it, and torn pages are kept out above it: the database's data file is
+//! opened on a shadow file system (`shadow.rs`), which changes the file
+//! only by a commit, made again whole after a crash. The free list on disk
+//! is the one of the last `sync`; pages allocated or freed since are, after
+//! a crash, as they were then, and the layers above keep the pages that
+//! refer to them consistent with that.
 //!
 //! Every page ends with its number and a digest of its body and number:
 //! this catches torn and corrupted pages and writes that landed in the

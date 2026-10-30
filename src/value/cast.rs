@@ -13,7 +13,9 @@ use crate::error::{Code, Result, SqlState, fail_with};
 ///
 /// SQLSTATE 22003 if a number does not fit \[GR3a ii, GR4a ii\]; 22018 if a
 /// string is no numeric literal \[GR3b i, GR4b i\]; 22001 if a number's
-/// literal is longer than the string type \[GR5a iv, GR5b iii 4\].
+/// literal is longer than the string type \[GR5a iv, GR5b iii 4\]; 22005 if
+/// `v` is of a kind CAST does not take to `to` \[SR4\]; others as the
+/// target's kind says, as of a datetime or an interval.
 pub fn cast(v: Value, to: &DataType) -> Result<Value> {
     to.kind().cast(v, to)
 }

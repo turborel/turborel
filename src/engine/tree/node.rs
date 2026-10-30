@@ -38,9 +38,9 @@
 //! rarely run, so split in the middle. And a run that begins past the end
 //! of the rightmost leaf while another run goes on inside it (a thread's
 //! new block of row ids) gets a leaf of its own at once (`tree.rs`), so no
-//! entries of one run ride along with the other's as it fills its leaves.
-//! Measured with threads inserting into one table, eight at once fill
-//! their leaves to 96% of what one alone does, against 55% with halves.
+//! entries of one run ride along with the other's as it fills its leaves,
+//! and threads inserting into one table at once fill their leaves nearly
+//! as one alone does.
 //!
 //! Where a node splits does not touch the paper's correctness: its proofs
 //! rest on keys moving only right, the right half written before the left

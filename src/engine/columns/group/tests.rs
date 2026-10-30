@@ -37,8 +37,8 @@ fn file() -> (Arc<BufferPool>, FileId) {
     memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES), "a test").unwrap()
 }
 
-/// Row `n`: K = n, a text of n's length with every seventh null, and
-/// n / 100, so its chunks are in order of it.
+/// Row `n`: K = n, a text of n mod 13 characters with every seventh null,
+/// and n / 100, so its chunks are in order of it.
 fn row(n: i128) -> Row {
     let text = if n.checked_rem(7) == Some(0) {
         Value::Null
@@ -99,10 +99,10 @@ fn groups_read_back() {
 }
 
 /// Verifies: [DESIGN] RULES.md D31, zone maps: a condition on one column
-/// reads only the runs of the chunks it may match; of two conditions, only
-/// those both may; the rows of a run hold the columns asked for, the
-/// others null; with no condition, or one of two columns, every row is a
-/// candidate.
+/// reads only the runs of the parts of chunks it may match; of two
+/// conditions, only those both may; IS NULL, IS NOT NULL and IN judged
+/// too; the rows of a run hold the columns asked for, the others null;
+/// with no condition, or one of two columns, every row is a candidate.
 #[test]
 fn scans_skip_chunks_a_condition_cannot_match() {
     let (pool, file) = file();

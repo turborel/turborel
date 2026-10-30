@@ -1,5 +1,5 @@
 //! Unit tests of a table's frozen row groups (`frozen.rs`, `freeze.rs`,
-//! `merge.rs`).
+//! `merge.rs`, `rewrite.rs`, `batches.rs`).
 
 use std::ops::Bound;
 use std::sync::Arc;

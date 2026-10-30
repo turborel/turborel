@@ -34,7 +34,7 @@ pub enum Kind {
     /// passes through them; none, empty (`Database::register_encoding`).
     Encodings,
     /// An `<identifier>`'s body: at most `MAX_IDENTIFIER_LENGTH`
-    /// characters, as given.
+    /// characters, not empty, as given, its ends trimmed.
     Identifier,
     /// A time zone displacement, ±HH:MM, from -12:59 to +13:00 [ISO/IEC
     /// 9075:1992 §5.3 SR25].
@@ -47,7 +47,7 @@ pub enum Kind {
     },
     /// \[EXTENSION\] Of a table option only: names of the table's columns,
     /// by commas, at most `most` of them, none twice; none, empty. A column
-    /// named is not dropped (`Database::alter_table`).
+    /// named is not dropped (`db/alter/columns.rs`).
     Columns {
         /// The most columns.
         most: usize,

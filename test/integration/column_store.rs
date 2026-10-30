@@ -188,7 +188,7 @@ fn data_bytes(dir: &Path) -> Vec<u8> {
     all
 }
 
-/// The database in `dir`, the test encodings registered.
+/// The database in `dir`, the test encoding `Scramble` registered.
 fn sealing(dir: &Path) -> Database {
     let db = Database::new();
     db.register_encoding(Box::new(Scramble)).unwrap();
@@ -345,7 +345,7 @@ fn first_thousands(got: &[String]) -> bool {
 
 /// Verifies: [DESIGN] RULES.md D31: rows frozen as they are read: a reader
 /// of a table of the column store counts the rows of a state a writer
-/// committed, by batch and row by row alike, none missed nor seen twice,
+/// committed, by a column and by an expression alike, none missed nor seen twice,
 /// while the maintenance thread freezes them, and takes out their entries.
 #[test]
 fn rows_read_as_they_are_frozen_are_read_once() {

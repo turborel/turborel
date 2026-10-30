@@ -1,7 +1,8 @@
 //! \[DESIGN\] A blocking connection to a server (RULES.md D42): one
-//! statement at a time, its rows read whole. It speaks the protocol over
-//! any stream that reads and writes, so TCP, Unix sockets and TLS (`tls`,
-//! with the feature `tls`) all carry it.
+//! statement at a time, its rows read whole, or given to a `Sink` a batch
+//! at a time (`query_into`). It speaks the protocol over any stream that
+//! reads and writes, so TCP, Unix sockets and TLS (`tls`, with the feature
+//! `tls`) all carry it.
 //!
 //! Every failure is a `Failure`, as the server would report it: the
 //! server's own, or one of the connection (SQLCODE -919, SQLSTATE class

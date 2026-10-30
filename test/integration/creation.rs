@@ -127,7 +127,7 @@ fn a_database_created_with_encodings_writes_through_them() {
 /// once the database is created, by the host program and in SQL; given
 /// again as it opens, it must be the one it was created with; a hash
 /// function or encoding not registered is refused, and so is one
-/// registered twice.
+/// registered twice, and a page size not a power of two.
 #[test]
 fn settings_fixed_at_creation_stay_fixed() {
     let scratch = Scratch::new("creation-fixed");

@@ -9,11 +9,13 @@
 //! is found from the owners' privileges up, a fixed point, so privileges
 //! that grant each other in a cycle fall together: the others are
 //! abandoned [SR9, SR11]. So is a view whose owner would no longer hold
-//! SELECT on a table it reads [SR13], and a constraint whose owner would
-//! no longer hold the REFERENCES it needs [SR14]. RESTRICT refuses to
-//! abandon anything [SR18]; CASCADE destroys what is abandoned: the
-//! privileges, the views with DROP VIEW CASCADE [GR3], the constraints with
-//! ALTER TABLE DROP CONSTRAINT CASCADE [GR4].
+//! SELECT on a table it reads [SR13], and a table constraint, assertion or
+//! domain constraint whose owner would no longer hold the privileges it
+//! needs [SR14–SR16]. RESTRICT refuses to abandon anything [SR18]; CASCADE
+//! destroys what is abandoned: the privileges, the views with DROP VIEW
+//! CASCADE [GR3], the table constraints with ALTER TABLE DROP CONSTRAINT
+//! CASCADE [GR4], the assertions with DROP ASSERTION [GR5], the domain
+//! constraints with ALTER DOMAIN DROP CONSTRAINT [GR6].
 //!
 //! The privileges of a view's owner on it are not kept but found from its
 //! tables' (`catalog::applicable`), so they change with them [SR7b, SR10]:

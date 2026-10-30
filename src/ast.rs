@@ -93,7 +93,7 @@ pub enum InsertSource {
 // ---------------------------------------------------------------------------
 
 /// [X3.135-1986 §5.6] `<value specification>` ::= `<parameter specification>` | `<literal>` | USER
-/// | CURRENT_USER | SESSION_USER | SYSTEM_USER [ISO/IEC 9075:1992 §6.2]
+/// | CURRENT_USER | SESSION_USER | SYSTEM_USER | `<dynamic parameter specification>` [ISO/IEC 9075:1992 §6.2]
 ///
 /// Not implemented: `<variable specification>` (embedded SQL).
 #[derive(Debug, Clone)]
@@ -142,7 +142,7 @@ pub struct ParameterSpecification {
     pub at: usize,
 }
 
-/// [X3.135-1986 §5.2] `<literal>` ::= `<character string literal>` | `<numeric literal>`
+/// [X3.135-1986 §5.2; ISO/IEC 9075:1992 §5.3] `<literal>`: character string, numeric, bit, hex, datetime or interval
 #[derive(Debug, Clone)]
 pub enum Literal {
     /// A `<character string literal>`'s value.
@@ -192,12 +192,14 @@ pub enum ExtractField {
 ///   | `<delete statement: positioned>` | `<delete statement: searched>`
 ///   | `<fetch statement>` | `<insert statement>` | `<open statement>`
 ///   | `<rollback statement>` | `<select statement>`
-///   | `<update statement: positioned>` | `<update statement: searched>`
+///   | `<update statement: positioned>` | `<update statement: searched>`;
+/// and the statements of ISO/IEC 9075:1992 and the \[EXTENSION\]s below.
 #[derive(Debug)]
 pub enum SqlStatement {
     /// [X3.135-1986 §8.1] `<close statement>` ::= CLOSE `<cursor name>`
     Close(String),
-    /// [X3.135-1986 §8.2] `<commit statement>` ::= COMMIT WORK
+    /// [X3.135-1986 §8.2; ISO/IEC 9075:1992 §14.3] `<commit statement>` ::= COMMIT \[WORK\]. Also what the parser
+    /// gives for a statement it read whole only to refuse at its end (`Parser::refuse_later`), never run.
     Commit,
     /// [X3.135-1986 §8.4] `<delete statement: positioned>` ::=
     ///     DELETE FROM `<table name>` WHERE CURRENT OF `<cursor name>`
@@ -225,18 +227,18 @@ pub enum SqlStatement {
         /// The `<alter table action>` as written, which the log keeps.
         text: String,
     },
-    /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] `<drop
-    /// schema statement>`, `<drop table statement>` or `<drop view
-    /// statement>`: DROP {SCHEMA `<schema name>` | TABLE `<table name>` |
-    /// VIEW `<table name>`} `<drop behavior>`
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27, §11.35] `<drop schema statement>`, `<drop
+    /// table statement>`, `<drop view statement>`, `<drop domain statement>` or `<drop assertion statement>`: DROP
+    /// {SCHEMA `<schema name>` | TABLE `<table name>` | VIEW `<table name>` | DOMAIN `<domain name>`} `<drop
+    /// behavior>`, or DROP ASSERTION `<constraint name>`, held as RESTRICT
     Drop {
         /// What it names.
         object: DropObject,
         /// The `<drop behavior>`.
         behavior: DropBehavior,
     },
-    /// \[EXTENSION\] A table, view or privileges defined or revoked outside a
-    /// `<schema definition>` (`SchemaStatement`).
+    /// \[EXTENSION\] A table, view, domain, assertion or privileges defined, a domain altered, or privileges revoked,
+    /// outside a `<schema definition>` (`SchemaStatement`).
     Schema {
         /// The statement.
         statement: SchemaStatement,
@@ -264,7 +266,7 @@ pub enum SqlStatement {
     Insert(InsertStatement),
     /// [X3.135-1986 §8.8] `<open statement>` ::= OPEN `<cursor name>`
     Open(String),
-    /// [X3.135-1986 §8.9] `<rollback statement>` ::= ROLLBACK WORK
+    /// [X3.135-1986 §8.9; ISO/IEC 9075:1992 §14.4] `<rollback statement>` ::= ROLLBACK \[WORK\]
     Rollback,
     /// [X3.135-1986 §8.10] `<select statement>` ::= SELECT \[ALL | DISTINCT\] `<select list>`
     ///     INTO `<select target list>` `<table expression>`
@@ -469,8 +471,7 @@ pub enum DropObject {
     /// An assertion [§11.35], which DROP names with no `<drop behavior>`.
     Assertion(TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
-    /// schema name>` [§5.4], its name an `<authorization identifier>` as
-    /// every schema's is.
+    /// schema name>` [§5.4].
     Schema {
         /// The `<catalog name>`, if written.
         catalog: Option<String>,

@@ -4,8 +4,8 @@
 //! a statement names one; and its base table INFORMATION_SCHEMA_CATALOG_NAME
 //! [§21.2.2]. The text is the standard's but where it is not SQL, each
 //! correction noted. Its assertion [§21.2.3] holds of the table, which has
-//! one row; its domains [§21.2.27-§21.2.29] are their types, there being
-//! no domains (`system.rs`). Split from system.rs (RULES.md R-SIZE-2).
+//! one row; its domains [§21.2.27-§21.2.29] are not defined as domains:
+//! its columns are of their types (`system.rs`). Split from system.rs (RULES.md R-SIZE-2).
 
 use super::{INFORMATION_SCHEMA, Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};
@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::storage::Row;
 
 /// [ISO/IEC 9075:1992 §21.2.2] INFORMATION_SCHEMA_CATALOG_NAME: one row,
-/// the name of the catalog \[GR1\].
+/// the name of the catalog in which the Information Schema resides.
 pub(super) struct CatalogName;
 
 impl SystemTable for CatalogName {
@@ -49,7 +49,7 @@ pub(crate) fn views() -> &'static [SystemView] {
     VIEWS
 }
 
-/// The views [§21.2.4-§21.2.26].
+/// The views [§21.2.4-§21.2.26], then this implementation's.
 const VIEWS: &[SystemView] = &[
     // [ISO/IEC 9075:1992 §21.2.4] SCHEMATA.
     SystemView {

@@ -179,7 +179,9 @@ fn null_default_and_colon_parameters() {
 
 /// Verifies: [EXTENSION] RULES.md D18 [ISO/IEC 9075:1992 §5.3, §5.4, §10.1,
 /// §11.28-§11.32, §17] each refused construct written wrong is a syntax
-/// error (SQLCODE -102), not refused as valid: its Format is read in full.
+/// error (SQLCODE -102), not refused as valid: its Format is read in full;
+/// so is an interval, a time zone or a name qualified by its catalog
+/// written wrong [§6.1, §6.14, §6.15, §16.5].
 #[test]
 fn refused_constructs_written_wrong_are_syntax_errors() {
     let db = setup();

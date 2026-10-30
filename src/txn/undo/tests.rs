@@ -1,3 +1,7 @@
+//! Unit tests of the undo log (`txn/undo.rs`): entries spilled and read
+//! back, a refused area, a run that cannot be read, a record not of an
+//! entry (RULES.md R-TEST-1, R-TEST-2 robustness).
+
 use std::sync::Mutex;
 
 use super::*;

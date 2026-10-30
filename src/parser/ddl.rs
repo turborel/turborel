@@ -1,9 +1,10 @@
 //! \[EXTENSION\] SQL-schema statements of ISO/IEC 9075:1992 run as SQL
 //! statements, in a transaction: `<alter table statement>` [§11.10],
-//! `<drop schema statement>` [§11.2], `<drop table statement>` [§11.18]
-//! and `<drop view statement>` [§11.20]; and the table storage clauses of
-//! this implementation (RULES.md D41). Split from parser.rs (RULES.md
-//! R-SIZE-2).
+//! `<drop schema statement>` [§11.2], `<drop table statement>` [§11.18],
+//! `<drop view statement>` [§11.20], `<drop domain statement>` [§11.27]
+//! and `<drop assertion statement>` [§11.35]; and the index statements and
+//! table storage clauses of this implementation (RULES.md D41). Split from
+//! parser.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
 use crate::ast::{AlterAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage};
@@ -11,11 +12,13 @@ use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
-    /// An SQL-schema statement of those implemented: CREATE TABLE or
-    /// CREATE VIEW (`parser/schema.rs`), ALTER TABLE, or DROP SCHEMA, TABLE
-    /// or VIEW; or, of
-    /// this implementation, CREATE, DROP or ALTER INDEX, and CREATE, ALTER
-    /// or DROP USER (`parser/users.rs`).
+    /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN or ASSERTION,
+    /// CREATE GLOBAL or LOCAL TEMPORARY TABLE, or ALTER DOMAIN
+    /// (`parser/schema.rs`); ALTER TABLE; DROP SCHEMA, TABLE, VIEW, DOMAIN or
+    /// ASSERTION; CREATE or DROP of a character set, collation or translation,
+    /// read then refused (`parser/charsets.rs`); or, of this implementation,
+    /// CREATE, DROP or ALTER INDEX, and CREATE, ALTER or DROP USER
+    /// (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
         let defines = [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION].iter().any(|w| self.next_is_kw(w));
         if (self.is_kw(kw::CREATE) && defines) || (self.is_kw(kw::ALTER) && self.next_is_kw(kw::DOMAIN)) {
@@ -87,7 +90,9 @@ impl Parser {
     /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] `<drop schema statement>`
     /// ::= DROP SCHEMA `<schema name>` `<drop behavior>`; `<drop table
     /// statement>` ::= DROP TABLE `<table name>` `<drop behavior>`; `<drop
-    /// view statement>` ::= DROP VIEW `<table name>` `<drop behavior>`.
+    /// view statement>` ::= DROP VIEW `<table name>` `<drop behavior>`;
+    /// [§11.27] `<drop domain statement>` ::= DROP DOMAIN `<domain name>`
+    /// `<drop behavior>`.
     fn drop_statement(&mut self) -> Result<SqlStatement> {
         // [§11.35] DROP ASSERTION <constraint name>: no <drop behavior>.
         if self.accept_kw(kw::ASSERTION) {

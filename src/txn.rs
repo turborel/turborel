@@ -62,11 +62,13 @@
 //! A conflicting lock request is refused or waits, as `LockWait` says, and a
 //! wait that would deadlock is refused (`txn/locks.rs`, RULES.md D28).
 //!
-//! Nothing here is shared between transactions but the counter that numbers
-//! them, the timestamps in use (commits under way and open snapshots, under
-//! one short lock), each table's lock, and the graph of who waits for whom
-//! (RULES.md D29): a transaction's undo log and bookkeeping are its own
-//! (`Txn`), so transactions on different tables never wait for each other.
+//! Nothing here is shared between transactions but the clock that numbers
+//! them and keeps the timestamps in use (commits under way and open
+//! snapshots, taken without a global lock: `txn/clock.rs`), each table's
+//! lock, the graph of who waits for whom, and a few maps held only for an
+//! insert or a removal as a transaction begins, logs or ends (RULES.md
+//! D29): a transaction's undo log and bookkeeping are its own (`Txn`), so
+//! transactions on different tables never wait for each other.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem;
@@ -211,7 +213,7 @@ pub(crate) struct Transactions {
     active: AtomicUsize,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
-    /// Taken by every change a checkpoint writes (`db/files.rs`).
+    /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
     pub(crate) gate: Gate,
     /// The position of the first record of each open transaction that
     /// logged one: where recovery from a checkpoint begins reading.
@@ -338,8 +340,8 @@ impl Transactions {
         self.clock.advance_past(highest);
     }
 
-    /// The highest transaction id or commit timestamp given, for a
-    /// database reopened to go on past (`Database::close`).
+    /// The highest transaction id or commit timestamp given, kept in each
+    /// checkpoint for a database reopened to go on past (`db/checkpoint.rs`).
     pub(crate) fn highest(&self) -> u64 {
         self.clock.highest()
     }

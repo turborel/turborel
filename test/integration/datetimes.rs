@@ -55,7 +55,7 @@ fn the_datetime_types_6_1() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3 SR15-SR18, SR21, SR22,
-/// SR25; §6.1 SR6] a datetime literal is DATE, TIME or TIMESTAMP, then its
+/// SR25; §6.1 GR6] a datetime literal is DATE, TIME or TIMESTAMP, then its
 /// string, of four digits of year and two of each other field, valid in
 /// the calendar, its displacement from -12:59 to +13:00, of as many
 /// digits of fraction as written; one invalid is refused (SQLCODE -103);
@@ -103,7 +103,7 @@ fn datetimes_are_assigned_9_2() {
     assert_eq!(exec(&a, "INSERT INTO T (H) VALUES (1)").err(), Some(Code::SyntaxRule), "a number");
     a.run("INSERT INTO T (Z) VALUES (TIMESTAMP '2024-06-01 00:00:00')").unwrap();
     assert_eq!(rows(&a, "SELECT Z FROM T WHERE D IS NULL").unwrap(), ["2024-06-01 00:00:00.000000+00:00"], "of the session's displacement");
-    // [§6.1 SR5] one read from a table too, in the session's displacement.
+    // [§6.1 GR5] one read from a table too, in the session's displacement.
     a.run("SET TIME_ZONE = '+02:00'").unwrap();
     a.run("INSERT INTO T (D, Z) SELECT DATE '2000-01-01', S FROM T WHERE S IS NOT NULL").unwrap();
     a.run("UPDATE T SET Z = S WHERE D = DATE '2024-01-02'").unwrap();
@@ -256,8 +256,9 @@ fn datetime_defaults_11_5() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.12, §6.14, §6.15; §6.5]
-/// arithmetic on a datetime waits for an interval: a datetime with a
-/// number is refused (SQLCODE -103), and SUM and AVG take numbers alone.
+/// arithmetic on a datetime is with an interval: a datetime with a number,
+/// a datetime negated, and a difference of datetimes with no interval
+/// qualifier are refused (SQLCODE -103), and SUM and AVG take no datetime.
 #[test]
 fn datetimes_are_no_numbers_6_14() {
     let db = datetimes();

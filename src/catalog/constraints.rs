@@ -1,6 +1,8 @@
 //! \[EXTENSION\] Table constraints [ISO/IEC 9075:1992 §11.6]: their
 //! descriptors in the catalog, each named [§10.6]. SQL-86's NOT NULL and
-//! UNIQUE [X3.135-1986 §6.3, §6.4] are among them. Split from catalog.rs
+//! UNIQUE [X3.135-1986 §6.3, §6.4] are among them. A domain's constraints
+//! [§11.21] and an assertion [§11.34], each a CHECK, are described the
+//! same way. Split from catalog.rs
 //! (RULES.md R-SIZE-2).
 
 use std::fmt;
@@ -8,10 +10,12 @@ use std::fmt;
 use super::{QualifiedName, TableDesc};
 pub use crate::ast::{ConstraintAttributes, MatchType, ReferentialAction};
 
-/// A table constraint, named [ISO/IEC 9075:1992 §10.6].
+/// A table constraint, a domain constraint or an assertion, named [ISO/IEC
+/// 9075:1992 §10.6].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstraintDesc {
-    /// Its `<constraint name>`, in its table's schema [§10.6 SR1, SR2].
+    /// Its `<constraint name>`, in its table's, domain's or assertion's
+    /// schema [§10.6 SR1, SR2].
     pub name: QualifiedName,
     /// What it constrains.
     pub kind: ConstraintKind,

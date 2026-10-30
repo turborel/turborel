@@ -1,6 +1,7 @@
-//! turborel: a SQL database engine. Its first dialect is ANSI X3.135-1986,
-//! "Database Language SQL" (adopted as FIPS PUB 127), followed for every
-//! production it implements; later ISO SQL standards will extend it.
+//! turborel: a relational database system. Its language is ANSI X3.135-1986,
+//! "Database Language SQL" (adopted as FIPS PUB 127), as extended by
+//! ISO/IEC 9075:1992, one language where the newer wins (D32); later ISO SQL
+//! standards will extend it the same way.
 //!
 //! # Citation convention
 //!
@@ -9,19 +10,20 @@
 //! standard names the document:
 //!
 //! ```text
-//! [X3.135-1986 §8.6 GR2]   ANSI X3.135-1986, clause 8.6, General Rule 2
+//! [X3.135-1986 §8.6 GR2]           ANSI X3.135-1986, clause 8.6, General Rule 2
+//! [ISO/IEC 9075:1992 §11.19 SR13]  ISO/IEC 9075:1992, clause 11.19, Syntax Rule 13
 //! ```
 //!
 //! * `F` is a Format (the BNF), `SR` a Syntax Rule, `GR` a General Rule.
 //!   Sub-items are written as printed: `GR3b vii`. Several rules of one
 //!   clause share a bracket: `[X3.135-1986 §5.8 GR1, GR2]`.
-//! * "SQL-86" in prose means ANSI X3.135-1986.
+//! * "SQL-86" in prose means ANSI X3.135-1986, "SQL-92" ISO/IEC 9075:1992.
 //! * "implementor-defined" beside a citation means the standard leaves the
 //!   choice to the implementation; the comment states the choice made here.
-//! * `[EXTENSION]` marks a facility X3.135-1986 does not define. The standard
-//!   allows them: "A conforming implementation may provide additional
-//!   facilities" [X3.135-1986 §3.4].
-//! * `[DESIGN]` marks internals the standard does not govern (storage, plans,
+//! * `[EXTENSION]` marks a facility neither standard defines. Both allow
+//!   them: "A conforming implementation may provide additional facilities"
+//!   [X3.135-1986 §3.4] [ISO/IEC 9075:1992 §23.3].
+//! * `[DESIGN]` marks internals the standards do not govern (storage, plans,
 //!   optimization). Where an idea comes from the literature, it is named.
 //!
 //! The same form is used in error messages, so a user can look a rule up.

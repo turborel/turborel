@@ -1,6 +1,7 @@
 //! Temporary tables [ISO/IEC 9075:1992 §4.9, §11.3, §14.3 GR3]: each
 //! session's own rows of a table defined in a schema, what a commit does
-//! to them, and the rules temporary tables keep.
+//! to them, and the rules temporary tables keep; and declared local
+//! temporary tables, a session's alone [§13.11].
 
 use turborel::db::Database;
 use turborel::error::Code;
@@ -221,7 +222,7 @@ fn what_a_declared_table_refuses_13_11() {
     assert_eq!(count(&s, "SELECT K FROM MODULE.D"), 0);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.9, §7.3 GR3b] an instance not
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.9; X3.135-1986 §7.3 GR3b] an instance not
 /// yet written reads as empty, through its index too; a failed statement
 /// on one is undone alone, the transaction going on; one is read and
 /// written at every isolation level, by its index and its rows.

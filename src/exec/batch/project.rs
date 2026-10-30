@@ -1,12 +1,13 @@
-//! \[DESIGN\] A projection of a table read a batch at a time (RULES.md D31):
-//! of a scan, filtered or not, whose expressions read only columns the
-//! scan reads, no subquery among them, of a table that reads by batch
-//! (`TableStorage::reads_by_batch`), each row given made of the batch's
+//! \[DESIGN\] A projection of tables read a batch at a time (RULES.md D31):
+//! of a subtree that gives batches (`stream.rs`), every table of which
+//! reads by batch (`TableStorage::reads_by_batch`), whose expressions read
+//! only columns its batches hold, no subquery nor outer reference among
+//! them, each row given made of the batch's
 //! vectors, no row of the table's width made for it, a batch read ahead of
 //! the rows given. A column or a constant is taken as it is; any other
 //! expression is evaluated as a row's is (`exec/eval.rs`), of a row of
-//! only the values it reads. Rows come as the scan gives batches,
-//! in no particular order but the engine's; a projection of anything else
+//! only the values it reads. Rows come as the subtree gives batches,
+//! in no particular order but its own; a projection of anything else
 //! is made row by row (`exec.rs`). Split from batch.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;

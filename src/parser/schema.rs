@@ -1,6 +1,9 @@
 //! The schema grammar: `<schema>` [X3.135-1986 §6.1], its `<table
-//! definition>`s [X3.135-1986 §6.2-§6.4] and `<privilege definition>`s
-//! [X3.135-1986 §6.6]. Split from parser.rs (RULES.md R-SIZE-2).
+//! definition>`s [X3.135-1986 §6.2-§6.4], `<view definition>`s
+//! [X3.135-1986 §6.5] and `<privilege definition>`s [X3.135-1986 §6.6];
+//! temporary tables [ISO/IEC 9075:1992 §11.3, §13.11] and the `<revoke
+//! statement>` [§11.37]. Domains and assertions are in `parser/domains.rs`.
+//! Split from parser.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
 use crate::ast::{
@@ -40,7 +43,9 @@ impl Parser {
             self.character_set_clause()?;
         }
 
-        // <schema element> ::= <table definition> | <view definition> | <privilege definition>
+        // <schema element> ::= <domain definition> | <table definition> | <view definition>
+        //     | <grant statement> | <assertion definition> | <character set definition>
+        //     | <collation definition> | <translation definition>
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut assertions = Vec::new();
         loop {
@@ -85,8 +90,9 @@ impl Parser {
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] A `<table definition>`, a
-    /// `<view definition>`, a `<grant statement>` or a `<revoke statement>`,
-    /// on its own: with its text.
+    /// `<view definition>`, a `<domain definition>`, an `<alter domain
+    /// statement>`, an `<assertion definition>`, a `<grant statement>` or a
+    /// `<revoke statement>`, on its own: with its text.
     pub(super) fn schema_statement(&mut self) -> Result<SqlStatement> {
         let start = self.here();
         let statement = if self.is_kw(kw::GRANT) {
@@ -322,7 +328,7 @@ impl Parser {
 
     /// `<action>` ::= SELECT | DELETE | INSERT \[(`<privilege column
     /// list>`)\] | UPDATE \[(`<grant column list>`)\] | REFERENCES
-    /// \[(`<privilege column list>`)\] [ISO/IEC 9075:1992 §10.3]
+    /// \[(`<privilege column list>`)\] | USAGE [ISO/IEC 9075:1992 §10.3]
     fn action(&mut self) -> Result<Action> {
         for (word, action) in [(kw::SELECT, Action::Select), (kw::DELETE, Action::Delete), (kw::USAGE, Action::Usage)] {
             if self.accept_kw(word) {
@@ -357,7 +363,9 @@ impl Parser {
     }
 
     /// ON `<object name>`: [ISO/IEC 9075:1992 §11.36] `<object name>` ::=
-    /// \[TABLE\] `<table name>`, of those implemented.
+    /// \[TABLE\] `<table name>` | DOMAIN `<domain name>`, of those
+    /// implemented: the name, and whether it is not a table's. A collation,
+    /// character set or translation is read, its name left empty.
     fn object_name(&mut self) -> Result<(TableName, bool)> {
         self.expect_kw(kw::ON)?;
         let at = self.here();

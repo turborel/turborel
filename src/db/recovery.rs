@@ -92,10 +92,10 @@ pub struct RecoveryReport {
     pub records: u64,
     /// Definitions replayed: `<schema>`s and indexes.
     pub definitions: u64,
-    /// Transactions that changed rows and committed.
+    /// Transactions that changed rows or definitions and committed.
     pub committed: u64,
-    /// Transactions that changed rows and did not commit: rolled back, or
-    /// interrupted.
+    /// Transactions that changed rows or definitions and did not commit:
+    /// rolled back, or interrupted after changing rows.
     pub not_committed: u64,
     /// Row changes redone.
     pub redone: u64,

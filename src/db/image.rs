@@ -6,7 +6,8 @@
 //! position of the first record of the oldest transaction open then
 //! (`start`), from which recovery reads the log; and the highest
 //! transaction id or timestamp given. `clean` says the database was closed
-//! there: nothing has changed since, and its indexes are kept too. A
+//! there: nothing has changed since, so, the log ending there, it is
+//! reopened with nothing replayed (`db/files.rs`). A
 //! database opened records its image again, not clean, before anything
 //! else runs.
 //!

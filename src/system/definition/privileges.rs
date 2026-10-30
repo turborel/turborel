@@ -9,8 +9,9 @@
 //! [X3.135-1986 §6.6 SR3b i]; those of each `<grant statement>`; and on the
 //! Information Schema, SELECT to PUBLIC, WITH GRANT OPTION, of the grantor
 //! INFORMATION_SCHEMA \[§21.1\]. A table privilege but DELETE is also one on
-//! each column [§11.3 GR4, §11.36 GR4]; UPDATE or REFERENCES on every
-//! column is the table privilege too, there being no other record of one.
+//! each column [§11.3 GR4, §11.36 GR3]; INSERT, UPDATE or REFERENCES on
+//! every column is the table privilege too, there being no other record of
+//! one.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

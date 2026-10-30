@@ -281,7 +281,7 @@ fn the_owner_sets_the_databases_values_in_sql() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.1, §6.2]; [DESIGN] RULES.md
-/// D36, D43, R-ERR-1: SET DATABASE is refused, nothing set: by any but the
+/// D36, D43, R-ERR-2: SET DATABASE is refused, nothing set: by any but the
 /// owner (SQLCODE -104), or with none; in a transaction (-917); of a
 /// setting not there (-103); of a value not of the setting's kind or
 /// range (-301); and as a Format broken (-102) without `=` or TO, or

@@ -321,7 +321,8 @@ pub struct JoinedTable {
     pub natural: bool,
     /// The `<join specification>`, if written.
     pub on: Option<JoinSpecification>,
-    /// Where it begins in the statement.
+    /// Where its join is written in the statement: the first key word
+    /// after `left`.
     pub at: usize,
 }
 

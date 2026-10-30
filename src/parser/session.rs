@@ -1,6 +1,6 @@
-//! \[EXTENSION\] [ISO/IEC 9075:1992 §14.1, §14.2, §16.2] The SET
+//! \[EXTENSION\] [ISO/IEC 9075:1992 §14.1, §14.2, §16.1, §16.2] The SET
 //! statements of transactions and sessions: SET TRANSACTION, SET
-//! CONSTRAINTS (`parser/constraints.rs`), SET SCHEMA, and SET of a
+//! CONSTRAINTS (`parser/constraints.rs`), SET CATALOG, SET SCHEMA, and SET of a
 //! setting (RULES.md D36), whose name is an `<identifier>`, as no standard
 //! SET statement's is; and SET DATABASE, of the database's value of a
 //! setting, by its owner (D43). In the standard's notation:
@@ -28,8 +28,10 @@ use crate::lexer::{Tok, delim, kw};
 const DATABASE: &str = "DATABASE";
 
 impl Parser {
-    /// A statement that begins with SET: SET TRANSACTION, SET CONSTRAINTS,
-    /// SET SCHEMA, or SET of a setting.
+    /// A statement that begins with SET: SET of a setting, SET DATABASE,
+    /// SET TRANSACTION, SET CONNECTION, SET SESSION AUTHORIZATION, SET
+    /// DESCRIPTOR, SET NAMES, SET TIME ZONE, SET CATALOG, SET SCHEMA, or SET
+    /// CONSTRAINTS.
     pub(super) fn set_statement(&mut self) -> Result<SqlStatement> {
         let database = *self.peek_at(1) == Tok::Identifier(DATABASE.to_owned()) && self.at_setting_name(2);
         if database {

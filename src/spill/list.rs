@@ -6,7 +6,7 @@
 //! a run back. Items that cannot be written stay held: a list never loses
 //! one. What its items are in bytes is its owner's, given as it writes and
 //! reads them: the transaction coordinator's undo entries, a row store's
-//! changes and garbage.
+//! changes and garbage, the row changes recovery reads from the log.
 
 use std::sync::Arc;
 

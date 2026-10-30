@@ -1,6 +1,6 @@
 //! Integration tests: the library seen from outside, through its public API
-//! only. One test binary, one module per area of the standard (see RULES.md,
-//! "Test layout"). Every test traces to its requirements with a
+//! only. One test binary, one module per area (see RULES.md, "Project
+//! layout"). Every test traces to its requirements with a
 //! `/// Verifies:` line.
 //!
 //! A panic is how a test reports failure, so test code may unwrap, index and

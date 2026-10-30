@@ -1,25 +1,31 @@
 //! \[DESIGN\] Index keys as bytes (RULES.md D31): the values of a key's
 //! columns encoded so that comparing the bytes, as unsigned bytes from the
 //! first, orders keys as SQL compares their values [X3.135-1986 §5.11], so a
-//! B+tree compares keys without decoding them.
+//! B-link tree compares keys without decoding them.
 //!
 //! ```text
 //! key:       each column's value, in order
 //! NULL:      0x00 (before every value)
-//! value:     0x01, then
+//! value:     0x01, then its type's key (`SqlType::encode_key`):
 //!   exact:       the units at the column's scale as i64, sign bit flipped,
 //!                big-endian
 //!   approximate: the IEEE-754 bits, all inverted if negative, else the
 //!                sign bit set, big-endian (-0.0 as 0.0)
 //!   character:   the UTF-8 of the value padded with spaces to the column's
 //!                length [X3.135-1986 §5.11 GR5]
+//!   varying:     the UTF-8 less its trailing spaces, in chunks, each with a
+//!                marker of what follows (`value/types/varying.rs`)
+//!   bit:         each byte and a marker, the last's its bits (`value/bits.rs`)
+//!   datetime:    the instant in UTC as i64, sign bit flipped, big-endian
+//!   interval:    the units as i128, sign bit flipped, big-endian
+//!   extension:   as its type writes it
 //! ```
 //!
 //! Character strings compare in Unicode scalar order [X3.135-1986 §5.11 GR6,
-//! implementor-defined], which is the order of their UTF-8 bytes. Padded to
-//! the same number of characters, no value's bytes are a prefix of another
-//! value's, so the columns of a composite key are simply concatenated, and
-//! a key is decoded again by its columns' types (`decode_key`).
+//! implementor-defined], which is the order of their UTF-8 bytes. No value's
+//! key is a prefix of another value's of its type, so the columns of a
+//! composite key are simply concatenated, and a key is decoded again by its
+//! columns' types (`decode_key`).
 //!
 //! A value compared with a column's keys need not be of the column's type:
 //! `1.555` with a column of scale 2, a string longer than the column. Its

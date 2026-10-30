@@ -65,7 +65,8 @@ pub(in crate::exec) struct Built {
 }
 
 /// What a hash join's right operand does once it outgrows its work area:
-/// it is partitioned, or, already a partition, moves to a table.
+/// it is partitioned, or moves to a table, as one already a partition,
+/// a LEFT join's read by batches and a subquery's rows do.
 #[derive(Clone, Copy)]
 pub(in crate::exec) enum Full {
     Partition,

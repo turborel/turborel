@@ -5,6 +5,9 @@
 //! so poisoning means a plug-in panicked. Taking a poisoned lock is reported
 //! as SQLCODE -910 rather than unwrapped, so the database refuses to go on
 //! with state it cannot trust.
+//!
+//! And the gate checkpoints shut (`Gate`), and the stripe of each thread
+//! (`thread_stripe`).
 
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -108,8 +111,9 @@ std::thread_local! {
 struct Stripe(RwLock<()>);
 
 /// \[DESIGN\] A lock taken shared by every operation that changes what a
-/// checkpoint writes, and exclusively by a checkpoint (`db/files.rs`), so a
-/// checkpoint sees no operation half done. A shared holder takes one of
+/// checkpoint writes, and exclusively by a checkpoint (`db/checkpoint.rs`)
+/// and an index build as it publishes (`db/indexes.rs`), so neither sees
+/// an operation half done. A shared holder takes one of
 /// several stripes, given to its thread in turn, each on a cache line of
 /// its own, so holders on different threads rarely meet; the exclusive holder takes them all, in order. A thread
 /// holding the gate takes it again without waiting, as a checkpoint

@@ -4,12 +4,13 @@
 //!
 //! A time or timestamp is kept in UTC [§4.5.1], with a time zone
 //! displacement: its own, of a type WITH TIME ZONE; else the SQL-session's,
-//! implied [§6.1 SR5], which the value carries only as it is shown. A date
+//! implied [§6.1 GR5], which the value carries only as it is shown. A date
 //! has none. So two values of one instant compare equal whatever their
 //! displacements.
 //!
 //! `utc` is microseconds: of a timestamp, from 0001-01-01 00:00:00 UTC; of a
-//! time, from midnight UTC, within a day; of a date, from its midnight.
+//! time, from midnight UTC, within a day; of a date, its midnight's, from
+//! 0001-01-01.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -92,7 +93,7 @@ fn floor_div(a: i64, b: i64) -> i64 {
     a.checked_div_euclid(b).unwrap_or(0)
 }
 
-/// What is left of `a` after `floor_div(a, b)`, from 0 to `b`.
+/// What is left of `a` after `floor_div(a, b)`, from 0 to below `b`.
 fn floor_rem(a: i64, b: i64) -> i64 {
     a.checked_rem_euclid(b).unwrap_or(0)
 }
@@ -250,7 +251,7 @@ impl Datetime {
         if self.moment == Moment::Time { floor_rem(local, MICROS_PER_DAY) } else { local }
     }
 
-    /// [ISO/IEC 9075:1992 §6.1 SR6] Whether its year, in UTC and as shown,
+    /// [ISO/IEC 9075:1992 §6.1 GR6] Whether its year, in UTC and as shown,
     /// is from 0001 to 9999.
     pub fn in_range(&self) -> bool {
         self.moment == Moment::Time || [self.utc, self.local()].iter().all(|m| (0..=LAST_DAY).contains(&floor_div(*m, MICROS_PER_DAY)))
@@ -364,7 +365,7 @@ impl fmt::Display for Datetime {
     }
 }
 
-/// [ISO/IEC 9075:1992 §4.5.1, §6.1 SR5] Each time and timestamp of a type
+/// [ISO/IEC 9075:1992 §4.5.1, §6.1 GR5] Each time and timestamp of a type
 /// without time zone in `row`, as a value retrieved shows it: in the
 /// SQL-session's displacement, `zone`.
 pub fn show_in(row: &mut [crate::value::Value], zone: i16) {

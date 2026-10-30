@@ -65,7 +65,7 @@ pub struct RuleContext<'a> {
 /// * `apply` returns `None` when it does not apply, so rewriting reaches a
 ///   fixed point; the driver stops after `OPTIMIZER.MAX_PASSES` otherwise.
 /// * The plan keeps the shapes the executor runs: every leaf a `Scan` of a
-///   catalog table.
+///   catalog table, a `System` table's rows, or `Values`.
 /// * `name` is unique and constant; `set_enabled` finds the rule by it.
 /// * The `RuleContext` is read-only: a rule must not change the database.
 /// * Methods may be called from several threads at once (`Send + Sync`): an
@@ -276,7 +276,8 @@ impl Rule for ConstantFolding {
     }
 }
 
-/// Remove known-TRUE parts of a condition, and a filter that is TRUE.
+/// Remove the known-TRUE operands of AND and known-FALSE operands of OR,
+/// and a filter that is TRUE.
 /// Only identities that drop no evaluation of other parts are used:
 /// "TRUE AND x" = x, "FALSE OR x" = x, NOT on a constant.
 pub struct SimplifyConditions;

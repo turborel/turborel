@@ -8,7 +8,9 @@
 //! and `FileLog` (`log/file.rs`), segments of block files in a directory.
 //!
 //! To a `Log`, a record is bytes; what the database writes in them, row
-//! changes, schema changes and the ends of transactions, is `record`.
+//! changes, schema changes, settings, users, checkpoints and the ends of
+//! transactions, is `record`; a record of a table with encodings is
+//! sealed through them (`sealed`).
 
 mod file;
 pub mod record;

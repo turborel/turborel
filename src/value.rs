@@ -58,8 +58,8 @@ pub const INDICATOR_PRECISION: u32 = 9;
 pub const MAX_BIT_LENGTH: u32 = 32_767 * 8;
 
 /// \[DESIGN\] Longest `CHARACTER(<length>)`. [X3.135-1986 §5.5 SR2] only requires a
-/// length greater than 0; values are stored padded to their length
-/// [X3.135-1986 §8.7 GR7b], so this bounds one value to 32 KiB.
+/// length greater than 0; values are padded to their length
+/// [X3.135-1986 §8.7 GR7b], so this bounds one value to 32,767 characters.
 pub const MAX_CHARACTER_LENGTH: u32 = 32_767;
 
 // ---------------------------------------------------------------------------
@@ -294,7 +294,8 @@ impl ArithOp {
 }
 
 // ---------------------------------------------------------------------------
-// Values [X3.135-1986 §4.2] null, character string, or number
+// Values [X3.135-1986 §4.2] null, character string, or number; and
+// [ISO/IEC 9075:1992 §4.3, §4.5] bit string, datetime or interval
 // ---------------------------------------------------------------------------
 
 /// A value [X3.135-1986 §4.2].
@@ -324,7 +325,7 @@ impl Value {
         matches!(self, Value::Null)
     }
 
-    /// A number as its nearest `f64`; `None` for null or a string.
+    /// A number as its nearest `f64`; `None` for null or any other value.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
@@ -417,7 +418,8 @@ pub enum NormKey {
 /// # Errors
 ///
 /// SQLCODE -301 for a zero divisor [X3.135-1986 §5.9 GR5], a result out of
-/// range [X3.135-1986 §5.9 GR6], or a character string operand.
+/// range [X3.135-1986 §5.9 GR6], or a character string operand; of
+/// intervals and datetimes, as `interval::add`, `scale` and `shift` say.
 pub fn arith(op: ArithOp, a: &Value, b: &Value) -> Result<Value> {
     match (a, b) {
         // [X3.135-1986 §5.9 GR1] if any <primary> is null, the result is null.
@@ -543,8 +545,8 @@ pub fn sort_cmp(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-// Unit tests: private decision logic of `Decimal`, one test per decision, with
-// MC/DC cases written out (RULES.md R-TEST-1, R-COV-3).
+// Unit tests: the decisions of arithmetic and assignment, one test per
+// decision, with MC/DC cases written out (RULES.md R-TEST-1, R-COV-3).
 #[cfg(test)]
 mod tests {
     use super::*;

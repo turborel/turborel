@@ -43,8 +43,9 @@ impl RowTable {
     }
 
     /// Opens the table whose meta page is `meta`, of columns of `types`:
-    /// row ids go on past those it reserved, and its rows are counted in
-    /// the pass that gathers its statistics.
+    /// row ids go on past those it reserved, its rows are counted by their
+    /// newest versions as it opens, and its statistics are gathered when
+    /// first asked for (`rows/recovery.rs`).
     ///
     /// # Errors
     ///

@@ -1,6 +1,6 @@
 //! \[DESIGN\] Maintenance (RULES.md D31): the work an engine leaves for
 //! later, so no transaction's end waits for it: the row store's gathering
-//! of a table's statistics; the column store's freezing of rows into
+//! of a table's statistics and summing up of its zones; the column store's freezing of rows into
 //! groups, its writing of groups again, and its taking out of the entries
 //! of rows frozen.
 //!

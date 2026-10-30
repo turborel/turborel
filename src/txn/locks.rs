@@ -2,8 +2,9 @@
 //! execution is serializable [X3.135-1986 §4.16]. A transaction that finds a
 //! table locked against it is refused at once (`LockWait::NoWait`) or waits
 //! until the holder ends (`LockWait::Wait`), unless waiting would deadlock or
-//! could never end, which is refused at once. Split from txn.rs (RULES.md
-//! R-SIZE-4).
+//! could never end, which is refused at once. A wait ends refused past
+//! `LOCK_TIMEOUT`, or when its statement is cancelled. Split from txn.rs
+//! (RULES.md R-SIZE-4).
 //!
 //! Each table has a lock of its own (RULES.md D29), so transactions on
 //! different tables never touch the same one. Only a transaction about to
@@ -109,9 +110,10 @@ impl Txn {
     }
 
     /// \[DESIGN\] Whether it may go on: not if a table it wrote has had an
-    /// index added since (`Database::create_index`). The index has no entry
-    /// for what it wrote before, so it must not commit, nor read through the
-    /// index, and can only roll back and run again.
+    /// index added or dropped since (`Database::create_index`,
+    /// `db/indexes.rs`). An index added has no entry for what it wrote
+    /// before, so it must not commit, nor read through the index, and can
+    /// only roll back and run again.
     ///
     /// # Errors
     ///
@@ -154,7 +156,7 @@ pub(crate) struct TableLock {
     /// undo did it (`Damage`), 0 for none.
     damaged: AtomicU8,
     /// The generation of the snapshot that last changed the table's
-    /// definitions (an index added), or 0.
+    /// definitions (an index added or dropped), or 0.
     changed_at: AtomicU64,
     /// Holds on collection of its garbage: by an index being built
     /// (`Database::create_index`), which counts every version it finds, and
@@ -299,7 +301,9 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -911 if the table is locked and the setting is no-wait, or if
-    /// waiting would deadlock or could never end; SQLCODE -910 if a lock is
+    /// waiting would deadlock, could never end, or lasts past `LOCK_TIMEOUT`;
+    /// SQLCODE -920 if its statement is cancelled or past its deadline
+    /// (`Stop::check_now`); SQLCODE -910 if a lock is
     /// poisoned.
     pub(crate) fn acquire(&self, tx: &Txn, table: &QualifiedName, mode: LockMode) -> Result<()> {
         acquire_lock(tx, table, self.lock_of(table)?, mode)

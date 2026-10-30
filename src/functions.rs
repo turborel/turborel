@@ -4,7 +4,8 @@
 //! words: COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary
 //! `AggregateFunction` plugins registered under those names, so an
 //! implementation can be swapped (say, a more accurate SUM) without touching
-//! the parser, planner or executor.
+//! the parser, planner or executor. So are SQL-92's string functions and
+//! concatenation (`functions/strings.rs`).
 //!
 //! \[EXTENSION\] SQL-86 has no syntax for calling any other function. As an opt-in,
 //! non-standard extension ([X3.135-1986 §3.4] allows "user options to process nonconforming
@@ -334,7 +335,8 @@ impl AggregateFunction for Sum {
             DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
             DataType::Interval(q) => DataType::Interval(q),
-            // [X3.135-1986 §5.8 SR9d]; `not_character` has refused CHARACTER.
+            // [X3.135-1986 §5.8 SR9d]; `not_character` has refused the types not
+            // numbers or intervals.
             DataType::Approximate { .. }
             | DataType::Character { .. }
             | DataType::Varying { .. }
@@ -445,7 +447,7 @@ impl AggregateFunction for Avg {
             },
             // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
             DataType::Interval(q) => DataType::Interval(q),
-            // `not_character` has refused CHARACTER.
+            // `not_character` has refused the types not numbers or intervals.
             DataType::Approximate { .. }
             | DataType::Character { .. }
             | DataType::Varying { .. }

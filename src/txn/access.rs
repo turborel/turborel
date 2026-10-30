@@ -134,6 +134,3 @@ impl State {
         Ok(())
     }
 }
-
-// Unit tests: commit reports a participant it cannot find (RULES.md R-ERR-1,
-// R-TEST-2 robustness).

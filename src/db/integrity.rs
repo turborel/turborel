@@ -4,8 +4,9 @@
 //! which may do more, then each constraint those rows may have broken
 //! (`Check`): NOT NULL, CHECK [§11.6 GR3], each FOREIGN KEY of the rows
 //! [§11.8 GR2], UNIQUE and PRIMARY KEY [§11.7 GR2], those to the rows
-//! deleted or re-keyed [NO ACTION], and each CHECK with a subquery that
-//! reads a table written, over all of its own [§11.6 GR3].
+//! deleted or re-keyed [NO ACTION], each CHECK with a subquery that
+//! reads a table written, over all of its own [§11.6 GR3], and each
+//! assertion that reads one [§11.34 GR2] (`db/assertions.rs`).
 //!
 //! A constraint whose mode in the transaction is immediate is checked then:
 //! a violation fails the statement, which is undone [X3.135-1986 §7.3
@@ -300,8 +301,8 @@ impl State {
     /// The checks of what `effects` did: of each row inserted, every
     /// constraint of its table; of each updated, those on a column given a
     /// value, and its CHECKs; of each deleted or re-keyed, the foreign keys
-    /// that reference it; and each CHECK with a subquery of a table
-    /// written, or reading one.
+    /// that reference it; each CHECK with a subquery of a table written, or
+    /// reading one; and each assertion reading one.
     fn checks(&self, effects: &Effects<'_>) -> Vec<Check> {
         let mut g = Gathered::default();
         for effect in &effects.done {

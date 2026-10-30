@@ -1,8 +1,8 @@
 //! How fast a database kept in a directory changes rows (RULES.md D25,
 //! D31): updates of every row of a table, committed in transactions of a
 //! thousand rows, so what each changed row costs shows past each commit's
-//! sync: its record in the log, and its older version in the undo log
-//! (`undo/`); with and without a reader holding the older versions. And
+//! sync: its record in the log, and its older version in the row store's
+//! undo store (`engine/rows/undo.rs`); with and without a reader holding the older versions. And
 //! how fast such a database recovers after a crash, in log records read; and
 //! how fast every row's update, made in one transaction, is rolled back. Run
 //! with `cargo xtask bench`, on the harness (RULES.md R-BENCH-1).

@@ -81,10 +81,9 @@ fn answers(db: &Database) -> Vec<Result<Vec<String>, Code>> {
 /// Verifies: [X3.135-1986 §4.16 "committed changes cannot be canceled"];
 /// [DESIGN] RULES.md D25, D31, a database closed cleanly and opened again
 /// is reopened in place: its rows, its B-link index (used by the planner),
-/// its hash index (rebuilt, its method keeping nothing), its UNIQUE
-/// constraint, and a table of an engine that keeps nothing, replayed from
-/// the log; new rows go on with new ids, and it closes and reopens again;
-/// a closed database refuses every call.
+/// its hash index, its UNIQUE constraint, and a table of an engine that
+/// keeps nothing, replayed from the log; new rows go on with new ids, and
+/// it closes and reopens again; a closed database refuses every call.
 #[test]
 fn a_closed_database_reopens_in_place() {
     let scratch = Scratch::new("reopen-clean");
@@ -459,7 +458,7 @@ fn constraints_are_kept() {
 /// Verifies: [DESIGN] RULES.md D25; [ISO/IEC 9075:1992 §11.11 GR2 note]: a
 /// view of all of a table that had a column added, and a CHECK whose
 /// subquery takes all of one, are reopened seeing the columns they saw, as
-/// their definitions are replayed in order.
+/// each keeps with its definition how many of each table's columns it saw.
 #[test]
 fn views_reopen_seeing_what_they_saw() {
     let scratch = Scratch::new("reopen-view-horizon");

@@ -7,9 +7,10 @@
 //! at its end [§4.9]. So the definitions a session's statements see
 //! (`Session::with_temporaries`) give each temporary table the session's
 //! own instance: its rows, its indexes and its lock, in place of those of
-//! the definition, which stay empty. An instance is made in memory, of the
-//! database's budget, when the session first writes it, and no change to
-//! it is logged: none is recovered [§4.9]. A table of ON COMMIT DELETE
+//! the definition, which stay empty. An instance's rows are made in
+//! memory, of the database's budget, when a transaction of the session
+//! first reads or writes it, its indexes' entries when first written, and
+//! no change to it is logged: none is recovered [§4.9]. A table of ON COMMIT DELETE
 //! ROWS is emptied as each transaction ends [§14.3 GR3]: committed, it is
 //! as the DELETE GR3 runs leaves it; rolled back, as it was before the
 //! transaction, empty too.
@@ -215,8 +216,8 @@ fn kind_of(kind: Option<TemporaryKind>) -> &'static str {
 }
 
 impl Instance {
-    /// An instance of `desc`, with `indexes`, made as it is first written,
-    /// of `budget`, noted in `uses`.
+    /// An instance of `desc`, with `indexes`, its rows and entries made as
+    /// they are first used, of `budget`, noted in `uses`.
     fn of(desc: &TableDesc, indexes: &[IndexDesc], (budget, uses): (&Arc<MemoryBudget>, &Arc<Uses>)) -> Instance {
         let rows = Arc::new(Rows_ { desc: desc.clone(), budget: Arc::clone(budget), uses: Arc::clone(uses), made: Mutex::default() });
         uses.register(&desc.name, &rows);
@@ -229,8 +230,9 @@ impl Instance {
     }
 }
 
-/// \[DESIGN\] An instance's rows: none until first written, then a table
-/// of a row store in memory of its own.
+/// \[DESIGN\] An instance's rows: none until a transaction first reads or
+/// writes them (`TableStorage::begin`), then a table of a row store in
+/// memory of its own.
 struct Rows_ {
     desc: TableDesc,
     budget: Arc<MemoryBudget>,

@@ -10,6 +10,9 @@
 //!   as a sort's sorted runs, or the rows a pass of grouping leaves to the
 //!   next.
 //!
+//! Made of runs: a list that spills (`spill/list.rs`), and byte records
+//! sorted (`spill/sort.rs`).
+//!
 //! The built-in provider (`spill/paged.rs`) keeps an area in a temporary
 //! pager file of its own, through a buffer pool of the area's size, so
 //! what does not fit the pool is written to the file as pages are evicted;

@@ -20,7 +20,7 @@ fn seen(s: &Session, sql: &str) -> Vec<String> {
 }
 
 /// Two schemas: S's tables, one with a referential constraint on the
-/// other, a view, and privileges granted to R.
+/// other, two views, and privileges granted to R and PUBLIC; and R's table.
 fn catalog() -> Database {
     let db = Database::new();
     db.schema(
@@ -45,8 +45,8 @@ fn catalog() -> Database {
 /// on, the Information Schema's among them, and SCHEMATA the schemas it
 /// owns; each column at its position, with its default, nullability and
 /// data type: a character string with its length, length in octets and
-/// character set, an exact numeric as NUMERIC of decimal precision, an
-/// approximate one as REAL or DOUBLE PRECISION of binary precision.
+/// character set, an exact numeric of decimal precision, an approximate one
+/// of binary precision, each by its type's name as written.
 #[test]
 fn tables_and_columns_are_described_21_2_7() {
     let db = catalog();
@@ -246,7 +246,7 @@ fn the_information_schema_is_the_databases_21_1() {
     assert_eq!(seen(&s, "SELECT * FROM INFORMATION_SCHEMA.SQL_LANGUAGES"), ["ISO 9075|1987|2|NULL|NULL|DIRECT|NULL"]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.2.7, §21.3.5, §6.1]: a
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.2.9, §21.3.5, §6.1]: a
 /// column's DATA_TYPE is its type's name as written: INTEGER, SMALLINT,
 /// DECIMAL, NUMERIC, REAL, DOUBLE PRECISION or FLOAT, as a database kept
 /// in a directory gives it once opened again; the name is no part of the

@@ -122,8 +122,9 @@ fn a_failed_free_keeps_the_pages() {
     assert_eq!((pager.free_pages(), read(&pager, 1).unwrap()), (0, b"kept".to_vec()));
 }
 
-/// Verifies: [DESIGN] RULES.md D30, block manager: a failed sync, size or
-/// read is reported with SQLCODE -915; opening fails as the file system does.
+/// Verifies: [DESIGN] RULES.md D30, block manager: a failed sync or read is
+/// reported with SQLCODE -915, and the block reads once the fault passes;
+/// opening fails, with SQLCODE -915 or -916, when its open, size or read does.
 #[test]
 fn block_file_faults_are_reported() {
     let scratch = Scratch::new("failures-blocks");

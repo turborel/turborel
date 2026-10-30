@@ -1,18 +1,17 @@
 //! \[DESIGN\] Row ids in blocks, one block per thread (RULES.md D31). Ids
 //! given in one increasing sequence send every insert into a table to the
-//! tree's rightmost leaf, whose lock the inserters then queue on: with
-//! eight threads inserting into one table, a quarter of the throughput of
-//! one thread on a machine of five fast cores. A thread instead takes a
-//! block of `BLOCK` ids at a time and gives them in order, so threads
-//! inserting at once fill different leaves (measured: 2.3 times the
-//! throughput at eight threads). A session runs on one thread at a time,
-//! so a thread stands for it.
+//! tree's rightmost leaf, whose lock the inserters then queue on, so
+//! threads inserting at once go no faster than one. A thread instead takes
+//! a block of `BLOCK` ids at a time and gives them in order, so threads
+//! inserting at once fill different leaves. A session runs on one thread
+//! at a time, so a thread stands for it.
 //!
 //! Ids stay unique and are never given twice; they increase within a
 //! thread's block, not across threads. Ids a block leaves unused are never
 //! given. A thread that has ended leaves its block behind; a shard of the
-//! blocks holding more than `KEPT` forgets them all, so threads that come
-//! and go cost a bounded amount, and their blocks' unused ids are skipped.
+//! blocks holding `KEPT` forgets them all as another is taken, so threads
+//! that come and go cost a bounded amount, and their blocks' unused ids
+//! are skipped.
 //! The meta page records the ids that may have been given, a reservation
 //! moved past each block as it is taken, so ids go on past them when the
 //! table is opened again.

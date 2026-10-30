@@ -25,7 +25,7 @@
 //! | `Diagnostics`       | none: events dropped  | the database's events (RULES.md D40) |
 //! | `Spill`             | `PagedSpill`          | operators past WORK_MEMORY (RULES.md D38) |
 //! | `Credentials`       | none: no password kept | CREATE and ALTER USER (RULES.md D43) |
-//! | `SqlType`           | CHARACTER NUMERIC FLOAT | data types (RULES.md D53)      |
+//! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a
 //! registry, plug-ins' among them; the database's values, kept with its
@@ -348,7 +348,7 @@ impl Session {
     }
 
     /// \[EXTENSION\] Accept the `<identifier>`(`<args>`) function call syntax.
-    /// Off by default, so a session processes only SQL-86.
+    /// Off by default, so a session refuses a function call as SQL does.
     pub fn enable_extensions(&mut self, on: bool) {
         self.extensions = on;
     }

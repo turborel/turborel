@@ -280,9 +280,9 @@ fn a_failed_write_stops_appends_until_recovery() {
 
 /// Verifies: [DESIGN] RULES.md D30: a block file opened from a point it is
 /// known valid through checks only what follows: damage before it is not
-/// read as it opens, a torn tail after it is cut; a point where no valid
-/// block ends, or past the file's end, is not taken, and every block is
-/// checked. A small block is read in one call, a large one in two.
+/// read as it opens; a point where no valid block ends, or past the file's
+/// end, is not taken, and every block is checked. A small block is read in
+/// one call, a large one in two.
 #[test]
 fn a_file_opened_from_a_known_end_checks_only_what_follows() {
     use turborel::disk::measured::MeasuredFileSystem;

@@ -120,7 +120,8 @@ impl Fields {
     ///
     /// # Errors
     ///
-    /// SQLCODE -900 if it is longer than a count describes.
+    /// SQLCODE -900 if it is longer than a count describes; -916 if those
+    /// asked for are not all there.
     pub fn chunk(&self, t: &DataType, from: usize, (count, compress): (usize, bool)) -> Result<Vec<u8>> {
         let end = from.checked_add(count).ok_or_else(too_large)?;
         let fields = self.0.get(from..end).ok_or_else(|| corrupt("its values are out of range"))?;
@@ -190,9 +191,9 @@ impl<'a> Chunk<'a> {
     }
 
     /// \[DESIGN\] Its values at positions `from` to `to`, each an exact
-    /// number's units, as integers pushed to `units`, and whether each is
-    /// null to `nulls` (`encoded::Body::ints`): none if its encoding does
-    /// not hold integers.
+    /// number's units or an approximate number's bits, as integers pushed
+    /// to `units`, and whether each is null to `nulls`
+    /// (`encoded::Body::ints`): none if its encoding does not hold them.
     pub fn ints(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Vec<bool>)) -> Option<()> {
         if to > self.count {
             return None;
@@ -248,7 +249,8 @@ impl<'a> Chunk<'a> {
 }
 
 // Unit tests: chunks read back as written, fixed and varying, with nulls;
-// how many values fit; malformed chunks refused (RULES.md R-TEST-1,
-// R-TEST-2).
+// how many values fit; malformed chunks refused; each compressed encoding
+// chosen and read back, one value at a time and as integers, texts or
+// codes at once (RULES.md R-TEST-1, R-TEST-2).
 #[cfg(test)]
 mod tests;

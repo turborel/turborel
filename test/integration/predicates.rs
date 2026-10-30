@@ -63,9 +63,10 @@ fn in_lists_are_any_equal_5_13() {
 /// so a CHAR(6) 'ANN' matches 'ANN   ' and 'ANN%' but not 'ANN'; NOT LIKE
 /// its negation, a null value unknown either way; with an escape character
 /// [GR2a], `_` and `%` match themselves, and a pattern the escape character
-/// cannot partition is a data exception; the left operand is a character
-/// string column [F, SR1], the pattern a character string [SR2], the
-/// escape character one character [SR3].
+/// cannot partition is a data exception; the pattern is a character string
+/// [SR2]; the left operand any character string, not a row, and the escape
+/// character one character, else a data exception [ISO/IEC 9075:1992 §8.5
+/// F, SR1, GR3a i].
 #[test]
 fn like_matches_patterns_5_14() {
     let db = setup();
@@ -96,7 +97,8 @@ fn like_matches_patterns_5_14() {
 
 /// Verifies: [X3.135-1986 §5.9 SR4d, GR6b] a quotient of exact numbers
 /// loses no leading significant digit: 1 / 3 is not 0 but has 18 digits,
-/// 6 / 2 is 3, 1 / 4 is 0.25, and AVG keeps its own scale.
+/// 6 / 2 is 3, 1 / 4 is 0.25, -7 / 2 is -3.5, and AMT / 4 is 2.625; a
+/// divisor of 0 is a data exception [GR5].
 #[test]
 fn exact_division_keeps_leading_digits_5_9() {
     let db = setup();

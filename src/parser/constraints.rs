@@ -1,7 +1,8 @@
 //! \[EXTENSION\] The constraints of ISO/IEC 9075:1992: `<column constraint
 //! definition>` [§11.4], `<table constraint definition>` [§11.6], with their
-//! `<constraint name definition>` and `<constraint attributes>` [§10.6].
-//! Split from parser/schema.rs (RULES.md R-SIZE-2).
+//! `<constraint name definition>` and `<constraint attributes>` [§10.6]; and
+//! the `<set constraints mode statement>` [§14.2]. Split from
+//! parser/schema.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
 use crate::ast::{

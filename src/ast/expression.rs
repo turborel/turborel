@@ -160,6 +160,8 @@ pub enum Predicate {
 /// `<factor>`  ::= \[+|-\] `<primary>`
 /// `<primary>` ::= `<value specification>` | `<column specification>`
 ///             | `<set function specification>` | (`<value expression>`)
+///
+/// And the primaries and operators of ISO/IEC 9075:1992 and the \[EXTENSION\] below.
 #[derive(Debug, Clone)]
 pub enum ValueExpression {
     /// A dyadic operator: +, -, * or /.

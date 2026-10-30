@@ -3,9 +3,8 @@
 //! constraints described for the catalog, each named [§10.6]; its foreign
 //! keys resolved once every table of the schema is known, so a table may
 //! reference one defined after it, or itself. What they require of the rows
-//! is checked at the end of each statement (`db/integrity.rs`). Split from
-//! db/schema.rs (RULES.md R-SIZE-2).
-//!
+//! is checked at the end of each statement, or at commit if deferred
+//! (`db/integrity.rs`). Split from db/schema.rs (RULES.md R-SIZE-2).
 
 use super::State;
 use crate::ast::{
@@ -366,7 +365,7 @@ impl State {
         self.bind_check(table, check, (None, &Referencing::default()))
     }
 
-    /// [ISO/IEC 9075:1992 §11.21 SR6, §11.9] The condition of a domain
+    /// [ISO/IEC 9075:1992 §11.21, §11.9] The condition of a domain
     /// constraint, bound over `probe`, a table of one column, VALUE's, as
     /// `check_condition` binds a CHECK's: VALUE names no column [AR1].
     ///

@@ -17,7 +17,9 @@
 //! * Tables of this implementation's: "An implementation may define
 //!   objects that are associated with INFORMATION_SCHEMA that are not
 //!   defined in this Clause" \[§21.1\]: the settings (`SETTINGS`, RULES.md
-//!   D36, `system/settings.rs`).
+//!   D36, `system/settings.rs`), the users (`USERS`, D43,
+//!   `system/users.rs`), and the memory budget's reservations
+//!   (`MEMORY_RESERVATIONS`, D38, `system/memory.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add
 //! one (`Database::register_system_table`), an engine's statistics, say.
@@ -75,7 +77,7 @@ pub struct Seen<'a> {
     pub own: &'a Own,
 }
 
-/// \[DESIGN\] A system table: an extension point (RULES.md D30).
+/// \[DESIGN\] A system table: an extension point (RULES.md D37).
 ///
 /// Contract (RULES.md R-SAFE-3):
 /// * `schema` and `name` are `<identifier>`s, upper case, unique together
@@ -178,8 +180,9 @@ impl SystemRead {
 }
 
 /// The rows `rows` of a system table of `desc`, each of its degree, its
-/// values of their columns' types, a character string padded to its
-/// column's length, none null in a NOT NULL column.
+/// values assigned to their columns' types (a character string fitting its
+/// column, padded if the column is fixed-length), none null in a NOT NULL
+/// column.
 ///
 /// # Errors
 ///

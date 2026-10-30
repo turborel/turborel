@@ -1,9 +1,11 @@
 //! \[EXTENSION\] The row store's table options (RULES.md D41): how long a
 //! character value may be before it goes out of line, which needs a
-//! rebuild, and how its statistics are sampled and refreshed, which change
-//! in place. A table's options are those its descriptor sets
-//! (`TableDesc::options`), else those `RowStore::configure` gave it, else
-//! the store's defaults. Split from engine/rows.rs (RULES.md R-SIZE-2).
+//! rebuild; and, changed in place, how its statistics are sampled and
+//! refreshed, what it keeps of its transactions in memory, and, of the
+//! column store, how its rows are frozen. A table's options are those its
+//! descriptor sets (`TableDesc::options`), else those `RowStore::configure`
+//! gave it, else the store's defaults. Split from engine/rows.rs (RULES.md
+//! R-SIZE-2).
 
 use crate::catalog::TableDesc;
 use crate::settings::{Kind, column_names};
@@ -56,7 +58,7 @@ pub const DEFAULT_GROUP_ROWS: u32 = 1 << 16;
 pub const MIN_GROUP_ROWS: u32 = 2048;
 /// \[DESIGN\] The most columns COLUMNSTORE.ORDER names: the first one or
 /// two order a group's rows into runs a condition skips, the rest only
-/// break their ties.
+/// break their ties. COLUMNSTORE.BLOOM names as many at most.
 pub const MOST_ORDER: usize = 8;
 /// \[DESIGN\] The longest COLUMNSTORE.FREEZE_DELAY, in seconds: a year.
 const MAX_FREEZE_DELAY: u32 = 366 * 24 * 60 * 60;

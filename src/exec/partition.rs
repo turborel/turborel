@@ -94,7 +94,7 @@ pub(in crate::exec) fn merge_all(mut sources: Vec<Records>, work: &mut Work) -> 
     Merge::of(sources, work.types())
 }
 
-/// Row `row` with its left row's number `n`, as a record.
+/// Row `row` with its number `n`, as a record.
 pub(in crate::exec) fn numbered(n: u64, row: &Row) -> Vec<u8> {
     [n.to_le_bytes().to_vec(), row_record(row)].concat()
 }

@@ -468,6 +468,7 @@ impl Value {
     }
 }
 
-// Unit tests: the kinds' refusals, unregistered values, registries.
+// Unit tests: the kinds' refusals, unregistered values, registries, and
+// CHARACTER VARYING's keys.
 #[cfg(test)]
 mod tests;

@@ -9,7 +9,7 @@
 //! columns COALESCE gives the corresponding join columns [SR6d], an item of
 //! their own that no `<qualifier>` names. The columns a query sees
 //! unqualified, and * gives, are those of the table references' results
-//! (`From::visible`): a NATURAL join's result has its common columns once
+//! (`From::visible_of`): a NATURAL join's result has its common columns once
 //! [SR6f], not each operand's. Every correlation and table name of the FROM
 //! clause, inside a joined table too, is exposed to the query [§6.3 SR2a].
 //!

@@ -8,7 +8,7 @@
 //! of a password, and the authenticator that made it checks a password
 //! against it. Users and the owner are definitions, logged and kept with
 //! the others, made outside any transaction. The owner, a user, is the one
-//! who manages the users in SQL (RULES.md D36); the host program's Rust
+//! who manages the users in SQL (RULES.md D43); the host program's Rust
 //! API manages them unrestricted.
 
 use std::collections::BTreeMap;
