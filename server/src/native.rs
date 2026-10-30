@@ -32,6 +32,7 @@ use wire::Wire;
 use crate::auth::{Peer, Step};
 use crate::server::{Connection, Protocol, Registered, Services, Serving};
 use crate::settings;
+use crate::shown::Present;
 use crate::transport::Transport;
 
 /// \[DESIGN\] Batches of rows in flight between a worker and its
@@ -69,15 +70,15 @@ async fn next(wire: &mut Wire, services: &Services) -> Result<Request> {
 
 /// Serves `connection` to its end.
 async fn serve(connection: Connection) {
-    let Connection { transport, peer, services } = connection;
+    let Connection { transport, peer, services, present } = connection;
     let max_body = u32::try_from(settings::count(services.database(), settings::MAX_MESSAGE_BYTES)).unwrap_or(u32::MAX);
     // A client's values of types beyond the standard read as the
     // database's (RULES.md D53).
     let types = services.database().types().unwrap_or_default();
     let mut wire = Wire::new(transport, max_body, types);
-    let ended = match services.login(welcome(&mut wire, &peer, &services)).await {
+    let ended = match services.login(welcome(&mut wire, (&peer, &present), &services)).await {
         // The key cancels the session's statements while it lives.
-        Ok(Some((session, _key))) => run(&mut wire, &services, session).await,
+        Ok(Some((session, _key))) => run(&mut wire, (&services, &present), session).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
@@ -105,7 +106,7 @@ fn refused(msg: String) -> SqlError {
 
 /// The client's first request: Hello, its session once authenticated, with
 /// its cancel key registered; or a Cancel, done here, and nothing more.
-async fn welcome(wire: &mut Wire, peer: &Peer, services: &Services) -> Result<Option<(Session, Registered)>> {
+async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: &Services) -> Result<Option<(Session, Registered)>> {
     match next(wire, services).await? {
         Request::Cancel(key) => {
             services.cancel(&key);
@@ -113,7 +114,7 @@ async fn welcome(wire: &mut Wire, peer: &Peer, services: &Services) -> Result<Op
         }
         // No capability is defined in version 1, so none is taken.
         Request::Hello { version, user, mechanism, initial, capabilities: _ } => {
-            authenticate(wire, peer, services, (version, user, mechanism, initial)).await.map(Some)
+            authenticate(wire, (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
         }
         Request::Answer(_)
         | Request::Query(_)
@@ -127,10 +128,11 @@ async fn welcome(wire: &mut Wire, peer: &Peer, services: &Services) -> Result<Op
 }
 
 /// Authenticates the client of `hello`: its version, user, mechanism and
-/// first bytes; its session, once Ready is sent with its cancel key.
+/// first bytes; its session, once Ready is sent with its cancel key, and
+/// its user shown (`Present`).
 async fn authenticate(
     wire: &mut Wire,
-    peer: &Peer,
+    (peer, present): (&Peer, &Present),
     services: &Services,
     hello: (u32, String, String, Vec<u8>),
 ) -> Result<(Session, Registered)> {
@@ -165,6 +167,7 @@ async fn authenticate(
     };
     let session = services.database().session(&authorization);
     let key = services.register_cancel(session.canceller())?;
+    present.authenticated(&authorization);
     wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
     Ok((session, key))
 }
@@ -187,8 +190,8 @@ fn work_of(request: Request) -> Result<Option<Work>> {
 /// Runs the client's requests in `session` until it terminates, the
 /// connection fails or the server stops; then ends the session on a
 /// worker, rolled back unless the client terminated it [ISO/IEC 9075:1992
-/// §20.1 GR2a].
-async fn run(wire: &mut Wire, services: &Services, opened: Session) -> Result<()> {
+/// §20.1 GR2a]. Shown running while a request is.
+async fn run(wire: &mut Wire, (services, present): (&Services, &Present), opened: Session) -> Result<()> {
     let mut held = Some(Held::new(opened));
     let ended = loop {
         let work = match services.idle(next(wire, services)).await.and_then(work_of) {
@@ -197,7 +200,10 @@ async fn run(wire: &mut Wire, services: &Services, opened: Session) -> Result<()
             Err(e) => break Err(e),
         };
         let Some(lent) = held.take() else { break Err(broken("[DESIGN] the session is gone")) };
-        match exchange(wire, services, lent, work).await {
+        present.running(true);
+        let exchanged = exchange(wire, services, lent, work).await;
+        present.running(false);
+        match exchanged {
             Ok(back) => held = Some(back),
             Err(e) => break Err(e),
         }

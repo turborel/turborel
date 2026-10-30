@@ -33,7 +33,7 @@ impl SystemTable for MemoryReservations {
     }
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
-        if seen.state.users.owner() != Some(seen.auth) {
+        if !seen.is_owner() {
             return Ok(Vec::new());
         }
         let shown = |what: &str| text(&what.chars().take(usize::try_from(OWNER_LENGTH).unwrap_or(usize::MAX)).collect::<String>());

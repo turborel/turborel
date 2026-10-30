@@ -70,3 +70,12 @@ turborel: SQLCODE -919 (SQLSTATE 08004): the server has as many connections as i
 At most 16 such refusals are made at once; a connection past them too
 is closed at once, told nothing, so clients that flood the server hold
 no more of it than that.
+
+The database's owner sees the connections served, and the server's
+counts, in INFORMATION_SCHEMA.CONNECTIONS and INFORMATION_SCHEMA.SERVER
+([Information Schema](../sql/information-schema.md)):
+
+```sql
+SELECT ID, USER_NAME, SECURE, STATE FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY ID;
+SELECT WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD FROM INFORMATION_SCHEMA.SERVER;
+```

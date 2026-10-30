@@ -75,6 +75,8 @@ string as CHARACTER, its octet length four octets a character.
 | SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION | setting, its value for the session |
 | USERS | USER_NAME, IS_OWNER | user: to the owner every one, to another user itself |
 | MEMORY_RESERVATIONS | RESERVED_BY, BYTES | part of the memory budget reserved, as a buffer pool's |
+| CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement |
+| SERVER | WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD | one row: the workers running a statement, the statements waiting for one, the connections, and those refused past SERVER.MAX_CONNECTIONS, told why or closed at once |
 | JOBS | LABEL, STATE, THREADED, RUNS, RESTARTS, LAST_ERROR | job of the database's background work, `turborel-checkpoint` or `turborel-maintenance`: IDLE, DUE or RUNNING; whether a thread of its own runs it; how often it ran, and failed by a fault; its last error, or NULL |
 
 VALUE_SOURCE says where a value comes from: DEFAULT, or the place it was
@@ -102,8 +104,11 @@ SELECT * FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS;
 ```
 
 The second, of a database kept in a directory: one in memory has no
-buffer pool. MEMORY_RESERVATIONS and JOBS show their rows to the
-database's owner alone; JOBS.POLICY says how the jobs JOBS lists
-are run ([Settings](../appendix/c-settings.md)).
+buffer pool. MEMORY_RESERVATIONS, JOBS, CONNECTIONS and SERVER show their
+rows to the database's owner alone. CONNECTIONS and SERVER are a
+server's: a database a server serves, as `turboreld`'s, has them, and
+they show no connection, and counts of none, while it does not serve.
+JOBS.POLICY says how the jobs JOBS lists are run
+([Settings](../appendix/c-settings.md)).
 
 The standard: ISO/IEC 9075:1992 §21.1, §21.2.

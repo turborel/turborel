@@ -36,5 +36,6 @@ mod connections;
 mod passwords;
 mod prepared;
 mod settings;
+mod shown;
 mod statements;
 mod tls;

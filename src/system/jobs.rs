@@ -45,7 +45,7 @@ impl SystemTable for Jobs {
     }
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
-        if seen.state.users.owner() != Some(seen.auth) {
+        if !seen.is_owner() {
             return Ok(Vec::new());
         }
         let count = |n: u64| Value::Exact(Decimal::new(i128::from(n), 0));

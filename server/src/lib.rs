@@ -16,5 +16,6 @@ pub mod password;
 pub mod runtime;
 pub mod server;
 pub mod settings;
+pub mod shown;
 pub mod tls;
 pub mod transport;

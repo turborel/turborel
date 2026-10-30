@@ -79,6 +79,15 @@ pub struct Seen<'a> {
     pub own: &'a Own,
 }
 
+impl Seen<'_> {
+    /// \[DESIGN\] Whether the statement's user is the database's owner
+    /// (RULES.md D43): to whom a table of what the database does, as
+    /// MEMORY_RESERVATIONS, shows its rows, and to no other.
+    pub fn is_owner(&self) -> bool {
+        self.state.users.owner() == Some(self.auth)
+    }
+}
+
 /// \[DESIGN\] A system table: an extension point (RULES.md D37).
 ///
 /// Contract (RULES.md R-SAFE-3):

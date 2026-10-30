@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -29,6 +30,7 @@ use crate::auth::{Authenticator, Peer};
 use crate::limit::{Held, Limit};
 use crate::password::Pbkdf2;
 use crate::settings::{IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, WORKERS, count, declare, millis};
+use crate::shown::{self, Present, Shown};
 use crate::tls::{Secured, Tls};
 use crate::transport::{Listener, Transport};
 
@@ -85,6 +87,9 @@ pub struct Connection {
     pub peer: Peer,
     /// What the server shares.
     pub services: Services,
+    /// Its row of INFORMATION_SCHEMA.CONNECTIONS, for what serves it to
+    /// say who logged in and whether a statement runs (`shown.rs`).
+    pub present: Present,
 }
 
 /// A listener, and the protocol it serves.
@@ -108,6 +113,8 @@ struct Shared {
     stop: watch::Receiver<bool>,
     /// What cancels each connection's statements, by its key (RULES.md D45).
     cancels: Mutex<HashMap<CancelKey, Arc<Stop>>>,
+    /// What it shows of itself (`shown.rs`).
+    shown: Arc<Shown>,
 }
 
 /// \[DESIGN\] A connection's cancel key, registered until this is dropped.
@@ -141,9 +148,12 @@ impl Services {
     ///
     /// A connection failure if the worker failed, which is a defect.
     pub async fn run<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> Result<T> {
+        let waiting = Counted::of(&self.0.shown, |s| &s.waiting);
         let permit = self.0.workers.take(|| count(&self.0.db, WORKERS)).await;
+        drop(waiting);
+        let busy = Counted::of(&self.0.shown, |s| &s.busy);
         let ran = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
+            let _held = (permit, busy);
             work()
         });
         ran.await.map_err(|_| broken("[DESIGN] a worker failed"))
@@ -222,21 +232,42 @@ fn lock_builtin<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 pub struct Server {
     db: Database,
     authenticators: Vec<Arc<dyn Authenticator>>,
+    shown: Arc<Shown>,
+}
+
+/// One more of a count of `shown.rs`, while it is held.
+struct Counted(Arc<Shown>, fn(&Shown) -> &AtomicU64);
+
+impl Counted {
+    fn of(shown: &Arc<Shown>, which: fn(&Shown) -> &AtomicU64) -> Counted {
+        which(shown).fetch_add(1, Ordering::Relaxed);
+        Counted(Arc::clone(shown), which)
+    }
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        (self.1)(&self.0).fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Server {
     /// A server of `db`, with no authenticator yet; the server's settings
     /// declared on `db`, unless they are already, and its passwords'
     /// verifiers made as they say (`password::Pbkdf2`), for the users SQL
-    /// creates.
+    /// creates; and its tables, CONNECTIONS and SERVER, registered with it
+    /// (`shown.rs`), in place of any of a server before.
     ///
     /// # Errors
     ///
-    /// `settings::declare`'s.
+    /// `settings::declare`'s; those of registering a system table.
     pub fn new(db: Database) -> Result<Server> {
         declare(&db)?;
         db.set_credentials(Box::new(Pbkdf2::of(&db)));
-        Ok(Server { db, authenticators: Vec::new() })
+        let shown = Arc::new(Shown::default());
+        db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;
+        db.register_system_table(Box::new(shown::Server(Arc::clone(&shown))))?;
+        Ok(Server { db, authenticators: Vec::new(), shown })
     }
 
     /// The database served.
@@ -266,7 +297,8 @@ impl Server {
         let connections = Arc::new(Limit::default());
         let refusals = Arc::new(Limit::default());
         let cancels = Mutex::new(HashMap::new());
-        let shared = Shared { db: self.db, authenticators: self.authenticators, workers: Arc::default(), stop: heard, cancels };
+        let shared =
+            Shared { db: self.db, authenticators: self.authenticators, workers: Arc::default(), stop: heard, cancels, shown: self.shown };
         let services = Services(Arc::new(shared));
         let mut listening = JoinSet::new();
         for endpoint in endpoints {
@@ -294,6 +326,9 @@ async fn listen(endpoint: Endpoint, services: Services, (connections, refusals):
                     if let Some(place) = place(&connections, &refusals, count(services.database(), MAX_CONNECTIONS)) {
                         let arrival = Arrival { protocol: Arc::clone(&endpoint.protocol), tls: endpoint.tls.clone(), services: services.clone() };
                         open.spawn(arrival.welcome(transport, peer, place));
+                    } else {
+                        services.0.shown.closed.fetch_add(1, Ordering::Relaxed);
+                        drop(transport);
                     }
                 }
                 Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
@@ -320,10 +355,12 @@ impl Arrival {
         let Some((transport, peer)) = self.secured(transport, peer).await else { return };
         match place {
             Place::Served(held) => {
-                self.protocol.serve(Connection { transport, peer, services: self.services }).await;
+                let present = self.services.0.shown.connected(&peer);
+                self.protocol.serve(Connection { transport, peer, services: self.services, present }).await;
                 drop(held);
             }
             Place::Refused(held) => {
+                self.services.0.shown.refused.fetch_add(1, Ordering::Relaxed);
                 self.protocol.refuse(transport, too_many()).await;
                 drop(held);
             }
