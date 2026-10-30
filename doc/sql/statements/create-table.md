@@ -90,8 +90,13 @@ false; it may read other tables through subqueries.
 
 A constraint is checked at the end of each statement, or, DEFERRABLE
 INITIALLY DEFERRED or deferred by [SET CONSTRAINTS](set-constraints.md),
-at commit. A constraint not named is given a name: the table's, its
-kind, and a number, as `EMPLOYEES_PRIMARY1`.
+at commit. A constraint not named is given a name in the table's
+schema: the table's, its kind, and a number, as `EMPLOYEES_PRIMARY1`. A
+constraint's name written without a schema is of the session's default
+schema, which may be another than the table's: in a session whose
+default schema is ANN, `CREATE TABLE SHOP.ITEMS (ID INTEGER CONSTRAINT
+KEYED PRIMARY KEY)` names its constraint ANN.KEYED. In a [CREATE
+SCHEMA](create-schema.md), it is of the schema being defined.
 
 **Temporary tables.** GLOBAL TEMPORARY or LOCAL TEMPORARY defines a
 table whose rows are each session's own: empty as the session begins,
@@ -122,7 +127,9 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
    a schema is of the session's default schema.
 2. No table or view of the schema has the name; no column is defined
    twice; the table has a column.
-3. A constraint's name is new in the schema, and of the table's schema.
+3. A constraint's name is new in its schema, which exists; in a CREATE
+   SCHEMA, its schema is the one being defined; it is not of MODULE but
+   for a declared local temporary table, whose constraints' are.
 4. A table has at most one PRIMARY KEY, and no two unique constraints on
    the same columns.
 5. A foreign key's referenced table is a base table, its referenced
@@ -153,7 +160,7 @@ USAGE on each domain a column is of.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 3F000 | -103 | The schema does not exist |
+| 3F000 | -103 | The schema does not exist, or a constraint's does not |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |
@@ -238,9 +245,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T8 has no column B, for the table o
 ISO/IEC 9075:1992 §11.3 to §11.9, and §10.6 for constraint names and
 attributes; X3.135-1986 §6.2 to §6.4, whose tables have NOT NULL and
 UNIQUE only. Outside a `<schema definition>`, CREATE TABLE is SQL-92's
-`<SQL schema statement>` [§20.1]. USING and WITH are extensions. A
-constraint's name written without a schema is taken in its table's
-schema, where SQL-92 would take the default schema [§5.4 SR8b].
+`<SQL schema statement>` [§20.1], and a constraint's name written without
+a schema is of the default schema [§5.4 SR8b]. USING and WITH are
+extensions.
 
 ## SEE ALSO
 

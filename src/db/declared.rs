@@ -12,6 +12,7 @@
 use std::slice;
 use std::sync::Arc;
 
+use super::constraints::Within;
 use super::schema::constraint_index_name;
 use super::{Completion, Session, State, rule};
 use crate::ast::{PrivilegeDefinition, RevokeStatement, SchemaStatement, TableDefinition};
@@ -38,7 +39,7 @@ impl Session {
         // [§5.4 SR6, SR8b] Its names without a schema's are of the session's
         // default schema; MODULE.T names a declared table.
         let names = self.default_schema();
-        let (mut desc, pending) = next.describe_table((kw::MODULE, &names, self.now.get().zone), t, &[], &[])?;
+        let (mut desc, pending) = next.describe_table((kw::MODULE, &names, self.now.get().zone, Within::Declared), t, &[], &[])?;
         let mut staged = next.catalog.duplicate();
         in_module(&mut *staged, &self.auth(), vec![desc.clone()]);
         next.catalog = Arc::from(staged);

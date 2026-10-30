@@ -156,6 +156,23 @@ impl SqlError {
         self
     }
 
+    /// This error, about `subject` unless it is about something already:
+    /// an error names what the innermost construct that knows it says it
+    /// is about [ISO/IEC 9075:1992 §18.1 GR3].
+    #[must_use]
+    pub fn or_about(mut self, subject: Subject) -> Self {
+        self.subject.get_or_insert_with(|| Box::new(subject));
+        self
+    }
+
+    /// This error, if a syntax error or access rule violation about
+    /// nothing yet, about the table or view `table` [ISO/IEC 9075:1992
+    /// §18.1 GR3g]; another condition as it is.
+    #[must_use]
+    pub fn or_about_table(self, table: (String, String)) -> Self {
+        if self.sqlstate().is_syntax_or_access() { self.or_about(Subject::table(table)) } else { self }
+    }
+
     /// \[EXTENSION\] The SQLSTATE: the one it was raised with, or its
     /// code's [ISO/IEC 9075:1992 §22.1].
     pub fn sqlstate(&self) -> SqlState {

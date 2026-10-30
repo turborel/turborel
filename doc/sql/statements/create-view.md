@@ -41,7 +41,13 @@ added to one later is not one of its.
 
 The view's owner holds SELECT on it, grantable if the owner holds SELECT
 grantable on each table it reads; and, on an updatable view, INSERT,
-UPDATE and DELETE as it holds them on the table below.
+UPDATE and DELETE as it holds them on the table below. It holds
+REFERENCES on a column of the view where it holds REFERENCES on some
+column of each table and view the query's FROM clauses name, and on each
+column of them the view's column is drawn from: those its select list
+item names, and those the FROM, WHERE, GROUP BY and HAVING clauses name,
+a join condition's and a derived table's query's among them; a column a
+NATURAL or USING join has in common is drawn from both its tables'.
 
 CREATE VIEW runs within the session's transaction: ROLLBACK undoes it.
 

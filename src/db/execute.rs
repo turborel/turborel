@@ -6,8 +6,11 @@ use std::sync::Arc;
 
 use super::write::{delete_searched, update_searched};
 use super::{Call, Completion, Session, State, StatementContext, slow};
-use crate::ast::{ConnectionStatement, DropObject, IndexStatement, SchemaStatement, SqlStatement, UserStatement};
-use crate::binder::{WriteKind, bind_write};
+use crate::ast::{
+    ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, SqlStatement, TableName,
+    UserStatement,
+};
+use crate::binder::{WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
@@ -52,7 +55,13 @@ impl Session {
         }
         let command = parsed.as_ref().map_or("", command_of);
         self.emptied(if prepared { ("EXECUTE", command) } else { (command, "") });
-        let outcome = parsed.and_then(|stmt| self.execute_parsed(&call, stmt, params));
+        let outcome = parsed.and_then(|stmt| {
+            let target = target_of(&stmt).map(|t| qualify(t, &self.default_schema()));
+            self.execute_parsed(&call, stmt, params).map_err(|e| match target {
+                Some(t) => e.or_about_table(t.parts()),
+                None => e,
+            })
+        });
         // [ISO/IEC 9075:1992 §11.8 GR8] a referential action on a row a
         // cursor changed: a warning, about the cursor [§18.1 GR3e].
         let conflict = self.conflict.borrow_mut().take();
@@ -174,6 +183,52 @@ impl Session {
             | SqlStatement::GetDiagnostics(_)
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
         }
+    }
+}
+
+/// [ISO/IEC 9075:1992 §18.1 GR3g] The table or view statement `stmt`
+/// inserts into, changes, defines, alters, drops, indexes, or grants or
+/// revokes privileges on: the table a syntax error or access rule
+/// violation it raises is about, unless what raised it names another.
+fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
+    match stmt {
+        SqlStatement::Insert(ins) => Some(&ins.table),
+        SqlStatement::UpdateSearched { table, .. }
+        | SqlStatement::DeleteSearched { table, .. }
+        | SqlStatement::UpdatePositioned { table, .. }
+        | SqlStatement::DeletePositioned { table, .. }
+        | SqlStatement::AlterTable { table, .. }
+        | SqlStatement::Index(IndexStatement::Create { table, .. })
+        | SqlStatement::Drop { object: DropObject::Table(table), .. }
+        | SqlStatement::Drop { object: DropObject::View(table), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Grant(PrivilegeDefinition { table, domain: false, .. }), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Revoke(RevokeStatement { table, domain: false, .. }), .. } => Some(table),
+        SqlStatement::Schema { statement: SchemaStatement::Table(t), .. } | SqlStatement::DeclareTable(t) => Some(&t.name),
+        SqlStatement::Schema { statement: SchemaStatement::View(v), .. } => Some(&v.name),
+        SqlStatement::Schema { statement: SchemaStatement::Grant(_), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Revoke(_), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Domain(_), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::AlterDomain(_), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Assertion(_), .. }
+        | SqlStatement::Drop { .. }
+        | SqlStatement::Index(_)
+        | SqlStatement::Close(_)
+        | SqlStatement::Commit
+        | SqlStatement::Fetch { .. }
+        | SqlStatement::GetDiagnostics(_)
+        | SqlStatement::Open(_)
+        | SqlStatement::Rollback
+        | SqlStatement::Select { .. }
+        | SqlStatement::SetTransaction(_)
+        | SqlStatement::SetCatalog(_)
+        | SqlStatement::SetSchema(_)
+        | SqlStatement::SetTimeZone(_)
+        | SqlStatement::SetSessionAuthorization(_)
+        | SqlStatement::Connection(_)
+        | SqlStatement::SetSetting { .. }
+        | SqlStatement::SetDatabase { .. }
+        | SqlStatement::User(_)
+        | SqlStatement::SetConstraints { .. } => None,
     }
 }
 

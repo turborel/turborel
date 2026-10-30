@@ -232,10 +232,11 @@ pub fn applicable(catalog: &dyn Catalog, auth: &str, name: &QualifiedName) -> (A
 }
 
 /// [ISO/IEC 9075:1992 §11.19 GR6b] The columns of `view` its owner `auth`
-/// holds REFERENCES on, and those of them grantable: each drawn only from
-/// columns it holds REFERENCES on, grantable if all are, when it holds
-/// REFERENCES on some column of every leaf underlying table. None if what
-/// the view is drawn from is not known.
+/// holds REFERENCES on, and those of them grantable: each of whose
+/// underlying columns of its leaf underlying tables, base tables or views,
+/// it holds REFERENCES on, grantable if all are, when it holds REFERENCES
+/// on some column of every leaf underlying table. None if what the view
+/// is drawn from is not recorded.
 fn view_references(catalog: &dyn Catalog, auth: &str, view: &ViewDesc) -> (BTreeSet<usize>, BTreeSet<usize>) {
     let Some(u) = &view.underlying else { return (BTreeSet::new(), BTreeSet::new()) };
     let leaves: Vec<(&QualifiedName, (Actions, Actions))> = u.leaves.iter().map(|t| (t, applicable(catalog, auth, t))).collect();
@@ -244,12 +245,20 @@ fn view_references(catalog: &dyn Catalog, auth: &str, view: &ViewDesc) -> (BTree
     }
     // Whether `auth` holds REFERENCES on column `c` of leaf `t`, grantable if `grantable`.
     let holds = |(t, c): &(QualifiedName, String), grantable: bool| {
-        let Some(at) = catalog.table(t).and_then(|d| d.column(c)) else { return false };
+        let Some(at) = column_at(catalog, t, c) else { return false };
         leaves.iter().find(|(l, _)| *l == t).is_some_and(|(_, (held, with))| if grantable { with } else { held }.references.contains(&at))
     };
     let of =
         |grantable: bool| (0..).zip(&u.columns).filter(|(_, drawn)| drawn.iter().all(|d| holds(d, grantable))).map(|(j, _)| j).collect();
     (of(false), of(true))
+}
+
+/// The position of column `c` of table or view `t`.
+fn column_at(catalog: &dyn Catalog, t: &QualifiedName, c: &str) -> Option<usize> {
+    match catalog.table(t) {
+        Some(table) => table.column(c),
+        None => catalog.view(t)?.columns.iter().position(|column| column.name == c),
+    }
 }
 
 /// [X3.135-1986 §6.6 SR3b ii] Those of every `<privilege definition>` on

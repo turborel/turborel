@@ -169,6 +169,16 @@ impl SqlState {
         self.0.get(..2).unwrap_or_default()
     }
 
+    /// Whether it is of a class of syntax error or access rule violation
+    /// [ISO/IEC 9075:1992 §18.1 GR3g]: 42, 2A (in a direct SQL statement)
+    /// or 37 (in a dynamic SQL statement) [§22.1].
+    pub fn is_syntax_or_access(self) -> bool {
+        /// [§22.1] The class of syntax error or access rule violation.
+        const SYNTAX_OR_ACCESS: &str = "42";
+        [SYNTAX_OR_ACCESS, SqlState::SYNTAX_ERROR_IN_DIRECT_STATEMENT.class(), SqlState::DYNAMIC_SYNTAX_ERROR.class()]
+            .contains(&self.class())
+    }
+
     /// The state an error of `code` has, unless raised with a closer one:
     /// the class of its condition, without a subclass.
     pub fn of(code: Code) -> SqlState {

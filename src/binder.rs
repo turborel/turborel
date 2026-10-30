@@ -501,6 +501,9 @@ impl Binder<'_> {
             let column = views::column_name(self.db, &item.table, i).or_else(|| item.desc.columns.get(i).map(|c| c.name.clone()));
             uses.borrow_mut().extend(column.map(|c| (item.table.clone(), c)));
         }
+        if let (Some(uses), views::Source::Common) = (self.uses, &item.source) {
+            underlying::note_common(self, item, i, uses);
+        }
         let pos = item.offset.saturating_add(item.position(i));
         self.used.borrow_mut().insert(pos);
         Ok(pos)

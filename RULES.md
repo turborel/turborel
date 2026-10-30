@@ -277,8 +277,14 @@ and a schema change that cannot be rolled back is a trap.
   each CHECK (a table's, a domain's, an assertion's), keeps the schema its
   names are of beside it (`ViewDesc::names`, `ConstraintKind::Check`), and
   is read again in that schema, whatever the default schema then; the log
-  record of an ALTER TABLE keeps it too. A constraint's own name is in its
-  table's schema.
+  record of an ALTER TABLE keeps it too. A constraint's own name written
+  without a schema is the default schema's too, which may be another than
+  its table's: no Syntax Rule makes them one, and the Definition Schema
+  keeps CONSTRAINT_SCHEMA beside TABLE_SCHEMA [§21.3.13]. It is then a
+  constraint of that schema, which must exist [§5.4 GR18], among whose
+  constraints its name is unique [§10.6 SR2]; ALTER TABLE DROP CONSTRAINT
+  finds it there. A name the implementation gives one is of its table's
+  schema [§11.6 SR2]; a declared local temporary table's are all MODULE's.
 - Each takes the lock of the name it defines, or grants or revokes on,
   exclusive: a table's own lock once there is a table, so two transactions
   defining one name take turns (D28). It takes shared locks on the tables
@@ -556,21 +562,24 @@ and needs no new machinery but its query.
 **D52. A view's REFERENCES: from what its columns are drawn from.** The
 privileges of a view's owner on it are found from its tables'
 `applicable`); REFERENCES on its column CV is held if the owner holds
-REFERENCES on every column of the leaf underlying tables CV is drawn
-from, and on some column of each [ISO/IEC 9075:1992 §11.19 GR6b].
-- What each column is drawn from is found as the view is defined, from the
-  columns its select list item references, a subquery's too, and kept in
-  its descriptor (`Underlying`), each by table and name.
-- It is known of a `<query specification>` whose FROM clause names
-  tables and views, joined without common columns, reading no view of
-  which it is not known; of a `<table value constructor>`, whose columns
-  are drawn from none [§7.10 SR16a]; and of a set operation by position
-  of queries it is known of, each column drawn from both operands' i-th
-  [SR16d]. Of any other, the owner holds no REFERENCES on the view.
-*Why:* finding it again from the query at every privilege check would bind
-the view each time; and where a column may be drawn from more than what
-its item names (a set operator's other side, a derived table, a common
-column), granting none is safe where granting by the item alone is not.
+REFERENCES on every underlying column of CV of the view's leaf underlying
+tables, and on some column of each [ISO/IEC 9075:1992 §11.19 GR6b].
+- The leaf underlying tables are the tables and views the FROM clauses of
+  its query name, through joined and derived tables and set operations'
+  operands; a view it reads is a leaf, having no underlying table [§4.9].
+- The underlying columns of a column of a `<query specification>` are
+  those its select list item references, a subquery's too, and those its
+  `<table expression>` references: its WHERE, GROUP BY and HAVING, a join
+  condition, a derived table's query [§7.9 SR5, §7.3 SR2, §6.4 SR9]. A
+  common column of a NATURAL or USING join is drawn from both its join
+  columns, as `COALESCE ( TA.C, TB.C )` [§7.5 SR6d]. A `<table value
+  constructor>`'s columns have none [§7.10 SR16a]; a set operation's are
+  both operands' i-th [SR16d], or with CORRESPONDING, both operands'
+  columns of its name [SR9a iv].
+- They are found as the view is defined, those of its leaves kept in its
+  descriptor (`Underlying`), each by table and name.
+*Why:* finding them again from the query at every privilege check would
+bind the view each time.
 
 **D53. Data types: one contract, standard types built in.** What a data
 type does is one trait, `value::SqlType`: how it is written, what it

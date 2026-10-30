@@ -19,6 +19,7 @@ use std::mem;
 use std::sync::Arc;
 
 use super::alter::Made;
+use super::constraints::Within;
 use super::ddl::{Changed, Dropped, validate_rows};
 use super::{Completion, Session, State, api, long_texts, rule};
 use crate::ast::{PrivilegeDefinition, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition};
@@ -213,7 +214,8 @@ impl State {
         self.new_object(&qn, "§11.3 SR2").or_at(t.name.at)?;
         let earlier: Vec<TableDesc> = self.catalog.tables().into_iter().filter(|d| d.name.auth == qn.auth).cloned().collect();
         let keys: Vec<Vec<_>> = earlier.iter().map(|_| Vec::new()).collect();
-        let (mut desc, pending) = self.describe_table((&qn.auth, schema, zone), t, &earlier, &keys).or_at(t.name.at)?;
+        let (mut desc, pending) = self.describe_table((&qn.auth, schema, zone, Within::Session), t, &earlier, &keys).or_at(t.name.at)?;
+        self.constraint_schemas(&desc.constraints, &pending).or_at(t.name.at)?;
         // Another table of the name, dropped, had a generation of its own.
         desc.generation = placed.map_or_else(|| self.retired.get(&qn).map_or(0, |g| g.saturating_add(1)), |(_, g)| *g);
         // Its foreign keys and CHECKs, it among the tables they may name.

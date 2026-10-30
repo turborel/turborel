@@ -143,7 +143,7 @@ impl State {
             }
             AlterAction::AddConstraint(c) => Ok((Dropped::default(), self.add_constraint((qn, names), c, (made, tx)).or_at(c.at)?, None)),
             AlterAction::DropConstraint { name, behavior } => {
-                Ok((self.drop_constraint(qn, name, *behavior).or_at(name.at)?, Made::default(), None))
+                Ok((self.drop_constraint((qn, names), name, *behavior).or_at(name.at)?, Made::default(), None))
             }
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
         }

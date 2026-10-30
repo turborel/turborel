@@ -226,21 +226,20 @@ pub struct ViewDesc {
     pub reads: Vec<QualifiedName>,
     /// The columns of each table it reads its query sees.
     pub horizon: Horizon,
-    /// What its columns are drawn from, if that is known: what its
-    /// owner's REFERENCES on it are found from [ISO/IEC 9075:1992 §11.19
-    /// GR6].
+    /// What its columns are drawn from, if recorded: what its owner's
+    /// REFERENCES on it are found from [ISO/IEC 9075:1992 §11.19 GR6].
     pub underlying: Option<Underlying>,
 }
 
 /// [ISO/IEC 9075:1992 §11.19 GR6] What a view's columns are drawn from:
-/// the leaf underlying tables of its query, base tables each; and, of each
-/// of its columns, the columns of them it is drawn from, each by its table
-/// and its name.
+/// the leaf underlying tables of its query, base tables and views [§4.9];
+/// and, of each of its columns, its underlying columns of them, each by
+/// its table and its name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Underlying {
     /// The leaf underlying tables.
     pub leaves: Vec<QualifiedName>,
-    /// Of each column of the view, the columns it is drawn from.
+    /// Of each column of the view, its underlying columns of the leaves.
     pub columns: Vec<Vec<(QualifiedName, String)>>,
 }
 

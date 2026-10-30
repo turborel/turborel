@@ -15,6 +15,7 @@ use crate::ast::{ConditionItem, GetDiagnostics, ParameterSpecification, Statemen
 use crate::binder;
 use crate::catalog::{QualifiedName, applicable};
 use crate::error::{Code, Result, SqlState, Subject, fail_with};
+use crate::lexer::kw;
 use crate::params::Params;
 use crate::settings::CATALOG_NAME;
 use crate::value::{DataType, Decimal, Value};
@@ -22,6 +23,9 @@ use crate::value::{DataType, Decimal, Value};
 /// \[DESIGN\] The naming authority of the conditions this implementation
 /// defines, its SQLSTATE class TB [§18.1 GR3b, GR3c].
 const IMPLEMENTATION: &str = "TURBOREL";
+/// [ISO/IEC 9075:1992 §18.1 GR3f ii, GR3g i] The CATALOG_NAME of a
+/// declared local temporary table: <space>s, here one.
+const DECLARED_CATALOG: &str = " ";
 /// [ISO/IEC 9075:1992 §18.1 GR3b, GR3c] The naming authority of the
 /// conditions the standard defines.
 const STANDARD: &str = "ISO 9075";
@@ -132,7 +136,7 @@ impl Session {
         // [GR3j] but for a syntax error or access rule violation, a table
         // on which the identifier holds no privilege, and a constraint of
         // one, are not named.
-        let access = ["42", "2A", "37"].contains(&condition.state.class());
+        let access = condition.state.is_syntax_or_access();
         let visible = |(schema, ident): &(String, String)| {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
             access || !applicable(&*st.catalog, &self.auth(), &name).0.is_empty()
@@ -159,7 +163,12 @@ impl Shown {
     /// \[GR3o\], and for a server's and connection's, there being no SQL
     /// connections \[GR3n\].
     fn value(&self, item: ConditionItem, (n, condition): (i128, &Condition)) -> Value {
-        let catalog_of = |named: &Option<(String, String)>| text(if named.is_some() { &self.catalog } else { "" });
+        // [GR3f ii, GR3g i] <space>s, one, for a declared local temporary
+        // table's, in no catalog.
+        let catalog_of = |named: &Option<(String, String)>| match named {
+            Some((schema, _)) => text(if schema == kw::MODULE { DECLARED_CATALOG } else { &self.catalog }),
+            None => text(""),
+        };
         let schema_of = |named: &Option<(String, String)>| text(named.as_ref().map_or("", |(s, _)| s));
         let name_of = |named: &Option<(String, String)>| text(named.as_ref().map_or("", |(_, i)| i));
         let origin = if condition.state.class() == "TB" { IMPLEMENTATION } else { STANDARD };

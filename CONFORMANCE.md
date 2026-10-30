@@ -198,6 +198,9 @@ restriction is lifted.
   columns may be null), PRIMARY KEY, FOREIGN KEY with MATCH FULL, PARTIAL or
   neither and every referential action, and CHECK, including CHECK with
   subqueries. Each is named, by the definition or by the implementation.
+  A name written without a schema is of the `<schema definition>`'s
+  schema, or outside one of the session's default schema, which may be
+  another than its table's [§5.4 SR8] (RULES.md D47).
   Constraints are checked at the end of each statement; deferrable ones,
   with SET CONSTRAINTS [§14.2], at commit.
 - **Defaults** [§11.5]: a literal, NULL, USER, CURRENT_USER, SESSION_USER,
@@ -217,8 +220,9 @@ restriction is lifted.
   GR3–GR5, §11.11 GR3]. A constraint's condition needs REFERENCES on each
   column it names, and, where it names no column at all, on one column at
   least of each table it reads [§11.9 AR1a, AR1b]. A view's owner holds REFERENCES on each column of
-  it drawn only from columns it holds REFERENCES on [§11.19 GR6b] (RULES.md
-  D52), so a CHECK or an assertion may read a view.
+  it whose underlying columns it holds REFERENCES on [§11.19 GR6b; §4.9,
+  §7.5 SR6d, §7.3 SR2, §7.9 SR5, §7.10 SR9a, SR16] (RULES.md D52), so a
+  CHECK or an assertion may read a view.
 - **The warning cursor operation conflict** [§11.8 GR8]: a referential
   action on a row changed through a cursor still open (SQLSTATE 01001).
 - **Schema statements on their own** [§11.3, §11.19, §11.36, §11.37,
@@ -260,9 +264,15 @@ restriction is lifted.
   length, with the warning 01004 [§9.1 GR2a, GR3b, GR3e, GR3g, GR3j].
 - **GET DIAGNOSTICS** [§18.1] of the diagnostics area [§4.19]: every
   statement item, and every condition item, the constraint, table and
-  cursor a condition is about among them, and the column of a privilege
-  refused or that a table lacks [GR3g]; the names of a table on which
-  the session holds no privilege withheld [GR3j].
+  cursor a condition is about among them. A syntax error or access rule
+  violation names the table that caused it: one a query names that is
+  not defined or has no column it names, a privilege is refused on, or a
+  foreign key references; else the table a statement inserts into,
+  changes, defines, alters, drops, indexes or grants on, or a `<schema
+  definition>` defines; and the column of a privilege refused or that a
+  table lacks [GR3g]. A declared local temporary table's CATALOG_NAME
+  is one space [GR3f ii, GR3g i]. The names of a table on which the
+  session holds no privilege are withheld [GR3j].
 - **Global and created local temporary tables** [§4.9, §11.3]: each
   session's rows, ON COMMIT DELETE or PRESERVE ROWS [§14.3 GR3], written
   in READ ONLY transactions too [§13.6–§13.10 GR1], with the rules of

@@ -78,7 +78,9 @@ the schema their names were read in: a view defined in SHOP that reads
 ITEMS reads SHOP.ITEMS from then on, whatever schema the session reading
 it has.
 
-A constraint's name written without a schema is of its table's schema.
+A constraint's name written without a schema is of the default schema
+too, which may be another than its table's; one the implementation
+gives is of its table's schema.
 A domain named without a schema, where the default schema has no domain
 of the name, may name a type a plug-in registers.
 

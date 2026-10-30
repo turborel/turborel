@@ -457,6 +457,35 @@ fn constraints_are_kept() {
     assert_eq!(s.run("INSERT INTO C VALUES (1, 50)").map_err(|e| e.code).err(), Some(Code::Constraint), "W_UP");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR8b, §10.6], RULES.md
+/// D47: a constraint named without a schema, of a table of another schema
+/// than the session's default one, CREATE TABLE's and ALTER TABLE's, is
+/// made again by recovery in the default schema it was defined in.
+#[test]
+fn constraint_names_are_recovered_in_their_schema() {
+    let scratch = Scratch::new("reopen-constraint-names");
+    let dir = scratch.path("db");
+    let (db, _) = open(&dir);
+    db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
+    db.schema("CREATE SCHEMA S2 AUTHORIZATION U").unwrap();
+    let s = db.session("U");
+    s.run("CREATE TABLE S2.T (K INTEGER CONSTRAINT KEYED PRIMARY KEY)").unwrap();
+    s.run("ALTER TABLE S2.T ADD CONSTRAINT POSITIVE CHECK (K > 0)").unwrap();
+    s.commit().unwrap();
+    let sql = "SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'S2'";
+    let (db, opened) = {
+        let crashed = db;
+        let reopened = open(&dir);
+        drop((s, crashed));
+        reopened
+    };
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let s = db.session("U");
+    assert_eq!(crate::common::sorted(&s, sql), vec!["U,KEYED", "U,POSITIVE"]);
+    let refused = s.run("INSERT INTO S2.T VALUES (-1)").unwrap_err();
+    assert_eq!(refused.subject.and_then(|subject| subject.constraint), Some(("U".to_owned(), "POSITIVE".to_owned())));
+}
+
 /// Verifies: [DESIGN] RULES.md D25; [ISO/IEC 9075:1992 §11.11 GR2 note]: a
 /// view of all of a table that had a column added, and a CHECK whose
 /// subquery takes all of one, are reopened seeing the columns they saw, as

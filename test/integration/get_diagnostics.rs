@@ -243,3 +243,50 @@ fn a_string_cut_to_fit_is_a_warning() {
     assert_eq!((done, p.value("SHORT").to_string()), (Completion::Warning(SqlState::STRING_TRUNCATED), "S".to_owned()));
     assert_eq!((statement(&a, "COMMAND_FUNCTION"), condition(&a, "RETURNED_SQLSTATE")), ("SELECT".to_owned(), "01004".to_owned()));
 }
+
+/// The CATALOG_NAME of condition 1 as it is, padding and all; and its
+/// SCHEMA_NAME, TABLE_NAME and COLUMN_NAME.
+fn named(s: &Session) -> [String; 4] {
+    let mut p = targets().declare("CAT", DataType::Varying { length: 128 }, Value::Null);
+    s.execute("GET DIAGNOSTICS EXCEPTION 1 CAT = CATALOG_NAME", &mut p).unwrap();
+    let catalog = p.value("CAT").to_string();
+    [catalog, condition(s, "SCHEMA_NAME"), condition(s, "TABLE_NAME"), condition(s, "COLUMN_NAME")]
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 GR3g] a syntax error or
+/// access rule violation names the table that caused it: the one a
+/// statement inserts into, changes, defines, alters, drops or grants on;
+/// the one a FOREIGN KEY references, with the column REFERENCES is refused
+/// on; a table of a `<schema definition>`; a declared local temporary
+/// table, its CATALOG_NAME <space>s and its SCHEMA_NAME MODULE [GR3g i].
+#[test]
+fn a_syntax_error_names_its_table_18_1() {
+    let db = diagnosed();
+    db.schema("CREATE SCHEMA AUTHORIZATION P").unwrap();
+    let a = db.session("A");
+    let cases = [
+        ("CREATE TABLE T (X INTEGER)", "T", ""),
+        ("INSERT INTO T VALUES (9, 'Z', 9)", "T", ""),
+        ("UPDATE T SET N = 1", "T", ""),
+        ("ALTER TABLE T ADD CONSTRAINT POSITIVE CHECK (K > 1)", "T", ""),
+        ("DROP TABLE NOPE CASCADE", "NOPE", ""),
+        ("CREATE VIEW W AS SELECT K FROM T UNION SELECT K, N FROM T", "W", ""),
+        ("GRANT UPDATE (NOPE) ON T TO P", "T", "NOPE"),
+        ("CREATE TABLE D (K INTEGER REFERENCES NOPE)", "NOPE", ""),
+        ("CREATE TABLE D (N CHAR(2) REFERENCES T (N))", "T", ""),
+        ("CREATE TABLE D (N CHAR(2) REFERENCES T)", "T", ""),
+    ];
+    for (sql, table, column) in cases {
+        assert!(a.run(sql).is_err(), "{sql}");
+        assert_eq!(named(&a)[1..], ["A".to_owned(), table.to_owned(), column.to_owned()], "{sql}");
+    }
+    let catalog = named(&a)[0].clone();
+    assert!(!catalog.trim().is_empty(), "the catalog's name");
+    let p = db.session("P");
+    assert_eq!(p.run("CREATE TABLE D (K INTEGER REFERENCES A.T (K))").err().map(|e| e.code), Some(Code::Privilege));
+    assert_eq!(named(&p), [catalog.clone(), "A".into(), "T".into(), "K".into()], "REFERENCES (K)");
+    assert!(p.direct("CREATE SCHEMA PX AUTHORIZATION P CREATE TABLE E (X INTEGER, X INTEGER)").is_err());
+    assert_eq!(named(&p)[1..], ["PX".to_owned(), "E".to_owned(), String::new()], "a <schema definition>'s");
+    assert!(p.run("DECLARE LOCAL TEMPORARY TABLE MODULE.M (X INTEGER, X INTEGER)").is_err());
+    assert_eq!(named(&p), [" ".to_owned(), "MODULE".into(), "M".into(), String::new()], "declared");
+}

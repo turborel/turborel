@@ -378,3 +378,62 @@ fn partial_updates_11_8() {
     s.run("UPDATE P SET A = 5 WHERE A = 1").unwrap();
     assert_eq!(sorted(&s, "SELECT A, B FROM X"), vec!["5,11", "NULL,11"], "A of (NULL, 11) is null, so stays");
 }
+
+/// The schema of each constraint of the tables of schema `schema`, its
+/// name, and its table's schema, as INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+/// shows them to `s`.
+fn placed(s: &turborel::db::Session, schema: &str) -> Vec<String> {
+    let sql = format!(
+        "SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '{schema}'"
+    );
+    sorted(s, &sql)
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR8, GR18; §10.6 SR1,
+/// SR2; §11.6 SR2; §11.17 SR2] outside a `<schema definition>`, a
+/// constraint's name written without a schema is of the session's default
+/// schema [SR8b], which may be another than its table's: no Syntax Rule
+/// makes them one. It is a constraint of that schema, whose others' names
+/// it may not take, nor they its; ALTER TABLE DROP CONSTRAINT finds it
+/// there. A schema written is taken as written, and must exist, as must
+/// the default schema (3F000); MODULE is no schema of one. A name the
+/// implementation gives is of the table's schema. In a `<schema
+/// definition>`, a name is of its schema [SR8a] and no other [§10.6 SR1].
+#[test]
+fn constraint_names_outside_a_schema_definition_5_4() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
+    db.schema("CREATE SCHEMA S2 AUTHORIZATION U").unwrap();
+    db.schema("CREATE SCHEMA S3 AUTHORIZATION V").unwrap();
+    let u = db.session("U");
+    u.run("CREATE TABLE S2.T (K INTEGER CONSTRAINT KEYED PRIMARY KEY, N INTEGER UNIQUE, CONSTRAINT S2.OTHER CHECK (N > 0))").unwrap();
+    assert_eq!(placed(&u, "S2"), vec!["S2,OTHER,S2", "S2,T_UNIQUE1,S2", "U,KEYED,S2"]);
+    u.run("INSERT INTO S2.T VALUES (1, 1)").unwrap();
+    let refused = u.run("INSERT INTO S2.T VALUES (1, 2)").unwrap_err();
+    assert_eq!(refused.subject.and_then(|s| s.constraint), Some(("U".to_owned(), "KEYED".to_owned())), "named so [§18.1 GR3f i]");
+    let taken = [
+        ("CREATE TABLE U.T2 (K INTEGER CONSTRAINT KEYED CHECK (K > 0))", "§10.6 SR2"),
+        ("CREATE ASSERTION KEYED CHECK (1 = 1)", "§11.34 SR2, SR7"),
+        ("ALTER TABLE S2.T ADD CONSTRAINT KEYED CHECK (K > 0)", "§10.6 SR2"),
+        ("ALTER TABLE S2.T DROP CONSTRAINT S2.KEYED CASCADE", "§11.17 SR2"),
+        ("CREATE TABLE S2.T3 (K INTEGER CONSTRAINT MODULE.C UNIQUE)", "MODULE names"),
+        ("CREATE SCHEMA S4 AUTHORIZATION U CREATE TABLE T (K INTEGER CONSTRAINT U.C UNIQUE)", "§10.6 SR1"),
+        ("DECLARE LOCAL TEMPORARY TABLE MODULE.D (K INTEGER CONSTRAINT U.C UNIQUE)", "is in MODULE"),
+    ];
+    for (sql, why) in taken {
+        let refused = if sql.starts_with("CREATE SCHEMA") { u.direct(sql).map(|_| ()) } else { u.run(sql).map(|_| ()) };
+        let e = refused.expect_err(sql);
+        assert!(e.code == Code::SyntaxRule && e.described().contains(why), "{sql}: {e}");
+    }
+    u.direct("CREATE SCHEMA S4 AUTHORIZATION U CREATE TABLE T (K INTEGER CONSTRAINT C UNIQUE)").unwrap();
+    assert_eq!(placed(&u, "S4"), vec!["S4,C,S4"], "of the <schema definition>'s schema");
+    u.run("ALTER TABLE S2.T DROP CONSTRAINT KEYED CASCADE").unwrap();
+    u.run("CREATE ASSERTION KEYED CHECK (1 = 1)").unwrap();
+    u.commit().unwrap();
+    let v = db.session("V");
+    let unplaced = v.run("CREATE TABLE S3.T (K INTEGER CONSTRAINT C UNIQUE)").unwrap_err();
+    assert_eq!((unplaced.code, unplaced.sqlstate().as_str()), (Code::SyntaxRule, "3F000"), "no schema V");
+    v.run("CREATE TABLE S3.T (K INTEGER CONSTRAINT S3.C UNIQUE, N INTEGER UNIQUE)").unwrap();
+    v.run("ALTER TABLE S3.T ADD CONSTRAINT S3.D CHECK (K > 0)").unwrap();
+    assert_eq!(placed(&v, "S3"), vec!["S3,C,S3", "S3,D,S3", "S3,T_UNIQUE1,S3"]);
+}

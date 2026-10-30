@@ -8,7 +8,7 @@ use super::Reshape;
 use crate::ast::{ColumnDefinition, DropBehavior};
 use crate::catalog::{ColumnDesc, ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
-use crate::db::constraints::Described;
+use crate::db::constraints::{Described, Within};
 use crate::db::defaults::default_of;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::cond_columns;
@@ -37,11 +37,12 @@ impl State {
         let (data_type, domain) = self.column_type(names, &def.data_type)?;
         let default = def.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose()?;
         next.columns.push(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain });
-        let taken = self.constraint_names(&desc.name.auth);
-        let mut added = Described::new((&desc.name, names), &next.columns, taken);
+        let taken = self.all_constraint_names();
+        let mut added = Described::new((&desc.name, names, Within::Session), &next.columns, taken);
         added.reserve(def.constraints.iter().filter_map(|c| c.name.as_ref()));
         added.column(desc.columns.len(), def)?;
         let (constraints, pending) = (added.constraints, added.pending);
+        self.constraint_schemas(&constraints, &pending)?;
         next.constraints.extend(constraints);
         // [§11.21 GR5, GR6] its domain's constraints, on it.
         let column = next.columns.last().map(std::slice::from_ref).unwrap_or_default();

@@ -61,7 +61,17 @@ The condition information items, of condition 1:
 | SERVER_NAME, CONNECTION_NAME | character | Empty |
 
 An item that does not apply is empty, or 0. A name of a table the
-session holds no privilege on is withheld.
+session holds no privilege on is withheld, but for a syntax error or
+access rule violation (SQLSTATE class 42 or 2A).
+
+A syntax error or access rule violation names the table that caused
+it: a table the statement names that is not defined, or has no column
+it names, or that a privilege is refused on, or that a foreign key
+references; else the table or view the statement inserts into, updates,
+deletes from, creates, alters, drops, indexes or grants or revokes on.
+It names the column where a privilege on it is refused, or the table
+has no column of the name. A declared local temporary table's
+CATALOG_NAME is one space, its SCHEMA_NAME `MODULE`.
 
 ## RULES
 
@@ -113,10 +123,7 @@ GET DIAGNOSTICS EXCEPTION 5 STATE = RETURNED_SQLSTATE   -301 (35000): there is n
 ## STANDARD
 
 ISO/IEC 9075:1992 §18.1, of the diagnostics area of §4.19. SQL-92 does
-not make it a `<directly executable statement>` [§20.1]. Its names of a
-table are only where a privilege is refused, a table is not defined, or
-a table named has no column named, and of a column only in the last
-case or of a privilege on a column [§18.1 GR3g]. SQL-86 has no
+not make it a `<directly executable statement>` [§20.1]. SQL-86 has no
 diagnostics area.
 
 ## SEE ALSO

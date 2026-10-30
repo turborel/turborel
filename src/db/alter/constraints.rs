@@ -7,9 +7,10 @@ use std::sync::Arc;
 
 use super::Made;
 use crate::ast::{DropBehavior, TableConstraint, TableName};
+use crate::binder::qualify;
 use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName};
 use crate::db::State;
-use crate::db::constraints::Described;
+use crate::db::constraints::{Described, Within};
 use crate::db::ddl::Dropped;
 use crate::db::schema::constraint_index_name;
 use crate::error::{Code, Result, SqlError};
@@ -37,10 +38,11 @@ impl State {
     ) -> Result<Made> {
         let mut desc = self.base_table(qn)?;
         let table_columns = desc.columns.clone();
-        let mut added = Described::new((qn, names), &table_columns, self.constraint_names(&qn.auth));
+        let mut added = Described::new((qn, names, Within::Session), &table_columns, self.all_constraint_names());
         added.reserve(c.name.iter());
         added.table_constraint(c)?;
         let (constraints, pending) = (added.constraints, added.pending);
+        self.constraint_schemas(&constraints, &pending)?;
         let unique = constraints
             .iter()
             .find_map(|k| if let ConstraintKind::Unique { columns, .. } = &k.kind { Some(columns.clone()) } else { None });
@@ -113,13 +115,18 @@ impl State {
         Ok(structure)
     }
 
-    /// [ISO/IEC 9075:1992 §11.17] Drops the constraint `name` of base table
-    /// `qn`: and with CASCADE, the foreign keys that reference the columns
+    /// [ISO/IEC 9075:1992 §11.17] Drops the constraint `name`, its schema
+    /// `implicit` if it names none [§5.4 SR8], of base table `qn`: and with CASCADE, the foreign keys that reference the columns
     /// of a unique one [SR3, GR1]; with RESTRICT, not while there are any
     /// [SR4]. A unique one's index goes with it.
-    pub(in crate::db) fn drop_constraint(&mut self, qn: &QualifiedName, name: &TableName, behavior: DropBehavior) -> Result<Dropped> {
+    pub(in crate::db) fn drop_constraint(
+        &mut self,
+        (qn, implicit): (&QualifiedName, &str),
+        name: &TableName,
+        behavior: DropBehavior,
+    ) -> Result<Dropped> {
         let mut desc = self.base_table(qn)?;
-        let named = QualifiedName { auth: name.auth.clone().unwrap_or_else(|| qn.auth.clone()), ident: name.ident.clone() };
+        let named = qualify(name, implicit);
         let at = desc
             .constraints
             .iter()

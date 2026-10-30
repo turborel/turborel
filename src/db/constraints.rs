@@ -16,7 +16,8 @@ use crate::binder::{self, Context, Purpose, Referencing, Uses, bind_select, qual
 use crate::catalog::{
     ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of,
 };
-use crate::error::{At, Code, Result, SqlError};
+use crate::error::{At, Code, Result, SqlError, SqlState, Subject};
+use crate::lexer::kw;
 use crate::logical::{Cond, LogicalPlan};
 use crate::params::Params;
 use crate::parser::Parser;
@@ -38,14 +39,34 @@ fn rule(message: String) -> SqlError {
     SqlError::new(Code::SyntaxRule, message)
 }
 
+/// Where a table's constraints are defined, which decides the schema of a
+/// constraint's name written without one, and the schemas one may name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::db) enum Within {
+    /// A `<schema definition>`: its schema [§5.4 SR8a], and no other
+    /// [§10.6 SR1].
+    SchemaDefinition,
+    /// A statement of a session, outside a `<schema definition>`: the
+    /// session's default schema [§5.4 SR8b], or any schema written, which
+    /// may be another than its table's: no Syntax Rule makes them one.
+    Session,
+    /// \[DESIGN\] A declared local temporary table [§13.11]: MODULE, its
+    /// table's, and no other: a session's table puts no name in a schema
+    /// other sessions share.
+    Declared,
+}
+
 /// The constraints of a table being described: its name and columns, the
-/// names taken in its schema, and what has been described so far.
+/// constraint names taken, and what has been described so far.
 pub(in crate::db) struct Described<'a> {
     pub(super) table: &'a QualifiedName,
     pub(super) columns: &'a [crate::catalog::ColumnDesc],
+    /// The names of constraints there are, of any schema.
     pub(super) taken: Vec<QualifiedName>,
     /// The schema of the names its CHECKs write without one [§5.4 SR8].
     names: String,
+    /// Where it is defined.
+    within: Within,
     pub(in crate::db) constraints: Vec<ConstraintDesc>,
     pub(in crate::db) pending: Vec<Pending>,
     /// The names written for constraints still to describe, which one the
@@ -57,10 +78,10 @@ pub(in crate::db) struct Described<'a> {
 
 impl<'a> Described<'a> {
     /// Nothing described yet, of table `table` with `columns`, its CHECKs'
-    /// names of schema `names`, in a schema where `taken` are the
-    /// constraint names.
+    /// names of schema `names`, defined `within`, where `taken` are the
+    /// names of the constraints there are.
     pub(in crate::db) fn new(
-        (table, names): (&'a QualifiedName, &str),
+        (table, names, within): (&'a QualifiedName, &str, Within),
         columns: &'a [crate::catalog::ColumnDesc],
         taken: Vec<QualifiedName>,
     ) -> Described<'a> {
@@ -69,6 +90,7 @@ impl<'a> Described<'a> {
             columns,
             taken,
             names: names.to_owned(),
+            within,
             constraints: Vec::new(),
             pending: Vec::new(),
             reserved: Vec::new(),
@@ -76,19 +98,54 @@ impl<'a> Described<'a> {
         }
     }
 
+    /// [§5.4 SR8] The schema of a constraint's name written without one:
+    /// that of the names the definition writes, a declared table's own.
+    fn home(&self) -> &str {
+        match self.within {
+            Within::SchemaDefinition | Within::Session => &self.names,
+            Within::Declared => &self.table.auth,
+        }
+    }
+
+    /// The constraint name `written`, its schema the one written or else
+    /// the implicit one [§5.4 SR8].
+    fn placed(&self, written: &TableName) -> QualifiedName {
+        QualifiedName { auth: written.auth.clone().unwrap_or_else(|| self.home().to_owned()), ident: written.ident.clone() }
+    }
+
+    /// Why the constraint name `name` may not be written where it is: of a
+    /// schema other than the `<schema definition>`'s [§10.6 SR1] or a
+    /// declared table's, or MODULE for a table of a schema.
+    fn misplaced(&self, name: &QualifiedName) -> Option<SqlError> {
+        let home = self.home();
+        let why = match self.within {
+            Within::SchemaDefinition => format!("[ISO/IEC 9075:1992 §10.6 SR1] constraint {name} is not in schema {home}"),
+            Within::Declared => format!("[DESIGN] constraint {name} of a declared local temporary table is in MODULE, its table's schema"),
+            Within::Session => format!(
+                "[DESIGN] constraint {name}: MODULE names a session's declared local temporary tables, not a schema [ISO/IEC 9075:1992 §5.4]"
+            ),
+        };
+        let misplaced = match self.within {
+            Within::SchemaDefinition | Within::Declared => name.auth != home,
+            Within::Session => name.auth == kw::MODULE,
+        };
+        misplaced.then(|| rule(why))
+    }
+
     /// [§10.6 SR1, SR2; §11.6 SR2] The name of a constraint: `written`, in
-    /// the table's schema and not another constraint's there, or else one
-    /// of the implementation's, `TABLE_KIND1` and on, that is free.
+    /// the schema it is placed in and not another constraint's there, or
+    /// else one of the implementation's, `TABLE_KIND1` and on, in the
+    /// table's schema, that is free.
     fn name(&mut self, written: Option<&TableName>, kind: &str) -> Result<QualifiedName> {
         let auth = &self.table.auth;
         let name = match written {
             Some(n) => {
-                if let Some(other) = n.auth.as_ref().filter(|a| *a != auth) {
-                    return Err(rule(format!("[ISO/IEC 9075:1992 §10.6 SR1] constraint {other}.{} is not in schema {auth}", n.ident)));
+                let name = self.placed(n);
+                if let Some(e) = self.misplaced(&name) {
+                    return Err(e);
                 }
-                let name = QualifiedName { auth: auth.clone(), ident: n.ident.clone() };
                 if self.taken.contains(&name) {
-                    return Err(rule(format!("[ISO/IEC 9075:1992 §10.6 SR2] schema {auth} has a constraint {}", n.ident)));
+                    return Err(rule(format!("[ISO/IEC 9075:1992 §10.6 SR2] schema {} has a constraint {}", name.auth, name.ident)));
                 }
                 name
             }
@@ -103,8 +160,8 @@ impl<'a> Described<'a> {
 
     /// Reserves the names `written`, of constraints still to describe.
     pub(in crate::db) fn reserve<'n>(&mut self, written: impl Iterator<Item = &'n TableName>) {
-        let auth = self.table.auth.clone();
-        self.reserved.extend(written.map(|n| QualifiedName { auth: auth.clone(), ident: n.ident.clone() }));
+        let placed: Vec<QualifiedName> = written.map(|n| self.placed(n)).collect();
+        self.reserved.extend(placed);
     }
 
     /// The positions of the columns `names` [§11.7 SR4, §11.8 SR6]: each of
@@ -112,11 +169,9 @@ impl<'a> Described<'a> {
     fn positions(&self, names: &[String], rule_cited: &str) -> Result<Vec<usize>> {
         let mut positions = Vec::new();
         for n in names {
-            let at = self
-                .columns
-                .iter()
-                .position(|c| c.name == *n)
-                .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 {rule_cited}] {} has no column {n}", self.table)))?;
+            let at = self.columns.iter().position(|c| c.name == *n).ok_or_else(|| {
+                binder::no_column(self.table, format!("[ISO/IEC 9075:1992 {rule_cited}] {} has no column {n}", self.table), n)
+            })?;
             if positions.contains(&at) {
                 return Err(rule(format!("[ISO/IEC 9075:1992 {rule_cited}] column {n} is named twice")));
             }
@@ -208,16 +263,16 @@ fn word(primary: bool) -> &'static str {
 }
 
 /// The constraints of `elements`, the definition of table `table` with
-/// `columns`, its names of schema `names`, in a schema where `taken` are
-/// the constraint names: their descriptors, and its foreign keys still to
-/// resolve.
+/// `columns`, its names of schema `names`, defined `within`, where `taken`
+/// are the constraint names there are: their descriptors, and its foreign
+/// keys still to resolve.
 pub(super) fn describe(
-    (table, names): (&QualifiedName, &str),
+    (table, names, within): (&QualifiedName, &str, Within),
     columns: &[crate::catalog::ColumnDesc],
     elements: &[TableElement],
     taken: Vec<QualifiedName>,
 ) -> Result<(Vec<ConstraintDesc>, Vec<Pending>)> {
-    let mut d = Described::new((table, names), columns, taken);
+    let mut d = Described::new((table, names, within), columns, taken);
     d.reserve(elements.iter().flat_map(|el| match el {
         TableElement::Column(def) => def.constraints.iter().filter_map(|c| c.name.as_ref()).collect::<Vec<_>>(),
         TableElement::Constraint(c) => c.name.iter().collect(),
@@ -243,6 +298,29 @@ pub(super) fn describe(
     };
     Described::check_unique(&probe)?;
     Ok((d.constraints, d.pending))
+}
+
+/// [ISO/IEC 9075:1992 §11.8 SR2] The positions of the columns a foreign
+/// key, written at `at`, references of table `target`, `parent`: those
+/// `written`, of a unique constraint of it [SR2a], or else its PRIMARY KEY
+/// [SR2b].
+fn referenced_columns((target, parent): (&QualifiedName, &TableDesc), written: Option<&[String]>, at: usize) -> Result<Vec<usize>> {
+    let Some(written) = written else {
+        return parent
+            .primary_key()
+            .map(<[usize]>::to_vec)
+            .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.8 SR2b] {target} has no PRIMARY KEY")).or_at(at));
+    };
+    let positions =
+        Described::new((target, &target.auth, Within::Session), &parent.columns, Vec::new()).positions(written, "§11.8 SR2a")?;
+    let keyed = parent.unique().any(|u| u.len() == positions.len() && u.iter().all(|c| positions.contains(c)));
+    if !keyed {
+        return Err(rule(format!(
+            "[ISO/IEC 9075:1992 §11.8 SR2a] the columns referenced are not those of a unique constraint of {target}"
+        ))
+        .or_at(at));
+    }
+    Ok(positions)
 }
 
 impl State {
@@ -273,28 +351,12 @@ impl State {
         let r = &p.references;
         let target = qualify(&r.table, names);
         let auth = owner_of(&*self.catalog, &child.name.auth);
-        let parent = self.referenced(&target).or_at(r.table.at)?;
+        // [ISO/IEC 9075:1992 §18.1 GR3g] its errors of what it references
+        // are about the table referenced.
+        let about = |e: SqlError| e.or_about_table(target.parts());
+        let parent = self.referenced(&target).map_err(about).or_at(r.table.at)?;
         super::temporary::may_refer(child, parent, ("§11.8 SR4", "§11.8 SR5")).or_at(r.table.at)?;
-        let referenced = match &r.columns {
-            // [SR2a] a set of columns of a unique constraint of it.
-            Some(written) => {
-                let positions = Described::new((&target, &target.auth), &parent.columns, Vec::new()).positions(written, "§11.8 SR2a")?;
-                let keyed = parent.unique().any(|u| u.len() == positions.len() && u.iter().all(|c| positions.contains(c)));
-                if !keyed {
-                    return Err(rule(format!(
-                        "[ISO/IEC 9075:1992 §11.8 SR2a] the columns referenced are not those of a unique constraint of {target}"
-                    ))
-                    .or_at(p.at));
-                }
-                positions
-            }
-            // [SR2b] its PRIMARY KEY.
-            None => parent
-                .primary_key()
-                .map(<[usize]>::to_vec)
-                .ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.8 SR2b] {target} has no PRIMARY KEY")))
-                .or_at(p.at)?,
-        };
+        let referenced = referenced_columns((&target, parent), r.columns.as_deref(), p.at).map_err(about)?;
         // [SR7] as many, each of the same type as its referencing column.
         let same = p.columns.len() == referenced.len() && child.types(&p.columns) == parent.types(&referenced);
         if !same {
@@ -308,8 +370,11 @@ impl State {
         let (held, _) = applicable(&*self.catalog, auth, &target);
         if let Some(column) = referenced.iter().find(|c| !held.references.contains(c)) {
             let name = parent.columns.get(*column).map_or("?", |c| c.name.as_str());
+            // [§18.1 GR3g] about the column, of the table referenced.
+            let subject = Subject { column: Some(name.to_owned()), ..Subject::table(target.parts()) };
             return Err(SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.8 AR1] {auth} may not reference {target}.{name}"))
-                .or_at(p.at));
+                .or_at(p.at)
+                .about(subject));
         }
         let fk = ForeignKey {
             columns: p.columns.clone(),
@@ -444,14 +509,36 @@ impl State {
         Err(SqlError::new(Code::Api, format!("[DESIGN] a CHECK of {table} did not bind to a filter of its rows")))
     }
 
-    /// The names of the constraints of schema `auth`: its tables', its
-    /// domains' and its assertions [ISO/IEC 9075:1992 §10.6 SR2].
-    pub(in crate::db) fn constraint_names(&self, auth: &str) -> Vec<QualifiedName> {
-        let tables =
-            self.catalog.tables().into_iter().filter(|t| t.name.auth == auth).flat_map(|t| t.constraints.iter().map(|c| c.name.clone()));
-        let domains =
-            self.catalog.domains().into_iter().filter(|d| d.name.auth == auth).flat_map(|d| d.constraints.iter().map(|c| c.name.clone()));
-        let assertions = self.catalog.assertions().into_iter().filter(|a| a.name.auth == auth).map(|a| a.name.clone());
+    /// The names of the constraints there are, of every schema: tables',
+    /// domains' and assertions [ISO/IEC 9075:1992 §10.6 SR2].
+    pub(in crate::db) fn all_constraint_names(&self) -> Vec<QualifiedName> {
+        let tables = self.catalog.tables().into_iter().flat_map(|t| t.constraints.iter().map(|c| c.name.clone()));
+        let domains = self.catalog.domains().into_iter().flat_map(|d| d.constraints.iter().map(|c| c.name.clone()));
+        let assertions = self.catalog.assertions().into_iter().map(|a| a.name.clone());
         tables.chain(domains).chain(assertions).collect()
+    }
+
+    /// The names of the constraints of schema `auth` [ISO/IEC 9075:1992
+    /// §10.6 SR2], whatever schema their tables are in.
+    pub(in crate::db) fn constraint_names(&self, auth: &str) -> Vec<QualifiedName> {
+        self.all_constraint_names().into_iter().filter(|n| n.auth == auth).collect()
+    }
+
+    /// That the schema of each name of `constraints` and `pending`, written
+    /// outside a `<schema definition>`, is one there is [ISO/IEC 9075:1992
+    /// §5.4 SR8b, GR18].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103, SQLSTATE 3F000, for one that is not.
+    pub(in crate::db) fn constraint_schemas(&self, constraints: &[ConstraintDesc], pending: &[Pending]) -> Result<()> {
+        let names = constraints.iter().map(|c| &c.name).chain(pending.iter().map(|p| &p.name));
+        for name in names {
+            if !self.catalog.schema_exists(&name.auth) {
+                let msg = format!("[ISO/IEC 9075:1992 §5.4 SR8b, GR18] there is no schema {} for constraint {name}", name.auth);
+                return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME));
+            }
+        }
+        Ok(())
     }
 }

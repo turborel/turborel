@@ -299,7 +299,7 @@ impl State {
         let mut dropped = Dropped::default();
         for (table, c) in &abandoned.constraints {
             let name = TableName { auth: Some(c.name.auth.clone()), ident: c.name.ident.clone(), at: 0 };
-            let taken = self.drop_constraint(table, &name, DropBehavior::Cascade)?;
+            let taken = self.drop_constraint((table, &table.auth), &name, DropBehavior::Cascade)?;
             dropped.storage.extend(taken.storage);
             dropped.indexes.extend(taken.indexes);
             locks.push((table.clone(), LockMode::Exclusive));

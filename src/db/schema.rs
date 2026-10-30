@@ -7,7 +7,7 @@ use std::mem;
 use std::sync::Arc;
 
 use super::alter::Made;
-use super::constraints::{self, Pending};
+use super::constraints::{self, Pending, Within};
 use super::defaults::default_of;
 use super::indexes::IndexSpec;
 use super::{Completion, Database, State, api};
@@ -194,7 +194,10 @@ impl State {
         self.schema_domains(&s, &owner, zone)?;
         let (mut descs, mut pending): (Vec<TableDesc>, Vec<Vec<Pending>>) = (Vec::new(), Vec::new());
         for table in &s.tables {
-            let (desc, keys) = self.describe_table((&s.name, &s.name, zone), table, &descs, &pending).or_at(table.name.at)?;
+            // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it defines.
+            let about = (s.name.clone(), table.name.ident.clone());
+            let described = self.describe_table((&s.name, &s.name, zone, Within::SchemaDefinition), table, &descs, &pending);
+            let (desc, keys) = described.map_err(|e| e.or_about_table(about)).or_at(table.name.at)?;
             descs.push(desc);
             pending.push(keys);
         }
@@ -249,7 +252,9 @@ impl State {
                 let done = self.grant_usage(owner, &s.name, p).or_at(p.table.at)?;
                 granted.push((Vec::new(), done.completion != Completion::Success));
             } else {
-                granted.push(self.describe_grant((owner, &s.name), p).or_at(p.table.at)?);
+                // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it names.
+                let about = qualify(&p.table, &s.name).parts();
+                granted.push(self.describe_grant((owner, &s.name), p).map_err(|e| e.or_about_table(about)).or_at(p.table.at)?);
             }
         }
         Ok(granted)
@@ -263,7 +268,7 @@ impl State {
     /// are known.
     pub(super) fn describe_table(
         &self,
-        (auth, names, zone): (&str, &str, i16),
+        (auth, names, zone, within): (&str, &str, i16, Within),
         t: &TableDefinition,
         earlier: &[TableDesc],
         keys: &[Vec<Pending>],
@@ -292,8 +297,9 @@ impl State {
             .iter()
             .flat_map(|d| d.constraints.iter().map(|c| c.name.clone()))
             .chain(keys.iter().flatten().map(|p| p.name.clone()))
+            .chain(self.all_constraint_names())
             .collect();
-        let (mut constraints, pending) = constraints::describe((&name, names), &columns, &t.elements, taken)?;
+        let (mut constraints, pending) = constraints::describe((&name, names, within), &columns, &t.elements, taken)?;
         // [§11.21 GR5, GR6] its domains' constraints, on their columns.
         constraints.extend(self.domain_checks(&name, &columns));
         // [ISO/IEC 9075:1992 §4.9] A temporary table's rows are each
@@ -316,11 +322,14 @@ impl State {
     /// §11.8], and its CHECK conditions bound [§11.9].
     pub(super) fn complete_tables(&self, names: &str, descs: &mut [TableDesc], pending: &[Vec<Pending>]) -> Result<()> {
         for (desc, keys) in descs.iter_mut().zip(pending) {
+            // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table.
+            let parts = desc.name.parts();
+            let about = |e: SqlError| e.or_about_table(parts.clone());
             for p in keys {
-                let resolved = self.resolve_foreign_key(names, desc, p)?;
+                let resolved = self.resolve_foreign_key(names, desc, p).map_err(about)?;
                 desc.constraints.push(resolved);
             }
-            self.bind_checks(desc)?;
+            self.bind_checks(desc).map_err(about)?;
         }
         Ok(())
     }

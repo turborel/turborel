@@ -18,7 +18,9 @@ impl State {
     /// catalog back if any view breaks a rule.
     pub(super) fn define_views(&mut self, (auth, names): (&str, &str), views: &[ViewDefinition]) -> Result<()> {
         for v in views {
-            let desc = self.describe_view((auth, names), v).or_at(v.name.at)?;
+            // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the view it defines.
+            let about = (auth.to_owned(), v.name.ident.clone());
+            let desc = self.describe_view((auth, names), v).map_err(|e| e.or_about_table(about)).or_at(v.name.at)?;
             let mut catalog = self.catalog.duplicate();
             catalog.add_views(vec![desc]);
             self.catalog = Arc::from(catalog);
@@ -60,7 +62,7 @@ impl State {
         }
         let horizon = Horizon::of(&*self.catalog, &reads);
         // [ISO/IEC 9075:1992 §11.19 GR6] what its owner's REFERENCES on it are found from.
-        let underlying = underlying(cx, &v.query)?;
+        let underlying = Some(underlying(cx, &v.query)?);
         let (query, names) = (v.text.clone(), names.to_owned());
         Ok(ViewDesc { name, columns, query, names, check_option: v.check_option, grouped, updates, reads, horizon, underlying })
     }

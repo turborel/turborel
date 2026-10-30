@@ -51,7 +51,8 @@ column go.
 **ADD CONSTRAINT** adds a table constraint, checked of the rows there
 now; a row that breaks it refuses it.
 
-**DROP CONSTRAINT** drops a constraint of the table. RESTRICT refuses
+**DROP CONSTRAINT** drops a constraint of the table, its name written
+without a schema being of the session's default schema. RESTRICT refuses
 the drop of a UNIQUE or PRIMARY KEY constraint that a foreign key
 references; CASCADE drops that foreign key too.
 
@@ -103,6 +104,7 @@ says.
 |---|---|---|
 | 2A000 | -102 | The action is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
+| 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
 | 25000 | -917 | The transaction is READ ONLY |

@@ -181,9 +181,10 @@ fn insert_on_columns_10_3() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.19 GR6b; §11.9 AR1;
 /// §11.34 AR2] a view's owner holds REFERENCES on each column of it drawn
 /// only from columns it holds REFERENCES on, so a CHECK or an assertion
-/// reads the view; grantable only if those are; none on a view drawn from
-/// a derived table, what it is drawn from not being known. In a `<schema
-/// definition>`, a CHECK reads a view it defines [§11.1 GR3].
+/// reads the view; grantable only if those are; and on a view of a
+/// derived table, whose underlying columns are those its query references
+/// [§7.3 SR2, §7.9 SR5]. In a `<schema definition>`, a CHECK reads a view
+/// it defines [§11.1 GR3].
 #[test]
 fn references_on_a_view_11_19() {
     let db = Database::new();
@@ -202,7 +203,7 @@ fn references_on_a_view_11_19() {
     assert_eq!(exec(&a, "INSERT INTO U VALUES (2)").err(), Some(Code::Constraint), "the CHECK reads V");
     a.run("CREATE ASSERTION SMALL CHECK (NOT EXISTS (SELECT * FROM V WHERE M > 9))").unwrap();
     assert_eq!(exec(&a, "INSERT INTO T VALUES (9, 9)").err(), Some(Code::Constraint), "SMALL reads V");
-    assert_eq!(exec(&a, "CREATE ASSERTION OF_X CHECK (NOT EXISTS (SELECT * FROM X))").err(), Some(Code::Privilege), "X");
+    a.run("CREATE ASSERTION OF_X CHECK (NOT EXISTS (SELECT * FROM X WHERE K > 99))").unwrap();
     a.commit().unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE VIEW W AS SELECT K, N FROM A.T").unwrap();
     let b = db.session("B");
@@ -249,8 +250,9 @@ fn a_constraint_needs_references_on_what_it_names_11_9() {
 /// SR16d]: a view's columns of a set operation by position are drawn from
 /// both operands' columns, so its owner holds REFERENCES on one only where
 /// it holds it on both; those of a VALUES from none, so it holds REFERENCES
-/// on them. Of a set operation with CORRESPONDING it holds none, what each
-/// column is drawn from not being found.
+/// on them. Of a set operation with CORRESPONDING, each column is drawn
+/// from the columns of its name of both operands [SR9a iv], not from
+/// those it leaves out.
 #[test]
 fn references_on_a_view_of_a_set_operation_11_19() {
     let db = Database::new();
@@ -261,18 +263,78 @@ fn references_on_a_view_of_a_set_operation_11_19() {
            CREATE VIEW EACH AS SELECT K FROM P UNION SELECT K FROM A.T
            CREATE VIEW MIXED (K) AS SELECT K FROM P UNION ALL SELECT N FROM A.T
            CREATE VIEW LISTED (C) AS VALUES (1), (2)
-           CREATE VIEW NAMED AS SELECT K FROM P UNION CORRESPONDING SELECT K FROM A.T",
+           CREATE VIEW NAMED AS SELECT K FROM P UNION CORRESPONDING SELECT K, N FROM A.T
+           CREATE VIEW RENAMED AS SELECT K FROM P UNION CORRESPONDING SELECT N AS K FROM A.T
+           CREATE VIEW LISTED_BY AS SELECT K, N FROM A.T UNION CORRESPONDING BY (K) SELECT K, K AS N FROM P",
     )
     .unwrap();
     let b = db.session("B");
-    for view in ["EACH", "LISTED"] {
+    for view in ["EACH", "LISTED", "NAMED", "LISTED_BY"] {
         let column = if view == "LISTED" { "C" } else { "K" };
         b.run(&format!("CREATE TABLE OF_{view} (J INTEGER CHECK (J IN (SELECT {column} FROM {view})))")).unwrap();
     }
-    for view in ["MIXED", "NAMED"] {
+    for view in ["MIXED", "RENAMED"] {
         let sql = format!("CREATE TABLE OF_{view} (J INTEGER CHECK (J IN (SELECT K FROM {view})))");
         assert_eq!(exec(&b, &sql).err(), Some(Code::Privilege), "{view}");
     }
+    b.rollback().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.19 GR6b; §7.5 SR6d; §7.3
+/// SR2; §7.9 SR5] a view's owner holds REFERENCES on a column of it whose
+/// underlying columns it holds REFERENCES on: a common column of a NATURAL
+/// or USING join is drawn from both its join columns; every column from
+/// those a join condition, a WHERE clause or a derived table's query
+/// references; a column of a derived table from what that query's column
+/// is drawn from.
+#[test]
+fn references_on_a_view_of_joins_and_derived_tables_11_19() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, N INTEGER) GRANT SELECT, REFERENCES (K) ON T TO B").unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION B
+           CREATE TABLE P (K INTEGER, Q INTEGER)
+           CREATE VIEW NATURALLY AS SELECT K, Q, N FROM P NATURAL JOIN A.T
+           CREATE VIEW USED AS SELECT K FROM P JOIN A.T USING (K)
+           CREATE VIEW JOINED AS SELECT P.K FROM P JOIN A.T ON P.Q = A.T.N
+           CREATE VIEW FILTERED AS SELECT K FROM A.T WHERE N > 0
+           CREATE VIEW DERIVED AS SELECT D.K FROM (SELECT K FROM A.T) AS D
+           CREATE VIEW NARROWED AS SELECT D.K FROM (SELECT K FROM A.T WHERE N > 0) AS D
+           CREATE VIEW UNITED AS SELECT D.K FROM (SELECT K FROM P UNION SELECT K FROM A.T) AS D
+           CREATE VIEW VALUED AS SELECT D.K FROM (VALUES (1)) AS D (K)",
+    )
+    .unwrap();
+    let b = db.session("B");
+    let check = |view: &str, column: &str| {
+        exec(&b, &format!("CREATE TABLE OF_{view}_{column} (J INTEGER CHECK (J IN (SELECT {column} FROM {view})))"))
+    };
+    for (view, column) in [("NATURALLY", "K"), ("NATURALLY", "Q"), ("USED", "K"), ("DERIVED", "K"), ("UNITED", "K"), ("VALUED", "K")] {
+        assert!(check(view, column).is_ok(), "{view}.{column}");
+    }
+    for (view, column) in [("NATURALLY", "N"), ("JOINED", "K"), ("FILTERED", "K"), ("NARROWED", "K")] {
+        assert_eq!(check(view, column).err(), Some(Code::Privilege), "{view}.{column}");
+    }
+    b.rollback().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.19 GR6b; §4.9] a view a
+/// view reads is one of its leaf underlying tables: its owner holds
+/// REFERENCES on a column drawn from a column of that view it holds
+/// REFERENCES on, though not on the base table's column below it.
+#[test]
+fn references_on_a_view_of_a_view_11_19() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE T (K INTEGER, N INTEGER)
+           CREATE VIEW AV AS SELECT K, N FROM T
+           GRANT SELECT, REFERENCES (N) ON AV TO B",
+    )
+    .unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION B CREATE VIEW BV AS SELECT N, K FROM A.AV").unwrap();
+    let b = db.session("B");
+    b.run("CREATE TABLE OF_N (J INTEGER CHECK (J IN (SELECT N FROM BV)))").unwrap();
+    assert_eq!(exec(&b, "CREATE TABLE OF_K (J INTEGER CHECK (J IN (SELECT K FROM BV)))").err(), Some(Code::Privilege), "K");
     b.rollback().unwrap();
 }
 

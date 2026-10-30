@@ -51,7 +51,9 @@ RULES.md when its design settles.
   plan: today each execution plans anew (D45).
 - **Stored, named modules** [X3.135-1986 §7]: their procedures run with
   the module's identifier, so at first only that identifier may associate
-  with one.
+  with one. With them, [ISO/IEC 9075:1992 §12.1 SR5]: exactly one
+  procedure of a module opens each cursor it declares, which a session,
+  playing the module's part, does not check.
 - **Dynamic SQL in SQL text** [ISO/IEC 9075:1992 §17]: PREPARE, EXECUTE,
   DESCRIBE and the descriptor areas, for a module or an embedded program;
   the protocol and the Rust API prepare without them.
@@ -90,9 +92,12 @@ RULES.md when its design settles.
 
 ## SQL
 
-- **SQL-92 in full** comes first. What came after it, through SQL:2023
-  (triggers, SQL/PSM, and the rest), follows, written from the standards'
-  own text, never from memory or other products.
+- **SQL-92 in full** comes first, but for what CONFORMANCE.md lists as
+  never implemented or not claimed (RULES.md D32): character sets other
+  than the one there is, collations and translations, the module language
+  and embedded SQL. What came after it, through SQL:2023 (triggers,
+  SQL/PSM, and the rest), follows, written from the standards' own text,
+  never from memory or other products.
 - **Temporary tables, further** (RULES.md D49): CREATE INDEX on one; ALTER
   TABLE of one while sessions hold rows in it. An instance reserves
   in-memory pools of the database's budget (2 MiB for its rows, and for
@@ -100,19 +105,15 @@ RULES.md when its design settles.
   MEMORY_BUDGET, so an instance larger than the budget leaves is refused
   (SQLCODE -918): it should spill to the session's temporary files past
   WORK_MEMORY instead.
-- **GET DIAGNOSTICS, further** [§18.1 GR3g]: a syntax error or access
-  rule violation names its table only where a privilege is refused, a
-  table is not defined, or a named table has no column it names; and its
-  column only in the last case, or for a privilege on a column.
 - **CAST warnings** [§6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7, GR8]: a
   CAST that cuts a string, or pads a bit string with 0 bits, raises no
   warning, SQLSTATE 01004 or 01008, where SQL-92 raises one; a warning
   of an expression needs a way to reach the statement's completion.
-- **Constraint names outside a `<schema definition>`** (RULES.md D47): a
-  constraint's name written without a schema is taken as its table's
-  schema's, where §5.4 SR8b would take the session's default schema's,
-  which may be another; the constraint would then be in another schema
-  than its table, which the catalog does not keep.
+- **Domain constraint names outside a `<schema definition>`** (RULES.md
+  D47): a domain constraint's name written without a schema is taken as
+  its domain's schema's, and one written of another schema is refused,
+  where §5.4 SR8b takes the session's default schema, as for a table's
+  constraint.
 - **Plug-in data types, further** (RULES.md D53): no privilege is needed
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's
@@ -120,17 +121,11 @@ RULES.md when its design settles.
 - **Assertions, further** (RULES.md D51): an assertion is checked whole
   after each statement that changes a table it reads, however little it
   changed.
-- **Privileges, further:** a view's owner holds REFERENCES on it only
-  where what its columns are drawn from is known (RULES.md D52): not of a
-  view with a derived table, a join with common columns, or a set
-  operation with CORRESPONDING.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them.
 - **Roles**, which SQL-92 leaves to the implementation, as it does users
   (RULES.md D43).
-- **[X3.135-1986 §7.1 SR1]** (exactly one procedure opens each cursor) is
-  not checked.
 
 ---
 
