@@ -1583,19 +1583,38 @@ make.
   a password typed at a terminal (D46). Chosen as the most used and most reviewed async
   runtime of Rust; its `unsafe` is its own, and none is written here
   (R-SAFE-1). The core never sees it.
-- Threads. Tokio's tasks do I/O only. Statements, the steps of an
-  authentication and the end of a session run on blocking workers, at most
-  SERVER.WORKERS at once. A query's rows go from its worker to its
-  connection through a bounded channel, in batches of about
-  SERVER.BATCH_BYTES, so a client reading slowly holds a worker but never
+- Threads. Tokio's tasks do I/O only. Statements and the end of a session
+  run on blocking workers, at most SERVER.WORKERS at once; the checks of
+  an authentication on blocking threads apart, at most SERVER.MAX_LOGINS
+  at once, so clients logging in never keep statements waiting. A
+  query's rows go from its worker to its connection through a bounded
+  channel, in batches of about SERVER.BATCH_BYTES, so a client reading slowly holds a worker but never
   more than a few batches of memory. A connection runs one request at a
   time, so no more wait for a worker than there are connections.
 - A client's time is bounded: it has SERVER.LOGIN_TIMEOUT (a minute by
-  default) to begin TLS and authenticate, and once the server has waited
-  on it SERVER.IDLE_TIMEOUT (no limit by default) for a request, or to take
-  what it is sent, it is closed, its session rolled back (SQLSTATE 08006).
-  A client that stops reading frees its worker so, as one that stops
-  sending frees its connection.
+  default), from when its connection is taken, to begin TLS and
+  authenticate, the two together; and once the server has waited on it
+  SERVER.IDLE_TIMEOUT (no limit by default) for a request, or to take
+  what it is sent, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS (no limit by
+  default) for a request while its transaction is active, its locks
+  held, it is closed, its session rolled back (SQLSTATE 08006). A client
+  that stops reading frees its worker so, as one that stops sending
+  frees its connection. TCP keepalive is on for each connection taken,
+  so the system finds out a client gone without closing, at its own
+  times; setting those needs a socket option tokio does not offer.
+- A client not yet authenticated holds little: its messages are of at
+  most 16 KiB (`native::LOGIN_MESSAGE_BYTES`), and a message's memory is
+  taken as its bytes arrive, never as its header declares.
+- An operator ends a connection by its ID in
+  INFORMATION_SCHEMA.CONNECTIONS (`Server::operator`, `Operator::end`):
+  what it runs is cancelled (D44), again until it stops, and it is
+  closed, told so (SQLSTATE 08006), its session rolled back.
+- The client waits on its server as its `Timeouts` say: to connect,
+  begin TLS and for each step of the login 30 seconds by default; for
+  each reply after, no limit by default; for Terminate's close, the
+  read limit, else 60 seconds, reading no more than a reply. Its replies
+  are of at most `MAX_BODY` unless the program says fewer; its memory,
+  too, taken as their bytes arrive.
 - Extension points (R-SAFE-3): `auth::Authenticator`, a mechanism of
   authentication as an exchange of as many steps as it needs, built in
   `password` (D43) and `trust`, which takes only clients of the server's
@@ -1674,6 +1693,18 @@ is configured, seen and changed like the database's.
   secret (`Mechanism::secret`), as `password` does. A user not there is
   refused as a wrong password is, after as long, the check made against
   a decoy verifier.
+- Failed logins slow their address, never their user: a user locked out
+  after failures would let anyone lock out anyone. After a failure, the
+  next login from the address waits 100 ms, doubled with each failure
+  after, up to SERVER.LOGIN_DELAY_MS (ten seconds by default), its
+  logins waiting taking turns a delay apart; one accepted, or ten minutes
+  without a failure, forgets them. An IPv6 address counts by its /64, a
+  Unix socket's clients as one; at most 10,000 addresses are kept.
+- A session lasts while its user does: a user dropped, each session that
+  logged in as it ends at its next request, refused (SQLSTATE 28000),
+  rolled back and closed. A new password ends none: the session proved
+  who it is as it logged in, and the operator may end one that should
+  not go on (D42).
 - The authenticator `trust` takes a client as the user it names, of the
   server's own machine alone, and only if SERVER.TRUST is LOCAL. It is
   OFF by default, so every client proves who it is unless the operator
@@ -1688,6 +1719,10 @@ is configured, seen and changed like the database's.
   other only itself, never a verifier.
 - An operator sets a database up with `turboreld --dir PATH user ...`
   while no server holds it: its directory is locked by the one that does.
+  A database kept nowhere has no directory to set up: `turboreld --memory
+  --owner NAME` makes NAME its first user, and so its owner, as the
+  server starts, its password read as `user add` reads one; else it
+  would have no owner, and no one could manage it in SQL.
   A password is typed without its echo at a terminal (rpassword, as the
   command-line client reads one, D46), or else read from standard input;
   never from the command line.

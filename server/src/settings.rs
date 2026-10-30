@@ -54,8 +54,8 @@ pub const MAX_STATEMENTS: &str = "SERVER.MAX_STATEMENTS";
 pub const DEFAULT_MAX_STATEMENTS: usize = 1024;
 /// About how many bytes of rows go in one batch.
 pub const BATCH_BYTES: &str = "SERVER.BATCH_BYTES";
-/// The milliseconds a connection has to be secured and authenticated; 0
-/// for no limit.
+/// The milliseconds a connection has, from when it is taken, to be secured
+/// and authenticated, the two together; 0 for no limit.
 pub const LOGIN_TIMEOUT: &str = "SERVER.LOGIN_TIMEOUT";
 /// \[DESIGN\] The default of `LOGIN_TIMEOUT`: a minute, as PostgreSQL's
 /// authentication_timeout.
@@ -72,6 +72,26 @@ pub const SHUTDOWN_TIMEOUT: &str = "SERVER.SHUTDOWN_TIMEOUT";
 /// statement near its end finishes, and a stop asked by a service manager
 /// ends before it gives up and kills the server.
 pub const DEFAULT_SHUTDOWN_TIMEOUT: usize = 30_000;
+/// The milliseconds the server waits for the next request of a client
+/// whose transaction is active, before it closes the connection, the
+/// transaction rolled back and its locks let go; 0 for no limit.
+pub const IDLE_IN_TRANSACTION_TIMEOUT_MS: &str = "SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS";
+/// Authentications checked at once, at most: apart from `WORKERS`, so
+/// clients logging in never hold the workers statements need.
+pub const MAX_LOGINS: &str = "SERVER.MAX_LOGINS";
+/// \[DESIGN\] The most `MAX_LOGINS`: the blocking threads a server's
+/// runtime allows them, beside `MAX_WORKERS`.
+pub const MOST_LOGINS: usize = 64;
+/// \[DESIGN\] The default of `MAX_LOGINS`: a few, so a flood of logins
+/// takes no more than a few processors' time, and each is checked in the
+/// time its hashing takes.
+pub const DEFAULT_MAX_LOGINS: usize = 4;
+/// The longest, in milliseconds, a client's login waits after failed ones
+/// from its address; 0 for no wait.
+pub const LOGIN_DELAY_MS: &str = "SERVER.LOGIN_DELAY_MS";
+/// \[DESIGN\] The default of `LOGIN_DELAY_MS`: ten seconds, a sixth of
+/// `DEFAULT_LOGIN_TIMEOUT`, so a delayed client still has time to log in.
+pub const DEFAULT_LOGIN_DELAY_MS: usize = 10_000;
 
 /// \[DESIGN\] The most workers: the blocking threads a server's runtime
 /// should allow.
@@ -107,6 +127,7 @@ fn limit(name: &str, (min, max): (i128, i128), default: usize, doc: &str) -> Def
 fn definitions() -> Vec<Definition> {
     let mut all = Vec::from(started());
     all.extend(limits());
+    all.extend(waits());
     all
 }
 
@@ -163,7 +184,7 @@ fn started() -> [Definition; 8] {
 }
 
 /// The limits, read as statements and connections begin.
-fn limits() -> [Definition; 8] {
+fn limits() -> [Definition; 6] {
     let processors = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let most = i128::from(u32::MAX);
     [
@@ -183,10 +204,23 @@ fn limits() -> [Definition; 8] {
         ),
         limit(BATCH_BYTES, (1, most), DEFAULT_BATCH_BYTES, "About how many bytes of rows the server sends in one batch."),
         limit(
+            MAX_LOGINS,
+            (1, i128::try_from(MOST_LOGINS).unwrap_or(most)),
+            DEFAULT_MAX_LOGINS,
+            "Authentications the server checks at once, at most, apart from its statements' workers.",
+        ),
+    ]
+}
+
+/// The waits' limits, in milliseconds, read as they begin.
+fn waits() -> [Definition; 5] {
+    let most = i128::from(u32::MAX);
+    [
+        limit(
             LOGIN_TIMEOUT,
             (0, most),
             DEFAULT_LOGIN_TIMEOUT,
-            "The milliseconds a connection has to begin TLS and authenticate before it is closed; 0 for no limit.",
+            "The milliseconds a connection has, from when it is taken, to begin TLS and authenticate, the two together, before it is closed; 0 for no limit.",
         ),
         limit(
             IDLE_TIMEOUT,
@@ -199,6 +233,18 @@ fn limits() -> [Definition; 8] {
             (0, most),
             DEFAULT_SHUTDOWN_TIMEOUT,
             "The milliseconds a server told to stop lets each connection finish its statement, before it cancels the statements and closes the connections, their transactions rolled back; 0 for no limit.",
+        ),
+        limit(
+            IDLE_IN_TRANSACTION_TIMEOUT_MS,
+            (0, most),
+            0,
+            "The milliseconds the server waits for the next request of a client in a transaction before it closes the connection, the transaction rolled back and its locks let go; 0 for no limit.",
+        ),
+        limit(
+            LOGIN_DELAY_MS,
+            (0, most),
+            DEFAULT_LOGIN_DELAY_MS,
+            "The longest, in milliseconds, a login waits after failed ones from its client's address; 0 for no wait.",
         ),
     ]
 }

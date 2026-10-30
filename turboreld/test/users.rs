@@ -97,6 +97,43 @@ fn a_verifier_takes_the_iterations_set_as_it_starts() {
     db.close().unwrap();
 }
 
+/// Verifies: [DESIGN] RULES.md D36, D43: `--memory --owner NAME` makes
+/// NAME, of the password read before the server starts, the first user
+/// and owner of a database kept nowhere, as it is served: it proves
+/// itself by that password, sets the database's settings and manages
+/// users in SQL. Without the password read, the server does not start.
+/// Regression test (R-TEST-7): a database kept nowhere had no owner, and
+/// could have none, so no one could configure it in SQL.
+#[cfg(unix)]
+#[test]
+fn a_database_kept_nowhere_is_given_its_owner() {
+    let scratch = Scratch::new("turboreld-owner");
+    let socket = scratch.path("s");
+    let line =
+        format!("--memory --owner ann --set SERVER.HOST= --set SERVER.SOCKET={} --set SERVER.PASSWORD_ITERATIONS=10000", socket.display());
+    let unread = config(&line);
+    let failed = turboreld::run(&unread, |_| panic!("not listening"), (async {}, std::future::pending())).unwrap_err();
+    assert!(failed.contains("password is read before the server starts"), "{failed}");
+    let mut served = config(&line);
+    assert_eq!(format!("{:?}", served.owner), "Some(Owner(ann))");
+    turboreld::read_owner_password(&mut served, &mut Cursor::new(&b"ann's\n"[..])).unwrap();
+    assert_eq!(format!("{:?}", served.owner), "Some(Owner(ann))", "never the password");
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (tell, told) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        turboreld::run(&served, |_| tell.send(()).unwrap(), (async { drop(stopped.await) }, std::future::pending()))
+    });
+    told.recv().unwrap();
+    let mut c = connection::connect_local(&socket, "ann", &mut Password("ann's".into())).unwrap();
+    assert_eq!(c.authorization(), "ANN");
+    c.query("SET DATABASE SERVER.MAX_CONNECTIONS = 9").unwrap();
+    c.query("CREATE USER bob PASSWORD 'bob''s'").unwrap();
+    c.terminate().unwrap();
+    assert_eq!(connection::connect_local(&socket, "bob", &mut Password("bob's".into())).unwrap().authorization(), "BOB");
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+}
+
 /// Verifies: [DESIGN] RULES.md D43: a database whose users an operator
 /// added is served: with SERVER.TRUST OFF, its default, a client proves
 /// itself by its password over a Unix socket, and trust is not served

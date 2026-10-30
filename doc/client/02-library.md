@@ -32,7 +32,35 @@ println!("{}, as {}", conn.server(), conn.authorization());
 A connection is a session of the server's. `terminate` ends it, its
 transaction as the setting SESSION_END says. A commit that fails then,
 as one of a deferred constraint not satisfied (SQLSTATE 40002), rolls
-the transaction back, and `terminate` gives its `Failure`.
+the transaction back, and `terminate` gives its `Failure`. It waits for
+the server to close at most as the connection's read timeout says, else
+`TERMINATE_WITHIN`, 60 seconds.
+
+## Timeouts
+
+`timeouts::Timeouts` says how long a connection waits on its server:
+`connect`, to connect, begin TLS, and for each step of the login, 30
+seconds by default (`CONNECT_WITHIN`); `read`, for each read or write of
+a request or reply after, no limit by default, as a statement may run
+as long as it must. `connect`, `connect_local`, `tls::connect` and
+`connect_to` wait as the default says; `target::connect_to_within` takes
+`Timeouts` of its own, and `set_read_timeout` changes a connection's
+read timeout. A wait that runs out loses the connection (SQLSTATE
+08006), saying the server did not answer in time. A connection over a
+stream given to `Connection::open` waits as its maker set the stream to.
+
+```rust
+use std::time::Duration;
+use turborel_client::target::{Target, connect_to_within};
+use turborel_client::timeouts::Timeouts;
+
+let within = Timeouts { connect: Some(Duration::from_secs(5)), read: Some(Duration::from_secs(60)) };
+let mut conn = connect_to_within(&Target::Tcp("127.0.0.1:7422".parse()?), "ANN", &mut Trust, within)?;
+```
+
+A reply is taken up to `MAX_BODY`, 16 MiB, the protocol's longest;
+`set_max_body` takes replies of at most as many bytes as it says, a
+longer one losing the connection.
 
 ## Running statements
 

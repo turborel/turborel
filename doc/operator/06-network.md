@@ -57,8 +57,11 @@ refused.
 | SERVER.MAX_STATEMENTS | prepared statements of a connection, 1,024 |
 | SERVER.MAX_MESSAGE_BYTES | the longest message a client sends, 16 MiB |
 | SERVER.BATCH_BYTES | about the bytes of rows in a batch sent, 64 KiB |
-| SERVER.LOGIN_TIMEOUT | the milliseconds a client has to begin TLS and authenticate, 60,000 |
+| SERVER.LOGIN_TIMEOUT | the milliseconds a client has to begin TLS and authenticate, the two together, from when the connection is taken, 60,000 |
+| SERVER.MAX_LOGINS | logins checked at once, apart from SERVER.WORKERS, 4 |
+| SERVER.LOGIN_DELAY_MS | the longest a login waits after failed ones from its address, 10,000; 0, no wait |
 | SERVER.IDLE_TIMEOUT | the milliseconds the server waits on a client before closing it, its transaction rolled back; 0, no limit |
+| SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | the milliseconds the server waits for the next request of a client whose transaction is active, before closing it, its transaction rolled back; 0, no limit |
 
 A connection past SERVER.MAX_CONNECTIONS is refused, told why once its
 TLS, if any, is begun:
@@ -72,6 +75,57 @@ is closed at once, told nothing, so clients that flood the server hold
 no more of it than that. Either way the diagnostics are told, as
 `connections_refused`, at most once a minute
 ([Diagnostics](08-diagnostics.md)).
+
+## Logins
+
+A client logging in holds little of the server. Until it is
+authenticated, it may send no message longer than 16 KiB, or
+SERVER.MAX_MESSAGE_BYTES if that is less, and a message's memory is
+taken as its bytes arrive, not as its length says. Its password is
+checked, a slow hash on purpose, on threads of the server's apart from
+those statements run on, at most SERVER.MAX_LOGINS at once: clients
+that log in, or try to, never keep the statements of those logged in
+waiting.
+
+After a login fails, the next from the same address waits before it is
+checked: 100 ms, doubled with each failure after, up to
+SERVER.LOGIN_DELAY_MS. Logins of one address waiting take turns, one a
+delay, so connections in parallel guess no faster. A login accepted
+forgets the address's failures, and so do ten minutes without one. An
+IPv6 address counts by its /64; the clients of a Unix socket count as
+one address. A user is never locked out: that would let anyone lock out
+anyone.
+
+## Clients gone
+
+A client whose machine or network fails never closes its connection,
+and its session would hold its transaction's locks while the server
+waited. The server turns TCP keepalive on for each connection it takes,
+so the system finds such a client out, and the server rolls its
+session back; the system's own times apply, on Linux two hours idle,
+then nine probes 75 seconds apart, unless its operator sets them
+shorter. SERVER.IDLE_TIMEOUT closes any client that keeps the server
+waiting longer; SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS closes, sooner,
+one that sends nothing while its transaction is active, its locks held:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 08006): the connection went past SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS, 60000 ms, with its transaction active and nothing from the client: closed
+```
+
+## Ending a connection
+
+A program that serves a database ends a connection by its ID in
+INFORMATION_SCHEMA.CONNECTIONS, through `Server::operator`, taken before
+it serves: `Operator::end(ID)` cancels the statement the connection runs,
+as a client's cancel does, then closes it, its session rolled back; the
+client is told:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 08006): the server's operator ended the connection
+```
+
+A connection whose user is dropped ends at its next request
+([Users](05-users.md#a-users-sessions)).
 
 The database's owner sees the connections served, and the server's
 counts, in INFORMATION_SCHEMA.CONNECTIONS and INFORMATION_SCHEMA.SERVER

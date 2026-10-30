@@ -17,6 +17,7 @@ use turborel_server::listening;
 use turborel_server::native::Native;
 use turborel_server::server::{Protocol, Server};
 use turborel_server::settings::PORT;
+use turborel_server::shown::Operator;
 
 /// Sets `db`'s whole-number setting `name` to `n`.
 pub fn set(db: &Database, name: &str, n: i128) {
@@ -31,6 +32,8 @@ pub struct Running {
     pub address: SocketAddr,
     /// Where it listens.
     pub names: Vec<String>,
+    /// What ends its connections at an operator's word.
+    pub operator: Operator,
     stop: Option<oneshot::Sender<()>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -46,6 +49,7 @@ pub fn start_with(db: &Database, settings: &[(&str, i128)], more: Vec<Arc<dyn Au
     for (name, n) in settings {
         set(db, name, *n);
     }
+    let operator = server.operator();
     server.add_authenticator(Arc::new(Trusted)).unwrap();
     for authenticator in more {
         server.add_authenticator(authenticator).unwrap();
@@ -61,7 +65,7 @@ pub fn start_with(db: &Database, settings: &[(&str, i128)], more: Vec<Arc<dyn Au
         });
     });
     let names = told.recv().unwrap();
-    Running { address: names.first().unwrap().parse().unwrap(), names, stop: Some(stop), thread: Some(thread) }
+    Running { address: names.first().unwrap().parse().unwrap(), names, operator, stop: Some(stop), thread: Some(thread) }
 }
 
 /// A server of `db`, its settings `set` as named, trusting clients of this

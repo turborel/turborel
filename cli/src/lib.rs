@@ -18,7 +18,8 @@ use turborel::error::SqlState;
 
 use turborel_client::agent::Connected;
 use turborel_client::connection::{Mechanism, Password, Trust};
-use turborel_client::target::{Target, connect_to};
+use turborel_client::target::{Target, connect_to_within};
+use turborel_client::timeouts::Timeouts;
 use turborel_client::tls;
 
 /// A failure, as the server reports it.
@@ -46,6 +47,12 @@ pub const USAGE: &str = "usage: turborel [options]
   -f, --file FILE        run FILE's statements; more than once for more
       --stop-on-error    end the run at the first statement that fails
       --null TEXT        show a null value as TEXT (default nothing)
+      --connect-timeout SECONDS
+                         wait at most SECONDS to connect and log in (default 30;
+                         0 for no limit)
+      --read-timeout SECONDS
+                         wait at most SECONDS for each reply of the server
+                         (default 0, no limit)
       --help             print this
       --version          print the release
 
@@ -92,7 +99,7 @@ pub fn banner(options: &Options, connection: &Connected) -> String {
 /// Why it cannot: the server cannot be reached, or refuses the user.
 pub fn connect(options: &Options, typed: impl FnOnce() -> std::io::Result<String>) -> Result<Connected, String> {
     let mut mechanism = mechanism(&options.credentials, typed)?;
-    reach(&options.server, &options.user, mechanism.as_mut()).map_err(|unreached| match unreached {
+    reach(&options.server, (&options.user, mechanism.as_mut()), options.timeouts).map_err(|unreached| match unreached {
         Unreached::Address(why) => why,
         Unreached::Refused(failure) => failure.to_string(),
     })
@@ -115,14 +122,15 @@ enum Unreached {
     Refused(Failure),
 }
 
-/// Connects to `server` as `user`, proved by `mechanism`: each of its
-/// addresses tried in turn, until one is connected to or refuses. If none
-/// is reached, the failure says why of each: one address's, as a TLS
-/// handshake failed, is not hidden by another's, as one nothing listens at.
-fn reach(server: &Server, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connected, Unreached> {
+/// Connects to `server` as `user`, proved by `mechanism`, waiting on it as
+/// `timeouts` say: each of its addresses tried in turn, until one is
+/// connected to or refuses. If none is reached, the failure says why of
+/// each: one address's, as a TLS handshake failed, is not hidden by
+/// another's, as one nothing listens at.
+fn reach(server: &Server, (user, mechanism): (&str, &mut dyn Mechanism), timeouts: Timeouts) -> Result<Connected, Unreached> {
     let mut failures: Vec<(String, Failure)> = Vec::new();
     for target in targets(server).map_err(Unreached::Address)? {
-        match connect_to(&target, user, mechanism) {
+        match connect_to_within(&target, user, mechanism, timeouts) {
             Ok(connection) => return Ok(connection),
             Err(failure) => {
                 // A refusal is the server's answer: no other address is tried.

@@ -19,11 +19,28 @@ The owner cannot be dropped until another owns the database.
 What a user may do is the privileges granted to its name, as of any
 authorization identifier ([GRANT](../sql/statements/grant.md)).
 
+## A user's sessions
+
+A session lasts while its user does. Once a user is dropped, each
+session of it ends at its next statement, which is refused, its
+transaction rolled back and its connection closed:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 28000): the user BOB was dropped: its connections end
+```
+
+A new password ends no session: it proved who it is as it logged in,
+and the next login takes the new password. To end a session at once,
+its operator ends its connection ([Connections](06-network.md#ending-a-connection)).
+
 ## Passwords
 
 A password is sent only over TLS or a Unix socket, never in the clear
 over TCP: the client refuses to send it so, and the server to take it. A client gives a wrong user or password the same answer, after
-as long: `the user or the password is wrong`, SQLSTATE 28000.
+as long: `the user or the password is wrong`, SQLSTATE 28000. After a
+failed login, the next from the same address waits, longer with each
+failure, up to SERVER.LOGIN_DELAY_MS, ten seconds by default
+([Logins](06-network.md#logins)); no user is ever locked out.
 
 ## Trusted local clients
 
@@ -60,3 +77,21 @@ BOB
 A name is an identifier, so `ann` is ANN. Each change of a user, or of
 the owner, is told to the diagnostics, `user_changed` and
 `owner_changed`; no verifier ever is.
+
+## The owner of a database kept nowhere
+
+A database kept nowhere, served by `turboreld --memory`, has no
+directory to set up first. `--owner NAME` makes NAME its first user, and
+so its owner, as the server starts; its password is typed without its
+echo at a terminal, or else read from standard input, as `user add`
+reads one. Without it, such a database has no user, so no owner: no one
+could manage its users or set its settings in SQL.
+
+```
+$ turboreld --memory --owner ann --set SERVER.SOCKET=/run/turborel/socket
+password:
+turboreld: listening at 127.0.0.1:7422, /run/turborel/socket
+```
+
+`--owner` is for `--memory` alone: a database kept in a directory is
+given its owner by `user add NAME --owner`.

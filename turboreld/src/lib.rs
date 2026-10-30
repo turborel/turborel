@@ -40,6 +40,8 @@ pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
 
   --dir PATH             serve the database kept in PATH, created if there is none
   --memory               serve a database kept nowhere, lost when the server stops
+  --owner NAME           with --memory: make NAME its first user and owner as the
+                         server starts, the password typed or read from standard input
   --set NAME=VALUE       set the database's setting NAME as the server starts, kept
                          with the database; more than once for more
   --log FILE             append the diagnostics, a line of JSON each, to FILE
@@ -66,11 +68,18 @@ The server's settings, beside the database's:
   SERVER.TLS_CERTIFICATE the PEM file of the server's certificate chain
   SERVER.TLS_KEY         the PEM file of the server's private key
   SERVER.WORKERS         statements run at once (default: one per processor)
-  SERVER.LOGIN_TIMEOUT   milliseconds a client has to authenticate (default 60000; 0 for no limit)
+  SERVER.LOGIN_TIMEOUT   milliseconds a client has to begin TLS and authenticate
+                         (default 60000; 0 for no limit)
+  SERVER.MAX_LOGINS      authentications checked at once, apart from the workers (default 4)
+  SERVER.LOGIN_DELAY_MS  the longest a login waits after failed ones from its address
+                         (default 10000; 0 for no wait)
   SERVER.IDLE_TIMEOUT    milliseconds the server waits on a client, for a request or to
                          take its rows, before closing it and rolling it back (default 0, none)
   SERVER.SHUTDOWN_TIMEOUT  milliseconds a server told to stop lets statements finish,
                          before it cancels them (default 30000; 0 for no limit)
+  SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS  milliseconds the server waits for a request of a
+                         client in a transaction, before closing it and rolling it back
+                         (default 0, none)
   SERVER.MAX_CONNECTIONS connections taken at once (default 256)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)
@@ -133,6 +142,9 @@ pub struct Config {
     pub log: Option<PathBuf>,
     /// The directory of the encryption keys, if any.
     pub keys: Option<PathBuf>,
+    /// The owner made of a database kept nowhere as it is served, if any
+    /// (`users.rs`).
+    pub owner: Option<Owner>,
 }
 
 /// What the command line `args`, without the program's name, asks for.
@@ -142,7 +154,7 @@ pub struct Config {
 /// What is wrong with it, for the operator.
 pub fn parse(args: &[String]) -> Result<Command, String> {
     let (mut store, mut settings, mut user) = (None, Vec::new(), None);
-    let (mut log, mut keys) = (None, None);
+    let (mut log, mut keys, mut owner) = (None, None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let mut value = || rest.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -154,6 +166,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--set" => settings.push(setting(value()?)?),
             "--log" => log = Some(PathBuf::from(value()?)),
             "--keys" => keys = Some(PathBuf::from(value()?)),
+            "--owner" => owner = Some(Owner { name: value()?.clone(), password: None }),
             "user" => {
                 user = Some(parse_user(rest.as_slice())?);
                 break;
@@ -162,7 +175,12 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         }
     }
     let store = store.ok_or_else(|| format!("name --dir or --memory\n\n{USAGE}"))?;
-    let config = Config { store, settings, log, keys };
+    if owner.is_some() && (store != Store::Memory || user.is_some()) {
+        return Err(
+            "--owner makes the owner of a database kept nowhere, served with --memory: in a directory, user add NAME --owner".into()
+        );
+    }
+    let config = Config { store, settings, log, keys, owner };
     Ok(match user {
         Some(command) => Command::User(config, command),
         None => Command::Serve(config),
@@ -258,6 +276,7 @@ fn within(config: &Config, runtime: Option<&Runtime>, work: impl FnOnce(Server) 
         // again, so they take SERVER.PASSWORD_ITERATIONS as given here.
         late.iter().try_for_each(set)?;
         db.set_credentials(Box::new(Pbkdf2::of(&db)));
+        config.owner.as_ref().map_or(Ok(()), |owner| users::make_owner(&db, owner))?;
         work(server)
     });
     let closed = match &config.store {
@@ -374,7 +393,7 @@ pub async fn signalled() {
 
 mod users;
 
-pub use users::{UserCommand, parse_user, run_user};
+pub use users::{Owner, UserCommand, parse_user, read_owner_password, run_user};
 
 // Unit tests: the command line read (RULES.md R-TEST-1).
 #[cfg(test)]

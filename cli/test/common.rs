@@ -16,6 +16,7 @@ pub fn options(server: &Running, inputs: Vec<Input>) -> Options {
         inputs,
         stop_on_error: false,
         null: String::new(),
+        timeouts: turborel_client::timeouts::Timeouts::default(),
     }
 }
 

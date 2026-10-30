@@ -27,6 +27,8 @@ as a table as they come, and each statement's outcome.
 | `-f`, `--file FILE` | run FILE's statements; more than once for more |
 | `--stop-on-error` | end the run at the first statement that fails |
 | `--null TEXT` | show a null value as TEXT; nothing by default |
+| `--connect-timeout SECONDS` | wait at most SECONDS to connect, begin TLS and for each step of the login; 30 by default, 0 for no limit |
+| `--read-timeout SECONDS` | wait at most SECONDS for each reply of the server; 0, no limit, by default, as a statement may run long |
 | `--help` | print the usage |
 | `--version` | print the release |
 
@@ -129,6 +131,13 @@ typed session the client then prompts again; a run of `-c`, `-f` or
 piped input ends there. Before the client has connected, Ctrl-C ends it.
 A cancel the server does not answer within 10 seconds is given up, and
 Ctrl-C may be pressed again.
+
+A server that does not answer within `--read-timeout` loses the
+connection, and the statement fails:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 08006): cannot receive: the server did not answer in time (Resource temporarily unavailable (os error 35))
+```
 
 ```
 turborel: SQLCODE -920 (SQLSTATE TB920): the statement was cancelled

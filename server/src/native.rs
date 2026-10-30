@@ -11,16 +11,23 @@
 //! and the worker stops fetching. The session ends on a worker too: as
 //! SESSION_END says once the client terminates it, a commit that fails
 //! sent as the client's error before the connection closes; rolled back
-//! if the connection ends otherwise, lost or failed or cut by the server
-//! stopping, as a direct invocation of SQL that terminated unexpectedly
-//! [ISO/IEC 9075:1992 §20.1 GR2a].
+//! if the connection ends otherwise, lost or failed, cut by the server
+//! stopping or ended by its operator, as a direct invocation of SQL that
+//! terminated unexpectedly [ISO/IEC 9075:1992 §20.1 GR2a].
 //!
-//! A connection has SERVER.LOGIN_TIMEOUT to authenticate, and is closed,
+//! A connection has SERVER.LOGIN_TIMEOUT to authenticate, in messages of
+//! at most `LOGIN_MESSAGE_BYTES`, its checks run apart from the workers
+//! and slowed after failures from its address (`logins.rs`). It is closed,
 //! its session rolled back, once it has kept the server waiting
-//! SERVER.IDLE_TIMEOUT for a request, or to take what it is sent.
+//! SERVER.IDLE_TIMEOUT for a request, or to take what it is sent, or
+//! SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS for a request while its
+//! transaction is active. A session of a user is ended at its next request
+//! once the user is dropped (RULES.md D43).
 
 mod requests;
 mod wire;
+
+use std::future::Future;
 
 use requests::{Held, Work};
 use tokio::sync::mpsc;
@@ -30,15 +37,27 @@ use turborel::value::types::TypeRegistry;
 use turborel_protocol::{Reply, Request, VERSION, broken};
 use wire::Wire;
 
-use crate::auth::{Peer, Step};
+use crate::auth::{Exchange, Peer, Step};
 use crate::server::{Connection, Protocol, Registered, Services, Serving};
 use crate::settings;
 use crate::shown::Present;
 use crate::transport::Transport;
 
-/// \[DESIGN\] Batches of rows in flight between a worker and its
-/// connection.
+/// \[DESIGN\] Batches of replies in flight between a worker and its
+/// connection: the replies a worker sends before it waits for the
+/// connection to take them.
 const IN_FLIGHT: usize = 4;
+
+/// \[DESIGN\] How often a statement of a connection its operator ended is
+/// cancelled again until it stops: a cancel made before it began does
+/// nothing (RULES.md D44). As often as a wait for a lock looks.
+const CANCEL_AGAIN: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// \[DESIGN\] The longest message taken from a client before it is
+/// authenticated, or SERVER.MAX_MESSAGE_BYTES if that is less: room for
+/// Hello, an Answer or a Cancel, each a user's name, a mechanism's and
+/// its proof; so a connection not yet authenticated holds little memory.
+pub const LOGIN_MESSAGE_BYTES: u32 = 16 * 1024;
 
 /// \[DESIGN\] The native protocol.
 #[derive(Debug, Clone, Copy, Default)]
@@ -61,25 +80,60 @@ impl Protocol for Native {
     }
 }
 
-/// The client's next request, unless the server stops first.
-async fn next(wire: &mut Wire, services: &Services) -> Result<Request> {
+/// The ending of a connection by the server's operator (SQLSTATE 08006).
+fn ended() -> SqlError {
+    broken("[DESIGN] the server's operator ended the connection")
+}
+
+/// The client's next request, unless the server stops, or its operator
+/// ends the connection, first.
+async fn next(wire: &mut Wire, services: &Services, present: &Present) -> Result<Request> {
     tokio::select! {
-        request = wire.receive() => request,
+        biased;
+        () = present.ended() => Err(ended()),
         () = services.stopping() => Err(broken("[DESIGN] the server is stopping")),
+        request = wire.receive() => request,
     }
+}
+
+/// What `worked` gives back, once it is done: if the operator ends the
+/// connection first, what its session runs cancelled, again every
+/// `CANCEL_AGAIN` until it stops.
+async fn stopped<T>(worked: impl Future<Output = T>, present: &Present) -> T {
+    tokio::pin!(worked);
+    tokio::select! {
+        back = &mut worked => return back,
+        () = present.ended() => {}
+    }
+    loop {
+        present.cancel();
+        if let Ok(back) = tokio::time::timeout(CANCEL_AGAIN, &mut worked).await {
+            return back;
+        }
+    }
+}
+
+/// A client authenticated: its session, its cancel key, registered while
+/// this lives, and the user it logged in as, if that was a user.
+struct Admitted {
+    session: Session,
+    key: Registered,
+    user: Option<String>,
 }
 
 /// Serves `connection` to its end.
 async fn serve(connection: Connection) {
-    let Connection { transport, peer, services, present } = connection;
+    let Connection { transport, peer, services, present, arrived } = connection;
     let max_body = u32::try_from(settings::count(services.database(), settings::MAX_MESSAGE_BYTES)).unwrap_or(u32::MAX);
     // A client's values of types beyond the standard read as the
     // database's (RULES.md D53).
     let types = services.database().types().unwrap_or_default();
-    let mut wire = Wire::new(transport, max_body, types);
-    let ended = match services.login(welcome(&mut wire, (&peer, &present), &services)).await {
-        // The key cancels the session's statements while it lives.
-        Ok(Some((session, _key))) => run(&mut wire, (&services, &present), session).await,
+    let mut wire = Wire::new(transport, max_body.min(LOGIN_MESSAGE_BYTES), types);
+    let ended = match services.login(arrived, welcome(&mut wire, (&peer, &present), &services)).await {
+        Ok(Some(admitted)) => {
+            wire.set_max_body(max_body);
+            run(&mut wire, (&services, &present), admitted).await
+        }
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
@@ -107,8 +161,8 @@ fn refused(msg: String) -> SqlError {
 
 /// The client's first request: Hello, its session once authenticated, with
 /// its cancel key registered; or a Cancel, done here, and nothing more.
-async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: &Services) -> Result<Option<(Session, Registered)>> {
-    match next(wire, services).await? {
+async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: &Services) -> Result<Option<Admitted>> {
+    match next(wire, services, present).await? {
         Request::Cancel(key) => {
             services.cancel(&key);
             Ok(None)
@@ -130,13 +184,14 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
 
 /// Authenticates the client of `hello`: its version, user, mechanism and
 /// first bytes; its session, once Ready is sent with its cancel key, and
-/// its user shown (`Present`).
+/// its user shown (`Present`), its statements cancelled as an operator
+/// ends it.
 async fn authenticate(
     wire: &mut Wire,
     (peer, present): (&Peer, &Present),
     services: &Services,
     hello: (u32, String, String, Vec<u8>),
-) -> Result<(Session, Registered)> {
+) -> Result<Admitted> {
     let (version, user, mechanism, initial) = hello;
     if version != VERSION {
         return Err(rejected(format!("[DESIGN] protocol version {version} is not served; this server speaks {VERSION}")));
@@ -146,11 +201,35 @@ async fn authenticate(
     let user = turborel::lexer::authorization_identifier(&user).map_err(|e| refused(format!("[DESIGN] {}", e.msg)))?;
     let authenticator =
         services.authenticator(&mechanism).ok_or_else(|| refused(format!("[DESIGN] mechanism {mechanism} is not served")))?;
-    let mut exchange = authenticator.begin(&user, peer);
-    let mut input = initial;
-    let authorization = loop {
-        let (taken, step) = services
-            .run(move || {
+    let exchange = authenticator.begin(&user, peer);
+    let authorization = exchanged(wire, (peer, present), services, (exchange, initial)).await?;
+    let db = services.database();
+    // A user's session lasts while the user does (RULES.md D43).
+    let member = db.is_user(&authorization)?.then(|| authorization.clone());
+    let session = db.session(&authorization);
+    let key = services.register_cancel(session.canceller())?;
+    present.stoppable(session.canceller());
+    present.authenticated(&authorization);
+    wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
+    Ok(Admitted { session, key, user: member })
+}
+
+/// The authorization identifier `exchange` accepts, given the client's
+/// `initial` bytes and its answers to the challenges sent it: each step
+/// checked apart from the workers, once the client's address has waited
+/// its turn after failed logins, its failure counted (`logins.rs`).
+async fn exchanged(
+    wire: &mut Wire,
+    (peer, present): (&Peer, &Present),
+    services: &Services,
+    (begun, initial): (Box<dyn Exchange>, Vec<u8>),
+) -> Result<String> {
+    let (logins, db) = (services.logins(), services.database());
+    logins.wait_turn(db, peer).await;
+    let (mut exchange, mut input) = (begun, initial);
+    loop {
+        let (taken, step) = logins
+            .check(db, move || {
                 let step = exchange.step(&input);
                 (exchange, step)
             })
@@ -158,19 +237,20 @@ async fn authenticate(
         exchange = taken;
         match step {
             Step::Challenge(challenge) => wire.send_now(&Reply::Challenge(challenge)).await?,
-            Step::Accept(authorization) => break authorization,
-            Step::Refuse(why) => return Err(refused(why)),
+            Step::Accept(authorization) => {
+                logins.accepted(peer);
+                return Ok(authorization);
+            }
+            Step::Refuse(why) => {
+                logins.failed(db, peer);
+                return Err(refused(why));
+            }
         }
-        let Request::Answer(answer) = next(wire, services).await? else {
+        let Request::Answer(answer) = next(wire, services, present).await? else {
             return Err(broken("[DESIGN] a challenge is answered with Answer"));
         };
         input = answer;
-    };
-    let session = services.database().session(&authorization);
-    let key = services.register_cancel(session.canceller())?;
-    present.authenticated(&authorization);
-    wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
-    Ok((session, key))
+    }
 }
 
 /// The work `request` asks of the session; none for Terminate.
@@ -188,22 +268,45 @@ fn work_of(request: Request) -> Result<Option<Work>> {
     }))
 }
 
-/// Runs the client's requests in `session` until it terminates, the
-/// connection fails or the server stops; then ends the session on a
+/// The work of the client's next request, none for Terminate: waited for
+/// SERVER.IDLE_TIMEOUT, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too if
+/// `in_transaction`. Refused (SQLSTATE 28000) if the session is `user`'s,
+/// and the user has been dropped since it logged in.
+async fn next_work(
+    wire: &mut Wire,
+    (services, present): (&Services, &Present),
+    in_transaction: bool,
+    user: Option<&str>,
+) -> Result<Option<Work>> {
+    let waiting = next(wire, services, present);
+    let request = if in_transaction { services.idle_in_transaction(waiting).await } else { services.idle(waiting).await };
+    let work = work_of(request?)?;
+    let Some(name) = user else { return Ok(work) };
+    if services.database().is_user(name)? {
+        return Ok(work);
+    }
+    Err(refused(format!("[DESIGN] the user {name} was dropped: its connections end")))
+}
+
+/// Runs the client's requests in `admitted`'s session until it terminates,
+/// the connection fails or the server stops; then ends the session on a
 /// worker: as SESSION_END says if the client terminated it, its failure
 /// returned to be sent before the connection closes; else rolled back
 /// [ISO/IEC 9075:1992 §20.1 GR2a]. Shown running while a request is.
-async fn run(wire: &mut Wire, (services, present): (&Services, &Present), opened: Session) -> Result<()> {
-    let mut held = Some(Held::new(opened));
+async fn run(wire: &mut Wire, (services, present): (&Services, &Present), admitted: Admitted) -> Result<()> {
+    // The key cancels the session's statements while it lives.
+    let Admitted { session, key: _key, user } = admitted;
+    let mut held = Some(Held::new(session));
     let ended = loop {
-        let work = match services.idle(next(wire, services)).await.and_then(work_of) {
+        let in_transaction = held.as_ref().is_some_and(|h| h.session.transaction().is_some());
+        let work = match next_work(wire, (services, present), in_transaction, user.as_deref()).await {
             Ok(Some(work)) => work,
             Ok(None) => break Ok(()),
             Err(e) => break Err(e),
         };
         let Some(lent) = held.take() else { break Err(broken("[DESIGN] the session is gone")) };
         present.running(true);
-        let exchanged = exchange(wire, services, lent, work).await;
+        let exchanged = exchange(wire, (services, present), lent, work).await;
         present.running(false);
         match exchanged {
             Ok(back) => held = Some(back),
@@ -239,18 +342,19 @@ async fn end(services: &Services, held: Held) -> Result<()> {
         .await
 }
 
-/// Does `work` with `lent` on a worker, sending its replies as they come:
-/// what it holds, given back.
-async fn exchange(wire: &mut Wire, services: &Services, lent: Held, work: Work) -> Result<Held> {
+/// Does `work` with `lent` on a worker, sending its replies as they come,
+/// until the operator ends the connection: what it holds, given back.
+async fn exchange(wire: &mut Wire, (services, present): (&Services, &Present), lent: Held, work: Work) -> Result<Held> {
     let (sender, mut receiver) = mpsc::channel(IN_FLIGHT);
     let db = services.database();
     let (batch, max_statements) = (settings::count(db, settings::BATCH_BYTES), settings::count(db, settings::MAX_STATEMENTS));
     let mut held = lent;
-    let running = services.run(move || {
+    let worked = services.run(move || {
         held.handle(work, (&sender, batch), max_statements);
         held
     });
-    let forward = async move {
+    let running = stopped(worked, present);
+    let forwarding = async move {
         while let Some(reply) = receiver.recv().await {
             // A client that stops taking what it is sent holds a worker:
             // it is given SERVER.IDLE_TIMEOUT, as one sending nothing is.
@@ -260,6 +364,14 @@ async fn exchange(wire: &mut Wire, services: &Services, lent: Held, work: Work) 
             }
         }
         Ok::<(), SqlError>(())
+    };
+    // Ended, the replies are let go, so a worker sending them stops: what
+    // it ran is cancelled (`Operator::end`).
+    let forward = async {
+        tokio::select! {
+            forwarded = forwarding => forwarded,
+            () = present.ended() => Err(ended()),
+        }
     };
     let (back, forwarded) = tokio::join!(running, forward);
     let back = back?;

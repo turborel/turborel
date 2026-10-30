@@ -6,10 +6,12 @@
 //!
 //! Every failure is a `Failure`, as the server would report it: the
 //! server's own, or one of the connection (SQLCODE -919, SQLSTATE class
-//! 08), after which the connection takes no more.
+//! 08), after which the connection takes no more. How long it waits on
+//! its server, its `Timeouts` say (`timeouts.rs`).
 
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use turborel::error::{Code, SqlError, SqlState};
 use turborel::storage::Row;
@@ -18,6 +20,11 @@ use turborel_protocol::{CancelKey, Column, Completed, Failure, HEADER, MAX_BODY,
 
 use crate::cancel::Canceller;
 use crate::target::Target;
+use crate::timeouts::{Socket, TERMINATE_WITHIN, Timeouts, io_failed, tcp_to};
+
+/// \[DESIGN\] The most of a reply's body reserved before its bytes
+/// arrive; past it, the buffer grows as they do.
+const RESERVED: usize = 64 * 1024;
 
 /// What a client's errors are: what the server reports, as it reports it.
 pub type Result<T> = std::result::Result<T, Failure>;
@@ -156,8 +163,12 @@ pub struct Connection<S: Read + Write> {
     authorization: String,
     /// The server's product and version, as Ready gave them.
     server: String,
-    /// The longest body read.
+    /// The longest body read: `MAX_BODY` unless `set_max_body` says.
     max_body: u32,
+    /// A handle on its socket, to bound its waits, if it was made here.
+    socket: Option<Socket>,
+    /// How long it waits on its server, as it was made.
+    timeouts: Timeouts,
     /// Set once the connection is lost: it takes no more.
     lost: Option<Failure>,
     /// What cancels its statements, as Ready gave it.
@@ -175,23 +186,26 @@ pub struct Connection<S: Read + Write> {
 }
 
 /// Connects to the server at `address` as `user`, authenticated by
-/// `mechanism`.
+/// `mechanism`, waiting as `Timeouts::default` says: to connect and log
+/// in, `CONNECT_WITHIN` each step; then without limit.
 ///
 /// # Errors
 ///
-/// As `Connection::open`; a connection failure if none can be made;
-/// SQLSTATE 28000, before any is made, for a secret mechanism, as
+/// As `Connection::open`; a connection failure if none can be made, in
+/// time; SQLSTATE 28000, before any is made, for a secret mechanism, as
 /// `Password`, over plain TCP.
 pub fn connect(address: impl ToSocketAddrs, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<TcpStream>> {
     in_the_clear(mechanism)?;
-    let stream = TcpStream::connect(address).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
+    let timeouts = Timeouts::default();
+    let stream = tcp_to(address, timeouts.connect)?;
     stream.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
     let server = stream.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
-    Ok(Connection::open(stream, user, mechanism)?.reached_by(Target::Tcp(server)))
+    let socket = Socket::tcp(&stream)?;
+    Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(Target::Tcp(server)))
 }
 
 /// Connects to the server at the Unix socket `path` as `user`,
-/// authenticated by `mechanism`.
+/// authenticated by `mechanism`, waiting as `Timeouts::default` says.
 ///
 /// # Errors
 ///
@@ -202,8 +216,10 @@ pub fn connect_local(
     user: &str,
     mechanism: &mut dyn Mechanism,
 ) -> Result<Connection<std::os::unix::net::UnixStream>> {
-    let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
-    Ok(Connection::open(stream, user, mechanism)?.reached_by(Target::Local(path.to_path_buf())))
+    let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
+    let socket = Socket::local(&stream)?;
+    let opened = Connection::open_timed(stream, socket, (user, mechanism), Timeouts::default())?;
+    Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
 
 impl<S: Read + Write> Connection<S> {
@@ -223,6 +239,8 @@ impl<S: Read + Write> Connection<S> {
             authorization: String::new(),
             server: String::new(),
             max_body: MAX_BODY,
+            socket: None,
+            timeouts: Timeouts { connect: None, read: None },
             lost: None,
             key: None,
             reach: None,
@@ -256,6 +274,48 @@ impl<S: Read + Write> Connection<S> {
                 }
             }
         }
+    }
+
+    /// Opens a connection over `stream`, as `open`, its waits bounded
+    /// through `socket`, a handle on its socket, as `timeouts` say: each
+    /// step of the login by `connect`, each after by `read`.
+    ///
+    /// # Errors
+    ///
+    /// As `open`'s; a connection failure if a wait runs out.
+    pub(crate) fn open_timed(
+        stream: S,
+        socket: Socket,
+        (user, mechanism): (&str, &mut dyn Mechanism),
+        timeouts: Timeouts,
+    ) -> Result<Connection<S>> {
+        socket.limit(timeouts.connect)?;
+        let mut connection = Connection::open(stream, user, mechanism)?;
+        socket.limit(timeouts.read)?;
+        connection.socket = Some(socket);
+        connection.timeouts = timeouts;
+        Ok(connection)
+    }
+
+    /// How long each read or write of the server waits from now on, as
+    /// `Timeouts::read`; none, no limit.
+    ///
+    /// # Errors
+    ///
+    /// A connection failure if the system cannot set it, or the connection
+    /// was made over a stream given to `open`, whose maker bounds it.
+    pub fn set_read_timeout(&mut self, within: Option<Duration>) -> Result<()> {
+        let Some(socket) = &self.socket else { return Err(failed("[DESIGN] a stream given to open is bounded by its maker")) };
+        socket.limit(within)?;
+        self.timeouts.read = within;
+        Ok(())
+    }
+
+    /// Takes replies of at most `bytes` bytes from now on: `MAX_BODY`, the
+    /// protocol's longest, unless this says. A longer one loses the
+    /// connection (SQLSTATE 08006).
+    pub fn set_max_body(&mut self, bytes: u32) {
+        self.max_body = bytes;
     }
 
     /// The session's authorization identifier, as the server authenticated
@@ -368,18 +428,25 @@ impl<S: Read + Write> Connection<S> {
     }
 
     /// Ends the connection, once the server has ended its session as
-    /// SESSION_END says and closed it.
+    /// SESSION_END says and closed it: waiting for it at most as its read
+    /// timeout says, else `TERMINATE_WITHIN`, and taking at most a reply's
+    /// bytes.
     ///
     /// # Errors
     ///
-    /// A connection failure, if Terminate cannot be sent; the server's
-    /// error, if it sends one rather than close: a commit that fails as
-    /// SESSION_END ends the session, its transaction rolled back (SQLSTATE
-    /// 40002 for a deferred constraint not satisfied).
+    /// A connection failure, if Terminate cannot be sent, or the server
+    /// does not close in time; the server's error, if it sends one rather
+    /// than close: a commit that fails as SESSION_END ends the session,
+    /// its transaction rolled back (SQLSTATE 40002 for a deferred
+    /// constraint not satisfied).
     pub fn terminate(mut self) -> Result<()> {
         self.send(&Request::Terminate)?;
+        if let Some(socket) = &self.socket {
+            socket.limit(Some(self.timeouts.read.unwrap_or(TERMINATE_WITHIN)))?;
+        }
+        let most = u64::from(self.max_body).saturating_add(u64::try_from(HEADER).unwrap_or(u64::MAX));
         let mut rest = Vec::new();
-        self.stream.read_to_end(&mut rest).map_err(|e| failed(&format!("[DESIGN] cannot receive: {e}")))?;
+        self.stream.by_ref().take(most).read_to_end(&mut rest).map_err(|e| io_failed("receive", &e))?;
         let Some((head, body)) = rest.split_first_chunk::<HEADER>() else { return Ok(()) };
         let (kind, _) = turborel_protocol::header(*head, self.max_body).map_err(|e| Failure::from(&e))?;
         match Reply::decode(kind, body).map_err(|e| Failure::from(&e))? {
@@ -422,18 +489,29 @@ impl<S: Read + Write> Connection<S> {
         request.encode(&mut bytes);
         let stream = self.stream.get_mut();
         let sent = stream.write_all(&bytes).and_then(|()| stream.flush());
-        sent.map_err(|e| self.lose(&format!("[DESIGN] cannot send: {e}")))
+        sent.map_err(|e| self.lost_by(io_failed("send", &e)))
+    }
+
+    /// Loses the connection, for `failure`.
+    fn lost_by(&mut self, failure: Failure) -> Failure {
+        self.lost = Some(failure.clone());
+        failure
     }
 
     pub(crate) fn receive(&mut self) -> Result<Reply> {
         let mut head = [0_u8; HEADER];
         if let Err(e) = self.stream.read_exact(&mut head) {
-            return Err(self.lose(&format!("[DESIGN] cannot receive: {e}")));
+            return Err(self.lost_by(io_failed("receive", &e)));
         }
         let (kind, length) = turborel_protocol::header(head, self.max_body).map_err(|e| self.failed(Failure::from(&e)))?;
-        let mut body = vec![0_u8; length];
-        if let Err(e) = self.stream.read_exact(&mut body) {
-            return Err(self.lose(&format!("[DESIGN] cannot receive: {e}")));
+        // Read as its bytes arrive: a header alone reserves little.
+        let mut body = Vec::with_capacity(length.min(RESERVED));
+        let wanted = u64::try_from(length).unwrap_or(u64::MAX);
+        if let Err(e) = self.stream.by_ref().take(wanted).read_to_end(&mut body) {
+            return Err(self.lost_by(io_failed("receive", &e)));
+        }
+        if body.len() != length {
+            return Err(self.lose("[DESIGN] cannot receive: the connection closed within a reply"));
         }
         let reply = Reply::decode(kind, &body).map_err(|e| self.failed(Failure::from(&e)))?;
         // A query's rows are read in a transaction; a statement's end says

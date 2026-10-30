@@ -3,23 +3,24 @@
 //! operator's tools tell them from the database's own
 //! (`turborel-checkpoint`, `turborel-maintenance`). Its I/O threads are
 //! tokio's default, one for each processor; its blocking pool, where
-//! statements run, may grow to MAX_WORKERS and a few spare, but is made
-//! only as statements need it, and no more than SERVER.WORKERS run at once
-//! (`server.rs`). `turboreld` and the tests' servers are made by it alike.
-//! The thread writing the diagnostics' lines (`log.rs`) is made here too,
-//! `turborel-server-log`, so a sink set before the runtime is made, as the
-//! database opens, has its writer.
+//! statements run, may grow to MAX_WORKERS, MOST_LOGINS for the checks of
+//! logins, and a few spare, but is made only as they need it, and no more
+//! than SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once
+//! (`server.rs`, `logins.rs`). `turboreld` and the tests' servers are made
+//! by it alike. The thread writing the diagnostics' lines (`log.rs`) is
+//! made here too, `turborel-server-log`, so a sink set before the runtime
+//! is made, as the database opens, has its writer.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::runtime::{Builder, Runtime};
 
-use crate::settings::MAX_WORKERS;
+use crate::settings::{MAX_WORKERS, MOST_LOGINS};
 
-/// \[DESIGN\] The blocking threads past MAX_WORKERS: for the steps of a
-/// session that are not statements, its login and its end, while every
-/// worker is busy.
+/// \[DESIGN\] The blocking threads past MAX_WORKERS and MOST_LOGINS: for
+/// the steps of a session that are neither statements nor a login's
+/// checks, as its end, while every worker is busy.
 const BLOCKING_SPARE: usize = 4;
 
 /// The prefix of the names of the server's threads.
@@ -46,7 +47,7 @@ pub fn runtime(io_threads: Option<usize>) -> std::io::Result<Runtime> {
     let mut builder = Builder::new_multi_thread();
     builder
         .enable_all()
-        .max_blocking_threads(MAX_WORKERS.saturating_add(BLOCKING_SPARE))
+        .max_blocking_threads(MAX_WORKERS.saturating_add(MOST_LOGINS).saturating_add(BLOCKING_SPARE))
         .thread_name_fn(move || format!("{LABEL}-{}", made.fetch_add(1, Ordering::Relaxed)));
     if let Some(n) = io_threads {
         builder.worker_threads(n);

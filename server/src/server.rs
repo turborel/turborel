@@ -37,9 +37,11 @@ use turborel_protocol::{CancelKey, KEY_BYTES, broken};
 
 use crate::auth::{Authenticator, Peer};
 use crate::limit::{Held, Limit};
+use crate::logins::Logins;
 use crate::password::Pbkdf2;
-use crate::settings::{IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, SHUTDOWN_TIMEOUT, WORKERS, count, declare, millis};
-use crate::shown::{self, Present, Shown};
+use crate::settings::{IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, SHUTDOWN_TIMEOUT, WORKERS};
+use crate::settings::{count, declare, millis};
+use crate::shown::{self, Operator, Present, Shown};
 use crate::tls::{Secured, Tls};
 use crate::told::{Throttle, Told};
 use crate::transport::{Listener, Transport};
@@ -92,10 +94,12 @@ pub type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// more than one can serve the same database.
 ///
 /// Contract (RULES.md R-SAFE-3): `serve` runs a connection to its end:
-/// authenticates it through the services' authenticators, runs each
-/// statement on a worker (`Services::run`), and ends when the client goes
-/// or the server stops (`Services::stopping`), its session ended on a
-/// worker. `refuse` tells the client why it is refused, and closes.
+/// authenticates it through the services' authenticators, each check on
+/// a login's thread (`Services::logins`) within SERVER.LOGIN_TIMEOUT of
+/// `Connection::arrived` (`Services::login`), runs each statement on a
+/// worker (`Services::run`), and ends when the client goes, the server
+/// stops (`Services::stopping`) or its operator ends it
+/// (`Present::ended`), its session ended on a worker. `refuse` tells the client why it is refused, and closes.
 pub trait Protocol: Send + Sync {
     /// The protocol's name.
     fn name(&self) -> &'static str;
@@ -116,6 +120,10 @@ pub struct Connection {
     /// Its row of INFORMATION_SCHEMA.CONNECTIONS, for what serves it to
     /// say who logged in and whether a statement runs (`shown.rs`).
     pub present: Present,
+    /// When it was taken: its SERVER.LOGIN_TIMEOUT runs from then, TLS's
+    /// handshake and authentication within the one limit
+    /// (`Services::login`).
+    pub arrived: Instant,
 }
 
 /// A listener, and the protocol it serves.
@@ -143,6 +151,8 @@ struct Shared {
     shown: Arc<Shown>,
     /// Failed accepts, and connections refused, told at most once a minute.
     throttles: (Throttle, Throttle),
+    /// What checks logins, apart from the workers (`logins.rs`).
+    logins: Logins,
 }
 
 /// \[DESIGN\] A connection's cancel key, registered until this is dropped.
@@ -189,15 +199,22 @@ impl Services {
         ran.await.map_err(|_| broken("[DESIGN] a worker failed"))
     }
 
-    /// `work`, if it is done within SERVER.LOGIN_TIMEOUT: as a connection
-    /// is secured and authenticated, so a client that never finishes does
-    /// not hold its place.
+    /// What checks logins, on threads apart from the workers, and slows
+    /// clients whose logins fail (`logins.rs`).
+    pub fn logins(&self) -> &Logins {
+        &self.0.logins
+    }
+
+    /// `work`, if it is done within SERVER.LOGIN_TIMEOUT of `arrived`, when
+    /// the connection was taken: as it is secured and authenticated, the
+    /// two within the one limit, so a client that never finishes does not
+    /// hold its place.
     ///
     /// # Errors
     ///
     /// `work`'s; a connection failure if the time ran out.
-    pub async fn login<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        self.bounded(LOGIN_TIMEOUT, work, "to begin TLS and authenticate").await
+    pub async fn login<T>(&self, arrived: Instant, work: impl Future<Output = Result<T>>) -> Result<T> {
+        self.bounded(LOGIN_TIMEOUT, arrived, work, "to begin TLS and authenticate").await
     }
 
     /// `work`, if it is done within SERVER.IDLE_TIMEOUT: as the server waits
@@ -207,17 +224,17 @@ impl Services {
     ///
     /// `work`'s; a connection failure if the time ran out.
     pub async fn idle<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        self.bounded(IDLE_TIMEOUT, work, "with nothing from or to the client").await
+        self.bounded(IDLE_TIMEOUT, Instant::now(), work, "with nothing from or to the client").await
     }
 
-    /// `work`, if it is done within the milliseconds of the setting `name`;
-    /// none of 0, no limit; and before the server hurries. The connection
-    /// fails once the time runs out, having waited `waiting`, or the
-    /// server hurries.
-    async fn bounded<T>(&self, name: &str, work: impl Future<Output = Result<T>>, waiting: &str) -> Result<T> {
+    /// `work`, if it is done within the milliseconds of the setting `name`
+    /// of `from`; none of 0, no limit; and before the server hurries. The
+    /// connection fails once the time runs out, having waited `waiting`, or
+    /// the server hurries.
+    async fn bounded<T>(&self, name: &str, from: Instant, work: impl Future<Output = Result<T>>, waiting: &str) -> Result<T> {
         let timed = async {
             let Some(limit) = millis(self.database(), name) else { return work.await };
-            tokio::time::timeout(limit, work).await.unwrap_or_else(|_| {
+            tokio::time::timeout(limit.saturating_sub(from.elapsed()), work).await.unwrap_or_else(|_| {
                 Err(broken(format!("[DESIGN] the connection went past {name}, {} ms, {waiting}: closed", limit.as_millis())))
             })
         };
@@ -225,6 +242,19 @@ impl Services {
             done = timed => done,
             () = self.hurried() => Err(broken("[DESIGN] the server is stopping, past SERVER.SHUTDOWN_TIMEOUT or told again: closed")),
         }
+    }
+
+    /// `work`, if it is done within SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
+    /// and SERVER.IDLE_TIMEOUT, the shorter: as the server waits for the
+    /// next request of a client whose transaction is active, its locks
+    /// held.
+    ///
+    /// # Errors
+    ///
+    /// `work`'s; a connection failure if the time ran out.
+    pub async fn idle_in_transaction<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
+        let waiting = "with its transaction active and nothing from the client";
+        self.idle(self.bounded(IDLE_IN_TRANSACTION_TIMEOUT_MS, Instant::now(), work, waiting)).await
     }
 
     /// Done once the server stops.
@@ -341,6 +371,12 @@ impl Server {
         &self.db
     }
 
+    /// What ends its connections at an operator's word, kept apart from
+    /// the server, so it is used while the server serves.
+    pub fn operator(&self) -> Operator {
+        Operator::of(&self.shown)
+    }
+
     /// Adds `authenticator`, for clients that ask for its mechanism.
     ///
     /// # Errors
@@ -372,8 +408,9 @@ impl Server {
         let (announce, heard) = watch::channel(Stage::Serving);
         let limits = (Arc::new(Limit::default()), Arc::new(Limit::default()));
         let (cancels, throttles) = (Mutex::new(HashMap::new()), (Throttle::default(), Throttle::default()));
-        let (db, authenticators, shown) = (self.db, self.authenticators, self.shown);
-        let services = Services(Arc::new(Shared { db, authenticators, workers: Arc::default(), stop: heard, cancels, shown, throttles }));
+        let (db, authenticators, shown, logins) = (self.db, self.authenticators, self.shown, Logins::default());
+        let services =
+            Services(Arc::new(Shared { db, authenticators, workers: Arc::default(), stop: heard, cancels, shown, throttles, logins }));
         let addresses = endpoints.iter().map(|e| e.listener.address()).collect();
         let mut listening = JoinSet::new();
         for endpoint in endpoints {
@@ -456,11 +493,12 @@ impl Arrival {
     /// own task, so neither TLS nor a refusal holds up the connections after
     /// it. Its place is given back as it ends.
     async fn welcome(self, transport: Box<dyn Transport>, peer: Peer, place: Place) {
-        let Some((transport, peer)) = self.secured(transport, peer).await else { return };
+        let arrived = Instant::now();
+        let Some((transport, peer)) = self.secured(transport, peer, arrived).await else { return };
         match place {
             Place::Served(held) => {
                 let present = self.services.0.shown.connected(&peer);
-                self.protocol.serve(Connection { transport, peer, services: self.services, present }).await;
+                self.protocol.serve(Connection { transport, peer, services: self.services, present, arrived }).await;
                 drop(held);
             }
             Place::Refused(held) => {
@@ -475,9 +513,9 @@ impl Arrival {
     /// `transport` and `peer` secured, if the endpoint has TLS and the
     /// client begins it; none if the handshake fails, or the client is in
     /// the clear where TLS is required, which it is told.
-    async fn secured(&self, transport: Box<dyn Transport>, peer: Peer) -> Option<(Box<dyn Transport>, Peer)> {
+    async fn secured(&self, transport: Box<dyn Transport>, peer: Peer, arrived: Instant) -> Option<(Box<dyn Transport>, Peer)> {
         let Some(tls) = &self.tls else { return Some((transport, peer)) };
-        let handshake = self.services.login(async { tls.secure(transport).await.map_err(|e| broken(e.to_string())) });
+        let handshake = self.services.login(arrived, async { tls.secure(transport).await.map_err(|e| broken(e.to_string())) });
         let told = |e: &SqlError| self.services.database().tell(&Event::TlsFailed { peer: peer.name(), message: e.msg.clone() });
         match handshake.await {
             Ok(Secured::Tls(secured)) => Some((secured, Peer { secure: true, ..peer })),

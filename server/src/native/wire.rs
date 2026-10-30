@@ -1,5 +1,9 @@
 //! A connection's messages, framed: requests read, replies written and
 //! flushed. Split from native.rs (RULES.md R-SIZE-4).
+//!
+//! A request's body is read into memory as its bytes arrive, never
+//! reserved whole as its header declares it: a client that declares a
+//! long body and sends little of it holds little.
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf};
 use turborel::error::{Result, SqlError};
@@ -7,6 +11,10 @@ use turborel::value::types::TypeRegistry;
 use turborel_protocol::{Failure, HEADER, Reply, Request, broken};
 
 use crate::transport::Transport;
+
+/// \[DESIGN\] The most of a body reserved before its bytes arrive; past
+/// it, the buffer grows as they do.
+const RESERVED: usize = 64 * 1024;
 
 /// A connection's messages.
 pub(super) struct Wire {
@@ -26,13 +34,23 @@ impl Wire {
         Wire { reader: BufReader::new(reader), writer: BufWriter::new(writer), max_body, out: Vec::new(), types }
     }
 
+    /// Takes requests of at most `max_body` bytes from now on.
+    pub(super) fn set_max_body(&mut self, max_body: u32) {
+        self.max_body = max_body;
+    }
+
     /// The client's next request.
     pub(super) async fn receive(&mut self) -> Result<Request> {
         let mut head = [0_u8; HEADER];
         self.reader.read_exact(&mut head).await.map_err(|e| broken(format!("[DESIGN] cannot receive: {e}")))?;
         let (kind, length) = turborel_protocol::header(head, self.max_body)?;
-        let mut body = vec![0_u8; length];
-        self.reader.read_exact(&mut body).await.map_err(|e| broken(format!("[DESIGN] cannot receive: {e}")))?;
+        let mut body = Vec::with_capacity(length.min(RESERVED));
+        let wanted = u64::try_from(length).unwrap_or(u64::MAX);
+        let read = (&mut self.reader).take(wanted).read_to_end(&mut body).await;
+        read.map_err(|e| broken(format!("[DESIGN] cannot receive: {e}")))?;
+        if body.len() != length {
+            return Err(broken("[DESIGN] cannot receive: the connection closed within a message"));
+        }
         Request::decode_with(kind, &body, &self.types)
     }
 

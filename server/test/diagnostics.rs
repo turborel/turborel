@@ -247,6 +247,9 @@ fn a_failed_tls_handshake_is_told() {
     stream.write_all(&[22, 3, 1, 0, 4, 0xff, 0xff, 0xff, 0xff]).unwrap();
     let mut rest = Vec::new();
     let _ = stream.read_to_end(&mut rest);
+    // The stream may close before the failure is told: once the server has
+    // stopped, every connection's task has ended.
+    server.stop();
     let told = kept.of("TlsFailed");
     assert_eq!(told.len(), 1, "{told:?}");
     assert!(told[0].starts_with(&format!(r#"TlsFailed {{ peer: "{peer}", message: ""#)), "{told:?}");

@@ -91,9 +91,10 @@ SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTING
  SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------
  SERVER.MAX_CONNECTIONS                                       | 512                                                          | DATABASE
+ SERVER.MAX_LOGINS                                            | 4                                                            | DEFAULT
  SERVER.MAX_MESSAGE_BYTES                                     | 16777216                                                     | DEFAULT
  SERVER.MAX_STATEMENTS                                        | 1024                                                         | DEFAULT
-(3 rows)
+(4 rows)
 ```
 
 A change of the database's value is told to the diagnostics,

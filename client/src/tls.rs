@@ -14,6 +14,7 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 use crate::connection::{Connection, Mechanism, Result, failed};
 use crate::target::Target;
+use crate::timeouts::{Socket, Timeouts, tcp_to};
 
 /// A connection's stream, secured.
 pub type TlsStream = StreamOwned<ClientConnection, TcpStream>;
@@ -50,28 +51,31 @@ pub fn config(store: RootCertStore) -> Result<Arc<ClientConfig>> {
 }
 
 /// Connects over TLS, by `config`, to the server named `name` at
-/// `address`, as `user`, authenticated by `mechanism`.
+/// `address`, as `user`, authenticated by `mechanism`; waiting as
+/// `Timeouts::default` says, its handshake as a step of its login.
 ///
 /// # Errors
 ///
-/// As `Connection::open`; a connection failure if none can be made, or the
-/// handshake fails: the server's certificate is not trusted, or not of
-/// `name`.
+/// As `Connection::open`; a connection failure if none can be made, in
+/// time, or the handshake fails: the server's certificate is not trusted,
+/// or not of `name`.
 pub fn connect(
     address: impl ToSocketAddrs,
     (name, config): (&str, &Arc<ClientConfig>),
     user: &str,
     mechanism: &mut dyn Mechanism,
 ) -> Result<Connection<TlsStream>> {
-    let tcp = TcpStream::connect(address).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
+    let timeouts = Timeouts::default();
+    let tcp = tcp_to(address, timeouts.connect)?;
     // Where it reached, for a connection made again to cancel (`Target`).
     let server = tcp.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
+    let socket = Socket::tcp(&tcp)?;
+    socket.limit(timeouts.connect)?;
     let stream = secured(tcp, (name, config))?;
     let reach = Target::Tls(server, name.to_owned(), Arc::clone(config));
-    Ok(Connection::open(stream, user, mechanism)?.reached_by(reach))
+    Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(reach))
 }
 
-/// A stream to the server at `address`, of the name `name`, secured by TLS
 /// The connection `tcp` to the server of the name `name`, secured by TLS
 /// as `config` says, its handshake done.
 ///

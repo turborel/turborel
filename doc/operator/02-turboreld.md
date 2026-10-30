@@ -13,6 +13,7 @@ turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
 |---|---|
 | `--dir PATH` | serve the database kept in the directory PATH, made if there is none |
 | `--memory` | serve a database kept nowhere, lost when the server stops |
+| `--owner NAME` | with `--memory`: make NAME the database's first user and owner as the server starts, its password typed or read from standard input ([Users](05-users.md#the-owner-of-a-database-kept-nowhere)) |
 | `--set NAME=VALUE` | set the database's setting NAME as the server starts, kept with the database; more than once for more |
 | `--log FILE` | append the diagnostics, a line of JSON each, to FILE; standard error by default |
 | `--keys DIR` | the encryption keys, a file in DIR each ([Encryption](07-encryption.md)) |

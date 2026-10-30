@@ -8,6 +8,7 @@ mod cancel;
 pub mod connection;
 pub mod statements;
 pub mod target;
+pub mod timeouts;
 
 pub use cancel::Canceller;
 /// What a connection's results and failures are made of.

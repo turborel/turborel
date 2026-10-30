@@ -87,7 +87,8 @@ impl Connector for Dialer {
             None => self.options.server.clone(),
         };
         let mut mechanism = mechanism(&self.options.credentials, &mut self.ask).map_err(|why| unreachable(&why))?;
-        reach(&server, user.unwrap_or(&self.options.user), mechanism.as_mut()).map_err(|unreached| match unreached {
+        reach(&server, (user.unwrap_or(&self.options.user), mechanism.as_mut()), self.options.timeouts).map_err(|unreached| match unreached
+        {
             Unreached::Address(why) => unreachable(&why),
             Unreached::Refused(failure) => failure,
         })

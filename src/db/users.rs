@@ -187,6 +187,16 @@ impl Database {
         Ok(self.snapshot()?.users.entries().find(|(n, _)| *n == name).map(|(_, v)| v.clone()))
     }
 
+    /// \[EXTENSION\] Whether `name` is a user: so a server ends the
+    /// sessions of a user once it is dropped (RULES.md D43).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub fn is_user(&self, name: &str) -> Result<bool> {
+        Ok(self.snapshot()?.users.exists(name))
+    }
+
     /// \[EXTENSION\] Every user, in order of name.
     ///
     /// # Errors

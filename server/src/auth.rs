@@ -3,7 +3,8 @@
 //! identifier of a session, by an exchange of as many steps as its
 //! mechanism needs, so challenge and response fit as well as one step.
 //! A step may be slow, a password hashed slowly on purpose (D26), so the
-//! server runs each on a worker, never on a thread doing I/O.
+//! server runs each on a blocking thread of its logins (`logins.rs`), never
+//! on a thread doing I/O, nor on a worker statements need.
 
 use std::net::SocketAddr;
 

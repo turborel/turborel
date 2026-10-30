@@ -6,6 +6,12 @@
 //! A password is typed without its echo at a terminal, or else read from
 //! standard input (`main.rs`); never taken from the command line, where
 //! other users of the machine could read it in the list of processes.
+//!
+//! A database kept nowhere, `--memory`, has no directory to set up
+//! before it is served: `--owner NAME` makes its first user, and so its
+//! owner, as the server starts, the password read the same way. Without
+//! it, such a database has no owner, so no one could manage its users or
+//! set its settings in SQL.
 
 use std::io::{BufRead, Write};
 
@@ -14,6 +20,53 @@ use turborel::lexer::authorization_identifier;
 use turborel_server::password::Pbkdf2;
 
 use crate::{Config, Store, within};
+
+/// \[DESIGN\] The owner `--owner` makes of a database kept nowhere as the
+/// server starts: its name, as written, and its password, once read.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Owner {
+    /// The user, as written.
+    pub name: String,
+    /// Its password: read before the server starts (`read_owner_password`).
+    pub password: Option<String>,
+}
+
+impl std::fmt::Debug for Owner {
+    /// Never the password.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Owner({})", self.name)
+    }
+}
+
+/// The owner's password of `config`, if it names one, read from `input`:
+/// its first line.
+///
+/// # Errors
+///
+/// What is wrong, for the operator: the password cannot be read, or is
+/// empty.
+pub fn read_owner_password(config: &mut Config, input: &mut dyn BufRead) -> Result<(), String> {
+    if let Some(owner) = &mut config.owner {
+        owner.password = Some(password(input)?);
+    }
+    Ok(())
+}
+
+/// Makes `owner` a user of `db`, of its password, and the database's
+/// owner.
+///
+/// # Errors
+///
+/// What failed, for the operator: the password not read, the name not an
+/// authorization identifier, a verifier not made.
+pub(crate) fn make_owner(db: &Database, owner: &Owner) -> Result<(), String> {
+    let failed = |e: turborel::error::SqlError| e.to_string();
+    let typed = owner.password.as_deref().ok_or_else(|| "--owner: the owner's password is read before the server starts".to_owned())?;
+    let name = user(&owner.name)?;
+    let verifier = Pbkdf2::of(db).make(typed).map_err(failed)?;
+    db.create_user(&name, verifier.as_bytes()).map_err(failed)?;
+    db.set_owner(&name).map_err(failed)
+}
 
 /// What a user command does.
 #[derive(Debug, Clone, PartialEq, Eq)]

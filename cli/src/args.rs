@@ -3,8 +3,10 @@
 //! R-SIZE-4).
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use turborel_client::connection::Password;
+use turborel_client::timeouts::Timeouts;
 
 /// The host connected to, unless one is named.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -77,6 +79,9 @@ pub struct Options {
     pub stop_on_error: bool,
     /// What a null value is shown as.
     pub null: String,
+    /// How long it waits on the server: to connect and log in, and for
+    /// each reply after.
+    pub timeouts: Timeouts,
 }
 
 /// What the command line asks for.
@@ -87,7 +92,7 @@ pub enum Command {
     /// The release, as `turborel::product` gives it.
     Version,
     /// A session.
-    Run(Options),
+    Run(Box<Options>),
 }
 
 /// What the command line named, before it is checked.
@@ -103,6 +108,7 @@ struct Named {
     inputs: Vec<Input>,
     stop_on_error: bool,
     null: Option<String>,
+    timeouts: Timeouts,
 }
 
 /// What the command line `args`, without the program's name, asks for;
@@ -130,15 +136,23 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "-f" | "--file" => named.inputs.push(Input::File(PathBuf::from(value()?))),
             "--stop-on-error" => named.stop_on_error = true,
             "--null" => named.null = Some(value()?),
+            "--connect-timeout" => named.timeouts.connect = seconds(&value()?)?,
+            "--read-timeout" => named.timeouts.read = seconds(&value()?)?,
             other => return Err(format!("{other} is not an option\n\n{}", crate::USAGE)),
         }
     }
-    options(named, env).map(Command::Run)
+    options(named, env).map(|o| Command::Run(Box::new(o)))
 }
 
 /// The port `text` names.
 fn port(text: &str) -> Result<u16, String> {
     text.parse().map_err(|_| format!("{text} is no port"))
+}
+
+/// The limit of time `text` names, in whole seconds: none for 0.
+fn seconds(text: &str) -> Result<Option<Duration>, String> {
+    let n: u64 = text.parse().map_err(|_| format!("{text} is no number of seconds"))?;
+    Ok((n > 0).then(|| Duration::from_secs(n)))
 }
 
 /// The options `named` makes, checked.
@@ -154,7 +168,8 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
     }
     let server = server(named.socket, named.host, named.port, named.roots.map(|roots| Tls { roots, name: named.name }))?;
     let inputs = if named.inputs.is_empty() { vec![Input::Standard] } else { named.inputs };
-    Ok(Options { server, user, credentials, inputs, stop_on_error: named.stop_on_error, null: named.null.unwrap_or_default() })
+    let (stop_on_error, null, timeouts) = (named.stop_on_error, named.null.unwrap_or_default(), named.timeouts);
+    Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts })
 }
 
 /// Where the server is: at the Unix socket `socket`, if one is named, and

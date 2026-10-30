@@ -44,6 +44,22 @@ fn a_wrong_command_line_says_what_is_wrong() {
     assert!(wrong("--memory --set SERVER.WORKERS").contains("NAME=VALUE"));
 }
 
+/// Verifies: [DESIGN] RULES.md D43: `--owner NAME` names the owner of a
+/// database kept nowhere, its password not read yet; refused, saying why,
+/// for a database kept in a directory, with a user command, or without
+/// its name.
+#[test]
+fn an_owner_is_named_for_a_database_kept_nowhere() {
+    let named = config("--memory --owner ann");
+    assert_eq!(named.owner, Some(Owner { name: "ann".into(), password: None }));
+    assert_eq!(config("--memory").owner, None);
+    let wrong = |line: &str| parse(&args(line)).unwrap_err();
+    for line in ["--dir /db --owner ann", "--memory --owner ann user list"] {
+        assert!(wrong(line).contains("user add NAME --owner"), "{line}");
+    }
+    assert!(wrong("--memory --owner").contains("--owner needs a value"));
+}
+
 /// Verifies: [DESIGN] RULES.md D43: `user` and the words after it are a
 /// user command, on the database named before; each command with its
 /// name, the owner asked for or not.

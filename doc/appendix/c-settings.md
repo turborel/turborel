@@ -95,9 +95,12 @@ Each in a sentence:
 |---|---|---|---|---|
 | SERVER.BATCH_BYTES | 65536 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.HOST | 127.0.0.1 | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
+| SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.IDLE_TIMEOUT | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| SERVER.LOGIN_DELAY_MS | 10000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.LOGIN_TIMEOUT | 60000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.MAX_CONNECTIONS | 256 | INTEGER FROM 1 TO 4294967295 | at once |  |
+| SERVER.MAX_LOGINS | 4 | INTEGER FROM 1 TO 64 | at once |  |
 | SERVER.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 1024 TO 4294967295 | at once |  |
 | SERVER.MAX_STATEMENTS | 1024 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.PASSWORD_ITERATIONS | 600000 | INTEGER FROM 10000 TO 4294967295 | when the server starts |  |
@@ -114,9 +117,12 @@ Each in a sentence:
 
 - **SERVER.BATCH_BYTES**: About how many bytes of rows the server sends in one batch.
 - **SERVER.HOST**: Hosts or addresses, by commas, where TCP connections are taken.
+- **SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS**: The milliseconds the server waits for the next request of a client in a transaction before it closes the connection, the transaction rolled back and its locks let go; 0 for no limit.
 - **SERVER.IDLE_TIMEOUT**: The milliseconds the server waits on a client, for its next request or to take what it is sent, before it closes the connection, its transaction rolled back; 0 for no limit.
-- **SERVER.LOGIN_TIMEOUT**: The milliseconds a connection has to begin TLS and authenticate before it is closed; 0 for no limit.
+- **SERVER.LOGIN_DELAY_MS**: The longest, in milliseconds, a login waits after failed ones from its client's address; 0 for no wait.
+- **SERVER.LOGIN_TIMEOUT**: The milliseconds a connection has, from when it is taken, to begin TLS and authenticate, the two together, before it is closed; 0 for no limit.
 - **SERVER.MAX_CONNECTIONS**: Connections the server takes at once, at most.
+- **SERVER.MAX_LOGINS**: Authentications the server checks at once, at most, apart from its statements' workers.
 - **SERVER.MAX_MESSAGE_BYTES**: The longest message, in bytes, the server takes from a client.
 - **SERVER.MAX_STATEMENTS**: Prepared statements a connection holds at once, at most.
 - **SERVER.PASSWORD_ITERATIONS**: The PBKDF2 iterations of a password's verifier made from the start on.

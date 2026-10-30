@@ -11,15 +11,22 @@
 //!   past SERVER.MAX_CONNECTIONS, told or closed at once.
 //!
 //! A server not serving shows no connections, and counts of none.
+//!
+//! An operator ends a connection by its ID (`Operator::end`): what it runs
+//! is cancelled, as a client's cancel does (RULES.md D44), and it is closed
+//! once that has stopped, its session rolled back.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use tokio::sync::watch;
+
 use turborel::catalog::ColumnDesc;
 use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
+use turborel::txn::Stop;
 use turborel::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
 use crate::auth::Peer;
@@ -46,6 +53,10 @@ struct Entry {
     peer: String,
     secure: bool,
     state: &'static str,
+    /// What tells its connection to end.
+    end: Arc<watch::Sender<bool>>,
+    /// What cancels its session's statements, once it has one.
+    stop: Option<Arc<Stop>>,
 }
 
 /// \[DESIGN\] A connection's row of CONNECTIONS, while it is served: what
@@ -54,15 +65,28 @@ struct Entry {
 pub struct Present {
     shown: Arc<Shown>,
     id: u64,
+    ended: watch::Receiver<bool>,
 }
 
 impl Shown {
     /// The row of a connection taken from `peer`, logging in.
     pub(crate) fn connected(self: &Arc<Self>, peer: &Peer) -> Present {
         let id = self.next.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-        let entry = Entry { user: None, peer: peer.name(), secure: peer.secure, state: "LOGIN" };
+        let (end, ended) = watch::channel(false);
+        let entry = Entry { user: None, peer: peer.name(), secure: peer.secure, state: "LOGIN", end: Arc::new(end), stop: None };
         self.locked().insert(id, entry);
-        Present { shown: Arc::clone(self), id }
+        Present { shown: Arc::clone(self), id, ended }
+    }
+
+    /// Ends the connection `id`, if it is served: what it runs cancelled.
+    fn end(&self, id: u64) -> bool {
+        let Some(entry) = self.locked().get(&id).cloned() else { return false };
+        // Its connection may have gone since: then there is nothing to end.
+        let _ = entry.end.send(true);
+        if let Some(stop) = &entry.stop {
+            stop.cancel();
+        }
+        true
     }
 
     fn locked(&self) -> std::sync::MutexGuard<'_, BTreeMap<u64, Entry>> {
@@ -80,6 +104,30 @@ impl Present {
         }
     }
 
+    /// What cancels its session's statements, `stop`: so an operator
+    /// ending it stops what it runs.
+    pub fn stoppable(&self, stop: Arc<Stop>) {
+        if let Some(entry) = self.shown.locked().get_mut(&self.id) {
+            entry.stop = Some(stop);
+        }
+    }
+
+    /// Cancels what its session runs, if anything does: as an operator
+    /// ending it waits for its statement to stop.
+    pub fn cancel(&self) {
+        let stop = self.shown.locked().get(&self.id).and_then(|e| e.stop.clone());
+        if let Some(stop) = stop {
+            stop.cancel();
+        }
+    }
+
+    /// Done once an operator ends the connection (`Operator::end`).
+    pub async fn ended(&self) {
+        let mut ended = self.ended.clone();
+        // An error means the row is gone: it is not served, so ended too.
+        let _ = ended.wait_for(|e| *e).await;
+    }
+
     /// Whether a statement of it runs now.
     pub fn running(&self, running: bool) {
         if let Some(entry) = self.shown.locked().get_mut(&self.id) {
@@ -91,6 +139,32 @@ impl Present {
 impl Drop for Present {
     fn drop(&mut self) {
         self.shown.locked().remove(&self.id);
+    }
+}
+
+/// \[DESIGN\] What ends a server's connections at an operator's word,
+/// each by its ID in INFORMATION_SCHEMA.CONNECTIONS (`Server::operator`).
+#[derive(Clone)]
+pub struct Operator(Arc<Shown>);
+
+impl Operator {
+    /// What ends the connections `shown` shows.
+    pub(crate) fn of(shown: &Arc<Shown>) -> Operator {
+        Operator(Arc::clone(shown))
+    }
+
+    /// Ends the connection `id`: the statement it runs, if any, cancelled
+    /// (SQLCODE -920), it is closed, told so (SQLSTATE 08006), its session
+    /// rolled back, as one lost is [ISO/IEC 9075:1992 §20.1 GR2a]. False if
+    /// no connection of that ID is served.
+    pub fn end(&self, id: u64) -> bool {
+        self.0.end(id)
+    }
+
+    /// The IDs of the connections served, and their users once
+    /// authenticated, in order of ID.
+    pub fn connections(&self) -> Vec<(u64, Option<String>)> {
+        self.0.locked().iter().map(|(id, e)| (*id, e.user.clone())).collect()
     }
 }
 
@@ -188,5 +262,27 @@ mod tests {
         assert_eq!(row(&shown).map(|r| r.3), Some("IDLE"));
         drop(present);
         assert!(shown.locked().is_empty(), "gone");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D42: an operator ends a connection by
+    /// its ID: its connection hears it, as soon as it waits; an ID of none
+    /// served ends nothing; the connections are listed by ID, with their
+    /// users once authenticated.
+    #[test]
+    fn an_operator_ends_a_connection_by_its_id() {
+        let shown = Arc::new(Shown::default());
+        let operator = Operator::of(&shown);
+        let present = shown.connected(&Peer::local());
+        present.authenticated("ANN");
+        present.stoppable(Arc::new(Stop::default()));
+        let other = shown.connected(&Peer::local());
+        assert_eq!(operator.connections(), [(1, Some("ANN".to_owned())), (2, None)]);
+        assert!(!operator.end(9), "none served");
+        assert!(operator.end(1));
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(present.ended());
+        assert!(!*other.ended.borrow(), "the other goes on");
+        drop(present);
+        assert_eq!(operator.connections(), [(2, None)]);
     }
 }

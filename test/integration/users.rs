@@ -33,8 +33,8 @@ fn code<T>(r: Result<T>) -> Option<Code> {
 /// is refused (SQLCODE -103): a user twice, a user not there, a name empty
 /// or longer than an identifier. The owner is a user, the first one
 /// created until another is made it; it cannot be dropped until another
-/// owns the database. The sink hears of each change,
-/// never of a verifier.
+/// owns the database. A name is a user while it is one (`is_user`). The
+/// sink hears of each change, never of a verifier.
 #[test]
 fn users_are_kept_with_their_verifiers() {
     let db = Database::new();
@@ -60,8 +60,10 @@ fn users_are_kept_with_their_verifiers() {
     assert_eq!(db.owner().unwrap().as_deref(), Some("ANN"));
     assert_eq!(code(db.drop_user("ANN")), Some(Code::SyntaxRule), "the owner");
     db.set_owner("bob").unwrap();
+    assert!(db.is_user("ANN").unwrap());
     db.drop_user("ANN").unwrap();
     assert!(!db.users().unwrap().contains(&"ANN".to_owned()));
+    assert!(!db.is_user("ANN").unwrap() && !db.is_user("CAROL").unwrap() && db.is_user("bob").unwrap());
     let events = kept.taken().into_iter().map(|(_, e)| e).collect::<Vec<_>>().join("\n");
     assert!(events.contains(r#"UserChanged { name: "ANN", dropped: false }"#), "{events}");
     assert!(events.contains(r#"UserChanged { name: "ANN", dropped: true }"#), "{events}");

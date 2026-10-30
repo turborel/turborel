@@ -64,6 +64,15 @@ RULES.md when its design settles.
   protocol version not served, of a user name that is no identifier, or
   of a mechanism not served is refused by the native protocol before
   any authenticator runs, so no `login_failed` is told of it.
+- **A connection ended in SQL**, by the owner, by its ID in
+  INFORMATION_SCHEMA.CONNECTIONS: today a program serving the database
+  ends one through `Server::operator`; the statement's BNF, an
+  extension, is to be agreed, and the core given a way to reach the
+  server that serves it.
+- **TCP keepalive's times as settings** (idle, interval, probes), so a
+  client gone is found out sooner than the system's default: tokio sets
+  keepalive on or off only; the times need a socket option of the
+  platform's, by a crate such as socket2 (D3).
 - **Import**, on the client: rows read from a source and inserted into a
   table over a connection, the source pluggable (a trait any program may
   implement, built-in ones for common formats), so the command-line client
@@ -129,9 +138,6 @@ RULES.md when its design settles.
 
 The registry, scopes and SET statements exist (D36). Still to do:
 
-- **An owner for a database with no users:** the first user created owns
-  the database (D43), but until one is, no one may SET DATABASE; a
-  database kept nowhere, served by `turboreld --memory`, never has one.
 - **Constants still to move onto the registry**, each keeping today's
   value as its default:
   - log durability, once the log can change it while open;
@@ -143,9 +149,10 @@ The registry, scopes and SET statements exist (D36). Still to do:
     largest block (`DEFAULT_MAX_BLOCK`), an engine's default fetch cost
     (`DEFAULT_FETCH_COST`), the entries an index counts for an estimate
     (`COUNTED`), the precision of distinct counts (`REGISTER_BITS`), and
-    the server's requests read ahead on a connection (`IN_FLIGHT`) and its
-    pause after a failed accept (`ACCEPT_BACKOFF`), and the bytes of frozen
-    groups' headers a store holds (`HEADER_CACHE_BYTES`).
+    the server's batches of replies in flight on a connection
+    (`IN_FLIGHT`) and its pause after a failed accept (`ACCEPT_BACKOFF`),
+    and the bytes of frozen groups' headers a store holds
+    (`HEADER_CACHE_BYTES`).
 - **Session settings to add:** commit durability, optimizer overrides, and
   the function call syntax (today `Session::enable_extensions`).
 
