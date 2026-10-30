@@ -489,3 +489,32 @@ fn a_failed_log_sync_stops_checkpoints_until_reopened() {
     s.commit().unwrap();
     db.checkpoint().unwrap();
 }
+
+/// Verifies: [DESIGN] RULES.md D25, D55: a checkpoint that fails leaves
+/// the row changes logged since the last counted toward the next
+/// (CHECKPOINT.AFTER_CHANGES): the next transaction to end asks for one
+/// again, though it changed fewer rows than the count.
+/// Regression test (R-TEST-7): the count was cleared as the pages were
+/// captured, so the failed checkpoint's retry waited for as many changes
+/// again.
+#[test]
+fn a_failed_checkpoint_keeps_its_count() {
+    let scratch = Scratch::new("checkpoint-count");
+    let (fs, faults) = crate::faults::FaultyFs::with_faults();
+    let db = Database::new();
+    db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER)").unwrap();
+    due(&db, 3, i64::MAX);
+    let s = db.session("APP");
+    s.run("INSERT INTO T VALUES (1), (2), (3)").unwrap();
+    s.commit().unwrap();
+    faults.inject(crate::faults::Rule::fail(crate::faults::Op::Write).on("catalog"));
+    assert_eq!(db.run_due().err().map(|e| e.code), Some(Code::Io), "the image cannot be recorded");
+    faults.clear();
+    let failed = db.checkpoints_taken();
+    s.run("INSERT INTO T VALUES (4)").unwrap();
+    s.commit().unwrap();
+    db.run_due().unwrap();
+    assert_eq!(db.checkpoints_taken(), failed + 1, "due again at once");
+}

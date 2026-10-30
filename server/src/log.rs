@@ -153,10 +153,34 @@ fn fields(json: &mut Json, event: &Event) {
             json.number("reopened", *reopened);
             json.number("limit", *limit);
         }
+        Event::CheckpointOverdue { changes, cause } => overdue(json, *changes, cause),
         // An event of a later database than this sink knows: kept whole.
         other => {
             json.text("event", "other");
             json.text("debug", &format!("{other:?}"));
+        }
+    }
+}
+
+/// The fields of checkpoints overdue, the log keeping `changes` row
+/// changes, and why.
+fn overdue(json: &mut Json, changes: u64, cause: &turborel::diagnostics::Overdue) {
+    use turborel::diagnostics::Overdue;
+    json.text("event", "checkpoint_overdue");
+    json.number("changes", changes);
+    match cause {
+        Overdue::Refused(e) => {
+            json.text("cause", "refused");
+            json.raw("sqlcode", &e.sqlcode().to_string());
+            json.text("message", &e.to_string());
+        }
+        Overdue::Transaction(age) => {
+            json.text("cause", "transaction");
+            json.number("seconds", age.as_secs());
+        }
+        Overdue::NotTaken(policy) => {
+            json.text("cause", "not_taken");
+            json.text("policy", policy.word());
         }
     }
 }
@@ -376,6 +400,23 @@ mod tests {
         assert_eq!(lines[0], "kept");
         assert!(lines[1].ends_with(r#""event":"closed"}"#) && lines[2].contains(r#""taken":1"#), "{text}");
         assert!(Lines::appending(&scratch.path("no/such/dir/log")).is_err());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D25, D40: checkpoints overdue are a
+    /// warning, with the row changes the log keeps and the cause: refused
+    /// with an error, an open transaction and its age in seconds, or none
+    /// taken under the job policy named.
+    #[test]
+    fn checkpoints_overdue_are_lines_of_json() {
+        use turborel::diagnostics::Overdue;
+        let shown = |cause: Overdue| line(at(0, 0), &Event::CheckpointOverdue { changes: 400, cause });
+        let head = r#"{"time":"1970-01-01T00:00:00.000Z","level":"warning","event":"checkpoint_overdue","changes":400,"#;
+        let damaged = SqlError::new(Code::Damaged, "T is damaged");
+        let refused = shown(Overdue::Refused(damaged));
+        assert!(refused.starts_with(&format!(r#"{head}"cause":"refused","sqlcode":-914,"message":""#)), "{refused}");
+        assert_eq!(shown(Overdue::Transaction(Duration::from_millis(90_500))), format!(r#"{head}"cause":"transaction","seconds":90}}"#));
+        let policy = turborel::threads::JobPolicy::Paused;
+        assert_eq!(shown(Overdue::NotTaken(policy)), format!(r#"{head}"cause":"not_taken","policy":"PAUSED"}}"#));
     }
 
     /// Verifies: [DESIGN] RULES.md D56: on Unix, a diagnostics log the sink

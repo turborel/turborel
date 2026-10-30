@@ -348,6 +348,13 @@ fill it commit together, or not at all.
   it; the row store's file is shadowed, so after a crash it is exactly as
   the last checkpoint left it. Recovery reopens the tables, then redoes and
   undoes from the log.
+- A checkpoint is due after CHECKPOINT.AFTER_CHANGES row changes
+  logged since the last taken, a failed one leaving them counted. The
+  log is kept from the last checkpoint or the first record of the oldest
+  open transaction: while checkpoints are refused, not taken, or one
+  transaction stays open, it grows, and past four times what makes one
+  due (`db::OVERDUE`) an event says so and why, at most once a minute
+  (`Event::CheckpointOverdue`, D40).
 - A database is open in one place at a time: opening it takes an exclusive
   lock on its directory's `lock` file (`FileSystem::lock`, the system's
   file lock), before anything there is cleared or read, and closing it

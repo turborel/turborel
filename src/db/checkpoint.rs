@@ -39,11 +39,13 @@
 //! and go on throughout; writers wait for steps 1 and 2 only. Checkpoints take turns. One is taken when asked
 //! (`Database::checkpoint`), when the database is closed, and when one
 //! comes due: when a transaction ends after CHECKPOINT.AFTER_CHANGES row
-//! changes were logged since the last, or CHECKPOINT.AFTER_BYTES written to
+//! changes were logged since the last taken (a failed one leaves them
+//! counted), or CHECKPOINT.AFTER_BYTES written to
 //! the tables file's side file, the ending thread asks the database's
 //! checkpoint thread (`Checkpointer`), which takes it, so no transaction
 //! waits for it. The thread holds the database weakly: it ends when the
-//! database is closed or dropped.
+//! database is closed or dropped. Checkpoints overdue, the log growing
+//! still, are told (`overdue.rs`).
 //!
 //! Closing, with no transaction open, is a checkpoint that also collects
 //! every table's garbage first and checkpoints every index method, logs
@@ -53,9 +55,13 @@
 //! closed, none opened after (RULES.md D56); a file left is told as an
 //! event.
 
+mod overdue;
+
+pub use overdue::OVERDUE;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::files::DatabaseFiles;
 use super::image::Image;
@@ -86,6 +92,8 @@ impl Database {
         let taken = self.noted(self.take_checkpoint());
         if taken.is_ok() {
             self.emit(&Event::CheckpointTaken(self.checkpoints_taken()));
+            // Taken, it may still give up no log: a transaction holds it.
+            self.tell_if_overdue();
         }
         taken
     }
@@ -106,14 +114,14 @@ impl Database {
         };
         // Taken shut: no definition is half published.
         let st = self.snapshot()?;
-        let image = st.capture_checkpoint(false)?;
+        let (image, counted) = st.capture_checkpoint(false)?;
         let stale = st.hold_stale();
         drop(shut);
         // Writers going on: the entries of what awaited collection as the
         // pages were captured, logged before the record that syncs them.
-        st.log_stale(&stale, image.through)?;
+        let logged = st.log_stale(&stale, image.through);
         drop(stale);
-        st.complete_checkpoint(&files, image)?;
+        st.counted_if(logged.and_then(|()| st.complete_checkpoint(&files, image)), counted)?;
         files.checkpointer.taken.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -142,13 +150,16 @@ impl Database {
     fn checkpoint_due(&self) -> bool {
         let (Ok(Some(files)), Ok(current)) = (self.files(), self.snapshot()) else { return false };
         let (changes, bytes) = (current.settings.integer(CHECKPOINT_AFTER_CHANGES), current.settings.integer(CHECKPOINT_AFTER_BYTES));
-        i128::from(current.tx.logged.load(Ordering::Relaxed)) >= changes || i128::from(files.shadows.pending_bytes()) >= bytes
+        i128::from(current.tx.since_checkpoint()) >= changes || i128::from(files.shadows.pending_bytes()) >= bytes
     }
 
-    /// Asks for the checkpoint job if a checkpoint is due.
+    /// Asks for the checkpoint job if a checkpoint is due; tells, then, if
+    /// checkpoints are overdue (`overdue.rs`), as each checkpoint taken
+    /// does.
     pub(super) fn checkpoint_if_due(&self) {
         if self.checkpoint_due() {
             self.request_checkpoint();
+            self.tell_if_overdue();
         }
     }
 
@@ -198,8 +209,8 @@ impl Database {
             for method in st.methods.values() {
                 method.checkpoint()?;
             }
-            let image = st.capture_checkpoint(true)?;
-            st.complete_checkpoint(&files, image)
+            let (image, counted) = st.capture_checkpoint(true)?;
+            st.counted_if(st.complete_checkpoint(&files, image), counted)
         })?;
         self.mark_closed();
         self.close_every_file(&current);
@@ -232,6 +243,8 @@ pub(super) struct Checkpointer {
     taking: Turn,
     taken: AtomicU64,
     failure: Mutex<Option<SqlError>>,
+    /// When checkpoints overdue were last told (`overdue.rs`).
+    overdue_told: Mutex<Option<Instant>>,
 }
 
 /// The checkpoint job's work: the checkpoint due, if one still is (one
@@ -254,21 +267,14 @@ pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
 impl State {
     /// What a checkpoint does with writers held (see the module's
     /// documentation): the position L, every engine's capture through it,
-    /// and the image but for the tables' locators. A close logs and syncs
-    /// its checkpoint record first, so L is the log's end after it.
-    fn capture_checkpoint(&self, clean: bool) -> Result<Image> {
+    /// and the image but for the tables' locators; and the row changes
+    /// logged through L, which, once the checkpoint is taken, no longer
+    /// count toward the next (CHECKPOINT.AFTER_CHANGES, `counted_if`). A
+    /// close logs and syncs its checkpoint record first, so L is the log's
+    /// end after it.
+    fn capture_checkpoint(&self, clean: bool) -> Result<(Image, u64)> {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
-        // Not once a sync of the log failed: its image would claim what
-        // the log may not hold (`txn/logging.rs`); nor while a table is
-        // damaged, whose state no transaction made, so that recovery from
-        // the last checkpoint and the log can repair it (RULES.md D19).
-        self.tx.taking_changes()?;
-        if let Some(table) = self.damaged_tables().first() {
-            return Err(SqlError::new(
-                Code::Damaged,
-                format!("[DESIGN] {table} is damaged: no checkpoint is taken until it is repaired (`Database::repair_table`)"),
-            ));
-        }
+        self.checkpoint_refused()?;
         if clean {
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
@@ -277,8 +283,8 @@ impl State {
         for engine in self.engines.values() {
             engine.checkpoint(through)?;
         }
-        self.tx.logged.store(0, Ordering::Relaxed);
-        Ok(Image {
+        let counted = self.tx.logged.load(Ordering::Relaxed);
+        let image = Image {
             clean,
             through,
             start: self.tx.oldest_logged().map_or(through, |first| first.min(through)),
@@ -292,7 +298,40 @@ impl State {
                 .filter(|(name, _)| self.catalog.index(name).is_some())
                 .map(|(name, index)| (name.clone(), self.index_generation(name), index.locator()))
                 .collect(),
-        })
+        };
+        Ok((image, counted))
+    }
+
+    /// Whether a checkpoint may be taken. Not once a sync of the log
+    /// failed: its image would claim what the log may not hold
+    /// (`txn/logging.rs`); nor while a table is damaged, whose state no
+    /// transaction made, so that recovery from the last checkpoint and the
+    /// log can repair it (RULES.md D19).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 after a failed sync of the log; -914 naming the first
+    /// table damaged.
+    pub(super) fn checkpoint_refused(&self) -> Result<()> {
+        self.tx.taking_changes()?;
+        match self.damaged_tables().first() {
+            Some(table) => Err(SqlError::new(
+                Code::Damaged,
+                format!("[DESIGN] {table} is damaged: no checkpoint is taken until it is repaired (`Database::repair_table`)"),
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// `finished`, the outcome of a checkpoint that holds the first
+    /// `counted` row changes logged: taken, they no longer count toward
+    /// the next; failed, they still do, so the next is due as soon as it
+    /// would have been.
+    fn counted_if(&self, finished: Result<()>, counted: u64) -> Result<()> {
+        if finished.is_ok() {
+            self.tx.checkpointed(counted);
+        }
+        finished
     }
 
     /// What awaits collection as the pages are captured, under the gate:

@@ -23,6 +23,7 @@ event, and what the event is of:
 | `opened` | the database is opened: `how`, created, reopened or recovered, and of a recovery what it did |
 | `closed` | the database is closed cleanly |
 | `checkpoint_taken` | a checkpoint is taken |
+| `checkpoint_overdue` | a warning: the log keeps `changes` row changes, or the data file's side file its bytes, four times what makes a checkpoint due, for want of one; `cause` says why: `refused`, each checkpoint failing, with its `sqlcode` and `message` (a damaged table, a failed sync of the log, an I/O error); `transaction`, checkpoints taken but an open transaction keeping the log from its first change, made `seconds` ago; or `not_taken`, under the JOBS.POLICY `policy` named, MANUAL or PAUSED, or AUTOMATIC with its thread behind; told at most once a minute ([Checkpoints](03-databases.md#checkpoints)) |
 | `thread` | a thread of background work, `label` `turborel-checkpoint` or `turborel-maintenance`, has `change`d: started, stopped, failed, with its error, or restarted after a fault |
 | `setting_changed` | the database's value of a setting is changed |
 | `user_changed`, `owner_changed` | a user is made, given a password or dropped; the database is given an owner |

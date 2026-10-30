@@ -73,7 +73,22 @@ recovery reads the log only from there. One is due once
 CHECKPOINT.AFTER_CHANGES row changes have been logged, 100,000 by
 default, or CHECKPOINT.AFTER_BYTES bytes written to the data file,
 64 MiB; the database's checkpoint thread takes it, so no transaction
-waits for it. Each is told to the diagnostics, `checkpoint_taken`.
+waits for it. Each is told to the diagnostics, `checkpoint_taken`. One
+that fails leaves the changes since the last counted, so the next is due
+as soon as a transaction ends.
+
+The log is kept from the last checkpoint, or from the first change of
+the oldest transaction still open, whichever is earlier. While
+checkpoints are refused (a table damaged, a failed sync of the log),
+not taken, or taken while one transaction stays open, the log only
+grows. Once it keeps four times CHECKPOINT.AFTER_CHANGES, or the side
+file four times CHECKPOINT.AFTER_BYTES, a `checkpoint_overdue` warning
+says so and why, at most once a minute
+([Diagnostics](08-diagnostics.md)):
+
+```
+{"time":"2026-10-30T09:12:44.310Z","level":"warning","event":"checkpoint_overdue","changes":400000,"cause":"transaction","seconds":5412}
+```
 
 ## Open files
 

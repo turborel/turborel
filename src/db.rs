@@ -115,6 +115,7 @@ pub use users::Credentials;
 
 use assignment::{assign_targets, candidate, check_option, check_targets, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
+pub use checkpoint::OVERDUE;
 pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
 pub(crate) use database::WeakDatabase;

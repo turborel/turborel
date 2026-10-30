@@ -75,6 +75,7 @@ use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::ThreadId;
+use std::time::{Duration, Instant};
 
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
@@ -215,11 +216,14 @@ pub(crate) struct Transactions {
     waits_for: Mutex<WaitsFor>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
     pub(crate) gate: Gate,
-    /// The position of the first record of each open transaction that
-    /// logged one: where recovery from a checkpoint begins reading.
-    firsts: Mutex<BTreeMap<TxId, Lsn>>,
-    /// Row changes logged since the last checkpoint.
+    /// The first record of each open transaction that logged one: its
+    /// position, where recovery from a checkpoint begins reading.
+    firsts: Mutex<BTreeMap<TxId, First>>,
+    /// Row changes logged since the database was opened.
     pub(crate) logged: AtomicU64,
+    /// Of those, the ones the last checkpoint taken holds: those after it
+    /// count toward the next (CHECKPOINT.AFTER_CHANGES).
+    checkpointed: AtomicU64,
     /// Index builds under way, which a checkpoint waits for: it records
     /// only indexes ready to be read (`Database::create_index`).
     builds: Mutex<usize>,
@@ -262,6 +266,14 @@ impl Transactions {
     }
 }
 
+/// The first record an open transaction logged: its position, the row
+/// changes logged before it, and when.
+struct First {
+    at: Lsn,
+    logged: u64,
+    when: Instant,
+}
+
 impl Default for Transactions {
     fn default() -> Self {
         Transactions {
@@ -271,6 +283,7 @@ impl Default for Transactions {
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
             logged: AtomicU64::new(0),
+            checkpointed: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
             stopped: Mutex::new(None),
@@ -349,12 +362,32 @@ impl Transactions {
     /// The position of the first record of the oldest open transaction
     /// that logged one, if any.
     pub(crate) fn oldest_logged(&self) -> Option<Lsn> {
-        lock_builtin(&self.firsts).values().min().copied()
+        lock_builtin(&self.firsts).values().map(|first| first.at).min()
     }
 
     /// Notes that `tx` logged its first record at `at`.
     pub(crate) fn first_logged(&self, tx: TxId, at: Lsn) {
-        lock_builtin(&self.firsts).entry(tx).or_insert(at);
+        let logged = self.logged.load(Ordering::Relaxed);
+        lock_builtin(&self.firsts).entry(tx).or_insert(First { at, logged, when: Instant::now() });
+    }
+
+    /// Row changes logged since the last checkpoint taken.
+    pub(crate) fn since_checkpoint(&self) -> u64 {
+        self.logged.load(Ordering::Relaxed).saturating_sub(self.checkpointed.load(Ordering::Relaxed))
+    }
+
+    /// Notes a checkpoint taken, holding the first `logged` row changes.
+    pub(crate) fn checkpointed(&self, logged: u64) {
+        self.checkpointed.fetch_max(logged, Ordering::Relaxed);
+    }
+
+    /// Of the oldest open transaction that logged a record, from whose
+    /// first the log is kept: the row changes logged since, its own among
+    /// them, and how long ago it logged it.
+    pub(crate) fn pinned(&self) -> Option<(u64, Duration)> {
+        let firsts = lock_builtin(&self.firsts);
+        let oldest = firsts.values().min_by_key(|first| first.at)?;
+        Some((self.logged.load(Ordering::Relaxed).saturating_sub(oldest.logged), oldest.when.elapsed()))
     }
 
     /// How many transactions are open.

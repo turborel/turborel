@@ -5,7 +5,8 @@
 //! that keeps them.
 //!
 //! Events are what an operator must know of the database's life and
-//! failures: opening and closing, checkpoints, changes of settings,
+//! failures: opening and closing, checkpoints taken, and overdue while the
+//! log grows (RULES.md D25), changes of settings,
 //! plug-ins registered, users and the owner changed, the threads of
 //! background work started, stopped or failing (RULES.md D55), failures
 //! beyond a statement's own
@@ -18,9 +19,11 @@
 //! takes them. What is counted (I/O, pool hits) stays in
 //! counters, read when wanted.
 
+use std::time::Duration;
+
 use crate::db::Opened;
 use crate::error::{Code, SqlError};
-use crate::threads::ThreadChange;
+use crate::threads::{JobPolicy, ThreadChange};
 use crate::value::Value;
 
 /// How much an event matters.
@@ -137,13 +140,41 @@ pub enum Event {
         /// FILES.MAX_OPEN.
         limit: u64,
     },
+    /// \[DESIGN\] The log, or the tables file's side file, has grown past
+    /// `db::OVERDUE` times what makes a checkpoint due
+    /// (CHECKPOINT.AFTER_CHANGES, CHECKPOINT.AFTER_BYTES) with no
+    /// checkpoint letting it be given up (RULES.md D25). Told at most once
+    /// a minute.
+    CheckpointOverdue {
+        /// The row changes the log keeps for want of a checkpoint.
+        changes: u64,
+        /// Why.
+        cause: Overdue,
+    },
+}
+
+/// \[DESIGN\] Why checkpoints let the log grow (`Event::CheckpointOverdue`).
+#[derive(Debug, Clone)]
+pub enum Overdue {
+    /// Each is refused, with this error: a damaged table (RULES.md D19), a
+    /// failed sync of the log (D25), or a failure of its own.
+    Refused(SqlError),
+    /// They are taken, but an open transaction keeps the log from its
+    /// first record, logged this long ago.
+    Transaction(Duration),
+    /// None is taken: JOBS.POLICY, as it is, leaves them to the program
+    /// (MANUAL) or to none (PAUSED), or, AUTOMATIC, its thread is behind.
+    NotTaken(JobPolicy),
 }
 
 impl Event {
     /// How much the event matters.
     pub fn level(&self) -> Level {
         match self {
-            Event::Opened(Opened::Recovered(_)) | Event::SlowStatement { .. } | Event::FilesReopened { .. } => Level::Warning,
+            Event::Opened(Opened::Recovered(_))
+            | Event::SlowStatement { .. }
+            | Event::FilesReopened { .. }
+            | Event::CheckpointOverdue { .. } => Level::Warning,
             Event::Failed(e) => worth(e.code).unwrap_or(Level::Warning),
             Event::Thread { change, .. } => match change {
                 ThreadChange::Started | ThreadChange::Stopped => Level::Info,

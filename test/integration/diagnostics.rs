@@ -192,3 +192,88 @@ fn a_failed_rotation_of_the_log_is_told() {
     assert_eq!(told[0].0, Level::Error);
     assert_eq!(crate::common::count(&a, "SELECT K FROM T"), 100);
 }
+
+/// A database in `scratch` over `fs`, its checkpoints run by the program
+/// (JOBS.POLICY MANUAL), one due after each row change; schema A's table
+/// T; and a sink keeping its events.
+fn overdue_after_one(scratch: &Scratch, fs: &std::sync::Arc<dyn turborel::disk::io::FileSystem>) -> (Database, Kept) {
+    let db = Database::new();
+    db.open_files(fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    db.set_setting("CHECKPOINT.AFTER_CHANGES", &Value::Exact(Decimal::new(1, 0))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone()));
+    (db, kept)
+}
+
+/// The events of checkpoints overdue `kept` has, with their levels.
+fn overdue(kept: &Kept) -> Vec<(Level, String)> {
+    kept.taken().into_iter().filter(|(_, e)| e.starts_with("CheckpointOverdue")).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D40, D55: with no checkpoint taken,
+/// the log grown past `OVERDUE` times CHECKPOINT.AFTER_CHANGES is told as
+/// a warning, as a transaction ends, with the job policy that leaves them
+/// to the program; and told at most once a minute.
+#[test]
+fn checkpoints_not_taken_are_told_overdue() {
+    let scratch = Scratch::new("diagnostics-overdue-policy");
+    let (db, kept) = overdue_after_one(&scratch, &os());
+    let a = db.session("A");
+    let below = turborel::db::OVERDUE - 1;
+    a.run(&format!("INSERT INTO T SELECT * FROM (VALUES {}) AS V (K)", vec!["(1)"; usize::try_from(below).unwrap()].join(", "))).unwrap();
+    a.commit().unwrap();
+    assert_eq!(overdue(&kept), vec![], "not yet");
+    a.run("INSERT INTO T VALUES (2)").unwrap();
+    a.commit().unwrap();
+    let told = overdue(&kept);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].0, Level::Warning);
+    assert!(told[0].1.contains(&format!("changes: {}", turborel::db::OVERDUE)) && told[0].1.contains("NotTaken(Manual)"), "{told:?}");
+    a.run("INSERT INTO T VALUES (3)").unwrap();
+    a.commit().unwrap();
+    assert_eq!(overdue(&kept), vec![], "once a minute");
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D40: checkpoints refused, each failing,
+/// are told overdue with the failure that refuses them.
+#[test]
+fn checkpoints_refused_are_told_overdue_with_why() {
+    let scratch = Scratch::new("diagnostics-overdue-refused");
+    let (fs, faults) = crate::faults::FaultyFs::with_faults();
+    let (db, kept) = overdue_after_one(&scratch, &fs);
+    faults.inject(crate::faults::Rule::fail(crate::faults::Op::Write).on("catalog"));
+    let a = db.session("A");
+    for k in 0..turborel::db::OVERDUE {
+        a.run(&format!("INSERT INTO T VALUES ({k})")).unwrap();
+        a.commit().unwrap();
+        assert_eq!(db.run_due().err().map(|e| e.code), Some(Code::Io));
+    }
+    faults.clear();
+    let told = overdue(&kept);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].1.contains("Refused") && told[0].1.contains("injected"), "{told:?}");
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D40: checkpoints taken while an open
+/// transaction keeps the log from its first record are told overdue,
+/// naming the transaction by how long ago it logged it, once the log
+/// keeps `OVERDUE` times CHECKPOINT.AFTER_CHANGES.
+#[test]
+fn a_transaction_keeping_the_log_is_told() {
+    let scratch = Scratch::new("diagnostics-overdue-transaction");
+    let (db, kept) = overdue_after_one(&scratch, &os());
+    let idle = db.session("A");
+    idle.run("INSERT INTO T VALUES (0)").unwrap();
+    let a = db.session("A");
+    for k in 1..turborel::db::OVERDUE {
+        a.run(&format!("INSERT INTO T VALUES ({k})")).unwrap();
+        a.commit().unwrap();
+        db.run_due().unwrap();
+    }
+    let told = overdue(&kept);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].1.contains("Transaction("), "{told:?}");
+    idle.rollback().unwrap();
+}
