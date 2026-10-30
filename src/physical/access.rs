@@ -4,7 +4,7 @@
 
 use super::estimate::{self, Known};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
-use crate::index::Probe;
+use crate::index::{IndexMethod, Probe};
 use crate::logical::{Cond, Expr, SortKey, and_all, pushed_conjuncts, render_cond};
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
@@ -20,6 +20,8 @@ struct Path {
     reverse: bool,
     /// The index and method names, the probe, and the conjuncts it answers.
     index: Option<(String, String, Probe, Vec<usize>)>,
+    /// Of a scan, the columns in whose order it reads the table, if any.
+    order: Vec<usize>,
 }
 
 /// A probe an index could answer: its probe, the conjuncts it answers, how
@@ -39,14 +41,15 @@ impl PhysicalPlanner<'_> {
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
-            let plan = Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows: 0, cost: 0.0_f64 };
+            let plan =
+                Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows: 0, cost: 0.0_f64, order: Vec::new() };
             let cost = self.db.cost();
             return filtered(plan, conds, &Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false });
         };
         let rows = storage.row_count();
         let best = self.best_path(read, &conds, want);
         let plan = match best.index {
-            None => Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost },
+            None => Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost, order: best.order },
             Some((index, method, probe, mut used)) => {
                 // `used` indexes `conds`, which `best_path` enumerated.
                 used.sort_unstable();
@@ -80,14 +83,15 @@ impl PhysicalPlanner<'_> {
     fn best_path(&self, read: TableRead<'_>, conds: &[Cond], want: &[SortKey]) -> Path {
         let cost = &self.db.cost();
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
-        let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None };
+        let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
         let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
         let rows = storage.row_count();
         let descent = cost.index_descent * cost_of(rows.saturating_add(1)).log2();
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
         let stats = storage.statistics();
         let all = cost_of(rows);
-        let mut best = Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
+        let mut best =
+            in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });
 
         // RULES.md D15: a probe reads only the rows its conjuncts select, so the
         // other conjuncts would not be evaluated on the rest. When one of them
@@ -112,12 +116,7 @@ impl PhysicalPlanner<'_> {
             // A full ordered read, only to provide order.
             candidates.push(Candidate { probe: Probe::All, used: Vec::new(), fixed: 0, guess: all });
             for c in candidates {
-                let supported = match &c.probe {
-                    Probe::All => method.ordered() && !want.is_empty(),
-                    Probe::Compare { op, .. } => method.supports(*op),
-                    Probe::Prefix { equal, then } => method.supports_prefix(types.len(), equal.len(), then.as_ref().map(|(op, _)| *op)),
-                    Probe::Range { equal, .. } => method.supports_range(types.len(), equal.len()),
-                };
+                let supported = supports(&**method, &c.probe, (types.len(), !want.is_empty()));
                 // Indexes hold no key with a null, so the rows of a probe are
                 // all its conjuncts select only if no column it does not test
                 // may be null.
@@ -137,12 +136,36 @@ impl PhysicalPlanner<'_> {
                 let total = path_cost + sort_penalty(est, order.is_some());
                 if total < best.total {
                     let probed = Some((ix.name.clone(), ix.method.clone(), c.probe, c.used));
-                    best = Path { total, cost: path_cost, est, ordered: order.is_some(), reverse: order.unwrap_or(false), index: probed };
+                    let ordered = (order.is_some(), order.unwrap_or(false));
+                    best = Path { total, cost: path_cost, est, ordered: ordered.0, reverse: ordered.1, index: probed, order: Vec::new() };
                 }
             }
         }
         best
     }
+}
+
+/// Whether `method`, of an index of `width` columns, answers `probe`: a
+/// read of all its keys only to give an order, if `ordering`.
+fn supports(method: &dyn IndexMethod, probe: &Probe, (width, ordering): (usize, bool)) -> bool {
+    match probe {
+        Probe::All => method.ordered() && ordering,
+        Probe::Compare { op, .. } => method.supports(*op),
+        Probe::Prefix { equal, then } => method.supports_prefix(width, equal.len(), then.as_ref().map(|(op, _)| *op)),
+        Probe::Range { equal, .. } => method.supports_range(width, equal.len()),
+    }
+}
+
+/// `scan`, a scan of `storage`, read in the order of the columns it keeps
+/// its rows sorted by, if `want` asks for the first of them, all ascending
+/// (`TableStorage::scan_ordered`): no sort, its rows merged as they are
+/// read, so its cost is the scan's.
+fn in_order(storage: &dyn TableStorage, want: &[SortKey], scan: Path) -> Path {
+    let keys: Vec<usize> = want.iter().map(|k| k.column).collect();
+    if want.is_empty() || want.iter().any(|k| k.descending) || !storage.ordered_by().starts_with(&keys) {
+        return scan;
+    }
+    Path { total: scan.cost, ordered: true, order: keys, ..scan }
 }
 
 /// The cost of a scan of `storage` reading `needed` under `conds`, and the

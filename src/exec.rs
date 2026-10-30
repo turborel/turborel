@@ -31,10 +31,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::index::{Key, Probe};
 use crate::logical::{Cond, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Condition, Row, RowId, TableStorage, project};
+use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage, project};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
-use crate::value::Value;
+use crate::value::{Value, sort_cmp};
 
 pub use eval::{eval, eval_cond, quantified};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
@@ -88,8 +88,47 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// The rows of the scan `plan`.
 #[inline(never)]
 fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::SeqScan { table, columns, .. } = plan else { return failed(broken("a scan is not one")) };
-    scanned(&table, &columns, db, tx)
+    let Plan::SeqScan { table, columns, order, .. } = plan else { return failed(broken("a scan is not one")) };
+    if order.is_empty() {
+        return scanned(&table, &columns, db, tx);
+    }
+    ordered_scan((&table, &columns, &order), None, db, tx)
+}
+
+/// The rows of `table`, `columns` read, in the order of the columns
+/// `order`, as ORDER BY sorts them [X3.135-1986 §8.3 GR3b], only those
+/// `condition` may match if given: as its storage reads them so
+/// (`TableStorage::scan_ordered`), else read and sorted, if it no longer
+/// can, its option changed since the plan was made.
+fn ordered_scan(
+    (table, columns, order): (&QualifiedName, &[usize], &[usize]),
+    condition: Option<&Conjunction>,
+    db: &Arc<State>,
+    tx: TxId,
+) -> RowIter {
+    let storage = match db.storage_of(table) {
+        Ok(storage) => Arc::clone(storage),
+        Err(e) => return failed(e),
+    };
+    if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, order, condition) {
+        return Box::new(rows.map(|read| read.map(|(_, row)| row)));
+    }
+    let read = match condition {
+        Some(c) => storage.scan_where(tx, columns, c),
+        None => storage.scan(tx, columns),
+    };
+    let mut found = match read.map(|r| r.map(|(_, row)| row)).collect::<Result<Vec<Row>>>() {
+        Ok(found) => found,
+        Err(e) => return failed(e),
+    };
+    found.sort_by(|a, b| {
+        order
+            .iter()
+            .map(|&c| a.get(c).zip(b.get(c)).map_or(std::cmp::Ordering::Equal, |(x, y)| sort_cmp(x, y)))
+            .find(|o| o.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Box::new(found.into_iter().map(Ok))
 }
 
 /// The rows of the product or hash join `plan`.
@@ -229,10 +268,15 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// conditions, if it has simple ones (`simple_conjuncts`).
 fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
     match (input, pushed_conjuncts(cond)) {
-        (Plan::SeqScan { table, columns, .. }, Some(condition)) => match db.storage_of(&table) {
-            Ok(storage) => Box::new(Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row))),
-            Err(e) => failed(e),
-        },
+        (Plan::SeqScan { table, columns, order, .. }, Some(condition)) => {
+            if !order.is_empty() {
+                return ordered_scan((&table, &columns, &order), Some(&condition), db, tx);
+            }
+            match db.storage_of(&table) {
+                Ok(storage) => Box::new(Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row))),
+                Err(e) => failed(e),
+            }
+        }
         (input, _) => execute(input, db, tx),
     }
 }
@@ -391,7 +435,13 @@ mod tests {
 
     /// A plan of the one row `row`, read from the empty table `A.E`.
     fn one_row(row: Row) -> Plan {
-        let empty = Plan::SeqScan { table: QualifiedName { auth: "A".into(), ident: "E".into() }, columns: vec![], rows: 0, cost: 0.0_f64 };
+        let empty = Plan::SeqScan {
+            table: QualifiedName { auth: "A".into(), ident: "E".into() },
+            columns: vec![],
+            rows: 0,
+            cost: 0.0_f64,
+            order: vec![],
+        };
         Plan::DefaultRow { row, input: Box::new(empty) }
     }
 
@@ -404,7 +454,7 @@ mod tests {
     #[test]
     fn missing_storage_and_indexes_are_reported() {
         let st = Arc::new(state());
-        let seq = || Plan::SeqScan { table: missing_table(), columns: vec![], rows: 0, cost: 0.0_f64 };
+        let seq = || Plan::SeqScan { table: missing_table(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![] };
         let index = || Plan::IndexScan {
             table: missing_table(),
             index: "I".into(),

@@ -46,6 +46,7 @@ mod scan;
 mod sealing;
 mod stats;
 mod store;
+mod table;
 mod undo;
 mod values;
 mod version;
@@ -60,7 +61,7 @@ use frozen::{Frozen, Merged, Merging};
 use ids::IdBlocks;
 use ids::{key, no_row, row_id};
 pub use meta::TABLE_FORMAT;
-use meta::{locator_of, meta_content, parse_locator, parse_meta};
+use meta::{locator_of, meta_content, parse_locator};
 use mvcc::{Read, Versions};
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
@@ -243,101 +244,6 @@ pub struct RowTable {
     headers: Arc<crate::engine::columns::cache::HeaderCache>,
 }
 
-/// What a table's meta page names, made or read.
-struct Found {
-    meta: PageId,
-    tree: BLinkTree,
-    /// The row ids reserved.
-    reserved: u64,
-}
-
-impl RowTable {
-    /// Creates an empty table of columns of `types` in `files`.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the file is not a registered pager file; the buffer
-    /// pool's errors.
-    pub fn create(files: &TableFiles, types: &[DataType], options: TableOptions) -> Result<RowTable> {
-        let tree = BLinkTree::create(Arc::clone(&files.pool), files.file)?;
-        let meta = {
-            let (meta, mut page) = files.pool.new_page(files.file)?;
-            *page = meta_content(tree.meta(), RESERVE, 0);
-            meta
-        };
-        RowTable::with(files, Found { meta, tree, reserved: RESERVE }, types, options)
-    }
-
-    /// Opens the table whose meta page is `meta`, of columns of `types`:
-    /// row ids go on past those it reserved, and its rows are counted in
-    /// the pass that gathers its statistics.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -916 if `meta` is not a table's meta page, or a row cannot
-    /// be read; as `create`.
-    pub fn open(files: &TableFiles, meta: PageId, types: &[DataType], options: TableOptions) -> Result<RowTable> {
-        RowTable::open_with(files, (meta, types), options, Sealing::plain())
-    }
-
-    /// As `open`, its rows sealed as `sealing` says, its frozen row groups'
-    /// pages too, which are read as it opens.
-    fn open_with(files: &TableFiles, (meta, types): (PageId, &[DataType]), options: TableOptions, sealing: Sealing) -> Result<RowTable> {
-        let (tree_meta, reserved, directory) = {
-            let page = files.pool.read(files.file, meta.0)?;
-            parse_meta(&page).ok_or_else(|| corrupt(&format!("page {} is not a table's meta page of this format", meta.0)))?
-        };
-        let tree = BLinkTree::open(Arc::clone(&files.pool), files.file, tree_meta)?;
-        let table = RowTable::with(files, Found { meta, tree, reserved }, types, options)?.sealed(sealing);
-        table.load_directory(directory)?;
-        table.zones.opened(reserved);
-        table.live.store(table.count_newest()?, Ordering::Release);
-        table.gathered.gather_when_asked();
-        Ok(table)
-    }
-
-    fn with(files: &TableFiles, found: Found, types: &[DataType], options: TableOptions) -> Result<RowTable> {
-        let Found { meta, tree, reserved } = found;
-        let threshold = options.out_of_line.unwrap_or(files.pool.capacity(files.file)?.checked_div(4).unwrap_or_default());
-        // A row's record shares its leaf entry with its key and its version.
-        let spill = Spill { threshold, most: tree.max_entry().saturating_sub(KEY).saturating_sub(VERSION) };
-        Ok(RowTable {
-            pool: Arc::clone(&files.pool),
-            file: files.file,
-            undo: Arc::clone(&files.undo),
-            versions: Versions::bounded(options.bounds(), Arc::clone(&files.work)),
-            meta,
-            tree,
-            format: RecordFormat::new(types),
-            spill,
-            next: AtomicU64::new(reserved),
-            blocks: IdBlocks::new(),
-            reserved: AtomicU64::new(reserved),
-            reserving: Mutex::new(()),
-            live: AtomicUsize::new(0),
-            gathered: Gathered::new(options.statistics),
-            durable: Arc::clone(&files.durable),
-            discarded: AtomicBool::new(false),
-            sealing: Sealing::plain(),
-            frozen: Frozen::new(options.columns),
-            freezes: Arc::clone(&files.freezes),
-            zones: Zones::new(types, options.columns.is_none()),
-            headers: Arc::clone(&files.headers),
-        })
-    }
-
-    /// The table, its rows sealed as `sealing` says.
-    fn sealed(mut self, sealing: Sealing) -> RowTable {
-        self.sealing = sealing;
-        self
-    }
-
-    /// Its meta page, by which `open` finds it.
-    pub fn meta(&self) -> PageId {
-        self.meta
-    }
-}
-
 impl TableStorage for RowTable {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
         let id = self.next_id()?;
@@ -429,6 +335,17 @@ impl TableStorage for RowTable {
     /// A table of the column store does.
     fn reads_by_batch(&self) -> bool {
         self.frozen.columns().is_some()
+    }
+
+    /// Of the column store, the columns COLUMNSTORE.ORDER names.
+    fn ordered_by(&self) -> Vec<usize> {
+        self.frozen.columns().map(|c| c.order.places().to_vec()).unwrap_or_default()
+    }
+
+    /// Of the column store, its groups' rows and the tree's merged in the
+    /// order of `keys` (`rows/frozen/ordered.rs`).
+    fn scan_ordered(self: Arc<Self>, tx: TxId, columns: &[usize], keys: &[usize], conditions: Option<&Conjunction>) -> Option<Rows> {
+        (!keys.is_empty() && self.ordered_by().starts_with(keys)).then(|| self.scan_ordered_of(tx, (columns, keys), conditions.cloned()))
     }
 
     fn row_count(&self) -> usize {

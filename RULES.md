@@ -835,7 +835,17 @@ the format of frozen groups becomes a trait when it is.
   order of a sixth slower, a fetch by key a twentieth. A group's header
   records the columns its rows are sorted by; once the option names
   others, the maintenance thread writes each group again sorted as it
-  says, two a call, until none is left, after a restart too. Of the
+  says, two a call, until none is left, after a restart too. An ORDER BY
+  of the first columns the option names, each ascending, is answered by a
+  scan in their order, no sort planned (`TableStorage::scan_ordered`,
+  `frozen/ordered.rs`): each group's rows a vector at a time, only the
+  runs a condition may match, those the tree has an entry for left out,
+  and the tree's rows the reader sees sorted, merged by a heap, the least
+  of their keys as ORDER BY sorts them first; a group sorted otherwise,
+  as the option changed, read whole and sorted, and a scan the plan asked
+  for that its table no longer gives in order read and sorted (of
+  393,216 rows, `ORDER BY S` 184 ms to 92, its sort of 132 ms over a scan
+  of 52 left out but the merge's). Of the
   columns COLUMNSTORE.BLOOM names (at most 8), each part of each chunk
   keeps a Bloom filter (`columns/bloom.rs`): 1280 bytes, 10 bits a row,
   each value not null setting 7 bits of its bucket (`value::bucket`, the

@@ -205,12 +205,12 @@ The registry, scopes and SET statements exist (D36). Still to do:
   latch (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
   a trait. For the column store:
-  - a sorted group's rows read in their order, or backwards, to answer
-    an ORDER BY of its order's columns without a sort, a cursor's first
-    rows found first (a clause limiting the rows waits for a later
-    standard's text); COLUMNSTORE.ORDER needs no descending columns for it, as
-    reading backwards gives their order (Vertica keeps ascending only,
-    ClickHouse sorting keys took DESC in 24.12 for the same reads);
+  - a sorted group's rows read backwards, to answer an ORDER BY of its
+    order's columns, all descending, without a sort, as ascending ones
+    are (`frozen/ordered.rs`); COLUMNSTORE.ORDER needs no descending
+    columns for it (Vertica keeps ascending only, ClickHouse sorting keys
+    took DESC in 24.12 for the same reads); and a clause limiting the rows
+    an ordered read gives, once a later standard's text is on hand;
   - a table option of columns (COLUMNSTORE.ORDER) following a column
     renamed, once ALTER TABLE renames columns;
   - conditions judged of runs, a run at a time, as a vector of runs

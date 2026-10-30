@@ -30,6 +30,7 @@
 mod batches;
 mod freeze;
 mod merge;
+mod ordered;
 mod rewrite;
 
 use std::borrow::Cow;
@@ -39,6 +40,7 @@ use std::time::Instant;
 
 pub(super) use batches::Batched;
 pub(super) use merge::{Merged, Merging};
+pub(super) use ordered::Ordered;
 
 use super::options::Columns;
 use super::sealing::Sealing;

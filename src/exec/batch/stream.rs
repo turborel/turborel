@@ -133,7 +133,8 @@ fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
 /// (`TableStorage::reads_by_batch`).
 pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     match plan {
-        Plan::SeqScan { table, .. } => db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
+        // A scan in an order is read a row at a time, its rows merged.
+        Plan::SeqScan { table, order, .. } => order.is_empty() && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, .. } => {

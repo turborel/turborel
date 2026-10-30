@@ -241,6 +241,20 @@ pub trait TableStorage: Send + Sync {
         };
         batches_of(rows, columns)
     }
+    /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered`
+    /// gives its rows, any first of them (RULES.md D31). Default: none.
+    fn ordered_by(&self) -> Vec<usize> {
+        Vec::new()
+    }
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
+    /// `conditions`, in the order of the columns `keys`, the first of
+    /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3
+    /// GR3b], nulls as it puts them, ties in no particular order; none if it
+    /// cannot give them so. Default: none.
+    fn scan_ordered(self: Arc<Self>, tx: TxId, columns: &[usize], keys: &[usize], conditions: Option<&Conjunction>) -> Option<Rows> {
+        let _ = (tx, columns, keys, conditions);
+        None
+    }
     /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
     /// so a statement given rows a few at a time, a cursor's, reads them by
     /// batch too, a batch read ahead of what it is given. Default: false,

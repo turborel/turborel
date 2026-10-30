@@ -96,8 +96,12 @@ the rows were in the order of before ran a sixth slower, and fetching a
 row by its key a twentieth slower. Once the option is set or changed,
 groups frozen before are written again in the background, sorted as it
 says, a few at a time, until every group is; queries read them as before
-meanwhile, in either order. A column the option names is not
-dropped until it names it no more; each is named as an identifier is,
+meanwhile, in either order. A query ordered by the first columns the
+option names, each ascending, ORDER BY S or ORDER BY S, G of an option
+naming S and G, reads the rows in that order as it scans them, merging
+the groups', and needs no sort: of 393,216 rows sorted by S, ORDER BY S
+ran in 92 milliseconds where it took 184 sorted. A column the option
+names is not dropped until it names it no more; each is named as an identifier is,
 a regular one in any case, a delimited one in double quotes.
 
 COLUMNSTORE.BLOOM keeps, of each 1,024 frozen rows of each column it

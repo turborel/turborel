@@ -7,7 +7,7 @@ use std::iter;
 use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
-use super::frozen::{Batched, Merged, Merging};
+use super::frozen::{Batched, Merged, Merging, Ordered};
 use super::mvcc::Read;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
@@ -103,6 +103,29 @@ impl RowTable {
             });
             found.transpose()
         }))
+    }
+
+    /// The rows `tx` sees, `columns` decoded, and only those `condition`
+    /// matches, if given, in the order of `keys` (`frozen/ordered.rs`).
+    pub(super) fn scan_ordered_of(
+        self: Arc<Self>,
+        tx: TxId,
+        (columns, keys): (&[usize], &[usize]),
+        condition: Option<Conjunction>,
+    ) -> Rows {
+        let read = condition.clone().map_or(Read::All, Read::Condition);
+        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
+            Ok(reader) => reader,
+            Err(e) => return Box::new(iter::once(Err(e))),
+        };
+        // The keys and the condition's columns are decoded too.
+        let mut decoded = columns.to_vec();
+        decoded.extend(keys);
+        decoded.extend(condition.iter().flat_map(Conjunction::columns));
+        match self.frozen.directory() {
+            Ok(directory) => Box::new(Ordered::new(Arc::clone(&self), (reader, directory), (decoded, keys.to_vec()), condition)),
+            Err(e) => Box::new(iter::once(Err(e))),
+        }
     }
 
     /// The rows `tx` sees by batch, of `columns`, only those `condition`

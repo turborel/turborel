@@ -48,6 +48,9 @@ pub enum Plan {
         rows: usize,
         /// The planner's cost estimate.
         cost: f64,
+        /// The columns, by their places, in whose order, ascending, it is read
+        /// (`TableStorage::scan_ordered`); none, in no particular order.
+        order: Vec<usize>,
     },
     /// The rows of a table an index finds for a probe, in index order.
     IndexScan {
@@ -406,7 +409,10 @@ impl Plan {
         let pad = "  ".repeat(depth);
         // Writing to a String cannot fail.
         let _ = match self {
-            Plan::SeqScan { table, rows, cost, .. } => writeln!(out, "{pad}SeqScan {table}  (rows={rows}, cost={cost:.1})"),
+            Plan::SeqScan { table, rows, cost, order, .. } => {
+                let ordered = if order.is_empty() { String::new() } else { format!(" in order of {}", order.len()) };
+                writeln!(out, "{pad}SeqScan {table}{ordered}  (rows={rows}, cost={cost:.1})")
+            }
             Plan::IndexScan { table, index, method, detail, est, cost, reverse, .. } => writeln!(
                 out,
                 "{pad}IndexScan {table} using {index} [{method}]{}: {detail}  (est. rows={est:.0}, cost={cost:.1})",

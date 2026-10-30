@@ -5,6 +5,7 @@
 
 use turborel_test_support::Scratch;
 
+use super::meta::parse_meta;
 use super::mvcc::Reader;
 use super::*;
 use crate::disk::buffer::Clock;
