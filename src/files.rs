@@ -53,6 +53,8 @@ pub struct Registry {
     shut: AtomicBool,
     /// The files noted, not the database's (`noted.rs`).
     noted: Mutex<HashMap<u64, Weak<noted::Entry>>>,
+    /// What it tells, and where (`told.rs`).
+    teller: told::Teller,
 }
 
 /// \[DESIGN\] A file, as INFORMATION_SCHEMA.FILES shows it.
@@ -196,7 +198,10 @@ impl Handle {
                 self.registry.refused(&self.path)?;
                 self.registry.admit(id);
                 match self.fs.open(&self.path, self.reopen) {
-                    Ok(file) => *write = Some(file),
+                    Ok(file) => {
+                        *write = Some(file);
+                        self.registry.reopened(std::time::Instant::now());
+                    }
                     Err(e) => {
                         self.registry.open.fetch_sub(1, Ordering::AcqRel);
                         return Err(e);
@@ -331,6 +336,12 @@ impl FileSystem for FileManager {
     fn remove(&self, path: &Path) -> Result<()> {
         self.inner.remove(path)
     }
+    /// A failure told to the database's sink, as no caller tells it.
+    fn discard(&self, path: &Path) {
+        if let Err(e) = self.inner.remove(path) {
+            self.registry.tell_failed(&e);
+        }
+    }
     fn exists(&self, path: &Path) -> Result<bool> {
         self.inner.exists(path)
     }
@@ -350,6 +361,7 @@ impl FileSystem for FileManager {
 
 mod noted;
 pub mod plugins;
+mod told;
 
 pub use noted::Noted;
 

@@ -41,9 +41,9 @@ impl Spill for PagedSpill {
             Ok(pool) => pool,
             Err(e) => {
                 drop(pager);
-                // The file is new and holds nothing; a failure to remove it
-                // leaves an empty file in the temporary directory.
-                let _ = temp.fs().remove(&path);
+                // The file is new and holds nothing; a failure to remove it,
+                // told, leaves an empty file in the temporary directory.
+                temp.fs().discard(&path);
                 return Err(e);
             }
         };
@@ -71,9 +71,10 @@ impl Drop for File {
     fn drop(&mut self) {
         // The pool, and with it the pager's file, closed first.
         drop(self.pool.take());
-        // Nothing reads the file again; a failure to remove it leaves it in
-        // the temporary directory, cleared when the database opens again.
-        let _ = self.temp.fs().remove(&self.path);
+        // Nothing reads the file again; a failure to remove it, told,
+        // leaves it in the temporary directory, cleared when the database
+        // opens or closes again.
+        self.temp.fs().discard(&self.path);
     }
 }
 

@@ -127,13 +127,23 @@ pub enum Event {
         /// Its text, if it may be told.
         statement: Option<String>,
     },
+    /// \[DESIGN\] More of the database's files were opened again, in a
+    /// minute, than FILES.MAX_OPEN lets be open: the limit is too low for
+    /// its work, each file closed only to be opened again (RULES.md D56).
+    /// Told at most once a minute.
+    FilesReopened {
+        /// The files opened again in the minute.
+        reopened: u64,
+        /// FILES.MAX_OPEN.
+        limit: u64,
+    },
 }
 
 impl Event {
     /// How much the event matters.
     pub fn level(&self) -> Level {
         match self {
-            Event::Opened(Opened::Recovered(_)) | Event::SlowStatement { .. } => Level::Warning,
+            Event::Opened(Opened::Recovered(_)) | Event::SlowStatement { .. } | Event::FilesReopened { .. } => Level::Warning,
             Event::Failed(e) => worth(e.code).unwrap_or(Level::Warning),
             Event::Thread { change, .. } => match change {
                 ThreadChange::Started | ThreadChange::Stopped => Level::Info,

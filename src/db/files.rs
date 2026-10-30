@@ -246,7 +246,9 @@ impl Database {
     pub fn open_files(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions) -> Result<Opened> {
         // Every file it opens through its file manager (RULES.md D56),
         // registered and limited.
-        let managed: Arc<dyn FileSystem> = Arc::new(FileManager::over(Arc::clone(fs), Arc::clone(&self.snapshot()?.files)));
+        let registry = Arc::clone(&self.snapshot()?.files);
+        registry.telling(self.events());
+        let managed: Arc<dyn FileSystem> = Arc::new(FileManager::over(Arc::clone(fs), registry));
         let opened = self.noted(self.open_from(&managed, dir, options))?;
         self.emit(&Event::Opened(opened));
         Ok(opened)

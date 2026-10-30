@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::*;
+use crate::diagnostics::{Diagnostics, Event};
 use crate::disk::memory::MemoryFileSystem;
 
 /// A manager of a file system in memory, of at most `limit` open files.
@@ -105,4 +106,43 @@ fn a_file_noted_is_shown_while_its_note_lives() {
     assert_eq!(registry.open.load(Ordering::Acquire), 0, "not under the limit");
     drop(noted);
     assert_eq!(registry.infos(), Vec::<FileInfo>::new());
+}
+
+/// A sink keeping the events it is told.
+#[derive(Default)]
+struct Told(Mutex<Vec<Event>>);
+
+impl Diagnostics for Told {
+    fn event(&self, event: &Event) {
+        self.0.lock().unwrap().push(event.clone());
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D56: more files opened again in a minute
+/// than FILES.MAX_OPEN is told once, as a warning naming the count and the
+/// limit; told again only a minute after; and a file nothing needs that
+/// cannot be removed is told as a failure.
+#[test]
+fn reopens_past_the_limit_and_files_not_discarded_are_told() {
+    let (fs, registry) = manager(1);
+    let told = Arc::new(Told::default());
+    let sink: Arc<dyn Diagnostics> = told.clone();
+    registry.telling(sink);
+    let files: Vec<Box<dyn DiskFile>> = ["/a", "/b"].iter().map(|p| fs.open(Path::new(p), OpenMode::CreateNew).unwrap()).collect();
+    for _ in 0..3_u32 {
+        for file in &files {
+            file.write_all_at(b"x", 0).unwrap();
+        }
+    }
+    let warned = |t: &Told| t.0.lock().unwrap().iter().filter(|e| matches!(e, Event::FilesReopened { .. })).count();
+    assert_eq!(warned(&told), 1, "once in the minute");
+    assert!(matches!(told.0.lock().unwrap().first(), Some(Event::FilesReopened { reopened: 2, limit: 1 })));
+    let later = std::time::Instant::now().checked_add(Duration::from_secs(61)).unwrap();
+    registry.reopened(later);
+    registry.reopened(later);
+    assert_eq!(warned(&told), 2, "again a minute after");
+    fs.discard(Path::new("/missing"));
+    let last = told.0.lock().unwrap().last().cloned();
+    let Some(Event::Failed(failed)) = last else { panic!("{last:?}") };
+    assert_eq!(failed.code, Code::Io);
 }

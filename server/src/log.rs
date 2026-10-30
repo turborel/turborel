@@ -147,20 +147,29 @@ fn fields(json: &mut Json, event: &Event) {
             json.text("message", &e.to_string());
         }
         Event::Thread { label, change } => thread(json, label, change),
-        Event::SlowStatement { user, millis, statement } => {
-            json.text("event", "slow_statement");
-            json.text("user", user);
-            json.number("millis", *millis);
-            match statement {
-                Some(text) => json.text("statement", text),
-                None => json.raw("statement", "null"),
-            }
+        Event::SlowStatement { user, millis, statement } => slow(json, user, *millis, statement.as_deref()),
+        Event::FilesReopened { reopened, limit } => {
+            json.text("event", "files_reopened");
+            json.number("reopened", *reopened);
+            json.number("limit", *limit);
         }
         // An event of a later database than this sink knows: kept whole.
         other => {
             json.text("event", "other");
             json.text("debug", &format!("{other:?}"));
         }
+    }
+}
+
+/// The fields of a statement of `user` whose work took `millis`, its text
+/// `statement` if it may be told.
+fn slow(json: &mut Json, user: &str, millis: u64, statement: Option<&str>) {
+    json.text("event", "slow_statement");
+    json.text("user", user);
+    json.number("millis", millis);
+    match statement {
+        Some(text) => json.text("statement", text),
+        None => json.raw("statement", "null"),
     }
 }
 
@@ -308,6 +317,8 @@ mod tests {
             shown(&untold),
             format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":null}}"#)
         );
+        let reopened = Event::FilesReopened { reopened: 3000, limit: 1024 };
+        assert_eq!(shown(&reopened), format!(r#"{head}"level":"warning","event":"files_reopened","reopened":3000,"limit":1024}}"#));
         let report = RecoveryReport { records: 1, definitions: 2, committed: 3, not_committed: 4, redone: 5, undone: 6 };
         let cases = [
             (Event::Opened(Opened::Created), r#""level":"info","event":"opened","how":"created"}"#.to_owned()),

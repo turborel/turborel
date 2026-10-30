@@ -81,7 +81,10 @@ A database holds at most FILES.MAX_OPEN of its files open at once, 1024
 by default, 0 for no limit, so a server stays within what the system
 allows a process. Past it, the file used least recently is closed, and
 opened again as it is next used; while every open file is being read or
-written, the next waits for one. The database's owner sees each file in
+written, the next waits for one. If more files are opened again in a
+minute than the limit, it is too low for the work, and a
+`files_reopened` warning says so, at most once a minute
+([Diagnostics](08-diagnostics.md)). The database's owner sees each file in
 INFORMATION_SCHEMA.FILES, its kind, whether it is open, and its reads,
 writes and syncs. The server's own files are there too, of KIND SERVER,
 though not under the limit: the `--log` file and the socket while they

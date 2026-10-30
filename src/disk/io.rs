@@ -81,6 +81,13 @@ pub trait FileSystem: Send + Sync {
     ///
     /// SQLCODE -915 if that cannot be found out.
     fn exists(&self, path: &Path) -> Result<bool>;
+    /// Removes the file at `path`, which nothing needs, as a spill file
+    /// dropped: a failure is no caller's to handle, so it is told where the
+    /// file system tells (the file manager's: the database's sink), or not
+    /// at all. Default: removed, a failure dropped.
+    fn discard(&self, path: &Path) {
+        let _ = self.remove(path);
+    }
     /// Creates the directory `path`, and any missing parents.
     ///
     /// # Errors
@@ -243,9 +250,9 @@ pub(crate) fn begin_file(fs: &dyn FileSystem, path: &Path, header: &[u8], durabl
     }
     if let Err(e) = begun {
         drop(file);
-        // A file not removed is refused as half made where it is opened,
-        // or cleared with its directory's scratch.
-        let _ = fs.remove(path);
+        // A file not removed is told, and refused as half made where it is
+        // opened, or cleared with its directory's scratch.
+        fs.discard(path);
         return Err(e);
     }
     Ok(file)
