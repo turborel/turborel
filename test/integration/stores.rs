@@ -74,7 +74,11 @@ fn the_catalog_holds_the_definitions_as_they_are() {
 /// keeps its catalog with the storage it is given, none in the directory:
 /// closed, it is reopened in place from it, and stopped, recovered from it;
 /// opened with another, which finds no catalog, it is refused, as its files
-/// are there; and its storage is not changed once it is opened.
+/// are there, its log only looked for, a torn tail left as it is; and its
+/// storage is not changed once it is opened.
+///
+/// Regression test (R-TEST-7): the log was opened, so recovered, cut, to
+/// learn whether one was there.
 #[test]
 fn a_catalog_is_kept_where_its_storage_keeps_it() {
     let scratch = Scratch::new("reopen-held-catalog");
@@ -103,9 +107,14 @@ fn a_catalog_is_kept_where_its_storage_keeps_it() {
     assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
     assert_eq!(rows(&db.session("S"), "SELECT K FROM T"), Ok(vec!["1".into(), "2".into()]));
     drop(db);
+    let last = std::fs::read_dir(dir.join("log")).unwrap().map(|e| e.unwrap().path()).max().unwrap();
+    let mut torn = std::fs::read(&last).unwrap();
+    torn.extend_from_slice(&[0xA5_u8; 100]);
+    std::fs::write(&last, &torn).unwrap();
     let refused = Database::new().open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap_err();
     assert_eq!(refused.code, Code::Api);
     assert!(refused.msg.contains("files, finds no catalog"), "{refused}");
+    assert_eq!(std::fs::read(&last).unwrap(), torn, "the log left as it was");
 }
 
 /// Verifies: [EXTENSION] RULES.md D25: a database kept in a directory

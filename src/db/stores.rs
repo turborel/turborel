@@ -97,6 +97,13 @@ pub trait LogStorage: Send + Sync {
     /// SQLCODE -915 if it cannot be read; -916 if what is there is not a
     /// log of this kind.
     fn open(&self, place: &StorePlace<'_>) -> Result<Option<Arc<dyn Log>>>;
+    /// Whether a log was made at `place`, nothing there changed: no tail
+    /// cut nor segment removed, as opening it may.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if that cannot be found out.
+    fn exists(&self, place: &StorePlace<'_>) -> Result<bool>;
     /// A new log at `place`, holding no record.
     ///
     /// # Errors
@@ -122,6 +129,10 @@ fn log_dir(place: &StorePlace<'_>) -> PathBuf {
 impl LogStorage for FileLogs {
     fn name(&self) -> &'static str {
         "files"
+    }
+
+    fn exists(&self, place: &StorePlace<'_>) -> Result<bool> {
+        FileLog::exists(&**place.fs, &log_dir(place))
     }
 
     fn open(&self, place: &StorePlace<'_>) -> Result<Option<Arc<dyn Log>>> {

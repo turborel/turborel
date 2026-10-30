@@ -424,6 +424,9 @@ impl LogStorage for HeldLogs {
     fn open(&self, _: &StorePlace<'_>) -> error::Result<Option<Arc<dyn Log>>> {
         Ok(self.0.lock().unwrap().as_ref().map(|log| Arc::clone(log) as Arc<dyn Log>))
     }
+    fn exists(&self, _: &StorePlace<'_>) -> error::Result<bool> {
+        Ok(self.0.lock().unwrap().is_some())
+    }
     fn create(&self, _: &StorePlace<'_>) -> error::Result<Arc<dyn Log>> {
         let mut held = self.0.lock().unwrap();
         if held.is_some() {
@@ -436,7 +439,7 @@ impl LogStorage for HeldLogs {
 }
 
 /// The contract of `LogStorage`, for `storage` at `dir`: none where none
-/// was made; one made, holding no record; a second refused; the records
+/// was made, nor said to exist; one made, holding no record, said to; a second refused; the records
 /// appended and synced given back, in order, by the log opened again.
 fn log_storage_contract(storage: &dyn LogStorage, dir: &std::path::Path) {
     let (fs, hash) = (crate::common::os(), crc32c());
@@ -444,7 +447,9 @@ fn log_storage_contract(storage: &dyn LogStorage, dir: &std::path::Path) {
     let formats = FileFormats::of(hash);
     let place = StorePlace::new(&fs, dir, &formats);
     assert!(storage.open(&place).unwrap().is_none(), "{}: none made", storage.name());
+    assert!(!storage.exists(&place).unwrap(), "{}: none there", storage.name());
     let log = storage.create(&place).unwrap();
+    assert!(storage.exists(&place).unwrap(), "{}: one there", storage.name());
     assert!(storage.create(&place).is_err(), "{}: one is there", storage.name());
     assert_eq!(log.read_from(log.end()).count(), 0);
     let start = log.end();

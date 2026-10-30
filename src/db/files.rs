@@ -359,7 +359,8 @@ impl Database {
         let storage = self.catalog_storage();
         let found = storage.open(place)?;
         let logs = self.log_storage(&FileLogOptions { durability: options.durability, ..FileLogOptions::default() });
-        if found.is_none() && logs.open(place)?.is_some() {
+        // Only looked for: opening it would recover it.
+        if found.is_none() && logs.exists(place)? {
             return Err(api(format!(
                 "[DESIGN] {} holds a database's log, but its catalog storage, {}, finds no catalog: open it with the storage that keeps its catalog (`Database::set_catalog_storage`)",
                 place.dir.display(),
