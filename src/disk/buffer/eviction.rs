@@ -14,9 +14,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 ///   finds none. Its proposal may be stale by the time the pool acts on it;
 ///   the pool checks again and asks again.
 /// * Methods may be called from several threads at once and take `&self`:
-///   the policy guards its own state. The pool calls them holding no lock
-///   but, for a read that hit by its hint, that frame's shared latch; they
-///   never call back into the pool (RULES.md R-ERR-4).
+///   the policy guards its own state. The pool calls them holding no lock;
+///   they never call back into the pool (RULES.md R-ERR-4).
+/// * `accessed` may be told of a frame not used: one a read hinted, told
+///   before the frame is latched and found to hold another page.
 pub trait Eviction: Send + Sync {
     /// Its name, for messages.
     fn name(&self) -> &'static str;

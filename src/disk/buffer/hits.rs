@@ -81,10 +81,14 @@ impl Hints {
 
 impl BufferPool {
     /// Page or block `key`, held for reading if its hint finds it at once:
-    /// its frame latched shared, holding it, not filling.
+    /// its frame latched shared, holding it, not filling. The eviction
+    /// policy is told of the use of the frame hinted before the latch is
+    /// taken, no lock held (RULES.md R-ERR-4): for a hint gone stale, of a
+    /// frame not used, which its contract allows.
     pub(super) fn read_hinted(&self, key: Key) -> Option<PageRef<'_>> {
         let index = self.hints.frame_of(key)?;
         let frame = self.frames.get(index)?;
+        self.eviction.accessed(index);
         let content = match frame.content.try_read() {
             Ok(content) => content,
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -94,7 +98,6 @@ impl BufferPool {
             return None;
         }
         self.hints.hit();
-        self.eviction.accessed(index);
         Some(PageRef { content, _pin: None })
     }
 }

@@ -19,7 +19,6 @@
 //! an extension point (`Eviction`); CLOCK is built in.
 //!
 //! No lock is held during I/O, nor during a call into the eviction policy
-//! but a read hit by its hint, which holds its frame's shared latch then
 //! (RULES.md R-ERR-4): a frame being filled or emptied is marked loading,
 //! and threads wanting its page wait for it on a condition variable.
 
