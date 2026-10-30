@@ -12,6 +12,8 @@
 //!              (`packed.rs`)
 //! RUNS:        runs of one value, of 8-byte fields as a frame's
 //!              (`runs.rs`)
+//! ALP:         approximate numbers as decimals, a frame of reference of
+//!              each one's digits and exceptions (`alp.rs`)
 //! DICTIONARY:  bits u8 | entries u32 | (entries + 1) × u32, where each
 //!              entry begins and the last ends | the entries | count × bits,
 //!              bit-packed, each value's entry, a null's 0
@@ -25,6 +27,7 @@
 
 use std::collections::HashMap;
 
+use super::alp::{Alp, Trials};
 use super::packed::{bits_for, get, pack, packed_len, unpack};
 use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
@@ -37,6 +40,7 @@ pub(super) const CONSTANT: u8 = 3;
 pub(super) const FRAME: u8 = 4;
 pub(super) const DICTIONARY: u8 = 5;
 pub(super) const RUNS: u8 = 6;
+pub(super) const ALP: u8 = 7;
 /// The bytes of a field frame of reference takes.
 const FRAMED: usize = 8;
 /// The most entries of a dictionary: as many as a code of 16 bits names.
@@ -56,6 +60,9 @@ pub(super) enum Plan {
     Dictionary(u32),
     /// Runs of one value, each less the least in this many bits.
     Runs(i64, u32),
+    /// Approximate numbers as decimals of an exponent, each one's digits
+    /// less the least in this many bits.
+    Alp(u32, i64, u32),
 }
 
 /// The bytes the values of a chunk take, in each encoding that can hold
@@ -77,6 +84,8 @@ pub(super) struct Sizer<'f> {
     framed: bool,
     entries: HashMap<&'f [u8], usize>,
     entry_bytes: usize,
+    /// The exponents tried, of approximate numbers.
+    alp: Option<Trials>,
 }
 
 fn integer(field: &[u8]) -> Option<i64> {
@@ -84,9 +93,10 @@ fn integer(field: &[u8]) -> Option<i64> {
 }
 
 impl<'f> Sizer<'f> {
-    /// No values yet, of fields of `width` if the type has one; encoded
-    /// plain only, unless `compress`.
-    pub(super) fn new(width: Option<usize>, compress: bool) -> Sizer<'f> {
+    /// No values yet, of fields of `width` if the type has one, of
+    /// approximate numbers if `floats`; encoded plain only, unless
+    /// `compress`.
+    pub(super) fn new(width: Option<usize>, (compress, floats): (bool, bool)) -> Sizer<'f> {
         Sizer {
             count: 0,
             compress,
@@ -100,6 +110,7 @@ impl<'f> Sizer<'f> {
             framed: width == Some(FRAMED),
             entries: HashMap::new(),
             entry_bytes: 0,
+            alp: (floats && compress && width == Some(FRAMED)).then(Trials::default),
         }
     }
 
@@ -107,6 +118,9 @@ impl<'f> Sizer<'f> {
     pub(super) fn add(&mut self, field: Option<&'f [u8]>) {
         self.count = self.count.saturating_add(1);
         let Some(f) = field else { return };
+        if let Some(alp) = &mut self.alp {
+            alp.add(f);
+        }
         self.varying = self.varying.saturating_add(f.len());
         if self.width.is_some_and(|w| w != f.len()) {
             self.width = None;
@@ -155,6 +169,9 @@ impl<'f> Sizer<'f> {
             let runs = runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX);
             found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
         }
+        if let Some(((e, least, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
+            found.push((Plan::Alp(e, least, bits), base.saturating_add(bytes)));
+        }
         if self.entries.len() < MOST_ENTRIES {
             let bits = bits_for(u64::try_from(self.entries.len().saturating_sub(1)).unwrap_or(u64::MAX));
             let table = self.entries.len().saturating_add(1).saturating_mul(WORD).saturating_add(self.entry_bytes);
@@ -196,6 +213,7 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], out: &mut Vec<u8>) 
         Plan::Frame(least, bits) => framed(fields, (least, bits), out),
         Plan::Dictionary(bits) => dictionary(fields, bits, out)?,
         Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
+        Plan::Alp(e, least, bits) => super::alp::encode(fields, (e, least, bits), out)?,
     }
     Ok(())
 }
@@ -255,6 +273,7 @@ pub(super) enum Body<'a> {
     Frame { least: i64, bits: u32, deltas: &'a [u8] },
     Dictionary { bits: u32, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
     Runs(Runs<'a>),
+    Alp(Alp<'a>),
 }
 
 /// `bytes` from `at` on, `len` of them.
@@ -308,6 +327,7 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
             Ok(Body::Dictionary { bits, offsets, entries: held, codes })
         }
         RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
+        ALP => Ok(Body::Alp(Alp::parse(rest, count)?)),
         _ => Err(corrupt("it is of another format")),
     }
 }
@@ -326,6 +346,7 @@ impl Body<'_> {
             }
             Body::Constant { field } => decoded(Some(field)),
             Body::Runs(runs) => decoded(runs.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
+            Body::Alp(alp) => decoded(alp.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
             Body::Frame { least, bits, deltas } => {
                 let delta = get(deltas, *bits, n).ok_or_else(|| corrupt("a value past its end is asked for"))?;
                 let sum = i128::from(*least).saturating_add(i128::from(delta));
@@ -363,7 +384,7 @@ impl Body<'_> {
                 out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
                 Some(())
             }
-            Body::Fixed { .. } | Body::Varying { .. } | Body::Dictionary { .. } => None,
+            Body::Fixed { .. } | Body::Varying { .. } | Body::Dictionary { .. } | Body::Alp(_) => None,
         }
     }
 }
@@ -436,7 +457,7 @@ impl Body<'_> {
                 let (from, to) = between(offsets, usize::from(self.code(n)?))?;
                 entries.get(from..to)
             }
-            Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) => None,
+            Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) | Body::Alp(_) => None,
         }
     }
 }
@@ -490,5 +511,6 @@ pub(super) fn kind_of(plan: Plan) -> u8 {
         Plan::Frame(..) => FRAME,
         Plan::Dictionary(_) => DICTIONARY,
         Plan::Runs(..) => RUNS,
+        Plan::Alp(..) => ALP,
     }
 }

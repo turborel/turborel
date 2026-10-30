@@ -20,6 +20,7 @@
 //! * `scan`: the rows of a group a reader asks for, chunks a condition
 //!   cannot match left unread.
 
+mod alp;
 mod bloom;
 pub mod cache;
 mod encoded;
@@ -102,7 +103,7 @@ impl Fields {
     /// than a chunk has one of its own.
     pub fn fitting(&self, t: &DataType, from: usize, (capacity, compress): (usize, bool)) -> usize {
         let rest = self.0.get(from..).unwrap_or_default();
-        let mut sizer = Sizer::new(width_of(&self.0, t), compress);
+        let mut sizer = Sizer::new(width_of(&self.0, t), (compress, matches!(t, DataType::Approximate { .. })));
         for (n, field) in rest.iter().enumerate() {
             sizer.add(field.as_deref());
             if sizer.best().1 > capacity {
@@ -121,7 +122,7 @@ impl Fields {
     pub fn chunk(&self, t: &DataType, from: usize, (count, compress): (usize, bool)) -> Result<Vec<u8>> {
         let end = from.checked_add(count).ok_or_else(too_large)?;
         let fields = self.0.get(from..end).ok_or_else(|| corrupt("its values are out of range"))?;
-        let mut sizer = Sizer::new(width_of(&self.0, t), compress);
+        let mut sizer = Sizer::new(width_of(&self.0, t), (compress, matches!(t, DataType::Approximate { .. })));
         for f in fields {
             sizer.add(f.as_deref());
         }

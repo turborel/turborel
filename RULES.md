@@ -801,7 +801,13 @@ the format of frozen groups becomes a trait when it is.
   it (`columns/runs.rs`: a sorted column of 400,000 rows of 80 values
   summed 2.2 ms to 1.9), or a dictionary, each value's code bit-packed
   in the bits its entries need (`columns/encoded.rs`: of 12 texts, 4 bits
-  a code, not a byte, scanned as fast); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
+  a code, not a byte, scanned as fast), or, of approximate numbers, each
+  as n / 10^e, n bit-packed as a frame's, e of the first 64 values the one
+  leaving fewest exceptions, kept as they are, n / 10^e checked to be the
+  value bit for bit (ALP, Afroozeh et al., SIGMOD 2023; `columns/alp.rs`:
+  no cast, integers made exact up to 2^53; 65,536 prices of two decimals
+  44 pages to 134, measures of one 29, `SUM` of 393,216 in memory 6.1 ms
+  to 6.5, a comparison 3.3 to 4.0, each value decoded alone); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Unpacked a value's 8 bytes at a time, a column of numbers held in
   memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
   rows 2.0 ms to 2.3), as its pages are half as many or fewer.

@@ -1,6 +1,6 @@
 //! Unit tests of column chunks (`columns.rs`).
 
-use super::encoded::{CONSTANT, DICTIONARY, FIXED, FRAME, RUNS, VARYING};
+use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, RUNS, VARYING};
 use super::*;
 use crate::value::{Decimal, Spelled};
 
@@ -286,4 +286,44 @@ fn sorted_chunks_are_runs() {
     let mut wide = bytes.clone();
     wide[at] = 65;
     assert_eq!(code(&wide), Some(Code::Corrupt), "wider than 64 bits");
+}
+
+const DOUBLE: DataType = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
+
+/// Verifies: [DESIGN] RULES.md D31, ALP: approximate numbers of two
+/// decimal digits, nulls among them, are written as decimals in about the
+/// bits their digits need, and read back bit for bit; those that are not
+/// such decimals, -0 and a third among them, are kept as they are; values
+/// of no decimal at all are written otherwise.
+#[test]
+fn approximate_numbers_are_decimals() {
+    let bits = |values: &[Value]| -> Vec<String> {
+        values.iter().map(|v| if let Value::Approx(f) = v { format!("{:x}", f.to_bits()) } else { v.to_string() }).collect()
+    };
+    let check = |values: Vec<Value>| {
+        let fields = Fields::of(&DOUBLE, values.iter().cloned()).unwrap();
+        let bytes = fields.chunk(&DOUBLE, 0, (fields.len(), true)).unwrap();
+        let chunk = Chunk::parse(&bytes).unwrap();
+        let back: Vec<Value> = (0..chunk.len()).map(|n| chunk.value(n, &DOUBLE).unwrap()).collect();
+        assert_eq!(bits(&back), bits(&values));
+        (bytes[0], bytes.len())
+    };
+    let prices: Vec<Value> = (0_i32..1000_i32)
+        .map(|n| {
+            if n % 50_i32 == 7_i32 {
+                Value::Null
+            } else {
+                Value::Approx(f64::from(n.checked_mul(37).unwrap().checked_rem(10_000).unwrap()) / 100.0)
+            }
+        })
+        .collect();
+    let (kind, len) = check(prices);
+    assert_eq!(kind, ALP);
+    assert!(len < 1000 * 2 + 200, "14 bits each, not 8 bytes: {len}");
+    let mut odd = vec![Value::Approx(-0.0), Value::Approx(1.0 / 3.0), Value::Approx(f64::MAX)];
+    odd.extend((0_i32..200_i32).map(|n| Value::Approx(f64::from(n) / 4.0)));
+    let (odd_kind, _) = check(odd);
+    assert_eq!(odd_kind, ALP, "three exceptions");
+    let thirds: Vec<Value> = (1_i32..100_i32).map(|n| Value::Approx(1.0 / f64::from(n.checked_mul(3).unwrap()))).collect();
+    assert_ne!(check(thirds).0, ALP, "no decimals");
 }

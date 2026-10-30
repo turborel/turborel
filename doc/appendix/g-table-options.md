@@ -65,8 +65,12 @@ skips, 1,024 rows at a time, the values it cannot match. Each page of a
 column's values is compressed, unless COLUMNSTORE.COMPRESSION is NONE: a
 value the same throughout kept once, numbers kept as their differences
 from the least, a number repeated over rows in a row kept once for them
-all, or few distinct values kept once each, whichever takes fewest bytes,
-so a page holds more of them. The more of a table's rows
+all, an approximate number written as a decimal of few digits kept as
+those digits, or few distinct values kept once each, whichever takes
+fewest bytes, so a page holds more of them. Approximate numbers so kept
+are read back exactly as written; 65,536 prices of two decimal places
+take 44 pages where they take 134 plain, and are summed about a tenth
+more slowly while their pages are in memory. The more of a table's rows
 are frozen, and the fewer of its columns a query reads, the faster it
 reads them.
 
