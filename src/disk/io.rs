@@ -12,6 +12,10 @@
 //! over `std::fs`, on Unix and Windows, the platforms whose std offers
 //! positional I/O. Only one platform primitive differs between them, the
 //! single positional read or write; the loops around it are shared.
+//!
+//! On Unix, the files and directories it makes are its user's alone
+//! (RULES.md D56): files 0600, directories 0700, less what the process's
+//! umask takes away. On Windows they take what their directory gives.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self as stdio, ErrorKind};
@@ -220,7 +224,7 @@ pub struct OsFileSystem;
 #[cfg(any(unix, windows))]
 impl FileSystem for OsFileSystem {
     fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
-        let mut options = OpenOptions::new();
+        let mut options = owners();
         match mode {
             OpenMode::CreateNew => options.read(true).write(true).create_new(true),
             OpenMode::ReadWrite => options.read(true).write(true),
@@ -236,7 +240,7 @@ impl FileSystem for OsFileSystem {
         path.try_exists().map_err(|e| failed("look for", path, &e))
     }
     fn create_dir_all(&self, path: &Path) -> Result<()> {
-        fs::create_dir_all(path).map_err(|e| failed("create the directory", path, &e))
+        owners_directories().create(path).map_err(|e| failed("create the directory", path, &e))
     }
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
         let read = |e: stdio::Error| failed("read the directory", path, &e);
@@ -250,14 +254,46 @@ impl FileSystem for OsFileSystem {
     /// \[DESIGN\] `File::try_lock`: `flock` on Unix, `LockFileEx` on
     /// Windows; the system gives it up when the process ends.
     fn lock(&self, path: &Path) -> Result<FileLock> {
-        let file =
-            OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path).map_err(|e| failed("open", path, &e))?;
+        let file = owners().read(true).write(true).create(true).truncate(false).open(path).map_err(|e| failed("open", path, &e))?;
         match file.try_lock() {
             Ok(()) => Ok(FileLock::new(file)),
             Err(fs::TryLockError::WouldBlock) => Err(locked(path)),
             Err(fs::TryLockError::Error(e)) => Err(failed("lock", path, &e)),
         }
     }
+}
+
+/// Options that make a file its user's alone: 0600.
+#[cfg(unix)]
+fn owners() -> OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = OpenOptions::new();
+    options.mode(0o600);
+    options
+}
+
+/// On Windows a file takes what its directory gives.
+#[cfg(windows)]
+fn owners() -> OpenOptions {
+    OpenOptions::new()
+}
+
+/// A maker of directories, and of those they are in, each its user's
+/// alone: 0700. A directory that exists is left as it is.
+#[cfg(unix)]
+fn owners_directories() -> fs::DirBuilder {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    builder
+}
+
+/// On Windows a directory takes what its parent gives.
+#[cfg(windows)]
+fn owners_directories() -> fs::DirBuilder {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    builder
 }
 
 /// On Unix a directory is synced like a file.

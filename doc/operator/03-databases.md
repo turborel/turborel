@@ -20,6 +20,11 @@ A database kept in a directory holds there:
 files are opened only by a release that knows their format versions
 ([Versions](../appendix/f-versions.md)).
 
+On Unix, the directories and files a database makes are the user's who
+runs it alone: directories 0700, files 0600, less what the umask takes
+away. A directory that already exists keeps its mode. On Windows they
+take the permissions of the directory they are made in.
+
 A database made with `--memory` has no directory: it is gone when the
 server stops. Its pages, its temporary tables' rows and what its queries
 spill are all kept in memory, of its MEMORY_BUDGET, never in the

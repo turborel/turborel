@@ -55,3 +55,30 @@ fn a_database_of_more_files_than_its_limit() {
     let again = open();
     assert_eq!(rows(&again.session("A"), "SELECT COUNT(*) FROM T WHERE S = 'changed'"), Ok(vec!["400".into()]));
 }
+
+/// Verifies: [DESIGN] RULES.md D56: on Unix, the directories and files a
+/// database makes are its user's alone: directories 0700, files 0600.
+#[cfg(unix)]
+#[test]
+fn files_made_are_their_users_alone() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("file-modes");
+    let dir = scratch.path("db");
+    let db = Database::new();
+    db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    db.session("A").run("INSERT INTO T VALUES (1)").unwrap();
+    db.close().unwrap();
+    let mut seen = 0_usize;
+    let mut pending = vec![dir];
+    while let Some(at) = pending.pop() {
+        let meta = std::fs::metadata(&at).unwrap();
+        let expected = if meta.is_dir() { 0o700 } else { 0o600 };
+        assert_eq!(meta.permissions().mode() & 0o777, expected, "{}", at.display());
+        if meta.is_dir() {
+            pending.extend(std::fs::read_dir(&at).unwrap().map(|e| e.unwrap().path()));
+        }
+        seen = seen.saturating_add(1);
+    }
+    assert!(seen > 3, "the directory, and its files: {seen}");
+}

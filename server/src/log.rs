@@ -44,7 +44,12 @@ impl Lines {
     ///
     /// The file cannot be opened for appending.
     pub fn appending(path: &Path) -> io::Result<Lines> {
-        Ok(Lines::new(Box::new(OpenOptions::new().create(true).append(true).open(path)?)))
+        let mut options = OpenOptions::new();
+        // \[DESIGN\] Made its user's alone, as the database's files are
+        // (RULES.md D56).
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        Ok(Lines::new(Box::new(options.create(true).append(true).open(path)?)))
     }
 }
 
@@ -343,5 +348,17 @@ mod tests {
         assert_eq!(lines[0], "kept");
         assert!(lines[1].ends_with(r#""event":"closed"}"#) && lines[2].contains(r#""taken":1"#), "{text}");
         assert!(Lines::appending(&scratch.path("no/such/dir/log")).is_err());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D56: on Unix, a diagnostics log the sink
+    /// makes is its user's alone (0600).
+    #[cfg(unix)]
+    #[test]
+    fn a_log_made_is_its_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = turborel_test_support::Scratch::new("server-log-mode");
+        let path = scratch.path("log");
+        drop(Lines::appending(&path).unwrap());
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     }
 }

@@ -5,7 +5,9 @@
 ## The event log
 
 The server tells what an operator must know as events, a line of JSON
-each, to standard error or the file `--log` names:
+each, to standard error or the file `--log` names. On Unix, a file
+`--log` makes is the server's user's alone (0600); one that exists is
+appended to as it is:
 
 ```
 {"time":"2026-10-28T19:41:24.918Z","level":"info","event":"opened","how":"reopened"}
