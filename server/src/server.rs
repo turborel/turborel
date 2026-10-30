@@ -37,6 +37,26 @@ use crate::transport::{Listener, Transport};
 /// keep a thread busy.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
+/// \[DESIGN\] The connections past SERVER.MAX_CONNECTIONS refused at once,
+/// each told why (SQLSTATE 08004) once its TLS, if any, is begun: a
+/// refusal over TLS lasts as long as its handshake. One past these is
+/// closed at once, telling it nothing, so clients that flood the server
+/// hold no more of it than this (RULES.md D55).
+const REFUSALS_IN_FLIGHT: usize = 16;
+
+/// A connection's place: under SERVER.MAX_CONNECTIONS, served; or among
+/// the refusals in flight, refused.
+enum Place {
+    Served(Held),
+    Refused(Held),
+}
+
+/// The place of a connection taken: under `most` of `connections`, else
+/// among the refusals in flight; none past these.
+fn place(connections: &Arc<Limit>, refusals: &Arc<Limit>, most: usize) -> Option<Place> {
+    connections.try_take(most).map(Place::Served).or_else(|| refusals.try_take(REFUSALS_IN_FLIGHT).map(Place::Refused))
+}
+
 /// What a `Protocol` returns.
 pub type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -244,12 +264,13 @@ impl Server {
     pub async fn serve(self, endpoints: Vec<Endpoint>, stop: impl Future<Output = ()>) {
         let (announce, heard) = watch::channel(false);
         let connections = Arc::new(Limit::default());
+        let refusals = Arc::new(Limit::default());
         let cancels = Mutex::new(HashMap::new());
         let shared = Shared { db: self.db, authenticators: self.authenticators, workers: Arc::default(), stop: heard, cancels };
         let services = Services(Arc::new(shared));
         let mut listening = JoinSet::new();
         for endpoint in endpoints {
-            listening.spawn(listen(endpoint, services.clone(), Arc::clone(&connections)));
+            listening.spawn(listen(endpoint, services.clone(), (Arc::clone(&connections), Arc::clone(&refusals))));
         }
         stop.await;
         // Nothing can fail to hear it: every receiver is in `services`.
@@ -258,9 +279,11 @@ impl Server {
     }
 }
 
-/// Takes `endpoint`'s connections, each served on a task of its own, until
-/// the server stops; then waits for every one to end.
-async fn listen(endpoint: Endpoint, services: Services, connections: Arc<Limit>) {
+/// Takes `endpoint`'s connections, each served, or refused, on a task of its
+/// own, while it has a place among `limits`, the connections and the
+/// refusals in flight, else closed at once; until the server stops; then
+/// waits for every one to end.
+async fn listen(endpoint: Endpoint, services: Services, (connections, refusals): (Arc<Limit>, Arc<Limit>)) {
     let mut open = JoinSet::new();
     loop {
         tokio::select! {
@@ -268,9 +291,10 @@ async fn listen(endpoint: Endpoint, services: Services, connections: Arc<Limit>)
             Some(_) = open.join_next(), if !open.is_empty() => {}
             accepted = endpoint.listener.accept() => match accepted {
                 Ok((transport, peer)) => {
-                    let permit = connections.try_take(count(services.database(), MAX_CONNECTIONS));
-                    let arrival = Arrival { protocol: Arc::clone(&endpoint.protocol), tls: endpoint.tls.clone(), services: services.clone() };
-                    open.spawn(arrival.welcome(transport, peer, permit));
+                    if let Some(place) = place(&connections, &refusals, count(services.database(), MAX_CONNECTIONS)) {
+                        let arrival = Arrival { protocol: Arc::clone(&endpoint.protocol), tls: endpoint.tls.clone(), services: services.clone() };
+                        open.spawn(arrival.welcome(transport, peer, place));
+                    }
                 }
                 Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
             },
@@ -288,18 +312,21 @@ struct Arrival {
 }
 
 impl Arrival {
-    /// Secures `transport` as the endpoint says, then serves it if it was
-    /// given a `permit`, a place under the limit of connections, else
-    /// refuses it; in its own task, so neither TLS nor a refusal holds up
-    /// the connections after it.
-    async fn welcome(self, transport: Box<dyn Transport>, peer: Peer, permit: Option<Held>) {
+    /// Secures `transport` as the endpoint says, then serves it if its
+    /// `place` is under the limit of connections, else refuses it; in its
+    /// own task, so neither TLS nor a refusal holds up the connections after
+    /// it. Its place is given back as it ends.
+    async fn welcome(self, transport: Box<dyn Transport>, peer: Peer, place: Place) {
         let Some((transport, peer)) = self.secured(transport, peer).await else { return };
-        match permit {
-            Some(permit) => {
+        match place {
+            Place::Served(held) => {
                 self.protocol.serve(Connection { transport, peer, services: self.services }).await;
-                drop(permit);
+                drop(held);
             }
-            None => self.protocol.refuse(transport, too_many()).await,
+            Place::Refused(held) => {
+                self.protocol.refuse(transport, too_many()).await;
+                drop(held);
+            }
         }
     }
 
@@ -334,4 +361,27 @@ fn clear() -> SqlError {
 /// The refusal of a connection past the limit (SQLSTATE 08004).
 fn too_many() -> SqlError {
     SqlError::new(Code::Connection, "[DESIGN] the server has as many connections as it takes").with_state(SqlState::CONNECTION_REJECTED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [DESIGN] RULES.md D42, D55: a connection taken is served
+    /// while fewer than the most are; past them, refused while fewer than
+    /// `REFUSALS_IN_FLIGHT` refusals are in flight; past these, given no
+    /// place, to be closed at once. A place given back makes room again.
+    #[test]
+    fn connections_past_the_limit_are_refused_then_closed() {
+        let (connections, refusals) = (Arc::new(Limit::default()), Arc::new(Limit::default()));
+        let served = place(&connections, &refusals, 1);
+        assert!(matches!(served, Some(Place::Served(_))));
+        let refused: Vec<Option<Place>> = (0..REFUSALS_IN_FLIGHT).map(|_| place(&connections, &refusals, 1)).collect();
+        assert!(refused.iter().all(|p| matches!(p, Some(Place::Refused(_)))));
+        assert!(place(&connections, &refusals, 1).is_none(), "closed at once");
+        drop(refused);
+        assert!(matches!(place(&connections, &refusals, 1), Some(Place::Refused(_))), "room again");
+        drop(served);
+        assert!(matches!(place(&connections, &refusals, 1), Some(Place::Served(_))));
+    }
 }

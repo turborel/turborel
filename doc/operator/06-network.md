@@ -59,3 +59,14 @@ refused.
 | SERVER.BATCH_BYTES | about the bytes of rows in a batch sent, 64 KiB |
 | SERVER.LOGIN_TIMEOUT | the milliseconds a client has to begin TLS and authenticate, 60,000 |
 | SERVER.IDLE_TIMEOUT | the milliseconds the server waits on a client before closing it, its transaction rolled back; 0, no limit |
+
+A connection past SERVER.MAX_CONNECTIONS is refused, told why once its
+TLS, if any, is begun:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 08004): the server has as many connections as it takes
+```
+
+At most 16 such refusals are made at once; a connection past them too
+is closed at once, told nothing, so clients that flood the server hold
+no more of it than that.

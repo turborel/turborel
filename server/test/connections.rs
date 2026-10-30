@@ -52,6 +52,7 @@ fn connections_past_the_limit_are_refused() {
     let first = server.connect("X");
     let refused = connection::connect(server.address, "X", &mut Trust).err().unwrap();
     assert_eq!(state(&refused), ("08004", -919));
+    assert!(refused.message.contains("the server has as many connections as it takes"), "{}", refused.message);
     first.terminate().unwrap();
     // The connection's task ends just after it closes the connection.
     let again = (0..1000).find_map(|_| {
