@@ -13,7 +13,8 @@
 //! no change to it is logged: none is recovered [§4.9]. A table of ON COMMIT DELETE
 //! ROWS is emptied as each transaction ends [§14.3 GR3]: committed, it is
 //! as the DELETE GR3 runs leaves it; rolled back, as it was before the
-//! transaction, empty too.
+//! transaction, empty too. One of ON COMMIT PRESERVE ROWS is collected
+//! then, by its session (`Instance::collect`).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -29,7 +30,7 @@ use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::lock_builtin;
-use crate::txn::{Concurrency, Persistence, ReadMode, TableLock, Timestamp, TxCapabilities, TxId, Undo};
+use crate::txn::{Concurrency, Persistence, ReadMode, TableLock, Timestamp, TxCapabilities, TxId, Undo, remove_entries};
 
 /// The capabilities of an instance: the row store's, but never recovered,
 /// so its changes are not logged.
@@ -155,15 +156,20 @@ impl Session {
     }
 
     /// [ISO/IEC 9075:1992 §14.3 GR3] Its transaction, `tx` if it had one,
-    /// ended: each instance of ON COMMIT DELETE ROWS emptied, and what it
-    /// altered of `st`'s temporary tables written again.
+    /// ended: each instance of ON COMMIT DELETE ROWS emptied, each other
+    /// collected (`Instance::collect`), and what it altered of `st`'s
+    /// temporary tables written again.
     pub(super) fn temporaries_ended(&self, st: &State, tx: Option<TxId>) {
         if let Some(tx) = tx {
             st.temporaries.ended(tx);
         }
-        for instance in lock_builtin(&self.temporaries.made).values().filter(|i| i.delete_rows) {
-            instance.rows.emptied();
-            instance.indexes.values().for_each(|e| e.emptied());
+        for instance in lock_builtin(&self.temporaries.made).values() {
+            if instance.delete_rows {
+                instance.rows.emptied();
+                instance.indexes.values().for_each(|e| e.emptied());
+            } else {
+                instance.collect();
+            }
         }
     }
 }
@@ -216,6 +222,24 @@ fn kind_of(kind: Option<TemporaryKind>) -> &'static str {
 }
 
 impl Instance {
+    /// \[DESIGN\] Removes every version of its rows superseded or deleted,
+    /// their index entries with them, as its session's transaction has
+    /// ended: no transaction of another session reads an instance, and none
+    /// of its own is open, so none can read them, whatever the database's
+    /// horizon (RULES.md D49). A failure leaves them for its next end.
+    fn collect(&self) {
+        let Some(rows) = self.rows.made() else { return };
+        let indexes: Vec<(&dyn Index, &[usize])> = self
+            .indexes
+            .values()
+            .map(|entries| {
+                let index: &dyn Index = &**entries;
+                (index, entries.index.columns.as_slice())
+            })
+            .collect();
+        let _ = rows.gc(Timestamp::MAX, &mut |id, row| remove_entries(&indexes, id, &row));
+    }
+
     /// An instance of `desc`, with `indexes`, its rows and entries made as
     /// they are first used, of `budget`, noted in `uses`.
     fn of(desc: &TableDesc, indexes: &[IndexDesc], (budget, uses): (&Arc<MemoryBudget>, &Arc<Uses>)) -> Instance {
@@ -415,3 +439,7 @@ impl Index for Entries {
         }
     }
 }
+
+// Unit tests: an instance's collection (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

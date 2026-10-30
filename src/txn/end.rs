@@ -126,7 +126,8 @@ impl State {
     /// only as a transaction ends, so a table no transaction touches is
     /// collected all the same, as soon as it can be. A failure leaves them
     /// for the next transaction to end: the one that ended has already
-    /// committed or rolled back.
+    /// committed or rolled back. A temporary table's instances are each
+    /// collected by their session instead (`db/temporary.rs`).
     pub(crate) fn gc(&self, tables: &[QualifiedName]) {
         let _gate = self.tx.gate.enter();
         let horizon = self.tx.horizon();
@@ -143,8 +144,14 @@ impl State {
     }
 
     /// Collects `table`'s garbage past `horizon`: whether versions of it
-    /// still await collection, or none if it is not there.
+    /// still await collection, or none if it is not there, or is a
+    /// temporary table: an instance of one is collected by its session as
+    /// its transactions end (`db/temporary.rs`), the definition's storage
+    /// holding nothing.
     fn collect_table(&self, table: &QualifiedName, horizon: Timestamp) -> Option<bool> {
+        if self.catalog.table(table).is_none_or(|t| t.temporary.is_some()) {
+            return None;
+        }
         // Not while an index of it is built, which counts every version it
         // finds; nor with definitions older than its indexes, whose entries
         // for the versions removed would stay. A later transaction collects
@@ -208,7 +215,7 @@ impl State {
 /// Removes the entries of row `id`, a version collected, of `row`, from
 /// `indexes`, each with its columns. Keys with a null were never inserted
 /// (`Index::insert`); one that cannot be removed is left.
-fn remove_entries(indexes: &[(&dyn Index, &[usize])], id: RowId, row: &Row) {
+pub(crate) fn remove_entries(indexes: &[(&dyn Index, &[usize])], id: RowId, row: &Row) {
     for (index, columns) in indexes {
         if let Some(key) = project(row, columns).map(Key).filter(|k| !k.0.iter().any(Value::is_null)) {
             let _ = index.remove(&key, id);

@@ -95,6 +95,7 @@ mod write;
 
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
+pub(crate) use end::remove_entries;
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;

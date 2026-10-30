@@ -96,9 +96,10 @@ RULES.md when its design settles.
 - **Temporary tables, further** (RULES.md D49): CREATE INDEX on one; ALTER
   TABLE of one while sessions hold rows in it. An instance reserves
   in-memory pools of the database's budget (2 MiB for its rows, and for
-  each index) when first written, and should spill to the session's
-  temporary files past WORK_MEMORY instead; a PRESERVE ROWS instance's old
-  row versions are not collected during a long session.
+  each index) when first written, and its pages are files in memory of
+  MEMORY_BUDGET, so an instance larger than the budget leaves is refused
+  (SQLCODE -918): it should spill to the session's temporary files past
+  WORK_MEMORY instead.
 - **GET DIAGNOSTICS, further** [§18.1 GR3g]: a syntax error or access
   rule violation names its table only where a privilege is refused, a
   table is not defined, or a named table has no column it names; and its

@@ -491,6 +491,12 @@ storage empty. Its rows are each session's.
   not logged: they are never recovered [§4.9].
 - ON COMMIT DELETE ROWS empties an instance as its transaction ends,
   committed or rolled back: as GR3 of §14.3 leaves it, or as it was.
+  Another, of PRESERVE ROWS, is collected then by its session, of every
+  version superseded or deleted, its index entries with them: no other
+  session reads it, and none of its own transactions is open, so the
+  database's horizon, which another session's long transaction holds
+  back, holds none of its versions. The database's collection
+  (`txn/end.rs`) leaves temporary tables to their sessions.
 - A session is one module, so a created local temporary table is, within
   a session, as a global one; and its declared local temporary tables
   [§13.11] are in a schema MODULE of its own definitions alone, owned by
