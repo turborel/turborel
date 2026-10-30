@@ -3,12 +3,11 @@
 //! far as its layout tells it (`stats.rs`), and from defaults for what
 //! they do not answer. Conjuncts and disjuncts are taken as independent.
 
-use crate::logical::{Cond, Expr, Truth};
+use crate::logical::{Cond, Expr, Truth, compared_with_constant};
 use crate::stats::Statistics;
 use crate::value::{CompOp, Value};
 
 use super::CostModel;
-use super::access::probe_candidate;
 
 /// What an estimate knows: a table's statistics, if any, and the cost
 /// model's guesses for what they do not tell.
@@ -43,8 +42,8 @@ pub fn selectivity(cond: &Cond, known: Known<'_>) -> f64 {
         }
         Cond::Quantified(_, op, _, _) => default_compare(*op, guess),
         // The candidate's operator has the column on its left.
-        Cond::Compare(_, op, _) => match probe_candidate(cond) {
-            Some((column, flipped, value)) => compare((column, flipped, &value), known),
+        Cond::Compare(_, op, _) => match compared_with_constant(cond) {
+            Some((column, flipped, value)) => compare((column, flipped, value), known),
             None => default_compare(*op, guess),
         },
     };

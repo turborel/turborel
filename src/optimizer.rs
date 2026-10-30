@@ -16,6 +16,7 @@
 //! costs belongs in physical.rs.
 
 mod outer;
+mod raising;
 mod transitivity;
 mod views;
 
@@ -43,6 +44,8 @@ pub const PUSH_HAVING_INTO_WHERE: &str = "push_having_into_where";
 pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
+pub(crate) use raising::is_guarded;
+pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
 pub use transitivity::{PREDICATE_TRANSITIVITY, PredicateTransitivity};
 pub use views::{PUSH_FILTER_THROUGH_DISTINCT, PUSH_FILTER_THROUGH_PROJECT, PushFilterThroughDistinct, PushFilterThroughProject};
 
@@ -104,6 +107,7 @@ impl Optimizer {
         o.add(Box::new(PushFilterThroughDistinct));
         // Before the conjuncts are pushed apart.
         o.add(Box::new(PredicateTransitivity));
+        o.add(Box::new(PushRaisingFilterIntoProduct));
         o.add(Box::new(PushFilterIntoProduct));
         o.add(Box::new(PushFilterIntoOuterJoin));
         o.add(Box::new(PushHavingIntoWhere));

@@ -9,7 +9,10 @@
 //! in the FROM clause's order. The product's rows are the same; only their
 //! order differs, which no ORDER BY asked for. A conjunct is evaluated on
 //! rows of the product it belongs to either way, but on fewer of them, so
-//! no condition of the chain may raise an error (RULES.md D15).
+//! no condition of the chain may raise an error (RULES.md D15). One that
+//! can, reading one operand's columns alone, is moved onto that operand,
+//! over a guard, before (`optimizer::PushRaisingFilterIntoProduct`): such
+//! an operand is one relation, evaluated whole wherever it is placed.
 //!
 //! The order: from each relation in turn, the relation joined next is the
 //! one that costs least and yields fewest rows; the cheapest of these
@@ -20,6 +23,7 @@ use std::sync::Arc;
 
 use super::{PhysicalPlanner, estimate};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, cond_columns, map_cond_columns, split_and};
+use crate::optimizer::is_guarded;
 use crate::stats::Statistics;
 use crate::storage::cost_of;
 use crate::value::CompOp;
@@ -97,6 +101,7 @@ impl PhysicalPlanner<'_> {
         }
         if let LogicalPlan::Filter { cond, input } = plan
             && is_chain(input)
+            && !is_guarded(plan)
         {
             split_and(map_cond_columns(cond.clone(), &|c| c.saturating_add(start)), conds);
             return self.take_apart(input, start, relations, conds);
@@ -106,10 +111,18 @@ impl PhysicalPlanner<'_> {
         Some(())
     }
 
-    /// The rows of a relation that reads a table, filtered or not, and the
-    /// table's statistics.
+    /// The rows of a relation that reads a table, filtered or not, its
+    /// conjuncts that can raise an error over a guard or not
+    /// (`optimizer::is_guarded`), and the table's statistics.
     fn estimate(&self, plan: &LogicalPlan) -> Option<(f64, Option<Arc<dyn Statistics>>)> {
         let (read, cond) = if let LogicalPlan::Filter { cond, input } = plan { (&**input, Some(cond)) } else { (plan, None) };
+        let read = if let LogicalPlan::Product { left, .. } = read
+            && is_guarded(plan)
+        {
+            &**left
+        } else {
+            read
+        };
         let LogicalPlan::Scan { table, .. } = read else { return None };
         let storage = self.db.storage_of(table).ok()?;
         let stats = self.db.statistics(table);
@@ -120,10 +133,12 @@ impl PhysicalPlanner<'_> {
     }
 }
 
-/// Whether `plan` is a product, or a filter over a chain.
+/// Whether `plan` is a product, or a filter over a chain; not a relation
+/// whose conjuncts that can raise an error are over a guard
+/// (`optimizer::is_guarded`), which is one relation.
 fn is_chain(plan: &LogicalPlan) -> bool {
     if let LogicalPlan::Filter { input, .. } = plan {
-        return is_chain(input);
+        return !is_guarded(plan) && is_chain(input);
     }
     matches!(plan, LogicalPlan::Product { .. })
 }

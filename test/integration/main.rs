@@ -88,6 +88,7 @@ mod positions;
 mod predicates;
 mod prepared;
 mod privileges;
+mod probes;
 mod queries;
 mod query_expressions;
 mod recovery;

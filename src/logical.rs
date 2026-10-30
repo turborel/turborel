@@ -19,9 +19,9 @@ pub use expr::{
     Cond, DomainChecks, Expr, Quantifier, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs, map_expr_columns,
     or_all, split_and,
 };
-pub use pushed::{compared_with_constant, in_list, pushed_conjuncts};
+pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
-pub use subquery::{Decorrelated, Subquery};
+pub use subquery::{Decorrelated, Subquery, plan_has_outer};
 
 use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;

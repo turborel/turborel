@@ -132,7 +132,7 @@ fn cond_has_outer(c: &Cond) -> bool {
 }
 
 /// Whether `plan` has an outer reference slot anywhere.
-fn plan_has_outer(plan: &LogicalPlan) -> bool {
+pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
     let own = match plan {
         LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => cond_has_outer(cond),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(expr_has_outer),

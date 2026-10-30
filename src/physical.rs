@@ -20,6 +20,7 @@ mod cost;
 mod estimate;
 mod join;
 mod order;
+mod probe;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 

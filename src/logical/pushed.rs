@@ -46,7 +46,7 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
                 .filter(|(_, values)| !values.iter().any(Value::is_null))
                 .map(|(column, values)| Conjunct::NotIn { column, values }),
         ),
-        Cond::Like(Expr::Column(c), Expr::Const(pattern), escape) => found.extend(prefixed(*c, pattern, escape.as_ref())),
+        Cond::Like(Expr::Column(c), pattern, escape) => found.extend(prefixed(*c, pattern, escape.as_ref())),
         Cond::Compare(..)
         | Cond::IsNull(..)
         | Cond::Const(_)
@@ -82,7 +82,7 @@ fn alternatives(cond: &Cond) -> Option<Conjunct> {
 }
 
 /// The operands of the ORs of `cond`.
-fn disjuncts<'c>(cond: &'c Cond, out: &mut Vec<&'c Cond>) {
+pub fn disjuncts<'c>(cond: &'c Cond, out: &mut Vec<&'c Cond>) {
     if let Cond::Or(a, b) = cond {
         disjuncts(a, out);
         disjuncts(b, out);
@@ -91,19 +91,29 @@ fn disjuncts<'c>(cond: &'c Cond, out: &mut Vec<&'c Cond>) {
     }
 }
 
-/// [X3.135-1986 §5.14] The bounds of the values of `column` LIKE the
-/// constant `pattern`, with `escape`: above the characters its pattern
-/// begins with, the last made one less, and below them, the last made one
-/// more. Every string that begins with them is between, as it is first
-/// apart from either at that character, whatever follows, spaces padding
-/// it or not [X3.135-1986 §5.11 GR5]. None if they are none, or a bound has
-/// no character.
-fn prefixed(column: usize, pattern: &Value, escape: Option<&Expr>) -> Vec<Conjunct> {
+/// The conjuncts a scan is told of `column` LIKE `pattern` with `escape`:
+/// the comparisons `like_bounds` gives.
+fn prefixed(column: usize, pattern: &Expr, escape: Option<&Expr>) -> Vec<Conjunct> {
+    let bound = |(op, value)| Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value } });
+    like_bounds(pattern, escape).into_iter().map(bound).collect()
+}
+
+/// [X3.135-1986 §5.14] The bounds of the values LIKE the constant
+/// `pattern`, with the constant `escape` if any: above the characters its
+/// pattern begins with, the last made one less, and below them, the last
+/// made one more. Every string that begins with them is between, as it is
+/// first apart from either at that character, whatever follows, spaces
+/// padding it or not [X3.135-1986 §5.11 GR5]; so are some that do not
+/// begin with them, and a filter still judges the LIKE (RULES.md D15).
+/// None if they are none, a bound has no character, or the pattern or
+/// escape is not a constant.
+pub fn like_bounds(pattern: &Expr, escape: Option<&Expr>) -> Vec<(CompOp, Value)> {
     let escape = match escape {
         None => None,
         Some(Expr::Const(e)) => Some(e),
         Some(_) => return Vec::new(),
     };
+    let Expr::Const(pattern) = pattern else { return Vec::new() };
     let Some(prefix) = constant_prefix(pattern, escape) else { return Vec::new() };
     let moved = |by: i64| {
         let mut chars: Vec<char> = prefix.chars().collect();
@@ -112,8 +122,7 @@ fn prefixed(column: usize, pattern: &Value, escape: Option<&Expr>) -> Vec<Conjun
         chars.push(char::from_u32(u32::try_from(code).ok()?)?);
         Some(Value::Char(chars.into_iter().collect()))
     };
-    let bound = |op: CompOp, value: Value| Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value } });
-    [moved(-1).map(|v| bound(CompOp::Gt, v)), moved(1).map(|v| bound(CompOp::Lt, v))].into_iter().flatten().collect()
+    [moved(-1).map(|v| (CompOp::Gt, v)), moved(1).map(|v| (CompOp::Lt, v))].into_iter().flatten().collect()
 }
 
 /// The column and constant `cond` compares by `op`, either way round, the

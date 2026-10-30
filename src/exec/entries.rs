@@ -17,8 +17,8 @@ use crate::txn::{TxId, checked};
 /// Rows with their ids, each read when it is pulled.
 pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 
-/// The rows, with their ids, produced by a table access: a scan or index
-/// scan, possibly filtered, possibly under a projection (which is ignored),
+/// The rows, with their ids, produced by a table access: a scan, an index
+/// scan or the index scans of an OR's ranges appended, possibly filtered, possibly under a projection (which is ignored),
 /// each read when it is pulled, and only while the statement is not
 /// cancelled (RULES.md D44). UPDATE, DELETE and updatable cursors need the
 /// ids to change the rows.
@@ -55,12 +55,14 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
                 Err(e) => Some(Err(e)),
             })))
         }
+        // The index scans of an OR's ranges, none overlapping
+        // (`physical/access.rs`): each row once.
+        Plan::Append { left, right } => Ok(Box::new(table_entries(*left, db, tx)?.chain(table_entries(*right, db, tx)?))),
         other @ (Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
-        | Plan::Append { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }

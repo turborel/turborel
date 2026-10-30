@@ -74,7 +74,7 @@ fn equalities_are_hash_joins() {
         ("SELECT A.N, B.N FROM A, B WHERE A.K = B.K", "SELECT A.N, B.N FROM A, B WHERE A.K + 0 = B.K", 5),
         ("SELECT A.N, B.N FROM A, B WHERE B.K = A.K", "SELECT A.N, B.N FROM A, B WHERE B.K + 0 = A.K", 5),
         ("SELECT A.N, E.N FROM A, E WHERE A.K = E.K", "SELECT A.N, E.N FROM A, E WHERE A.K + 0 = E.K", 3),
-        ("SELECT C.N, D.N FROM C, D WHERE C.S = D.S", "SELECT C.N, D.N FROM C, D WHERE C.S = D.S AND C.N + 0 > 0", 3),
+        ("SELECT C.N, D.N FROM C, D WHERE C.S = D.S", "SELECT C.N, D.N FROM C, D WHERE C.S = D.S AND C.N + D.N > 0", 3),
         (
             "SELECT A.N, B.N FROM A, B WHERE A.K = B.K AND (A.N = 1 OR B.N = 50)",
             "SELECT A.N, B.N FROM A, B WHERE A.K + 0 = B.K AND (A.N = 1 OR B.N = 50)",
@@ -93,9 +93,10 @@ fn equalities_are_hash_joins() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D15: a condition that can raise an error is
-/// evaluated on every pair of the product, so it is not a hash join, which
-/// would evaluate it only on the pairs whose keys are equal.
+/// Verifies: [DESIGN] RULES.md D15: a condition that can raise an error,
+/// of the columns of both operands, is evaluated on every pair of the
+/// product, so it is not a hash join, which would evaluate it only on the
+/// pairs whose keys are equal.
 #[test]
 fn a_condition_that_can_raise_is_not_a_hash_join() {
     let db = joins();

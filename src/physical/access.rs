@@ -1,13 +1,14 @@
 //! \[DESIGN\] Access paths: how one table is read, by a sequential scan or
-//! an index probe, chosen by cost. Split from physical.rs (RULES.md
-//! R-SIZE-2).
+//! an index's probes (`physical/probe.rs`), one, or one of each range of
+//! an OR, chosen by cost. Split from physical.rs (RULES.md R-SIZE-2).
 
 use super::estimate::{self, Known};
+use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
-use crate::index::{IndexMethod, Probe};
-use crate::logical::{Cond, Expr, SortKey, and_all, pushed_conjuncts, render_cond};
+use crate::index::{Index, IndexMethod, Probe};
+use crate::logical::{Cond, SortKey, and_all, pushed_conjuncts, render_cond};
 use crate::storage::{TableStorage, cost_of};
-use crate::value::{CompOp, DataType, Value};
+use crate::value::{CompOp, DataType};
 
 /// A way to read a table: its cost, with and without the sort it may still
 /// need, the rows it yields, whether in the order asked for (backward if
@@ -18,20 +19,42 @@ struct Path {
     est: f64,
     ordered: bool,
     reverse: bool,
-    /// The index and method names, the probe, and the conjuncts it answers.
-    index: Option<(String, String, Probe, Vec<usize>)>,
+    /// The index probed, if any.
+    index: Option<Probed>,
     /// Of a scan, the columns in whose order it reads the table, if any.
     order: Vec<usize>,
 }
 
-/// A probe an index could answer: its probe, the conjuncts it answers, how
-/// many of the index's first columns it holds equal, and the rows it is
-/// guessed to find from the table's statistics.
+/// An index probed: its name, its method's, its columns, its probes, one
+/// for each range of an OR, the conjuncts they answer exactly, and whether
+/// they only bound the rows of others, which a filter still judges.
+struct Probed {
+    index: String,
+    method: String,
+    columns: Vec<usize>,
+    probes: Vec<Probe>,
+    used: Vec<usize>,
+    loose: bool,
+}
+
+/// Probes an index could answer: its probes, of one range each, the
+/// conjuncts they answer exactly, how many of the index's first columns
+/// they hold equal, the rows they are guessed to find from the table's
+/// statistics, and whether they only bound the rows of a conjunct, which a
+/// filter still judges (a LIKE's).
 struct Candidate {
-    probe: Probe,
+    probes: Vec<Probe>,
     used: Vec<usize>,
     fixed: usize,
     guess: f64,
+    loose: bool,
+}
+
+impl Candidate {
+    /// One probe.
+    fn one(probe: Probe, (used, fixed, guess, loose): (Vec<usize>, usize, f64, bool)) -> Candidate {
+        Candidate { probes: vec![probe], used, fixed, guess, loose }
+    }
 }
 
 impl PhysicalPlanner<'_> {
@@ -44,98 +67,84 @@ impl PhysicalPlanner<'_> {
             let plan =
                 Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows: 0, cost: 0.0_f64, order: Vec::new() };
             let cost = self.db.cost();
-            return filtered(plan, conds, &Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false });
+            let with = Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64 };
+            return filtered(plan, conds, &with);
         };
         let rows = storage.row_count();
         let best = self.best_path(read, &conds, want);
-        let plan = match best.index {
-            None => Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost, order: best.order },
-            Some((index, method, probe, mut used)) => {
-                // `used` indexes `conds`, which `best_path` enumerated.
-                used.sort_unstable();
+        let (plan, found) = match best.index {
+            None => {
+                let order = best.order;
+                (Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost, order }, cost_of(rows))
+            }
+            Some(mut probed) => {
+                // `used` indexes `conds`, which `best_path` enumerated; a
+                // conjunct two comparisons of it answer is there twice.
+                probed.used.sort_unstable();
+                probed.used.dedup();
                 let mut answered = Vec::new();
-                for &ci in used.iter().rev() {
+                for &ci in probed.used.iter().rev() {
                     if ci < conds.len() {
                         answered.push(conds.remove(ci));
                     }
                 }
                 answered.reverse();
-                let detail = and_all(answered).map_or_else(|| "all keys, in order".to_string(), |c| render_cond(&c, read.names));
-                Plan::IndexScan {
-                    table: read.table.clone(),
-                    index,
-                    method,
-                    probe,
-                    reverse: best.reverse,
-                    detail,
-                    est: best.est,
-                    cost: best.cost,
-                }
+                (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), best.est)
             }
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
-        filtered(plan, conds, &Filtered { names: read.names, known, ordered: best.ordered })
+        filtered(plan, conds, &Filtered { names: read.names, known, ordered: best.ordered, read: found })
     }
 
-    /// The cheapest way to read the table: a sequential scan, an index probe
+    /// The cheapest way to read the table: a sequential scan, index probes
     /// answering conjuncts of `conds`, or a full ordered index read.
     fn best_path(&self, read: TableRead<'_>, conds: &[Cond], want: &[SortKey]) -> Path {
         let cost = &self.db.cost();
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
         let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
-        let rows = storage.row_count();
-        let descent = cost.index_descent * cost_of(rows.saturating_add(1)).log2();
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
         let stats = self.db.statistics(read.table);
-        let all = cost_of(rows);
+        let known = Known { stats: stats.as_deref(), cost };
+        let all = cost_of(storage.row_count());
         let mut best =
             in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });
 
         // RULES.md D15: a probe reads only the rows its conjuncts select, so the
         // other conjuncts would not be evaluated on the rest. When one of them
         // can raise an error it must see every row: probe no index then.
-        let probes_allowed = !conds.iter().any(Cond::can_raise);
-        let compared: Vec<(usize, usize, CompOp, Value)> =
-            conds.iter().enumerate().filter_map(|(ci, c)| probe_candidate(c).map(|(col, op, v)| (ci, col, op, v))).collect();
+        let (compared, ors) = if conds.iter().any(Cond::can_raise) { (Vec::new(), Vec::new()) } else { comparisons(conds, known) };
         // An index being built is not read until it is (`Database::create_index`).
         for ix in self.db.catalog.indexes(read.table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
             // [DESIGN] An index the state lacks is not a path; neither is one on
             // a column the table lacks.
             let columns: Option<Vec<_>> = ix.columns.iter().map(|&c| desc.columns.get(c)).collect();
-            let (Some(method), Ok(index), Some(columns)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), columns) else {
+            let (Some(kind), Ok(found), Some(columns)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), columns) else {
                 continue;
             };
             let types: Vec<DataType> = columns.iter().map(|c| c.data_type).collect();
-            let mut candidates = if probes_allowed {
-                probes(&ix.columns, &types, &compared, all, Known { stats: stats.as_deref(), cost })
-            } else {
-                Vec::new()
-            };
+            let mut candidates = probes(&ix.columns, &types, (&compared, &ors), all, known);
             // A full ordered read, only to provide order.
-            candidates.push(Candidate { probe: Probe::All, used: Vec::new(), fixed: 0, guess: all });
+            candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {
-                let supported = supports(&**method, &c.probe, (types.len(), !want.is_empty()));
+                let supported = c.probes.iter().all(|p| supports(&**kind, p, (types.len(), !want.is_empty())));
                 // Indexes hold no key with a null, so the rows of a probe are
                 // all its conjuncts select only if no column it does not test
                 // may be null.
-                let untested = columns.get(tested(&c.probe)..).unwrap_or_default();
-                let order = if method.ordered() && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
-                if !supported || untested.iter().any(|col| !col.not_null) || matches!(c.probe, Probe::All) && order.is_none() {
+                let untested = columns.get(c.probes.first().map_or(0, tested)..).unwrap_or_default();
+                // The rows of probes of several ranges come a range at a time.
+                let one = c.probes.len() == 1;
+                let order = if kind.ordered() && !want.is_empty() && one { index_order(&ix.columns, c.fixed, want) } else { None };
+                let all_keys = matches!(c.probes.first(), Some(Probe::All));
+                if !supported || untested.iter().any(|col| !col.not_null) || all_keys && order.is_none() {
                     continue;
                 }
-                // The index's count if cheap; else, for an equality on all its
-                // columns, the rows over its distinct keys; else the guess.
-                let whole_key = c.fixed == types.len();
-                let by_keys = || index.distinct_keys().filter(|_| whole_key).map(|d| all / d.max(1.0_f64));
-                let est = index.estimate(&c.probe).map(cost_of).or_else(by_keys).unwrap_or(c.guess);
-                // Its pages to find the entries, if it knows, else a tree's levels.
-                let found = index.probe_pages(&c.probe).map_or(descent, |pages| cost.index_descent * pages);
-                let path_cost = found + est * storage.fetch_cost();
+                let (est, path_cost) = priced(&**found, &c, (all, types.len(), cost.index_descent), &**storage);
                 let total = path_cost + sort_penalty(est, order.is_some());
                 if total < best.total {
-                    let probed = Some((ix.name.clone(), ix.method.clone(), c.probe, c.used));
+                    let (index, method, keys) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
+                    let probed = Some(Probed { index, method, columns: keys, probes: c.probes, used: c.used, loose: c.loose });
                     let ordered = (order.is_some(), order.unwrap_or(false));
                     best = Path { total, cost: path_cost, est, ordered: ordered.0, reverse: ordered.1, index: probed, order: Vec::new() };
                 }
@@ -143,6 +152,68 @@ impl PhysicalPlanner<'_> {
         }
         best
     }
+}
+
+/// The rows `c`'s probes of `index` are estimated to find, and their cost,
+/// of a table of `all` rows in `storage`, the index `width` columns wide,
+/// a level of a tree costing `descent`: the index's count of each probe's
+/// if cheap; else, for an equality on all its columns, the rows over its
+/// distinct keys; else the guess, shared by the probes. Its pages to find
+/// the entries, if it knows, else a tree's levels.
+fn priced(index: &dyn Index, c: &Candidate, (all, width, descent): (f64, usize, f64), storage: &dyn TableStorage) -> (f64, f64) {
+    let levels = descent * cost_of(storage.row_count().saturating_add(1)).log2();
+    let share = c.guess / cost_of(c.probes.len());
+    let (mut est, mut found) = (0.0_f64, 0.0_f64);
+    for probe in &c.probes {
+        let by_keys = || index.distinct_keys().filter(|_| whole_key(probe, width)).map(|d| all / d.max(1.0_f64));
+        est += index.estimate(probe).map(cost_of).or_else(by_keys).unwrap_or(share);
+        found += index.probe_pages(probe).map_or(levels, |pages| descent * pages);
+    }
+    (est, found + est * storage.fetch_cost())
+}
+
+/// Whether `probe` holds every column of an index `width` columns wide
+/// equal.
+fn whole_key(probe: &Probe, width: usize) -> bool {
+    match probe {
+        Probe::Compare { op, .. } => *op == CompOp::Eq && width == 1,
+        Probe::Prefix { equal, then } => then.is_none() && equal.len() == width,
+        Probe::All | Probe::Range { .. } => false,
+    }
+}
+
+/// The index scans of `probed` on the table `read`, answering the
+/// conjuncts `answered`, of the rows `est` and the `cost` the planner gave
+/// them all, read `reverse` if so: one for each of its probes, the rows of
+/// each after those of the one before (an OR's ranges, none overlapping,
+/// so each row is found once). Each shows the conjuncts it answers, or its
+/// probe, if it answers some only in part, or one of several.
+fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, cost, reverse): (f64, f64, bool)) -> Plan {
+    let share = cost_of(probed.probes.len());
+    let whole = and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| render_cond(&c, read.names));
+    let Probed { index, method, columns, probes, .. } = probed;
+    let mut level: Vec<Plan> = probes
+        .into_iter()
+        .map(|probe| {
+            let detail = whole.clone().unwrap_or_else(|| render_probe(&probe, &columns, read.names));
+            let (index, method, table) = (index.clone(), method.clone(), read.table.clone());
+            Plan::IndexScan { table, index, method, probe, reverse, detail, est: est / share, cost: cost / share }
+        })
+        .collect();
+    // Appended in pairs, a level at a time, so they are about log2(n) deep
+    // (RULES.md R-CF-6).
+    while level.len() > 1 {
+        let mut pairs = level.into_iter();
+        let mut next = Vec::new();
+        while let Some(left) = pairs.next() {
+            next.push(match pairs.next() {
+                Some(right) => Plan::Append { left: Box::new(left), right: Box::new(right) },
+                None => left,
+            });
+        }
+        level = next;
+    }
+    level.pop().unwrap_or(Plan::Values { rows: Vec::new(), detail: String::new() })
 }
 
 /// Whether `method`, of an index of `width` columns, answers `probe`: a
@@ -177,57 +248,66 @@ fn scan_priced(storage: &dyn TableStorage, needed: &[usize], conds: &[Cond]) -> 
 }
 
 /// The probes of an index on `columns`, of types `types`, that the
-/// comparisons `compared` (conjunct, column, operator, constant) answer: the
-/// equalities of its first columns, as many as there are, then each
-/// comparison of the next column, or none. Values are of the column's type
-/// (`coerce_probe`). An index on one column is asked with
-/// `Probe::Compare`, which every method answers that supports the operator.
-fn probes(columns: &[usize], types: &[DataType], compared: &[(usize, usize, CompOp, Value)], all: f64, known: Known<'_>) -> Vec<Candidate> {
+/// comparisons `compared` and their ORs `ors` answer: the equalities of
+/// its first columns, as many as there are, then each comparison of the
+/// next column, a lower and an upper bound of it, each OR of it, or none.
+/// Values are those an index places as SQL compares them (`coerce`). An
+/// index on one column is asked with `Probe::Compare`, which every method
+/// answers that supports the operator.
+fn probes(
+    columns: &[usize],
+    types: &[DataType],
+    (compared, ors): (&[Compared], &[Alternatives]),
+    all: f64,
+    known: Known<'_>,
+) -> Vec<Candidate> {
     let on = |at: usize| {
-        let (col, data_type) = (columns.get(at).copied(), types.get(at));
-        compared.iter().filter_map(move |(ci, c, op, v)| {
-            (Some(*c) == col).then_some(())?;
-            Some((*ci, *c, *op, coerce_probe(v, data_type?)?))
+        let (column, data_type) = (columns.get(at).copied(), types.get(at));
+        compared.iter().filter(move |c| Some(c.column) == column).flat_map(move |c| {
+            let each = data_type.and_then(|t| coerce(c.op, &c.value, t)).unwrap_or_default();
+            each.into_iter().map(move |(op, value)| (c, op, value))
         })
     };
     let (mut equal, mut used, mut guess) = (Vec::new(), Vec::new(), all);
-    while let Some((ci, col, _, value)) = on(equal.len()).find(|(_, _, op, _)| *op == CompOp::Eq) {
-        guess *= estimate::compare((col, CompOp::Eq, &value), known);
+    while let Some((c, _, value)) = on(equal.len()).find(|(_, op, _)| *op == CompOp::Eq) {
+        guess *= estimate::compare((c.column, CompOp::Eq, &value), known);
         equal.push(value);
-        used.push(ci);
+        used.push(c.at);
     }
     let fixed = equal.len();
+    // The conjuncts answered: of the equalities, and of `also` if exactly.
+    let with = |also: &[&Compared]| [used.clone(), also.iter().filter(|c| c.exact).map(|c| c.at).collect()].concat();
     let mut out = Vec::new();
-    for (ci, col, op, value) in on(fixed).filter(|(_, _, op, _)| *op != CompOp::Eq || fixed == 0) {
-        let guess = guess * estimate::compare((col, op, &value), known);
-        let used = [used.as_slice(), &[ci]].concat();
+    for (c, op, value) in on(fixed).filter(|(_, op, _)| *op != CompOp::Eq || fixed == 0) {
+        let guess = guess * estimate::compare((c.column, op, &value), known);
         let probe = if fixed == 0 { Probe::Compare { op, value } } else { Probe::Prefix { equal: equal.clone(), then: Some((op, value)) } };
-        out.push(Candidate { probe, used, fixed, guess });
+        out.push(Candidate::one(probe, (with(&[c]), fixed, guess, !c.exact)));
     }
     // [ISO/IEC 9075:1992 §8.3 GR1] a lower and an upper bound of the next
     // column, as of BETWEEN: one range, the keys past the upper not read.
-    let bound = |below: bool| {
-        on(fixed).find(|(_, _, op, _)| matches!(op, CompOp::Lt | CompOp::Le) == below && *op != CompOp::Eq && *op != CompOp::Ne)
-    };
-    if let (Some((lo_ci, col, lo_op, lo)), Some((hi_ci, _, hi_op, hi))) = (bound(false), bound(true)) {
-        let (a, b) = (estimate::compare((col, lo_op, &lo), known), estimate::compare((col, hi_op, &hi), known));
+    let bound =
+        |below: bool| on(fixed).find(|(_, op, _)| matches!(op, CompOp::Lt | CompOp::Le) == below && *op != CompOp::Eq && *op != CompOp::Ne);
+    if let (Some((lo_c, lo_op, lo)), Some((hi_c, hi_op, hi))) = (bound(false), bound(true)) {
+        let (a, b) = (estimate::compare((lo_c.column, lo_op, &lo), known), estimate::compare((hi_c.column, hi_op, &hi), known));
         // Of one column, both hold where either does not fail: a + b - 1,
         // if the statistics know; else as if independent.
         let guess = guess * (a + b - 1.0_f64).max(a * b);
-        let used = [used.as_slice(), &[lo_ci, hi_ci]].concat();
-        out.push(Candidate {
-            probe: Probe::Range { equal: equal.clone(), low: Box::new((lo_op, lo)), high: Box::new((hi_op, hi)) },
-            used,
-            fixed,
-            guess,
-        });
+        let probe = Probe::Range { equal: equal.clone(), low: Box::new((lo_op, lo)), high: Box::new((hi_op, hi)) };
+        out.push(Candidate::one(probe, (with(&[lo_c, hi_c]), fixed, guess, !lo_c.exact || !hi_c.exact)));
+    }
+    // An OR of the next column's ranges, an IN list among them: a probe of
+    // each range.
+    for any in ors.iter().filter(|a| Some(a.column) == columns.get(fixed).copied()) {
+        let Some(probes) = types.get(fixed).and_then(|t| probes_of_any(&equal, t, any)) else { continue };
+        let used = if any.exact { [used.as_slice(), &[any.at]].concat() } else { used.clone() };
+        out.push(Candidate { probes, used, fixed, guess: guess * any.share, loose: !any.exact });
     }
     if fixed > 0 {
         let probe = match (equal.as_slice(), columns.len()) {
             ([only], 1) => Probe::Compare { op: CompOp::Eq, value: only.clone() },
             _ => Probe::Prefix { equal, then: None },
         };
-        out.push(Candidate { probe, used, fixed, guess });
+        out.push(Candidate::one(probe, (used, fixed, guess, false)));
     }
     out
 }
@@ -263,66 +343,20 @@ struct Filtered<'a> {
     known: Known<'a>,
     /// Whether the access yields rows in the order asked for.
     ordered: bool,
+    /// The rows the access is estimated to read.
+    read: f64,
 }
 
 /// A table access `plan` under a filter for the conjuncts `conds` it does not
 /// answer itself, estimated to keep the fraction of the rows read that the
 /// table's statistics give.
 fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
-    let read = match &plan {
-        Plan::SeqScan { rows, .. } => Some(cost_of(*rows)),
-        Plan::IndexScan { est, .. } => Some(*est),
-        Plan::Filter { .. }
-        | Plan::Product { .. }
-        | Plan::HashJoin { .. }
-        | Plan::OuterJoin { .. }
-        | Plan::Aggregate { .. }
-        | Plan::Project { .. }
-        | Plan::Distinct { .. }
-        | Plan::Append { .. }
-        | Plan::SetOp { .. }
-        | Plan::Values { .. }
-        | Plan::System { .. }
-        | Plan::Sort { .. } => None,
-    };
     let plan = match and_all(conds) {
         Some(c) => {
-            let est = read.map(|rows| rows * estimate::selectivity(&c, with.known));
+            let est = Some(with.read * estimate::selectivity(&c, with.known));
             Plan::Filter { detail: render_cond(&c, with.names), cond: c, est, input: Box::new(plan) }
         }
         None => plan,
     };
     Built { plan, ordered: with.ordered }
-}
-
-/// "column `<op>` constant" or "constant `<op>` column".
-pub(super) fn probe_candidate(c: &Cond) -> Option<(usize, CompOp, Value)> {
-    match c {
-        Cond::Compare(Expr::Column(i), op, Expr::Const(v)) => Some((*i, *op, v.clone())),
-        Cond::Compare(Expr::Const(v), op, Expr::Column(i)) => Some((*i, op.flip(), v.clone())),
-        Cond::Compare(..)
-        | Cond::Const(_)
-        | Cond::Or(..)
-        | Cond::And(..)
-        | Cond::Not(_)
-        | Cond::Is(..)
-        | Cond::IsNull(..)
-        | Cond::Like(..)
-        | Cond::Exists(_)
-        | Cond::Unique(_)
-        | Cond::Quantified(..)
-        | Cond::Match { .. } => None,
-    }
-}
-
-/// An index on a column of type T can be probed with a constant only when
-/// comparing them in the index's key order gives the [X3.135-1986 §5.11] result.
-fn coerce_probe(v: &Value, column: &DataType) -> Option<Value> {
-    match (column, v) {
-        (DataType::Character { .. } | DataType::Varying { .. }, Value::Char(_))
-        | (DataType::Exact { .. }, Value::Exact(_))
-        | (DataType::Approximate { .. }, Value::Approx(_)) => Some(v.clone()),
-        (DataType::Approximate { .. }, Value::Exact(d)) => Some(Value::Approx(d.to_f64())),
-        _ => None,
-    }
 }

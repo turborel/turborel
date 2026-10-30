@@ -151,8 +151,22 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Scan filters** (D31): an index probe of a LIKE's prefix, and of an
-  OR of one column's ranges, as the scan is told them.
+- **Index nested-loop joins** (D35): plans join by a product or a hash
+  join only; a small outer operand probing an index of the inner one for
+  each of its rows needs a plan of its own, the executor running a probe
+  of each row's values.
+- **IN lists judged by a set** (D31): an IN list of constants is bound as
+  an OR of equalities and judged one equality after another, a row at a
+  time and over vectors (`exec/batch/judge.rs`); a long list would be
+  judged faster by a set of its values' buckets made once.
+- **Conditions that can raise an error, of outer joins** (D15): of an
+  outer join's ON, a conjunct that can raise an error and reads one
+  operand's columns alone keeps the join from being on its equalities
+  through a hash table, as a WHERE's no longer keeps a product from being
+  a hash join.
+- **Index probes of an OR's ranges, in order** (D34): their index scans
+  give rows a range at a time, so an ORDER BY of the column is still a
+  sort, though the ranges are apart and in order.
 - **Batch execution, further** (RULES.md D31): RIGHT and FULL outer
   joins, and LEFT ones with a condition beyond their keys; products and
   a join's right operand built from batches; a sort, a DISTINCT of

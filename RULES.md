@@ -209,6 +209,14 @@ production calling them, and the position already identifies it.
 **D15. Run-time errors do not depend on the plan.** Every conjunct of a
 WHERE or HAVING condition that can raise an error is evaluated on every row
 or group the clause applies to, whatever access path or rewrite is chosen.
+Of a product, such a conjunct that reads one operand's columns alone is
+evaluated on every row of that operand when every other operand has a
+row, and on none when one has none: each row of the operand is in some
+row of the product exactly then (§5.20 GR2b). So it is moved onto its
+operand, over a guard of one row of no columns, an EXISTS of each other
+operand (`optimizer/raising.rs`), and the rest of the condition, which
+cannot raise, may be a hash join's keys and index probes. A table read
+for a filter with such a conjunct is never probed: its every row is.
 *Why:* §5.18 GR2 defines AND only by its truth table, and §5.21 GR2 and
 §5.23 GR2 apply the condition to each row and group; nothing permits
 leaving an operand unevaluated. So results never depend on the plan.
@@ -887,7 +895,8 @@ the format of frozen groups becomes a trait when it is.
   scan every such conjunct, not only one, lets it skip the chunks and
   zones any of them rules out: a conjunction, a range, an IN list, IS
   NULL of nulls kept together, a LIKE prefix of a column in the rows'
-  order, and an OR of ranges.
+  order, and an OR of ranges. An index is probed by the same comparisons,
+  LIKE prefixes, IN lists and ORs of one column's ranges (D34).
 - Zone maps of the row store (`rows/zones.rs`): for each block of 1024
   row ids, of each column of a number, a datetime, an interval or a
   character string of at most 32, its least and greatest value and
@@ -1185,6 +1194,23 @@ ORDER BY in its order is, holds a leaf or a bucket of it, not the index,
 and the statement looks for a cancel as each entry is read (D44).
 A probe value not of the column's type is placed by its anchor and each
 entry found checked, so an index finds exactly what SQL compares.
+The planner probes an index by the conjuncts of a filter over its table,
+none of which can raise an error (D15), that compare one of its columns
+with a constant, a character string, a number, a datetime, an interval
+or a bit string, of the column's kind: its first columns' equalities,
+then of the next column a comparison, a lower and an upper bound (as
+BETWEEN gives), the bounds of a LIKE of a constant pattern (strings
+beginning with the characters it begins with are between them: the
+filter still judges the LIKE), or an OR of these, an IN list of
+constants among them, as one probe of each of its ranges, those that
+overlap or touch joined so that no row is found twice, their index
+scans' rows appended. A number of the other kind than the column's is
+placed among the column's values (`physical/probe.rs`): an approximate
+number among an exact column's multiples of its scale, an exact one
+among the `f64`s, the comparison turned into one with the value it
+equals, or with the values on either side, so the probe finds exactly
+the rows SQL's comparison by algebraic value keeps
+[X3.135-1986 §5.11 GR4].
 An index built from its table while nothing else writes it (rebuilt as a
 database opens, or for an engine the coordinator locks) is loaded whole
 (`Index::load`): `btree` sorts its entries in a work area of WORK_MEMORY,
@@ -1214,8 +1240,10 @@ physical planner chooses access paths and join order by estimated cost
 from the engines' statistics. Built in: hash joins on equalities, join
 ordering of chains of products, transitive predicates, sort elimination
 for ordered indexes and GROUP BY, filters pushed into views and outer
-joins, and decorrelation of repeated subqueries. A rewrite is made only
-where it cannot change a result or an error (D15). Rules are plug-ins.
+joins, conditions that can raise an error moved onto the operand of a
+product they read (D15), and decorrelation of repeated subqueries. A
+rewrite is made only where it cannot change a result or an error (D15).
+Rules are plug-ins.
 An index path is costed from the index method's own answers where it
 gives them: the rows a probe selects (`Index::estimate`), the pages it
 reads to find them (`Index::probe_pages`, a hash table's one bucket, a
