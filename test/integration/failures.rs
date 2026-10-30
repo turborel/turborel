@@ -12,7 +12,7 @@ use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::{Durability, FileSystem};
 use turborel::disk::pager::{Extent, PageId, Pager};
 use turborel::error::Code;
-use turborel::log::{FileLog, Log, Lsn};
+use turborel::log::{FileLog, FileLogOptions, Log, Lsn};
 
 use crate::common::{Kept, Scratch, crc32c, small_segments};
 use crate::faults::{FaultyFs, Op, Rule};
@@ -120,6 +120,55 @@ fn a_failed_free_keeps_the_pages() {
     faults.inject(Rule::fail(Op::Write).times(1));
     assert_eq!(pager.free(&[Extent { start: PageId(1), count: 1 }]).err().map(|e| e.code), Some(Code::Io));
     assert_eq!((pager.free_pages(), read(&pager, 1).unwrap()), (0, b"kept".to_vec()));
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D56: a pager file, scratch or not, or a
+/// block file, whose header cannot be written, or that cannot be synced,
+/// is refused with SQLCODE -915 and removed, so it may be made again once
+/// the fault passes.
+///
+/// Regression test (R-TEST-7): the half-made file was left, a spill
+/// file leaked, and making it again was refused as it existed.
+#[test]
+fn a_file_half_made_is_removed() {
+    let scratch = Scratch::new("failures-half-made-files");
+    let (fs, faults) = FaultyFs::with_faults();
+    let path = scratch.path("f");
+    let make: [&dyn Fn() -> turborel::error::Result<()>; 3] = [
+        &|| Pager::create(&*fs, &path, crc32c(), Pipeline::none(), PAGE).map(drop),
+        &|| Pager::create_scratch(&*fs, &path, crc32c(), Pipeline::none(), PAGE).map(drop),
+        &|| BlockFile::create(&*fs, &path, crc32c(), Pipeline::none(), BlockOptions::default()).map(drop),
+    ];
+    for (n, made) in make.iter().enumerate() {
+        let op = if n == 1 { Op::Write } else { Op::Sync };
+        faults.inject(Rule::fail(op).times(1));
+        assert_eq!(made().err().map(|e| e.code), Some(Code::Io), "{n}");
+        assert!(!path.exists(), "{n}: removed");
+        made().unwrap();
+        std::fs::remove_file(&path).unwrap();
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D56, file log: a log never synced
+/// (`Durability::None`, the undo log's) syncs nothing, as it makes its
+/// segments or removes them: every sync failing, it is made, rotates and
+/// truncates; one that syncs is refused as it is made.
+///
+/// Regression test (R-TEST-7): the undo log synced each segment it made,
+/// and its directory at each truncation.
+#[test]
+fn a_log_never_synced_syncs_nothing() {
+    let scratch = Scratch::new("failures-unsynced-log");
+    let (fs, faults) = FaultyFs::with_faults();
+    faults.inject(Rule::fail(Op::Sync));
+    faults.inject(Rule::fail(Op::SyncDir));
+    let unsynced = FileLogOptions { durability: Durability::None, ..small_segments() };
+    let log = FileLog::create(Arc::clone(&fs), &scratch.path("undo"), crc32c(), unsynced).unwrap();
+    let last = (0..30_u8).map(|n| log.append(&[n; 400]).unwrap()).last().unwrap();
+    assert!(log.counts().rotations > 1);
+    log.truncate_before(last).unwrap();
+    assert_eq!(faults.injected(), 0, "no sync asked");
+    assert_eq!(FileLog::create(Arc::clone(&fs), &scratch.path("log"), crc32c(), small_segments()).err().map(|e| e.code), Some(Code::Io));
 }
 
 /// Verifies: [DESIGN] RULES.md D30, block manager: a failed sync or read is

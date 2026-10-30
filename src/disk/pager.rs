@@ -34,7 +34,7 @@ use format::{KIND_DATA, KIND_NEW, KIND_TRUNK, META_AT, Meta, NONE, PAGE_NUMBER_B
 use free::FreeList;
 
 use super::encoding::{Encoding, Pipeline};
-use super::io::{DiskFile, Durability, FileSystem, OpenMode};
+use super::io::{DiskFile, Durability, FileSystem, OpenMode, begin_file};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::{HashFunction, HashId};
 use crate::sync::lock_builtin;
@@ -195,14 +195,7 @@ impl Pager {
                 format!("[DESIGN] a page size must be a power of two from {MIN_PAGE_SIZE} to {MAX_PAGE_SIZE} bytes, not {page_size}"),
             )
         })?;
-        let file = fs.open(path, OpenMode::CreateNew)?;
-        file.write_all_at(&format::header(&*hash, &pipeline, page_size, size), 0)?;
-        if durable {
-            file.sync(Durability::Full)?;
-            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-                fs.sync_dir(dir)?;
-            }
-        }
+        let file = begin_file(fs, path, &format::header(&*hash, &pipeline, page_size, size), durable)?;
         let mut pager = Pager::new(file, path, hash, size);
         pager.pipeline = pipeline;
         Ok(pager)

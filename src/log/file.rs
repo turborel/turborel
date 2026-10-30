@@ -228,11 +228,14 @@ impl FileLog {
     /// segment already; SQLCODE -915 if the segment cannot be created.
     pub fn create(fs: Arc<dyn FileSystem>, dir: &Path, hash: Arc<dyn HashFunction>, options: FileLogOptions) -> Result<FileLog> {
         check_segment_size(options.segment_size)?;
-        fs.create_dir_durably(dir)?;
+        match options.durability {
+            Durability::None => fs.create_dir_all(dir)?,
+            Durability::Data | Durability::Full => fs.create_dir_durably(dir)?,
+        }
         if fs.read_dir(dir)?.iter().any(|p| segment_number(p).is_some()) {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} already holds a log", dir.display())));
         }
-        let first = BlockFile::create(&*fs, &dir.join(segment_name(0)), Arc::clone(&hash), options.pipeline.clone(), options.blocks)?;
+        let first = segment_file(&*fs, &dir.join(segment_name(0)), Arc::clone(&hash), &options)?;
         FileLog::over(fs, dir, hash, options, vec![Segment::new(0, first)])
     }
 
@@ -418,6 +421,15 @@ fn remove_after(fs: &dyn FileSystem, dir: &Path, after: &[(u64, PathBuf)]) -> Re
     Ok(bytes)
 }
 
+/// A new segment's block file at `path`, its creation synced unless the
+/// log is never synced (`Durability::None`).
+fn segment_file(fs: &dyn FileSystem, path: &Path, hash: Arc<dyn HashFunction>, options: &FileLogOptions) -> Result<BlockFile> {
+    match options.durability {
+        Durability::None => BlockFile::create_unsynced(fs, path, hash, options.pipeline.clone(), options.blocks),
+        Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, options.pipeline.clone(), options.blocks),
+    }
+}
+
 /// Checks a segment size.
 fn check_segment_size(size: u64) -> Result<()> {
     if (MIN_SEGMENT_SIZE..=MAX_SEGMENT_SIZE).contains(&size) {
@@ -474,7 +486,11 @@ impl Log for FileLog {
             self.fs.remove(&self.dir.join(segment_name(n)))?;
             lock_builtin(&self.segments).remove(&n);
         }
-        self.fs.sync_dir(&self.dir)
+        // A log never synced does not sync its removals either.
+        match self.options.durability {
+            Durability::None => Ok(()),
+            Durability::Data | Durability::Full => self.fs.sync_dir(&self.dir),
+        }
     }
 
     fn end(&self) -> Lsn {

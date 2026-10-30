@@ -226,6 +226,31 @@ pub trait DiskFile: Send + Sync {
     }
 }
 
+/// \[DESIGN\] A new file at `path` of `fs`, beginning with `header`, and,
+/// if `durable`, synced with its directory, so a crash after leaves it
+/// whole. One that fails once made is removed: it holds nothing, and may
+/// then be made again (RULES.md D56).
+///
+/// # Errors
+///
+/// SQLCODE -915 if it cannot be made, written or synced.
+pub(crate) fn begin_file(fs: &dyn FileSystem, path: &Path, header: &[u8], durable: bool) -> Result<Box<dyn DiskFile>> {
+    let file = fs.open(path, OpenMode::CreateNew)?;
+    let mut begun = file.write_all_at(header, 0);
+    if durable {
+        let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
+        begun = begun.and_then(|()| file.sync(Durability::Full)).and_then(|()| dir.map_or(Ok(()), |d| fs.sync_dir(d)));
+    }
+    if let Err(e) = begun {
+        drop(file);
+        // A file not removed is refused as half made where it is opened,
+        // or cleared with its directory's scratch.
+        let _ = fs.remove(path);
+        return Err(e);
+    }
+    Ok(file)
+}
+
 /// The error for `what` failing on `path`.
 fn failed(what: &str, path: &Path, e: &stdio::Error) -> SqlError {
     SqlError::new(Code::Io, format!("[DESIGN] could not {what} {}: {e}", path.display()))

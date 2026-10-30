@@ -4,9 +4,10 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 
-use super::{FileLog, Segment, add, segment_name};
+use super::{FileLog, Segment, add, segment_file, segment_name};
 use crate::diagnostics::Event;
-use crate::disk::block::{BlockFile, BlockId};
+use crate::disk::block::BlockId;
+use crate::disk::io::Durability;
 use crate::error::{Result, SqlError};
 use crate::sync::lock_builtin;
 
@@ -53,7 +54,7 @@ impl FileLog {
         if self.fs.exists(&path)? {
             self.fs.remove(&path)?;
         }
-        let blocks = BlockFile::create(&*self.fs, &path, Arc::clone(&self.hash), self.options.pipeline.clone(), self.options.blocks)?;
+        let blocks = segment_file(&*self.fs, &path, Arc::clone(&self.hash), &self.options)?;
         let next = Segment::new(number, blocks);
         lock_builtin(&self.segments).insert(number, Arc::clone(&next));
         *self.active.write().unwrap_or_else(PoisonError::into_inner) = next;
@@ -67,7 +68,10 @@ impl FileLog {
             return Ok(());
         }
         segment.drain();
-        segment.blocks.sync(self.options.durability)?;
+        // A log never synced asks for no sync.
+        if self.options.durability != Durability::None {
+            segment.blocks.sync(self.options.durability)?;
+        }
         segment.durable_end.fetch_max(segment.blocks.end().0, Ordering::AcqRel);
         segment.sealed.store(true, Ordering::Release);
         Ok(())

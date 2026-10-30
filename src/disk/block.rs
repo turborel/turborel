@@ -37,7 +37,7 @@ pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
 
 use super::encoding::{Encoding, Pipeline};
-use super::io::{DiskFile, Durability, FileSystem, OpenMode};
+use super::io::{DiskFile, Durability, FileSystem, OpenMode, begin_file};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::{HashFunction, HashId};
 use crate::sync::lock_builtin;
@@ -179,12 +179,34 @@ impl BlockFile {
         pipeline: Pipeline,
         options: BlockOptions,
     ) -> Result<BlockFile> {
-        let file = fs.open(path, OpenMode::CreateNew)?;
-        file.write_all_at(&format::header(&*hash, &pipeline), 0)?;
-        file.sync(Durability::Full)?;
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            fs.sync_dir(dir)?;
-        }
+        BlockFile::made(fs, path, hash, (pipeline, options), true)
+    }
+
+    /// As `create`, but nothing synced: for a file a crash may lose, as a
+    /// log never synced (`FileLog` of `Durability::None`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if the file exists or cannot be written.
+    pub fn create_unsynced(
+        fs: &dyn FileSystem,
+        path: &Path,
+        hash: Arc<dyn HashFunction>,
+        pipeline: Pipeline,
+        options: BlockOptions,
+    ) -> Result<BlockFile> {
+        BlockFile::made(fs, path, hash, (pipeline, options), false)
+    }
+
+    /// `create`'s work, made durable if `durable`.
+    fn made(
+        fs: &dyn FileSystem,
+        path: &Path,
+        hash: Arc<dyn HashFunction>,
+        (pipeline, options): (Pipeline, BlockOptions),
+        durable: bool,
+    ) -> Result<BlockFile> {
+        let file = begin_file(fs, path, &format::header(&*hash, &pipeline), durable)?;
         let mut blocks = BlockFile::new(file, path, hash, options, HEADER_LEN);
         blocks.pipeline = pipeline;
         Ok(blocks)
