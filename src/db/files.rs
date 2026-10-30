@@ -261,7 +261,7 @@ impl Database {
         {
             return Err(api("[DESIGN] a database is opened from its files before it holds a schema, a log or files"));
         }
-        fs.create_dir_all(dir)?;
+        fs.create_dir_durably(dir)?;
         // Before anything is cleared or opened: no other has it open.
         let held = Arc::new(fs.lock(&dir.join(LOCK))?);
         snapshot.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))?;

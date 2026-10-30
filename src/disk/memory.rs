@@ -325,4 +325,50 @@ mod tests {
         drop(file);
         assert_eq!(budget.reserved(), 0);
     }
+
+    /// A file system in memory noting the directories it syncs.
+    #[derive(Default)]
+    struct Noting {
+        inner: MemoryFileSystem,
+        synced: Mutex<Vec<PathBuf>>,
+    }
+
+    impl FileSystem for Noting {
+        fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
+            self.inner.open(path, mode)
+        }
+        fn remove(&self, path: &Path) -> Result<()> {
+            self.inner.remove(path)
+        }
+        fn exists(&self, path: &Path) -> Result<bool> {
+            self.inner.exists(path)
+        }
+        fn create_dir_all(&self, path: &Path) -> Result<()> {
+            self.inner.create_dir_all(path)
+        }
+        fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+            self.inner.read_dir(path)
+        }
+        fn sync_dir(&self, path: &Path) -> Result<()> {
+            lock_builtin(&self.synced).push(path.to_path_buf());
+            self.inner.sync_dir(path)
+        }
+        fn lock(&self, path: &Path) -> Result<FileLock> {
+            self.inner.lock(path)
+        }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D56, `FileSystem::create_dir_durably`:
+    /// each directory made is synced in its parent, and none that was there
+    /// before; made again, nothing is synced.
+    #[test]
+    fn directories_made_are_synced_in_their_parents() {
+        let fs = Noting::default();
+        fs.create_dir_all(Path::new("/a")).unwrap();
+        fs.create_dir_durably(Path::new("/a/b/c")).unwrap();
+        let synced = std::mem::take(&mut *lock_builtin(&fs.synced));
+        assert_eq!(synced, [PathBuf::from("/a/b"), PathBuf::from("/a")]);
+        fs.create_dir_durably(Path::new("/a/b/c")).unwrap();
+        assert_eq!(*lock_builtin(&fs.synced), Vec::<PathBuf>::new(), "made before");
+    }
 }

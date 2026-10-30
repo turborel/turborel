@@ -228,7 +228,7 @@ impl FileLog {
     /// segment already; SQLCODE -915 if the segment cannot be created.
     pub fn create(fs: Arc<dyn FileSystem>, dir: &Path, hash: Arc<dyn HashFunction>, options: FileLogOptions) -> Result<FileLog> {
         check_segment_size(options.segment_size)?;
-        fs.create_dir_all(dir)?;
+        fs.create_dir_durably(dir)?;
         if fs.read_dir(dir)?.iter().any(|p| segment_number(p).is_some()) {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} already holds a log", dir.display())));
         }

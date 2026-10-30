@@ -87,6 +87,30 @@ pub trait FileSystem: Send + Sync {
     ///
     /// SQLCODE -915 if it cannot be created.
     fn create_dir_all(&self, path: &Path) -> Result<()>;
+    /// Creates the directory `path`, and any missing parents, as
+    /// `create_dir_all` does, then syncs each it made in its parent, so a
+    /// crash after leaves them (RULES.md D56).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if one cannot be created or synced.
+    fn create_dir_durably(&self, path: &Path) -> Result<()> {
+        let mut made = Vec::new();
+        for dir in path.ancestors().filter(|d| !d.as_os_str().is_empty()) {
+            if self.exists(dir)? {
+                break;
+            }
+            made.push(dir);
+        }
+        self.create_dir_all(path)?;
+        for dir in made {
+            let parent = dir.parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p });
+            if let Some(parent) = parent {
+                self.sync_dir(parent)?;
+            }
+        }
+        Ok(())
+    }
     /// The paths of the entries of directory `path`, sorted.
     ///
     /// # Errors
