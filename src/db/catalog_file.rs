@@ -88,8 +88,6 @@ struct Active {
     /// Which of the two files it is (`name`).
     which: usize,
     records: usize,
-    /// Its last record, with its sequence number.
-    last: Option<Numbered>,
     /// Set once an append failed: a block file then takes no more, so the
     /// next record goes to the other file.
     broken: bool,
@@ -103,7 +101,12 @@ struct CatalogFile {
     /// one before it was.
     hash: Arc<dyn HashFunction>,
     pipeline: Pipeline,
-    active: Mutex<Active>,
+    /// The file it writes to; taken out while a record is written, so no
+    /// lock is held over the file system's calls (RULES.md R-ERR-4).
+    active: Mutex<Option<Active>>,
+    /// Its last record, with its sequence number, kept apart from the file
+    /// so it is read while one is written.
+    last: Mutex<Option<Numbered>>,
 }
 
 /// The last record of `blocks`, with its sequence number, and how many
@@ -127,8 +130,8 @@ impl CatalogFile {
     /// The block file's: SQLCODE -915 if it exists or cannot be written.
     fn create(fs: Arc<dyn FileSystem>, dir: PathBuf, (hash, pipeline): (Arc<dyn HashFunction>, Pipeline)) -> Result<CatalogFile> {
         let blocks = BlockFile::create(&*fs, &dir.join(name(0)), Arc::clone(&hash), pipeline.clone(), BlockOptions::default())?;
-        let active = Active { blocks, which: 0, records: 0, last: None, broken: false };
-        Ok(CatalogFile { fs, dir, hash, pipeline, active: Mutex::new(active) })
+        let active = Active { blocks, which: 0, records: 0, broken: false };
+        Ok(CatalogFile { fs, dir, hash, pipeline, active: Mutex::new(Some(active)), last: Mutex::new(None) })
     }
 
     /// Opens the catalog in `dir`: of its two files, the one whose last
@@ -147,34 +150,57 @@ impl CatalogFile {
             if fs.exists(&path)? {
                 let (blocks, _) = BlockFile::open(&*fs, &path, &formats.hashes, &formats.encodings, BlockOptions::default())?;
                 let (last, records) = last_record(&blocks)?;
-                found.push(Active { blocks, which, records, last, broken: false });
+                found.push((Active { blocks, which, records, broken: false }, last));
             }
         }
-        let newest = found.iter().enumerate().max_by_key(|(_, a)| a.last.as_ref().map(|(sequence, _)| *sequence)).map(|(at, _)| at);
+        let newest = found.iter().enumerate().max_by_key(|(_, (_, last))| last.as_ref().map(|(sequence, _)| *sequence)).map(|(at, _)| at);
         let active = newest.and_then(|at| (at < found.len()).then(|| found.swap_remove(at)));
-        let active = active.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {} holds no catalog", dir.display())))?;
-        for other in found {
+        let (active, last) = active.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {} holds no catalog", dir.display())))?;
+        for (other, _) in found {
             drop(other.blocks);
             fs.remove(&dir.join(name(other.which)))?;
         }
         let (hash, pipeline) = (Arc::clone(active.blocks.hash()), active.blocks.pipeline().clone());
-        Ok(CatalogFile { fs, dir, hash, pipeline, active: Mutex::new(active) })
+        Ok(CatalogFile { fs, dir, hash, pipeline, active: Mutex::new(Some(active)), last: Mutex::new(last) })
     }
 }
 
 impl CatalogStore for CatalogFile {
     fn last(&self) -> Option<Vec<u8>> {
-        lock_builtin(&self.active).last.as_ref().map(|(_, record)| record.clone())
+        lock_builtin(&self.last).as_ref().map(|(_, record)| record.clone())
     }
 
     /// Records `record`, durably, with the next sequence number; in a new
-    /// file once this one holds `compact_after` records.
+    /// file once this one holds `compact_after` records. Its file is taken
+    /// out while it is written, so no lock is held over the file system,
+    /// a plug-in (RULES.md R-ERR-4); records take turns already, as
+    /// checkpoints do (`db/checkpoint.rs`), so one asked for meanwhile is
+    /// refused, never waited for.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if another record is being written; the file system's
+    /// and the block file's.
     fn record(&self, record: &[u8], compact_after: usize) -> Result<()> {
-        let mut active = lock_builtin(&self.active);
-        let sequence = active.last.as_ref().map_or(0, |(s, _)| s.saturating_add(1));
-        let bytes = framed(sequence, record);
+        let taken = lock_builtin(&self.active).take();
+        let mut active = taken
+            .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a catalog record is being written: records take turns (RULES.md R-ERR-4)"))?;
+        let sequence = lock_builtin(&self.last).as_ref().map_or(0, |(s, _)| s.saturating_add(1));
+        let written = self.write(&mut active, &framed(sequence, record), compact_after);
+        *lock_builtin(&self.active) = Some(active);
+        written?;
+        *lock_builtin(&self.last) = Some((sequence, record.to_vec()));
+        Ok(())
+    }
+}
+
+impl CatalogFile {
+    /// Writes `bytes`, a record framed, to `active`, durably; or, once it
+    /// holds `compact_after` records or an append to it failed, alone to
+    /// the other file, made anew, which `active` then is.
+    fn write(&self, active: &mut Active, bytes: &[u8], compact_after: usize) -> Result<()> {
         if active.records < compact_after && !active.broken {
-            let appended = active.blocks.append(&bytes).and_then(|_| active.blocks.sync(Durability::Full));
+            let appended = active.blocks.append(bytes).and_then(|_| active.blocks.sync(Durability::Full));
             if let Err(e) = appended {
                 active.broken = true;
                 return Err(e);
@@ -187,14 +213,13 @@ impl CatalogStore for CatalogFile {
                 self.fs.remove(&path)?;
             }
             let blocks = BlockFile::create(&*self.fs, &path, Arc::clone(&self.hash), self.pipeline.clone(), BlockOptions::default())?;
-            blocks.append(&bytes)?;
+            blocks.append(bytes)?;
             blocks.sync(Durability::Full)?;
             self.fs.sync_dir(&self.dir)?;
             self.fs.remove(&old)?;
             self.fs.sync_dir(&self.dir)?;
-            *active = Active { blocks, which, records: 1, last: None, broken: false };
+            *active = Active { blocks, which, records: 1, broken: false };
         }
-        active.last = Some((sequence, record.to_vec()));
         Ok(())
     }
 }

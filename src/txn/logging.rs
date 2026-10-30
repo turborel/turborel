@@ -109,11 +109,13 @@ impl Txn {
     /// any. If that cannot be written, the log would show changes that were
     /// cancelled as made, so the transaction can then only roll back.
     pub(super) fn statement_undone(&self) {
-        let mut st = lock_builtin(&self.state);
-        let (Some(log), Some(from)) = (&self.log, st.statement_from.take()) else { return };
+        let from = lock_builtin(&self.state).statement_from.take();
+        let (Some(log), Some(from)) = (&self.log, from) else { return };
         let record = Record { tx: self.id, change: Change::StatementUndone { from } }.encode();
+        // Appended with the state unlocked: the log is a plug-in (RULES.md
+        // R-ERR-4).
         if log.append(&record).is_err() {
-            st.doomed.get_or_insert("a statement's changes were undone but could not be logged as undone");
+            lock_builtin(&self.state).doomed.get_or_insert("a statement's changes were undone but could not be logged as undone");
         }
     }
 

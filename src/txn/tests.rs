@@ -121,3 +121,54 @@ fn a_statement_reads_at_a_snapshot_of_its_own() {
     strict.check_reads(false).unwrap();
     assert!(strict.read_mode().checked, "always");
 }
+
+/// A log, in memory, that notes as each record is appended whether the
+/// transaction it watches has its state locked.
+#[derive(Default)]
+struct Watching {
+    tx: std::sync::OnceLock<std::sync::Weak<Txn>>,
+    locked: Mutex<Vec<bool>>,
+    records: crate::log::MemoryLog,
+}
+
+impl Log for Watching {
+    fn capabilities(&self) -> crate::log::LogCapabilities {
+        self.records.capabilities()
+    }
+    fn append(&self, record: &[u8]) -> Result<Lsn> {
+        if let Some(tx) = self.tx.get().and_then(std::sync::Weak::upgrade) {
+            let locked = matches!(tx.state.try_lock(), Err(std::sync::TryLockError::WouldBlock));
+            lock_builtin(&self.locked).push(locked);
+        }
+        self.records.append(record)
+    }
+    fn sync(&self, through: Lsn) -> Result<()> {
+        self.records.sync(through)
+    }
+    fn read_from(&self, from: Lsn) -> crate::log::Records<'_> {
+        self.records.read_from(from)
+    }
+    fn truncate_before(&self, before: Lsn) -> Result<()> {
+        self.records.truncate_before(before)
+    }
+    fn end(&self) -> Lsn {
+        self.records.end()
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md R-ERR-4: a transaction's state is not
+/// locked while the log, a plug-in, appends its records: a change's, nor
+/// the record of its statement undone.
+/// Regression test (R-TEST-7): the state was held locked across the
+/// append of a statement undone.
+#[test]
+fn the_log_appends_with_no_lock_held() {
+    let shared = Arc::new(Transactions::default());
+    let log = Arc::new(Watching::default());
+    let watched: Arc<dyn Log> = log.clone();
+    let tx = Arc::new(shared.begin(Some(watched), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default()));
+    log.tx.set(Arc::downgrade(&tx)).unwrap();
+    tx.log_change(crate::log::record::Change::Abort).unwrap();
+    tx.statement_undone();
+    assert_eq!(*lock_builtin(&log.locked), [false, false]);
+}
