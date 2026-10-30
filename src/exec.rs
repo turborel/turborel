@@ -12,12 +12,15 @@
 //! where it can (`exec/batch.rs`, EXECUTOR.BATCHES). Operators that must
 //! hold rows (sorts, grouping, DISTINCT, joins and products, EXCEPT and
 //! INTERSECT, subqueries' rows) hold up to WORK_MEMORY of them in memory
-//! and spill the rest (`exec/work.rs`, RULES.md D38).
+//! and spill the rest (`exec/work.rs`, RULES.md D38); so do the rows a
+//! statement holds past them, a cursor's or a write's (`exec/held.rs`).
 
 mod batch;
 mod distinct;
+mod entries;
 mod eval;
 mod group;
+mod held;
 mod join;
 mod partition;
 mod set;
@@ -36,11 +39,19 @@ use crate::physical::Plan;
 use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage, project};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
-use crate::value::{Value, sort_cmp};
+use crate::value::Value;
 
+pub use entries::{Entries, row_entries, table_entries};
 pub use eval::{eval, eval_cond, quantified};
+pub use held::{HeldIter, HeldRows, Holdable};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub use sort::compare_rows;
+
+/// [X3.135-1986 §8.3 GR3b] `rows` sorted by `keys`, in a work area of
+/// `db` that spills (RULES.md D38).
+pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State) -> RowIter {
+    sort::sort(keys, rows, db)
+}
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The
@@ -120,18 +131,9 @@ fn ordered_scan(
         Some(c) => storage.scan_where(tx, columns, c),
         None => storage.scan(tx, columns),
     };
-    let mut found = match checked(read.map(|r| r.map(|(_, row)| row)), stop).collect::<Result<Vec<Row>>>() {
-        Ok(found) => found,
-        Err(e) => return failed(e),
-    };
-    found.sort_by(|a, b| {
-        order
-            .iter()
-            .map(|&c| a.get(c).zip(b.get(c)).map_or(std::cmp::Ordering::Equal, |(x, y)| sort_cmp(x, y)))
-            .find(|o| o.is_ne())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Box::new(found.into_iter().map(Ok))
+    // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
+    let keys: Vec<SortKey> = order.iter().map(|&column| SortKey { column, descending: false }).collect();
+    sort::sort(&keys, Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop)), db)
 }
 
 /// The rows of the product or hash join `plan`.
@@ -323,59 +325,6 @@ fn filter(cond: Cond, input: RowIter, runner: Runner) -> RowIter {
     }))
 }
 
-/// The rows, with their ids, produced by a table access: a scan or index
-/// scan, possibly filtered, possibly under a projection (which is ignored).
-/// They are the object rows of a searched UPDATE or DELETE
-/// [X3.135-1986 §8.12 GR1, §8.5 GR1].
-/// UPDATE, DELETE and updatable cursors need the ids to change the rows.
-/// Each row is read only while the statement is not cancelled (RULES.md
-/// D44).
-///
-/// # Errors
-///
-/// A row's search condition fails, the statement is cancelled or runs past
-/// STATEMENT_TIMEOUT (SQLCODE -920), or `plan` is not a table access or
-/// names a table or index that does not exist (SQLCODE -910).
-pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, Row)>> {
-    match plan {
-        Plan::Project { input, .. } => row_entries(*input, db, tx),
-        Plan::SeqScan { table, columns, .. } => checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx)).collect(),
-        Plan::IndexScan { table, index, probe, reverse, .. } => {
-            let Found { storage, columns, entries } = probe_index(db, &table, &index, &probe, reverse)?;
-            storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe })?;
-            let rows = entries.into_iter().filter_map(move |(key, id)| fetch(&*storage, &columns, tx, &key, id).transpose());
-            checked(rows, db.tx.stop_of(tx)).collect()
-        }
-        Plan::Filter { cond, input, .. } => {
-            let rows = match (*input, pushed_conjuncts(&cond)) {
-                (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
-                    let rows = Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition);
-                    checked(rows, db.tx.stop_of(tx)).collect::<Result<Vec<_>>>()?
-                }
-                (input, _) => row_entries(input, db, tx)?,
-            };
-            let mut out = Vec::new();
-            let runner = Runner::new(db, tx);
-            for (id, row) in rows {
-                if eval_cond(&cond, &row, &runner)? == Truth::True {
-                    out.push((id, row));
-                }
-            }
-            Ok(out)
-        }
-        other @ (Plan::Product { .. }
-        | Plan::HashJoin { .. }
-        | Plan::OuterJoin { .. }
-        | Plan::Aggregate { .. }
-        | Plan::Distinct { .. }
-        | Plan::Append { .. }
-        | Plan::SetOp { .. }
-        | Plan::Values { .. }
-        | Plan::System { .. }
-        | Plan::Sort { .. }) => Err(broken(&format!("not a table access: {other:?}"))),
-    }
-}
-
 /// [X3.135-1986 §5.25 GR2] Each expression of the projection `plan`
 /// applied to each row of its input. Never inlined into `execute`, whose
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
@@ -416,17 +365,8 @@ mod tests {
     /// A state with one empty table, `A.E`, and no `A.T`.
     fn state() -> State {
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
-        let name = QualifiedName { auth: "A".into(), ident: "E".into() };
-        let desc = TableDesc {
-            name: name.clone(),
-            columns: vec![],
-            constraints: vec![],
-            engine: ROW_STORE.into(),
-            options: Vec::new(),
-            generation: 0,
-            temporary: None,
-        };
-        st.storage.insert(name, Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
+        let desc = state_desc();
+        st.storage.insert(desc.name.clone(), Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
         st
     }
 
@@ -465,6 +405,54 @@ mod tests {
         assert_eq!(row_entries(index(), &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
         let product = Plan::Product { left: Box::new(seq()), right: Box::new(seq()) };
         assert_eq!(code(execute(product, &st, NO_TRANSACTION)), Some(Code::Api));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38, D31 [X3.135-1986 §8.3 GR3b]: a scan
+    /// planned in an order its table no longer gives is read and sorted in
+    /// a work area that spills: with WORK_MEMORY at its least, its rows come
+    /// in order; runs that cannot be read back fail it (SQLCODE -915), so
+    /// its rows were written to them.
+    #[test]
+    fn a_scan_no_longer_in_order_is_sorted_by_spilling() {
+        use crate::catalog::ColumnDesc;
+        use crate::spill::testing::{Held, areas};
+        use crate::value::{DataType, Decimal, Spelled};
+        const ROWS: i128 = 5000;
+        for broken in [false, true] {
+            let mut st = state();
+            st.settings.set("WORK_MEMORY", Some(&Value::Exact(Decimal::new(64 << 10, 0)))).unwrap();
+            st.work = areas(Some(Arc::new(Held { broken })), usize::MAX);
+            let name = QualifiedName { auth: "A".into(), ident: "N".into() };
+            let data_type = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
+            let column = ColumnDesc { name: "K".into(), data_type, not_null: false, default: None, domain: None };
+            let desc = TableDesc { name: name.clone(), columns: vec![column], ..state_desc() };
+            let table = RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap();
+            for k in 0..ROWS {
+                table.insert(NO_TRANSACTION, vec![Value::Exact(Decimal::new(ROWS - k, 0))]).unwrap();
+            }
+            st.storage.insert(name.clone(), Arc::from(table));
+            let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0] };
+            let read = execute(plan, &Arc::new(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>();
+            if broken {
+                assert_eq!(read.err().map(|e| e.code), Some(Code::Io), "spilled");
+                continue;
+            }
+            let keys: Vec<String> = read.unwrap().iter().map(|r| r.iter().map(ToString::to_string).collect()).collect();
+            assert_eq!(keys, (1..=ROWS).map(|k| k.to_string()).collect::<Vec<_>>());
+        }
+    }
+
+    /// The description of `A.E`, of no columns.
+    fn state_desc() -> TableDesc {
+        TableDesc {
+            name: QualifiedName { auth: "A".into(), ident: "E".into() },
+            columns: vec![],
+            constraints: vec![],
+            engine: ROW_STORE.into(),
+            options: Vec::new(),
+            generation: 0,
+            temporary: None,
+        }
     }
 
     /// Verifies: [DESIGN] `row_entries` refuses a plan that is not a table

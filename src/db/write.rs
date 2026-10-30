@@ -13,7 +13,7 @@ use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, Row
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Result};
-use crate::exec::{Runner, execute, row_entries};
+use crate::exec::{HeldRows, Runner, execute, row_entries};
 use crate::params::Params;
 use crate::storage::{Row, RowId};
 use crate::txn::Txn;
@@ -63,11 +63,15 @@ impl Session {
     /// The rows it inserted [ISO/IEC 9075:1992 §18.1 GR1e i].
     pub(super) fn insert_statement(&self, st: &Arc<State>, tx: &Txn, stmt: &InsertStatement, params: &Params) -> Result<usize> {
         let target = self.insert_target(st, stmt)?;
-        let rows = match &stmt.source {
+        let mut rows = match &stmt.source {
             InsertSource::Query(query) => self.query_rows(StatementContext { st, tx }, &target, query, params)?,
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default.
-            InsertSource::DefaultValues => vec![target.defaults.clone()],
+            InsertSource::DefaultValues => {
+                let mut one = HeldRows::new(st.list_space());
+                one.push(target.defaults.clone())?;
+                one
+            }
         };
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() {
@@ -75,10 +79,14 @@ impl Session {
         }
         self.settle_cursors(st, &target.name);
         let mut effects = self.effects();
-        for row in &rows {
+        rows.visit(&mut |row| {
             effects.inserted(&target.name, st.insert_row(tx, &target.name, row)?); // [X3.135-1986 §8.7 GR1c]
+            Ok(())
+        })?;
+        if !target.checks.is_empty() {
+            let runner = Runner::new(st, tx.id);
+            rows.visit(&mut |row| check_option(&target.checks, [row], ("§8.7 GR2", &runner)))?;
         }
-        check_option(&target.checks, &rows, ("§8.7 GR2", &Runner::new(st, tx.id)))?;
         st.end_statement(tx, effects)?;
         Ok(rows.len())
     }
@@ -132,13 +140,13 @@ impl Session {
     /// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the
     /// candidate rows of a `<query expression>`, one for each row of its
     /// result, which is evaluated in full before any row is inserted.
-    fn query_rows(&self, cx: StatementContext<'_>, target: &Target, query: &QueryExpression, params: &Params) -> Result<Vec<Row>> {
+    fn query_rows(&self, cx: StatementContext<'_>, target: &Target, query: &QueryExpression, params: &Params) -> Result<HeldRows<Row>> {
         let StatementContext { st, tx } = cx;
         let bound = self.bound_insert(st, target, query, params)?;
         if bound.columns.len() != target.object.len() {
             let (n, m) = (bound.columns.len(), target.object.len());
-            let failed = Err(rule(format!("[X3.135-1986 §8.7 SR5; ISO/IEC 9075:1992 §13.8 SR5] a query of degree {n} for {m} columns")));
-            return degree_at(query, m).map_or(failed.clone(), |at| failed.or_at(at));
+            let failed = rule(format!("[X3.135-1986 §8.7 SR5; ISO/IEC 9075:1992 §13.8 SR5] a query of degree {n} for {m} columns"));
+            return Err(degree_at(query, m).map_or(failed.clone(), |at| failed.or_at(at)));
         }
         // [X3.135-1986 §8.7 SR6] placed at its select list item, if written;
         // a <table value constructor>'s values are checked as bound.
@@ -166,14 +174,19 @@ impl Session {
         for t in optimized.tables() {
             st.read_lock(tx, &t)?;
         }
-        let found = execute(physical, st, tx.id).collect::<Result<Vec<Row>>>()?;
-        found.into_iter().map(|values| target.candidate(values)).collect()
+        // Held up to WORK_MEMORY, the rest spilled (RULES.md D38).
+        let mut rows = HeldRows::new(st.list_space());
+        for values in execute(physical, st, tx.id) {
+            rows.push(target.candidate(values?)?)?;
+        }
+        Ok(rows)
     }
 }
 
 /// The object rows of a searched UPDATE or DELETE, found before any is
-/// changed [X3.135-1986 §8.5 GR1, §8.12 GR1].
-pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: &BoundWrite) -> Result<Vec<(RowId, Row)>> {
+/// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to WORK_MEMORY, the
+/// rest spilled (RULES.md D38).
+pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: &BoundWrite) -> Result<HeldRows<(RowId, Row)>> {
     // T, to be written, and the tables its subqueries read.
     st.update_lock(tx, &w.table)?;
     // The tables its condition's and its SET values' subqueries read, the
@@ -203,12 +216,20 @@ pub(super) fn update_searched(
     let runner = Runner::new(st, tx.id);
     // [ISO/IEC 9075:1992 §13.10 GR6] every value computed before any row
     // is updated: a subquery of one may read the table.
-    let news = objects.iter().map(|(_, old)| candidate(w, old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))).collect::<Result<Vec<Row>>>()?;
-    for ((id, old), new) in objects.into_iter().zip(&news) {
-        st.update_row(tx, &w.table, id, new)?;
-        effects.updated(&w.table, id, old, &columns);
+    let mut changes = HeldRows::new(st.list_space());
+    for object in objects {
+        let (id, old) = object?;
+        let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
+        changes.push((id, old, new))?;
     }
-    check_option(&w.checks, &news, ("§8.12 GR4", &runner))?;
+    changes.visit(&mut |(id, old, new)| {
+        st.update_row(tx, &w.table, *id, new)?;
+        effects.updated(&w.table, *id, old.clone(), &columns);
+        Ok(())
+    })?;
+    if !w.checks.is_empty() {
+        changes.visit(&mut |(_, _, new)| check_option(&w.checks, [new], ("§8.12 GR4", &runner)))?;
+    }
     st.end_statement(tx, effects)?;
     Ok(count)
 }
@@ -226,7 +247,8 @@ pub(super) fn delete_searched(
         return Ok(0);
     }
     let count = objects.len();
-    for (id, old) in objects {
+    for object in objects {
+        let (id, old) = object?;
         st.delete_row(tx, &w.table, id)?;
         effects.deleted(&w.table, id, old);
     }

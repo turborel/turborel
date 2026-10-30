@@ -95,3 +95,30 @@ fn items_are_taken_from_a_place() {
     let mut empty = SpillList::<N>::default();
     assert!(empty.is_empty() && empty.take_from(0, &decode).unwrap().is_empty());
 }
+
+/// Verifies: [DESIGN] RULES.md D38, `SpillList::locate` and `take_oldest`:
+/// an item is found held, or in its run by segment and place; past the
+/// last, none. Taken oldest first, the segments give every item in order,
+/// the list emptied; a run that cannot be read back is taken, its error in
+/// its place.
+#[test]
+fn items_are_located_and_taken_oldest_first() {
+    let mut list = numbers(10, false);
+    assert!(matches!(list.locate(4), Some(Located::Spilled { at: 1, .. })));
+    let end = list.len() - 1;
+    match list.locate(end) {
+        Some(Located::Held(n)) => assert_eq!(n.0, 9),
+        Some(Located::Spilled { segment, at }) => assert_eq!(list.segment(segment, &decode).unwrap()[at].0, 9),
+        None => panic!("item {end} not found"),
+    }
+    assert!(list.locate(10).is_none());
+    let mut taken = Vec::new();
+    while let Some(items) = list.take_oldest(&decode) {
+        taken.extend(items.unwrap().into_iter().map(|n| n.0));
+    }
+    assert_eq!(taken, (0..10).collect::<Vec<_>>());
+    assert!(list.is_empty() && list.held() == 0);
+    let mut unread = numbers(10, true);
+    assert_eq!(unread.take_oldest(&decode).and_then(Result::err).map(|e| e.code), Some(Code::Io));
+    assert_eq!(unread.len(), 7, "the segment taken");
+}

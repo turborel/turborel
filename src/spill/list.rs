@@ -1,12 +1,14 @@
 //! \[DESIGN\] A list that spills (RULES.md D38): items appended, held in
 //! memory until they pass a number of bytes, then written, each segment of
 //! them as a run of a spill area made when first needed; read back a
-//! segment at a time, newest or oldest first. A mark begins a segment, so
+//! segment at a time, newest or oldest first, or the segment of an item's
+//! place. A mark begins a segment, so
 //! the items from it on are taken apart from those before without reading
 //! a run back. Items that cannot be written stay held: a list never loses
 //! one. What its items are in bytes is its owner's, given as it writes and
 //! reads them: the transaction coordinator's undo entries, a row store's
-//! changes and garbage, the row changes recovery reads from the log.
+//! changes and garbage, the row changes recovery reads from the log, the
+//! rows a cursor or a data-changing statement holds (`exec/held.rs`).
 
 use std::sync::Arc;
 
@@ -239,12 +241,37 @@ impl<T: ListItem> SpillList<T> {
         if newest {
             segments.reverse();
         }
-        segments.into_iter().map(move |segment| match segment {
-            Segment::Held(items, _) => Ok(items),
-            Segment::Spilled(run, _) => {
-                run.into_records().and_then(|records| records.map(|r| r.and_then(|record| decode(&record))).collect())
+        segments.into_iter().map(move |segment| read_once(segment, decode))
+    }
+
+    /// Its oldest segment's items, taken from it, in order: a run read back
+    /// once with `decode`, its pages given back as it is read; none once it
+    /// has none. A run that cannot be read back is taken all the same, its
+    /// error in its items' place.
+    pub fn take_oldest(&mut self, decode: Decode<'_, T>) -> Option<Result<Vec<T>>> {
+        if self.segments.is_empty() {
+            return None;
+        }
+        let segment = self.segments.remove(0);
+        self.count = self.count.saturating_sub(segment.len());
+        self.held = self.held.saturating_sub(segment.held_bytes());
+        Some(read_once(segment, decode))
+    }
+
+    /// Where its `place`th item is: held, or in a run, by the run's
+    /// segment and the item's place in it; none past its last.
+    pub fn locate(&self, place: usize) -> Option<Located<'_, T>> {
+        let mut at = place;
+        for (i, segment) in self.segments.iter().enumerate() {
+            if at < segment.len() {
+                return Some(match segment {
+                    Segment::Held(items, _) => Located::Held(items.get(at)?),
+                    Segment::Spilled(..) => Located::Spilled { segment: i, at },
+                });
             }
-        })
+            at = at.saturating_sub(segment.len());
+        }
+        None
     }
 
     /// Calls `each` with every item, oldest first, the list kept: runs read
@@ -312,6 +339,27 @@ impl<T: ListItem> SpillList<T> {
         if self.area.is_none() {
             self.area = other.area;
         }
+    }
+}
+
+/// Where an item of a list is (`SpillList::locate`).
+pub enum Located<'a, T> {
+    /// Held in memory.
+    Held(&'a T),
+    /// In the run of its `segment`th segment, the `at`th item there.
+    Spilled {
+        /// The segment.
+        segment: usize,
+        /// Its place in the segment.
+        at: usize,
+    },
+}
+
+/// The items of `segment`, a run's read back once with `decode`.
+fn read_once<T>(segment: Segment<T>, decode: Decode<'_, T>) -> Result<Vec<T>> {
+    match segment {
+        Segment::Held(items, _) => Ok(items),
+        Segment::Spilled(run, _) => run.into_records().and_then(|records| records.map(|r| r.and_then(|record| decode(&record))).collect()),
     }
 }
 

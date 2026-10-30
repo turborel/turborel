@@ -1314,6 +1314,18 @@ catalog to keep in step.
   least and greatest value; and, by the place of a row's first null, the
   least and greatest of the values before it. Never by comparing the row
   with every row.
+- The rows a statement holds past its operators are held up to
+  WORK_MEMORY too, then written to runs of a spill area, in a list that
+  spills (`spill/list.rs`, `exec/held.rs`): a read-only cursor's rows read
+  at OPEN, its plan able to raise an error, or read before its
+  transaction changes a table it reads, given back in order, each run
+  read once, the first error read after the rows before it; a SCROLL
+  cursor's rows as it reads them, read back by place a run at a time; an
+  updatable cursor's row ids, in its order, its rows sorted as ORDER BY
+  sorts them; the object rows of a searched UPDATE or DELETE, with an
+  UPDATE's new values, and the candidate rows of an INSERT, each chosen
+  before any row is changed. A scan planned in an order its table no
+  longer gives is sorted as ORDER BY sorts.
 - A database kept in a directory keeps its areas' files in `tmp/` there,
   cleared when it opens; one in memory, in the system's temporary
   directory.

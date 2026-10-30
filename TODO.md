@@ -210,10 +210,12 @@ The registry, scopes and SET statements exist (D36). Still to do:
   ChaCha20-Poly1305 for machines without AES instructions.
 - **Spills, further:** compressed, through the database's compression,
   where the disk is slower than the CPU; and a spill file made before a
-  table is encrypted stays as it was until its operator ends. A read-only
-  cursor's rows held at once, a SCROLL cursor's as it reads them, or any
-  one's read before its transaction changes a table it reads, are held in
-  memory, and should spill past WORK_MEMORY as an operator's do.
+  table is encrypted stays as it was until its operator ends. What a
+  data-changing statement did, kept for its constraints' checks at its
+  end (each row's id, and an UPDATE's or DELETE's old values,
+  `db/integrity.rs`), and the entries an index scan finds, read at once
+  (`Index::search`), are held in memory, and should spill past
+  WORK_MEMORY as an operator's rows do.
 - **Buffer pool:** a benchmark of the B-link tree in a small pool, and
   read-ahead, to make misses cheaper. Hits with one shared write measured
   87.6M/s to 151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27):

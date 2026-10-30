@@ -281,7 +281,7 @@ fn memory() -> [Definition; 3] {
         defined(
             ("WORK_MEMORY", at_least(64_i128 << 10_i32), count(crate::spill::DEFAULT_WORK_MEMORY)),
             SESSION,
-            "The bytes a sort, hash join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY_BUDGET.",
+            "The bytes a sort, hash join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY_BUDGET; so too the rows a cursor reads ahead of its fetches or keeps to scroll among, and those an INSERT, UPDATE or DELETE chooses before it changes any.",
         ),
         defined(
             ("SPILL_BATCH", Kind::Integer { min: 4_i128 << 10_i32, max: 1_i128 << 20_i32 }, count(crate::spill::DEFAULT_SPILL_BATCH)),

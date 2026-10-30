@@ -14,17 +14,20 @@
 //!   reads the rest of its rows (`settle`), so it never sees the change.
 //!   Other transactions' changes it cannot see: they wait for its locks, or
 //!   its engine reads as of its snapshot (RULES.md D29).
+//!
+//! Rows read ahead of their fetch so are held up to WORK_MEMORY, the rest
+//! spilled (`exec/held.rs`, RULES.md D38). Reading ahead stops at the first
+//! error, which is fetched after the rows read before it, and ends them.
 
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use super::{Completion, Database, State};
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
-use crate::error::Result;
-use crate::error::{Code, fail};
-use crate::exec::{RowIter, execute};
+use crate::error::{Code, Result, SqlError, fail};
+use crate::exec::{HeldIter, HeldRows, RowIter, execute};
 use crate::physical::Plan;
+use crate::spill::ListSpace;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::txn::{Stop, TxId};
@@ -32,12 +35,16 @@ use crate::value::datetime::show_in;
 
 /// \[DESIGN\] The rows of a read-only cursor.
 pub(super) struct Stream {
-    /// Rows read and not yet fetched, an error where reading one failed.
-    ready: VecDeque<Result<Row>>,
+    /// Rows read ahead and not yet fetched; none if none were read ahead.
+    ready: Option<HeldIter<Row>>,
+    /// The error that ended reading ahead, fetched after `ready`.
+    failure: Option<SqlError>,
     /// The rows still to read from the plan; none once all are read.
     rest: Option<RowIter>,
     /// The base tables the plan reads, its subqueries' too.
     reads: Vec<QualifiedName>,
+    /// Where rows read ahead are held: its statement's work area.
+    space: ListSpace,
 }
 
 impl Stream {
@@ -46,15 +53,32 @@ impl Stream {
     ///
     /// # Errors
     ///
-    /// The plan, read now, raises one.
+    /// The plan, read now, raises one, or its rows cannot be held.
     pub(super) fn open(physical: Plan, reads: Vec<QualifiedName>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
         let read_now = physical.can_raise();
-        let rows = execute(physical, st, tx);
+        let rest = Some(execute(physical, st, tx));
+        let mut stream = Stream { ready: None, failure: None, rest, reads, space: st.list_space() };
         if read_now {
-            let all = rows.collect::<Result<Vec<Row>>>()?;
-            return Ok(Stream { ready: all.into_iter().map(Ok).collect(), rest: None, reads });
+            stream.read_ahead();
+            if let Some(e) = stream.failure.take() {
+                return Err(e);
+            }
         }
-        Ok(Stream { ready: VecDeque::new(), rest: Some(rows), reads })
+        Ok(stream)
+    }
+
+    /// Reads the rest of the rows from the plan, if any are still to read,
+    /// up to the first error.
+    fn read_ahead(&mut self) {
+        let Some(rest) = self.rest.take() else { return };
+        let mut held = HeldRows::new(self.space.clone());
+        for read in rest {
+            if let Err(e) = read.and_then(|row| held.push(row)) {
+                self.failure = Some(e);
+                break;
+            }
+        }
+        self.ready = Some(held.into_iter());
     }
 
     /// The next row, or none after the last.
@@ -63,8 +87,14 @@ impl Stream {
     ///
     /// Reading it failed.
     pub(super) fn next(&mut self) -> Result<Option<Row>> {
-        if let Some(read) = self.ready.pop_front() {
-            return read.map(Some);
+        if let Some(ready) = self.ready.as_mut() {
+            if let Some(read) = ready.next() {
+                return read.map(Some);
+            }
+            self.ready = None;
+        }
+        if let Some(e) = self.failure.take() {
+            return Err(e);
         }
         let read = self.rest.as_mut().and_then(Iterator::next);
         if read.is_none() {
@@ -76,11 +106,8 @@ impl Stream {
     /// [X3.135-1986 §8.8 GR3b] Reads the rest of the rows now if the cursor
     /// reads `table`, which its transaction is about to change.
     pub(super) fn settle(&mut self, table: &QualifiedName) {
-        if !self.reads.contains(table) {
-            return;
-        }
-        if let Some(rest) = self.rest.take() {
-            self.ready.extend(rest);
+        if self.reads.contains(table) {
+            self.read_ahead();
         }
     }
 

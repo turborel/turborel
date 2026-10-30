@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-pub use list::{Decode, Encode, ListItem, ListSpace, SpillList};
+pub use list::{Decode, Encode, ListItem, ListSpace, Located, SpillList};
 pub use paged::PagedSpill;
 pub use sort::sorted_records;
 

@@ -15,13 +15,13 @@ use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, 
 use crate::binder::{self, BoundWrite, OutColumn, bind_cursor, bind_select};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlState, fail, fail_with};
-use crate::exec::{Runner, compare_rows, execute, row_entries};
-use crate::logical::{Cond, LogicalPlan, SortKey, and_all};
+use crate::exec::{Runner, execute};
+use crate::logical::{Cond, LogicalPlan, and_all};
 use crate::params::Params;
 use crate::physical::Plan;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
-use crate::txn::{TxId, Txn};
+use crate::txn::Txn;
 use crate::value::datetime::show_in;
 use crate::value::{DataType, Value};
 
@@ -127,18 +127,6 @@ fn settable(desc: &TableDesc, updatability: Option<&Updatability>) -> Result<Vec
         .collect()
 }
 
-/// The rows an updatable cursor may cover, in its order: those of its
-/// `plan`'s table access, sorted, if a Sort is atop it, on the keys it
-/// has, each a column of the cursor, `projection`'s column of the table.
-fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId, projection: &[usize]) -> Result<Vec<RowId>> {
-    let Plan::Sort { keys, input, .. } = plan else { return Ok(row_entries(plan, st, tx)?.into_iter().map(|(id, _)| id).collect()) };
-    let mut entries = row_entries(*input, st, tx)?;
-    let on_table: Vec<SortKey> =
-        keys.iter().filter_map(|k| projection.get(k.column).map(|&column| SortKey { column, descending: k.descending })).collect();
-    entries.sort_by(|(_, a), (_, b)| compare_rows(&on_table, a, b));
-    Ok(entries.into_iter().map(|(id, _)| id).collect())
-}
-
 /// [ISO/IEC 9075:1992 §13.3 SR3, SR4, GR2] Where FETCH `orientation` moves
 /// a cursor, SCROLL if `scroll`, its J's value read from `params` by
 /// `auth`.
@@ -203,10 +191,10 @@ fn open_updatable(
     let settable = settable(&st.base_table(&table)?, spec.updatability.as_ref())?;
     let ordered = ordered_columns(&c.optimized, &projection);
     let condition = row_condition(&c.optimized);
-    let ids = ordered_ids(c.physical, st, tx.id, &projection)?;
+    let ids = super::scroll::ordered_ids(c.physical, st, tx.id, &projection)?;
     let snapshot = Arc::clone(st);
     let at = Position::Before(0);
-    let rows = Updatable { snapshot, named, table, ids, projection, condition, at, settable, ordered, changed: Vec::new() };
+    let rows = Updatable { snapshot, named, table, ids, projection, condition, at, settable, ordered, changed: Vec::new(), on: None };
     Ok(OpenCursor { columns: c.columns, rows: CursorRows::Updatable(Box::new(rows)) })
 }
 
@@ -412,7 +400,7 @@ impl Session {
         } else {
             // [X3.135-1986 §8.8 GR3b] "that table ... is effectively created".
             let (columns, rows) = self.open_rows(st, tx, &spec, params)?;
-            OpenCursor { columns, rows: if flags.1 { CursorRows::Kept(Kept::new(rows)) } else { CursorRows::Table(rows) } }
+            OpenCursor { columns, rows: if flags.1 { CursorRows::Kept(Kept::new(rows, st)) } else { CursorRows::Table(rows) } }
         };
         // [X3.135-1986 §8.8 GR3c] open, positioned before the first row.
         let mut inner = self.inner.borrow_mut();
