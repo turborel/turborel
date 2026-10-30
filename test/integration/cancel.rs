@@ -2,6 +2,7 @@
 //! it reads, as its cursor is fetched from, and as it waits for a lock;
 //! and by STATEMENT_TIMEOUT and LOCK_TIMEOUT.
 
+use turborel::db::Session;
 use turborel::error::Code;
 
 use crate::common::{arm, gated, locked, rows};
@@ -28,6 +29,38 @@ fn a_statement_cancelled_as_it_reads_is_undone() {
     cancelling.join().unwrap();
     assert_eq!((failed.code, failed.sqlstate().as_str()), (Code::Cancelled, "TB920"));
     assert_eq!(rows(&s, "SELECT K FROM G ORDER BY K"), Ok(vec!["1".into(), "2".into(), "3".into(), "4".into()]), "undone, the insert kept");
+}
+
+/// Verifies: [DESIGN] RULES.md D44: a statement whose scan is told its
+/// conditions looks for a cancel as it reads each row, as an unfiltered
+/// scan does: a query read row by row, cancelled as it reads, fails
+/// (SQLCODE -920); and a searched DELETE, cancelled as it reads its object
+/// rows, fails before it finds that none match.
+#[test]
+fn a_filtered_scan_cancelled_as_it_reads_fails() {
+    assert_eq!(cancelled_as_it_reads(|s| rows(s, "SELECT K FROM G WHERE K > 0").err()), Some(Code::Cancelled), "a query");
+    let deleted = cancelled_as_it_reads(|s| s.run("DELETE FROM G WHERE K > 100").err().map(|e| e.code));
+    assert_eq!(deleted, Some(Code::Cancelled), "a DELETE");
+}
+
+/// The error of `run`, on a session of `gated()`'s database reading row by
+/// row, cancelled once its scan reaches the second row; the table's rows
+/// checked to be left as they were.
+fn cancelled_as_it_reads(run: impl Fn(&Session) -> Option<Code>) -> Option<Code> {
+    let (db, gate, heard, go) = gated();
+    let s = db.session("X");
+    s.run("SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    arm(&gate);
+    let canceller = s.canceller();
+    let cancelling = std::thread::spawn(move || {
+        heard.recv().unwrap();
+        canceller.cancel();
+        go.send(()).unwrap();
+    });
+    let failed = run(&s);
+    cancelling.join().unwrap();
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM G WHERE K > 0"), Ok(vec!["3".into()]));
+    failed
 }
 
 /// Verifies: [DESIGN] RULES.md D44: a fetch of a cursor reading as it is

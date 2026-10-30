@@ -101,7 +101,8 @@ fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// `order`, as ORDER BY sorts them [X3.135-1986 §8.3 GR3b], only those
 /// `condition` may match if given: as its storage reads them so
 /// (`TableStorage::scan_ordered`), else read and sorted, if it no longer
-/// can, its option changed since the plan was made.
+/// can, its option changed since the plan was made; each row read only
+/// while the statement is not cancelled (RULES.md D44).
 fn ordered_scan(
     (table, columns, order): (&QualifiedName, &[usize], &[usize]),
     condition: Option<&Conjunction>,
@@ -112,14 +113,15 @@ fn ordered_scan(
         Ok(storage) => Arc::clone(storage),
         Err(e) => return failed(e),
     };
+    let stop = db.tx.stop_of(tx);
     if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, order, condition) {
-        return Box::new(rows.map(|read| read.map(|(_, row)| row)));
+        return Box::new(checked(rows.map(|read| read.map(|(_, row)| row)), stop));
     }
     let read = match condition {
         Some(c) => storage.scan_where(tx, columns, c),
         None => storage.scan(tx, columns),
     };
-    let mut found = match read.map(|r| r.map(|(_, row)| row)).collect::<Result<Vec<Row>>>() {
+    let mut found = match checked(read.map(|r| r.map(|(_, row)| row)), stop).collect::<Result<Vec<Row>>>() {
         Ok(found) => found,
         Err(e) => return failed(e),
     };
@@ -267,7 +269,8 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 }
 
 /// The rows of `input`, under a filter on `cond`: a scan is told the
-/// conditions, if it has simple ones (`logical::pushed_conjuncts`).
+/// conditions, if it has simple ones (`logical::pushed_conjuncts`), each
+/// row read only while the statement is not cancelled (RULES.md D44).
 fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
     match (input, pushed_conjuncts(cond)) {
         (Plan::SeqScan { table, columns, order, .. }, Some(condition)) => {
@@ -275,7 +278,10 @@ fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIte
                 return ordered_scan((&table, &columns, &order), Some(&condition), db, tx);
             }
             match db.storage_of(&table) {
-                Ok(storage) => Box::new(Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row))),
+                Ok(storage) => {
+                    let rows = Arc::clone(storage).scan_where(tx, &columns, &condition).map(|read| read.map(|(_, row)| row));
+                    Box::new(checked(rows, db.tx.stop_of(tx)))
+                }
                 Err(e) => failed(e),
             }
         }
@@ -333,24 +339,29 @@ fn filter(cond: Cond, input: RowIter, runner: Runner) -> RowIter {
 /// They are the object rows of a searched UPDATE or DELETE
 /// [X3.135-1986 §8.12 GR1, §8.5 GR1].
 /// UPDATE, DELETE and updatable cursors need the ids to change the rows.
+/// Each row is read only while the statement is not cancelled (RULES.md
+/// D44).
 ///
 /// # Errors
 ///
-/// A row's search condition fails, or `plan` is not a table access or names
-/// a table or index that does not exist (SQLCODE -910).
+/// A row's search condition fails, the statement is cancelled or runs past
+/// STATEMENT_TIMEOUT (SQLCODE -920), or `plan` is not a table access or
+/// names a table or index that does not exist (SQLCODE -910).
 pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, Row)>> {
     match plan {
         Plan::Project { input, .. } => row_entries(*input, db, tx),
-        Plan::SeqScan { table, columns, .. } => Arc::clone(db.storage_of(&table)?).scan(tx, &columns).collect(),
+        Plan::SeqScan { table, columns, .. } => checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx)).collect(),
         Plan::IndexScan { table, index, probe, reverse, .. } => {
             let Found { storage, columns, entries } = probe_index(db, &table, &index, &probe, reverse)?;
             storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe })?;
-            entries.iter().filter_map(|(key, id)| fetch(&*storage, &columns, tx, key, *id).transpose()).collect()
+            let rows = entries.into_iter().filter_map(move |(key, id)| fetch(&*storage, &columns, tx, &key, id).transpose());
+            checked(rows, db.tx.stop_of(tx)).collect()
         }
         Plan::Filter { cond, input, .. } => {
             let rows = match (*input, pushed_conjuncts(&cond)) {
                 (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
-                    Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition).collect::<Result<Vec<_>>>()?
+                    let rows = Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition);
+                    checked(rows, db.tx.stop_of(tx)).collect::<Result<Vec<_>>>()?
                 }
                 (input, _) => row_entries(input, db, tx)?,
             };
