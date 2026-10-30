@@ -365,3 +365,37 @@ fn random_queries_answer_alike_with_and_without_rules() {
     }
     assert!(refused * 10_usize <= queries.len(), "{refused} of {} queries failed", queries.len());
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §8.8 GR1, §3.3.4.4, Annex C
+/// item 6]; [DESIGN] RULES.md D15: an EXISTS stops at the first row of its
+/// subquery that decides it, read by batches as row by row, with every
+/// optimizer rule on and off, so an error the subquery's condition would
+/// raise of a later row is not raised: B's row 16 divides by zero, and
+/// row 1, or the row of X's K, decides each EXISTS first. A subquery no
+/// row of which decides it before the failing row still raises its error.
+///
+/// Regression test (R-TEST-7): read by batches of the column store, the
+/// whole first batch was judged and the error raised; row by row, not.
+/// Found by `random_queries_answer_alike_with_and_without_rules` with
+/// TURBOREL_QUERY_SEED=16 and TURBOREL_QUERY_COUNT=3000.
+#[test]
+fn exists_stops_at_its_deciding_row_in_both_paths_8_8() {
+    let db = schema();
+    let all: Vec<String> = (1_i32..=8_i32).map(|k| k.to_string()).collect();
+    let cases = [
+        ("SELECT X.K FROM C X WHERE EXISTS (SELECT * FROM B S WHERE S.K / S.N < 11)", Ok(all.clone())),
+        ("SELECT X.K FROM C X WHERE EXISTS (SELECT * FROM B S WHERE S.K = X.K AND S.K / S.N < 11)", Ok(all)),
+        ("SELECT X.K FROM C X WHERE EXISTS (SELECT * FROM B S WHERE S.K > 15 AND S.K / S.N < 11)", Err(Code::Data)),
+    ];
+    for enabled in [true, false] {
+        set_all_rules(&db, enabled);
+        let s = db.session("Q");
+        for (sql, want) in &cases {
+            let mut found = [run(&s, sql, true), run(&s, sql, false)];
+            for rows in found.iter_mut().flatten() {
+                rows.sort_by_key(|k| k.parse::<i32>().unwrap());
+            }
+            assert_eq!(found, [want.clone(), want.clone()], "{sql}, rules {enabled}");
+        }
+    }
+}

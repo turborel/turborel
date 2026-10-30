@@ -12,12 +12,15 @@
 //! would judge it of; one of whose expressions no integers are made, as
 //! of a column of values or a result past 18 digits, has the batch judged
 //! whole a row at a time, so every row it would raise for still does; and
-//! a filter of which some cannot be is judged so of every batch. Split
-//! from batch.rs (RULES.md R-SIZE-2).
+//! a filter of which some cannot be is judged so of every batch. A batch
+//! whose judgment raises an error is judged again a row at a time, in
+//! order, to give the rows before its failing one first, as a filter read
+//! row by row does, for an EXISTS that stops at one of them (RULES.md
+//! D15). Split from batch.rs (RULES.md R-SIZE-2).
 
 use super::project::{Place, place_of};
 use super::vector::ints::evaluable;
-use crate::error::Result;
+use crate::error::{Result, SqlError};
 use crate::exec::eval::compared;
 use crate::exec::{Runner, eval_cond};
 use crate::logical::{Cond, Expr, Truth, compared_with_constant, in_list};
@@ -127,32 +130,53 @@ impl Judging {
             let over = if self.raising { &given } else { &kept };
             let Some(true_of) = judged.kept(batch, over) else {
                 // Integers not made: the batch judged whole, row by row.
-                return self.by_rows(&self.whole, batch, given, runner);
+                return self.by_rows(&self.whole, batch, &given, runner);
             };
             kept = if self.raising { both(&kept, &true_of) } else { true_of };
         }
         match &self.rest {
-            Some(rest) => self.by_rows(rest, batch, kept, runner),
+            Some(rest) => self.by_rows(rest, batch, &kept, runner),
             None => Ok(kept),
         }
     }
 
     /// The rows of `batch` at `rows` that `cond` is true of, each made a
     /// row and judged as one.
-    fn by_rows(&self, cond: &Cond, batch: &Batch, rows: Vec<usize>, runner: &Runner) -> Result<Vec<usize>> {
+    fn by_rows(&self, cond: &Cond, batch: &Batch, rows: &[usize], runner: &Runner) -> Result<Vec<usize>> {
+        let (kept, failed) = self.in_order(cond, batch, rows, runner);
+        failed.map_or(Ok(kept), Err)
+    }
+
+    /// The rows of `batch` at `rows`, or of all, the whole filter keeps,
+    /// judged a row at a time in order up to the first that raises an
+    /// error, and that error: what the filter gives read row by row. A
+    /// batch whose judgment failed is judged again so, and gives the rows
+    /// before its failing one before the failure, so that a reader that
+    /// stops at one of them, as EXISTS does (RULES.md D15), sees the error
+    /// as it would row by row: not at all.
+    pub(super) fn in_order_of(&self, batch: &Batch, rows: Option<&[usize]>, runner: &Runner) -> (Vec<usize>, Option<SqlError>) {
+        let given: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
+        self.in_order(&self.whole, batch, &given, runner)
+    }
+
+    /// The rows of `batch` at `rows` that `cond` is true of, judged in
+    /// order up to the first that raises an error, and that error.
+    fn in_order(&self, cond: &Cond, batch: &Batch, rows: &[usize], runner: &Runner) -> (Vec<usize>, Option<SqlError>) {
         let mut row = vec![Value::Null; self.width];
         let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
+        for &r in rows {
             for (vector, &c) in batch.columns.iter().zip(&self.columns) {
                 if let (Some(slot), Some(v)) = (row.get_mut(c), vector.values().get(r)) {
                     slot.clone_from(v);
                 }
             }
-            if eval_cond(cond, &row, runner)? == Truth::True {
-                out.push(r);
+            match eval_cond(cond, &row, runner) {
+                Ok(Truth::True) => out.push(r),
+                Ok(Truth::False | Truth::Unknown) => {}
+                Err(e) => return (out, Some(e)),
             }
         }
-        Ok(out)
+        (out, None)
     }
 }
 

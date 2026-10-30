@@ -240,12 +240,21 @@ pub(super) fn scanned(
 }
 
 /// `inner`'s batches, each with the rows of those kept that `judging`
-/// keeps.
+/// keeps. A batch whose judgment raises an error gives first the rows a
+/// filter read row by row would give before it (`Judging::in_order_of`),
+/// then the error of the first row that raises one, so a reader that
+/// stops at one of those rows, as EXISTS does, sees what it would row by
+/// row (RULES.md D15).
 fn filtered(inner: Batches, (judging, runner): (Judging, Runner)) -> Batches {
-    Box::new(inner.map(move |kept| {
-        let (batch, rows) = kept?;
-        let rows = judging.kept_of(&batch, rows.as_deref(), &runner)?;
-        Ok((batch, Some(rows)))
+    Box::new(inner.flat_map(move |kept| {
+        let judged = kept.map(|(batch, rows)| match judging.kept_of(&batch, rows.as_deref(), &runner) {
+            Ok(judged) => vec![Ok((batch, Some(judged)))],
+            Err(e) => {
+                let (before, failed) = judging.in_order_of(&batch, rows.as_deref(), &runner);
+                vec![Ok((batch, Some(before))), Err(failed.unwrap_or(e))]
+            }
+        });
+        judged.unwrap_or_else(|e| vec![Err(e)])
     }))
 }
 

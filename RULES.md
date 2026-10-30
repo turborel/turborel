@@ -220,6 +220,21 @@ for a filter with such a conjunct is never probed: its every row is.
 *Why:* §5.18 GR2 defines AND only by its truth table, and §5.21 GR2 and
 §5.23 GR2 apply the condition to each row and group; nothing permits
 leaving an operand unevaluated. So results never depend on the plan.
+*Exception:* an EXISTS stops at the first row of its subquery that its
+condition keeps, whatever the plan: read by batches, a batch whose
+condition raises an error gives the rows before its failing row first,
+as a read row by row would, so no error of a later row is raised.
+ISO/IEC 9075:1992 §8.8 GR1 defines EXISTS by "the cardinality of T",
+which its first row decides, and §3.3.4.4 makes it
+"implementation-dependent whether expressions are actually evaluated
+left to right, particularly when operands or operators might cause
+conditions to be raised or if the results of the expressions can be
+determined without completely evaluating all parts of the expression"
+(Annex C item 6: whether the exception of an inessential part is raised
+is implementation-dependent). So, likewise, a scalar or row subquery
+stops at its second row, which makes it fail [§7.11 GR1]. IN, ANY, SOME
+and ALL over a subquery read all of its rows, so they raise any error of
+them.
 
 **D18. A limit the standard does not set is not a syntax error.** Valid SQL
 beyond one of this implementation's limits gets SQLCODE -900 ("valid, but

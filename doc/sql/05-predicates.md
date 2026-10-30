@@ -139,7 +139,9 @@ SELECT ID FROM STAFF WHERE SALARY > ANY (SELECT SALARY FROM STAFF WHERE DEPT = '
 ## EXISTS
 
 `EXISTS (subquery)` is true if the subquery has a row. It is never
-unknown.
+unknown. The subquery's rows are read only up to the first its
+condition keeps, so an error its condition would raise of a later row,
+such as a division by zero, is not raised.
 
 ```sql
 SELECT ID FROM STAFF S WHERE EXISTS (SELECT * FROM STAFF T WHERE T.DEPT = S.DEPT AND T.ID <> S.ID) ORDER BY ID;

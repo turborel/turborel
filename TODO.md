@@ -189,17 +189,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   columns left out of histograms. A scan's share
   (D31) is taken whole, the filter's estimate of the rows kept not told
   how the rows read lie.
-- **EXISTS and run-time errors** (D15): whether the condition of an
-  EXISTS's subquery raises an error depends on how it is read. Read row
-  by row, the subquery stops at its first row the condition keeps, so a
-  later row whose condition raises is never judged; read by batches of
-  the column store, every row of the batch is. With S.N zero in row 16 of
-  a column-store table B, `SELECT X.K FROM C X WHERE EXISTS (SELECT *
-  FROM B S WHERE S.K / S.N < 11)` fails by batches and answers row by
-  row. §8.8 GR1 takes the subquery's whole result, so D15 would judge
-  every row; or a decision excepts EXISTS from D15 and the batches stop
-  too. Found by `random_queries.rs` with TURBOREL_QUERY_SEED=16 and
-  TURBOREL_QUERY_COUNT=3000.
 - **Zone maps, further** (D31): a zone a rolled-back insert widened is
   never narrowed; zones are summed up from scratch after a table is
   opened, a pass of the whole table, rather than kept with its pages.
