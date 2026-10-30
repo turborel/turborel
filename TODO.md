@@ -69,6 +69,17 @@ RULES.md when its design settles.
   are not served.
 - **Configuration files** in a subset of TOML, read by our own parser, the
   source of the database's settings at startup.
+- **Other systems' wire protocols**, each a `server::Protocol` plug-in in
+  a crate of its own (RULES.md D39), served by a listener a setting
+  names, so their clients and drivers connect: PostgreSQL's
+  frontend/backend protocol, version 3, first (startup and SSLRequest;
+  SCRAM-SHA-256, or a password over TLS; simple and extended queries;
+  cancel by key; type OIDs and text formats of the standard types; the
+  server parameters drivers read); then MySQL's client/server protocol
+  (handshake v10, caching_sha2_password, COM_QUERY, COM_STMT_*). A client
+  still speaks turborel's SQL: what it sends in its own system's dialect
+  is refused, saying why; how far its tools' catalog queries
+  (`pg_catalog`, `SHOW`) are answered is a decision to make.
 - **Replication**, pluggable, Viewstamped Replication first. Most likely a
   `Log` whose `sync` returns once a quorum holds the record, so commit needs
   no change. To settle: whether replication is a kind of `Log` or a plug-in
