@@ -1267,7 +1267,10 @@ an equality on all its columns), counted by a sketch kept as the index is
 written, of no more keys than it holds, and kept with the index's locator,
 so a checkpoint records it with the pages it commits and recovery's mending
 changes it as it changes the entries; an index whose locator holds none
-counts its keys once, when first asked, in a pass that streams them. Else
+has none until first asked: asking makes the count due, and the
+database's maintenance counts its keys once, in a pass that streams
+them (`Index::maintain`), planning meanwhile estimating without them, as
+a table's statistics are gathered (D31): no plan waits for a pass. Else
 from the table's statistics, if its engine has them; else by the
 defaults PLANNER.EQUAL_SELECTIVITY, RANGE_SELECTIVITY and NULL_FRACTION
 give, as a table of a database just opened is planned until maintenance

@@ -136,3 +136,29 @@ fn an_entry_alone_by_default() {
     assert!(!index.insert_alone(key(1), 11).unwrap(), "another row's");
     assert!(index.insert_alone(key(2), 11).unwrap());
 }
+
+/// Verifies: [DESIGN] RULES.md D35, `Index::maintenance_due`,
+/// `Index::maintain`: an index opened by a locator without key counts has
+/// no distinct keys, and asking makes its count due, with no pass; its
+/// maintenance then counts them, once. Regression test (R-TEST-7): the
+/// first to ask counted them in a pass over every entry, inside planning.
+#[test]
+fn an_index_opened_without_counts_counts_its_keys_in_maintenance() {
+    let method = HashMethod::in_memory();
+    let index = Arc::<dyn Index>::from(method.create(&[MONEY]).unwrap());
+    for row in 0..300 {
+        index.insert(Key(vec![exact(i128::from(row % 3), 0)]), row).unwrap();
+    }
+    assert!(!index.maintenance_due(), "counted as written");
+    assert_eq!(index.maintain().ok(), Some(false));
+    let full = index.locator();
+    let uncounted = &full[..24];
+    let again = method.open(&[MONEY], uncounted).unwrap().unwrap();
+    assert!(!again.maintenance_due(), "not yet asked for");
+    assert_eq!(again.distinct_keys(), None);
+    assert!(again.maintenance_due());
+    assert_eq!(again.maintain().ok(), Some(true));
+    assert!(!again.maintenance_due());
+    assert!(again.distinct_keys().is_some_and(|d| (d - 3.0_f64).abs() < 0.5_f64), "{:?}", again.distinct_keys());
+    assert_eq!(again.maintain().ok(), Some(false), "once");
+}

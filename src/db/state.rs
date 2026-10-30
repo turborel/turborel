@@ -310,6 +310,19 @@ impl State {
         }
         stats
     }
+
+    /// The distinct keys `index`, of `table`, knows it holds, if it knows
+    /// (`Index::distinct_keys`). If it does not, and asking made a count
+    /// due, the table is noted for the database's maintenance
+    /// (`db/maintenance.rs`), which counts them: planning never waits for a
+    /// pass over an index (RULES.md D35).
+    pub(crate) fn distinct_keys(&self, table: &QualifiedName, index: &dyn Index) -> Option<f64> {
+        let keys = index.distinct_keys();
+        if keys.is_none() && index.maintenance_due() {
+            self.tx.note_maintenance(table);
+        }
+        keys
+    }
 }
 
 /// Lookups that rely on the invariant documented on `State`. They return an

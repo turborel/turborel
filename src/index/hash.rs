@@ -163,7 +163,8 @@ struct HashIndex {
     table: Arc<HashTable>,
     types: Vec<DataType>,
     discarded: AtomicBool,
-    /// Its distinct keys, counted when asked for (`index/stats.rs`).
+    /// Its distinct keys, counted as written, or by maintenance once asked
+    /// for (`index/stats.rs`).
     keys: KeyCounts,
 }
 
@@ -273,10 +274,21 @@ impl Index for HashIndex {
         self.table.remove(&self.encoded(key)?, &row.to_be_bytes()).map(|_| ())
     }
 
-    /// Every entry's key as encoded: equal keys are equal bytes, as the
-    /// table finds them by.
+    /// Every entry's key, counted: of an index opened, once maintenance
+    /// has made its pass (`index/stats.rs`).
     fn distinct_keys(&self) -> Option<f64> {
-        self.keys.distinct(|| Ok(Box::new(self.table.keys())))
+        self.keys.distinct()
+    }
+
+    /// A pass over its keys, once asked for.
+    fn maintenance_due(&self) -> bool {
+        self.keys.due()
+    }
+
+    /// The pass over every entry's key as encoded, if due: equal keys are
+    /// equal bytes, as the table finds them by.
+    fn maintain(&self) -> Result<bool> {
+        self.keys.count(|| Ok(Box::new(self.table.keys())))
     }
 
     /// A lookup reads its key's bucket; a probe of every entry, each bucket.

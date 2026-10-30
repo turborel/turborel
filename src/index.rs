@@ -352,10 +352,29 @@ pub trait Index: Send + Sync {
     fn estimate(&self, probe: &Probe) -> Option<usize>;
     /// \[DESIGN\] How many distinct keys it holds, near enough, if it knows:
     /// the planner's estimate of the rows of an equality on all its
-    /// columns, its table's rows over them (RULES.md D35). Default: not
-    /// known.
+    /// columns, its table's rows over them (RULES.md D35). Asked inside
+    /// planning, so it makes no pass over the index: one that must count
+    /// them first gives none, and makes that work due (`maintenance_due`),
+    /// for the database's maintenance. Default: not known.
     fn distinct_keys(&self) -> Option<f64> {
         None
+    }
+    /// \[DESIGN\] Whether work is due that the index leaves to the
+    /// database's maintenance (`maintain`), as a count of its keys asked
+    /// for: asked as planning reads its statistics, so it should be quick.
+    /// Default: none.
+    fn maintenance_due(&self) -> bool {
+        false
+    }
+    /// \[DESIGN\] Does the work due (`maintenance_due`), on the database's
+    /// maintenance thread, or when it is asked to (`Database::maintain`):
+    /// whether it did any, for it to be called again. Default: none.
+    ///
+    /// # Errors
+    ///
+    /// The index cannot do it; it is tried again later.
+    fn maintain(&self) -> Result<bool> {
+        Ok(false)
     }
     /// \[DESIGN\] The pages it reads to find the entries `probe` selects, if
     /// it knows: the planner weighs each as one level of a descent

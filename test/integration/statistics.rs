@@ -1,9 +1,11 @@
 //! Statistics for the optimizer (RULES.md D31): the planner estimates the
 //! rows a condition keeps from what a table's engine knows of its rows,
 //! and from defaults where it knows nothing; the row store gathers its
-//! statistics when a table opened is first asked for them, when it has
-//! changed enough, and when told to; optimizer rules can read them.
+//! statistics once a table opened is first asked for them, when it has
+//! changed enough, and when told to, and an index counts its keys once
+//! first asked for, both in maintenance; optimizer rules can read them.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use turborel::db::{Database, OpenOptions, Session};
@@ -12,12 +14,13 @@ use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::OsFileSystem;
 use turborel::disk::pager::Pager;
 use turborel::engine::rows::{RowTable, TableFiles, TableOptions};
-use turborel::error::Code;
+use turborel::error::{Code, Result, SqlError};
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::log::MemoryLog;
 use turborel::logical::LogicalPlan;
 use turborel::optimizer::{Rule, RuleContext};
 use turborel::params::Params;
-use turborel::storage::TableStorage;
+use turborel::storage::{RowId, TableStorage};
 use turborel::threads::JobPolicy;
 use turborel::txn::NO_TRANSACTION;
 use turborel::value::{CompOp, DataType};
@@ -267,4 +270,134 @@ fn a_table_opened_has_its_statistics_gathered_by_maintenance() {
     seen.lock().unwrap().clear();
     db.session("APP").physical_plan("SELECT ID FROM T", &Params::new()).unwrap();
     assert_eq!(seen.lock().unwrap().first().map(|noted| noted.0), Some(Some(200.0)));
+}
+
+/// An index method, "uncounted", whose indexes are the B-link tree's but
+/// estimate no probe, and know their distinct keys only once maintenance
+/// has counted them, as a built-in index opened without its counts does;
+/// the passes it made counted.
+struct Uncounted(BTreeMethod, Arc<AtomicUsize>);
+
+impl IndexMethod for Uncounted {
+    fn name(&self) -> &'static str {
+        "uncounted"
+    }
+    fn supports(&self, op: CompOp) -> bool {
+        self.0.supports(op)
+    }
+    fn supports_prefix(&self, columns: usize, equal: usize, then: Option<CompOp>) -> bool {
+        self.0.supports_prefix(columns, equal, then)
+    }
+    fn ordered(&self) -> bool {
+        self.0.ordered()
+    }
+    fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
+        let entries = Arc::from(self.0.create(columns)?);
+        let (asked, failed) = (AtomicBool::new(false), AtomicBool::new(false));
+        Ok(Box::new(UncountedIndex { entries, asked, failed, passes: Arc::clone(&self.1) }))
+    }
+}
+
+/// An index of `Uncounted`: whether its keys were asked for, and whether
+/// its first pass failed, as it does.
+struct UncountedIndex {
+    entries: Arc<dyn Index>,
+    asked: AtomicBool,
+    failed: AtomicBool,
+    passes: Arc<AtomicUsize>,
+}
+
+impl Index for UncountedIndex {
+    fn insert(&self, key: Key, row: RowId) -> Result<()> {
+        self.entries.insert(key, row)
+    }
+    fn remove(&self, key: &Key, row: RowId) -> Result<()> {
+        self.entries.remove(key, row)
+    }
+    fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
+        self.entries.rows(key)
+    }
+    fn estimate(&self, _probe: &Probe) -> Option<usize> {
+        None
+    }
+    fn distinct_keys(&self) -> Option<f64> {
+        if self.passes.load(Ordering::SeqCst) == 0 {
+            self.asked.store(true, Ordering::SeqCst);
+            return None;
+        }
+        self.entries.distinct_keys()
+    }
+    fn maintenance_due(&self) -> bool {
+        self.asked.load(Ordering::SeqCst) && self.passes.load(Ordering::SeqCst) == 0
+    }
+    fn maintain(&self) -> Result<bool> {
+        if !self.maintenance_due() {
+            return Ok(false);
+        }
+        if !self.failed.swap(true, Ordering::SeqCst) {
+            return Err(SqlError::new(Code::Io, "[DESIGN] the first pass fails"));
+        }
+        self.passes.fetch_add(1, Ordering::SeqCst);
+        Ok(true)
+    }
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        Arc::clone(&self.entries).search(probe, order)
+    }
+}
+
+/// The estimated rows of the scan of `U_AB` that `sql` plans, in `s`.
+fn ab_estimate(s: &Session, sql: &str) -> f64 {
+    let plan = s.explain(sql, &Params::new()).unwrap();
+    let est = plan.lines().find(|l| l.contains("using U_AB")).unwrap_or_else(|| panic!("{plan}"));
+    est.split("est. rows=").nth(1).and_then(|r| r.split(',').next()).and_then(|n| n.parse::<f64>().ok()).unwrap_or_else(|| panic!("{est}"))
+}
+
+/// Verifies: [DESIGN] RULES.md D35, D55, `Index::maintenance_due`,
+/// `Index::maintain`: an index that must count its distinct keys first
+/// gives none to planning, and makes no pass there: queries planned at
+/// once on two threads plan without them, and the table is noted for
+/// maintenance, asked for as their transactions end; the maintenance job
+/// has the index count them, once, a pass that failed made again when
+/// maintenance is next done, and plans after estimate an equality on all its columns as
+/// the table's rows over them. Regression test
+/// (R-TEST-7): an index opened without its counts counted its keys in a
+/// pass over every entry inside the first plan to ask, which no cancel
+/// could stop.
+#[test]
+fn an_index_has_its_keys_counted_by_maintenance() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    let passes = Arc::new(AtomicUsize::new(0));
+    db.register_index_method(Box::new(Uncounted(BTreeMethod::in_memory(), Arc::clone(&passes)))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE U (K INTEGER NOT NULL, A INTEGER NOT NULL, B INTEGER NOT NULL)").unwrap();
+    db.create_index("U_AB", "APP.U", &["A", "B"], "uncounted").unwrap();
+    let s = db.session("APP");
+    let values: Vec<String> = (0..2000).map(|k| format!("({k}, {}, {})", k % 10, k % 10)).collect();
+    s.run(&format!("INSERT INTO U VALUES {}", values.join(", "))).unwrap();
+    s.commit().unwrap();
+    db.maintain().unwrap();
+    // Asked in the index's order, which the index gives as it probes.
+    let sql = "SELECT K, A, B FROM U WHERE A = 3 AND B = 3 ORDER BY A, B";
+    let ests = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                let s = db.session("APP");
+                ests.lock().unwrap().push(ab_estimate(&s, sql));
+                assert_eq!(rows(&s, "SELECT COUNT(*) FROM U WHERE A = 3 AND B = 3"), Ok(vec!["200".into()]));
+                s.commit().unwrap();
+            });
+        }
+    });
+    assert_eq!(passes.load(Ordering::SeqCst), 0, "no pass in planning");
+    let without = ests.into_inner().unwrap();
+    assert!(without.iter().all(|est| (est - 200.0_f64).abs() > 50.0_f64), "as if its columns were independent: {without:?}");
+    assert_eq!(db.run_due().err().map(|e| e.code), Some(Code::Io), "the first pass fails");
+    assert_eq!(passes.load(Ordering::SeqCst), 0);
+    db.maintain().unwrap();
+    assert_eq!(passes.load(Ordering::SeqCst), 1, "counted by maintenance, once");
+    let est = ab_estimate(&db.session("APP"), sql);
+    assert!((est - 200.0_f64).abs() < 10.0_f64, "the rows over its ten keys: {est}");
+    db.run_due().unwrap();
+    assert_eq!(passes.load(Ordering::SeqCst), 1, "not due again");
 }

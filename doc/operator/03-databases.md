@@ -145,8 +145,9 @@ SELECT KIND, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND;
 The database does some of its work in the background: its checkpoints,
 and its maintenance, which gathers tables' statistics (a table's, after
 the database opens, once a query first plans with it, which plans
-without them meanwhile) and freezes the rows of the column store.
-JOBS.POLICY says how: AUTOMATIC, the
+without them meanwhile), counts the distinct keys of an index that has
+not kept them (the same way: once a query first plans with it), and
+freezes the rows of the column store. JOBS.POLICY says how: AUTOMATIC, the
 default, on threads of the database's own as the work comes due;
 PAUSED, not at all until it changes, the work due kept; MANUAL, only
 when the program embedding the database asks. It takes effect at once:

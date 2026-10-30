@@ -7,8 +7,11 @@
 //! records them with the pages it commits, and an index reopened from it
 //! has them again; recovery's mending (`State::mend_indexes`) changes them
 //! as it changes the entries. An index whose locator holds none, as one
-//! whose counts were never complete, has its keys added in one pass when
-//! first asked for.
+//! whose counts were never complete, has none until first asked for: then
+//! its pass over its keys is due, made by the database's maintenance
+//! (`Index::maintain`), the planner meanwhile estimating without them, so
+//! no plan waits for a pass over an index, and the pass is made once,
+//! however many plan at once.
 //!
 //! ```text
 //! locator: meta page u64, then, if the counts are complete:
@@ -58,6 +61,9 @@ pub(crate) struct KeyCounts {
     /// Whether every key the index holds was added: false for one opened,
     /// until its pass.
     complete: AtomicBool,
+    /// Set as the counts, not complete, are first asked for: the pass is
+    /// due.
+    asked: AtomicBool,
     /// Set while a thread makes that pass.
     counting: AtomicBool,
 }
@@ -68,8 +74,8 @@ impl KeyCounts {
         KeyCounts::with(true)
     }
 
-    /// The counts of an index opened from its files: its keys added when
-    /// first asked for.
+    /// The counts of an index opened from its files: its keys added once
+    /// first asked for, by a pass of the database's maintenance.
     pub(crate) fn opened() -> KeyCounts {
         KeyCounts::with(false)
     }
@@ -77,7 +83,8 @@ impl KeyCounts {
     fn with(complete: bool) -> KeyCounts {
         let registers = (0..REGISTERS).map(|_| AtomicU8::new(0)).collect();
         let entries = (0..STRIPES).map(|_| Stripe::default()).collect();
-        KeyCounts { registers, entries, complete: AtomicBool::new(complete), counting: AtomicBool::new(false) }
+        let (asked, counting) = (AtomicBool::new(false), AtomicBool::new(false));
+        KeyCounts { registers, entries, complete: AtomicBool::new(complete), asked, counting }
     }
 
     /// Its counts, as a locator holds them, if they are complete.
@@ -133,7 +140,7 @@ impl KeyCounts {
     }
 
     /// The meta page and the counts a `locator` holds: those it holds, else
-    /// none, to be added when first asked for.
+    /// none, to be added once first asked for.
     ///
     /// # Errors
     ///
@@ -176,21 +183,38 @@ impl KeyCounts {
     }
 
     /// How many distinct keys there are, near enough: none known of an
-    /// opened index until a pass over `keys`, its entries' keys in bytes,
-    /// the same bytes for equal keys, has added them; the first to ask
-    /// makes it, while others have none. A pass that fails is made again
-    /// at the next.
-    pub(crate) fn distinct<'a>(&self, keys: impl FnOnce() -> Result<Keys<'a>>) -> Option<f64> {
+    /// opened index until a pass has added its keys (`count`); asking
+    /// before makes the pass due, and makes none.
+    pub(crate) fn distinct(&self) -> Option<f64> {
         if !self.complete.load(Ordering::Acquire) {
-            if self.counting.swap(true, Ordering::Acquire) {
-                return None;
-            }
-            let passed = self.pass(keys);
-            self.counting.store(false, Ordering::Release);
-            passed.ok()?;
+            self.asked.store(true, Ordering::Release);
+            return None;
         }
         let registers: Vec<u8> = self.registers.iter().map(|r| r.load(Ordering::Relaxed)).collect();
         Some(estimate_of(&registers).clamp(0.0_f64, count(self.live())))
+    }
+
+    /// Whether the pass over its keys is due: they were asked for, and are
+    /// not complete.
+    pub(crate) fn due(&self) -> bool {
+        self.asked.load(Ordering::Acquire) && !self.complete.load(Ordering::Acquire)
+    }
+
+    /// Makes the pass, if due and no other thread makes it, over `keys`,
+    /// its entries' keys in bytes, the same bytes for equal keys: whether
+    /// it made it. A pass that fails is due still, made again at the next
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// `keys`'s.
+    pub(crate) fn count<'a>(&self, keys: impl FnOnce() -> Result<Keys<'a>>) -> Result<bool> {
+        if !self.due() || self.counting.swap(true, Ordering::Acquire) {
+            return Ok(false);
+        }
+        let passed = self.pass(keys);
+        self.counting.store(false, Ordering::Release);
+        passed.map(|()| true)
     }
 
     /// Adds every key of `keys` the index held when opened: added again,
@@ -221,9 +245,7 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D35, `KeyCounts`: the keys of an index
     /// made new are counted as they are added, with no pass, near their
-    /// number and never past the live entries; an index opened has its
-    /// keys added in one pass when first asked for, once, and a pass that
-    /// fails is made again at the next.
+    /// number and never past the live entries.
     #[test]
     fn keys_are_counted_as_added() {
         let passes = Cell::new(0_u32);
@@ -231,29 +253,64 @@ mod tests {
         for key in keys(1000, 100, &passes) {
             made.added(&key.unwrap());
         }
-        let first = made.distinct(|| Err(SqlError::new(Code::Io, "[DESIGN] no pass"))).unwrap();
+        let first = made.distinct().unwrap();
         assert!((first - 100.0_f64).abs() < 5.0_f64, "{first}");
+        assert!(!made.due(), "complete");
+        assert_eq!(made.count(|| Ok(keys(10, 2, &passes))).ok(), Some(false), "no pass for counts complete");
         for _ in 0_u32..998_u32 {
             made.removed();
         }
-        assert_eq!(made.distinct(|| Err(SqlError::new(Code::Io, "[DESIGN] no pass"))), Some(2.0_f64), "no more than the entries");
+        assert_eq!(made.distinct(), Some(2.0_f64), "no more than the entries");
+        assert_eq!(passes.get(), 1, "no pass");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D35, `KeyCounts::count`: an index opened
+    /// has none, and asking for them makes no pass but makes it due, which
+    /// `count` then makes, once; a pass that fails is due still, made
+    /// again at the next call. Regression test (R-TEST-7): the first to
+    /// ask made the pass itself, inside planning.
+    #[test]
+    fn keys_opened_are_counted_once_asked_for() {
+        let passes = Cell::new(0_u32);
         let opened = KeyCounts::opened();
-        assert_eq!(opened.distinct(|| Err(SqlError::new(Code::Io, "[DESIGN] told to fail"))), None, "a pass that failed");
-        let counted = opened.distinct(|| Ok(keys(1000, 3, &passes))).unwrap();
+        assert!(!opened.due(), "not yet asked for");
+        assert_eq!(opened.count(|| Ok(keys(10, 2, &passes))).ok(), Some(false), "no pass until asked for");
+        assert_eq!(opened.distinct(), None, "asked for: none, and no pass");
+        assert!(opened.due());
+        let failed = opened.count(|| Err(SqlError::new(Code::Io, "[DESIGN] told to fail")));
+        assert_eq!(failed.err().map(|e| e.code), Some(Code::Io));
+        assert!(opened.due(), "a pass that failed is due still");
+        assert_eq!(opened.count(|| Ok(keys(1000, 3, &passes))).ok(), Some(true));
+        assert!(!opened.due());
+        let counted = opened.distinct().unwrap();
         assert!((counted - 3.0_f64).abs() < 0.5_f64, "{counted}");
-        assert_eq!(opened.distinct(|| Ok(keys(1000, 3, &passes))), Some(counted));
-        assert_eq!(passes.get(), 2, "the pass made once");
+        assert_eq!(opened.count(|| Ok(keys(1000, 3, &passes))).ok(), Some(false));
+        assert_eq!(passes.get(), 1, "the pass made once");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D35, `KeyCounts::count`: a pass due while
+    /// another thread makes it is not made twice.
+    #[test]
+    fn one_pass_at_a_time() {
+        let opened = KeyCounts::opened();
+        assert_eq!(opened.distinct(), None);
+        let passes = Cell::new(0_u32);
+        let inner = opened.count(|| {
+            assert_eq!(opened.count(|| Ok(keys(10, 2, &passes))).ok(), Some(false), "the other's pass");
+            Ok(keys(10, 2, &passes))
+        });
+        assert_eq!(inner.ok(), Some(true));
+        assert_eq!(passes.get(), 1);
     }
 
     /// Verifies: [DESIGN] RULES.md D35, `KeyCounts::locator`: complete
     /// counts, of few keys or many, are kept in the locator and given back
     /// by it with no pass; counts not complete are not, and those of the
-    /// locator are counted when first asked for; a locator not one is
+    /// locator are counted once first asked for; a locator not one is
     /// SQLCODE -916.
     #[test]
     fn counts_are_kept_with_the_locator() {
         let passes = Cell::new(0_u32);
-        let no_pass = || Err(SqlError::new(Code::Io, "[DESIGN] no pass"));
         for distinct in [3_u32, 50_000_u32] {
             let made = KeyCounts::new();
             for key in keys(60_000, distinct, &passes) {
@@ -261,13 +318,15 @@ mod tests {
             }
             let (meta, kept) = KeyCounts::located(&made.locator(42)).unwrap();
             assert_eq!(meta, 42);
-            assert_eq!(kept.distinct(no_pass), made.distinct(no_pass), "{distinct} keys");
+            assert_eq!(kept.distinct(), made.distinct(), "{distinct} keys");
             assert_eq!(kept.live(), 60_000);
         }
         let opened = KeyCounts::opened();
         assert_eq!(opened.locator(7), 7_u64.to_le_bytes().to_vec(), "no counts until they are complete");
         let (_, again) = KeyCounts::located(&opened.locator(7)).unwrap();
-        assert!(again.distinct(|| Ok(keys(10, 2, &passes))).is_some());
+        assert!(again.distinct().is_none());
+        assert_eq!(again.count(|| Ok(keys(10, 2, &passes))).ok(), Some(true));
+        assert!(again.distinct().is_some());
         assert_eq!(passes.get(), 3, "the pass made for counts not kept");
         assert_eq!(KeyCounts::located(&[1, 2]).err().map(|e| e.code), Some(Code::Corrupt));
         assert_eq!(KeyCounts::located(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).err().map(|e| e.code), Some(Code::Corrupt));

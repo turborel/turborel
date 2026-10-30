@@ -140,7 +140,8 @@ struct BLinkIndex {
     tree: BLinkTree,
     types: Vec<DataType>,
     discarded: AtomicBool,
-    /// Its distinct keys, counted when asked for (`index/stats.rs`).
+    /// Its distinct keys, counted as written, or by maintenance once asked
+    /// for (`index/stats.rs`).
     keys: KeyCounts,
 }
 
@@ -413,9 +414,20 @@ impl Index for BLinkIndex {
         Some(counted)
     }
 
-    /// Every entry's key, counted.
+    /// Every entry's key, counted: of an index opened, once maintenance
+    /// has made its pass (`index/stats.rs`).
     fn distinct_keys(&self) -> Option<f64> {
-        self.keys.distinct(|| {
+        self.keys.distinct()
+    }
+
+    /// A pass over its keys, once asked for.
+    fn maintenance_due(&self) -> bool {
+        self.keys.due()
+    }
+
+    /// The pass over every entry's key, if due.
+    fn maintain(&self) -> Result<bool> {
+        self.keys.count(|| {
             let all = self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward);
             Ok(Box::new(all.map(|e| e.and_then(|(entry, _)| split(&entry).map(|(key, _)| key.to_vec())))))
         })
