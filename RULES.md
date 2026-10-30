@@ -90,6 +90,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
 | D53 | Data types: one contract, standard types built in |
+| D55 | Threads: one manager, each thread labelled and shown |
 
 ### The project
 
@@ -615,6 +616,41 @@ statement's datetimes on when within it each is evaluated; a time
 without time zone is kept as SQL-92, the standard implemented, says,
 until a later standard's reading is taken.
 
+**D55. Threads: one manager, each thread labelled and shown.**
+- Every thread the database, the server or the command-line client runs,
+  and every piece of background work, is started through one manager
+  (`src/threads.rs`), never by `thread::spawn` elsewhere (R-SAFE-5). Each
+  has a label, `turborel-<kind>[-<n>]`, a kind, its database, and a state:
+  starting, idle, running, stopping, stopped or failed; when it started,
+  when it last ran, how often, its last error, and its restarts.
+- Background work (checkpoints, maintenance) is a job the manager runs as
+  a policy says, a policy of each database: automatic, a thread of its
+  own as now; manual, run only when the program asks
+  (`Database::run_due`), as tests and an operator choosing the time do;
+  or paused. A job's errors are noted and told as events (D40); a panic
+  is caught, told, and the job started again as its policy says.
+- Lifecycle: a job starts as its database opens, or when first due, told
+  either way; none starts once its database is closing; a close that
+  fails leaves its jobs as they were; every thread of a database is
+  joined before its files and lock are released, and none drops its
+  database last.
+- The server's runtime is built by the manager: its threads named, their
+  number and its pool of blocking threads from settings (D42); its
+  statement workers, listeners and connections counted, refused
+  connections bounded. The command-line client's interrupts are a job of
+  its own, a cancel bounded in time (D46).
+- Turns a job takes (a checkpoint's, maintenance's) refuse the thread that
+  holds them, as the definitions' turn does (D27), so no lock is held
+  across a plug-in's call (R-ERR-4).
+- The manager is shown: a system table (INFORMATION_SCHEMA.THREADS), each
+  thread and job with its state, to the database's owner; and events
+  when one starts, stops, fails or restarts.
+*Why:* threads started where they were needed, under names of their own
+or none, were unseen by operators, outlived what they served, swallowed
+their errors, and made tests depend on their timing. One manager makes
+each visible, bounded and stoppable, and lets a test or an operator run
+the work at a time of its own choosing.
+
 **D27. A thread-safe core over snapshots of the definitions.**
 - A `Database` is shared between threads, and every extension trait is
   `Send + Sync`; a plug-in guards its own state.
@@ -1081,11 +1117,22 @@ the same results and errors is the optimizer's to choose.
   Plug-ins declare theirs the same way, the server too (D42): every
   component is configured by settings, never by a configuration of its own.
 - Scopes: a built-in default, the database's value, a session's own value.
-- A number a subsystem is tuned by (a threshold, a weight, a guess, a work
-  area's size) is a setting, the constant it was named by its default.
-  Only these stay constants: formats on disk, the standard's
-  implementation-defined values (CONFORMANCE.md), and the shapes of
-  structures fixed when they are made (stripes and shards).
+- A number an operator tunes a subsystem by (a size of memory or a pool,
+  a threshold, a pace of background work, a timeout, a durability) is a
+  setting, the constant it was named by its default. These stay
+  constants: formats on disk, the standard's implementation-defined
+  values (CONFORMANCE.md), the shapes of structures fixed when they are
+  made (stripes, shards, vectors), and the planner's weights an engine
+  states of its own costs, measured by its benchmark.
+- Names: each setting is of a group, `GROUP.NAME`, a plug-in's under its
+  own name; a quantity names its unit (`_BYTES`, `_MS`); a word means one
+  thing throughout; choices take one vocabulary (`ON`, `OFF`, and words of
+  their own only where two will not do). During alpha a name is changed
+  in place (VERSIONING.md).
+- A setting's effect is the one declared: one taken for each transaction
+  is taken as the transaction begins; one that waits for a restart says
+  so where settings are shown. A database kept in memory refuses those
+  fixed at creation.
 - The database's values are definitions: logged and replayed like schema
   changes. A session's values never persist.
 - Some are fixed when a database is created in its directory: its page
@@ -1695,6 +1742,7 @@ Every other file under a target's directory is a module of that target.
 | R-SAFE-2 | No `mem::forget`, `process::exit` or global mutable state. | `mem_forget`, `exit`; review |
 | R-SAFE-3 | `dyn Trait` **shall** be used only at the extension points listed at the top of `src/db.rs`, the traits they hand out, the storage foundation's traits (D30), and streams of rows. Each extension trait **shall** document its contract, and every built-in implementation **shall** pass the same contract tests. | review; tests |
 | R-SAFE-4 | No dependency **shall** be added without a decision in §1 covering rationale, version, license and review; only cryptography and compression plug-ins, the server crate and the command-line client may have any (D3, D26, D42, D46, D48). | review |
+| R-SAFE-5 | No thread **shall** be started but through the thread manager (`src/threads.rs`, D55), and none unnamed. | xtask; review |
 
 ---
 
