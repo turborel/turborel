@@ -22,7 +22,8 @@
 //!   the one it split from, its entries after those there, and its pages
 //!   are freed.
 //! * **Order.** All a key's entries are in one bucket, in the order added,
-//!   through splits and merges: `get` gives them so.
+//!   through splits and merges: `get` gives them so, and `values` too, a
+//!   page at a time (`hash/values.rs`).
 //! * **Readers lock nothing.** They read the shape (level and split
 //!   pointer, one word) and the bucket's first page (the directory, in
 //!   memory), then the chain a page at a time under the pool's latch, and
@@ -48,6 +49,7 @@ mod scan;
 mod shape;
 #[cfg(test)]
 mod tests;
+mod values;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};

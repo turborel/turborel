@@ -6,8 +6,10 @@
 //! A right partition that still outgrows the work area is partitioned
 //! again, by another hash, up to SPILL.PARTITION_DEPTH times; one that does not shrink,
 //! as when one key holds most of its rows, is built in a table of the
-//! spill area instead. Every run is read and written in order, where a
-//! probe of a spilled table reads at random.
+//! spill area instead, each probe reading its key's rows from the table as
+//! they are joined, never all at once. Every run is read and written in
+//! order, where a probe of a spilled table reads at random. Every run is
+//! read back only while the statement is not cancelled (`exec/work.rs`).
 //!
 //! The joined rows must come in the left operand's order, which the
 //! planner relies on. Each left row is numbered as it is read, each
@@ -21,7 +23,7 @@ use std::hash::{BuildHasher, RandomState};
 use super::super::partition::{Merge, merge_all, numbered, unnumbered};
 use super::super::work::Work;
 use super::super::{RowIter, failed};
-use super::{Built, Full, Right, key, matches};
+use super::{Built, Full, Right, each_match, key};
 use crate::error::{Code, Result, SqlError};
 use crate::spill::{Records, SpillRun, bucket_key, record_row, row_bytes, row_record};
 use crate::storage::Row;
@@ -57,9 +59,9 @@ impl Partitions {
     /// The right operand's partitions, of the rows `built` holds and the
     /// rest of the operand, `rows`, in runs of `work`'s spill area.
     pub(super) fn of(built: Built, rows: impl Iterator<Item = Result<Row>>, work: &mut Work) -> Result<Partitions> {
-        let mut parts = Partitions::new(built.keys, work)?;
+        let mut parts = Partitions::new(built.keys.clone(), work)?;
         // A bucket goes whole to one partition, so its rows keep their order.
-        for (b, held) in built.buckets {
+        for (b, held) in built.into_buckets() {
             for row in &held {
                 parts.add_right(&b, row)?;
             }
@@ -158,9 +160,7 @@ fn pairs(
         let mut out = work.run()?;
         for record in probes.into_records()? {
             let (n, l) = unnumbered(&record?, &types)?;
-            for row in matches(&built, &l)? {
-                out.push(&numbered(n, &row))?;
-            }
+            each_match(&built, &l, |row| out.push(&numbered(n, &row)))?;
         }
         sources.push(out.into_records()?);
     }

@@ -253,3 +253,32 @@ fn a_scan_holds_the_shape_while_writers_go_on() {
     }
     assert!(table.buckets() > before, "it grows again once the scan is gone");
 }
+
+/// Verifies: [DESIGN] RULES.md D38, `HashTable::values`: a key's values,
+/// across a chain of many more pages than the pool has frames, come back in
+/// the order added, as `get` gives them, a page at a time; a key with none
+/// gives none; a table whose shape changes as they are read fails the read
+/// (SQLCODE -910) rather than give values moved or missed, and the read
+/// ends there.
+#[test]
+fn a_keys_values_are_read_a_page_at_a_time() {
+    let (pool, file) = pool(4);
+    let table = Arc::new(HashTable::create(pool, file).unwrap());
+    let values: Vec<Vec<u8>> = (0..2_000_u64).map(|n| n.to_le_bytes().repeat(8)).collect();
+    for v in &values {
+        table.insert(b"hot", v).unwrap();
+    }
+    table.insert(b"cold", b"one").unwrap();
+    let read: Vec<Vec<u8>> = table.values(b"hot").collect::<Result<_>>().unwrap();
+    assert_eq!(read, values);
+    assert_eq!(table.get(b"hot").unwrap(), values);
+    assert_eq!(table.values(b"none").count(), 0);
+    let mut hot = table.values(b"hot");
+    assert!(hot.next().unwrap().is_ok());
+    for n in 0..5_000_u64 {
+        table.insert(&key(n), b"filler").unwrap();
+    }
+    let rest: Vec<Result<Vec<u8>>> = hot.collect();
+    assert_eq!(rest.last().and_then(|r| r.as_ref().err()).map(|e| e.code), Some(Code::Api), "the shape changed");
+    assert_eq!(rest.iter().filter(|r| r.is_err()).count(), 1, "and the read ends there");
+}

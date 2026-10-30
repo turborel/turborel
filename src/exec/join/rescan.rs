@@ -4,7 +4,9 @@
 //! while it fits the work area, else in a run of the spill area, read again
 //! from its first record each time; either way in the order it came. A
 //! product reads it once for each left row, so what it reads is as many
-//! rows as it gives. Split from exec/join.rs (RULES.md R-SIZE-2).
+//! rows as it gives. A run is read back only while the statement is not
+//! cancelled (`exec/work.rs`), so a pass that gives no row a later
+//! operator keeps still stops. Split from exec/join.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 
@@ -14,6 +16,10 @@ use crate::error::Result;
 use crate::spill::{SpillRun, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::value::types::TypeRegistry;
+
+/// The bytes counted of a row held beyond its own: the flag an outer join
+/// keeps of it, whether it matched (`outer.rs`).
+const FLAG_BYTES: usize = 1;
 
 /// The rows of a right operand, each pass of them.
 pub(in crate::exec) type Pass = Box<dyn Iterator<Item = Result<Row>> + Send>;
@@ -34,7 +40,7 @@ impl Rescanned {
     /// # Errors
     ///
     /// The rows', and the spill area's.
-    pub(in crate::exec) fn of(rows: RowIter, work: &mut Work) -> Result<(Rescanned, usize)> {
+    pub(in crate::exec) fn of(rows: impl Iterator<Item = Result<Row>>, work: &mut Work) -> Result<(Rescanned, usize)> {
         let mut gathering = Gathering::default();
         for r in rows {
             gathering.push(r?, work)?;
@@ -91,7 +97,7 @@ impl Gathering {
         if let Some((run, _)) = &mut self.run {
             return run.push(&row_record(&row));
         }
-        self.bytes = self.bytes.saturating_add(row_bytes(&row));
+        self.bytes = self.bytes.saturating_add(row_bytes(&row)).saturating_add(FLAG_BYTES);
         self.held.push(row);
         if self.bytes > work.limit() {
             let mut spilled = work.run()?;

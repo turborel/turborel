@@ -263,7 +263,7 @@ enum Kind {
 fn joined((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kind: Kind, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let (left_columns, left_width) = layout(&left, db).unwrap_or_default();
     let (right_columns, _) = layout(&right, db).unwrap_or_default();
-    let mut work = Work::new(db);
+    let mut work = Work::of(db, tx);
     let full = match kind {
         Kind::Inner => Full::Partition,
         Kind::Left => Full::Table,
@@ -327,11 +327,14 @@ impl Probe {
             let equal = |right: &&Row| {
                 places.iter().all(|&(at, rc)| right.get(rc).and_then(|v| compare(value(at), v)) == Some(std::cmp::Ordering::Equal))
             };
-            let candidates = if keyed { self.built.bucket_rows(&key)? } else { std::borrow::Cow::Borrowed(&[][..]) };
-            for right in candidates.iter().filter(equal) {
-                found = true;
-                put(&mut out, (batch, r, left), (Some(right), &self.right_columns));
-                full(&mut out, &mut self.ready, width);
+            let candidates = if keyed { Some(self.built.bucket_rows(&key)?) } else { None };
+            for right in candidates.into_iter().flatten() {
+                let right = right?;
+                if equal(&&*right) {
+                    found = true;
+                    put(&mut out, (batch, r, left), (Some(&right), &self.right_columns));
+                    full(&mut out, &mut self.ready, width);
+                }
             }
             // [ISO/IEC 9075:1992 §7.5 GR4, GR5b] A LEFT join's left row
             // no right row matches, with nulls.

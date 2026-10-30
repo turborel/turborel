@@ -10,8 +10,9 @@
 //! first row, and the groups merged by number, so they are given in the
 //! order their first rows came, as in memory. The values a DISTINCT set
 //! function has taken, of every group of a pass, are kept as keys of one
-//! bag, which spills to a table of its own work area once they outgrow it
-//! (`exec/work.rs`). Split from exec.rs (RULES.md R-SIZE-2).
+//! bag, which spills to a table once they outgrow it (`exec/work.rs`): the
+//! work area split in two, half the groups', half the bag's, so they hold
+//! no more than one. Split from exec.rs (RULES.md R-SIZE-2).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -62,8 +63,7 @@ pub(super) type Finished = Vec<(u64, Row)>;
 /// while its input is made (RULES.md R-CF-6).
 #[inline(never)]
 pub(super) fn grouping(spec: Spec, input: RowIter, db: &Arc<State>, tx: TxId) -> RowIter {
-    let mut grouper = Grouper { spec, runner: Runner::new(db, tx), work: Work::new(db) };
-    grouper.grouped(input).unwrap_or_else(failed)
+    Grouper::new(spec, db, tx).grouped(input).unwrap_or_else(failed)
 }
 
 /// \[DESIGN\] Groups made by batch (`exec/batch.rs`) past the work area:
@@ -79,7 +79,7 @@ impl Spilling {
     /// Spilling of a grouping under `spec`, in a work area of `db`, read as
     /// `tx` sees it.
     pub(super) fn new(spec: Spec, db: &Arc<State>, tx: TxId) -> Spilling {
-        Spilling { grouper: Grouper { spec, runner: Runner::new(db, tx), work: Work::new(db) }, overflow: Overflow::Partitions(None) }
+        Spilling { grouper: Grouper::new(spec, db, tx), overflow: Overflow::Partitions(None) }
     }
 
     /// Writes `row`, the `n`th, of grouping key `key`, for its group to be
@@ -100,11 +100,13 @@ impl Spilling {
     }
 }
 
-/// A grouping being made.
+/// A grouping being made: in its work area, and, of DISTINCT set
+/// functions, the half of it their bag of values taken holds.
 struct Grouper {
     spec: Spec,
     runner: Runner,
     work: Work,
+    bag: Option<Work>,
 }
 
 /// Where a pass writes the rows of the groups it has no room for: to
@@ -138,6 +140,14 @@ impl Overflow {
 }
 
 impl Grouper {
+    /// A grouping under `spec`, in a work area of `db`, read as `tx` sees
+    /// it, split in two if a set function is DISTINCT.
+    fn new(spec: Spec, db: &Arc<State>, tx: TxId) -> Grouper {
+        let mut work = Work::of(db, tx);
+        let bag = spec.aggs.iter().any(|a| a.distinct).then(|| work.split());
+        Grouper { spec, runner: Runner::new(db, tx), work, bag }
+    }
+
     /// The groups of `input`, from memory if they fit the work area, else
     /// merged from runs. Without GROUP BY, there is a single group even of
     /// no rows ([X3.135-1986 §5.23 GR1, §5.25 GR1]).
@@ -181,7 +191,7 @@ impl Grouper {
     /// holds, the rows of the others written to `overflow`.
     fn pass(&mut self, rows: Numbered<'_>, overflow: &mut Overflow) -> Result<Finished> {
         let (mut found, mut bytes) = (HashMap::<Vec<u8>, Group>::new(), 0_usize);
-        let mut seen = Bag::new(self.work.another());
+        let mut seen = Bag::new(self.bag.as_ref().unwrap_or(&self.work).another());
         for r in rows {
             let (n, row) = r?;
             let values: Row = self.spec.groups.iter().map(|&c| column(&row, c).cloned()).collect::<Result<_>>()?;

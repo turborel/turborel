@@ -131,6 +131,17 @@ pub trait SpillTable: Send {
     ///
     /// Its storage's errors.
     fn get(&self, key: &[u8]) -> Result<Vec<Vec<u8>>>;
+    /// The values under `key`, in the order added, read as they are taken,
+    /// so a key of more values than memory holds is read whole: as a hash
+    /// join probes a key that most of its right rows have. Nothing is added
+    /// or removed while they are read. Default: those `get` gives.
+    ///
+    /// # Errors
+    ///
+    /// Its storage's errors.
+    fn values(&self, key: &[u8]) -> Result<Records> {
+        Ok(Box::new(self.get(key)?.into_iter().map(Ok)))
+    }
     /// Removes the first `value` under `key`; whether there was one.
     ///
     /// # Errors
@@ -323,11 +334,24 @@ impl TempFiles {
 }
 
 /// The bytes `row` holds in memory, near enough to bound an operator's
-/// work area by.
+/// work area by: its values, and what each holds apart from itself.
 pub fn row_bytes(row: &Row) -> usize {
     let values = row.len().saturating_mul(size_of::<Value>());
-    let text: usize = row.iter().map(|v| if let Value::Char(s) = v { s.len() } else { 0 }).sum();
-    values.saturating_add(text).saturating_add(size_of::<Row>())
+    let held = row.iter().fold(0usize, |sum, v| sum.saturating_add(heap_bytes(v)));
+    values.saturating_add(held).saturating_add(size_of::<Row>())
+}
+
+/// The bytes `v` holds apart from itself: a string's characters, a bit
+/// string's bytes, a plug-in's value's bytes (counted by every value that
+/// shares them, so never too few). The others hold all they have in
+/// themselves.
+pub fn heap_bytes(v: &Value) -> usize {
+    match v {
+        Value::Char(s) => s.len(),
+        Value::Bits(b) => b.bytes().len(),
+        Value::Extension(e) => e.bytes.len(),
+        Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) => 0,
+    }
 }
 
 /// `row` as a record.

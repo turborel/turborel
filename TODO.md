@@ -204,9 +204,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
   table is encrypted stays as it was until its operator ends. What a
   data-changing statement did, kept for its constraints' checks at its
   end (each row's id, and an UPDATE's or DELETE's old values,
-  `db/integrity.rs`), and the entries an index scan finds, read at once
-  (`Index::search`), are held in memory, and should spill past
+  `db/integrity.rs`), is held in memory, and should spill past
   WORK_MEMORY as an operator's rows do.
+  DISTINCT read row by row (`exec/distinct.rs`) is not told its statement,
+  so its passes over partitions look for no cancel (D44), as the others'
+  do: `exec.rs` should hand it the transaction, for `Work::of`. And it,
+  EXCEPT and INTERSECT take a second work area for a bag beside what they
+  hold (`Work::another`), up to twice WORK_MEMORY, which `Work::split`
+  would bound as grouping's is.
 - **Buffer pool:** a benchmark of the B-link tree in a small pool, and
   read-ahead, to make misses cheaper. Hits with one shared write measured
   87.6M/s to 151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27):

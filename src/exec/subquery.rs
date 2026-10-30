@@ -20,8 +20,11 @@
 //!
 //! \[DESIGN\] RULES.md D38: a subquery's rows outgrowing the work area are
 //! spilled to a run (`exec/join/rescan.rs`), and a decorrelated subquery's
-//! to a table keyed by bucket (`exec/join.rs`); the rows of the runs kept
-//! for their outer values are kept while they fit the work area in all.
+//! to a table keyed by bucket (`exec/join.rs`), the rows for a set of outer
+//! values read from it as they are gathered. The runs kept for their outer
+//! values are kept while they fit the work area in all, each counted with
+//! its key and entry, and one that spilled as its area's bytes; a
+//! subquery's with no outer references always, as it is its only run.
 
 mod quantified;
 
@@ -31,13 +34,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::join::{Built, Full, Rescanned, Right};
-use super::work::{Bag, Work};
+use super::work::{Bag, ENTRY_BYTES, Work};
 use super::{RowIter, broken, execute};
 use crate::db::State;
 use crate::error::Result;
 use crate::logical::{Decorrelated, LogicalPlan, Subquery};
 use crate::optimizer::RuleContext;
 use crate::physical::PhysicalPlanner;
+use crate::spill::heap_bytes;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::txn::TxId;
@@ -162,14 +166,14 @@ struct Seen {
 }
 
 /// \[DESIGN\] Runs subqueries for transaction `tx`, keeping their rows (see
-/// the module's documentation): those of each run while what it keeps in
-/// memory fits the work area, a spilled run's always, as it holds them on
-/// disk.
+/// the module's documentation): those of each run while what it keeps
+/// fits the work area (`Runner::keep`).
 pub struct Runner {
     db: Arc<State>,
     tx: TxId,
     done: RefCell<HashMap<Run, SubqueryRows>>,
-    /// The bytes the rows kept in `done` hold in memory.
+    /// The bytes `done` holds: its keys and entries, the rows held in
+    /// memory, and the areas of those that spilled.
     kept: Cell<usize>,
     seen: RefCell<HashMap<usize, Seen>>,
 }
@@ -211,7 +215,7 @@ impl Runner {
                 // Its key columns follow its own, each equal to an outer slot's value.
                 let keys = (0..how.slots.len()).map(|n| (n, how.width.saturating_add(n))).collect();
                 let rows = self.run(how.plan.clone());
-                let Right::Held(rows) = Built::of(rows, keys, (&mut Work::new(&self.db), Full::Table))? else {
+                let Right::Held(rows) = Built::of(rows, keys, (&mut Work::of(&self.db, self.tx), Full::Table))? else {
                     return Err(broken("a subquery's rows were partitioned"));
                 };
                 Some(Arc::new(Keyed { how, rows: Mutex::new(rows) }))
@@ -228,27 +232,53 @@ impl Runner {
             Some(n) => Box::new(rows.take(n)),
             None => rows,
         };
-        let (rows, _) = Rescanned::of(rows, &mut Work::new(&self.db))?;
+        let (rows, _) = Rescanned::of(rows, &mut Work::of(&self.db, self.tx))?;
         Ok(SubqueryRows::of(rows, &self.db))
+    }
+
+    /// Keeps `found`, the rows of the run `key`, of outer values `outer`,
+    /// if what is kept fits the work area, counting the key, its entry and
+    /// the rows held in memory twice, as a comparison with them makes as
+    /// much again of them (`subquery/quantified.rs`); or, of rows that
+    /// spilled, their area, so they are kept only alone. The rows of a
+    /// subquery with no outer references are kept whatever they hold, as
+    /// they are its only run: one for each subquery of the statement, as
+    /// each of its operators has a work area of its own.
+    fn keep(&self, key: Run, outer: &[Value], found: &SubqueryRows) {
+        let limit = Work::new(&self.db).limit();
+        let rows = if found.spilled { limit } else { lock_builtin(&found.rows).held_bytes().saturating_mul(2) };
+        let held = outer.iter().fold(0usize, |sum, v| sum.saturating_add(heap_bytes(v)));
+        let of_key = outer.len().saturating_mul(size_of::<NormKey>()).saturating_add(held).saturating_add(ENTRY_BYTES);
+        let bytes = rows.saturating_add(of_key).saturating_add(size_of::<SubqueryRows>());
+        let kept = self.kept.get().saturating_add(bytes);
+        if !outer.is_empty() && kept > limit {
+            return;
+        }
+        self.kept.set(kept);
+        self.done.borrow_mut().insert(key, found.clone());
     }
 }
 
 /// The rows of a decorrelated subquery for `outer` values: those whose key
 /// columns equal the values of their slots, at most `limit`; none if one is
-/// null [X3.135-1986 §5.11 GR2].
-fn rows_for(keyed: &Keyed, outer: &[Value], limit: Option<usize>) -> Result<Vec<Row>> {
+/// null [X3.135-1986 §5.11 GR2]. Gathered as they are read from `keyed`, in
+/// memory until they outgrow `work`, then in a run of its area.
+fn rows_for(keyed: &Keyed, outer: &[Value], (limit, work): (Option<usize>, &mut Work)) -> Result<Rescanned> {
+    let none = || Ok(Rescanned::Held(Arc::new(Vec::new())));
     let values: Option<Vec<&Value>> = keyed.how.slots.iter().map(|&slot| outer.get(slot)).collect();
-    let Some(values) = values else { return Ok(Vec::new()) };
-    let Some(key) = values.iter().map(|v| bucket(v)).collect::<Option<Vec<Bucket>>>() else { return Ok(Vec::new()) };
+    let Some(values) = values else { return none() };
+    let Some(key) = values.iter().map(|v| bucket(v)).collect::<Option<Vec<Bucket>>>() else { return none() };
     let equal = |row: &Row| {
         let columns = row.get(keyed.how.width..).unwrap_or_default();
         columns.len() == values.len() && columns.iter().zip(&values).all(|(c, v)| compare(c, v) == Some(Ordering::Equal))
     };
     let width = keyed.how.width;
     let built = lock_builtin(&keyed.rows);
-    let bucket = built.bucket_rows(&key)?;
-    let found = bucket.iter().filter(|row| equal(row));
-    Ok(found.take(limit.unwrap_or(usize::MAX)).map(|row| row.get(..width).unwrap_or_default().to_vec()).collect())
+    let found = built.bucket_rows(&key)?.filter_map(|r| match r {
+        Ok(row) => equal(&row).then(|| Ok(row.get(..width).unwrap_or_default().to_vec())),
+        Err(e) => Some(Err(e)),
+    });
+    Ok(Rescanned::of(found.take(limit.unwrap_or(usize::MAX)), work)?.0)
 }
 
 impl Subqueries for Runner {
@@ -259,16 +289,12 @@ impl Subqueries for Runner {
             return Ok(rows.clone());
         }
         let found = match self.keyed(subquery, at)? {
-            Some(keyed) => SubqueryRows::of(Rescanned::Held(Arc::new(rows_for(&keyed, outer, limit)?)), &self.db),
+            Some(keyed) => SubqueryRows::of(rows_for(&keyed, outer, (limit, &mut Work::of(&self.db, self.tx)))?, &self.db),
             None => self.gathered(self.run(subquery.bound(outer)), limit)?,
         };
-        // Kept while what is kept in memory fits the work area; past that,
-        // run again for each set of outer values.
-        let bytes = lock_builtin(&found.rows).held_bytes();
-        if self.kept.get().saturating_add(bytes) <= Work::new(&self.db).limit() {
-            self.kept.set(self.kept.get().saturating_add(bytes));
-            self.done.borrow_mut().insert(key, found.clone());
-        }
+        // Kept while what is kept fits the work area; past that, run again
+        // for each set of outer values.
+        self.keep(key, outer, &found);
         Ok(found)
     }
 }

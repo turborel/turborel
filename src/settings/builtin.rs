@@ -336,7 +336,7 @@ fn spilling() -> [Definition; 2] {
         defined(
             ("SPILL.PARTITION_DEPTH", Kind::Integer { min: 0, max: 64 }, count(DEFAULT_PARTITION_DEPTH)),
             SESSION,
-            "The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping, makes it in passes.",
+            "The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.",
         ),
     ]
 }

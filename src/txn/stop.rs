@@ -6,8 +6,9 @@
 //! ends never stops the next.
 //!
 //! A statement looks at it as it reads each row of a table or an index
-//! (`exec.rs`), or each batch of a table's (`exec/batch/stream.rs`), and
-//! while it waits for a lock (`txn/locks.rs`): a
+//! (`exec.rs`), or each batch of a table's (`exec/batch/stream.rs`), as an
+//! operator reads back each record it spilled (`exec/work.rs`), and while
+//! it waits for a lock (`txn/locks.rs`): a
 //! cancelled one fails there (SQLCODE -920), and is undone as any failed
 //! statement is [X3.135-1986 §7.3 GR3b i]; its transaction goes on.
 //!

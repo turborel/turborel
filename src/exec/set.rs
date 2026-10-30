@@ -51,7 +51,7 @@ pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::SetOp { op, all, left, right } = plan else { return failed(broken("a set operation is not one")) };
     let second = execute(*right, db, tx);
     let how = Kept { intersect: op == SetOp::Intersect, all };
-    match counted_rows(second, db) {
+    match counted_rows(second, db, tx) {
         Ok((Counted::Held(counts), work)) => {
             let first = execute(*left, db, tx);
             keeping(first, counts, how, &work)
@@ -71,12 +71,12 @@ enum Counted {
     Partitioned(Partitioner),
 }
 
-/// The rows of `rows`, counted, in a work area of `db`. Kept apart from
-/// `operation`, whose frame is on the stack while its operands are made
-/// (RULES.md R-CF-6).
+/// The rows of `rows`, counted, in a work area of `db`, for the statement
+/// of `tx`. Kept apart from `operation`, whose frame is on the stack while
+/// its operands are made (RULES.md R-CF-6).
 #[inline(never)]
-fn counted_rows(rows: RowIter, db: &State) -> Result<(Counted, Work)> {
-    let mut work = Work::new(db);
+fn counted_rows(rows: RowIter, db: &State, tx: TxId) -> Result<(Counted, Work)> {
+    let mut work = Work::of(db, tx);
     let counts = counted(rows.map(|r| r.map(|row| (key(&row), 1))), &mut work, true)?;
     Ok((counts, work))
 }

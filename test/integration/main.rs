@@ -100,6 +100,7 @@ mod schema_transactions;
 mod scroll_cursors;
 mod set_statements;
 mod settings;
+mod spilled_rows;
 mod spilling;
 mod statements;
 mod statistics;

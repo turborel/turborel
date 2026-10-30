@@ -16,29 +16,30 @@ pub(in crate::exec) use partitioned::joined as partitioned_joined;
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(super) use rescan::Rescanned;
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::work::Work;
-use super::{RowIter, column, execute, failed};
+use super::{RowIter, broken, column, execute, failed};
 use crate::db::State;
 use crate::error::Result;
 use crate::physical::Plan;
-use crate::spill::{SpillTable, bucket_key, record_row, row_bytes, row_record};
+use crate::spill::{Records, SpillTable, bucket_key, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::types::TypeRegistry;
 use crate::value::{Bucket, bucket, compare};
 
 /// The rows of `left` joined with those of `right`: on `keys` if given
-/// (`hash_join`), else with every one (`product`). The right operand is
+/// (`HashJoin`), else with every one (`product`). The right operand is
 /// read first, and the left only if it succeeded. Never inlined into
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
 pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<(usize, usize)>>, db: &Arc<State>, tx: TxId) -> RowIter {
-    let mut work = Work::new(db);
+    let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {
             Ok((right, _)) => rescan::product(execute(left, db, tx), right),
@@ -46,7 +47,7 @@ pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<(usize, usize)>>,
         };
     };
     match Built::of(execute(right, db, tx), keys, (&mut work, Full::Partition)) {
-        Ok(Right::Held(built)) => hash_join(execute(left, db, tx), built),
+        Ok(Right::Held(built)) => Box::new(HashJoin { left: execute(left, db, tx), right: built, current: None }),
         Ok(Right::Partitioned(parts)) => partitioned::joined(execute(left, db, tx), parts, work),
         Err(e) => failed(e),
     }
@@ -55,10 +56,14 @@ pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<(usize, usize)>>,
 /// The right operand of a hash join, its rows with a null key left out, as
 /// none matches [X3.135-1986 §5.11 GR2]: by bucket of key values, in
 /// memory, or in a table of its spill area keyed by bucket if they outgrew
-/// it. Either way a bucket's rows are in order.
+/// it. Either way a bucket's rows are in order, and read one at a time
+/// (`Probe`), so a bucket of more rows than the work area holds is never in
+/// memory whole.
 pub(in crate::exec) struct Built {
     keys: Vec<(usize, usize)>,
-    buckets: HashMap<Vec<Bucket>, Vec<Row>>,
+    /// The place in `held` of each bucket's rows.
+    buckets: HashMap<Vec<Bucket>, usize>,
+    held: Vec<Vec<Row>>,
     spilled: Option<Box<dyn SpillTable>>,
     /// The types beyond the standard its spilled rows may hold values of.
     types: TypeRegistry,
@@ -79,6 +84,14 @@ pub(in crate::exec) enum Right {
     Partitioned(partitioned::Partitions),
 }
 
+/// The rows of a bucket of a `Built`, as they are read: the place of the
+/// bucket held in memory, if it has one, and of its next row; or its
+/// records, read from the spill area's table as they are taken.
+pub(in crate::exec) enum Probe {
+    Held(Option<usize>, usize),
+    Spilled(Records),
+}
+
 impl Built {
     /// The right operand `rows`, joined on `keys`, built in `work`, and
     /// once it outgrows it, done with as `full` says.
@@ -87,13 +100,13 @@ impl Built {
         keys: Vec<(usize, usize)>,
         (work, full): (&mut Work, Full),
     ) -> Result<Right> {
-        let mut built = Built { keys, buckets: HashMap::new(), spilled: None, types: work.types().clone() };
+        let mut built = Built { keys, buckets: HashMap::new(), held: Vec::new(), spilled: None, types: work.types().clone() };
         let mut bytes = 0_usize;
         for r in rows.by_ref() {
             let row = r?;
             let Some(b) = key(&row, built.keys.iter().map(|k| k.1))? else { continue };
             bytes = bytes.saturating_add(row_bytes(&row));
-            built.buckets.entry(b).or_default().push(row);
+            built.add(b, row)?;
             if bytes > work.limit() {
                 return match full {
                     Full::Partition => Ok(Right::Partitioned(partitioned::Partitions::of(built, rows, work)?)),
@@ -104,14 +117,32 @@ impl Built {
         Ok(Right::Held(built))
     }
 
+    /// Adds `row`, of key values `b`, after the rows of its bucket.
+    fn add(&mut self, b: Vec<Bucket>, row: Row) -> Result<()> {
+        let next = self.held.len();
+        let at = *self.buckets.entry(b).or_insert(next);
+        if at == next {
+            self.held.push(Vec::new());
+        }
+        self.held.get_mut(at).ok_or_else(|| broken("a hash join's bucket is missing"))?.push(row);
+        Ok(())
+    }
+
+    /// Its buckets held in memory, each with its rows, in order.
+    fn into_buckets(self) -> impl Iterator<Item = (Vec<Bucket>, Vec<Row>)> {
+        let mut held = self.held;
+        self.buckets.into_iter().map(move |(b, at)| (b, held.get_mut(at).map(std::mem::take).unwrap_or_default()))
+    }
+
     /// It and the rest of its operand, `rows`, in a table of `work`'s
     /// spill area.
     fn spilled(mut self, rows: impl Iterator<Item = Result<Row>>, work: &mut Work) -> Result<Built> {
         let mut table = work.table()?;
-        for (bucket, held) in self.buckets.drain() {
-            let at = bucket_key(&bucket);
-            for one in &held {
-                table.insert(&at, &row_record(one))?;
+        let (buckets, mut held) = (std::mem::take(&mut self.buckets), std::mem::take(&mut self.held));
+        for (bucket, at) in buckets {
+            let key = bucket_key(&bucket);
+            for one in held.get_mut(at).map(std::mem::take).unwrap_or_default() {
+                table.insert(&key, &row_record(&one))?;
             }
         }
         for r in rows {
@@ -124,12 +155,9 @@ impl Built {
         Ok(self)
     }
 
-    /// The rows of bucket `b`, borrowed if held in memory.
-    pub(in crate::exec) fn bucket_rows(&self, b: &[Bucket]) -> Result<std::borrow::Cow<'_, [Row]>> {
-        match &self.spilled {
-            Some(_) => self.bucket(b).map(std::borrow::Cow::Owned),
-            None => Ok(std::borrow::Cow::Borrowed(self.buckets.get(b).map_or(&[][..], Vec::as_slice))),
-        }
+    /// The rows of bucket `b`, read as they are taken.
+    pub(in crate::exec) fn bucket_rows(&self, b: &[Bucket]) -> Result<BucketRows<'_>> {
+        Ok(BucketRows { built: self, probe: self.probe(b)? })
     }
 
     /// The pairs of a left column and a right column it is joined on.
@@ -137,27 +165,81 @@ impl Built {
         &self.keys
     }
 
-    /// The rows of bucket `b`.
-    pub(in crate::exec) fn bucket(&self, b: &[Bucket]) -> Result<Vec<Row>> {
+    /// The rows of bucket `b`, to be read with `next_of`.
+    fn probe(&self, b: &[Bucket]) -> Result<Probe> {
         match &self.spilled {
-            Some(table) => table.get(&bucket_key(b))?.iter().map(|r| record_row(r, &self.types)).collect(),
-            None => Ok(self.buckets.get(b).cloned().unwrap_or_default()),
+            Some(table) => Ok(Probe::Spilled(table.values(&bucket_key(b))?)),
+            None => Ok(Probe::Held(self.buckets.get(b).copied(), 0)),
         }
+    }
+
+    /// The next row of `probe`, borrowed if held in memory.
+    fn next_of(&self, probe: &mut Probe) -> Option<Result<Cow<'_, Row>>> {
+        match probe {
+            Probe::Held(at, next) => {
+                let row = self.held.get((*at)?)?.get(*next)?;
+                *next = next.saturating_add(1);
+                Some(Ok(Cow::Borrowed(row)))
+            }
+            Probe::Spilled(records) => Some(records.next()?.and_then(|r| record_row(&r, &self.types)).map(Cow::Owned)),
+        }
+    }
+}
+
+/// The rows of a bucket of a `Built`, as they are read.
+pub(in crate::exec) struct BucketRows<'a> {
+    built: &'a Built,
+    probe: Probe,
+}
+
+impl<'a> Iterator for BucketRows<'a> {
+    type Item = Result<Cow<'a, Row>>;
+
+    fn next(&mut self) -> Option<Result<Cow<'a, Row>>> {
+        self.built.next_of(&mut self.probe)
     }
 }
 
 /// [X3.135-1986 §5.20 GR2b, §5.21 GR2] each row of the left concatenated
 /// with each row of the right whose `keys` (a left column, a right column)
 /// are equal [X3.135-1986 §5.11]: a null equals nothing (GR2). The left is
-/// read in order, so the joined rows are in its order.
-fn hash_join(left: RowIter, right: Built) -> RowIter {
-    Box::new(left.flat_map(move |l| {
-        let out: Vec<Result<Row>> = match l.and_then(|l| matches(&right, &l)) {
-            Ok(rows) => rows.into_iter().map(Ok).collect(),
-            Err(e) => vec![Err(e)],
-        };
-        out
-    }))
+/// read in order, so the joined rows are in its order; a left row's
+/// matches are given as its bucket is read, never gathered.
+struct HashJoin {
+    left: RowIter,
+    right: Built,
+    /// The left row being joined, and its bucket, being read.
+    current: Option<(Row, Probe)>,
+}
+
+impl HashJoin {
+    /// The next joined row, if there is one.
+    fn step(&mut self) -> Result<Option<Row>> {
+        loop {
+            if let Some((l, probe)) = &mut self.current {
+                let Some(r) = self.right.next_of(probe).transpose()? else {
+                    self.current = None;
+                    continue;
+                };
+                if equal(&self.right.keys, l, &r)? {
+                    return Ok(Some(l.iter().chain(r.iter()).cloned().collect()));
+                }
+                continue;
+            }
+            let Some(l) = self.left.next().transpose()? else { return Ok(None) };
+            if let Some(b) = key(&l, self.right.keys.iter().map(|k| k.0))? {
+                self.current = Some((l, self.right.probe(&b)?));
+            }
+        }
+    }
+}
+
+impl Iterator for HashJoin {
+    type Item = Result<Row>;
+
+    fn next(&mut self) -> Option<Result<Row>> {
+        self.step().transpose()
+    }
 }
 
 /// The buckets of `row`'s values in `columns`, or none if one is null.
@@ -176,19 +258,26 @@ fn key(row: &Row, columns: impl Iterator<Item = usize>) -> Result<Option<Vec<Buc
     Ok(Some(buckets))
 }
 
-/// `l` concatenated with each row of `right` whose keys equal its own:
-/// those in its bucket, compared, as rows in one bucket may differ.
-fn matches(right: &Built, l: &Row) -> Result<Vec<Row>> {
-    let Some(b) = key(l, right.keys.iter().map(|k| k.0))? else { return Ok(Vec::new()) };
-    let mut out = Vec::new();
-    for r in right.bucket_rows(&b)?.iter() {
-        let mut equal = true;
-        for &(lc, rc) in &right.keys {
-            equal &= compare(column(l, lc)?, column(r, rc)?) == Some(Ordering::Equal);
-        }
-        if equal {
-            out.push(l.iter().chain(r).cloned().collect());
+/// Whether the values of `l` and `r` the pairs `keys` name are equal, as
+/// rows in one bucket may differ.
+fn equal(keys: &[(usize, usize)], l: &Row, r: &Row) -> Result<bool> {
+    for &(lc, rc) in keys {
+        if compare(column(l, lc)?, column(r, rc)?) != Some(Ordering::Equal) {
+            return Ok(false);
         }
     }
-    Ok(out)
+    Ok(true)
+}
+
+/// Gives `each` left row `l` concatenated with each row of `right` whose
+/// keys equal its own, in order, as its bucket is read.
+fn each_match(right: &Built, l: &Row, mut each: impl FnMut(Row) -> Result<()>) -> Result<()> {
+    let Some(b) = key(l, right.keys.iter().map(|k| k.0))? else { return Ok(()) };
+    for r in right.bucket_rows(&b)? {
+        let r = r?;
+        if equal(&right.keys, l, &r)? {
+            each(l.iter().chain(r.iter()).cloned().collect())?;
+        }
+    }
+    Ok(())
 }

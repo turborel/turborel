@@ -2,36 +2,44 @@
 //! spill them to areas of the database's spill provider, reserved of the
 //! memory budget, and give the rows, in the order, they give in memory.
 
-use turborel::db::{Completion, Cursor, Database, OpenOptions, Session};
-use turborel::error::Code;
-use turborel::params::Params;
-use turborel::value::{DataType, Decimal, Spelled, Value};
+use std::sync::{Arc, Mutex};
+
+use turborel::db::{Database, OpenOptions, Session};
+use turborel::error::{Code, SqlError};
+use turborel::memory::MemoryBudget;
+use turborel::spill::{Area, PagedSpill, Records, Spill, SpillArea, SpillRun, SpillTable, TempFiles};
+use turborel::txn::Stop;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{Counted, Scratch, exec, os, rows};
 
 /// The smallest WORK_MEMORY, 64 KiB.
-const SMALL: usize = 64 << 10;
+pub(crate) const SMALL: usize = 64 << 10;
+/// Half of it, as a grouping of DISTINCT set functions splits it.
+const HALF: usize = 32 << 10;
 /// Rows of each table: some thousands, many times the smallest work area.
-const ROWS: usize = 3000;
+pub(crate) const ROWS: usize = 3000;
 /// Rows of `V`, half of them of one key: more than the smallest work area
 /// holds.
 const SKEWED: usize = 1200;
 
-fn bytes(n: usize) -> Value {
+pub(crate) fn bytes(n: usize) -> Value {
     Value::Exact(Decimal::new(i128::try_from(n).unwrap(), 0))
 }
 
 /// Schema `S` with tables `T` and `U`, each `ROWS` rows: `K` from 0, `G` of
 /// 1000 values and `S` of 701 in `T`, of 2505 in `U`; in `U` a null `G` every 100th
 /// row, its `S` from its `K`; `V` of `SKEWED` rows, `C` 0 in every other one; and `W` of four,
-/// 0 to 3.
-fn filled(db: &Database) {
+/// 0 to 3; `E`, empty; and `R` of eight, 0 to 7.
+pub(crate) fn filled(db: &Database) {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION S
            CREATE TABLE T (K INTEGER, G INTEGER, S CHARACTER(60))
            CREATE TABLE U (K INTEGER, G INTEGER, S CHARACTER(60))
            CREATE TABLE V (K INTEGER, C INTEGER, S CHARACTER(60))
-           CREATE TABLE W (K INTEGER)",
+           CREATE TABLE W (K INTEGER)
+           CREATE TABLE E (K INTEGER)
+           CREATE TABLE R (K INTEGER)",
     )
     .unwrap();
     let s = db.session("S");
@@ -45,6 +53,8 @@ fn filled(db: &Database) {
     let v: Vec<String> = (0..SKEWED).map(|k| format!("({k}, {}, 'V{k:05}')", if k % 2 == 0 { 0 } else { k })).collect();
     s.run(&format!("INSERT INTO V VALUES {}", v.join(", "))).unwrap();
     s.run("INSERT INTO W VALUES (0), (1), (2), (3)").unwrap();
+    let r: Vec<String> = (0..8).map(|k| format!("({k})")).collect();
+    s.run(&format!("INSERT INTO R VALUES {}", r.join(", "))).unwrap();
 }
 
 /// Row `k` of `U`, as a row value constructor.
@@ -74,6 +84,8 @@ const QUERIES: &[&str] = &[
     "SELECT U.K, T.K FROM U LEFT OUTER JOIN T ON U.G = T.G",
     "SELECT W.K, T.K FROM W LEFT OUTER JOIN T ON W.K + 2990 < T.K",
     "SELECT W.K, T.K FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
+    "SELECT E.K, T.K FROM E FULL OUTER JOIN T ON E.K < T.K",
+    "SELECT T.K, V.K FROM T LEFT OUTER JOIN V ON T.K = V.C",
     "SELECT G FROM T EXCEPT SELECT G FROM U",
     "SELECT G FROM T EXCEPT ALL SELECT G FROM U",
     "SELECT G FROM T INTERSECT SELECT G FROM U",
@@ -102,7 +114,10 @@ const QUERIES: &[&str] = &[
 /// areas of WORK_MEMORY's bytes, of the provider given (`set_spill`), and
 /// give the rows, in the order, they give in memory, whatever SPILL_BATCH,
 /// SPILL.PARTITIONS and SPILL.PARTITION_DEPTH;
-/// the areas' memory goes back to the budget once the query is read.
+/// the areas' memory goes back to the budget once the query is read. A
+/// hash join's and an outer join's partitions are partitioned again while
+/// they outgrow the work area, as SPILL.PARTITION_DEPTH allows, and one
+/// that does not shrink, as of a key most rows have, is joined so too.
 #[test]
 fn operators_spill_and_give_the_same_rows() {
     let db = Database::new();
@@ -116,8 +131,9 @@ fn operators_spill_and_give_the_same_rows() {
 
     db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
     // The default batch, then the least, with which a join partitions most;
-    // then two partitions, never partitioned again, built in tables.
-    for (batch, partitions, depth) in [(16 << 10, 64, 8), (4 << 10, 64, 8), (16 << 10, 2, 0)] {
+    // then two partitions, partitioned again while they outgrow the work
+    // area, and never, built in tables or joined in parts.
+    for (batch, partitions, depth) in [(16 << 10, 64, 8), (4 << 10, 64, 8), (16 << 10, 2, 8), (16 << 10, 2, 0)] {
         db.set_setting("SPILL_BATCH", &bytes(batch)).unwrap();
         db.set_setting("SPILL.PARTITIONS", &bytes(partitions)).unwrap();
         db.set_setting("SPILL.PARTITION_DEPTH", &bytes(depth)).unwrap();
@@ -127,7 +143,8 @@ fn operators_spill_and_give_the_same_rows() {
             assert_eq!(db.memory().unwrap().1, reserved, "{q}: its areas given back");
         }
     }
-    assert!(counted.0.lock().unwrap().iter().all(|&b| b == SMALL));
+    // A grouping of DISTINCT set functions splits its work area in two.
+    assert!(counted.0.lock().unwrap().iter().all(|&b| b == SMALL || b == HALF));
     assert_eq!(db.set_setting("WORK_MEMORY", &bytes(SMALL - 1)).err().map(|e| e.code), Some(Code::Api), "below its least");
 }
 
@@ -202,202 +219,243 @@ fn a_session_sets_its_own_work_memory() {
     assert_eq!(counted.taken(), 0, "the database's again");
 }
 
-/// The rows of `T`, in the order a scan reads them.
-const SCANNED: &str = "SELECT K, S FROM T";
-
-/// `row`, as `rows` shows it.
-fn shown(row: &[Value]) -> String {
-    row.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
-}
-
-/// Every row `c` has still to give, as `rows` shows them.
-fn fetch_all(c: &mut Cursor) -> Vec<String> {
-    let mut out = Vec::new();
-    while let Some(r) = c.fetch().unwrap() {
-        out.push(shown(&r));
-    }
-    out
-}
-
-/// A database, filled, spilling to a counted provider, and a session of
-/// it.
-fn counted_database() -> (Database, Counted, Session) {
+/// Verifies: [DESIGN] RULES.md D38, D44: with WORK_MEMORY at its least, a
+/// statement cancelled as a spilled operator begins to read back what it
+/// wrote, after every row of its tables is read, fails (SQLCODE -920)
+/// there: grouping, of set functions and of DISTINCT ones, EXCEPT and
+/// INTERSECT, a hash join and an outer join on keys reading their
+/// partitions, and a product and an outer join on no keys their right
+/// operand's run, by batches and row by row. The session's next statement
+/// runs, giving the rows it gives unspilled. Regression test (R-TEST-7):
+/// those passes looked for no cancel, so a statement ran on until it read
+/// a table again, or to its end.
+#[test]
+fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
+    const CANCELLED: &[&str] = &[
+        "SELECT G, COUNT(*), MIN(S) FROM T GROUP BY G",
+        "SELECT S, COUNT(DISTINCT G) FROM T GROUP BY S",
+        "SELECT S, G FROM U EXCEPT ALL SELECT S, G FROM T",
+        "SELECT S FROM T INTERSECT SELECT S FROM U",
+        "SELECT T.K, U.K FROM T, U WHERE T.G = U.G",
+        "SELECT T.K, V.K FROM T FULL OUTER JOIN V ON T.K = V.C",
+        "SELECT W.K, T.K FROM W, T",
+        "SELECT W.K, T.K FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
+    ];
     let db = Database::new();
     filled(&db);
+    let s = db.session("S");
+    let in_memory: Vec<Vec<String>> = CANCELLED.iter().map(|q| rows(&s, q).unwrap()).collect();
+    let cancelling = Cancelling::default();
+    db.set_spill(Box::new(cancelling.clone())).unwrap();
+    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    for batches in ["ON", "OFF"] {
+        exec(&s, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+        for (q, expected) in CANCELLED.iter().zip(&in_memory) {
+            cancelling.arm(&s);
+            assert_eq!(rows(&s, q).err(), Some(Code::Cancelled), "{q}, batches {batches}");
+            assert!(cancelling.fired(), "{q}");
+            assert_eq!(&rows(&s, q).unwrap(), expected, "{q}: the next statement runs");
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D38: the rows a correlated subquery gave for
+/// each set of outer values are kept only while they fit the work area,
+/// counted with their keys and entries, and rows that spilled as their
+/// area: a subquery run for many sets of outer values, each of its results
+/// spilling, holds a few areas of the budget at once, not one for each
+/// result; the rows are those it gives unspilled. Regression test
+/// (R-TEST-7): a result that spilled counted as no bytes, so each was kept,
+/// with its area, until the statement ended.
+#[test]
+fn kept_subquery_rows_stay_within_the_work_area() {
+    const CORRELATED: &str = "SELECT K FROM R WHERE K * 7 IN (SELECT G FROM U WHERE U.K >= R.K)";
+    let db = Database::new();
+    filled(&db);
+    let s = db.session("S");
+    let in_memory = rows(&s, CORRELATED).unwrap();
+    assert_ne!(in_memory, Vec::<String>::new());
+    let peak = Peak::default();
+    db.set_spill(Box::new(peak.clone())).unwrap();
+    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    let reserved = db.memory().unwrap().1;
+    assert_eq!(rows(&s, CORRELATED).unwrap(), in_memory);
+    let most = peak.taken();
+    assert!(most > reserved, "its results spilled");
+    // Eight results, each kept with its area, held eight areas and more.
+    assert!(most - reserved <= 2 * SMALL, "{} bytes of areas at once", most - reserved);
+}
+
+/// Verifies: [DESIGN] RULES.md D38: a grouping of DISTINCT set functions
+/// splits its work area in two, half for its groups and half for the bag
+/// of the values they took, each spilling to an area of its half, so the
+/// two hold no more than WORK_MEMORY; the rows are those it gives
+/// unspilled. The rows of the query, read as its cursor opens as its set
+/// functions may raise an error, are held apart, in an area of their own.
+/// Regression test (R-TEST-7): the bag took a work area of its own, so
+/// the grouping held up to twice WORK_MEMORY.
+#[test]
+fn a_grouping_shares_its_work_area_with_its_distinct_values() {
+    const GROUPED: &str = "SELECT S, COUNT(DISTINCT G), COUNT(DISTINCT K) FROM T GROUP BY S";
+    let db = Database::new();
+    filled(&db);
+    let s = db.session("S");
+    let in_memory = rows(&s, GROUPED).unwrap();
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
-    let s = db.session("S");
-    (db, counted, s)
-}
-
-/// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.8 GR3b]. Regression
-/// test (R-TEST-7): a cursor held every row it read ahead of its fetches
-/// in memory. With WORK_MEMORY at its least, a cursor whose plan can raise
-/// an error, its rows read at OPEN, holds them in a spill area, and gives
-/// the rows it gives in memory; one read as it is fetched from holds none,
-/// until its transaction changes the table it reads: it then reads the
-/// rest so, spilling, and gives them as they were before the change.
-#[test]
-fn a_cursor_holds_its_rows_by_spilling() {
-    let (db, counted, s) = counted_database();
-    let raising = "SELECT K + 1, S FROM T";
-    let (all_raising, all_scanned) = (rows(&s, raising).unwrap(), rows(&s, SCANNED).unwrap());
-    assert_eq!(counted.taken(), 0, "the default WORK_MEMORY holds them");
     db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-    let mut c = s.open_cursor(raising).unwrap();
-    assert!(counted.taken() > 0, "read at OPEN, and spilled");
-    assert_eq!(fetch_all(&mut c), all_raising);
-    drop(c);
-    let mut c = s.open_cursor(SCANNED).unwrap();
-    let mut read: Vec<String> = (0..10).map(|_| shown(&c.fetch().unwrap().unwrap())).collect();
-    assert_eq!(counted.taken(), 0, "read as it is fetched from");
-    s.run("INSERT INTO T VALUES (9999, 0, 'new')").unwrap();
-    assert!(counted.taken() > 0, "the rest read before T changed, and spilled");
-    read.extend(fetch_all(&mut c));
-    assert_eq!(read, all_scanned, "the row inserted not among them");
+    assert_eq!(rows(&s, GROUPED).unwrap(), in_memory);
+    let sizes: Vec<usize> = counted.0.lock().unwrap().drain(..).collect();
+    let halves = sizes.iter().filter(|&&b| b == HALF).count();
+    let whole = sizes.iter().filter(|&&b| b == SMALL).count();
+    assert!(halves >= 2 && whole <= 1 && halves + whole == sizes.len(), "{sizes:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D38: a cursor whose rows cannot be held,
-/// its spill area past the memory budget, fails: at OPEN if it reads them
-/// there (SQLCODE -918); else, reading the rest before its transaction
-/// changes the table, it gives the rows it held, then the error, then no
-/// more.
+/// Verifies: [DESIGN] RULES.md D38: a key's rows built in a table of the
+/// spill area are read from it as they are joined (`SpillTable::values`),
+/// never gathered (`SpillTable::get`, refused here): of a hash join's
+/// partition of one key, too big for the work area, probed by each left
+/// row of that key; of a LEFT join read by batches; and of a decorrelated
+/// subquery's rows kept by key. The rows are those it gives unspilled.
+/// Regression test (R-TEST-7): each probe gathered every row of its key in
+/// memory, however many.
 #[test]
-fn a_cursor_past_the_budget_fails() {
+fn a_probe_reads_its_keys_rows_as_it_joins() {
+    const PROBED: &[&str] = &[
+        "SELECT T.K, V.K FROM T, V WHERE T.K = V.C",
+        "SELECT T.K, V.K FROM T LEFT OUTER JOIN V ON T.K = V.C",
+        "SELECT K FROM T WHERE EXISTS (SELECT * FROM V WHERE V.C = T.K AND V.K > 10)",
+    ];
     let db = Database::new();
     filled(&db);
     let s = db.session("S");
+    let in_memory: Vec<Vec<String>> = PROBED.iter().map(|q| rows(&s, q).unwrap()).collect();
+    db.set_spill(Box::new(Streamed)).unwrap();
     db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-    db.set_setting("MEMORY_BUDGET", &bytes(1 << 20)).unwrap();
-    assert_eq!(s.open_cursor("SELECT K + 1, S FROM T").err().map(|e| e.code), Some(Code::Resources), "at OPEN");
-    let mut c = s.open_cursor(SCANNED).unwrap();
-    assert!(c.fetch().unwrap().is_some());
-    s.run("INSERT INTO T VALUES (9999, 0, 'new')").unwrap();
-    let mut held = 0_usize;
-    let failed = loop {
-        match c.fetch() {
-            Ok(Some(_)) => held += 1,
-            Ok(None) => break None,
-            Err(e) => break Some(e.code),
-        }
-    };
-    assert_eq!(failed, Some(Code::Resources));
-    assert!(held > 0 && held < ROWS, "{held} rows held before it");
-    assert!(c.fetch().unwrap().is_none(), "no more after it");
-}
-
-/// K_OUT, a FETCH's target.
-fn target() -> Params {
-    Params::new().declare("K_OUT", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null)
-}
-
-/// The K that `FETCH how FROM C` gives, none for no data.
-fn fetched(s: &Session, p: &mut Params, how: &str) -> Option<String> {
-    match s.execute(&format!("FETCH {how} FROM C INTO K_OUT"), p).unwrap() {
-        Completion::NoData => None,
-        _ => Some(p.value("K_OUT").to_string()),
+    for (q, expected) in PROBED.iter().zip(&in_memory) {
+        assert_eq!(&rows(&s, q).unwrap(), expected, "{q}");
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D38 [ISO/IEC 9075:1992 §13.3 GR2–GR5].
-/// Regression test (R-TEST-7): a SCROLL cursor kept every row it read in
-/// memory. With WORK_MEMORY at its least, it keeps them in a spill area,
-/// and moves to the row each orientation names, as it does in memory:
-/// NEXT, PRIOR, FIRST, LAST, ABSOLUTE and RELATIVE, back and forth across
-/// the rows it spilled.
-#[test]
-fn a_scroll_cursor_keeps_its_rows_by_spilling() {
-    let (db, counted, s) = counted_database();
-    let keys = rows(&s, "SELECT K FROM T").unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-    s.declare_cursor("DECLARE C SCROLL CURSOR FOR SELECT K FROM T").unwrap();
-    let mut p = target();
-    s.execute("OPEN C", &mut p).unwrap();
-    assert_eq!(counted.taken(), 0, "nothing read yet");
-    let at = |i: usize| Some(keys[i].clone());
-    assert_eq!(fetched(&s, &mut p, "NEXT"), at(0));
-    assert_eq!(fetched(&s, &mut p, "ABSOLUTE 2000"), at(1999));
-    assert!(counted.taken() > 0, "the rows read kept in a spill area");
-    assert_eq!(fetched(&s, &mut p, "PRIOR"), at(1998));
-    assert_eq!(fetched(&s, &mut p, "RELATIVE -1500"), at(498));
-    assert_eq!(fetched(&s, &mut p, "FIRST"), at(0));
-    assert_eq!(fetched(&s, &mut p, "LAST"), at(ROWS - 1));
-    assert_eq!(fetched(&s, &mut p, "ABSOLUTE -3000"), at(0));
-    assert_eq!(fetched(&s, &mut p, "RELATIVE 2999"), at(ROWS - 1));
-    assert_eq!(fetched(&s, &mut p, "NEXT"), None, "after the last");
-    assert_eq!(fetched(&s, &mut p, "PRIOR"), at(ROWS - 1));
-    assert_eq!(fetched(&s, &mut p, "ABSOLUTE 1500"), at(1499));
-    assert_eq!(fetched(&s, &mut p, "RELATIVE 0"), at(1499));
-    assert_eq!(fetched(&s, &mut p, "NEXT"), at(1500));
-    for i in (0..ROWS).rev().step_by(97) {
-        assert_eq!(fetched(&s, &mut p, &format!("ABSOLUTE {}", i + 1)), at(i), "row {i}");
+/// The built-in provider, whose tables refuse to give a key's values at
+/// once (`SpillTable::get`).
+struct Streamed;
+
+impl Spill for Streamed {
+    fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
+        Ok(Box::new(StreamedArea(PagedSpill.area(memory, temp, area)?)))
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D38 [ISO/IEC 9075:1992 §13.1 GR3, §13.9].
-/// Regression test (R-TEST-7): an updatable cursor sorted its rows in
-/// memory. With WORK_MEMORY at its least, its rows, in its order, are
-/// sorted at OPEN in a work area that spills; it gives them in the order it
-/// gives in memory, and a positioned UPDATE changes the row it is on.
-#[test]
-fn an_updatable_cursor_sorts_its_rows_by_spilling() {
-    let (db, counted, s) = counted_database();
-    // Ordered by G, of ties, a key of the row each FETCH gives with K.
-    s.declare_cursor("DECLARE C CURSOR FOR SELECT G, K FROM T ORDER BY G DESC FOR UPDATE OF S").unwrap();
-    let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let next = |p: &mut Params| match s.execute("FETCH NEXT FROM C INTO G_OUT, K_OUT", p).unwrap() {
-        Completion::NoData => None,
-        _ => Some((p.value("G_OUT").to_string(), p.value("K_OUT").to_string())),
-    };
-    let mut orders = Vec::new();
-    for small in [false, true] {
-        if small {
-            db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-        }
-        let mut p = target().declare("G_OUT", integer, Value::Null);
-        s.execute("OPEN C", &mut p).unwrap();
-        assert_eq!(counted.taken() > 0, small, "sorted by spilling");
-        let order: Vec<Option<(String, String)>> = (0..ROWS).map(|_| next(&mut p)).collect();
-        assert!(order.iter().all(Option::is_some));
-        s.execute("UPDATE T SET S = 'last' WHERE CURRENT OF C", &mut p).unwrap();
-        assert_eq!(next(&mut p), None);
-        s.execute("CLOSE C", &mut p).unwrap();
-        let (_, last) = order.last().cloned().flatten().unwrap();
-        assert_eq!(rows(&s, "SELECT K FROM T WHERE S = 'last'").unwrap(), [last]);
-        s.rollback().unwrap();
-        orders.push(order);
+struct StreamedArea(Box<dyn SpillArea>);
+
+impl SpillArea for StreamedArea {
+    fn table(&self) -> turborel::error::Result<Box<dyn SpillTable>> {
+        Ok(Box::new(StreamedTable(self.0.table()?)))
     }
-    assert_eq!(orders[0], orders[1]);
+    fn run(&self) -> turborel::error::Result<Box<dyn SpillRun>> {
+        self.0.run()
+    }
 }
 
-/// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.5 GR1, §8.7 GR3, §8.12
-/// GR1; ISO/IEC 9075:1992 §13.10 GR6]. Regression test (R-TEST-7): a
-/// searched UPDATE or DELETE, and an INSERT of a query, held every row it
-/// chose in memory. With WORK_MEMORY at its least, each holds them in a
-/// spill area, every one chosen before any is changed, and changes the
-/// rows it changes in memory: an INSERT of the table's own rows adds each
-/// once, an UPDATE of the key it chooses rows by changes each once.
-#[test]
-fn writes_hold_their_rows_by_spilling() {
-    let mut tables = Vec::new();
-    for small in [false, true] {
-        let (db, counted, s) = counted_database();
-        // Its changes held in memory, so the statements' rows alone spill.
-        s.run("ALTER TABLE T SET (TRANSACTIONS.HELD_BYTES = 67108864)").unwrap();
-        if small {
-            db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-        }
-        for write in [
-            "INSERT INTO T SELECT K + 3000, G, S FROM T",
-            "UPDATE T SET K = K + 10000, S = 'u' WHERE G < 500 AND K < 10000",
-            "DELETE FROM T WHERE K >= 10000 AND G < 250",
-        ] {
-            s.run(write).unwrap();
-            assert_eq!(counted.taken() > 0, small, "{write}");
-        }
-        assert_eq!(rows(&s, "SELECT COUNT(*) FROM T").unwrap(), ["4500"]);
-        assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE K >= 20000").unwrap(), ["0"], "each row updated once");
-        tables.push(crate::common::sorted(&s, "SELECT K, G, S FROM T"));
+struct StreamedTable(Box<dyn SpillTable>);
+
+impl SpillTable for StreamedTable {
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> turborel::error::Result<()> {
+        self.0.insert(key, value)
     }
-    assert_eq!(tables[0], tables[1]);
+    fn get(&self, _: &[u8]) -> turborel::error::Result<Vec<Vec<u8>>> {
+        Err(SqlError::new(Code::Api, "[DESIGN] a key's values gathered"))
+    }
+    fn values(&self, key: &[u8]) -> turborel::error::Result<Records> {
+        self.0.values(key)
+    }
+    fn remove(&mut self, key: &[u8], value: &[u8]) -> turborel::error::Result<bool> {
+        self.0.remove(key, value)
+    }
+}
+
+/// The built-in provider, keeping the most bytes the memory budget had
+/// reserved as an area was asked for: what the areas made before held,
+/// and every other reservation.
+#[derive(Clone, Default)]
+pub struct Peak(pub Arc<Mutex<usize>>);
+
+impl Spill for Peak {
+    fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
+        let mut most = self.0.lock().unwrap();
+        *most = (*most).max(memory.reserved());
+        Spill::area(&PagedSpill, memory, temp, area)
+    }
+}
+
+impl Peak {
+    /// The most reserved since the last call.
+    pub fn taken(&self) -> usize {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+/// What `Cancelling` cancels: a session's statement, once.
+type Armed = Arc<Mutex<Option<Arc<Stop>>>>;
+
+/// The built-in provider, whose runs, once armed with a session's
+/// canceller (`Cancelling::arm`), cancel what the session runs the first
+/// time one is read back: as a spilled operator's passes over what it
+/// wrote begin, after it read its operands' rows.
+#[derive(Clone, Default)]
+pub struct Cancelling(Armed);
+
+impl Cancelling {
+    /// Cancels what `s` runs as a run is next read back.
+    pub fn arm(&self, s: &Session) {
+        *self.0.lock().unwrap() = Some(s.canceller());
+    }
+
+    /// Whether it cancelled since it was armed.
+    pub fn fired(&self) -> bool {
+        self.0.lock().unwrap().is_none()
+    }
+}
+
+impl Spill for Cancelling {
+    fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
+        let made = Spill::area(&PagedSpill, memory, temp, area)?;
+        Ok(Box::new(CancellingArea(made, Arc::clone(&self.0))))
+    }
+}
+
+struct CancellingArea(Box<dyn SpillArea>, Armed);
+
+impl SpillArea for CancellingArea {
+    fn table(&self) -> turborel::error::Result<Box<dyn SpillTable>> {
+        self.0.table()
+    }
+    fn run(&self) -> turborel::error::Result<Box<dyn SpillRun>> {
+        Ok(Box::new(CancellingRun(self.0.run()?, Arc::clone(&self.1))))
+    }
+}
+
+struct CancellingRun(Box<dyn SpillRun>, Armed);
+
+impl CancellingRun {
+    fn fire(armed: &Armed) {
+        if let Some(stop) = armed.lock().unwrap().take() {
+            stop.cancel();
+        }
+    }
+}
+
+impl SpillRun for CancellingRun {
+    fn push(&mut self, record: &[u8]) -> turborel::error::Result<()> {
+        self.0.push(record)
+    }
+    fn records(&mut self) -> turborel::error::Result<Records> {
+        CancellingRun::fire(&self.1);
+        self.0.records()
+    }
+    fn into_records(self: Box<Self>) -> turborel::error::Result<Records> {
+        CancellingRun::fire(&self.1);
+        self.0.into_records()
+    }
 }

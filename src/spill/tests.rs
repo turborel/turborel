@@ -1,6 +1,7 @@
-//! Unit tests of normalized keys (`spill.rs`).
+//! Unit tests of normalized keys, and of the bytes a row is counted as
+//! holding (`spill.rs`).
 
-use super::{bucket_key, norm_key, put_norm};
+use super::{bucket_key, heap_bytes, norm_key, put_norm, row_bytes};
 use crate::value::datetime::{Field, Moment};
 use crate::value::interval::{Interval, Qualifier};
 use crate::value::types::unregistered;
@@ -73,4 +74,32 @@ fn keys_of_every_kind() {
         assert_eq!(Some(key.clone()), bucket(&values[*n].clone()).map(|b| bucket_key(&[b])), "alike of {n}");
         assert!(keyed.iter().all(|(m, other)| m == n || other != key), "{n} differs of the others");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D38, a row's bytes: what a value holds
+/// apart from itself counts toward its row's, as an operator bounds its
+/// work area by them, of strings, bit strings and values of a kind beyond
+/// the standard alike; the values that hold nothing apart count none.
+/// Regression test (R-TEST-7): a bit string or a plug-in's value counted
+/// as the size of a value alone, however many bytes it held, so rows of
+/// them overran WORK_MEMORY.
+#[test]
+fn rows_count_the_bytes_their_values_hold() {
+    let long = "1".repeat(8000usize);
+    let bits = Value::Bits(Bits::of_bits(&long).unwrap());
+    assert_eq!(heap_bytes(&bits), 1000usize);
+    let blob = unregistered("BLOB", "x", &[7u8; 4096]);
+    let Value::Extension(e) = &blob else { panic!("an extension value") };
+    let held = e.bytes.len();
+    assert!(held >= 4096usize);
+    assert_eq!(heap_bytes(&blob), held);
+    assert_eq!(heap_bytes(&Value::Char("abc".into())), 3usize);
+    let day_hour = Qualifier { start: Field::Day, end: Field::Hour, leading: 2, fraction: 0 };
+    for v in
+        [Value::Null, Value::Exact(Decimal::new(1, 0)), Value::Approx(1.0), Value::Interval(Interval { units: 1, qualifier: day_hour })]
+    {
+        assert_eq!(heap_bytes(&v), 0usize, "{v:?}");
+    }
+    let empty = row_bytes(&vec![Value::Null, Value::Null]);
+    assert_eq!(row_bytes(&vec![bits, blob]), empty + 1000usize + held);
 }

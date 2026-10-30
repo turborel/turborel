@@ -83,7 +83,7 @@ struct PagedArea(usize, Arc<File>);
 
 impl SpillArea for PagedArea {
     fn table(&self) -> Result<Box<dyn SpillTable>> {
-        let table = HashTable::create(Arc::clone(self.1.pool()?), self.1.id)?;
+        let table = Arc::new(HashTable::create(Arc::clone(self.1.pool()?), self.1.id)?);
         Ok(Box::new(PagedTable { file: Arc::clone(&self.1), table }))
     }
 
@@ -92,10 +92,11 @@ impl SpillArea for PagedArea {
     }
 }
 
-/// A table of an area.
+/// A table of an area: shared with the reads of a key's values
+/// (`SpillTable::values`).
 struct PagedTable {
     file: Arc<File>,
-    table: HashTable,
+    table: Arc<HashTable>,
 }
 
 impl PagedTable {
@@ -111,14 +112,19 @@ impl PagedTable {
 
     /// The value an entry holds.
     fn value(&self, entry: &[u8]) -> Result<Vec<u8>> {
-        match entry.split_first() {
-            Some((&INLINE, value)) => Ok(value.to_vec()),
-            Some((&PAGED, id)) => {
-                let id = <[u8; 8]>::try_from(id).map(u64::from_le_bytes).map_err(|_| corrupt())?;
-                Ok(self.file.pool()?.read(self.file.id, id)?.to_vec())
-            }
-            Some(_) | None => Err(corrupt()),
+        value_of(&self.file, entry)
+    }
+}
+
+/// The value an entry of a table of `file` holds.
+fn value_of(file: &File, entry: &[u8]) -> Result<Vec<u8>> {
+    match entry.split_first() {
+        Some((&INLINE, value)) => Ok(value.to_vec()),
+        Some((&PAGED, id)) => {
+            let id = <[u8; 8]>::try_from(id).map(u64::from_le_bytes).map_err(|_| corrupt())?;
+            Ok(file.pool()?.read(file.id, id)?.to_vec())
         }
+        Some(_) | None => Err(corrupt()),
     }
 }
 
@@ -134,6 +140,13 @@ impl SpillTable for PagedTable {
 
     fn get(&self, key: &[u8]) -> Result<Vec<Vec<u8>>> {
         self.table.get(key)?.iter().map(|e| self.value(e)).collect()
+    }
+
+    /// Read a page of the key's bucket at a time, a value kept in a page of
+    /// its own as it is taken.
+    fn values(&self, key: &[u8]) -> Result<Records> {
+        let file = Arc::clone(&self.file);
+        Ok(Box::new(self.table.values(key).map(move |entry| entry.and_then(|e| value_of(&file, &e)))))
     }
 
     fn remove(&mut self, key: &[u8], value: &[u8]) -> Result<bool> {

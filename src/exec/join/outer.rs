@@ -5,9 +5,14 @@
 //! of columns, the right operand is hashed on them while it fits the work
 //! area, and both operands are partitioned once it does not
 //! (`outer/spilled.rs`); with none, it is read again for each left row, in
-//! memory or from a run of the spill area (`rescan.rs`). Split from
-//! exec/join.rs (RULES.md R-SIZE-2).
+//! memory or from a run of the spill area (`rescan.rs`). A right operand
+//! held in memory has a flag for each row, whether it matched, counted in
+//! the work area with it; one in a run has none, and of a preserved right,
+//! the left rows are kept in a run too, so each right row is tried again
+//! with every left row once the left is read. Split from exec/join.rs
+//! (RULES.md R-SIZE-2).
 
+mod chunked;
 mod spilled;
 
 use std::cmp::Ordering;
@@ -22,10 +27,14 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, OuterJoin, Truth};
 use crate::physical::Plan;
-use crate::spill::row_bytes;
+use crate::spill::{SpillRun, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::{Bucket, Value, compare};
+
+/// The bytes a right row held for an outer join on keys takes beyond its
+/// own: its place in its bucket, and its flag, whether it matched.
+pub(super) const PLACE_BYTES: usize = size_of::<usize>() + 1;
 
 /// What an outer join matches on, and keeps.
 pub(super) struct Spec {
@@ -78,18 +87,18 @@ pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return failed(SqlError::new(Code::Api, "[DESIGN] an outer join is not one"));
     };
     let spec = Spec { kind, keys, cond, widths, runner: Runner::new(db, tx) };
-    let mut work = Work::new(db);
+    let mut work = Work::of(db, tx);
     let rows = execute(*right, db, tx);
     if spec.keys.is_empty() {
         return match Rescanned::of(rows, &mut work) {
-            Ok((scanned, count)) => Box::new(OuterRows::new(execute(*left, db, tx), (Side::Scanned(scanned), count), spec)),
+            Ok((scanned, count)) => Box::new(OuterRows::new(execute(*left, db, tx), (Side::Scanned(scanned), count), (spec, work))),
             Err(e) => failed(e),
         };
     }
     match held(rows, &spec.keys, work.limit()) {
         Ok(Held::All(table)) => {
             let count = table.rows.len();
-            Box::new(OuterRows::new(execute(*left, db, tx), (Side::Hashed(table), count), spec))
+            Box::new(OuterRows::new(execute(*left, db, tx), (Side::Hashed(table), count), (spec, work)))
         }
         Ok(Held::Part(rows, rest)) => spilled::joined(execute(*left, db, tx), (rows, rest), &spec, work),
         Err(e) => failed(e),
@@ -97,10 +106,10 @@ pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 }
 
 /// The right operand of an outer join on keys, in memory: its rows, and for
-/// each bucket of key values the rows with it, in order.
+/// each bucket of key values the places of the rows with it, in order.
 struct Table {
     rows: Arc<Vec<Row>>,
-    buckets: HashMap<Vec<Bucket>, Vec<usize>>,
+    buckets: HashMap<Vec<Bucket>, Arc<[usize]>>,
 }
 
 /// What of an outer join's right operand fits its work area: all of it,
@@ -111,12 +120,12 @@ enum Held {
 }
 
 /// The right operand `rows`, hashed on its columns of `keys`, if it holds
-/// no more than `limit` bytes.
+/// no more than `limit` bytes, with the places and flags of its rows.
 fn held(mut rows: RowIter, keys: &[(usize, usize)], limit: usize) -> Result<Held> {
     let (mut kept, mut bytes, mut buckets) = (Vec::new(), 0_usize, HashMap::<Vec<Bucket>, Vec<usize>>::new());
     while let Some(r) = rows.next() {
         let row = r?;
-        bytes = bytes.saturating_add(row_bytes(&row));
+        bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
         if let Some(b) = key(&row, keys.iter().map(|k| k.1))? {
             buckets.entry(b).or_default().push(kept.len());
         }
@@ -125,6 +134,7 @@ fn held(mut rows: RowIter, keys: &[(usize, usize)], limit: usize) -> Result<Held
             return Ok(Held::Part(kept, rows));
         }
     }
+    let buckets = buckets.into_iter().map(|(b, places)| (b, Arc::from(places))).collect();
     Ok(Held::All(Table { rows: Arc::new(kept), buckets }))
 }
 
@@ -143,9 +153,10 @@ impl Side {
     fn candidates(&mut self, l: &Row, keys: &[(usize, usize)]) -> Result<Numbered> {
         match self {
             Side::Hashed(table) => {
-                let found = key(l, keys.iter().map(|k| k.0))?.and_then(|b| table.buckets.get(&b).cloned()).unwrap_or_default();
+                let found = key(l, keys.iter().map(|k| k.0))?.and_then(|b| table.buckets.get(&b).cloned()).unwrap_or_else(|| Arc::from([]));
                 let rows = Arc::clone(&table.rows);
-                Ok(Box::new(found.into_iter().filter_map(move |n| rows.get(n).cloned().map(|r| Ok((n, r))))))
+                let places = (0..found.len()).filter_map(move |at| found.get(at).copied());
+                Ok(Box::new(places.filter_map(move |n| rows.get(n).cloned().map(|r| Ok((n, r))))))
             }
             Side::Scanned(right) => Ok(numbered(right.pass()?)),
         }
@@ -165,26 +176,39 @@ fn numbered(pass: Pass) -> Numbered {
     Box::new(pass.enumerate().map(|(n, r)| r.map(|row| (n, row))))
 }
 
+/// How an outer join knows which right rows matched none: a flag for each,
+/// of a right operand held in memory; or, of one in a run, the left rows,
+/// kept in a run of the work area if the right is preserved, each right
+/// row tried with them again.
+enum Matched {
+    Flags(Vec<bool>),
+    Lefts(Option<Box<dyn SpillRun>>),
+}
+
 /// The rows of an outer join, as they are pulled.
 struct OuterRows {
     spec: Spec,
     left: RowIter,
     right: Side,
-    /// Whether each row of the right operand has matched a row of the left.
-    matched: Vec<bool>,
+    matched: Matched,
     /// The left row being paired, the right rows it is still to be tried
     /// with, and whether one matched it.
     current: Option<(Row, Numbered, bool)>,
     /// Once the left operand is read, the right rows still to look at, if
     /// the right is preserved.
     tail: Option<Numbered>,
+    work: Work,
 }
 
 impl OuterRows {
     /// The outer join of `left` with `right`, of `count` rows, as `spec`
-    /// says.
-    fn new(left: RowIter, (right, count): (Side, usize), spec: Spec) -> OuterRows {
-        OuterRows { spec, left, right, matched: vec![false; count], current: None, tail: None }
+    /// says, in `work`.
+    fn new(left: RowIter, (right, count): (Side, usize), (spec, work): (Spec, Work)) -> OuterRows {
+        let matched = match &right {
+            Side::Scanned(Rescanned::Spilled(..)) => Matched::Lefts(None),
+            Side::Scanned(Rescanned::Held(_)) | Side::Hashed(_) => Matched::Flags(vec![false; count]),
+        };
+        OuterRows { spec, left, right, matched, current: None, tail: None, work }
     }
 
     /// The next row of the left row being paired, if it gives one more;
@@ -194,7 +218,9 @@ impl OuterRows {
         while let Some((n, r)) = candidates.next().transpose()? {
             if let Some(joined) = self.spec.joined(l, &r)? {
                 *found = true;
-                if let Some(m) = self.matched.get_mut(n) {
+                if let Matched::Flags(flags) = &mut self.matched
+                    && let Some(m) = flags.get_mut(n)
+                {
                     *m = true;
                 }
                 return Ok(Some(joined));
@@ -203,6 +229,40 @@ impl OuterRows {
         let alone = (!*found && self.spec.kind.keeps_left()).then(|| self.spec.left_alone(l));
         self.current = None;
         Ok(alone)
+    }
+
+    /// Starts pairing left row `l`, kept for the right's rows that match
+    /// none if they are found so.
+    fn begin(&mut self, l: Row) -> Result<()> {
+        if self.spec.kind.keeps_right()
+            && let Matched::Lefts(lefts) = &mut self.matched
+        {
+            let run = match lefts {
+                Some(run) => run,
+                None => lefts.insert(self.work.run()?),
+            };
+            run.push(&row_record(&l))?;
+        }
+        let candidates = self.right.candidates(&l, &self.spec.keys)?;
+        self.current = Some((l, candidates, false));
+        Ok(())
+    }
+
+    /// Whether right row `r`, at place `n`, matched no left row.
+    fn unmatched(&mut self, (n, r): (usize, &Row)) -> Result<bool> {
+        match &mut self.matched {
+            Matched::Flags(flags) => Ok(!flags.get(n).copied().unwrap_or(true)),
+            Matched::Lefts(None) => Ok(true),
+            Matched::Lefts(Some(lefts)) => {
+                for record in lefts.records()? {
+                    let l = record_row(&record?, self.work.types())?;
+                    if self.spec.joined(&l, r)?.is_some() {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+        }
     }
 
     /// The next row, if there is one.
@@ -216,14 +276,13 @@ impl OuterRows {
             }
             if let Some(tail) = &mut self.tail {
                 let Some((n, r)) = tail.next().transpose()? else { return Ok(None) };
-                if !self.matched.get(n).copied().unwrap_or(true) {
+                if self.unmatched((n, &r))? {
                     return Ok(Some(self.spec.right_alone(&r)));
                 }
                 continue;
             }
             if let Some(l) = self.left.next().transpose()? {
-                let candidates = self.right.candidates(&l, &self.spec.keys)?;
-                self.current = Some((l, candidates, false));
+                self.begin(l)?;
             } else {
                 if !self.spec.kind.keeps_right() {
                     return Ok(None);

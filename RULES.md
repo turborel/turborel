@@ -1310,7 +1310,9 @@ catalog to keep in step.
 - An operator that holds rows (a sort, grouping, DISTINCT, a hash join's
   right operand, EXCEPT and INTERSECT) holds up to WORK_MEMORY of them in
   memory, a setting a session may set for itself: its statements read the
-  settings it set over the database's (D36). Past that it spills to an area of as many bytes, reserved of the
+  settings it set over the database's (D36); a row counts its values and
+  what each holds apart from itself (a string's characters, a bit string's
+  or a plug-in's value's bytes). Past that it spills to an area of as many bytes, reserved of the
   budget: a temporary pager file whose buffer pool is the area, so
   eviction writes it to disk; its creation not made durable
   (`Pager::create_scratch`), as nothing reads it after a crash, so a
@@ -1337,7 +1339,10 @@ catalog to keep in step.
   second's rows as counts; grouping numbers each group by its first row.
   Each partitions a partition again while it outgrows the work area, as
   many times as SPILL.PARTITION_DEPTH says; past that, DISTINCT, EXCEPT
-  and INTERSECT keep its keys in a table of the spill area.
+  and INTERSECT keep its keys in a table of the spill area, and a hash
+  join, as for a partition that does not shrink, its right rows, each probe
+  reading its key's rows from the table as it joins them
+  (`SpillTable::values`), never all at once.
 - Runs are written in batches of SPILL_BATCH bytes; an operator reads or
   writes as many runs at once as WORK_MEMORY holds two batches of. A run
   read once gives its pages back as it is read (`SpillRun::into_records`),
@@ -1348,15 +1353,26 @@ catalog to keep in step.
   groups a pass has no room for left to the next.
 - An outer join on keys is partitioned as the hash join is, both operands
   numbered: each left row with its matches or nulls, merged back into the
-  left's order, then the right's rows that matched none, in the right's.
+  left's order, then the right's rows that matched none, in the right's;
+  its partitions partitioned again as the hash join's are. One that does
+  not shrink, or is past SPILL.PARTITION_DEPTH, is joined a part of the
+  work area's size at a time, the left partition read again for each part,
+  whether each left row matched kept in a run beside it. A right operand
+  held in memory has a flag for each row, whether it matched, counted in
+  the work area with it.
   A product, and an outer join on no keys, read their right operand again
   for each left row, from a run of the spill area once it outgrows the
-  work area.
+  work area; then, of a preserved right, the outer join keeps no flags but
+  the left rows, in a run, and tries each right row with them again.
 - A subquery's rows spill as a product's right operand does, and a
   decorrelated subquery's, kept by key, as a hash join's; the rows kept
-  for each set of outer values are kept while they fit the work area. The
-  values a DISTINCT set function took, of every group of a grouping pass,
-  are keys of one bag, which spills. IN, NOT IN, ALL and SOME of a row,
+  for each set of outer values are kept while they fit the work area in
+  all, each counted with its key and entry, rows held in memory twice, for
+  what a comparison makes of them, and rows that spilled as their area, so
+  they are kept only alone; a subquery's with no outer references always,
+  as they are its only run. The values a DISTINCT set function took, of
+  every group of a grouping pass, are keys of one bag, which spills: the
+  grouping's work area split in two, half its groups', half the bag's. IN, NOT IN, ALL and SOME of a row,
   nulls in it or in the subquery's rows or not, are answered from what is
   made once of those rows: for each pattern of nulls they have, a hash of
   them on the columns neither they nor the row has null; each column's
@@ -1637,7 +1653,10 @@ was made, so mechanisms are plug-ins, as everything else is.
   running then, so one that arrives as a statement ends never stops the
   next, and one made while nothing runs does nothing.
 - A statement looks as it reads each row of a table or an index, before
-  and after the read, and while it waits for a lock, which wakes every 20
+  and after the read; as a spilled operator reads back each record of the
+  runs of its work area, so passes over partitions and runs that read no
+  table (grouping, EXCEPT, INTERSECT, joins, products) stop too; and
+  while it waits for a lock, which wakes every 20
   ms to look. A cancelled statement fails (SQLCODE -920, SQLSTATE TB920)
   and is undone as any failed statement is [X3.135-1986 §7.3 GR3b i]; its
   transaction goes on. A cursor's rows cut short by a cancel stay so:

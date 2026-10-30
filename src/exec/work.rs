@@ -4,6 +4,11 @@
 //! needed (`spill.rs`). And the keys an operator counts, kept in memory
 //! until they outgrow it, then in a table of its area. Split from exec.rs
 //! (RULES.md R-SIZE-2).
+//!
+//! The runs of an operator's area, of the statement that runs it, look for
+//! a cancel of it as each record is read back (RULES.md D44): the passes of
+//! a spilled operator read no table's rows, which look so, yet may read
+//! many records.
 
 use crate::value::types::TypeRegistry;
 use std::collections::HashMap;
@@ -12,7 +17,8 @@ use std::sync::Arc;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::settings::{SPILL_BATCH, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, WORK_MEMORY, batch_bytes, work_bytes};
-use crate::spill::{Area, SpillArea, SpillRun, SpillTable, WorkAreas};
+use crate::spill::{Area, Records, SpillArea, SpillRun, SpillTable, WorkAreas};
+use crate::txn::{Stop, TxId, checked};
 
 /// The bytes a key held in memory takes beyond its own: its map entry.
 pub(super) const ENTRY_BYTES: usize = 48;
@@ -30,6 +36,9 @@ pub(super) struct Work {
     /// The types beyond the standard the rows it spills may hold values of,
     /// read back by them (`spill::record_row`).
     types: TypeRegistry,
+    /// What cancels the statement it works for, looked at as its runs are
+    /// read back; none if it is not known.
+    stop: Option<Arc<Stop>>,
 }
 
 impl Work {
@@ -37,14 +46,30 @@ impl Work {
     pub(super) fn new(db: &State) -> Work {
         let (limit, batch) = (work_bytes(db.settings.get(WORK_MEMORY)), batch_bytes(db.settings.get(SPILL_BATCH)));
         let partitions = (db.settings.count(SPILL_PARTITIONS), db.settings.count(SPILL_PARTITION_DEPTH));
-        Work { limit, batch, partitions, areas: Arc::clone(&db.work), area: None, types: db.types.clone() }
+        Work { limit, batch, partitions, areas: Arc::clone(&db.work), area: None, types: db.types.clone(), stop: None }
+    }
+
+    /// The work area of an operator of `db` run by `tx`'s statement: its
+    /// runs read back only while the statement is not cancelled.
+    pub(super) fn of(db: &State, tx: TxId) -> Work {
+        Work { stop: db.tx.stop_of(tx), ..Work::new(db) }
     }
 
     /// A work area of the same settings, of its own: for an operator's
     /// part that holds rows apart from the rest.
     pub(super) fn another(&self) -> Work {
-        let (limit, batch, partitions) = (self.limit, self.batch, self.partitions);
-        Work { limit, batch, partitions, areas: Arc::clone(&self.areas), area: None, types: self.types.clone() }
+        let (limit, batch, partitions, stop) = (self.limit, self.batch, self.partitions, self.stop.clone());
+        Work { limit, batch, partitions, areas: Arc::clone(&self.areas), area: None, types: self.types.clone(), stop }
+    }
+
+    /// Half of it, of its own, the other half left to it, an area of each
+    /// half made of each when needed: for a part of an operator that holds
+    /// rows beside it, so the two hold no more than one work area does.
+    /// Made before it makes its area.
+    pub(super) fn split(&mut self) -> Work {
+        let half = self.limit.div_ceil(2);
+        self.limit = self.limit.saturating_sub(half);
+        Work { limit: half, ..self.another() }
     }
 
     /// The types beyond the standard the rows it spills may hold values of.
@@ -97,7 +122,33 @@ impl Work {
     ///
     /// SQLCODE -918 if the area cannot be reserved; the area's errors.
     pub(super) fn run(&mut self) -> Result<Box<dyn SpillRun>> {
-        self.area()?.run()
+        let run = self.area()?.run()?;
+        Ok(match &self.stop {
+            Some(stop) => Box::new(Stopped { run, stop: Arc::clone(stop) }),
+            None => run,
+        })
+    }
+}
+
+/// A run whose records are read back only while the statement that wrote
+/// them is not cancelled (`txn::checked`).
+struct Stopped {
+    run: Box<dyn SpillRun>,
+    stop: Arc<Stop>,
+}
+
+impl SpillRun for Stopped {
+    fn push(&mut self, record: &[u8]) -> Result<()> {
+        self.run.push(record)
+    }
+
+    fn records(&mut self) -> Result<Records> {
+        Ok(Box::new(checked(self.run.records()?, Some(Arc::clone(&self.stop)))))
+    }
+
+    fn into_records(self: Box<Self>) -> Result<Records> {
+        let Stopped { run, stop } = *self;
+        Ok(Box::new(checked(run.into_records()?, Some(stop))))
     }
 }
 
