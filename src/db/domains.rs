@@ -433,13 +433,14 @@ impl State {
     /// keeps its data type, and takes its default if it has none of its
     /// own [GR1a, GR1b]; each copy of a domain constraint on it becomes a
     /// constraint of its table, where the domain's owner could add it, and
-    /// goes otherwise [GR1c]; with CASCADE, the views and constraints that
-    /// CAST to it go, as the revoke of USAGE on it takes them [GR2].
+    /// goes otherwise [GR1c]; with CASCADE, the views, constraints and
+    /// assertions that CAST to it go, as the revoke of USAGE on it takes
+    /// them [GR2; §11.37 SR13–SR15, GR5].
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such domain [SR1], or, not `cascade`, a
-    /// column, view or constraint uses it [SR2].
+    /// column, view, constraint or assertion uses it [SR2].
     pub(super) fn drop_domain(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         let domain =
             self.catalog.domain(qn).cloned().ok_or_else(|| rule(format!("[ISO/IEC 9075:1992 §11.27 SR1] there is no domain {qn}")))?;
@@ -450,7 +451,7 @@ impl State {
         let owner = owner_of(&*self.catalog, &qn.auth).to_owned();
         let mut dropped = Dropped::default();
         let mut catalog = self.catalog.duplicate();
-        for t in self.catalog.tables().into_iter().filter(|t| t.columns.iter().any(|c| of_domain(c, qn) || casts_any(t, qn))) {
+        for t in self.catalog.tables().into_iter().filter(|t| t.columns.iter().any(|c| of_domain(c, qn)) || casts_any(t, qn)) {
             let mut next = t.clone();
             for c in next.columns.iter_mut().filter(|c| of_domain(c, qn)) {
                 if c.default.is_none() {
@@ -471,6 +472,10 @@ impl State {
             next.constraints.retain(|c| !casts_check(c, qn));
             catalog.put_domain(next);
         }
+        for assertion in self.catalog.assertions().into_iter().filter(|a| casts_check(a, qn)) {
+            catalog.remove_assertion(&assertion.name);
+            dropped.names.push(assertion.name.clone());
+        }
         catalog.remove_domain(qn);
         self.catalog = Arc::from(catalog);
         // [GR2] the views that CAST to it, and those that read them.
@@ -486,7 +491,8 @@ impl State {
     }
 
     /// What uses domain `qn` [ISO/IEC 9075:1992 §11.27 SR2]: each column of
-    /// it, and each view and constraint that CASTs to it, as named.
+    /// it, and each view, constraint and assertion that CASTs to it, as
+    /// named.
     fn domain_users(&self, qn: &QualifiedName) -> Vec<String> {
         let mut users = Vec::new();
         for t in self.catalog.tables() {
@@ -497,6 +503,7 @@ impl State {
         for d in self.catalog.domains().into_iter().filter(|d| d.name != *qn) {
             users.extend(d.constraints.iter().filter(|c| casts_check(c, qn)).map(|c| format!("constraint {}", c.name)));
         }
+        users.extend(self.catalog.assertions().into_iter().filter(|a| casts_check(a, qn)).map(|a| format!("assertion {}", a.name)));
         users
     }
 }

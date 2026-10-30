@@ -243,6 +243,23 @@ fn views_that_cast_to_a_domain_11_27() {
     assert_eq!(code(&a, "SELECT M FROM V"), Code::SyntaxRule, "V went");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.27 SR2, GR2; §11.37
+/// SR15, GR5] an assertion whose search condition CASTs to a domain keeps
+/// it from being dropped with RESTRICT, and goes with it under CASCADE.
+#[test]
+fn assertions_that_cast_to_a_domain_11_27() {
+    let db = domains();
+    let a = db.session("A");
+    a.run("ALTER TABLE T DROP COLUMN K CASCADE").unwrap();
+    a.run("CREATE ASSERTION SMALL CHECK (NOT EXISTS (SELECT * FROM T WHERE CAST(N AS AMOUNT) > 100))").unwrap();
+    a.commit().unwrap();
+    assert_eq!(exec(&a, "DROP DOMAIN AMOUNT RESTRICT").err(), Some(Code::SyntaxRule), "SMALL casts to it");
+    a.run("DROP DOMAIN AMOUNT CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(count(&a, "SELECT * FROM INFORMATION_SCHEMA.ASSERTIONS"), 0, "SMALL went");
+    a.run("INSERT INTO T VALUES (500)").unwrap();
+}
+
 /// Verifies: [DESIGN] RULES.md D25: domains, a column's domain, and their
 /// changes are logged and kept by a checkpoint: as they were after a crash
 /// and after a clean close.
