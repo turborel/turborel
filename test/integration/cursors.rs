@@ -544,3 +544,28 @@ fn parameters_are_checked_when_used_5_6() {
         Params::new().declare("K", DataType::Approximate { precision: 24, spelled: Spelled::Float }, Value::Exact(Decimal::new(9, 0)));
     assert_eq!(insert(&mut p, "INSERT INTO T (ID, F) VALUES (9, K)"), Ok(Completion::Success));
 }
+
+/// Verifies: [X3.135-1986 §5.6 GR1]; [EXTENSION] [ISO/IEC 9075:1992 §6.1,
+/// §9.2] a host program's argument of a bit string, a datetime or an
+/// interval suits a parameter of its type, as a string or a number suits
+/// one of its: each assigned as a column's value is; one of another kind
+/// is refused.
+#[test]
+fn parameters_of_every_standard_type_5_6() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("CREATE TABLE W (D DATE, B BIT VARYING(8), I INTERVAL DAY)").unwrap();
+    s.run("INSERT INTO W VALUES (DATE '2026-10-30', B'101', INTERVAL '3' DAY)").unwrap();
+    let types: Vec<DataType> = s.prepare("SELECT D, B, I FROM W").unwrap().columns().iter().map(|c| c.data_type).collect();
+    let mut cursor = s.open_cursor("SELECT D, B, I FROM W").unwrap();
+    let row = cursor.fetch().unwrap().unwrap();
+    drop(cursor);
+    let mut p = Params::new();
+    for ((name, data_type), value) in ["PD", "PB", "PI"].into_iter().zip(types.iter().copied()).zip(row.iter().cloned()) {
+        p = p.declare(name, data_type, value);
+    }
+    s.execute("INSERT INTO W VALUES (PD, PB, PI)", &mut p).unwrap();
+    assert_eq!(count(&s, "SELECT * FROM W WHERE D = DATE '2026-10-30' AND B = B'101' AND I = INTERVAL '3' DAY"), 2);
+    let mut wrong = Params::new().declare("PD", types[0], Value::Char("2026-10-30".into()));
+    assert_eq!(s.execute("INSERT INTO W (D) VALUES (PD)", &mut wrong).err().map(|e| e.code), Some(Code::Api), "a string for a date");
+}

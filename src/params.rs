@@ -166,7 +166,10 @@ impl Params {
 
 /// \[DESIGN\] Whether a host program's argument `value` suits a parameter of
 /// type `data_type`: a string no longer than the length, an exact number for an
-/// exact parameter, any number for an approximate one.
+/// exact parameter, any number for an approximate one; a bit string, a
+/// datetime, an interval or a plug-in type's value for a parameter of its
+/// kind, its length, fields and precision then as its assignment checks
+/// them.
 fn argument_fits(value: &Value, data_type: DataType) -> bool {
     if let (Value::Char(s), DataType::Character { length } | DataType::Varying { length }) = (value, data_type) {
         return usize::try_from(length).is_ok_and(|l| s.chars().count() <= l);
@@ -176,5 +179,9 @@ fn argument_fits(value: &Value, data_type: DataType) -> bool {
         (Value::Exact(_), DataType::Exact { .. })
             | (Value::Exact(_), DataType::Approximate { .. })
             | (Value::Approx(_), DataType::Approximate { .. })
+            | (Value::Bits(_), DataType::Bit { .. } | DataType::BitVarying { .. })
+            | (Value::Datetime(_), DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. })
+            | (Value::Interval(_), DataType::Interval(_))
+            | (Value::Extension(_), DataType::Extension(_))
     )
 }
