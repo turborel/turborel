@@ -817,7 +817,19 @@ the format of frozen groups becomes a trait when it is.
   order of a sixth slower, a fetch by key a twentieth. A group's header
   records the columns its rows are sorted by; once the option names
   others, the maintenance thread writes each group again sorted as it
-  says, two a call, until none is left, after a restart too. An option naming
+  says, two a call, until none is left, after a restart too. Of the
+  columns COLUMNSTORE.BLOOM names (at most 8), each part of each chunk
+  keeps a Bloom filter (`columns/bloom.rs`): 1280 bytes, 10 bits a row,
+  each value not null setting 7 bits of its bucket (`value::bucket`, the
+  form every two values that compare equal share) hashed by MurmurHash3
+  x64-128 (D30), the i-th h1 + i × h2 of its halves (Kirsch and
+  Mitzenmacher, 2006), so 1.5, 1.50 and 1.5E0, and 'a' and 'a  ', set the
+  same bits; filters are packed on pages of their own, read only by a
+  scan of an equality or IN of the column, after its parts' bounds: of
+  393,216 rows of distinct values in no order, a lookup by number ran
+  2.1 ms to 80 us, by text 13.2 ms to 157 us, values absent taken as
+  present 0.8% of the time. A group whose filters are of other columns
+  than the option names is written again as for ORDER. An option naming
   columns (`Kind::Columns`) names the table's, and a column it names is
   not dropped. Groups are immutable, their row ids' ranges apart,
   found through a directory the meta page names. A row's newest state is

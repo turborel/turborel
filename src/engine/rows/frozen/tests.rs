@@ -8,7 +8,7 @@ use crate::disk::buffer::{BufferPool, Clock};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
-use crate::engine::rows::options::{Columns, Order};
+use crate::engine::rows::options::{Columns, Places};
 use crate::engine::rows::{RowTable, TableFiles, TableOptions, key};
 use crate::engine::tree::Direction;
 use crate::error::Code;
@@ -49,7 +49,8 @@ fn rewriting(delay: u32, fraction: f64) -> TableOptions {
             freeze_delay: delay,
             rewrite_fraction: fraction,
             compress: true,
-            order: Order::default(),
+            order: Places::default(),
+            bloom: Places::default(),
         }),
         ..TableOptions::default()
     }
@@ -292,7 +293,8 @@ fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool
             freeze_delay: 0,
             rewrite_fraction: 0.0,
             compress,
-            order: Order::default(),
+            order: Places::default(),
+            bloom: Places::default(),
         }),
         ..TableOptions::default()
     };
@@ -396,7 +398,7 @@ fn groups_are_sorted_by_their_order() {
     let (_, files) = files();
     let mut options = options(0);
     if let Some(columns) = options.columns.as_mut() {
-        columns.order = Order::of(&[1]);
+        columns.order = Places::of(&[1]);
     }
     let table = Arc::new(RowTable::create(&files, &TYPES, options).unwrap());
     let ids: Vec<RowId> = (0..5000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
@@ -430,7 +432,7 @@ fn groups_are_sorted_again_when_their_order_changes() {
     let orders = |t: &RowTable| -> Vec<Vec<usize>> { t.frozen.directory().unwrap().groups.iter().map(|e| e.group.order.clone()).collect() };
     assert_eq!(orders(&table), vec![Vec::<usize>::new(); 3], "frozen in row id order");
     let mut sorted = options(0).columns.unwrap();
-    sorted.order = Order::of(&[1]);
+    sorted.order = Places::of(&[1]);
     table.frozen.reconfigure(Some(sorted));
     assert!(table.maintenance_due(), "groups to sort");
     assert!(table.maintain(1).unwrap());

@@ -3,8 +3,8 @@
 //! chunk of the column each compares (zone maps), and the rows of a run, only
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
-use super::Chunk;
 use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
+use super::{Chunk, bloom};
 use crate::error::Result;
 use crate::storage::{Coded, Conjunct, Conjunction, Ints, Row, Texts};
 use crate::value::{DataType, Value};
@@ -21,6 +21,26 @@ pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Vec<(u32, 
         }
     }
     runs
+}
+
+/// As `candidates`, and of those, the runs of the parts whose Bloom
+/// filters may hold a value an equality or IN of `conditions` asks for
+/// (`bloom::kept`), their filters read from `pages`.
+///
+/// # Errors
+///
+/// As `Pages::with`.
+pub fn read_candidates<S: Seal>(group: &Group, pages: &Pages<'_, S>, conditions: Option<&Conjunction>) -> Result<Vec<(u32, u32)>> {
+    let mut runs = candidates(group, conditions);
+    for condition in conditions.iter().flat_map(|c| c.conjuncts()) {
+        if runs.is_empty() {
+            break;
+        }
+        if let Some(kept) = bloom::kept(group, pages, condition, &runs)? {
+            runs = both(&runs, &kept);
+        }
+    }
+    Ok(runs)
 }
 
 /// The runs in both `a` and `b`, each in order and apart.

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::disk::buffer::BufferPool;
-use crate::engine::columns::scan::{candidates, rows};
+use crate::engine::columns::scan::{candidates, read_candidates, rows};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::index::Probe;
 use crate::memory::MemoryBudget;
@@ -54,7 +54,7 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
     let ids: Vec<RowId> =
         (0..u64::try_from(count).unwrap()).map(|n| n.checked_mul(step).and_then(|d| d.checked_add(first)).unwrap()).collect();
     let all: Vec<Row> = (0..count).map(row).collect();
-    let group = Group::write(pages, &TYPES, (&ids, &all), &[]).unwrap();
+    let group = Group::write(pages, &TYPES, (&ids, &all), (&[], &[])).unwrap();
     assert_eq!((group.first, group.last, group.rows), (first, *ids.last().unwrap(), u32::try_from(count).unwrap()));
     assert_eq!(group.row_ids(pages).unwrap(), ids);
     let parts = |zones: &Vec<Zone>| zones.iter().map(|z| z.parts.len()).sum::<usize>();
@@ -157,9 +157,9 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 fn what_groups_refuse() {
     let (pool, file) = file();
     let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
-    assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), &[]).err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), (&[], &[])).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
-    assert!(Group::write(&pages, &TYPES, (&[1], &wrong), &[]).is_err(), "not of its types");
+    assert!(Group::write(&pages, &TYPES, (&[1], &wrong), (&[], &[])).is_err(), "not of its types");
     let group = written(&pages, (1, 1), 10);
     assert_eq!(read(&pages, group.header[0], &TYPES[..2]).err().map(|e| e.code), Some(Code::Corrupt), "other columns");
     let mut written_pages = Vec::new();
@@ -183,7 +183,7 @@ fn groups_of_rows_out_of_order_read_back() {
     let count = 4000_u64;
     let ids: Vec<RowId> = (0..count).map(|n| n.checked_mul(7).unwrap().checked_rem(count).unwrap().checked_add(100).unwrap()).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
-    let group = Group::write(&pages, &TYPES, (&ids, &all), &[1, 0]).unwrap();
+    let group = Group::write(&pages, &TYPES, (&ids, &all), (&[1, 0], &[])).unwrap();
     assert_eq!((group.first, group.last), (100, 4099));
     assert!(group.sorted() && !group.ids.is_empty(), "its ids kept, and positions by id");
     assert_eq!(group.row_ids(&pages).unwrap(), ids);
@@ -194,4 +194,48 @@ fn groups_of_rows_out_of_order_read_back() {
     let back = read(&pages, group.header[0], &TYPES).unwrap();
     assert_eq!((back.ids.clone(), back.by_id.clone()), (group.ids.clone(), group.by_id.clone()));
     assert_eq!(back.order, vec![1, 0], "the columns its rows are sorted by");
+}
+
+/// The rows of `runs`, as a count.
+fn count_of(runs: &[(u32, u32)]) -> u32 {
+    runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum()
+}
+
+/// Verifies: [DESIGN] RULES.md D31, COLUMNSTORE.BLOOM: a group of Bloom
+/// filters of two columns keeps one of each part of them, on pages of
+/// their own, and reads them back from its header; an equality or IN of
+/// one of them reads only the parts that may hold its values, none of a
+/// value within their bounds but not among them, the row asked for among
+/// those read; a condition of another kind, or of a column without
+/// filters, reads as bounds say.
+#[test]
+fn groups_skip_parts_by_their_filters() {
+    let (pool, file) = file();
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let ids: Vec<RowId> = (1..=4000_u64).collect();
+    let all: Vec<Row> = (0..4000).map(row).collect();
+    let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[0, 1])).unwrap();
+    assert_eq!(group.blooms(), vec![0, 1]);
+    let filters = group.columns[0].iter().flat_map(|z| &z.parts).filter_map(|p| p.filter).count();
+    assert_eq!(filters, group.columns[0].iter().map(|z| z.parts.len()).sum::<usize>(), "one of each part");
+    let back = read(&pages, group.header[0], &TYPES).unwrap();
+    assert_eq!(back.blooms(), vec![0, 1], "read back");
+    assert!(group.pages().len() > written(&pages, (1, 1), 4000).pages().len(), "on pages of their own");
+    let equal = |column: usize, value: Value| {
+        let c = Condition { columns: vec![column], probe: Probe::Compare { op: CompOp::Eq, value } };
+        read_candidates(&group, &pages, Some(&Conjunction::of(c))).unwrap()
+    };
+    let one = equal(0, int(2500));
+    assert!(count_of(&one) <= PART_ROWS, "one part: {one:?}");
+    assert!(one.iter().any(|&(from, to)| (from..to).contains(&2500)));
+    assert!(equal(1, Value::Char("ta".into())).is_empty(), "within the bounds, among none");
+    assert_eq!(count_of(&equal(1, Value::Char("tttt  ".into()))), 4000, "in every part, padded");
+    let listed = Conjunction(vec![Conjunct::In { column: 0, values: vec![int(5), int(3999), Value::Null] }]);
+    assert!(count_of(&read_candidates(&group, &pages, Some(&listed)).unwrap()) <= PART_ROWS * 2, "two parts");
+    let range = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: int(10) } };
+    let by_range = Conjunction::of(range);
+    assert_eq!(read_candidates(&group, &pages, Some(&by_range)).unwrap(), candidates(&group, Some(&by_range)), "not an equality");
+    let unfiltered = Condition { columns: vec![2], probe: Probe::Compare { op: CompOp::Eq, value: int(7) } };
+    let of_two = Conjunction::of(unfiltered);
+    assert_eq!(read_candidates(&group, &pages, Some(&of_two)).unwrap(), candidates(&group, Some(&of_two)), "no filters");
 }

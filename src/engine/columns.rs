@@ -20,6 +20,7 @@
 //! * `scan`: the rows of a group a reader asks for, chunks a condition
 //!   cannot match left unread.
 
+mod bloom;
 mod encoded;
 pub mod group;
 mod packed;

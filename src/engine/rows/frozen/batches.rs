@@ -20,7 +20,7 @@ use std::sync::Arc;
 use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::group::Group;
-use crate::engine::columns::scan::{candidates, ints, ints_at, texts, texts_at, values, values_at};
+use crate::engine::columns::scan::{ints, ints_at, read_candidates, texts, texts_at, values, values_at};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, key, row_id};
@@ -84,10 +84,11 @@ impl Batched {
     /// tree's entries in its range; whether there was one.
     fn next_group(&mut self) -> Result<bool> {
         let Some(entry) = self.directory.groups.get(self.next_group).cloned() else { return Ok(false) };
-        let ids = entry.group.row_ids(&self.table.group_pages()?)?;
         let shadowed = self.entries_in(&entry.group)?;
+        let pages = self.table.group_pages()?;
+        let ids = entry.group.row_ids(&pages)?;
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
-        for (from, to) in candidates(&entry.group, self.condition.as_ref()) {
+        for (from, to) in read_candidates(&entry.group, &pages, self.condition.as_ref())? {
             let mut at = from;
             while at < to {
                 let end = at.saturating_add(vector).min(to);

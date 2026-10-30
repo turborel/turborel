@@ -214,7 +214,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   - chunks compressed further: FSST for texts, ALP for approximate
     numbers; and conditions judged on a frame or runs without decoding
     each value;
-  - bloom filters, for an equality on a column of many values;
   - groups' headers read as they are needed, not held in memory.
 
 ---

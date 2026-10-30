@@ -14,6 +14,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 
 | Option | Default | Values | Changed |
 |---|---|---|---|
+| COLUMNSTORE.BLOOM | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | COLUMNSTORE.COMPRESSION | AUTO | ONE OF AUTO, NONE | in place |
 | COLUMNSTORE.FREEZE_DELAY | 0 | INTEGER FROM 0 TO 31622400 | in place |
 | COLUMNSTORE.FREEZE_ROWS | 0 | INTEGER FROM 0 TO 9223372036854775807 | in place |
@@ -31,6 +32,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 
 Each in a sentence:
 
+- **COLUMNSTORE.BLOOM**: The columns, by commas, of which a table of the column store keeps a Bloom filter of each 1024 rows of each group it freezes, so an equality or IN on one skips the rows that cannot hold its values, groups frozen before written again so in the background; none if empty.
 - **COLUMNSTORE.COMPRESSION**: Whether a table of the column store compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.
 - **COLUMNSTORE.FREEZE_DELAY**: The seconds a row of a table of the column store stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNSTORE.FREEZE_ROWS**: The rows committed past the last group after which a table of the column store freezes them; 0 for COLUMNSTORE.GROUP_ROWS.
@@ -90,6 +92,26 @@ says, a few at a time, until every group is; queries read them as before
 meanwhile, in either order. A column the option names is not
 dropped until it names it no more; each is named as an identifier is,
 a regular one in any case, a delimited one in double quotes.
+
+COLUMNSTORE.BLOOM keeps, of each 1,024 frozen rows of each column it
+names, a Bloom filter: about 10 bits for each row, from which a query
+learns that a value is surely not among those rows, or may be. A
+condition `column = value`, or `column IN (...)`, of a column so named
+then reads only the rows that may hold one of its values, though they
+lie scattered through the table, where its least and greatest values
+skip none. Of 393,216 frozen rows of distinct values in no order,
+finding one by a number ran in 80 microseconds where it ran in 2.1
+milliseconds without, and by a text of up to 20 characters in 157
+microseconds where it ran in 13.2 milliseconds; a value not among the
+rows is taken as perhaps among them about once in 120 times, and those
+rows are then read and judged as any are. The filters take about 1.25
+bytes for each row, a sixth as many again as a column of numbers of 8
+bytes plain, so name only the columns a query looks up by equality; a
+column of few values, each among most 1,024 rows, gains nothing. Rows
+not yet frozen are read as before.
+Once the option is set or changed, groups frozen before are written
+again in the background, as for COLUMNSTORE.ORDER, and it names columns
+as that option does.
 
 What a table holds, and what a query of it gives, is the same in either
 store; only how fast each query runs differs. ALTER TABLE ... USING

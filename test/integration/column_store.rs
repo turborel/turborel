@@ -409,3 +409,44 @@ fn groups_sorted_by_columns_answer_alike() {
     a.commit().unwrap();
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM O"), rows(&a, "SELECT COUNT(*) FROM R"));
 }
+
+/// Equalities of S and N, `{t}` the table: of values held and not, padded
+/// with spaces, an approximate number equal to an exact one, a list, and
+/// the null value, which equals nothing.
+const EQUALITIES: [&str; 8] = [
+    "SELECT K FROM {t} WHERE S = 's5'",
+    "SELECT K FROM {t} WHERE S = 's5   '",
+    "SELECT K FROM {t} WHERE S = 'absent'",
+    "SELECT K, S FROM {t} WHERE N = 250",
+    "SELECT K FROM {t} WHERE N = 2.5E2",
+    "SELECT COUNT(*) FROM {t} WHERE N IN (1, 499, 9999)",
+    "SELECT COUNT(*) FROM {t} WHERE S IN ('s1', 's96', 'none') AND N > 100",
+    "SELECT COUNT(*) FROM {t} WHERE N = CAST(NULL AS INTEGER)",
+];
+
+/// Verifies: [EXTENSION] RULES.md D31, D41, COLUMNSTORE.BLOOM: a table of
+/// the column store whose groups keep Bloom filters of columns answers as
+/// a table of the row store, an equality or IN of one of them too, of
+/// values held or not, equal though not alike; once the option names
+/// others, its groups are written again and answer alike; it names the
+/// table's columns as COLUMNSTORE.ORDER does.
+#[test]
+fn groups_with_bloom_filters_answer_alike() {
+    let db = Database::new();
+    let a = both(&db);
+    a.run("CREATE TABLE F (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, COLUMNSTORE.BLOOM = 'S, n')").unwrap();
+    a.run("INSERT INTO F SELECT * FROM R").unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let equalities = |t: &str| EQUALITIES.iter().map(|q| sorted(&a, &q.replace("{t}", t))).collect::<Vec<_>>();
+    assert_eq!(answers(&a, "F"), answers(&a, "R"));
+    assert_eq!(equalities("F"), equalities("R"));
+    let bloom = "SELECT OPTION_VALUE FROM INFORMATION_SCHEMA.TABLE_OPTIONS WHERE TABLE_NAME = 'F' AND OPTION_NAME = 'COLUMNSTORE.BLOOM'";
+    assert_eq!(rows(&a, bloom), Ok(vec!["S, N".to_owned()]), "as the table names them");
+    assert_eq!(exec(&a, "ALTER TABLE F SET (COLUMNSTORE.BLOOM = 'Q')").err(), Some(Code::SyntaxRule), "no column Q");
+    a.run("ALTER TABLE F SET (COLUMNSTORE.BLOOM = 'G, K')").unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    assert_eq!(equalities("F"), equalities("R"), "groups written again");
+    assert_eq!(sorted(&a, "SELECT N FROM F WHERE G = 3 AND K = 3"), sorted(&a, "SELECT N FROM R WHERE G = 3 AND K = 3"));
+}

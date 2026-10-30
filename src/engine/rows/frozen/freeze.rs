@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use super::{Directory, Entry, Retiring};
 use crate::engine::columns::group::Group;
-use crate::engine::rows::options::{Columns, Order};
+use crate::engine::rows::options::{Columns, Places};
 use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
@@ -64,7 +64,7 @@ fn delayed(commits: &mut VecDeque<(Timestamp, Instant)>, delay: u32) -> Timestam
 
 /// `rows`, each with its id, sorted by the columns of `order`, ascending,
 /// as ORDER BY sorts them, their ids breaking ties: their ids and rows.
-pub(super) fn ordered(order: &Order, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId>, Vec<Row>) {
+pub(super) fn ordered(order: &Places, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId>, Vec<Row>) {
     if !order.places().is_empty() {
         rows.sort_by(|(a_id, a), (b_id, b)| {
             let by = |&c: &usize| a.get(c).zip(b.get(c)).map_or(cmp::Ordering::Equal, |(x, y)| sort_cmp(x, y));
@@ -95,8 +95,8 @@ impl RowTable {
     /// Whether a freeze, a rewrite or entries to take out may be due: rows
     /// enough past the last group, and none found too few a moment ago;
     /// frozen rows enough given entries; a group sorted by other columns
-    /// than COLUMNSTORE.ORDER names now; or rows frozen whose entries
-    /// remain.
+    /// than COLUMNSTORE.ORDER names now, or keeping Bloom filters of others
+    /// than COLUMNSTORE.BLOOM names; or rows frozen whose entries remain.
     pub(in crate::engine::rows) fn freeze_wanted(&self) -> bool {
         let Ok(Some(columns)) = read(&self.frozen.columns).map(|c| *c) else { return false };
         let frozen = self.frozen.directory().map_or(0, |d| d.rows());
@@ -105,7 +105,7 @@ impl RowTable {
         let shadowed = usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX);
         (waited && live.saturating_sub(frozen) >= columns.due())
             || super::rewrite::due(shadowed, columns.group_rows, &columns)
-            || self.frozen.directory().is_ok_and(|d| super::rewrite::unsorted(&d.groups, &columns))
+            || self.frozen.directory().is_ok_and(|d| super::rewrite::stale(&d.groups, &columns))
             || !lock_builtin(&self.frozen.retiring).is_empty()
     }
 
@@ -149,7 +149,7 @@ impl RowTable {
             if entries.len() < fewest {
                 break;
             }
-            self.freeze(entries, &columns.order)?;
+            self.freeze(entries, &columns)?;
             froze = true;
         }
         *lock_builtin(&self.frozen.tried) = (!froze).then(Instant::now);
@@ -178,15 +178,16 @@ impl RowTable {
         Ok(found)
     }
 
-    /// Writes `entries`' rows as a group, sorted as `order` says, and
-    /// publishes it.
-    fn freeze(&self, entries: Vec<(RowId, Vec<u8>)>, order: &Order) -> Result<()> {
+    /// Writes `entries`' rows as a group, sorted, and with Bloom filters,
+    /// as `columns` says, and publishes it.
+    fn freeze(&self, entries: Vec<(RowId, Vec<u8>)>, columns: &Columns) -> Result<()> {
         let mut rows: Vec<(RowId, Row)> = Vec::with_capacity(entries.len());
         for (id, bytes) in &entries {
             rows.push((*id, self.decode(*id, Version::parse(bytes)?.record, None)?));
         }
-        let (ids, rows) = ordered(order, rows);
-        let group = Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), order.places())?;
+        let (ids, rows) = ordered(&columns.order, rows);
+        let places = (columns.order.places(), columns.bloom.places());
+        let group = Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), places)?;
         self.publish((None, Some(group)), entries)
     }
 

@@ -8,10 +8,10 @@
 //! as a freeze takes out its rows' (`freeze.rs`). An entry not yet
 //! committed so stays, before the group's values, which hold its row as it
 //! was. A group whose rows are sorted by other columns than COLUMNSTORE.ORDER
-//! names now, as it was changed, is written again so, sorted as it says,
+//! names now, or that keeps Bloom filters of other columns than
+//! COLUMNSTORE.BLOOM names, as they were changed, is written again so,
 //! MOST_REWRITES of them a call, as the maintenance thread calls again
-//! while any is left (`unsorted`). Split from frozen.rs (RULES.md
-//! R-SIZE-2).
+//! while any is left (`stale`). Split from frozen.rs (RULES.md R-SIZE-2).
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -22,7 +22,7 @@ use super::Entry;
 use super::freeze::ordered;
 use crate::engine::columns::group::Group;
 use crate::engine::columns::scan::rows;
-use crate::engine::rows::options::{Columns, Order};
+use crate::engine::rows::options::Columns;
 use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
@@ -33,10 +33,16 @@ use crate::txn::Timestamp;
 /// \[DESIGN\] The most groups one call writes again.
 const MOST_REWRITES: usize = 2;
 
-/// Whether one of `groups` is sorted by other columns than `columns`'s
-/// COLUMNSTORE.ORDER names.
-pub(super) fn unsorted(groups: &[Arc<Entry>], columns: &Columns) -> bool {
-    groups.iter().any(|entry| entry.group.order.as_slice() != columns.order.places())
+/// Whether `group` is sorted by other columns than `columns`'s
+/// COLUMNSTORE.ORDER names, or keeps Bloom filters of others than its
+/// COLUMNSTORE.BLOOM names.
+fn stale_group(group: &Group, columns: &Columns) -> bool {
+    group.order.as_slice() != columns.order.places() || group.blooms().as_slice() != columns.bloom.places()
+}
+
+/// Whether one of `groups` is stale (`stale_group`).
+pub(super) fn stale(groups: &[Arc<Entry>], columns: &Columns) -> bool {
+    groups.iter().any(|entry| stale_group(&entry.group, columns))
 }
 
 /// Whether `entries` of a group of `rows` rows are COLUMNSTORE.REWRITE_FRACTION
@@ -54,7 +60,7 @@ impl RowTable {
         let shadowed =
             due(usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX), columns.group_rows, &columns);
         let directory = self.frozen.directory()?;
-        if !shadowed && !unsorted(&directory.groups, &columns) {
+        if !shadowed && !stale(&directory.groups, &columns) {
             return Ok(false);
         }
         if shadowed {
@@ -67,13 +73,13 @@ impl RowTable {
                 self.frozen.shadow();
                 break;
             }
-            let resorted = entry.group.order.as_slice() != columns.order.places();
+            let resorted = stale_group(&entry.group, &columns);
             if !shadowed && !resorted {
                 continue;
             }
             let entries = self.entries_in(&entry.group)?;
             if resorted || due(entries.len(), entry.group.rows, &columns) {
-                self.rewrite(entry, (entries, cutoff), &columns.order)?;
+                self.rewrite(entry, (entries, cutoff), &columns)?;
                 written = written.saturating_add(1);
             }
         }
@@ -92,8 +98,9 @@ impl RowTable {
     }
 
     /// Writes `entry`'s group again, `entries` of its range committed at or
-    /// before `cutoff` folded in, its rows sorted as `order` says.
-    fn rewrite(&self, entry: &Arc<Entry>, (entries, cutoff): (Vec<(RowId, Vec<u8>)>, Timestamp), order: &Order) -> Result<()> {
+    /// before `cutoff` folded in, its rows sorted and its Bloom filters
+    /// kept as `columns` says.
+    fn rewrite(&self, entry: &Arc<Entry>, (entries, cutoff): (Vec<(RowId, Vec<u8>)>, Timestamp), columns: &Columns) -> Result<()> {
         let pages = self.group_pages()?;
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
@@ -113,8 +120,9 @@ impl RowTable {
             kept.insert(id, row);
             folded.push((id, bytes));
         }
-        let (new_ids, new_rows) = ordered(order, kept.into_iter().filter_map(|(id, row)| row.map(|r| (id, r))).collect());
-        let group = if new_ids.is_empty() { None } else { Some(Group::write(&pages, types, (&new_ids, &new_rows), order.places())?) };
+        let (new_ids, new_rows) = ordered(&columns.order, kept.into_iter().filter_map(|(id, row)| row.map(|r| (id, r))).collect());
+        let places = (columns.order.places(), columns.bloom.places());
+        let group = if new_ids.is_empty() { None } else { Some(Group::write(&pages, types, (&new_ids, &new_rows), places)?) };
         self.publish((Some(entry), group), folded)
     }
 }

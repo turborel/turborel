@@ -41,6 +41,7 @@ const FREEZE_DELAY: &str = "COLUMNSTORE.FREEZE_DELAY";
 const REWRITE_FRACTION: &str = "COLUMNSTORE.REWRITE_FRACTION";
 const COMPRESSION: &str = "COLUMNSTORE.COMPRESSION";
 const ORDER: &str = "COLUMNSTORE.ORDER";
+const BLOOM: &str = "COLUMNSTORE.BLOOM";
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
@@ -100,21 +101,25 @@ pub struct Columns {
     /// fewest bytes (`engine/columns/encoded.rs`).
     pub compress: bool,
     /// The columns each group's rows are sorted by as they are frozen.
-    pub order: Order,
+    pub order: Places,
+    /// The columns each group keeps Bloom filters of, in the order of
+    /// their places.
+    pub bloom: Places,
 }
 
-/// \[DESIGN\] The columns a group's rows are sorted by, ascending, by
-/// their places in the row: at most `MOST_ORDER`; none, in row id order.
+/// \[DESIGN\] Columns of a table by their places in the row, at most
+/// `MOST_ORDER`: those a group's rows are sorted by, ascending, none in
+/// row id order; or those it keeps Bloom filters of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Order {
+pub struct Places {
     places: [usize; MOST_ORDER],
     len: usize,
 }
 
-impl Order {
+impl Places {
     /// Of the columns at `places`, the first `MOST_ORDER` of them.
-    pub fn of(places: &[usize]) -> Order {
-        let mut order = Order::default();
+    pub fn of(places: &[usize]) -> Places {
+        let mut order = Places::default();
         for (slot, &place) in order.places.iter_mut().zip(places) {
             *slot = place;
             order.len = order.len.saturating_add(1);
@@ -136,7 +141,8 @@ impl Default for Columns {
             freeze_delay: 0,
             rewrite_fraction: DEFAULT_REWRITE_FRACTION,
             compress: true,
-            order: Order::default(),
+            order: Places::default(),
+            bloom: Places::default(),
         }
     }
 }
@@ -269,6 +275,11 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
             Rebuild::No,
             "The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.",
         ),
+        TableOption::new(
+            (BLOOM, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
+            Rebuild::No,
+            "The columns, by commas, of which a table of the column store keeps a Bloom filter of each 1024 rows of each group it freezes, so an equality or IN on one skips the rows that cannot hold its values, groups frozen before written again so in the background; none if empty.",
+        ),
     ]
 }
 
@@ -301,10 +312,20 @@ pub(super) fn columns_of(desc: &TableDesc, base: Option<Columns>) -> Option<Colu
 
 /// The order COLUMNSTORE.ORDER, `value`, names, of `desc`'s columns: those
 /// it names that are the table's (the database checks each is).
-fn order_of(desc: &TableDesc, value: &Value) -> Order {
-    let Value::Char(names) = value else { return Order::default() };
+fn order_of(desc: &TableDesc, value: &Value) -> Places {
+    let Value::Char(names) = value else { return Places::default() };
     let places: Vec<usize> = column_names(names).unwrap_or_default().iter().filter_map(|n| desc.column(n)).collect();
-    Order::of(&places)
+    Places::of(&places)
+}
+
+/// The columns COLUMNSTORE.BLOOM, `value`, names, of `desc`'s columns, in
+/// the order of their places, each once.
+fn bloom_of(desc: &TableDesc, value: &Value) -> Places {
+    let Value::Char(names) = value else { return Places::default() };
+    let mut places: Vec<usize> = column_names(names).unwrap_or_default().iter().filter_map(|n| desc.column(n)).collect();
+    places.sort_unstable();
+    places.dedup();
+    Places::of(&places)
 }
 
 /// `base` with the options `desc` sets.
@@ -329,6 +350,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         rewrite_fraction: set(REWRITE_FRACTION).and_then(Value::as_f64).unwrap_or(c.rewrite_fraction),
         compress: set(COMPRESSION).map_or(c.compress, |v| v.to_string().trim_end() != "NONE"),
         order: set(ORDER).map_or(c.order, |v| order_of(desc, v)),
+        bloom: set(BLOOM).map_or(c.bloom, |v| bloom_of(desc, v)),
     });
     out
 }

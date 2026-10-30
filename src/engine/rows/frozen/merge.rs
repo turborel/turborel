@@ -11,7 +11,7 @@ use std::iter::Peekable;
 use std::sync::Arc;
 
 use super::{Directory, Entry};
-use crate::engine::columns::scan::{candidates, rows};
+use crate::engine::columns::scan::{read_candidates, rows};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::{RowTable, row_id};
@@ -94,8 +94,9 @@ impl Merged {
             }
             let Some(entry) = self.directory.groups.get(self.next_group).cloned() else { return Ok(None) };
             self.next_group = self.next_group.saturating_add(1);
-            let ids = entry.group.row_ids(&self.table.group_pages()?)?;
-            for (from, to) in candidates(&entry.group, self.condition.as_ref()) {
+            let pages = self.table.group_pages()?;
+            let ids = entry.group.row_ids(&pages)?;
+            for (from, to) in read_candidates(&entry.group, &pages, self.condition.as_ref())? {
                 let mut at = from;
                 while at < to {
                     let end = at.saturating_add(VECTOR).min(to);

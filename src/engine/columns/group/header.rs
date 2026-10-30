@@ -1,7 +1,7 @@
 //! \[DESIGN\] A frozen row group's header, written and read back as
 //! `group.rs` describes it. Split from group.rs (RULES.md R-SIZE-2).
 
-use super::{GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
+use super::{Filter, GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::value::{DataType, Value};
@@ -67,6 +67,15 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
             for part in &zone.parts {
                 put_u32(&mut out, part.nulls);
                 put_bounds(&mut out, part.bounds.as_ref(), t)?;
+                match part.filter {
+                    Some(f) => {
+                        out.push(1);
+                        put_u64(&mut out, f.page.0);
+                        put_u32(&mut out, f.at);
+                        put_u32(&mut out, f.len);
+                    }
+                    None => out.push(0),
+                }
             }
         }
     }
@@ -118,11 +127,23 @@ impl<'a> Reader<'a> {
         }
     }
 
+    fn filter(&mut self) -> Result<Option<Filter>> {
+        match self.byte()? {
+            0 => Ok(None),
+            1 => Ok(Some(Filter { page: PageId(self.u64()?), at: self.u32()?, len: self.u32()? })),
+            _ => Err(corrupt("a part's filter is of another format")),
+        }
+    }
+
+    fn part(&mut self, t: &DataType) -> Result<Part> {
+        Ok(Part { nulls: self.u32()?, bounds: self.bounds(t)?, filter: self.filter()? })
+    }
+
     fn zone(&mut self, t: &DataType) -> Result<Zone> {
         let run = self.run()?;
         let nulls = self.u32()?;
         let bounds = self.bounds(t)?;
-        let parts = (0..self.count()?).map(|_| Ok(Part { nulls: self.u32()?, bounds: self.bounds(t)? })).collect::<Result<Vec<_>>>()?;
+        let parts = (0..self.count()?).map(|_| self.part(t)).collect::<Result<Vec<_>>>()?;
         Ok(Zone { run, nulls, bounds, parts })
     }
 }
