@@ -55,6 +55,22 @@ pub fn cargo_output<K: AsRef<OsStr>, V: AsRef<OsStr>>(root: &Path, args: &[&str]
     output(&mut command, CARGO_ON_PATH)
 }
 
+/// What a child process did: whether it succeeded, and what it printed.
+pub struct Finished {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs cargo in `root`, keeping what it prints, and returns how it ended,
+/// a failure among them; fails only if cargo cannot be started.
+pub fn cargo_finished(root: &Path, args: &[&str]) -> Result<Finished> {
+    let out =
+        Command::new(cargo_program()).args(args).current_dir(root).output().map_err(|e| Error::new(format!("cannot run cargo: {e}")))?;
+    let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
+    Ok(Finished { success: out.status.success(), stdout: text(out.stdout), stderr: text(out.stderr) })
+}
+
 /// Runs `program` in `root` and returns its standard output; fails if it fails.
 pub fn tool_output<S: AsRef<OsStr>>(root: &Path, program: &Path, args: &[S]) -> Result<String> {
     let mut command = Command::new(program);

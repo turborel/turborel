@@ -33,6 +33,34 @@ fn set_operators_count_duplicates_7_10() {
     }
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §3.1.3 h, i, §7.10 GR1b ii 1]:
+/// two null values are not distinct, so rows of nulls are duplicates and
+/// UNION gives "exactly one duplicate" of them: one null row of the seven
+/// nulls of one operand and the one of the other; rows alike but for a
+/// null in one of them are distinct, and a row null in the same column
+/// as another, equal elsewhere, is not. UNION ALL keeps every null. Read
+/// by batches and row by row (EXECUTOR.BATCHES OFF), alike.
+#[test]
+fn union_over_nulls_gives_one_null_row_7_10() {
+    let db = crate::common::big();
+    let s = db.session("APP");
+    let cases = [
+        ("SELECT NAME FROM T WHERE NAME IS NULL UNION SELECT NAME FROM T WHERE ID = 3", vec!["NULL"]),
+        ("SELECT NAME FROM T WHERE ID = 3 UNION SELECT NAME FROM T WHERE ID = 3", vec!["NULL"]),
+        ("SELECT NAME FROM T WHERE NAME IS NULL UNION ALL SELECT NAME FROM T WHERE ID = 3", vec!["NULL"; 8]),
+        (
+            "SELECT NAME, AMT FROM T WHERE ID IN (10, 50) UNION SELECT NAME, AMT FROM T WHERE ID IN (3, 50)",
+            vec!["NULL,1.00", "NULL,3.00", "NULL,NULL"],
+        ),
+        ("SELECT NAME, AMT FROM T WHERE ID IN (20, 50) UNION VALUES ('N1', 1.00)", vec!["N1    ,1.00", "NULL,1.00", "NULL,6.00"]),
+    ];
+    for (sql, want) in cases {
+        let (batched, row_by_row) = crate::common::both_ways(&s, sql);
+        assert_eq!(batched, want, "{sql}");
+        assert_eq!(row_by_row, want, "{sql}: row by row");
+    }
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.10 F]: INTERSECT binds more
 /// tightly than UNION and EXCEPT, which are applied left to right;
 /// parentheses group; a set operation is a subquery's query expression

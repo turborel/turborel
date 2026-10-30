@@ -75,6 +75,24 @@ fn an_exponent_needs_digits_5_3() {
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = 1.5E"), Code::Lexical); // SR2
 }
 
+/// Verifies: [X3.135-1986 §5.3 SR2] "A <nondelimiter token> shall be
+/// followed by a <delimiter token> or a <separator>": an exact or
+/// approximate literal, a key word or an identifier run into a letter is
+/// refused (SQLCODE of a lexical error), not read as two tokens; the same
+/// tokens apart by a space, or followed by a delimiter token, are taken
+/// ([EXTENSION] [ISO/IEC 9075:1992 §5.2 SR5] says the same).
+#[test]
+fn a_nondelimiter_token_is_followed_by_a_delimiter_or_separator_5_3() {
+    let db = setup();
+    let s = db.session("APP");
+    for glued in ["SELECT 1A FROM T", "SELECT 1.5E2A FROM T", "SELECT ID FROM T WHERE ID = 1AND ID = 1", "SELECT 1 FROM T WHERE ID = .5X"] {
+        assert_eq!(code(&s, glued), Code::Lexical, "{glued}");
+    }
+    assert_eq!(rows(&s, "SELECT 1 A FROM T WHERE ID = 1"), Ok(vec!["1".into()]), "a <separator> between");
+    assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID=1"), Ok(vec!["1".into()]), "a <delimiter token> after");
+    assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID = 1\nAND ID = 1"), Ok(vec!["1".into()]), "a <newline> after");
+}
+
 /// Verifies: [X3.135-1986 §5.3]; [DESIGN] the implementor-defined end-of-line
 /// indicator is `\n` or `\r\n` (CONFORMANCE.md). A comment must end with one.
 #[test]

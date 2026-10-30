@@ -91,6 +91,7 @@ mod privileges;
 mod probes;
 mod queries;
 mod query_expressions;
+mod random_queries;
 mod recovery;
 mod refusals;
 mod reopen;

@@ -102,6 +102,28 @@ fn fetch_past_the_last_row_gives_sqlcode_100_8_6() {
     assert_eq!(p.value("ID_OUT").to_string(), "2");
 }
 
+/// Verifies: [X3.135-1986 §8.3, §8.8 GR3, §8.6 GR2] a cursor declared,
+/// opened and fetched in SQL over an empty table: "If the table designated
+/// by cursor CR is empty", every FETCH gives SQLCODE 100 and assigns no
+/// target; the cursor is open until CLOSE, so it closes once.
+#[test]
+fn fetch_from_a_cursor_on_an_empty_table_gives_sqlcode_100_8_6() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("CREATE TABLE E (ID INTEGER, NAME CHAR(2))").unwrap();
+    s.declare_cursor("DECLARE C CURSOR FOR SELECT ID, NAME FROM E ORDER BY ID").unwrap();
+    let mut p = targets();
+    p.set("ID_OUT", Value::Exact(Decimal::new(7, 0)));
+    assert_eq!(s.execute("OPEN C", &mut p).unwrap(), Completion::Success);
+    for _ in 0..2 {
+        let done = s.execute(FETCH_C, &mut p).unwrap();
+        assert_eq!((done, done.sqlcode()), (Completion::NoData, 100));
+        assert_eq!((p.value("ID_OUT").to_string(), p.value("NAME_OUT").to_string()), ("7".into(), "NULL".into()), "no target assigned");
+    }
+    assert_eq!(s.execute("CLOSE C", &mut p).unwrap(), Completion::Success);
+    assert_eq!(s.execute("CLOSE C", &mut p).unwrap_err().code, Code::Cursor);
+}
+
 /// Verifies: [X3.135-1986 §8.1 GR1] a closed cursor cannot be closed again.
 #[test]
 fn a_closed_cursor_cannot_be_closed_8_1() {

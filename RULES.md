@@ -1842,7 +1842,7 @@ test/integration/       the integration test binary: public API only
   <area>.rs             one module per area
 bench/                  benchmarks, run by `cargo xtask bench`
   harness.rs            the harness every benchmark uses
-xtask/                  the project's tools: verify, coverage, trace, bench
+xtask/                  the project's tools: verify, coverage, trace, bench, mutate
 ```
 
 `Cargo.toml` declares each test and benchmark target with its path and
@@ -1949,10 +1949,10 @@ Every other file under a target's directory is a module of that target.
 | R-TEST-2 | Tests **shall** be derived from requirements, not from the code, with normal-range cases (boundaries included) and robustness cases (invalid inputs, with the exact SQLCODE expected). | review |
 | R-TEST-3 | A test's name **shall** say the behaviour checked; an integration test may end in its clause: `fetch_targets_8_6`. | review |
 | R-TEST-4 | Test code may `unwrap`, index and panic: a panic is a failure. Every other rule applies. | lints |
-| R-TEST-5 | Tests **shall** be deterministic and independent: no clock, randomness, network beyond the machine's own loopback (the server's tests, D42) or order dependence, and each test builds its own `Database`. | review |
+| R-TEST-5 | Tests **shall** be deterministic and independent: no clock, randomness, network beyond the machine's own loopback (the server's tests, D42) or order dependence, and each test builds its own `Database`. A generator of test cases is pseudo-random from a fixed seed, so each run makes the same cases (`test/integration/random_queries.rs`). | review |
 | R-TEST-7 | Every defect fixed **shall** get a regression test that fails without the fix, saying so in its doc comment. | review |
 | R-TEST-8 | For each decision of two or more conditions in new code, the tests **shall** show MC/DC, their doc comments naming the condition pairs. | review |
-| R-TEST-9 | The tests **should** be checked by mutation now and then: break a mechanism, and expect the named tests to fail. | periodic |
+| R-TEST-9 | The tests **should** be checked by mutation now and then: break a mechanism, and expect the named tests to fail. `cargo xtask mutate [NAME]` applies each mutation of `xtask/src/mutate/list.rs` (a file, a snippet found in it once, its replacement, the tests that must fail) one at a time, runs its tests, writes the file back, and reports a mutation no test caught or a named test that passed; a change to a mechanism the list breaks runs it, and a new mechanism adds a mutation. | `cargo xtask mutate`, periodic; `verify` checks each mutation still applies |
 | R-TEST-10 | A fixture or helper used by more than one module **shall** be written once: in its test binary's `common.rs`, or, used by the tests of more than one crate, in `turborel-test-support` (`support/`). Tests use `#[test]` and no other framework. | review |
 
 R-TEST-6 was withdrawn with the golden-file tests (D6).

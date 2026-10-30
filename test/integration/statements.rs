@@ -5,7 +5,7 @@ use turborel::catalog::{Catalog, ColumnDesc, ConstraintDesc, ConstraintKind, Ind
 use turborel::db::{Completion, Database, Session};
 
 use turborel::error::Code;
-use turborel::value::{DOUBLE_PRECISION, DataType, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION};
+use turborel::value::{DOUBLE_PRECISION, DataType, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, REAL_PRECISION};
 
 use crate::common::{code, count, exec, rows, setup};
 use turborel::value::Spelled;
@@ -294,6 +294,39 @@ fn data_type_limits_are_not_syntax_errors() {
     for (n, column) in beyond.into_iter().enumerate() {
         assert_eq!(create(n + 10, column.clone()), Err(Code::Unsupported), "{column}");
     }
+}
+
+/// Verifies: [X3.135-1986 §5.5 SR10, SR11, SR12, §8.7 GR7d]; [EXTENSION]
+/// [ISO/IEC 9075:1992 §6.1 SR21, §9.2 GR3k]: FLOAT(p) has "binary
+/// precision equal to or greater than" p, so up to REAL's 24 binary digits
+/// it is REAL (FLOAT(24) the boundary), and from 25 DOUBLE PRECISION's 53;
+/// a value assigned to such a column, by INSERT or UPDATE, is set to "the
+/// approximate value" in that precision: 0.1 rounded to the nearest single
+/// in a REAL, kept as the nearest double in a DOUBLE PRECISION.
+#[test]
+fn float_up_to_24_digits_is_real_and_rounds_on_assignment_5_5() {
+    let db = Database::new();
+    assert_eq!(REAL_PRECISION, 24);
+    db.schema("CREATE SCHEMA AUTHORIZATION F CREATE TABLE T (R REAL, A FLOAT(1), B FLOAT(24), C FLOAT(25), D DOUBLE PRECISION)").unwrap();
+    let s = db.session("F");
+    let precision =
+        "SELECT ORDINAL_POSITION, COLUMN_NAME, NUMERIC_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'T' ORDER BY 1";
+    assert_eq!(rows(&s, precision), Ok(vec!["1,R,24".into(), "2,A,24".into(), "3,B,24".into(), "4,C,53".into(), "5,D,53".into()]));
+    // 0.1 has no exact binary value: its single and double approximations differ.
+    let single = f64::from(0.1_f32);
+    assert_ne!(single, 0.1_f64);
+    let at = |column: &str| format!("SELECT {column} FROM T");
+    s.run("INSERT INTO T VALUES (0.1, 0.1, 0.1, 0.1, 1.0E-1)").unwrap();
+    for (column, value) in [("R", single), ("A", single), ("B", single), ("C", 0.1_f64), ("D", 0.1_f64)] {
+        let found: Vec<f64> = rows(&s, &at(column)).unwrap().iter().map(|v| v.parse().unwrap()).collect();
+        assert_eq!(found, vec![value], "INSERT into {column}");
+    }
+    s.run("UPDATE T SET R = 0.3E0, B = 0.3, C = 0.3E0").unwrap();
+    for (column, value) in [("R", f64::from(0.3_f32)), ("B", f64::from(0.3_f32)), ("C", 0.3_f64)] {
+        let found: Vec<f64> = rows(&s, &at(column)).unwrap().iter().map(|v| v.parse().unwrap()).collect();
+        assert_eq!(found, vec![value], "UPDATE of {column}");
+    }
+    assert_eq!(count(&s, "SELECT R FROM T WHERE R = 0.3E0"), 0, "a REAL holds no 0.3 of 53 binary digits");
 }
 
 /// A catalog holding table A.T (K NOT NULL UNIQUE) with its constraint index,

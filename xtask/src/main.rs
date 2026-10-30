@@ -16,6 +16,7 @@ mod file_length;
 mod files;
 mod json;
 mod lint_audit;
+mod mutate;
 mod threads;
 mod trace;
 
@@ -35,6 +36,7 @@ const LINT_AUDIT: &str = "lint-audit";
 const WRITE: &str = "--write";
 const INSTALL_HOOKS: &str = "install-hooks";
 const BENCH: &str = "bench";
+const MUTATE: &str = "mutate";
 /// The tracked directory of git hooks.
 const HOOKS_DIR: &str = ".githooks";
 /// Builds and runs every test target. Not `--all-targets`, which would run
@@ -60,7 +62,8 @@ commands:
   {LINT_AUDIT} [{WRITE}]  lint baseline counts: check, or record a decrease (R-DEV-2)
   {INSTALL_HOOKS}        run `verify` before every commit (R-PROC-1)
   {BENCH} [NAME] [--save LABEL] [--compare LABEL]
-                       the benchmarks in bench/, built optimized; keep or compare results (R-BENCH-1)"
+                       the benchmarks in bench/, built optimized; keep or compare results (R-BENCH-1)
+  {MUTATE} [NAME]        break each mechanism the list names, or one, and expect its tests to fail (R-TEST-9)"
     )
 }
 
@@ -90,6 +93,7 @@ fn run(args: &[String]) -> Result<()> {
         [LINT_AUDIT, WRITE] => lint_audit::write(&root),
         [INSTALL_HOOKS] => install_hooks(&root),
         [BENCH, rest @ ..] => bench::run(&root, rest),
+        [MUTATE, rest @ ..] => mutate::run(&root, rest),
         _ => Err(Error::new(usage())),
     }
 }

@@ -96,6 +96,29 @@ fn set_functions_of_no_rows_are_null_except_count_5_8() {
     assert_eq!(rows(&s, "SELECT COUNT(*), SUM(AMT), AVG(AMT), MAX(ID) FROM T WHERE ID > 99"), Ok(vec!["0,NULL,NULL,NULL".into()]));
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.9 GR1a i, §6.5 GR2]; [X3.135-1986
+/// §5.25 GR1]: over a table that is not grouped and has no rows, a select
+/// list of set functions gives "a table consisting of 1 row", with DISTINCT
+/// before it or inside the set functions: a COUNT of the empty set 0, and
+/// any other null. An empty base table, and rows WHERE removes; read by
+/// batches and row by row, alike.
+#[test]
+fn distinct_set_functions_of_no_rows_give_one_row_7_9() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("CREATE TABLE E (K INTEGER, N CHAR(2))").unwrap();
+    let cases = [
+        ("SELECT DISTINCT COUNT(*), MAX(K), SUM(K) FROM E", "0,NULL,NULL"),
+        ("SELECT COUNT(DISTINCT K), SUM(DISTINCT K), AVG(DISTINCT K), MIN(DISTINCT N) FROM E", "0,NULL,NULL,NULL"),
+        ("SELECT DISTINCT COUNT(DISTINCT K), MAX(DISTINCT N) FROM E", "0,NULL"),
+        ("SELECT DISTINCT COUNT(DISTINCT ID), SUM(DISTINCT AMT) FROM T WHERE ID > 99", "0,NULL"),
+    ];
+    for (sql, want) in cases {
+        let (batched, row_by_row) = crate::common::both_ways(&s, sql);
+        assert_eq!((batched, row_by_row), (vec![want.to_owned()], vec![want.to_owned()]), "{sql}");
+    }
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 F, SR1] a set function
 /// takes DISTINCT or ALL, or neither, before any value expression: COUNT of
 /// one counts its values not null, which SQL-86 does not allow

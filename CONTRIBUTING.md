@@ -72,6 +72,11 @@ is not done.
   Give the numbers, and the costs: memory, latency of other paths, code
   size.
 - **Coverage floors only rise** (R-COV-2).
+- **The tests catch a broken mechanism** (R-TEST-9): a change to one that
+  `xtask/src/mutate/list.rs` breaks (MVCC visibility, a checksum, the log's
+  sync, a constraint, a lock) runs `cargo xtask mutate`, which breaks each
+  in turn and reports a break the named tests did not catch; a new
+  mechanism adds its mutation to the list.
 
 ## Changes that touch data
 

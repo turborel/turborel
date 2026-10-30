@@ -536,6 +536,14 @@ pub fn locked() -> (Database, Session) {
     (db, holder)
 }
 
+/// Turns every optimizer rule of `db` on or off, as `enabled` says.
+pub fn set_all_rules(db: &Database, enabled: bool) {
+    let names: Vec<&str> = db.with_optimizer(|o| o.rules()).unwrap().iter().map(|(n, _)| *n).collect();
+    for name in &names {
+        assert!(db.with_optimizer(|o| o.set_enabled(name, enabled)).unwrap(), "{name}");
+    }
+}
+
 /// The rows of `sql`, sorted, read by batches where it can be, and read
 /// row by row throughout (EXECUTOR.BATCHES OFF).
 pub fn both_ways(s: &Session, sql: &str) -> (Vec<String>, Vec<String>) {

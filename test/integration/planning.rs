@@ -15,7 +15,7 @@ use turborel::params::Params;
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::TxId;
 
-use crate::common::{MemoryTable, Scratch, after_crash, big, code, rows, setup};
+use crate::common::{MemoryTable, Scratch, after_crash, big, code, rows, set_all_rules, setup};
 use turborel::value::Spelled;
 
 /// Verifies: [DESIGN] access path selection; [EXTENSION] indexes
@@ -123,24 +123,16 @@ fn pushed_having_is_not_evaluated_on_rows_where_removed() {
     let query = "SELECT ID FROM T WHERE ID <> 2 GROUP BY ID HAVING 100 / (ID - 2) > 0";
     let expected = Ok(vec!["3".to_owned()]);
     assert_eq!(rows(&db.session("APP"), query), expected);
-    let names: Vec<&str> = db.with_optimizer(|o| o.rules()).unwrap().iter().map(|(n, _)| *n).collect();
-    for name in &names {
-        assert!(db.with_optimizer(|o| o.set_enabled(name, false)).unwrap());
-    }
+    set_all_rules(&db, false);
     assert_eq!(rows(&db.session("APP"), query), expected);
 }
 
 /// Runs `query` with every optimizer rule on, then off, and returns both outcomes.
 fn with_and_without_rules(db: &Database, query: &str) -> [Result<Vec<String>, Code>; 2] {
     let with_rules = rows(&db.session("APP"), query);
-    let names: Vec<&str> = db.with_optimizer(|o| o.rules()).unwrap().iter().map(|(n, _)| *n).collect();
-    for name in &names {
-        db.with_optimizer(|o| o.set_enabled(name, false)).unwrap();
-    }
+    set_all_rules(db, false);
     let without_rules = rows(&db.session("APP"), query);
-    for name in &names {
-        db.with_optimizer(|o| o.set_enabled(name, true)).unwrap();
-    }
+    set_all_rules(db, true);
     [with_rules, without_rules]
 }
 
@@ -224,10 +216,7 @@ fn rules_rewrite_the_plan_without_changing_results() {
     drop(s);
 
     // Same answers with every rule turned off.
-    let names: Vec<&str> = db.with_optimizer(|o| o.rules()).unwrap().iter().map(|(n, _)| *n).collect();
-    for n in &names {
-        assert!(db.with_optimizer(|o| o.set_enabled(n, false)).unwrap());
-    }
+    set_all_rules(&db, false);
     let s = db.session("APP");
     for (q, expected) in queries.iter().zip(with_rules) {
         let mut a = rows(&s, q).unwrap();
