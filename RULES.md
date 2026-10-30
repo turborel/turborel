@@ -91,6 +91,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D46 | The command-line client |
 | D53 | Data types: one contract, standard types built in |
 | D55 | Threads: one manager, each thread labelled and shown |
+| D56 | Files: one manager a database, its open files limited, each shown |
 
 ### The project
 
@@ -650,6 +651,59 @@ or none, were unseen by operators, outlived what they served, swallowed
 their errors, and made tests depend on their timing. One manager makes
 each visible, bounded and stoppable, and lets a test or an operator run
 the work at a time of its own choosing.
+
+**D56. Files: one manager a database, its open files limited, each shown.**
+- Every file a database opens, creates, removes or locks is through its
+  file manager (`src/files.rs`), which wraps the `FileSystem` the
+  database was given, so shadowing and test file systems stay below it.
+  Each file is registered: its owner (the database, an engine or index
+  method by name, a spill, the log), its kind and path, its mode, its
+  bytes, its class of durability, and its counts of reads, writes and
+  syncs.
+- Classes of durability: durable (the catalog, the data file, the log);
+  durable at commit (the shadow files); unsynced (the undo log, begun
+  anew at each open); scratch (spill files, removed when dropped, cleared
+  at each open). A class says what a create, a remove and a sync do, and
+  what a close or an open does to its files: a directory made or emptied
+  is synced in its parent where durability needs it, and only there.
+- Open file descriptors are limited a database, FILES.MAX_OPEN, 1024 by
+  default, 0 for no limit: past it, the file used least recently is
+  closed, to be opened again as it is next used (LRU). Log and undo
+  segments, spill files and the rest share the limit; a file held open
+  by a read or write in progress is not closed under it, and one that
+  needs a descriptor while every one is so held waits for one to be
+  given back. A file that cannot be opened again is an error of the
+  statement or job that needs it, told as an event.
+- Engines and index methods take the manager through `Host`, as they take
+  the memory budget (D38): a directory of their own under the
+  database's, shadowed or not as they declare, and scratch files; what
+  they open is theirs to show, limit and close as the database's.
+- Files of a database in memory are of `MemoryFileSystem`, their bytes
+  reserved of MEMORY_BUDGET; its scratch files too, never the system's
+  temporary directory.
+- On Unix, files are made readable and writable by their owner alone
+  (0600), directories 0700.
+- Lifecycle: at open, scratch is cleared and the durable classes
+  recovered; at close, after its threads are joined (D55), every file is
+  synced as its class says and closed, scratch removed, and anything
+  still open or not removed told, before the directory's lock is
+  released.
+- Shown: INFORMATION_SCHEMA.FILES, each file open or known, to the
+  database's owner; and events when a file cannot be opened, removed or
+  synced, and when the limit closes files faster than they are reused.
+- The server's own files, its diagnostics log, socket, and TLS and key
+  files, are registered as the server's, shown and counted, though not
+  the database's to limit.
+- While anything of the database is encrypted (D48), events carry no
+  statement's text: a slow statement is told by its user and time
+  alone, so no value meant for an encrypted table reaches a log in the
+  clear.
+*Why:* files were opened where they were needed, some through the
+database's `FileSystem` and some around it; nothing bounded the
+descriptors a server held, nor showed them; a failed rotation, a file
+left behind, a directory not synced, went unseen. One manager makes
+each file visible and bounded, and gives engines what the database's
+own files have.
 
 **D27. A thread-safe core over snapshots of the definitions.**
 - A `Database` is shared between threads, and every extension trait is
