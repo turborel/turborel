@@ -104,6 +104,7 @@ impl Database {
     pub(super) fn budget_from_settings(&self) -> Result<()> {
         let st = self.snapshot()?;
         st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET)));
+        st.files.set_limit(usize::try_from(st.settings.integer(settings::FILES_MAX_OPEN)).unwrap_or(usize::MAX));
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
         Ok(())

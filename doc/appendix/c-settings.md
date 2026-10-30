@@ -23,6 +23,7 @@ starts, or only when the database is made.
 | DIAGNOSTICS.SLOW_STATEMENT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
+| FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | LOCK_TIMEOUT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | LOCK_WAIT | NO_WAIT | ONE OF NO_WAIT, WAIT | from the next transaction | *session* |
 | LOG.SEGMENT_SIZE | 67108864 | INTEGER FROM 4096 TO 1099511627775 | when the database is made |  |
@@ -59,6 +60,7 @@ Each in a sentence:
 - **DIAGNOSTICS.SLOW_STATEMENT**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
+- **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed, and opened again as it is next used.
 - **LOCK_TIMEOUT**: The milliseconds a statement waits for a lock, under LOCK_WAIT WAIT, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCK_WAIT**: WAIT waits for a lock another transaction holds; NO_WAIT refuses the statement at once.
 - **LOG.SEGMENT_SIZE**: The bytes after which a segment of the log is ended and the next begun.

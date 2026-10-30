@@ -77,6 +77,7 @@ string as CHARACTER, its octet length four octets a character.
 | MEMORY_RESERVATIONS | RESERVED_BY, BYTES | part of the memory budget reserved, as a buffer pool's |
 | CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement |
 | SERVER | WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD | one row: the workers running a statement, the statements waiting for one, the connections, and those refused past SERVER.MAX_CONNECTIONS, told why or closed at once |
+| FILES | PATH, KIND, IS_OPEN, READS, WRITES, SYNCS | file of the database: DATA, SHADOW, CATALOG, LOG, UNDO, SPILL or OTHER; whether it is open now; its reads, writes and syncs |
 | JOBS | LABEL, STATE, THREADED, RUNS, RESTARTS, LAST_ERROR | job of the database's background work, `turborel-checkpoint` or `turborel-maintenance`: IDLE, DUE or RUNNING; whether a thread of its own runs it; how often it ran, and failed by a fault; its last error, or NULL |
 
 VALUE_SOURCE says where a value comes from: DEFAULT, or the place it was
@@ -104,7 +105,7 @@ SELECT * FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS;
 ```
 
 The second, of a database kept in a directory: one in memory has no
-buffer pool. MEMORY_RESERVATIONS, JOBS, CONNECTIONS and SERVER show their
+buffer pool. MEMORY_RESERVATIONS, FILES, JOBS, CONNECTIONS and SERVER show their
 rows to the database's owner alone. CONNECTIONS and SERVER are a
 server's: a database a server serves, as `turboreld`'s, has them, and
 they show no connection, and counts of none, while it does not serve.

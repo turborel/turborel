@@ -74,6 +74,8 @@ pub const TIME_ZONE: Key = Key(30);
 pub const EXECUTOR_BATCHES: Key = Key(31);
 /// See [`DEFAULT_ENGINE`].
 pub const JOBS_POLICY: Key = Key(32);
+/// See [`DEFAULT_ENGINE`].
+pub const FILES_MAX_OPEN: Key = Key(33);
 
 /// The words of `EXECUTOR.BATCHES`.
 pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
@@ -143,6 +145,11 @@ pub(super) fn builtin() -> Vec<Definition> {
         ("JOBS.POLICY", Kind::Choice(&crate::threads::JobPolicy::WORDS), text("AUTOMATIC")),
         DATABASE,
         "How the database's background work, its checkpoints and maintenance, runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
+    ));
+    all.push(defined(
+        ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
+        DATABASE,
+        "The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed, and opened again as it is next used.",
     ));
     all
 }

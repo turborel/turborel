@@ -57,6 +57,20 @@ default, or CHECKPOINT.AFTER_BYTES bytes written to the data file,
 64 MiB; the database's checkpoint thread takes it, so no transaction
 waits for it. Each is told to the diagnostics, `checkpoint_taken`.
 
+## Open files
+
+A database holds at most FILES.MAX_OPEN of its files open at once, 1024
+by default, 0 for no limit, so a server stays within what the system
+allows a process. Past it, the file used least recently is closed, and
+opened again as it is next used; while every open file is being read or
+written, the next waits for one. The database's owner sees each file in
+INFORMATION_SCHEMA.FILES, its kind, whether it is open, and its reads,
+writes and syncs:
+
+```sql
+SELECT KIND, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND;
+```
+
 ## Background work
 
 The database does some of its work in the background: its checkpoints,

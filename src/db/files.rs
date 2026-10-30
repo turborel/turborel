@@ -62,6 +62,7 @@ use crate::disk::pager::Pager;
 use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
+use crate::files::FileManager;
 use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod};
 use crate::log::{FileLog, FileLogOptions, Log, Lsn};
 use crate::spill::TempFiles;
@@ -235,12 +236,15 @@ impl Database {
     /// a file is not of its kind or malformed; -915 if one cannot be read or
     /// written; the errors of recovery.
     pub fn open_files(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions) -> Result<Opened> {
-        let opened = self.noted(self.open_from(fs, dir, options))?;
+        // Every file it opens through its file manager (RULES.md D56),
+        // registered and limited.
+        let managed: Arc<dyn FileSystem> = Arc::new(FileManager::over(Arc::clone(fs), Arc::clone(&self.snapshot()?.files)));
+        let opened = self.noted(self.open_from(&managed, dir, options))?;
         self.emit(&Event::Opened(opened));
         Ok(opened)
     }
 
-    /// `open_files`' work.
+    /// `open_files`' work, through `fs`, the database's file manager.
     fn open_from(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions) -> Result<Opened> {
         let snapshot = self.snapshot()?;
         if !snapshot.catalog.tables().is_empty()
@@ -255,13 +259,13 @@ impl Database {
         let held = Arc::new(fs.lock(&dir.join(LOCK))?);
         snapshot.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))?;
         // Its settings given before it opened, of those it reads as it opens.
-        let given = snapshot.settings.started();
+        let started = snapshot.settings.started();
         // Its catalog is read in whatever registered formats it names: its
         // own are recorded in it.
         let reading = FileFormats { pipeline: Pipeline::none(), ..snapshot.layout(&snapshot.settings)?.formats };
         let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading), options)? else {
             let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held));
-            return self.create_files(&place, &given);
+            return self.create_files(&place, &started);
         };
         let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
         let recorded = |name: &str| image.as_ref().and_then(|i| i.snapshot.setting(name)).cloned();
@@ -300,7 +304,7 @@ impl Database {
         catalog.record(&Image { clean: false, ..image }.encode(), self.snapshot()?.compact_after())?;
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
-        self.opened(&given)?;
+        self.opened(&started)?;
         Ok(opened)
     }
 

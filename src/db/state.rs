@@ -116,6 +116,9 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
+    /// The files it holds, shared by every snapshot (`files.rs`, RULES.md
+    /// D56).
+    pub(crate) files: Arc<crate::files::Registry>,
     /// The log, the commit point of transactions begun with this snapshot
     /// (RULES.md D25); `None`, the default, writes none, as a database whose
     /// engines keep nothing between runs needs none.
@@ -159,13 +162,21 @@ impl State {
             temporaries: Arc::default(),
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             jobs: Arc::default(),
+            files: Arc::default(),
             log: None,
             reopening: None,
             building: HashSet::new(),
         };
-        // The built-ins, given the budget as `attach` gives a plug-in it,
-        // sharing their pages in memory, sized by STORAGE.POOL_BYTES.
-        st.pages.use_budget(Arc::clone(&memory));
+        st.attach_builtins(&memory);
+        st
+    }
+
+    /// The built-in engines and index methods, given the budget `memory`
+    /// as `attach` gives a plug-in it, sharing their pages in memory,
+    /// sized by STORAGE.POOL_BYTES.
+    fn attach_builtins(&mut self, memory: &Arc<MemoryBudget>) {
+        let st = self;
+        st.pages.use_budget(Arc::clone(memory));
         let engine = RowStore::sharing(TableOptions::default(), Arc::clone(&st.pages));
         engine.use_work(Arc::clone(&st.work));
         engine.use_encodings(Arc::clone(&st.encodings));
@@ -180,7 +191,6 @@ impl State {
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
-        st
     }
 
     /// Gives each table and index already in the catalog its storage and index

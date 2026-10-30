@@ -39,6 +39,7 @@ pub mod disk;
 pub mod engine;
 pub mod error;
 pub mod exec;
+pub mod files;
 pub mod functions;
 pub mod hash;
 pub mod index;
