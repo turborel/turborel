@@ -133,7 +133,10 @@ fn fields(json: &mut Json, event: &Event) {
             json.text("event", "slow_statement");
             json.text("user", user);
             json.number("millis", *millis);
-            json.text("statement", statement);
+            match statement {
+                Some(text) => json.text("statement", text),
+                None => json.raw("statement", "null"),
+            }
         }
         // An event of a later database than this sink knows: kept whole.
         other => {
@@ -277,10 +280,15 @@ mod tests {
     fn events_are_lines_of_json() {
         let shown = |event: &Event| line(at(0, 0), event);
         let head = r#"{"time":"1970-01-01T00:00:00.000Z","#;
-        let slow = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: "SELECT 'a\"b'\n\u{1}".into() };
+        let slow = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: Some("SELECT 'a\"b'\n\u{1}".into()) };
         assert_eq!(
             shown(&slow),
             format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":"SELECT 'a\"b'\n\u0001"}}"#)
+        );
+        let untold = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: None };
+        assert_eq!(
+            shown(&untold),
+            format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":null}}"#)
         );
         let report = RecoveryReport { records: 1, definitions: 2, committed: 3, not_committed: 4, redone: 5, undone: 6 };
         let cases = [

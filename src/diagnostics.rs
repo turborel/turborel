@@ -117,14 +117,15 @@ pub enum Event {
     },
     /// A statement whose work took DIAGNOSTICS.SLOW_STATEMENT or longer: a
     /// call, or a cursor's opening and fetches (`db/slow.rs`). Its text is
-    /// as its session gave it, values written in it included.
+    /// as its session gave it, values written in it included; none while
+    /// anything of the database is encrypted (RULES.md D56).
     SlowStatement {
         /// Who ran it: its session's authorization identifier.
         user: String,
         /// Its work, in milliseconds.
         millis: u64,
-        /// Its text.
-        statement: String,
+        /// Its text, if it may be told.
+        statement: Option<String>,
     },
 }
 

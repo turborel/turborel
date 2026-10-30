@@ -24,6 +24,10 @@ turboreld: cannot open db: SQLCODE -910 (SQLSTATE TB910): the keyring (none: giv
 Keep the keys apart from the database, and safe: without them, the
 database cannot be read by anyone, its operator included.
 
+While anything of the database is encrypted, its files or a table, the
+diagnostics tell no statement's text: a slow statement is told by who
+ran it and its time alone ([Diagnostics](08-diagnostics.md)).
+
 ## Table encodings
 
 A table's rows may pass through encodings of their own, compressed or

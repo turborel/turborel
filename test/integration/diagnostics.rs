@@ -7,7 +7,7 @@ use turborel::error::Code;
 use turborel::index::BTreeMethod;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Kept, Scratch, arm, gated, locked, os};
+use crate::common::{Kept, Scramble, Scratch, arm, gated, locked, os};
 
 /// Verifies: [DESIGN] RULES.md D40, `Diagnostics`: a database kept in a
 /// directory tells its sink it was created, of each checkpoint taken, of a
@@ -109,6 +109,27 @@ fn a_slow_statement_is_told() {
     let told = slow(&kept);
     assert_eq!(told.len(), 1, "the wait, not the SET: {told:?}");
     assert!(told[0].contains(r#"user: "X""#) && told[0].contains("INSERT INTO L VALUES (2)"), "{told:?}");
+    holder.commit().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D56, D48: while anything of the database is
+/// encrypted, a slow statement is told by who ran it and its time alone,
+/// its text left out, so no value meant for an encrypted table reaches a
+/// log in the clear.
+#[test]
+fn a_slow_statement_of_an_encrypted_database_is_told_without_its_text() {
+    let (db, holder) = locked();
+    db.register_encoding(Box::new(Scramble)).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE SECRET (V CHARACTER(10)) WITH (ENCODINGS = 'test scramble')").unwrap();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT", &Value::Exact(Decimal::new(20, 0))).unwrap();
+    let waiter = db.session("X");
+    waiter.run("SET LOCK_TIMEOUT = 40").unwrap();
+    assert!(waiter.run("INSERT INTO L VALUES (2)").is_err(), "waited, then refused");
+    let told = slow(&kept);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains(r#"user: "X""#) && told[0].contains("statement: None"), "{told:?}");
     holder.commit().unwrap();
 }
 
