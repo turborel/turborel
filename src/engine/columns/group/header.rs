@@ -1,6 +1,7 @@
 //! \[DESIGN\] A frozen row group's header, written and read back as
 //! `group.rs` describes it. Split from group.rs (RULES.md R-SIZE-2).
 
+use super::summary::{Overall, Summary};
 use super::{Filter, GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
 use crate::disk::pager::PageId;
 use crate::error::Result;
@@ -178,4 +179,57 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
         return Err(corrupt("its header has bytes past its end"));
     }
     Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, header })
+}
+
+/// Appends `summary`, its columns of `types`, as a table's directory holds
+/// it:
+///
+/// ```text
+/// summary:  header page u64 | first id u64 | last id u64 | rows u32 |
+///           order u32 | each: column u32 | blooms u32 | each: column u32 |
+///           columns u32 | each: nulls u32 | bounds u8 | least | greatest
+/// ```
+///
+/// # Errors
+///
+/// SQLCODE -910 if a bound is not of its column's type; -900 if it is too
+/// large.
+pub fn put_summary(out: &mut Vec<u8>, summary: &Summary, types: &[DataType]) -> Result<()> {
+    put_u64(out, summary.header.0);
+    put_u64(out, summary.first);
+    put_u64(out, summary.last);
+    put_u32(out, summary.rows);
+    for places in [&summary.order, &summary.blooms] {
+        put_u32(out, count32(places.len())?);
+        for &place in places {
+            put_u32(out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
+        }
+    }
+    put_u32(out, count32(summary.columns.len())?);
+    for (overall, t) in summary.columns.iter().zip(types) {
+        put_u32(out, overall.nulls);
+        put_bounds(out, overall.bounds.as_ref(), t)?;
+    }
+    Ok(())
+}
+
+/// The summaries `bytes` hold one after another, their columns of `types`.
+///
+/// # Errors
+///
+/// SQLCODE -916 if one is malformed, or of other columns.
+pub fn read_summaries(bytes: &[u8], types: &[DataType]) -> Result<Vec<Summary>> {
+    let mut r = Reader(bytes);
+    let mut out = Vec::new();
+    while !r.0.is_empty() {
+        let (header, first, last, rows) = (PageId(r.u64()?), r.u64()?, r.u64()?, r.u32()?);
+        let order = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
+        let blooms = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
+        if r.count()? != types.len() {
+            return Err(corrupt("its summary's columns are not its table's"));
+        }
+        let columns = types.iter().map(|t| Ok(Overall { nulls: r.u32()?, bounds: r.bounds(t)? })).collect::<Result<Vec<_>>>()?;
+        out.push(Summary { header, first, last, rows, order, blooms, columns });
+    }
+    Ok(out)
 }

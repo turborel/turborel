@@ -2,6 +2,7 @@
 //! of a buffer pool, shadowed or not (`disk/shadow.rs`), and the undo store
 //! its tables share.
 
+use crate::engine::columns::cache::HeaderCache;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 
@@ -32,6 +33,9 @@ pub struct TableFiles {
     /// exclusively while a checkpoint is captured, so none captures half
     /// a group (`rows/frozen.rs`).
     pub(super) freezes: Arc<RwLock<()>>,
+    /// The headers of its tables' frozen row groups held in memory
+    /// (`columns/cache.rs`): its store's.
+    pub(super) headers: Arc<HeaderCache>,
 }
 
 impl TableFiles {
@@ -53,6 +57,7 @@ impl TableFiles {
             shadows: None,
             work: Arc::default(),
             freezes: Arc::default(),
+            headers: Arc::default(),
         }
     }
 

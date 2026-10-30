@@ -126,6 +126,9 @@ pub struct RowStore {
     /// Whether it checkpoints its files: not the column store sharing the
     /// row store's, which checkpoints them for both.
     checkpoints: bool,
+    /// The headers of its tables' frozen row groups held in memory, of
+    /// the database's budget once attached (`columns/cache.rs`).
+    headers: Arc<crate::engine::columns::cache::HeaderCache>,
 }
 
 impl StorageEngine for RowStore {
@@ -236,6 +239,8 @@ pub struct RowTable {
     freezes: Arc<RwLock<()>>,
     /// Its zone maps, of the row store (`rows/zones.rs`).
     zones: Zones,
+    /// Its store's headers of frozen row groups held (`TableFiles::headers`).
+    headers: Arc<crate::engine::columns::cache::HeaderCache>,
 }
 
 /// What a table's meta page names, made or read.
@@ -317,6 +322,7 @@ impl RowTable {
             frozen: Frozen::new(options.columns),
             freezes: Arc::clone(&files.freezes),
             zones: Zones::new(types, options.columns.is_none()),
+            headers: Arc::clone(&files.headers),
         })
     }
 

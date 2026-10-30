@@ -20,7 +20,7 @@ use std::sync::atomic::Ordering;
 
 use super::Entry;
 use super::freeze::ordered;
-use crate::engine::columns::group::Group;
+use crate::engine::columns::group::{Group, Summary};
 use crate::engine::columns::scan::rows;
 use crate::engine::rows::options::Columns;
 use crate::engine::rows::version::{Maker, Version};
@@ -36,13 +36,13 @@ const MOST_REWRITES: usize = 2;
 /// Whether `group` is sorted by other columns than `columns`'s
 /// COLUMNSTORE.ORDER names, or keeps Bloom filters of others than its
 /// COLUMNSTORE.BLOOM names.
-fn stale_group(group: &Group, columns: &Columns) -> bool {
-    group.order.as_slice() != columns.order.places() || group.blooms().as_slice() != columns.bloom.places()
+fn stale_group(group: &Summary, columns: &Columns) -> bool {
+    group.order.as_slice() != columns.order.places() || group.blooms.as_slice() != columns.bloom.places()
 }
 
 /// Whether one of `groups` is stale (`stale_group`).
 pub(super) fn stale(groups: &[Arc<Entry>], columns: &Columns) -> bool {
-    groups.iter().any(|entry| stale_group(&entry.group, columns))
+    groups.iter().any(|entry| stale_group(&entry.summary, columns))
 }
 
 /// Whether `entries` of a group of `rows` rows are COLUMNSTORE.REWRITE_FRACTION
@@ -73,12 +73,12 @@ impl RowTable {
                 self.frozen.shadow();
                 break;
             }
-            let resorted = stale_group(&entry.group, &columns);
+            let resorted = stale_group(&entry.summary, &columns);
             if !shadowed && !resorted {
                 continue;
             }
-            let entries = self.entries_in(&entry.group)?;
-            if resorted || due(entries.len(), entry.group.rows, &columns) {
+            let entries = self.entries_in(&entry.summary)?;
+            if resorted || due(entries.len(), entry.summary.rows, &columns) {
                 self.rewrite(entry, (entries, cutoff), &columns)?;
                 written = written.saturating_add(1);
             }
@@ -87,7 +87,7 @@ impl RowTable {
     }
 
     /// The tree's entries in `group`'s range of row ids.
-    fn entries_in(&self, group: &Group) -> Result<Vec<(RowId, Vec<u8>)>> {
+    fn entries_in(&self, group: &Summary) -> Result<Vec<(RowId, Vec<u8>)>> {
         let (low, high) = (key(group.first), key(group.last));
         let mut found = Vec::new();
         for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
@@ -104,8 +104,9 @@ impl RowTable {
         let pages = self.group_pages()?;
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
-        let old_ids = entry.group.row_ids(&pages)?;
-        let frozen = rows(&entry.group, &pages, types, &all, (0, entry.group.rows))?;
+        let old = self.group_of(entry)?;
+        let old_ids = old.row_ids(&pages)?;
+        let frozen = rows(&old, &pages, types, &all, (0, old.rows))?;
         // Each row id's row, or none if deleted: the group's, then the
         // entries folded in over them.
         let mut kept: BTreeMap<RowId, Option<Row>> = old_ids.into_iter().zip(frozen.into_iter().map(Some)).collect();

@@ -13,10 +13,11 @@ use crate::engine::rows::{RowTable, TableFiles, TableOptions, key};
 use crate::engine::tree::Direction;
 use crate::error::Code;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
+use crate::index::Probe;
 use crate::log::MemoryLog;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage};
 use crate::txn::NO_TRANSACTION;
-use crate::value::{DataType, Decimal, Spelled, Value};
+use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
 const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::Varying { length: 20 }];
 
@@ -96,7 +97,7 @@ fn rows_are_frozen_when_due() {
     let (table, ids) = table(&files, 0, 5000);
     ended(&table, 1);
     let directory = table.frozen.directory().unwrap();
-    assert_eq!(directory.groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048, 2048]);
+    assert_eq!(directory.groups.iter().map(|e| e.summary.rows).collect::<Vec<_>>(), [2048, 2048]);
     assert_eq!(entries(&table), 5000 - 4096, "the frozen rows' entries taken out");
     assert_eq!(table.get(NO_TRANSACTION, ids[7]).unwrap().map(|r| r[1].to_string()), Some("v7".to_owned()));
     assert_eq!(table.get(NO_TRANSACTION, ids[4999]).unwrap().map(|r| r[1].to_string()), Some("v4999".to_owned()));
@@ -259,7 +260,7 @@ fn groups_are_written_again() {
     let before = table.frozen.directory().unwrap();
     changed(&table, (&ids[0..400], &ids[400..500]), 10);
     let after = table.frozen.directory().unwrap();
-    assert_eq!(after.groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048 - 100, 2048]);
+    assert_eq!(after.groups.iter().map(|e| e.summary.rows).collect::<Vec<_>>(), [2048 - 100, 2048]);
     assert!(Arc::ptr_eq(&before.groups[1], &after.groups[1]), "the other group as it was");
     drop(before);
     table.retire_unread().unwrap();
@@ -279,7 +280,7 @@ fn groups_are_written_again() {
         (never, more)
     };
     changed(&never, (&more[0..1000], &[]), 30);
-    assert_eq!(never.frozen.directory().unwrap().groups.iter().map(|e| e.group.rows).collect::<Vec<_>>(), [2048, 2048], "never");
+    assert_eq!(never.frozen.directory().unwrap().groups.iter().map(|e| e.summary.rows).collect::<Vec<_>>(), [2048, 2048], "never");
 }
 
 /// The pages of the groups a table of rows `0..4096` of `types`, made by
@@ -303,7 +304,7 @@ fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool
         table.insert(NO_TRANSACTION, make(n)).unwrap();
     }
     ended(&table, 1);
-    let pages = table.frozen.directory().unwrap().groups.iter().map(|e| e.group.pages().len()).sum();
+    let pages = table.frozen.directory().unwrap().groups.iter().map(|e| table.group_of(e).unwrap().pages().len()).sum();
     let all: Vec<usize> = (0..types.len()).collect();
     let read = Arc::clone(&table)
         .scan(NO_TRANSACTION, &all)
@@ -383,7 +384,7 @@ fn a_read_by_batch_misses_no_entry_taken_out() {
 /// Whether `table`'s first group's rows are in order of their texts.
 fn sorted_by_text(table: &RowTable) -> bool {
     let directory = table.frozen.directory().unwrap();
-    let group = &directory.groups[0].group;
+    let group = &*table.group_of(&directory.groups[0]).unwrap();
     let texts = crate::engine::columns::scan::values(group, &table.group_pages().unwrap(), (1, &TYPES[1]), (0, group.rows)).unwrap();
     group.sorted() && texts.windows(2).all(|w| crate::value::sort_cmp(&w[0], &w[1]).is_le())
 }
@@ -411,7 +412,7 @@ fn groups_are_sorted_by_their_order() {
     assert_eq!(batched, 5000);
     changed(&table, (&ids[0..400], &ids[400..500]), 10);
     assert!(sorted_by_text(&table), "sorted as written again");
-    assert_eq!(table.frozen.directory().unwrap().groups[0].group.rows, 2048 - 100);
+    assert_eq!(table.frozen.directory().unwrap().groups[0].summary.rows, 2048 - 100);
     assert_eq!(table.get(NO_TRANSACTION, ids[3]).unwrap().map(|r| r[1].to_string()), Some("v-3".to_owned()));
     assert!(table.get(NO_TRANSACTION, ids[450]).unwrap().is_none());
 }
@@ -429,7 +430,8 @@ fn groups_are_sorted_again_when_their_order_changes() {
     let table = Arc::new(RowTable::create(&files, &TYPES, options(0)).unwrap());
     let ids: Vec<RowId> = (0..7000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     ended(&table, 1);
-    let orders = |t: &RowTable| -> Vec<Vec<usize>> { t.frozen.directory().unwrap().groups.iter().map(|e| e.group.order.clone()).collect() };
+    let orders =
+        |t: &RowTable| -> Vec<Vec<usize>> { t.frozen.directory().unwrap().groups.iter().map(|e| e.summary.order.clone()).collect() };
     assert_eq!(orders(&table), vec![Vec::<usize>::new(); 3], "frozen in row id order");
     let mut sorted = options(0).columns.unwrap();
     sorted.order = Places::of(&[1]);
@@ -447,4 +449,37 @@ fn groups_are_sorted_again_when_their_order_changes() {
     ended(&table, 1);
     assert_eq!(orders(&table), vec![Vec::<usize>::new(); 3], "in row id order again");
     assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, headers read as they are needed: a
+/// table opened again holds only its groups' summaries, no header read; a
+/// scan whose condition no group's summary may match, by rows or by
+/// batches, reads no header and gives no frozen row; one that reads a
+/// group holds its header, and gives what the table holds.
+#[test]
+fn headers_are_read_as_they_are_needed() {
+    let (_, files) = files();
+    let (table, _) = table(&files, 0, 5000);
+    ended(&table, 1);
+    assert_eq!(files.headers.held().1, 2, "the headers written held");
+    let cold = TableFiles { headers: Arc::default(), ..files.clone() };
+    let opened = Arc::new(RowTable::open(&cold, table.meta(), &TYPES, options(0)).unwrap());
+    assert_eq!(cold.headers.held(), (0, 0), "summaries only");
+    let directory = opened.frozen.directory().unwrap();
+    assert_eq!(directory.groups.iter().map(|e| (e.summary.first, e.summary.rows)).collect::<Vec<_>>(), [(1024, 2048), (3072, 2048)]);
+    let over = |n: i128| {
+        Conjunction::of(Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: Value::Exact(Decimal::new(n, 0)) } })
+    };
+    let rows = |c: &Conjunction| Arc::clone(&opened).scan_where(NO_TRANSACTION, &[0], c).count();
+    let batched = |c: &Conjunction| Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0], Some(c)).map(|b| b.unwrap().rows).sum::<usize>();
+    assert_eq!((rows(&over(4500)), batched(&over(4500))), (499, 499), "the tree's rows only");
+    assert_eq!(cold.headers.held(), (0, 0), "no group may match: no header read");
+    // Batches give the rows of the parts that may match, for the filter
+    // to judge.
+    assert_eq!(rows(&over(3000)), 1999);
+    assert!((1999..5000).contains(&batched(&over(3000))));
+    let (bytes, held) = cold.headers.held();
+    assert!(held == 1 && bytes > 0, "the second group's header held: {bytes} bytes");
+    assert_eq!(scanned(&opened, NO_TRANSACTION).len(), 5000);
+    assert_eq!(cold.headers.held().1, 2);
 }

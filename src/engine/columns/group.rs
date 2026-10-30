@@ -32,11 +32,13 @@
 //! encodings, its page number their context.
 
 mod header;
+mod summary;
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-pub use header::read;
+pub use header::{put_summary, read, read_summaries};
+pub use summary::{Overall, Summary};
 
 use super::{Chunk, Fields, bloom};
 use crate::disk::buffer::{BufferPool, FileId};

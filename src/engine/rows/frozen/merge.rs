@@ -10,7 +10,8 @@ use std::collections::VecDeque;
 use std::iter::Peekable;
 use std::sync::Arc;
 
-use super::{Directory, Entry};
+use super::Directory;
+use crate::engine::columns::group::Group;
 use crate::engine::columns::scan::{read_candidates, rows};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
@@ -55,7 +56,7 @@ pub(in crate::engine::rows) struct Merged {
     /// The next group to read.
     next_group: usize,
     /// The group being read, its row ids, and the runs of it left.
-    group: Option<(Arc<Entry>, Vec<RowId>)>,
+    group: Option<(Arc<Group>, Vec<RowId>)>,
     runs: VecDeque<(u32, u32)>,
     frozen: VecDeque<(RowId, Row)>,
 }
@@ -94,9 +95,15 @@ impl Merged {
             }
             let Some(entry) = self.directory.groups.get(self.next_group).cloned() else { return Ok(None) };
             self.next_group = self.next_group.saturating_add(1);
+            // A group the condition cannot match by its summary is passed
+            // over unread.
+            if !entry.summary.may_match(self.condition.as_ref()) {
+                continue;
+            }
             let pages = self.table.group_pages()?;
-            let ids = entry.group.row_ids(&pages)?;
-            for (from, to) in read_candidates(&entry.group, &pages, self.condition.as_ref())? {
+            let group = self.table.group_of(&entry)?;
+            let ids = group.row_ids(&pages)?;
+            for (from, to) in read_candidates(&group, &pages, self.condition.as_ref())? {
                 let mut at = from;
                 while at < to {
                     let end = at.saturating_add(VECTOR).min(to);
@@ -104,8 +111,8 @@ impl Merged {
                     at = end;
                 }
             }
-            let sorted = entry.group.sorted();
-            self.group = Some((entry, ids));
+            let sorted = group.sorted();
+            self.group = Some((group, ids));
             if sorted {
                 while let Some((from, to)) = self.runs.pop_front() {
                     self.read_run(from, to)?;
@@ -119,9 +126,9 @@ impl Merged {
     /// Reads positions `from` to `to` of the group being read, keeping the
     /// rows the condition matches.
     fn read_run(&mut self, from: u32, to: u32) -> Result<()> {
-        let Some((entry, ids)) = &self.group else { return Ok(()) };
+        let Some((group, ids)) = &self.group else { return Ok(()) };
         let pages = self.table.group_pages()?;
-        let found = rows(&entry.group, &pages, self.table.format.types(), &self.columns, (from, to))?;
+        let found = rows(group, &pages, self.table.format.types(), &self.columns, (from, to))?;
         let first = usize::try_from(from).unwrap_or(usize::MAX);
         for (n, row) in found.into_iter().enumerate() {
             let Some(&id) = ids.get(first.saturating_add(n)) else { continue };

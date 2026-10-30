@@ -141,7 +141,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
     (`DEFAULT_FETCH_COST`), the entries an index counts for an estimate
     (`COUNTED`), the precision of distinct counts (`REGISTER_BITS`), and
     the server's requests read ahead on a connection (`IN_FLIGHT`) and its
-    pause after a failed accept (`ACCEPT_BACKOFF`).
+    pause after a failed accept (`ACCEPT_BACKOFF`), and the bytes of frozen
+    groups' headers a store holds (`HEADER_CACHE_BYTES`).
 - **Session settings to add:** commit durability, optimizer overrides, and
   the function call syntax (today `Session::enable_extensions`).
 
@@ -205,8 +206,9 @@ The registry, scopes and SET statements exist (D36). Still to do:
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
   a trait. For the column store:
   - a sorted group's rows read in their order, or backwards, to answer
-    an ORDER BY of its order's columns, LIMIT among them, without a
-    sort; COLUMNSTORE.ORDER needs no descending columns for it, as
+    an ORDER BY of its order's columns without a sort, a cursor's first
+    rows found first (a clause limiting the rows waits for a later
+    standard's text); COLUMNSTORE.ORDER needs no descending columns for it, as
     reading backwards gives their order (Vertica keeps ascending only,
     ClickHouse sorting keys took DESC in 24.12 for the same reads);
   - a table option of columns (COLUMNSTORE.ORDER) following a column
@@ -214,7 +216,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   - chunks compressed further: FSST for texts, ALP for approximate
     numbers; and conditions judged on a frame or runs without decoding
     each value;
-  - groups' headers read as they are needed, not held in memory.
 
 ---
 

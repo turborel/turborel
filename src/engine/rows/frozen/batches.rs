@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use super::Directory;
 use super::merge::VECTOR_ROWS;
-use crate::engine::columns::group::Group;
+use crate::engine::columns::group::{Group, Summary};
 use crate::engine::columns::scan::{ints, ints_at, read_candidates, texts, texts_at, values, values_at};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
@@ -40,7 +40,7 @@ pub(in crate::engine::rows) struct Batched {
     next_group: usize,
     /// The group being read, its row ids, those the tree has entries for,
     /// in order, and its runs left to read.
-    group: Option<(usize, Vec<RowId>, Vec<RowId>)>,
+    group: Option<(Arc<Group>, Vec<RowId>, Vec<RowId>)>,
     runs: VecDeque<(u32, u32)>,
     /// The rows of the tree's entries in the group's range, left to give.
     entries: Vec<Row>,
@@ -77,18 +77,26 @@ impl Batched {
 
     /// The group being read.
     fn current(&self) -> Option<&Group> {
-        self.group.as_ref().and_then(|(at, _, _)| self.directory.groups.get(*at)).map(|e| &e.group)
+        self.group.as_ref().map(|(group, _, _)| &**group)
     }
 
     /// Takes up the next group, its runs a vector at most each, and the
-    /// tree's entries in its range; whether there was one.
+    /// tree's entries in its range; whether there was one. A group the
+    /// condition cannot match by its summary is passed over unread, the
+    /// tree's entries in its range read with the rest.
     fn next_group(&mut self) -> Result<bool> {
         let Some(entry) = self.directory.groups.get(self.next_group).cloned() else { return Ok(false) };
-        let shadowed = self.entries_in(&entry.group)?;
+        self.group = None;
+        if !entry.summary.may_match(self.condition.as_ref()) {
+            self.next_group = self.next_group.saturating_add(1);
+            return Ok(true);
+        }
+        let shadowed = self.entries_in(&entry.summary)?;
         let pages = self.table.group_pages()?;
-        let ids = entry.group.row_ids(&pages)?;
+        let group = self.table.group_of(&entry)?;
+        let ids = group.row_ids(&pages)?;
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
-        for (from, to) in read_candidates(&entry.group, &pages, self.condition.as_ref())? {
+        for (from, to) in read_candidates(&group, &pages, self.condition.as_ref())? {
             let mut at = from;
             while at < to {
                 let end = at.saturating_add(vector).min(to);
@@ -96,7 +104,7 @@ impl Batched {
                 at = end;
             }
         }
-        self.group = Some((self.next_group, ids, shadowed));
+        self.group = Some((group, ids, shadowed));
         self.next_group = self.next_group.saturating_add(1);
         Ok(true)
     }
@@ -120,7 +128,7 @@ impl Batched {
     /// The ids of the tree's entries in `group`'s range of row ids, in
     /// order, the rows of those the reader sees kept to give, and the range
     /// noted as read.
-    fn entries_in(&mut self, group: &Group) -> Result<Vec<RowId>> {
+    fn entries_in(&mut self, group: &Summary) -> Result<Vec<RowId>> {
         let (low, high) = (key(group.first), key(group.last));
         let decoded = self.decoded();
         let mut shadowed = Vec::new();

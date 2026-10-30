@@ -2,6 +2,7 @@
 //! the database's budget and work areas. Split from engine/rows.rs
 //! (RULES.md R-SIZE-2).
 
+use crate::engine::columns::cache::HeaderCache;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -27,8 +28,10 @@ impl RowStore {
     /// unless `configure` says otherwise.
     pub fn new(files: TableFiles, defaults: TableOptions) -> RowStore {
         let work = Arc::clone(&files.work);
+        let headers: Arc<HeaderCache> = Arc::default();
         RowStore {
-            files: Mutex::new(Some(files)),
+            files: Mutex::new(Some(TableFiles { headers: Arc::clone(&headers), ..files })),
+            headers,
             memory: MemoryPages::new(0),
             defaults,
             tables: Mutex::new(HashMap::new()),
@@ -61,6 +64,7 @@ impl RowStore {
     pub(crate) fn sharing(defaults: TableOptions, memory: Arc<MemoryPages>) -> RowStore {
         RowStore {
             files: Mutex::new(None),
+            headers: Arc::default(),
             memory,
             defaults,
             tables: Mutex::new(HashMap::new()),
@@ -88,6 +92,7 @@ impl RowStore {
 
     /// Makes `budget` the one its pool in memory draws on, if made after.
     pub(crate) fn use_budget(&self, budget: Arc<MemoryBudget>) {
+        self.headers.use_budget(Arc::clone(&budget));
         self.memory.use_budget(budget);
     }
 
@@ -103,7 +108,11 @@ impl RowStore {
             return Ok(files.clone());
         }
         let (pool, file) = self.memory.file("the pool in memory of the built-in engine and index methods")?;
-        let made = TableFiles { work: Arc::clone(&self.work), ..TableFiles::new(pool, file, Arc::new(MemoryLog::new())) };
+        let made = TableFiles {
+            work: Arc::clone(&self.work),
+            headers: Arc::clone(&self.headers),
+            ..TableFiles::new(pool, file, Arc::new(MemoryLog::new()))
+        };
         *files = Some(made.clone());
         Ok(made)
     }

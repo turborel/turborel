@@ -21,6 +21,7 @@
 //!   cannot match left unread.
 
 mod bloom;
+pub mod cache;
 mod encoded;
 pub mod group;
 mod packed;

@@ -113,6 +113,16 @@ Once the option is set or changed, groups frozen before are written
 again in the background, as for COLUMNSTORE.ORDER, and it names columns
 as that option does.
 
+Of each frozen group the database keeps in memory only a summary: the
+range of rows it holds, and each column's least and greatest values and
+nulls, so a query passes over a group whose summary says no row of it
+can match without reading more of it. The rest of what describes a
+group, of each 1,024 rows of each column, is read as a query needs it,
+and up to 16 MiB of it kept for the queries after, of MEMORY_BUDGET:
+INFORMATION_SCHEMA.MEMORY_RESERVATIONS lists it as the headers of frozen
+row groups, a MiB at a time. What was read longest ago is given up
+first, and read again when it is needed.
+
 What a table holds, and what a query of it gives, is the same in either
 store; only how fast each query runs differs. ALTER TABLE ... USING
 moves a table to the other, its rows copied; the setting DEFAULT_ENGINE

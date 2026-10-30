@@ -45,7 +45,7 @@ impl RowTable {
             }
         }
         // Its groups' pages go with the last reader of them.
-        self.frozen.retire_all();
+        self.retire_all()?;
         if self.frozen.stored() != 0 {
             let pages = self.group_pages()?;
             let (_, chain) = crate::engine::columns::group::read_chain(&pages, crate::disk::pager::PageId(self.frozen.stored()))?;

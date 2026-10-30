@@ -16,11 +16,15 @@
 //! apart from the others'. A reader takes the directory as it is when it
 //! begins; the tree's entries of rows frozen are taken out only once no
 //! reader holds a directory without their group (`freeze.rs`), so no
-//! reader misses a row. Its groups' header pages are listed on a chain of
-//! pages, the first named by the table's meta page:
+//! reader misses a row. Of each group the directory holds in memory only
+//! its summary (`group/summary.rs`), so a scan passes over a group no
+//! condition may match without its header; a header is read as it is
+//! needed, and held while it was read recently (`columns/cache.rs`). The
+//! summaries are kept on a chain of pages, the first named by the table's
+//! meta page:
 //!
 //! ```text
-//! directory:  groups u32 | each: the first page of its header u64
+//! directory:  groups u32 | each: its summary (`group/header.rs`)
 //! ```
 
 mod batches;
@@ -29,7 +33,7 @@ mod merge;
 mod rewrite;
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -42,7 +46,8 @@ use super::version::{Maker, Version};
 use super::{RowTable, corrupt};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
-use crate::engine::columns::group::{self, Group, Pages, Seal};
+use crate::engine::columns::cache::HeaderCache;
+use crate::engine::columns::group::{self, Group, Pages, Seal, Summary};
 use crate::engine::columns::scan::candidates;
 use crate::error::Result;
 use crate::storage::{Conjunction, Row, RowId};
@@ -95,21 +100,33 @@ impl Seal for Sealing {
     }
 }
 
-/// A group of the directory: freed once retired and no reader holds it.
+/// A group of the directory, its summary: its pages freed once retired
+/// and no reader holds it.
 pub(super) struct Entry {
-    pub(super) group: Group,
+    pub(super) summary: Summary,
+    headers: Arc<HeaderCache>,
     pool: Arc<BufferPool>,
     file: FileId,
-    retired: AtomicBool,
+    /// Its pages, once it is retired.
+    retired: Mutex<Option<Vec<PageId>>>,
 }
 
 impl Drop for Entry {
     fn drop(&mut self) {
-        if self.retired.load(Ordering::Acquire) {
-            for page in self.group.pages() {
+        self.headers.forget((self.file, self.summary.header));
+        if let Some(pages) = lock_builtin(&self.retired).take() {
+            for page in pages {
                 let _ = self.pool.free(self.file, page);
             }
         }
+    }
+}
+
+impl Entry {
+    /// Marks it retired, `pages`, its group's, freed when the last reader
+    /// is done.
+    fn retire(&self, pages: Vec<PageId>) {
+        *lock_builtin(&self.retired) = Some(pages);
     }
 }
 
@@ -122,18 +139,18 @@ pub(super) struct Directory {
 impl Directory {
     /// The group whose range holds row `id`, if any.
     pub(super) fn holding(&self, id: RowId) -> Option<&Arc<Entry>> {
-        let at = self.groups.partition_point(|e| e.group.last < id);
-        self.groups.get(at).filter(|e| e.group.first <= id)
+        let at = self.groups.partition_point(|e| e.summary.last < id);
+        self.groups.get(at).filter(|e| e.summary.first <= id)
     }
 
     /// The last row id of its last group.
     fn last(&self) -> Option<RowId> {
-        self.groups.last().map(|e| e.group.last)
+        self.groups.last().map(|e| e.summary.last)
     }
 
     /// How many rows its groups hold.
     pub(super) fn rows(&self) -> u64 {
-        self.groups.iter().map(|e| u64::from(e.group.rows)).sum()
+        self.groups.iter().map(|e| u64::from(e.summary.rows)).sum()
     }
 }
 
@@ -213,14 +230,6 @@ impl Frozen {
             *held = columns;
         }
     }
-
-    /// Marks every group retired, so its pages are freed when the last
-    /// reader is done: the table is dropped.
-    pub(super) fn retire_all(&self) {
-        if let Ok(directory) = read(&self.directory) {
-            directory.groups.iter().for_each(|e| e.retired.store(true, Ordering::Release));
-        }
-    }
 }
 
 impl RowTable {
@@ -231,18 +240,43 @@ impl RowTable {
         Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress })
     }
 
+    /// The group of `entry`: its header as held, else read and held.
+    ///
+    /// # Errors
+    ///
+    /// As `group::read`.
+    pub(super) fn group_of(&self, entry: &Entry) -> Result<Arc<Group>> {
+        let key = (self.file, entry.summary.header);
+        if let Some(group) = self.headers.get(key) {
+            return Ok(group);
+        }
+        let group = Arc::new(group::read(&self.group_pages()?, entry.summary.header, self.format.types())?);
+        self.headers.put(key, &group);
+        Ok(group)
+    }
+
+    /// Marks every group retired, so its pages are freed when the last
+    /// reader is done: the table is dropped.
+    pub(super) fn retire_all(&self) -> Result<()> {
+        for entry in &self.frozen.directory()?.groups {
+            entry.retire(self.group_of(entry)?.pages());
+        }
+        Ok(())
+    }
+
     /// Row `id`'s frozen values, `columns` of them or all, if a group of
     /// `directory` holds it.
     pub(super) fn frozen_in(&self, directory: &Directory, id: RowId, columns: Option<&[usize]>) -> Result<Option<Row>> {
         let Some(entry) = directory.holding(id) else { return Ok(None) };
         let pages = self.group_pages()?;
-        let Some(position) = entry.group.position(&pages, id)? else { return Ok(None) };
+        let group = self.group_of(entry)?;
+        let Some(position) = group.position(&pages, id)? else { return Ok(None) };
         let types = self.format.types();
         let mut row = vec![Value::Null; types.len()];
         let all: Vec<usize> = (0..types.len()).collect();
         for &c in columns.unwrap_or(&all) {
             if let (Some(slot), Some(t)) = (row.get_mut(c), types.get(c)) {
-                *slot = entry.group.value(&pages, (c, t), position)?;
+                *slot = group.value(&pages, (c, t), position)?;
             }
         }
         Ok(Some(row))
@@ -278,15 +312,12 @@ impl RowTable {
         let (bytes, _) = group::read_chain(&pages, PageId(first))?;
         let (count, rest) = bytes.split_first_chunk::<4>().ok_or_else(|| corrupt("its groups' directory is too short"))?;
         let count = usize::try_from(u32::from_le_bytes(*count)).map_err(|_| corrupt("its groups' directory is too long"))?;
-        if rest.len() != count.saturating_mul(8) {
+        let summaries = group::read_summaries(rest, self.format.types())?;
+        if summaries.len() != count {
             return Err(corrupt("its groups' directory is not whole"));
         }
-        let mut groups = Vec::with_capacity(count);
-        for b in rest.as_chunks::<8>().0 {
-            let group = group::read(&pages, PageId(u64::from_le_bytes(*b)), self.format.types())?;
-            groups.push(self.entry(group));
-        }
-        if groups.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.group.last >= b.group.first)) {
+        let groups: Vec<Arc<Entry>> = summaries.into_iter().map(|s| self.entry(s)).collect();
+        if groups.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.summary.last >= b.summary.first)) {
             return Err(corrupt("its groups' row ids overlap"));
         }
         *crate::sync::write(&self.frozen.directory)? = Arc::new(Directory { groups });
@@ -294,9 +325,23 @@ impl RowTable {
         Ok(())
     }
 
-    /// `group`, as an entry of the directory.
-    fn entry(&self, group: Group) -> Arc<Entry> {
-        Arc::new(Entry { group, pool: Arc::clone(&self.pool), file: self.file, retired: AtomicBool::new(false) })
+    /// The group `summary` sums up, as an entry of the directory.
+    fn entry(&self, summary: Summary) -> Arc<Entry> {
+        Arc::new(Entry {
+            summary,
+            headers: Arc::clone(&self.headers),
+            pool: Arc::clone(&self.pool),
+            file: self.file,
+            retired: Mutex::new(None),
+        })
+    }
+
+    /// `group`, just written, as an entry of the directory, its header held.
+    fn entry_of(&self, group: Group) -> Result<Arc<Entry>> {
+        let header = *group.header.first().ok_or_else(|| corrupt("a group has no header"))?;
+        let entry = self.entry(Summary::of(&group, header));
+        self.headers.put((self.file, header), &Arc::new(group));
+        Ok(entry)
     }
 
     /// Stores `directory`, and names it in the meta page; frees the one
@@ -304,8 +349,7 @@ impl RowTable {
     fn store_directory(&self, directory: &Directory) -> Result<()> {
         let mut bytes = u32::try_from(directory.groups.len()).map_err(|_| corrupt("it has too many groups"))?.to_le_bytes().to_vec();
         for e in &directory.groups {
-            let first = e.group.header.first().ok_or_else(|| corrupt("a group has no header"))?;
-            bytes.extend_from_slice(&first.0.to_le_bytes());
+            group::put_summary(&mut bytes, &e.summary, self.format.types())?;
         }
         let pages = self.group_pages()?;
         let chain = group::write_chain(&pages, &bytes)?;
@@ -326,11 +370,12 @@ impl RowTable {
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
         for entry in &directory.groups {
-            let ids = entry.group.row_ids(&pages)?;
+            let group = self.group_of(entry)?;
+            let ids = group.row_ids(&pages)?;
             for (n, chunk) in ids.chunks(merge::VECTOR_ROWS).enumerate() {
                 let from = u32::try_from(n.saturating_mul(merge::VECTOR_ROWS)).map_err(|_| corrupt("a group is too large"))?;
                 let to = from.saturating_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX));
-                let found = crate::engine::columns::scan::rows(&entry.group, &pages, types, &all, (from, to))?;
+                let found = crate::engine::columns::scan::rows(&group, &pages, types, &all, (from, to))?;
                 for (&id, row) in chunk.iter().zip(found) {
                     self.unless_shadowed(id, row, &mut each)?;
                 }
@@ -360,15 +405,19 @@ impl RowTable {
 
     /// The share of the table's rows a scan told `conditions` reads
     /// (`TableStorage::scan_share`): every row of the tree, and the frozen
-    /// rows of the chunks they may match (`columns/scan.rs`).
+    /// rows of the groups they may match, of the chunks they may match of
+    /// a group whose header is held (`columns/scan.rs`).
     pub(super) fn frozen_read_share(&self, conditions: &Conjunction) -> f64 {
         let Ok(directory) = self.frozen.directory() else { return 1.0_f64 };
         let (frozen, all) = self.frozen_share();
         let read: u64 = directory
             .groups
             .iter()
-            .flat_map(|e| candidates(&e.group, Some(conditions)))
-            .map(|(from, to)| u64::from(to.saturating_sub(from)))
+            .filter(|e| e.summary.may_match(Some(conditions)))
+            .map(|e| match self.headers.get((self.file, e.summary.header)) {
+                Some(group) => candidates(&group, Some(conditions)).iter().map(|(from, to)| u64::from(to.saturating_sub(*from))).sum(),
+                None => u64::from(e.summary.rows),
+            })
             .sum();
         let read = crate::storage::cost_of(usize::try_from(read).unwrap_or(usize::MAX));
         if all > 0.0_f64 { ((all - frozen).max(0.0_f64) + read).min(all) / all } else { 1.0_f64 }

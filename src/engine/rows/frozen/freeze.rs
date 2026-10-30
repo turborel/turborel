@@ -195,22 +195,24 @@ impl RowTable {
     /// any, the directory stored, and the tree's `entries` of its rows to
     /// be taken out; `old`'s pages freed once no reader holds it.
     pub(super) fn publish(&self, (old, group): (Option<&Arc<Entry>>, Option<Group>), entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
-        let made = group.map(|g| self.entry(g));
+        let old_pages = old.map(|o| self.group_of(o).map(|g| g.pages())).transpose()?;
+        let made_pages = group.as_ref().map(Group::pages);
+        let made = group.map(|g| self.entry_of(g)).transpose()?;
         let before = {
             let mut held = write(&self.frozen.directory)?;
             let mut groups: Vec<Arc<Entry>> = held.groups.iter().filter(|e| old.is_none_or(|o| !Arc::ptr_eq(e, o))).cloned().collect();
             groups.extend(made.iter().cloned());
-            groups.sort_by_key(|e| e.group.first);
+            groups.sort_by_key(|e| e.summary.first);
             let next = Arc::new(Directory { groups });
             if let Err(e) = self.store_directory(&next) {
                 // Freed as it goes: it was never published.
-                if let Some(m) = &made {
-                    m.retired.store(true, Ordering::Release);
+                if let (Some(m), Some(pages)) = (&made, made_pages) {
+                    m.retire(pages);
                 }
                 return Err(e);
             }
-            if let Some(o) = old {
-                o.retired.store(true, Ordering::Release);
+            if let (Some(o), Some(pages)) = (old, old_pages) {
+                o.retire(pages);
             }
             mem::replace(&mut *held, next)
         };

@@ -832,7 +832,17 @@ the format of frozen groups becomes a trait when it is.
   than the option names is written again as for ORDER. An option naming
   columns (`Kind::Columns`) names the table's, and a column it names is
   not dropped. Groups are immutable, their row ids' ranges apart,
-  found through a directory the meta page names. A row's newest state is
+  found through a directory the meta page names, which keeps of each its
+  summary (`group/summary.rs`): its row ids' range, rows, the columns it
+  is sorted by and keeps Bloom filters of, and each column's nulls and
+  least and greatest values; that is all a table holds of a group in
+  memory, so a scan passes over a group no condition may match unread.
+  A group's header is read as a scan or a fetch needs it, and held while
+  it was read recently (`columns/cache.rs`): a store's tables hold at most
+  `HEADER_CACHE_BYTES` (16 MiB) of headers, reserved of the memory budget
+  a MiB at a time, the one read longest ago given up first, and one the
+  budget has no room for read each time (a header of 65,536 rows of three
+  columns is 15.5 KB, read in 34 us). A row's newest state is
   its entry in the tree if it has one, else its group's values, which
   every reader sees: so a frozen row changed is written as any row is,
   over a version holding its frozen values, and a deletion of one stays in
