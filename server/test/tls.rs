@@ -84,6 +84,29 @@ fn a_client_trusts_only_its_authorities() {
     assert!(nobody.message.contains("cannot connect"), "{nobody}");
 }
 
+/// Verifies: [DESIGN] RULES.md D42: a client connecting over TLS opens one
+/// connection to its server, the one it secures, and no other.
+#[test]
+fn a_client_connects_once_to_secure_it() {
+    let pki = pki("tls-once");
+    let config = tls::trusting(&pki.authority).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    // Each connection taken in turn, and dropped at once: no handshake is
+    // answered, so the client's ends once its connections were taken.
+    let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counting = Arc::clone(&taken);
+    std::thread::spawn(move || {
+        for connection in listener.incoming() {
+            counting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            drop(connection);
+        }
+    });
+    let refused = tls::connect(address, ("localhost", &config), "X", &mut Trust).err().unwrap();
+    assert_eq!(state(&refused).0, "08006", "{refused}");
+    assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 1, "one connection opened");
+}
+
 /// An authenticator, `sealed`, that takes a user only over a secure
 /// connection: as one taking a password must. A test-local plug-in
 /// (RULES.md D6).

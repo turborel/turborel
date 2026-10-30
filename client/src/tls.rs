@@ -64,9 +64,9 @@ pub fn connect(
     mechanism: &mut dyn Mechanism,
 ) -> Result<Connection<TlsStream>> {
     let tcp = TcpStream::connect(address).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
+    // Where it reached, for a connection made again to cancel (`Target`).
     let server = tcp.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
-    drop(tcp);
-    let stream = secured(server, (name, config))?;
+    let stream = secured_over(tcp, (name, config))?;
     let reach = Target::Tls(server, name.to_owned(), Arc::clone(config));
     Ok(Connection::open(stream, user, mechanism)?.reached_by(reach))
 }
@@ -78,9 +78,19 @@ pub fn connect(
 ///
 /// As `connect`'s.
 pub(crate) fn secured(address: std::net::SocketAddr, (name, config): (&str, &Arc<ClientConfig>)) -> Result<TlsStream> {
+    let tcp = TcpStream::connect(address).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
+    secured_over(tcp, (name, config))
+}
+
+/// The connection `tcp` to the server of the name `name`, secured by TLS
+/// as `config` says, its handshake done.
+///
+/// # Errors
+///
+/// As `connect`'s.
+fn secured_over(mut tcp: TcpStream, (name, config): (&str, &Arc<ClientConfig>)) -> Result<TlsStream> {
     let server = ServerName::try_from(name.to_owned()).map_err(|e| failed(&format!("[DESIGN] {name} is no server's name: {e}")))?;
     let mut session = ClientConnection::new(Arc::clone(config), server).map_err(|e| failed(&format!("[DESIGN] cannot begin TLS: {e}")))?;
-    let mut tcp = TcpStream::connect(address).map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
     tcp.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
     while session.is_handshaking() {
         session.complete_io(&mut tcp).map_err(|e| failed(&format!("[DESIGN] the TLS handshake failed: {e}")))?;
