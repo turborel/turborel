@@ -39,8 +39,8 @@ fn all(log: &dyn Log, from: Lsn) -> Vec<(Lsn, Vec<u8>)> {
 /// not overlap; `read_from` yields exactly what was appended, in order,
 /// from any position given, or one record at a position; `sync` accepts
 /// the positions given and refuses others; `truncate_before` never removes a record at or after its
-/// position; each record appended from other threads is read once, each
-/// thread's in order.
+/// position; records appended by threads at once are each read once, each
+/// thread's in the order it appended them.
 fn contract(log: &dyn Log) {
     let start = log.end();
     assert!(all(log, Lsn(0)).is_empty() && all(log, start).is_empty(), "a new log is empty");
@@ -61,22 +61,22 @@ fn contract(log: &dyn Log) {
     let kept = all(log, Lsn(0));
     assert!(kept.ends_with(&read[30..]), "nothing at or after the position removed");
     assert_eq!(log.read_at(positions[30]).unwrap(), Some(record(30)), "still read at the position");
-    let threads: Vec<_> = (0..4)
-        .map(|t| {
-            thread::scope(|s| {
-                s.spawn(move || {
-                    let mine: Vec<Lsn> = (0..25).map(|n| log.append(format!("thread {t} record {n}").as_bytes()).unwrap()).collect();
-                    assert!(mine.windows(2).all(|w| w[0] < w[1]), "each thread's appends in order");
-                    mine
-                })
-                .join()
-                .unwrap()
-            })
-        })
-        .collect();
+    let threads: Vec<Vec<Lsn>> = thread::scope(|s| {
+        let appending: Vec<_> = (0..4)
+            .map(|t| s.spawn(move || (0..25).map(|n| log.append(format!("thread {t} record {n}").as_bytes()).unwrap()).collect()))
+            .collect();
+        appending.into_iter().map(|a| a.join().unwrap()).collect()
+    });
+    assert!(threads.iter().all(|mine: &Vec<Lsn>| mine.windows(2).all(|w| w[0] < w[1])), "each thread's appends in order");
     let after = all(log, positions[39]);
     assert_eq!(after.len(), 1 + 4 * 25, "every record appended by the threads, once");
     assert!(threads.iter().flatten().all(|p| after.iter().any(|(q, _)| q == p)));
+    for t in 0..4 {
+        let prefix = format!("thread {t} record ");
+        let read: Vec<String> =
+            after.iter().filter_map(|(_, r)| String::from_utf8_lossy(r).strip_prefix(&prefix).map(str::to_owned)).collect();
+        assert_eq!(read, (0..25).map(|n| n.to_string()).collect::<Vec<_>>(), "thread {t}'s records read in its order");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D25, `Log` contract, memory log: positions,
