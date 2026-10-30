@@ -292,6 +292,45 @@ fn domains_are_kept() {
     kept(&open(&dir));
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21 GR4] a domain's owner
+/// holds USAGE on it grantable only while it holds grantable REFERENCES on
+/// each column its constraints reference, and grantable USAGE on each
+/// domain they CAST to, its own or another's: without, a grant gives a
+/// warning (SQLSTATE 01007) and grants nothing, and USAGE_PRIVILEGES says
+/// the owner's is not grantable; with, both as for any domain.
+#[test]
+fn usage_grantable_as_its_constraints_reference_11_21() {
+    let db = domains();
+    for s in ["B", "C"] {
+        db.schema(&format!("CREATE SCHEMA AUTHORIZATION {s}")).unwrap();
+    }
+    let (a, b) = (db.session("A"), db.session("B"));
+    a.run("GRANT REFERENCES (N) ON T TO B").unwrap();
+    a.commit().unwrap();
+    b.run("CREATE DOMAIN LISTED AS INTEGER CHECK (VALUE IN (SELECT N FROM A.T))").unwrap();
+    b.run("CREATE DOMAIN TWICE AS INTEGER CHECK (CAST(VALUE AS LISTED) > 0)").unwrap();
+    b.commit().unwrap();
+    let grantable = "SELECT OBJECT_NAME, IS_GRANTABLE FROM INFORMATION_SCHEMA.USAGE_PRIVILEGES
+                     WHERE OBJECT_TYPE = 'DOMAIN' AND GRANTOR = '_SYSTEM' ORDER BY OBJECT_NAME";
+    let owners = |listed: &str, twice: &str| Ok(vec![format!("LISTED,{listed}"), format!("TWICE,{twice}")]);
+    assert_eq!(b.run("GRANT USAGE ON DOMAIN LISTED TO C").unwrap().sqlstate().as_str(), "01007", "B may not grant it");
+    b.commit().unwrap();
+    let c = db.session("C");
+    assert_eq!(exec(&c, "CREATE TABLE X (K B.LISTED)").err(), Some(Code::Privilege), "C holds none");
+    c.rollback().unwrap();
+    a.run("GRANT REFERENCES (N) ON T TO B WITH GRANT OPTION").unwrap();
+    a.commit().unwrap();
+    b.run("GRANT USAGE ON DOMAIN LISTED TO C").unwrap();
+    b.commit().unwrap();
+    c.run("CREATE DOMAIN THEIRS AS INTEGER CHECK (CAST(VALUE AS B.LISTED) > 0)").unwrap();
+    c.commit().unwrap();
+    assert_eq!(rows(&b, grantable), owners("YES", "YES"));
+    assert_eq!(rows(&c, grantable), Ok(vec!["THEIRS,NO".into()]), "C's USAGE on LISTED is not grantable");
+    a.run("REVOKE GRANT OPTION FOR REFERENCES (N) ON T FROM B CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(rows(&b, grantable), owners("NO", "NO"), "LISTED's REFERENCES no longer grantable");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.36 GR14, GR15; §11.37 SR7,
 /// SR18, GR8, GR9] USAGE is granted on with grant option and passed on; a
 /// holder without the grant option grants nothing, with a warning (SQLSTATE

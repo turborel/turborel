@@ -376,6 +376,19 @@ impl State {
         self.bind_check(probe, check, (None, &Referencing::of_value(probe)))
     }
 
+    /// The columns the condition of a domain constraint, bound over
+    /// `probe` as `value_condition` binds it, references, once each: VALUE
+    /// not among them.
+    ///
+    /// # Errors
+    ///
+    /// As `value_condition`'s.
+    pub(in crate::db) fn value_uses(&self, probe: &QualifiedName, check: (&str, &str, &Horizon)) -> Result<Vec<(QualifiedName, String)>> {
+        let uses = Uses::default();
+        self.bind_check(probe, check, (Some(&uses), &Referencing::of_value(probe)))?;
+        Ok(binder::once_each(uses.into_inner()).into_iter().filter(|(table, _)| table != probe).collect())
+    }
+
     /// [ISO/IEC 9075:1992 §21.3.18] The columns the CHECK `text` of table
     /// `table`, its names of schema `names`, seeing the columns `horizon`
     /// says, references, once each.

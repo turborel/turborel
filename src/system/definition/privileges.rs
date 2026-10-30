@@ -31,7 +31,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
         defined("USERS", users_columns, Rows::Fallible(users)),
         defined("TABLE_PRIVILEGES", table_privileges_columns, Rows::Fallible(table_privileges)),
         defined("COLUMN_PRIVILEGES", column_privileges_columns, Rows::Fallible(column_privileges)),
-        defined("USAGE_PRIVILEGES", usage_privileges_columns, Rows::Infallible(usage_privileges)),
+        defined("USAGE_PRIVILEGES", usage_privileges_columns, Rows::Fallible(usage_privileges)),
     ]
 }
 
@@ -179,8 +179,13 @@ fn usage_privileges_columns() -> Vec<ColumnDesc> {
 }
 
 /// USAGE on the character set and collation SQL_TEXT (`definition::usage`);
-/// and on each domain, its owner's [§11.21 GR4] and each granted.
-fn usage_privileges(seen: &Seen<'_>) -> Vec<Row> {
+/// and on each domain, its owner's, grantable as [§11.21 GR4] says
+/// (`State::owner_grantable`), and each granted.
+///
+/// # Errors
+///
+/// A domain constraint's condition no longer binds.
+fn usage_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows: Vec<Row> = usage()
         .into_iter()
@@ -192,8 +197,8 @@ fn usage_privileges(seen: &Seen<'_>) -> Vec<Row> {
         let row = |grantor: &str, grantee: &str, grantable: bool| {
             [vec![text(grantor), text(grantee)], ids(&catalog, &d.name).to_vec(), vec![text("DOMAIN"), yes(grantable)]].concat()
         };
-        rows.push(row(SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &d.name.auth), true));
+        rows.push(row(SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &d.name.auth), seen.state.owner_grantable(d)?));
         rows.extend(d.usage.iter().map(|u| row(&u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable)));
     }
-    rows
+    Ok(rows)
 }

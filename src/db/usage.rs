@@ -10,7 +10,7 @@ use super::revoke::Abandoned;
 use super::{Completion, State, rule};
 use crate::ast::{Action, DropBehavior, PrivilegeDefinition, RevokeStatement};
 use crate::binder::qualify;
-use crate::catalog::{ConstraintDesc, DomainDesc, QualifiedName, UsageDesc, owner_of};
+use crate::catalog::{Catalog, ConstraintDesc, ConstraintKind, DomainDesc, QualifiedName, UsageDesc, applicable, owner_of};
 use crate::error::{Code, Result, SqlError, SqlState};
 
 /// [ISO/IEC 9075:1992 §11.36 SR1, §11.37 SR1] That `actions`, of a domain,
@@ -23,15 +23,54 @@ fn usage_alone(actions: Option<&[Action]>) -> Result<()> {
 }
 
 /// Whether `who` holds USAGE in `usage`, its domain's owner `owner`, and
-/// whether grantably.
-fn holds(usage: &[UsageDesc], who: &str, owner: &str) -> (bool, bool) {
+/// whether grantably: the owner always, grantably if `owners` says so
+/// (`State::owner_grantable`).
+fn holds(usage: &[UsageDesc], who: &str, (owner, owners): (&str, bool)) -> (bool, bool) {
     if who == owner {
-        return (true, true);
+        return (true, owners);
     }
     usage.iter().filter(|u| u.grantee.as_deref().is_none_or(|g| g == who)).fold((false, false), |(_, g), u| (true, g || u.grantable))
 }
 
+/// The position of column `column` of table or view `table`.
+fn position(catalog: &dyn Catalog, table: &QualifiedName, column: &str) -> Option<usize> {
+    let columns = catalog.table(table).map(|t| &t.columns).or_else(|| catalog.view(table).map(|v| &v.columns))?;
+    columns.iter().position(|c| c.name == column)
+}
+
 impl State {
+    /// [ISO/IEC 9075:1992 §11.21 GR4] Whether the owner of `domain` holds
+    /// USAGE on it grantably: while it holds grantable REFERENCES on each
+    /// column the domain's constraints reference, and grantable USAGE on
+    /// each other domain they CAST to. Found when asked, as a view's
+    /// owner's privileges are (`catalog::applicable`), so a privilege
+    /// revoked since it was defined counts.
+    ///
+    /// # Errors
+    ///
+    /// A constraint's condition no longer binds.
+    pub(crate) fn owner_grantable(&self, domain: &DomainDesc) -> Result<bool> {
+        let owner = owner_of(&*self.catalog, &domain.name.auth);
+        for c in &domain.constraints {
+            let ConstraintKind::Check { text, names, .. } = &c.kind else { continue };
+            for (table, column) in self.domain_constraint_uses(domain, (text, names))? {
+                let grantable = applicable(&*self.catalog, owner, &table).1;
+                if !position(&*self.catalog, &table, &column).is_some_and(|at| grantable.references.contains(&at)) {
+                    return Ok(false);
+                }
+            }
+            for other in self.catalog.domains().into_iter().filter(|d| d.name != domain.name && casts_to(text, names, &d.name)) {
+                let others = owner_of(&*self.catalog, &other.name.auth);
+                // No domain is in usage by its own constraints [SR4], so this ends.
+                let owners = others == owner && self.owner_grantable(other)?;
+                if !holds(&other.usage, owner, (others, owners)).1 {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// The domain `qn`, and its schema's owner.
     ///
     /// # Errors
@@ -54,7 +93,7 @@ impl State {
     pub(super) fn grant_usage(&mut self, auth: &str, schema: &str, p: &PrivilegeDefinition) -> Result<Defined> {
         usage_alone(p.actions.as_deref())?;
         let (mut domain, owner) = self.domain_named(&qualify(&p.table, schema))?;
-        let (held, grantable) = holds(&domain.usage, auth, &owner);
+        let (held, grantable) = holds(&domain.usage, auth, (&owner, auth == owner && self.owner_grantable(&domain)?));
         if !held {
             return Err(SqlError::new(
                 Code::Privilege,
@@ -100,9 +139,10 @@ impl State {
             domain.usage.retain(|u| !named(u));
         }
         // [SR7] a grant whose grantor holds no grant option is abandoned.
+        let owners = self.owner_grantable(&domain)?;
         loop {
             let held = domain.usage.clone();
-            domain.usage.retain(|u| holds(&held, &u.grantor, &owner).1);
+            domain.usage.retain(|u| holds(&held, &u.grantor, (&owner, owners)).1);
             if domain.usage.len() == held.len() {
                 break;
             }
@@ -132,7 +172,7 @@ impl State {
     /// its tables' CHECKs, other domains' constraints and assertions; a
     /// copy of a domain constraint on a column goes with the domain's.
     fn casting_without_usage(&self, domain: &DomainDesc, owner: &str) -> Abandoned {
-        let unheld = |schema: &str| !holds(&domain.usage, owner_of(&*self.catalog, schema), owner).0;
+        let unheld = |schema: &str| !holds(&domain.usage, owner_of(&*self.catalog, schema), (owner, true)).0;
         let casts = |c: &ConstraintDesc| casts_check(c, &domain.name);
         let mut abandoned = Abandoned::default();
         abandoned.views = self
