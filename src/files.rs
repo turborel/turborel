@@ -12,16 +12,18 @@
 //! on at once as they did; only closing it takes it whole.
 //!
 //! The registry is the database's, shared by its snapshots, so
-//! INFORMATION_SCHEMA.FILES shows each file (`system/files.rs`).
+//! INFORMATION_SCHEMA.FILES shows each file (`system/files.rs`). As the
+//! database closes, every descriptor is closed (`Registry::close_all`)
+//! before its directory's lock is given up, and none is opened after.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard, Weak};
 use std::time::Duration;
 
 use crate::disk::io::{DiskFile, Durability, FileLock, FileSystem, OpenMode};
-use crate::error::Result;
+use crate::error::{Code, Result, SqlError};
 
 /// \[DESIGN\] The default of FILES.MAX_OPEN: well under the 1024 most
 /// systems allow a process by default, for the connections and the rest
@@ -47,6 +49,8 @@ pub struct Registry {
     /// Woken as a file is done being read or written, for one waiting.
     done: Condvar,
     waiting: Mutex<()>,
+    /// Set as the database closes: no file is opened after.
+    shut: AtomicBool,
 }
 
 /// \[DESIGN\] A file, as INFORMATION_SCHEMA.FILES shows it.
@@ -110,6 +114,23 @@ impl Registry {
         infos
     }
 
+    /// Closes every file's descriptor, as the database closes, and lets
+    /// none be opened after: the paths of those still being read or
+    /// written, left open.
+    pub fn close_all(&self) -> Vec<PathBuf> {
+        self.shut.store(true, Ordering::Release);
+        let handles: Vec<Arc<Handle>> = self.locked().values().filter_map(Weak::upgrade).collect();
+        handles.iter().filter(|h| !h.close_if_idle() && h.info().open).map(|h| h.path.clone()).collect()
+    }
+
+    /// The error of a file opened after `close_all`, if it was called.
+    fn refused(&self, path: &Path) -> Result<()> {
+        if self.shut.load(Ordering::Acquire) {
+            return Err(SqlError::new(Code::Api, format!("[DESIGN] {} is not opened: its database is closed", path.display())));
+        }
+        Ok(())
+    }
+
     fn locked(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Weak<Handle>>> {
         // Entries are added and removed whole, so a poisoned map is whole.
         self.files.lock().unwrap_or_else(PoisonError::into_inner)
@@ -160,6 +181,7 @@ impl Handle {
             drop(read);
             let mut write = self.file.write().unwrap_or_else(PoisonError::into_inner);
             if write.is_none() {
+                self.registry.refused(&self.path)?;
                 self.registry.admit(id);
                 match self.fs.open(&self.path, self.reopen) {
                     Ok(file) => *write = Some(file),
@@ -208,8 +230,8 @@ impl Handle {
 
 /// The error of a descriptor closed under a read or write, which the
 /// handle's lock never lets be.
-fn closed() -> crate::error::SqlError {
-    crate::error::SqlError::new(crate::error::Code::Io, "[DESIGN] a file's descriptor was closed under it".to_owned())
+fn closed() -> SqlError {
+    SqlError::new(Code::Io, "[DESIGN] a file's descriptor was closed under it".to_owned())
 }
 
 /// \[DESIGN\] A file the manager opened: its handle, while it lives.
@@ -265,6 +287,7 @@ impl FileManager {
 
 impl FileSystem for FileManager {
     fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
+        self.registry.refused(path)?;
         let id = self.registry.next.fetch_add(1, Ordering::Relaxed);
         self.registry.admit(id);
         let file = self.inner.open(path, mode).inspect_err(|_| {

@@ -43,7 +43,9 @@ stopped without closing. The diagnostics tell which:
 ```
 
 Closing, as the server stops, takes a checkpoint and marks the catalog
-closed cleanly.
+closed cleanly. Then, before it lets go of `lock`, it removes the spill
+files left in `tmp/` and closes every file of the database; a spill file
+it cannot remove, or a file still in use, is told as a `failed` event.
 
 ## Recovery after a crash
 

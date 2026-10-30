@@ -69,3 +69,22 @@ fn a_file_waits_while_every_open_one_is_in_use() {
     assert!(registry.open.load(Ordering::Acquire) <= 1);
     drop((handle, first));
 }
+
+/// Verifies: [DESIGN] RULES.md D56: closing the database closes every
+/// file's descriptor but one being read or written, which it tells; after,
+/// no file is opened, nor opened again (SQLCODE -910).
+#[test]
+fn closing_closes_every_file_and_opens_none_after() {
+    let (fs, registry) = manager(0);
+    let files: Vec<Box<dyn DiskFile>> = ["/a", "/b"].iter().map(|p| fs.open(Path::new(p), OpenMode::CreateNew).unwrap()).collect();
+    let busy = registry.locked().values().filter_map(Weak::upgrade).find(|h| h.path == Path::new("/b")).unwrap();
+    let reading = busy.file.read().unwrap();
+    assert_eq!(registry.close_all(), vec![Path::new("/b").to_path_buf()], "the one in use told");
+    drop(reading);
+    assert_eq!(registry.open.load(Ordering::Acquire), 1);
+    let code = |r: Result<()>| r.err().map(|e| e.code);
+    assert_eq!(code(files[0].write_all_at(b"x", 0)), Some(Code::Api), "not opened again");
+    assert_eq!(code(fs.open(Path::new("/c"), OpenMode::CreateNew).map(drop)), Some(Code::Api));
+    assert_eq!(registry.close_all(), Vec::<PathBuf>::new());
+    assert_eq!(registry.open.load(Ordering::Acquire), 0);
+}

@@ -48,7 +48,10 @@
 //! Closing, with no transaction open, is a checkpoint that also collects
 //! every table's garbage first and checkpoints every index method, logs
 //! and syncs its checkpoint record before step 1, and records the image as
-//! clean; every call after is refused.
+//! clean; every call after is refused. Then, before its directory's lock
+//! is given up, its spill files are removed and every file's descriptor
+//! closed, none opened after (RULES.md D56); a file left is told as an
+//! event.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -199,9 +202,25 @@ impl Database {
             st.complete_checkpoint(&files, image)
         })?;
         self.mark_closed();
+        self.close_every_file(&current);
         // Another may open it now.
         lock(&files.held)?.take();
         Ok(())
+    }
+
+    /// Removes the spill files of `st`, and closes every file's
+    /// descriptor, none opened after (RULES.md D56): a spill file not
+    /// removed, or a file still being read or written, told as an event.
+    fn close_every_file(&self, st: &State) {
+        if let Err(e) = st.work.clear_temp() {
+            self.emit(&Event::Failed(e));
+        }
+        let open = st.files.close_all();
+        if !open.is_empty() {
+            let paths: Vec<String> = open.iter().map(|p| p.display().to_string()).collect();
+            let why = format!("[DESIGN] files left open as the database closed: {}", paths.join(", "));
+            self.emit(&Event::Failed(SqlError::new(Code::Io, why)));
+        }
     }
 }
 

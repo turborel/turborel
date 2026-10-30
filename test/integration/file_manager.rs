@@ -6,7 +6,7 @@
 use turborel::db::{Database, OpenOptions};
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Scratch, os, rows, small_segments};
+use crate::common::{Kept, Scratch, os, rows, small_segments};
 
 /// Verifies: [DESIGN] RULES.md D56, D36: a database of more files than
 /// FILES.MAX_OPEN, its log and its older rows' in many small segments,
@@ -81,4 +81,25 @@ fn files_made_are_their_users_alone() {
         seen = seen.saturating_add(1);
     }
     assert!(seen > 3, "the directory, and its files: {seen}");
+}
+
+/// Verifies: [DESIGN] RULES.md D56: closing a database removes the spill
+/// files left in its `tmp/` before it gives up its directory, and, every
+/// file closed, tells of none left: its last event is that it closed.
+#[test]
+fn closing_removes_spill_files_and_closes_every_file() {
+    let scratch = Scratch::new("file-close");
+    let dir = scratch.path("db");
+    let kept = Kept::default();
+    let db = Database::new();
+    db.set_diagnostics(Box::new(kept.clone()));
+    db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    std::fs::create_dir_all(dir.join("tmp")).unwrap();
+    let stray = dir.join("tmp").join("left-0.spill");
+    std::fs::write(&stray, b"rows").unwrap();
+    kept.taken();
+    db.close().unwrap();
+    assert!(!stray.exists(), "removed as it closed");
+    let events: Vec<String> = kept.taken().into_iter().map(|(_, e)| e).collect();
+    assert_eq!(events, vec!["Closed".to_owned()]);
 }

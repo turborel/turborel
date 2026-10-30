@@ -214,6 +214,17 @@ impl WorkAreas {
         Ok(())
     }
 
+    /// Removes the files of spill areas left in its directory, as the
+    /// database closes (`TempFiles::clear`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if one cannot be removed.
+    pub(crate) fn clear_temp(&self) -> Result<()> {
+        let temp = Arc::clone(&self.place.read().unwrap_or_else(PoisonError::into_inner).1);
+        temp.clear()
+    }
+
     /// Writes the files of areas made from now on through `pipeline`
     /// (`TempFiles::pipeline`).
     pub(crate) fn set_encodings(&self, pipeline: Pipeline) {
