@@ -2,8 +2,9 @@
 //! crash a table is reopened as its last checkpoint left it, which may hold
 //! versions made by transactions open then: they name older versions in
 //! the undo store, which did not survive the process. So a table opened
-//! counts its rows by their newest versions alone, and gathers its
-//! statistics only when first asked, once recovery is done; and recovery
+//! counts its rows by their newest versions alone, and has its statistics
+//! gathered only once first asked for, after recovery is done
+//! (`rows/stats.rs`); and recovery
 //! writes each row's newest version outright, committed, never reading the
 //! version it replaces (`apply`).
 

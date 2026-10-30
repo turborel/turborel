@@ -73,7 +73,7 @@ impl PhysicalPlanner<'_> {
                 }
             }
         };
-        let (cost, stats) = (self.db.cost(), storage.statistics());
+        let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
         filtered(plan, conds, &Filtered { names: read.names, known, ordered: best.ordered })
     }
@@ -88,7 +88,7 @@ impl PhysicalPlanner<'_> {
         let rows = storage.row_count();
         let descent = cost.index_descent * cost_of(rows.saturating_add(1)).log2();
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
-        let stats = storage.statistics();
+        let stats = self.db.statistics(read.table);
         let all = cost_of(rows);
         let mut best =
             in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });

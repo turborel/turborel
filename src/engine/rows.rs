@@ -375,13 +375,10 @@ impl TableStorage for RowTable {
         self.frozen_fetch_cost()
     }
 
-    /// A table opened gathers them when first asked (`rows/recovery.rs`).
+    /// A table opened has none until the database's maintenance gathers
+    /// them, due once first asked for (`rows/stats.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
-        let stats: Arc<dyn Statistics> = match self.gathered.get() {
-            Some(stats) => stats,
-            None if self.gathered.asked() => self.gather().ok()?,
-            None => return None,
-        };
+        let stats: Arc<dyn Statistics> = self.gathered.asked_for()?;
         Some(stats)
     }
 

@@ -891,7 +891,11 @@ the format of frozen groups becomes a trait when it is.
   rows, widths, distinct values, nulls, selectivity. The row store
   gathers them again, once a table has changed enough, as the database's
   maintenance (below), not in the commit that made it due, as a pass in
-  the commit made the commits that fell due for one far slower.
+  the commit made the commits that fell due for one far slower. A table
+  of a database opened has none until first asked for; asking makes them
+  due, and notes the table for maintenance, which gathers them, so no
+  plan waits for a pass over a table nor makes one, and planners asking
+  at once cause one pass.
 - The column store: the tree is the table's delta, every row written
   there as in the row store. Once COLUMNSTORE.FREEZE_ROWS rows past the last group are committed
   before every snapshot (and COLUMNSTORE.FREEZE_DELAY seconds ago), the
@@ -1197,7 +1201,10 @@ written, of no more keys than it holds, and kept with the index's locator,
 so a checkpoint records it with the pages it commits and recovery's mending
 changes it as it changes the entries; an index whose locator holds none
 counts its keys once, when first asked, in a pass that streams them. Else
-from the table's statistics.
+from the table's statistics, if its engine has them; else by the
+defaults PLANNER.EQUAL_SELECTIVITY, RANGE_SELECTIVITY and NULL_FRACTION
+give, as a table of a database just opened is planned until maintenance
+gathers its statistics (D31).
 *Why:* the General Rules define results, not plans; any plan that gives
 the same results and errors is the optimizer's to choose.
 

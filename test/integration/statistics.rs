@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use turborel::db::{Database, Session};
+use turborel::db::{Database, OpenOptions, Session};
 use turborel::disk::buffer::{BufferPool, Clock};
 use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::OsFileSystem;
@@ -22,7 +22,7 @@ use turborel::threads::JobPolicy;
 use turborel::txn::NO_TRANSACTION;
 use turborel::value::{CompOp, DataType};
 
-use crate::common::{Scratch, crc32c, locking_big, number};
+use crate::common::{Scratch, crc32c, locking_big, number, os, rows};
 use turborel::value::Spelled;
 
 /// The rows the Filter of `sql`'s physical plan is estimated to keep, if
@@ -194,10 +194,11 @@ fn rules_read_statistics() {
     assert_eq!(seen.lock().unwrap().first().copied(), Some((None, None)));
 }
 
-/// Verifies: [DESIGN] RULES.md D31, the row store: a new table has no
+/// Verifies: [DESIGN] RULES.md D31, D35, the row store: a new table has no
 /// statistics until gathered; `analyze` gathers them; a table opened again
-/// has them, gathered when first asked for, from its newest committed
-/// rows.
+/// has none until first asked for, which makes them due, and maintenance
+/// then gathers them from its newest committed rows. Regression test
+/// (R-TEST-7): the first ask made the pass itself, in whatever plan asked.
 #[test]
 fn tables_opened_have_statistics() {
     let scratch = Scratch::new("statistics-open");
@@ -218,8 +219,52 @@ fn tables_opened_have_statistics() {
     let meta = t.meta();
     drop(t);
     let again = RowTable::open(&files, meta, &types, TableOptions::default()).unwrap();
+    while again.maintain(u64::MAX).unwrap() {}
+    assert!(again.statistics().is_none(), "not gathered until asked for, and asking makes no pass");
+    assert!(again.maintenance_due(), "but makes them due");
+    while again.maintain(u64::MAX).unwrap() {}
+    assert!(!again.maintenance_due());
     let stats = again.statistics().unwrap();
     assert_eq!((stats.rows(), stats.nulls(0)), (Some(30.0), Some(0.0)));
     assert!(stats.selectivity(0, CompOp::Lt, &number(15)).is_some_and(|f| (f - 0.5).abs() < 0.05));
     assert!(stats.width(&[0]).is_some_and(|w| w > 0.0));
+}
+
+/// Verifies: [DESIGN] RULES.md D35, D55: a table of a database opened again
+/// has no statistics until first asked for, and planning then makes no pass
+/// over it: queries planned at once on two threads plan without them, and
+/// the table is noted for maintenance, asked for as their transactions
+/// end; the maintenance job gathers them, once, and plans after have them.
+/// Regression test (R-TEST-7): the first plan of each planner made a pass
+/// over the whole table itself, which no cancel could stop.
+#[test]
+fn a_table_opened_has_its_statistics_gathered_by_maintenance() {
+    let scratch = Scratch::new("statistics-reopened");
+    let dir = scratch.path("db");
+    let db = Database::new();
+    db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, GRADE INTEGER, NOTE CHAR(5))").unwrap();
+    add(&db, 1..=200, |i| i % 10);
+    db.close().unwrap();
+    let db = Database::new();
+    db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    db.with_optimizer(|o| o.add(Box::new(Seen(Arc::clone(&seen))))).unwrap();
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                let s = db.session("APP");
+                assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec!["200".into()]));
+                s.commit().unwrap();
+            });
+        }
+    });
+    let planned = seen.lock().unwrap().clone();
+    assert!(!planned.is_empty() && planned.iter().all(|noted| *noted == (None, None)), "{planned:?}");
+    db.run_due().unwrap();
+    seen.lock().unwrap().clear();
+    db.session("APP").physical_plan("SELECT ID FROM T", &Params::new()).unwrap();
+    assert_eq!(seen.lock().unwrap().first().map(|noted| noted.0), Some(Some(200.0)));
 }

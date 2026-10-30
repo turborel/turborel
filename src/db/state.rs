@@ -299,8 +299,16 @@ impl State {
     }
 
     /// What `table`'s engine knows of its rows, if anything (`stats.rs`).
+    /// If nothing, and asking made its gathering due, the table is noted
+    /// for the database's maintenance (`db/maintenance.rs`), which gathers
+    /// them: planning never waits for a pass over a table (RULES.md D35).
     pub fn statistics(&self, table: &QualifiedName) -> Option<Arc<dyn Statistics>> {
-        self.storage.get(table)?.statistics()
+        let storage = self.storage.get(table)?;
+        let stats = storage.statistics();
+        if stats.is_none() && storage.maintenance_due() {
+            self.tx.note_maintenance(table);
+        }
+        stats
     }
 }
 

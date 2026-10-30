@@ -112,7 +112,7 @@ impl PhysicalPlanner<'_> {
         let (read, cond) = if let LogicalPlan::Filter { cond, input } = plan { (&**input, Some(cond)) } else { (plan, None) };
         let LogicalPlan::Scan { table, .. } = read else { return None };
         let storage = self.db.storage_of(table).ok()?;
-        let stats = storage.statistics();
+        let stats = self.db.statistics(table);
         let all = cost_of(storage.row_count());
         let model = self.db.cost();
         let known = estimate::Known { stats: stats.as_deref(), cost: &model };
