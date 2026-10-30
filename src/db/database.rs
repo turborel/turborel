@@ -104,6 +104,7 @@ impl Database {
     }
 
     fn over(state: State) -> Self {
+        let background = Background::over(Arc::clone(&state.jobs));
         Database(Arc::new(Shared {
             current: RwLock::new(Arc::new(state)),
             changing: Mutex::new(None),
@@ -113,7 +114,7 @@ impl Database {
             diagnostics: RwLock::new(Arc::new(NoDiagnostics)),
             storages: Storages::default(),
             credentials: RwLock::new(None),
-            background: Background::default(),
+            background,
         }))
     }
 

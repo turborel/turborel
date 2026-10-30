@@ -12,10 +12,11 @@ use turborel::db::{Database, OpenOptions, Opened};
 use turborel::error::{Code, Result, fail};
 use turborel::index::{BTreeMethod, Index, IndexMethod, Key, Probe};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
+use turborel::threads::JobPolicy;
 use turborel::txn::{Concurrency, TxCapabilities, TxId, Undo};
-use turborel::value::{CompOp, DataType};
+use turborel::value::{CompOp, DataType, Decimal, Value};
 
-use crate::common::{MemoryTable, Scratch, after_crash, exec, rows};
+use crate::common::{Kept, MemoryTable, Scratch, after_crash, exec, rows};
 
 /// An engine whose `delete`, by which the coordinator undoes an insert,
 /// fails while `failing` is set.
@@ -213,4 +214,40 @@ fn damaged_rows_are_repaired_by_opening_again() {
     assert_eq!(db.damaged_tables().unwrap(), Vec::<QualifiedName>::new());
     assert_eq!(rows(&db.session("X"), "SELECT K FROM U"), Ok(vec!["1".into()]));
     db.checkpoint().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D55, D19: a job of background work that
+/// fails, a checkpoint refused while a table is damaged, keeps its error,
+/// tells it as an event, and INFORMATION_SCHEMA.JOBS shows it to the
+/// database's owner; the program running it is given it.
+#[test]
+fn a_failed_job_is_kept_told_and_shown() {
+    let scratch = Scratch::new("damage-job");
+    let failing = Arc::new(AtomicBool::new(false));
+    let db = Database::new();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone()));
+    db.register_engine(Box::new(Flaky { failing: Arc::clone(&failing) })).unwrap();
+    db.open_files(&after_crash(), &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("CHECKPOINT.AFTER_CHANGES", &Value::Exact(Decimal::new(1, 0))).unwrap();
+    db.place_table("X.U", "flaky").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE U (K INTEGER NOT NULL UNIQUE) CREATE TABLE T (K INTEGER)").unwrap();
+    let s = db.session("X");
+    failing.store(true, Ordering::SeqCst);
+    s.run("INSERT INTO U VALUES (2)").unwrap();
+    assert_eq!(exec(&s, "ROLLBACK"), Err(Code::Damaged), "U damaged");
+    failing.store(false, Ordering::SeqCst);
+    s.run("INSERT INTO T VALUES (1)").unwrap();
+    s.commit().unwrap();
+    kept.taken();
+    assert_eq!(db.run_due().err().map(|e| e.code), Some(Code::Damaged), "the checkpoint due refused");
+    let job = db.jobs().into_iter().find(|t| t.label == "turborel-checkpoint").unwrap();
+    assert_eq!(job.last_error.map(|e| e.code), Some(Code::Damaged));
+    assert!(kept.taken().iter().any(|(_, e)| e.contains("Thread") && e.contains("Failed")), "told");
+    let shown = "SELECT LAST_ERROR FROM INFORMATION_SCHEMA.JOBS WHERE LABEL = 'turborel-checkpoint'";
+    let error = rows(&db.session("OWNER"), shown).unwrap();
+    assert!(error[0].contains("damaged"), "{error:?}");
 }

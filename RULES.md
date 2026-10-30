@@ -642,7 +642,7 @@ until a later standard's reading is taken.
 - Turns a job takes (a checkpoint's, maintenance's) refuse the thread that
   holds them, as the definitions' turn does (D27), so no lock is held
   across a plug-in's call (R-ERR-4).
-- The manager is shown: a system table (INFORMATION_SCHEMA.THREADS), each
+- The manager is shown: a system table (INFORMATION_SCHEMA.JOBS), each
   thread and job with its state, to the database's owner; and events
   when one starts, stops, fails or restarts.
 *Why:* threads started where they were needed, under names of their own

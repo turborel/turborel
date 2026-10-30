@@ -73,7 +73,7 @@ pub const TIME_ZONE: Key = Key(30);
 /// See [`DEFAULT_ENGINE`].
 pub const EXECUTOR_BATCHES: Key = Key(31);
 /// See [`DEFAULT_ENGINE`].
-pub const THREADS_POLICY: Key = Key(32);
+pub const JOBS_POLICY: Key = Key(32);
 
 /// The words of `EXECUTOR.BATCHES`.
 pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
@@ -140,7 +140,7 @@ pub(super) fn builtin() -> Vec<Definition> {
         "Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.",
     ));
     all.push(defined(
-        ("THREADS.POLICY", Kind::Choice(&crate::threads::ThreadPolicy::WORDS), text("AUTOMATIC")),
+        ("JOBS.POLICY", Kind::Choice(&crate::threads::JobPolicy::WORDS), text("AUTOMATIC")),
         DATABASE,
         "How the database's background work, its checkpoints and maintenance, runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
     ));

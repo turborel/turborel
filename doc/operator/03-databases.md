@@ -61,13 +61,13 @@ waits for it. Each is told to the diagnostics, `checkpoint_taken`.
 
 The database does some of its work in the background: its checkpoints,
 and its maintenance, which gathers tables' statistics and freezes the
-rows of the column store. THREADS.POLICY says how: AUTOMATIC, the
+rows of the column store. JOBS.POLICY says how: AUTOMATIC, the
 default, on threads of the database's own as the work comes due;
 PAUSED, not at all until it changes, the work due kept; MANUAL, only
 when the program embedding the database asks. It takes effect at once:
 
 ```sql
-SET DATABASE THREADS.POLICY = 'PAUSED'
+SET DATABASE JOBS.POLICY = 'PAUSED'
 ```
 
 Each thread started or stopped is told to the diagnostics, `thread`, as

@@ -8,7 +8,7 @@
 //! notes the table if its engine has maintenance due
 //! (`TableStorage::maintenance_due`); the session ending it then asks for
 //! the database's maintenance job, which the thread manager runs as
-//! THREADS.POLICY says (`db/background.rs`, RULES.md D55). The job has
+//! JOBS.POLICY says (`db/background.rs`, RULES.md D55). The job has
 //! each table noted do some of its work (`TableStorage::maintain`), and
 //! goes round again at once while any did some; a table still due, though
 //! it did none, it looks at again a second later, as a freeze may be

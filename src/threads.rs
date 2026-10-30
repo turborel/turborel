@@ -4,7 +4,7 @@
 //!
 //! Background work is a job: a function of the database, its checkpoints
 //! or its maintenance, that a session asks for as it comes due. As the
-//! database's THREADS.POLICY says, a job asked for is done on a thread of
+//! database's JOBS.POLICY says, a job asked for is done on a thread of
 //! its own, started the first time and told as an event (AUTOMATIC); only
 //! when the program asks (`Database::run_due`, MANUAL); or not until the
 //! policy changes (PAUSED). A job's error is noted and told; a panic in it
@@ -32,9 +32,9 @@ use crate::error::{Code, Result, SqlError};
 use crate::sync::lock_builtin;
 
 /// \[DESIGN\] How a database's background work runs: the setting
-/// THREADS.POLICY.
+/// JOBS.POLICY.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadPolicy {
+pub enum JobPolicy {
     /// On threads of its own, as it comes due.
     Automatic,
     /// Only when the program asks (`Database::run_due`).
@@ -43,40 +43,51 @@ pub enum ThreadPolicy {
     Paused,
 }
 
-impl ThreadPolicy {
-    /// The words THREADS.POLICY takes, in the order of the policies.
+impl JobPolicy {
+    /// The words JOBS.POLICY takes, in the order of the policies.
     pub const WORDS: [&'static str; 3] = ["AUTOMATIC", "MANUAL", "PAUSED"];
 
     /// The policy `word` names, AUTOMATIC for any other.
-    pub(crate) fn of(word: &str) -> ThreadPolicy {
+    pub(crate) fn of(word: &str) -> JobPolicy {
         if word.eq_ignore_ascii_case("MANUAL") {
-            ThreadPolicy::Manual
+            JobPolicy::Manual
         } else if word.eq_ignore_ascii_case("PAUSED") {
-            ThreadPolicy::Paused
+            JobPolicy::Paused
         } else {
-            ThreadPolicy::Automatic
+            JobPolicy::Automatic
         }
     }
 
-    /// The word THREADS.POLICY takes for it.
+    /// The word JOBS.POLICY takes for it.
     pub fn word(self) -> &'static str {
         match self {
-            ThreadPolicy::Automatic => "AUTOMATIC",
-            ThreadPolicy::Manual => "MANUAL",
-            ThreadPolicy::Paused => "PAUSED",
+            JobPolicy::Automatic => "AUTOMATIC",
+            JobPolicy::Manual => "MANUAL",
+            JobPolicy::Paused => "PAUSED",
         }
     }
 }
 
 /// \[DESIGN\] What a job is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreadState {
+pub enum JobState {
     /// Nothing asked of it.
     Idle,
     /// Asked for, not yet done.
     Due,
     /// Being done.
     Running,
+}
+
+impl JobState {
+    /// Its name, as INFORMATION_SCHEMA.JOBS shows it.
+    pub fn word(self) -> &'static str {
+        match self {
+            JobState::Idle => "IDLE",
+            JobState::Due => "DUE",
+            JobState::Running => "RUNNING",
+        }
+    }
 }
 
 /// \[DESIGN\] What happened to a job's thread, as an event tells.
@@ -95,11 +106,11 @@ pub enum ThreadChange {
 
 /// \[DESIGN\] A job, as the manager shows it.
 #[derive(Debug, Clone)]
-pub struct ThreadInfo {
+pub struct JobInfo {
     /// Its label: `turborel-<kind>`.
     pub label: &'static str,
     /// What it is doing.
-    pub state: ThreadState,
+    pub state: JobState,
     /// Whether a thread of its own runs it now.
     pub threaded: bool,
     /// The times its work was done.
@@ -168,10 +179,10 @@ impl Jobs {
     }
 
     /// Asks for job `id` of `db`, which runs it as `policy` says.
-    pub(crate) fn request(&self, id: JobId, db: &Database, policy: ThreadPolicy) {
+    pub(crate) fn request(&self, id: JobId, db: &Database, policy: JobPolicy) {
         let Some(job) = self.job(id) else { return };
         lock_builtin(&job.record).due = true;
-        if policy == ThreadPolicy::Automatic {
+        if policy == JobPolicy::Automatic {
             self.threaded(&job, db);
         }
     }
@@ -210,15 +221,15 @@ impl Jobs {
 
     /// Takes `policy` for `db`: a thread for each job due if AUTOMATIC;
     /// else every thread stopped and joined.
-    pub(crate) fn apply(&self, db: &Database, policy: ThreadPolicy) {
+    pub(crate) fn apply(&self, db: &Database, policy: JobPolicy) {
         for job in self.all() {
             match policy {
-                ThreadPolicy::Automatic => {
+                JobPolicy::Automatic => {
                     if lock_builtin(&job.record).due {
                         self.threaded(&job, db);
                     }
                 }
-                ThreadPolicy::Manual | ThreadPolicy::Paused => job.stop(db),
+                JobPolicy::Manual | JobPolicy::Paused => job.stop(db),
             }
         }
     }
@@ -231,13 +242,13 @@ impl Jobs {
     }
 
     /// Lets `db`'s jobs start again, as `policy` says: its close failed.
-    pub(crate) fn reopened(&self, db: &Database, policy: ThreadPolicy) {
+    pub(crate) fn reopened(&self, db: &Database, policy: JobPolicy) {
         self.closing.store(false, Ordering::Release);
         self.apply(db, policy);
     }
 
     /// Each job, as the manager shows it.
-    pub(crate) fn infos(&self) -> Vec<ThreadInfo> {
+    pub(crate) fn infos(&self) -> Vec<JobInfo> {
         self.all().iter().map(|job| job.info()).collect()
     }
 }
@@ -298,16 +309,16 @@ impl Job {
         }
     }
 
-    fn info(&self) -> ThreadInfo {
+    fn info(&self) -> JobInfo {
         let record = lock_builtin(&self.record);
         let state = if record.running {
-            ThreadState::Running
+            JobState::Running
         } else if record.due {
-            ThreadState::Due
+            JobState::Due
         } else {
-            ThreadState::Idle
+            JobState::Idle
         };
-        ThreadInfo {
+        JobInfo {
             label: self.label,
             state,
             threaded: self.worker.running(),
@@ -327,11 +338,11 @@ mod tests {
     /// whatever its case; a word of none is AUTOMATIC.
     #[test]
     fn policies_have_their_words() {
-        for policy in [ThreadPolicy::Automatic, ThreadPolicy::Manual, ThreadPolicy::Paused] {
-            assert_eq!(ThreadPolicy::of(policy.word()), policy);
-            assert_eq!(ThreadPolicy::of(&policy.word().to_ascii_lowercase()), policy);
-            assert!(ThreadPolicy::WORDS.contains(&policy.word()));
+        for policy in [JobPolicy::Automatic, JobPolicy::Manual, JobPolicy::Paused] {
+            assert_eq!(JobPolicy::of(policy.word()), policy);
+            assert_eq!(JobPolicy::of(&policy.word().to_ascii_lowercase()), policy);
+            assert!(JobPolicy::WORDS.contains(&policy.word()));
         }
-        assert_eq!(ThreadPolicy::of("SOMETIMES"), ThreadPolicy::Automatic);
+        assert_eq!(JobPolicy::of("SOMETIMES"), JobPolicy::Automatic);
     }
 }

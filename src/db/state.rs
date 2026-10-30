@@ -113,6 +113,9 @@ pub struct State {
     pub(crate) temporaries: Arc<super::temporary::Uses>,
     /// Where its operators spill, shared by every snapshot (`spill.rs`).
     pub(crate) work: Arc<WorkAreas>,
+    /// Its background work's jobs, shared by every snapshot (`threads.rs`,
+    /// RULES.md D55).
+    pub(crate) jobs: Arc<crate::threads::Jobs>,
     /// The log, the commit point of transactions begun with this snapshot
     /// (RULES.md D25); `None`, the default, writes none, as a database whose
     /// engines keep nothing between runs needs none.
@@ -155,6 +158,7 @@ impl State {
             pages: MemoryPages::new(crate::db::POOL_BYTES),
             temporaries: Arc::default(),
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
+            jobs: Arc::default(),
             log: None,
             reopening: None,
             building: HashSet::new(),

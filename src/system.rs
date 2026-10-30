@@ -18,8 +18,9 @@
 //!   objects that are associated with INFORMATION_SCHEMA that are not
 //!   defined in this Clause" \[§21.1\]: the settings (`SETTINGS`, RULES.md
 //!   D36, `system/settings.rs`), the users (`USERS`, D43,
-//!   `system/users.rs`), and the memory budget's reservations
-//!   (`MEMORY_RESERVATIONS`, D38, `system/memory.rs`).
+//!   `system/users.rs`), the memory budget's reservations
+//!   (`MEMORY_RESERVATIONS`, D38, `system/memory.rs`), and the jobs of
+//!   background work (`JOBS`, D55, `system/jobs.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add
 //! one (`Database::register_system_table`), an engine's statistics, say.
@@ -32,6 +33,7 @@
 
 mod definition;
 mod information;
+mod jobs;
 mod memory;
 mod settings;
 mod users;
@@ -120,6 +122,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(settings::Settings),
         Arc::new(users::Users),
         Arc::new(memory::MemoryReservations),
+        Arc::new(jobs::Jobs),
         Arc::new(information::CatalogName),
     ];
     tables.extend(definition::tables());

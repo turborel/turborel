@@ -18,7 +18,7 @@ use turborel::logical::LogicalPlan;
 use turborel::optimizer::{Rule, RuleContext};
 use turborel::params::Params;
 use turborel::storage::TableStorage;
-use turborel::threads::ThreadPolicy;
+use turborel::threads::JobPolicy;
 use turborel::txn::NO_TRANSACTION;
 use turborel::value::{CompOp, DataType};
 
@@ -41,10 +41,10 @@ fn near(got: Option<f64>, want: f64, by: f64) -> bool {
 
 /// A database whose table APP.T holds `n` rows, committed: ID 1 to `n`,
 /// GRADE = ID mod 10, NOTE NULL for every fourth; its background work
-/// done only when a test asks (THREADS.POLICY MANUAL, RULES.md D55).
+/// done only when a test asks (JOBS.POLICY MANUAL, RULES.md D55).
 fn graded(n: u32) -> Database {
     let db = Database::new();
-    db.set_thread_policy(ThreadPolicy::Manual).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, GRADE INTEGER, NOTE CHAR(5))").unwrap();
     add(&db, 1..=n, |i| i % 10);
     db
@@ -131,7 +131,7 @@ fn statistics_follow_the_table() {
 #[test]
 fn statistics_are_gathered_in_the_background() {
     let db = graded(1000);
-    db.set_thread_policy(ThreadPolicy::Automatic).unwrap();
+    db.set_job_policy(JobPolicy::Automatic).unwrap();
     added(&db, 1001..=1300, |_| 1);
     let until = std::time::Instant::now().checked_add(std::time::Duration::from_secs(30)).unwrap();
     while above(&db, 1000).is_none_or(|e| e < 100.0) {

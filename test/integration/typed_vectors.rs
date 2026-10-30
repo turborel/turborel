@@ -6,7 +6,7 @@
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
-use turborel::threads::ThreadPolicy;
+use turborel::threads::JobPolicy;
 
 use crate::common::{both_ways, exec, rows, sorted};
 
@@ -19,7 +19,7 @@ const ROWS: i64 = 10_000;
 /// Tables R, of the row store, and C, of the column store, alike: written,
 /// C's rows frozen, then some changed and deleted in each.
 fn both(db: &Database) -> Session {
-    db.set_thread_policy(ThreadPolicy::Manual).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12))
