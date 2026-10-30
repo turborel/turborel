@@ -54,7 +54,7 @@ use super::snapshot::Snapshot;
 use super::stores::{CatalogStore, StorePlace};
 use super::{Database, RecoveryReport, State, api};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc};
-use crate::diagnostics::Event;
+use crate::diagnostics::{Diagnostics, Event};
 use crate::disk::buffer::BufferPool;
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::{Durability, FileLock, FileSystem, OsFileSystem};
@@ -156,6 +156,10 @@ pub(super) struct Reopening {
     unbuilt: Vec<String>,
 }
 
+/// How a database's files are opened: its options, the lock of its
+/// directory, and where its events go.
+type Opening<'a> = (&'a OpenOptions, Arc<FileLock>, Arc<dyn Diagnostics>);
+
 /// Where a database's files are: the file system, the directory, what
 /// they are made of (`db/formats.rs`), the shadowing file system of the
 /// tables file, and the options they are opened with.
@@ -167,14 +171,17 @@ struct Place<'a> {
     options: &'a OpenOptions,
     /// The lock of its directory, held while it is open.
     held: Arc<FileLock>,
+    /// Where the database's events go (RULES.md D40).
+    events: Arc<dyn Diagnostics>,
 }
 
 impl<'a> Place<'a> {
     /// The place in `dir` of `fs`, of `layout`, opened with `options`, its
-    /// directory locked by `held`.
-    fn new(fs: &'a Arc<dyn FileSystem>, dir: &'a Path, layout: FileLayout, (options, held): (&'a OpenOptions, Arc<FileLock>)) -> Place<'a> {
+    /// directory locked by `held`, its events told to `events`.
+    fn new(fs: &'a Arc<dyn FileSystem>, dir: &'a Path, layout: FileLayout, opened: Opening<'a>) -> Place<'a> {
         let shadows = Arc::new(ShadowFileSystem::new(Arc::clone(fs), Arc::clone(&layout.formats.hash)));
-        Place { fs, dir, layout, shadows, options, held }
+        let (options, held, events) = opened;
+        Place { fs, dir, layout, shadows, options, held, events }
     }
 
     fn path(&self, name: &str) -> std::path::PathBuf {
@@ -183,7 +190,7 @@ impl<'a> Place<'a> {
 
     /// It as its stores see it.
     fn store(&self) -> StorePlace<'_> {
-        StorePlace::new(self.fs, self.dir, &self.layout.formats)
+        StorePlace::new(self.fs, self.dir, &self.layout.formats).telling(&self.events)
     }
 
     /// The options of the built-in log.
@@ -264,13 +271,13 @@ impl Database {
         // own are recorded in it.
         let reading = FileFormats { pipeline: Pipeline::none(), ..snapshot.layout(&snapshot.settings)?.formats };
         let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading), options)? else {
-            let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held));
+            let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held, self.events()));
             return self.create_files(&place, &started);
         };
         let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
         let recorded = |name: &str| image.as_ref().and_then(|i| i.snapshot.setting(name)).cloned();
         let values = snapshot.recorded(&recorded)?;
-        let place = Place::new(fs, dir, snapshot.layout(&values)?, (options, held));
+        let place = Place::new(fs, dir, snapshot.layout(&values)?, (options, held, self.events()));
         // Read in the encodings its files name; opened again in its own
         // formats, their encodings bound to their arguments (a key's name),
         // as what it records from now on is written through them.
@@ -461,7 +468,8 @@ fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
         }
     }
     let options = FileLogOptions { pipeline: place.layout.formats.pipeline.clone(), ..place.options.undo.clone() };
-    Ok(Arc::new(FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?))
+    let log = FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?;
+    Ok(Arc::new(log.telling(Arc::clone(&place.events))))
 }
 
 impl State {

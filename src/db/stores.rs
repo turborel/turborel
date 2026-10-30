@@ -37,7 +37,7 @@ use std::sync::{PoisonError, RwLock};
 use super::Database;
 use super::catalog_file::CatalogFiles;
 use super::formats::FileFormats;
-use crate::diagnostics::{Event, Extension};
+use crate::diagnostics::{Diagnostics, Event, Extension};
 use crate::disk::io::FileSystem;
 use crate::error::Result;
 use crate::error::{Code, SqlError};
@@ -58,13 +58,23 @@ pub struct StorePlace<'a> {
     /// The position its log is known durable through, as its last image
     /// records it: a log need not check what it holds before it.
     pub through: Lsn,
+    /// Where the database's events go, for a failure its store goes on
+    /// past, if it is told one (RULES.md D40, D56).
+    pub events: Option<&'a Arc<dyn Diagnostics>>,
 }
 
 impl<'a> StorePlace<'a> {
     /// The place in `dir` of `fs`, its files of `formats`, nothing of its
     /// log known.
     pub fn new(fs: &'a Arc<dyn FileSystem>, dir: &'a Path, formats: &'a FileFormats) -> StorePlace<'a> {
-        StorePlace { fs, dir, formats, through: Lsn(0) }
+        StorePlace { fs, dir, formats, through: Lsn(0), events: None }
+    }
+
+    /// The same place, its stores telling `events` of the failures they go
+    /// on past.
+    #[must_use]
+    pub fn telling(self, events: &'a Arc<dyn Diagnostics>) -> StorePlace<'a> {
+        StorePlace { events: Some(events), ..self }
     }
 
     /// The same place, its log known durable through `through`.
@@ -121,12 +131,21 @@ impl LogStorage for FileLogs {
         }
         let formats = (place.formats.hashes.as_slice(), place.formats.encodings.as_slice());
         let (log, _) = FileLog::open_through(Arc::clone(place.fs), &dir, formats, self.options.clone(), place.through)?;
-        Ok(Some(Arc::new(log)))
+        Ok(Some(Arc::new(told(log, place))))
     }
 
     fn create(&self, place: &StorePlace<'_>) -> Result<Arc<dyn Log>> {
         let options = FileLogOptions { pipeline: place.formats.pipeline.clone(), ..self.options.clone() };
-        Ok(Arc::new(FileLog::create(Arc::clone(place.fs), &log_dir(place), Arc::clone(&place.formats.hash), options)?))
+        let log = FileLog::create(Arc::clone(place.fs), &log_dir(place), Arc::clone(&place.formats.hash), options)?;
+        Ok(Arc::new(told(log, place)))
+    }
+}
+
+/// `log`, telling the events of `place`, if it has any.
+fn told(log: FileLog, place: &StorePlace<'_>) -> FileLog {
+    match place.events {
+        Some(events) => log.telling(Arc::clone(events)),
+        None => log,
     }
 }
 

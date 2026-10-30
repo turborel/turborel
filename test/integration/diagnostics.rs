@@ -165,3 +165,30 @@ fn a_cursor_is_timed_by_its_work() {
     assert_eq!(told.len(), 1, "{told:?}");
     assert!(told[0].contains("SELECT K FROM G"), "{told:?}");
 }
+
+/// Verifies: [DESIGN] RULES.md D40, D56: a log segment that cannot be begun
+/// is told to the database's sink, as an error, while the statements that
+/// append to the log go on; the sink the database has as it fails, set
+/// after it opened.
+#[test]
+fn a_failed_rotation_of_the_log_is_told() {
+    let scratch = Scratch::new("diagnostics-rotation");
+    let (fs, faults) = crate::faults::FaultyFs::with_faults();
+    let db = Database::new();
+    db.set_setting("LOG.SEGMENT_SIZE", &Value::Exact(Decimal::new(4096, 0))).unwrap();
+    db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone()));
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(200))").unwrap();
+    faults.inject(crate::faults::Rule::fail(crate::faults::Op::Open).on(&format!("log{}segment-", std::path::MAIN_SEPARATOR)));
+    let a = db.session("A");
+    for k in 0..100 {
+        a.run(&format!("INSERT INTO T VALUES ({k}, 'row {k}')")).unwrap();
+        a.commit().unwrap();
+    }
+    faults.clear();
+    let told: Vec<(Level, String)> = kept.taken().into_iter().filter(|(_, e)| e.contains("could not begin a segment")).collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].0, Level::Error);
+    assert_eq!(crate::common::count(&a, "SELECT K FROM T"), 100);
+}

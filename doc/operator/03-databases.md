@@ -25,6 +25,12 @@ runs it alone: directories 0700, files 0600, less what the umask takes
 away. A directory that already exists keeps its mode. On Windows they
 take the permissions of the directory they are made in.
 
+The log begins a new segment as the current one reaches
+LOG.SEGMENT_SIZE. If one cannot be begun, as when the disk is full,
+the current segment grows past that size, commits going on, until one
+can be; the failure is told once as a `failed` event
+([Diagnostics](08-diagnostics.md)).
+
 A database made with `--memory` has no directory: it is gone when the
 server stops. Its pages, its temporary tables' rows and what its queries
 spill are all kept in memory, of its MEMORY_BUDGET, never in the

@@ -26,7 +26,7 @@ event, and what the event is of:
 | `thread` | a thread of background work, `label` `turborel-checkpoint` or `turborel-maintenance`, has `change`d: started, stopped, failed, with its error, or restarted after a fault |
 | `setting_changed` | the database's value of a setting is changed |
 | `user_changed`, `owner_changed` | a user is made, given a password or dropped; the database is given an owner |
-| `failed` | a failure an operator must know of: a commit rolled back, a file not read, stored data corrupt |
+| `failed` | a failure an operator must know of: a commit rolled back, a file not read, stored data corrupt, a log segment that could not be begun (told once until one is), files left as the database closed |
 | `slow_statement` | a statement worked longer than DIAGNOSTICS.SLOW_STATEMENT |
 
 ## Slow statements

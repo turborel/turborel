@@ -17,6 +17,12 @@
 //! segment a crash left half created (shorter than a block file's header)
 //! holds no record and is removed; a missing segment between two others is
 //! refused as corruption.
+//!
+//! A segment that cannot be begun leaves the current one growing past the
+//! segment size, its appends going on; the failure is told to the sink the
+//! log is given (`telling`), once until a segment is begun again (RULES.md
+//! D56). One a failed rotation left half made holds no record, and is made
+//! again by the next.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,12 +30,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
 
 use super::{Log, LogCapabilities, Lsn, Records};
+use crate::diagnostics::{Diagnostics, NoDiagnostics};
 use crate::disk::block::{BlockFile, BlockId, BlockOptions, HEADER_LEN, ReadWith};
 use crate::disk::encoding::{Encoding, Pipeline};
 use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
 use crate::sync::lock_builtin;
+
+mod segments;
 
 /// Bits of a position that hold the block id within its segment: segments
 /// of up to 1 TiB, and 2^24 of them.
@@ -142,6 +151,10 @@ pub struct FileLog {
     syncing: Mutex<bool>,
     synced: Condvar,
     counters: Counters,
+    /// Where a failure it goes on past is told.
+    events: Arc<dyn Diagnostics>,
+    /// Whether a rotation's failure was told since one last succeeded.
+    told: AtomicBool,
 }
 
 /// The position of block `id` of segment `number`.
@@ -333,7 +346,16 @@ impl FileLog {
             syncing: Mutex::new(false),
             synced: Condvar::new(),
             counters: Counters::default(),
+            events: Arc::new(NoDiagnostics),
+            told: AtomicBool::new(false),
         })
+    }
+
+    /// The log, telling `events` of the failures it goes on past: a
+    /// segment that cannot be begun.
+    #[must_use]
+    pub fn telling(self, events: Arc<dyn Diagnostics>) -> FileLog {
+        FileLog { events, ..self }
     }
 
     /// The counters now.
@@ -418,8 +440,9 @@ impl Log for FileLog {
         add(&self.counters.appended_bytes, u64::try_from(record.len()).unwrap_or(u64::MAX));
         if segment.blocks.end().0 >= self.options.segment_size {
             // A segment that cannot be begun leaves this one growing past
-            // its size; the record is appended either way.
-            let _ = self.rotate(&segment);
+            // its size; the record is appended either way, the failure told.
+            let rotated = self.rotate(&segment);
+            self.tell(rotated, &segment);
         }
         Ok(lsn(segment.number, id))
     }
@@ -457,84 +480,6 @@ impl Log for FileLog {
     fn end(&self) -> Lsn {
         let active = self.active.read().unwrap_or_else(PoisonError::into_inner);
         lsn(active.number, active.blocks.end())
-    }
-}
-
-impl FileLog {
-    /// Begins the segment after `full`, if `full` is still the current one
-    /// and no other thread is beginning one; then seals `full`.
-    fn rotate(&self, full: &Arc<Segment>) -> Result<()> {
-        if self.rotating.swap(true, Ordering::AcqRel) {
-            return Ok(());
-        }
-        let current = Arc::ptr_eq(&self.active.read().unwrap_or_else(PoisonError::into_inner), full);
-        let begun = if current { self.begin_after(full) } else { Ok(()) };
-        self.rotating.store(false, Ordering::Release);
-        begun?;
-        if current {
-            self.seal(full)?;
-        }
-        Ok(())
-    }
-
-    /// Creates the segment after `full` and makes it current.
-    fn begin_after(&self, full: &Segment) -> Result<()> {
-        let number = full.number.saturating_add(1);
-        let blocks = BlockFile::create(
-            &*self.fs,
-            &self.dir.join(segment_name(number)),
-            Arc::clone(&self.hash),
-            self.options.pipeline.clone(),
-            self.options.blocks,
-        )?;
-        let next = Segment::new(number, blocks);
-        lock_builtin(&self.segments).insert(number, Arc::clone(&next));
-        *self.active.write().unwrap_or_else(PoisonError::into_inner) = next;
-        add(&self.counters.rotations, 1);
-        Ok(())
-    }
-
-    /// Seals `segment`, no longer current: waits for its appends, syncs it.
-    fn seal(&self, segment: &Segment) -> Result<()> {
-        if segment.sealed.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        segment.drain();
-        segment.blocks.sync(self.options.durability)?;
-        segment.durable_end.fetch_max(segment.blocks.end().0, Ordering::AcqRel);
-        segment.sealed.store(true, Ordering::Release);
-        Ok(())
-    }
-
-    /// Makes block `id` of `segment` durable, grouping with other syncs: if
-    /// one is running, wait for it, then check again; otherwise sync for
-    /// everyone, through the blocks published when the sync began.
-    fn sync_through(&self, segment: &Segment, id: BlockId) -> Result<()> {
-        if id.0 < segment.durable_end.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        add(&self.counters.sync_requests, 1);
-        let mut syncing = lock_builtin(&self.syncing);
-        loop {
-            if id.0 < segment.durable_end.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            if !*syncing {
-                break;
-            }
-            syncing = self.synced.wait(syncing).unwrap_or_else(PoisonError::into_inner);
-        }
-        *syncing = true;
-        drop(syncing);
-        let end = segment.blocks.end();
-        let synced = segment.blocks.sync(self.options.durability);
-        if synced.is_ok() {
-            segment.durable_end.fetch_max(end.0, Ordering::AcqRel);
-            add(&self.counters.syncs, 1);
-        }
-        *lock_builtin(&self.syncing) = false;
-        self.synced.notify_all();
-        synced
     }
 }
 

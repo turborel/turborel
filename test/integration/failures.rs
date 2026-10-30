@@ -14,7 +14,7 @@ use turborel::disk::pager::{Extent, PageId, Pager};
 use turborel::error::Code;
 use turborel::log::{FileLog, Log, Lsn};
 
-use crate::common::{Scratch, crc32c, small_segments};
+use crate::common::{Kept, Scratch, crc32c, small_segments};
 use crate::faults::{FaultyFs, Op, Rule};
 
 /// 4 KiB pages; content past this overflows.
@@ -168,6 +168,40 @@ fn a_log_survives_failed_rotations_and_syncs() {
     log.sync(positions[0]).unwrap();
     let read: Vec<_> = log.read_from(Lsn(0)).collect::<turborel::error::Result<_>>().unwrap();
     assert_eq!(read.len(), 22);
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D56, file log: a segment whose header
+/// cannot be written is left half made; the next rotation removes it and
+/// makes it again, so the log rotates once the fault passes, the segment
+/// before growing past its size meanwhile; the failure is told to the
+/// log's sink once, however many rotations fail, and again after one
+/// succeeds.
+///
+/// Regression test (R-TEST-7): a half-made segment refused every rotation
+/// after (it existed), and the failure was never told.
+#[test]
+fn a_half_made_segment_is_made_again_and_told() {
+    let scratch = Scratch::new("failures-half-made");
+    let dir = scratch.path("log");
+    let (fs, faults) = FaultyFs::with_faults();
+    let kept = Kept::default();
+    let log = FileLog::create(Arc::clone(&fs), &dir, crc32c(), small_segments()).unwrap().telling(Arc::new(kept.clone()));
+    faults.inject(Rule::fail(Op::Write).on("segment-0000000001").times(3));
+    for n in 0..20_u8 {
+        log.append(&[n; 400]).unwrap();
+    }
+    assert_eq!((faults.injected(), log.counts().rotations), (3, 1), "made again past three faults");
+    let told: Vec<String> = kept.taken().into_iter().map(|(_, e)| e).collect();
+    assert_eq!(told.len(), 1, "told once: {told:?}");
+    assert!(told[0].contains("could not begin a segment after segment 0"), "{told:?}");
+    faults.inject(Rule::fail(Op::Open).on("segment-0000000002"));
+    for n in 0..24_u8 {
+        log.append(&[n; 400]).unwrap();
+    }
+    assert_eq!(kept.taken().len(), 1, "told again after a rotation succeeded");
+    faults.clear();
+    let read: Vec<_> = log.read_from(Lsn(0)).collect::<turborel::error::Result<_>>().unwrap();
+    assert_eq!(read.len(), 44);
 }
 
 /// Verifies: [DESIGN] RULES.md D25, file log: a segment whose file cannot be

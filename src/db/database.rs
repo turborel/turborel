@@ -44,6 +44,17 @@ pub struct Database(Arc<Shared>);
 #[derive(Clone)]
 pub(crate) struct WeakDatabase(Weak<Shared>);
 
+/// \[DESIGN\] The sink `Database::events` gives.
+struct Forward(WeakDatabase);
+
+impl Diagnostics for Forward {
+    fn event(&self, event: &Event) {
+        if let Some(db) = self.0.upgrade() {
+            db.emit(event);
+        }
+    }
+}
+
 impl WeakDatabase {
     /// The database, if it is still open somewhere.
     pub(crate) fn upgrade(&self) -> Option<Database> {
@@ -165,6 +176,13 @@ impl Database {
     /// A handle that does not keep the database open.
     pub(crate) fn downgrade(&self) -> WeakDatabase {
         WeakDatabase(Arc::downgrade(&self.0))
+    }
+
+    /// A sink that gives each event to the database's sink of the moment,
+    /// while the database is open somewhere: for a part of it that tells
+    /// of failures it goes on past, as its logs (RULES.md D40, D56).
+    pub(crate) fn events(&self) -> Arc<dyn Diagnostics> {
+        Arc::new(Forward(self.downgrade()))
     }
 
     /// Refuses every call from now on.
