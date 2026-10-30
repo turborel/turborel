@@ -214,6 +214,13 @@ impl WorkAreas {
         Ok(())
     }
 
+    /// Where scratch files are made: a plug-in's own, removed when it is
+    /// done with them, and cleared with the spill areas' as the database
+    /// opens and closes if it is not (RULES.md D56).
+    pub fn scratch(&self) -> Arc<TempFiles> {
+        Arc::clone(&self.place.read().unwrap_or_else(PoisonError::into_inner).1)
+    }
+
     /// Removes the files of spill areas left in its directory, as the
     /// database closes (`TempFiles::clear`).
     ///

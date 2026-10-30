@@ -329,6 +329,8 @@ impl FileSystem for FileManager {
     }
 }
 
+pub mod plugins;
+
 // Unit tests: the limit kept by closing the file used least recently,
 // files opened again as used, and the counts (RULES.md R-TEST-1).
 #[cfg(test)]

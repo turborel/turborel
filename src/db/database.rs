@@ -292,7 +292,7 @@ impl Database {
     /// What it provides the plug-ins registered with it.
     fn host(&self) -> Result<Host> {
         let st = self.snapshot()?;
-        Ok(Host::new(Arc::clone(&st.memory), Arc::clone(&st.work), Arc::clone(&st.encodings)))
+        Ok(Host::new(Arc::clone(&st.memory), Arc::clone(&st.work), Arc::clone(&st.encodings), Arc::clone(&st.plugins)))
     }
 
     /// \[DESIGN\] Adds or replaces a storage engine, under its name, once

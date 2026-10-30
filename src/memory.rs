@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::disk::encoding::Encodings;
 use crate::error::{Code, Result, SqlError};
+use crate::files::plugins::PluginFiles;
 use crate::spill::WorkAreas;
 use crate::sync::lock_builtin;
 
@@ -104,8 +105,8 @@ impl MemoryBudget {
 
 /// \[DESIGN\] What a database provides the plug-ins registered with it
 /// (`StorageEngine::attach`, `IndexMethod::attach`): its memory budget,
-/// which their caches and work areas reserve of, its spill areas, and the
-/// encodings registered with it. More may be added, so it is made only by
+/// which their caches and work areas reserve of, its spill areas, the
+/// encodings registered with it, and a directory for each of their own. More may be added, so it is made only by
 /// the database.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -118,13 +119,17 @@ pub struct Host {
     /// The encodings registered (`Database::register_encoding`): those a
     /// table's options name, its data is sealed with (RULES.md D30, D41).
     pub encodings: Arc<Encodings>,
+    /// Where it keeps files of its own (RULES.md D56); its scratch files
+    /// are those of `work` (`WorkAreas::scratch`).
+    pub files: Arc<PluginFiles>,
 }
 
 impl Host {
     /// What a database whose budget is `memory`, whose spill areas are
-    /// `work` and whose encodings are `encodings` provides.
-    pub(crate) fn new(memory: Arc<MemoryBudget>, work: Arc<WorkAreas>, encodings: Arc<Encodings>) -> Host {
-        Host { memory, work, encodings }
+    /// `work`, whose encodings are `encodings` and whose plug-ins' files
+    /// are kept in `files` provides.
+    pub(crate) fn new(memory: Arc<MemoryBudget>, work: Arc<WorkAreas>, encodings: Arc<Encodings>, files: Arc<PluginFiles>) -> Host {
+        Host { memory, work, encodings, files }
     }
 }
 

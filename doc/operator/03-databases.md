@@ -14,6 +14,7 @@ A database kept in a directory holds there:
 | `log/` | the write-ahead log, in segments |
 | `undo/` | older versions of rows, for readers of earlier snapshots |
 | `tmp/` | the work areas of large sorts, joins and groupings |
+| `plugins/` | the files of plug-in engines and index methods, each in a directory of its name, made as one first keeps a file |
 | `lock` | held while a server, or a program, has the database open |
 
 `undo/` and `tmp/` are made anew each time the database opens. The

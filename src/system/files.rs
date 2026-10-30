@@ -10,6 +10,7 @@ use std::path::Path;
 use super::{Seen, SystemTable, text, text_column, yes};
 use crate::catalog::ColumnDesc;
 use crate::error::Result;
+use crate::files::plugins::PLUGINS;
 use crate::storage::Row;
 use crate::value::Spelled;
 use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Value};
@@ -22,11 +23,14 @@ pub(super) struct Files;
 
 /// The kind of the file at `path`, by its name and its directory's: the
 /// data file and its shadow files, the catalog, a segment of the log or of
-/// older row versions, a spill file, or another.
+/// older row versions, a spill file, a plug-in's own file (in a directory
+/// of `plugins/`, first, whatever its name), or another.
 fn kind(path: &Path) -> &'static str {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
     let dir = path.parent().and_then(Path::file_name).and_then(|n| n.to_str()).unwrap_or_default();
-    if name == "data" {
+    if path.ancestors().skip(2).any(|a| a.file_name().is_some_and(|n| n == PLUGINS)) {
+        "PLUGIN"
+    } else if name == "data" {
         "DATA"
     } else if name.starts_with("data.shadow") {
         "SHADOW"
@@ -99,6 +103,8 @@ mod tests {
             ("db/undo/segment-0000000001.log", "UNDO"),
             ("db/tmp/turborel-1-2-3.spill", "SPILL"),
             ("db/lock", "OTHER"),
+            ("db/plugins/mine/data", "PLUGIN"),
+            ("db/plugins/mine/parts/0", "PLUGIN"),
         ] {
             assert_eq!(kind(Path::new(path)), expected, "{path}");
         }

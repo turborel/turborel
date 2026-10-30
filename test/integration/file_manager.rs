@@ -3,7 +3,15 @@
 //! closed and opened again as needed, each shown in
 //! INFORMATION_SCHEMA.FILES to the database's owner.
 
+use std::sync::{Arc, Mutex};
+
+use turborel::catalog::TableDesc;
 use turborel::db::{Database, OpenOptions};
+use turborel::disk::io::{DiskFile, Durability, OpenMode};
+use turborel::engine::rows::{RowStore, TableOptions};
+use turborel::error::{Code, Result};
+use turborel::memory::Host;
+use turborel::storage::{StorageEngine, TableStorage};
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Kept, Scratch, os, rows, small_segments};
@@ -102,4 +110,79 @@ fn closing_removes_spill_files_and_closes_every_file() {
     assert!(!stray.exists(), "removed as it closed");
     let events: Vec<String> = kept.taken().into_iter().map(|(_, e)| e).collect();
     assert_eq!(events, vec!["Closed".to_owned()]);
+}
+
+/// What a plug-in was given as it was registered.
+type Given = Arc<Mutex<Option<Host>>>;
+
+/// A plug-in engine keeping, for each table it makes, a file of its own in
+/// its directory, and a scratch file; its rows kept by a row store.
+struct Keeping {
+    rows: RowStore,
+    host: Given,
+    kept: Mutex<Vec<Box<dyn DiskFile>>>,
+}
+
+impl StorageEngine for Keeping {
+    fn name(&self) -> &'static str {
+        "keeping"
+    }
+    fn attach(&self, host: &Host) -> Result<()> {
+        self.rows.attach(host)?;
+        *self.host.lock().unwrap() = Some(host.clone());
+        Ok(())
+    }
+    fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
+        let host = self.host.lock().unwrap().clone().unwrap();
+        let (fs, dir) = host.files.directory(self.name())?;
+        let file = fs.open(&dir.join(&desc.name.ident), OpenMode::CreateNew)?;
+        file.write_all_at(b"made", 0)?;
+        file.sync(Durability::Full)?;
+        let scratch = host.work.scratch();
+        let path = scratch.path()?;
+        drop(scratch.fs().open(&path, OpenMode::CreateNew)?);
+        scratch.fs().remove(&path)?;
+        self.kept.lock().unwrap().push(file);
+        self.rows.create_table(desc)
+    }
+}
+
+/// The engine, and what it is given.
+fn keeping() -> (Box<Keeping>, Given) {
+    let host = Given::default();
+    let engine = Keeping { rows: RowStore::in_memory(TableOptions::default()), host: Arc::clone(&host), kept: Mutex::new(Vec::new()) };
+    (Box::new(engine), host)
+}
+
+/// Verifies: [DESIGN] RULES.md D56, `Host::files`: a plug-in keeps files of
+/// its own in a directory of its name, under the database's `plugins/`
+/// once it is kept in a directory, though given before it opened, shown
+/// in INFORMATION_SCHEMA.FILES as PLUGIN; in memory for a database kept in
+/// memory; a name that is no directory's is refused (SQLCODE -910); and
+/// it makes scratch files where the database does.
+#[test]
+fn plug_ins_keep_files_of_their_own() {
+    let scratch = Scratch::new("file-plugins");
+    let dir = scratch.path("db");
+    let db = Database::new();
+    db.register_engine(keeping().0).unwrap();
+    db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) USING keeping").unwrap();
+    assert_eq!(std::fs::read(dir.join("plugins").join("keeping").join("T")).unwrap(), b"made");
+    let shown = rows(&db.session("OWNER"), "SELECT COUNT(*) FROM INFORMATION_SCHEMA.FILES WHERE KIND = 'PLUGIN'").unwrap();
+    assert_eq!(shown, ["1"]);
+
+    let in_memory = Database::new();
+    let (engine, given) = keeping();
+    in_memory.register_engine(engine).unwrap();
+    in_memory.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) USING keeping").unwrap();
+    in_memory.session("A").run("INSERT INTO T VALUES (1)").unwrap();
+    let host = given.lock().unwrap().clone().unwrap();
+    let (fs, mine) = host.files.directory("keeping").unwrap();
+    assert!(fs.exists(&mine.join("T")).unwrap(), "in memory");
+    let refused = |name: &str| host.files.directory(name).err().map(|e| e.code);
+    assert_eq!((refused("../up"), refused("")), (Some(Code::Api), Some(Code::Api)));
+    assert_eq!(refused("fine_name-1"), None);
 }

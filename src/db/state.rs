@@ -119,6 +119,8 @@ pub struct State {
     /// The files it holds, shared by every snapshot (`files.rs`, RULES.md
     /// D56).
     pub(crate) files: Arc<crate::files::Registry>,
+    /// Where its plug-ins keep files of their own (RULES.md D56).
+    pub(crate) plugins: Arc<crate::files::plugins::PluginFiles>,
     /// The log, the commit point of transactions begun with this snapshot
     /// (RULES.md D25); `None`, the default, writes none, as a database whose
     /// engines keep nothing between runs needs none.
@@ -163,6 +165,7 @@ impl State {
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             jobs: Arc::default(),
             files: Arc::default(),
+            plugins: Arc::new(crate::files::plugins::PluginFiles::in_memory(Arc::clone(&memory))),
             log: None,
             reopening: None,
             building: HashSet::new(),

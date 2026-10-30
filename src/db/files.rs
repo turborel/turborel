@@ -63,6 +63,7 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
+use crate::files::plugins::PLUGINS;
 use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod};
 use crate::log::{FileLog, FileLogOptions, Log, Lsn};
 use crate::spill::TempFiles;
@@ -264,7 +265,7 @@ impl Database {
         fs.create_dir_durably(dir)?;
         // Before anything is cleared or opened: no other has it open.
         let held = Arc::new(fs.lock(&dir.join(LOCK))?);
-        snapshot.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))?;
+        snapshot.keep_in(fs, dir)?;
         // Its settings given before it opened, of those it reads as it opens.
         let started = snapshot.settings.started();
         // Its catalog is read in whatever registered formats it names: its
@@ -474,6 +475,14 @@ fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
 }
 
 impl State {
+    /// Keeps its spill areas' files, and its plug-ins' own, in `dir` of
+    /// `fs` from now on, the spill files a run before left removed.
+    fn keep_in(&self, fs: &Arc<dyn FileSystem>, dir: &Path) -> Result<()> {
+        self.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))?;
+        self.plugins.set_place(Arc::clone(fs), dir.join(PLUGINS));
+        Ok(())
+    }
+
     /// The storage of the table `desc` in `engine`: reopened by its locator
     /// while the database is reopened and the engine can, else new.
     pub(super) fn table_storage(&mut self, engine: &dyn StorageEngine, desc: &TableDesc) -> Result<Arc<dyn TableStorage>> {
