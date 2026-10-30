@@ -1,6 +1,6 @@
 //! Unit tests of column chunks (`columns.rs`).
 
-use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, RUNS, VARYING};
+use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, FSST, RUNS, VARYING};
 use super::*;
 use crate::value::{Decimal, Spelled};
 
@@ -341,4 +341,36 @@ fn approximate_numbers_are_decimals() {
     assert_eq!(odd_kind, ALP, "three exceptions");
     let thirds: Vec<Value> = (1_i32..100_i32).map(|n| Value::Approx(1.0 / f64::from(n.checked_mul(3).unwrap()))).collect();
     assert_ne!(check(thirds).0, ALP, "no decimals");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, FSST: VARCHAR texts alike in their
+/// parts, nulls among them, are written as codes of a table of their
+/// common parts, in fewer bytes than plain, and read back as written, one
+/// at a time and of any range at once; bytes of such a chunk whose table is
+/// malformed, or whose codes are, are refused with SQLCODE -916.
+#[test]
+fn texts_are_compressed_by_their_parts() {
+    let texts: Vec<Value> = (0..300_u32)
+        .map(|k| if k % 23 == 5 { Value::Null } else { Value::Char(format!("customer{k}@mail{}.example.com", k % 7)) })
+        .collect();
+    let fields = Fields::of(&TEXT, texts.iter().cloned()).unwrap();
+    let bytes = fields.chunk(&TEXT, 0, (fields.len(), true)).unwrap();
+    assert_eq!(bytes[0], FSST);
+    let plain = fields.chunk(&TEXT, 0, (fields.len(), false)).unwrap();
+    assert!(bytes.len() < plain.len() >> 1_u32, "{} of {}", bytes.len(), plain.len());
+    let chunk = Chunk::parse(&bytes).unwrap();
+    let back: Vec<String> = (0..chunk.len()).map(|n| chunk.value(n, &TEXT).unwrap().to_string()).collect();
+    assert_eq!(back, texts.iter().map(ToString::to_string).collect::<Vec<_>>());
+    for range in [(0, 300), (4, 6), (17, 260)] {
+        assert_eq!(texts_of(&TEXT, &texts, range).map(|(a, b)| a == b), Some(true), "{range:?}");
+    }
+    let at = HEADER.saturating_add(nulls_len(300));
+    let mut bad_table = bytes.clone();
+    bad_table[at] = 200;
+    assert_eq!(Chunk::parse(&bad_table).err().map(|e| e.code), Some(Code::Corrupt), "a table of 200 symbols");
+    let mut bad_codes = bytes.clone();
+    let last = bad_codes.len().saturating_sub(1);
+    bad_codes[last] = 255;
+    let broken = Chunk::parse(&bad_codes).unwrap();
+    assert_eq!(broken.value(299, &TEXT).err().map(|e| e.code), Some(Code::Corrupt), "an escape at the end");
 }

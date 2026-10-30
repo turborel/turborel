@@ -24,6 +24,7 @@ mod alp;
 mod bloom;
 pub mod cache;
 mod encoded;
+mod fsst;
 pub mod group;
 mod packed;
 mod runs;
@@ -76,7 +77,7 @@ fn width_of(fields: &[Option<Vec<u8>>], t: &DataType) -> Option<usize> {
 
 /// The values of a column, each as its type writes it in a record, none
 /// for a null.
-pub struct Fields(Vec<Option<Vec<u8>>>);
+pub struct Fields(Vec<Option<Vec<u8>>>, std::sync::OnceLock<Option<fsst::Table>>);
 
 impl Fields {
     /// `values`, of type `t`, written.
@@ -85,7 +86,8 @@ impl Fields {
     ///
     /// As `SqlType::encode_record` says.
     pub fn of(t: &DataType, values: impl Iterator<Item = Value>) -> Result<Fields> {
-        values.map(|v| if v.is_null() { Ok(None) } else { t.encode_record(&v).map(Some) }).collect::<Result<_>>().map(Fields)
+        let fields = values.map(|v| if v.is_null() { Ok(None) } else { t.encode_record(&v).map(Some) }).collect::<Result<_>>()?;
+        Ok(Fields(fields, std::sync::OnceLock::new()))
     }
 
     /// How many there are.
@@ -103,7 +105,7 @@ impl Fields {
     /// than a chunk has one of its own.
     pub fn fitting(&self, t: &DataType, from: usize, (capacity, compress): (usize, bool)) -> usize {
         let rest = self.0.get(from..).unwrap_or_default();
-        let mut sizer = Sizer::new(width_of(&self.0, t), (compress, matches!(t, DataType::Approximate { .. })));
+        let mut sizer = Sizer::new(width_of(&self.0, t), (compress, matches!(t, DataType::Approximate { .. })), self.table(t, compress));
         for (n, field) in rest.iter().enumerate() {
             sizer.add(field.as_deref());
             if sizer.best().1 > capacity {
@@ -122,7 +124,7 @@ impl Fields {
     pub fn chunk(&self, t: &DataType, from: usize, (count, compress): (usize, bool)) -> Result<Vec<u8>> {
         let end = from.checked_add(count).ok_or_else(too_large)?;
         let fields = self.0.get(from..end).ok_or_else(|| corrupt("its values are out of range"))?;
-        let mut sizer = Sizer::new(width_of(&self.0, t), (compress, matches!(t, DataType::Approximate { .. })));
+        let mut sizer = Sizer::new(width_of(&self.0, t), (compress, matches!(t, DataType::Approximate { .. })), self.table(t, compress));
         for f in fields {
             sizer.add(f.as_deref());
         }
@@ -137,8 +139,16 @@ impl Fields {
             }
         }
         out.extend_from_slice(&nulls);
-        encoded::encode(plan, fields, &mut out)?;
+        encoded::encode(plan, fields, sizer.table(), &mut out)?;
         Ok(out)
+    }
+
+    /// Of texts of a VARCHAR type `t`, compressed if `compress`, the table
+    /// of symbols chosen of them all once (`fsst.rs`), each chunk then
+    /// sized and written by it.
+    fn table(&self, t: &DataType, compress: bool) -> Option<&fsst::Table> {
+        let (DataType::Varying { .. }, true) = (t, compress) else { return None };
+        self.1.get_or_init(|| Some(fsst::Table::chosen(&self.0.iter().flatten().map(Vec::as_slice).collect::<Vec<_>>()))).as_ref()
     }
 }
 

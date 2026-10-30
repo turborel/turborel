@@ -213,8 +213,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
     ClickHouse sorting keys took DESC in 24.12 for the same reads);
   - a table option of columns (COLUMNSTORE.ORDER) following a column
     renamed, once ALTER TABLE renames columns;
-  - chunks compressed further: FSST for texts; and conditions judged on
-    a frame or runs without decoding each value;
+  - conditions judged of runs, a run at a time, as a vector of runs
+    through the filter and the set functions: of 393,216 rows of a sorted
+    column `COUNT(*) WHERE S >= 10` takes 1.43 ms where a `COUNT(*)`
+    reading none takes 0.48 (of a frame, decoding is a hundredth of a
+    scan's time, so nothing to gain);
 
 ---
 

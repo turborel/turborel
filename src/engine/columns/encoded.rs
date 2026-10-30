@@ -14,6 +14,8 @@
 //!              (`runs.rs`)
 //! ALP:         approximate numbers as decimals, a frame of reference of
 //!              each one's digits and exceptions (`alp.rs`)
+//! FSST:        texts, each as codes of a table of their common substrings
+//!              (`fsst.rs`)
 //! DICTIONARY:  bits u8 | entries u32 | (entries + 1) × u32, where each
 //!              entry begins and the last ends | the entries | count × bits,
 //!              bit-packed, each value's entry, a null's 0
@@ -28,6 +30,7 @@
 use std::collections::HashMap;
 
 use super::alp::{Alp, Trials};
+use super::fsst::{Coded, Table};
 use super::packed::{bits_for, get, pack, packed_len, unpack};
 use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
@@ -41,6 +44,7 @@ pub(super) const FRAME: u8 = 4;
 pub(super) const DICTIONARY: u8 = 5;
 pub(super) const RUNS: u8 = 6;
 pub(super) const ALP: u8 = 7;
+pub(super) const FSST: u8 = 8;
 /// The bytes of a field frame of reference takes.
 const FRAMED: usize = 8;
 /// The most entries of a dictionary: as many as a code of 16 bits names.
@@ -63,6 +67,8 @@ pub(super) enum Plan {
     /// Approximate numbers as decimals of an exponent, each one's digits
     /// less the least in this many bits.
     Alp(u32, i64, u32),
+    /// Texts as codes of the sizer's table of symbols.
+    Fsst,
 }
 
 /// The bytes the values of a chunk take, in each encoding that can hold
@@ -86,6 +92,8 @@ pub(super) struct Sizer<'f> {
     entry_bytes: usize,
     /// The exponents tried, of approximate numbers.
     alp: Option<Trials>,
+    /// Of texts, the table of symbols chosen, and the bytes of their codes.
+    fsst: Option<(&'f Table, usize)>,
 }
 
 fn integer(field: &[u8]) -> Option<i64> {
@@ -94,9 +102,9 @@ fn integer(field: &[u8]) -> Option<i64> {
 
 impl<'f> Sizer<'f> {
     /// No values yet, of fields of `width` if the type has one, of
-    /// approximate numbers if `floats`; encoded plain only, unless
-    /// `compress`.
-    pub(super) fn new(width: Option<usize>, (compress, floats): (bool, bool)) -> Sizer<'f> {
+    /// approximate numbers if `floats`, of texts `table` encodes if given;
+    /// encoded plain only, unless `compress`.
+    pub(super) fn new(width: Option<usize>, (compress, floats): (bool, bool), table: Option<&'f Table>) -> Sizer<'f> {
         Sizer {
             count: 0,
             compress,
@@ -111,7 +119,13 @@ impl<'f> Sizer<'f> {
             entries: HashMap::new(),
             entry_bytes: 0,
             alp: (floats && compress && width == Some(FRAMED)).then(Trials::default),
+            fsst: table.filter(|_| compress).map(|t| (t, 0)),
         }
+    }
+
+    /// The table of symbols it sized texts by, if any.
+    pub(super) fn table(&self) -> Option<&'f Table> {
+        self.fsst.as_ref().map(|(t, _)| *t)
     }
 
     /// Adds a value, none for a null.
@@ -120,6 +134,9 @@ impl<'f> Sizer<'f> {
         let Some(f) = field else { return };
         if let Some(alp) = &mut self.alp {
             alp.add(f);
+        }
+        if let Some((table, bytes)) = &mut self.fsst {
+            *bytes = bytes.saturating_add(table.encoded_len(f));
         }
         self.varying = self.varying.saturating_add(f.len());
         if self.width.is_some_and(|w| w != f.len()) {
@@ -172,6 +189,10 @@ impl<'f> Sizer<'f> {
         if let Some(((e, least, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
             found.push((Plan::Alp(e, least, bits), base.saturating_add(bytes)));
         }
+        if let Some((table, codes)) = &self.fsst {
+            let offsets = self.count.saturating_add(1).saturating_mul(WORD);
+            found.push((Plan::Fsst, base.saturating_add(table.bytes()).saturating_add(offsets).saturating_add(*codes)));
+        }
         if self.entries.len() < MOST_ENTRIES {
             let bits = bits_for(u64::try_from(self.entries.len().saturating_sub(1)).unwrap_or(u64::MAX));
             let table = self.entries.len().saturating_add(1).saturating_mul(WORD).saturating_add(self.entry_bytes);
@@ -184,8 +205,8 @@ impl<'f> Sizer<'f> {
     }
 }
 
-/// Appends `fields` to `out` as `plan` writes them.
-pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], out: &mut Vec<u8>) -> Result<()> {
+/// Appends `fields` to `out` as `plan` writes them, of texts by `table`.
+pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], table: Option<&Table>, out: &mut Vec<u8>) -> Result<()> {
     match plan {
         Plan::Fixed(width) => {
             out.extend_from_slice(&word(width)?);
@@ -214,6 +235,7 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], out: &mut Vec<u8>) 
         Plan::Dictionary(bits) => dictionary(fields, bits, out)?,
         Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
         Plan::Alp(e, least, bits) => super::alp::encode(fields, (e, least, bits), out)?,
+        Plan::Fsst => super::fsst::encode(fields, table.ok_or_else(|| corrupt("texts have no table"))?, out)?,
     }
     Ok(())
 }
@@ -274,6 +296,7 @@ pub(super) enum Body<'a> {
     Dictionary { bits: u32, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
     Runs(Runs<'a>),
     Alp(Alp<'a>),
+    Fsst(Coded<'a>),
 }
 
 /// `bytes` from `at` on, `len` of them.
@@ -328,6 +351,7 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
         }
         RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
         ALP => Ok(Body::Alp(Alp::parse(rest, count)?)),
+        FSST => Ok(Body::Fsst(Coded::parse(rest, count)?)),
         _ => Err(corrupt("it is of another format")),
     }
 }
@@ -347,6 +371,7 @@ impl Body<'_> {
             Body::Constant { field } => decoded(Some(field)),
             Body::Runs(runs) => decoded(runs.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
             Body::Alp(alp) => decoded(alp.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
+            Body::Fsst(coded) => decoded(Some(&coded.text(n).ok_or_else(|| corrupt("a text's codes are malformed"))?)),
             Body::Frame { least, bits, deltas } => {
                 let delta = get(deltas, *bits, n).ok_or_else(|| corrupt("a value past its end is asked for"))?;
                 let sum = i128::from(*least).saturating_add(i128::from(delta));
@@ -386,7 +411,7 @@ impl Body<'_> {
                 out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
                 Some(())
             }
-            Body::Fixed { .. } | Body::Varying { .. } => None,
+            Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
         }
     }
 }
@@ -402,6 +427,9 @@ impl Body<'_> {
         (text, ends): (&mut String, &mut Vec<usize>),
         null: impl Fn(usize) -> bool,
     ) -> Option<()> {
+        if let Body::Fsst(coded) = self {
+            return coded.texts((from, to), (text, ends), null);
+        }
         for n in from..to {
             if !null(n) {
                 text.push_str(std::str::from_utf8(self.field(n)?).ok()?);
@@ -459,7 +487,7 @@ impl Body<'_> {
                 let (from, to) = between(offsets, usize::from(self.code(n)?))?;
                 entries.get(from..to)
             }
-            Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) | Body::Alp(_) => None,
+            Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) | Body::Alp(_) | Body::Fsst(_) => None,
         }
     }
 }
@@ -536,5 +564,6 @@ pub(super) fn kind_of(plan: Plan) -> u8 {
         Plan::Dictionary(_) => DICTIONARY,
         Plan::Runs(..) => RUNS,
         Plan::Alp(..) => ALP,
+        Plan::Fsst => FSST,
     }
 }

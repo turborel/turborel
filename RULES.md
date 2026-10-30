@@ -809,7 +809,17 @@ the format of frozen groups becomes a trait when it is.
   44 pages to 134, measures of one 29; read a run at a time as a scan's
   vector of approximate numbers, `Floats`, a `SUM` of 393,216 in memory
   1.65 ms where plain it takes 2.26, and either took 6.1 a value at a
-  time); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
+  time); or, of VARCHAR texts, each as one-byte codes of a table of at
+  most 64 symbols of 1 to 8 bytes, a byte of none escaped (FSST, Boncz,
+  Neumann and Leis, VLDB 2020; `columns/fsst.rs`): the table chosen once
+  of a group's column, of 16 runs of its texts taken evenly through it,
+  as every n-th text misses a pattern's kinds, in FSST's five rounds,
+  symbols counted packed in a word, no allocation, and held in each
+  chunk, 576 bytes at most; decoded a symbol a word of 8 bytes at a time,
+  a range checked UTF-8 at once, each end on a character's boundary (of
+  65,536 addresses, mails and links, 361 pages to 125; of 393,216, scans
+  as fast, `COUNT(T)` 8.1 ms where plain it takes 8.3, a load and freeze
+  5% slower); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
   Unpacked a value's 8 bytes at a time, a column of numbers held in
   memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
   rows 2.0 ms to 2.3), as its pages are half as many or fewer.
