@@ -439,6 +439,24 @@ impl Session {
         self.diagnosed(self.db.noted(self.rollback_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
     }
 
+    /// [X3.135-1986 §7.1 GR2, ISO/IEC 9075:1992 §20.1 GR2a] Ends the
+    /// session's transaction after its last statement: committed or rolled
+    /// back as SESSION_END says, and rolled back if a constraint is not
+    /// satisfied; its failure returned, where dropping the session would
+    /// lose it. A server calls it when its client terminates the session,
+    /// which then has no transaction left to end when it is dropped.
+    ///
+    /// # Errors
+    ///
+    /// As `commit`'s, or `rollback`'s, as SESSION_END says.
+    pub fn end(&self) -> Result<()> {
+        let ending = self.session_end(self.enter()?.state());
+        match ending {
+            SessionEnd::Commit => self.commit(),
+            SessionEnd::Rollback => self.rollback(),
+        }
+    }
+
     fn rollback_in(&self, st: &State) -> Result<()> {
         // The changes of definitions are forgotten; the published ones have
         // the storage of every table its changes are undone in.

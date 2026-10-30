@@ -27,7 +27,9 @@ println!("{}, as {}", conn.server(), conn.authorization());
 ```
 
 A connection is a session of the server's. `terminate` ends it, its
-transaction as the setting SESSION_END says.
+transaction as the setting SESSION_END says. A commit that fails then,
+as one of a deferred constraint not satisfied (SQLSTATE 40002), rolls
+the transaction back, and `terminate` gives its `Failure`.
 
 ## Running statements
 

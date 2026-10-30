@@ -93,4 +93,5 @@ what is wrong, and the rule of the standard that says so
 
 The end of input, Ctrl-D, ends the session. A transaction left open is
 committed as the session ends, unless the setting SESSION_END is
-ROLLBACK; end it with COMMIT or ROLLBACK to be sure.
+ROLLBACK; end it with COMMIT or ROLLBACK to be sure. A commit that fails
+as the session ends is told, as any statement's failure is.

@@ -100,7 +100,9 @@ $ echo $?
 ```
 
 A transaction a run leaves open is ended as the session ends: committed,
-unless the setting SESSION_END is ROLLBACK.
+unless the setting SESSION_END is ROLLBACK. A commit that fails then, as
+one of a deferred constraint not satisfied (SQLSTATE 40002), is told,
+the transaction rolled back, and the program exits with 1.
 
 ## Connections
 

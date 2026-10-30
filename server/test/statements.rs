@@ -220,6 +220,31 @@ fn a_session_ends_as_its_connection_does() {
     assert_eq!(c.query("SELECT K FROM T").unwrap_err(), cut, "it takes no more");
 }
 
+/// Verifies: [X3.135-1986 §7.1 GR2]; [ISO/IEC 9075:1992 §14.3 GR5a, §20.1
+/// GR2a]; [DESIGN] RULES.md D19, D42: a session the client terminates,
+/// committed as SESSION_END says, whose commit fails as a deferred
+/// constraint is not satisfied, is rolled back, and its client told why
+/// (SQLSTATE 40002) before the connection closes; one whose commit
+/// succeeds terminates without error. Regression test (R-TEST-7): the
+/// failure was lost as the session was dropped, and the client's
+/// terminate succeeded.
+#[test]
+fn a_commit_that_fails_as_the_client_terminates_is_told() {
+    let db = database();
+    db.schema("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE U (K INTEGER CONSTRAINT UK UNIQUE DEFERRABLE INITIALLY DEFERRED) GRANT SELECT ON U TO X").unwrap();
+    let server = start(&db, &[(WORKERS, 2)]);
+    let mut c = server.connect("Y");
+    c.query("INSERT INTO U VALUES (1)").unwrap();
+    c.query("INSERT INTO U VALUES (1)").unwrap();
+    let failed = c.terminate().unwrap_err();
+    assert_eq!(failed.sqlstate, "40002", "{failed}");
+    assert!(embedded(&db, "SELECT K FROM Y.U").is_empty(), "nothing committed");
+    let mut c = server.connect("Y");
+    c.query("INSERT INTO U VALUES (2)").unwrap();
+    c.terminate().unwrap();
+    assert_eq!(embedded(&db, "SELECT K FROM Y.U"), ["2"], "committed");
+}
+
 /// Verifies: [DESIGN] RULES.md D27, D42: many clients run at once, on
 /// fewer workers than clients, each in its own session; what each commits
 /// is all there.

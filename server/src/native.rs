@@ -9,10 +9,11 @@
 //! bounded channel, so a client reading slowly holds the worker but never
 //! more than a few batches of memory; a client gone closes the channel,
 //! and the worker stops fetching. The session ends on a worker too: as
-//! SESSION_END says once the client terminates it; rolled back if the
-//! connection ends otherwise, lost or failed or cut by the server stopping,
-//! as a direct invocation of SQL that terminated unexpectedly [ISO/IEC
-//! 9075:1992 §20.1 GR2a].
+//! SESSION_END says once the client terminates it, a commit that fails
+//! sent as the client's error before the connection closes; rolled back
+//! if the connection ends otherwise, lost or failed or cut by the server
+//! stopping, as a direct invocation of SQL that terminated unexpectedly
+//! [ISO/IEC 9075:1992 §20.1 GR2a].
 //!
 //! A connection has SERVER.LOGIN_TIMEOUT to authenticate, and is closed,
 //! its session rolled back, once it has kept the server waiting
@@ -189,8 +190,9 @@ fn work_of(request: Request) -> Result<Option<Work>> {
 
 /// Runs the client's requests in `session` until it terminates, the
 /// connection fails or the server stops; then ends the session on a
-/// worker, rolled back unless the client terminated it [ISO/IEC 9075:1992
-/// §20.1 GR2a]. Shown running while a request is.
+/// worker: as SESSION_END says if the client terminated it, its failure
+/// returned to be sent before the connection closes; else rolled back
+/// [ISO/IEC 9075:1992 §20.1 GR2a]. Shown running while a request is.
 async fn run(wire: &mut Wire, (services, present): (&Services, &Present), opened: Session) -> Result<()> {
     let mut held = Some(Held::new(opened));
     let ended = loop {
@@ -208,23 +210,31 @@ async fn run(wire: &mut Wire, (services, present): (&Services, &Present), opened
             Err(e) => break Err(e),
         }
     };
-    if let Some(back) = held {
-        end(services, back, ended.is_err()).await?;
+    let Some(back) = held else { return ended };
+    match ended {
+        Ok(()) => terminated(services, back).await,
+        Err(e) => {
+            end(services, back).await?;
+            Err(e)
+        }
     }
-    ended
 }
 
-/// Ends `held`'s session on a worker: rolled back first if it ended
-/// `unexpected`ly [ISO/IEC 9075:1992 §20.1 GR2a].
-async fn end(services: &Services, held: Held, unexpected: bool) -> Result<()> {
+/// Ends `held`'s session on a worker as SESSION_END says, its client
+/// having terminated it [ISO/IEC 9075:1992 §20.1 GR2a]: a commit that
+/// fails, as a deferred constraint not satisfied, is the client's error.
+async fn terminated(services: &Services, held: Held) -> Result<()> {
+    services.run(move || held.session.end()).await?
+}
+
+/// Ends `held`'s session on a worker, rolled back: it ended unexpectedly
+/// [ISO/IEC 9075:1992 §20.1 GR2a].
+async fn end(services: &Services, held: Held) -> Result<()> {
     services
         .run(move || {
-            if unexpected {
-                // A failed rollback has marked its tables damaged (RULES.md
-                // D19): nothing is left for the client.
-                let _ = held.session.rollback();
-            }
-            drop(held);
+            // A failed rollback has marked its tables damaged (RULES.md
+            // D19): nothing is left for the client.
+            let _ = held.session.rollback();
         })
         .await
 }
@@ -255,7 +265,7 @@ async fn exchange(wire: &mut Wire, services: &Services, lent: Held, work: Work) 
     let back = back?;
     if let Err(e) = forwarded {
         // As `run`'s: the connection is lost.
-        end(services, back, true).await?;
+        end(services, back).await?;
         return Err(e);
     }
     Ok(back)

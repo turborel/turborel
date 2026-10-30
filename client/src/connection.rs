@@ -329,7 +329,9 @@ impl<S: Read + Write> Connection<S> {
     /// # Errors
     ///
     /// A connection failure, if Terminate cannot be sent; the server's
-    /// error, if it sends one rather than close.
+    /// error, if it sends one rather than close: a commit that fails as
+    /// SESSION_END ends the session, its transaction rolled back (SQLSTATE
+    /// 40002 for a deferred constraint not satisfied).
     pub fn terminate(mut self) -> Result<()> {
         self.send(&Request::Terminate)?;
         let mut rest = Vec::new();

@@ -1468,8 +1468,9 @@ make.
   authenticator accepts. Each statement is a `<direct SQL statement>`
   [ISO/IEC 9075:1992 §20.1] (`Session::direct`); a client creates only its
   own schema [§11.1 AR1]. A session ends as SESSION_END says when its
-  client terminates it; otherwise, lost, failed or cut by the server
-  stopping, it is rolled back [§20.1 GR2a].
+  client terminates it (`Session::end`), a commit that fails sent to the
+  client as its error before the connection closes; otherwise, lost,
+  failed or cut by the server stopping, it is rolled back [§20.1 GR2a].
 - Configuration is the database's settings (D36), declared by the server
   on the database it serves: SERVER.HOST, SERVER.PORT, SERVER.SOCKET and
   the TLS settings when it starts; SERVER.WORKERS, SERVER.MAX_CONNECTIONS,

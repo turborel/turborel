@@ -51,6 +51,25 @@ fn the_program_runs_statements() {
     assert!(String::from_utf8(failed.stderr).unwrap().starts_with("turborel: SQLCODE -"));
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §14.3 GR5a, §20.1 GR2a];
+/// [DESIGN] RULES.md D46: a run whose statements succeed but whose commit, as the program
+/// ends the session, fails, a deferred constraint not satisfied, fails,
+/// saying why (SQLSTATE 40002); nothing is committed. Regression test
+/// (R-TEST-7): the program exited successfully, the commit's failure lost.
+#[test]
+fn a_commit_that_fails_at_the_end_fails_the_run() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE U (K INTEGER UNIQUE DEFERRABLE INITIALLY DEFERRED)").unwrap();
+    let server = start(&db, &[]);
+    let port = server.address.port().to_string();
+    let run = program(&["-p", &port, "-U", "X", "-c", "INSERT INTO U VALUES (1)", "-c", "INSERT INTO U VALUES (1)"]);
+    assert!(!run.status.success());
+    let told = String::from_utf8(run.stderr).unwrap();
+    assert!(told.starts_with("turborel: ") && told.contains("40002"), "{told}");
+    let session = db.session("X");
+    assert!(session.open_cursor("SELECT K FROM U").unwrap().fetch().unwrap().is_none(), "nothing committed");
+}
+
 /// Verifies: [DESIGN] RULES.md D44, D46: Ctrl-C (SIGINT) cancels the
 /// statement running; the run, not typed, ends there, and fails.
 #[cfg(unix)]
