@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use turborel::db::{Database, OpenOptions};
 use turborel::disk::block::{BlockFile, BlockOptions};
 use turborel::disk::buffer::{BufferPool, Clock};
 use turborel::disk::encoding::Pipeline;
@@ -13,6 +14,7 @@ use turborel::disk::io::{Durability, FileSystem};
 use turborel::disk::pager::{Extent, PageId, Pager};
 use turborel::error::Code;
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn};
+use turborel::value::{Decimal, Value};
 
 use crate::common::{Kept, Scratch, crc32c, small_segments};
 use crate::faults::{FaultyFs, Op, Rule};
@@ -197,7 +199,12 @@ fn block_file_faults_are_reported() {
 /// Verifies: [DESIGN] RULES.md D25, file log: when the next segment cannot
 /// be created, appends still succeed, into the current segment, and the
 /// next append after the fault passes begins the segment; a failed sync is
-/// reported, and the next one, the fault passed, succeeds.
+/// reported, and so is every later one, the fault passed, as a sync tried
+/// again may succeed without what the failed one lost; the records stay
+/// readable, and the log opened again syncs.
+///
+/// Regression test (R-TEST-7): the sync after a failed one was tried again,
+/// and succeeded.
 #[test]
 fn a_log_survives_failed_rotations_and_syncs() {
     let scratch = Scratch::new("failures-log");
@@ -213,10 +220,87 @@ fn a_log_survives_failed_rotations_and_syncs() {
     let next = log.append(b"in segment 1").unwrap();
     faults.inject(Rule::fail(Op::Sync).times(1));
     assert_eq!(log.sync(next).err().map(|e| e.code), Some(Code::Io));
-    log.sync(next).unwrap();
-    log.sync(positions[0]).unwrap();
+    for at in [next, positions[0]] {
+        let refused = log.sync(at).unwrap_err();
+        assert_eq!(refused.code, Code::Io);
+        assert!(refused.msg.contains("syncs nothing more"), "{refused}");
+    }
     let read: Vec<_> = log.read_from(Lsn(0)).collect::<turborel::error::Result<_>>().unwrap();
     assert_eq!(read.len(), 22);
+    drop(log);
+    let (log, _) = FileLog::open(Arc::clone(&fs), &dir, &[crc32c()], &[], small_segments()).unwrap();
+    let again = log.append(b"after reopening").unwrap();
+    log.sync(again).unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D40, file log: a segment whose sync
+/// fails as an append seals it, beginning the next, fails every later sync
+/// of the log, the fault passed, and is told to the log's sink once, as a
+/// segment not synced; the records stay readable.
+///
+/// Regression test (R-TEST-7): the failed seal was told as a segment not
+/// begun, and the next sync sealed the segment again, its sync tried
+/// again, and succeeded, claiming durable what the failed one may have
+/// lost.
+#[test]
+fn a_failed_seal_fails_every_later_sync() {
+    let scratch = Scratch::new("failures-log-seal");
+    let (fs, faults) = FaultyFs::with_faults();
+    let kept = Kept::default();
+    let log = FileLog::create(Arc::clone(&fs), &scratch.path("log"), crc32c(), small_segments()).unwrap().telling(Arc::new(kept.clone()));
+    faults.inject(Rule::fail(Op::Sync).on("segment-0000000000").times(1));
+    let positions: Vec<Lsn> = (0..20_u8).map(|n| log.append(&[n; 400]).unwrap()).collect();
+    assert!(faults.injected() == 1 && log.counts().rotations > 1, "{:?}", log.counts());
+    faults.clear();
+    let told: Vec<String> = kept.taken().into_iter().map(|(_, e)| e).collect();
+    assert_eq!(told.len(), 1, "told once: {told:?}");
+    assert!(told[0].contains("could not sync segment 0") && !told[0].contains("could not begin"), "{told:?}");
+    for at in [positions[0], positions[19]] {
+        let refused = log.sync(at).unwrap_err();
+        assert_eq!(refused.code, Code::Io);
+        assert!(refused.msg.contains("syncs nothing more"), "{refused}");
+    }
+    assert!(kept.taken().is_empty(), "told once");
+    let read: Vec<_> = log.read_from(Lsn(0)).collect::<turborel::error::Result<_>>().unwrap();
+    assert_eq!(read.len(), 20);
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D40: a sync of the log that fails as a
+/// statement's append ends a segment, sealing it, stops the database: the
+/// transaction's COMMIT fails (SQLCODE -915), and the database takes no
+/// change, the fault passed, until it is opened again; the failure is told
+/// as a segment of the log not synced.
+///
+/// Regression test (R-TEST-7): the failed seal was told as a segment not
+/// begun, and the commit's sync sealed the segment again and succeeded,
+/// acknowledging a commit over records the failed sync may have lost.
+#[test]
+fn a_failed_seal_stops_the_database() {
+    let scratch = Scratch::new("failures-db-seal");
+    let (fs, faults) = FaultyFs::with_faults();
+    let db = Database::new();
+    db.set_setting("LOG.SEGMENT_SIZE", &Value::Exact(Decimal::new(4096, 0))).unwrap();
+    db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone()));
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(200))").unwrap();
+    // The next segment is synced as it is made, then the full one as it is
+    // sealed: that one fails.
+    faults.inject(Rule::fail(Op::Sync).on("log/segment-").after(1).times(1));
+    let a = db.session("A");
+    for k in 0..40_i32 {
+        a.run(&format!("INSERT INTO T VALUES ({k}, 'row {k}')")).unwrap();
+    }
+    assert_eq!(faults.injected(), 1, "a seal failed");
+    faults.clear();
+    assert_eq!(a.commit().err().map(|e| e.code), Some(Code::Io));
+    assert_eq!(db.log_failure().map(|e| e.code), Some(Code::Io));
+    let refused = a.run("INSERT INTO T VALUES (40, 'row 40')").unwrap_err();
+    assert_eq!(refused.code, Code::Io);
+    assert!(refused.msg.contains("opened again"), "{refused}");
+    let told: Vec<String> = kept.taken().into_iter().map(|(_, e)| e).filter(|e| e.contains("Failed")).collect();
+    assert!(told.iter().any(|e| e.contains("could not sync segment")), "{told:?}");
+    assert!(!told.iter().any(|e| e.contains("could not begin")), "{told:?}");
 }
 
 /// Verifies: [DESIGN] RULES.md D25, D56, file log: a segment whose header
@@ -276,6 +360,88 @@ fn a_failed_truncation_keeps_the_segment() {
     drop(log);
     faults.inject(Rule::fail(Op::ReadDir));
     assert_eq!(FileLog::open(Arc::clone(&fs), &dir, &[crc32c()], &[], small_segments()).err().map(|e| e.code), Some(Code::Io));
+}
+
+/// Copies the files of directory `from` into `to`, made anew.
+fn copy_dir(from: &Path, to: &Path) {
+    if to.exists() {
+        std::fs::remove_dir_all(to).unwrap();
+    }
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, to.join(path.file_name().unwrap())).unwrap();
+    }
+}
+
+/// A log in `dir` of 22 records of 400 bytes, none of them zero, in
+/// segments 0 to 2, synced; the paths of its segments.
+fn three_segments(dir: &Path) -> Vec<std::path::PathBuf> {
+    let log = FileLog::create(crate::common::os(), dir, crc32c(), small_segments()).unwrap();
+    let last = (1..=22_u8).map(|n| log.append(&[n; 400]).unwrap()).last().unwrap();
+    log.sync(last).unwrap();
+    drop(log);
+    let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+    files.sort();
+    assert_eq!(files.len(), 3);
+    files
+}
+
+/// Changes byte `at` of the file at `path`.
+fn flip(path: &Path, at: usize) {
+    let mut bytes = std::fs::read(path).unwrap();
+    bytes[at] ^= 0x55;
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D30, file log recovery: opening a log
+/// with a torn end to cut, whether segments after it are removed, a half
+/// created one is, or valid blocks after a block's write cut short are cut,
+/// reports SQLCODE -915 or -916 when any open, read, size, cut, sync,
+/// removal or listing it makes fails, each in turn, and opens once none
+/// does.
+#[test]
+fn opening_a_torn_log_reports_each_failure() {
+    let scratch = Scratch::new("failures-log-torn");
+    let (fs, faults) = FaultyFs::with_faults();
+    let frame = 412_usize;
+    let torn = scratch.path("torn");
+    let files = three_segments(&torn);
+    let size = std::fs::metadata(&files[1]).unwrap().len();
+    std::fs::OpenOptions::new().write(true).open(&files[1]).unwrap().set_len(size - 3).unwrap();
+    let half = scratch.path("half");
+    let files = three_segments(&half);
+    std::fs::write(&files[2], b"TBBL").unwrap();
+    flip(&files[1], usize::try_from(std::fs::metadata(&files[1]).unwrap().len()).unwrap() - frame + 9);
+    let cut_short = scratch.path("cut-short");
+    let files = three_segments(&cut_short);
+    let mut bytes = std::fs::read(&files[2]).unwrap();
+    let first = usize::try_from(turborel::disk::block::HEADER_LEN).unwrap();
+    bytes[first + 8..first + frame].fill(0);
+    std::fs::write(&files[2], bytes).unwrap();
+    let work = scratch.path("work");
+    let ops = [Op::Open, Op::Read, Op::Size, Op::SetSize, Op::Sync, Op::Remove, Op::ReadDir, Op::SyncDir];
+    for template in [&torn, &half, &cut_short] {
+        for op in ops {
+            let passed = (0..400_usize).find(|&k| {
+                copy_dir(template, &work);
+                let before = faults.injected();
+                faults.inject(Rule::fail(op).after(k).times(1));
+                let opened = FileLog::open(Arc::clone(&fs), &work, &[crc32c()], &[], small_segments());
+                faults.clear();
+                if faults.injected() == before {
+                    let (_, recovery) = opened.unwrap();
+                    assert!(recovery.cut > 0, "{template:?}");
+                    return true;
+                }
+                if let Err(e) = opened {
+                    assert!(matches!(e.code, Code::Io | Code::Corrupt), "{op:?} {k}: {e}");
+                }
+                false
+            });
+            assert!(passed.is_some(), "{template:?} {op:?}");
+        }
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D30, buffer pool: a page that cannot be read

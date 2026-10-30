@@ -97,7 +97,7 @@ fn a_reopened_file_keeps_its_blocks() {
     let end = file.end();
     drop(file);
     let (file, recovery) = BlockFile::open(&OsFileSystem, &path, &[crc32c(), nvme], &[], BlockOptions::default()).unwrap();
-    assert_eq!(recovery, Recovery { end, cut: 0 });
+    assert_eq!(recovery, Recovery { end, cut: 0, follows: None, interrupted: false });
     assert_eq!(file.hash_id(), CRC64_NVME.id);
     assert_eq!(file.read(first).unwrap(), b"one");
     assert_eq!(file.append(b"two").unwrap(), end);
@@ -143,7 +143,8 @@ fn a_torn_or_corrupt_tail_is_cut() {
         let size = std::fs::metadata(&path).unwrap().len();
         let valid_end = if i == 3 { end } else { c.0 };
         let (file, recovery) = open(&path, TailPolicy::Truncate).unwrap();
-        assert_eq!(recovery, Recovery { end: BlockId(valid_end), cut: size - valid_end }, "{damage}");
+        let torn = Recovery { end: BlockId(valid_end), cut: size - valid_end, follows: None, interrupted: i == 0 };
+        assert_eq!(recovery, torn, "{damage}: only the incomplete one runs past the end");
         assert_eq!(std::fs::metadata(&path).unwrap().len(), valid_end, "{damage}: cut in the file");
         assert_eq!((file.read(a).unwrap(), file.read(b).unwrap()), (b"aaaa".to_vec(), b"bbbb".to_vec()));
         assert_eq!(file.append(b"next").unwrap(), BlockId(valid_end), "{damage}");
@@ -251,7 +252,7 @@ fn appenders_on_many_threads_write_at_once() {
     file.sync(Durability::Data).unwrap();
     let end = file.end();
     drop(file);
-    assert_eq!(open(&path, TailPolicy::Refuse).unwrap().1, Recovery { end, cut: 0 });
+    assert_eq!(open(&path, TailPolicy::Refuse).unwrap().1, Recovery { end, cut: 0, follows: None, interrupted: false });
 }
 
 /// Verifies: [DESIGN] RULES.md D30: a torn write fails its append with the
@@ -274,14 +275,15 @@ fn a_failed_write_stops_appends_until_recovery() {
     assert_eq!((file.read(kept).unwrap(), file.end()), (b"kept".to_vec(), end));
     drop(file);
     let (file, recovery) = BlockFile::open(&*fs, &path, &[crc32c()], &[], BlockOptions::default()).unwrap();
-    assert_eq!(recovery, Recovery { end, cut: frame(10).div_euclid(2) });
+    assert_eq!(recovery, Recovery { end, cut: frame(10).div_euclid(2), follows: None, interrupted: true });
     assert_eq!(file.append(b"again").unwrap(), end);
 }
 
 /// Verifies: [DESIGN] RULES.md D30: a block file opened from a point it is
 /// known valid through checks only what follows: damage before it is not
 /// read as it opens; a point where no valid block ends, or past the file's
-/// end, is not taken, and every block is checked. A small block is read in
+/// end, is not taken, and every block is checked, so the damage, valid
+/// blocks after it, is refused (SQLCODE -916). A small block is read in
 /// one call, a large one in two.
 #[test]
 fn a_file_opened_from_a_known_end_checks_only_what_follows() {
@@ -290,15 +292,15 @@ fn a_file_opened_from_a_known_end_checks_only_what_follows() {
     let path = scratch.path("f");
     let ids = three_blocks(&path);
     let opened = |from: u64| {
-        let (file, recovery) =
-            BlockFile::open_from(&OsFileSystem, &path, (&[crc32c()], &[]), BlockOptions::default(), BlockId(from)).unwrap();
-        (file.end(), recovery)
+        BlockFile::open_from(&OsFileSystem, &path, (&[crc32c()], &[]), BlockOptions::default(), BlockId(from))
+            .map(|(file, _)| file.end())
+            .map_err(|e| e.code)
     };
     let end = std::fs::metadata(&path).unwrap().len();
     corrupt(&path, ids[0].0 + 8, 0xEE);
-    assert_eq!(opened(end).0, BlockId(end), "the first block's damage is before the known end");
-    assert_eq!(opened(ids[1].0 + 3).0, ids[0], "mid-block: every block checked, the first one damaged");
-    assert_eq!(opened(end + 100).0, ids[0], "past the end");
+    assert_eq!(opened(end), Ok(BlockId(end)), "the first block's damage is before the known end");
+    assert_eq!(opened(ids[1].0 + 3), Err(Code::Corrupt), "mid-block: every block checked, the first one damaged");
+    assert_eq!(opened(end + 100), Err(Code::Corrupt), "past the end");
 
     let other = scratch.path("g");
     let measured = MeasuredFileSystem::new(Box::new(OsFileSystem));
@@ -312,4 +314,89 @@ fn a_file_opened_from_a_known_end_checks_only_what_follows() {
     let before = stats.snapshot();
     assert_eq!(file.read(large).unwrap(), vec![9; 10_000]);
     assert_eq!(stats.snapshot().since(&before).reads, 2, "a large one in two");
+}
+
+/// Blocks of `payloads` in a new file at `path`, synced; their ids.
+fn blocks_of(path: &Path, payloads: &[Vec<u8>]) -> Vec<BlockId> {
+    let file = create(path);
+    let ids = payloads.iter().map(|p| file.append(p).unwrap()).collect();
+    file.sync(Durability::Full).unwrap();
+    ids
+}
+
+/// `len` bytes, none of them zero.
+fn nonzero(len: usize) -> Vec<u8> {
+    (0..len).map(|n| u8::try_from(n % 251).unwrap() + 1).collect()
+}
+
+/// Sets bytes `from..to` of the file at `path` to zero.
+fn zero(path: &Path, from: u64, to: u64) {
+    let mut f = OpenOptions::new().write(true).open(path).unwrap();
+    f.seek(SeekFrom::Start(from)).unwrap();
+    f.write_all(&vec![0; usize::try_from(to - from).unwrap()]).unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D30, recovery: a block in the middle of
+/// a file that fails its checksum, valid blocks after it, is damage, not a
+/// torn end: opening refuses the file with SQLCODE -916, under either tail
+/// policy, naming the offsets of the damage and of the valid block after
+/// it, and leaves the file as it was. A damaged stretch longer than a scan's
+/// chunk, before a block longer than what a chunk reads ahead, is found
+/// the same way.
+///
+/// Regression test (R-TEST-7): the file was cut at the damaged block,
+/// durably, losing the valid blocks after it.
+#[test]
+fn damage_before_valid_blocks_is_refused() {
+    let scratch = Scratch::new("blocks-damage");
+    let small = scratch.path("small");
+    let [_, b, c] = three_blocks(&small);
+    corrupt(&small, b.0 + 8, b'X');
+    let large = scratch.path("large");
+    let ids = blocks_of(&large, &[b"a".to_vec(), nonzero(200_000), nonzero(100_000), b"d".to_vec()]);
+    corrupt(&large, ids[1].0 + 9, 0);
+    for (path, damaged, follows) in [(&small, b, c), (&large, ids[1], ids[2])] {
+        let before = std::fs::read(path).unwrap();
+        for tail in [TailPolicy::Truncate, TailPolicy::Refuse] {
+            let refused = open(path, tail).err().unwrap();
+            assert_eq!(refused.code, Code::Corrupt, "{tail:?}");
+            let offsets = format!(
+                "damaged at offset {}: the bytes there are not a valid block, but a valid block follows at offset {}",
+                damaged.0, follows.0
+            );
+            assert!(refused.msg.contains(&offsets), "{refused}");
+            assert_eq!(std::fs::read(path).unwrap(), before, "{tail:?}: unchanged");
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D30, recovery: invalid bytes before
+/// valid blocks that show a write a crash interrupted, as the system may
+/// write a file's pages back in any order before a sync, are a torn end,
+/// cut with the blocks after them: a sector of them reading as zeros,
+/// never written; or a zero length ending them, a block's write cut short.
+///
+/// MC/DC of `interrupted` (`disk/block/tail.rs`): a zero sector alone; a
+/// zero end alone; a block running past the end alone
+/// (`a_torn_or_corrupt_tail_is_cut`); none (`damage_before_valid_blocks_is_refused`).
+#[test]
+fn an_interrupted_write_before_valid_blocks_is_cut() {
+    let scratch = Scratch::new("blocks-interrupted");
+    // A sector of the second block's payload never written; its ends were.
+    let sector = scratch.path("sector");
+    let ids = blocks_of(&sector, &[b"a".to_vec(), nonzero(2_000), b"c".to_vec()]);
+    zero(&sector, ids[1].0 + 600, ids[1].0 + 1_700);
+    // The second half of a small block never written.
+    let end = scratch.path("end");
+    let [a, b, c] = three_blocks(&end);
+    zero(&end, b.0 + 8, c.0);
+    for (path, cut_at, follows) in [(&sector, ids[1], ids[2]), (&end, b, c)] {
+        let size = std::fs::metadata(path).unwrap().len();
+        let (file, recovery) = open(path, TailPolicy::Truncate).unwrap();
+        assert_eq!(recovery, Recovery { end: cut_at, cut: size - cut_at.0, follows: Some(follows), interrupted: true });
+        assert_eq!(recovery.damage(), None);
+        assert_eq!(std::fs::metadata(path).unwrap().len(), cut_at.0, "cut, the blocks after it with it");
+        assert_eq!(file.end(), cut_at);
+    }
+    assert_eq!(open(&end, TailPolicy::Truncate).unwrap().0.read(a).unwrap(), b"aaaa");
 }

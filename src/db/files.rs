@@ -51,7 +51,7 @@ use super::formats::{FileFormats, FileLayout};
 use super::image::Image;
 use super::recovery::{Definitions, Touched};
 use super::snapshot::Snapshot;
-use super::stores::{CatalogStore, StorePlace};
+use super::stores::{CatalogStore, OpenedLog, StorePlace};
 use super::{Database, RecoveryReport, State, api};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc};
 use crate::diagnostics::{Diagnostics, Event};
@@ -286,36 +286,48 @@ impl Database {
         // as what it records from now on is written through them.
         drop(found);
         let catalog = self.catalog_at(&place.store(), options)?.ok_or_else(|| api("[DESIGN] the catalog went as the database opened"))?;
-        let log = self.log_at(&place, image.as_ref().map_or(Lsn(0), |i| i.through))?;
+        let OpenedLog { log, cut } = self.log_at(&place, image.as_ref().map_or(Lsn(0), |i| i.through))?;
         // The budget the pool is made in: the one recorded, before the
         // definitions are made again.
         snapshot.memory.set_limit(recorded("MEMORY_BUDGET").map_or(crate::memory::DEFAULT_BUDGET, |v| crate::settings::budget_bytes(&v)));
-        let (image, opened) = match image {
-            Some(image) if image.clean && image.through == log.end() => {
-                self.attach_pager(&place, Pagers::Open)?;
-                self.reopen(&image, &*log)?;
-                (image, Opened::Reopened)
-            }
-            Some(image) => {
-                self.attach_pager(&place, Pagers::Open)?;
-                let report = self.reopen(&image, &*log)?.unwrap_or_default();
-                (image, Opened::Recovered(report))
-            }
-            // Made, but stopped before its first image: made again.
-            None => {
-                self.attach_pager(&place, Pagers::Create)?;
-                place.shadows.commit()?;
-                let (report, _) = self.replay_log(&*log, Lsn(0), Definitions::All)?;
-                self.change(State::rebuild_indexes)?;
-                let made = Snapshot::of(&*self.snapshot()?);
-                (Image { through: log.end(), start: log.end(), snapshot: made, ..Image::default() }, Opened::Recovered(report))
-            }
-        };
+        let (image, opened) = self.reopen_or_recover(&place, image, (&*log, cut))?;
         catalog.record(&Image { clean: false, ..image }.encode(), self.snapshot()?.compact_after())?;
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
         self.opened(&started)?;
         Ok(opened)
+    }
+
+    /// Reopens the database at `place` from `image`, if it was closed
+    /// cleanly and its log, opened cutting `cut` bytes, is as the image
+    /// left it; else recovers it from `log`. A database stopped before its
+    /// first image is made again from the log alone. The image it is now
+    /// at, and how it opened.
+    fn reopen_or_recover(&self, place: &Place<'_>, image: Option<Image>, (log, cut): (&dyn Log, u64)) -> Result<(Image, Opened)> {
+        Ok(match image {
+            Some(image) if image.clean && image.through == log.end() && cut == 0 => {
+                self.attach_pager(place, Pagers::Open)?;
+                self.reopen(&image, log)?;
+                (image, Opened::Reopened)
+            }
+            Some(image) => {
+                self.attach_pager(place, Pagers::Open)?;
+                let report = self.reopen(&image, log)?.unwrap_or_default();
+                (image, Opened::Recovered(RecoveryReport { cut, ..report }))
+            }
+            // Made, but stopped before its first image: made again.
+            None => {
+                self.attach_pager(place, Pagers::Create)?;
+                place.shadows.commit()?;
+                let (report, _) = self.replay_log(log, Lsn(0), Definitions::All)?;
+                self.change(State::rebuild_indexes)?;
+                let made = Snapshot::of(&*self.snapshot()?);
+                (
+                    Image { through: log.end(), start: log.end(), snapshot: made, ..Image::default() },
+                    Opened::Recovered(RecoveryReport { cut, ..report }),
+                )
+            }
+        })
     }
 
     /// Once it is opened: its settings fixed at creation fixed, those given
@@ -334,13 +346,13 @@ impl Database {
     }
 
     /// The log at `place`, of the database's log storage, known durable
-    /// through `through`.
+    /// through `through`, and the bytes opening it cut.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if it finds none, though a catalog is there: the log is
     /// kept by another storage. The storage's errors.
-    fn log_at(&self, place: &Place<'_>, through: Lsn) -> Result<Arc<dyn Log>> {
+    fn log_at(&self, place: &Place<'_>, through: Lsn) -> Result<OpenedLog> {
         let logs = self.log_storage(&place.log_options());
         logs.open(&place.store().through(through))?.ok_or_else(|| {
             api(format!(

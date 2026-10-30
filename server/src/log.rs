@@ -211,6 +211,7 @@ fn opened(json: &mut Json, how: &Opened) {
             json.number("not_committed", report.not_committed);
             json.number("redone", report.redone);
             json.number("undone", report.undone);
+            json.number("cut", report.cut);
         }
     }
 }
@@ -343,13 +344,13 @@ mod tests {
         );
         let reopened = Event::FilesReopened { reopened: 3000, limit: 1024 };
         assert_eq!(shown(&reopened), format!(r#"{head}"level":"warning","event":"files_reopened","reopened":3000,"limit":1024}}"#));
-        let report = RecoveryReport { records: 1, definitions: 2, committed: 3, not_committed: 4, redone: 5, undone: 6 };
+        let report = RecoveryReport { records: 1, definitions: 2, committed: 3, not_committed: 4, redone: 5, undone: 6, cut: 7 };
         let cases = [
             (Event::Opened(Opened::Created), r#""level":"info","event":"opened","how":"created"}"#.to_owned()),
             (Event::Opened(Opened::Reopened), r#""level":"info","event":"opened","how":"reopened"}"#.to_owned()),
             (
                 Event::Opened(Opened::Recovered(report)),
-                r#""level":"warning","event":"opened","how":"recovered","records":1,"definitions":2,"committed":3,"not_committed":4,"redone":5,"undone":6}"#.to_owned(),
+                r#""level":"warning","event":"opened","how":"recovered","records":1,"definitions":2,"committed":3,"not_committed":4,"redone":5,"undone":6,"cut":7}"#.to_owned(),
             ),
             (Event::Closed, r#""level":"info","event":"closed"}"#.to_owned()),
             (Event::CheckpointTaken(7), r#""level":"info","event":"checkpoint_taken","taken":7}"#.to_owned()),

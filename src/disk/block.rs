@@ -20,13 +20,16 @@
 //! On open, the blocks are scanned from the first, or from a point the
 //! caller knows they are valid through (`open_from`); the first one that is
 //! incomplete or fails its checksum ends the valid part, and what follows
-//! is cut off or refused, as `TailPolicy` says.
+//! is cut off or refused, as `TailPolicy` says; but valid blocks after it,
+//! with no sign of a write a crash interrupted, are damage, and the file is
+//! refused, unchanged (`tail.rs`).
 //!
 //! A read takes the first `FIRST_READ` bytes of a block at once, so a small
 //! block is read in one call; a larger one takes a second for the rest.
 
 mod cursor;
 mod format;
+mod tail;
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -37,7 +40,7 @@ pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
 
 use super::encoding::{Encoding, Pipeline};
-use super::io::{DiskFile, Durability, FileSystem, OpenMode, begin_file};
+use super::io::{DiskFile, Durability, FileSystem, begin_file};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::{HashFunction, HashId};
 use crate::sync::lock_builtin;
@@ -48,6 +51,8 @@ use crate::sync::lock_builtin;
 pub struct BlockId(pub u64);
 
 /// What `BlockFile::open` does with bytes after the last valid block.
+/// Under either, valid blocks after them that show no interrupted write
+/// are damage, and the file is refused (`Recovery::damage`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TailPolicy {
     /// Cut them off, durably, and report how many there were: the bytes of
@@ -83,6 +88,12 @@ pub struct Recovery {
     pub end: BlockId,
     /// Bytes after it that were cut off.
     pub cut: u64,
+    /// The first valid block after those bytes, if one follows them.
+    pub follows: Option<BlockId>,
+    /// Whether those bytes show a write a crash interrupted: a sector of
+    /// zeros, never written; a zero length ending them; or a block running
+    /// past the end of the file (`tail.rs`).
+    pub interrupted: bool,
 }
 
 /// The counters of a block file, for the heuristics above it (RULES.md D30).
@@ -220,8 +231,9 @@ impl BlockFile {
     /// # Errors
     ///
     /// SQLCODE -915 if the file cannot be read, or cut; SQLCODE -916 if it is
-    /// not a block file, or has invalid bytes at its end under
-    /// `TailPolicy::Refuse`; SQLCODE -910 if its hash function or one of its
+    /// not a block file, has invalid bytes at its end under
+    /// `TailPolicy::Refuse`, or is damaged (`Recovery::damage`), the file
+    /// then unchanged; SQLCODE -910 if its hash function or one of its
     /// encodings is not given.
     pub fn open(
         fs: &dyn FileSystem,
@@ -244,35 +256,14 @@ impl BlockFile {
     pub fn open_from(
         fs: &dyn FileSystem,
         path: &Path,
-        (hashes, encodings): ReadWith<'_>,
+        formats: ReadWith<'_>,
         options: BlockOptions,
         from: BlockId,
     ) -> Result<(BlockFile, Recovery)> {
-        let file = fs.open(path, OpenMode::ReadWrite)?;
-        let size = file.size()?;
-        let mut header = vec![0; format::HEADER_BYTES];
-        file.read_exact_at(&mut header, 0).map_err(|e| {
-            SqlError::new(Code::Corrupt, format!("[DESIGN] {} is too short to be a block file: {}", path.display(), e.described()))
-        })?;
-        let (hash, ids) = format::read_header(&header, hashes, path)?;
-        let mut blocks = BlockFile::new(file, path, hash, options, size);
-        blocks.pipeline = Pipeline::resolve(&ids, encodings, path)?;
-        let end = blocks.valid_end(blocks.known(from, size)?, size)?;
-        let cut = size.saturating_sub(end);
-        if cut > 0 {
-            if options.tail == TailPolicy::Refuse {
-                return Err(SqlError::new(
-                    Code::Corrupt,
-                    format!("[DESIGN] the last {cut} bytes of {} are not valid blocks, and the tail policy is Refuse", path.display()),
-                ));
-            }
-            // Cut durably before any append, or a later crash could bring
-            // back old blocks after the new ones.
-            blocks.file.set_size(end)?;
-            blocks.file.sync(Durability::Full)?;
-            blocks.reset_end(end);
-        }
-        Ok((blocks, Recovery { end: BlockId(end), cut }))
+        let (blocks, recovery) = BlockFile::open_uncut(fs, path, formats, options, from)?;
+        blocks.refuse_tail(&recovery, options.tail)?;
+        blocks.cut_tail(&recovery)?;
+        Ok((blocks, recovery))
     }
 
     fn new(file: Box<dyn DiskFile>, path: &Path, hash: Arc<dyn HashFunction>, options: BlockOptions, end: u64) -> BlockFile {

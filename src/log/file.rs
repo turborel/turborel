@@ -16,13 +16,21 @@
 //! short ends the log, and the segments after it are removed. A last
 //! segment a crash left half created (shorter than a block file's header)
 //! holds no record and is removed; a missing segment between two others is
-//! refused as corruption.
+//! refused as corruption, and so is a segment damaged, valid blocks
+//! following invalid ones (`open.rs`), the log then unchanged.
 //!
 //! A segment that cannot be begun leaves the current one growing past the
 //! segment size, its appends going on; the failure is told to the sink the
 //! log is given (`telling`), once until a segment is begun again (RULES.md
 //! D56). One a failed rotation left half made holds no record, and is made
 //! again by the next.
+//!
+//! A failed sync, of a segment sealed or of a group, fails every later
+//! `sync` with it, and is told to the sink: what the failed sync was to
+//! make durable may be lost, and a sync of the same file tried again may
+//! succeed without it, as some systems forget a failed write once they
+//! report it; so no record appended before is ever claimed durable after
+//! it (RULES.md D25). The database stops taking changes at the next sync.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -31,13 +39,14 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
 
 use super::{Log, LogCapabilities, Lsn, Records};
 use crate::diagnostics::{Diagnostics, NoDiagnostics};
-use crate::disk::block::{BlockFile, BlockId, BlockOptions, HEADER_LEN, ReadWith};
+use crate::disk::block::{BlockFile, BlockId, BlockOptions, HEADER_LEN};
 use crate::disk::encoding::{Encoding, Pipeline};
-use crate::disk::io::{Durability, FileSystem, OpenMode};
+use crate::disk::io::{Durability, FileSystem};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
 use crate::sync::lock_builtin;
 
+mod open;
 mod segments;
 
 /// Bits of a position that hold the block id within its segment: segments
@@ -155,6 +164,8 @@ pub struct FileLog {
     events: Arc<dyn Diagnostics>,
     /// Whether a rotation's failure was told since one last succeeded.
     told: AtomicBool,
+    /// The failure of a sync, once one failed: every later sync fails.
+    failure: Mutex<Option<SqlError>>,
 }
 
 /// The position of block `id` of segment `number`.
@@ -244,8 +255,8 @@ impl FileLog {
     ///
     /// # Errors
     ///
-    /// SQLCODE -916 if a segment is missing between others, or is not a
-    /// block file; SQLCODE -910 if `dir` holds no log, or a hash function or
+    /// SQLCODE -916 if a segment is missing between others, is not a block
+    /// file, or is damaged (`open_through`); SQLCODE -910 if `dir` holds no log, or a hash function or
     /// encoding is not given; SQLCODE -915 if a segment cannot be read.
     pub fn open(
         fs: Arc<dyn FileSystem>,
@@ -255,77 +266,6 @@ impl FileLog {
         options: FileLogOptions,
     ) -> Result<(FileLog, LogRecovery)> {
         FileLog::open_through(fs, dir, (hashes, encodings), options, Lsn(0))
-    }
-
-    /// Opens the log as `open` does, its records known durable through
-    /// `through`, as a checkpoint's image records it: a segment before
-    /// through's was synced and sealed whole before it, so it is taken to
-    /// its end unchecked; through's is checked from there, and the later
-    /// ones whole. A segment cut short ends the log: the ones after it are
-    /// removed, as no record of theirs was synced (a sync seals the
-    /// segments before its own first).
-    ///
-    /// # Errors
-    ///
-    /// As `open`'s.
-    pub fn open_through(
-        fs: Arc<dyn FileSystem>,
-        dir: &Path,
-        formats: ReadWith<'_>,
-        options: FileLogOptions,
-        through: Lsn,
-    ) -> Result<(FileLog, LogRecovery)> {
-        check_segment_size(options.segment_size)?;
-        let mut numbered: Vec<(u64, PathBuf)> = fs.read_dir(dir)?.into_iter().filter_map(|p| Some((segment_number(&p)?, p))).collect();
-        numbered.sort();
-        let Some(&(first, _)) = numbered.first() else {
-            return Err(SqlError::new(Code::Api, format!("[DESIGN] {} holds no log", dir.display())));
-        };
-        let last = numbered.len().saturating_sub(1);
-        let mut segments = Vec::with_capacity(numbered.len());
-        let mut cut = 0_u64;
-        let (known, offset) = split(through);
-        for (n, (number, path)) in numbered.iter().enumerate() {
-            let expected = first.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
-            if *number != expected {
-                return Err(SqlError::new(Code::Corrupt, format!("[DESIGN] the log in {} is missing segment {expected}", dir.display())));
-            }
-            let from = known_through(&*fs, (*number, path), (known, offset))?;
-            match BlockFile::open_from(&*fs, path, formats, options.blocks, from) {
-                Ok((blocks, recovery)) => {
-                    cut = cut.saturating_add(recovery.cut);
-                    segments.push(Segment::new(*number, blocks));
-                    if recovery.cut > 0 && n != last {
-                        cut = cut.saturating_add(remove_after(&*fs, dir, numbered.get(n.saturating_add(1)..).unwrap_or_default())?);
-                        break;
-                    }
-                }
-                // Only the last may be one a rotation a crash interrupted
-                // left half created, holding no record: it is removed.
-                Err(e) => {
-                    if n != last || !half_created(&*fs, path, &e)? {
-                        return Err(e);
-                    }
-                    fs.remove(path)?;
-                    fs.sync_dir(dir)?;
-                }
-            }
-        }
-        // New segments are checksummed and encoded as the last one is.
-        let newest = segments.last().ok_or_else(|| {
-            SqlError::new(Code::Api, format!("[DESIGN] {} holds no log: its only segment was never completely created", dir.display()))
-        })?;
-        let hash = Arc::clone(newest.blocks.hash());
-        let mut options = options;
-        options.pipeline = newest.blocks.pipeline().clone();
-        let count = u64::try_from(segments.len()).unwrap_or(u64::MAX);
-        for older in segments.iter().take(segments.len().saturating_sub(1)) {
-            older.durable_end.store(older.blocks.end().0, Ordering::Release);
-            older.sealed.store(true, Ordering::Release);
-        }
-        let log = FileLog::over(fs, dir, hash, options, segments)?;
-        let end = log.end();
-        Ok((log, LogRecovery { segments: count, end, cut }))
     }
 
     /// The log over `segments`, the last one current.
@@ -351,11 +291,12 @@ impl FileLog {
             counters: Counters::default(),
             events: Arc::new(NoDiagnostics),
             told: AtomicBool::new(false),
+            failure: Mutex::new(None),
         })
     }
 
     /// The log, telling `events` of the failures it goes on past: a
-    /// segment that cannot be begun.
+    /// segment that cannot be begun, or synced as it is sealed.
     #[must_use]
     pub fn telling(self, events: Arc<dyn Diagnostics>) -> FileLog {
         FileLog { events, ..self }
@@ -389,38 +330,6 @@ impl FileLog {
     }
 }
 
-/// Whether the segment at `path`, which failed to open with `error`, is one
-/// a crash left half created: shorter than a block file's header.
-fn half_created(fs: &dyn FileSystem, path: &Path, error: &SqlError) -> Result<bool> {
-    if error.code != Code::Corrupt {
-        return Ok(false);
-    }
-    Ok(fs.open(path, OpenMode::ReadOnly)?.size()? < HEADER_LEN)
-}
-
-/// Where segment `number` at `path` is known valid through, the log
-/// known durable through block `offset` of segment `known`: a segment
-/// before `known` to its end, `known` to `offset`, a later one nowhere.
-fn known_through(fs: &dyn FileSystem, (number, path): (u64, &Path), (known, offset): (u64, BlockId)) -> Result<BlockId> {
-    Ok(match number.cmp(&known) {
-        std::cmp::Ordering::Less => BlockId(fs.open(path, OpenMode::ReadOnly)?.size()?),
-        std::cmp::Ordering::Equal => offset,
-        std::cmp::Ordering::Greater => BlockId(HEADER_LEN),
-    })
-}
-
-/// Removes the segments `after`, past a segment cut short, durably: the
-/// bytes they held.
-fn remove_after(fs: &dyn FileSystem, dir: &Path, after: &[(u64, PathBuf)]) -> Result<u64> {
-    let mut bytes = 0_u64;
-    for (_, path) in after {
-        bytes = bytes.saturating_add(fs.open(path, OpenMode::ReadOnly)?.size()?);
-        fs.remove(path)?;
-    }
-    fs.sync_dir(dir)?;
-    Ok(bytes)
-}
-
 /// A new segment's block file at `path`, its creation synced unless the
 /// log is never synced (`Durability::None`).
 fn segment_file(fs: &dyn FileSystem, path: &Path, hash: Arc<dyn HashFunction>, options: &FileLogOptions) -> Result<BlockFile> {
@@ -452,14 +361,15 @@ impl Log for FileLog {
         add(&self.counters.appended_bytes, u64::try_from(record.len()).unwrap_or(u64::MAX));
         if segment.blocks.end().0 >= self.options.segment_size {
             // A segment that cannot be begun leaves this one growing past
-            // its size; the record is appended either way, the failure told.
-            let rotated = self.rotate(&segment);
-            self.tell(rotated, &segment);
+            // its size; the record is appended either way, a failure told,
+            // and a failed seal kept to fail the next sync.
+            self.rotate(&segment);
         }
         Ok(lsn(segment.number, id))
     }
 
     fn sync(&self, through: Lsn) -> Result<()> {
+        self.healthy()?;
         let (number, id) = split(through);
         let segment = self.segment(number).filter(|s| id < s.blocks.end()).ok_or_else(|| {
             SqlError::new(Code::Api, format!("[DESIGN] the log in {} has no record at position {}", self.dir.display(), through.0))

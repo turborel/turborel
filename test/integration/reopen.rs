@@ -310,7 +310,9 @@ fn dropped_indexes_stay_dropped() {
 /// Regression test: a reopen rebuilt the indexes it does not keep before
 /// moving the clock past the timestamps its tables' versions were stamped
 /// with, and so looked for versions older than those, which a clean close
-/// does not keep.
+/// does not keep. The crashed database's session, ended after the reopen,
+/// wrote its rollback over the log the reopened one wrote to, which the
+/// next open refuses as damage.
 #[test]
 fn dropped_tables_stay_dropped() {
     let scratch = Scratch::new("reopen-drop-table");
@@ -332,12 +334,11 @@ fn dropped_tables_stay_dropped() {
     s.run("DROP TABLE T CASCADE").unwrap();
     let kept = rows(&s, "SELECT COUNT(*) FROM T").map_err(|_| ());
     assert_eq!(kept, Err(()), "dropped for its transaction");
-    let (recovered, opened) = {
-        let crashed = db;
-        let reopened = open(&dir);
-        drop((s, crashed));
-        reopened
-    };
+    // Kept to the end, its transaction open: a process that crashed writes
+    // nothing more, and its rollback would write to the log the next opener
+    // writes to.
+    let crashed = (s, db);
+    let (recovered, opened) = open(&dir);
     assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
     let s = recovered.session("APP");
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec!["2900".into()]), "its transaction was open: T and its rows stay");
@@ -351,6 +352,7 @@ fn dropped_tables_stay_dropped() {
     };
     assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
     assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T").map_err(|_| ()), Err(()), "committed before the crash");
+    drop(crashed);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.11, §11.15], RULES.md D33,

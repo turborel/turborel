@@ -84,19 +84,30 @@ impl<'a> StorePlace<'a> {
     }
 }
 
+/// \[EXTENSION\] A log a `LogStorage` opened, and what opening it did.
+pub struct OpenedLog {
+    /// The log.
+    pub log: Arc<dyn Log>,
+    /// Bytes cut from its end: what writes a crash interrupted left, of
+    /// records never synced. The database reports them
+    /// (`RecoveryReport::cut`).
+    pub cut: u64,
+}
+
 /// \[EXTENSION\] A kind of log, given to a database before it is opened
 /// from its files (`Database::set_log_storage`).
 pub trait LogStorage: Send + Sync {
     /// Its name, for messages and events.
     fn name(&self) -> &'static str;
     /// The log at `place`, if one was made there, holding every record
-    /// synced before.
+    /// synced before, and what opening it cut.
     ///
     /// # Errors
     ///
     /// SQLCODE -915 if it cannot be read; -916 if what is there is not a
-    /// log of this kind.
-    fn open(&self, place: &StorePlace<'_>) -> Result<Option<Arc<dyn Log>>>;
+    /// log of this kind, or is damaged: a record synced may be lost, and
+    /// nothing is cut.
+    fn open(&self, place: &StorePlace<'_>) -> Result<Option<OpenedLog>>;
     /// Whether a log was made at `place`, nothing there changed: no tail
     /// cut nor segment removed, as opening it may.
     ///
@@ -135,14 +146,14 @@ impl LogStorage for FileLogs {
         FileLog::exists(&**place.fs, &log_dir(place))
     }
 
-    fn open(&self, place: &StorePlace<'_>) -> Result<Option<Arc<dyn Log>>> {
+    fn open(&self, place: &StorePlace<'_>) -> Result<Option<OpenedLog>> {
         let dir = log_dir(place);
         if !FileLog::exists(&**place.fs, &dir)? {
             return Ok(None);
         }
         let formats = (place.formats.hashes.as_slice(), place.formats.encodings.as_slice());
-        let (log, _) = FileLog::open_through(Arc::clone(place.fs), &dir, formats, self.options.clone(), place.through)?;
-        Ok(Some(Arc::new(told(log, place))))
+        let (log, recovery) = FileLog::open_through(Arc::clone(place.fs), &dir, formats, self.options.clone(), place.through)?;
+        Ok(Some(OpenedLog { log: Arc::new(told(log, place)), cut: recovery.cut }))
     }
 
     fn create(&self, place: &StorePlace<'_>) -> Result<Arc<dyn Log>> {

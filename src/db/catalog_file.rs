@@ -2,7 +2,8 @@
 //! D25): a block file (`disk/block.rs`) of catalog records in the
 //! database's directory, each appended and synced; the last whole one says
 //! what state the database's files are in. A record cut short by a crash is cut off when
-//! the file is opened, so the one before it stands.
+//! the file is opened, so the one before it stands; a record damaged, valid
+//! ones after it, refuses the file (SQLCODE -916, `disk/block/tail.rs`).
 //!
 //! The file is `catalog.0` or `catalog.1`. Once one holds CATALOG.COMPACT_AFTER
 //! records, or an append to it failed (a block file then takes no more),

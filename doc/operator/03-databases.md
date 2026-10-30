@@ -69,8 +69,27 @@ and the indexes mended. No committed transaction is lost; none not
 committed survives.
 
 ```
-{"time":"2026-10-28T19:41:11.802Z","level":"warning","event":"opened","how":"recovered","records":6,"definitions":3,"committed":1,"not_committed":0,"redone":2,"undone":0}
+{"time":"2026-10-28T19:41:11.802Z","level":"warning","event":"opened","how":"recovered","records":6,"definitions":3,"committed":1,"not_committed":0,"redone":2,"undone":0,"cut":0}
 ```
+
+A record the crash interrupted, written in part at the end of the log,
+was never synced, so no transaction it belonged to committed: it is cut
+off as the database opens, and `cut` tells how many bytes were. Valid
+records after invalid ones are another matter: the log is damaged, as by
+a failing disk, and cutting it there would lose committed transactions.
+The database is then not opened, and nothing of its log is cut: opening
+fails with SQLCODE -916, naming the log's file and the offset of the
+damage, and the database is to be restored from a copy of its
+directory. Invalid bytes that show a write the crash interrupted, part
+of them never written, are cut with what follows them, as the system
+may write a file's last pages in any order before the database syncs
+it.
+
+If a sync of the log fails as the database runs, it may have lost what
+the log held, and a sync tried again may succeed without it; so the log
+syncs nothing more, the commit fails with SQLCODE -915, and the database
+takes no change until it is opened again, which recovers it from what
+its log holds. The failure is told as a `failed` event.
 
 ## Checkpoints
 

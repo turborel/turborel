@@ -334,7 +334,14 @@ fill it commit together, or not at all.
   the last image holds it durable through: the segments before it were
   synced whole. A segment cut short by a crash ends the log, and the
   segments after it are removed: a sync seals the segments before its
-  own, so none of their records was durable.
+  own, so none of their records was durable; the bytes cut are reported
+  in the database's `RecoveryReport` and its `opened` event. Valid
+  records after invalid bytes, in the segment or a later one, are damage
+  unless the invalid bytes show a write the crash interrupted (a sector
+  never written, reading as zeros; a zero length ending them; a record
+  running past the end of the file): the log is then refused (SQLCODE
+  -916), nothing cut, as cutting would lose records committed after the
+  damage.
 - Each engine declares its persistence: `Logged` (replayed from the log),
   `Forced` (makes its own writes durable at commit), `External` (keeps its
   own durability) or `None` (scratch data, never recovered).
@@ -360,11 +367,14 @@ fill it commit together, or not at all.
   file lock), before anything there is cleared or read, and closing it
   gives the lock up; a process that crashes gives it up with it.
 - A failed sync of the log stops the database taking changes, as it may
-  have lost what the log held, and a later sync may succeed without it:
-  from then on, no row change, commit of a transaction that wrote,
-  definition or checkpoint is accepted (SQLCODE -915), and it cannot be
-  closed cleanly; reads and rollbacks go on. Opened again, it is recovered
-  from what its log holds (`Database::log_failure`).
+  have lost what the log held, and a later sync may succeed without it.
+  The file log keeps the failure, of a commit's sync or of a segment's as
+  an append seals it, and fails every later sync with it, never trying
+  the sync again; the database stops at the next: from then on, no row
+  change, commit of a transaction that wrote, definition or checkpoint is
+  accepted (SQLCODE -915), and it cannot be closed cleanly; reads and
+  rollbacks go on. Opened again, it is recovered from what its log holds
+  (`Database::log_failure`).
 *Why:* one commit point makes transactions atomic across engines without
 two-phase commit. Logical records keep engines independent, and a
 pluggable log leaves room for replicated or remote ones.

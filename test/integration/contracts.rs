@@ -7,7 +7,7 @@ use std::sync::Arc;
 use turborel::catalog::{
     Actions, Catalog, ColumnDesc, Horizon, IndexDesc, MemoryCatalog, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc,
 };
-use turborel::db::{CatalogFiles, CatalogStorage, CatalogStore, Database, FileFormats, FileLogs, LogStorage, StorePlace};
+use turborel::db::{CatalogFiles, CatalogStorage, CatalogStore, Database, FileFormats, FileLogs, LogStorage, OpenedLog, StorePlace};
 use turborel::disk::buffer::{BufferPool, Clock};
 use turborel::disk::encoding::Pipeline;
 use turborel::disk::io::OsFileSystem;
@@ -421,8 +421,8 @@ impl LogStorage for HeldLogs {
     fn name(&self) -> &'static str {
         "held"
     }
-    fn open(&self, _: &StorePlace<'_>) -> error::Result<Option<Arc<dyn Log>>> {
-        Ok(self.0.lock().unwrap().as_ref().map(|log| Arc::clone(log) as Arc<dyn Log>))
+    fn open(&self, _: &StorePlace<'_>) -> error::Result<Option<OpenedLog>> {
+        Ok(self.0.lock().unwrap().as_ref().map(|log| OpenedLog { log: Arc::clone(log) as Arc<dyn Log>, cut: 0 }))
     }
     fn exists(&self, _: &StorePlace<'_>) -> error::Result<bool> {
         Ok(self.0.lock().unwrap().is_some())
@@ -459,7 +459,7 @@ fn log_storage_contract(storage: &dyn LogStorage, dir: &std::path::Path) {
     }
     log.sync(last).unwrap();
     drop(log);
-    let again = storage.open(&place).unwrap().unwrap();
+    let again = storage.open(&place).unwrap().unwrap().log;
     let read: Vec<Vec<u8>> = again.read_from(start).map(|r| r.unwrap().1).collect();
     assert_eq!(read, (0_u32..5_u32).map(|n| n.to_le_bytes().to_vec()).collect::<Vec<_>>(), "{}: opened again", storage.name());
 }

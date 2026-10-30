@@ -125,7 +125,7 @@ pub use image::IMAGE_FORMAT;
 use integrity::Deferral;
 pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
-pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, StorePlace};
+pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]

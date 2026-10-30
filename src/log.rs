@@ -73,7 +73,10 @@ pub trait Log: Send + Sync {
     /// # Errors
     ///
     /// SQLCODE -910 if `through` is not a position of this log; SQLCODE -915
-    /// if the sync fails, when nothing more is promised.
+    /// if the sync fails, when nothing more is promised: the database then
+    /// takes no change until it is opened again (RULES.md D25). A sync
+    /// tried again after one failed may succeed without what the failed
+    /// one lost, so the file log fails every later sync too.
     fn sync(&self, through: Lsn) -> Result<()>;
     /// The records at or after `from`, in order.
     fn read_from(&self, from: Lsn) -> Records<'_>;

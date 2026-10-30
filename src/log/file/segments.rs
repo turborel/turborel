@@ -1,5 +1,6 @@
-//! \[DESIGN\] A file log's segments begun, sealed and synced (RULES.md D25,
-//! D30): see the parent module. Split from file.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] A file log's segments begun, sealed and synced, a failed
+//! sync kept (RULES.md D25, D30): see the parent module. Split from
+//! file.rs (RULES.md R-SIZE-2).
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
@@ -12,13 +13,31 @@ use crate::error::{Result, SqlError};
 use crate::sync::lock_builtin;
 
 impl FileLog {
-    /// Tells a failure `rotated` of `full`'s rotation, once until one
-    /// succeeds.
-    pub(super) fn tell(&self, rotated: Result<()>, full: &Segment) {
-        let Err(e) = rotated else {
-            self.told.store(false, Ordering::Release);
+    /// Begins the segment after `full`, if `full` is still the current one
+    /// and no other thread is beginning one; then seals `full`. A segment
+    /// that cannot be begun is told, once until one is; a seal that fails
+    /// is kept, and told, by `failed`.
+    pub(super) fn rotate(&self, full: &Arc<Segment>) {
+        if self.rotating.swap(true, Ordering::AcqRel) {
             return;
-        };
+        }
+        let current = Arc::ptr_eq(&self.active.read().unwrap_or_else(PoisonError::into_inner), full);
+        let begun = if current { self.begin_after(full) } else { Ok(()) };
+        self.rotating.store(false, Ordering::Release);
+        if let Err(e) = begun {
+            self.tell_unbegun(&e, full);
+            return;
+        }
+        self.told.store(false, Ordering::Release);
+        if current {
+            // Its failure fails every later sync; nothing more to do here.
+            drop(self.seal(full));
+        }
+    }
+
+    /// Tells failure `e` to begin the segment after `full`, once until one
+    /// is begun.
+    fn tell_unbegun(&self, e: &SqlError, full: &Segment) {
         if !self.told.swap(true, Ordering::AcqRel) {
             let why = format!(
                 "[DESIGN] the log in {} could not begin a segment after segment {}, which grows past its size: {}",
@@ -30,20 +49,39 @@ impl FileLog {
         }
     }
 
-    /// Begins the segment after `full`, if `full` is still the current one
-    /// and no other thread is beginning one; then seals `full`.
-    pub(super) fn rotate(&self, full: &Arc<Segment>) -> Result<()> {
-        if self.rotating.swap(true, Ordering::AcqRel) {
-            return Ok(());
+    /// Fails if a sync of the log failed before: it may have lost what it
+    /// was to make durable, and a sync tried again may succeed without it.
+    ///
+    /// # Errors
+    ///
+    /// The failure kept, as SQLCODE -915 or its own.
+    pub(super) fn healthy(&self) -> Result<()> {
+        let Some(e) = lock_builtin(&self.failure).clone() else { return Ok(()) };
+        Err(SqlError::new(
+            e.code,
+            format!(
+                "[DESIGN] a sync of the log in {} failed, so it syncs nothing more until it is opened again: {}",
+                self.dir.display(),
+                e.msg
+            ),
+        ))
+    }
+
+    /// Keeps `e`, the failure of a sync of segment `number`, if it is the
+    /// first, and tells it; returns it.
+    fn failed(&self, e: SqlError, number: u64) -> SqlError {
+        let mut failure = lock_builtin(&self.failure);
+        if failure.is_none() {
+            *failure = Some(e.clone());
+            drop(failure);
+            let why = format!(
+                "[DESIGN] the log in {} could not sync segment {number}, so every later sync of it fails, and the database takes no change until it is opened again: {}",
+                self.dir.display(),
+                e.msg
+            );
+            self.events.event(&Event::Failed(SqlError::new(e.code, why)));
         }
-        let current = Arc::ptr_eq(&self.active.read().unwrap_or_else(PoisonError::into_inner), full);
-        let begun = if current { self.begin_after(full) } else { Ok(()) };
-        self.rotating.store(false, Ordering::Release);
-        begun?;
-        if current {
-            self.seal(full)?;
-        }
-        Ok(())
+        e
     }
 
     /// Creates the segment after `full` and makes it current.
@@ -67,10 +105,11 @@ impl FileLog {
         if segment.sealed.load(Ordering::Acquire) {
             return Ok(());
         }
+        self.healthy()?;
         segment.drain();
         // A log never synced asks for no sync.
         if self.options.durability != Durability::None {
-            segment.blocks.sync(self.options.durability)?;
+            segment.blocks.sync(self.options.durability).map_err(|e| self.failed(e, segment.number))?;
         }
         segment.durable_end.fetch_max(segment.blocks.end().0, Ordering::AcqRel);
         segment.sealed.store(true, Ordering::Release);
@@ -90,6 +129,8 @@ impl FileLog {
             if id.0 < segment.durable_end.load(Ordering::Acquire) {
                 return Ok(());
             }
+            // The group's sync failed: none is tried again.
+            self.healthy()?;
             if !*syncing {
                 break;
             }
@@ -98,7 +139,7 @@ impl FileLog {
         *syncing = true;
         drop(syncing);
         let end = segment.blocks.end();
-        let synced = segment.blocks.sync(self.options.durability);
+        let synced = segment.blocks.sync(self.options.durability).map_err(|e| self.failed(e, segment.number));
         if synced.is_ok() {
             segment.durable_end.fetch_max(end.0, Ordering::AcqRel);
             add(&self.counters.syncs, 1);

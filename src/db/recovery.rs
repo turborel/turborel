@@ -101,6 +101,10 @@ pub struct RecoveryReport {
     pub redone: u64,
     /// Row changes undone.
     pub undone: u64,
+    /// Bytes cut from the end of the log as it opened: what writes a crash
+    /// interrupted left, of records never synced, so of no transaction
+    /// committed (`OpenedLog::cut`).
+    pub cut: u64,
 }
 
 /// The most entries of one row under one key mending takes back: a bound

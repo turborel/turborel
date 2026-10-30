@@ -317,3 +317,50 @@ fn a_file_log_opened_through_a_position_checks_what_follows() {
     assert_eq!(segments(&dir).len(), 2);
     assert!(log.end() < positions[59]);
 }
+
+/// Every file in `dir`, sorted, with its bytes.
+fn contents(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    segments(dir).into_iter().map(|p| (p.clone(), std::fs::read(&p).unwrap())).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D25, file log recovery: a segment damaged in
+/// its middle, a block failing its checksum before valid ones, refuses the
+/// log with SQLCODE -916, naming the segment and the offset, and so does
+/// one whose last block is damaged while a later segment holds valid
+/// blocks; either way no segment is cut or removed. Mended, the log opens
+/// with nothing cut.
+///
+/// Regression test (R-TEST-7): the damaged segment was cut at the damaged
+/// block and every later segment removed, losing committed records.
+#[test]
+fn a_damaged_file_log_is_refused_unchanged() {
+    let scratch = Scratch::new("log-damaged");
+    let dir = scratch.path("log");
+    let log = file_log(&dir, small_segments());
+    let positions: Vec<Lsn> = (0..60).map(|n| log.append(&record(n)).unwrap()).collect();
+    log.sync(positions[59]).unwrap();
+    drop(log);
+    let second = segments(&dir)[1].clone();
+    let size = std::fs::metadata(&second).unwrap().len();
+    let bytes = std::fs::read(&second).unwrap();
+    let trailing = u64::from(u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap()));
+    let last_block = size - trailing - 12;
+    assert!(last_block > HEADER_LEN, "segment 1 holds more than one block");
+    for (at, whose) in [(HEADER_LEN, "a valid block follows"), (last_block, "segment 2 after it holds a valid block")] {
+        let mut damaged = bytes.clone();
+        damaged[usize::try_from(at + 9).unwrap()] ^= 0x55;
+        std::fs::write(&second, &damaged).unwrap();
+        let before = contents(&dir);
+        let refused = FileLog::open(fs(), &dir, &[crc32c()], &[], small_segments()).err().unwrap();
+        assert_eq!(refused.code, Code::Corrupt, "{whose}");
+        assert!(
+            refused.msg.contains(&format!("segment-0000000001.log is damaged at offset {at}")) && refused.msg.contains(whose),
+            "{refused}"
+        );
+        assert_eq!(contents(&dir), before, "{whose}: unchanged");
+    }
+    std::fs::write(&second, &bytes).unwrap();
+    let (log, recovery) = reopen(&dir);
+    assert_eq!(recovery.cut, 0);
+    assert_eq!(all(&log, Lsn(0)).len(), 60);
+}

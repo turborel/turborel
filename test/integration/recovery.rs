@@ -249,3 +249,49 @@ fn recovery_reads_its_changes_a_segment_at_a_time() {
     assert_eq!(db.index_entries("T_V").unwrap(), 3000, "one a row");
     drop(open_tx);
 }
+
+/// Verifies: [DESIGN] RULES.md D25, D40, recovery from a damaged or torn
+/// log: a database whose log is damaged in its middle, a record failing its
+/// checksum before valid ones, is refused as it opens (SQLCODE -916), its
+/// log unchanged; one whose last record a crash tore is recovered, the
+/// torn record cut, and the bytes cut are reported (`RecoveryReport::cut`)
+/// and told in the `opened` event.
+///
+/// Regression test (R-TEST-7): the damaged log was cut at the damage,
+/// committed records after it lost, and no report or event said so.
+#[test]
+fn a_damaged_log_is_refused_and_a_torn_one_reported() {
+    let scratch = Scratch::new("recovery-torn-log");
+    let dir = scratch.path("db");
+    let crashed = Database::new();
+    crashed.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+    crashed.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    let s = crashed.session("A");
+    for k in 0..5_i32 {
+        s.run(&format!("INSERT INTO T VALUES ({k})")).unwrap();
+        s.commit().unwrap();
+    }
+    let segment = dir.join("log").join("segment-0000000000.log");
+    let bytes = std::fs::read(&segment).unwrap();
+    let mut damaged = bytes.clone();
+    damaged[usize::try_from(turborel::disk::block::HEADER_LEN).unwrap() + 9] ^= 0x55;
+    std::fs::write(&segment, &damaged).unwrap();
+    let refused = Database::new().open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap_err();
+    assert_eq!(refused.code, Code::Corrupt);
+    assert!(refused.msg.contains("is damaged at offset"), "{refused}");
+    assert_eq!(std::fs::read(&segment).unwrap(), damaged, "unchanged");
+    // A record's first 10 bytes written, the crash before the rest.
+    let mut torn = bytes.clone();
+    torn.extend_from_slice(&200_u32.to_le_bytes());
+    torn.extend_from_slice(&[0xAB; 6]);
+    std::fs::write(&segment, &torn).unwrap();
+    let kept = crate::common::Kept::default();
+    let db = Database::new();
+    db.set_diagnostics(Box::new(kept.clone()));
+    let opened = db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+    let Opened::Recovered(report) = opened else { panic!("{opened:?}") };
+    assert_eq!(report.cut, 10);
+    assert!(kept.taken().iter().any(|(_, e)| e.contains("Opened(Recovered") && e.contains("cut: 10")), "told");
+    assert_eq!(rows(&db.session("A"), "SELECT COUNT(*) FROM T"), Ok(vec!["5".into()]));
+    drop((s, crashed));
+}
