@@ -47,7 +47,6 @@ fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::Product { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::Aggregate { .. }
-            | LogicalPlan::DefaultRow { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }

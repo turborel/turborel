@@ -31,7 +31,6 @@ use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, LogicalPlan, OuterJoin, SetOp, SortKey, column_name, render_cond, render_expr, render_keys, split_and,
 };
-use crate::storage::Row;
 use crate::system::SystemRead;
 
 /// \[DESIGN\] A physical plan: the operators the executor runs, each with what
@@ -133,13 +132,6 @@ pub enum Plan {
         /// The grouping and set functions, as text.
         detail: String,
         /// The rows grouped.
-        input: Box<Plan>,
-    },
-    /// `row` if `input` has no rows, else the rows of `input` [X3.135-1986 §5.25 GR3].
-    DefaultRow {
-        /// The row given for no groups.
-        row: Row,
-        /// The grouped rows.
         input: Box<Plan>,
     },
     /// Each `<value expression>` applied to each row [X3.135-1986 §5.25 GR2].
@@ -284,11 +276,6 @@ impl<'a> PhysicalPlanner<'a> {
                 Built { plan, ordered: !inner.is_empty() && b.ordered }
             }
 
-            LogicalPlan::DefaultRow { row, input } => {
-                let b = self.build(input, want);
-                Built { plan: Plan::DefaultRow { row: row.clone(), input: Box::new(b.plan) }, ordered: b.ordered }
-            }
-
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
 
             // Duplicate elimination keeps the first occurrence, so order is kept.
@@ -394,7 +381,7 @@ impl Plan {
             Plan::OuterJoin { left, right, cond, .. } => {
                 left.can_raise() || right.can_raise() || cond.as_ref().is_some_and(Cond::can_raise)
             }
-            Plan::DefaultRow { input, .. } | Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
+            Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
         }
     }
 
@@ -424,7 +411,6 @@ impl Plan {
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
             Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
-            Plan::DefaultRow { .. } => writeln!(out, "{pad}DefaultRow (one row if no groups, [X3.135-1986 §5.25 GR3])"),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
             Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
             Plan::Append { .. } => writeln!(out, "{pad}Append"),
@@ -445,7 +431,6 @@ impl Plan {
             }
             Plan::Filter { input, .. }
             | Plan::Aggregate { input, .. }
-            | Plan::DefaultRow { input, .. }
             | Plan::Project { input, .. }
             | Plan::Distinct { input }
             | Plan::Sort { input, .. } => input.write(out, depth.saturating_add(1)),

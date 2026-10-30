@@ -232,18 +232,36 @@ fn having_without_group_by_makes_one_group_5_23() {
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T HAVING COUNT(*) > 3"), Ok(vec!["5".into()]));
 }
 
-/// Verifies: [X3.135-1986 §5.25 GR3] zero groups with a select list of only set
-/// functions give one row, but no row when the select list has a column.
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.9 GR1b i, §7.8 GR1-GR2, §7.7 GR1]
+/// a grouped table of 0 groups gives an empty table, even when the select
+/// list has only set functions: HAVING that removes the single group
+/// HAVING alone makes, and GROUP BY of no rows, give no row; the single
+/// group of no rows that HAVING keeps gives its row.
+/// Regression test (R-TEST-7): each of these once gave one row of the set
+/// functions' values of no rows, by SQL-86's §5.25 GR3 read literally.
 #[test]
-fn zero_groups_give_one_row_of_set_functions_5_25() {
+fn zero_groups_give_no_row_7_9() {
     let db = grouping_rows();
     let s = db.session("APP");
-    // [X3.135-1986 §5.25 GR3], read literally: a grouped table with zero groups and a select
-    // list of only set functions gives one row, here because HAVING removed the group.
-    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T HAVING COUNT(*) > 99"), Ok(vec!["0".into()]));
-    assert_eq!(rows(&s, "SELECT COUNT(*), MAX(ID) FROM T WHERE ID > 99 GROUP BY NAME"), Ok(vec!["0,NULL".into()]));
-    // ...but not when the select list has a column.
+    // [ISO/IEC 9075:1992 §7.8 GR1-GR2] T is one group, which HAVING removes: 0 groups.
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T HAVING COUNT(*) > 99"), Ok(vec![]));
+    // [ISO/IEC 9075:1992 §7.7 GR1] no rows partition into no groups.
+    assert_eq!(rows(&s, "SELECT COUNT(*), MAX(ID) FROM T WHERE ID > 99 GROUP BY NAME"), Ok(vec![]));
     assert_eq!(rows(&s, "SELECT NAME, COUNT(*) FROM T WHERE ID > 99 GROUP BY NAME"), Ok(vec![]));
+    // [ISO/IEC 9075:1992 §7.8 GR1] without GROUP BY, T of no rows is still one group.
+    assert_eq!(rows(&s, "SELECT COUNT(*), MAX(ID) FROM T WHERE ID > 99 HAVING COUNT(*) = 0"), Ok(vec!["0,NULL".into()]));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.9 GR1a i] a query that is not
+/// grouped, with set functions, gives one row of them over an empty table
+/// as over no qualifying rows.
+#[test]
+fn set_functions_of_no_rows_give_one_row_7_9() {
+    let db = setup();
+    let s = db.session("APP");
+    s.run("DELETE FROM U").unwrap();
+    assert_eq!(rows(&s, "SELECT COUNT(*), MAX(ID) FROM U"), Ok(vec!["0,NULL".into()]));
+    assert_eq!(rows(&s, "SELECT COUNT(*), SUM(AMT) FROM T WHERE ID > 99"), Ok(vec!["0,NULL".into()]));
 }
 
 /// Verifies: [X3.135-1986 §8.3] ORDER BY sorts by position, name or qualified

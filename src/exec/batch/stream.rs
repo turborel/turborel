@@ -88,7 +88,6 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
-        | Plan::DefaultRow { .. }
         | Plan::System { .. } => None,
     }
 }
@@ -148,7 +147,6 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
-        | Plan::DefaultRow { .. }
         | Plan::System { .. } => false,
     }
 }
@@ -203,7 +201,6 @@ fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
-        | Plan::DefaultRow { .. }
         | Plan::System { .. } => Err(crate::exec::broken("a plan that gives no batches")),
     }
 }

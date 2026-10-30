@@ -75,7 +75,6 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::OuterJoin { .. } => join::outer(plan, db, tx),
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
         Plan::Aggregate { .. } => grouped(plan, db, tx),
-        Plan::DefaultRow { .. } => defaulted(plan, db, tx),
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
         Plan::Project { .. } => projected(plan, db, tx),
         Plan::Append { .. } => appended(plan, db, tx),
@@ -146,7 +145,6 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Filter { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
-        | Plan::DefaultRow { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
         | Plan::SetOp { .. }
@@ -155,15 +153,6 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Sort { .. }
         | Plan::Distinct { .. } => failed(broken("a join is not one")),
     }
-}
-
-/// [X3.135-1986 §5.25 GR3] The rows of `plan`'s input, or its default row
-/// if there are none.
-#[inline(never)]
-fn defaulted(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::DefaultRow { row, input } = plan else { return failed(broken("a default row is not one")) };
-    let mut rows = execute(*input, db, tx).peekable();
-    if rows.peek().is_none() { Box::new(std::iter::once(Ok(row))) } else { Box::new(rows) }
 }
 
 /// [X3.135-1986 §8.3 GR2b ii] the rows of both operands of `plan`.
@@ -378,7 +367,6 @@ pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Vec<(RowId, 
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
-        | Plan::DefaultRow { .. }
         | Plan::Distinct { .. }
         | Plan::Append { .. }
         | Plan::SetOp { .. }
@@ -446,16 +434,9 @@ mod tests {
         QualifiedName { auth: "A".into(), ident: "T".into() }
     }
 
-    /// A plan of the one row `row`, read from the empty table `A.E`.
+    /// A plan of the one row `row`, a table value constructor of its values.
     fn one_row(row: Row) -> Plan {
-        let empty = Plan::SeqScan {
-            table: QualifiedName { auth: "A".into(), ident: "E".into() },
-            columns: vec![],
-            rows: 0,
-            cost: 0.0_f64,
-            order: vec![],
-        };
-        Plan::DefaultRow { row, input: Box::new(empty) }
+        Plan::Values { rows: vec![row.into_iter().map(crate::logical::Expr::Const).collect()], detail: String::new() }
     }
 
     fn code(rows: RowIter) -> Option<Code> {
@@ -512,5 +493,28 @@ mod tests {
         let sort = Plan::Sort { keys, detail: String::new(), input: Box::new(one_row(vec![Value::Null])) };
         assert_eq!(code(execute(sort, &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(code(execute(one_row(row), &st, NO_TRANSACTION)), None, "the row source itself succeeds");
+    }
+
+    /// An executor of one kind of plan.
+    type Executor = fn(Plan, &Arc<State>, TxId) -> RowIter;
+
+    /// Verifies: [DESIGN] each executor of one kind of plan, given a plan
+    /// of another, yields SQLCODE -910 rather than panicking (RULES.md
+    /// R-ERR-1); and the batch reader takes it for none of its own.
+    #[test]
+    fn executors_refuse_a_plan_of_another_kind() {
+        let st = Arc::new(state());
+        let other = || one_row(vec![Value::Null]);
+        let executors: [Executor; 10] =
+            [scanned_plan, appended, sorted_plan, indexed, filtered, grouped, distinct_rows, projected, set::operation, |plan, db, _| {
+                system_plan(plan, db)
+            }];
+        for run in executors {
+            assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
+        }
+        let distinct = Plan::Distinct { input: Box::new(other()) };
+        assert_eq!(code(set::values(distinct, &st, NO_TRANSACTION)), Some(Code::Api));
+        assert!(!batch::aggregable(&other(), &st) && batch::distinct_groupable(&other(), &st).is_none());
+        assert!(matches!(batch::distinct_grouping(other(), 1_usize), Plan::Values { .. }), "not a DISTINCT: left as it is");
     }
 }

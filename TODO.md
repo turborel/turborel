@@ -250,8 +250,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   taken as REAL and its boundary (FLOAT(24) against FLOAT(25)), REAL
   rounded on assignment, UNION over nulls giving one null row (run, but
   its result not checked), a cursor declared, opened and fetched in SQL on
-  an empty table (only the Rust API's is), §5.25 GR3 together with
-  DISTINCT.
+  an empty table (only the Rust API's is).
 - Random queries for the comparison with every optimizer rule on and off:
   `planning.rs` compares the two on queries written by hand only.
 - Run the mutation check regularly: break a mechanism, and expect the named

@@ -412,3 +412,31 @@ fn set_functions_of_vectors_answer_as_row_by_row() {
         }
     }
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.9 GR1a i, GR1b i, §7.8 GR1]
+/// RULES.md D31: read by batches and row by row, of a table of either
+/// store, a grouped table of 0 groups gives no row even of a select list
+/// of only set functions, by GROUP BY of no rows or HAVING that removes
+/// the single group; the single group of no rows HAVING keeps, and a query
+/// not grouped, of no rows, give one.
+/// Regression test (R-TEST-7): the grouped ones once gave a row of the set
+/// functions' values of no rows.
+#[test]
+fn zero_groups_by_batch_give_no_row() {
+    let db = Database::new();
+    let a = both(&db);
+    let cases: [(&str, &[&str]); 4] = [
+        ("SELECT COUNT(*), SUM(N) FROM {t} WHERE K < -100 GROUP BY G", &[]),
+        ("SELECT COUNT(*), MAX(K) FROM {t} HAVING COUNT(*) > 99999", &[]),
+        ("SELECT COUNT(*), MAX(K) FROM {t} WHERE K < -100 HAVING COUNT(*) = 0", &["0,NULL"]),
+        ("SELECT COUNT(*), MAX(K) FROM {t} WHERE K < -100", &["0,NULL"]),
+    ];
+    for (query, expected) in cases {
+        for table in ["R", "C"] {
+            let sql = query.replace("{t}", table);
+            let (batched, row) = both_ways(&a, &sql);
+            assert_eq!(batched, row, "{sql}");
+            assert_eq!(batched, *expected, "{sql}");
+        }
+    }
+}

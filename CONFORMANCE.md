@@ -96,7 +96,7 @@ tested. **Not claimed:** outside the claim above.
 | §5.16 `<quantified predicate>` | Done | |
 | §5.17 `<exists predicate>` | Done | |
 | §5.18 `<search condition>` | Done | Three-valued logic, by the GR2 truth tables. |
-| §5.19–§5.25 Table expressions and query specifications | Done | A subquery runs once per distinct set of outer values [§5.21 GR3]. §5.25 GR3 is read literally: see [readings](#readings-of-ambiguous-text). |
+| §5.19–§5.25 Table expressions and query specifications | Done | A subquery runs once per distinct set of outer values [§5.21 GR3]. §5.25 GR3's one row of set functions of zero groups gives way to SQL-92's empty table: see [SQL-92](#queries-and-expressions). |
 
 ### 6. Schema definition language
 
@@ -246,6 +246,13 @@ restriction is lifted.
   tables with AS and column lists [§6.3].
 - **Query expressions** [§7.10]: UNION, EXCEPT and INTERSECT, ALL or not,
   CORRESPONDING; table value constructors of many rows [§7.2]; TABLE t.
+- **Grouped tables of 0 groups** [§7.9 GR1b i]: a query grouped by
+  GROUP BY or HAVING gives no row when there are no groups, even of a
+  select list of only set functions, where SQL-86 gave one row of them
+  [X3.135-1986 §5.25 GR3]. GROUP BY of no rows makes no groups [§7.7
+  GR1]; HAVING without GROUP BY makes T a single group, even of no rows
+  [§7.8 GR1], which it then keeps or removes [GR2]. A query not grouped
+  gives one row of its set functions, even of no rows [§7.9 GR1a i].
 - **Updatable queries with subqueries** [§7.9 SR12d], and searched UPDATE
   and DELETE that read the table they change.
 - **Store and retrieval assignment** [§9.1, §9.2]: a string retrieved
@@ -545,10 +552,6 @@ SQLCODE -900 (RULES.md D18).
   written, and an update is checked against every view with the option that
   it spans, including through a view without it. SQL-86 checked only the
   WHERE clause of the view a statement names.
-- **§5.25 GR3** is read literally: a grouped query whose select list has
-  only set functions returns one row even when there are no groups,
-  including when HAVING removed the only group. Later standards changed
-  this.
 - **§7.3 SR4**: an unqualified name that is both a column and a declared
   parameter means the parameter.
 - **A grant option given to PUBLIC** [§6.6 SR3b ii]: anyone may pass on

@@ -57,7 +57,6 @@ fn bound_plan(plan: LogicalPlan, values: &[Value]) -> LogicalPlan {
         other @ (LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
-        | LogicalPlan::DefaultRow { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::Sort { .. }) => other,
@@ -77,7 +76,6 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::SetOp { .. }
-        | LogicalPlan::DefaultRow { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. } => false,
     };
@@ -144,7 +142,6 @@ fn plan_has_outer(plan: &LogicalPlan) -> bool {
         | LogicalPlan::System { .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::SetOp { .. }
-        | LogicalPlan::DefaultRow { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. } => false,
     };

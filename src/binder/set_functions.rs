@@ -17,8 +17,7 @@ pub(super) fn column_specifications<'v>(v: &'v ValueExpression, out: &mut Vec<&'
     }
 }
 
-/// Whether `v` is itself a set function, or a call of an extension aggregate:
-/// a select list of only these gives one row for no groups [X3.135-1986 §5.25 GR1].
+/// Whether `v` is itself a set function, or a call of an extension aggregate.
 pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
     match v {
         ValueExpression::SetFunction(_) => true,

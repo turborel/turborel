@@ -200,8 +200,8 @@ SELECT SUM(SALARY) FROM STAFF WHERE 1 = 0;
 (1 row)
 ```
 
-A query of a set function and no GROUP BY gives one row, so each
-column it selects is in a set function. A set function is not in a
+A query of a set function and no GROUP BY or HAVING gives one row,
+even of no rows, so each column it selects is in a set function. A set function is not in a
 WHERE clause, which is applied to rows one by one:
 
 ```sql

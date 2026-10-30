@@ -266,7 +266,6 @@ impl Rule for ConstantFolding {
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
             | LogicalPlan::Aggregate { .. }
-            | LogicalPlan::DefaultRow { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }
@@ -474,7 +473,6 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::Aggregate { .. }
-        | LogicalPlan::DefaultRow { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

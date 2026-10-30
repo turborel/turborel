@@ -50,7 +50,6 @@ impl Rule for PushFilterIntoOuterJoin {
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
             | LogicalPlan::Aggregate { .. }
-            | LogicalPlan::DefaultRow { .. }
             | LogicalPlan::Project { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }

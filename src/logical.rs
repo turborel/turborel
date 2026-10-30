@@ -25,7 +25,6 @@ pub use subquery::{Decorrelated, Subquery};
 
 use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;
-use crate::storage::Row;
 use crate::system::SystemRead;
 use crate::value::DataType;
 
@@ -87,13 +86,6 @@ pub enum LogicalPlan {
         /// The set functions computed per group.
         aggs: Vec<AggCall>,
         /// The rows grouped.
-        input: Box<LogicalPlan>,
-    },
-    /// [X3.135-1986 §5.25 GR3] one row of set-function results if the input has no rows.
-    DefaultRow {
-        /// The row given for no groups.
-        row: Row,
-        /// The grouped rows.
         input: Box<LogicalPlan>,
     },
     /// [X3.135-1986 §5.25 GR2] apply the select list.
@@ -265,7 +257,6 @@ impl LogicalPlan {
             LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }
-            | LogicalPlan::DefaultRow { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Sort { .. } => {}
@@ -284,7 +275,6 @@ impl LogicalPlan {
             }
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Aggregate { input, .. }
-            | LogicalPlan::DefaultRow { input, .. }
             | LogicalPlan::Project { input, .. }
             | LogicalPlan::Distinct { input }
             | LogicalPlan::Sort { input, .. } => vec![input],
@@ -312,10 +302,7 @@ impl LogicalPlan {
             }
             LogicalPlan::SetOp { left, .. } => left.names(),
             LogicalPlan::Values { width, .. } => (0..*width).map(|i| column_name(&[], i)).collect(),
-            LogicalPlan::Filter { input, .. }
-            | LogicalPlan::DefaultRow { input, .. }
-            | LogicalPlan::Distinct { input }
-            | LogicalPlan::Sort { input, .. } => input.names(),
+            LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => input.names(),
         }
     }
 
@@ -362,7 +349,6 @@ impl LogicalPlan {
                 LogicalPlan::OuterJoin { kind, cond, left, right: g(right) }
             }
             LogicalPlan::Aggregate { groups, aggs, input } => LogicalPlan::Aggregate { groups, aggs, input: g(input) },
-            LogicalPlan::DefaultRow { row, input } => LogicalPlan::DefaultRow { row, input: g(input) },
             LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs, input: g(input) },
             LogicalPlan::Distinct { input } => LogicalPlan::Distinct { input: g(input) },
             LogicalPlan::SetOp { op, all, left, right } => {
@@ -397,7 +383,6 @@ impl LogicalPlan {
                 let a: Vec<&str> = aggs.iter().map(|a| a.label.as_str()).collect();
                 writeln!(out, "{pad}Aggregate group by [{}] computing [{}]", g.join(", "), a.join(", "))
             }
-            LogicalPlan::DefaultRow { .. } => writeln!(out, "{pad}DefaultRow"),
             LogicalPlan::Project { exprs, input } => {
                 let n = inner(input);
                 writeln!(out, "{pad}Project {}", exprs.iter().map(|e| render_expr(e, &n)).collect::<Vec<_>>().join(", "))

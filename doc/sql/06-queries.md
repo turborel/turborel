@@ -80,7 +80,10 @@ SELECT * FROM (SELECT DEPT, COUNT(*) FROM STAFF GROUP BY DEPT) AS C (D, N) WHERE
 the nulls one group. A query then gives a row of each group: what it
 selects is a grouping column, or of a set function, computed of the
 group. **HAVING** keeps the groups its condition is true of; without
-GROUP BY, it makes the whole table one group.
+GROUP BY, it makes the whole table one group, even of no rows. A
+grouped query of no groups gives no row, though it selects only set
+functions: GROUP BY of no rows makes no groups, and HAVING may keep
+none.
 
 ```sql
 SELECT DEPT, COUNT(*) AS N, SUM(SALARY) AS TOTAL FROM STAFF

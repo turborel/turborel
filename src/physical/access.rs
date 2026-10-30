@@ -277,7 +277,6 @@ fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
-        | Plan::DefaultRow { .. }
         | Plan::Project { .. }
         | Plan::Distinct { .. }
         | Plan::Append { .. }

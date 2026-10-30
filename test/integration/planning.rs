@@ -217,8 +217,10 @@ fn rules_rewrite_the_plan_without_changing_results() {
     assert!(s.explain(queries[1], &Params::new()).unwrap().contains(PUSH_HAVING_INTO_WHERE));
     let plan = s.explain(queries[2], &Params::new()).unwrap();
     assert!(plan.contains(REMOVE_REDUNDANT_DISTINCT) && plan.contains(SIMPLIFY_CONDITIONS), "{plan}");
-    // Without GROUP BY a constant HAVING must stay above the single group.
-    assert_eq!(with_rules[3], Ok(vec!["0".into()]));
+    // Without GROUP BY a constant HAVING must stay above the single group: false, it
+    // removes that group, and 0 groups give no row [ISO/IEC 9075:1992 §7.8 GR1-GR2,
+    // §7.9 GR1b i]; pushed into WHERE, it would leave one group and give a row of 0.
+    assert_eq!(with_rules[3], Ok(Vec::<String>::new()));
     drop(s);
 
     // Same answers with every rule turned off.

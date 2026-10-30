@@ -5,7 +5,6 @@
 use std::cell::RefCell;
 
 use super::from::{Bounds, From, bind_from, from_plan};
-use super::set_functions::is_aggregate_call;
 use super::set_operations::ObjectColumn;
 use super::{Binder, Bound, Context, FromItem, Grouping, OutColumn, Outer, Scope, nondeterministic, rule, sort_keys, with_sort};
 use crate::ast::{
@@ -14,8 +13,6 @@ use crate::ast::{
 };
 use crate::error::{At, Result};
 use crate::logical::{Cond, Expr, LogicalPlan};
-use crate::storage::Row;
-use crate::value::Value;
 
 /// [X3.135-1986 §5.25] `<query specification>`, with the ORDER BY of its cursor if it is the
 /// whole `<query expression>`.
@@ -71,7 +68,6 @@ pub(super) fn bind_query(
         Some(r) => vec![r],
         None => select_items(&binder, &spec.select_list)?,
     };
-    let select: Vec<ValueExpression> = selected.iter().map(|i| i.value.clone()).collect();
 
     // [X3.135-1986 §5.21] <where clause>: applied to rows.
     let where_scope = Scope::Rows(
@@ -101,7 +97,7 @@ pub(super) fn bind_query(
         plan = LogicalPlan::Filter { cond, input: Box::new(plan) };
     }
     if let Some(g) = grouping {
-        plan = group(plan, g, having, grouped && select.iter().all(|v| is_aggregate_call(v, cx.db)))?;
+        plan = group(plan, g, having);
     }
     // [X3.135-1986 §5.25 GR2]
     plan = LogicalPlan::Project { exprs, input: Box::new(plan) };
@@ -252,21 +248,18 @@ fn order_by_column(binder: &Binder<'_>, columns: &[OutColumn], cs: &ColumnSpecif
     }
 }
 
-/// [X3.135-1986 §5.22, §5.23, §5.25 GR1-GR3] Groups `plan` and computes the
-/// set functions, keeps the groups HAVING accepts, and, if `default_row`,
-/// gives one row of set-function results when there are no groups.
-fn group(plan: LogicalPlan, g: Grouping, having: Option<Cond>, default_row: bool) -> Result<LogicalPlan> {
-    let aggs = g.aggs.into_inner();
-    let mut empty_row: Row = vec![Value::Null; g.columns.len()];
-    for a in &aggs {
-        empty_row.push(a.func.0.accumulator(a.result).finish()?);
+/// [X3.135-1986 §5.22, §5.23, §5.25 GR1-GR2] Groups `plan` and computes the
+/// set functions, and keeps the groups HAVING accepts. Without GROUP BY
+/// the aggregation gives one group even of no rows: the argument of a
+/// non-grouped query's set functions [ISO/IEC 9075:1992 §7.9 GR1a i], or
+/// the single group HAVING alone makes [ISO/IEC 9075:1992 §7.8 GR1]. A
+/// grouped table of 0 groups gives no row, whatever the select list
+/// [ISO/IEC 9075:1992 §7.9 GR1b i]: GROUP BY of no rows makes none, and
+/// HAVING may remove every group, the single one included.
+fn group(plan: LogicalPlan, g: Grouping, having: Option<Cond>) -> LogicalPlan {
+    let plan = LogicalPlan::Aggregate { groups: g.columns, aggs: g.aggs.into_inner(), input: Box::new(plan) };
+    match having {
+        Some(cond) => LogicalPlan::Filter { cond, input: Box::new(plan) },
+        None => plan,
     }
-    let mut plan = LogicalPlan::Aggregate { groups: g.columns, aggs, input: Box::new(plan) };
-    if let Some(cond) = having {
-        plan = LogicalPlan::Filter { cond, input: Box::new(plan) };
-    }
-    if default_row {
-        plan = LogicalPlan::DefaultRow { row: empty_row, input: Box::new(plan) };
-    }
-    Ok(plan)
 }
