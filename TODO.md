@@ -213,9 +213,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
     ClickHouse sorting keys took DESC in 24.12 for the same reads);
   - a table option of columns (COLUMNSTORE.ORDER) following a column
     renamed, once ALTER TABLE renames columns;
-  - chunks compressed further: FSST for texts; a dictionary of numbers
-    read as a vector of them, not a value at a time; and conditions
-    judged on a frame or runs without decoding each value;
+  - chunks compressed further: FSST for texts; and conditions judged on
+    a frame or runs without decoding each value;
 
 ---
 

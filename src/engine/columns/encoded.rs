@@ -367,7 +367,7 @@ impl Body<'_> {
     /// \[DESIGN\] The values at positions `from` to `to`, each 8 bytes, an
     /// exact number's units or an approximate number's bits, as integers
     /// pushed to `out`, a null's 0 (`Ints`, `Floats`): none if the
-    /// encoding is of varying fields or a dictionary. Each frame's width read with a loop of its own, so its
+    /// encoding is of varying fields or a dictionary of them. Each frame's width read with a loop of its own, so its
     /// differences are read as fast as plain integers.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         let count = to.checked_sub(from)?;
@@ -375,6 +375,7 @@ impl Body<'_> {
             Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), out),
             Body::Runs(runs) => runs.ints((from, to), out),
             Body::Alp(alp) => alp.words((from, to), out),
+            Body::Dictionary { bits, offsets, entries, codes } => dictionary_words((*bits, offsets, entries, codes), (from, to), out),
             Body::Fixed { width: FRAMED, values } => {
                 let given = values.get(from.checked_mul(FRAMED)?..to.checked_mul(FRAMED)?)?;
                 out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&w| i64::from_le_bytes(w)));
@@ -385,7 +386,7 @@ impl Body<'_> {
                 out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
                 Some(())
             }
-            Body::Fixed { .. } | Body::Varying { .. } | Body::Dictionary { .. } => None,
+            Body::Fixed { .. } | Body::Varying { .. } => None,
         }
     }
 }
@@ -461,6 +462,28 @@ impl Body<'_> {
             Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) | Body::Alp(_) => None,
         }
     }
+}
+
+/// The values at positions `from` to `to` of a dictionary whose codes of
+/// `bits` are `codes`, each its entry's 8 bytes as an integer, pushed to
+/// `out`: the entries read once, then the codes unpacked a run at a time;
+/// none if an entry is not of 8 bytes.
+fn dictionary_words(
+    (bits, offsets, entries, codes): (u32, &[u8], &[u8], &[u8]),
+    (from, to): (usize, usize),
+    out: &mut Vec<i64>,
+) -> Option<()> {
+    let count = offsets.len().checked_div(WORD)?.checked_sub(1)?;
+    let words: Vec<i64> =
+        (0..count).map(|e| between(offsets, e).and_then(|(a, b)| entries.get(a..b)).and_then(integer)).collect::<Option<_>>()?;
+    out.reserve(to.checked_sub(from)?);
+    let mut ok = true;
+    unpack(codes, bits, (from, to), |c| {
+        let word = usize::try_from(c).ok().and_then(|c| words.get(c)).copied();
+        ok = ok && word.is_some();
+        out.push(word.unwrap_or(0));
+    })?;
+    ok.then_some(())
 }
 
 /// Where the `e`th of the fields `offsets` gives begins and ends.

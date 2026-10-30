@@ -904,7 +904,9 @@ the format of frozen groups becomes a trait when it is.
   tree has no entry for, gives an exact column's integers decoded
   straight from its chunks, each chunk's span asked of it at once, each
   whole byte's width of a frame of reference read by a loop of its own
-  and other widths unpacked (`Body::ints`), and of a
+  and other widths unpacked, a dictionary's entries of 8 bytes read once
+  and its codes unpacked (`Body::ints`: of 300 numbers far apart, `SUM`
+  of 393,216 rows 5.5 ms to 2.0, a comparison 5.3 to 2.3), and of a
   vector of integers COUNT, SUM, AVG, MIN and MAX are fed, and a column
   compared with constants, IS NULL and IN judged, as integers, scaled
   once to one scale, a running sum checked a value at a time as decimals

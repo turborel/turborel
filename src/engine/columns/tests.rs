@@ -143,8 +143,8 @@ fn ints_of(values: &[Value], compress: bool, (from, to): (usize, usize)) -> Opti
 /// integers gives, of a range of its positions, the values read one at a
 /// time give, nulls as nulls: a frame of reference whose differences take
 /// 1, 2, 3, 4, 5 and 8 bytes, of negative numbers too; fixed fields; a
-/// constant, and one of nulls only. A dictionary gives none, nor a range
-/// past the chunk's end.
+/// constant, and one of nulls only; a dictionary of numbers far apart,
+/// whole and in part. A range past the chunk's end gives none.
 #[test]
 fn chunks_give_their_integers() {
     let with_nulls = |values: Vec<i128>| -> Vec<Value> {
@@ -169,7 +169,10 @@ fn chunks_give_their_integers() {
     let nulls_read = ints_of(&nulls, true, (0, 12)).unwrap();
     assert_eq!(nulls_read.0, nulls_read.1, "nulls only");
     let few = with_nulls((0..300_i128).map(|n| [5, 900_000_000_000, -7][usize::try_from(n % 3).unwrap()]).collect());
-    assert_eq!(ints_of(&few, true, (0, 300)), None, "a dictionary");
+    let few_read = ints_of(&few, true, (0, 300)).unwrap();
+    assert_eq!(few_read.0, few_read.1, "a dictionary");
+    let few_part = ints_of(&few, true, (7, 211)).unwrap();
+    assert_eq!(few_part.0, few_part.1, "a dictionary, a part");
     assert_eq!(ints_of(&fixed, false, (0, 21)), None, "past the end");
 }
 
