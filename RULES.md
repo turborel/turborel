@@ -373,8 +373,8 @@ under R-SAFE-4.
   not taken: its own README calls it an experiment, not for third parties
   to depend on. In the client, only with its feature `tls`.
 - Tests make their certificates with rcgen 0.14.10 (MIT or Apache-2.0),
-  on aws-lc-rs, a development dependency of the server: none is kept in
-  the repository to expire.
+  on aws-lc-rs, a dependency of the test support's feature `tls`, which
+  the server's tests take: none is kept in the repository to expire.
 - Encryption at rest: AES-256-GCM from the same aws-lc-rs, in the crate
   `turborel-aes`, an encoding (D48), its subkeys by HKDF-SHA256.
 - Passwords: PBKDF2-HMAC-SHA256 from the same aws-lc-rs (D43), at
@@ -587,7 +587,7 @@ sent as a built-in one is.
 - A time or timestamp is kept as its instant in UTC, to the microsecond,
   as ISO/IEC 9075:1992 §4.5.1 says, with its displacement if its type is
   WITH TIME ZONE. Without time zone, its displacement is the session's,
-  implied [§6.1 SR5]: a value retrieved is shown in it, so it shows
+  implied [§6.1 GR5]: a value retrieved is shown in it, so it shows
   differently in a session of another zone. A date is its days.
 - A session's displacement is the setting TIME_ZONE, the database's by
   default, `+00:00`, and its own if it sets one, by SET TIME ZONE [§16.5]
@@ -717,8 +717,7 @@ the format of frozen groups becomes a trait when it is.
   to nine tenths of a page, then the levels above. A value replaced by
   one of its length, as a version stamped committed is, is written over
   in place, nothing moved, so a leaf is not compacted again and again as
-  a commit stamps its versions: a commit of 2048 rows went from 8.6 ms to
-  1.8 ms.
+  a commit stamps its versions, rather than writing them again.
 - The newest version of a row is in the tree; older ones are in an undo
   store, a log: on disk for a database kept in a directory (`undo/`),
   never synced and begun anew when it opens, as no reader outlives the
@@ -740,17 +739,12 @@ the format of frozen groups becomes a trait when it is.
   they do not match, and count as read only those they all match; the
   filter still judges every row given. The row store skips the zones,
   the column store the frozen chunks, any of them cannot match, and each
-  leaves the rows of the rest to the filter, as judging them twice cost
-  more than it saved (`G NOT IN (1, 2)` of the row store's 400,000 rows:
-  45.9 ms, 53.9 judged in the engine too; `G = 3` of the column
-  store's: 6.4 ms, 11.1). Of the column store's 400,000 rows, `G = 3 AND
-  B < 4000` ran in 1.1 ms where with one conjunct told it took 11.6; `B
-  BETWEEN 100000 AND 103999` in 1.2 ms where it took 13.4; `B IN (5,
-  200000, 399000)` in 1.1 ms where it took 9.0; `N IS NULL`, its nulls in
-  one chunk, in 0.9 ms where it took 4.2; `S LIKE 'k01000%'`, S in the
-  rows' order, in 1.4 ms where it took 53.7 (the row store's: 0.3, where
-  94.7); `B < 1000 OR B > 399000` in 1.3 ms where it took 13.3 (the row
-  store's: 0.4, where 50.8).
+  leaves the rows of the rest to the filter, as judging them twice, in
+  the engine and again in the filter, cost more than it saved. Telling a
+  scan every such conjunct, not only one, lets it skip the chunks and
+  zones any of them rules out: a conjunction, a range, an IN list, IS
+  NULL of nulls kept together, a LIKE prefix of a column in the rows'
+  order, and an OR of ranges.
 - Zone maps of the row store (`rows/zones.rs`): for each block of 1024
   row ids, of each column of a number, a datetime, an interval or a
   character string of at most 32, its least and greatest value and
@@ -763,24 +757,22 @@ the format of frozen groups becomes a trait when it is.
   version is not its row's newest; a write meanwhile throws its sum away.
   So a zone is never narrower than what a snapshot may read. Kept in
   memory, each zone locked alone; a table opened knows none until each is
-  summed up. Of 400,000 rows: `B BETWEEN 100000 AND 103999`, B in the
-  rows' order, 54.4 ms to 0.9 ms; `B IN (5, 200000, 399000)` 48.4 to 0.4;
-  `N IS NULL`, its nulls in two blocks, 45.2 to 0.3; a scan nothing
-  skips 2 to 3% slower; an insert 1% slower.
+  summed up. A range or IN list of a column in the rows' order, or IS
+  NULL of nulls kept together, reads only a few blocks; a scan nothing
+  skips, and an insert, pay a little for keeping the zones.
 - The planner prices a scan by the share of the rows the conditions it
   will be told may match (`TableStorage::scan_share`, `logical::pushed_conjuncts`,
   the executor's same): the row store's zones' rows they may match, of
   256 zones at most, evenly apart, so planning costs no more as a table
-  grows; the column store's frozen chunks and every row of its tree. Of
-  400,000 rows, a tenth counted by a range of a column in the rows' order
-  ran by a scan in 6.8 ms where the index took 19.8; a range of a
-  column of scattered values keeps its index.
+  grows; the column store's frozen chunks and every row of its tree. A
+  range of a column in the rows' order then runs by a scan that skips
+  what it cannot match, faster than by the index; a range of a column of
+  scattered values keeps its index.
 - The planner asks for statistics through a trait, every answer optional:
   rows, widths, distinct values, nulls, selectivity. The row store
   gathers them again, once a table has changed enough, as the database's
-  maintenance (below), not in the commit that made it due: a commit of
-  2048 rows into a growing table took 15.6 ms at the 95th percentile
-  with the pass, 1.9 ms without.
+  maintenance (below), not in the commit that made it due, as a pass in
+  the commit made the commits that fell due for one far slower.
 - The column store: the tree is the table's delta, every row written
   there as in the row store. Once COLUMNSTORE.FREEZE_ROWS rows past the last group are committed
   before every snapshot (and COLUMNSTORE.FREEZE_DELAY seconds ago), the
@@ -794,70 +786,64 @@ the format of frozen groups becomes a trait when it is.
   fewest bytes, and holds as many values as its page does so: plain, a
   constant, a frame of reference of 8-byte fields (any such field read as
   a signed integer, so every type of that width), each difference
-  bit-packed in the bits its span needs (`columns/packed.rs`: a chunk of
-  2048 numbers of 12 values 2318 bytes to 1040, of a flag 2318 to 272, of
-  numbers up to 400,000 8462 to 4880), runs of one value of such fields,
-  each run's value and end bit-packed, a null continuing the run before
-  it (`columns/runs.rs`: a sorted column of 400,000 rows of 80 values
-  summed 2.2 ms to 1.9), or a dictionary, each value's code bit-packed
-  in the bits its entries need (`columns/encoded.rs`: of 12 texts, 4 bits
-  a code, not a byte, scanned as fast), or, of approximate numbers, each
-  as n / 10^e, n bit-packed as a frame's, e of the first 64 values the one
-  leaving fewest exceptions, kept as they are, n / 10^e checked to be the
-  value bit for bit (ALP, Afroozeh et al., SIGMOD 2023; `columns/alp.rs`:
-  no cast, integers made exact up to 2^53; 65,536 prices of two decimals
-  44 pages to 134, measures of one 29; read a run at a time as a scan's
-  vector of approximate numbers, `Floats`, a `SUM` of 393,216 in memory
-  1.65 ms where plain it takes 2.26, and either took 6.1 a value at a
-  time); or, of VARCHAR texts, each as one-byte codes of a table of at
-  most 64 symbols of 1 to 8 bytes, a byte of none escaped (FSST, Boncz,
-  Neumann and Leis, VLDB 2020; `columns/fsst.rs`): the table chosen once
-  of a group's column, of 16 runs of its texts taken evenly through it,
-  as every n-th text misses a pattern's kinds, in FSST's five rounds,
-  symbols counted packed in a word, no allocation, and held in each
-  chunk, 576 bytes at most; decoded a symbol a word of 8 bytes at a time,
-  a range checked UTF-8 at once, each end on a character's boundary (of
-  65,536 addresses, mails and links, 361 pages to 125; of 393,216, scans
-  as fast, `COUNT(T)` 8.1 ms where plain it takes 8.3, a load and freeze
-  5% slower); COLUMNSTORE.COMPRESSION = NONE keeps them plain.
-  Unpacked a value's 8 bytes at a time, a column of numbers held in
-  memory scans a tenth slower than of whole bytes (`SUM(B)` of 400,000
-  rows 2.0 ms to 2.3), as its pages are half as many or fewer.
-  Measured: rows of numbers of few values or near one another, and of
-  texts of few values, freeze into 12 pages where they take 46 plain, and
-  scans run as fast, a value read at a time either way. A group's rows are
-  in row id order, or sorted by the columns COLUMNSTORE.ORDER names (at
-  most 8, ascending, nulls as ORDER BY puts them, row ids breaking ties)
-  as they are frozen or written again, its ids then kept in its rows'
-  order and its rows' positions by id, so a row is found by its id: a
-  hundredth of 200,000 rows counted by a scattered column ran 4.7 times
-  as fast sorted by it (`bench/analytics.rs`), a column the rows were in
-  order of a sixth slower, a fetch by key a twentieth. A group's header
-  records the columns its rows are sorted by; once the option names
-  others, the maintenance thread writes each group again sorted as it
-  says, two a call, until none is left, after a restart too. An ORDER BY
-  of the first columns the option names, each ascending, is answered by a
-  scan in their order, no sort planned (`TableStorage::scan_ordered`,
+  bit-packed in the bits its span needs (`columns/packed.rs`), runs of
+  one value of such fields, each run's value and end bit-packed, a null
+  continuing the run before it (`columns/runs.rs`), or a dictionary, each
+  value's code bit-packed in the bits its entries need
+  (`columns/encoded.rs`: of 12 texts, 4 bits a code, not a byte), or, of
+  approximate numbers, each as n / 10^e, n bit-packed as a frame's, e of
+  the first 64 values the one leaving fewest exceptions, kept as they
+  are, n / 10^e checked to be the value bit for bit (ALP, Afroozeh et
+  al., SIGMOD 2023; `columns/alp.rs`: no cast, integers made exact up to
+  2^53; read a run at a time as a scan's vector of approximate numbers,
+  `Floats`, faster than a value at a time); or, of VARCHAR texts, each
+  as one-byte codes of a table of at most 64 symbols of 1 to 8 bytes, a
+  byte of none escaped (FSST, Boncz, Neumann and Leis, VLDB 2020;
+  `columns/fsst.rs`): the table chosen once of a group's column, of 16
+  runs of its texts taken evenly through it, as every n-th text misses a
+  pattern's kinds, in FSST's five rounds, symbols counted packed in a
+  word, no allocation, and held in each chunk, 576 bytes at most; decoded
+  a symbol a word of 8 bytes at a time, a range checked UTF-8 at once,
+  each end on a character's boundary, so texts take far fewer pages and
+  scan about as fast, a load and freeze paying a little for choosing the
+  table; COLUMNSTORE.COMPRESSION = NONE keeps them plain. Unpacked a
+  value's 8 bytes at a time, a column of numbers held in memory scans a
+  little slower than of whole bytes, as its pages are half as many or
+  fewer. Rows of numbers of few values or near one another, and of texts
+  of few values, freeze into far fewer pages than plain, and scans run
+  as fast, a value read at a time either way. A group's rows are in row
+  id order, or sorted by the columns COLUMNSTORE.ORDER names (at most 8,
+  ascending, nulls as ORDER BY puts them, row ids breaking ties) as they
+  are frozen or written again, its ids then kept in its rows' order and
+  its rows' positions by id, so a row is found by its id: a few rows
+  counted by a scattered column run much faster sorted by it, as the scan
+  skips the rest (`bench/analytics.rs` compares them), a column the rows
+  were in order of slower, a fetch by key a little slower. A group's
+  header records the columns its rows are sorted by; once the option
+  names others, the maintenance thread writes each group again sorted as
+  it says, two a call, until none is left, after a restart too. An ORDER
+  BY of the first columns the option names, each ascending, is answered
+  by a scan in their order, no sort planned (`TableStorage::scan_ordered`,
   `frozen/ordered.rs`): each group's rows a vector at a time, only the
   runs a condition may match, those the tree has an entry for left out,
   and the tree's rows the reader sees sorted, merged by a heap, the least
   of their keys as ORDER BY sorts them first; a group sorted otherwise,
   as the option changed, read whole and sorted, and a scan the plan asked
-  for that its table no longer gives in order read and sorted (of
-  393,216 rows, `ORDER BY S` 184 ms to 92, its sort of 132 ms over a scan
-  of 52 left out but the merge's). Of the
-  columns COLUMNSTORE.BLOOM names (at most 8), each part of each chunk
-  keeps a Bloom filter (`columns/bloom.rs`): 1280 bytes, 10 bits a row,
-  each value not null setting 7 bits of its bucket (`value::bucket`, the
-  form every two values that compare equal share) hashed by MurmurHash3
-  x64-128 (D30), the i-th h1 + i × h2 of its halves (Kirsch and
-  Mitzenmacher, 2006), so 1.5, 1.50 and 1.5E0, and 'a' and 'a  ', set the
-  same bits; filters are packed on pages of their own, read only by a
-  scan of an equality or IN of the column, after its parts' bounds: of
-  393,216 rows of distinct values in no order, a lookup by number ran
-  2.1 ms to 80 us, by text 13.2 ms to 157 us, values absent taken as
-  present 0.8% of the time. A group whose filters are of other columns
-  than the option names is written again as for ORDER. An option naming
+  for that its table no longer gives in order read and sorted. So the
+  sort, which cost more than the scan, is left out, all but the merge's
+  work. Of the columns COLUMNSTORE.BLOOM names (at most 8), each part of
+  each chunk keeps a Bloom filter (`columns/bloom.rs`): 1280 bytes, 10
+  bits a row, each value not null setting 7 bits of its bucket
+  (`value::bucket`, the form every two values that compare equal share)
+  hashed by MurmurHash3 x64-128 (D30), the i-th h1 + i × h2 of its
+  halves (Kirsch and Mitzenmacher, 2006), so 1.5, 1.50 and 1.5E0, and 'a'
+  and 'a  ', set the same bits; filters are packed on pages of their own,
+  read only by a scan of an equality or IN of the column, after its
+  parts' bounds, so a lookup of a column of distinct values in no order,
+  which bounds cannot narrow, reads only the parts that may hold it,
+  values absent taken as present some 0.8% of the time, as 10 bits and 7
+  hashes give. A group whose filters are of other columns than the option
+  names is written again as for ORDER. An option naming
   columns (`Kind::Columns`) names the table's, and a column it names is
   not dropped. Groups are immutable, their row ids' ranges apart,
   found through a directory the meta page names, which keeps of each its
@@ -869,9 +855,9 @@ the format of frozen groups becomes a trait when it is.
   it was read recently (`columns/cache.rs`): a store's tables hold at most
   `HEADER_CACHE_BYTES` (16 MiB) of headers, reserved of the memory budget
   a MiB at a time, the one read longest ago given up first, and one the
-  budget has no room for read each time (a header of 65,536 rows of three
-  columns is 15.5 KB, read in 34 us). A row's newest state is
-  its entry in the tree if it has one, else its group's values, which
+  budget has no room for read each time; so a header read often is not
+  read and decoded again for each scan and fetch. A row's newest state
+  is its entry in the tree if it has one, else its group's values, which
   every reader sees: so a frozen row changed is written as any row is,
   over a version holding its frozen values, and a deletion of one stays in
   the tree, until its group is written again: once the tree's entries in
@@ -890,11 +876,11 @@ the format of frozen groups becomes a trait when it is.
   row then its group's.
 - Maintenance (`db/maintenance.rs`): work an engine leaves for later
   (`TableStorage::maintenance_due`, `maintain`), statistics gathered
-  again and the column store's freezes, rewrites and entries taken out, so no transaction waits for
-  it: measured over 100 commits of 2048 rows each, in groups of 2^16,
-  the slowest twentieth of commits went from 47 ms to 30 ms. A
-  transaction's end notes a table with work due and asks the database's
-  maintenance thread, started the first time; it has each table noted do
+  again and the column store's freezes, rewrites and entries taken out,
+  so no transaction waits for it, and the slowest commits are no longer
+  those that fell due for such work. A transaction's end notes a table
+  with work due and asks the database's maintenance thread, started the
+  first time; it has each table noted do
   some, one at a time, under the gate, so a checkpoint waits for at most
   a few groups, and goes round again while any did some; a table still
   due though it did none it looks at again a second later, so a freeze
@@ -907,14 +893,13 @@ the format of frozen groups becomes a trait when it is.
   columns are read, a frozen row 0.25 and 0.75 more; and a fetch by id
   4.4 of a table the buffer pool holds, more as it holds less of it, to
   14.6 of one it holds none of (its bytes of the table's, by its rows and
-  their width), 10% more as all the rows are frozen, as measured
-  (`bench/analytics.rs`; a scan of 400,000 rows of sixteen columns, 0.27
-  us a row read for no column and 0.06 more for fourteen; in a database's
-  files, a fetch through an index 1.28 us a row, a scan 0.29, with a pool
-  of 256 MiB; 5.3 and 0.36 with one of 1 MiB. Priced at 3 a fetch, the
-  planner chose the index up to a third of the rows, a fifth taking 308
-  ms where a scan took 123; priced at 10, a scan of a tenth of a table
-  the pool held, 98 ms where the index took 46).
+  their width), 10% more as all the rows are frozen. The weights follow
+  the costs `bench/analytics.rs` compares: a row costs a scan little
+  more for each column read; a fetch through an index costs several
+  times a row scanned, and far more once the pool no longer holds the
+  table. A fetch priced too cheap had the planner take an index for so
+  many rows that a scan was faster; priced too dear, a scan where the
+  index was faster.
 - Batches (`TableStorage::scan_batches`): a scan's rows by vectors of up
   to 2048 of each column's values, in no particular order, by default its
   rows gathered. A column's vector is of values, or, of an exact number a
@@ -925,48 +910,43 @@ the format of frozen groups becomes a trait when it is.
   straight from its chunks, each chunk's span asked of it at once, each
   whole byte's width of a frame of reference read by a loop of its own
   and other widths unpacked, a dictionary's entries of 8 bytes read once
-  and its codes unpacked (`Body::ints`: of 300 numbers far apart, `SUM`
-  of 393,216 rows 5.5 ms to 2.0, a comparison 5.3 to 2.3), and of a
-  vector of integers COUNT, SUM, AVG, MIN and MAX are fed, and a column
-  compared with constants, IS NULL and IN judged, as integers, scaled
-  once to one scale, a running sum checked a value at a time as decimals
-  check it (of 400,000 rows: `SUM(B)` 5.6 ms to 2.1, `B > 200000` 5.6 to
-  2.3; of the chunks alone, decoded 2.3 ms to 0.04). An approximate
-  column's vector, of such a run, is of its numbers as `f64`s
-  (`storage::Floats`), each chunk's 8-byte fields read as an exact
-  column's are, its bits the number's, and of ALP a run at a time: of it
+  and its codes unpacked (`Body::ints`), and of a vector of integers
+  COUNT, SUM, AVG, MIN and MAX are fed, and a column compared with
+  constants, IS NULL and IN judged, as integers, scaled once to one
+  scale, a running sum checked a value at a time as decimals check it,
+  so no value is made of each row. An approximate column's vector, of
+  such a run, is of its numbers as `f64`s (`storage::Floats`), each
+  chunk's 8-byte fields read as an exact column's are, its bits the
+  number's, and of ALP a run at a time: of it
   COUNT, SUM, AVG, MIN and MAX are fed, SUM adding in the order a row at
   a time does, so the same total, and checked as `arith` checks it, a
   sum out of range given again a value at a time so it raises alike;
   comparisons with constants, IN and IS NULL judged of it, an exact
   constant compared as `value::compare` compares it (`judge/floats.rs`),
-  and grouping keys made of it (of 393,216 rows: `SUM(P)` 6.1 ms to
-  1.65, `P > 9990.0E0` 3.3 to 1.5, `MAX(M), MIN(P)` 8.5 to 3.4). A VARCHAR column's
-  vector, of a run of a frozen group, is its text, one buffer of every
+  and grouping keys made of it, again no value made of each row. A
+  VARCHAR column's vector, of a run of a frozen group, is its text, one
+  buffer of every
   row's and where each ends (`storage::Texts`), decoded straight from
   varying, dictionary and constant chunks, each checked UTF-8: LIKE a
   constant pattern, comparisons with constant strings, padded as strings
   compare, IN, IS NULL and COUNT are judged and fed of the text, and
-  grouping keys made of it (`judge/texts.rs`; of 400,000 rows: `S LIKE
-  '%5%'` 11.6 ms to 6.9, `S = 's7'` 13.4 to 7.7, `GROUP BY S` 16.3 to
-  10.8, `COUNT(T)` 9.8 to 5.3). Of runs whose chunks are all
-  dictionaries, it is their entries and each row's entry among them
-  (`storage::Coded`), a condition then judged once of each entry and a
-  row kept by its entry's (`S LIKE '%5%'` 6.9 to 2.9, `S = 's7'` 7.7 to
-  2.9, `S IN ('s1', 's2', 's3')` 12.0 to 3.2); making a group's key of
-  an entry once, not of each row, saved nothing, its hashing the cost. An expression of
-  integers and exact constants, negated, summed, subtracted or
-  multiplied, is evaluated as integers at the scale decimals give it, a
-  result past 18 digits, or a quotient, evaluated of values, which raise
-  of it (`vector/ints.rs`: `SUM(B * 2)` 7.3 ms to 2.8). Grouping makes an
+  grouping keys made of it (`judge/texts.rs`), no value made of each
+  row. Of runs whose chunks are all dictionaries, it is their entries and
+  each row's entry among them (`storage::Coded`), a condition then
+  judged once of each entry and a row kept by its entry's, so a text is
+  judged once, not once for each row that holds it; making a group's key
+  of an entry once, not of each row, saved nothing, its hashing the
+  cost. An expression of integers and exact constants, negated, summed,
+  subtracted or multiplied, is evaluated as integers at the scale
+  decimals give it, a result past 18 digits, or a quotient, evaluated of
+  values, which raise of it (`vector/ints.rs`). Grouping makes an
   integer's key as its value's (`spill::put_norm_exact`), reads a batch's
   values in place (`storage::Cell`), and gathers each group's rows of a
   batch in order, a counting sort into one buffer, to feed its set
-  functions a vector at a time (`GROUP BY G` with `SUM(B)` 11.9 ms to
-  8.2, with `SUM(B * 2 + 1)` 19.6 to 10.1, `GROUP BY G, S` 24.2 to 19.0).
-  A column store table
-  gives each frozen vector straight from its chunks, a condition's columns read first and the others only
-  of the rows it keeps; the tree's entries in its group's range of row
+  functions a vector at a time. A column store table gives each frozen
+  vector straight from its chunks, a condition's columns read first and
+  the others only of the rows it keeps; the tree's entries in its
+  group's range of row
   ids, read once as the group is taken up, in their rows' place; then the
   tree's other rows. A subtree of a plan gives its rows by batch (a
   stream, `exec/batch/stream.rs`) if it is a table's scan; a filter of
@@ -976,66 +956,52 @@ the format of frozen groups becomes a trait when it is.
   row path builds it; held in the work area, each of the left's batches
   probes it, a batch of joined rows made of each, the left's columns then
   the right's; partitioned, the joined rows made row by row and gathered.
-  Of 400,000 rows joined with 10, a COUNT(*) of the column store took
-  16 ms where row by row it took 79 (the row store's, 50 where 110), and
-  SUM grouped by a column of the 10 rows 36 where 123 (71 where 151). A
-  LEFT outer join on keys, no other condition, of streams is one too,
-  each left row no right row matches joined with nulls; its right
-  operand, outgrowing the work area, moved to a table of the spill area,
-  so every left row probes it in order: of the same rows, COUNT(*) 20.4
-  ms where 77.8 (54.0 where 110), grouped 33.2 where 110 (67.5 where
-  137). An
+  A join's count or grouped sum so runs much faster than row by row, of
+  either store. A LEFT outer join on keys, no other condition, of streams
+  is one too, each left row no right row matches joined with nulls; its
+  right operand, outgrowing the work area, moved to a table of the spill
+  area, so every left row probes it in order, and gains alike. An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the stream holds or not at all, of a
   stream, feeds them from the vectors (`exec/batch.rs`), each a column's
   values, or an expression's evaluated as a row's is, of a row of only
-  the values it reads, no subquery in it (`SUM(B * 2)` of 400,000 rows of
-  the column store: 31.0 ms to 11.9; grouped, `SUM(B * 2 + 1)` 72.6 to
-  24.8); one of columns and constants, negated and in arithmetic, no
-  deeper than 16, a vector at a time, each node once over the batch, a
-  value at a time as a row's (`exec/batch/vector.rs`), or the batch's a
-  row at a time if one raises an error, so the error is the row's
-  (`SUM(B * 2)` 12.2 to 9.4, grouped 25.1 to 23.7),
-  of no GROUP BY a vector at a time (`Accumulator::update_many`,
-  `update_rows`, each by default `update` a value at a time): COUNT
-  counting, SUM adding exact values as decimals, nothing cloned, MAX and
-  MIN cloning only the best (of the column store, COUNT(*) 142M to 206M
-  rows a second, SUM 47.8M to 62.3M, `bench/analytics.rs`). A
-  filter that cannot raise an error has its conjuncts comparing a column
-  with a constant, testing it IS NULL or IS NOT NULL, IN or NOT IN a
-  list of constants, or LIKE a constant pattern, split once and matched
-  by bytes if the string is ASCII, judged over the vectors, the LIKE last
-  (`exec/batch/judge.rs`): of 400,000 rows, `S LIKE '%5%'` ran in 11.4 ms
-  of the column store where it took 47.8, 52.6 of the row store where it
-  took 85.2. The rest of it is judged of
-  the rows they keep, each made a row; one that can raise is judged whole
-  a row at a time, as row by row. A projection of a stream whose
-  expressions read only its columns, no subquery among them, every table
-  of which reads by batch (`reads_by_batch`, a column store table's), makes
-  each row it gives of the vectors, a column or a constant as it is, any
-  other expression evaluated as a row's is of a row of only the values it
-  reads, kept and written over (`SELECT K + 1, S` of 400,000 rows: 80.8
-  ms to 69.1; `SELECT B * 2, UPPER(S) ... WHERE G = 3`: 44.4 to 25.6), a
-  batch read ahead of what a cursor is given; of any other table it reads
-  a row at a time, as reading ahead would gain nothing
-  (`exec/batch/project.rs`). Groups are held in the work area, given in the order
-  their first rows came; past it, the rows of every group not yet held
-  are written, numbered, as a pass of `exec/group.rs` writes them, grouped
-  as it groups them, and merged with the groups held by number. Measured against the row store row by row (`bench/analytics.rs`): COUNT(*)
-  of a column store table some 50 times as fast, a SUM of one column 17, a
-  filter of 1% 10, a GROUP BY of 10 groups 7.9, each row's grouping key
-  made in a buffer kept (`spill::put_norm`). A projection of columns of a
-  stream is a stream, its batches those columns' vectors, moved; so are
-  the operands of a UNION ALL, each holding every column of its rows
+  the values it reads, no subquery in it; one of columns and constants,
+  negated and in arithmetic, no deeper than 16, a vector at a time, each
+  node once over the batch, a value at a time as a row's
+  (`exec/batch/vector.rs`), or the batch's a row at a time if one raises
+  an error, so the error is the row's; of no GROUP BY a vector at a time
+  (`Accumulator::update_many`, `update_rows`, each by default `update` a
+  value at a time): COUNT counting, SUM adding exact values as decimals,
+  nothing cloned, MAX and MIN cloning only the best. A filter that
+  cannot raise an error has its conjuncts comparing a column with a
+  constant, testing it IS NULL or IS NOT NULL, IN or NOT IN a list of
+  constants, or LIKE a constant pattern, split once and matched by bytes
+  if the string is ASCII, judged over the vectors, the LIKE last
+  (`exec/batch/judge.rs`), much faster than a row at a time, of either
+  store. The rest of it is judged of the rows they keep, each made a
+  row; one that can raise is judged whole a row at a time, as row by
+  row. A projection of a stream whose expressions read only its columns,
+  no subquery among them, every table of which reads by batch
+  (`reads_by_batch`, a column store table's), makes each row it gives of
+  the vectors, a column or a constant as it is, any other expression
+  evaluated as a row's is of a row of only the values it reads, kept and
+  written over, a batch read ahead of what a cursor is given; of any
+  other table it reads a row at a time, as reading ahead would gain
+  nothing (`exec/batch/project.rs`). Groups are held in the work area,
+  given in the order their first rows came; past it, the rows of every
+  group not yet held are written, numbered, as a pass of `exec/group.rs`
+  writes them, grouped as it groups them, and merged with the groups
+  held by number. Each row's grouping key is made in a buffer kept
+  (`spill::put_norm`). Against the row store read row by row, a column
+  store table's counts, sums, filters and groupings by batch run far
+  faster (`bench/analytics.rs` compares them). A projection of columns
+  of a stream is a stream, its batches those columns' vectors, moved; so
+  are the operands of a UNION ALL, each holding every column of its rows
   alike, read in turn, a chain of them gathered without a frame each. A
   DISTINCT of a stream holding every column of its rows is that grouping
   by every column, no set function (`batch::distinct_grouping`): its groups
   are DISTINCT's rows, in the order their first came, past the work area
-  too (of 400,000 rows of the column store, `SELECT DISTINCT G` 41.5 ms to
-  9.0, of `G, S` 60.4 to 19.3; of the row store, 88.0 to 46.0); a UNION,
-  a DISTINCT of its operands appended, too (`G UNION G` of the column
-  store 39.9 to 18.7, of the row store 131 to 91.4; a COUNT(*) of a UNION
-  ALL 77.4 to 7.2). The setting
+  too; a UNION, a DISTINCT of its operands appended, too. The setting
   EXECUTOR.BATCHES, a session's too, ON by default, reads by batches
   where a query can; OFF, a row at a time throughout, as to compare the
   two, as the tests of batches do, each answer read both ways.
@@ -1043,12 +1009,12 @@ the format of frozen groups becomes a trait when it is.
 the base the other layouts build on. Logical row ids stay stable, so
 indexes never need rewriting for them, frozen or not. Columns suit scans
 of a few columns of many rows; keeping new rows as rows keeps writes and
-key lookups as fast as in the row store, the design of SQL Server's deltastore,
-HyPer's Data Blocks and TiFlash's delta tree. Measured on 200,000 rows of
-16 columns in memory, against the row store (`bench/analytics.rs`): COUNT(*) 3.1
-times as fast, a SUM of one column 3.0, a filter of 1% by a column in the
-rows' order 4.8; one row fetched by key 7% slower, as each column is a
-page of its own.
+key lookups as fast as in the row store, the design of SQL Server's
+deltastore, HyPer's Data Blocks and TiFlash's delta tree. Against the
+row store, a column store table counts, sums and filters by a column in
+the rows' order much faster (`bench/analytics.rs` compares them); one
+row fetched by key is a little slower, as each column is a page of its
+own.
 
 **D34. Index methods.** An index method is a plug-in that creates indexes
 and says which probes they answer. Two are built in, both in pages through
@@ -1056,9 +1022,9 @@ the buffer pool, so an index larger than memory lives in its file:
 - `btree`, a B-link tree keyed by the encoded key then the row id: ordered,
   for equality and ranges. A lower and an upper bound of one column, as
   BETWEEN gives, are one probe (`Probe::Range`), so the keys past the
-  upper are not read: 100 keys of 200,000 by BETWEEN went from 28 to some
-  7,400 queries a second (`bench/cursors.rs`, 2026-10-28). A method says
-  it answers ranges by `IndexMethod::supports_range`.
+  upper are not read, and a short range costs its own keys, not the rest
+  of the index (`bench/cursors.rs` compares them). A method says it
+  answers ranges by `IndexMethod::supports_range`.
 - `hash`, a linear hash table (Litwin, 1980) keyed by the encoded key:
   equality only, growing and shrinking a bucket at a time, readers locking
   nothing.
@@ -1083,8 +1049,8 @@ tree's, under the leaf's lock, of the entries beside the new one, not when
 the leaf before may hold one, nor when the leaf after may, its high key
 beginning with the key. A UNIQUE constraint at a statement's end does not
 read a row whose entry was so: a row of its key inserted after was not,
-and is read itself. An INSERT of 2048 rows with a PRIMARY KEY went from
-6.9 ms to 5.7.
+and is read itself. So an INSERT into a table with a PRIMARY KEY reads
+again at its end only the rows whose entries were not found alone.
 *Why:* each kind of index excels at different probes, and the planner
 picks by estimate, so a new method needs no change to the planner.
 
@@ -1173,9 +1139,10 @@ catalog to keep in step.
   settings it set over the database's (D36). Past that it spills to an area of as many bytes, reserved of the
   budget: a temporary pager file whose buffer pool is the area, so
   eviction writes it to disk; its creation not made durable
-  (`Pager::create_scratch`), as nothing reads it after a crash, which
-  saved 7 to 9 ms of each sort that spilled. In the area it makes tables (byte keys to
-  values, in the order added) and runs (records read back in order).
+  (`Pager::create_scratch`), as nothing reads it after a crash, so a
+  sort that spills waits for no sync. In the area it makes tables (byte
+  keys to values, in the order added) and runs (records read back in
+  order).
   Areas come from a provider, an extension point (`Spill`), given to
   plug-ins through the `Host` too, so one may give partitioned or parallel
   areas.
@@ -1183,11 +1150,10 @@ catalog to keep in step.
   merge, stable; the rows held, or each run, sorted by a prefix of the
   first key, a number in the key's order, beside each row's place, those
   of equal prefixes compared whole, or by the other keys only if every
-  prefix holds its value whole (`exec/sort/prefix.rs`): of 400,000 rows
-  in memory, by a column of random integers, 95 ms to 40.6, as the rows
-  themselves, each in memory of its own, are no longer read for every
-  comparison; grouping and DISTINCT give their rows in the order their
-  first rows came. A hash join is partitioned (Grace), its partitions
+  prefix holds its value whole (`exec/sort/prefix.rs`), faster, as the
+  rows themselves, each in memory of its own, are no longer read for
+  every comparison; grouping and DISTINCT give their rows in the order
+  their first rows came. A hash join is partitioned (Grace), its partitions
   partitioned again while they outgrow the work area, its left rows
   numbered so the joined rows are merged back into the left operand's
   order. Grouping, DISTINCT, EXCEPT and INTERSECT partition so too, by
