@@ -16,6 +16,7 @@ mod file_length;
 mod files;
 mod json;
 mod lint_audit;
+mod threads;
 mod trace;
 
 use std::path::Path;
@@ -109,6 +110,8 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     trace::check(root)?;
     step("citations (R-DOC-5)");
     citations::check(root)?;
+    step("threads (R-SAFE-5)");
+    threads::check(root)?;
     step("tests: unit and integration (R-TEST)");
     command::cargo(root, &TEST_ARGS, NO_ENV)?;
     step("doc tests (R-TEST-1)");

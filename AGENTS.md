@@ -222,7 +222,11 @@ warning an error. The ones most often broken:
 - **Pluggable.** Extension points are traits registered on `Database`
   (`register_engine`, `register_index_method`, `set_log`, `set_spill`,
   ...), listed at the top of `src/db.rs`; `dyn Trait` only there (R-SAFE-3).
-  A number a subsystem is tuned by is a setting (D36).
+  A number an operator tunes is a setting (D36), named `GROUP.NAME` with
+  its unit.
+- **No thread but through the thread manager** (D55, R-SAFE-5): background
+  work is a job of `src/threads.rs`; the server's threads come from
+  `server/src/runtime.rs`. `verify` refuses a thread started elsewhere.
 - **Multiplatform.** A portable baseline everywhere; platform extras
   `cfg`-gated, and refused clearly elsewhere (as Unix sockets are off
   Unix, D42). Code compiled on one platform only is checked by CI there
