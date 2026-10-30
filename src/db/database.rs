@@ -6,6 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, Weak};
 use std::thread::{self, ThreadId};
 
+mod handles;
+
+use handles::Program;
+pub(crate) use handles::WeakDatabase;
+
 use super::background::Background;
 use super::files::DatabaseFiles;
 use super::stores::Storages;
@@ -36,31 +41,17 @@ use crate::value::Value;
 /// is a change of definitions from inside one; a call into another session
 /// runs as a separate transaction, which may conflict with the caller's locks
 /// (SQLCODE -911).
+///
+/// The program's handles, and its sessions', are counted apart from those
+/// a job of its own holds while it works (`handles.rs`): as the program's
+/// last is dropped, its jobs are stopped and joined, so the database goes
+/// on the program's thread, its directory's lock given up as the drop
+/// returns (RULES.md D55).
 #[derive(Clone)]
-pub struct Database(Arc<Shared>);
-
-/// A handle to a database that does not keep it open: what a thread of the
-/// database's own holds (`threads.rs`).
-#[derive(Clone)]
-pub(crate) struct WeakDatabase(Weak<Shared>);
-
-/// \[DESIGN\] The sink `Database::events` gives.
-struct Forward(WeakDatabase);
-
-impl Diagnostics for Forward {
-    fn event(&self, event: &Event) {
-        if let Some(db) = self.0.upgrade() {
-            db.emit(event);
-        }
-    }
-}
-
-impl WeakDatabase {
-    /// The database, if it is still open somewhere.
-    pub(crate) fn upgrade(&self) -> Option<Database> {
-        self.0.upgrade().map(Database)
-    }
-}
+pub struct Database(
+    Arc<Shared>,
+    #[expect(dead_code, reason = "held for its count: the program's last, dropped, joins the jobs (RULES.md D55)")] Option<Arc<Program>>,
+);
 
 /// What every handle to one database shares.
 struct Shared {
@@ -84,6 +75,8 @@ struct Shared {
     credentials: RwLock<Option<Arc<dyn Credentials>>>,
     /// Its background work: checkpoints and maintenance (`db/background.rs`).
     background: Background,
+    /// What the program's handles share, while one is held (`handles.rs`).
+    program: Weak<Program>,
 }
 
 /// One thread's turn to change the definitions. Dropping it ends the turn.
@@ -116,7 +109,7 @@ impl Database {
 
     fn over(state: State) -> Self {
         let background = Background::over(Arc::clone(&state.jobs));
-        Database(Arc::new(Shared {
+        Program::over(|program| Shared {
             current: RwLock::new(Arc::new(state)),
             changing: Mutex::new(None),
             turn_ended: Condvar::new(),
@@ -126,7 +119,8 @@ impl Database {
             storages: Storages::default(),
             credentials: RwLock::new(None),
             background,
-        }))
+            program,
+        })
     }
 
     /// \[DESIGN\] A database over a `Catalog` plug-in. Every table and index the
@@ -171,18 +165,6 @@ impl Database {
     /// Its background work.
     pub(super) fn background(&self) -> &Background {
         &self.0.background
-    }
-
-    /// A handle that does not keep the database open.
-    pub(crate) fn downgrade(&self) -> WeakDatabase {
-        WeakDatabase(Arc::downgrade(&self.0))
-    }
-
-    /// A sink that gives each event to the database's sink of the moment,
-    /// while the database is open somewhere: for a part of it that tells
-    /// of failures it goes on past, as its logs (RULES.md D40, D56).
-    pub(crate) fn events(&self) -> Arc<dyn Diagnostics> {
-        Arc::new(Forward(self.downgrade()))
     }
 
     /// Refuses every call from now on.

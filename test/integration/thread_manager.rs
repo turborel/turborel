@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 use turborel::db::{Database, OpenOptions};
 use turborel::error::Code;
 use turborel::threads::{JobInfo, JobPolicy, JobState};
-use turborel::value::Value;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{Kept, Scratch, after_crash};
+use crate::faults::{FaultyFs, Rule};
 
 /// The job labelled `label` of `db`.
 fn job(db: &Database, label: &str) -> JobInfo {
@@ -82,7 +83,7 @@ fn a_failed_close_leaves_checkpoints_running() {
     let scratch = Scratch::new("threads-close");
     let db = Database::new();
     db.open_files(&after_crash(), &scratch.path("db"), &OpenOptions::default()).unwrap();
-    db.set_setting("CHECKPOINT.AFTER_CHANGES", &Value::Exact(turborel::value::Decimal::new(1, 0))).unwrap();
+    db.set_setting("CHECKPOINT.AFTER_CHANGES", &Value::Exact(Decimal::new(1, 0))).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
     let a = db.session("A");
     a.run("INSERT INTO T VALUES (1)").unwrap();
@@ -122,4 +123,38 @@ fn threads_are_shown_to_the_owner() {
     owner.commit().unwrap();
     owner.run("SET DATABASE JOBS.POLICY = 'PAUSED'").unwrap();
     assert_eq!(db.setting("JOBS.POLICY").unwrap().to_string(), "PAUSED");
+}
+
+/// Verifies: [DESIGN] RULES.md D55, D25: the program's last handle,
+/// dropped while a job's thread is in the middle of a checkpoint, stops
+/// and joins it there, so the database's directory, its lock given up as
+/// the drop returns, opens again at once.
+/// Regression test (R-TEST-7): the job held the database as it worked,
+/// and its thread, not the program's, dropped it last, giving the lock up
+/// only then, so the open was refused.
+#[test]
+fn the_last_handle_dropped_joins_its_jobs() {
+    let scratch = Scratch::new("threads-drop");
+    let dir = scratch.path("db");
+    let (fs, faults) = FaultyFs::with_faults();
+    let db = Database::new();
+    db.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
+    db.set_setting("CHECKPOINT.AFTER_CHANGES", &Value::Exact(Decimal::new(1, 0))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    // The checkpoint's thread waits inside its write of the catalog.
+    faults.inject(Rule::delay(Duration::from_millis(500)).on("catalog").times(1));
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (1)").unwrap();
+    a.commit().unwrap();
+    let began = Instant::now();
+    while faults.injected() == 0 && began.elapsed() < Duration::from_secs(30) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(faults.injected(), 1, "the checkpoint's thread is writing");
+    drop(a);
+    drop(db);
+    let again = Database::new();
+    again.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
+    assert_eq!(crate::common::rows(&again.session("A"), "SELECT K FROM T"), Ok(vec!["1".to_owned()]));
+    again.close().unwrap();
 }

@@ -634,7 +634,10 @@ until a later standard's reading is taken.
   either way; none starts once its database is closing; a close that
   fails leaves its jobs as they were; every thread of a database is
   joined before its files and lock are released, and none drops its
-  database last.
+  database last: the program's handles, its sessions' among them, are
+  counted apart from those a job holds while it works, and the program's
+  last, dropped, stops and joins the jobs, a job's work in progress
+  waited for, so the lock is given up as that drop returns.
 - The server's runtime is built by the manager: its threads named, their
   number and its pool of blocking threads from settings (D42); its
   statement workers, listeners and connections counted, refused

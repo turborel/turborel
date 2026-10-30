@@ -193,13 +193,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Storage and durability
 
-- **A database's last handle dropped by a job's thread** (RULES.md D55):
-  a job holds its database strongly while it works, so a program's last
-  `drop` meanwhile completes on the job's thread as its work ends, and
-  only then are the files closed and the directory's lock given up: an
-  open of the directory just after the drop may find it locked. The
-  program's handles counted apart from the jobs', its last stopping and
-  joining them before the database goes.
 - **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
   through `Host`, is kept as the plug-in writes it, which makes its files
   durable itself. A directory it declares shadowed would have its writes

@@ -99,6 +99,8 @@ impl Worker {
         self.signal.set(|w| w.stop = true);
         let Some(thread) = lock_builtin(&self.thread).take() else { return false };
         // The thread itself, ending as it is told: it cannot join itself.
+        // Its database never goes on it (`db/database/handles.rs`), but
+        // its work may stop its own job, as a policy taken there would.
         if thread.thread().id() != thread::current().id() {
             let _ = thread.join();
         }
@@ -106,8 +108,10 @@ impl Worker {
     }
 }
 
-/// Dropped with the database: the thread is told to end, and waited for,
-/// unless the thread itself dropped the database's last handle.
+/// Dropped with the database: the thread is told to end, and waited for.
+/// The program's last handle, dropped, joined it already
+/// (`db/database/handles.rs`): this keeps a thread from outliving its job
+/// whatever drops it.
 impl Drop for Worker {
     fn drop(&mut self) {
         self.stop();
