@@ -78,9 +78,10 @@ the schema their names were read in: a view defined in SHOP that reads
 ITEMS reads SHOP.ITEMS from then on, whatever schema the session reading
 it has.
 
-A constraint's name written without a schema is of the default schema
-too, which may be another than its table's; one the implementation
-gives is of its table's schema.
+A constraint's name written without a schema, a table's or a domain's,
+is of the default schema too, which may be another than its table's or
+domain's; one the implementation gives is of its table's or domain's
+schema. Only the owner of a schema names a constraint in it.
 A domain named without a schema, where the default schema has no domain
 of the name, may name a type a plug-in registers.
 
@@ -124,6 +125,5 @@ In a program, a name in a statement that is a parameter's is the
 parameter: see [DECLARE CURSOR](statements/declare-cursor.md).
 
 The standard: ISO/IEC 9075:1992 §5.4 and §6.4; X3.135-1986 §5.4 and
-§5.7. Where SQL-92 takes a constraint's name written without a schema
-as of the default schema [§5.4 SR8b], turborel takes it as of its
-table's.
+§5.7. That only a schema's owner names a constraint in it is stricter
+than SQL-92.

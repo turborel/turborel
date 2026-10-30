@@ -37,7 +37,8 @@ is checked of the rows there now: a row of a column of the domain that
 breaks it refuses it.
 
 **DROP CONSTRAINT** drops a constraint of the domain, and so of each of
-its columns.
+its columns; a name written without a schema is of the session's default
+schema.
 
 ALTER DOMAIN runs within the session's transaction: ROLLBACK undoes it.
 It locks each table with a column of the domain, as
@@ -65,7 +66,7 @@ REFERENCES a CHECK needs.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the domain's schema, or lacks a privilege the constraint needs |
+| 2A000 | -104 | Its user does not own the domain's schema, or the constraint's, or lacks a privilege the constraint needs |
 | 23000 | -201 | A row breaks the constraint added |
 | 25000 | -917 | The transaction is READ ONLY |
 | TB911 | -911 | Another transaction holds a lock on a table of the domain |

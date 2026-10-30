@@ -109,11 +109,6 @@ RULES.md when its design settles.
   CAST that cuts a string, or pads a bit string with 0 bits, raises no
   warning, SQLSTATE 01004 or 01008, where SQL-92 raises one; a warning
   of an expression needs a way to reach the statement's completion.
-- **Domain constraint names outside a `<schema definition>`** (RULES.md
-  D47): a domain constraint's name written without a schema is taken as
-  its domain's schema's, and one written of another schema is refused,
-  where §5.4 SR8b takes the session's default schema, as for a table's
-  constraint.
 - **Plug-in data types, further** (RULES.md D53): no privilege is needed
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's

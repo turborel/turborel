@@ -372,7 +372,7 @@ fn usage_with_grant_option_11_37() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.21–§11.27] refused: a
-/// domain of no schema, a constraint of it named in another schema, a
+/// domain of no schema, a constraint of it named in another's schema, a
 /// domain constraint not a CHECK, ALTER and DROP of a domain not there or
 /// another's, a default not of its type, a table's CHECK that CASTs to it
 /// on DROP DOMAIN RESTRICT; a constraint that CASTs to it goes with it
@@ -383,7 +383,7 @@ fn what_domains_refuse_11_22() {
     db.schema("CREATE SCHEMA AUTHORIZATION B").unwrap();
     let (a, b) = (db.session("A"), db.session("B"));
     let refused = [
-        ("CREATE DOMAIN D AS INTEGER CONSTRAINT B.X CHECK (VALUE > 0)", Code::SyntaxRule),
+        ("CREATE DOMAIN D AS INTEGER CONSTRAINT B.X CHECK (VALUE > 0)", Code::Privilege),
         ("CREATE DOMAIN D AS INTEGER CONSTRAINT X UNIQUE (VALUE)", Code::Syntax),
         ("CREATE DOMAIN D AS INTEGER DEFAULT 'X'", Code::SyntaxRule),
         ("ALTER DOMAIN NOPE SET DEFAULT 1", Code::SyntaxRule),

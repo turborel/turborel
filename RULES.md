@@ -283,8 +283,17 @@ and a schema change that cannot be rolled back is a trap.
   keeps CONSTRAINT_SCHEMA beside TABLE_SCHEMA [§21.3.13]. It is then a
   constraint of that schema, which must exist [§5.4 GR18], among whose
   constraints its name is unique [§10.6 SR2]; ALTER TABLE DROP CONSTRAINT
-  finds it there. A name the implementation gives one is of its table's
+  finds it there. So is a domain constraint's, of CREATE and ALTER DOMAIN.
+  A name the implementation gives one is of its table's or domain's
   schema [§11.6 SR2]; a declared local temporary table's are all MODULE's.
+- \[EXTENSION\] A constraint is named in a schema only by that schema's
+  owner, who is the owner of its table's or domain's schema too; another's
+  is refused as an access rule violation (SQLCODE -104), which SQL-92's
+  text does not require: no one puts a name in another's schema, which
+  would refuse that owner's own constraints of the name. DROP SCHEMA
+  RESTRICT is refused while a constraint named in the schema is of a table
+  or domain of another; CASCADE drops it, as ALTER TABLE or ALTER DOMAIN
+  DROP CONSTRAINT CASCADE would, where SQL-92 leaves it [§11.2 GR1-GR8].
 - Each takes the lock of the name it defines, or grants or revokes on,
   exclusive: a table's own lock once there is a table, so two transactions
   defining one name take turns (D28). It takes shared locks on the tables

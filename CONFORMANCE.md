@@ -198,9 +198,10 @@ restriction is lifted.
   columns may be null), PRIMARY KEY, FOREIGN KEY with MATCH FULL, PARTIAL or
   neither and every referential action, and CHECK, including CHECK with
   subqueries. Each is named, by the definition or by the implementation.
-  A name written without a schema is of the `<schema definition>`'s
-  schema, or outside one of the session's default schema, which may be
-  another than its table's [§5.4 SR8] (RULES.md D47).
+  A name written without a schema, a table's or a domain's constraint's,
+  is of the `<schema definition>`'s schema, or outside one of the
+  session's default schema, which may be another than its table's or
+  domain's [§5.4 SR8] (RULES.md D47).
   Constraints are checked at the end of each statement; deferrable ones,
   with SET CONSTRAINTS [§14.2], at commit.
 - **Defaults** [§11.5]: a literal, NULL, USER, CURRENT_USER, SESSION_USER,
@@ -209,7 +210,9 @@ restriction is lifted.
 - **DROP SCHEMA** [§11.2], **DROP TABLE** [§11.18], **DROP VIEW**
   [§11.20] and **ALTER TABLE** [§11.10–§11.17]: ADD and DROP COLUMN, ALTER
   COLUMN defaults, ADD and DROP CONSTRAINT; CASCADE and RESTRICT. They run
-  inside transactions (RULES.md D33).
+  inside transactions (RULES.md D33). DROP SCHEMA RESTRICT is refused, and
+  CASCADE drops them, while constraints named in the schema are of tables
+  or domains of another (RULES.md D47).
 - **Views** [§11.19]: of any query expression; WITH LOCAL or CASCADED CHECK
   OPTION, checked against every view an update spans [GR11]. A view keeps
   the columns it saw when it was defined, whatever columns are added later
@@ -485,6 +488,7 @@ file that implements it.
 | §7.1 GR2 the end of a session with a transaction open | COMMIT, or ROLLBACK, as the setting SESSION_END says | `txn.rs`, `db.rs` |
 | §3.3, §7.3 GR3b ii negative SQLCODE values | -101 lexical, -102 Format, -103 Syntax Rule, -104 privilege, -201 constraint, -301 data, -501 cursor, -811 cardinality, -900 not implemented, -910 API misuse, -911 conflict with another transaction, -912 transaction policy, -913 commit failed, -914 table damaged by a failed undo, -915 I/O error, -916 corrupt stored data, -917 invalid transaction state, -918 memory budget spent or buffer pool full, -919 connection exception (a server's), -920 statement cancelled, -921 dynamic SQL error | `error.rs` |
 | §4.6, §4.7 how schemas are created and stored | `Database::schema` and the `Catalog` trait; in memory, or kept in a directory with its catalog file and log | `db.rs`, `catalog.rs`, `db/files.rs` |
+| ISO/IEC 9075:1992 §5.4 SR8b, §10.6, §11.6, §11.21 who may name a constraint in a schema, which SQL-92 does not restrict | only the schema's owner, who owns the constraint's table's or domain's schema too; another is refused (SQLCODE -104) (RULES.md D47) | `db/constraints.rs`, `db/domains.rs` |
 | ISO/IEC 9075:1992 §11.1 AR1 the privileges a schema definition needs | through a session, as a server's clients run it: a schema of any name, its authorization identifier the session's, written or implicit [SR2b]; `Database::schema`, the host program's, creates any, naming its AUTHORIZATION | `db/direct.rs`, `db/schema.rs` |
 | ISO/IEC 9075:1992 §17.6 GR5b-d, s, u CHARACTER VARYING of a dynamic parameter | of the longest length, 32767, its value CAST to it [§17.9 GR5g] | `params/dynamic.rs` |
 | ISO/IEC 9075:1992 §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |

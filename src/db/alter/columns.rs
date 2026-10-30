@@ -42,7 +42,7 @@ impl State {
         added.reserve(def.constraints.iter().filter_map(|c| c.name.as_ref()));
         added.column(desc.columns.len(), def)?;
         let (constraints, pending) = (added.constraints, added.pending);
-        self.constraint_schemas(&constraints, &pending)?;
+        self.constraint_schemas(&desc.name, (&constraints, &pending))?;
         next.constraints.extend(constraints);
         // [§11.21 GR5, GR6] its domain's constraints, on it.
         let column = next.columns.last().map(std::slice::from_ref).unwrap_or_default();

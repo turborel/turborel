@@ -23,7 +23,9 @@ holds a table, a view, a domain or an assertion. CASCADE drops each of
 them first: its tables, as DROP TABLE CASCADE does, and so the views,
 constraints and assertions of other schemas that refer to them; its
 views left; its domains, as DROP DOMAIN CASCADE does; and its
-assertions.
+assertions. A constraint named in the schema of a table or a domain of
+another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
+CONSTRAINT drops it; RESTRICT refuses the drop while there is one.
 
 DROP SCHEMA runs within the session's transaction: ROLLBACK undoes it,
 as it does not undo a [CREATE SCHEMA](create-schema.md).
@@ -32,7 +34,8 @@ as it does not undo a [CREATE SCHEMA](create-schema.md).
 
 1. The schema exists; a catalog named is the one catalog.
 2. Its user owns the schema.
-3. RESTRICT: the schema holds nothing.
+3. RESTRICT: the schema holds nothing, and names no constraint of a
+   table or domain of another schema.
 4. The transaction is not READ ONLY.
 
 ## PRIVILEGES
@@ -84,7 +87,9 @@ turborel: SQLCODE -104 (SQLSTATE 2A000): schema ANN is owned by ANN, not BOB [IS
 
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.2. SQL-86 has no DROP SCHEMA.
+ISO/IEC 9075:1992 §11.2. SQL-86 has no DROP SCHEMA. Dropping the
+constraints named in the schema of another schema's tables and domains,
+which SQL-92 leaves, is an extension.
 
 ## SEE ALSO
 

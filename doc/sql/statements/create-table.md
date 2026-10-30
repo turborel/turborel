@@ -127,9 +127,10 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
    a schema is of the session's default schema.
 2. No table or view of the schema has the name; no column is defined
    twice; the table has a column.
-3. A constraint's name is new in its schema, which exists; in a CREATE
-   SCHEMA, its schema is the one being defined; it is not of MODULE but
-   for a declared local temporary table, whose constraints' are.
+3. A constraint's name is new in its schema, which exists, and which
+   the table's schema's owner owns *(extension)*; in a CREATE SCHEMA, its
+   schema is the one being defined; it is not of MODULE but for a
+   declared local temporary table, whose constraints' are.
 4. A table has at most one PRIMARY KEY, and no two unique constraints on
    the same columns.
 5. A foreign key's referenced table is a base table, its referenced
@@ -162,7 +163,7 @@ USAGE on each domain a column is of.
 |---|---|---|
 | 3F000 | -103 | The schema does not exist, or a constraint's does not |
 | 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or lacks REFERENCES or USAGE it needs |
+| 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |
 | 0A000 | -900 | A COLLATE or CHARACTER SET clause of another character set |
 

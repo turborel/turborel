@@ -42,7 +42,7 @@ impl State {
         added.reserve(c.name.iter());
         added.table_constraint(c)?;
         let (constraints, pending) = (added.constraints, added.pending);
-        self.constraint_schemas(&constraints, &pending)?;
+        self.constraint_schemas(qn, (&constraints, &pending))?;
         let unique = constraints
             .iter()
             .find_map(|k| if let ConstraintKind::Unique { columns, .. } = &k.kind { Some(columns.clone()) } else { None });

@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use super::ddl::{Changed, Dropped};
 use super::{Session, State, rule};
-use crate::ast::{DropBehavior, DropObject, TableName};
+use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, DropObject, TableName};
 use crate::binder::qualify;
-use crate::catalog::{ConstraintKind, QualifiedName, TemporaryKind, owner_of};
+use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TemporaryKind, owner_of};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::log::record::{Change, DropTarget};
@@ -125,7 +125,7 @@ impl State {
         if let (Some(first), false) = (held, cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
-        let mut dropped = Dropped::default();
+        let mut dropped = self.drop_named_in(auth, cascade)?;
         for table in &tables {
             dropped.absorb(self.drop_table(table, true)?);
         }
@@ -145,6 +145,40 @@ impl State {
         catalog.remove_schema(auth);
         self.catalog = Arc::from(catalog);
         dropped.names.push(QualifiedName::of_schema(auth));
+        Ok(dropped)
+    }
+
+    /// \[EXTENSION\] (RULES.md D47) The constraints named in schema `auth`
+    /// of tables and domains of other schemas, dropped with it if
+    /// `cascade`, as ALTER TABLE and ALTER DOMAIN DROP CONSTRAINT drop them,
+    /// a domain constraint's copies with it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103, not `cascade`, if there is one.
+    fn drop_named_in(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
+        let named = |c: &&ConstraintDesc| c.name.auth == auth && c.domain.is_none();
+        let of_tables: Vec<(QualifiedName, QualifiedName)> = (self.catalog.tables().into_iter())
+            .filter(|t| t.name.auth != auth)
+            .flat_map(|t| t.constraints.iter().filter(named).map(|c| (t.name.clone(), c.name.clone())))
+            .collect();
+        let of_domains: Vec<(QualifiedName, QualifiedName)> = (self.catalog.domains().into_iter())
+            .filter(|d| d.name.auth != auth)
+            .flat_map(|d| d.constraints.iter().filter(named).map(|c| (d.name.clone(), c.name.clone())))
+            .collect();
+        if let (Some((of, c)), false) = (of_tables.first().or(of_domains.first()), cascade) {
+            return Err(rule(format!("[EXTENSION] schema {auth} names constraint {c} of {of}, so it is dropped only with CASCADE")));
+        }
+        let written = |q: &QualifiedName| TableName { auth: Some(q.auth.clone()), ident: q.ident.clone(), at: 0 };
+        let mut dropped = Dropped::default();
+        for (table, c) in &of_tables {
+            dropped.absorb(self.drop_constraint((table, &table.auth), &written(c), DropBehavior::Cascade)?);
+            dropped.names.push(table.clone());
+        }
+        for (domain, c) in &of_domains {
+            let statement = AlterDomain { name: written(domain), action: AlterDomainAction::DropConstraint(written(c)) };
+            dropped.names.extend(self.alter_domain((&domain.auth, 0), &statement)?.locks.into_iter().map(|(name, _)| name));
+        }
         Ok(dropped)
     }
 

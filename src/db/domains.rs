@@ -225,13 +225,23 @@ impl State {
             return Err(rule("[ISO/IEC 9075:1992 §11.21] a domain constraint is a CHECK".to_owned()));
         };
         let k = earlier.len().saturating_add(1);
+        // [§5.4 SR8] Written without a schema, of the schema of its names:
+        // the session's default one, or the <schema definition>'s.
         let name = c.name.as_ref().map_or_else(
             || QualifiedName { auth: domain.auth.clone(), ident: format!("{}_CHECK{k}", domain.ident) },
-            |n| qualify(n, &domain.auth),
+            |n| qualify(n, names),
         );
-        if name.auth != domain.auth || self.constraint_names(&domain.auth).contains(&name) || earlier.iter().any(|e| e.name == name) {
+        // [§10.6 SR1] In a <schema definition>, whose domains' constraints
+        // are bound once its tables are, of its schema alone.
+        if !bound && name.auth != domain.auth {
+            return Err(rule(format!("[ISO/IEC 9075:1992 §10.6 SR1] constraint {name} is not in schema {}", domain.auth)).or_at(c.at));
+        }
+        if bound {
+            self.constraint_schema(&name, domain).or_at(c.at)?;
+        }
+        if self.constraint_names(&name.auth).contains(&name) || earlier.iter().any(|e| e.name == name) {
             return Err(
-                rule(format!("[ISO/IEC 9075:1992 §10.6 SR2] constraint {name} is not a new one of schema {}", domain.auth)).or_at(c.at)
+                rule(format!("[ISO/IEC 9075:1992 §10.6 SR2] constraint {name} is not a new one of schema {}", name.auth)).or_at(c.at)
             );
         }
         let reads = if bound { self.bound_on_value(domain, data_type, (&check.text, names)).or_at(c.at)? } else { Vec::new() };
@@ -383,7 +393,8 @@ impl State {
             }
             AlterDomainAction::AddConstraint(c) => validate = self.add_domain_constraint((&mut domain, schema), &mut tables, c)?,
             AlterDomainAction::DropConstraint(n) => {
-                let name = qualify(n, &qn.auth);
+                // [§5.4 SR8b] Written without a schema, of the default one.
+                let name = qualify(n, schema);
                 if !domain.constraints.iter().any(|c| c.name == name) {
                     return Err(rule(format!("[ISO/IEC 9075:1992 §11.26 SR3] {name} is not a constraint of domain {qn}")).or_at(n.at));
                 }

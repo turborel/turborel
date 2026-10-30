@@ -42,7 +42,10 @@ CREATE DOMAIN runs within the session's transaction: ROLLBACK undoes it.
    without a schema is of the session's default schema.
 2. No domain of the schema has the name.
 3. The default is of the data type, as a column's default is.
-4. A constraint's name is new in the schema.
+4. A constraint's name is new in its schema, which exists, and which the
+   domain's schema's owner owns *(extension)*. A name written without a
+   schema is of the session's default schema; in a CREATE SCHEMA, of the
+   schema being defined, and no other.
 5. A constraint's condition follows the rules of a CHECK; the only
    column it names is VALUE.
 6. No constraint CASTs to the domain, nor to a domain one of whose
@@ -59,9 +62,9 @@ REFERENCES a CHECK needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 3F000 | -103 | The schema does not exist |
+| 3F000 | -103 | The schema does not exist, or a constraint's does not |
 | 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or lacks a privilege a constraint needs |
+| 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks a privilege a constraint needs |
 | 25000 | -917 | The transaction is READ ONLY |
 | 0A000 | -900 | A COLLATE clause |
 

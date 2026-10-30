@@ -437,3 +437,64 @@ fn constraint_names_outside_a_schema_definition_5_4() {
     v.run("ALTER TABLE S3.T ADD CONSTRAINT S3.D CHECK (K > 0)").unwrap();
     assert_eq!(placed(&v, "S3"), vec!["S3,C,S3", "S3,D,S3", "S3,T_UNIQUE1,S3"]);
 }
+
+/// Verifies: [EXTENSION] RULES.md D47; [ISO/IEC 9075:1992 §5.4 SR8b,
+/// §10.6 SR1, §11.21, §11.23]: a constraint is named in a schema only by
+/// that schema's owner, a table's or a domain's, written or the default
+/// schema (SQLCODE -104), stricter than SQL-92; a domain constraint's name
+/// written without a schema is of the session's default schema, CREATE
+/// DOMAIN's and ALTER DOMAIN's, ADD and DROP, and in a `<schema definition>` of its
+/// schema and no other.
+#[test]
+fn constraints_are_named_by_their_schemas_owner_5_4() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
+    db.schema("CREATE SCHEMA S2 AUTHORIZATION U").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION W").unwrap();
+    let u = db.session("U");
+    let refused = [
+        "CREATE TABLE S2.T (K INTEGER CONSTRAINT W.C UNIQUE)",
+        "CREATE DOMAIN S2.D AS INTEGER CONSTRAINT W.C CHECK (VALUE > 0)",
+        "SET SCHEMA 'W'",
+    ];
+    for sql in &refused[..2] {
+        assert_eq!(exec(&u, sql), Err(Code::Privilege), "{sql}");
+    }
+    u.run("CREATE TABLE S2.T (K INTEGER)").unwrap();
+    u.run(refused[2]).unwrap();
+    assert_eq!(exec(&u, "ALTER TABLE S2.T ADD CONSTRAINT C CHECK (K > 0)"), Err(Code::Privilege), "W's, the default");
+    assert_eq!(exec(&u, "ALTER TABLE S2.T ADD COLUMN N INTEGER CONSTRAINT C UNIQUE"), Err(Code::Privilege), "W's, of a column");
+    u.run("SET SCHEMA 'U'").unwrap();
+    u.run("CREATE DOMAIN S2.D AS INTEGER CONSTRAINT POSITIVE CHECK (VALUE > 0)").unwrap();
+    u.run("ALTER DOMAIN S2.D ADD CONSTRAINT SMALL CHECK (VALUE < 9)").unwrap();
+    let sql = "SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, DOMAIN_SCHEMA FROM INFORMATION_SCHEMA.DOMAIN_CONSTRAINTS";
+    assert_eq!(sorted(&u, sql), vec!["U,POSITIVE,S2", "U,SMALL,S2"]);
+    assert_eq!(exec(&u, "CREATE DOMAIN S2.E AS INTEGER CONSTRAINT POSITIVE CHECK (VALUE > 0)"), Err(Code::SyntaxRule), "taken in U");
+    u.run("ALTER DOMAIN S2.D DROP CONSTRAINT SMALL").unwrap();
+    assert_eq!(sorted(&u, sql), vec!["U,POSITIVE,S2"], "SMALL, of the default schema, dropped");
+    u.commit().unwrap();
+    let schema = "CREATE SCHEMA S4 AUTHORIZATION U CREATE DOMAIN D AS INTEGER CONSTRAINT U.C CHECK (VALUE > 0)";
+    assert_eq!(u.direct(schema).err().map(|e| e.code), Some(Code::SyntaxRule), "§10.6 SR1");
+}
+
+/// Verifies: [EXTENSION] RULES.md D47; [ISO/IEC 9075:1992 §11.2]: DROP
+/// SCHEMA RESTRICT is refused while a constraint named in the schema is of
+/// a table or domain of another; CASCADE drops those constraints, a domain
+/// constraint's copies on its columns with it, and leaves their tables and
+/// domains.
+#[test]
+fn a_schema_dropped_takes_the_constraints_named_in_it_11_2() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION O").unwrap();
+    db.schema("CREATE SCHEMA O2 AUTHORIZATION O").unwrap();
+    let o = db.session("O");
+    o.run("CREATE DOMAIN O2.D AS INTEGER CONSTRAINT POSITIVE CHECK (VALUE > 0)").unwrap();
+    o.run("CREATE TABLE O2.T (K INTEGER CONSTRAINT KEYED UNIQUE, V O2.D)").unwrap();
+    o.run("INSERT INTO O2.T VALUES (1, 1)").unwrap();
+    assert_eq!(exec(&o, "DROP SCHEMA O RESTRICT"), Err(Code::SyntaxRule));
+    o.run("DROP SCHEMA O CASCADE").unwrap();
+    o.run("INSERT INTO O2.T VALUES (1, -1)").unwrap();
+    assert_eq!(sorted(&o, "SELECT K, V FROM O2.T"), vec!["1,-1", "1,1"], "KEYED and POSITIVE gone");
+    assert_eq!(sorted(&o, "SELECT CAST(-2 AS O2.D) FROM O2.T WHERE V = 1"), vec!["-2"], "the domain stays, unconstrained");
+    o.commit().unwrap();
+}
