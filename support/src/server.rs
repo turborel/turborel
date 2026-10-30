@@ -51,7 +51,8 @@ pub fn start_with(db: &Database, settings: &[(&str, i128)], more: Vec<Arc<dyn Au
         server.add_authenticator(authenticator).unwrap();
     }
     let thread = std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        // As turboreld's, of two I/O threads.
+        let runtime = turborel_server::runtime::runtime(Some(2)).unwrap();
         runtime.block_on(async move {
             let native: Arc<dyn Protocol> = Arc::new(Native);
             let endpoints = listening::bind(server.database(), &native).await.unwrap();

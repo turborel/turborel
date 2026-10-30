@@ -25,10 +25,7 @@ use turborel_server::log::Lines;
 use turborel_server::native::Native;
 use turborel_server::password::{Password, Pbkdf2};
 use turborel_server::server::{Protocol, Server};
-use turborel_server::settings::{self, MAX_WORKERS, TRUST};
-
-/// \[DESIGN\] Blocking threads beyond the most workers, for tokio's own.
-const BLOCKING_SPARE: usize = 4;
+use turborel_server::settings::{self, TRUST};
 
 /// The usage text.
 pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
@@ -195,12 +192,7 @@ pub fn run(config: &Config, ready: impl FnOnce(&[String]), stop: impl Future<Out
         if settings::text(&db, TRUST) == "LOCAL" {
             server.add_authenticator(Arc::new(Trust)).map_err(|e| e.to_string())?;
         }
-        let blocking = MAX_WORKERS.saturating_add(BLOCKING_SPARE);
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .max_blocking_threads(blocking)
-            .build()
-            .map_err(|e| format!("cannot start: {e}"))?;
+        let runtime = turborel_server::runtime::runtime(None).map_err(|e| format!("cannot start: {e}"))?;
         runtime.block_on(serve(server, ready, stop))
     })
 }

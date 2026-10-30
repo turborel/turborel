@@ -119,6 +119,8 @@ fails with SQLCODE -920, SQLSTATE TB920, undone as a statement that
 fails is. In a
 typed session the client then prompts again; a run of `-c`, `-f` or
 piped input ends there. Before the client has connected, Ctrl-C ends it.
+A cancel the server does not answer within 10 seconds is given up, and
+Ctrl-C may be pressed again.
 
 ```
 turborel: SQLCODE -920 (SQLSTATE TB920): the statement was cancelled

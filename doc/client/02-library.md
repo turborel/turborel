@@ -57,7 +57,8 @@ A value is a `turborel::value::Value`: `Exact` of a `Decimal`, `Approx`,
 `Char`, `Bits`, `Datetime`, `Interval`, `Extension` of a plug-in's
 type, or `Null`. `in_transaction` says whether the session's
 transaction is active, as the server said after the last statement. `canceller` gives what cancels the statement running
-from another thread.
+from another thread: `cancel` gives up after `CANCEL_WITHIN`, 10 seconds,
+if the server does not answer; `cancel_within` takes a limit of its own.
 
 ## Prepared statements
 

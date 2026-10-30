@@ -33,7 +33,7 @@ impl Interrupts {
         let interrupts = Interrupts::default();
         let (tell, told) = std::sync::mpsc::channel();
         let held = Arc::clone(&interrupts.canceller);
-        let spawned = std::thread::Builder::new().name("interrupts".to_owned()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("turborel-interrupts".to_owned()).spawn(move || {
             match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime.block_on(answer(tokio::signal::ctrl_c, &held, handlers, tell)),
                 Err(e) => drop(tell.send(Err(format!("cannot take Ctrl-C: {e}")))),

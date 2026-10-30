@@ -50,3 +50,9 @@ connections, each connection finishes the statement it runs, and the
 database is closed cleanly, which the diagnostics tell as `closed`. A
 server killed without closing, as by SIGKILL or a crash, loses no
 committed transaction: the database is recovered as it is next opened.
+
+The server's threads are named `turborel-server-<n>`: its I/O threads,
+one for each processor, and the threads statements run on, made as they
+are needed, at most SERVER.WORKERS running at once. The database's own
+are `turborel-checkpoint` and `turborel-maintenance`
+([Background work](03-databases.md#background-work)).

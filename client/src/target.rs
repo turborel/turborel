@@ -4,6 +4,7 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
 
 use crate::connection::{Connection, Mechanism, Result, failed};
 
@@ -46,19 +47,54 @@ impl Target {
     /// A connection failure if it cannot be reached, or TLS's handshake
     /// fails.
     pub fn stream(&self) -> Result<Box<dyn Duplex>> {
+        self.stream_within(None)
+    }
+
+    /// A stream to the server, as `stream`, made, and then read and
+    /// written, each within `limit` if given, else without one.
+    ///
+    /// # Errors
+    ///
+    /// As `stream`'s; a connection failure if it is not made within
+    /// `limit`.
+    pub fn stream_within(&self, limit: Option<Duration>) -> Result<Box<dyn Duplex>> {
         let unreachable = |e: std::io::Error| failed(&format!("[DESIGN] cannot connect: {e}"));
+        let set_up = |e: std::io::Error| failed(&format!("[DESIGN] cannot set the connection up: {e}"));
         match self {
             Target::Tcp(address) => {
-                let stream = TcpStream::connect(address).map_err(unreachable)?;
-                stream.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
+                let stream = connected(address, limit)?;
+                stream.set_nodelay(true).map_err(set_up)?;
                 Ok(Box::new(stream))
             }
             #[cfg(unix)]
-            Target::Local(path) => Ok(Box::new(std::os::unix::net::UnixStream::connect(path).map_err(unreachable)?)),
+            Target::Local(path) => {
+                let stream = std::os::unix::net::UnixStream::connect(path).map_err(unreachable)?;
+                stream.set_read_timeout(limit).and_then(|()| stream.set_write_timeout(limit)).map_err(set_up)?;
+                Ok(Box::new(stream))
+            }
             #[cfg(feature = "tls")]
-            Target::Tls(address, name, config) => Ok(Box::new(crate::tls::secured(*address, (name, config))?)),
+            Target::Tls(address, name, config) => Ok(Box::new(crate::tls::secured(connected(address, limit)?, (name, config))?)),
         }
     }
+}
+
+/// A TCP connection to `address`, made, read and written each within
+/// `limit` if given.
+///
+/// # Errors
+///
+/// A connection failure if it cannot be made, in time.
+fn connected(address: &SocketAddr, limit: Option<Duration>) -> Result<TcpStream> {
+    let stream = match limit {
+        Some(limit) => TcpStream::connect_timeout(address, limit),
+        None => TcpStream::connect(address),
+    }
+    .map_err(|e| failed(&format!("[DESIGN] cannot connect: {e}")))?;
+    stream
+        .set_read_timeout(limit)
+        .and_then(|()| stream.set_write_timeout(limit))
+        .map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
+    Ok(stream)
 }
 
 /// Connects to the server at `target` as `user`, authenticated by
