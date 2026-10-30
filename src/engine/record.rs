@@ -93,7 +93,8 @@ pub struct Reference {
 /// \[DESIGN\] When values go out of line (RULES.md D31).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Spill {
-    /// A character value longer than this, in bytes, goes out of line.
+    /// A value of varying width whose record bytes are longer than this
+    /// goes out of line.
     pub threshold: usize,
     /// The most bytes a record may take: the longest values left go out of
     /// line until it fits.
@@ -196,14 +197,19 @@ impl RecordFormat {
     }
 
     /// Which columns of `row` go out of line: those longer than the
-    /// threshold, then the longest others until the record fits.
+    /// threshold, then the longest others until the record fits; each
+    /// value of varying width measured by the bytes its record holds, as
+    /// its type writes them.
     fn choose(&self, row: &Row, spill: Spill) -> Result<Vec<bool>> {
         self.check_len(row)?;
-        let lengths: Vec<Option<usize>> = row
+        let lengths = row
             .iter()
-            .zip(&self.places)
-            .map(|pair| if let (Value::Char(s), Place::Variable(_)) = pair { Some(s.trim_end_matches(' ').len()) } else { None })
-            .collect();
+            .zip(self.types.iter().zip(&self.places))
+            .map(|(value, (&data_type, place))| match (place, value.is_null()) {
+                (Place::Variable(_), false) => encode_value(value, data_type).map(|bytes| Some(bytes.len())),
+                (Place::Variable(_), true) | (Place::Fixed(..), _) => Ok(None),
+            })
+            .collect::<Result<Vec<Option<usize>>>>()?;
         let mut outside: Vec<bool> = lengths.iter().map(|l| l.is_some_and(|l| l > spill.threshold)).collect();
         let size = |marks: &[bool]| {
             lengths.iter().zip(marks).fold(self.variable_at(), |n, (length, &out)| {
@@ -265,10 +271,9 @@ impl RecordFormat {
                 }
             }
             if let Place::Variable(n) = place {
-                let end = u32::try_from(variable.len())
-                    .ok()
-                    .filter(|&e| e < OUTSIDE)
-                    .ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] a row's character values take 2 GiB or more".to_owned()))?;
+                let end = u32::try_from(variable.len()).ok().filter(|&e| e < OUTSIDE).ok_or_else(|| {
+                    SqlError::new(Code::Unsupported, "[DESIGN] a row's values of varying width take 2 GiB or more".to_owned())
+                })?;
                 put(&mut record, self.ends_at().saturating_add(n.saturating_mul(END_BYTES)), &(end | flag).to_le_bytes());
             }
         }

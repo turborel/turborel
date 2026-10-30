@@ -11,7 +11,7 @@
 //!   splits, and are never given out again. The table's meta page records
 //!   the ids reserved, so a table opened again goes on past every id it
 //!   gave.
-//! * **Long values** go out of line (`record.rs`): a character value
+//! * **Long values** go out of line (`record.rs`): a value of varying width
 //!   longer than the table's threshold (by default a quarter of a page's
 //!   capacity), and the longest others if the row would not fit its leaf,
 //!   each in a page of its own, of any length (the pager's overflow). The

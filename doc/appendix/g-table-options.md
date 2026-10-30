@@ -40,7 +40,7 @@ Each in a sentence:
 - **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own. See [Encryption](../operator/07-encryption.md).
-- **OUT_OF_LINE**: Character values longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
+- **OUT_OF_LINE**: Values of varying width longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
 - **STATISTICS.BUCKETS**: The buckets of each column's histogram.
 - **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.
 - **STATISTICS.REFRESH_ROWS**: The changes past STATISTICS.REFRESH_FRACTION of the rows after which the statistics are gathered again.

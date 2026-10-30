@@ -154,6 +154,26 @@ fn rows_too_long_move_their_longest_values_out() {
     assert_eq!(failing.err().map(|e| e.code), Some(Code::Io));
 }
 
+/// Verifies: [DESIGN] RULES.md D31, values out of line: a value is
+/// measured by the bytes its record holds, whatever its type: a VARCHAR
+/// value of trailing spaces, kept with them, and a BIT VARYING value go
+/// out of line past the threshold, and a record they would make longer
+/// than the most a row may take has them moved out; each read back as
+/// written.
+#[test]
+fn values_of_every_varying_type_are_measured() {
+    let format = RecordFormat::new(&[DataType::Varying { length: 1000 }, DataType::BitVarying { length: 8000 }]);
+    let row = vec![Value::Char(format!("{:<300}", "x")), Value::Bits(crate::value::Bits::new(vec![0xAB; 300], 2400).unwrap())];
+    let mut store = Vec::new();
+    let bytes = spill(&format, &row, Spill { threshold: 100, most: 4000 }, &mut store).unwrap();
+    assert_eq!(store.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [0, 1], "both past the threshold");
+    let mut fetch = |r: Reference| Ok(store[usize::try_from(r.at).unwrap()].1.clone());
+    assert_eq!(shown(&format.decode_with(&bytes, &mut fetch).unwrap()), shown(&row));
+    let mut kept = Vec::new();
+    let fitted = spill(&format, &row, Spill { threshold: 4000, most: 400 }, &mut kept).unwrap();
+    assert!(fitted.len() <= 400, "{} bytes", fitted.len());
+}
+
 /// Verifies: [DESIGN] RULES.md D31, values out of line: a malformed
 /// reference (shorter than where and how long, or with a prefix longer
 /// than 16 bytes or than its value) is refused with SQLCODE -916.

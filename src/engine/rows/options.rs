@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The row store's table options (RULES.md D41): how long a
-//! character value may be before it goes out of line, which needs a
+//! value of varying width may be before it goes out of line, which needs a
 //! rebuild; and, changed in place, how its statistics are sampled and
 //! refreshed, what it keeps of its transactions in memory, and, of the
 //! column store, how its rows are frozen. A table's options are those its
@@ -67,7 +67,7 @@ const MAX_FREEZE_DELAY: u32 = 366 * 24 * 60 * 60;
 /// its statistics.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TableOptions {
-    /// Character values longer than this, in bytes, go out of line; none
+    /// Values of varying width longer than this, in bytes, go out of line; none
     /// for a quarter of a page's capacity.
     pub out_of_line: Option<usize>,
     /// How its statistics are sampled and refreshed.
@@ -202,7 +202,7 @@ pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
         TableOption::new(
             (OUT_OF_LINE, Kind::Integer { min: 0, max: 1_i128 << 30_i32 }, whole(defaults.out_of_line.unwrap_or(0))),
             Rebuild::Yes,
-            "Character values longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.",
+            "Values of varying width longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.",
         ),
         TableOption::new(
             (SAMPLE, Kind::Integer { min: 1, max: 1_000_000 }, whole(stats.sampling.values)),
