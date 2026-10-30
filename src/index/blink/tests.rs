@@ -18,7 +18,7 @@ fn exact(units: i128, scale: u32) -> Value {
 
 /// An index on columns of `types`, in memory.
 fn index(types: &[DataType]) -> BLinkIndex {
-    let (pool, file) = memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES), "a test").unwrap();
+    let (pool, file) = memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 4_i32), "a test").unwrap();
     BLinkIndex::with(BLinkTree::create(pool, file).unwrap(), types, KeyCounts::new())
 }
 

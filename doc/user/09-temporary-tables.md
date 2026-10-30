@@ -6,7 +6,8 @@
 
 A temporary table is defined as any table is, but each session has rows
 of its own of it: no other session sees them, they are kept in memory,
-and they are gone when the session ends. CREATE GLOBAL TEMPORARY TABLE
+of the database's MEMORY_BUDGET, and they are gone when the session
+ends. CREATE GLOBAL TEMPORARY TABLE
 or CREATE LOCAL TEMPORARY TABLE defines one, in a schema, for every
 session ([CREATE TABLE](../sql/statements/create-table.md)).
 

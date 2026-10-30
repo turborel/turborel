@@ -8,7 +8,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{exec, locking_database, rows};
+use crate::common::{exec, locking_database, rows, spill_bytes};
 
 /// The smallest WORK_MEMORY, 64 KiB.
 const SMALL: i128 = 64 << 10;
@@ -39,16 +39,15 @@ fn undo_entries_spill_and_are_read_back() {
     for db in [Database::new(), locking_database()] {
         filled(&db);
         db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
-        let reserved = db.memory().unwrap().1;
         let s = db.session("S");
         s.run("UPDATE T SET V = 'changed'").unwrap();
-        assert!(db.memory().unwrap().1 > reserved, "an area reserved");
+        assert!(spill_bytes(&db) > 0, "an area reserved");
         // Every K the same: a UNIQUE violation at the statement's end.
         assert!(exec(&s, "UPDATE T SET K = 7").is_err());
         assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE V = 'changed'"), Ok(vec![ROWS.to_string()]));
         assert_eq!(rows(&s, "SELECT COUNT(DISTINCT K) FROM T"), Ok(vec![ROWS.to_string()]), "the failed statement undone");
         s.rollback().unwrap();
-        assert_eq!(db.memory().unwrap().1, reserved, "the area given back");
+        assert_eq!(spill_bytes(&db), 0, "the area given back");
         assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE V = 'changed'"), Ok(vec!["0".into()]));
         assert_eq!(rows(&s, "SELECT K FROM T WHERE V = 'v2999'"), Ok(vec!["2999".into()]), "the index as it was");
         assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE K = 7"), Ok(vec!["1".into()]));
@@ -121,9 +120,8 @@ fn row_store_changes_spill_and_are_read_back() {
         s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
     }
     s.commit().unwrap();
-    let reserved = db.memory().unwrap().1;
     s.run("UPDATE T SET V = 'changed' WHERE K < 1500").unwrap();
-    assert!(db.memory().unwrap().1 > reserved, "an area reserved");
+    assert!(spill_bytes(&db) > 0, "an area reserved");
     assert!(exec(&s, "UPDATE T SET K = 7").is_err());
     // Every row as it was before the failed statement, each its own.
     let expected: Vec<String> = (0..ROWS).map(|k| if k < 1500 { format!("{k},changed") } else { format!("{k},v{k}") }).collect();
@@ -133,7 +131,7 @@ fn row_store_changes_spill_and_are_read_back() {
     s.commit().unwrap();
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE V = 'changed'"), Ok(vec!["1500".into()]));
     s.commit().unwrap();
-    assert_eq!(db.memory().unwrap().1, reserved, "the areas given back");
+    assert_eq!(spill_bytes(&db), 0, "the areas given back");
 }
 
 /// Verifies: [X3.135-1986 §4.16]; [DESIGN] RULES.md D38: a committed

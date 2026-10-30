@@ -40,7 +40,8 @@ pub use sort::sorted_records;
 
 use crate::bytes::Reader;
 use crate::disk::encoding::Pipeline;
-use crate::disk::io::{FileSystem, OsFileSystem};
+use crate::disk::io::FileSystem;
+use crate::disk::memory::MemoryFileSystem;
 use crate::error::Result;
 use crate::memory::MemoryBudget;
 use crate::storage::Row;
@@ -176,10 +177,11 @@ pub struct WorkAreas {
 }
 
 impl WorkAreas {
-    /// The built-in provider's areas, in the system's temporary directory,
-    /// reserved of `memory`.
+    /// The built-in provider's areas, their files in memory, reserved of
+    /// `memory` as are their pools (RULES.md D56).
     pub(crate) fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
-        let temp = TempFiles::new(Arc::new(OsFileSystem), &std::env::temp_dir());
+        let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
+        let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
         WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))) }
     }
 
@@ -230,7 +232,8 @@ impl fmt::Debug for WorkAreas {
 /// \[DESIGN\] Where a database's spill areas keep their files: a directory
 /// of a file system, each file named apart from every other, in this
 /// process and others. A database kept in a directory has `tmp/` in it; one
-/// in memory has the system's temporary directory.
+/// in memory has a file system in memory, never the system's temporary
+/// directory.
 pub struct TempFiles {
     fs: Arc<dyn FileSystem>,
     dir: PathBuf,

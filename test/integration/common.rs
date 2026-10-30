@@ -131,6 +131,17 @@ pub fn count(s: &Session, sql: &str) -> usize {
     rows(s, sql).map_or(usize::MAX, |r| r.len())
 }
 
+/// The bytes of `db`'s memory budget its spill areas and their files hold,
+/// as INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows the database's owner:
+/// OWNER, made so if no one is.
+pub fn spill_bytes(db: &Database) -> usize {
+    // Made the first time; refused, as they are, every time after.
+    let _ = db.create_user("OWNER", b"x");
+    let _ = db.set_owner("OWNER");
+    let sql = "SELECT COALESCE(SUM(BYTES), 0) FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS WHERE RESERVED_BY LIKE 'a spill%'";
+    rows(&db.session("OWNER"), sql).unwrap().first().unwrap().parse().unwrap()
+}
+
 /// Runs `sql` with no parameters and returns its outcome.
 pub fn exec(s: &Session, sql: &str) -> Result<Completion, Code> {
     s.execute(sql, &mut Params::new()).map_err(|e| e.code)

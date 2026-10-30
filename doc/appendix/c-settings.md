@@ -64,7 +64,7 @@ Each in a sentence:
 - **LOCK_TIMEOUT**: The milliseconds a statement waits for a lock, under LOCK_WAIT WAIT, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCK_WAIT**: WAIT waits for a lock another transaction holds; NO_WAIT refuses the statement at once.
 - **LOG.SEGMENT_SIZE**: The bytes after which a segment of the log is ended and the next begun.
-- **MEMORY_BUDGET**: The bytes the database's buffer pools may reserve in all; lowering it takes back none they hold.
+- **MEMORY_BUDGET**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, a row read in sequence costing 1.

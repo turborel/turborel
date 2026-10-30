@@ -234,6 +234,9 @@ impl DiskFile for Managed {
     fn sync(&self, durability: Durability) -> Result<()> {
         self.handle.with(self.id, Use::Sync, |f| f.sync(durability))
     }
+    fn reserve(&self, size: u64) -> Result<()> {
+        self.handle.with(self.id, Use::Write, |f| f.reserve(size))
+    }
 }
 
 impl Drop for Managed {

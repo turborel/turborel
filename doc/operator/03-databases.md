@@ -21,7 +21,11 @@ files are opened only by a release that knows their format versions
 ([Versions](../appendix/f-versions.md)).
 
 A database made with `--memory` has no directory: it is gone when the
-server stops.
+server stops. Its pages, its temporary tables' rows and what its queries
+spill are all kept in memory, of its MEMORY_BUDGET, never in the
+system's temporary directory: a statement that needs a page past the
+budget is refused with SQLCODE -918, and what was written before it
+stays.
 
 ## Opening and closing
 

@@ -34,7 +34,7 @@ impl Seal for Plain {
 }
 
 fn file() -> (Arc<BufferPool>, FileId) {
-    memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES), "a test").unwrap()
+    memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 4_i32), "a test").unwrap()
 }
 
 /// Row `n`: K = n, a text of n mod 13 characters with every seventh null,

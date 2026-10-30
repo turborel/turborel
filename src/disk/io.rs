@@ -170,6 +170,17 @@ pub trait DiskFile: Send + Sync {
     ///
     /// SQLCODE -915 if the sync fails; what was written may then be lost.
     fn sync(&self, durability: Durability) -> Result<()>;
+    /// Holds room for the file to grow to `size` bytes, where its bytes are
+    /// kept in memory of a budget (RULES.md D56), so a write within it is
+    /// not refused; a file on disk holds nothing. Default: nothing.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -918 if the budget has no room for it.
+    fn reserve(&self, size: u64) -> Result<()> {
+        let _ = size;
+        Ok(())
+    }
     /// Fills `buf` from `offset`.
     ///
     /// # Errors

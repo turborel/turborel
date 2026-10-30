@@ -8,7 +8,7 @@ use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
 use super::format::{self, KIND_TRUNK, META_AT, Meta, NONE};
-use super::{Extent, Pager, add};
+use super::{Extent, PageId, Pager, add};
 use crate::disk::io::Durability;
 use crate::error::Result;
 use crate::sync::lock_builtin;
@@ -119,6 +119,17 @@ impl Pager {
             self.write_run(id, &sealed)?;
         }
         Ok(())
+    }
+
+    /// Holds room in its file for page `id`, where the file is kept in
+    /// memory of a budget (`DiskFile::reserve`, RULES.md D56): so a page is
+    /// refused as it is allocated, never as it is written back.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -918 if the budget has no room for it.
+    pub fn reserve(&self, id: PageId) -> Result<()> {
+        self.offset(id.0.saturating_add(1)).and_then(|end| self.file.reserve(end))
     }
 
     /// Cuts the file at the start of `run`, the free run that ended it, set

@@ -10,6 +10,13 @@
 //! opened only if present; a file opened for reading only refuses writes;
 //! removing a file that is not there is an error; directories list their
 //! entries sorted. Every failure is SQLCODE -915.
+//!
+//! Given a memory budget (`within`, RULES.md D56), each file's bytes are
+//! reserved of it, and given back as it shrinks or goes. Room is held
+//! ahead (`DiskFile::reserve`) or as the size is set, refused past the
+//! budget's limit with SQLCODE -918; a write past the room held is never
+//! refused, what it holds counted even past the limit, so a page written
+//! back is not lost.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -17,13 +24,50 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use super::io::{DiskFile, Durability, FileLock, FileSystem, OpenMode, locked};
 use crate::error::{Code, Result, SqlError};
+use crate::memory::{MemoryBudget, Reservation};
 use crate::sync::lock_builtin;
 
 /// What a path names.
 #[derive(Clone)]
 enum Entry {
     Directory,
-    File(Arc<RwLock<Vec<u8>>>),
+    File(Arc<RwLock<Content>>),
+}
+
+/// A file's bytes, and what they hold of the budget, if one is given: at
+/// least its size, more if room is held ahead.
+struct Content {
+    bytes: Vec<u8>,
+    held: Option<Reservation>,
+}
+
+impl Content {
+    /// Makes it of `size` bytes, as `set_size` does: its reservation first,
+    /// refused past the limit, and no more than it now needs.
+    fn set_size(&mut self, size: usize) -> Result<()> {
+        if let Some(held) = &mut self.held {
+            held.resize(size)?;
+        }
+        self.bytes.resize(size, 0);
+        Ok(())
+    }
+
+    /// Makes it at least `size` bytes, for a write: past the room held,
+    /// reserved even past the limit.
+    fn grow(&mut self, size: usize) {
+        if let Some(held) = self.held.as_mut().filter(|held| held.bytes() < size) {
+            held.resize_anyway(size);
+        }
+        self.bytes.resize(size, 0);
+    }
+
+    /// Holds room for `size` bytes.
+    fn reserve(&mut self, size: usize) -> Result<()> {
+        match self.held.as_mut().filter(|held| held.bytes() < size) {
+            Some(held) => held.resize(size),
+            None => Ok(()),
+        }
+    }
 }
 
 /// \[DESIGN\] A file system in memory. It may be shared between threads.
@@ -32,6 +76,9 @@ pub struct MemoryFileSystem {
     entries: Mutex<BTreeMap<PathBuf, Entry>>,
     /// The files locked (`FileSystem::lock`).
     locked: Arc<Mutex<BTreeSet<PathBuf>>>,
+    /// The budget its files' bytes are reserved of, and what they are, as
+    /// its reservations say.
+    budget: Option<(Arc<MemoryBudget>, String)>,
 }
 
 /// A lock of a `MemoryFileSystem`'s, given up when dropped.
@@ -55,6 +102,21 @@ impl MemoryFileSystem {
     pub fn new() -> MemoryFileSystem {
         MemoryFileSystem::default()
     }
+
+    /// An empty file system whose files' bytes are reserved of `budget`,
+    /// each file's reservation held by `what` and its path.
+    pub fn within(budget: Arc<MemoryBudget>, what: &str) -> MemoryFileSystem {
+        MemoryFileSystem { budget: Some((budget, what.to_owned())), ..MemoryFileSystem::default() }
+    }
+
+    /// The content of a new file at `path`: no bytes, and none reserved.
+    fn content(&self, path: &Path) -> Result<Arc<RwLock<Content>>> {
+        let held = match &self.budget {
+            Some((budget, what)) => Some(budget.reserve(0, &format!("{what} {}", path.display()))?),
+            None => None,
+        };
+        Ok(Arc::new(RwLock::new(Content { bytes: Vec::new(), held })))
+    }
 }
 
 /// Whether `path` is the root, which always exists.
@@ -75,7 +137,7 @@ impl FileSystem for MemoryFileSystem {
                 if !path.parent().is_some_and(|dir| is_directory(&entries, dir)) {
                     return Err(failed("create", path, "its directory does not exist"));
                 }
-                let content = Arc::new(RwLock::new(Vec::new()));
+                let content = self.content(path)?;
                 entries.insert(path.to_path_buf(), Entry::File(Arc::clone(&content)));
                 content
             }
@@ -144,7 +206,7 @@ impl FileSystem for MemoryFileSystem {
 
 /// A file of `MemoryFileSystem`.
 struct MemoryFile {
-    content: Arc<RwLock<Vec<u8>>>,
+    content: Arc<RwLock<Content>>,
     path: PathBuf,
     writable: bool,
 }
@@ -163,7 +225,7 @@ impl DiskFile for MemoryFile {
             .ok_or_else(|| failed("read", &self.path, "the range is beyond 2^64 bytes"))?;
         let content = self.content.read().unwrap_or_else(PoisonError::into_inner);
         let from = index(offset, &self.path)?;
-        let available = content.get(from..).unwrap_or_default();
+        let available = content.bytes.get(from..).unwrap_or_default();
         let read = available.len().min(buf.len());
         if let (Some(into), Some(bytes)) = (buf.get_mut(..read), available.get(..read)) {
             into.copy_from_slice(bytes);
@@ -178,10 +240,10 @@ impl DiskFile for MemoryFile {
         let from = index(offset, &self.path)?;
         let end = from.checked_add(data.len()).ok_or_else(|| failed("write", &self.path, "the end is beyond memory"))?;
         let mut content = self.content.write().unwrap_or_else(PoisonError::into_inner);
-        if content.len() < end {
-            content.resize(end, 0);
+        if content.bytes.len() < end {
+            content.grow(end);
         }
-        if let Some(into) = content.get_mut(from..end) {
+        if let Some(into) = content.bytes.get_mut(from..end) {
             into.copy_from_slice(data);
         }
         Ok(())
@@ -189,7 +251,7 @@ impl DiskFile for MemoryFile {
 
     fn size(&self) -> Result<u64> {
         let content = self.content.read().unwrap_or_else(PoisonError::into_inner);
-        u64::try_from(content.len()).map_err(|_| failed("find the size of", &self.path, "it is beyond 2^64 bytes"))
+        u64::try_from(content.bytes.len()).map_err(|_| failed("find the size of", &self.path, "it is beyond 2^64 bytes"))
     }
 
     fn set_size(&self, size: u64) -> Result<()> {
@@ -197,13 +259,17 @@ impl DiskFile for MemoryFile {
             return Err(failed("set the size of", &self.path, "it is open for reading only"));
         }
         let size = index(size, &self.path)?;
-        self.content.write().unwrap_or_else(PoisonError::into_inner).resize(size, 0);
-        Ok(())
+        self.content.write().unwrap_or_else(PoisonError::into_inner).set_size(size)
     }
 
     /// Memory is as durable as the process, whatever is asked.
     fn sync(&self, _durability: Durability) -> Result<()> {
         Ok(())
+    }
+
+    fn reserve(&self, size: u64) -> Result<()> {
+        let size = index(size, &self.path)?;
+        self.content.write().unwrap_or_else(PoisonError::into_inner).reserve(size)
     }
 }
 
@@ -229,5 +295,34 @@ mod tests {
         fs.sync_dir(Path::new("/")).unwrap();
         drop(fs.open(Path::new("/d/f"), OpenMode::CreateNew).unwrap());
         assert_eq!(code(fs.open(Path::new("/d/f"), OpenMode::ReadOnly).unwrap().set_size(4)), Some(Code::Io));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D56: within a budget, a file's bytes are
+    /// reserved, held by what and its path: room held ahead, or a size set,
+    /// is refused past the limit with SQLCODE -918, the file left as it
+    /// was; a write within the room takes no more, one past it is counted
+    /// even past the limit; a smaller size, and the file removed and
+    /// closed, give them back.
+    #[test]
+    fn files_are_reserved_of_a_budget() {
+        let budget = MemoryBudget::new(100);
+        let fs = MemoryFileSystem::within(Arc::clone(&budget), "a spill file");
+        let path = Path::new("/f");
+        let file = fs.open(path, OpenMode::CreateNew).unwrap();
+        file.reserve(60).unwrap();
+        file.write_all_at(&[1_u8; 40], 0).unwrap();
+        assert_eq!(budget.reservations(), [("a spill file /f".to_owned(), 60)], "within the room");
+        let refused = |r: Result<()>| r.err().map(|e| e.code);
+        assert_eq!(refused(file.reserve(101)), Some(Code::Resources));
+        assert_eq!(refused(file.set_size(101)), Some(Code::Resources));
+        assert_eq!((file.size().unwrap(), budget.reserved()), (40_u64, 60));
+        file.write_all_at(&[2_u8; 70], 40).unwrap();
+        assert_eq!(budget.reserved(), 110, "written past the limit");
+        file.set_size(10).unwrap();
+        assert_eq!(budget.reserved(), 10);
+        fs.remove(path).unwrap();
+        assert_eq!(budget.reserved(), 10, "held while open");
+        drop(file);
+        assert_eq!(budget.reserved(), 0);
     }
 }

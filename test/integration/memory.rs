@@ -16,15 +16,17 @@ use crate::common::{Scratch, os};
 
 const MIB: usize = 1 << 20;
 const HALF_MIB: usize = 1 << 19;
+/// The page that heads a pager file: what a file in memory holds once made.
+const HEADER: usize = 8192;
 
 fn bytes(n: usize) -> Value {
     Value::Exact(Decimal::new(i128::try_from(n).unwrap(), 0))
 }
 
-/// Verifies: [DESIGN] RULES.md D38: a database in memory reserves the pool
-/// its engine and index methods share as its first table is made, of
+/// Verifies: [DESIGN] RULES.md D38, D56: a database in memory reserves the
+/// pool its engine and index methods share as its first table is made, of
 /// STORAGE.POOL_BYTES then, 32 MiB unless set, of MEMORY_BUDGET's 256 MiB,
-/// its indexes taking no more; past the budget a statement is refused
+/// with the page heading their file, its indexes taking no more; past the budget a statement is refused
 /// (SQLCODE -918, SQLSTATE TB918); STORAGE.POOL_BYTES set after the pool is
 /// made changes nothing; a lower budget takes back nothing reserved; one
 /// below 1 MiB is no MEMORY_BUDGET.
@@ -33,9 +35,10 @@ fn pools_reserve_the_budget() {
     let db = Database::new();
     assert_eq!(db.memory().unwrap(), (256 * MIB, 0));
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
-    assert_eq!(db.memory().unwrap(), (256 * MIB, 32 * MIB), "the shared pool");
+    let (limit, made) = db.memory().unwrap();
+    assert!(limit == 256 * MIB && (32 * MIB + HEADER..33 * MIB).contains(&made), "the shared pool and its file: {made}");
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER UNIQUE)").unwrap();
-    assert_eq!(db.memory().unwrap().1, 32 * MIB, "its index method shares it");
+    assert!((made..33 * MIB).contains(&db.memory().unwrap().1), "its index method shares them");
 
     let small = Database::new();
     small.set_setting("MEMORY_BUDGET", &bytes(3 * MIB)).unwrap();
@@ -46,10 +49,11 @@ fn pools_reserve_the_budget() {
     small.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
     small.set_setting("STORAGE.POOL_BYTES", &bytes(MIB)).unwrap();
     small.set_setting("MEMORY_BUDGET", &bytes(MIB)).unwrap();
-    assert_eq!(small.memory().unwrap(), (MIB, 2 * MIB), "nothing taken back, the pool as it was made");
+    let (limit, held) = small.memory().unwrap();
+    assert!(limit == MIB && (2 * MIB + HEADER..3 * MIB).contains(&held), "nothing taken back, the pool as it was made");
     small.reset_setting("MEMORY_BUDGET").unwrap();
     small.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER UNIQUE)").unwrap();
-    assert_eq!(small.memory().unwrap(), (256 * MIB, 2 * MIB));
+    assert!((held..3 * MIB).contains(&small.memory().unwrap().1));
     assert_eq!(small.set_setting("MEMORY_BUDGET", &bytes(MIB - 1)).err().map(|e| e.code), Some(Code::Api));
 }
 
@@ -123,7 +127,8 @@ fn plug_ins_draw_on_the_budget() {
     db.register_engine(Box::new(Cached::new(false))).unwrap();
     db.set_setting("DEFAULT_ENGINE", &Value::Char("cached".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) CREATE TABLE U (K INTEGER)").unwrap();
-    assert_eq!(db.memory().unwrap().1, 2 * MIB + 2 * MIB, "its row store's pool and a cache for each table");
+    let held = db.memory().unwrap().1;
+    assert!((4 * MIB + HEADER..5 * MIB).contains(&held), "its row store's pool and file, and a cache for each table: {held}");
     db.set_setting("MEMORY_BUDGET", &bytes(4 * MIB)).unwrap();
     let refused = db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE V (K INTEGER)").unwrap_err();
     assert_eq!(refused.code, Code::Resources, "{}", refused.msg);
@@ -151,4 +156,51 @@ fn reservations_are_shown_to_the_owner() {
     let total: usize = held.iter().map(|r| r.rsplit(',').next().unwrap().parse::<usize>().unwrap()).sum();
     assert_eq!(total, db.memory().unwrap().1);
     assert_eq!(crate::common::rows(&db.session("OTHER"), shown), Ok(vec![]));
+}
+
+/// Verifies: [DESIGN] RULES.md D38, D56: the pages of a database in memory
+/// are reserved of its budget as its file grows past the pool, so a table
+/// that outgrows MEMORY_BUDGET is refused (SQLCODE -918), not given memory
+/// past it; the rows written before stay.
+#[test]
+fn a_database_in_memory_keeps_its_pages_in_its_budget() {
+    let db = Database::new();
+    db.set_setting("MEMORY_BUDGET", &bytes(3 * MIB)).unwrap();
+    db.set_setting("STORAGE.POOL_BYTES", &bytes(MIB)).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(1000))").unwrap();
+    let a = db.session("A");
+    let long = "x".repeat(1000);
+    let refused = (0_i32..10_000_i32).find_map(|k| a.run(&format!("INSERT INTO T VALUES ({k}, '{long}')")).err().map(|e| (k, e)));
+    let (written, error) = refused.expect("a table past the budget is refused");
+    assert_eq!(error.code, Code::Resources, "{}", error.msg);
+    assert!(written > 1000_i32, "{written} rows first");
+    assert!(db.memory().unwrap().1 <= 3 * MIB);
+    assert_eq!(crate::common::count(&a, "SELECT K FROM T"), usize::try_from(written).unwrap());
+}
+
+/// Verifies: [DESIGN] RULES.md D56: a database in memory spills to files in
+/// memory, reserved of its budget while they are held and given back after,
+/// never to the system's temporary directory.
+#[test]
+fn a_database_in_memory_spills_in_memory() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(200))").unwrap();
+    let a = db.session("A");
+    for first in (0_i32..4000_i32).step_by(500) {
+        let values: Vec<String> = (first..first + 500_i32).map(|k| format!("({k}, 'r{k}')")).collect();
+        a.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    let before = db.memory().unwrap().1;
+    a.run("SET WORK_MEMORY = 65536").unwrap();
+    let sorted = crate::common::rows(&a, "SELECT K, S FROM T ORDER BY S DESC").unwrap();
+    let sorted: Vec<String> = sorted.iter().map(|r| r.trim_end().to_owned()).collect();
+    assert_eq!((sorted.len(), sorted.first().map(String::as_str)), (4000, Some("999,r999")));
+    assert_eq!(db.memory().unwrap().1, before, "given back");
+    let ours = format!("turborel-{}-", std::process::id());
+    let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with(&ours))
+        .collect();
+    assert_eq!(left, Vec::<String>::new(), "nothing of this process in the temporary directory");
 }

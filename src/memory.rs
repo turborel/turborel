@@ -77,6 +77,14 @@ impl MemoryBudget {
     ///
     /// SQLCODE -918 if they would take what is reserved past its limit.
     pub fn reserve(self: &Arc<Self>, bytes: usize, what: &str) -> Result<Reservation> {
+        self.take(bytes, what)?;
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        lock_builtin(&self.held).insert(id, (what.to_owned(), bytes));
+        Ok(Reservation { budget: Arc::clone(self), bytes, id })
+    }
+
+    /// Counts `bytes` more reserved, for `what`, if they fit its limit.
+    fn take(&self, bytes: usize, what: &str) -> Result<()> {
         let limit = self.limit();
         let mut reserved = self.reserved.load(Ordering::Acquire);
         loop {
@@ -87,11 +95,7 @@ impl MemoryBudget {
                 ));
             };
             match self.reserved.compare_exchange_weak(reserved, after, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => {
-                    let id = self.next.fetch_add(1, Ordering::Relaxed);
-                    lock_builtin(&self.held).insert(id, (what.to_owned(), bytes));
-                    return Ok(Reservation { budget: Arc::clone(self), bytes, id });
-                }
+                Ok(_) => return Ok(()),
                 Err(now) => reserved = now,
             }
         }
@@ -138,6 +142,44 @@ impl Reservation {
     pub fn bytes(&self) -> usize {
         self.bytes
     }
+
+    /// Makes it hold `bytes`: more reserved of its budget, or what it no
+    /// longer needs given back.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -918 if the more would take what is reserved past the
+    /// budget's limit; it then holds what it held.
+    pub fn resize(&mut self, bytes: usize) -> Result<()> {
+        if let Some(more) = bytes.checked_sub(self.bytes) {
+            let what = lock_builtin(&self.budget.held).get(&self.id).map(|(what, _)| what.clone()).unwrap_or_default();
+            self.budget.take(more, &what)?;
+        } else {
+            self.budget.reserved.fetch_sub(self.bytes.saturating_sub(bytes), Ordering::AcqRel);
+        }
+        self.held(bytes);
+        Ok(())
+    }
+
+    /// Makes it hold `bytes`, even past its budget's limit: for what is
+    /// already held, as a page written back that was not reserved, which
+    /// refusing would lose.
+    pub fn resize_anyway(&mut self, bytes: usize) {
+        if let Some(more) = bytes.checked_sub(self.bytes) {
+            self.budget.reserved.fetch_add(more, Ordering::AcqRel);
+        } else {
+            self.budget.reserved.fetch_sub(self.bytes.saturating_sub(bytes), Ordering::AcqRel);
+        }
+        self.held(bytes);
+    }
+
+    /// Notes that it holds `bytes`.
+    fn held(&mut self, bytes: usize) {
+        self.bytes = bytes;
+        if let Some(held) = lock_builtin(&self.budget.held).get_mut(&self.id) {
+            held.1 = bytes;
+        }
+    }
 }
 
 impl Drop for Reservation {
@@ -173,5 +215,27 @@ mod tests {
         drop(b);
         assert!(budget.reserve(30, "c").is_ok());
         assert!(budget.reserve(usize::MAX, "d").is_err(), "no overflow");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38, D56: a reservation grows while it
+    /// fits the limit, and is refused past it holding what it held
+    /// (SQLCODE -918), unless made to grow anyway; it shrinks, giving back
+    /// what it no longer needs; the budget lists it at its size.
+    #[test]
+    fn a_reservation_grows_and_shrinks() {
+        let budget = MemoryBudget::new(100);
+        let mut a = budget.reserve(10, "a").unwrap();
+        a.resize(70).unwrap();
+        assert_eq!((budget.reserved(), a.bytes()), (70, 70));
+        assert_eq!(a.resize(101).err().map(|e| e.code), Some(Code::Resources));
+        assert_eq!((budget.reserved(), a.bytes()), (70, 70), "held as it was");
+        a.resize(20).unwrap();
+        assert_eq!(budget.reservations(), [("a".to_owned(), 20)]);
+        a.resize_anyway(120);
+        assert_eq!(budget.reserved(), 120, "past the limit");
+        assert!(budget.reserve(1, "b").is_err());
+        a.resize_anyway(20);
+        drop(a);
+        assert_eq!(budget.reserved(), 0);
     }
 }

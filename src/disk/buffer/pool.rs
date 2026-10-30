@@ -253,11 +253,13 @@ impl BufferPool {
     /// # Errors
     ///
     /// SQLCODE -910 if `file` is not a registered pager file, or every frame
-    /// is held; the errors of writing back the page whose frame it takes.
+    /// is held; SQLCODE -918 if its file is kept in memory of a budget with
+    /// no room for the page (`Pager::reserve`); the errors of writing back
+    /// the page whose frame it takes.
     pub fn new_page(&self, file: FileId) -> Result<(PageId, PageMut<'_>)> {
         let pager = self.pager(file)?;
         let id = pager.allocate(1).first().map_or(PageId(0), |e| e.start);
-        match self.hold(Key { file, id: id.0 }, Fill::Empty) {
+        match pager.reserve(id).and_then(|()| self.hold(Key { file, id: id.0 }, Fill::Empty)) {
             Ok(frame) => Ok((id, Self::held_for_writing(frame))),
             Err(e) => {
                 // Never written, so nothing refers to it.

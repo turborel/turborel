@@ -42,7 +42,7 @@ use crate::value::DataType;
 pub const MEMORY_POOL_BYTES: usize = 2 << 20;
 
 /// A pager file in a file system of its own in memory, in a buffer pool of
-/// its own drawing on `budget`, held by `what`: where the built-in engine
+/// its own, both drawing on `budget`, held by `what`: where the built-in engine
 /// and indexes of a database kept nowhere else put their pages.
 ///
 /// # Errors
@@ -55,7 +55,7 @@ pub(crate) fn memory_file(budget: &Arc<MemoryBudget>, what: &str) -> Result<(Arc
 
 /// As `memory_file`, its pool of `bytes`.
 fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Result<(Arc<BufferPool>, FileId), SqlError> {
-    let fs = MemoryFileSystem::new();
+    let fs = MemoryFileSystem::within(Arc::clone(budget), &format!("the pages of {what}"));
     let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
     let pager = Pager::create(&fs, Path::new("/pages"), hash, Pipeline::none(), DEFAULT_PAGE_SIZE)?;
     let pool = Arc::new(BufferPool::in_budget(budget, (bytes, pager.page_size()), what)?);
@@ -77,9 +77,9 @@ pub(crate) struct MemoryPages {
 
 impl MemoryPages {
     /// Pages whose pool will be of `bytes`, reserved of a budget of their
-    /// own until they are given another.
+    /// own, limited by nothing else, until they are given another.
     pub(crate) fn new(bytes: usize) -> Arc<MemoryPages> {
-        Arc::new(MemoryPages { budget: Mutex::new(MemoryBudget::new(bytes)), bytes: AtomicUsize::new(bytes), made: Mutex::new(None) })
+        Arc::new(MemoryPages { budget: Mutex::new(MemoryBudget::new(usize::MAX)), bytes: AtomicUsize::new(bytes), made: Mutex::new(None) })
     }
 
     /// Makes `budget` the one their pool draws on, if made after.

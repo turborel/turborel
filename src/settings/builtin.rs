@@ -276,7 +276,7 @@ fn memory() -> [Definition; 3] {
         defined(
             ("MEMORY_BUDGET", at_least(1_i128 << 20_i32), count(crate::memory::DEFAULT_BUDGET)),
             DATABASE,
-            "The bytes the database's buffer pools may reserve in all; lowering it takes back none they hold.",
+            "The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.",
         ),
         defined(
             ("WORK_MEMORY", at_least(64_i128 << 10_i32), count(crate::spill::DEFAULT_WORK_MEMORY)),
