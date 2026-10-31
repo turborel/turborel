@@ -101,6 +101,7 @@ mod log_sync;
 mod memory;
 mod mvcc;
 mod named_schemas;
+mod ordered_joins;
 mod pages;
 mod planning;
 mod plugin_files;

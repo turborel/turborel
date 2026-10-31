@@ -1,13 +1,14 @@
 //! \[DESIGN\] Batch streams (RULES.md D31): the rows of a subtree of a plan
 //! given a batch at a time, for an aggregation or a projection over it to
-//! read. A subtree gives them if it is a table's scan; a filter of one,
-//! told the simple conjuncts of its condition (`scanned`), or of any other
-//! stream; an inner hash join, a product or an outer join of streams
-//! [ISO/IEC 9075:1992 §7.5] (`joined.rs`); a projection of columns of a
-//! stream, its batches the vectors of those columns, in order, moved; one of
-//! expressions of its columns, each evaluated of the rows a batch keeps
-//! (`project::computed`); or the rows of
-//! two streams each holding every column of their rows, alike
+//! read. A subtree gives them if it is a table's scan, one in an order
+//! read in it and its rows gathered, as a plan over it relies on; a filter
+//! of one, told the simple conjuncts of its condition (`scanned`) if it is
+//! in none, or of any other stream; an inner hash join, a product or an
+//! outer join of streams [ISO/IEC 9075:1992 §7.5] (`joined.rs`); a
+//! projection of columns of a stream, its batches the vectors of those
+//! columns, in order, moved; one of expressions of its columns, each
+//! evaluated of the rows a batch keeps (`project::computed`); or the rows
+//! of two streams each holding every column of their rows, alike
 //! (`Plan::Append`, UNION ALL), a chain of them gathered without a frame
 //! each, every operand's batches in turn, each opened once those before it
 //! are read.
@@ -154,12 +155,24 @@ pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
 ///
 /// As `open`.
 pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    // A scan in an order (`TableStorage::scan_ordered`) is read in it, its
+    // rows merged, and gathered into batches: a grouping or a join over it
+    // gives its rows in that order, as the planner relies on.
+    if let Plan::SeqScan { columns, order, .. } = &plan
+        && !order.is_empty()
+    {
+        let columns = columns.clone();
+        return Ok(joined::gathered(crate::exec::execute(plan, db, tx), &columns));
+    }
     match plan {
         Plan::SeqScan { table, columns, .. } => scan_of((&table, &columns, None), db, tx),
         Plan::Filter { cond, input, .. } => {
-            // A scan's filter: its simple conjuncts told the scan.
+            // A scan's filter: its simple conjuncts told the scan, unless
+            // it is in an order.
             let inner = *input;
-            let (inner, columns) = if let Plan::SeqScan { table, columns, .. } = &inner {
+            let (inner, columns) = if let Plan::SeqScan { table, columns, order, .. } = &inner
+                && order.is_empty()
+            {
                 (scan_of((table, columns, Some(&cond)), db, tx)?, columns.clone())
             } else {
                 let columns = layout(&inner, db).map(|l| l.0).unwrap_or_default();

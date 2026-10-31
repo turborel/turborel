@@ -1659,7 +1659,9 @@ write-ahead logging.
   in their rows' place; then the tree's other rows.
 - **Streams** (`exec/batch/stream.rs`). A plan subtree gives rows by
   batch (a stream) if it is:
-  - a table's scan;
+  - a table's scan; one in an order (`scan_ordered`) read so, its rows
+    gathered into batches, as a join or a grouping over it gives that
+    order with no sort;
   - a filter of one (told its condition's simple conjuncts) or of
     another stream, each batch with the rows kept;
   - a join of streams (`exec/batch/joined.rs`), the columns its keys and

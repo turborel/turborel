@@ -192,7 +192,7 @@ fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
 }
 
 /// `rows`, joined, gathered into batches of their values of `columns`.
-fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
+pub(super) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
     // Rows with no id, which a batch does not keep.
     Box::new(batches_of(Box::new(rows.map(|r| r.map(|row| (0, row)))), columns).map(|b| b.map(|b| (b, None))))
 }
