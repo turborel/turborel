@@ -47,6 +47,7 @@ pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
 pub(crate) use raising::is_guarded;
 pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
 pub use transitivity::{PREDICATE_TRANSITIVITY, PredicateTransitivity};
+pub(crate) use views::substitute;
 pub use views::{PUSH_FILTER_THROUGH_DISTINCT, PUSH_FILTER_THROUGH_PROJECT, PushFilterThroughDistinct, PushFilterThroughProject};
 
 /// The passes `Optimizer::optimize` makes at most, unless the setting

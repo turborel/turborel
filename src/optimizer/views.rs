@@ -41,7 +41,7 @@ impl Rule for PushFilterThroughProject {
 }
 
 /// `e` with each column the expression `exprs` has for it.
-fn substitute(e: Expr, exprs: &[Expr]) -> Expr {
+pub(crate) fn substitute(e: Expr, exprs: &[Expr]) -> Expr {
     if let Expr::Column(i) = e {
         return exprs.get(i).cloned().unwrap_or(Expr::Column(i));
     }

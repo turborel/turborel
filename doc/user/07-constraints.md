@@ -77,9 +77,9 @@ turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.EMPLOYEES_CHECK1 of ANN.EMPLO
 An assertion is a constraint of a schema, on no one table: its condition
 holds of the database whole, checked after each statement that changes
 a table it reads ([CREATE ASSERTION](../sql/statements/create-assertion.md)).
-That no row has a condition, or that a count of rows stays within a
-bound, is checked from the rows the statement changed, not the tables
-whole, as CREATE ASSERTION tells.
+That no row has a condition, or that a count of rows, or their greatest
+or least value, stays within a bound, is checked from the rows the
+statement changed, not the tables whole, as CREATE ASSERTION tells.
 
 ## Deferred checking
 

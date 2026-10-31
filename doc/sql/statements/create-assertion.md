@@ -80,18 +80,28 @@ turborel: SQLCODE -913 (SQLSTATE 40002): the transaction is rolled back: asserti
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.34. After a statement that changes a table it
-reads, an assertion of one of two forms is checked from the rows the
-statement changed, the others whole: `NOT EXISTS (SELECT ... FROM T WHERE
-p)`, of the rows the statement inserted or updated; and `(SELECT COUNT(*)
-FROM T WHERE p)` compared with a constant, from how many rows the
-statement brought into the count or took out of it, whole only if that
-moves the count toward breaking the comparison, or the transaction reads
-at a snapshot of each statement. Of each form, `p` is of columns,
-constants, arithmetic, comparisons, IS NULL, LIKE and CASE alone, of the
-one table's row; the conjuncts of an AND are taken each. A deferred
-assertion is checked whole, once, however many statements of the
+reads, an assertion whose every conjunct has one of these forms is
+checked from the rows the statement changed, the others whole.
+`NOT EXISTS (SELECT ... FROM T WHERE p)` is checked from the rows the
+statement inserted or updated; so are `(SELECT MAX(x) FROM T WHERE p)`
+less than a constant, or not greater, and MIN greater, or not less.
+`(SELECT COUNT(*) FROM T WHERE p)` compared with a constant, and COUNT(x),
+is checked from how many rows the statement brought into the count or
+took out of it, whole only if that moves the count toward breaking the
+comparison, or the transaction reads at a snapshot of each statement.
+MAX greater than a constant, or not less, and MIN less, or not greater,
+holds if a row the statement inserted or updated reaches the constant,
+or if it changed none of the rows; else it is checked whole. Of each
+form, `p` and `x` are of columns, constants, arithmetic, comparisons, IS
+NULL, LIKE and CASE alone, of the one table's row, through the filters
+and columns of views of it; and `x` is never null there: a column NOT
+NULL or of the PRIMARY KEY, not DEFERRABLE, or one `p` is not true of
+when null. SUM and AVG are checked whole. A deferred assertion of one
+`NOT EXISTS` is checked from each row the transaction wrote while it was
+deferred; any other, whole, once, however many statements of the
 transaction changed a table it reads. Whichever way, a statement fails
-exactly when the condition is false after it. SQL-86 has no assertions.
+exactly when the condition is false after it, with the same error and
+warning. SQL-86 has no assertions.
 
 ## SEE ALSO
 

@@ -6,84 +6,65 @@
 //! changes a table it reads [§4.10.1], so it was satisfied as the statement
 //! began: the statement before it was checked, or the assertion was
 //! checked whole as it was made or made immediate, and a statement that
-//! breaks it is undone. Two forms of a conjunct of its condition are
-//! checked from the change alone, each over one table T, its rows filtered
-//! by conditions of the row alone (`row_cond`): columns, constants,
-//! arithmetic, comparisons, IS NULL, LIKE and CASE, no function, CAST,
-//! subquery or outer reference. Such a condition of a row gives the same
-//! truth, or the same error, every time it is evaluated on it, and raises
-//! no warning; it depends on nothing but the row, so not on the time, the
-//! session, nor a function a plug-in may replace.
+//! breaks it is undone. The forms of a conjunct of its condition checked
+//! from the change alone (`forms.rs`) are each over the rows of one table
+//! T that pass steps of conditions and expressions of the row alone:
+//! columns, constants, arithmetic, comparisons, IS NULL, LIKE and CASE, no
+//! function, CAST, subquery or outer reference. Such a step gives the same
+//! truth, or the same error, every time it is evaluated on a row, and
+//! raises no warning; it depends on nothing but the row, so not on the
+//! time, the session, nor a function a plug-in may replace. Each row of T
+//! was evaluated without an error as it was written, or as the assertion
+//! was checked whole: a whole check that finds it satisfied has evaluated
+//! every row.
 //!
-//! - `NOT EXISTS (SELECT ... FROM T WHERE p)` is false exactly when some
-//!   row of T has `p` true. As the statement began none had, and each row
-//!   gave `p` without an error: it was evaluated as the row was written, or
-//!   as the assertion was checked whole. A row the statement did not change
-//!   gives what it gave; one it deleted is gone. So the conjunct is false
-//!   after it exactly when a row it inserted or updated has `p` true, and
+//! - No row passes (`NOT EXISTS`; MAX or MIN bounded, its step `NOT (x op
+//!   k)`): as the statement began none did. A row the statement did not
+//!   change gives what it gave; one it deleted is gone. So the conjunct is
+//!   false after it exactly when a row it inserted or updated passes, and
 //!   those rows alone are evaluated. Rows are independent of one another,
 //!   so what other transactions write cannot combine with them: each
 //!   transaction's rows are checked as it writes them, as a table's CHECK
-//!   is.
-//! - `(SELECT COUNT(*) FROM T WHERE p) op k`, or `k op (...)`, of a
-//!   constant `k`: the count after is the count before plus the rows of
-//!   the change that have `p` true now less those that had it before,
-//!   each row as `p` gives it alone. A count no greater satisfies `<` and
-//!   `<=` if the count before did, one no smaller `>` and `>=`, one equal
-//!   any of them; a change that moves the count the other way is checked
-//!   whole. The count before is the one this transaction sees, so this
-//!   holds only for one that reads at one snapshot, its own: one reading at
-//!   a snapshot of each statement checks whole. Whatever others commit
-//!   meanwhile, a transaction whose change cannot move the count the wrong
-//!   way leaves any state that satisfies it satisfying it once it commits;
-//!   one whose change can reads T whole, its reads checked at commit (RULES.md
-//!   D29).
+//!   is. NOT EXISTS stops at the first row passing, as EXISTS does (RULES.md
+//!   D15); a set function evaluates every row.
+//! - A count compared with a constant: the count after is the count before
+//!   plus the rows of the change that pass now less those that passed
+//!   before. A count no greater satisfies `<` and `<=` if the count before
+//!   did, one no smaller `>` and `>=`, one equal any of them; a change that
+//!   moves the count the other way is checked whole. The count before is
+//!   the one this transaction sees, so this holds only for one that reads
+//!   at one snapshot, its own: one reading at a snapshot of each statement
+//!   checks whole. Whatever others commit meanwhile, a transaction whose
+//!   change cannot move the count the wrong way leaves any state that
+//!   satisfies it satisfying it once it commits; one whose change can reads
+//!   T whole, its reads checked at commit (RULES.md D29).
+//! - MAX or MIN reached (`MAX(x) > k`): true after the statement if a row it
+//!   inserted or updated passes with `x op k` true, whatever the others; if
+//!   no row it changed passed before or passes now, the greatest or least is
+//!   the one before, at one snapshot as a count is; else checked whole.
 //!
-//! The conjuncts of an AND are checked each: the condition is false when
-//! one of them is. A deferred assertion, or any other form, is checked
-//! whole.
+//! Every form is evaluated on the change, as AND evaluates both its
+//! operands, so an error any raises is raised (RULES.md D15); the condition
+//! is false when one of them is. Any other form is checked whole.
+//!
+//! A deferred assertion whose condition is one form of no row passing is
+//! checked, when it is, from each row the transaction wrote while it was
+//! deferred (`Check::AssertedRow`): it held as it was deferred, as it was
+//! immediate then, or as each transaction before checked it, and rows are
+//! independent. Any other deferred assertion is checked whole.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::State;
-use super::super::integrity::Effects;
+use super::super::integrity::{Check, Effects};
+use super::forms::{Form, Kind, Known, Safe, Step, forms_of};
 use crate::catalog::{ConstraintKind, QualifiedName};
 use crate::error::Result;
-use crate::exec::{Heard, eval_cond};
-use crate::functions::Registry;
-use crate::logical::{Cond, Expr, LogicalPlan, Subquery, Truth, split_and};
-use crate::storage::Row;
+use crate::exec::{Heard, HeldRows, eval, eval_cond};
+use crate::logical::Truth;
+use crate::storage::{Row, RowId};
 use crate::txn::Txn;
-use crate::value::CompOp;
-
-/// A conjunct of an assertion's condition that a statement's change
-/// checks, of the rows of `table` that all of `conds` keep.
-struct Form {
-    table: QualifiedName,
-    conds: Vec<Cond>,
-    kind: Kind,
-}
-
-/// What the conjunct says of those rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    /// There is none.
-    NoRow,
-    /// Their count compares so with a constant: a change of `Safe`'s
-    /// direction cannot make it false.
-    Count(Safe),
-}
-
-/// The changes of a count that cannot make its comparison false.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Safe {
-    /// None that adds to it: of `<` and `<=`.
-    Fewer,
-    /// None that takes from it: of `>` and `>=`.
-    More,
-    /// None that changes it: of `=` and `<>`.
-    Same,
-}
 
 /// What a change shows of an assertion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +76,45 @@ enum Verdict {
     /// Only checking it whole tells.
     Unknown,
 }
+
+/// What the rows of a change showed of a form.
+#[derive(Default)]
+struct Seen {
+    /// A row passes now.
+    passes: bool,
+    /// A row passed before or passes now.
+    touched: bool,
+    /// The rows passing now less those passing before.
+    change: i64,
+    /// A row passing now has `Kind::Reach`'s condition true.
+    reached: bool,
+}
+
+impl Seen {
+    /// What it shows of a form of `kind`, in a transaction that reads at
+    /// one snapshot if `one_snapshot`.
+    fn verdict(&self, kind: &Kind, one_snapshot: bool) -> Verdict {
+        let holds = match kind {
+            Kind::NoRow | Kind::Bound => return if self.passes { Verdict::Broken } else { Verdict::Holds },
+            // The count before is the one of this transaction's snapshot.
+            Kind::Count(safe) => {
+                one_snapshot
+                    && match safe {
+                        Safe::Fewer => self.change <= 0,
+                        Safe::More => self.change >= 0,
+                        Safe::Same => self.change == 0,
+                    }
+            }
+            Kind::Reach(_) => self.reached || (one_snapshot && !self.touched),
+        };
+        if holds { Verdict::Holds } else { Verdict::Unknown }
+    }
+}
+
+/// How the checks of a deferred assertion are made, as `Check::AssertedRow`
+/// meets it: of each row, by its one form; or, none, checked whole once,
+/// made.
+pub(in crate::db) struct Asserted(Option<Form>);
 
 impl State {
     /// [ISO/IEC 9075:1992 §4.10.1, §11.34 GR2] That assertion `name`,
@@ -112,7 +132,7 @@ impl State {
             self.read_lock(tx, t)?;
         }
         let plan = self.assertion_plan(a)?;
-        let verdict = match forms_of(&plan, &self.functions) {
+        let verdict = match forms_of(&plan, &self.known()) {
             Some(forms) => self.verdict(tx, &forms, effects)?,
             None => Verdict::Unknown,
         };
@@ -123,334 +143,135 @@ impl State {
         }
     }
 
+    /// What finding an assertion's forms takes of this state.
+    fn known(&self) -> Known<'_> {
+        Known { functions: &self.functions, catalog: &*self.catalog }
+    }
+
     /// What the change `effects` shows of an assertion whose condition is
-    /// the conjunction of `forms`.
+    /// the conjunction of `forms`: each evaluated.
     fn verdict(&self, tx: &Txn, forms: &[Form], effects: &mut Effects<'_>) -> Result<Verdict> {
         let mut verdict = Verdict::Holds;
         for form in forms {
-            match self.form_verdict(tx, form, effects)? {
-                Verdict::Holds => {}
-                Verdict::Broken => return Ok(Verdict::Broken),
-                Verdict::Unknown => verdict = Verdict::Unknown,
-            }
+            verdict = match (verdict, self.form_verdict(tx, form, effects)?) {
+                (Verdict::Broken, _) | (_, Verdict::Broken) => Verdict::Broken,
+                (Verdict::Unknown, _) | (_, Verdict::Unknown) => Verdict::Unknown,
+                (Verdict::Holds, Verdict::Holds) => Verdict::Holds,
+            };
         }
         Ok(verdict)
     }
 
     /// What the change `effects` shows of `form`.
     fn form_verdict(&self, tx: &Txn, form: &Form, effects: &mut Effects<'_>) -> Result<Verdict> {
-        let safe = match form.kind {
-            Kind::NoRow => None,
-            Kind::Count(safe) => Some(safe),
-        };
-        // The count before is the one of this transaction's snapshot.
-        if safe.is_some() && !tx.one_snapshot() {
-            return Ok(Verdict::Unknown);
-        }
         let storage = self.storage_of(&form.table)?;
-        let mut change: i64 = 0;
-        let mut broken = false;
+        // Only a count and a greatest or least reached look at the rows before.
+        let before_counts = matches!(form.kind, Kind::Count(_) | Kind::Reach(_));
+        let mut seen = Seen::default();
         effects.visit_changed(&form.table, &mut |id, before| {
-            if broken {
+            if seen.passes && matches!(form.kind, Kind::NoRow) {
                 return Ok(());
             }
             let now = storage.get(tx.id, id)?;
-            let kept = now.as_ref().map(|row| keeps(&form.conds, row, tx)).transpose()?.unwrap_or(false);
-            if safe.is_none() {
-                broken = kept;
-                return Ok(());
+            let is_in = now.as_ref().map(|row| passes(&form.steps, row, tx)).transpose()?.unwrap_or(false);
+            let was_in = before.filter(|_| before_counts).map(|row| passes(&form.steps, row, tx)).transpose()?.unwrap_or(false);
+            if let (Kind::Reach(reach), Some(row), true) = (&form.kind, &now, is_in) {
+                let reached = eval_cond(reach, row, &Heard(tx.stop.warnings()))? == Truth::True;
+                seen.reached = seen.reached || reached;
             }
-            let had = before.map(|row| keeps(&form.conds, row, tx)).transpose()?.unwrap_or(false);
-            change = change.saturating_add(i64::from(kept)).saturating_sub(i64::from(had));
+            seen.passes = seen.passes || is_in;
+            seen.touched = seen.touched || is_in || was_in;
+            seen.change = seen.change.saturating_add(i64::from(is_in)).saturating_sub(i64::from(was_in));
             Ok(())
         })?;
-        if broken {
-            return Ok(Verdict::Broken);
+        Ok(seen.verdict(&form.kind, tx.one_snapshot()))
+    }
+
+    /// Of assertion `name`, deferred, at the end of the statement that did
+    /// `effects`: if its condition is one form of no row passing, the check
+    /// of each row the statement changed in that form's table, added to
+    /// `out`; whether it was.
+    ///
+    /// # Errors
+    ///
+    /// Its condition does not bind; the spill area's.
+    pub(in crate::db) fn defer_asserted_rows(
+        &self,
+        name: &QualifiedName,
+        effects: &mut Effects<'_>,
+        out: &mut HeldRows<Check>,
+    ) -> Result<bool> {
+        let Some(form) = self.row_form(name)? else { return Ok(false) };
+        effects.visit_changed(&form.table, &mut |id, _| {
+            out.push(Check::AssertedRow { table: form.table.clone(), constraint: name.clone(), id })
+        })?;
+        Ok(true)
+    }
+
+    /// The one form of assertion `name`'s condition, if it has one, of no
+    /// row passing, stopping at the first.
+    fn row_form(&self, name: &QualifiedName) -> Result<Option<Form>> {
+        let Some(a) = self.catalog.assertion(name) else { return Ok(None) };
+        let mut forms = forms_of(&self.assertion_plan(a)?, &self.known()).unwrap_or_default();
+        let one = forms.pop().filter(|_| forms.is_empty());
+        Ok(one.filter(|form| matches!(form.kind, Kind::NoRow)))
+    }
+
+    /// [ISO/IEC 9075:1992 §4.10.1, §11.34 GR2] That row `id` of `table`, as
+    /// transaction `tx` sees it, written while assertion `name` was
+    /// deferred, leaves it not false: by its form, kept in `made` for the
+    /// rows after it; or, if it has none of that table now, whole, once.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -201, SQLSTATE 23000, about the assertion, if it is false.
+    pub(in crate::db) fn check_asserted_row(
+        self: &Arc<Self>,
+        tx: &Txn,
+        (table, name, id): (&QualifiedName, &QualifiedName, RowId),
+        made: &mut HashMap<QualifiedName, Asserted>,
+    ) -> Result<()> {
+        if !made.contains_key(name) {
+            let Some(a) = self.catalog.assertion(name) else { return Ok(()) };
+            let ConstraintKind::Check { reads, .. } = &a.kind else { return Ok(()) };
+            for t in reads {
+                self.read_lock(tx, t)?;
+            }
+            let form = self.row_form(name)?.filter(|form| form.table == *table);
+            if form.is_none() {
+                self.assertion_holds(tx, name, self.assertion_plan(a)?)?;
+            }
+            made.insert(name.clone(), Asserted(form));
         }
-        let harmless = match safe {
-            None => true,
-            Some(Safe::Fewer) => change <= 0,
-            Some(Safe::More) => change >= 0,
-            Some(Safe::Same) => change == 0,
-        };
-        Ok(if harmless { Verdict::Holds } else { Verdict::Unknown })
+        let Some(Asserted(Some(form))) = made.get(name) else { return Ok(()) };
+        let now = self.storage_of(table)?.get(tx.id, id)?;
+        if now.map(|row| passes(&form.steps, &row, tx)).transpose()?.unwrap_or(false) {
+            return Err(super::broken(name));
+        }
+        Ok(())
     }
 }
 
-/// Whether every condition of `conds` is true of `row`.
-fn keeps(conds: &[Cond], row: &Row, tx: &Txn) -> Result<bool> {
-    for c in conds {
-        if eval_cond(c, row, &Heard(tx.stop.warnings()))? != Truth::True {
-            return Ok(false);
+/// Whether `row` passes every one of `steps`, in order.
+///
+/// # Errors
+///
+/// A step's evaluation's.
+fn passes(steps: &[Step], row: &Row, tx: &Txn) -> Result<bool> {
+    let heard = Heard(tx.stop.warnings());
+    for step in steps {
+        match step {
+            Step::Keep(c) => {
+                if eval_cond(c, row, &heard)? != Truth::True {
+                    return Ok(false);
+                }
+            }
+            Step::Compute(exprs) => {
+                for e in exprs {
+                    eval(e, row, &heard)?;
+                }
+            }
         }
     }
     Ok(true)
-}
-
-/// The forms of the conjuncts of the condition of `plan`, an assertion's
-/// bound query, `SELECT 1 FROM (VALUES (1)) WHERE NOT (condition)`, if
-/// each has one; `functions` the database's.
-fn forms_of(plan: &LogicalPlan, functions: &Registry) -> Option<Vec<Form>> {
-    let LogicalPlan::Project { input, .. } = plan else { return None };
-    let LogicalPlan::Filter { cond: Cond::Not(condition), input: values } = &**input else { return None };
-    if !matches!(**values, LogicalPlan::Values { .. }) {
-        return None;
-    }
-    let mut conjuncts = Vec::new();
-    split_and((**condition).clone(), &mut conjuncts);
-    conjuncts.iter().map(|c| form_of(c, functions)).collect()
-}
-
-/// The form of the conjunct `c`, if it has one.
-fn form_of(c: &Cond, functions: &Registry) -> Option<Form> {
-    match c {
-        Cond::Not(inner) => {
-            let Cond::Exists(s) = &**inner else { return None };
-            exists_form(s)
-        }
-        Cond::Compare(Expr::Subquery(s, 0), op, Expr::Const(_)) => count_form(s, *op, functions),
-        Cond::Compare(Expr::Const(_), op, Expr::Subquery(s, 0)) => count_form(s, op.flip(), functions),
-        Cond::Const(_)
-        | Cond::Or(..)
-        | Cond::And(..)
-        | Cond::Is(..)
-        | Cond::Compare(..)
-        | Cond::IsNull(..)
-        | Cond::In(..)
-        | Cond::Like(..)
-        | Cond::Exists(_)
-        | Cond::Quantified(..)
-        | Cond::Unique(_)
-        | Cond::Match { .. } => None,
-    }
-}
-
-/// `NOT EXISTS (SELECT ... FROM T WHERE p)`: of `s`, the subquery.
-fn exists_form(s: &Subquery) -> Option<Form> {
-    let rows = if let LogicalPlan::Project { exprs, input } = &s.plan {
-        // The select list of EXISTS, which raises nothing.
-        exprs.iter().all(|e| matches!(e, Expr::Column(_) | Expr::Const(_))).then_some(&**input)?
-    } else {
-        &s.plan
-    };
-    let (table, conds) = filtered_scan(rows).filter(|_| s.outer.is_empty())?;
-    Some(Form { table, conds, kind: Kind::NoRow })
-}
-
-/// `(SELECT COUNT(*) FROM T WHERE p) op k`: of `s`, the subquery, and
-/// `op`, the comparison with the count first.
-fn count_form(s: &Subquery, op: CompOp, functions: &Registry) -> Option<Form> {
-    let LogicalPlan::Project { exprs, input } = &s.plan else { return None };
-    let LogicalPlan::Aggregate { groups, aggs, input: rows } = &**input else { return None };
-    let ([Expr::Column(0)], [agg]) = (exprs.as_slice(), aggs.as_slice()) else { return None };
-    // COUNT(*) alone: COUNT of a column eliminates its nulls, with a warning.
-    let counted = groups.is_empty() && agg.arg.is_none() && !agg.distinct && functions.is_standard_count(&agg.func);
-    let (table, conds) = filtered_scan(rows).filter(|_| counted && s.outer.is_empty())?;
-    let safe = match op {
-        CompOp::Lt | CompOp::Le => Safe::Fewer,
-        CompOp::Gt | CompOp::Ge => Safe::More,
-        CompOp::Eq | CompOp::Ne => Safe::Same,
-    };
-    Some(Form { table, conds, kind: Kind::Count(safe) })
-}
-
-/// The table `plan` reads and the conditions it keeps its rows by, if it is
-/// filters of conditions of the row alone over a scan.
-fn filtered_scan(plan: &LogicalPlan) -> Option<(QualifiedName, Vec<Cond>)> {
-    let mut conds = Vec::new();
-    let mut node = plan;
-    loop {
-        match node {
-            LogicalPlan::Filter { cond, input } => {
-                if !row_cond(cond) {
-                    return None;
-                }
-                conds.push(cond.clone());
-                node = input;
-            }
-            LogicalPlan::Scan { table, .. } => return Some((table.clone(), conds)),
-            LogicalPlan::Product { .. }
-            | LogicalPlan::Aggregate { .. }
-            | LogicalPlan::Project { .. }
-            | LogicalPlan::Distinct { .. }
-            | LogicalPlan::OuterJoin { .. }
-            | LogicalPlan::SetOp { .. }
-            | LogicalPlan::System { .. }
-            | LogicalPlan::Values { .. }
-            | LogicalPlan::Sort { .. } => return None,
-        }
-    }
-}
-
-/// Whether `c` is a condition of the row alone, as the module says.
-fn row_cond(c: &Cond) -> bool {
-    match c {
-        Cond::Const(_) => true,
-        Cond::Or(a, b) | Cond::And(a, b) => row_cond(a) && row_cond(b),
-        Cond::Not(a) | Cond::Is(a, ..) => row_cond(a),
-        Cond::Compare(a, _, b) => row_expr(a) && row_expr(b),
-        Cond::IsNull(e, _) | Cond::In(e, _) => row_expr(e),
-        Cond::Like(e, pattern, escape) => row_expr(e) && row_expr(pattern) && escape.as_ref().is_none_or(row_expr),
-        Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(_) | Cond::Match { .. } => false,
-    }
-}
-
-/// Whether `e` is an expression of the row alone, as the module says.
-fn row_expr(e: &Expr) -> bool {
-    match e {
-        Expr::Column(_) | Expr::Const(_) => true,
-        Expr::Neg(x) => row_expr(x),
-        Expr::Arith(a, _, b) => row_expr(a) && row_expr(b),
-        Expr::Case(whens, otherwise) => whens.iter().all(|(c, result)| row_cond(c) && row_expr(result)) && row_expr(otherwise),
-        Expr::Call(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => false,
-    }
-}
-
-// Unit tests: the forms found of an assertion's bound query, and the
-// shapes of none (RULES.md R-TEST-1).
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::*;
-    use crate::functions::AggregateRef;
-    use crate::logical::{AggCall, InSet};
-    use crate::value::{ArithOp, DataType, Decimal, Spelled, Value};
-
-    const COUNTED: DataType = DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric };
-
-    fn table() -> QualifiedName {
-        QualifiedName { auth: "A".into(), ident: "T".into() }
-    }
-
-    fn scan() -> LogicalPlan {
-        LogicalPlan::Scan { table: table(), names: vec!["K".into(), "N".into()], needed: vec![0, 1] }
-    }
-
-    fn number(n: i128) -> Expr {
-        Expr::Const(Value::Exact(Decimal::new(n, 0)))
-    }
-
-    /// The rows of T where `cond`.
-    fn filtered(cond: Cond) -> LogicalPlan {
-        LogicalPlan::Filter { cond, input: Box::new(scan()) }
-    }
-
-    fn subquery(plan: LogicalPlan) -> Arc<Subquery> {
-        Arc::new(Subquery { plan, outer: Vec::new() })
-    }
-
-    /// `NOT EXISTS (SELECT exprs FROM rows)`.
-    fn none_of(exprs: Vec<Expr>, rows: LogicalPlan) -> Cond {
-        Cond::Not(Box::new(Cond::Exists(subquery(LogicalPlan::Project { exprs, input: Box::new(rows) }))))
-    }
-
-    /// `(SELECT f(arg) FROM rows) op k`.
-    fn counted(f: AggregateRef, arg: Option<Expr>, rows: LogicalPlan, op: CompOp) -> Cond {
-        let agg = AggCall { func: f, arg, distinct: false, result: COUNTED, label: "COUNT(*)".into() };
-        let aggregate = LogicalPlan::Aggregate { groups: Vec::new(), aggs: vec![agg], input: Box::new(rows) };
-        let s = subquery(LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) });
-        Cond::Compare(Expr::Subquery(s, 0), op, number(10))
-    }
-
-    /// The bound query of an assertion of `condition`.
-    fn asserting(condition: Cond) -> LogicalPlan {
-        let values = LogicalPlan::Values { rows: vec![vec![number(1)]], width: 1 };
-        let filter = LogicalPlan::Filter { cond: Cond::Not(Box::new(condition)), input: Box::new(values) };
-        LogicalPlan::Project { exprs: vec![number(1)], input: Box::new(filter) }
-    }
-
-    fn kinds(condition: Cond, functions: &Registry) -> Option<Vec<Kind>> {
-        forms_of(&asserting(condition), functions).map(|forms| forms.into_iter().map(|f| f.kind).collect())
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 GR2]; [DESIGN]
-    /// RULES.md D51: NOT EXISTS of filters of a row's conditions over a
-    /// table, and COUNT(*) of them compared with a constant, either side,
-    /// are found, each conjunct of an AND.
-    #[test]
-    fn forms_are_found_of_each_conjunct() {
-        let functions = Registry::with_set_functions();
-        let count = functions.aggregate("COUNT").unwrap();
-        let row = Cond::And(
-            Box::new(Cond::Compare(Expr::Neg(Box::new(Expr::Column(1))), CompOp::Lt, number(0))),
-            Box::new(Cond::Is(Box::new(Cond::IsNull(Expr::Column(0), true)), Truth::True, false)),
-        );
-        let listed = Cond::In(Expr::Column(0), Arc::new(InSet::of(vec![Value::Exact(Decimal::new(1, 0))])));
-        let row = Cond::And(Box::new(row), Box::new(listed));
-        let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(0))], Box::new(number(0)));
-        let like = Cond::Like(Expr::Column(1), number(1), Some(number(2)));
-        let Cond::Compare(s, op, k) = counted(count.clone(), None, scan(), CompOp::Lt) else { panic!("a comparison") };
-        let flipped = Cond::Compare(k, op, s);
-        let condition = [
-            none_of(vec![number(1)], filtered(row)),
-            counted(
-                count.clone(),
-                None,
-                filtered(Cond::Or(Box::new(like), Box::new(Cond::Compare(case, CompOp::Eq, number(3))))),
-                CompOp::Le,
-            ),
-            counted(count.clone(), None, scan(), CompOp::Ne),
-            flipped,
-        ]
-        .into_iter()
-        .reduce(|a, b| Cond::And(Box::new(a), Box::new(b)))
-        .unwrap();
-        assert_eq!(
-            kinds(condition, &functions),
-            Some(vec![Kind::NoRow, Kind::Count(Safe::Fewer), Kind::Count(Safe::Same), Kind::Count(Safe::More)])
-        );
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 GR2]; [DESIGN]
-    /// RULES.md D51: no form is found of a function, a CAST, a subquery in
-    /// a filter, an outer reference, a select list that can raise, a join,
-    /// COUNT of a column or DISTINCT, a COUNT a plug-in replaced, an OR of
-    /// conjuncts, nor of a query not an assertion's.
-    #[test]
-    fn other_shapes_have_no_form() {
-        let functions = Registry::with_set_functions();
-        let count = functions.aggregate("COUNT").unwrap();
-        let mut replaced = Registry::with_set_functions();
-        replaced.add_aggregate(Arc::clone(&functions.aggregate("SUM").unwrap().0)).unwrap();
-        let sum = functions.aggregate("SUM").unwrap();
-        let length = functions.scalar("CHAR_LENGTH").unwrap();
-        let cast = Expr::Cast(Box::new(Expr::Column(0)), COUNTED);
-        let call = Expr::Call(length, vec![Expr::Column(1)]);
-        let inner = Cond::Exists(subquery(scan()));
-        let raising = Expr::Arith(Box::new(Expr::Column(0)), ArithOp::Div, Box::new(number(0)));
-        let joined = LogicalPlan::Product { left: Box::new(scan()), right: Box::new(scan()) };
-        let cases = [
-            none_of(vec![number(1)], filtered(Cond::Compare(call, CompOp::Eq, number(1)))),
-            none_of(vec![number(1)], filtered(Cond::IsNull(cast, false))),
-            none_of(vec![number(1)], filtered(inner)),
-            none_of(vec![raising], scan()),
-            none_of(vec![number(1)], joined),
-            Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery { plan: scan(), outer: vec![Expr::Column(0)] })))),
-            Cond::Not(Box::new(Cond::Const(Truth::True))),
-            counted(count.clone(), Some(Expr::Column(1)), scan(), CompOp::Le),
-            counted(sum, None, scan(), CompOp::Le),
-            Cond::Or(
-                Box::new(counted(count.clone(), None, scan(), CompOp::Le)),
-                Box::new(counted(count.clone(), None, scan(), CompOp::Ge)),
-            ),
-        ];
-        for (n, condition) in cases.into_iter().enumerate() {
-            assert!(kinds(condition, &functions).is_none(), "case {n}");
-        }
-        let kept = replaced.aggregate("COUNT").unwrap();
-        assert!(kinds(counted(kept, None, scan(), CompOp::Le), &replaced).is_some(), "its COUNT, another set function replaced");
-        let own = Arc::clone(&count.0);
-        let mut other = Registry::with_set_functions();
-        other.add_aggregate(own).unwrap();
-        assert!(kinds(counted(count, None, scan(), CompOp::Le), &other).is_none(), "another registry's COUNT");
-        assert!(forms_of(&scan(), &functions).is_none());
-        let unfiltered = LogicalPlan::Project { exprs: vec![number(1)], input: Box::new(scan()) };
-        assert!(forms_of(&unfiltered, &functions).is_none());
-        let over_rows = LogicalPlan::Project {
-            exprs: vec![number(1)],
-            input: Box::new(LogicalPlan::Filter { cond: Cond::Not(Box::new(Cond::Const(Truth::True))), input: Box::new(scan()) }),
-        };
-        assert!(forms_of(&over_rows, &functions).is_none());
-    }
 }

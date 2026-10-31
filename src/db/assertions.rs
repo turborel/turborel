@@ -13,6 +13,9 @@
 //! statement changed where its form allows (`assertions/changes.rs`).
 
 mod changes;
+mod forms;
+
+pub(super) use changes::Asserted;
 
 use std::sync::Arc;
 

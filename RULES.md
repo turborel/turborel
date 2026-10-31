@@ -790,26 +790,51 @@ machinery.
   row means it is broken [GR2].
 - **When.** Checked when made and at the end of each statement changing
   a table it reads, its reads locked shared; at commit if deferred.
-- **Deferred, once.** A deferred assertion, or deferred CHECK reading
-  other tables, waits once however many statements changed what it
-  reads (`Deferral::wholes`), so is checked once at commit or SET
+- **Deferred, once.** A deferred assertion checked whole, or deferred
+  CHECK reading other tables, waits once however many statements changed
+  what it reads (`Deferral::wholes`), so is checked once at commit or SET
   CONSTRAINTS ... IMMEDIATE [§4.10.1]. A row's checks are each kept.
 - **From a change.** Checked immediate at a statement's end, it held at
-  the statement's start. So two forms of a conjunct of its condition are
-  checked from the changed rows (`Effects::changed_rows`,
-  `db/assertions/changes.rs`), each over one table T and a condition `p`
-  on T's row alone (columns, constants, arithmetic, comparisons, IS NULL,
-  LIKE, CASE; no function, CAST, subquery or outer reference, so the same
-  truth or error each time, and no warning):
+  the statement's start. So a conjunct of these forms is checked from the
+  changed rows (`db/assertions/changes.rs`, `forms.rs`), each of one table
+  T's rows passing its steps; `k` a constant, the set function the
+  standard one:
   - `NOT EXISTS (SELECT ... FROM T WHERE p)`: from rows inserted or
     updated, as a CHECK;
-  - `(SELECT COUNT(*) FROM T WHERE p) op k`, `k` a constant and COUNT the
-    standard one: from rows entering the count less those leaving. It
-    holds without reading T if that cannot move the count toward false
-    and the transaction reads at one snapshot (D29); else checked whole.
-- **Whole.** Any other form, a deferred assertion, and SUM, AVG, MIN and
-  MAX are checked whole: a SUM's nulls and overflow depend on every row,
-  which the change does not show.
+  - `(SELECT COUNT(*) FROM T WHERE p) op k`: from rows entering the count
+    less those leaving. It holds without reading T if that cannot move
+    the count toward false and the transaction reads at one snapshot
+    (D29); else whole. COUNT(x) is COUNT(*) of the rows `x IS NOT NULL`;
+  - MAX(x) `<` or `<=` k, MIN(x) `>` or `>=` k: from rows inserted or
+    updated, none past k [§6.5 GR2b iii];
+  - MAX(x) `>` or `>=` k, MIN(x) `<` or `<=` k: holds if a row inserted
+    or updated reaches k, or, at one snapshot, no row changed passes
+    before or after; else whole.
+- **Steps.** Of T's row alone (columns, constants, arithmetic,
+  comparisons, IS NULL, LIKE, CASE; no function, CAST, subquery or outer
+  reference), so the same truth or error each time, and no warning: the
+  filters of the WHERE and of a view, merged or not, and a view's
+  projection.
+  - A condition above a projection is rewritten over T's row; its
+    expressions that can raise are evaluated on each row it projects,
+    as it evaluates them.
+  - A row stops at the first filter not true of it, the lower first, as
+    `MergeFilters` keeps.
+- **Never null.** A set function's `x` is never null in those rows: a
+  column of a NOT NULL or PRIMARY KEY constraint not deferrable, one a
+  filter's conjunct is not true of when null, a constant, or arithmetic
+  of those. Else whether a null is eliminated, warning 01003 [§6.5
+  GR1b], depends on every row.
+- **Errors.** Every form is evaluated on the change, as AND evaluates
+  both operands, so an error any raises is raised (D15); NOT EXISTS
+  stops at its first row passing, as EXISTS does.
+- **Deferred rows.** A deferred assertion of one NOT EXISTS waits as a
+  check of each row written (`Check::AssertedRow`), evaluated when it is
+  made: it held as it was deferred, and rows are independent.
+- **Whole.** Any other form; any other deferred assertion; SUM and AVG,
+  whose value and overflow depend on every row [§6.5 GR2b iv]; a join, a
+  grouping, COUNT DISTINCT; MAX or MIN `=` or `<>` k; an `x` that may be
+  null.
 - **Name.** A constraint name of its schema, for SET CONSTRAINTS and
   every other constraint's [SR2, SR7].
 - **In a `<schema definition>`,** outside any session's transaction, it

@@ -1,9 +1,10 @@
 //! Assertions checked from the rows a statement changed [ISO/IEC 9075:1992
 //! §4.10.1, §11.34 GR2] (RULES.md D51): `NOT EXISTS` over one table's
 //! rows, and a count of them compared with a constant, each of conditions
-//! of the row alone; every other form, a deferred assertion, and a count
-//! read below one snapshot, checked whole. Whichever way, a statement
-//! fails exactly when its condition is false after it.
+//! of the row alone; every other form, a deferred count, and a count read
+//! below one snapshot, checked whole. Whichever way, a statement fails
+//! exactly when its condition is false after it. The further forms are
+//! tested in `assertion_forms.rs`.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -79,9 +80,9 @@ fn a_count_is_held_to_its_bound_11_34() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §10.6 GR3, §14.3 GR4];
-/// [DESIGN] RULES.md D51: a deferred assertion is checked whole when it is
-/// made immediate, or at commit: a statement that breaks it may be mended
-/// by another before.
+/// [DESIGN] RULES.md D51: a deferred assertion of a count is checked whole
+/// when it is made immediate, or at commit: a statement that breaks it may
+/// be mended by another before.
 #[test]
 fn a_deferred_assertion_is_checked_whole_14_3() {
     let (_db, s) = schema();
@@ -134,6 +135,39 @@ fn a_count_read_at_each_statement_is_checked_whole_11_34() {
         }
         s.rollback().unwrap();
     }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 GR2]; [DESIGN] RULES.md
+/// D15, D51. Regression test (R-TEST-7): a query's condition over a view
+/// merged into it is evaluated only on the rows the view's own keeps, as
+/// the whole check does, so a row the view leaves out raises nothing; it
+/// was evaluated first, dividing by zero.
+#[test]
+fn a_views_rows_are_kept_before_the_query_judges_them_11_34() {
+    let (_db, s) = schema();
+    s.run("CREATE VIEW V AS SELECT K, N FROM T WHERE K < 100").unwrap();
+    s.run("CREATE ASSERTION SMALL CHECK (NOT EXISTS (SELECT * FROM V WHERE 10 / N > 100))").unwrap();
+    s.commit().unwrap();
+    s.run("INSERT INTO T VALUES (200, 0, 'X')").unwrap();
+    assert_eq!(exec(&s, "INSERT INTO T VALUES (50, 0, 'X')"), Err(Code::Data), "a row of the view, divided by zero");
+    s.commit().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §8.12 GR2, §11.34 GR2];
+/// [DESIGN] RULES.md D15, D51. Regression test (R-TEST-7): every conjunct
+/// of an assertion is evaluated on the change, as AND evaluates both its
+/// operands, so an error the second raises is raised though the first is
+/// false, as checked whole; the first false ended the check.
+#[test]
+fn every_conjunct_is_evaluated_on_the_change_11_34() {
+    let (_db, s) = schema();
+    let condition = "NOT EXISTS (SELECT * FROM T WHERE N > 100) AND NOT EXISTS (SELECT * FROM T WHERE 10 / (N - 101) > 0)";
+    s.run(&format!("CREATE ASSERTION PAIRED CHECK ({condition})")).unwrap();
+    s.commit().unwrap();
+    assert_eq!(exec(&s, "INSERT INTO T VALUES (11, 101, 'X')"), Err(Code::Data), "the second divides by zero");
+    assert_eq!(exec(&s, "INSERT INTO T VALUES (11, 102, 'X')"), Err(Code::Constraint), "the first false alone");
+    let found = rows(&s, &format!("SELECT 1 FROM (VALUES (1)) AS V (X) WHERE NOT ({condition} AND 1 = 1)"));
+    assert_eq!(found, Ok(Vec::new()), "neither inserted");
 }
 
 /// The assertions of the random test: each name, condition, and whether

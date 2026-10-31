@@ -61,6 +61,7 @@ fn checks_are_read_back() {
         Check::Referenced { child: named("U"), constraint: named("F"), old: old(), id: Some(3) },
         Check::Referenced { child: named("U"), constraint: named("F"), old: old(), id: None },
         Check::Assertion { constraint: named("A") },
+        Check::AssertedRow { table: named("T"), constraint: named("A"), id: 4 },
     ];
     for check in &checks {
         let (read, record) = again(check);
@@ -74,6 +75,9 @@ fn checks_are_read_back() {
     }
     assert!(matches!(again(&checks[1]).0, Check::Unique { id: 2, .. }));
     assert!(matches!(again(&checks[0]).0, Check::Row { id: 1, .. }));
+    let (Check::AssertedRow { table, id, .. }, _) = again(&checks[6]) else { panic!("not an asserted row") };
+    assert_eq!((table, id), (named("T"), 4_u64));
+    assert!(checks[6].bytes() > checks[5].bytes(), "its table's name counted");
     let mut unknown = checks[2].record();
     unknown[0] = 9_u8;
     assert_eq!(Check::read(&unknown, &TypeRegistry::default()).err().map(|e| e.code), Some(Code::Corrupt));

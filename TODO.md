@@ -96,12 +96,13 @@ What came after SQL-92 follows it, written from the standards' own text
   to their declared types, the most specific chosen, an ambiguous call
   refused.
 - **Assertions, further** (RULES.md D51): more forms checked from a
-  statement's change than `NOT EXISTS` and COUNT(*) of one table's
-  filtered rows: COUNT of a column (its warning of nulls eliminated
-  depends on every row), SUM, AVG, MIN and MAX (the value before is not
-  kept, and a SUM's nulls and overflow depend on every row); a condition
-  through a view or a join; and a deferred assertion from the changes of
-  its transaction.
+  statement's change: a condition through a join or a grouping; SUM and
+  AVG, and COUNT, MAX or MIN of a value that may be null (their value,
+  overflow, or warning of a null eliminated depends on every row, which
+  only a value kept from before would tell); MAX or MIN equal or unequal
+  to a bound, and COUNT DISTINCT; and a deferred assertion of any form but
+  one `NOT EXISTS` from the changes of its transaction (a count needs each
+  row's image as the transaction began, kept to commit).
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them

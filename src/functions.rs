@@ -222,20 +222,34 @@ impl fmt::Debug for AggregateRef {
 pub struct Registry {
     scalars: HashMap<String, ScalarRef>,
     aggregates: HashMap<String, AggregateRef>,
-    /// The standard COUNT, which a plug-in of its name may replace.
-    count: AggregateRef,
+    /// The standard COUNT, MAX and MIN, in `Standard`'s order, which a
+    /// plug-in of its name may replace.
+    standard: [AggregateRef; 3],
+}
+
+/// A set function a `Registry` holds as the standard defines it, no
+/// plug-in of its name [ISO/IEC 9075:1992 §6.5].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Standard {
+    /// COUNT.
+    Count,
+    /// MAX.
+    Max,
+    /// MIN.
+    Min,
 }
 
 impl Registry {
     /// A registry holding the five SQL-86 set functions, and the string
     /// functions of SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
     pub fn with_set_functions() -> Registry {
-        let count = AggregateRef(Arc::new(Count));
+        let standard =
+            [AggregateRef(Arc::new(Count)), AggregateRef(Arc::new(Extreme { max: true })), AggregateRef(Arc::new(Extreme { max: false }))];
         let scalars = strings::functions().into_iter().map(|f| (f.name().to_string(), ScalarRef(f))).collect();
-        let set_functions: Vec<Arc<dyn AggregateFunction>> =
-            vec![Arc::clone(&count.0), Arc::new(Sum), Arc::new(Avg), Arc::new(Extreme { max: true }), Arc::new(Extreme { max: false })];
-        let aggregates = set_functions.into_iter().map(|f| (f.name().to_string(), AggregateRef(f))).collect();
-        Registry { scalars, aggregates, count }
+        let (sum, avg): (Arc<dyn AggregateFunction>, Arc<dyn AggregateFunction>) = (Arc::new(Sum), Arc::new(Avg));
+        let set_functions = standard.iter().map(|f| Arc::clone(&f.0)).chain([sum, avg]);
+        let aggregates = set_functions.map(|f| (f.name().to_string(), AggregateRef(f))).collect();
+        Registry { scalars, aggregates, standard }
     }
 
     /// Adds a scalar function, one for each name (RULES.md D53).
@@ -286,10 +300,11 @@ impl Registry {
         self.aggregates.get(name).cloned()
     }
 
-    /// Whether `f` is the standard COUNT [X3.135-1986 §5.8], no plug-in
-    /// of its name.
-    pub(crate) fn is_standard_count(&self, f: &AggregateRef) -> bool {
-        std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&self.count.0))
+    /// Which of the standard COUNT, MAX and MIN [X3.135-1986 §5.8] `f` is,
+    /// if it is one, no plug-in of its name.
+    pub(crate) fn standard(&self, f: &AggregateRef) -> Option<Standard> {
+        let held = |at: usize| self.standard.get(at).is_some_and(|s| std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&s.0)));
+        [Standard::Count, Standard::Max, Standard::Min].into_iter().enumerate().find_map(|(at, s)| held(at).then_some(s))
     }
 }
 

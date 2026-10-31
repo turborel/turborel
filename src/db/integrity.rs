@@ -37,6 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use self::keys::KeyCheck;
+use super::assertions::Asserted;
 use super::{State, api, plan};
 use crate::catalog::{ConstraintDesc, ConstraintKind, Horizon, QualifiedName, ReferentialAction, TableDesc};
 use crate::error::{Code, Result, SqlError, Subject, fail};
@@ -186,6 +187,9 @@ pub(super) enum Check {
     Referenced { child: QualifiedName, constraint: QualifiedName, old: Row, id: Option<RowId> },
     /// An assertion, of a table it reads written [ISO/IEC 9075:1992 §11.34].
     Assertion { constraint: QualifiedName },
+    /// A deferred assertion of no row passing, of row `id` of `table`
+    /// written (`db/assertions/changes.rs`).
+    AssertedRow { table: QualifiedName, constraint: QualifiedName, id: RowId },
 }
 
 impl Check {
@@ -196,7 +200,8 @@ impl Check {
             | Check::Unique { constraint, .. }
             | Check::Table { constraint, .. }
             | Check::Referenced { constraint, .. }
-            | Check::Assertion { constraint } => constraint,
+            | Check::Assertion { constraint }
+            | Check::AssertedRow { constraint, .. } => constraint,
         }
     }
 
@@ -205,7 +210,7 @@ impl Check {
         match self {
             Check::Row { table, .. } | Check::Unique { table, .. } | Check::Table { table, .. } => Some(table),
             Check::Referenced { child, .. } => Some(child),
-            Check::Assertion { .. } => None,
+            Check::Assertion { .. } | Check::AssertedRow { .. } => None,
         }
     }
 
@@ -217,7 +222,7 @@ impl Check {
         match self {
             Check::Table { table, constraint } => Some((Some(table.clone()), constraint.clone())),
             Check::Assertion { constraint } => Some((None, constraint.clone())),
-            Check::Row { .. } | Check::Unique { .. } | Check::Referenced { .. } => None,
+            Check::Row { .. } | Check::Unique { .. } | Check::Referenced { .. } | Check::AssertedRow { .. } => None,
         }
     }
 }
@@ -275,12 +280,14 @@ impl Deferral {
 }
 
 /// What the checks of a statement, or those made at once, keep as they
-/// are made: each CHECK condition bound once, and the check of the rows of
-/// one UNIQUE constraint, given one after another.
+/// are made: each CHECK condition bound once, the check of the rows of
+/// one UNIQUE constraint, given one after another, and how each deferred
+/// assertion's rows are checked.
 #[derive(Default)]
 pub(super) struct Checking<'s> {
     bound: HashMap<QualifiedName, Cond>,
     key: Option<KeyCheck<'s>>,
+    asserted: HashMap<QualifiedName, Asserted>,
 }
 
 impl Checking<'_> {
@@ -359,6 +366,16 @@ impl State {
                     // does for every statement that asks for it.
                     continue;
                 }
+                // A deferred assertion of no row passing waits as the rows
+                // it may break.
+                let by_rows = if let (Check::Assertion { constraint }, true) = (&check, deferred_now) {
+                    self.defer_asserted_rows(constraint, &mut effects, &mut deferred)?
+                } else {
+                    false
+                };
+                if by_rows {
+                    continue;
+                }
                 if deferred_now {
                     wholes.extend(check.whole());
                     deferred.push(check)?;
@@ -393,6 +410,9 @@ impl State {
     pub(super) fn check<'s>(self: &'s Arc<Self>, tx: &'s Txn, check: &Check, checking: &mut Checking<'s>) -> Result<()> {
         if !matches!(check, Check::Unique { .. }) {
             checking.finish()?;
+        }
+        if let Check::AssertedRow { table, constraint, id } = check {
+            return self.check_asserted_row(tx, (table, constraint, *id), &mut checking.asserted);
         }
         let Some(table) = check.table() else { return self.check_assertion(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
@@ -431,6 +451,7 @@ impl State {
                 self.check_referenced(tx, (desc, &c.name, fk), old, *id)
             }
             Check::Assertion { constraint } => self.check_assertion(tx, constraint),
+            Check::AssertedRow { table, constraint, id } => self.check_asserted_row(tx, (table, constraint, *id), &mut checking.asserted),
         }
     }
 

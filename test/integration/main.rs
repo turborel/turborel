@@ -44,6 +44,7 @@ mod ident;
 mod logs;
 
 mod assertion_changes;
+mod assertion_forms;
 mod assertions;
 mod batch_joins;
 mod batches;
