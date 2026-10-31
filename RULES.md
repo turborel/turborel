@@ -1483,6 +1483,12 @@ the format of frozen groups becomes a trait when it is.
   store table's counts, sums, filters and groupings by batch run far
   faster (`bench/analytics.rs` compares them). A projection of columns
   of a stream is a stream, its batches those columns' vectors, moved; so
+  is one of other expressions of its columns, no subquery among them,
+  each evaluated of the rows a batch keeps only, as integers or of
+  values a vector at a time where it can be, else a row at a time
+  (`project::computed`), a batch of which one raises an error evaluated
+  again a row at a time, in order, so the rows before its failing one
+  come first; so a DISTINCT of expressions is grouped by batches. So
   are the operands of a UNION ALL, each holding every column of its rows
   alike, read in turn, a chain of them gathered without a frame each. A
   DISTINCT of a stream holding every column of its rows is that grouping

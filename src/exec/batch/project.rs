@@ -8,17 +8,21 @@
 //! expression is evaluated as a row's is (`exec/eval.rs`), of a row of
 //! only the values it reads. Rows come as the subtree gives batches,
 //! in no particular order but its own; a projection of anything else
-//! is made row by row (`exec.rs`). Split from batch.rs (RULES.md R-SIZE-2).
+//! is made row by row (`exec.rs`). A projection read by a stream's reader,
+//! as DISTINCT, a grouping, a join or UNION ALL is, is a stream itself, its
+//! batches its expressions' vectors (`computed`). Split from batch.rs
+//! (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 
-use super::stream;
+use super::stream::{self, Batches};
+use super::vector::{self, Lane};
 use crate::db::State;
-use crate::error::Result;
+use crate::error::{Result, SqlError};
 use crate::exec::{RowIter, Runner, eval};
 use crate::logical::{Expr, expr_columns, map_expr_columns};
 use crate::physical::Plan;
-use crate::storage::{Batch, Row};
+use crate::storage::{Batch, Column, Row};
 use crate::txn::TxId;
 use crate::value::Value;
 
@@ -76,7 +80,7 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
 
 /// A projection's rows, made of the batches as they are read.
 struct Projected {
-    batches: stream::Batches,
+    batches: Batches,
     places: Vec<Place>,
     runner: Runner,
     batch: Batch,
@@ -147,6 +151,112 @@ impl Projected {
         }
         Ok(Some(row))
     }
+}
+
+/// \[DESIGN\] The batches of a projection of a stream's `batches`, its
+/// expressions given by `places` of their vectors, as a stream of its own,
+/// its columns the expressions': each batch of the rows a filter kept of
+/// one of `batches`, each expression evaluated of them only, a vector at a
+/// time where it can be (`vector.rs`, `vector/ints.rs`), else a row at a
+/// time, as row by row; its warnings heard by `runner`. A batch of which
+/// one raises an error is evaluated again a row at a time, in order, so
+/// the rows before its failing one come first, then the error, as a
+/// projection row by row gives them (RULES.md D15).
+pub(super) fn computed(batches: Batches, places: Vec<Place>, runner: Runner) -> Batches {
+    Box::new(batches.flat_map(move |kept| {
+        let made = kept.map(|(batch, rows)| {
+            if let Ok(made) = by_vectors(&batch, rows.as_deref(), (&places, &runner)) {
+                return vec![Ok((made, None))];
+            }
+            let (before, failed) = by_rows(&batch, rows.as_deref(), (&places, &runner));
+            vec![Ok((before, None))].into_iter().chain(failed.map(Err)).collect()
+        });
+        made.unwrap_or_else(|e| vec![Err(e)])
+    }))
+}
+
+/// The vectors of `places` of the rows `rows` of `batch`, or all, a batch
+/// of them alone, its warnings heard by `runner`.
+fn by_vectors(batch: &Batch, rows: Option<&[usize]>, (places, runner): (&[Place], &Runner)) -> Result<Batch> {
+    let given: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
+    let gathered = |at: usize| Column::Values(given.iter().map(|&r| batch.cell(at, r).to_value()).collect());
+    let mut columns = Vec::with_capacity(places.len());
+    for place in places {
+        columns.push(match place {
+            // Of every row, its vector as it is.
+            Place::Column(at) => match rows {
+                None => batch.columns.get(*at).cloned().unwrap_or_default(),
+                Some(_) => gathered(*at),
+            },
+            Place::Const(v) => Column::Values(vec![v.clone(); given.len()]),
+            Place::Expr(e, inputs) => expr_vector((e, inputs), (batch, rows, &given), runner)?,
+        });
+    }
+    Ok(Batch { columns, rows: given.len() })
+}
+
+/// The vector of `e`, of a row of the values at `inputs`, of the rows
+/// `given` of `batch`, `rows` if a filter kept them: as integers, or of
+/// values a vector at a time, or a row at a time; its warnings heard by
+/// `runner`.
+fn expr_vector(
+    (e, inputs): (&Expr, &[usize]),
+    (batch, rows, given): (&Batch, Option<&[usize]>, &[usize]),
+    runner: &Runner,
+) -> Result<Column> {
+    if let Some(ints) = vector::ints::lane(e, inputs, batch, rows) {
+        return Ok(Column::Ints(ints));
+    }
+    if let Some(lane) = vector::lane(e, inputs, batch, rows) {
+        return Ok(Column::Values(match lane {
+            Lane::Made(values) => values,
+            Lane::Column(..) | Lane::Const(_) => (0..given.len()).map(|n| lane.at(n).clone()).collect(),
+        }));
+    }
+    let mut scratch = Vec::new();
+    let mut values = Vec::with_capacity(given.len());
+    for &r in given {
+        values.push(evaluated_of((e, inputs), (batch, r), (&mut scratch, runner))?);
+    }
+    Ok(Column::Values(values))
+}
+
+/// The value of `e`, of a row of the values at `inputs` of row `r` of
+/// `batch`, made in `scratch`, its warnings heard by `runner`.
+fn evaluated_of((e, inputs): (&Expr, &[usize]), (batch, r): (&Batch, usize), (scratch, runner): (&mut Row, &Runner)) -> Result<Value> {
+    scratch.resize(inputs.len(), Value::Null);
+    for (slot, &at) in scratch.iter_mut().zip(inputs) {
+        *slot = batch.cell(at, r).to_value();
+    }
+    eval(e, scratch, runner)
+}
+
+/// The rows `rows` of `batch`, or all, each of the values of `places`,
+/// evaluated a row at a time in order, until one raises an error: a batch
+/// of those before it, and the error, if one did.
+fn by_rows(batch: &Batch, rows: Option<&[usize]>, (places, runner): (&[Place], &Runner)) -> (Batch, Option<SqlError>) {
+    let mut out = Batch::empty(places.len());
+    let mut scratch = Vec::new();
+    for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
+        let row: Result<Vec<Value>> = places
+            .iter()
+            .map(|place| match place {
+                Place::Column(at) => Ok(batch.cell(*at, r).to_value()),
+                Place::Const(v) => Ok(v.clone()),
+                Place::Expr(e, inputs) => evaluated_of((e, inputs), (batch, r), (&mut scratch, runner)),
+            })
+            .collect();
+        match row {
+            Ok(values) => {
+                for (vector, v) in out.columns.iter_mut().zip(values) {
+                    vector.values_mut().push(v);
+                }
+                out.rows = out.rows.saturating_add(1);
+            }
+            Err(e) => return (out, Some(e)),
+        }
+    }
+    (out, None)
 }
 
 impl Iterator for Projected {

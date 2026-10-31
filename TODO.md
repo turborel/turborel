@@ -170,8 +170,9 @@ The registry, scopes and SET statements exist (D36). Still to do:
   joins, and products, probing by batches: their operands are read by
   batches, but their rows joined row by row and gathered into batches
   after, as a probe by batches needs a flag of each right row held and
-  the right's rows of a null key kept; a sort, a DISTINCT of
-  expressions, EXCEPT and INTERSECT over streams; typed vectors further:
+  the right's rows of a null key kept; a sort, EXCEPT and INTERSECT
+  over streams, of their operands' vectors, not of rows made of them;
+  typed vectors further:
   a filter's comparisons of expressions over vectors of integers
   (`B * 2 > 400000` 9.5 ms, `B > 200000` 2.3), quotients of them, the
   row store's batches as integers, and of text; CHARACTER columns as

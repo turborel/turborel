@@ -440,3 +440,45 @@ fn zero_groups_by_batch_give_no_row() {
         }
     }
 }
+
+/// Queries over projections of expressions, read as streams: `{t}` the
+/// table, R or C.
+const COMPUTED: [&str; 9] = [
+    "SELECT DISTINCT G * 2, -N FROM {t} WHERE K < 1000",
+    "SELECT DISTINCT N / 7 FROM {t}",
+    "SELECT DISTINCT UPPER(S) FROM {t}",
+    "SELECT DISTINCT CASE WHEN G > 3 THEN 'big' ELSE S END FROM {t}",
+    "SELECT DISTINCT 1, G FROM {t} WHERE N > 300",
+    "SELECT COUNT(*), SUM(X) FROM (SELECT G * 10 + 1 AS X FROM {t} UNION ALL SELECT N FROM {t} WHERE K < 50) AS U (X)",
+    "SELECT COUNT(*), MAX(X), SUM(Y) FROM (SELECT K - N AS X, G + 1 AS Y FROM {t} WHERE G <> 2) AS V",
+    "SELECT X, COUNT(*) FROM (SELECT G * 2 AS X FROM {t}) AS V GROUP BY X",
+    "SELECT DISTINCT X FROM (SELECT G + K AS X FROM {t} WHERE N IS NULL) AS V",
+];
+
+/// Verifies: [DESIGN] RULES.md D31, D15 [X3.135-1986 §5.25 GR2, GR5,
+/// §5.9]: a projection of expressions of a stream's columns is a stream,
+/// each expression evaluated of the rows a batch keeps, as integers, of
+/// values a vector at a time, or a row at a time: DISTINCT of it, a
+/// grouping, set functions, UNION ALL give what they give row by row, of a
+/// table of either store; one whose expression raises an error of a row
+/// raises it, and an EXISTS that stops at a row before the failing one
+/// raises none.
+#[test]
+fn projections_of_expressions_stream_as_row_by_row() {
+    let db = Database::new();
+    let a = both(&db);
+    off_alike(&a, &COMPUTED);
+    for table in ["R", "C"] {
+        for raising in [
+            format!("SELECT DISTINCT K / (G - 3) FROM {table}"),
+            format!("SELECT COUNT(*), SUM(X) FROM (SELECT K / (G - 3) AS X FROM {table}) AS V"),
+        ] {
+            assert_eq!(rows(&a, &raising).err(), Some(Code::Data), "{raising}: division by zero");
+            exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+            assert_eq!(rows(&a, &raising).err(), Some(Code::Data), "{raising}, row by row");
+            exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        }
+    }
+    let stops = "SELECT COUNT(*) FROM R WHERE K < 3 AND EXISTS (SELECT * FROM (SELECT 10 / (X.K - 5) FROM C X UNION ALL SELECT Y.K FROM C Y) AS V (Q))";
+    assert_eq!(both_ways(&a, stops), (vec!["5".to_owned()], vec!["5".to_owned()]));
+}

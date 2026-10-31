@@ -4,7 +4,9 @@
 //! told the simple conjuncts of its condition (`scanned`), or of any other
 //! stream; an inner hash join or an outer join of streams [ISO/IEC
 //! 9075:1992 §7.5] (`joined.rs`); a projection of columns of a stream, its
-//! batches the vectors of those columns, in order, moved; or the rows of
+//! batches the vectors of those columns, in order, moved; one of
+//! expressions of its columns, each evaluated of the rows a batch keeps
+//! (`project::computed`); or the rows of
 //! two streams each holding every column of their rows, alike
 //! (`Plan::Append`, UNION ALL), a chain of them gathered without a frame
 //! each, every operand's batches in turn, each opened once those before it
@@ -18,6 +20,7 @@ use std::sync::Arc;
 
 use super::joined;
 use super::judge::Judging;
+use super::project::{computed, place_of};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
@@ -49,8 +52,8 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         Plan::Filter { input, .. } => layout(input, db),
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::layout(plan, db),
         Plan::Project { exprs, input, .. } => {
-            picked(exprs, &layout(input, db)?.0)?;
-            Some(((0..exprs.len()).collect(), exprs.len()))
+            let (columns, _) = layout(input, db)?;
+            exprs.iter().all(|e| place_of(e, &columns).is_some()).then(|| ((0..exprs.len()).collect(), exprs.len()))
         }
         Plan::Append { .. } => {
             let mut held = None;
@@ -167,8 +170,13 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         join @ (Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. }) => joined::batches(join, db, tx),
         Plan::Project { exprs, input, .. } => {
             let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
-            let picks = picked(&exprs, &columns).ok_or_else(|| crate::exec::broken("a projection that gives no batches"))?;
-            Ok(Box::new(batches(*input, db, tx)?.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows)))))
+            let inner = batches(*input, db, tx)?;
+            if let Some(picks) = picked(&exprs, &columns) {
+                return Ok(Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows)))));
+            }
+            let places = exprs.iter().map(|e| place_of(e, &columns)).collect::<Option<Vec<_>>>();
+            let places = places.ok_or_else(|| crate::exec::broken("a projection that gives no batches"))?;
+            Ok(computed(inner, places, Runner::new(db, tx)))
         }
         chain @ Plan::Append { .. } => {
             // Each operand opened once those before it are read.
