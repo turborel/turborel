@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 mod ahead;
 mod claim;
 
+pub(super) use ahead::Queued;
 pub use ahead::READ_AHEAD_PAGES;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
@@ -101,6 +102,7 @@ impl BufferPool {
             counters: Counters::default(),
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
+            queued: Queued::default(),
             _reservation: None,
         })
     }

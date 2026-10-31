@@ -5,6 +5,9 @@
 //! conditions cannot match are skipped; the rows of the rest are given
 //! for the filter to judge, as it judges every row given.
 //!
+//! As a group is taken up, the pages of the chunks its runs are read from
+//! are asked to be read ahead, a window at a time (`columns/ahead.rs`).
+//!
 //! A group's rows the tree has entries for are read from them as the
 //! group is taken up, the tree read once over its range of row ids, in
 //! whatever order its rows are (COLUMNSTORE.ORDER), and that range then
@@ -19,6 +22,7 @@ use std::sync::Arc;
 
 use super::Directory;
 use super::merge::VECTOR_ROWS;
+use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::{Group, Pages, Summary};
 use crate::engine::columns::scan::{floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at};
 use crate::engine::rows::gathered::Gathering;
@@ -53,6 +57,8 @@ pub(in crate::engine::rows) struct Batched {
     /// The ranges of row ids of the tree's entries read with the groups'
     /// rows, in order, left out of `delta`.
     read: Vec<(RowId, RowId)>,
+    /// The pages of the group being read it asks to be read ahead.
+    ahead: GroupAhead,
 }
 
 impl Batched {
@@ -76,6 +82,7 @@ impl Batched {
             entries: Vec::new(),
             delta: None,
             read: Vec::new(),
+            ahead: GroupAhead::default(),
         }
     }
 
@@ -100,7 +107,9 @@ impl Batched {
         let group = self.table.group_of(&entry)?;
         let ids = group.row_ids(&pages)?;
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
-        for (from, to) in read_candidates(&group, &pages, self.condition.as_ref())? {
+        let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;
+        self.ahead.take_up(&group, &self.columns, &candidates);
+        for (from, to) in candidates {
             let mut at = from;
             while at < to {
                 let end = at.saturating_add(vector).min(to);
@@ -227,6 +236,7 @@ impl Batched {
                 return Ok(Some(batch));
             }
             if let Some(run) = self.runs.pop_front() {
+                self.ahead.step(&self.table.group_pages()?);
                 match self.run_batch(run)? {
                     Some(batch) => return Ok(Some(batch)),
                     None => continue,

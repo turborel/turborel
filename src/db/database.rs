@@ -123,7 +123,7 @@ impl Database {
 
     fn over(state: State) -> Self {
         let background = Background::over(Arc::clone(&state.jobs));
-        Program::over(|program| Shared {
+        let db = Program::over(|program| Shared {
             current: RwLock::new(Arc::new(state)),
             changing: Mutex::new(None),
             turn_ended: Condvar::new(),
@@ -138,7 +138,9 @@ impl Database {
             in_doubt: Mutex::new(Vec::new()),
             opening: Mutex::new(None),
             service: AtomicU64::new(0),
-        })
+        });
+        db.serve_read_ahead();
+        db
     }
 
     /// \[DESIGN\] A database over a `Catalog` plug-in. Every table and index the

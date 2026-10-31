@@ -493,9 +493,10 @@ impl Database {
             }
             Pagers::Open => Pager::open(fs, &path, &place.layout.formats.hashes, &place.layout.formats.encodings)?.0,
         };
-        let budget = Arc::clone(&self.snapshot()?.memory);
+        let st = self.snapshot()?;
         let pool =
-            Arc::new(BufferPool::in_budget(&budget, (place.layout.pool_bytes, pager.page_size()), "the buffer pool of the data file")?);
+            Arc::new(BufferPool::in_budget(&st.memory, (place.layout.pool_bytes, pager.page_size()), "the buffer pool of the data file")?);
+        st.ahead.serve(&pool);
         let file = pool.add_pager(Arc::new(pager));
         let undo = UndoStore::batched(undo_log(place)?, place.options.undo_batch);
         let files = TableFiles::over(Arc::clone(&pool), file, undo).shadowed(Arc::clone(&place.shadows));

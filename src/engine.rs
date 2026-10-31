@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::disk::buffer::{BufferPool, FileId, READ_AHEAD_PAGES};
+use crate::disk::buffer::{AheadReader, BufferPool, FileId, READ_AHEAD_PAGES};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::{DEFAULT_PAGE_SIZE, Pager};
@@ -68,12 +68,15 @@ fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Resul
 /// then, reserved of the budget it is given. A database kept in memory
 /// gives one to its built-in engine and index methods, which share it, as
 /// a database kept in a directory shares its data file, sized by its
-/// setting STORAGE.POOL_BYTES, its read-ahead by STORAGE.READ_AHEAD_PAGES.
+/// setting STORAGE.POOL_BYTES, its read-ahead by STORAGE.READ_AHEAD_PAGES,
+/// done by the database's read-ahead job (`AheadReader`).
 pub(crate) struct MemoryPages {
     budget: Mutex<Arc<MemoryBudget>>,
     bytes: AtomicUsize,
     /// The pages its pool reads ahead at once (`BufferPool::read_ahead`).
     read_ahead: AtomicUsize,
+    /// What reads ahead for their pool, if a database's.
+    reader: Mutex<Option<Arc<AheadReader>>>,
     made: Mutex<Option<(Arc<BufferPool>, FileId, usize)>>,
 }
 
@@ -85,6 +88,7 @@ impl MemoryPages {
             budget: Mutex::new(MemoryBudget::new(usize::MAX)),
             bytes: AtomicUsize::new(bytes),
             read_ahead: AtomicUsize::new(READ_AHEAD_PAGES),
+            reader: Mutex::new(None),
             made: Mutex::new(None),
         })
     }
@@ -108,6 +112,15 @@ impl MemoryPages {
         }
     }
 
+    /// Has `reader` read ahead for their pool, made or when it is.
+    pub(crate) fn use_reader(&self, reader: Arc<AheadReader>) {
+        let made = lock_builtin(&self.made);
+        if let Some((pool, _, _)) = made.as_ref() {
+            reader.serve(pool);
+        }
+        *lock_builtin(&self.reader) = Some(reader);
+    }
+
     /// Their pool and file, made if not yet, held by `what`.
     ///
     /// # Errors
@@ -122,6 +135,9 @@ impl MemoryPages {
         let bytes = self.bytes.load(Ordering::Acquire);
         let (pool, file) = memory_file_of(&budget, bytes, what)?;
         pool.set_read_ahead(self.read_ahead.load(Ordering::Acquire));
+        if let Some(reader) = lock_builtin(&self.reader).as_ref() {
+            reader.serve(&pool);
+        }
         *made = Some((Arc::clone(&pool), file, bytes));
         Ok((pool, file))
     }

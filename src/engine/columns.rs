@@ -18,8 +18,10 @@
 //! * `group`: a frozen row group, its row ids, its chunks, the least and
 //!   greatest value and nulls of each, and the pages they are on;
 //! * `scan`: the rows of a group a reader asks for, chunks a condition
-//!   cannot match left unread.
+//!   cannot match left unread;
+//! * `ahead`: the pages a scan of groups will read, read ahead.
 
+pub mod ahead;
 mod alp;
 mod bloom;
 pub mod cache;

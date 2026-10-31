@@ -1,13 +1,15 @@
 //! Unit tests of a table's frozen row groups (`frozen.rs`, `freeze.rs`,
-//! `merge.rs`, `rewrite.rs`, `batches.rs`).
+//! `merge.rs`, `rewrite.rs`, `batches.rs`), and read ahead
+//! (`columns/ahead.rs`).
 
 use std::ops::Bound;
 use std::sync::Arc;
 
-use crate::disk::buffer::{BufferPool, Clock};
+use crate::disk::buffer::{AheadReader, BufferPool, Clock};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
+use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::rows::options::{Columns, Places};
 use crate::engine::rows::{RowTable, TableFiles, TableOptions, key};
 use crate::engine::tree::Direction;
@@ -482,4 +484,35 @@ fn headers_are_read_as_they_are_needed() {
     assert!(held == 1 && bytes > 0, "the second group's header held: {bytes} bytes");
     assert_eq!(scanned(&opened, NO_TRANSACTION).len(), 5000);
     assert_eq!(cold.headers.held().1, 2);
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D31: a scan of a frozen group, its
+/// pool served by a reader, asks as it takes the group up for the pages of
+/// the chunks it reads; the reader's job reads them, and the scan finds
+/// them in the pool, no page missed; a scan by batches gives every row.
+#[test]
+fn a_group_is_read_ahead_of_its_scan() {
+    let (pager, files) = files();
+    let (table, _) = table(&files, 0, 5000);
+    ended(&table, 1);
+    files.pool.flush().unwrap();
+    let pool = Arc::new(BufferPool::new(256, Box::new(Clock::new(256))).unwrap());
+    let reader = AheadReader::new();
+    reader.serve(&pool);
+    let file = pool.add_pager(pager);
+    let cold = TableFiles { pool: Arc::clone(&pool), file, headers: Arc::default(), ..files.clone() };
+    let opened = Arc::new(RowTable::open(&cold, table.meta(), &TYPES, options(0)).unwrap());
+    let directory = opened.frozen.directory().unwrap();
+    let (stored, group) = (opened.group_pages().unwrap(), opened.group_of(&directory.groups[0]).unwrap());
+    let mut ahead = GroupAhead::default();
+    ahead.take_up(&group, &[0, 1], &[(0, group.rows)]);
+    ahead.step(&stored);
+    assert_eq!(pool.counts().read_ahead, 0, "asked, not read");
+    let read = reader.read_queued();
+    assert!(read > 0);
+    let misses = pool.counts().misses;
+    let rows = crate::engine::columns::scan::rows(&group, &stored, &TYPES, &[0, 1], (0, group.rows)).unwrap();
+    assert_eq!((rows.len(), pool.counts().misses), (2048_usize, misses), "found in the pool");
+    let batched = Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0, 1], None).map(|b| b.unwrap().rows).sum::<usize>();
+    assert_eq!(batched, 5000_usize);
 }

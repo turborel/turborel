@@ -3,7 +3,7 @@
 //! each labelled, with a state an operator sees (`Database::threads`).
 //!
 //! Background work is a job: a function of the database, its checkpoints,
-//! its maintenance or its log's syncs, that a session asks for as it comes
+//! its maintenance, its log's syncs or its scans' read-ahead, that a session asks for as it comes
 //! due, at once or after a time. As the
 //! database's JOBS.POLICY says, a job asked for is done on a thread of
 //! its own, started the first time and told as an event (AUTOMATIC); only
@@ -27,7 +27,7 @@ use std::time::Duration;
 pub(crate) use turn::Turn;
 use worker::Worker;
 
-use crate::db::Database;
+use crate::db::{Database, WeakDatabase};
 use crate::diagnostics::Event;
 use crate::error::{Code, Result, SqlError};
 use crate::sync::lock_builtin;
@@ -120,6 +120,30 @@ pub struct JobInfo {
     pub restarts: u64,
     /// The error of its last work, if it failed.
     pub last_error: Option<SqlError>,
+}
+
+/// \[DESIGN\] How a part of a database below it, which knows no database,
+/// asks for one of its jobs, as the buffer pool asks for the read-ahead
+/// job (`disk/buffer/ahead.rs`): it holds the database weakly, so never
+/// keeps it open, and asks for nothing once it is gone.
+#[derive(Clone)]
+pub(crate) struct JobAsker {
+    db: WeakDatabase,
+    job: JobHandle,
+}
+
+impl JobAsker {
+    /// What asks for job `job` of `db`.
+    pub(crate) fn new(db: WeakDatabase, job: JobHandle) -> JobAsker {
+        JobAsker { db, job }
+    }
+
+    /// Asks for the job, which runs as JOBS.POLICY says.
+    pub(crate) fn ask(&self) {
+        if let Some(db) = self.db.upgrade() {
+            db.request_job(self.job, Duration::ZERO);
+        }
+    }
 }
 
 /// The work of a job: done for the database, what it says of when to do it
@@ -401,5 +425,23 @@ mod tests {
             assert!(JobPolicy::WORDS.contains(&policy.word()));
         }
         assert_eq!(JobPolicy::of("SOMETIMES"), JobPolicy::Automatic);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D55: a part of a database below it asks
+    /// for a job through its asker, the job due then as the policy says;
+    /// once the database is gone, it asks for nothing.
+    #[test]
+    fn an_asker_asks_while_its_database_is() {
+        let db = Database::new();
+        db.set_job_policy(JobPolicy::Manual).unwrap();
+        let label = "turborel-read-ahead";
+        let job = db.snapshot().unwrap().jobs.add(label, Work::Own(|_| Ok(None)), None);
+        let asker = JobAsker::new(db.downgrade(), JobHandle(job));
+        let state = |of: &Database| of.jobs().into_iter().find(|j| j.label == label).map(|j| j.state);
+        assert_eq!(state(&db), Some(JobState::Idle));
+        asker.ask();
+        assert_eq!(state(&db), Some(JobState::Due));
+        drop(db);
+        asker.ask();
     }
 }

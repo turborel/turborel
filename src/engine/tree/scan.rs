@@ -6,10 +6,11 @@
 //! * **Forward**, it follows right links. Keys only ever move right, so
 //!   every key past the last one returned is in the leaf linked to, or
 //!   further right (Lehman and Yao 1981, §4). Each leaf's entries are taken
-//!   past the last key returned, so none is returned twice. A leaf linked
-//!   to from the page before it in the file, as a tree filled in key order
-//!   lays its leaves, is read with the pages after it, ahead of the scan
-//!   (`BufferPool::read_ahead`).
+//!   past the last key returned, so none is returned twice. Reading a leaf
+//!   linked to from the page before it in the file, as a tree filled in
+//!   key order lays its leaves, it asks for the pages after it to be read
+//!   ahead (`BufferPool::ahead_of`): by the database's read-ahead job while
+//!   it goes on, those it has not read passed over once it ends.
 //! * **Backward**, it goes down from the root again for each leaf: to the
 //!   leaf holding the bound, then to the one holding the key below that
 //!   leaf's range, found on the way down (a parent's key, or a left
@@ -26,6 +27,7 @@ use std::ops::{Bound, Deref};
 use super::node::Node;
 use super::reclaim::Entered;
 use super::{BLinkTree, Path, Target, corrupt};
+use crate::disk::buffer::Ahead;
 use crate::disk::pager::PageId;
 use crate::error::Result;
 
@@ -67,8 +69,10 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
     ready: Vec<Entry>,
     next: Next,
     /// The leaf it read last, forward: a leaf after it in the file, linked
-    /// to, is read ahead.
+    /// to, has the pages after it read ahead.
     last: Option<PageId>,
+    /// What it asked to be read ahead.
+    ahead: Ahead,
     /// Its epoch, counted while it lives: it holds a leaf's page number
     /// between reads (`reclaim.rs`).
     entered: Entered,
@@ -99,6 +103,7 @@ pub fn scan_of<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<&[u8]>, upper
         ready: Vec::new(),
         next: Next::Descend,
         last: None,
+        ahead: Ahead::default(),
         entered,
     }
 }
@@ -168,7 +173,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
             Next::Done => return Ok(()),
             Next::Leaf(id) => {
                 if self.last.and_then(|last| last.0.checked_add(1)) == Some(id.0) {
-                    tree.pool.read_ahead(tree.file, id.0);
+                    tree.pool.ahead_of(&mut self.ahead, tree.file, id.0);
                 }
                 self.last = Some(id);
                 let page = tree.pool.read(tree.file, id.0)?;

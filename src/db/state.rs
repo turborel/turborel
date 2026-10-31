@@ -116,6 +116,9 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
+    /// What reads ahead for its pools on its read-ahead job, shared by
+    /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
+    pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
     /// The files it holds, shared by every snapshot (`files.rs`, RULES.md
     /// D56).
     pub(crate) files: Arc<crate::files::Registry>,
@@ -164,6 +167,7 @@ impl State {
             temporaries: Arc::default(),
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             jobs: Arc::default(),
+            ahead: crate::disk::buffer::AheadReader::new(),
             files: Arc::default(),
             plugins: Arc::new(crate::files::plugins::PluginFiles::in_memory(Arc::clone(&memory))),
             log: None,
@@ -188,6 +192,7 @@ impl State {
     fn attach_builtins(&mut self, memory: &Arc<MemoryBudget>) {
         let st = self;
         st.pages.use_budget(Arc::clone(memory));
+        st.pages.use_reader(Arc::clone(&st.ahead));
         let engine = RowStore::sharing(TableOptions::default(), Arc::clone(&st.pages));
         engine.use_work(Arc::clone(&st.work));
         engine.use_encodings(Arc::clone(&st.encodings));

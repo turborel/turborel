@@ -4,8 +4,10 @@
 //! whole tree; then the same in a small pool, a tenth of the tree's pages
 //! or so, so most reads miss and read their page from the file, as a
 //! table larger than STORAGE.POOL_BYTES is read; its scans with read-ahead
-//! and without (`BufferPool::read_ahead`). Run with `cargo xtask bench`, on
-//! the harness (RULES.md R-BENCH-1).
+//! in the scan's thread, without, and on a thread of a reader's own, as a
+//! database's read-ahead job reads (`BufferPool::ahead_of`,
+//! `AheadReader`). Run with `cargo xtask bench`, on the harness (RULES.md
+//! R-BENCH-1).
 
 #![allow(
     clippy::unwrap_used,
@@ -22,9 +24,11 @@ mod harness;
 
 use std::ops::Bound;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use harness::{Bench, Case, on_threads, scatter};
-use turborel::disk::buffer::{BufferPool, READ_AHEAD_PAGES};
+use turborel::disk::buffer::{AheadReader, BufferPool, READ_AHEAD_PAGES};
 use turborel::engine::tree::{BLinkTree, Direction};
 
 /// Entries per thread, and frames: enough for the whole tree.
@@ -129,6 +133,41 @@ fn in_a_small_pool(bench: &Bench) {
             });
             threads as u64 * ENTRIES
         });
+    }
+    read_ahead_by_a_reader(bench);
+}
+
+/// A tree as `in_a_small_pool`'s, its pool served by a reader, which a
+/// thread of its own runs while the scans run, as a database's read-ahead
+/// job does.
+fn read_ahead_by_a_reader(bench: &Bench) {
+    let pool = harness::pool(SMALL_FRAMES);
+    let tree = tree_in(bench, &pool);
+    insert(&tree, 1, |_, n| n);
+    let reader = AheadReader::new();
+    reader.serve(&pool);
+    for threads in SMALL_THREADS {
+        bench.measure(Case::new("small pool: scan forward, read ahead by a reader", "entries").threads(threads), || {
+            let scanning = AtomicUsize::new(threads);
+            on_threads(threads + 1, |t| {
+                if t == threads {
+                    read_while(&reader, &scanning);
+                    return;
+                }
+                tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).count();
+                scanning.fetch_sub(1, Ordering::AcqRel);
+            });
+            threads as u64 * ENTRIES
+        });
+    }
+}
+
+/// Reads what `reader`'s pools queue while any of `scanning` scans is.
+fn read_while(reader: &AheadReader, scanning: &AtomicUsize) {
+    while scanning.load(Ordering::Acquire) > 0 {
+        if reader.read_queued() == 0 {
+            thread::yield_now();
+        }
     }
 }
 

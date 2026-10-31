@@ -1,6 +1,7 @@
 //! \[DESIGN\] A database's background work (RULES.md D55): its jobs, its
 //! checkpoints (`db/checkpoint.rs`), its maintenance
-//! (`db/maintenance.rs`) and its log's syncs (`db/log_sync.rs`), run by the thread manager (`threads.rs`) as
+//! (`db/maintenance.rs`), its log's syncs (`db/log_sync.rs`) and its
+//! scans' read-ahead (`disk/buffer/ahead.rs`), run by the thread manager (`threads.rs`) as
 //! JOBS.POLICY says; and how a program runs them, sees them, and sets
 //! the policy.
 
@@ -14,7 +15,7 @@ use super::maintenance::maintained;
 use crate::error::Result;
 use crate::error::{Code, SqlError};
 use crate::settings::JOBS_POLICY;
-use crate::threads::{BackgroundJob, JobHandle, JobId, JobInfo, JobPolicy, Jobs, Turn, Work};
+use crate::threads::{BackgroundJob, JobAsker, JobHandle, JobId, JobInfo, JobPolicy, Jobs, Turn, Work};
 use crate::value::Value;
 
 /// \[DESIGN\] What every job's label begins with (RULES.md D55).
@@ -27,6 +28,9 @@ const MAINTENANCE: &str = "turborel-maintenance";
 /// The label of a database's job and thread syncing its log at a pace of
 /// its own (LOG.SYNC_AFTER_MS).
 const LOG_SYNC: &str = "turborel-log-sync";
+/// The label of a database's job and thread reading ahead of its scans
+/// (RULES.md D30).
+const READ_AHEAD: &str = "turborel-read-ahead";
 /// \[DESIGN\] How long after a failure, or a round that did no work while
 /// some is still due, maintenance looks again unasked: a second, as a
 /// freeze may be waiting out COLUMNSTORE.FREEZE_DELAY.
@@ -39,23 +43,32 @@ pub(super) struct Background {
     checkpoint: JobId,
     maintenance: JobId,
     log_sync: JobId,
+    read_ahead: JobId,
     pub(super) maintenance_turn: Turn,
 }
 
 impl Background {
     /// The background work of a database whose snapshots share `jobs`:
-    /// its checkpoint, maintenance and log sync jobs added.
+    /// its checkpoint, maintenance, log sync and read-ahead jobs added.
     pub(super) fn over(jobs: Arc<Jobs>) -> Background {
         let checkpoint = jobs.add(CHECKPOINT, Work::Own(checkpointed), None);
         let maintenance = jobs.add(MAINTENANCE, Work::Own(maintained), Some(AGAIN));
         let log_sync = jobs.add(LOG_SYNC, Work::Own(log_synced), None);
-        Background { jobs, checkpoint, maintenance, log_sync, maintenance_turn: Turn::default() }
+        let read_ahead = jobs.add(READ_AHEAD, Work::Own(read_queued), None);
+        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, maintenance_turn: Turn::default() }
     }
+}
+
+/// The read-ahead job's work: the pages the database's scans asked for,
+/// read into their pools (`AheadReader::read_queued`).
+fn read_queued(db: &Database) -> Result<Option<Duration>> {
+    db.snapshot()?.ahead.read_queued();
+    Ok(None)
 }
 
 impl Database {
     /// \[DESIGN\] Does now the background work due, its checkpoints,
-    /// maintenance and syncs of the log, as JOBS.POLICY MANUAL leaves it to the program to
+    /// maintenance, syncs of the log and read-ahead, as JOBS.POLICY MANUAL leaves it to the program to
     /// do: each job until it is due no more. Under the other policies too,
     /// taking turns with their threads.
     ///
@@ -123,6 +136,14 @@ impl Database {
     /// every thread stopped.
     pub(super) fn apply_job_policy(&self) {
         self.background().jobs.apply(self, self.job_policy());
+    }
+
+    /// Has its scans' read-ahead read by its read-ahead job, asked for
+    /// through the job seam (`request_job`) by its pools (RULES.md D30).
+    pub(super) fn serve_read_ahead(&self) {
+        if let Ok(st) = self.snapshot() {
+            st.ahead.use_job(JobAsker::new(self.downgrade(), JobHandle(self.background().read_ahead)));
+        }
     }
 
     /// Asks for the checkpoint job.

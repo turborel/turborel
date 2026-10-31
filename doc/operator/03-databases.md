@@ -48,13 +48,16 @@ its own ([Temporary Tables](../user/09-temporary-tables.md)).
 A page wanted while every page of its pool is held at once, as by a
 pool set too small for the work, is refused with SQLCODE -918 too, at
 once, never waited for, but by an undo, which waits for a page to be let
-go. A scan of a table of the built-in row store, or of a B-tree index,
-whose pages lie in the file in key order, as rows inserted in that order
-lay them, reads ahead: on a page not in the pool, the pages after it,
-STORAGE.READ_AHEAD_PAGES of them (32 by default, 0 for none), are read
-with it in one read of the file, at most an eighth of the pool's pages,
-those the pool holds already left as they are. A change holds at once,
-for a scan under way too.
+go. A scan reads ahead, the pages it will read next brought into the
+pool while it reads those before: a scan of a table of the built-in row
+store, or of a B-tree index, the pages after the one it reads, as rows
+inserted in key order lay them; a scan of a column store table's frozen
+groups, the pages of the chunks it will read. Those not in the pool,
+STORAGE.READ_AHEAD_PAGES of them at once (32 by default, 0 for none), at
+most an eighth of the pool's pages, are read by the database's job
+`turborel-read-ahead` ([Background work](#background-work)), each run
+of them in one read of the file; what a scan ends before they are read
+is never read. A change holds at once, for a scan under way too.
 
 The planner prices a row fetched through an index by where its page is
 found: in the buffer pool, as the table's own lookups have found its
@@ -194,9 +197,12 @@ its maintenance, which gathers tables' statistics (a table's, after
 the database opens, once a query first plans with it, which plans
 without them meanwhile), counts the distinct keys of an index that has
 not kept them (the same way: once a query first plans with it), and
-freezes the rows of the column store; and the syncs of its log that
+freezes the rows of the column store; the syncs of its log that
 commits of LOG.COMMIT_SYNC OFF leave for LOG.SYNC_AFTER_MS
-([Settings](04-settings.md#a-sessions-own)). JOBS.POLICY says how: AUTOMATIC, the
+([Settings](04-settings.md#a-sessions-own)); and the pages its scans
+read ahead ([A database's directory](#a-databases-directory)), which a
+scan reads itself if they are not read in time. JOBS.POLICY says how:
+AUTOMATIC, the
 default, on threads of the database's own as the work comes due;
 PAUSED, not at all until it changes, the work due kept; MANUAL, only
 when the program embedding the database asks. It takes effect at once:
@@ -207,6 +213,6 @@ SET DATABASE JOBS.POLICY = 'PAUSED'
 
 Each thread started or stopped is told to the diagnostics, `thread`, as
 is each failure of its work. The threads are named for their work:
-`turborel-checkpoint`, `turborel-maintenance` and `turborel-log-sync`,
-and those of the work a plug-in adds (`Database::add_job`), each
-`turborel-<kind>`.
+`turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync` and
+`turborel-read-ahead`, and those of the work a plug-in adds
+(`Database::add_job`), each `turborel-<kind>`.

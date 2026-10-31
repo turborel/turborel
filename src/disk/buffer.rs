@@ -16,14 +16,17 @@
 //! latch itself keeps the frame, as an eviction takes it exclusively. A
 //! hint wrong, or a frame busy, sends the read the locked way: the page
 //! table's shard, and a pin. Which frame is evicted is
-//! an extension point (`Eviction`); CLOCK is built in. A sequential scan
-//! reads ahead (`pool/ahead.rs`): on a miss, the pages after the one it
-//! wants, in one read of the file, a bounded share of the frames.
+//! an extension point (`Eviction`); CLOCK is built in. A scan reads ahead
+//! (`pool/ahead.rs`): the pages it will want next, not in the pool, a
+//! bounded share of the frames, read by its database's read-ahead job
+//! while it goes on (`ahead.rs`), or in its own thread in a pool no
+//! database serves.
 //!
 //! No lock is held during I/O, nor during a call into the eviction policy
 //! (RULES.md R-ERR-4): a frame being filled or emptied is marked loading,
 //! and threads wanting its page wait for it on a condition variable.
 
+mod ahead;
 mod eviction;
 mod hits;
 mod pool;
@@ -34,6 +37,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
+pub use ahead::{Ahead, AheadReader};
 pub use eviction::{Clock, Eviction};
 pub use pool::READ_AHEAD_PAGES;
 pub use tally::Tally;
@@ -78,7 +82,8 @@ pub struct PoolCounts {
     pub evictions: u64,
     /// Dirty pages written back.
     pub write_backs: u64,
-    /// Pages read ahead of a sequential scan (`BufferPool::read_ahead`).
+    /// Pages read ahead of a scan (`BufferPool::read_ahead`,
+    /// `BufferPool::ahead_of`, `BufferPool::ahead_pages`).
     pub read_ahead: u64,
 }
 
@@ -225,6 +230,9 @@ pub struct BufferPool {
     hints: hits::Hints,
     /// The pages it reads ahead at once (`pool/ahead.rs`).
     read_ahead_pages: AtomicUsize,
+    /// The pages its scans asked to be read ahead, not yet read, and what
+    /// reads them (`ahead.rs`).
+    queued: pool::Queued,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
     _reservation: Option<Reservation>,

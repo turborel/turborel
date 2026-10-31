@@ -1,7 +1,8 @@
 //! \[DESIGN\] The server's runtime (RULES.md D42, D55): the one place its
 //! threads are made. Its threads are named `turborel-server-<n>`, so an
 //! operator's tools tell them from the database's own
-//! (`turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`).
+//! (`turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,
+//! `turborel-read-ahead`).
 //! Its I/O threads are tokio's default, one for each processor; its
 //! blocking pool, where statements run, may grow to MAX_WORKERS,
 //! MOST_LOGINS for the checks of logins, and a few spare, but is made only

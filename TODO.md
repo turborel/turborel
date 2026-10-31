@@ -206,9 +206,16 @@ The registry, scopes and SET statements exist (D36). Still to do:
   (BRAVO) needs `unsafe` (R-SAFE-1), and a crate for it breaches R-SAFE-4;
   safe ways are reader locks striped by thread on hot frames, or copies
   of a tree's inner nodes checked by a version.
-- **Read-ahead, further:** it is synchronous: reading ahead on a job of
-  the thread manager (D55) would overlap the reads with the scan; the
-  column store's scans of frozen groups read none ahead.
+- **Read-ahead, further:** on the job `turborel-read-ahead` (D30, D55),
+  measured on a quiet machine (2026-10-31, load 4 to 6, three runs): a
+  row store scan of a table ten times its pool 3.96M to 4.35M rows/s
+  (+10%), a column store one 5.73M to 6.15M (+7%); a tree in a small
+  pool scanned forward, read ahead by a reader on a thread of its own,
+  19.8M to 29.6M entries/s on one thread (+49%), 97M to 106M on four
+  (+9%). Left: a frozen group's header, a chain of pages each linking
+  the one before it, read page by page; scans of groups in their order
+  (`frozen/ordered.rs`) ask for none; a scan asks for a group's chunks
+  only as it takes the group up, not the next group's.
 - **Layouts** (D31), paused: a hybrid (PAX), the format of frozen groups
   then made a trait. For the column store:
   - a sorted group's rows read backwards, to answer an ORDER BY of its

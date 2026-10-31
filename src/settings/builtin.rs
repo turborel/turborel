@@ -166,7 +166,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(defined(
         ("JOBS.POLICY", Kind::Choice(&crate::threads::JobPolicy::WORDS), text("AUTOMATIC")),
         DATABASE,
-        "How the database's background work, its checkpoints, maintenance and syncs of the log (LOG.SYNC_AFTER_MS), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
+        "How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS) and read-ahead (STORAGE.READ_AHEAD_PAGES), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
     ));
     all.push(defined(
         ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
@@ -253,14 +253,14 @@ fn storage() -> [Definition; 5] {
     ]
 }
 
-/// \[DESIGN\] The pages a scan reads ahead of it in one read of a file
-/// (RULES.md D30), of the buffer pool of the data file or in memory: at
-/// once, from the next read ahead on, a scan under way included.
+/// \[DESIGN\] The pages a scan has read ahead of it at once (RULES.md
+/// D30), of the buffer pool of the data file or in memory: at once, from
+/// the scan's next request on, a scan under way included.
 fn read_ahead() -> Definition {
     defined(
         ("STORAGE.READ_AHEAD_PAGES", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, count(crate::disk::buffer::READ_AHEAD_PAGES)),
         DATABASE,
-        "The pages a scan of a table of the built-in row store, or of a B-tree index, reads in one read of the file after a page not in the buffer pool, at most an eighth of the pool's pages; 0 for none. A change holds from the next page so read, a scan under way included.",
+        "The pages a scan of a table of the built-in stores, or of a B-tree index, has read ahead of it at once, at most an eighth of the buffer pool's pages: read by the database's job turborel-read-ahead while the scan goes on, each run of them in one read of the file; 0 for none. A change holds at once, a scan under way included.",
     )
 }
 

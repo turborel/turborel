@@ -2,7 +2,8 @@
 //! tree's entries and its groups' rows merged in row id order, a row's
 //! entry taken before its frozen values. Each group's rows are read a
 //! vector at a time, only the runs whose chunks a condition may match
-//! (`columns/scan.rs`); those of a group sorted by its columns
+//! (`columns/scan.rs`), their chunks' pages read ahead
+//! (`columns/ahead.rs`); those of a group sorted by its columns
 //! (COLUMNSTORE.ORDER) all as it is taken up, then put in row id order.
 //! Split from frozen.rs (RULES.md R-SIZE-2).
 
@@ -11,6 +12,7 @@ use std::iter::Peekable;
 use std::sync::Arc;
 
 use super::Directory;
+use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::Group;
 use crate::engine::columns::scan::{read_candidates, rows};
 use crate::engine::rows::mvcc::Reader;
@@ -59,6 +61,8 @@ pub(in crate::engine::rows) struct Merged {
     group: Option<(Arc<Group>, Vec<RowId>)>,
     runs: VecDeque<(u32, u32)>,
     frozen: VecDeque<(RowId, Row)>,
+    /// The pages of the group being read it asks to be read ahead.
+    ahead: GroupAhead,
 }
 
 impl Merged {
@@ -83,6 +87,7 @@ impl Merged {
             group: None,
             runs: VecDeque::new(),
             frozen: VecDeque::new(),
+            ahead: GroupAhead::default(),
         }
     }
 
@@ -103,7 +108,9 @@ impl Merged {
             let pages = self.table.group_pages()?;
             let group = self.table.group_of(&entry)?;
             let ids = group.row_ids(&pages)?;
-            for (from, to) in read_candidates(&group, &pages, self.condition.as_ref())? {
+            let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;
+            self.ahead.take_up(&group, &self.columns, &candidates);
+            for (from, to) in candidates {
                 let mut at = from;
                 while at < to {
                     let end = at.saturating_add(VECTOR).min(to);
@@ -128,6 +135,7 @@ impl Merged {
     fn read_run(&mut self, from: u32, to: u32) -> Result<()> {
         let Some((group, ids)) = &self.group else { return Ok(()) };
         let pages = self.table.group_pages()?;
+        self.ahead.step(&pages);
         let found = rows(group, &pages, self.table.format.types(), &self.columns, (from, to))?;
         let first = usize::try_from(from).unwrap_or(usize::MAX);
         for (n, row) in found.into_iter().enumerate() {

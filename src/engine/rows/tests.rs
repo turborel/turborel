@@ -332,3 +332,27 @@ fn its_pool_reads_ahead_the_pages_set() {
     Configurable::configure(&in_memory, &Settings::default());
     assert_eq!(made.pool.read_ahead_pages(), READ_AHEAD_PAGES, "after");
 }
+
+/// Verifies: [DESIGN] RULES.md D30, D55: pages in memory have their pool
+/// served by the reader they are given, made before it is given or after:
+/// pages asked for are queued for it, a window of them at most, not read
+/// at once.
+#[test]
+fn pages_in_memory_are_read_ahead_by_their_reader() {
+    use crate::disk::buffer::{Ahead, AheadReader};
+    for made_first in [false, true] {
+        let pages = crate::engine::MemoryPages::new(1 << 20_u32);
+        let reader = AheadReader::new();
+        if !made_first {
+            pages.use_reader(Arc::clone(&reader));
+        }
+        let (pool, file) = pages.file("pages").unwrap();
+        if made_first {
+            pages.use_reader(Arc::clone(&reader));
+        }
+        let mut ahead = Ahead::default();
+        let past: Vec<u64> = (100..164).collect();
+        assert_eq!(pool.ahead_pages(&mut ahead, file, &past), 16_usize, "a window, of 128 frames");
+        assert_eq!(pool.ahead_pages(&mut ahead, file, &past[16..]), 0_usize, "queued, so no room: {made_first}");
+    }
+}

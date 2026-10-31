@@ -1053,8 +1053,8 @@ the standard's meaning holds and programs and drivers need only SQL.
   (starting, idle, running, stopping, stopped, failed), start time, last
   run, run count, last error, restarts.
 - **Jobs.** Background work (checkpoints, maintenance, the log's syncs,
-  D25) runs as jobs under a per-database policy: automatic (own thread,
-  at once or at the time asked); manual, only on `Database::run_due`
+  D25; read-ahead, D30) runs as jobs under a per-database policy:
+  automatic (own thread, at once or at the time asked); manual, only on `Database::run_due`
   (tests, operators choosing the time); or paused. Errors become events (D40); a panic is caught, reported, and
   the job restarted per policy.
 - **Plug-ins' jobs.** A plug-in adds background work to a database
@@ -1063,6 +1063,9 @@ the standard's meaning holds and programs and drivers need only SQL.
   - run, shown and told as the database's own, asked for by
     `Database::request_job`; its work says when it runs again;
   - holding no strong handle of its database between runs.
+- **Asked from below.** A layer that knows no database (the buffer
+  pool) asks for its job by the same seam, `request_job`, through a
+  weak handle (`JobAsker`) that never keeps the database open.
 - **Lifecycle.** A job starts, reported, when its database opens or it
   is first due; none starts once the database is closing. A failed
   close leaves jobs as they were. A database's threads are all joined
@@ -1369,15 +1372,25 @@ never block each other; writers meet only on the same row.
   the hold may be the caller's own, which the pool does not track.
 - **Hot pages.** They still contend on the latch; a reader-biased one
   (BRAVO) would need a reviewed exception to R-SAFE-1.
-- **Read-ahead.** A forward B-link tree scan reading a leaf that follows
-  the last one in the file reads ahead (`BufferPool::read_ahead`): on a
-  miss, the next pages (STORAGE.READ_AHEAD_PAGES, 32 by default, a
-  change taken at once) in one file read, into their own frames, at
-  most an eighth of the pool's. It skips
-  pooled pages, frames not free at once, and pages not whole in the
-  read (overflowing, freed, torn), so it never fails a read; none during
-  an undo. Synchronous, it saves file reads, not waits; a read-ahead
-  thread would be a thread manager job (D55).
+- **Read-ahead.** A scan asks its pool for the pages it reads next:
+  - a forward B-link tree scan, on a leaf following the last in the
+    file, the window after it, again once half is left (`ahead_of`);
+  - a scan of frozen groups, the chunks it will read of the group it
+    takes up, in its order, a window at a time (`ahead_pages`).
+- **Window.** STORAGE.READ_AHEAD_PAGES (32 by default, taken at once),
+  at most an eighth of the pool's frames: no more queued or being read
+  in a pool at once. Pooled pages are skipped; none past the file's end,
+  none during an undo.
+- **On a job.** A pool the database serves (`AheadReader`: its data
+  file's, its pages in memory) queues the request for the job
+  `turborel-read-ahead` (D55), which reads each run of pages in one file
+  read, into frames claimed as a miss claims them (CLOCK, the busy wait),
+  unpinned once filled. A scan's requests are passed over once it ends,
+  and dropped as it reads past them. Other pools read at once, in the
+  scan's thread.
+- **Never fails.** Frames not had, pages not whole in the read
+  (overflowing, freed, torn) and failed reads are left to the scan's own
+  read.
 - **Portability.** File formats are the same on every platform.
 - **Counters.** Each component counts its work for the heuristics above.
 *Why:* each layer can be tested, fault-injected, benchmarked and reused
