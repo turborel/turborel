@@ -21,6 +21,7 @@
 //! (`engine/key.rs` `anchor`), not compared with every key.
 
 use super::estimate::{self, Known};
+use super::join::Flip;
 use super::{PhysicalPlanner, Plan};
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::{IndexMethod, Probe};
@@ -94,15 +95,11 @@ pub(super) fn right_index_join(
     (right, rows): (Plan, f64),
     (width, names): (usize, &[String]),
 ) -> Plan {
-    let right_width = names.len().saturating_sub(width);
-    let moved = |i: usize| i.checked_sub(width).unwrap_or_else(|| i.saturating_add(right_width));
-    let rest = rest.into_iter().map(|c| map_cond_columns(c, &moved)).collect();
-    let flipped: Vec<String> = names.iter().skip(width).chain(names.iter().take(width)).cloned().collect();
-    let join = Equijoin { width: right_width, keys: swapped, rest, outer: true };
-    let joined = index_join(probing, join, (right, rows), &flipped);
-    let exprs: Vec<Expr> = (right_width..right_width.saturating_add(width)).chain(0..right_width).map(Expr::Column).collect();
-    let detail = exprs.iter().map(|e| render_expr(e, &flipped)).collect::<Vec<_>>().join(", ");
-    Plan::Project { exprs, detail, input: Box::new(joined) }
+    let flip = Flip { width, right_width: names.len().saturating_sub(width) };
+    let rest = rest.into_iter().map(|c| flip.cond(c)).collect();
+    let flipped = flip.names(names);
+    let join = Equijoin { width: flip.right_width, keys: swapped, rest, outer: true };
+    flip.restored(index_join(probing, join, (right, rows), &flipped), &flipped)
 }
 
 /// `index_join` of the table's own rows.

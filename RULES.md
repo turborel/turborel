@@ -1489,8 +1489,9 @@ write-ahead logging.
   - Partitioned: an inner join's rows are made row by row and gathered;
     a LEFT join's right operand outgrowing the work area moves to a
     spill-area table, which every left row probes in order.
-- **Other joins.** Other outer joins (RIGHT, FULL, a LEFT one whose
-  condition can raise or whose operand has its own condition) and
+- **Other joins.** Other outer joins (FULL, a RIGHT one not planned as
+  a LEFT one (D35), a LEFT one whose condition can raise or whose
+  operand has its own condition) and
   products join batch rows as the row path does and gather the results
   into batches, so operands are still read by batch.
 - **Aggregation** (`exec/batch.rs`). Of a stream, set functions that
@@ -1693,6 +1694,17 @@ picks by estimate, so a new method needs no change to the planner.
   left's order, each row's matches in the index's.
 - **Join order** weighs a relation's probes beside a hash join, so a few
   rows are joined first to the table they probe.
+- **Build side.** A hash join builds the operand of fewer estimated rows
+  (`physical/join.rs`):
+  - an inner join whose right has more is planned as the join of its
+    operands swapped, its left built, unless the left gives the order
+    asked for;
+  - a RIGHT outer join on keys is planned as the LEFT one of its
+    operands swapped, probed by batches (D31), unless its left has more;
+  - either under a projection putting the columns back in order;
+  - never if an operand or a conjunct can raise an error: the built
+    operand is read first, so which error is raised would depend on the
+    plan (D15).
 
 *Why:* the General Rules define results, not plans; any plan giving the
 same results and errors is the optimizer's to choose.

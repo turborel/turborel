@@ -6,9 +6,10 @@
 //! error, which the planner leaves to be evaluated on every pair.
 
 use turborel::db::{Database, Session};
+use turborel::error::Code;
 use turborel::params::Params;
 
-use crate::common::{rows, sorted};
+use crate::common::{both_ways, code, rows, sorted};
 
 /// Schema J: numbers exact (A), approximate (B) and exact again (E), and
 /// strings of two lengths (C, D), with nulls and repeated keys.
@@ -121,8 +122,10 @@ fn products_are_joined_in_the_cheapest_order() {
     assert!(!plan.contains("NestedLoop"), "T and U are not paired: {plan}");
     let ordered = "SELECT T.K, U.W FROM T, U, S WHERE T.K = S.K AND U.K = S.K ORDER BY 2 DESC";
     let plan = s.physical_plan(ordered, &Params::new()).unwrap();
-    let first = plan.lines().find(|l| l.contains("Scan J.")).unwrap_or_default();
-    assert!(first.contains("J.U"), "U is read first: {plan}");
+    // The first join, the innermost, reads U first.
+    let lines: Vec<&str> = plan.lines().collect();
+    let innermost = lines.iter().rposition(|l| l.contains("HashJoin")).unwrap();
+    assert!(lines[innermost + 1].contains("Scan J.U"), "U is read first: {plan}");
     assert_eq!(rows(&s, ordered), Ok(vec!["7,21".into(), "5,15".into()]));
 }
 
@@ -166,4 +169,147 @@ fn large_and_small() -> Database {
     }
     s.commit().unwrap();
     db
+}
+
+/// Schema J: BIG of 40 rows, keys 0 to 7 repeated and 4 nulls, V its row's
+/// number; SMALL of 5 rows, key 1 twice, 3, 9 and a null.
+fn built_operands() -> Database {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION J
+           CREATE TABLE BIG (K INTEGER, V INTEGER)
+           CREATE TABLE SMALL (K INTEGER, W INTEGER)",
+    )
+    .unwrap();
+    let s = db.session("J");
+    for k in 0..36 {
+        s.run(&format!("INSERT INTO BIG VALUES ({}, {k})", k % 8)).unwrap();
+    }
+    for k in 36..40 {
+        s.run(&format!("INSERT INTO BIG VALUES (NULL, {k})")).unwrap();
+    }
+    s.run("INSERT INTO SMALL VALUES (1, 10), (1, 11), (3, 30), (9, 90), (NULL, 0)").unwrap();
+    s.commit().unwrap();
+    db
+}
+
+/// The line of `plan` after its first that contains `operator`: the first
+/// operand of that operator.
+fn first_operand<'p>(plan: &'p str, operator: &str) -> &'p str {
+    plan.lines().skip_while(|l| !l.contains(operator)).nth(1).unwrap_or_default()
+}
+
+/// Verifies: [DESIGN] RULES.md D35: a hash join builds the operand of
+/// fewer estimated rows, whichever side of the product it is on, and
+/// probes it with the other; the rows, with their nulls and repeated keys,
+/// and their columns' order are the product's that the condition keeps
+/// [X3.135-1986 §5.20 GR2b, §5.11 GR2], by batches and row by row alike.
+#[test]
+fn the_operand_of_fewer_rows_is_built() {
+    let db = built_operands();
+    let s = db.session("J");
+    let cases = [
+        ("SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K", "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0 = BIG.K", 15),
+        ("SELECT * FROM BIG, SMALL WHERE BIG.K = SMALL.K", "SELECT * FROM BIG, SMALL WHERE BIG.K + 0 = SMALL.K", 15),
+        (
+            "SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND SMALL.W < BIG.V",
+            "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0 = BIG.K AND SMALL.W < BIG.V",
+            7,
+        ),
+    ];
+    for (sql, nested, n) in cases {
+        let (found, plan) = same_rows(&s, sql, nested);
+        assert_eq!(found.len(), n, "{sql}: {found:?}");
+        assert!(first_operand(&plan, "HashJoin").contains("SeqScan J.BIG"), "BIG probes SMALL built: {plan}");
+        let (batched, rowwise) = both_ways(&s, sql);
+        assert_eq!((batched, rowwise), (found.clone(), found), "{sql}");
+    }
+    assert_eq!(rows(&s, "SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND BIG.V = 9"), Ok(vec!["1,10,1,9".into(), "1,11,1,9".into()]));
+}
+
+/// Verifies: [DESIGN] RULES.md D35: a hash join whose left operand gives
+/// the order an ORDER BY asks for keeps building its right, of more rows,
+/// so the left's order is kept and no sort is needed.
+#[test]
+fn an_ordered_left_operand_is_not_built() {
+    let db = large_and_small();
+    db.create_index("T_K", "J.T", &["K"], "btree").unwrap();
+    let s = db.session("J");
+    s.run("CREATE TABLE W (K INTEGER NOT NULL, V INTEGER)").unwrap();
+    for _ in 0..3 {
+        s.run("INSERT INTO W SELECT K, V FROM T").unwrap();
+    }
+    s.commit().unwrap();
+    let sql = "SELECT T.K, W.V FROM T, W WHERE T.K = W.K AND T.K > 290 ORDER BY T.K";
+    let plan = s.physical_plan(sql, &Params::new()).unwrap();
+    assert!(!plan.contains("Sort") && first_operand(&plan, "HashJoin").contains("J.T"), "{plan}");
+    let found = rows(&s, sql).unwrap();
+    assert_eq!((found.len(), found.first().map(String::as_str), found.last().map(String::as_str)), (27, Some("291,582"), Some("299,598")));
+}
+
+/// Verifies: [DESIGN] RULES.md D15, D35: a hash join whose operands can
+/// both raise an error keeps building its right, of more rows, as the
+/// left built first would raise its error instead: BIG's division by
+/// zero is raised, not SMALL's subquery of more than one row.
+#[test]
+fn operands_that_can_raise_are_not_swapped() {
+    let db = built_operands();
+    let s = db.session("J");
+    let sql = "SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND SMALL.W = (SELECT K FROM BIG) AND BIG.V / BIG.K > 0";
+    let plan = s.physical_plan(sql, &Params::new()).unwrap();
+    assert!(plan.contains("HashJoin") && !first_operand(&plan, "HashJoin").contains("J.BIG"), "{plan}");
+    assert_eq!(code(&s, sql), Code::Data);
+}
+
+/// Verifies: [DESIGN] RULES.md D35: a RIGHT outer join is planned as the
+/// LEFT one of its operands swapped, its left built, unless its left has
+/// more rows, or an operand or a conjunct can raise an error (D15); the rows are the
+/// RIGHT join's [ISO/IEC 9075:1992 §7.5 GR5], each row of the right no row
+/// of the left matches, a null key's too, with nulls, by batches and row
+/// by row alike.
+#[test]
+fn a_right_join_is_the_left_join_swapped() {
+    let db = built_operands();
+    let s = db.session("J");
+    let cases = [
+        (
+            "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K",
+            "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K",
+            45,
+            true,
+        ),
+        (
+            "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND SMALL.W < BIG.V",
+            "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K AND SMALL.W < BIG.V",
+            43,
+            true,
+        ),
+        (
+            "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND SMALL.W / 2 > 0",
+            "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K AND SMALL.W / 2 > 0",
+            45,
+            false,
+        ),
+        (
+            "SELECT * FROM BIG RIGHT JOIN SMALL ON SMALL.K = BIG.K",
+            "SELECT BIG.*, SMALL.* FROM SMALL LEFT JOIN BIG ON SMALL.K = BIG.K",
+            17,
+            false,
+        ),
+        (
+            "SELECT * FROM SMALL RIGHT JOIN (SELECT K, V / 2 FROM BIG) AS H (K, V) ON SMALL.K = H.K",
+            "SELECT SMALL.*, H.* FROM (SELECT K, V / 2 FROM BIG) AS H (K, V) LEFT JOIN SMALL ON SMALL.K = H.K",
+            45,
+            false,
+        ),
+    ];
+    for (sql, left, n, swapped) in cases {
+        let found = sorted(&s, sql);
+        assert_eq!((found.len(), &found), (n, &sorted(&s, left)), "{sql}");
+        let plan = s.physical_plan(sql, &Params::new()).unwrap();
+        assert_eq!((plan.contains("LeftOuterJoin"), plan.contains("RightOuterJoin")), (swapped, !swapped), "{sql}: {plan}");
+        let (batched, rowwise) = both_ways(&s, sql);
+        assert_eq!((batched, rowwise), (found.clone(), found), "{sql}");
+    }
+    assert!(sorted(&s, "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K").contains(&"NULL,NULL,NULL,36".to_owned()));
 }

@@ -159,15 +159,15 @@ The registry, scopes and SET statements exist (D36). Still to do:
   which make its catalog anew at each call, so no plan of that session is
   kept, not only theirs: kept by what they are rather than by the
   catalog's identity.
-- **Joins by batches** (RULES.md D31): RIGHT and FULL outer joins, LEFT
+- **Joins by batches** (RULES.md D31): FULL outer joins, RIGHT and LEFT
   ones whose condition can raise or whose operand has a condition of its
-  own, and products: their operands are read by batches, but their rows
+  own (a RIGHT one too if an operand can raise, or its left has more
+  rows), and products: their operands are read by batches, but their rows
   joined (a product's paired) row by row and gathered into batches after,
   as a probe by batches needs a flag of each right row held and the
   right's rows of a null key kept; so too an inner join's partitions past
   the work area. A join's batches lose their typed vectors (`Column::
-  Values`). A RIGHT join could be planned as the LEFT join of its
-  operands swapped, as an index join is.
+  Values`).
 - **Operators over vectors** (D31): a sort, EXCEPT and INTERSECT over
   streams, of their operands' vectors, not of rows made of them; grouping
   of many groups: past the work area each row of a group not held is
@@ -181,13 +181,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   integers and text; CHARACTER columns as text, padded as LIKE sees them;
   a LIKE whose pattern is not a constant, over vectors and row by row
   alike, its patterns split once each.
-- **A hash join's operand to build** (D35): an inner join builds its
-  right operand, as join ordering leaves it, however many more rows it
-  has than the left: `SELECT COUNT(*), SUM(F.A) FROM D, F WHERE D.G =
-  F.G`, D of 12 rows and F of 200,000 of 10 values of G, builds F,
-  partitioned and joined in parts past the work area, many times slower
-  than F probing D built. The planner could build the operand of fewer
-  rows, the join's columns then put back in order; a RIGHT join so too.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
 - **Statistics:** a fetch's cost does not tell a page the system's cache

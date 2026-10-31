@@ -18,10 +18,11 @@
 //! moves to a table of the spill area, not partitions, so every left row
 //! probes it in the left's order.
 //!
-//! Any other outer join (RIGHT, FULL, a LEFT one whose condition can raise
-//! or whose operand has a condition of its own), and a product, join the
-//! rows of their operands' batches, of a row each of the table's width, as
-//! the row path joins its operands' rows (`exec/join/outer.rs`,
+//! Any other outer join (FULL, a RIGHT one not planned as the LEFT one of
+//! its operands swapped (`physical/join.rs`), a LEFT one whose condition
+//! can raise or whose operand has a condition of its own), and a product,
+//! join the rows of their operands' batches, of a row each of the table's
+//! width, as the row path joins its operands' rows (`exec/join/outer.rs`,
 //! `exec/join/rescan.rs`), and gather the joined rows into batches: so
 //! their operands are scanned, and filtered, by batch.
 
