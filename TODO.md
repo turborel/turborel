@@ -59,14 +59,15 @@ design settles.
   is refused, saying why; how far its tools' catalog queries
   (`pg_catalog`, `SHOW`) are answered is a decision to make. A protocol
   crate's dependencies are a decision of R-SAFE-4.
-- **Replication between nodes** (D57): real databases in the simulator,
-  a backup compared with the primary, through the driver, a job of the
-  thread manager (D55) joining a consensus, a transport, a journal and
+- **Replication between nodes** (D57): the driver, a job of the thread
+  manager (D55) joining a consensus, a transport, a journal and
   `Standby`, which tells VR where its database recovered to rather than
-  having committed records delivered again from the start; continuous
-  replay (`Standby::replay` holding a transaction open across calls,
-  `promote` ending those left open) and reads on backups, and checkpoints
-  of a following database; state transfer (`Standby`'s export and import,
+  having committed records delivered again from the start (the
+  simulator models a deposed or crashed database as one new, given the
+  log from its start); a following database's records of open
+  transactions spilled past MEMORY.WORK_BYTES (held in memory now);
+  reads on backups, and checkpoints of a following database; state
+  transfer (`Standby`'s export and import,
   whole files, the first `StateTransfer`, and its contract tests), log
   retention (the replicated log and its journal keep every record), VR's
   RECOVERY protocol for a journal lost, and DOVIEWCHANGE and STARTVIEW

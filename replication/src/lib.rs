@@ -60,7 +60,7 @@ pub struct ReplicaId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// Serve as primary in `view`: take changes, whose records it appends
-    /// (`Database::promote` in the core, a later stage).
+    /// (the core's `Standby::promote`).
     Primary {
         /// The view it is primary of.
         view: u64,

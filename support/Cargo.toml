@@ -27,7 +27,7 @@ turborel-replication = { path = "../replication", optional = true }
 client = ["dep:turborel-client"]
 server = ["client", "dep:turborel", "dep:turborel-protocol", "dep:turborel-server", "dep:tokio"]
 tls = ["server", "dep:rcgen"]
-replication = ["dep:turborel", "dep:turborel-replication"]
+replication = ["database", "dep:turborel-replication"]
 database = ["dep:turborel"]
 
 [lints]

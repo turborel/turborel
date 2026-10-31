@@ -85,6 +85,36 @@ pub fn count(s: &Session, sql: &str) -> usize {
     rows(s, sql).map_or(usize::MAX, |r| r.len())
 }
 
+/// The Information Schema's tables that show what a database is doing
+/// now, not what it holds, so differ between two runs of it, or two
+/// replicas of it.
+pub const RUNNING: [&str; 3] = ["FILES", "JOBS", "MEMORY_RESERVATIONS"];
+
+/// What `db` holds, as its users see it: each Information Schema table's
+/// rows but those of `RUNNING`, each base table's rows, and each index's
+/// entries, through a session of each of `readers`, sorted. Two databases
+/// that hold the same rows and the same catalog give the same.
+pub fn contents(db: &Database, readers: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    for &user in readers {
+        let s = db.session(user);
+        let tables = rows(&s, "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE <> 'VIEW'").unwrap();
+        for table in tables {
+            let (schema, name) = table.split_once(',').unwrap();
+            if schema == "INFORMATION_SCHEMA" && RUNNING.contains(&name) {
+                continue;
+            }
+            let mut read = rows(&s, &format!("SELECT * FROM {schema}.{name}")).unwrap();
+            read.sort();
+            found.extend(read.into_iter().map(|row| format!("{user} {schema}.{name}: {row}")));
+        }
+        let indexes = rows(&s, "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.INDEXES").unwrap();
+        found.extend(indexes.iter().map(|ix| format!("{user} {ix}: {} entries", db.index_entries(ix.trim()).unwrap())));
+        s.commit().unwrap();
+    }
+    found
+}
+
 /// An exact number of scale 0.
 pub fn number(n: impl Into<i128>) -> Value {
     Value::Exact(Decimal::new(n.into(), 0))

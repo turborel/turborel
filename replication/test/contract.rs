@@ -1,6 +1,8 @@
 //! The contract tests of replication's extension points (R-SAFE-3), run
 //! against each implementation: VR, and the simulator's transport.
 
+use std::sync::Arc;
+
 use turborel_replication::ReplicaId;
 use turborel_test_support::replication::Make;
 use turborel_test_support::replication::contract::{check_consensus, check_transport};
@@ -15,7 +17,7 @@ use crate::common::{ids, make_vr};
 /// deterministic.
 #[test]
 fn vr_keeps_the_consensus_contract() {
-    let make: Make = Box::new(make_vr);
+    let make: Make = Arc::new(make_vr);
     check_consensus(&make);
 }
 

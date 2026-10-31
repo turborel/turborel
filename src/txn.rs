@@ -242,6 +242,9 @@ pub(crate) struct Transactions {
     /// does (`txn/logging.rs`, RULES.md D57), and whether something does.
     held: Mutex<Option<Held>>,
     holding: AtomicBool,
+    /// Following a log, the records of each of its transactions not yet
+    /// ended, held until it ends (`db/standby.rs`).
+    pub(crate) followed: Mutex<BTreeMap<TxId, Vec<(Lsn, crate::log::record::Record)>>>,
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,
@@ -300,6 +303,7 @@ impl Default for Transactions {
             unsynced: Mutex::new(None),
             held: Mutex::new(None),
             holding: AtomicBool::new(false),
+            followed: Mutex::new(BTreeMap::new()),
             uncollected: Mutex::new(BTreeSet::new()),
             maintenance: Mutex::new(BTreeSet::new()),
             stops: Mutex::new(HashMap::new()),

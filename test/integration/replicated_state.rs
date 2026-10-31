@@ -20,13 +20,9 @@ use turborel::log::record::{KINDS, Record};
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn, MemoryLog};
 use turborel::value::types::TypeRegistry;
 
-use crate::common::{Scratch, after_crash, crc32c, exec, number, os, rows};
+use crate::common::{Scratch, Watched, after_crash, contents, crc32c, exec, number, os, rows};
 use crate::file_manager::keeping;
 use crate::table_settings::{Calls, Noted};
-
-/// The Information Schema's tables that show what the database is doing
-/// now, not what it holds, so differ between two runs of it.
-const RUNNING: [&str; 3] = ["FILES", "JOBS", "MEMORY_RESERVATIONS"];
 
 /// The users whose sessions the state is read through: the schemas'
 /// owners, and the database's owner, once set, who alone sees USERS.
@@ -133,28 +129,10 @@ const WRITERS: [Writer; 18] = [
     Writer { kind: 18, run: |db| committed(db, &["CREATE VIEW W AS SELECT K FROM T", "GRANT SELECT ON T TO B"]) },
 ];
 
-/// What the database holds, as its users see it: each Information Schema
-/// table's rows but those of `RUNNING`, each base table's rows, and each
-/// index's entries, through a session of each of `READERS`, sorted.
+/// What the database holds, as its users see it, through a session of each
+/// of `READERS`.
 fn state(db: &Database) -> Vec<String> {
-    let mut found = Vec::new();
-    for user in READERS {
-        let s = db.session(user);
-        let tables = rows(&s, "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE <> 'VIEW'").unwrap();
-        for table in tables {
-            let (schema, name) = table.split_once(',').unwrap();
-            if schema == "INFORMATION_SCHEMA" && RUNNING.contains(&name) {
-                continue;
-            }
-            let mut read = rows(&s, &format!("SELECT * FROM {schema}.{name}")).unwrap();
-            read.sort();
-            found.extend(read.into_iter().map(|row| format!("{user} {schema}.{name}: {row}")));
-        }
-        let indexes = rows(&s, "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.INDEXES").unwrap();
-        found.extend(indexes.iter().map(|ix| format!("{user} {ix}: {} entries", db.index_entries(ix.trim()).unwrap())));
-        s.commit().unwrap();
-    }
-    found
+    contents(db, &READERS)
 }
 
 /// The kinds of record in the log in `dir`, read as recovery will read
@@ -372,4 +350,119 @@ fn a_standby_serves_once_promoted_until_deposed() {
     let fresh = Database::new();
     fresh.promote(Arc::new(MemoryLog::new())).unwrap();
     fresh.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").unwrap();
+}
+
+/// The records `log` holds from `from` on, each given to `standby` in a
+/// call of its own, as a group commits them one by one.
+fn replay_one_by_one(standby: &Database, log: &dyn Log, from: Lsn) {
+    for read in log.read_from(from) {
+        let (at, bytes) = read.unwrap();
+        assert_eq!(Standby::replay(standby, &mut std::iter::once(Ok((at, bytes)))).unwrap(), at);
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D57, the standby seam's continuous replay:
+/// given its primary's log one record per call, a standby holds the
+/// records of each transaction until the record that ends it, so it shows
+/// nothing of a transaction still open, all of one committed across calls
+/// (a statement undone among them left out), and nothing of one rolled
+/// back across calls; whatever the calls, it ends holding what its primary
+/// holds, rows and index entries.
+#[test]
+fn a_standby_holds_a_transaction_until_it_ends() {
+    let log = Arc::new(MemoryLog::new());
+    let primary = primary(&log);
+    let standby = following();
+    replay_one_by_one(&standby, &*log, Lsn(0));
+    assert_eq!(answers(&standby, &["T_V"]), answers(&primary, &["T_V"]));
+
+    let mark = log.end();
+    let open = primary.session("APP");
+    exec(&open, "INSERT INTO T VALUES (5, 'five')").unwrap();
+    assert!(open.run("INSERT INTO T VALUES (1, 'again')").is_err(), "UNIQUE: the statement undone");
+    let rolled_back = primary.session("APP");
+    exec(&rolled_back, "INSERT INTO T VALUES (8, 'eight')").unwrap();
+    committed(&primary, &["INSERT INTO T VALUES (6, 'six')"]);
+    replay_one_by_one(&standby, &*log, mark);
+    assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,two       ", "6,six       "], "neither open transaction shown");
+
+    let mark = log.end();
+    exec(&open, "INSERT INTO T VALUES (7, 'seven')").unwrap();
+    open.commit().unwrap();
+    rolled_back.rollback().unwrap();
+    committed(&primary, &["UPDATE T SET V = 'dos' WHERE K = 2"]);
+    replay_one_by_one(&standby, &*log, mark);
+    assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,dos       ", "5,five      ", "6,six       ", "7,seven     "]);
+    assert_eq!(answers(&standby, &["T_V"]), answers(&primary, &["T_V"]));
+}
+
+/// The ids of the transactions whose abort records `log` holds, in order.
+fn aborted(log: &dyn Log) -> Vec<u64> {
+    let decoded = log.read_from(Lsn(0)).map(|read| Record::decode(&read.unwrap().1, &TypeRegistry::default()).unwrap());
+    decoded.filter(|r| matches!(r.change, turborel::log::record::Change::Abort)).map(|r| r.tx).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D57 [VRR §4.2], the standby seam: promoted,
+/// a standby ends each transaction its log left open, appending its abort
+/// record to its new log and syncing it before it serves, so a standby
+/// following that log after the first ends it too, holding nothing of it;
+/// its own transactions are numbered past the open ones; if the new log
+/// cannot sync, promotion fails, the standby still follows (SQLCODE -917)
+/// and the transactions stay open, ended by the next promotion.
+#[test]
+fn a_promoted_standby_ends_the_transactions_left_open() {
+    let log = Arc::new(MemoryLog::new());
+    let primary = primary(&log);
+    let open = primary.session("APP");
+    exec(&open, "INSERT INTO T VALUES (9, 'nine')").unwrap();
+    let left = open.transaction().unwrap();
+    let standby = following();
+    Standby::replay(&standby, &mut log.read_from(Lsn(0))).unwrap();
+
+    let failing = Arc::new(Watched::default());
+    failing.fail_syncs.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(standby.promote(Arc::clone(&failing) as Arc<dyn Log>).err().map(|e| e.code), Some(Code::Io));
+    assert_eq!(standby.session("APP").run("INSERT INTO T VALUES (4, 'four')").err().map(|e| e.code), Some(Code::TransactionState));
+
+    let own = Arc::new(MemoryLog::new());
+    standby.promote(Arc::clone(&own) as Arc<dyn Log>).unwrap();
+    assert_eq!(aborted(&*own), [left], "the transaction left open ended in the new log");
+    let s = standby.session("APP");
+    s.run("INSERT INTO T VALUES (4, 'four')").unwrap();
+    assert!(s.transaction().unwrap() > left, "past the ids held");
+    s.commit().unwrap();
+    assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,two       ", "4,four      "]);
+
+    // A standby of the group: the first log, then the new primary's after it.
+    let next = following();
+    Standby::replay(&next, &mut log.read_from(Lsn(0))).unwrap();
+    let after = log.end().0;
+    let moved = own.read_from(Lsn(0)).map(|read| read.map(|(at, bytes)| (Lsn(at.0 + after), bytes)));
+    Standby::replay(&next, &mut moved.collect::<Vec<_>>().into_iter()).unwrap();
+    assert_eq!(answers(&next, &["T_V"]), answers(&standby, &["T_V"]));
+    let last = Arc::new(MemoryLog::new());
+    next.promote(Arc::clone(&last) as Arc<dyn Log>).unwrap();
+    assert_eq!(last.end(), Lsn(1), "nothing left open to end");
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D25, the standby seam: deposed, a
+/// database writes nothing more to the log it served over, which its
+/// replica may serve again in a later view, for the database opened
+/// again: a writer's rollback, and a writer's commit refused (SQLCODE
+/// -913), leave the log as they found it. Regression test (R-TEST-7): the
+/// rollback of a deposed database's transaction wrote its abort record.
+#[test]
+fn a_deposed_database_writes_nothing_to_its_log() {
+    let own = Arc::new(MemoryLog::new());
+    let db = following();
+    db.promote(Arc::clone(&own) as Arc<dyn Log>).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER)").unwrap();
+    let (rolled_back, refused) = (db.session("APP"), db.session("APP"));
+    exec(&rolled_back, "INSERT INTO T VALUES (1)").unwrap();
+    exec(&refused, "INSERT INTO T VALUES (2)").unwrap();
+    let end = own.end();
+    db.depose().unwrap();
+    rolled_back.rollback().unwrap();
+    assert_eq!(refused.commit().err().map(|e| e.code), Some(Code::CommitFailed));
+    assert_eq!(own.end(), end, "nothing written once deposed");
 }

@@ -1064,10 +1064,14 @@ opaque bytes.**
   crate:
   - `replay`: the one replay, as recovery runs it; the database then
     follows, until promoted;
-  - `promote`: it serves over a log; `depose`: it stops until opened
-    again;
+  - continuous: records end anywhere, so a transaction's are held until
+    the record ending it; the rest replay at once, as recovery's;
+  - `promote`: it ends each transaction left open, an abort record
+    appended and synced to its new log, then serves over that log
+    ([VRR §4.2]: "Operations that had not committed might also
+    survive"); `depose`: it stops until opened again;
   - following or deposed, it refuses what it would log (SQLCODE -917),
-    as a failed sync does (D25); reads go on;
+    as a failed sync does (D25), abort records too; reads go on;
   - export and import come with state transfer.
 - **Replicated log.** `ReplicatedLog`, a `Log` over a `Consensus` and a
   `Journal`: its positions the consensus's, `sync(p)` returning once
@@ -1118,8 +1122,10 @@ records, objects and files; none may need a replication change.
   (`turborel-test-support`: frames delayed, lost, duplicated, reordered;
   partitions, crashes, failing disks), checking that committed records
   survive view changes in order, at most one primary serves a view (the
-  one it names), and the group converges once faults stop; later, it
-  also compares backups with the primary.
+  one it names), and the group converges once faults stop;
+- the simulator also runs real databases, one a replica, through
+  `Standby` alone, the primary's taking SQL: after each run every
+  backup holds what the primary holds, rows and catalog.
 
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
 `db/standby.rs`, `files/classes.rs`, `log/record/kinds.rs`,

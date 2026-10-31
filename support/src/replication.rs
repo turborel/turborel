@@ -1,8 +1,9 @@
 //! Fixtures for replication's tests (RULES.md D57, R-TEST-10): a replica's
 //! journal; a group of replicas whose frames and journal writes a test
 //! carries out step by step, so each step of a protocol can be shown; and
-//! a deterministic simulator, which runs a group through faults at random
-//! from a seed and checks it throughout (`sim`).
+//! a deterministic simulator, which runs a group, its databases modelled
+//! or real turborel databases, through faults at random from a seed and
+//! checks it throughout (`sim`).
 //!
 //! Each replica's consensus is driven as the crate's contract says a driver
 //! drives it: its outputs carried out in order, each `Persist` answered by

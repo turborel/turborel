@@ -18,7 +18,9 @@ use turborel::txn::{Concurrency, LockWait, TxCapabilities, TxId, Undo};
 use turborel::value::Value;
 
 // Written once in `support/`, for the suites every log passes too.
-pub use crate::database::{LOCKING, LockingEngine, MemoryTable, after_crash, count, crc32c, number, os, rows, setup, small_pool, sorted};
+pub use crate::database::{
+    LOCKING, LockingEngine, MemoryTable, after_crash, contents, count, crc32c, number, os, rows, setup, small_pool, sorted,
+};
 pub use crate::logs::Watched;
 pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 pub use encodings::{RunLength, Scramble};

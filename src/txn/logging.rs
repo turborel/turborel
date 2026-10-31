@@ -271,8 +271,13 @@ impl Txn {
     /// Writes the abort record, if the transaction logged a change. Not
     /// synced: a transaction without a commit record is undone by recovery
     /// either way, and a failure to write it cannot matter for the same
-    /// reason.
+    /// reason. Not written while the database is held (`Held`): a deposed
+    /// database's log is its replica's, which may serve again, in a later
+    /// view, for the database opened again (RULES.md D57).
     pub(super) fn log_abort(&self) {
+        if self.shared.held().is_some() {
+            return;
+        }
         if let Some(log) = self.log.as_ref().filter(|_| lock_builtin(&self.state).logged) {
             let _ = log.append(&Record { tx: self.id, change: Change::Abort }.encode());
         }

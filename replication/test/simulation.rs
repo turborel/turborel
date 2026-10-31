@@ -3,6 +3,7 @@
 //! convergence. A failure names its seed, which makes the run again.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use turborel_test_support::replication::Make;
 use turborel_test_support::replication::sim::{Faults, Plan, Report, Weather, simulate};
@@ -29,7 +30,7 @@ fn plan(replicas: u32) -> Plan {
 
 /// Runs `seeds` of `plan`, and fails naming every seed that failed.
 fn sweep(plan: &Plan, seeds: Range<u64>) -> Vec<Report> {
-    let make: Make = Box::new(make_vr);
+    let make: Make = Arc::new(make_vr);
     let mut reports = Vec::new();
     let mut failures = Vec::new();
     for seed in seeds {
@@ -88,7 +89,7 @@ fn groups_stay_safe_through_storms() {
 /// from its seed.
 #[test]
 fn a_seed_makes_its_run_again() {
-    let make: Make = Box::new(make_vr);
+    let make: Make = Arc::new(make_vr);
     let first = simulate(7, &plan(3), &make).unwrap();
     assert_eq!(simulate(7, &plan(3), &make).unwrap(), first);
     assert_ne!(simulate(8, &plan(3), &make).unwrap(), first);

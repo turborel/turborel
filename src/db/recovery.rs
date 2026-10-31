@@ -49,6 +49,7 @@ use changes::{RowChange, decode_change, encode_change};
 use super::indexes::IndexSpec;
 use super::{Database, State};
 use crate::catalog::{IndexDesc, QualifiedName};
+use crate::disk::encoding::Encodings;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::{Change, Record};
@@ -58,6 +59,7 @@ use crate::storage::{Row, RowId, project};
 use crate::txn::Timestamp;
 use crate::txn::{NO_TRANSACTION, Persistence, TxId};
 use crate::value::Value;
+use crate::value::types::TypeRegistry;
 
 /// Which of the log's definitions reading it replays: those after the
 /// checkpoint whose image gave the others (`db/files.rs`), or all.
@@ -247,15 +249,31 @@ impl Database {
         records: &mut dyn Iterator<Item = Result<(Lsn, Vec<u8>)>>,
         definitions: Definitions,
     ) -> Result<(RecoveryReport, Touched)> {
+        let (encodings, types) = self.openers()?;
+        let mut opened = records.map(|read| read.and_then(|(lsn, bytes)| Ok((lsn, crate::log::sealed::open(&bytes, &encodings, &types)?))));
+        self.replay_records(&mut opened, definitions)
+    }
+
+    /// What opens a log's records: the database's encodings, of sealed
+    /// ones (`log/sealed.rs`), and its types.
+    pub(super) fn openers(&self) -> Result<(Arc<Encodings>, TypeRegistry)> {
+        let st = self.snapshot()?;
+        Ok((Arc::clone(&st.encodings), st.types.clone()))
+    }
+
+    /// `replay`, of records already opened.
+    pub(super) fn replay_records(
+        &self,
+        records: &mut dyn Iterator<Item = Result<(Lsn, Record)>>,
+        definitions: Definitions,
+    ) -> Result<(RecoveryReport, Touched)> {
         let mut report = RecoveryReport::default();
         let mut analysis = Analysis::default();
         let mut changes = Touched::new(self.snapshot()?.list_space());
         let mut replaying = Replaying { definitions, pending: HashMap::new() };
-        let encodings = Arc::clone(&self.snapshot()?.encodings);
         let types = self.snapshot()?.types.clone();
         for read in records {
-            let (lsn, bytes) = read?;
-            let record = crate::log::sealed::open(&bytes, &encodings, &types)?;
+            let (lsn, record) = read?;
             report.records = report.records.saturating_add(1);
             analysis.note(lsn, &record);
             if let Some(change) = self.replay_record(lsn, record, &mut replaying, &mut report)? {

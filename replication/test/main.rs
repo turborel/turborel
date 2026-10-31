@@ -18,6 +18,7 @@
 mod common;
 
 mod contract;
+mod databases;
 mod frames;
 mod log;
 mod normal;

@@ -1,6 +1,8 @@
 //! Fixtures of replication's tests: groups of VR replicas, on the group of
 //! `turborel-test-support`.
 
+use std::sync::Arc;
+
 use turborel_replication::{Consensus, Output, Recovered, ReplicaId, Vr, VrOptions};
 use turborel_test_support::replication::Group;
 
@@ -17,7 +19,7 @@ pub fn options() -> VrOptions {
 
 /// A group of `count` VR replicas, numbered from 1, with instant disks.
 pub fn vr_group(count: u32) -> Group {
-    Group::new(&ids(count), Box::new(make_vr))
+    Group::new(&ids(count), Arc::new(make_vr))
 }
 
 /// A VR replica, new or made again from its journal.

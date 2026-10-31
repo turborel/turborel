@@ -3,6 +3,7 @@
 //! until it makes them durable, unless its disks are instant.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use turborel_replication::{Consensus, Input, Lsn, Output, Recovered, ReplicaId};
 
@@ -10,7 +11,7 @@ use super::Journal;
 
 /// Makes a replica's consensus: of the group's members, as one of them,
 /// new (`None`) or again after a crash, from what its journal recovered.
-pub type Make = Box<dyn Fn(&[ReplicaId], ReplicaId, Option<Recovered>) -> Box<dyn Consensus>>;
+pub type Make = Arc<dyn Fn(&[ReplicaId], ReplicaId, Option<Recovered>) -> Box<dyn Consensus> + Send + Sync>;
 
 /// A frame sent and not yet delivered.
 #[derive(Debug, Clone, PartialEq, Eq)]
