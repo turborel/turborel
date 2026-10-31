@@ -226,8 +226,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   the statement for MATCH PARTIAL, read whole for each change, and the
   values a statement gave each row of a table an action may change
   [ISO/IEC 9075:1992 §11.8 GR7]. They should spill as the statement's
-  effects do. NO ACTION, and whether a row has a match, gather every
-  matching row only to ask whether there is one: the first would do.
+  effects do.
 - **Spills, further:** SPILL.ENCODINGS compresses spill files (LZ4), off
   by default: on 2026-10-31 it ran from 17% slower to 45% faster, most
   within 10%, on an SSD the system's cache kept up with; a disk slower

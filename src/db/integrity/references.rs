@@ -14,6 +14,7 @@
 //! matched to go acts on it.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use super::{Effect, Effects};
@@ -29,6 +30,10 @@ use crate::value::{Value, compare};
 /// [ISO/IEC 9075:1992 §11.8 GR7] The values given in a statement to each
 /// column of each row, by the statement or its referential actions.
 type Given = HashMap<(QualifiedName, RowId, usize), Value>;
+
+/// What is called with each row a search finds, with its id: whether to go
+/// on to the next.
+type Visit<'a> = &'a mut dyn FnMut(RowId, Row) -> Result<ControlFlow<()>>;
 
 /// What the referential actions of a statement keep while they run: the
 /// values given [GR7], and, for MATCH PARTIAL, the referenced rows each
@@ -64,42 +69,60 @@ impl State {
         // Those not null, which with no match type or FULL are all of them.
         let (columns, wanted): (Vec<usize>, Vec<Value>) =
             fk.referenced.iter().zip(values).filter(|(_, v)| !v.is_null()).map(|(&c, v)| (c, v.clone())).unzip();
-        Ok(!self.rows_with(tx, &fk.table, &columns, &wanted)?.is_empty())
+        self.has_row_with(tx, &fk.table, &columns, &wanted)
     }
 
-    /// The rows of `table`, with their ids, whose `columns` equal `values`
-    /// [§8.2], none null: through an index of exactly those columns if
-    /// there is one, else read in full.
-    fn rows_with(&self, tx: &Txn, table: &QualifiedName, columns: &[usize], values: &[Value]) -> Result<Vec<(RowId, Row)>> {
-        self.read_lock(tx, table)?;
-        let storage = self.storage_of(table)?;
+    /// Whether a row of `table` has `columns` equal to `values` [§8.2],
+    /// none null: the first found ends the search.
+    fn has_row_with(&self, tx: &Txn, table: &QualifiedName, columns: &[usize], values: &[Value]) -> Result<bool> {
+        let mut found = false;
+        self.each_row_with(tx, table, (columns, values), &mut |_, _| {
+            found = true;
+            Ok(ControlFlow::Break(()))
+        })?;
+        Ok(found)
+    }
+
+    /// Calls `each` with the rows of `table`, with their ids, whose
+    /// `columns` equal `values` [§8.2], none null, until it breaks: through
+    /// an index of exactly those columns if there is one, else read in
+    /// full, a row at a time.
+    fn each_row_with(&self, tx: &Txn, table: &QualifiedName, (columns, values): (&[usize], &[Value]), each: Visit<'_>) -> Result<()> {
         let equal = |row: &Row| columns.iter().zip(values).all(|(&c, v)| row.get(c).is_some_and(|x| equals(x, v)));
         let index = self
             .catalog
             .indexes(table)
             .into_iter()
             .find(|ix| ix.columns.len() == columns.len() && ix.columns.iter().all(|c| columns.contains(c)));
-        if let Some(ix) = index {
-            let key: Option<Vec<Value>> =
-                ix.columns.iter().map(|c| columns.iter().position(|x| x == c).and_then(|at| values.get(at)).cloned()).collect();
-            let key = Key(key.ok_or_else(|| api("[DESIGN] an index key is not the values looked up"))?);
-            let mut found = Vec::new();
-            for id in self.index_of(&ix.name)?.rows(&key)? {
-                if let Some(row) = storage.get(tx.id, id)?.filter(|r| equal(r)) {
-                    found.push((id, row));
-                }
+        let Some(ix) = index else { return self.each_row_where(tx, table, &equal, each) };
+        self.read_lock(tx, table)?;
+        let storage = self.storage_of(table)?;
+        let key: Option<Vec<Value>> =
+            ix.columns.iter().map(|c| columns.iter().position(|x| x == c).and_then(|at| values.get(at)).cloned()).collect();
+        let key = Key(key.ok_or_else(|| api("[DESIGN] an index key is not the values looked up"))?);
+        for id in self.index_of(&ix.name)?.rows(&key)? {
+            if let Some(row) = storage.get(tx.id, id)?.filter(|r| equal(r))
+                && each(id, row)?.is_break()
+            {
+                break;
             }
-            return Ok(found);
         }
-        self.rows_where(tx, table, &equal)
+        Ok(())
     }
 
-    /// The rows of `table`, with their ids, that `keep` keeps: read in full.
-    fn rows_where(&self, tx: &Txn, table: &QualifiedName, keep: &dyn Fn(&Row) -> bool) -> Result<Vec<(RowId, Row)>> {
+    /// Calls `each` with the rows of `table`, with their ids, that `keep`
+    /// keeps, until it breaks: read in full, a row at a time.
+    fn each_row_where(&self, tx: &Txn, table: &QualifiedName, keep: &dyn Fn(&Row) -> bool, each: Visit<'_>) -> Result<()> {
         self.read_lock(tx, table)?;
         let width = self.catalog.table(table).map_or(0, |t| t.columns.len());
         let all: Vec<usize> = (0..width).collect();
-        Arc::clone(self.storage_of(table)?).scan(tx.id, &all).filter(|r| r.as_ref().map_or(true, |(_, row)| keep(row))).collect()
+        for read in Arc::clone(self.storage_of(table)?).scan(tx.id, &all) {
+            let (id, row) = read?;
+            if keep(&row) && each(id, row)?.is_break() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// [§11.8 GR3] The rows of `child` that match a referenced row whose
@@ -111,9 +134,22 @@ impl State {
                 if key.iter().any(Value::is_null) {
                     return Ok(Vec::new());
                 }
-                self.rows_with(tx, &child.name, &fk.columns, key)
+                let mut found = Vec::new();
+                self.each_row_with(tx, &child.name, (&fk.columns, key), &mut |id, row| {
+                    found.push((id, row));
+                    Ok(ControlFlow::Continue(()))
+                })?;
+                Ok(found)
             }
-            MatchType::Partial => self.rows_where(tx, &child.name, &|row| project(row, &fk.columns).is_some_and(|v| partially(&v, key))),
+            MatchType::Partial => {
+                let mut found = Vec::new();
+                let matching = |row: &Row| project(row, &fk.columns).is_some_and(|v| partially(&v, key));
+                self.each_row_where(tx, &child.name, &matching, &mut |id, row| {
+                    found.push((id, row));
+                    Ok(ControlFlow::Continue(()))
+                })?;
+                Ok(found)
+            }
         }
     }
 
@@ -145,13 +181,15 @@ impl State {
     fn orphans(&self, tx: &Txn, (child, fk): (&TableDesc, &ForeignKey), old: &Row, id: Option<RowId>) -> Result<bool> {
         let key = project(old, &fk.referenced).ok_or_else(|| api(format!("[DESIGN] a row of {} is short", fk.table)))?;
         if fk.match_type == MatchType::Partial {
-            for (_, row) in self.matching_rows(tx, (child, fk), &key)? {
+            // Each matching row in turn, until one matches no row now.
+            let mut orphaned = false;
+            let matching = |row: &Row| project(row, &fk.columns).is_some_and(|v| partially(&v, &key));
+            self.each_row_where(tx, &child.name, &matching, &mut |_, row| {
                 let values = project(&row, &fk.columns).ok_or_else(|| api(format!("[DESIGN] a row of {} is short", child.name)))?;
-                if !self.matches(tx, fk, &values)? {
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
+                orphaned = !self.matches(tx, fk, &values)?;
+                Ok(if orphaned { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
+            })?;
+            return Ok(orphaned);
         }
         if key.iter().any(Value::is_null) {
             return Ok(false);
@@ -162,10 +200,10 @@ impl State {
                 return Ok(false);
             }
         }
-        if !self.rows_with(tx, &fk.table, &fk.referenced, &key)?.is_empty() {
+        if self.has_row_with(tx, &fk.table, &fk.referenced, &key)? {
             return Ok(false);
         }
-        Ok(!self.rows_with(tx, &child.name, &fk.columns, &key)?.is_empty())
+        self.has_row_with(tx, &child.name, &fk.columns, &key)
     }
 
     /// [§11.8 GR5, GR6] The referential actions of the rows `effects`
@@ -266,8 +304,11 @@ impl State {
     /// that did `effects`: as they are, but for the rows it inserted, gone,
     /// and those it updated or deleted, as they were first.
     fn before_statement(&self, tx: &Txn, table: &QualifiedName, effects: &mut Effects<'_>) -> Result<Vec<(RowId, Row)>> {
-        let mut rows: HashMap<RowId, Option<Row>> =
-            self.rows_where(tx, table, &|_| true)?.into_iter().map(|(id, r)| (id, Some(r))).collect();
+        let mut rows: HashMap<RowId, Option<Row>> = HashMap::new();
+        self.each_row_where(tx, table, &|_| true, &mut |id, row| {
+            rows.insert(id, Some(row));
+            Ok(ControlFlow::Continue(()))
+        })?;
         let mut seen = Vec::new();
         effects.done.visit(&mut |effect| {
             let (t, id, was) = match effect {

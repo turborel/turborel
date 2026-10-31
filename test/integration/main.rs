@@ -117,6 +117,7 @@ mod served;
 mod set_statements;
 mod settings;
 mod spill_encodings;
+mod spilled_actions;
 mod spilled_checks;
 mod spilled_rows;
 mod spilled_sorts;
