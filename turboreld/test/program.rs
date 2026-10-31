@@ -153,8 +153,13 @@ fn sighup_opens_the_log_again() {
     thread.join().unwrap().unwrap();
     let rotated = std::fs::read_to_string(scratch.path("log.1")).unwrap();
     assert!(rotated.contains(&format!(r#""event":"listening","addresses":["{}"]"#, at[0])), "{rotated}");
+    // `stopping` counts the connections still open: the refused one may
+    // be, its place given back only once its task ends, after the client
+    // has read the refusal; so the line is looked for, not its count.
+    let stopping = r#""event":"stopping","connections":"#;
+    assert!(!rotated.contains(stopping), "{rotated}");
     let after = std::fs::read_to_string(&log).unwrap();
-    assert!(after.contains(r#""event":"stopping","connections":0"#) && !after.contains(r#""event":"listening""#), "{after}");
+    assert!(after.contains(stopping) && !after.contains(r#""event":"listening""#), "{after}");
 }
 
 /// Verifies: [DESIGN] RULES.md D40, D42: on Unix, SIGHUP takes the
