@@ -5,10 +5,11 @@
 //! opened as a cursor [§17.13, §17.14], as often as asked, each time with values
 //! for its parameters [§17.9 GR5].
 //!
-//! A query, an INSERT and a searched UPDATE or DELETE keep their plan
-//! between executions, bound again only when what it was bound with
-//! changed (`prepared/plans.rs`, RULES.md D45); each execution fills in its
-//! values and chooses the access paths by them. The statement is checked
+//! A query, an INSERT and a searched or positioned UPDATE or DELETE keep
+//! their plan between executions, a query opened as a dynamic cursor's
+//! too, bound again only when what it was bound with changed
+//! (`prepared/plans.rs`, RULES.md D45); each execution fills in its values
+//! and chooses the access paths by them. The statement is checked
 //! against the definitions as they are when an execution binds it: what it
 //! was prepared against may have changed [§17.6 GR10].
 //!
@@ -86,8 +87,8 @@ impl Prepared {
     /// \[DESIGN\] How many plans its executions, its clones' too, made: one
     /// kept while what it was made with holds, another each time that
     /// changed, and one for each execution whose plan holds a value it read
-    /// (RULES.md D45). Only a query, an INSERT, and a searched UPDATE or
-    /// DELETE make one.
+    /// (RULES.md D45). Only a query, an INSERT, and a searched or
+    /// positioned UPDATE or DELETE make one.
     pub fn plans_made(&self) -> u64 {
         self.plans.made()
     }
@@ -101,6 +102,11 @@ impl Prepared {
     /// The cursor it changes a row through, if it does [§17.6 GR2].
     pub(super) fn cursor(&self) -> Option<&Name> {
         self.cursor.as_ref()
+    }
+
+    /// What it keeps between its executions, shared with its clones.
+    pub(super) fn plans(&self) -> &Plans {
+        &self.plans
     }
 }
 

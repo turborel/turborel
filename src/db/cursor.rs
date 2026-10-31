@@ -8,12 +8,13 @@ use std::sync::{Arc, Weak};
 
 use super::dynamic::Name;
 use super::position::{Move, Position};
+use super::prepared::Keeping;
 use super::{
     Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api, assign_targets,
     candidate, check_option, check_targets, cursor_error, plan, rule, set_columns,
 };
 use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification, Updatability, ValueSpecification};
-use crate::binder::{self, BoundWrite, OutColumn, bind_cursor, bind_select};
+use crate::binder::{self, BoundWrite, OutColumn, bind_select};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlState, fail, fail_with};
 use crate::exec::{Runner, execute};
@@ -277,18 +278,30 @@ impl Session {
     }
 
     pub(super) fn compile(&self, st: &State, spec: &CursorSpecification, params: &Params) -> Result<Compiled> {
-        let bound = self.bound(st, params, |cx| bind_cursor(cx, spec))?;
-        let text = bound.plan.explain();
-        let (optimized, trace, physical) = plan(st, bound.plan);
-        Ok(Compiled { columns: bound.columns, bound: text, trace, optimized, physical })
+        self.compile_kept(st, spec, params, None)
+    }
+
+    /// `spec` compiled as `compile` compiles it: of a prepared statement,
+    /// from the plan it keeps (`keeping`, RULES.md D45).
+    fn compile_kept(&self, st: &State, spec: &CursorSpecification, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Compiled> {
+        let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
+        let text = logical.explain();
+        let (optimized, trace, physical) = plan(st, logical);
+        Ok(Compiled { columns, bound: text, trace, optimized, physical })
     }
 
     /// [X3.135-1986 §8.3 SR4b; ISO/IEC 9075:1992 §13.1 SR5, §7.9 SR12] The
     /// compiled specification of a cursor its text makes updatable, and
     /// the one table it reads, unless a subquery of its WHERE clause reads
     /// that table too \[SR12d\]: then it is read-only.
-    fn updatable_plan(&self, st: &State, spec: &CursorSpecification, params: &Params) -> Result<Option<(Compiled, QualifiedName)>> {
-        let c = self.compile(st, spec, params)?;
+    fn updatable_plan(
+        &self,
+        st: &State,
+        spec: &CursorSpecification,
+        params: &Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<Option<(Compiled, QualifiedName)>> {
+        let c = self.compile_kept(st, spec, params, keeping)?;
         let read = c.optimized.subquery_tables();
         let own: Vec<QualifiedName> = c.optimized.tables().into_iter().filter(|t| !read.contains(t)).collect();
         let [table] = own.as_slice() else { return Ok(None) };
@@ -297,16 +310,17 @@ impl Session {
     }
 
     /// The rows of a read-only cursor's specification, after taking
-    /// shared locks on the tables it reads [X3.135-1986 §8.8 GR3b].
+    /// shared locks on the tables it reads [X3.135-1986 §8.8 GR3b]: of a
+    /// prepared statement, from the plan it keeps (`keeping`, RULES.md D45).
     pub(super) fn open_rows(
         &self,
         st: &Arc<State>,
         tx: &Txn,
         spec: &CursorSpecification,
-        params: &Params,
+        (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<(Vec<OutColumn>, Stream)> {
-        let bound = self.bound(st, params, |cx| bind_cursor(cx, spec))?;
-        Ok((bound.columns, Stream::planned(st, tx, bound.plan)?))
+        let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
+        Ok((columns, Stream::planned(st, tx, logical)?))
     }
 
     /// [ISO/IEC 9075:1992 §11.8 GR8] The rows changed through each cursor
@@ -390,16 +404,18 @@ impl Session {
         if dynamic {
             return self.open_dynamic(cx, name, None, params);
         }
-        self.open_text(cx, name, (&text, flags), params)
+        self.open_text(cx, name, (&text, flags, None), params)
     }
 
     /// OPEN of the cursor `name`, of the `<cursor specification>` `text`,
-    /// INSENSITIVE and SCROLL as `flags` say, with the parameters `params`.
+    /// INSENSITIVE and SCROLL as `flags` say, with the parameters `params`:
+    /// of a prepared statement's, a dynamic cursor's, from the
+    /// specification and plan it keeps (`keeping`, RULES.md D45).
     pub(super) fn open_text(
         &self,
         cx: StatementContext<'_>,
         name: &Name,
-        (text, flags): (&str, (bool, bool)),
+        (text, flags, keeping): (&str, (bool, bool), Option<&Keeping<'_>>),
         params: &Params,
     ) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
@@ -407,11 +423,11 @@ impl Session {
             return cursor_error(&name.name, format!("[X3.135-1986 §8.8 GR1] cursor {name} is already open"));
         }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
-        let spec = Self::parse_cursor(st, text, params)?;
+        let spec = Self::cursor_specification(st, text, params, keeping)?;
         let wanted = wanted(&spec, flags)?;
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
-                self.updatable_plan(st, &spec, params)?.map(|(c, table)| (named, c, table))
+                self.updatable_plan(st, &spec, params, keeping)?.map(|(c, table)| (named, c, table))
             }
             (Wanted::ReadOnly, _) | (Wanted::Written | Wanted::Implicit, None) => None,
         };
@@ -423,7 +439,7 @@ impl Session {
             open_updatable(st, tx, &spec, found)?
         } else {
             // [X3.135-1986 §8.8 GR3b] "that table ... is effectively created".
-            let (columns, rows) = self.open_rows(st, tx, &spec, params)?;
+            let (columns, rows) = self.open_rows(st, tx, &spec, (params, keeping))?;
             OpenCursor { columns, rows: if flags.1 { CursorRows::Kept(Kept::new(rows, st)) } else { CursorRows::Table(rows) } }
         };
         // [X3.135-1986 §8.8 GR3c] open, positioned before the first row.

@@ -150,10 +150,10 @@ if let Outcome::Rows { rows, .. } = conn.execute(&by_id, &[Value::Exact(Decimal:
 ```
 
 A prepared statement stays valid across transactions. A query, an
-INSERT, and a searched UPDATE or DELETE keep their plan between
-executions, each execution putting its values in it; the plan is made
-again when the definitions, a setting, or the session's schema, user or
-time zone changed since, and at each execution if it holds the
+INSERT, and a searched or positioned UPDATE or DELETE keep their plan
+between executions, each execution putting its values in it; the plan
+is made again when the definitions, a setting, or the session's schema,
+user or time zone changed since, and at each execution if it holds the
 statement's instant, as [The Embedded Library](03-embedding.md#prepared-statements)
 tells.
 

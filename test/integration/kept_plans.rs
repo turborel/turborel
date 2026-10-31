@@ -1,6 +1,7 @@
 //! Plans kept between executions of a prepared statement (RULES.md D45): a
-//! query, an INSERT and a searched UPDATE or DELETE bound once, each
-//! execution filling in its values; bound again when the definitions, the
+//! query, an INSERT and a searched or positioned UPDATE or DELETE bound
+//! once, each execution filling in its values, in a session with declared
+//! local temporary tables too; bound again when the definitions, the
 //! settings or the session it was bound with changed, or at each execution
 //! when its plan holds the statement's instant; its results always those
 //! of the statement written with its values.
@@ -10,7 +11,8 @@ use std::sync::Arc;
 use turborel::clock::FixedClock;
 use turborel::db::{Cursor, Database, Prepared, Session};
 use turborel::error::Code;
-use turborel::value::{Decimal, Value};
+use turborel::params::Params;
+use turborel::value::{DataType, Decimal, Spelled, Value};
 
 use crate::common::{Rng, exec, rows, sorted};
 
@@ -216,6 +218,94 @@ fn a_plan_holding_the_instant_is_made_at_each_execution() {
     assert_eq!(w[0..3], ["1,1970-01-01 00:00:00+00:00", "2,1970-01-01 00:01:00+00:00", "3,1970-01-01 00:02:00+00:00"]);
     assert_eq!(w[3..6], ["11,1970-01-01 00:00:00+00:00", "12,1970-01-01 00:01:00+00:00", "13,1970-01-01 00:02:00+00:00"]);
     assert_eq!([now.plans_made(), implied.plans_made(), written.plans_made(), seen.plans_made()], [3, 1, 3, 3]);
+}
+
+/// Parameters FK and FN, INTEGER, a FETCH's targets.
+fn targets() -> Params {
+    let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
+    Params::new().declare("FK", integer, int(0)).declare("FN", integer, int(0))
+}
+
+/// Verifies: [EXTENSION] [X3.135-1986 §8.4, §8.11; ISO/IEC 9075:1992
+/// §17.6 GR10, §17.19, §17.20]; [DESIGN] RULES.md D45: a positioned UPDATE
+/// and DELETE prepared keep their plan between executions, each changing
+/// the row its cursor is on, with its values; made again once an index is
+/// made; the privilege it was made with revoked, refused at the next
+/// execution. Regression test (R-TEST-7): they were bound at each
+/// execution.
+#[test]
+fn positioned_statements_keep_their_plan_between_executions() {
+    let (db, x) = schema();
+    x.run("GRANT SELECT, UPDATE, DELETE ON T TO Y").unwrap();
+    x.commit().unwrap();
+    let y = db.session("Y");
+    y.declare_cursor("DECLARE C CURSOR FOR SELECT K, N FROM X.T WHERE K <= 6").unwrap();
+    let update = y.prepare("UPDATE X.T SET N = ? WHERE CURRENT OF C").unwrap();
+    let delete = y.prepare("DELETE FROM X.T WHERE CURRENT OF C").unwrap();
+    let mut p = targets();
+    y.execute("OPEN C", &mut p).unwrap();
+    for k in 1..=6_i128 {
+        y.execute("FETCH C INTO FK, FN", &mut p).unwrap();
+        if k % 2 == 1 {
+            y.execute_prepared(&update, &[int(k * 10)]).unwrap();
+        } else {
+            y.execute_prepared(&delete, &[]).unwrap();
+        }
+    }
+    y.execute("CLOSE C", &mut p).unwrap();
+    y.commit().unwrap();
+    assert_eq!(rows(&y, "SELECT K, N FROM X.T WHERE K <= 6 ORDER BY K").unwrap(), ["1,10", "3,30", "5,50"]);
+    assert_eq!([update.plans_made(), delete.plans_made()], [1, 1]);
+    db.create_index("T_K", "X.T", &["K"], "btree").unwrap();
+    y.execute("OPEN C", &mut p).unwrap();
+    y.execute("FETCH C INTO FK, FN", &mut p).unwrap();
+    y.execute_prepared(&update, &[int(7)]).unwrap();
+    y.execute("CLOSE C", &mut p).unwrap();
+    y.commit().unwrap();
+    assert_eq!(update.plans_made(), 2, "an index made");
+    x.run("REVOKE UPDATE ON T FROM Y CASCADE").unwrap();
+    x.commit().unwrap();
+    y.execute("OPEN C", &mut p).unwrap();
+    y.execute("FETCH C INTO FK, FN", &mut p).unwrap();
+    assert_eq!(y.execute_prepared(&update, &[int(8)]).err().map(|e| e.code), Some(Code::Privilege));
+    assert_eq!(rows(&y, "SELECT N FROM X.T WHERE K = 1").unwrap(), ["7"]);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §13.11, §17.6 GR10]; [DESIGN]
+/// RULES.md D45: a session that declared local temporary tables keeps its
+/// prepared statements' plans, of those tables and of others, while they
+/// and the definitions under them are unchanged; a table declared after,
+/// an index made, or the session's user changed, makes them again.
+/// Regression test (R-TEST-7): such a session kept no plan.
+#[test]
+fn a_session_with_declared_tables_keeps_its_plans() {
+    let (db, s) = schema();
+    s.run("DECLARE LOCAL TEMPORARY TABLE MODULE.D (K INTEGER NOT NULL, V VARCHAR(8)) ON COMMIT PRESERVE ROWS").unwrap();
+    let insert = s.prepare("INSERT INTO MODULE.D VALUES (?, ?)").unwrap();
+    let declared = s.prepare("SELECT V FROM MODULE.D WHERE K = ?").unwrap();
+    let query = s.prepare("SELECT S FROM T WHERE K = ?").unwrap();
+    for k in 1..=4 {
+        s.execute_prepared(&insert, &[int(k), Value::Char(format!("D{k}"))]).unwrap();
+        assert_eq!(opened(&s, &declared, &[int(k)]), [format!("D{k}")]);
+        assert_eq!(opened(&s, &query, &[int(k)]), [format!("S{k}")]);
+        s.commit().unwrap();
+    }
+    assert_eq!([insert.plans_made(), declared.plans_made(), query.plans_made()], [1, 1, 1]);
+    s.run("DECLARE LOCAL TEMPORARY TABLE MODULE.E (K INTEGER)").unwrap();
+    assert_eq!(opened(&s, &declared, &[int(2)]), ["D2"]);
+    assert_eq!(opened(&s, &query, &[int(2)]), ["S2"]);
+    assert_eq!([declared.plans_made(), query.plans_made()], [2, 2], "a table declared");
+    db.create_index("T_K", "X.T", &["K"], "btree").unwrap();
+    assert_eq!(opened(&s, &query, &[int(3)]), ["S3"]);
+    assert_eq!(opened(&s, &query, &[int(4)]), ["S4"]);
+    assert_eq!(query.plans_made(), 3, "an index made");
+    s.commit().unwrap();
+    db.create_user("X", b"x").unwrap();
+    db.set_owner("X").unwrap();
+    exec(&s, "SET SESSION AUTHORIZATION 'Y'").unwrap();
+    assert_eq!(s.open_prepared(&query, &[int(1)]).err().map(|e| e.code), Some(Code::Privilege), "Y may not read X.T");
+    assert_eq!(opened(&s, &declared, &[int(1)]), ["D1"], "its declared tables are the session's, whoever its user");
+    assert_eq!(declared.plans_made(), 3, "its user changed");
 }
 
 /// A prepared statement of the random test, and how to write it with its

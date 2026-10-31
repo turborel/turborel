@@ -209,15 +209,16 @@ impl Session {
     /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of
     /// `table` giving `set`, bound as `kind`, run in `cx` by `run` through
     /// the cursor its `<cursor name>` names: a dynamic cursor's, of a
-    /// statement prepared that names it [ISO/IEC 9075:1992 §17.6 GR2].
+    /// statement prepared that names it [ISO/IEC 9075:1992 §17.6 GR2]; of
+    /// a prepared statement, bound as it keeps it (`keeping`, RULES.md D45).
     fn positioned(
         &self,
         cx: StatementContext<'_>,
         (table, set): (&TableName, &[SetClause]),
         (kind, cursor, run): (WriteKind, &(String, usize), Positioned),
-        params: &Params,
+        (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
-        let w = self.bound(cx.st, params, |b| bind_write(b, kind, table, set, None))?;
+        let w = self.write_bound(cx.st, params, keeping, |b| bind_write(b, kind, table, set, None))?;
         self.settle_cursors(cx.st, &w.table);
         run(self, cx, (&self.positioned_key(&cursor.0), cursor.1), &w)
     }
@@ -248,10 +249,10 @@ impl Session {
                 delete_searched(cx, &w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::UpdatePositioned { table, set, cursor } => {
-                self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), params)
+                self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), (params, keeping))
             }
             SqlStatement::DeletePositioned { table, cursor } => {
-                self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), params)
+                self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), (params, keeping))
             }
             SqlStatement::Open(name) => self.open(cx, &Name::plain(name), params),
             SqlStatement::Fetch { cursor, orientation, targets } => self.fetch(cx, &Name::plain(cursor), (orientation, targets), params),

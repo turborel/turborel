@@ -221,11 +221,13 @@ fn main() -> Result<(), turborel::error::SqlError> {
 `execute_prepared` runs it with values for them, in order;
 `open_prepared` runs a prepared query, and gives its cursor. A prepared
 statement stays valid across transactions. A query, an INSERT, and a
-searched UPDATE or DELETE keep their plan between executions: each
-execution puts its values in the kept plan and chooses indexes by them.
-The plan is made again when the definitions change (a table altered, an
-index made or dropped, a privilege granted or revoked, the transaction's
-own uncommitted changes among them), when a setting of the database or
+searched or positioned UPDATE or DELETE keep their plan between
+executions, a query also when SQL text opens it as a dynamic cursor:
+each execution puts its values in the kept plan and chooses indexes by
+them. The plan is made again when the definitions change (a table
+altered, an index made or dropped, a local temporary table declared, a
+privilege granted or revoked, the transaction's own uncommitted changes
+among them), when a setting of the database or
 of the session is set, or when the session's schema, authorization
 identifier or time zone changes; a plan that holds the statement's
 instant, of CURRENT_TIMESTAMP in the statement or a view it reads, or of

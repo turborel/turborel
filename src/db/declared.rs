@@ -10,7 +10,7 @@
 //! Information Schema [GR5] (`State::without_declared`).
 
 use std::slice;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use super::constraints::Within;
 use super::schema::constraint_index_name;
@@ -47,7 +47,9 @@ impl Session {
         let indexes = indexes_of(&desc, st.constraint_method());
         // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
         let padding = super::padding::of_table(&desc, t);
-        lock_builtin(&self.temporaries.declared).push((desc, indexes));
+        let mut declared = lock_builtin(&self.temporaries.declared);
+        declared.tables.push((desc, indexes));
+        declared.made = None;
         Ok(Completion::Success.warned(padding))
     }
 
@@ -64,7 +66,7 @@ impl Session {
     /// SQLCODE -103 for a rule it breaks, or another of the view's or the
     /// table's.
     pub(super) fn refuse_declared(&self, st: &State, statement: &SchemaStatement, (object, schema): (&QualifiedName, &str)) -> Result<()> {
-        if lock_builtin(&self.temporaries.declared).is_empty() {
+        if lock_builtin(&self.temporaries.declared).tables.is_empty() {
             return Ok(());
         }
         match statement {
@@ -79,21 +81,48 @@ impl Session {
     }
 
     /// `st`, with the session's declared local temporary tables in its
-    /// schema MODULE.
+    /// schema MODULE: the catalog made with them the call before, if made
+    /// of the same catalog for the same authorization identifier, so a
+    /// plan kept by the catalog's identity holds (RULES.md D45).
     pub(super) fn with_declared(&self, st: Arc<State>) -> Arc<State> {
-        let declared = lock_builtin(&self.temporaries.declared);
-        if declared.is_empty() {
+        let mut declared = lock_builtin(&self.temporaries.declared);
+        if declared.tables.is_empty() {
             return st;
         }
+        let auth = self.auth().clone();
+        let under = Arc::downgrade(&st.catalog);
+        let made = declared.made.as_ref().filter(|m| Weak::ptr_eq(&m.under, &under) && m.auth == auth).map(|m| Arc::clone(&m.catalog));
+        let catalog = made.unwrap_or_else(|| {
+            let mut catalog = st.catalog.duplicate();
+            in_module(&mut *catalog, &auth, declared.tables.iter().map(|(desc, _)| desc.clone()).collect());
+            for (_, indexes) in &declared.tables {
+                indexes.iter().cloned().for_each(|ix| catalog.add_index(ix));
+            }
+            let catalog: Arc<dyn Catalog> = Arc::from(catalog);
+            declared.made = Some(Made { under, auth, catalog: Arc::clone(&catalog) });
+            catalog
+        });
         let mut copy = State::clone(&st);
-        let mut catalog = copy.catalog.duplicate();
-        in_module(&mut *catalog, &self.auth(), declared.iter().map(|(desc, _)| desc.clone()).collect());
-        for (_, indexes) in declared.iter() {
-            indexes.iter().cloned().for_each(|ix| catalog.add_index(ix));
-        }
-        copy.catalog = Arc::from(catalog);
+        copy.catalog = catalog;
         Arc::new(copy)
     }
+}
+
+/// \[DESIGN\] A session's declared local temporary tables, each with its
+/// indexes, and the catalog last made with them.
+#[derive(Default)]
+pub(super) struct Declared {
+    tables: Vec<(TableDesc, Vec<IndexDesc>)>,
+    made: Option<Made>,
+}
+
+/// A catalog made with a session's declared tables (`with_declared`): of
+/// the catalog `under` (whose allocation the `Weak` keeps, so no other
+/// catalog takes its address), its schema MODULE owned by `auth`.
+struct Made {
+    under: Weak<dyn Catalog>,
+    auth: String,
+    catalog: Arc<dyn Catalog>,
 }
 
 /// The schema MODULE of `catalog`, owned by `auth`, with `tables` in it.

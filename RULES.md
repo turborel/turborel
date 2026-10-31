@@ -2656,24 +2656,29 @@ to bound what any statement takes.
   else when it runs.
 - **Plug-ins.** A scalar function states each argument's `?` type
   (`ScalarFunction::parameter_type`); by default, refused.
-- **Kept plans.** A query, an INSERT, and a searched UPDATE or DELETE
-  keep parsed text and bound plan, each `?` a slot typed by context
-  (`Expr::Dynamic`); other statements keep parsed text only. Each
-  execution fills the slots, cast [§17.9 GR5], then rewrites and plans,
-  so access paths follow its values and current statistics, never a
-  generic plan (`db/prepared/plans.rs`, `logical/dynamic.rs`).
+- **Kept plans.** A query, an INSERT, and a searched or positioned
+  UPDATE or DELETE keep parsed text and bound plan, each `?` a slot
+  typed by context (`Expr::Dynamic`); other statements keep parsed text
+  only. Each execution fills the slots, cast [§17.9 GR5], then rewrites
+  and plans, so access paths follow its values and current statistics,
+  never a generic plan (`db/prepared/plans.rs`, `logical/dynamic.rs`).
+- **Cursors.** A query keeps its `<cursor specification>` parsed and its
+  plan bound, opened by `open_prepared` or as a dynamic cursor's
+  [§17.14] (D58). Each OPEN still judges updatability [§13.1 SR5, SR6]
+  by the cursor's own INSENSITIVE and SCROLL.
 - **Validity.** A kept plan holds while these are unchanged:
   - the snapshot's generation (every published change of definitions,
     settings, functions, optimizer rules);
   - the catalog read, by identity: every change makes a new one, a
     transaction's uncommitted ones and GRANT and REVOKE included;
+  - with declared local temporary tables, the catalog made with them,
+    made again only when they, the catalog under them or the session's
+    user change (`db/declared.rs`);
   - the session's authorization identifier, default schema, time zone
     and own settings, SQL.FUNCTION_CALLS included.
 - **Rebinding.** Otherwise the statement is rebound, its Syntax and
   Access Rules checked against current definitions [§17.6 GR10], so a
-  revoked privilege is missing at the next execution. Declared local
-  temporary tables make a new catalog per call, so their statements are
-  rebound every time.
+  revoked privilege is missing at the next execution.
 - **Never kept.** A binding that reads a value: a `?` other than as a
   slot, or the statement's instant (CURRENT_DATE, CURRENT_TIME,
   CURRENT_TIMESTAMP, a datetime CAST, a DEFAULT written with them, in

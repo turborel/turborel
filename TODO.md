@@ -122,13 +122,16 @@ The registry, scopes and SET statements exist (D36). Still to do:
 ## Query processing
 
 - **Plans kept, further** (RULES.md D45): the access paths kept too, for
-  values that would choose the same ones (each execution now rewrites and
-  plans the kept bound plan anew); positioned UPDATE and DELETE kept as
-  the searched ones are; a dynamic cursor's query (RULES.md D58), bound
-  anew at each OPEN; and a session's declared local temporary tables,
-  which make its catalog anew at each call, so no plan of that session is
-  kept, not only theirs: kept by what they are rather than by the
-  catalog's identity.
+  values that would choose the same ones. Each execution rewrites and
+  plans the kept bound plan anew: of a prepared key lookup's 5.4 µs,
+  planning takes about 2.6 µs (the scan's zone share about 1.4, the
+  index's estimate 0.9) and rewriting 0.35. The choice reads the values through rewrites
+  (folding, transitivity), probes (`coerce`, ranges merged, a LIKE's
+  prefix) and plug-ins' answers for them (`scan_share`,
+  `Index::estimate`), so no test short of planning tells it is the
+  same: which plan to keep, and when to plan again, is a decision to
+  make (a generic plan beside the values' own, kept while it costs no
+  more, is one way).
 - **Joins by batches** (RULES.md D31): FULL outer joins, RIGHT and LEFT
   ones whose condition can raise or whose operand has a condition of its
   own (a RIGHT one too if an operand can raise, or its left has more

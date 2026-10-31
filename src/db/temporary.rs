@@ -48,12 +48,11 @@ use storage::{Entries, Rows_};
 type Instances = Mutex<HashMap<(QualifiedName, u32), Instance>>;
 
 /// A session's instances of the temporary tables (`Uses` notes them); and
-/// its declared local temporary tables, each with its indexes
-/// (`db/declared.rs`).
+/// its declared local temporary tables (`db/declared.rs`).
 #[derive(Default)]
 pub(super) struct Temporaries {
     made: Arc<Instances>,
-    pub(super) declared: Mutex<Vec<(TableDesc, Vec<IndexDesc>)>>,
+    pub(super) declared: Mutex<super::declared::Declared>,
 }
 
 /// One instance: its rows, with its entries of each index, and its lock.

@@ -40,10 +40,15 @@ takes its value as the statement is executed. Unlike the client
 library's prepare, PREPARE refuses a statement with a comment, and a
 positioned UPDATE or DELETE whose cursor is not there. The statement is
 checked against the definitions as it is prepared, and again as it runs: they
-may have changed meanwhile. It is kept across transactions. A positioned
-UPDATE or DELETE finds its cursor as it is prepared: the cursor of the
-name declared, or allocated; one that names no table, `DELETE WHERE
-CURRENT OF C`, changes the table the cursor reads.
+may have changed meanwhile. It is kept across transactions. A query, an
+INSERT, and a searched or positioned UPDATE or DELETE keep their plan
+between executions, and a query between the OPENs of a cursor that
+reads it, made again as
+[The Embedded Library](../../client/03-embedding.md#prepared-statements)
+tells. A positioned UPDATE or DELETE finds its cursor as it is
+prepared: the cursor of the name declared, or allocated; one that names
+no table, `DELETE WHERE CURRENT OF C`, changes the table the cursor
+reads.
 
 A name is the session's. A statement name is an identifier; an extended
 statement name is the value of a parameter, a character string, its
