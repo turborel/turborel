@@ -15,6 +15,18 @@ pub fn over_tls(server: &Running, pki: &Pki, name: &str) -> connection::Result<C
     tls::connect(server.address, (name, &config), "X", &mut Trust)
 }
 
+/// The workers a server of `db` shows busy, as its owner `owner` reads
+/// them in INFORMATION_SCHEMA.SERVER through a session of its own,
+/// embedded: no connection to the server, nor a worker of its, taken.
+pub fn busy(db: &turborel::db::Database, owner: &str) -> String {
+    let session = db.session(owner);
+    let mut cursor = session.open_cursor("SELECT WORKERS_BUSY FROM INFORMATION_SCHEMA.SERVER").unwrap();
+    let row = cursor.fetch().unwrap().unwrap();
+    drop(cursor);
+    session.rollback().unwrap();
+    row[0].to_string()
+}
+
 /// A sink that keeps every event, as `Debug` shows it.
 #[derive(Clone, Default)]
 pub struct Kept(std::sync::Arc<std::sync::Mutex<Vec<String>>>);

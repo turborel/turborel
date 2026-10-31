@@ -16,18 +16,7 @@ use turborel_server::native::LOGIN_MESSAGE_BYTES;
 use turborel_server::password::{self as pbkdf2, Pbkdf2};
 use turborel_server::settings::{BATCH_BYTES, LOGIN_DELAY_MS, LOGIN_TIMEOUT_MS, MAX_LOGINS, PASSWORD_ITERATIONS, WORKERS};
 
-use crate::common::{Pki, Running, pki, secured, set, start, start_with, state};
-
-/// The workers the server shows busy, as its owner OWNER reads them in
-/// INFORMATION_SCHEMA.SERVER through a session of its own, embedded.
-fn busy(db: &Database) -> String {
-    let owner = db.session("OWNER");
-    let mut cursor = owner.open_cursor("SELECT WORKERS_BUSY FROM INFORMATION_SCHEMA.SERVER").unwrap();
-    let row = cursor.fetch().unwrap().unwrap();
-    drop(cursor);
-    owner.rollback().unwrap();
-    row[0].to_string()
-}
+use crate::common::{Pki, Running, busy, pki, secured, set, start, start_with, state};
 
 /// Verifies: [DESIGN] RULES.md D42, D43: a login is checked on threads
 /// apart from the statements' workers, SERVER.MAX_LOGINS at once: with the
@@ -55,7 +44,7 @@ fn logins_never_wait_for_the_workers() {
     assert!(
         (0..1000).any(|_| {
             std::thread::sleep(Duration::from_millis(5));
-            busy(&db) == "1"
+            busy(&db, "OWNER") == "1"
         }),
         "the statement waits on the one worker"
     );

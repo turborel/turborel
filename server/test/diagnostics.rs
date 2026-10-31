@@ -17,7 +17,7 @@ use turborel_server::server::{Endpoint, Server};
 use turborel_server::settings::{MAX_CONNECTIONS, SHUTDOWN_TIMEOUT_MS};
 use turborel_server::transport::{Accepting, Listener};
 
-use crate::common::{Kept, pki, rows, secured, start, start_with, state};
+use crate::common::{Kept, busy, pki, secured, start, start_with, state};
 
 /// A database of X's table T, of `ROWS` rows; its owner OWN; its events
 /// kept.
@@ -39,18 +39,17 @@ fn database() -> (Database, Kept) {
 /// The rows of T: its cross join of three, its rows cubed, runs long.
 const ROWS: u32 = 400;
 
-/// A long statement of X, run over a connection to `address`, once it
-/// has begun: what it gave, once it ends, its failure's SQLSTATE if it
-/// failed.
-fn waiting(address: std::net::SocketAddr) -> std::thread::JoinHandle<Option<String>> {
+/// A long statement of X, run over a connection to `address`, a server of
+/// `db`, once it has begun: what it gave, once it ends, its failure's
+/// SQLSTATE if it failed. The owner OWN waits for it embedded, so that
+/// connection is the server's only one: one the owner had closed could
+/// still be counted a moment after its client saw it closed.
+fn waiting(db: &Database, address: std::net::SocketAddr) -> std::thread::JoinHandle<Option<String>> {
     let mut c = connection::connect(address, "X", &mut Trust).unwrap();
     let running = std::thread::spawn(move || c.query("SELECT COUNT(*) FROM T A, T B, T C").err().map(|f| f.sqlstate));
-    let mut owner = connection::connect(address, "OWN", &mut Trust).unwrap();
-    // Busy: the owner's statement asking, and the one waiting.
-    while rows(&owner.query("SELECT WORKERS_BUSY FROM INFORMATION_SCHEMA.SERVER").unwrap()) != ["2"] {
+    while busy(db, "OWN") != "1" {
         std::thread::yield_now();
     }
-    owner.terminate().unwrap();
     running
 }
 
@@ -67,7 +66,7 @@ fn a_stop_past_its_deadline_cancels_statements() {
     let (db, kept) = database();
     let server = start(&db, &[(SHUTDOWN_TIMEOUT_MS, 50)]);
     let address = server.address.to_string();
-    let running = waiting(server.address);
+    let running = waiting(&db, server.address);
     server.stop();
     let outcome = running.join().unwrap();
     assert!(outcome.is_some(), "it failed, cancelled or its connection closed, before it ended: {outcome:?}");
@@ -92,7 +91,7 @@ fn a_second_stop_hurries_the_server() {
     let address = endpoints[0].listener.address().parse().unwrap();
     let ((stop, stopped), (hurry, hurried)) = (oneshot::channel::<()>(), oneshot::channel::<()>());
     let serving = runtime.spawn(server.serve_until(endpoints, async { drop(stopped.await) }, async { drop(hurried.await) }));
-    let running = waiting(address);
+    let running = waiting(&db, address);
     stop.send(()).unwrap();
     hurry.send(()).unwrap();
     runtime.block_on(serving).unwrap();
