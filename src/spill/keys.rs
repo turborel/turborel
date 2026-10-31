@@ -46,6 +46,9 @@ const EXTENSION_TAG: u8 = 4;
 const BITS_TAG: u8 = 5;
 const INSTANT_TAG: u8 = 6;
 const SPAN_TAG: u8 = 7;
+/// The tag of an exact number that is an integer within 64 bits: its key
+/// is the tag and those 8 bytes, a fixed width, not its units and scale.
+const INTEGER_TAG: u8 = 8;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -94,6 +97,18 @@ pub fn put_norm_approx(f: f64, out: &mut Vec<u8>) {
 /// integer keys as its value does.
 pub fn put_norm_exact(units: i128, scale: u32, out: &mut Vec<u8>) {
     let (units, scale) = Decimal::new(units, scale).normalized();
+    put_exact(units, scale, out);
+}
+
+/// Appends the key of the normalized exact number of `units` at `scale`:
+/// an integer within 64 bits as those 8 bytes, any other as its units and
+/// scale. Each value has one normalized form, so one key.
+fn put_exact(units: i128, scale: u32, out: &mut Vec<u8>) {
+    if let (0, Ok(integer)) = (scale, i64::try_from(units)) {
+        out.push(INTEGER_TAG);
+        out.extend_from_slice(&integer.to_le_bytes());
+        return;
+    }
     out.push(EXACT_TAG);
     out.extend_from_slice(&units.to_le_bytes());
     out.extend_from_slice(&scale.to_le_bytes());
@@ -121,11 +136,7 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
         match k {
             NormKey::Null => out.push(NULL_TAG),
             NormKey::Char(s) => text(&mut out, CHAR_TAG, s),
-            NormKey::Exact(units, scale) => {
-                out.push(EXACT_TAG);
-                out.extend_from_slice(&units.to_le_bytes());
-                out.extend_from_slice(&scale.to_le_bytes());
-            }
+            NormKey::Exact(units, scale) => put_exact(*units, *scale, &mut out),
             NormKey::Approx(bits) => {
                 out.push(APPROX_TAG);
                 out.extend_from_slice(&bits.to_le_bytes());

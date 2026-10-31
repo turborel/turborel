@@ -154,6 +154,7 @@ mod typed_vectors;
 mod unique_checks;
 mod users;
 mod varying;
+mod vector_operators;
 mod views;
 mod warnings;
 mod working_tables;

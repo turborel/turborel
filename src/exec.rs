@@ -8,8 +8,9 @@
 //!
 //! \[DESIGN\] Each plan node becomes an iterator over rows (the Volcano /
 //! iterator model). Rows are pulled one at a time from the top; an
-//! aggregation or projection of tables' scans reads them a batch at a time
-//! where it can (`exec/batch.rs`, EXECUTOR.BATCHES). Operators that must
+//! aggregation, projection, sort, EXCEPT or INTERSECT of tables' scans
+//! reads them a batch at a time where it can (`exec/batch.rs`,
+//! EXECUTOR.BATCHES). Operators that must
 //! hold rows (sorts, grouping, DISTINCT, joins and products, EXCEPT and
 //! INTERSECT, subqueries' rows) hold up to MEMORY.WORK_BYTES of them in memory
 //! and spill the rest (`exec/work.rs`, RULES.md D38); so do the rows a
@@ -245,6 +246,10 @@ fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, sorted by `keys`.
 #[inline(never)]
 fn sorted(keys: &[SortKey], input: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    // A stream's batches sorted as they are, if it can be (`sort/vectors.rs`).
+    if batched(db) && batch::whole_width(&input, db).is_some() {
+        return batch::kept(input, db, tx).map_or_else(failed, |batches| sort::sort_batches(keys, batches, db, tx));
+    }
     let rows = execute(input, db, tx);
     sort::sort(keys, rows, db, tx)
 }
@@ -342,7 +347,7 @@ fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// Whether a query reads its tables a batch at a time where it can, as the
 /// setting EXECUTOR.BATCHES says.
-fn batched(db: &State) -> bool {
+pub(super) fn batched(db: &State) -> bool {
     if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHES) { s != "OFF" } else { true }
 }
 

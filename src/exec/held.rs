@@ -11,7 +11,7 @@
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
-use crate::spill::{ListItem, ListSpace, Located, SpillList, row_bytes};
+use crate::spill::{ListItem, ListSpace, Located, SpillList, record_room, row_bytes, row_record};
 use crate::storage::{Row, RowId};
 use crate::value::Value;
 use crate::value::codec::{put_row, row};
@@ -38,9 +38,7 @@ impl ListItem for Vec<Value> {
 
 impl Holdable for Row {
     fn record(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        put_row(&mut out, self);
-        out
+        row_record(self)
     }
     fn read(record: &[u8], types: &TypeRegistry) -> Result<Row> {
         let mut r = Reader::new(record, "held row").with_types(types);
@@ -58,7 +56,7 @@ impl ListItem for (RowId, Row) {
 
 impl Holdable for (RowId, Row) {
     fn record(&self) -> Vec<u8> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(record_room(size_of::<RowId>(), self.1.len()));
         out.put_u64(self.0);
         put_row(&mut out, &self.1);
         out

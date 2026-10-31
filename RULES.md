@@ -1632,6 +1632,11 @@ write-ahead logging.
   (`storage::Cell`); each group's rows of a batch are gathered in order
   by a counting sort into one buffer, feeding its set functions a vector
   at a time.
+- **Integer keys.** An exact number that is an integer within 64 bits,
+  at any scale, keys as a tag and those 8 bytes (`spill::put_norm`); any
+  other, as its normalized units and scale. One width, so keys are
+  short and groups, DISTINCT and EXCEPT and INTERSECT hold more in a
+  work area.
 - **Column store batches.** Each frozen vector straight from chunks, a
   condition's columns first and the rest only for rows it keeps; tree
   entries in the group's row id range, read once as the group is taken
@@ -1728,11 +1733,19 @@ write-ahead logging.
   vectors: a column or constant as is, another expression on a reused
   row of only its values; a batch is read ahead of the cursor. Over
   other tables it reads a row at a time, as reading ahead gains nothing.
-- **Groups held.** In the work area, in order of first rows. Past it,
-  rows of groups not yet held are written, numbered, as a pass of
-  `exec/group.rs` writes them, grouped as it groups, and merged with the
-  held groups by number. Each row's key is built in a kept buffer
-  (`spill::put_norm`).
+- **Groups held** (`batch/groups.rs`). In the work area, in order of
+  first rows. Each row's key is built in a kept buffer (`batch::put_key`).
+- **Groups past it** (`groups/spilled.rs`). Rows of groups not yet held
+  are written by batch:
+  - of each batch, each partition's rows one record (at most 256 rows):
+    their numbers, then each column, integers as units, scale and nulls,
+    others as values;
+  - each partition read back as batches, integers as integers, and
+    grouped again by batch; partitioned again, or made in passes, as
+    D38 says;
+  - every pass's groups merged with the held groups by number.
+  - Groups are not made partly before they spill: a plug-in's
+    accumulator is opaque (D38), so only rows are written.
 - **Projected streams** (`project::computed`). A projection of a
   stream's columns is a stream of those vectors, moved. So is one of
   other expressions of its columns, no subquery: each evaluated only on
@@ -1746,6 +1759,20 @@ write-ahead logging.
   column of its rows: grouping by every column, no set function, its
   groups the rows in order of first, past the work area too. So is a
   UNION, as a DISTINCT of its operands appended.
+- **Sorts** (`exec/sort/vectors.rs`). Of a stream holding every column of
+  its rows (`batch::whole_width`):
+  - its batches held as they come, counted by their vectors' bytes;
+    beside them each row's batch, place and first key's prefix, made of
+    the vector (`prefix::prefix_of_cell`);
+  - sorted as D38's sort sorts rows, stably, ties compared on the
+    vectors;
+  - a row made only as it is given, or as its record is written to a
+    run, which the merge reads as for rows.
+- **EXCEPT and INTERSECT** (`exec/set.rs`, `batch/keyed.rs`). An operand
+  that is such a stream is read by batch, each row's key made of its
+  vectors; a row is made only of one kept, or written to a partition.
+  Keys are alike of either path, so either operand may be read either
+  way.
 - **EXECUTOR.BATCHES.** ON by default, per session too: read by batch
   where a query can. OFF reads a row at a time throughout, to compare
   the two; the batch tests read each answer both ways.
@@ -2108,7 +2135,8 @@ catalog to keep in step.
   MEMORY.WORK_BYTES in memory, a session may set for itself (its
   statements read its settings over the database's, D36). A row counts
   its values and what each holds apart from itself (a string's
-  characters, a bit string's or a plug-in value's bytes).
+  characters, a bit string's or a plug-in value's bytes); a batch a sort
+  holds, its vectors' bytes (D31).
 - **Spill area.** Past that it spills to an area as large, reserved from
   the budget: a temporary pager file whose buffer pool is the area, so
   eviction writes it to disk. Its creation is not made durable
@@ -2157,7 +2185,8 @@ catalog to keep in step.
   product's right operand, a subquery's rows) keeps them.
 - **Accumulators.** A plug-in's is opaque, never written out: past
   SPILL.PARTITION_DEPTH, grouping makes a partition in passes, each
-  leaving the groups it has no room for to the next.
+  leaving the groups it has no room for to the next. Grouping by batch
+  writes those rows by batch (D31).
 - **Outer join on keys.** Partitioned like the hash join, both operands
   numbered: each left row with its matches or nulls, in the left's
   order, then unmatched right rows, in the right's; partitions

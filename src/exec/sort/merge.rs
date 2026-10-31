@@ -18,7 +18,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use super::compare_rows;
-use super::prefix::{Kind, alike, prefix_of};
+use super::prefix::{Kind, Prefix, alike, prefix_of};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::SortKey;
 use crate::spill::{Batch, Batches, SpillRun, record_row};
@@ -52,12 +52,19 @@ impl Order {
 
 /// `row`'s record, sorted by `keys`, written to `out`, emptied first.
 pub(super) fn record(keys: &[SortKey], row: &Row, out: &mut Vec<u8>) {
-    out.clear();
     let prefix = keys.first().and_then(|k| row.get(k.column).and_then(|v| prefix_of(v, k.descending)));
+    put_head(prefix, out);
+    put_row(out, row);
+}
+
+/// Writes to `out`, emptied first, the head of a record whose first key's
+/// value has `prefix`: its tag and its prefix. Its row follows, as
+/// `codec::put_row` writes it.
+pub(super) fn put_head(prefix: Option<Prefix>, out: &mut Vec<u8>) {
+    out.clear();
     let (tag, bits) = prefix.map_or((0, 0), |p| (if p.whole { p.kind.code() | WHOLE } else { p.kind.code() }, p.bits));
     out.push(tag);
     out.extend_from_slice(&bits.to_be_bytes());
-    put_row(out, row);
 }
 
 /// A record too short to hold its prefix.

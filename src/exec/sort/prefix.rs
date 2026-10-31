@@ -21,7 +21,7 @@ use std::cmp::Ordering;
 
 use super::compare_rows;
 use crate::logical::SortKey;
-use crate::storage::Row;
+use crate::storage::{Cell, Row};
 use crate::value::datetime::Moment;
 use crate::value::{Bits, Decimal, NULLS_SORT_HIGH, Value, pow10};
 
@@ -118,7 +118,7 @@ pub(super) fn alike(a: Kind, b: Kind) -> bool {
 
 /// The kind of a key's values, `held` so far, with one of `next`; none if
 /// they are not alike.
-fn joined(held: Kind, next: Kind) -> Option<Kind> {
+pub(super) fn joined(held: Kind, next: Kind) -> Option<Kind> {
     if !alike(held, next) {
         return None;
     }
@@ -164,10 +164,28 @@ pub(super) fn prefix_of(value: &Value, descending: bool) -> Option<Prefix> {
         }
         Value::Extension(_) => return None,
     };
+    Some(finished((kind, bits, held), descending))
+}
+
+/// The prefix of a value of `kind` whose prefix is `bits`, held whole if
+/// `held`, of a key `descending` or not.
+fn finished((kind, bits, held): (Kind, u64, bool), descending: bool) -> Prefix {
     // A value whose prefix is a null's does not hold it whole, so no null
     // ties a value held whole.
     let whole = held && (kind == Kind::Null || bits != NULL_PREFIX);
-    Some(Prefix { kind, bits: if descending { !bits } else { bits }, whole })
+    Prefix { kind, bits: if descending { !bits } else { bits }, whole }
+}
+
+/// The prefix of the value of a batch's `cell`, as `prefix_of` gives it of
+/// the value, made without making a string's (RULES.md D31).
+pub(super) fn prefix_of_cell(cell: Cell<'_>, descending: bool) -> Option<Prefix> {
+    match cell {
+        Cell::Value(v) => prefix_of(v, descending),
+        Cell::Exact(units, scale) => prefix_of(&Value::Exact(Decimal::new(i128::from(units), scale)), descending),
+        Cell::Approx(f) => prefix_of(&Value::Approx(f), descending),
+        Cell::Text(t) => Some(finished((Kind::Char, text(t), t.len() <= PREFIX_BYTES), descending)),
+        Cell::Null => prefix_of(&Value::Null, descending),
+    }
 }
 
 /// Each row's prefix of `key` and its place, if its values are of one kind
@@ -314,6 +332,29 @@ mod tests {
             [f64::NEG_INFINITY, -2.5_f64, -0.0_f64, 0.0_f64, 1e-300_f64, 3.0_f64].iter().map(|&f| approximate(f)).collect();
         assert!(approx.is_sorted(), "{approx:?}");
         assert_eq!(approximate(-0.0_f64), approximate(0.0_f64));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D31, D38: the prefix of a batch's cell is
+    /// its value's, ascending and DESC: of an integer of any scale, an
+    /// approximate number, a text short and longer than a prefix, a value
+    /// read in place, and a null.
+    #[test]
+    fn prefixes_of_cells_are_their_values() {
+        let text = Value::Char("a b".to_owned());
+        let cells = [
+            Cell::Exact(-15_i64, 1_u32),
+            Cell::Exact(7_i64, 0_u32),
+            Cell::Approx(-0.0_f64),
+            Cell::Text("ab"),
+            Cell::Text("abcdefghij"),
+            Cell::Value(&text),
+            Cell::Null,
+        ];
+        for cell in cells {
+            for descending in [false, true] {
+                assert_eq!(prefix_of_cell(cell, descending), prefix_of(&cell.to_value(), descending), "{cell:?} {descending}");
+            }
+        }
     }
 
     /// `rows` sorted by `keys`, as `sorted` sorts them and as comparing

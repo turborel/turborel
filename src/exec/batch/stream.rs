@@ -31,10 +31,10 @@ use crate::storage::{Batch, Column};
 use crate::txn::{TxId, checked};
 
 /// A batch, and the rows of it a filter kept, if one did.
-pub(super) type Kept = (Batch, Option<Vec<usize>>);
+pub(in crate::exec) type Kept = (Batch, Option<Vec<usize>>);
 
 /// What a stream gives, a batch at a time.
-pub(super) type Batches = Box<dyn Iterator<Item = Result<Kept>> + Send>;
+pub(in crate::exec) type Batches = Box<dyn Iterator<Item = Result<Kept>> + Send>;
 
 /// \[DESIGN\] A subtree's rows, a batch at a time.
 pub(super) struct Stream {

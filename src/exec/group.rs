@@ -66,40 +66,6 @@ pub(super) fn grouping(spec: Spec, input: RowIter, db: &Arc<State>, tx: TxId) ->
     Grouper::new(spec, db, tx).grouped(input).unwrap_or_else(failed)
 }
 
-/// \[DESIGN\] Groups made by batch (`exec/batch.rs`) past the work area:
-/// the rows of groups it has no room for written as a pass of `grouping`
-/// writes them, numbered by where they came, then grouped as it groups
-/// them, and merged by number with the groups it held.
-pub(super) struct Spilling {
-    grouper: Grouper,
-    overflow: Overflow,
-}
-
-impl Spilling {
-    /// Spilling of a grouping under `spec`, in a work area of `db`, read as
-    /// `tx` sees it.
-    pub(super) fn new(spec: Spec, db: &Arc<State>, tx: TxId) -> Spilling {
-        Spilling { grouper: Grouper::new(spec, db, tx), overflow: Overflow::Partitions(None) }
-    }
-
-    /// Writes `row`, the `n`th, of grouping key `key`, for its group to be
-    /// made later.
-    pub(super) fn push(&mut self, key: &[u8], (n, row): (u64, &Row)) -> Result<()> {
-        self.overflow.push(key, &numbered(n, row), &mut self.grouper.work)
-    }
-
-    /// The groups: `held`, each numbered by its first row, in that order,
-    /// and those of the rows written, merged by number.
-    pub(super) fn finish(mut self, held: Finished) -> Result<RowIter> {
-        let Overflow::Partitions(Some(parts)) = self.overflow else { return Ok(Box::new(held.into_iter().map(|(_, row)| Ok(row)))) };
-        let mut sources = vec![self.grouper.written(held)?];
-        for run in parts.into_runs() {
-            self.grouper.partition(run.into_records()?, (0, &mut sources))?;
-        }
-        Ok(Box::new(merge_all(sources, &mut self.grouper.work)?.map(|r| r.map(|(_, row)| row))))
-    }
-}
-
 /// A grouping being made: in its work area, and, of DISTINCT set
 /// functions, the half of it their bag of values taken holds.
 struct Grouper {

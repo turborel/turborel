@@ -434,9 +434,23 @@ pub fn heap_bytes(v: &Value) -> usize {
     }
 }
 
+/// The bytes a record holds for each value of a row, room made for them
+/// at once: most values' records are a tag and 20 bytes or fewer
+/// (`codec::put_value`), so a record is seldom grown as it is written.
+const VALUE_RECORD_BYTES: usize = 24;
+
+/// The bytes of a row's record before its values: their count, a `u32`.
+const ROW_HEAD_BYTES: usize = 4;
+
+/// The room to make for a record of `more` bytes, then a row of `values`
+/// values (`row_record`), so it is seldom grown as it is written.
+pub fn record_room(more: usize, values: usize) -> usize {
+    values.saturating_mul(VALUE_RECORD_BYTES).saturating_add(ROW_HEAD_BYTES).saturating_add(more)
+}
+
 /// `row` as a record.
 pub fn row_record(row: &Row) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(record_room(0, row.len()));
     put_row(&mut out, row);
     out
 }

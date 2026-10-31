@@ -5,15 +5,18 @@
 //! while they fit the work area, else partition both operands alike. But
 //! for ALL, they keep the rows given already in a bag beside the counts,
 //! their work area split in two, half the counts', half the bag's, so the
-//! two hold no more than one work area. Split from exec.rs (RULES.md
-//! R-SIZE-2).
+//! two hold no more than one work area. RULES.md D31: an operand that is a
+//! stream holding every column of its rows is read by batch, each row's
+//! key made of its vectors (`batch::keyed`), and a row made only of one
+//! kept or partitioned. Split from exec.rs (RULES.md R-SIZE-2).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::batch::{Keyed, KeyedBatches, keyed, whole_width};
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, ENTRY_BYTES, Work};
-use super::{RowIter, Runner, broken, eval, execute, failed};
+use super::{RowIter, Runner, batched, broken, eval, execute, failed};
 use crate::db::State;
 use crate::error::Result;
 use crate::logical::SetOp;
@@ -52,18 +55,62 @@ fn key(row: &Row) -> Vec<u8> {
 #[inline(never)]
 pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::SetOp { op, all, left, right } = plan else { return failed(broken("a set operation is not one")) };
-    let second = execute(*right, db, tx);
     let how = Kept { intersect: op == SetOp::Intersect, all };
-    match counted_rows(second, (db, tx), how) {
-        Ok((Counted::Held(counts), _, given)) => {
-            let first = execute(*left, db, tx);
-            keeping(first, counts, how, given)
-        }
-        Ok((Counted::Partitioned(parts), work, given)) => {
-            let first = execute(*left, db, tx);
-            partitioned(first, (parts, how), (work, given))
-        }
+    match Operand::of(*right, db, tx).and_then(|second| counted_rows(second, (db, tx), how)) {
+        Ok((Counted::Held(counts), _, given)) => match Operand::of(*left, db, tx) {
+            Ok(first) => keeping(first, counts, how, given),
+            Err(e) => failed(e),
+        },
+        Ok((Counted::Partitioned(parts), work, given)) => match Operand::of(*left, db, tx) {
+            Ok(first) => partitioned(first, (parts, how), (work, given)),
+            Err(e) => failed(e),
+        },
         Err(e) => failed(e),
+    }
+}
+
+/// An operand's rows: one at a time, or, of a stream holding every column
+/// of its rows, by batch, each row keyed (`batch::keyed`).
+enum Operand {
+    Rows(RowIter),
+    Keyed(KeyedBatches),
+}
+
+/// Rows or keys, each a row's or of a batch's, as they are read.
+type Each<T> = Box<dyn Iterator<Item = Result<T>> + Send>;
+
+impl Operand {
+    /// The rows of `plan`, by batch where EXECUTOR.BATCHES allows and it
+    /// is such a stream, as `tx` sees them.
+    fn of(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Operand> {
+        if batched(db) && whole_width(&plan, db).is_some() {
+            return Ok(Operand::Keyed(keyed(plan, db, tx)?));
+        }
+        Ok(Operand::Rows(execute(plan, db, tx)))
+    }
+
+    /// Each row's key, counted once.
+    fn keys(self) -> Each<(Vec<u8>, u64)> {
+        match self {
+            Operand::Rows(rows) => Box::new(rows.map(|r| r.map(|row| (key(&row), 1)))),
+            Operand::Keyed(batches) => Box::new(batches.flat_map(|b| each(b, |keyed, n| (keyed.key(n).to_vec(), 1)))),
+        }
+    }
+
+    /// Each row, with its key.
+    fn rows(self) -> Each<(Vec<u8>, Row)> {
+        match self {
+            Operand::Rows(rows) => Box::new(rows.map(|r| r.map(|row| (key(&row), row)))),
+            Operand::Keyed(batches) => Box::new(batches.flat_map(|b| each(b, |keyed, n| (keyed.key(n).to_vec(), keyed.row(n))))),
+        }
+    }
+}
+
+/// What `made` makes of each row of the batch `b`, in order, or its error.
+fn each<T>(b: Result<Keyed>, made: impl Fn(&Keyed, usize) -> T) -> Vec<Result<T>> {
+    match b {
+        Ok(keyed) => (0..keyed.len()).map(|n| Ok(made(&keyed, n))).collect(),
+        Err(e) => vec![Err(e)],
     }
 }
 
@@ -79,11 +126,11 @@ enum Counted {
 /// Kept apart from `operation`, whose frame is on the stack while its
 /// operands are made (RULES.md R-CF-6).
 #[inline(never)]
-fn counted_rows(rows: RowIter, (db, tx): (&State, TxId), how: Kept) -> Result<(Counted, Work, Work)> {
+fn counted_rows(rows: Operand, (db, tx): (&State, TxId), how: Kept) -> Result<(Counted, Work, Work)> {
     let mut work = Work::of(db, tx);
     // ALL keeps no bag of rows given, so takes the whole work area.
     let given = if how.all { work.another() } else { work.split() };
-    let counts = counted(rows.map(|r| r.map(|row| (key(&row), 1))), &mut work, true)?;
+    let counts = counted(rows.keys(), &mut work, true)?;
     Ok((counts, work, given))
 }
 
@@ -136,11 +183,37 @@ fn uncounted(record: &[u8]) -> Result<(Vec<u8>, u64)> {
 }
 
 /// The rows of `first` the set operation `how` keeps, of the second
-/// operand's `counts`, those given kept in a bag of `given`.
+/// operand's `counts`, those given kept in a bag of `given`: of a batch,
+/// a row made only of one kept.
 #[inline(never)]
-fn keeping(first: RowIter, mut counts: Bag, how: Kept, given: Work) -> RowIter {
+fn keeping(first: Operand, mut counts: Bag, how: Kept, given: Work) -> RowIter {
     let mut given = Bag::new(given);
-    Box::new(first.filter_map(move |r| kept(how, (&mut counts, &mut given), r)))
+    match first {
+        Operand::Rows(rows) => Box::new(rows.filter_map(move |r| kept(how, (&mut counts, &mut given), r))),
+        Operand::Keyed(batches) => Box::new(batches.flat_map(move |b| kept_of(how, (&mut counts, &mut given), b))),
+    }
+}
+
+/// The rows of the batch `b` the set operation `how` keeps, in order, as
+/// `kept` keeps them, then the error of the first it cannot judge, if any;
+/// or its error.
+fn kept_of(how: Kept, (counts, given): (&mut Bag, &mut Bag), b: Result<Keyed>) -> Vec<Result<Row>> {
+    let keyed = match b {
+        Ok(keyed) => keyed,
+        Err(e) => return vec![Err(e)],
+    };
+    let mut out = Vec::new();
+    for n in 0..keyed.len() {
+        match keeps(how, (&mut *counts, &mut *given), keyed.key(n)) {
+            Ok(true) => out.push(Ok(keyed.row(n))),
+            Ok(false) => {}
+            Err(e) => {
+                out.push(Err(e));
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// \[DESIGN\] RULES.md D38: the rows of `first` the set operation `how`
@@ -149,12 +222,12 @@ fn keeping(first: RowIter, mut counts: Bag, how: Kept, given: Work) -> RowIter {
 /// alone (`pair`), those given kept in bags of `given`; and the rows kept
 /// merged back by number, in `first`'s order. Never inlined, as `keeping`.
 #[inline(never)]
-fn partitioned(first: RowIter, (parts, how): (Partitioner, Kept), (mut work, given): (Work, Work)) -> RowIter {
+fn partitioned(first: Operand, (parts, how): (Partitioner, Kept), (mut work, given): (Work, Work)) -> RowIter {
     let run = || -> Result<RowIter> {
         let mut lefts = parts.alike(&mut work)?;
-        for (n, r) in (0_u64..).zip(first) {
-            let row = r?;
-            lefts.push(&key(&row), &numbered(n, &row))?;
+        for (n, r) in (0_u64..).zip(first.rows()) {
+            let (k, row) = r?;
+            lefts.push(&k, &numbered(n, &row))?;
         }
         let mut sources = Vec::new();
         for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
@@ -218,16 +291,19 @@ fn kept(how: Kept, (counts, given): (&mut Bag, &mut Bag), r: Result<Row>) -> Opt
         Ok(row) => row,
         Err(e) => return Some(Err(e)),
     };
-    let k = key(&row);
-    let keep = if how.all {
-        // Each duplicate in the second operand matches one in the first.
-        counts.take(&k).map(|matched| matched == how.intersect)
-    } else {
-        counts.count(&k).and_then(|n| if (n > 0) == how.intersect { given.add_new(&k) } else { Ok(false) })
-    };
-    match keep {
+    match keeps(how, (counts, given), &key(&row)) {
         Ok(true) => Some(Ok(row)),
         Ok(false) => None,
         Err(e) => Some(Err(e)),
     }
+}
+
+/// Whether the set operation `how` keeps a row of key `k`: `counts` holds
+/// the second operand's rows, and `given` those given already.
+fn keeps(how: Kept, (counts, given): (&mut Bag, &mut Bag), k: &[u8]) -> Result<bool> {
+    if how.all {
+        // Each duplicate in the second operand matches one in the first.
+        return counts.take(k).map(|matched| matched == how.intersect);
+    }
+    counts.count(k).and_then(|n| if (n > 0) == how.intersect { given.add_new(k) } else { Ok(false) })
 }

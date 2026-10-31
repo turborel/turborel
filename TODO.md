@@ -146,12 +146,17 @@ The registry, scopes and SET statements exist (D36). Still to do:
   probing keeps its typed vectors. An outer join whose right operand
   outgrows the work area still joins row by row, partitioned or from a
   run, its rows gathered into batches after.
-- **Operators over vectors** (D31): a sort, EXCEPT and INTERSECT over
-  streams, of their operands' vectors, not of rows made of them; grouping
-  of many groups: past the work area each row of a group not held is
-  written whole and grouped again row by row (`group::Spilling`), where
-  partial groups made first, or partitions written by batches, would do
-  (`GROUP BY K` of 400,000 keys, 382 ms).
+- **Operators over vectors, further** (D31, D38): grouping past the work
+  area writes every row of a group not held, as a plug-in's accumulator
+  cannot write its state; partial groups made first need `Accumulator`
+  to write and merge one (a design to agree: `GROUP BY K` of 400,000
+  keys of the column store, 378 ms, 623 before rows were written by
+  batch). A spilled sort is bound by its runs (`ORDER BY C` of 200,000
+  rows of the column store, 49 ms, 50 before it sorted vectors): records
+  made through the value codec (an integer 21 bytes) and pages written
+  one by one; runs of vectors, integers at their width, would be fewer
+  bytes. A spilled run's pages are freed through the pager's free list,
+  each costing more than the record it held.
 - **Typed vectors, further** (D31): a LIKE whose pattern is another
   expression (a CASE) leaves its filter judged whole a row at a time,
   each pattern split once (`S LIKE CASE ...` of 200,000 rows of the

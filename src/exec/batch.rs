@@ -9,33 +9,35 @@
 //! where it can be (`vector.rs`); under a filter, only of the rows it
 //! keeps (`judge.rs`). Groups are held in the work area, each the grouping
 //! values and their set functions, given in the order their first rows
-//! came; the rows of groups past it are written, grouped as `group.rs`
-//! groups them, which spills, and merged by number with those held
-//! (`group::Spilling`). A null a set function's argument takes out raises
-//! its warning [ISO/IEC 9075:1992 §6.5 GR1b], as a row at a time does.
+//! came; the rows of groups past it are written by batch, each partition
+//! grouped again by batch, and merged by number with those held
+//! (`groups.rs`). A null a set function's argument takes out raises its
+//! warning [ISO/IEC 9075:1992 §6.5 GR1b], as a row at a time does. The
+//! rows of a stream are read whole so too by a sort, EXCEPT and INTERSECT
+//! (`keyed.rs`).
 
+mod groups;
 mod joined;
 mod judge;
+mod keyed;
 mod project;
 mod stream;
 mod vector;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
+pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
 use project::Place;
 pub(super) use project::{projectable, projected};
+pub(super) use stream::Batches;
 use vector::Lane;
 
-use super::group::{Finished, STATE_BYTES, Spec, Spilling};
-use super::work::Work;
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
-use crate::spill::{put_norm, put_norm_approx, put_norm_exact, put_norm_text, row_bytes};
 use crate::storage::{Batch, Cell, Column, Floats, Ints, Row, Texts};
 use crate::txn::TxId;
 use crate::value::Value;
@@ -51,12 +53,9 @@ enum Taken {
     Expr(Expr, Vec<usize>),
 }
 
-/// What an aggregation read by batches reads: the columns of its input's
-/// rows its batches hold, the width of those rows, what each set function
+/// What an aggregation read by batches reads: what each set function
 /// takes, and where each grouping column is in a batch.
 struct Read {
-    columns: Vec<usize>,
-    width: usize,
     taken: Vec<Taken>,
     groups: Vec<usize>,
 }
@@ -82,9 +81,9 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
 /// subtree that gives them (`stream::layout`).
 fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     let Plan::Aggregate { groups, aggs, input, .. } = plan else { return None };
-    let (columns, width) = stream::layout(input, db)?;
+    let (columns, _) = stream::layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
-    Some(Read { taken: taken(aggs, &columns)?, groups: at, columns, width })
+    Some(Read { taken: taken(aggs, &columns)?, groups: at })
 }
 
 /// \[DESIGN\] The width of the rows of the DISTINCT `plan`, if it is a
@@ -96,7 +95,7 @@ fn read_of(plan: &Plan, db: &State) -> Option<Read> {
 #[inline(never)]
 pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
     let Plan::Distinct { input } = plan else { return None };
-    stream::layout(input, db).filter(|(columns, width)| columns.iter().copied().eq(0..*width)).map(|l| l.1)
+    whole_width(input, db)
 }
 
 /// \[DESIGN\] The DISTINCT `plan` as the grouping of its rows by every
@@ -130,76 +129,7 @@ pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIte
             Err(e) => failed(e),
         };
     }
-    grouped_all(&read, &aggs, (db, tx), stream.batches).unwrap_or_else(failed)
-}
-
-/// The groups of the rows `read` reads, each its grouping values and the
-/// finished set functions `aggs`, in the order their first rows came;
-/// those past the work area made as `exec/group.rs` makes them.
-fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), batches: stream::Batches) -> Result<super::RowIter> {
-    let width = read.width;
-    let spec = Spec { groups: read.groups.iter().filter_map(|&at| read.columns.get(at).copied()).collect(), aggs: aggs.to_vec() };
-    let mut groups = Groups {
-        found: HashMap::new(),
-        held: Vec::new(),
-        bytes: 0,
-        limit: Work::new(db).limit(),
-        key: Vec::new(),
-        rows: 0,
-        spilling: Spilling::new(spec, db, tx),
-        spilled: false,
-        width,
-        scratch: Vec::new(),
-        slots: Vec::new(),
-        runner: Runner::new(db, tx),
-    };
-    for kept in batches {
-        let (batch, rows) = kept?;
-        groups.feed(&batch, rows.as_deref(), (read, aggs))?;
-    }
-    let held: Finished = groups
-        .held
-        .into_iter()
-        .map(|(first, mut row, states)| {
-            for state in &states {
-                row.push(state.finish()?);
-            }
-            Ok((first, row))
-        })
-        .collect::<Result<_>>()?;
-    groups.spilling.finish(held)
-}
-
-/// The rows `placed`, each its group's place among `groups` of them, its
-/// place among the rows given and in the batch, gathered by group in order:
-/// the places among those given, those in the batch, and where each
-/// group's end.
-fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
-    let mut ends = vec![0_usize; groups];
-    for &(slot, ..) in placed {
-        if let Some(end) = ends.get_mut(slot) {
-            *end = end.saturating_add(1);
-        }
-    }
-    let mut at = 0_usize;
-    let mut next: Vec<usize> = ends
-        .iter_mut()
-        .map(|end| {
-            let first = at;
-            at = at.saturating_add(*end);
-            *end = at;
-            first
-        })
-        .collect();
-    let (mut given, mut read_rows) = (vec![0_usize; placed.len()], vec![0_usize; placed.len()]);
-    for &(slot, n, r) in placed {
-        let Some(to) = next.get_mut(slot) else { continue };
-        if let (Some(g), Some(b)) = (given.get_mut(*to), read_rows.get_mut(*to)) {
-            (*g, *b) = (n, r);
-        }
-        *to = to.saturating_add(1);
-    }
-    (given, read_rows, ends)
+    groups::grouped_all(&read, &aggs, (db, tx), stream.batches).unwrap_or_else(failed)
 }
 
 /// Feeds `states` the rows of one group of `batch`, as `taken` says: the
@@ -321,133 +251,9 @@ fn put_cell(cell: Cell<'_>, slot: &mut Value) {
     }
 }
 
-/// A group held: its first row's number, its grouping values and its set
-/// functions.
-type Held = (u64, Row, Vec<Box<dyn Accumulator>>);
-
-/// Groups being made, in the work area.
-struct Groups {
-    /// Each group's place in `held`, by its grouping key.
-    found: HashMap<Vec<u8>, usize>,
-    /// Each group's first row's number, grouping values and set
-    /// functions, in the order their first rows came.
-    held: Vec<Held>,
-    bytes: usize,
-    limit: usize,
-    /// The key of the row being grouped.
-    key: Vec<u8>,
-    /// The rows grouped so far, each numbered by where it came.
-    rows: u64,
-    /// Where the rows of groups past the work area go.
-    spilling: Spilling,
-    /// Whether a group has been past it: every group not yet held is then,
-    /// so no group is both held and written.
-    spilled: bool,
-    /// The width of the input's rows, as a row written is made.
-    width: usize,
-    /// The row an expression a set function takes is evaluated of.
-    scratch: Row,
-    /// Of each group held, one more than its place among the groups a batch
-    /// has rows of, or 0 if the batch has none of them yet.
-    slots: Vec<usize>,
-    /// What hears the warnings the set functions raise.
-    runner: Runner,
-}
-
-impl Groups {
-    /// Feeds the rows of `batch` at `rows`, or all, to their groups'
-    /// set functions `aggs`, as `read` says; a row of a group past the work
-    /// area is written, for its group to be made after.
-    fn feed(&mut self, batch: &Batch, rows: Option<&[usize]>, (read, aggs): (&Read, &[AggCall])) -> Result<()> {
-        let lanes = lanes(&read.taken, batch, rows);
-        // The groups of the batch's rows, in the order they came, and of each
-        // row its group's place among them, and its place among those given
-        // and in the batch.
-        let (mut groups, mut placed): (Vec<usize>, Vec<(usize, usize, usize)>) = (Vec::new(), Vec::new());
-        for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
-            let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
-            let cell = |at: usize| batch.cell(at, r);
-            // The key made in a buffer kept, no value copied unless its
-            // group is new, nor made of an integer.
-            self.key.clear();
-            for &at in &read.groups {
-                match cell(at) {
-                    Cell::Value(v) => put_norm(v, &mut self.key),
-                    Cell::Exact(units, scale) => put_norm_exact(i128::from(units), scale, &mut self.key),
-                    Cell::Approx(f) => put_norm_approx(f, &mut self.key),
-                    Cell::Text(text) => put_norm_text(text, &mut self.key),
-                    Cell::Null => put_norm(&Value::Null, &mut self.key),
-                }
-            }
-            let number = self.rows;
-            self.rows = self.rows.saturating_add(1);
-            if let (Some(at), false) = (self.place(number, (batch, r), (read, aggs))?, aggs.is_empty()) {
-                placed.push((self.slot_of(at, &mut groups), n, r));
-            }
-        }
-        // Each group's rows gathered, in order, a counting sort into one
-        // buffer, and its set functions fed them a vector at a time.
-        let (given, read_rows, ends) = gathered(&placed, groups.len());
-        let mut from = 0;
-        for (&at, &end) in groups.iter().zip(&ends) {
-            if let Some(slot) = self.slots.get_mut(at) {
-                *slot = 0;
-            }
-            let (these, read_these) = (given.get(from..end).unwrap_or_default(), read_rows.get(from..end).unwrap_or_default());
-            from = end;
-            let Some((_, _, states)) = self.held.get_mut(at) else { continue };
-            fed_group(states, (&read.taken, &mut self.scratch, &self.runner), (batch, &lanes), (these, read_these))?;
-        }
-        Ok(())
-    }
-
-    /// The place of group `at` among `groups`, the groups the batch has
-    /// rows of, added if it is new.
-    fn slot_of(&mut self, at: usize, groups: &mut Vec<usize>) -> usize {
-        if self.slots.len() <= at {
-            self.slots.resize(at.saturating_add(1), 0);
-        }
-        let Some(slot) = self.slots.get_mut(at) else { return 0 };
-        if let Some(found) = slot.checked_sub(1) {
-            return found;
-        }
-        groups.push(at);
-        *slot = groups.len();
-        groups.len().saturating_sub(1)
-    }
-
-    /// The place of the group of row `r` of `batch`, the `number`th, its
-    /// key made: found, or made if the work area has room; else the row is
-    /// written, and it has none.
-    fn place(&mut self, number: u64, (batch, r): (&Batch, usize), (read, aggs): (&Read, &[AggCall])) -> Result<Option<usize>> {
-        if let Some(&at) = self.found.get(self.key.as_slice()) {
-            return Ok(Some(at));
-        }
-        let value = |at: usize| batch.cell(at, r).to_value();
-        let values: Row = read.groups.iter().map(|&at| value(at)).collect();
-        let bytes = self.key.len().saturating_add(row_bytes(&values)).saturating_add(aggs.len().saturating_mul(STATE_BYTES));
-        if self.spilled || self.bytes.saturating_add(bytes) > self.limit {
-            self.spilled = true;
-            let mut row = vec![Value::Null; self.width];
-            for (at, &c) in read.columns.iter().enumerate() {
-                if let Some(slot) = row.get_mut(c) {
-                    *slot = value(at);
-                }
-            }
-            self.spilling.push(&self.key, (number, &row))?;
-            return Ok(None);
-        }
-        self.bytes = self.bytes.saturating_add(bytes);
-        self.held.push((number, values, aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect()));
-        let at = self.held.len().saturating_sub(1);
-        self.found.insert(self.key.clone(), at);
-        Ok(Some(at))
-    }
-}
-
 /// The finished set functions `aggs` of the rows of `batches`, as `read`
 /// says, their warnings heard by `runner`.
-fn read_all(read: &Read, aggs: &[AggCall], batches: stream::Batches, runner: &Runner) -> Result<Vec<Value>> {
+fn read_all(read: &Read, aggs: &[AggCall], batches: Batches, runner: &Runner) -> Result<Vec<Value>> {
     let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result)).collect();
     for kept in batches {
         let (batch, rows) = kept?;

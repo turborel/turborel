@@ -10,9 +10,10 @@ use crate::value::{Bits, Datetime, Decimal, Value, bucket};
 /// Verifies: [DESIGN] RULES.md D38, normalized keys: a value's key made in
 /// place (`put_norm`) is the bytes of the key of its normalized value
 /// (`norm_key`), for nulls, texts with and without trailing spaces, exact
-/// numbers with and without trailing zeros, approximate zeros of either
-/// sign and other numbers, and bit strings; and values the comparison
-/// rules find equal have one key.
+/// numbers with and without trailing zeros, integers within 64 bits and
+/// past them, approximate zeros of either sign and other numbers, and bit
+/// strings; values the comparison rules find equal have one key; and an
+/// integer within 64 bits keys by a fixed width.
 #[test]
 fn keys_made_in_place_are_normalized_keys() {
     let values = [
@@ -27,6 +28,9 @@ fn keys_made_in_place_are_normalized_keys() {
         Value::Approx(-0.0),
         Value::Approx(1.5),
         Value::Bits(Bits::of_bits("101").unwrap()),
+        Value::Exact(Decimal::new(70_i128, 1_u32)),
+        Value::Exact(Decimal::new(i128::from(i64::MAX) + 1_i128, 0_u32)),
+        Value::Exact(Decimal::new(i128::from(i64::MIN), 0_u32)),
     ];
     for v in &values {
         let mut made = Vec::new();
@@ -42,6 +46,13 @@ fn keys_made_in_place_are_normalized_keys() {
     assert_eq!(key(&values[4]), key(&values[5]), "trailing zeros");
     assert_eq!(key(&values[7]), key(&values[8]), "zeros of either sign");
     assert_ne!(key(&values[0]), key(&values[3]), "null is not empty");
+    // An integer within 64 bits keys by those 8 bytes beside its tag, of
+    // any scale it is written at; one past them by its units and scale.
+    assert_eq!(key(&values[11]), key(&Value::Exact(Decimal::new(7_i128, 0_u32))), "7.0 is 7");
+    assert_eq!((key(&values[6]).len(), key(&values[13]).len()), (9_usize, 9_usize), "integers of a fixed width");
+    assert_eq!(key(&values[12]).len(), 21_usize, "past 64 bits: units and scale");
+    assert_ne!(key(&values[12]), key(&Value::Exact(Decimal::new(i128::from(i64::MAX), 0_u32))));
+    assert_ne!(key(&values[4]), key(&Value::Exact(Decimal::new(15_i128, 0_u32))), "1.5 is not 15");
 }
 
 /// Verifies: [DESIGN] RULES.md D38, normalized keys and buckets of the

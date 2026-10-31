@@ -9,10 +9,13 @@
 //! for each group, by an inner join, the table its right operand, by
 //! LEFT, RIGHT and FULL outer joins, and as a product; joined with
 //! itself, its right operand past the work area; DISTINCT of an
-//! expression; and one row fetched by its key, the transactional work
+//! expression; sorted by a scattered column; EXCEPT and INTERSECT of
+//! half its keys; and one row fetched by its key, the transactional work
 //! beside them. Each is measured on F, a row store
-//! table, then on FC, a column store one. Rates are of the table's rows
-//! read, but the key's, of queries. Run with `cargo xtask bench`, on the harness
+//! table, then on FC, a column store one; so is a grouping of W, of
+//! 400,000 rows, by its key, far more groups than the work area holds,
+//! then of WC. Rates are of the tables' rows read, but the key's, of
+//! queries. Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
 #![allow(
@@ -37,18 +40,20 @@ const ROWS: u64 = 200_000;
 const PER_INSERT: u64 = 500;
 /// Keys fetched in each run of the lookups.
 const LOOKUPS: u64 = 1_000;
+/// Rows in the table W, each of its own key.
+const KEYS: u64 = 400_000;
 
 fn main() {
     let bench = Bench::new("analytics");
     let db = database();
     let s = db.session("B");
-    measure(&bench, &s, ("F", ""));
-    measure(&bench, &s, ("FC", " (columnstore)"));
+    measure(&bench, &s, ("F", "W", ""));
+    measure(&bench, &s, ("FC", "WC", " (columnstore)"));
 }
 
-/// Measures each workload on table `table`, its cases' names ending in
-/// `label`.
-fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
+/// Measures each workload on table `table`, and the grouping by key on
+/// `keyed`, its cases' names ending in `label`.
+fn measure(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)) {
     let scan = |sql: &str| {
         let sql = sql.replace("{t}", table);
         move || {
@@ -91,12 +96,44 @@ fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
         scan("SELECT COUNT(*), SUM(T1.A) FROM {t} AS T1, {t} AS T2 WHERE T1.B = T2.B"),
     );
     bench.measure(case("DISTINCT of an expression, 10 groups", "rows"), scan("SELECT DISTINCT G * 2 FROM {t}"));
+    holding(bench, s, (table, keyed, label));
     bench.measure(case("fetch one row of 16 columns by its key", "queries"), || {
         for n in 0..LOOKUPS {
             fetched(s, &format!("SELECT * FROM {table} WHERE K = {}", scatter(n, ROWS)));
         }
         LOOKUPS
     });
+}
+
+/// Measures the operators that hold rows: a sort, EXCEPT and INTERSECT of
+/// table `table`, and a grouping by key of `keyed` past the work area,
+/// their cases' names ending in `label`.
+fn holding(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)) {
+    let case = |name: &str| Case::new(format!("{name}{label}"), "rows");
+    let run = |sql: String, rows: u64| {
+        move || {
+            fetched(s, &sql);
+            rows
+        }
+    };
+    let of = |sql: &str| sql.replace("{t}", table);
+    bench.measure(case("ORDER BY a scattered column, 2 columns"), run(of("SELECT C, A FROM {t} ORDER BY C"), ROWS));
+    bench.measure(case("EXCEPT of half the keys"), run(of("SELECT C FROM {t} EXCEPT SELECT B FROM {t} WHERE B < 100000"), ROWS));
+    bench.measure(case("INTERSECT of half the keys"), run(of("SELECT C FROM {t} INTERSECT SELECT B FROM {t} WHERE B < 100000"), ROWS));
+    bench.measure(
+        case("GROUP BY K of 400,000 keys past the work area"),
+        run(format!("SELECT K, COUNT(*), SUM(V) FROM {keyed} GROUP BY K"), KEYS),
+    );
+}
+
+/// W's and WC's `KEYS` rows, K every key once and V one of 1,000.
+fn keyed(s: &Session) {
+    for first in (0..KEYS).step_by(PER_INSERT as usize) {
+        let rows: Vec<String> = (first..first + PER_INSERT).map(|k| format!("({k}, {})", k % 1_000)).collect();
+        for table in ["W", "WC"] {
+            s.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
+        }
+    }
 }
 
 /// The rows of `sql`, each fetched, counted.
@@ -114,7 +151,9 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 /// each of the same `ROWS` rows: K its key; G one of 10 groups; B
 /// in the order the rows are written, C scattered; the others numbers of
 /// a few distributions, E exact with a fraction, and S text; and D, of the
-/// row store, a name for each group, two for group 1, and one of none.
+/// row store, a name for each group, two for group 1, and one of none;
+/// W, in the row store, and WC, in the column store, of `KEYS` rows each,
+/// K every key once and V one of 1,000.
 fn database() -> Database {
     let db = Database::new();
     db.schema(
@@ -125,7 +164,9 @@ fn database() -> Database {
            CREATE TABLE FC (K INTEGER PRIMARY KEY, G INTEGER NOT NULL, A INTEGER, B INTEGER, C INTEGER,
              D INTEGER, E DECIMAL(9,2), H INTEGER, I INTEGER, J INTEGER, L INTEGER, M INTEGER,
              N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) USING columnstore
-           CREATE TABLE D (G INTEGER, NAME VARCHAR(10))",
+           CREATE TABLE D (G INTEGER, NAME VARCHAR(10))
+           CREATE TABLE W (K INTEGER NOT NULL, V INTEGER)
+           CREATE TABLE WC (K INTEGER NOT NULL, V INTEGER) USING columnstore",
     )
     .unwrap();
     let s = db.session("B");
@@ -156,6 +197,7 @@ fn database() -> Database {
             s.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
         }
     }
+    keyed(&s);
     s.run("INSERT INTO D VALUES (0, 'zero'), (1, 'one'), (1, 'uno'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five'), (6, 'six'), (7, 'seven'), (8, 'eight'), (9, 'nine'), (NULL, 'none')").unwrap();
     s.commit().unwrap();
     // FC's rows frozen, as the maintenance thread would have them.

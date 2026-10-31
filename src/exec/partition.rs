@@ -13,8 +13,9 @@ use std::hash::{BuildHasher, RandomState};
 
 use super::work::Work;
 use crate::error::{Code, Result, SqlError};
-use crate::spill::{Records, SpillRun, record_row, row_record};
+use crate::spill::{Records, SpillRun, record_room, record_row};
 use crate::storage::Row;
+use crate::value::codec::put_row;
 use crate::value::types::TypeRegistry;
 
 /// Records written to partitions by a hash of a key of theirs.
@@ -60,8 +61,22 @@ impl Partitioner {
     ///
     /// The spill area's.
     pub(super) fn push(&mut self, key: &[u8], record: &[u8]) -> Result<()> {
+        self.push_at(self.place_of(key), record)
+    }
+
+    /// The place of the partition of `key`.
+    pub(super) fn place_of(&self, key: &[u8]) -> usize {
         let n = u64::try_from(self.runs.len()).unwrap_or(1);
-        let at = usize::try_from(self.hasher.hash_one(key).checked_rem(n).unwrap_or_default()).unwrap_or_default();
+        usize::try_from(self.hasher.hash_one(key).checked_rem(n).unwrap_or_default()).unwrap_or_default()
+    }
+
+    /// Writes `record` to the partition at `at`, as `place_of` places it:
+    /// for records of many rows, of one partition.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's; SQLCODE -910 if it has no such partition.
+    pub(super) fn push_at(&mut self, at: usize, record: &[u8]) -> Result<()> {
         self.runs.get_mut(at).ok_or_else(lost)?.push(record)
     }
 
@@ -96,7 +111,10 @@ pub(in crate::exec) fn merge_all(mut sources: Vec<Records>, work: &mut Work) -> 
 
 /// Row `row` with its number `n`, as a record.
 pub(in crate::exec) fn numbered(n: u64, row: &Row) -> Vec<u8> {
-    [n.to_le_bytes().to_vec(), row_record(row)].concat()
+    let mut out = Vec::with_capacity(record_room(size_of::<u64>(), row.len()));
+    out.extend_from_slice(&n.to_le_bytes());
+    put_row(&mut out, row);
+    out
 }
 
 /// The number and the row of a record `numbered` made.

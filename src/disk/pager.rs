@@ -405,15 +405,15 @@ impl Pager {
         Ok(())
     }
 
-    /// Zeroes the pages of `e` that are on file, `ZERO_CHUNK_PAGES` per write.
+    /// Zeroes the pages of `e` that are on file, `ZERO_CHUNK_PAGES` per write,
+    /// no more zeros made than they need: a spilled run frees one at a time.
     fn zero(&self, e: Extent) -> Result<()> {
         let end = e.start.0.saturating_add(e.count).min(self.on_file.load(Ordering::Acquire));
-        let zeros = vec![0; self.page_size.saturating_mul(usize::try_from(ZERO_CHUNK_PAGES).unwrap_or(1))];
         let mut at = e.start.0;
         while at < end {
             let pages = end.saturating_sub(at).min(ZERO_CHUNK_PAGES);
             let len = usize::try_from(pages).unwrap_or_default().saturating_mul(self.page_size);
-            self.file.write_all_at(zeros.get(..len).unwrap_or_default(), self.offset(at)?)?;
+            self.file.write_all_at(&vec![0; len], self.offset(at)?)?;
             at = at.saturating_add(pages);
         }
         Ok(())

@@ -216,10 +216,16 @@ impl Bag {
             }
             return if now > 0 { table.insert(key, &now.to_le_bytes()) } else { Ok(()) };
         }
+        // A key held already keeps its bytes: none made of it again.
+        match self.counts.get_mut(key) {
+            Some(n) => *n = now,
+            None => {
+                self.counts.insert(key.to_vec(), now);
+            }
+        }
         if was == 0 {
             self.bytes = self.bytes.saturating_add(key.len()).saturating_add(ENTRY_BYTES);
         }
-        self.counts.insert(key.to_vec(), now);
         if self.bytes > self.work.limit() { self.spill() } else { Ok(()) }
     }
 
