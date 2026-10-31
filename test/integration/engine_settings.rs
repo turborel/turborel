@@ -1,58 +1,34 @@
 //! Settings a storage engine declares and reads (RULES.md D36, D41):
 //! declared under its name as it is registered, their values told it as
-//! they are published (`StorageEngine::configure`), with no lock held;
+//! they are published (`Configurable::configure`), with no lock held;
 //! the column store's bound on the headers of frozen groups among them.
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
 
 use turborel::catalog::TableDesc;
 use turborel::db::{Database, OpenOptions};
 use turborel::error::Result;
-use turborel::settings::{Definition, Effect, Kind, Settings};
+use turborel::settings::Configurable;
 use turborel::storage::{StorageEngine, TableStorage};
 use turborel::threads::JobPolicy;
-use turborel::value::{Decimal, Value};
 
-use crate::common::{MemoryTable, Scratch, after_crash, rows};
-
-fn whole(n: i128) -> Value {
-    Value::Exact(Decimal::new(n, 0))
-}
+use crate::common::{MemoryTable, Noted, Scratch, after_crash, rows, whole};
 
 /// An engine of tables in memory that declares NOTED.DEPTH, or a setting
-/// of another's name, and keeps the value it is told; -1 until told.
-struct Noted {
-    setting: &'static str,
-    told: Arc<AtomicI64>,
-}
+/// of another's name, and keeps the value it is told (`Noted`).
+struct NotedEngine(Noted);
 
-impl Noted {
-    fn new(setting: &'static str) -> (Noted, Arc<AtomicI64>) {
-        let told = Arc::new(AtomicI64::new(-1));
-        (Noted { setting, told: Arc::clone(&told) }, told)
+impl NotedEngine {
+    fn new(setting: &'static str) -> (NotedEngine, Noted) {
+        let noted = Noted::new(setting);
+        (NotedEngine(noted.clone()), noted)
     }
 }
 
-impl StorageEngine for Noted {
+impl StorageEngine for NotedEngine {
     fn name(&self) -> &'static str {
         "noted"
     }
-    fn settings(&self) -> Vec<Definition> {
-        vec![Definition {
-            name: self.setting.to_owned(),
-            kind: Kind::Integer { min: 1, max: 9 },
-            default: whole(1),
-            per_session: false,
-            node: false,
-            effect: Effect::Statement,
-            doc: "How deep.".to_owned(),
-        }]
-    }
-    fn configure(&self, settings: &Settings) {
-        if let Some(key) = settings.key(self.setting) {
-            self.told.store(i64::try_from(settings.integer(key)).unwrap(), Ordering::SeqCst);
-        }
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        Some(&self.0)
     }
     fn create_table(&self, _: &TableDesc) -> Result<Box<dyn TableStorage>> {
         Ok(Box::new(MemoryTable::new()))
@@ -71,34 +47,34 @@ fn an_engine_reads_its_settings_as_they_are_published() {
     let dir = scratch.path("db");
     let db = Database::new();
     db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
-    let (engine, told) = Noted::new("NOTED.DEPTH");
+    let (engine, told) = NotedEngine::new("NOTED.DEPTH");
     db.register_engine(Box::new(engine)).unwrap();
-    assert_eq!(told.load(Ordering::SeqCst), 1, "its default");
+    assert_eq!(told.told(), 1, "its default");
     db.set_setting("noted.depth", &whole(4)).unwrap();
-    assert_eq!(told.load(Ordering::SeqCst), 4);
+    assert_eq!(told.told(), 4);
     db.reset_setting("NOTED.DEPTH").unwrap();
-    assert_eq!(told.load(Ordering::SeqCst), 1, "its default again");
+    assert_eq!(told.told(), 1, "its default again");
     db.set_setting("NOTED.DEPTH", &whole(6)).unwrap();
     db.close().unwrap();
     drop(db);
     let again = Database::new();
     again.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
-    let (engine, told) = Noted::new("NOTED.DEPTH");
+    let (engine, told) = NotedEngine::new("NOTED.DEPTH");
     again.register_engine(Box::new(engine)).unwrap();
-    assert_eq!(told.load(Ordering::SeqCst), 6, "kept");
+    assert_eq!(told.told(), 6, "kept");
     again.set_setting("NOTED.DEPTH", &whole(7)).unwrap();
     let crashed = again;
     let third = Database::new();
-    let (engine, told) = Noted::new("NOTED.DEPTH");
+    let (engine, told) = NotedEngine::new("NOTED.DEPTH");
     third.register_engine(Box::new(engine)).unwrap();
-    assert_eq!(told.load(Ordering::SeqCst), 1, "its default, until opened");
+    assert_eq!(told.told(), 1, "its default, until opened");
     drop(crashed);
     third.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
-    assert_eq!(told.load(Ordering::SeqCst), 7, "recovered, as it opens");
+    assert_eq!(told.told(), 7, "recovered, as it opens");
     let other = Database::new();
-    let (stray, untold) = Noted::new("OTHER.DEPTH");
+    let (stray, untold) = NotedEngine::new("OTHER.DEPTH");
     assert_eq!(other.register_engine(Box::new(stray)).map_err(|e| e.sqlcode()), Err(-910_i32));
-    assert_eq!(untold.load(Ordering::SeqCst), -1, "not told");
+    assert_eq!(untold.told(), -1, "not told");
     assert!(other.setting("OTHER.DEPTH").is_err() && other.place_table("X.T", "noted").is_err(), "not registered");
 }
 

@@ -2,6 +2,7 @@
 
 mod dynamic;
 mod encodings;
+mod settings;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,7 @@ pub use crate::database::{LOCKING, LockingEngine, MemoryTable, after_crash, coun
 pub use crate::logs::Watched;
 pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 pub use encodings::{RunLength, Scramble};
+pub use settings::{Noted, whole};
 
 /// Schema D: tables T (btree index on N) and U, each holding 1-3; views V
 /// over T and W over V, X over U, S all of T; P may read T and V.
@@ -145,6 +147,9 @@ pub fn small_segments() -> FileLogOptions {
 pub struct Counted(pub Arc<Mutex<Vec<usize>>>);
 
 impl turborel::spill::Spill for Counted {
+    fn name(&self) -> &'static str {
+        "counted"
+    }
     fn area(
         &self,
         memory: &Arc<turborel::memory::MemoryBudget>,

@@ -7,9 +7,10 @@
 use turborel::db::{Database, OpenOptions};
 use turborel::error::{Code, Result, fail};
 use turborel::functions::ScalarFunction;
+use turborel::settings::Configurable;
 use turborel::value::{DataType, Decimal, Spelled, SqlType, Value};
 
-use crate::common::{Counted, Scratch, exec, os, rows, sorted};
+use crate::common::{Counted, Noted, Scratch, exec, os, rows, sorted};
 use crate::ident::{IDENT, Ident, ident_type};
 
 /// The identifier of `n`, its 32 hexadecimal digits.
@@ -33,13 +34,16 @@ fn identified() -> Database {
 
 /// A kind of the name it is given, as IDENT in all else but that it takes
 /// no character string by store assignment, as `SqlType::assigns_text`
-/// says by default.
+/// says by default; with the settings hook it is given, if any.
 #[derive(Debug)]
-struct Named(&'static str);
+pub struct Named(pub &'static str, pub Option<Noted>);
 
 impl SqlType for Named {
     fn name(&self) -> &'static str {
         self.0
+    }
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        self.1.as_ref().map(|noted| noted as &dyn Configurable)
     }
     fn written(&self, t: &DataType) -> String {
         IDENT.written(t)
@@ -109,10 +113,10 @@ impl SqlType for Named {
 fn a_type_is_registered_once_by_its_name() {
     let db = Database::new();
     for bad in ["ident", "SELECT", "TWO WORDS", "\"IDENT\""] {
-        assert_eq!(db.register_type(Box::new(Named(bad))).err().map(|e| e.code), Some(Code::Api), "{bad}");
+        assert_eq!(db.register_type(Box::new(Named(bad, None))).err().map(|e| e.code), Some(Code::Api), "{bad}");
     }
     db.register_type(Box::new(Ident)).unwrap();
-    assert_eq!(db.register_type(Box::new(Named("IDENT"))).err().map(|e| e.code), Some(Code::Api), "twice");
+    assert_eq!(db.register_type(Box::new(Named("IDENT", None))).err().map(|e| e.code), Some(Code::Api), "twice");
     assert_eq!(db.types().unwrap().names().collect::<Vec<_>>(), ["IDENT"]);
 }
 
@@ -279,7 +283,7 @@ fn plug_in_types_are_kept() {
 #[test]
 fn a_character_string_is_stored_in_a_plug_in_type_that_takes_one() {
     let db = identified();
-    db.register_type(Box::new(Named("OPAQUE"))).unwrap();
+    db.register_type(Box::new(Named("OPAQUE", None))).unwrap();
     let a = db.session("A");
     a.run(&format!("INSERT INTO T VALUES ('{}', 1)", hex(1))).unwrap();
     a.run(&format!("UPDATE T SET K = '{}' WHERE N = 1", hex(2))).unwrap();

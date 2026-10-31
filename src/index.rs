@@ -176,6 +176,11 @@ pub trait IndexMethod: Send + Sync {
     fn attach(&self, _host: &Host) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// Can a `Probe::Compare` with this operator be answered?
     fn supports(&self, op: CompOp) -> bool;
     /// Can an index on `columns` columns answer a `Probe::Prefix` of

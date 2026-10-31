@@ -94,6 +94,11 @@ pub trait HashFunction: Send + Sync {
     fn id(&self) -> HashId;
     /// Its name, for messages.
     fn name(&self) -> &'static str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// The bytes in each of its digests.
     fn digest_len(&self) -> usize;
     /// The digest of `parts`, concatenated.

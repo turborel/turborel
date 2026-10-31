@@ -13,7 +13,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::record::Change;
 use crate::params::Params;
 use crate::settings::{self, Definition, Kind, LOCKS_WAIT, Listed, SESSION_COMMIT_AT_END};
-use crate::storage::{StorageEngine, TableOption};
+use crate::storage::TableOption;
 use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
 use crate::value::Value;
@@ -80,32 +80,6 @@ impl State {
         self.log_definition(None, Change::Setting { name: canonical, value })
     }
 
-    /// Declares the settings `engine` declares (`StorageEngine::settings`),
-    /// those declared already kept as they are: an engine registered again
-    /// under its name, as one opened from its files replacing the one in
-    /// memory, declares its own again.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if one is not under the engine's name (RULES.md D36),
-    /// or its default is not of its kind.
-    pub(super) fn declare_engine_settings(&mut self, engine: &dyn StorageEngine) -> Result<()> {
-        let group = format!("{}.", engine.name().to_ascii_uppercase());
-        for definition in engine.settings() {
-            if !definition.name.to_ascii_uppercase().starts_with(&group) {
-                let name = &definition.name;
-                return Err(SqlError::new(
-                    Code::Api,
-                    format!("[DESIGN] the setting {name} of engine {} is not under its name", engine.name()),
-                ));
-            }
-            if self.settings.key(&definition.name).is_none() {
-                self.settings.declare(definition)?;
-            }
-        }
-        Ok(())
-    }
-
     /// Declares the setting of each optimizer rule that has none yet,
     /// ON by default, a session's to set for itself (`optimizer::switch_name`);
     /// one declared before, as of a rule added again, is taken again.
@@ -163,8 +137,8 @@ impl Database {
     /// held: the memory budget its limit, MEMORY.BUDGET_BYTES's; the files
     /// their limit; the pages of a database in memory their pool's size,
     /// STORAGE.POOL_BYTES', and once their pool is made, the size it was
-    /// made of as the one started with; and each engine the database's
-    /// values (`configure_engines`).
+    /// made of as the one started with; and each plug-in the database's
+    /// values (`configure_plugins`).
     ///
     /// # Errors
     ///
@@ -181,7 +155,7 @@ impl Database {
                 Some(Value::Exact(crate::value::Decimal::new(i128::try_from(made).unwrap_or(i128::MAX), 0))),
             );
         }
-        self.configure_engines()
+        self.configure_plugins()
     }
 
     /// \[DESIGN\] Records the database's values of the settings `names`,
@@ -197,22 +171,6 @@ impl Database {
         let st = self.snapshot()?;
         for name in names {
             st.settings.mark_started(st.settings.known(name)?, None);
-        }
-        Ok(())
-    }
-
-    /// \[DESIGN\] Tells each storage engine the database's values of the
-    /// settings as they are now published (`StorageEngine::configure`):
-    /// with no lock held, from a snapshot, so an engine reads its settings
-    /// without calling back into the database (RULES.md R-ERR-4).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the database is closed.
-    pub(super) fn configure_engines(&self) -> Result<()> {
-        let st = self.snapshot()?;
-        for engine in st.engines.values() {
-            engine.configure(&st.settings);
         }
         Ok(())
     }
@@ -275,9 +233,10 @@ impl Database {
         Ok(self.snapshot()?.settings.list(&settings::Own::default()))
     }
 
-    /// \[DESIGN\] Declares a setting of a plug-in: an engine's, an index
-    /// method's. A value the database was given for it before, as it was
-    /// opened again, is its value.
+    /// \[DESIGN\] Declares a setting of what serves the database, as a
+    /// server's (RULES.md D42); a plug-in registered declares its own as it
+    /// is registered (`Configurable`). A value the database was given for
+    /// it before, as it was opened again, is its value.
     ///
     /// # Errors
     ///
@@ -383,8 +342,9 @@ impl Database {
     /// # Errors
     ///
     /// SQLCODE -910 if it would be of the Definition Schema, or named as
-    /// a view of the Information Schema is; if called back from a plug-in,
-    /// or a lock is poisoned.
+    /// a view of the Information Schema is; if a setting it declares is
+    /// refused (`Configurable`, under its name, RULES.md D36); if called
+    /// back from a plug-in, or a lock is poisoned.
     pub fn register_system_table(&self, table: Box<dyn SystemTable>) -> Result<()> {
         let table: Arc<dyn SystemTable> = Arc::from(table);
         let name = system::name_of(&*table);
@@ -393,10 +353,11 @@ impl Database {
         }
         let shown = name.to_string();
         let done = self.change(|st| {
-            st.system.insert(name, table);
+            st.declare_plugin(table.name(), table.configurable())?;
+            st.system.insert(name, Arc::clone(&table));
             Ok(())
         });
-        self.registered((Extension::SystemTable, &shown), done)
+        self.registered((Extension::SystemTable, &shown), done.and_then(|()| self.tell_plugin(table.configurable())))
     }
 }
 

@@ -133,17 +133,19 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if one of its name or id is registered.
+    /// SQLCODE -910 if one of its name or id is registered, or a setting
+    /// it declares is refused (`Configurable`, RULES.md D36).
     pub fn register_hash_function(&self, hash: Box<dyn HashFunction>) -> Result<()> {
-        let name = hash.name();
+        let (name, hash): (_, Arc<dyn HashFunction>) = (hash.name(), Arc::from(hash));
         let done = self.change(|st| {
             if st.hashes.iter().any(|h| h.name().eq_ignore_ascii_case(name) || h.id() == hash.id()) {
                 return Err(api(format!("[DESIGN] a hash function of the name {name}, or of its id, is registered")));
             }
-            st.hashes.push(Arc::from(hash));
+            st.declare_plugin(name, hash.configurable())?;
+            st.hashes.push(Arc::clone(&hash));
             Ok(())
         });
-        self.registered((Extension::HashFunction, name), done)
+        self.registered((Extension::HashFunction, name), done.and_then(|()| self.tell_plugin(hash.configurable())))
     }
 
     /// \[EXTENSION\] Registers an encoding, before the database is opened
@@ -152,10 +154,14 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if one of its name or id is registered.
+    /// SQLCODE -910 if one of its name or id is registered, or a setting
+    /// it declares is refused (`Configurable`, RULES.md D36).
     pub fn register_encoding(&self, encoding: Box<dyn Encoding>) -> Result<()> {
-        let name = encoding.name();
-        let done = self.change(|st| st.encodings.add(encoding));
-        self.registered((Extension::Encoding, name), done)
+        let (name, encoding): (_, Arc<dyn Encoding>) = (encoding.name(), Arc::from(encoding));
+        let done = self.change(|st| {
+            st.declare_plugin(name, encoding.configurable())?;
+            st.encodings.add(Arc::clone(&encoding))
+        });
+        self.registered((Extension::Encoding, name), done.and_then(|()| self.tell_plugin(encoding.configurable())))
     }
 }

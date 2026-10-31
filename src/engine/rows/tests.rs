@@ -274,12 +274,12 @@ fn its_pool_reads_ahead_the_pages_set() {
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
     let store = RowStore::new(files.clone(), TableOptions::default());
     assert_eq!(files.pool.read_ahead_pages(), READ_AHEAD_PAGES);
-    StorageEngine::configure(&store, &told(5));
+    Configurable::configure(&store, &told(5));
     assert_eq!(files.pool.read_ahead_pages(), 5_usize, "the data file's");
     let in_memory = RowStore::sharing(TableOptions::default(), crate::engine::MemoryPages::new(1 << 20_u32));
-    StorageEngine::configure(&in_memory, &told(3));
+    Configurable::configure(&in_memory, &told(3));
     let made = in_memory.files().unwrap();
     assert_eq!(made.pool.read_ahead_pages(), 3_usize, "as its pages are made");
-    StorageEngine::configure(&in_memory, &Settings::default());
+    Configurable::configure(&in_memory, &Settings::default());
     assert_eq!(made.pool.read_ahead_pages(), READ_AHEAD_PAGES, "after");
 }

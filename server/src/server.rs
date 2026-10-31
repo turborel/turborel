@@ -355,14 +355,15 @@ impl Server {
     ///
     /// # Errors
     ///
-    /// `settings::declare`'s; those of registering a system table.
+    /// `settings::declare`'s; those of registering a system table or
+    /// setting a plug-in.
     pub fn new(db: Database) -> Result<Server> {
         declare(&db)?;
-        db.set_credentials(Box::new(Pbkdf2::of(&db)));
+        db.set_credentials(Box::new(Pbkdf2::of(&db)))?;
         let shown = Arc::new(Shown::default());
         db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;
         db.register_system_table(Box::new(shown::Server(Arc::clone(&shown))))?;
-        db.set_served_connections(Box::new(Operator::of(&shown)));
+        db.set_served_connections(Box::new(Operator::of(&shown)))?;
         Ok(Server { db, authenticators: Vec::new(), shown })
     }
 

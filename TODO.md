@@ -118,10 +118,12 @@ The registry, scopes and SET statements exist (D36). Still to do:
   open, each new segment, and a `Log` plug-in, fixing it as made, and
   `Log::capabilities`, which the Strict policy reads at each write (D25),
   telling the value now.
-- **Plug-ins' settings beyond engines' own** (D36): index methods, and
-  every other kind of plug-in, declaring and told theirs as an engine's
-  are (`StorageEngine::settings`, `configure`), so a plug-in reads its
-  own without calling back into the database.
+- **Settings of the last plug-ins** (D36): a `Log` given by
+  `Database::set_log`, a diagnostics sink and a clock have no name to
+  declare settings under, so no `Configurable` yet; and the server's
+  verifiers (`password::Pbkdf2`) read SERVER.PASSWORD_ITERATIONS as made,
+  so `turboreld` sets them again after its settings, where the hook
+  would tell them.
 
 ---
 

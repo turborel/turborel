@@ -101,6 +101,7 @@ mod mvcc;
 mod named_schemas;
 mod pages;
 mod planning;
+mod plugin_settings;
 mod positions;
 mod predicates;
 mod prepared;

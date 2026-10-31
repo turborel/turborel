@@ -176,7 +176,7 @@ impl State {
         // an engine without one at its default.
         let engines: Vec<Arc<dyn StorageEngine>> = st.engines.values().cloned().collect();
         for engine in engines {
-            let _ = st.declare_engine_settings(&*engine);
+            let _ = st.declare_plugin(engine.name(), engine.configurable());
         }
         let _ = st.switch_rules();
         st

@@ -32,6 +32,11 @@ use crate::log::record::Change;
 pub trait Credentials: Send + Sync {
     /// Its name, for diagnostics.
     fn name(&self) -> &'static str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// The verifier of `password`, for the user `user`.
     ///
     /// # Errors
@@ -227,15 +232,23 @@ impl Database {
     }
 
     /// \[EXTENSION\] Sets what makes users' verifiers of the passwords SQL
-    /// gives them (`CREATE USER ... PASSWORD`), in place of any set before.
-    pub fn set_credentials(&self, credentials: Box<dyn Credentials>) {
-        let name = credentials.name().to_owned();
-        *self.credentials_slot().write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::from(credentials));
-        self.emit(&Event::Registered { kind: Extension::Credentials, name });
+    /// gives them (`CREATE USER ... PASSWORD`), in place of any set before;
+    /// its settings declared and told it (`Configurable`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a setting it declares is refused (RULES.md D36), or
+    /// the database is closed.
+    pub fn set_credentials(&self, credentials: Box<dyn Credentials>) -> Result<()> {
+        let credentials: Arc<dyn Credentials> = Arc::from(credentials);
+        self.declare_plugin(credentials.name(), credentials.configurable())?;
+        *self.credentials_slot().write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&credentials));
+        self.emit(&Event::Registered { kind: Extension::Credentials, name: credentials.name().to_owned() });
+        self.tell_plugin(credentials.configurable())
     }
 
     /// What makes verifiers, if it was set.
-    fn credentials(&self) -> Option<Arc<dyn Credentials>> {
+    pub(super) fn credentials(&self) -> Option<Arc<dyn Credentials>> {
         self.credentials_slot().read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }

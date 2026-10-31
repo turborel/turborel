@@ -70,6 +70,11 @@ pub trait Encoding: Send + Sync {
     fn id(&self) -> EncodingId;
     /// Its name, for messages.
     fn name(&self) -> &'static str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// The most bytes `encode_with` adds to any input, with `argument`.
     fn overhead(&self, argument: &str) -> usize;
     /// Whether whoever reads what it encodes, without what it was given (a

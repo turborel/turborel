@@ -52,7 +52,7 @@ fn the_owner_ends_and_cancels_served_connections() {
     let ann = db.session("ANN");
     assert_eq!(refused(&ann, "END CONNECTION 1"), ("08003".to_owned(), Some(15)), "no server");
     let asked = Asked::default();
-    db.set_served_connections(Box::new(asked.clone()));
+    db.set_served_connections(Box::new(asked.clone())).unwrap();
     assert_eq!(exec(&db.session("BOB"), "CANCEL CONNECTION 1"), Err(Code::Privilege), "not the owner");
     db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER)").unwrap();
     exec(&ann, "INSERT INTO T VALUES (1)").unwrap();

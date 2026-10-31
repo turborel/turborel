@@ -411,12 +411,15 @@ files, so the definitions that name one find it:
 | `register_system_table` | a table of the Information Schema's kind, `SystemTable` |
 | `set_diagnostics` | where the database's events go, `Diagnostics` ([Diagnostics](../operator/08-diagnostics.md)); `tell` gives it one of the program's own, as a server's, those below DIAGNOSTICS.LEVEL dropped |
 
-An engine may declare settings of the database's, under its own name
-(`StorageEngine::settings`), as the column store declares
-COLUMNSTORE.HEADER_CACHE_BYTES; it is told their values as it is
-registered, as each changes and as the database opens
-(`StorageEngine::configure`), and never calls back into the database
-to read them. `with_optimizer` adds rules to the optimizer (`Rule`),
+A plug-in of any kind above, and a catalog's or a log's storage, the
+credentials, a server's connections and a spill, may declare settings
+of the database's, under its own name, as the column store declares
+COLUMNSTORE.HEADER_CACHE_BYTES: it gives itself as its `Configurable`
+(`configurable`), whose `settings` it declares. It is told their values
+as it is registered, as each changes and as the database opens
+(`Configurable::configure`), and never calls back into the database to
+read them; a setting outside its name, or a built-in one's, is refused,
+and the plug-in not registered. `with_optimizer` adds rules to the optimizer (`Rule`),
 each with its setting, OPTIMIZER and its name, which turns it on or
 off, as the built-in rules' do ([Settings](../appendix/c-settings.md)).
 

@@ -197,6 +197,7 @@ Each in a sentence:
 - **SERVER.TRUST_LOCAL**: Whether a client of this machine is trusted as who it says (ON), or proves it as every other does (OFF).
 - **SERVER.WORKERS**: Statements the server runs at once, at most.
 
-Plug-ins may declare settings of their own, listed alike: a storage
-engine its own, under its name; a rule added to the optimizer, OPTIMIZER
+Plug-ins may declare settings of their own, listed alike: a plug-in of
+any kind its own, under its name, as the column store declares
+COLUMNSTORE.HEADER_CACHE_BYTES; a rule added to the optimizer, OPTIMIZER
 and its name, as the built-in rules have.

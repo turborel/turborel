@@ -25,6 +25,11 @@ use crate::error::{Code, Result, SqlError, SqlState, fail};
 pub trait ServedConnections: Send + Sync {
     /// Its name, for diagnostics.
     fn name(&self) -> &'static str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// Ends the connection `id`; false if none of `id` is served.
     fn end(&self, id: u64) -> bool;
     /// Cancels what the connection `id` runs; false if none of `id` is
@@ -34,15 +39,23 @@ pub trait ServedConnections: Send + Sync {
 
 impl Database {
     /// \[EXTENSION\] Sets what ends and cancels the connections of the
-    /// server that serves the database, in place of any set before.
-    pub fn set_served_connections(&self, served: Box<dyn ServedConnections>) {
-        let name = served.name().to_owned();
-        *self.served_slot().write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::from(served));
-        self.emit(&Event::Registered { kind: Extension::ServedConnections, name });
+    /// server that serves the database, in place of any set before; its
+    /// settings declared and told it (`Configurable`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a setting it declares is refused (RULES.md D36), or
+    /// the database is closed.
+    pub fn set_served_connections(&self, served: Box<dyn ServedConnections>) -> Result<()> {
+        let served: Arc<dyn ServedConnections> = Arc::from(served);
+        self.declare_plugin(served.name(), served.configurable())?;
+        *self.served_slot().write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&served));
+        self.emit(&Event::Registered { kind: Extension::ServedConnections, name: served.name().to_owned() });
+        self.tell_plugin(served.configurable())
     }
 
     /// What ends and cancels the served connections, if it was set.
-    fn served_connections(&self) -> Option<Arc<dyn ServedConnections>> {
+    pub(super) fn served_connections(&self) -> Option<Arc<dyn ServedConnections>> {
         self.served_slot().read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }

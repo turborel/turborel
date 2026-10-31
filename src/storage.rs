@@ -33,7 +33,7 @@ use crate::catalog::TableDesc;
 use crate::error::Result;
 use crate::log::Lsn;
 use crate::memory::Host;
-use crate::settings::{Definition, Settings};
+use crate::settings::Configurable;
 use crate::stats::Statistics;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 use crate::value::Value;
@@ -120,21 +120,11 @@ pub trait StorageEngine: Send + Sync {
     fn attach(&self, _host: &Host) -> Result<()> {
         Ok(())
     }
-    /// \[DESIGN\] The database's settings it declares (RULES.md D36), each
-    /// named under its own name ("ROWSTORE.X"), with its kind and default,
-    /// not for a session to set: declared as it is registered, a value
-    /// the database was given before kept, one declared already kept as
-    /// it is. Default: none.
-    fn settings(&self) -> Vec<Definition> {
-        Vec::new()
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        None
     }
-    /// \[DESIGN\] Takes the database's values of the settings, `settings`,
-    /// as they are published: once it is registered, after each change of
-    /// one, and once the database is opened, its values replayed. The
-    /// engine reads its own (`Settings::key`, `get`), and keeps what it
-    /// needs; the values are a copy, never changed under it. Default:
-    /// nothing, for an engine that declares none.
-    fn configure(&self, _settings: &Settings) {}
     /// The storage for a new, empty table described by `desc`.
     ///
     /// # Errors

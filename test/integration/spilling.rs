@@ -409,6 +409,9 @@ fn a_probe_reads_its_keys_rows_as_it_joins() {
 struct Streamed;
 
 impl Spill for Streamed {
+    fn name(&self) -> &'static str {
+        "streamed"
+    }
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
         Ok(Box::new(StreamedArea(PagedSpill.area(memory, temp, area)?)))
     }
@@ -449,6 +452,9 @@ impl SpillTable for StreamedTable {
 pub struct Peak(pub Arc<Mutex<usize>>);
 
 impl Spill for Peak {
+    fn name(&self) -> &'static str {
+        "peak"
+    }
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
         let mut most = self.0.lock().unwrap();
         *most = (*most).max(memory.reserved());
@@ -486,6 +492,9 @@ impl Cancelling {
 }
 
 impl Spill for Cancelling {
+    fn name(&self) -> &'static str {
+        "cancelling"
+    }
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
         let made = Spill::area(&PagedSpill, memory, temp, area)?;
         Ok(Box::new(CancellingArea(made, Arc::clone(&self.0))))

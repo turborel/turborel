@@ -118,7 +118,7 @@ fn users_survive_a_crash() {
 #[test]
 fn the_owner_manages_users_in_sql() {
     let db = Database::new();
-    db.set_credentials(Box::new(Reversed));
+    db.set_credentials(Box::new(Reversed)).unwrap();
     db.create_user("OWNER", b"").unwrap();
     db.set_owner("OWNER").unwrap();
     let s = db.session("OWNER");
@@ -150,7 +150,7 @@ fn user_statements_are_refused_saying_why() {
     db.create_user("ANN", b"").unwrap();
     db.set_owner("ANN").unwrap();
     assert_eq!(exec(&s, "CREATE USER bob PASSWORD 'x'"), Err(Code::Api), "no credentials plug-in");
-    db.set_credentials(Box::new(Reversed));
+    db.set_credentials(Box::new(Reversed)).unwrap();
     assert_eq!(exec(&db.session("BOB"), "DROP USER ann"), Err(Code::Privilege), "not the owner");
     db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER)").unwrap();
     exec(&s, "INSERT INTO T VALUES (1)").unwrap();

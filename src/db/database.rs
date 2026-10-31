@@ -20,7 +20,6 @@ use super::{Session, State, qualified_name};
 use crate::catalog::{Catalog, MemoryCatalog, QualifiedName};
 use crate::diagnostics::{Diagnostics, Event, Extension, Level, NoDiagnostics};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::functions::{AggregateFunction, ScalarFunction};
 use crate::index::{IndexMethod, KeyOrder, Probe};
 use crate::log::Log;
 use crate::memory::Host;
@@ -243,14 +242,18 @@ impl Database {
 
     /// \[DESIGN\] Makes the spill areas of its operators, and of its
     /// plug-ins, with `spill` from now on (RULES.md D38); an area already
-    /// made stays its maker's.
+    /// made stays its maker's. Its settings are declared and told it
+    /// (`Configurable`).
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if the database is closed.
+    /// SQLCODE -910 if the database is closed, or a setting it declares is
+    /// refused (RULES.md D36).
     pub fn set_spill(&self, spill: Box<dyn Spill>) -> Result<()> {
-        self.snapshot()?.work.set_spill(Arc::from(spill));
-        Ok(())
+        let spill: Arc<dyn Spill> = Arc::from(spill);
+        self.declare_plugin(spill.name(), spill.configurable())?;
+        self.snapshot()?.work.set_spill(Arc::clone(&spill));
+        self.tell_plugin(spill.configurable())
     }
 
     /// Where it keeps its catalog and its log (`db/stores.rs`).
@@ -312,72 +315,48 @@ impl Database {
 
     /// \[DESIGN\] Adds or replaces a storage engine, under its name, once
     /// it has taken what the database provides (`StorageEngine::attach`),
-    /// its settings declared and their values told it (`configure_engines`).
+    /// its settings declared and their values told it (`Configurable`).
     ///
     /// # Errors
     ///
     /// The engine's, from `attach`; SQLCODE -910 if called back from a
-    /// plug-in, or a setting it declares is refused (`declare_engine_settings`).
+    /// plug-in, or a setting it declares is refused (RULES.md D36).
     pub fn register_engine(&self, engine: Box<dyn StorageEngine>) -> Result<()> {
-        let name = engine.name();
+        let (name, engine): (_, Arc<dyn StorageEngine>) = (engine.name(), Arc::from(engine));
         engine.attach(&self.host()?)?;
         let done = self.change(|st| {
             // [EXTENSION] RULES.md D41: a table option is one plug-in's.
             if let Some(o) = engine.table_options().iter().find(|o| st.table_options.iter().any(|(_, p)| p.name == o.name)) {
                 return fail(Code::Api, format!("[DESIGN] the table option {} of engine {name} is a plug-in's", o.name));
             }
-            st.declare_engine_settings(&*engine)?;
-            st.engines.insert(name.to_owned(), Arc::from(engine));
+            st.declare_plugin(name, engine.configurable())?;
+            st.engines.insert(name.to_owned(), Arc::clone(&engine));
             Ok(())
         });
-        self.registered((Extension::Engine, name), done.and_then(|()| self.configure_engines()))
+        self.registered((Extension::Engine, name), done.and_then(|()| self.tell_plugin(engine.configurable())))
     }
 
     /// \[DESIGN\] Adds or replaces an index method, under its name, once it
-    /// has taken what the database provides (`IndexMethod::attach`).
+    /// has taken what the database provides (`IndexMethod::attach`), its
+    /// settings declared and their values told it (`Configurable`).
     ///
     /// # Errors
     ///
-    /// The method's, from `attach`.
-    /// SQLCODE -910 if called back from a plug-in.
+    /// The method's, from `attach`; SQLCODE -910 if called back from a
+    /// plug-in, or a setting it declares is refused (RULES.md D36).
     pub fn register_index_method(&self, method: Box<dyn IndexMethod>) -> Result<()> {
-        let name = method.name();
+        let (name, method): (_, Arc<dyn IndexMethod>) = (method.name(), Arc::from(method));
         method.attach(&self.host()?)?;
         let done = self.change(|st| {
             // [EXTENSION] RULES.md D41: an index option is one plug-in's.
             if let Some(o) = method.index_options().iter().find(|o| st.index_options.iter().any(|(_, p)| p.name == o.name)) {
                 return fail(Code::Api, format!("[DESIGN] the index option {} of method {name} is a plug-in's", o.name));
             }
-            st.methods.insert(name.to_owned(), Arc::from(method));
+            st.declare_plugin(name, method.configurable())?;
+            st.methods.insert(name.to_owned(), Arc::clone(&method));
             Ok(())
         });
-        self.registered((Extension::IndexMethod, name), done)
-    }
-
-    /// \[EXTENSION\] Register a scalar function. Callable only from sessions
-    /// that take the function call syntax (SQL.FUNCTION_CALLS ON).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if an aggregate function has the same name, or a
-    /// scalar function, a standard one too: none is replaced (RULES.md D53).
-    pub fn register_scalar_function(&self, f: Box<dyn ScalarFunction>) -> Result<()> {
-        let name = f.name().to_owned();
-        let done = self.change(|st| st.functions.add_scalar(Arc::from(f)));
-        self.registered((Extension::Function, &name), done)
-    }
-
-    /// \[EXTENSION\] Register an aggregate. Registering COUNT, SUM, AVG, MAX or
-    /// MIN replaces that set function's implementation [X3.135-1986 §5.8];
-    /// any other name is callable only through the function call syntax.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if a scalar function has the same name.
-    pub fn register_aggregate_function(&self, f: Box<dyn AggregateFunction>) -> Result<()> {
-        let name = f.name().to_owned();
-        let done = self.change(|st| st.functions.add_aggregate(Arc::from(f)));
-        self.registered((Extension::Function, &name), done)
+        self.registered((Extension::IndexMethod, name), done.and_then(|()| self.tell_plugin(method.configurable())))
     }
 
     /// \[DESIGN\] Choose the storage engine for tables in subsequent

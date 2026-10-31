@@ -85,6 +85,7 @@ use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::memory::Host;
+use crate::settings::Configurable;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
@@ -154,19 +155,9 @@ impl StorageEngine for RowStore {
     fn table_options(&self) -> Vec<crate::storage::TableOption> {
         options::declared(self.defaults)
     }
-    /// The column store's, whose tables freeze rows into groups: the
-    /// bytes of their headers it holds (`columns/cache.rs`).
-    fn settings(&self) -> Vec<crate::settings::Definition> {
-        (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
-    }
-    /// The headers it holds; and the pages its pool reads ahead, of its
-    /// data file's or in memory (STORAGE.READ_AHEAD_PAGES), which index
-    /// methods on the same pool share.
-    fn configure(&self, settings: &crate::settings::Settings) {
-        if let Some(key) = settings.key(&cache::setting_name(self.name)) {
-            self.headers.set_most(settings.count(key));
-        }
-        self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
+    /// It reads its settings (`Configurable`).
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        Some(self)
     }
     fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
@@ -228,6 +219,23 @@ impl StorageEngine for RowStore {
             files.durable.fetch_max(files.sealed.load(Ordering::Acquire), Ordering::AcqRel);
         }
         Ok(())
+    }
+}
+
+impl Configurable for RowStore {
+    /// The column store's, whose tables freeze rows into groups: the
+    /// bytes of their headers it holds (`columns/cache.rs`).
+    fn settings(&self) -> Vec<crate::settings::Definition> {
+        (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
+    }
+    /// The headers it holds; and the pages its pool reads ahead, of its
+    /// data file's or in memory (STORAGE.READ_AHEAD_PAGES), which index
+    /// methods on the same pool share.
+    fn configure(&self, settings: &crate::settings::Settings) {
+        if let Some(key) = settings.key(&cache::setting_name(self.name)) {
+            self.headers.set_most(settings.count(key));
+        }
+        self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
     }
 }
 

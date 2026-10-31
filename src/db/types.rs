@@ -24,7 +24,8 @@ impl Database {
     ///
     /// SQLCODE -910 if its name is not a regular identifier written as SQL
     /// text takes it (in upper case, no key word), or a type of its name is
-    /// registered already.
+    /// registered already; or a setting it declares is refused
+    /// (`Configurable`, RULES.md D36).
     pub fn register_type(&self, kind: Box<dyn SqlType>) -> Result<()> {
         let name = kind.name().to_owned();
         if authorization_identifier(&name).ok().as_deref() != Some(name.as_str()) {
@@ -34,8 +35,11 @@ impl Database {
             return Err(api(format!("[DESIGN] a type {name} is registered already")));
         }
         let kind: &'static dyn SqlType = Box::leak(kind);
-        let done = self.change(|st| st.types.add(kind));
-        self.registered((Extension::DataType, &name), done)
+        let done = self.change(|st| {
+            st.declare_plugin(&name, kind.configurable())?;
+            st.types.add(kind)
+        });
+        self.registered((Extension::DataType, &name), done.and_then(|()| self.tell_plugin(kind.configurable())))
     }
 
     /// \[EXTENSION\] The data types beyond the standard registered (RULES.md

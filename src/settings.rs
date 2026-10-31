@@ -4,15 +4,14 @@
 //! values set, the database's and a session's own.
 //!
 //! The built-in settings are declared here; a plug-in declares its own
-//! (`Database::declare_setting`). A database setting is a definition,
-//! logged and replayed with the others (RULES.md D25), so it survives the
-//! database being closed, unless it is a node's (`Definition::node`, D57),
-//! whose value is never logged nor kept in an image; one replayed before
-//! the plug-in that declares it is kept until it is declared. A session's settings are its own, and end
-//! with it. A name is an SQL `<identifier>`, upper case, its parts joined by
-//! periods, a plug-in's under its own name ("ROWSTORE.X").
+//! (`Configurable`). A database setting is a definition, logged and
+//! replayed with the others (RULES.md D25), unless it is a node's
+//! (`Definition::node`, D57), never logged nor in an image; one replayed
+//! before the plug-in that declares it is kept until then. A session's end
+//! with it. A name is an upper case `<identifier>`, parts joined by periods.
 
 mod builtin;
+mod configurable;
 mod kind;
 mod started;
 mod words;
@@ -32,6 +31,7 @@ pub use builtin::{
     SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, STATEMENT_TIMEOUT_MS, SWITCHES, TABLES_ENGINE, TABLES_UNIQUE_INDEX_METHOD, TRANSACTION_STRICT,
 };
 use builtin::{builtin, whole};
+pub use configurable::Configurable;
 pub use kind::{Kind, column_list, column_names};
 pub use started::Started;
 use words::word_of;

@@ -81,6 +81,11 @@ pub(crate) fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
 pub trait SqlType: Send + Sync + fmt::Debug {
     /// The name it is written by, in a `<data type>`.
     fn name(&self) -> &str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
 
     /// `t` as written in a `<data type>`.
     fn written(&self, t: &DataType) -> String;
@@ -247,6 +252,11 @@ impl TypeRegistry {
     /// it.
     pub fn kind(&self, name: &str) -> Option<Kind> {
         self.kinds.get(name).copied()
+    }
+
+    /// Each kind registered that declares settings (RULES.md D36).
+    pub(crate) fn configurables(&self) -> impl Iterator<Item = &dyn crate::settings::Configurable> {
+        self.kinds.values().filter_map(|k| k.configurable())
     }
 
     /// The names registered, in order.

@@ -1,5 +1,6 @@
 //! Unit tests of the built-in set functions (`functions.rs`).
 
+use super::extremes::Extreme;
 use super::*;
 
 /// Verifies: [X3.135-1986 §5.8 F] MAX and MIN take an argument; asked for

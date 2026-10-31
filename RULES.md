@@ -1669,6 +1669,8 @@ compares them); a row fetched by key reads a page per column.
   from them; other methods insert them one by one.
 - **No index-only scans:** a versioned engine has an entry per version;
   a reader must read the version it sees.
+- **Settings.** A method declares and reads its own as every plug-in
+  does (`IndexMethod::configurable`, D36); its indexes' options are D41.
 - **SQL.** An extension, by the owner of the table's schema:
   `CREATE INDEX name ON table (columns) [USING method] [WITH (...)]`,
   `DROP INDEX name`, `ALTER INDEX name SET (...)`. The index is built
@@ -1781,13 +1783,21 @@ same results and errors is the optimizer's to choose.
   message; or when its reader starts, e.g. a server's addresses).
   Plug-ins, the server too (D42), declare theirs the same way: every
   component is configured by settings, never a configuration of its own.
-- **Engines.** A storage engine declares its own under its name
-  (`StorageEngine::settings`), as its tables' options (D41). It is given
-  the database's values (`StorageEngine::configure`) when registered,
-  after each change, and once the database opens and replays them: from
-  a snapshot, no lock held, so it never calls back to read them
-  (R-ERR-4). So the column store bounds the frozen-group headers it
-  holds (COLUMNSTORE.HEADER_CACHE_BYTES).
+- **Plug-ins.** Every kind declares and reads its own by one hook,
+  `Configurable` (`settings`, `configure`), given by its `configurable`
+  (default: none):
+  - the kinds: engines, index methods, functions, system tables, data
+    types, hash functions, encodings, catalog and log storages,
+    credentials, a server's connections, spills;
+  - declared under its name as it is registered; one outside it, or a
+    built-in's, refuses the plug-in;
+  - told the values when registered, after each change, and once the
+    database opens and replays them: from a snapshot, no lock held, so
+    it never calls back (R-ERR-4);
+  - a setting of effect Start it keeps as it started, recording it
+    (`Settings::mark_started`).
+  - So the column store bounds the frozen-group headers it holds
+    (COLUMNSTORE.HEADER_CACHE_BYTES).
 - **Sessions** set for themselves, over the database's value: whether
   commits wait for the log (LOG.COMMIT_SYNC, D25); whether the function
   call syntax is accepted (SQL.FUNCTION_CALLS); each optimizer rule

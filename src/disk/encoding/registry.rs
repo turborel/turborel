@@ -46,13 +46,13 @@ impl Encodings {
     /// # Errors
     ///
     /// SQLCODE -910 if one of its name or id is registered.
-    pub(crate) fn add(&self, encoding: Box<dyn Encoding>) -> Result<()> {
+    pub(crate) fn add(&self, encoding: Arc<dyn Encoding>) -> Result<()> {
         let mut registered = write(&self.registered)?;
         let name = encoding.name();
         if registered.iter().any(|e| e.name().eq_ignore_ascii_case(name) || e.id() == encoding.id()) {
             return Err(api(format!("[DESIGN] an encoding of the name {name}, or of its id, is registered")));
         }
-        registered.push(Arc::from(encoding));
+        registered.push(encoding);
         Ok(())
     }
 
@@ -218,8 +218,8 @@ mod tests {
     #[test]
     fn sealed_data_names_its_encodings() {
         let encodings = Encodings::default();
-        encodings.add(Box::new(Reverse)).unwrap();
-        assert_eq!(encodings.add(Box::new(Reverse)).err().map(|e| e.code), Some(Code::Api));
+        encodings.add(Arc::new(Reverse)).unwrap();
+        assert_eq!(encodings.add(Arc::new(Reverse)).err().map(|e| e.code), Some(Code::Api));
         let pipeline = encodings.named(" reverse ").unwrap();
         let mut sealed = Vec::new();
         pipeline.seal(3, b"abc", &mut sealed).unwrap();
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn malformed_sealed_data_is_refused() {
         let encodings = Encodings::default();
-        encodings.add(Box::new(Reverse)).unwrap();
+        encodings.add(Arc::new(Reverse)).unwrap();
         let code = |bytes: &[u8]| encodings.unseal(0, bytes).err().map(|e| e.code);
         assert_eq!(code(b""), Some(Code::Corrupt));
         assert_eq!(code(&[5]), Some(Code::Corrupt));

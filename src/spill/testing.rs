@@ -22,6 +22,9 @@ struct HeldRun {
 }
 
 impl Spill for Held {
+    fn name(&self) -> &'static str {
+        "held"
+    }
     fn area(&self, _memory: &Arc<MemoryBudget>, _temp: &Arc<TempFiles>, _area: Area) -> Result<Box<dyn SpillArea>> {
         Ok(Box::new(HeldArea { broken: self.broken }))
     }

@@ -99,6 +99,11 @@ pub struct OpenedLog {
 pub trait LogStorage: Send + Sync {
     /// Its name, for messages and events.
     fn name(&self) -> &'static str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// The log at `place`, if one was made there, holding every record
     /// synced before, and what opening it cut.
     ///
@@ -176,6 +181,11 @@ fn told(log: FileLog, place: &StorePlace<'_>) -> FileLog {
 pub trait CatalogStorage: Send + Sync {
     /// Its name, for messages and events.
     fn name(&self) -> &'static str;
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any. Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// The store at `place`, if one was made there.
     ///
     /// # Errors
@@ -230,15 +240,17 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if it is already opened from its files.
+    /// SQLCODE -910 if it is already opened from its files, or a setting
+    /// it declares is refused (`Configurable`, RULES.md D36).
     pub fn set_catalog_storage(&self, storage: Box<dyn CatalogStorage>) -> Result<()> {
         if self.files()?.is_some() {
             return Err(SqlError::new(Code::Api, "[DESIGN] a catalog's storage is chosen before its database is opened from its files"));
         }
-        let name = storage.name().to_owned();
-        *self.storages().catalog.write().unwrap_or_else(PoisonError::into_inner) = Arc::from(storage);
-        self.emit(&Event::Registered { kind: Extension::CatalogStorage, name });
-        Ok(())
+        let storage: Arc<dyn CatalogStorage> = Arc::from(storage);
+        self.declare_plugin(storage.name(), storage.configurable())?;
+        *self.storages().catalog.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&storage);
+        self.emit(&Event::Registered { kind: Extension::CatalogStorage, name: storage.name().to_owned() });
+        self.tell_plugin(storage.configurable())
     }
 
     /// \[EXTENSION\] Keeps its log with `storage`, once it is opened from
@@ -248,22 +260,28 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if it is already opened from its files.
+    /// SQLCODE -910 if it is already opened from its files, or a setting
+    /// it declares is refused (`Configurable`, RULES.md D36).
     pub fn set_log_storage(&self, storage: Box<dyn LogStorage>) -> Result<()> {
         if self.files()?.is_some() {
             return Err(SqlError::new(Code::Api, "[DESIGN] a log's storage is chosen before its database is opened from its files"));
         }
-        let name = storage.name().to_owned();
-        *self.storages().log.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::from(storage));
-        self.emit(&Event::Registered { kind: Extension::LogStorage, name });
-        Ok(())
+        let storage: Arc<dyn LogStorage> = Arc::from(storage);
+        self.declare_plugin(storage.name(), storage.configurable())?;
+        *self.storages().log.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&storage));
+        self.emit(&Event::Registered { kind: Extension::LogStorage, name: storage.name().to_owned() });
+        self.tell_plugin(storage.configurable())
     }
 
     /// The kind of log it is kept with: the one set, else the built-in, of
     /// `options`.
     pub(super) fn log_storage(&self, options: &FileLogOptions) -> Arc<dyn LogStorage> {
-        let set = self.storages().log.read().unwrap_or_else(PoisonError::into_inner).clone();
-        set.unwrap_or_else(|| Arc::new(FileLogs { options: options.clone() }))
+        self.log_storage_set().unwrap_or_else(|| Arc::new(FileLogs { options: options.clone() }))
+    }
+
+    /// The kind of log set to keep it with, if one was.
+    pub(super) fn log_storage_set(&self) -> Option<Arc<dyn LogStorage>> {
+        self.storages().log.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// The kind of store its catalog is kept in.

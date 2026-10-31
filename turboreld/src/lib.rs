@@ -358,7 +358,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
         // made; the verifiers it makes of the users SQL creates are made
         // again, so they take SERVER.PASSWORD_ITERATIONS as given here.
         late.iter().try_for_each(set)?;
-        db.set_credentials(Box::new(Pbkdf2::of(&db)));
+        db.set_credentials(Box::new(Pbkdf2::of(&db))).map_err(|e| e.to_string())?;
         config.owner.as_ref().map_or(Ok(()), |owner| users::make_owner(&db, owner))?;
         work(server)
     });

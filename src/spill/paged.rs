@@ -31,6 +31,9 @@ const PAGED: u8 = 1;
 pub struct PagedSpill;
 
 impl Spill for PagedSpill {
+    fn name(&self) -> &'static str {
+        "paged"
+    }
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> Result<Box<dyn SpillArea>> {
         let file = ScratchFile::create(memory, temp, area.bytes, "a spill area")?;
         Ok(Box::new(PagedArea(area.batch, Arc::new(file))))
