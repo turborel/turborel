@@ -12,11 +12,12 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::{Session, State, StatementContext, plan, rule, set_columns};
 use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, RowElement, SelectList, SelectSublist};
-use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
+use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify, taken_default};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
+use crate::error::SqlState;
 use crate::error::{At, Result};
 use crate::exec::{HeldRows, Runner, execute, row_entries};
-use crate::logical::{LogicalPlan, filled};
+use crate::logical::{Expr, LogicalPlan, filled};
 use crate::params::Params;
 use crate::storage::{Row, RowId};
 use crate::txn::Txn;
@@ -56,6 +57,15 @@ impl Target {
         Ok(Target { defaults: default_row(&self.desc, auth, now)?, ..self })
     }
 
+    /// [ISO/IEC 9075:1992 §11.5 GR1b v] Whether a row it inserts takes a
+    /// default padded with 0-valued bits: of a column not an object column
+    /// if `query`, else of any, every column taking its default [§13.8
+    /// SR2].
+    fn pads(&self, query: bool) -> bool {
+        let taken = |c: &usize| !query || !self.object.contains(c);
+        self.desc.columns.iter().enumerate().any(|(c, col)| taken(&c) && col.padded_default().is_some())
+    }
+
     /// [X3.135-1986 §8.7 GR1a, b, GR5, GR7] the candidate row for the
     /// insert values `values`: each column's default [ISO/IEC 9075:1992
     /// §13.8 GR4b i], null if it has none, but for the object columns, each
@@ -86,6 +96,7 @@ impl Session {
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
         let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
+        let query_given = query.is_some();
         let mut rows = if let Some(logical) = query {
             query_rows(cx, &target, logical)?
         } else {
@@ -98,6 +109,10 @@ impl Session {
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() {
             return Ok(0);
+        }
+        // [ISO/IEC 9075:1992 §11.5 GR1b v] a default taken padded.
+        if target.pads(query_given) {
+            tx.stop.warnings().raise(SqlState::ZERO_BIT_PADDING);
         }
         self.settle_cursors(st, &target.name);
         let mut effects = self.effects(st);
@@ -181,7 +196,12 @@ impl Session {
         let objects: Vec<ObjectColumn> = target
             .columns()
             .zip(&target.object)
-            .map(|(col, &c)| ObjectColumn { desc: col.clone(), default: target.defaults.get(c).cloned().unwrap_or(Value::Null) })
+            .map(|(col, &c)| {
+                let value = target.defaults.get(c).cloned().unwrap_or(Value::Null);
+                let default =
+                    target.desc.columns.get(c).map_or_else(|| Expr::Const(value.clone()), |base| taken_default(base, value.clone()));
+                ObjectColumn { desc: col.clone(), default }
+            })
             .collect();
         self.bound(st, params, |bound| binder::bind_insert_query(bound, query, &objects))
     }

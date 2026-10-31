@@ -30,7 +30,7 @@ use std::sync::Arc;
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::index::Index;
+use crate::index::{BTREE_METHOD, HASH_METHOD, Index};
 use crate::log::record::Change;
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
@@ -232,13 +232,19 @@ impl Database {
     fn build_index(&self, spec: &IndexSpec, ready: &dyn Fn(&mut State, &Txn) -> Result<()>) -> Result<()> {
         let (name, qn) = (spec.name.as_str(), &spec.table);
         let current = self.snapshot()?;
-        // [ISO/IEC 9075:1992 §4.9] Each session's instance of a temporary
-        // table has the indexes its constraints give it (`db/temporary.rs`).
+        // [ISO/IEC 9075:1992 §4.9] Of a temporary table, only defined: each
+        // session's instance makes its entries, in memory, of its own rows,
+        // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
-            return Err(SqlError::new(
-                Code::SyntaxRule,
-                format!("[DESIGN] {qn} is temporary: each session's rows have its constraints' indexes alone"),
-            ));
+            if spec.method != BTREE_METHOD && spec.method != HASH_METHOD {
+                return Err(SqlError::new(
+                    Code::SyntaxRule,
+                    format!(
+                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD} or {HASH_METHOD}, kept in memory (RULES.md D49)"
+                    ),
+                ));
+            }
+            return self.create_index_locked(spec, ready);
         }
         if current.capabilities(qn)?.concurrency == Concurrency::Coordinator {
             return self.create_index_locked(spec, ready);

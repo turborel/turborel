@@ -52,7 +52,7 @@ use crate::value::Spelled;
 use from::FromItem;
 use query::{Nesting, bind_query_specification};
 use set_operations::bind_query_expression;
-pub use set_operations::{ObjectColumn, bind_insert_query};
+pub use set_operations::{ObjectColumn, bind_insert_query, taken_default};
 pub use statements::{
     AssignRule, BoundWrite, INSERT_RULE, UPDATE_POSITIONED_RULE, UPDATE_SEARCHED_RULE, WriteKind, bind_select, bind_write,
     check_assignment, updatable, updatable_in,

@@ -162,6 +162,11 @@ impl State {
             };
             for table in renewed {
                 self.lock_of(&table)?.replaced(self.generation_of(&table), at);
+                // [DESIGN] each session's instance of a temporary one, too
+                // (RULES.md D49).
+                if self.catalog.table(&table).is_some_and(|t| t.temporary.is_some()) {
+                    self.temporaries.published(&table, self.generation_of(&table), at);
+                }
             }
         }
         Ok(dropped)
@@ -220,21 +225,32 @@ impl Session {
             );
         }
         self.prepare_change(st, tx, &qn)?;
-        // [DESIGN] Of a temporary table, only while no session's instance
-        // holds a row (RULES.md D49).
+        // [DESIGN] Of a temporary table, no other transaction using an
+        // instance of it meanwhile (RULES.md D49).
         if temporary.is_some() {
-            st.temporaries.alter(&qn, tx.id)?;
+            let column = matches!(action, AlterAction::AddColumn(_) | AlterAction::DropColumn { .. });
+            st.temporaries.alter(&qn, tx.id, column)?;
         }
         let mut next = State::clone(st);
         let zone = self.now.get().zone;
         let (_, made, reshape) = next.alter_table((&qn, &schema, zone), action, (None, Some(tx)))?;
         let next = Arc::new(next);
         let checked = match (reshape, action) {
-            (Some(reshape), _) => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects(&next))),
+            // [DESIGN] Of a temporary table, each session's instance's rows,
+            // not the definition's (`db/temporary/reshape.rs`).
+            (Some(reshape), _) => match temporary {
+                Some(_) => self.reshape_instances((st, &next), tx, (&qn, action, reshape)),
+                None => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects(&next))),
+            },
             // [§11.12 GR1] a default changes no row, nor does an option
             // changed in place.
             (None, AlterAction::AlterColumn { .. } | AlterAction::Storage(_)) => Ok(()),
-            (None, _) => validate_rows(&next, tx, &qn, self.effects(&next)),
+            (None, _) => {
+                if temporary.is_some() {
+                    self.add_empty_entries((&qn, st.generation_of(&qn)), &added_indexes(st, &next, &qn));
+                }
+                validate_rows(&next, tx, &qn, self.effects(&next))
+            }
         };
         if let Err(e) = checked {
             made.discard();
@@ -305,6 +321,12 @@ impl Database {
     }
 }
 
+/// The indexes of `table` in `next` that `st` does not give it.
+fn added_indexes(st: &State, next: &State, table: &QualifiedName) -> Vec<crate::catalog::IndexDesc> {
+    let had = st.catalog.indexes(table);
+    next.catalog.indexes(table).into_iter().filter(|ix| !had.iter().any(|h| h.name == ix.name)).cloned().collect()
+}
+
 /// Copies the rows of `table` that transaction `tx` sees in `st` into its
 /// new generation in `next`, each reshaped as the action says, by `tx`'s
 /// own writes.
@@ -313,7 +335,7 @@ impl Database {
 ///
 /// SQLCODE -201 if a column added NOT NULL would be null in a row
 /// [ISO/IEC 9075:1992 §11.11 GR2]; the reads' and writes'.
-fn copy_rows(
+pub(super) fn copy_rows(
     st: &Arc<State>,
     next: &Arc<State>,
     tx: &Txn,
@@ -333,6 +355,7 @@ fn copy_rows(
         | AlterAction::Storage(_) => None,
     };
     let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;
+    let mut filled = false;
     for read in Arc::clone(st.storage_of(table)?).scan(tx.id, &columns) {
         let (_, row) = read?;
         let mut new = reshape.row(row);
@@ -346,8 +369,13 @@ fn copy_rows(
             if let Some(slot) = new.last_mut() {
                 *slot = value.clone();
             }
+            filled = true;
         }
         effects.inserted(table, next.insert_row(tx, table, &new)?)?;
+    }
+    // [§11.5 GR1b v] a default padded, taken by a row.
+    if filled && added.as_ref().is_some_and(|c| c.padded_default().is_some()) {
+        tx.stop.warnings().raise(crate::error::SqlState::ZERO_BIT_PADDING);
     }
     // The table's constraints, those of a column added among them, hold of
     // the rows copied.

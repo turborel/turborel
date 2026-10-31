@@ -249,7 +249,7 @@ fn bind_set_clause(binder: &Binder<'_>, sc: &SetClause, rules: &SetRules, done: 
                 Source::Base(vb) => vb.base.columns.get(position),
                 Source::Table | Source::Derived(_) | Source::Common | Source::System(_) => Some(col),
             };
-            Some(Expr::Const(base.map_or(Value::Null, |c| c.default_value(binder.user, binder.now))))
+            Some(base.map_or(Expr::Const(Value::Null), |c| super::taken_default(c, c.default_value(binder.user, binder.now))))
         }
         UpdateSource::Value(v) => {
             // [ISO/IEC 9075:1992 §17.6 GR5w] a `?` takes its object column's type.

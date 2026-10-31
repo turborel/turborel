@@ -177,6 +177,50 @@ fn bit_string_defaults_11_5() {
     a.commit().unwrap();
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.5 GR1b v, GR2] a bit
+/// string default shorter than its fixed-length column is extended with
+/// 0-valued bits, and a statement that takes it, for a row, raises the
+/// warning 01008, implicit zero-bit padding: an INSERT whose row it fills,
+/// by an omitted column, DEFAULT or DEFAULT VALUES; an UPDATE setting
+/// DEFAULT; a column added of rows; a domain's default; a referential
+/// action SET DEFAULT [§11.8 GR5a iii]. One that takes it for no row, a
+/// default of the column's length, or one of a varying length raises none.
+#[test]
+fn a_default_taken_padded_warns_11_5() {
+    use turborel::db::Completion;
+    use turborel::error::SqlState;
+    let padded = Ok(Completion::Warning(SqlState::ZERO_BIT_PADDING));
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE DOMAIN D BIT(4) DEFAULT B'11'
+           CREATE TABLE T (F BIT(4) DEFAULT B'1', V BIT VARYING(4) DEFAULT X'A', W BIT(4) DEFAULT B'1010', N INTEGER)
+           CREATE TABLE U (E D, N INTEGER)
+           CREATE TABLE P (K BIT(4) PRIMARY KEY)
+           CREATE TABLE C (K BIT(4) DEFAULT B'0' REFERENCES P ON DELETE SET DEFAULT)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    assert_eq!(exec(&a, "INSERT INTO T (N) VALUES (1)"), padded, "F omitted");
+    assert_eq!(exec(&a, "INSERT INTO T (F, N) VALUES (B'1111', 2)"), Ok(Completion::Success), "V and W omitted");
+    assert_eq!(exec(&a, "INSERT INTO T VALUES (DEFAULT, B'1', B'0000', 3)"), padded, "DEFAULT");
+    assert_eq!(exec(&a, "INSERT INTO T DEFAULT VALUES"), padded);
+    assert_eq!(exec(&a, "INSERT INTO T (N) SELECT N FROM T WHERE N > 9"), Ok(Completion::NoData), "no row");
+    assert_eq!(exec(&a, "UPDATE T SET F = DEFAULT WHERE N = 2"), padded);
+    assert_eq!(exec(&a, "UPDATE T SET V = DEFAULT, W = DEFAULT"), Ok(Completion::Success));
+    assert_eq!(squeezed(&a, "SELECT F, V, W FROM T WHERE N = 2"), ["1000,1010,1010"]);
+    assert_eq!(exec(&a, "ALTER TABLE T ADD COLUMN G BIT(3) DEFAULT B'1'"), padded, "of its rows");
+    assert_eq!(exec(&a, "ALTER TABLE U ADD COLUMN G BIT(3) DEFAULT B'1'"), Ok(Completion::Success), "of no row");
+    assert_eq!(exec(&a, "INSERT INTO U (N) VALUES (1)"), padded, "the domain's");
+    assert_eq!(squeezed(&a, "SELECT E, G FROM U"), ["1100,100"]);
+    a.run("INSERT INTO P VALUES (B'0000'), (B'1111'), (B'0101')").unwrap();
+    a.run("INSERT INTO C VALUES (B'1111')").unwrap();
+    assert_eq!(exec(&a, "DELETE FROM P WHERE K = B'0101'"), Ok(Completion::Success), "no row referred to it");
+    assert_eq!(exec(&a, "DELETE FROM P WHERE K = B'1111'"), padded, "SET DEFAULT");
+    assert_eq!(squeezed(&a, "SELECT K FROM C"), ["0000"]);
+    a.rollback().unwrap();
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §8.2 GR4, §11.7] UNIQUE holds
 /// equal bit strings the same, a string and a longer one it begins apart;
 /// an index finds bit strings by their key, in order.

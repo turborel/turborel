@@ -48,6 +48,13 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption, zone: i16) -
         }
         DefaultOption::Literal(l) => l,
     };
+    // [GR1b v] a bit string shorter than its fixed length, padded as it is
+    // taken, with the warning.
+    if let (Literal::Bit(b), DataType::Bit { length }) = (literal, subject)
+        && b.len() < length
+    {
+        return Ok(ColumnDefault::Padded(Value::Bits(b.clone())));
+    }
     // [GR1b] its value, a fixed-length string padded.
     Ok(ColumnDefault::Value(assign(literal_value(literal, subject, zone)?, &subject, "ISO/IEC 9075:1992 §11.5 GR1b")?))
 }
@@ -82,7 +89,8 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
             }
         }
         // [SR3a ii] a bit string no longer than the column; [GR1b iv, v]
-        // of a fixed length, extended with 0 bits, the warning not raised.
+        // of a fixed length, extended with 0 bits as it is taken
+        // (`ColumnDefault::Padded`).
         Literal::Bit(b) => {
             let (DataType::Bit { length } | DataType::BitVarying { length }) = subject else { return Err(not_of()) };
             if b.len() > length {

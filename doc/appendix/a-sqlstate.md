@@ -24,7 +24,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 01005 | Warning: insufficient item descriptor areas: DESCRIBE of more than an SQL descriptor area's occurrences |
 | 01006 | Warning: privilege not revoked |
 | 01007 | Warning: privilege not granted |
-| 01008 | Warning: implicit zero-bit padding: a bit string padded to fit a parameter, or by CAST |
+| 01008 | Warning: implicit zero-bit padding: a bit string padded to fit a parameter, by CAST, or as a default shorter than its BIT column |
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
 | 02000 | No data |

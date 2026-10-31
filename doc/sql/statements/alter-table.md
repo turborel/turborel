@@ -98,8 +98,12 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCK_WAIT =
 7. SET and USING: the engine is registered, and takes each option, of a
    value it accepts; an option of columns names the table's. A temporary table names no engine or options,
    and is not resealed.
-8. A temporary table is altered only while no session's instance of it
-   holds a row, the session's own included.
+8. A temporary table is altered only while no other transaction has a
+   session's rows of it open. ADD and DROP COLUMN change each session's
+   rows, its own and another's, the column added taking its default in
+   each; while another session holds rows, no constraint of the table
+   reads another table. Any other action is taken only while no session
+   holds a row of the table.
 9. No cursor of the transaction reads the table.
 10. The transaction is not READ ONLY.
 
@@ -120,7 +124,7 @@ says.
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
 | 25000 | -917 | The transaction is READ ONLY |
 | 24000 | -501 | A cursor of the transaction reads the table |
-| TB911 | -911 | A temporary table's instance holds a row; another transaction holds a lock on the table |
+| TB911 | -911 | Another transaction has a session's rows of a temporary table open; a session holds a row of one, for an action other than ADD or DROP COLUMN, or one whose constraints read another table; another transaction holds a lock on the table |
 
 ## EXAMPLES
 

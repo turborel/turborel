@@ -108,8 +108,8 @@ fn which_tables_a_temporary_table_refers_to_11_8() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §10.3 SR2, §11.3 SR3, §21.3.8]
 /// privileges on a temporary table are granted as ALL PRIVILEGES alone; ON
 /// COMMIT is of a temporary table alone; [DESIGN] one names no engine or
-/// options, by CREATE TABLE or ALTER TABLE, nor is given an index; the
-/// Information Schema gives each table's kind; one is dropped as any is.
+/// options, by CREATE TABLE or ALTER TABLE, nor an index of a method not
+/// built in; the Information Schema gives each table's kind; one is dropped as any is.
 #[test]
 fn what_a_temporary_table_refuses_11_3() {
     let db = temporary();
@@ -121,7 +121,7 @@ fn what_a_temporary_table_refuses_11_3() {
     assert_eq!(exec(&s, "ALTER TABLE L SET (OUT_OF_LINE = 1)").err(), Some(Code::SyntaxRule), "SET");
     assert_eq!(exec(&s, "ALTER TABLE L USING rowstore").err(), Some(Code::SyntaxRule), "USING");
     s.commit().unwrap();
-    assert_eq!(db.create_index("L_K", "A.L", &["K"], "btree").map_err(|e| e.code), Err(Code::SyntaxRule));
+    assert_eq!(db.create_index("L_K", "A.L", &["K"], "nope").map_err(|e| e.code), Err(Code::SyntaxRule));
     let kinds = "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'A' ORDER BY TABLE_NAME";
     let kinds: Vec<String> =
         crate::common::rows(&s, kinds).unwrap().iter().map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
@@ -269,36 +269,6 @@ fn names_in_a_declaration_5_4() {
     a.run("INSERT INTO L VALUES (9)").unwrap();
     assert_eq!(exec(&a, "INSERT INTO MODULE.D VALUES (9)").err(), Some(Code::Constraint), "the CAST's CHECK");
     a.commit().unwrap();
-}
-
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.10, §4.9]; [DESIGN] RULES.md
-/// D49: a temporary table is altered only while no session's instance of
-/// it holds a row, its own's included (SQLSTATE TB911); while the
-/// transaction altering it is open, no other writes an instance of it;
-/// once it commits, each session's instance is of the new definition.
-#[test]
-fn a_temporary_table_is_altered_while_unused_11_10() {
-    let db = temporary();
-    let (a, b) = (db.session("A"), db.session("A"));
-    a.run("INSERT INTO L VALUES (1)").unwrap();
-    a.commit().unwrap();
-    assert_eq!(exec(&b, "ALTER TABLE L ADD COLUMN M INTEGER").err(), Some(Code::Conflict), "A's row, kept by its commit");
-    b.rollback().unwrap();
-    a.run("DELETE FROM L").unwrap();
-    a.commit().unwrap();
-    b.run("ALTER TABLE L ADD COLUMN M INTEGER DEFAULT 7").unwrap();
-    assert_eq!(exec(&a, "INSERT INTO L VALUES (2)").err(), Some(Code::Conflict), "being altered");
-    a.rollback().unwrap();
-    b.commit().unwrap();
-    a.run("INSERT INTO L (K) VALUES (2)").unwrap();
-    assert_eq!(crate::common::rows(&a, "SELECT K, M FROM L"), Ok(vec!["2,7".into()]), "of the new definition");
-    a.commit().unwrap();
-    b.run("INSERT INTO G VALUES (1)").unwrap();
-    assert_eq!(exec(&b, "ALTER TABLE G ADD COLUMN M INTEGER").err(), Some(Code::Conflict), "its own row");
-    b.commit().unwrap();
-    b.run("ALTER TABLE G ADD COLUMN M INTEGER").unwrap();
-    b.commit().unwrap();
-    assert_eq!(crate::common::rows(&a, "SELECT K, M FROM G"), Ok(vec![]));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §14.3 GR3, GR4, GR5a]: at

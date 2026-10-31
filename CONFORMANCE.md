@@ -303,8 +303,11 @@ restriction is lifted.
   session's rows, ON COMMIT DELETE or PRESERVE ROWS [§14.3 GR3], written
   in READ ONLY transactions too [§13.6–§13.10 GR1], with the rules of
   which tables each refers to [§11.8 SR4, SR5; §11.9 SR3, SR4] and their
-  privileges [§10.3 SR2], altered [§11.10] while no session's instance
-  holds a row (RULES.md D49); and **declared local temporary
+  privileges [§10.3 SR2]; altered [§11.10] while no other transaction
+  has a session's instance's rows open, a column added to or dropped from
+  each session's rows [§11.11 GR2, §11.15 GR4], any other change made
+  while no instance holds a row; indexed by CREATE INDEX, each session's
+  instance of its own rows (RULES.md D49); and **declared local temporary
   tables** [§13.11], DECLARE LOCAL TEMPORARY TABLE MODULE.T, a session's
   own, in no view of the Information Schema, never altered, dropped,
   granted on or named by a view [§10.3 SR1, §11.10 SR5, §11.18 SR3,
@@ -354,7 +357,9 @@ restriction is lifted.
   [§6.6 GR4-GR6]; CASE and set operations of BIT VARYING if any is
   [§9.3 SR3b]; CAST to and from character strings [§6.10 GR5d, GR6d, GR7,
   GR8], not numbers [SR4]; a default of a bit string literal [§11.5 SR3a
-  ii, GR1b iv, v]. Retrieved into a parameter, a bit string is cut to
+  ii, GR1b iv, v], a BIT one shorter than the column padded with 0 bits,
+  with the warning 01008, by each statement that takes it for a row.
+  Retrieved into a parameter, a bit string is cut to
   fit, with the warning 01004, or a BIT one padded with 0 bits, with
   01008 [§9.1 GR3f-GR3j]; CAST raises them as it cuts or pads [§6.10
   GR7, GR8].

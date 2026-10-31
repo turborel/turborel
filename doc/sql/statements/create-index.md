@@ -52,6 +52,14 @@ INDEX_OPTIONS their options.
 An index takes no UNIQUE: a UNIQUE or PRIMARY KEY constraint makes an
 index of its own, named for it, as `ANN.STAFF.UNIQUE1`.
 
+An index on a temporary table is one of each session's rows
+([Temporary Tables](../../user/09-temporary-tables.md)): each session
+makes its entries, in memory, of its own rows, as its next statement
+begins. A session whose transaction had its rows of the table open then
+uses the index only once that transaction ends; until then, a statement
+that would read or write through it is refused (SQLSTATE TB911), and is
+run again after COMMIT or ROLLBACK.
+
 ## RULES
 
 1. The session has no transaction open: COMMIT or ROLLBACK first.
@@ -59,7 +67,8 @@ index of its own, named for it, as `ANN.STAFF.UNIQUE1`.
    schema.
 3. Each column is the table's.
 4. No index has the name.
-5. The method is registered; its name is matched in any case.
+5. The method is registered; its name is matched in any case. On a
+   temporary table, it is `btree` or `hash`.
 6. Each option is declared, given once, of a value it accepts.
 
 ## PRIVILEGES

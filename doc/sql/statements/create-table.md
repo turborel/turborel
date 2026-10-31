@@ -71,7 +71,9 @@ keeps its rows and that engine's options.
 A column's default is its own, written DEFAULT, else its domain's, else
 the null value. A datetime literal written without a time zone takes
 the session's ([SET TIME ZONE](set-time-zone.md)); CURRENT_DATE and the
-others are taken as the statement that inserts the row runs.
+others are taken as the statement that inserts the row runs. A bit string
+shorter than its BIT column is padded with 0 bits as it is taken: the
+statement that takes it for a row completes with the warning 01008.
 
 **Constraints.** NOT NULL refuses the null value. UNIQUE refuses two
 rows of the same values in its columns, of rows none of whose values is

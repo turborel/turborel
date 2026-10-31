@@ -331,7 +331,7 @@ fn domain_constraints(seen: &Seen<'_>) -> Vec<Row> {
 fn default_text(default: Option<&ColumnDefault>) -> Value {
     match default {
         None => Value::Null,
-        Some(ColumnDefault::Value(v)) => long(&v.to_literal()),
+        Some(ColumnDefault::Value(v) | ColumnDefault::Padded(v)) => long(&v.to_literal()),
         Some(ColumnDefault::User) => text("CURRENT_USER"),
         Some(ColumnDefault::Datetime(moment, precision)) => text(&match moment {
             Moment::Date => "CURRENT_DATE".to_owned(),

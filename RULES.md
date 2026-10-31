@@ -637,13 +637,25 @@ storage empty. Its rows are each session's.
   [§13.11] are in a schema MODULE of its own definitions alone, owned by
   its authorization identifier (`db/declared.rs`), in no other session's
   and no view of the Information Schema.
-- ALTER TABLE of one is made only while no session's instance holds a
-  row, the altering session's included, else refused (SQLSTATE TB911);
-  and while its transaction is open, no other writes an instance. The
-  database's instances are noted for it (`temporary::Uses`). So no
-  session keeps rows its new definition does not describe, and no added
-  constraint goes unchecked of rows only another session sees.
-- Not implemented: CREATE INDEX on one.
+- ALTER TABLE of one is refused (SQLSTATE TB911) while another
+  transaction has a session's instance's rows open; while its
+  transaction is open, no other begins on an instance. The database's
+  instances are noted, by session (`temporary::Uses`). ADD and DROP
+  COLUMN give each instance that holds rows a successor of the new
+  generation, its rows copied there by the altering transaction, the
+  table's constraints checked of them at once; each session takes its
+  successor at the commit, and a statement or transaction that began
+  before reads it no more (`TableLock::check_generation`). A session's
+  rows are checked only against its own instances, so the copy is
+  refused while another session holds rows and a constraint of the table
+  reads another table. Any other action is made only while no instance
+  holds a row.
+- CREATE INDEX on one defines it, of the built-in methods alone. Each
+  instance makes its entries in memory as a statement of its session
+  first sees the index: empty if it has no rows, else of every version of
+  them if no transaction has them open; else the session uses the index
+  only once its transaction ends, a use meanwhile refused (SQLSTATE
+  TB911). An index dropped is forgotten by each instance alike.
 *Why:* the standard puts each session's rows in a schema of its own
 [§4.9]; giving the session's view of the definitions its own storage does
 so with no change to how a table is found, bound or checked.

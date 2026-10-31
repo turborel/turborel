@@ -114,16 +114,16 @@ design settles.
   and embedded SQL. What came after it, through SQL:2023 (triggers,
   SQL/PSM, and the rest), follows, written from the standards' own text,
   never from memory or other products.
-- **Temporary tables, further** (RULES.md D49): CREATE INDEX on one; ALTER
-  TABLE of one while sessions hold rows in it. An instance reserves
+- **Temporary tables, further** (RULES.md D49): an instance reserves
   in-memory pools of the database's budget (2 MiB for its rows, and for
   each index) when first written, and its pages are files in memory of
   MEMORY_BUDGET, so an instance larger than the budget leaves is refused
   (SQLCODE -918): it should spill to the session's temporary files past
-  WORK_MEMORY instead.
-- **Default warnings** [§11.5 GR1b v]: a BIT column's default shorter
-  than the column is kept padded with 0 bits, and a statement that takes
-  it raises no warning 01008, implicit zero-bit padding.
+  WORK_MEMORY instead. An ALTER TABLE adding or dropping a column is
+  refused while another session holds rows and a constraint of the table
+  reads another table, as the copy checks constraints against the
+  altering session's instances; one other than adding or dropping a
+  column, while any instance holds a row.
 - **Plug-in data types, further** (RULES.md D53): a domain is never of
   one, CREATE DOMAIN taking only a standard type's name; a function is
   one of its name, none chosen among several by its arguments' types.

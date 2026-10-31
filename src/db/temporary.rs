@@ -9,148 +9,93 @@
 //! own instance: its rows, its indexes and its lock, in place of those of
 //! the definition, which stay empty. An instance's rows are made in
 //! memory, of the database's budget, when a transaction of the session
-//! first reads or writes it, its indexes' entries when first written, and
-//! no change to it is logged: none is recovered [§4.9]. A table of ON COMMIT DELETE
-//! ROWS is emptied as each transaction ends [§14.3 GR3]: committed, it is
-//! as the DELETE GR3 runs leaves it; rolled back, as it was before the
-//! transaction, empty too. One of ON COMMIT PRESERVE ROWS is collected
-//! then, by its session (`Instance::collect`).
+//! first reads or writes it, its entries of each index when its session
+//! first sees the index (`Rows_::entries`), and no change to it is logged:
+//! none is recovered [§4.9]. A table of ON COMMIT DELETE ROWS is emptied
+//! as each transaction ends [§14.3 GR3]: committed, it is as the DELETE
+//! GR3 runs leaves it; rolled back, as it was before the transaction,
+//! empty too. One of ON COMMIT PRESERVE ROWS is collected then, by its
+//! session (`Instance::collect`). ALTER TABLE of one changes each
+//! session's instance (`db/temporary/uses.rs`, `db/temporary/reshape.rs`).
+
+mod reshape;
+mod storage;
+mod uses;
+
+pub(crate) use uses::Uses;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
-use super::{Session, State, api, rule};
+use super::{Session, State, rule};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc, TemporaryKind};
-use crate::engine::rows::{RowStore, TableOptions};
-use crate::error::{Code, Result, SqlError};
-use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
-use crate::log::Lsn;
+use crate::error::Result;
+use crate::index::Index;
 use crate::memory::MemoryBudget;
-use crate::spill::{Area, WorkAreas};
-use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::TableStorage;
 use crate::sync::lock_builtin;
-use crate::txn::{Concurrency, Persistence, ReadMode, TableLock, Timestamp, TxCapabilities, TxId, Undo, remove_entries};
-
-/// The capabilities of an instance: the row store's, but never recovered,
-/// so its changes are not logged.
-const SCRATCH: TxCapabilities =
-    TxCapabilities { undo: Undo::Native, concurrency: Concurrency::Engine { serializable: true }, persistence: Persistence::None };
+use crate::txn::{TableLock, Timestamp, TxId, remove_entries};
+use storage::Rows_;
 
 /// A session's instances of the temporary tables, each by its table and
-/// the generation of its definition; and its declared local temporary
-/// tables, each with its indexes (`db/declared.rs`).
+/// the generation of its definition.
+type Instances = Mutex<HashMap<(QualifiedName, u32), Instance>>;
+
+/// A session's instances of the temporary tables (`Uses` notes them); and
+/// its declared local temporary tables, each with its indexes
+/// (`db/declared.rs`).
 #[derive(Default)]
 pub(super) struct Temporaries {
-    made: Mutex<HashMap<(QualifiedName, u32), Instance>>,
+    made: Arc<Instances>,
     pub(super) declared: Mutex<Vec<(TableDesc, Vec<IndexDesc>)>>,
 }
 
-/// \[DESIGN\] The database's instances of each temporary table, of every
-/// session, and the transaction altering it, if one is (RULES.md D49): an
-/// ALTER TABLE of one is made only while no instance holds a row, and no
-/// other transaction writes one until it ends, so none has rows the new
-/// definition does not describe.
-#[derive(Default)]
-pub(crate) struct Uses(Mutex<HashMap<QualifiedName, Use>>);
-
-/// A temporary table's instances, and its altering transaction.
-#[derive(Default)]
-struct Use {
-    instances: Vec<Weak<Rows_>>,
-    altering: Option<TxId>,
-}
-
-impl Uses {
-    /// Notes `rows`, an instance of temporary table `name`.
-    fn register(&self, name: &QualifiedName, rows: &Arc<Rows_>) {
-        let mut tables = lock_builtin(&self.0);
-        let used = tables.entry(name.clone()).or_default();
-        used.instances.retain(|w| w.strong_count() > 0);
-        used.instances.push(Arc::downgrade(rows));
-    }
-
-    /// That transaction `tx` may write an instance of `name`: no other
-    /// transaction is altering it.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -911 if one is.
-    fn may_write(&self, name: &QualifiedName, tx: TxId) -> Result<()> {
-        let altering = lock_builtin(&self.0).get(name).and_then(|u| u.altering);
-        if altering.is_some_and(|other| other != tx) {
-            let msg =
-                format!("[DESIGN] temporary table {name} is being altered: its rows are written once that transaction ends (RULES.md D49)");
-            return Err(SqlError::new(Code::Conflict, msg));
-        }
-        Ok(())
-    }
-
-    /// [ISO/IEC 9075:1992 §11.10] Transaction `tx` alters temporary table
-    /// `name`, which no instance of any session holds a row of: no other
-    /// writes one until it ends.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -911 if an instance holds a row.
-    pub(super) fn alter(&self, name: &QualifiedName, tx: TxId) -> Result<()> {
-        let mut tables = lock_builtin(&self.0);
-        let used = tables.entry(name.clone()).or_default();
-        used.instances.retain(|w| w.strong_count() > 0);
-        if used.instances.iter().filter_map(Weak::upgrade).any(|rows| rows.row_count() > 0) {
-            let msg = format!(
-                "[DESIGN] temporary table {name} has rows in a session's instance: it is altered only while none does (RULES.md D49)"
-            );
-            return Err(SqlError::new(Code::Conflict, msg));
-        }
-        used.altering = Some(tx);
-        Ok(())
-    }
-
-    /// Transaction `tx` ended: what it altered may be written again.
-    fn ended(&self, tx: TxId) {
-        for used in lock_builtin(&self.0).values_mut() {
-            if used.altering == Some(tx) {
-                used.altering = None;
-            }
-        }
-    }
-}
-
-/// One instance: its rows, its lock, its indexes, and whether a commit
-/// empties it.
+/// One instance: its rows, with its entries of each index, and its lock.
+#[derive(Clone)]
 struct Instance {
     rows: Arc<Rows_>,
     lock: Arc<TableLock>,
-    indexes: HashMap<String, Arc<Entries>>,
-    delete_rows: bool,
 }
 
 impl Session {
     /// [ISO/IEC 9075:1992 §4.9] `published`, with the session's declared
     /// local temporary tables (`db/declared.rs`), each temporary table in it
     /// this session's own instance: one made for it the first time it is
-    /// seen, and forgotten once its definition is gone or replaced.
+    /// seen, with its entries of each index of the table (`Rows_::entries`);
+    /// forgotten once its definition is gone or of an earlier generation,
+    /// unless a transaction is altering it, which may roll back.
     pub(super) fn with_temporaries(&self, published: Arc<State>) -> Arc<State> {
         let st = self.with_declared(published);
         let temporary: Vec<TableDesc> = st.catalog.tables().into_iter().filter(|t| t.temporary.is_some()).cloned().collect();
-        let mut made = lock_builtin(&self.temporaries.made);
-        made.retain(|(name, generation), _| temporary.iter().any(|t| t.name == *name && t.generation == *generation));
         if temporary.is_empty() {
+            lock_builtin(&self.temporaries.made).clear();
             return st;
         }
+        st.temporaries.enlist(&self.temporaries.made);
+        let altering = st.temporaries.altering();
+        let instances: Vec<(TableDesc, Instance)> = {
+            let mut made = lock_builtin(&self.temporaries.made);
+            made.retain(|(name, generation), _| {
+                temporary.iter().any(|t| t.name == *name && (*generation >= t.generation || altering.contains(name)))
+            });
+            let mut instances = Vec::new();
+            for desc in temporary {
+                let key = (desc.name.clone(), desc.generation);
+                let instance = made.entry(key).or_insert_with(|| Instance::of(&desc, (&st.memory, &st.temporaries))).clone();
+                instances.push((desc, instance));
+            }
+            instances
+        };
         let mut copy = State::clone(&st);
-        for desc in temporary {
+        for (desc, instance) in instances {
             let indexes: Vec<IndexDesc> = st.catalog.indexes(&desc.name).into_iter().cloned().collect();
-            let key = (desc.name.clone(), desc.generation);
-            let instance = made.entry(key).or_insert_with(|| Instance::of(&desc, &indexes, (&st.memory, &st.temporaries)));
+            for (name, entries) in instance.rows.entries(&indexes) {
+                let entries: Arc<dyn Index> = entries;
+                copy.indexes.insert(name, entries);
+            }
             let rows: Arc<dyn TableStorage> = Arc::<Rows_>::clone(&instance.rows);
             copy.storage.insert(desc.name.clone(), rows);
-            copy.locks.insert(desc.name.clone(), Arc::clone(&instance.lock));
-            for (name, entries) in &instance.indexes {
-                let entries: Arc<dyn Index> = Arc::<Entries>::clone(entries);
-                copy.indexes.insert(name.clone(), entries);
-            }
+            copy.locks.insert(desc.name, instance.lock);
         }
         Arc::new(copy)
     }
@@ -158,18 +103,28 @@ impl Session {
     /// [ISO/IEC 9075:1992 §14.3 GR3] Its transaction, `tx` if it had one,
     /// ended: each instance of ON COMMIT DELETE ROWS emptied, each other
     /// collected (`Instance::collect`), and what it altered of `st`'s
-    /// temporary tables written again.
+    /// temporary tables used again.
     pub(super) fn temporaries_ended(&self, st: &State, tx: Option<TxId>) {
         if let Some(tx) = tx {
             st.temporaries.ended(tx);
         }
-        for instance in lock_builtin(&self.temporaries.made).values() {
-            if instance.delete_rows {
+        let instances: Vec<Instance> = lock_builtin(&self.temporaries.made).values().cloned().collect();
+        for instance in instances {
+            if instance.rows.desc.temporary.is_some_and(|t| t.delete_rows) {
                 instance.rows.emptied();
-                instance.indexes.values().for_each(|e| e.emptied());
             } else {
                 instance.collect();
             }
+        }
+    }
+
+    /// [ISO/IEC 9075:1992 §11.10] Its instance of temporary table `name`,
+    /// of generation `generation`, given entries, empty, of `indexes`: its
+    /// transaction's ALTER TABLE added them, while no instance holds a row.
+    pub(super) fn add_empty_entries(&self, (name, generation): (&QualifiedName, u32), indexes: &[IndexDesc]) {
+        let found = lock_builtin(&self.temporaries.made).get(&(name.clone(), generation)).cloned();
+        if let Some(instance) = found {
+            instance.rows.add_empty(indexes);
         }
     }
 }
@@ -229,9 +184,9 @@ impl Instance {
     /// horizon (RULES.md D49). A failure leaves them for its next end.
     fn collect(&self) {
         let Some(rows) = self.rows.made() else { return };
-        let indexes: Vec<(&dyn Index, &[usize])> = self
-            .indexes
-            .values()
+        let entries = self.rows.all_entries();
+        let indexes: Vec<(&dyn Index, &[usize])> = entries
+            .iter()
             .map(|entries| {
                 let index: &dyn Index = &**entries;
                 (index, entries.index.columns.as_slice())
@@ -240,203 +195,27 @@ impl Instance {
         let _ = rows.gc(Timestamp::MAX, &mut |id, row| remove_entries(&indexes, id, &row));
     }
 
-    /// An instance of `desc`, with `indexes`, its rows and entries made as
-    /// they are first used, of `budget`, noted in `uses`.
-    fn of(desc: &TableDesc, indexes: &[IndexDesc], (budget, uses): (&Arc<MemoryBudget>, &Arc<Uses>)) -> Instance {
-        let rows = Arc::new(Rows_ { desc: desc.clone(), budget: Arc::clone(budget), uses: Arc::clone(uses), made: Mutex::default() });
-        uses.register(&desc.name, &rows);
-        let entries = |ix: &IndexDesc| {
-            let made = Entries { desc: desc.clone(), index: ix.clone(), budget: Arc::clone(budget), made: Mutex::default() };
-            (ix.name.clone(), Arc::new(made))
-        };
-        let delete_rows = desc.temporary.is_some_and(|t| t.delete_rows);
-        Instance { rows, lock: Arc::default(), indexes: indexes.iter().map(entries).collect(), delete_rows }
-    }
-}
-
-/// \[DESIGN\] An instance's rows: none until a transaction first reads or
-/// writes them (`TableStorage::begin`), then a table of a row store in
-/// memory of its own.
-struct Rows_ {
-    desc: TableDesc,
-    budget: Arc<MemoryBudget>,
-    /// Which transaction may write it (`Uses::may_write`).
-    uses: Arc<Uses>,
-    made: Mutex<Option<Arc<dyn TableStorage>>>,
-}
-
-impl Rows_ {
-    fn made(&self) -> Option<Arc<dyn TableStorage>> {
-        lock_builtin(&self.made).clone()
+    /// An instance of `desc`, its rows and entries made as they are first
+    /// used, of `budget`, written as `uses` lets.
+    fn of(desc: &TableDesc, (budget, uses): (&Arc<MemoryBudget>, &Arc<Uses>)) -> Instance {
+        Instance { rows: Arc::new(Rows_::new(desc, budget, uses)), lock: Arc::default() }
     }
 
-    /// The rows, made if they are not, for transaction `tx` to write.
-    fn make(&self, tx: TxId) -> Result<Arc<dyn TableStorage>> {
-        self.uses.may_write(&self.desc.name, tx)?;
-        let mut made = lock_builtin(&self.made);
-        if let Some(rows) = made.as_ref() {
-            return Ok(Arc::clone(rows));
+    /// `st`, with this instance as table `name`'s: its rows and lock, and,
+    /// if `written`, its entries of each index `st` gives the table.
+    fn on(&self, st: &State, name: &QualifiedName, written: bool) -> Arc<State> {
+        let mut copy = State::clone(st);
+        if written {
+            let indexes: Vec<IndexDesc> = st.catalog.indexes(name).into_iter().cloned().collect();
+            for (index, entries) in self.rows.entries(&indexes) {
+                let entries: Arc<dyn Index> = entries;
+                copy.indexes.insert(index, entries);
+            }
         }
-        let engine = RowStore::in_memory(TableOptions::default());
-        engine.use_budget(Arc::clone(&self.budget));
-        let rows: Arc<dyn TableStorage> = Arc::from(engine.create_table(&self.desc)?);
-        *made = Some(Arc::clone(&rows));
-        Ok(rows)
-    }
-
-    /// Empty again.
-    fn emptied(&self) {
-        *lock_builtin(&self.made) = None;
-    }
-}
-
-/// The rows of an instance not made: none.
-fn no_rows() -> Rows {
-    Box::new(std::iter::empty())
-}
-
-impl TableStorage for Rows_ {
-    fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
-        self.make(tx)?.insert(tx, row)
-    }
-    fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.make(tx)?.update(tx, id, row)
-    }
-    fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.make(tx)?.delete(tx, id)
-    }
-    fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.make(tx)?.restore(tx, id, row)
-    }
-    fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
-        self.made().map_or(Ok(None), |rows| rows.get(tx, id))
-    }
-    fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows {
-        self.made().map_or_else(no_rows, |rows| rows.scan(tx, columns))
-    }
-    fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], condition: &Conjunction) -> Rows {
-        self.made().map_or_else(no_rows, |rows| rows.scan_where(tx, columns, condition))
-    }
-    fn row_count(&self) -> usize {
-        self.made().map_or(0, |rows| rows.row_count())
-    }
-    fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.read_by_condition(tx, condition))
-    }
-    fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
-        self.made().map_or(Ok(Newest { row: None, pending: None }), |rows| rows.newest(tx, id))
-    }
-    fn statistics(&self) -> Option<Arc<dyn Statistics>> {
-        self.made().and_then(|rows| rows.statistics())
-    }
-    fn analyze(&self) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.analyze())
-    }
-    fn capabilities(&self) -> TxCapabilities {
-        SCRATCH
-    }
-    fn begin(&self, tx: TxId, snapshot: Timestamp) -> Result<()> {
-        self.make(tx)?.begin(tx, snapshot)
-    }
-    fn read_mode(&self, tx: TxId, mode: ReadMode) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.read_mode(tx, mode))
-    }
-    fn savepoint(&self, tx: TxId) -> u64 {
-        self.made().map_or(0, |rows| rows.savepoint(tx))
-    }
-    fn rollback_to(&self, tx: TxId, savepoint: u64) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.rollback_to(tx, savepoint))
-    }
-    fn validate(&self, tx: TxId, at: Timestamp) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.validate(tx, at))
-    }
-    fn commit(&self, tx: TxId, at: Timestamp) {
-        if let Some(rows) = self.made() {
-            rows.commit(tx, at);
-        }
-    }
-    fn durable_through(&self) -> Lsn {
-        Lsn(u64::MAX)
-    }
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.gc(horizon, removed))
-    }
-    fn uncollected(&self) -> bool {
-        self.made().is_some_and(|rows| rows.uncollected())
-    }
-    fn rollback(&self, tx: TxId) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.rollback(tx))
-    }
-}
-
-/// \[DESIGN\] An instance's entries of one of its table's indexes: none
-/// until first written, then an index of its method, built in, in memory
-/// of its own.
-struct Entries {
-    desc: TableDesc,
-    index: IndexDesc,
-    budget: Arc<MemoryBudget>,
-    made: Mutex<Option<Arc<dyn Index>>>,
-}
-
-impl Entries {
-    fn made(&self) -> Option<Arc<dyn Index>> {
-        lock_builtin(&self.made).clone()
-    }
-
-    /// The entries, made if they are not: of a hash index if its index is
-    /// one, else of a B-link tree.
-    fn make(&self) -> Result<Arc<dyn Index>> {
-        let mut made = lock_builtin(&self.made);
-        if let Some(entries) = made.as_ref() {
-            return Ok(Arc::clone(entries));
-        }
-        let types =
-            self.desc.types(&self.index.columns).ok_or_else(|| api(format!("[DESIGN] index {} names no column", self.index.name)))?;
-        let on = (&self.desc, &self.index);
-        let entries: Arc<dyn Index> = if self.index.method == HASH_METHOD {
-            let method = HashMethod::in_memory();
-            method.use_budget(Arc::clone(&self.budget));
-            Arc::from(method.create_on(&types, on)?)
-        } else {
-            let method = BTreeMethod::in_memory();
-            method.use_budget(Arc::clone(&self.budget));
-            Arc::from(method.create_on(&types, on)?)
-        };
-        *made = Some(Arc::clone(&entries));
-        Ok(entries)
-    }
-
-    /// Empty again.
-    fn emptied(&self) {
-        *lock_builtin(&self.made) = None;
-    }
-}
-
-impl Index for Entries {
-    fn insert(&self, key: Key, row: RowId) -> Result<()> {
-        self.make()?.insert(key, row)
-    }
-    fn load(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, work: (&WorkAreas, Area)) -> Result<()> {
-        self.make()?.load(entries, work)
-    }
-    fn remove(&self, key: &Key, row: RowId) -> Result<()> {
-        self.made().map_or(Ok(()), |entries| entries.remove(key, row))
-    }
-    fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
-        self.made().map_or(Ok(Vec::new()), |entries| entries.rows(key))
-    }
-    fn estimate(&self, probe: &Probe) -> Option<usize> {
-        self.made().map_or(Some(0), |entries| entries.estimate(probe))
-    }
-    fn distinct_keys(&self) -> Option<f64> {
-        self.made().and_then(|entries| entries.distinct_keys())
-    }
-    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> index::Entries {
-        match self.made() {
-            Some(entries) => entries.search(probe, order),
-            None => Box::new(std::iter::empty()),
-        }
+        let rows: Arc<dyn TableStorage> = Arc::<Rows_>::clone(&self.rows);
+        copy.storage.insert(name.clone(), rows);
+        copy.locks.insert(name.clone(), Arc::clone(&self.lock));
+        Arc::new(copy)
     }
 }
 
