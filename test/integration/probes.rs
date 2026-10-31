@@ -336,21 +336,18 @@ fn few_rows_probe_indexes_of_every_kind_they_can() {
 /// RULES.md D35: of a RIGHT outer join, a few rows of the preserved right
 /// operand each probe an index of the left's table, its columns first
 /// still, the rest of the condition judged of the pairs found, a row that
-/// finds none kept after nulls; and a view of a table's columns, filtered
-/// or not, in another order, or of another such view, is probed as its
-/// table, as the right operand of an inner, LEFT or RIGHT join. A view of
-/// an expression is not. The rows are those of the same query of S, not
+/// finds none kept after nulls; and a derived table of a table's columns,
+/// filtered or not, in another order, or of another such derived table,
+/// is probed as its table, as the right operand of an inner, LEFT or
+/// RIGHT join, as a view of them is, which is read as its table. One of an
+/// expression is not. The rows are those of the same query of S, not
 /// indexed, read by batches and row by row.
 #[test]
-fn right_joins_and_views_probe_an_index() {
+fn right_joins_and_derived_tables_probe_an_index() {
     let db = with_few();
     let s = db.session("P");
-    for (name, table) in [("I", "I"), ("S", "S")] {
-        s.run(&format!("CREATE VIEW V{name} (K, N) AS SELECT K, N FROM {table}")).unwrap();
-        s.run(&format!("CREATE VIEW F{name} (N, K) AS SELECT N, K FROM {table} WHERE K < 100")).unwrap();
-        s.run(&format!("CREATE VIEW W{name} (K) AS SELECT K FROM F{name}")).unwrap();
-        s.run(&format!("CREATE VIEW X{name} (K, L) AS SELECT K, K + 1 FROM {table}")).unwrap();
-    }
+    s.run("CREATE VIEW VI (K, N) AS SELECT K, N FROM I").unwrap();
+    s.run("CREATE VIEW VS (K, N) AS SELECT K, N FROM S").unwrap();
     s.commit().unwrap();
     let plan = joined(&s, "SELECT E.K, I.N FROM I RIGHT JOIN E ON I.K = E.K", 5);
     assert!(plan.contains("LeftOuterIndexNestedLoop P.I using I_K") && !plan.contains("OuterJoin"), "{plan}");
@@ -359,17 +356,18 @@ fn right_joins_and_views_probe_an_index() {
     let kept = rows(&s, "SELECT E.K, I.N FROM I RIGHT JOIN E ON I.K = E.K ORDER BY 1").unwrap();
     assert!(kept.contains(&"1000,NULL".to_string()) && kept.contains(&"NULL,NULL".to_string()), "{kept:?}");
     for (query, least, probed) in [
-        ("SELECT E.K, VI.N FROM E, VI WHERE E.K = VI.K", 3, true),
-        ("SELECT E.K, FI.N FROM E LEFT JOIN FI ON E.K = FI.K", 5, true),
-        ("SELECT E.K, VI.N FROM VI RIGHT JOIN E ON VI.K = E.K AND VI.N <> 'n4'", 5, true),
-        ("SELECT E.K, WI.K FROM E JOIN WI ON WI.K = E.K", 3, true),
-        ("SELECT E.K, XI.L FROM E JOIN XI ON XI.K = E.K", 3, false),
+        ("SELECT E.K, V{t}.N FROM E, V{t} WHERE E.K = V{t}.K", 3, true),
+        ("SELECT E.K, D.N FROM E, (SELECT K, N FROM {t}) AS D WHERE E.K = D.K", 3, true),
+        ("SELECT E.K, D.N FROM E LEFT JOIN (SELECT N, K FROM {t} WHERE K < 100) AS D ON E.K = D.K", 5, true),
+        ("SELECT E.K, D.N FROM (SELECT K, N FROM {t}) AS D RIGHT JOIN E ON D.K = E.K AND D.N <> 'n4'", 5, true),
+        ("SELECT E.K, D.K FROM E JOIN (SELECT K FROM (SELECT N, K FROM {t}) AS X) AS D ON D.K = E.K", 3, true),
+        ("SELECT E.K, D.L FROM E JOIN (SELECT K, K + 1 AS L FROM {t}) AS D ON D.K = E.K", 3, false),
     ] {
-        let unindexed = query.replace("VI", "VS").replace("FI", "FS").replace("WI", "WS").replace("XI", "XS");
-        let (batched, by_rows) = both_ways(&s, query);
+        let (indexed, unindexed) = (query.replace("{t}", "I"), query.replace("{t}", "S"));
+        let (batched, by_rows) = both_ways(&s, &indexed);
         assert_eq!((&batched, &by_rows), (&sorted(&s, &unindexed), &sorted(&s, &unindexed)), "{query}");
         assert!(batched.len() >= least, "{query}: {batched:?}");
-        let plan = s.explain(query, &Params::new()).unwrap();
+        let plan = s.explain(&indexed, &Params::new()).unwrap();
         assert_eq!(plan.contains("IndexNestedLoop P.I using I_K"), probed, "{query}: {plan}");
     }
 }

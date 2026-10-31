@@ -4,7 +4,7 @@
 //! the equalities give, rather than the table being read whole into a hash
 //! table, when the left's rows are estimated few enough that their probes
 //! cost less than that read. An operand reading its table through a
-//! projection of its columns, as a view's does, is probed as the table,
+//! projection of its columns, as a derived table's does, is probed as the table,
 //! the join under a projection giving the operand's columns; and a RIGHT
 //! outer join as the LEFT one of its operands swapped, under a projection
 //! putting the left's columns first. Split from physical/join.rs (RULES.md
@@ -42,7 +42,7 @@ pub(super) struct Probing {
     pub(super) each: f64,
     pub(super) cost: f64,
     /// Of an operand that reads the table through a projection of its
-    /// columns, as a view's does, the table's column each of its columns
+    /// columns, as a derived table's does, the table's column each of its columns
     /// is, and the names of the table's columns.
     through: Option<(Vec<usize>, Vec<String>)>,
 }
@@ -291,7 +291,7 @@ fn probed_columns(
 }
 
 /// The cost the planner gave the read of a table `plan` is: of its scan,
-/// or of its index scans, filtered or not, and projected, as a view's
+/// or of its index scans, filtered or not, and projected, as a derived table's
 /// columns are, which costs nothing beside the read.
 fn access_cost(plan: &Plan) -> Option<f64> {
     match plan {
@@ -322,7 +322,7 @@ struct Read<'a> {
 
 /// How `plan` reads a table, if it is a table's scan, a filter of one that
 /// cannot raise an error, or a projection of the columns of one of these,
-/// as a view's is, or of such a projection. A projection of another
+/// as a derived table's is, or of such a projection. A projection of another
 /// expression is not: of an outer join, its value of a row given nulls
 /// would not be null; of an inner, it would be evaluated of fewer rows.
 fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {

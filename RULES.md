@@ -1609,8 +1609,9 @@ or chunks its conditions cannot match (`TableStorage::scan_share`, D31)
 is estimated to keep no more rows than the scan reads.
 An inner or LEFT outer join on equalities whose right operand reads a
 table, filtered by a condition that cannot raise an error or not, or
-through a projection of its columns, as a view of them does (or a view
-of such a view), is an index nested-loop join (`Plan::IndexJoin`,
+through a projection of its columns, as a derived table of them does
+(or a derived table of such a one; an updatable view is read as its
+table itself), is an index nested-loop join (`Plan::IndexJoin`,
 `physical/indexed.rs`) when
 an index of the table has first columns the equalities give values of,
 of the indexed column's kind (so the index places them among its keys),
