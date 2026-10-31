@@ -319,11 +319,11 @@ fn any_join_order_raises_one_of_the_errors() {
 
 /// Verifies: [DESIGN] RULES.md D35: a RIGHT outer join is planned as the
 /// LEFT one of its operands swapped, its left built, unless its left has
-/// more rows or a conjunct the join keeps can raise an error (one over the
-/// preserved operand's columns alone), though an operand can; the rows
-/// are the RIGHT join's [ISO/IEC 9075:1992 §7.5 GR5], each row of the right no row
-/// of the left matches, a null key's too, with nulls, by batches and row
-/// by row alike.
+/// more rows, though an operand can raise an error or the join keeps a
+/// conjunct that can (one over the preserved operand's columns alone, or
+/// one over each operand's); the rows are the RIGHT join's [ISO/IEC
+/// 9075:1992 §7.5 GR5], each row of the right no row of the left matches,
+/// a null key's too, with nulls, by batches and row by row alike.
 #[test]
 fn a_right_join_is_the_left_join_swapped() {
     let db = built_operands();
@@ -351,7 +351,13 @@ fn a_right_join_is_the_left_join_swapped() {
             "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND BIG.V / 2 > 0",
             "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K AND BIG.V / 2 > 0",
             45,
-            false,
+            true,
+        ),
+        (
+            "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND BIG.V / 2 > 0 AND SMALL.W / 2 > 5",
+            "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K AND BIG.V / 2 > 0 AND SMALL.W / 2 > 5",
+            40,
+            true,
         ),
         (
             "SELECT * FROM BIG RIGHT JOIN SMALL ON SMALL.K = BIG.K",
@@ -375,4 +381,29 @@ fn a_right_join_is_the_left_join_swapped() {
         assert_eq!((batched, rowwise), (found.clone(), found), "{sql}");
     }
     assert!(sorted(&s, "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K").contains(&"NULL,NULL,NULL,36".to_owned()));
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075:1992 §7.5 GR1c]; RULES.md D15, D35: a
+/// RIGHT outer join keeping an ON conjunct that can raise an error, of
+/// its preserved operand's columns alone, planned as the LEFT join of its
+/// operands swapped, raises its error though the row raising it matches
+/// nothing by its keys, by batches and row by row, and none when the
+/// other operand is empty, as the RIGHT join does.
+#[test]
+fn a_swapped_right_join_raises_as_the_right_join() {
+    let db = built_operands();
+    let s = db.session("J");
+    // BIG.V = 38 has a null key, so matches no row of SMALL.
+    let sql = "SELECT BIG.V FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND BIG.V / (BIG.V - 38) > -1";
+    let plan = s.physical_plan(sql, &Params::new()).unwrap();
+    assert!(plan.contains("LeftOuterJoin") && !plan.contains("RightOuterJoin"), "{plan}");
+    for batches in ["ON", "OFF"] {
+        exec(&s, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+        assert_eq!(rows(&s, sql).err(), Some(Code::Data), "{batches}");
+    }
+    s.run("DELETE FROM SMALL").unwrap();
+    for batches in ["ON", "OFF"] {
+        exec(&s, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+        assert_eq!(rows(&s, sql).map(|r| r.len()), Ok(40), "{batches}");
+    }
 }

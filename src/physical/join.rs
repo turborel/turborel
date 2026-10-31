@@ -28,10 +28,10 @@
 //! that can both raise an error, the other's may be raised, as evaluation
 //! order is implementation-dependent [ISO/IEC 9075:1992 §3.3.4.4]
 //! (D15); whether one is raised is the same, as each operand is read
-//! whole either way. A RIGHT join is swapped only if it keeps no
-//! conjunct that can raise (no operand's own, `Parted::keyed_alone`), so
-//! the LEFT join is probed by batches as a hash join is, its right moved
-//! to a table past the work area, not partitioned (D31).
+//! whole either way. A RIGHT join keeping a conjunct that can raise, an
+//! operand's own, is swapped too: the LEFT join judges each operand's own
+//! of its rows when the other has a row, as the RIGHT one does, so whether
+//! one is raised is the same.
 
 use super::indexed::{Equijoin, index_join, right_index_join};
 use super::{Built, PhysicalPlanner, Plan, of_left};
@@ -268,8 +268,8 @@ impl PhysicalPlanner<'_> {
             return Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered };
         }
         // A RIGHT join as the LEFT one of its operands swapped, which
-        // builds its left and probes it by batches.
-        if kind == OuterJoin::Right && parted.keyed_alone() && !self.larger(left, right) {
+        // builds its left, each operand's own condition the other's.
+        if kind == OuterJoin::Right && !parted.keys.is_empty() && !self.larger(left, right) {
             let flip = Flip { width, right_width: right.width() };
             let flipped = flip.names(&names);
             let detail = render_cond(&flip.cond(cond.clone()), &flipped);

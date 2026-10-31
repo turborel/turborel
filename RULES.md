@@ -1969,12 +1969,13 @@ picks by estimate, so a new method needs no change to the planner.
     operands swapped, its left built, unless the left gives the order
     asked for;
   - a RIGHT outer join on keys is planned as the LEFT one of its
-    operands swapped, probed by batches (D31), unless its left has more;
+    operands swapped, joined by batches (D31), unless its left has more;
   - either under a projection putting the columns back in order;
   - an operand that can raise an error may be built: each operand is
     read whole either way, so only which error comes first changes
-    (D15). A RIGHT join keeping an ON conjunct that can raise is not
-    swapped; it is probed by batches as it is (D31).
+    (D15). A RIGHT join keeping an ON conjunct that can raise (an
+    operand's own) is swapped too: the LEFT join judges each operand's
+    own on its rows once the other has a row, as the RIGHT one does.
 
 *Why:* the General Rules define results, not plans; any plan giving the
 same results and errors is the optimizer's to choose.
