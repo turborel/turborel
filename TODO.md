@@ -9,7 +9,7 @@ its history.
 Code never cites this file (R-DOC-5): an item moves, or goes, when it is
 done.
 
-Contents: [Next](#next) · [Project](#project) · [Server](#server) · [SQL](#sql) ·
+Contents: [Next](#next) · [Server](#server) · [SQL](#sql) ·
 [Configuration](#configuration) · [Query processing](#query-processing) ·
 [Storage and durability](#storage-and-durability)
 
@@ -20,15 +20,6 @@ Contents: [Next](#next) · [Project](#project) · [Server](#server) · [SQL](#sq
 Each item becomes a decision in RULES.md when done:
 
 - Nothing is chosen yet: the open work is in the areas below.
-
----
-
-## Project
-
-- **Documentation for alpha** (D23): the manual in `doc/` is written
-  whole; it is to be published on the project's website, and kept as the
-  code changes. The internals guide, drafted from the doc comments and
-  RULES.md, comes into the repository once the design settles.
 
 ---
 
