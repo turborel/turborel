@@ -51,8 +51,9 @@ turboreld: listening at 0.0.0.0:7422
 The server opens the database, recovering it if it stopped without
 closing ([Databases](03-databases.md)), and says where it listens once it
 takes connections, which the diagnostics tell too, as `listening`, before
-it says so. By then it hears SIGHUP too ([Signals](#signals)), so a
-supervisor may rotate the log as soon as it is told. By
+it says so. By then it hears SIGHUP, SIGTERM and Ctrl-C too
+([Signals](#signals)), so a supervisor may rotate the log, or stop the
+server cleanly, as soon as it is told. By
 default it listens at 127.0.0.1, port 7422: only clients of its own
 machine reach it, and each proves it is a user.
 

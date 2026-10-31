@@ -22,6 +22,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Poll;
 
 use turborel::db::{Database, OpenOptions};
 use turborel::disk::io::{FileSystem, OsFileSystem};
@@ -250,11 +251,12 @@ fn setting(text: &str) -> Result<(String, Value), String> {
 
 /// Serves `config` until `stop` is done, hurried once `hurry` is
 /// (`Server::serve_until`), then closes the database, if it is kept
-/// somewhere. `ready` is given where it listens, once it does and its
-/// diagnostics have told `listening`; it runs on the server's runtime, so
-/// it should not wait long. From the start, SIGHUP opens the log file again
-/// (Unix): so before `ready`, and a signal sent once it is cannot end the
-/// process.
+/// somewhere. `ready` is given where it listens, once it does, its
+/// diagnostics have told `listening` and `stop` has been polled once; it
+/// runs on the server's runtime, so it should not wait long. From the
+/// start, SIGHUP opens the log file again (Unix): so before `ready`, and a
+/// signal sent once it is cannot end the process; SIGTERM sent then,
+/// heard by `signalled` from its first poll, stops it cleanly.
 ///
 /// # Errors
 ///
@@ -420,9 +422,17 @@ async fn serve(
     // Ready as `stop` is first polled: once the server takes connections
     // and has told `listening`, so that line goes to the log a rotation
     // signalled at once moves away. SIGHUP is heard already (`within`).
+    // `stop` is polled once before: it hears what stops the server from
+    // its first poll (`signalled`), so a SIGTERM sent as soon as the
+    // program is ready stops it cleanly, neither ending the process nor
+    // lost.
     let stop = async move {
+        let mut stop = std::pin::pin!(stop);
+        let stopped = std::future::poll_fn(|cx| Poll::Ready(stop.as_mut().poll(cx).is_ready())).await;
         ready(&names);
-        stop.await;
+        if !stopped {
+            stop.await;
+        }
     };
     server.serve_until(endpoints, stop, hurry).await;
     Ok(())
@@ -466,7 +476,8 @@ fn hangups(_: &Runtime, reopener: Reopener, retaken: Retaken) -> Result<(), Stri
 
 /// Done when the program is told to stop, or, polled once it has been, to
 /// hurry: Ctrl-C, or SIGTERM on Unix. If it cannot be told, it is done at
-/// once, rather than serve with no way to stop cleanly.
+/// once, rather than serve with no way to stop cleanly. Each signal is
+/// heard from its first poll on.
 pub async fn signalled() {
     #[cfg(unix)]
     {

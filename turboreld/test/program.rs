@@ -274,6 +274,34 @@ fn the_usage_names_every_setting_of_the_server() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D42: the program is ready only once what
+/// stops it has been polled, as `turboreld::signalled` hears SIGTERM from
+/// its first poll: a signal sent as soon as it says where it listens
+/// stops it cleanly.
+/// Regression test (R-TEST-7): it was ready first, and a SIGTERM sent at
+/// once, before its handler was set, ended the process uncleanly, or, set
+/// but not yet listened for, was lost, and the program served on.
+#[test]
+fn the_program_hears_what_stops_it_before_it_is_ready() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let polled = Arc::new(AtomicBool::new(false));
+    let heard = Arc::clone(&polled);
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (tell, told) = mpsc::channel();
+    let served = config(&["--memory", "--set", "SERVER.PORT=0"].map(str::to_owned));
+    let thread = std::thread::spawn(move || {
+        let hearing = async move {
+            heard.store(true, Ordering::SeqCst);
+            drop(stopped.await);
+        };
+        turboreld::run(&served, |_| tell.send(polled.load(Ordering::SeqCst)).unwrap(), (hearing, std::future::pending()))
+    });
+    assert!(told.recv().unwrap(), "what stops it polled before it is ready");
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+}
+
 /// Verifies: [DESIGN] RULES.md D42: `turboreld` serves until SIGTERM, then
 /// stops cleanly: its client's open transaction rolled back, it exits
 /// successfully. A database kept nowhere has nothing to close.
