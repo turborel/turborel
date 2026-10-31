@@ -24,7 +24,8 @@ to it, or sets their columns null or to their defaults. A DELETE that
 deletes no row completes with no data.
 
 The positioned form, WHERE CURRENT OF a cursor, runs only in a program
-that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
+that embeds turborel; see [DECLARE CURSOR](declare-cursor.md), and, of a
+cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
 
 ## RULES
 

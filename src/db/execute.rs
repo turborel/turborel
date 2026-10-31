@@ -4,17 +4,21 @@
 
 use std::sync::Arc;
 
+use super::dynamic::{self, Name};
 use super::prepared::{Keeping, Plans};
 use super::write::{delete_searched, update_searched};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
     AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, ServedStatement,
-    SqlStatement, TableName, TableStorage, UserStatement,
+    SetClause, SqlStatement, TableName, TableStorage, UserStatement,
 };
-use crate::binder::{Context, WriteKind, bind_write, qualify};
+use crate::binder::{BoundWrite, Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
+
+/// A positioned DELETE or UPDATE run through a cursor (`Session::positioned`).
+type Positioned = fn(&Session, StatementContext<'_>, (&Name, usize), &BoundWrite) -> Result<Completion>;
 
 impl Session {
     /// Execute an `<SQL statement>` [X3.135-1986 §7.3]. `params` plays the part
@@ -38,14 +42,15 @@ impl Session {
         self.execute(sql, &mut Params::new())
     }
 
-    /// `execute`, of a statement `prepared` (`execute_prepared`), with the
-    /// plans it keeps: the diagnostics area then names EXECUTE, and the
+    /// `execute`, of a statement prepared, if `prepared` names EXECUTE or
+    /// EXECUTE IMMEDIATE, which runs it (`execute_prepared`), with the
+    /// plans it keeps: the diagnostics area then names that, and the
     /// statement as its DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c,
     /// GR1d].
-    pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<&Plans>) -> Result<Completion> {
+    pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(&'static str, &Plans)>) -> Result<Completion> {
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), sql, &self.auth());
-        let keeping = prepared.map(|plans| self.keeping(call.state(), plans));
+        let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
         let parsed = self.parsed(&call, sql, params, keeping.as_ref());
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
@@ -55,8 +60,14 @@ impl Session {
         if parsed.is_err() && diagnostics_statement(sql) {
             return parsed.map(|_| Completion::Success);
         }
-        let command = parsed.as_deref().map_or("", command_of);
-        self.emptied(if prepared.is_some() { ("EXECUTE", command) } else { (command, "") });
+        let (command, function) = parsed.as_deref().map_or(("", ""), |stmt| (command_of(stmt), prepared_command(stmt)));
+        // [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE runs the statement
+        // prepared as a statement of its own.
+        if let Ok(SqlStatement::Execute(e)) = parsed.as_deref() {
+            drop(call);
+            return self.execute_dynamic(e, command, params);
+        }
+        self.emptied(prepared.map_or((command, ""), |(outer, _)| (outer, function)));
         let outcome = parsed.and_then(|stmt| {
             let target = target_of(&stmt).map(|t| qualify(t, &self.default_schema()));
             self.execute_parsed(&call, &stmt, params, keeping.as_ref()).map_err(|e| match target {
@@ -178,7 +189,11 @@ impl Session {
             | SqlStatement::Select { .. }
             | SqlStatement::Drop { .. }
             | SqlStatement::AlterTable { .. }
-            | SqlStatement::Schema { .. } => self.ensure_transaction(st),
+            | SqlStatement::Schema { .. }
+            // [ISO/IEC 9075:1992 §4.22.6] transaction initiating; EXECUTE
+            // never reaches here (`execute_as`).
+            | SqlStatement::Dynamic(_)
+            | SqlStatement::Execute(_) => self.ensure_transaction(st),
         };
         call.runs(&tx);
         self.may_run(st, stmt)?;
@@ -187,6 +202,22 @@ impl Session {
         // too, the damage is the error reported, and it names the first one.
         let cx = StatementContext { st, tx: &tx };
         self.db.noted(self.run_statement(cx, stmt, params, keeping).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e)))
+    }
+
+    /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of
+    /// `table` giving `set`, bound as `kind`, run in `cx` by `run` through
+    /// the cursor its `<cursor name>` names: a dynamic cursor's, of a
+    /// statement prepared that names it [ISO/IEC 9075:1992 §17.6 GR2].
+    fn positioned(
+        &self,
+        cx: StatementContext<'_>,
+        (table, set): (&TableName, &[SetClause]),
+        (kind, cursor, run): (WriteKind, &(String, usize), Positioned),
+        params: &Params,
+    ) -> Result<Completion> {
+        let w = self.bound(cx.st, params, |b| bind_write(b, kind, table, set, None))?;
+        self.settle_cursors(cx.st, &w.table);
+        run(self, cx, (&self.positioned_key(&cursor.0), cursor.1), &w)
     }
 
     /// Runs a statement that runs in the transaction `tx`: not COMMIT,
@@ -215,18 +246,15 @@ impl Session {
                 delete_searched(cx, &w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::UpdatePositioned { table, set, cursor } => {
-                let w = self.bound(st, params, |b| bind_write(b, WriteKind::UpdatePositioned, table, set, None))?;
-                self.settle_cursors(st, &w.table);
-                self.update_positioned(cx, (&cursor.0, cursor.1), &w)
+                self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), params)
             }
             SqlStatement::DeletePositioned { table, cursor } => {
-                let w = self.bound(st, params, |b| bind_write(b, WriteKind::DeletePositioned, table, &[], None))?;
-                self.settle_cursors(st, &w.table);
-                self.delete_positioned(cx, (&cursor.0, cursor.1), &w)
+                self.positioned(cx, (table, &[]), (WriteKind::DeletePositioned, cursor, Self::delete_positioned), params)
             }
-            SqlStatement::Open(name) => self.open(st, tx, name, params),
-            SqlStatement::Fetch { cursor, orientation, targets } => self.fetch(cx, cursor, (orientation, targets), params),
-            SqlStatement::Close(name) => self.close(name),
+            SqlStatement::Open(name) => self.open(cx, &Name::plain(name), params),
+            SqlStatement::Fetch { cursor, orientation, targets } => self.fetch(cx, &Name::plain(cursor), (orientation, targets), params),
+            SqlStatement::Close(name) => self.close(&Name::plain(name)),
+            SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
             SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (table, action, text)),
@@ -247,6 +275,7 @@ impl Session {
             | SqlStatement::User(_)
             | SqlStatement::Served(_)
             | SqlStatement::GetDiagnostics(_)
+            | SqlStatement::Execute(_)
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
         }
     }
@@ -271,6 +300,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::Schema { statement: SchemaStatement::Revoke(RevokeStatement { table, domain: false, .. }), .. } => Some(table),
         SqlStatement::Schema { statement: SchemaStatement::Table(t), .. } | SqlStatement::DeclareTable(t) => Some(&t.name),
         SqlStatement::Schema { statement: SchemaStatement::View(v), .. } => Some(&v.name),
+        SqlStatement::Dynamic(d) => dynamic::changed_table(d).map(|(table, _)| table),
         SqlStatement::Schema { statement: SchemaStatement::Grant(_), .. }
         | SqlStatement::Schema { statement: SchemaStatement::Revoke(_), .. }
         | SqlStatement::Schema { statement: SchemaStatement::Domain(_), .. }
@@ -295,8 +325,24 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetSetting { .. }
         | SqlStatement::SetDatabase { .. }
         | SqlStatement::User(_)
+        | SqlStatement::Execute(_)
         | SqlStatement::SetConstraints { .. } => None,
     }
+}
+
+/// [ISO/IEC 9075:1992 §18.1 GR1d, Table 22] How DYNAMIC_FUNCTION names
+/// `stmt`, prepared: a positioned DELETE or UPDATE prepared is a
+/// `<preparable dynamic delete statement: positioned>` or `<preparable
+/// dynamic update statement: positioned>` [§17.6, §17.19, §17.20]; any
+/// other as COMMAND_FUNCTION names it.
+fn prepared_command(stmt: &SqlStatement) -> &'static str {
+    if let SqlStatement::DeletePositioned { .. } = stmt {
+        return "DYNAMIC DELETE CURSOR";
+    }
+    if let SqlStatement::UpdatePositioned { .. } = stmt {
+        return "DYNAMIC UPDATE CURSOR";
+    }
+    command_of(stmt)
 }
 
 /// Whether `sql` begins as a `<get diagnostics statement>` does.
@@ -329,6 +375,8 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Schema { statement: SchemaStatement::Revoke(_), .. } => "REVOKE",
         SqlStatement::Fetch { .. } => "FETCH",
         SqlStatement::GetDiagnostics(_) => "GET DIAGNOSTICS",
+        SqlStatement::Dynamic(d) => dynamic::command(d),
+        SqlStatement::Execute(e) => dynamic::execute_command(e),
         SqlStatement::DeclareTable(_) => "DECLARE LOCAL TEMPORARY TABLE",
         SqlStatement::Insert(_) => "INSERT",
         SqlStatement::Open(_) => "OPEN",

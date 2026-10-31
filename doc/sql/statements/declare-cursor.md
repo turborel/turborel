@@ -17,6 +17,10 @@ DECLARE CURSOR: declare a cursor *(in a program)*
     <query expression> [ <order by clause> ] [ <updatability clause> ]
 
 <updatability clause> ::= FOR { READ ONLY | UPDATE [ OF <column name list> ] }
+
+<dynamic declare cursor> ::=
+    DECLARE <cursor name> [ INSENSITIVE ] [ SCROLL ] CURSOR
+    FOR <statement name>
 ```
 
 The `<query expression>` and `<order by clause>` are those of
@@ -47,6 +51,16 @@ is opened: a name in it that is a parameter's is the parameter, as of
 any statement the program runs, so parameters are best named apart from
 columns.
 
+**A dynamic cursor.** Declared FOR a statement name, the cursor's
+specification is the query [PREPARE](prepare.md) prepares by that name,
+read as the cursor is opened: [OPEN](open.md) gives its dynamic
+parameters their values, USING parameters or an SQL descriptor area,
+and [FETCH](fetch.md) puts its rows into targets or into a descriptor
+area. The name may be prepared before the cursor is opened, and again,
+of a query, once it is closed. [ALLOCATE CURSOR](allocate-cursor.md)
+allocates a cursor of a query prepared by an extended name, as a
+statement.
+
 SCROLL lets FETCH move the cursor any way; without it, FETCH moves to
 the next row alone. INSENSITIVE is taken: a cursor sees the rows as its
 transaction's snapshot has them, whatever the cursor is.
@@ -68,7 +82,10 @@ read-only table; else updatable on every column.
 ```
 
 They change the row the cursor is on, of the table it reads. After a
-DELETE, the cursor is on no row until the next FETCH.
+DELETE, the cursor is on no row until the next FETCH. Prepared, either
+may name no table, `DELETE WHERE CURRENT OF U`: it is of the table the
+cursor reads, a cursor declared or allocated, which is found as the
+statement is prepared.
 
 ## RULES
 
@@ -128,9 +145,39 @@ DECLARE U CURSOR FOR SELECT ID FROM STAFF        -103 (2A000): cursor U is alrea
 
 STAFF is left of 1, 7300.00 and 3, 6900.00.
 
+A dynamic cursor, of the parameters of [PREPARE](prepare.md), FLOOR
+holding 7000, and of a descriptor area ROW and N, exact:
+
+```rust
+s.declare_cursor("DECLARE D SCROLL CURSOR FOR NAME_LIST")?;
+s.execute("OPEN D USING FLOOR", &mut p);                              // refused: not prepared
+p.set("TEXT", Value::Char("SELECT ID, NAME FROM STAFF WHERE SALARY < ? ORDER BY ID".into()));
+s.execute("PREPARE NAME_LIST FROM TEXT", &mut p)?;
+s.execute("OPEN D USING FLOOR", &mut p)?;
+s.execute("FETCH LAST FROM D INTO MY_ID, MY_NAME INDICATOR NAME_IND", &mut p)?;   // 3, NAME_IND = -1
+s.execute("ALLOCATE DESCRIPTOR 'ROW'", &mut p)?;
+s.execute("DESCRIBE NAME_LIST USING SQL DESCRIPTOR 'ROW'", &mut p)?;
+s.execute("SET DESCRIPTOR 'ROW' VALUE 1 TYPE = 2, PRECISION = 9", &mut p)?;
+s.execute("FETCH FIRST FROM D INTO SQL DESCRIPTOR 'ROW'", &mut p)?;
+s.execute("GET DESCRIPTOR 'ROW' VALUE 1 N = DATA", &mut p)?;          // 3
+s.execute("CLOSE D", &mut p)?;
+```
+
+A positioned UPDATE prepared, of no table, RAISE holding 100:
+
+```rust
+s.declare_cursor("DECLARE U CURSOR FOR SELECT ID, SALARY FROM STAFF FOR UPDATE OF SALARY")?;
+p.set("TEXT", Value::Char("UPDATE SET SALARY = SALARY + ? WHERE CURRENT OF U".into()));
+s.execute("PREPARE PAY_RISE FROM TEXT", &mut p)?;
+s.execute("OPEN U", &mut p)?;
+s.execute("FETCH U INTO MY_ID, N", &mut p)?;
+s.execute("EXECUTE PAY_RISE USING RAISE", &mut p)?;                   // Ada's SALARY 7300.00
+```
+
 ## STANDARD
 
-ISO/IEC 9075:1992 §13.1, §13.6 and §13.9; X3.135-1986 §8.3, §8.4 and
+ISO/IEC 9075:1992 §13.1, §13.6 and §13.9; of a dynamic cursor, §17.12,
+§17.19 and §17.20; X3.135-1986 §8.3, §8.4 and
 §8.11, whose cursors are neither SCROLL nor INSENSITIVE. Neither
 standard makes a cursor's statements `<directly executable statement>`s
 [ISO/IEC 9075:1992 §20.1].
@@ -138,4 +185,5 @@ standard makes a cursor's statements `<directly executable statement>`s
 ## SEE ALSO
 
 [OPEN](open.md), [FETCH](fetch.md), [CLOSE](close.md),
-[SELECT](select.md), [UPDATE](update.md), [DELETE](delete.md)
+[SELECT](select.md), [UPDATE](update.md), [DELETE](delete.md),
+[PREPARE](prepare.md), [ALLOCATE CURSOR](allocate-cursor.md)

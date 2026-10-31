@@ -10,7 +10,11 @@ CLOSE: close a cursor *(in a program)*
 
 ```
 <close statement> ::= CLOSE <cursor name>
+
+<dynamic close statement> ::= CLOSE <extended cursor name>
 ```
+
+The `<extended cursor name>` is [ALLOCATE CURSOR](allocate-cursor.md)'s.
 
 ## DESCRIPTION
 
@@ -35,6 +39,7 @@ None.
 |---|---|---|
 | 2A000 | -103 | No cursor of the name is declared |
 | 24000 | -501 | The cursor is not open |
+| 34000 | -921 | No cursor of the extended name is allocated |
 
 ## EXAMPLES
 
@@ -45,9 +50,16 @@ CLOSE C     Success
 CLOSE C     -501 (24000): cursor C is not open [X3.135-1986 §8.1 GR1]
 ```
 
+Of a parameter CUR holding NONE, the name of no cursor allocated:
+
+```
+CLOSE CUR   -921 (34000): no cursor 'NONE' is allocated [ISO/IEC 9075:1992 §17.16 SR2]
+```
+
 ## STANDARD
 
-ISO/IEC 9075:1992 §13.4; X3.135-1986 §8.1.
+ISO/IEC 9075:1992 §13.4, and of an extended cursor name §17.16;
+X3.135-1986 §8.1.
 
 ## SEE ALSO
 

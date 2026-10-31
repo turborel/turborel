@@ -76,12 +76,33 @@ impl SqlState {
     /// Dynamic SQL error: using clause does not match dynamic parameter
     /// specifications.
     pub const USING_CLAUSE_MISMATCH: SqlState = SqlState("07001");
+    /// Dynamic SQL error: using clause does not match target
+    /// specifications.
+    pub const USING_CLAUSE_TARGETS_MISMATCH: SqlState = SqlState("07002");
     /// Dynamic SQL error: cursor specification cannot be executed.
     pub const CURSOR_SPECIFICATION_NOT_EXECUTED: SqlState = SqlState("07003");
+    /// Dynamic SQL error: using clause required for dynamic parameters.
+    pub const USING_CLAUSE_REQUIRED_PARAMETERS: SqlState = SqlState("07004");
     /// Dynamic SQL error: prepared statement not a cursor specification.
     pub const NOT_A_CURSOR_SPECIFICATION: SqlState = SqlState("07005");
+    /// Dynamic SQL error: restricted data type attribute violation.
+    pub const RESTRICTED_DATA_TYPE: SqlState = SqlState("07006");
+    /// Dynamic SQL error: using clause required for result fields.
+    pub const USING_CLAUSE_REQUIRED_RESULTS: SqlState = SqlState("07007");
+    /// Dynamic SQL error: invalid descriptor count.
+    pub const INVALID_DESCRIPTOR_COUNT: SqlState = SqlState("07008");
+    /// Dynamic SQL error: invalid descriptor index.
+    pub const INVALID_DESCRIPTOR_INDEX: SqlState = SqlState("07009");
+    /// Warning: insufficient item descriptor areas.
+    pub const INSUFFICIENT_ITEM_DESCRIPTOR_AREAS: SqlState = SqlState("01005");
     /// Invalid SQL statement name.
     pub const INVALID_STATEMENT_NAME: SqlState = SqlState("26000");
+    /// Invalid SQL descriptor name.
+    pub const INVALID_DESCRIPTOR_NAME: SqlState = SqlState("33000");
+    /// Invalid cursor name.
+    pub const INVALID_CURSOR_NAME: SqlState = SqlState("34000");
+    /// Ambiguous cursor name.
+    pub const AMBIGUOUS_CURSOR_NAME: SqlState = SqlState("3C000");
     /// Syntax error or access rule violation in dynamic SQL statement.
     pub const DYNAMIC_SYNTAX_ERROR: SqlState = SqlState("37000");
     /// Data exception.

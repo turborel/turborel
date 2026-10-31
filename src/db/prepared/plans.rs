@@ -208,7 +208,7 @@ impl Session {
     /// [ISO/IEC 9075:1992 §17.14] `p`, a query, opened as an unnamed cursor
     /// in the call `call` with `params`: its plan as it keeps it, its
     /// values filled in.
-    pub(super) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
+    pub(in crate::db) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
         let st = call.state();
         let k = self.keeping(st, &p.plans);
         let timed = super::super::slow::Timed::of(st, p.sql.clone(), &self.auth());

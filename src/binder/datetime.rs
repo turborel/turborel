@@ -113,6 +113,16 @@ pub(super) fn takes_zone(from: DataType, to: DataType) -> bool {
 }
 
 /// [ISO/IEC 9075:1992 §6.10 SR4] Whether CAST takes a value of `from` to
+/// `to`: as `castable` says, either a datetime or interval type; else no
+/// number to or from a bit string, as `Binder::cast` refuses.
+pub(crate) fn cast_is_valid(from: &DataType, to: &DataType) -> bool {
+    if from.is_datetime() || to.is_datetime() || from.is_interval() || to.is_interval() {
+        return castable(from, to);
+    }
+    !((from.is_bit() && to.is_numeric()) || (from.is_numeric() && to.is_bit()))
+}
+
+/// [ISO/IEC 9075:1992 §6.10 SR4] Whether CAST takes a value of `from` to
 /// `to`, either a datetime type: from and to a character string, a
 /// datetime of the same fields, a date and a timestamp, a time and a
 /// timestamp; no number, no bit string.

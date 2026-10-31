@@ -11,6 +11,8 @@
 //! values and chooses the access paths by them. The statement is checked
 //! against the definitions as they are when an execution binds it: what it
 //! was prepared against may have changed [§17.6 GR10].
+//!
+//! The same preparation serves PREPARE in SQL text (`db/dynamic.rs`).
 
 mod plans;
 
@@ -18,11 +20,12 @@ use std::sync::Arc;
 
 pub(super) use plans::{Keeping, KeptPlan, Plans};
 
+use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::SqlStatement;
+use crate::ast::{SqlStatement, TableName};
 use crate::binder::{self, OutColumn, WriteKind, bind_write};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::lexer::{Tok, kw, lex};
+use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::{ParameterType, Params};
 use crate::value::Value;
 
@@ -46,6 +49,14 @@ pub struct Prepared {
     parameters: Vec<ParameterType>,
     columns: Vec<OutColumn>,
     plans: Arc<Plans>,
+    /// Whether it is a `<dynamic single row select statement>` [§17.6]: a
+    /// `<query specification>` alone.
+    single_row: bool,
+    /// Of a positioned DELETE or UPDATE, the cursor its `<cursor name>`
+    /// names [§17.6 GR2], and the table it changes if it names none
+    /// [§17.19 SR1, §17.20 SR1].
+    cursor: Option<Name>,
+    implicit: Option<TableName>,
 }
 
 impl Prepared {
@@ -79,7 +90,43 @@ impl Prepared {
     pub fn plans_made(&self) -> u64 {
         self.plans.made()
     }
+
+    /// Whether it is a `<dynamic single row select statement>`, which
+    /// EXECUTE runs [§17.10 GR2].
+    pub(super) fn is_single_row(&self) -> bool {
+        self.single_row
+    }
+
+    /// The cursor it changes a row through, if it does [§17.6 GR2].
+    pub(super) fn cursor(&self) -> Option<&Name> {
+        self.cursor.as_ref()
+    }
 }
+
+/// [ISO/IEC 9075:1992 §17.6 GR4] `e`, raised preparing a statement: a
+/// statement that breaks a Format, a Syntax Rule or an Access Rule is of
+/// class 37 here, not of direct SQL's 2A [§20.1 GR5].
+pub(super) fn in_dynamic(e: SqlError) -> SqlError {
+    if e.sqlstate() == SqlState::SYNTAX_ERROR_IN_DIRECT_STATEMENT { e.with_state(SqlState::DYNAMIC_SYNTAX_ERROR) } else { e }
+}
+
+/// [ISO/IEC 9075:1992 §17.6 GR4q] Whether `sql`, made of `tokens`, has a
+/// `<comment>` in a `<separator>` between them.
+fn has_comment(sql: &str, tokens: &[Token]) -> bool {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut from = 0;
+    for t in tokens {
+        if chars.get(from..t.start).is_some_and(|gap| gap.windows(2).any(|w| w == [COMMENT_START, COMMENT_START])) {
+            return true;
+        }
+        from = t.end;
+    }
+    false
+}
+
+/// [ISO/IEC 9075:1992 §5.2] The character a `<comment introducer>`, two of
+/// it, is made of.
+const COMMENT_START: char = '-';
 
 /// [§17.6 GR4a] A statement that is not a `<preparable statement>`
 /// (SQLSTATE 37000).
@@ -93,18 +140,17 @@ fn dynamic(state: SqlState, msg: String) -> SqlError {
     SqlError::new(Code::Dynamic, msg).with_state(state)
 }
 
-/// What `sql` is, by its first tokens, as `Session::direct` tells.
-fn kind_of(sql: &str) -> Result<Kind> {
-    let tokens = lex(sql)?;
+/// What `tokens` are, by the first, as `Session::direct` tells.
+fn kind_of(tokens: &[Token]) -> Kind {
     let mut words = tokens.iter().map(|t| &t.tok);
-    Ok(match (words.next(), words.next()) {
+    match (words.next(), words.next()) {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
         // name too, MODULE's: no other statement begins so.
         (Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE) | Tok::Delimiter("(") | Tok::Identifier(_) | Tok::Introducer(_)), _)
         | (Some(Tok::KeyWord(kw::MODULE)), Some(Tok::Delimiter("."))) => Kind::Query,
         (Some(Tok::KeyWord(kw::CREATE)), Some(Tok::KeyWord(kw::SCHEMA))) => Kind::Schema,
         _ => Kind::Statement,
-    })
+    }
 }
 
 impl Session {
@@ -117,13 +163,11 @@ impl Session {
     ///
     /// Those of the statement's Format, Syntax and Access Rules, of SQLSTATE
     /// 37000 \[GR4a\]: so too if it is not a `<preparable statement>`, or a
-    /// `?` takes no type where it stands \[GR4\].
+    /// `?` takes no type where it stands, or it has a `<comment>` \[GR4\];
+    /// of a positioned DELETE or UPDATE, SQLSTATE 34000 if no cursor of its
+    /// name is declared or allocated, 3C000 if more than one is \[GR2\].
     pub fn prepare(&self, sql: &str) -> Result<Prepared> {
-        // [GR4a] a statement that breaks a Format, a Syntax Rule or an Access
-        // Rule is of class 37 here, not of direct SQL's 2A [§20.1 GR5].
-        let made = self.prepared(sql).map_err(|e| {
-            if e.sqlstate() == SqlState::SYNTAX_ERROR_IN_DIRECT_STATEMENT { e.with_state(SqlState::DYNAMIC_SYNTAX_ERROR) } else { e }
-        });
+        let made = self.prepared(sql).map_err(in_dynamic);
         self.diagnosed(made, |_| SqlState::SUCCESSFUL_COMPLETION)
     }
 
@@ -132,12 +176,36 @@ impl Session {
         let call = self.enter()?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <prepare statement>.
         self.emptied(("PREPARE", ""));
-        let st = call.state();
-        let kind = kind_of(sql)?;
-        let mut parser = crate::parser::Parser::for_prepare(sql, self.extensions)?.in_catalog(&st.catalog_name());
+        self.prepared_with(call.state(), sql)
+    }
+
+    /// `sql` prepared as `prepare` prepares it, the diagnostics area left
+    /// as it is: of EXECUTE IMMEDIATE [ISO/IEC 9075:1992 §17.11 GR4].
+    pub(super) fn prepared_quietly(&self, sql: &str) -> Result<Prepared> {
+        let call = self.enter()?;
+        self.prepared_with(call.state(), sql).map_err(in_dynamic)
+    }
+
+    /// `sql` prepared against the definitions `st`.
+    pub(super) fn prepared_with(&self, st: &State, sql: &str) -> Result<Prepared> {
+        let tokens = lex(sql)?;
+        if has_comment(sql, &tokens) {
+            let msg = "[ISO/IEC 9075:1992 §17.6 GR4q] a statement prepared has no <comment>";
+            return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
+        }
+        let kind = kind_of(&tokens);
+        let (cursor, implicit) = self.positioned_reference(st, &tokens)?;
+        let mut parser =
+            crate::parser::Parser::for_prepare(sql, self.extensions)?.in_catalog(&st.catalog_name()).implying(implicit.clone());
+        let mut single_row = false;
         let (columns, params) = match kind {
             Kind::Query => {
                 let spec = parser.cursor_specification()?;
+                // [§17.6] a <dynamic single row select statement> ::= <query specification>.
+                single_row = spec.query.spec().is_some()
+                    && spec.order_by.is_empty()
+                    && spec.updatability.is_none()
+                    && matches!(tokens.first().map(|t| &t.tok), Some(Tok::KeyWord(kw::SELECT)));
                 let params = Params::preparing(parser.dynamic_parameters());
                 (self.compile(st, &spec, &params)?.columns, params)
             }
@@ -159,7 +227,7 @@ impl Session {
             )
             .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
         })?;
-        Ok(Prepared { sql: sql.to_owned(), kind, parameters, columns, plans: Arc::default() })
+        Ok(Prepared { sql: sql.to_owned(), kind, parameters, columns, plans: Arc::default(), single_row, cursor, implicit })
     }
 
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
@@ -196,6 +264,7 @@ impl Session {
                 return Err(not_preparable("a statement of a module's cursor"));
             }
             SqlStatement::GetDiagnostics(_) => return Err(not_preparable("a <get diagnostics statement>")),
+            SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
             SqlStatement::Commit
             | SqlStatement::Rollback
@@ -241,11 +310,24 @@ impl Session {
             let msg = "[ISO/IEC 9075:1992 §17.10 GR2] a <cursor specification> is opened, not executed".to_owned();
             return Err(dynamic(SqlState::CURSOR_SPECIFICATION_NOT_EXECUTED, msg));
         }
-        let mut params = Self::values_for(p, values)?;
+        Self::values_for(p, values)?;
+        self.run_prepared(p, values.to_vec(), "EXECUTE")
+    }
+
+    /// `p`, not a query, run with `values` for its parameters, as `via`,
+    /// EXECUTE or EXECUTE IMMEDIATE, runs it: as `execute` runs a
+    /// statement, its positioned DELETE or UPDATE through the cursor found
+    /// as it was prepared [§17.6 GR2]; or a schema definition as `direct`
+    /// runs it.
+    pub(super) fn run_prepared(&self, p: &Prepared, values: Vec<Value>, via: &'static str) -> Result<Completion> {
         if p.kind == Kind::Schema {
             return self.direct(&p.sql).map(|_| Completion::Success);
         }
-        self.execute_as(&p.sql, &mut params, Some(&p.plans))
+        let mut params = Params::executing(values).implying(p.implicit.clone());
+        self.inner.borrow_mut().dynamic.positioned.clone_from(&p.cursor);
+        let done = self.execute_as(&p.sql, &mut params, Some((via, &p.plans)));
+        self.inner.borrow_mut().dynamic.positioned = None;
+        done
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.14] Opens `p`, a query, as an

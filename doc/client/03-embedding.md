@@ -245,6 +245,37 @@ fn main() -> Result<(), turborel::error::SqlError> {
 }
 ```
 
+A statement may be prepared in SQL text too, by name, its text and its
+values the program's parameters, as `execute` runs any statement:
+[PREPARE](../sql/statements/prepare.md), [EXECUTE](../sql/statements/execute.md)
+and the other statements of dynamic SQL, SQL descriptor areas among
+them ([DESCRIBE](../sql/statements/describe.md)).
+
+```rust
+use turborel::db::Database;
+use turborel::params::Params;
+use turborel::value::{DataType, Decimal, Spelled, Value};
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE STAFF (ID INTEGER, NAME VARCHAR(30))")?;
+    let ann = db.session("ANN");
+    let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
+    let mut p = Params::new()
+        .declare("TEXT", DataType::Varying { length: 200 }, Value::Char("INSERT INTO STAFF VALUES (?, ?)".into()))
+        .declare("MY_ID", integer, Value::Exact(Decimal::new(1, 0)))
+        .declare("MY_NAME", DataType::Varying { length: 30 }, Value::Char("Ada".into()));
+    ann.execute("PREPARE ADD_ONE FROM TEXT", &mut p)?;
+    ann.execute("EXECUTE ADD_ONE USING MY_ID, MY_NAME", &mut p)?;
+    p.set("TEXT", Value::Char("SELECT NAME FROM STAFF WHERE ID = ?".into()));
+    ann.execute("PREPARE NAME_OF FROM TEXT", &mut p)?;
+    p.set("MY_NAME", Value::Null);
+    ann.execute("EXECUTE NAME_OF INTO MY_NAME USING MY_ID", &mut p)?;
+    assert_eq!(p.value("MY_NAME").to_string(), "Ada");
+    Ok(())
+}
+```
+
 ## Functions
 
 A program may add scalar functions, and set functions, of its own:

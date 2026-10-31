@@ -177,3 +177,21 @@ fn the_operators_guide_runs_as_printed() {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D57: the SQL Reference Manual's
+/// examples of dynamic SQL that direct SQL runs, of SQL descriptor areas
+/// and EXECUTE IMMEDIATE, run as printed, as ANN, one page after another.
+#[test]
+fn the_dynamic_sql_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    for page in [
+        "sql/statements/allocate-descriptor.md",
+        "sql/statements/set-descriptor.md",
+        "sql/statements/deallocate-descriptor.md",
+        "sql/statements/execute-immediate.md",
+    ] {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}

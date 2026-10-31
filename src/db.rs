@@ -74,6 +74,7 @@ mod definitions;
 mod direct;
 mod domains;
 mod drop;
+mod dynamic;
 mod execute;
 mod explain;
 mod export;
@@ -104,6 +105,7 @@ mod stream;
 mod temporary;
 mod time_zone;
 mod types;
+mod unnamed;
 mod usage;
 mod users;
 mod views;
@@ -169,6 +171,9 @@ struct DeclaredCursor {
     /// opening procedure's parameters, and always at OPEN.
     updatable: Option<bool>,
     open: Option<OpenCursor>,
+    /// Of a dynamic cursor, the statement prepared that is its
+    /// specification [ISO/IEC 9075:1992 §17.12, §17.13].
+    statement: Option<dynamic::Name>,
 }
 
 struct OpenCursor {
@@ -194,7 +199,7 @@ enum CursorRows {
 #[derive(Default)]
 struct SessionState {
     tx: Option<Arc<Txn>>,
-    cursors: HashMap<String, DeclaredCursor>,
+    cursors: HashMap<dynamic::Name, DeclaredCursor>,
     /// The rows of cursors opened with `open_cursor`, shared with the
     /// cursors: settled before the transaction changes a table they read,
     /// taken away when it ends.
@@ -203,6 +208,8 @@ struct SessionState {
     staged: Option<ddl::Staged>,
     /// Its diagnostics area (`db/area.rs`).
     area: area::Area,
+    /// Its prepared statements and SQL descriptor areas (`db/dynamic.rs`).
+    dynamic: dynamic::DynamicState,
 }
 
 /// \[DESIGN\] An application program bound to a `<module>`: an authorization
@@ -495,16 +502,20 @@ impl Session {
         let call = self.enter()?;
         let d = Parser::new(sql)?.in_catalog(&call.state().catalog_name()).declare_cursor()?;
         let mut inner = self.inner.borrow_mut();
-        if inner.cursors.contains_key(&d.name) {
+        let name = dynamic::Name::plain(&d.name);
+        if inner.cursors.contains_key(&name) {
             return Err(rule(format!("[X3.135-1986 §8.3 SR1] cursor {} is already declared", d.name)));
         }
+        // [ISO/IEC 9075:1992 §17.12] of a <statement name>: a dynamic cursor.
+        let statement = dynamic::declared_statement(&d.specification).map(|s| dynamic::Name::plain(&s));
         // Known now only if the text parses without the opening procedure's
         // parameters; otherwise it is parsed, and any error reported, at OPEN.
         let parsed = Parser::new(&d.specification).and_then(|p| p.of_definition().cursor_specification()).ok();
         let updatable = parsed.map(|c| cursor::declared_updatable(&c, (d.insensitive, d.scroll))).transpose()?;
-        let declared =
-            DeclaredCursor { specification: d.specification, insensitive: d.insensitive, scroll: d.scroll, updatable, open: None };
-        inner.cursors.insert(d.name, declared);
+        let (insensitive, scroll) = (d.insensitive, d.scroll);
+        inner
+            .cursors
+            .insert(name, DeclaredCursor { specification: d.specification, insensitive, scroll, updatable, open: None, statement });
         Ok(())
     }
 }

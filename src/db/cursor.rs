@@ -1,15 +1,16 @@
 //! A session's cursors: declaring their use, opening them [X3.135-1986 §8.8],
 //! FETCH [X3.135-1986 §8.6], CLOSE [X3.135-1986 §8.1], the cursor position used
-//! by positioned UPDATE and DELETE [X3.135-1986 §8.4, §8.11], single-row SELECT
-//! [X3.135-1986 §8.10] and the \[EXTENSION\] `open_cursor`. Split from db.rs
-//! (RULES.md R-SIZE-2).
+//! by positioned UPDATE and DELETE [X3.135-1986 §8.4, §8.11], and single-row
+//! SELECT [X3.135-1986 §8.10]; of a dynamic cursor too [ISO/IEC 9075:1992
+//! §17.12-§17.18] (`db/dynamic.rs`). Split from db.rs (RULES.md R-SIZE-2).
 
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
+use super::dynamic::Name;
 use super::position::{Move, Position};
 use super::{
-    Completion, Cursor, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api,
-    assign_targets, candidate, check_option, check_targets, cursor_error, plan, rule, set_columns,
+    Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api, assign_targets,
+    candidate, check_option, check_targets, cursor_error, plan, rule, set_columns,
 };
 use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification, Updatability, ValueSpecification};
 use crate::binder::{self, BoundWrite, OutColumn, bind_cursor, bind_select};
@@ -24,6 +25,9 @@ use crate::sync::lock_builtin;
 use crate::txn::Txn;
 use crate::value::datetime::show_in;
 use crate::value::{DataType, Value};
+
+/// The columns of a cursor and the row it is on, if it is on one.
+type Fetched = Option<(Vec<OutColumn>, Row)>;
 
 /// Rows a single-row SELECT reads: enough to tell one row from more than one
 /// [X3.135-1986 §8.10 GR2].
@@ -234,19 +238,19 @@ impl Session {
     /// The cursor's own state is used, as recorded at OPEN, rather than its
     /// text: the text may name parameters of the procedure that opened it,
     /// which this statement need not declare [X3.135-1986 §8.3 SR2, §8.8 GR3a].
-    pub(super) fn positioned_row(&self, cx: StatementContext<'_>, name: &str, w: &BoundWrite, clause: &str) -> Result<RowId> {
+    pub(super) fn positioned_row(&self, cx: StatementContext<'_>, name: &Name, w: &BoundWrite, clause: &str) -> Result<RowId> {
         let (named, table) = (&w.named, &w.table);
         let inner = self.inner.borrow();
         let c = inner.cursors.get(name).ok_or_else(|| rule(format!("[X3.135-1986 {clause} SR2] no cursor {name} is declared")))?;
         let read_only = || rule(format!("[X3.135-1986 {clause} SR3, §8.3 SR4] cursor {name} is read-only"));
-        let not_positioned = || cursor_error(name, format!("[X3.135-1986 {clause} GR1] cursor {name} is not positioned on a row"));
+        let not_positioned = || cursor_error(&name.name, format!("[X3.135-1986 {clause} GR1] cursor {name} is not positioned on a row"));
         match &c.open {
             Some(OpenCursor { rows: CursorRows::Table(_) | CursorRows::Kept(_), .. }) => Err(read_only()),
             Some(OpenCursor { rows: CursorRows::Updatable(u), .. }) => {
                 if *named != u.named {
                     return Err(rule(format!("[X3.135-1986 {clause} SR4] {named} is not the table of cursor {name} ({})", u.named)));
                 }
-                check_object_columns(u, w, name)?;
+                check_object_columns(u, w, &name.name)?;
                 let storage = cx.st.storage_of(table)?;
                 let live = match u.current() {
                     Some(id) => storage.get(cx.tx.id, id)?.map(|_| id),
@@ -293,7 +297,13 @@ impl Session {
 
     /// The rows of a read-only cursor's specification, after taking
     /// shared locks on the tables it reads [X3.135-1986 §8.8 GR3b].
-    fn open_rows(&self, st: &Arc<State>, tx: &Txn, spec: &CursorSpecification, params: &Params) -> Result<(Vec<OutColumn>, Stream)> {
+    pub(super) fn open_rows(
+        &self,
+        st: &Arc<State>,
+        tx: &Txn,
+        spec: &CursorSpecification,
+        params: &Params,
+    ) -> Result<(Vec<OutColumn>, Stream)> {
         let bound = self.bound(st, params, |cx| bind_cursor(cx, spec))?;
         Ok((bound.columns, Stream::planned(st, tx, bound.plan)?))
     }
@@ -305,7 +315,7 @@ impl Session {
         let mut rows = Vec::new();
         for (name, c) in &inner.cursors {
             if let Some(OpenCursor { rows: CursorRows::Updatable(u), .. }) = c.open.as_ref() {
-                rows.extend(u.changed.iter().map(|id| (name.clone(), u.table.clone(), *id)));
+                rows.extend(u.changed.iter().map(|id| (name.name.clone(), u.table.clone(), *id)));
             }
         }
         rows
@@ -313,7 +323,7 @@ impl Session {
 
     /// Notes row `id` changed through cursor `name` [ISO/IEC 9075:1992
     /// §11.8 GR8].
-    fn changed_through(&self, name: &str, id: RowId) {
+    fn changed_through(&self, name: &Name, id: RowId) {
         if let Some(DeclaredCursor { open: Some(OpenCursor { rows: CursorRows::Updatable(u), .. }), .. }) =
             self.inner.borrow_mut().cursors.get_mut(name)
         {
@@ -368,18 +378,35 @@ impl Session {
         }
     }
 
-    /// [X3.135-1986 §8.8; ISO/IEC 9075:1992 §13.2] OPEN
-    pub(super) fn open(&self, st: &Arc<State>, tx: &Txn, name: &str, params: &Params) -> Result<Completion> {
-        let (text, flags) = {
+    /// [X3.135-1986 §8.8; ISO/IEC 9075:1992 §13.2] OPEN; of a dynamic
+    /// cursor, OPEN with no `<using clause>` [§17.14].
+    pub(super) fn open(&self, cx: StatementContext<'_>, name: &Name, params: &Params) -> Result<Completion> {
+        let (text, flags, dynamic) = {
             let inner = self.inner.borrow();
             let c = inner.cursors.get(name).ok_or_else(|| rule(format!("[X3.135-1986 §8.8 SR1] no cursor {name} is declared")))?;
-            if c.open.is_some() {
-                return cursor_error(name, format!("[X3.135-1986 §8.8 GR1] cursor {name} is already open"));
-            }
-            (c.specification.clone(), (c.insensitive, c.scroll))
+            (c.specification.clone(), (c.insensitive, c.scroll), c.statement.is_some())
         };
+        if dynamic {
+            return self.open_dynamic(cx, name, None, params);
+        }
+        self.open_text(cx, name, (&text, flags), params)
+    }
+
+    /// OPEN of the cursor `name`, of the `<cursor specification>` `text`,
+    /// INSENSITIVE and SCROLL as `flags` say, with the parameters `params`.
+    pub(super) fn open_text(
+        &self,
+        cx: StatementContext<'_>,
+        name: &Name,
+        (text, flags): (&str, (bool, bool)),
+        params: &Params,
+    ) -> Result<Completion> {
+        let StatementContext { st, tx } = cx;
+        if self.inner.borrow().cursors.get(name).is_some_and(|c| c.open.is_some()) {
+            return cursor_error(&name.name, format!("[X3.135-1986 §8.8 GR1] cursor {name} is already open"));
+        }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
-        let spec = self.parse_cursor(st, &text, params)?;
+        let spec = self.parse_cursor(st, text, params)?;
         let wanted = wanted(&spec, flags)?;
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
@@ -411,18 +438,45 @@ impl Session {
     pub(super) fn fetch(
         &self,
         cx: StatementContext<'_>,
-        name: &str,
+        name: &Name,
         (orientation, targets): (&FetchOrientation, &[ParameterSpecification]),
         params: &mut Params,
     ) -> Result<Completion> {
-        let values = {
-            let mut inner = self.inner.borrow_mut();
-            let c = inner.cursors.get_mut(name).ok_or_else(|| rule(format!("[X3.135-1986 §8.6 SR1] no cursor {name} is declared")))?;
+        let ((), fetched) =
+            self.fetch_row(cx, (name, orientation), params, |columns, p| check_targets(columns, targets, p, "§8.6 SR2", "§8.6 SR3"))?;
+        match fetched {
+            // [X3.135-1986 §8.6 GR2] positioned after the last row; SQLCODE 100.
+            None => Ok(Completion::NoData),
+            Some((_, values)) => assign_targets(&values, targets, params, "§8.6 GR8", "§8.6 GR10"),
+        }
+    }
+
+    /// [X3.135-1986 §8.6; ISO/IEC 9075:1992 §13.3] The cursor `name` moved as
+    /// `orientation` says, once `check` has accepted its columns: what
+    /// `check` gave, and the columns and the row it is on, shown in the
+    /// session's time zone, if it is on one.
+    pub(super) fn fetch_row<T>(
+        &self,
+        cx: StatementContext<'_>,
+        (name, orientation): (&Name, &FetchOrientation),
+        params: &Params,
+        check: impl FnOnce(&[OutColumn], &Params) -> Result<T>,
+    ) -> Result<(T, Fetched)> {
+        let (to, columns) = {
+            let inner = self.inner.borrow();
+            let c = inner.cursors.get(name).ok_or_else(|| rule(format!("[X3.135-1986 §8.6 SR1] no cursor {name} is declared")))?;
             let to = movement(orientation, c.scroll, (&self.auth(), params))?;
-            let Some(open) = c.open.as_mut() else {
-                return cursor_error(name, format!("[X3.135-1986 §8.6 GR1] cursor {name} is not open"));
+            let Some(open) = c.open.as_ref() else {
+                return cursor_error(&name.name, format!("[X3.135-1986 §8.6 GR1] cursor {name} is not open"));
             };
-            check_targets(&open.columns, targets, params, "§8.6 SR2", "§8.6 SR3")?;
+            (to, open.columns.clone())
+        };
+        // Run with no borrow of the session held: it may read the session.
+        let checked = check(&columns, params)?;
+        let row = {
+            let mut inner = self.inner.borrow_mut();
+            let open = inner.cursors.get_mut(name).and_then(|c| c.open.as_mut());
+            let open = open.ok_or_else(|| api(format!("[DESIGN] cursor {name} closed as it was fetched from")))?;
             match &mut open.rows {
                 // [§13.3 SR3] Not SCROLL: NEXT.
                 CursorRows::Table(rows) => rows.next()?,
@@ -430,24 +484,32 @@ impl Session {
                 CursorRows::Updatable(u) => u.fetch(cx.tx.id, to)?,
             }
         };
-        match values {
-            // [X3.135-1986 §8.6 GR2] positioned after the last row; SQLCODE 100.
-            None => Ok(Completion::NoData),
-            Some(mut values) => {
-                show_in(&mut values, self.now.get().zone);
-                assign_targets(&values, targets, params, "§8.6 GR8", "§8.6 GR10")
-            }
-        }
+        let zone = self.now.get().zone;
+        Ok((
+            checked,
+            row.map(|mut values| {
+                show_in(&mut values, zone);
+                (columns, values)
+            }),
+        ))
     }
 
     /// [X3.135-1986 §8.1] CLOSE
-    pub(super) fn close(&self, name: &str) -> Result<Completion> {
+    pub(super) fn close(&self, name: &Name) -> Result<Completion> {
         let mut inner = self.inner.borrow_mut();
         let c = inner.cursors.get_mut(name).ok_or_else(|| rule(format!("[X3.135-1986 §8.1 SR1] no cursor {name} is declared")))?;
         if c.open.take().is_none() {
-            return cursor_error(name, format!("[X3.135-1986 §8.1 GR1] cursor {name} is not open"));
+            return cursor_error(&name.name, format!("[X3.135-1986 §8.1 GR1] cursor {name} is not open"));
         }
         Ok(Completion::Success)
+    }
+
+    /// The cursor a positioned statement's `<cursor name>` `name` names:
+    /// the one a prepared statement running found for it [ISO/IEC
+    /// 9075:1992 §17.6 GR2], an extended cursor's too, or the one of the
+    /// name.
+    pub(super) fn positioned_key(&self, name: &str) -> Name {
+        self.inner.borrow().dynamic.positioned.clone().filter(|k| k.name == name).unwrap_or_else(|| Name::plain(name))
     }
 
     /// [X3.135-1986 §8.10] SELECT ... INTO
@@ -477,85 +539,9 @@ impl Session {
         }
     }
 
-    /// \[DESIGN\] Read a `<cursor specification>` [X3.135-1986 §8.3] in one call: an
-    /// unnamed cursor's rows, as FETCH would return them but without assigning
-    /// them to parameters. It runs in the session's transaction, and is
-    /// closed when that transaction ends.
-    ///
-    /// # Errors
-    ///
-    /// Any error of the cursor specification or of reading its rows.
-    pub fn open_cursor(&self, sql: &str) -> Result<Cursor> {
-        // [ISO/IEC 9075:1992 §18.1 Table 22] a <direct select statement:
-        // multiple rows>.
-        self.open_with(("SELECT", ""), |call| self.open_in(call, sql, &Params::new()))
-    }
-
-    /// An unnamed cursor `open` opens in a call, as `open_cursor` opens
-    /// one: the diagnostics area naming it as `command` says.
-    pub(super) fn open_with(
-        &self,
-        command: (&'static str, &'static str),
-        open: impl FnOnce(&super::Call<'_>) -> Result<Cursor>,
-    ) -> Result<Cursor> {
-        let call = self.enter()?;
-        self.emptied(command);
-        let opened = open(&call);
-        // [ISO/IEC 9075:1992 §3.3.4.1] with a warning its rows raised as it
-        // opened (`Session::warning`).
-        let warned = Completion::Success.warned(self.raised());
-        self.diagnosed(opened, |_| warned.sqlstate())
-    }
-
-    /// The cursor of `sql`, with the parameters `params`, in the call
-    /// `call`.
-    fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
-        let timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth());
-        let spec = self.unnamed_specification(call.state(), sql, params)?;
-        self.unnamed(call, timed, |st, tx| self.open_rows(st, tx, &spec, params))
-    }
-
-    /// `sql`, the specification of an unnamed cursor, parsed with
-    /// `params`.
-    ///
-    /// # Errors
-    ///
-    /// It does not parse; it is FOR UPDATE: no positioned statement names
-    /// an unnamed cursor.
-    pub(super) fn unnamed_specification(&self, st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
-        let spec = self.parse_cursor(st, sql, params)?;
-        if let Some(Updatability::Update(_)) = spec.updatability {
-            return Err(rule(
-                "[DESIGN] an unnamed cursor is read-only: no positioned statement names it, so it is not FOR UPDATE".to_owned(),
-            ));
-        }
-        Ok(spec)
-    }
-
-    /// An unnamed cursor, opened in the call `call` and the session's
-    /// transaction over the rows `rows` gives, its work timed by `timed`.
-    pub(super) fn unnamed(
-        &self,
-        call: &super::Call<'_>,
-        mut timed: Option<super::slow::Timed<String>>,
-        rows: impl FnOnce(&Arc<State>, &Txn) -> Result<(Vec<OutColumn>, Stream)>,
-    ) -> Result<Cursor> {
-        let st = call.state();
-        let tx = self.ensure_transaction(st);
-        call.runs(&tx);
-        tx.begin_statement(|| !self.cursors_open())?;
-        let (columns, rows) = rows(st, &tx).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e))?;
-        let rows = Arc::new(Mutex::new(Some(rows)));
-        self.inner.borrow_mut().anonymous.push(Arc::downgrade(&rows));
-        if let Some(opened) = timed.as_mut() {
-            opened.paused();
-        }
-        Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed, zone: self.now.get().zone })
-    }
-
     /// [X3.135-1986 §8.11] the positioned UPDATE bound as `w`, through
     /// cursor `cursor`.
-    pub(super) fn update_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&str, usize), w: &BoundWrite) -> Result<Completion> {
+    pub(super) fn update_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&Name, usize), w: &BoundWrite) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
         let id = self.positioned_row(cx, cursor, w, "§8.11").or_at(at)?;
         let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;
@@ -575,7 +561,7 @@ impl Session {
 
     /// [X3.135-1986 §8.4] the positioned DELETE bound as `w`, through
     /// cursor `cursor`.
-    pub(super) fn delete_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&str, usize), w: &BoundWrite) -> Result<Completion> {
+    pub(super) fn delete_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&Name, usize), w: &BoundWrite) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
         let id = self.positioned_row(cx, cursor, w, "§8.4").or_at(at)?;
         let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;

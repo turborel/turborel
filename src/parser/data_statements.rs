@@ -4,25 +4,26 @@
 //! the same `Parser`.
 
 use super::Parser;
-use crate::ast::{SetClause, SqlStatement, UpdateSource};
+use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource};
 use crate::error::Result;
 use crate::lexer::{delim, kw};
 
 impl Parser {
     /// [X3.135-1986 §8.1, §8.8] CLOSE or OPEN `<cursor name>`; [ISO/IEC
     /// 9075:1992 §17.14, §17.16] of an `<extended cursor name>`, or OPEN
-    /// with a `<using clause>`, refused.
+    /// with a `<using clause>`.
     pub(super) fn open_or_close(&mut self) -> Result<SqlStatement> {
         let open = self.is_kw(kw::OPEN);
         self.advance();
-        if let Some(refused) = self.dynamic_open_or_close(open)? {
-            return Ok(refused);
+        if let Some(dynamic) = self.dynamic_open_or_close(open)? {
+            return Ok(dynamic);
         }
+        let at = self.here();
         let cursor = self.identifier()?;
         if !open {
             return Ok(SqlStatement::Close(cursor));
         }
-        Ok(if self.dynamic_open_using()? { SqlStatement::Commit } else { SqlStatement::Open(cursor) })
+        Ok(self.dynamic_open_using(&cursor, at)?.unwrap_or(SqlStatement::Open(cursor)))
     }
 
     /// [X3.135-1986 §8.4, §8.5] DELETE FROM `<table name>`
@@ -30,9 +31,10 @@ impl Parser {
     pub(super) fn delete_statement(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::DELETE)?;
         // [ISO/IEC 9075:1992 §17.19] a <preparable dynamic delete statement:
-        // positioned> of no table: refused.
+        // positioned> of no table.
         if self.dynamic.is_some() && self.is_kw(kw::WHERE) {
-            return self.preparable_positioned();
+            let (table, cursor) = self.preparable_positioned()?;
+            return Ok(SqlStatement::DeletePositioned { table, cursor });
         }
         self.expect_kw(kw::FROM)?;
         let table = self.table_name()?;
@@ -41,8 +43,8 @@ impl Parser {
         }
         if self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
-            if self.dynamic_current_of()? {
-                return Ok(SqlStatement::Commit);
+            if let Some(cursor) = self.dynamic_current_of()? {
+                return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::DeletePositioned { table, cursor })));
             }
             let at = self.here();
             return Ok(SqlStatement::DeletePositioned { table, cursor: (self.identifier()?, at) });
@@ -55,33 +57,36 @@ impl Parser {
     pub(super) fn update_statement(&mut self) -> Result<SqlStatement> {
         self.expect_kw(kw::UPDATE)?;
         // [ISO/IEC 9075:1992 §17.20] a <preparable dynamic update statement:
-        // positioned> of no table: refused.
+        // positioned> of no table.
         if self.dynamic.is_some() && self.is_kw(kw::SET) {
-            self.advance();
-            self.set_clause()?;
-            while self.accept_delim(delim::COMMA) {
-                self.set_clause()?;
-            }
-            return self.preparable_positioned();
+            let set = self.set_clause_list()?;
+            let (table, cursor) = self.preparable_positioned()?;
+            return Ok(SqlStatement::UpdatePositioned { table, set, cursor });
         }
         let table = self.table_name()?;
-        self.expect_kw(kw::SET)?;
-        let mut set = vec![self.set_clause()?];
-        while self.accept_delim(delim::COMMA) {
-            set.push(self.set_clause()?);
-        }
+        let set = self.set_clause_list()?;
         if !self.accept_kw(kw::WHERE) {
             return Ok(SqlStatement::UpdateSearched { table, set, where_clause: None });
         }
         if self.accept_kw(kw::CURRENT) {
             self.expect_kw(kw::OF)?;
-            if self.dynamic_current_of()? {
-                return Ok(SqlStatement::Commit);
+            if let Some(cursor) = self.dynamic_current_of()? {
+                return Ok(SqlStatement::Dynamic(Box::new(DynamicStatement::UpdatePositioned { table, set, cursor })));
             }
             let at = self.here();
             return Ok(SqlStatement::UpdatePositioned { table, set, cursor: (self.identifier()?, at) });
         }
         Ok(SqlStatement::UpdateSearched { table, set, where_clause: Some(self.search_condition()?) })
+    }
+
+    /// SET `<set clause>` \[{, `<set clause>`}...\]
+    fn set_clause_list(&mut self) -> Result<Vec<SetClause>> {
+        self.expect_kw(kw::SET)?;
+        let mut set = vec![self.set_clause()?];
+        while self.accept_delim(delim::COMMA) {
+            set.push(self.set_clause()?);
+        }
+        Ok(set)
     }
 
     /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` =

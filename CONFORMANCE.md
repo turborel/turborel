@@ -178,8 +178,23 @@ restriction is lifted.
   the Rust API (`Session::prepare`, `execute_prepared`, `open_prepared`)
   and a server's protocol (RULES.md D45), with `<dynamic parameter
   specification>`s [§6.2] whose types are deduced as §17.6 GR5 says and
-  refused where it gives none [GR4]. Not implemented: the statements of
-  dynamic SQL in SQL text, and the descriptor areas [§17.1–§17.5].
+  refused where it gives none [GR4]; a statement with a `<comment>` is
+  refused [GR4q].
+- **Dynamic SQL in SQL text** [§17.1–§17.20], run by a session with its
+  program's parameters, the session playing the module (RULES.md D57):
+  PREPARE [§17.6], DEALLOCATE PREPARE [§17.7], DESCRIBE INPUT and OUTPUT
+  [§17.8], EXECUTE with arguments or a descriptor area, of a `<dynamic
+  single row select statement>` INTO them [§17.9, §17.10], EXECUTE
+  IMMEDIATE [§17.11]; SQL descriptor areas, ALLOCATE, DEALLOCATE, GET and
+  SET DESCRIPTOR, every field of Table 17 and the codes of Tables 18–20
+  [§17.1–§17.5]; the `<dynamic declare cursor>` [§17.12], through
+  `Session::declare_cursor`, ALLOCATE CURSOR [§17.13], and the dynamic
+  OPEN, FETCH, CLOSE and positioned DELETE and UPDATE [§17.14–§17.18]; a
+  positioned DELETE or UPDATE prepared, of no table too [§17.19, §17.20].
+  Names of statements, cursors and descriptor areas are the session's,
+  LOCAL and GLOBAL ones apart [§5.4]. Direct SQL has no parameters [§20.1
+  SR1]: there only the statements whose operands may be `<literal>`s are
+  of use.
 
 ### Schemas and constraints
 
@@ -400,13 +415,9 @@ restriction is lifted.
   one (SQLSTATE 22018). A minute is always 60 seconds, so datetime
   arithmetic, whose results over a leap second are implementation-defined
   [§6.1 Table 10, note], is exact.
-- **Dynamic SQL in SQL text** [§17]: ALLOCATE and DEALLOCATE DESCRIPTOR,
-  GET and SET DESCRIPTOR, PREPARE, DEALLOCATE PREPARE, DESCRIBE, EXECUTE,
-  EXECUTE IMMEDIATE, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE
-  and positioned DELETE and UPDATE, refused (SQLCODE -900): statements
-  are prepared through the API and the protocol (RULES.md D45).
 - **The module language and embedded SQL** (RULES.md D32): a parameter
-  written with a colon, `:P`, refused (SQLCODE -900).
+  written with a colon, `:P`, refused (SQLCODE -900), of dynamic SQL's
+  statements too, where it would be an `<embedded variable name>`.
 - **Never:** character sets other than the one there is, SQL_TEXT, and
   collations and translations (RULES.md D32): CHARACTER SET of another,
   its `<introducer>`, COLLATE, CONVERT, TRANSLATE, CREATE and DROP of a
@@ -514,6 +525,10 @@ file that implements it.
 | ISO/IEC 9075:1992 §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |
 | ISO/IEC 9075:1992 §17.6 GR5 a dynamic parameter as a CASE result, which GR5 gives no type | refused, as one GR4 refuses (SQLSTATE 37000) | `binder/case.rs` |
 | ISO/IEC 9075:1992 §17.6 GR10 a prepared statement in a later transaction | valid; its plan kept between executions, bound again against the definitions then whenever they changed (RULES.md D45) | `db/prepared.rs`, `db/prepared/plans.rs` |
+| ISO/IEC 9075:1992 §17.2 SR2, GR3 the `<occurrences>` of an SQL descriptor area allocated without WITH MAX, the greatest, and how many areas a session holds at once | 100; 1,000; 64, one more beyond a limit (SQLCODE -900) | `db/dynamic/areas.rs` |
+| ISO/IEC 9075:1992 §17.1 Table 18 the code of an implementation-defined data type | -1, of every plug-in's type (RULES.md D53); an item of it described keeps its type, which no other field gives | `db/dynamic/descriptor.rs` |
+| ISO/IEC 9075:1992 §17.2 GR2, §17.4 GR7c, §17.5 GR5, §17.9 GR3e, GR4e (implementation-dependent) a field not set, NAME of an unnamed column and of a dynamic parameter, the fields TYPE leaves | 0, or the empty string, DATA the null value; the empty string, UNNAMED 1; undefined | `db/dynamic/descriptor.rs`, `db/dynamic/areas.rs` |
+| ISO/IEC 9075:1992 §17.5 GR7 restrictions on changing what DESCRIBE set | none: the fields set are those EXECUTE, OPEN and FETCH use | `db/dynamic/areas.rs` |
 | ISO/IEC 9075:1992 §4.30, §15.1 GR8a the authorization identifier a session begins with, and the default SQL-server | the user the client connects as, at a server; for a session the host program starts, the identifier it names. DEFAULT is the server the command line names, connected to as it starts | `db.rs`, `cli/src/dial.rs` |
 | ISO/IEC 9075:1992 §15.1 SR1, GR4 the implicit `<user name>`, and restrictions on one | the user the command line names; one named is proved as the command line says, a password typed asked for again, and the server accepts or refuses it (RULES.md D43) | `cli/src/dial.rs` |
 | ISO/IEC 9075:1992 §15.1 GR8b how an `<SQL-server name>` determines the server | it is an address: 'host', 'host:port', '[IPv6 address]:port', or on Unix a socket's path beginning '/'; over TLS when the default server's connection is, trusting the same certificates. An address is no `<identifier>`, so CONNECT to one names its connection with AS [GR6] | `cli/src/dial.rs` |
@@ -568,6 +583,7 @@ SQLCODE -900 (RULES.md D18).
 | FLOAT precision | 53 binary digits; approximate literals within the range of a double | [§5.5 SR10] allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser.rs` |
 | `<unsigned integer>` | 4,294,967,295 | [§5.2] sets no maximum. | `parser.rs` |
 | Index entry | An encoded key plus an 8-byte row id. A B-link tree index holds 2,020 bytes at the default 8 KiB page, 996 at 4 KiB, and 16,356 at 64 KiB. A hash index holds 8,136 bytes at 8 KiB and 65,480 at 64 KiB. These figures assume the default 4-byte CRC-32C checksum. | A B-link node must hold at least four entries to split. A row's long values go out of line, but an index key is compared in its node, so it stays whole. A table's rows are not limited this way. STORAGE.PAGE_SIZE, chosen when the database is created, raises the limit. | `index/blink.rs`, `index/hash.rs`, `engine/tree.rs` |
+| SQL descriptor areas | 64 at once, of a session | ISO/IEC 9075:1992 [§17.2 GR3] leaves the number to the implementation, and names no exception past it. Direct SQL allocates them, a server's clients among it. | `db/dynamic/areas.rs` |
 | Nesting depth | 64 levels of the syntax tree: about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 
 ---
@@ -628,6 +644,19 @@ SQLCODE -900 (RULES.md D18).
   DV the datetime in UTC; it is read as the same instant shown in the
   displacement TZ, of the type WITH TIME ZONE, as a datetime WITH TIME
   ZONE keeps its own [§4.5.1].
+- **DATA of a datetime or an interval** [ISO/IEC 9075:1992 §17.1 SR2]:
+  the rule says when a value's or a target's type matches an item
+  descriptor area's, but lists no datetime or interval type, so none
+  would match; one matches the type the item describes, as a plug-in's
+  type does.
+- **An invalid SQL statement identifier** [ISO/IEC 9075:1992 §17.6 GR8]:
+  Table 23 has no such condition; it is read as invalid SQL statement
+  name, 26000, the condition of a statement's name.
+- **A `<statement name>` and a LOCAL extended statement name** [ISO/IEC
+  9075:1992 §5.4 GR12, GR13]: both are of the module, here the session,
+  but the one is an `<identifier>` and the other a value; they are names
+  apart, as a `<cursor name>` and an extended cursor name are [§17.6
+  GR2a].
 - **OVERLAPS with an interval** [ISO/IEC 9075:1992 §8.11 SR3a]: "such that
   the interval can be added to the datetime" is read as §6.14 SR3 says
   of addition: the interval's fields are the datetime's.

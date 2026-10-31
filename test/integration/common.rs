@@ -1,5 +1,7 @@
 //! Fixtures and helpers shared by the integration tests.
 
+mod dynamic;
+
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -17,6 +19,8 @@ use turborel::params::Params;
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{Concurrency, LockWait, TxCapabilities, TxId, Undo};
 use turborel::value::{Decimal, Value};
+
+pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 
 /// Schema `APP` with tables `T` (hash index on NAME, btree on AMT) and `U`;
 /// `T` holds rows 1-3 and `U` two rows.

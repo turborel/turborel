@@ -83,10 +83,11 @@ impl Parser {
                 None => FetchOrientation::Next,
             }
         };
-        // [ISO/IEC 9075:1992 §17.15] a <dynamic fetch statement>: refused.
-        if self.dynamic_fetch()? {
-            return Ok(SqlStatement::Commit);
-        }
+        // [ISO/IEC 9075:1992 §17.15] a <dynamic fetch statement>.
+        let orientation = match self.dynamic_fetch(orientation)? {
+            Ok(fetch) => return Ok(fetch),
+            Err(orientation) => orientation,
+        };
         let cursor = self.identifier()?;
         self.expect_kw(kw::INTO)?;
         Ok(SqlStatement::Fetch { cursor, orientation, targets: self.target_list()? })

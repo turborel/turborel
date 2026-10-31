@@ -67,6 +67,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D51 | Assertions: a query whose rows break it |
 | D52 | A view's REFERENCES: from what its columns are drawn from |
 | D54 | Datetimes and intervals: UTC, the session's zone, a clock |
+| D57 | Dynamic SQL in SQL text: a session plays the module |
 | **Architecture** | |
 | D25 | Durability: one log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -747,6 +748,44 @@ sent as a built-in one is.
 statement's datetimes on when within it each is evaluated; a time
 without time zone is kept as SQL-92, the standard implemented, says,
 until a later standard's reading is taken.
+
+**D57. Dynamic SQL in SQL text: a session plays the module.**
+- The statements of ISO/IEC 9075:1992 §17 run by `Session::execute`, as
+  any `<SQL procedure statement>` does, the session in the `<module>`'s
+  part (D32 claims no module language): PREPARE, EXECUTE, EXECUTE
+  IMMEDIATE, DEALLOCATE PREPARE, DESCRIBE, ALLOCATE, DEALLOCATE, GET and
+  SET DESCRIPTOR, ALLOCATE CURSOR, and the dynamic OPEN, FETCH, CLOSE and
+  positioned DELETE and UPDATE. A `<dynamic declare cursor>` is declared
+  through `Session::declare_cursor`, as any cursor is.
+- Their values are the program's parameters (`Params`), written as
+  SQL-86 writes them, an `<identifier>` declared, where §17 writes a
+  `<parameter name>` or an embedded variable; an `<identifier>` that is a
+  parameter's name, where a name of a statement or cursor stands, is the
+  parameter, so the name is an extended one [§5.4]. Direct SQL, the
+  client's, has no parameters [§20.1 SR1]: there only the statements whose
+  operands may be `<literal>`s are of use (ALLOCATE, DEALLOCATE and SET
+  DESCRIPTOR, EXECUTE IMMEDIATE); PREPARE's text and an extended statement
+  or cursor name are no `<literal>` [§17.6 SR1, §5.4 SR13].
+- Prepared statements, cursors allocated and descriptor areas are the
+  session's, by name: a `<statement name>` or `<cursor name>`, and LOCAL
+  and GLOBAL extended names, each apart [§5.4 GR12-GR16]; kept across
+  transactions [§17.6 GR10] until deallocated or the session ends [§20.1
+  GR2b]. A statement is prepared as `Session::prepare` prepares one (D45);
+  EXECUTE and EXECUTE IMMEDIATE run it as `execute_prepared` does, a
+  statement of its own, which begins a transaction as the statement
+  prepared does [§4.22.6]; every other statement of §17 is transaction
+  initiating.
+- A positioned DELETE or UPDATE prepared finds its cursor as it is
+  prepared, a declared cursor's or an allocated one's [§17.6 GR2], and
+  one of no table takes that cursor's [§17.19 SR1, §17.20 SR1].
+- Implementation-defined: a descriptor area allocated without WITH MAX
+  has 100 occurrences, at most 1,000 [§17.2 SR2, GR3]; a session holds 64
+  areas at once, more refused as beyond a limit (D18); a plug-in's type
+  (D53) is described by the TYPE code -1 [§17.1 Table 18].
+*Why:* SQL-92's dynamic SQL is defined for a module's procedures; a
+session already plays that part for cursors and statements run with
+parameters, so the same statements run there with the standard's
+meaning, and a program, or a driver, needs nothing beyond SQL text.
 
 **D55. Threads: one manager, each thread labelled and shown.**
 - Every thread the database, the server or the command-line client runs,
@@ -2009,7 +2048,9 @@ operator must be able to bound what any statement takes.
   `execute_prepared` [§17.10] and `open_prepared` [§17.13, §17.14] run it
   with values, each cast to its parameter's type [§17.9 GR5]. A `?` where
   GR5 gives none is refused (SQLSTATE 37000) [GR4], and so is every
-  Format, Syntax or Access Rule broken while preparing [GR4a]. A scalar
+  Format, Syntax or Access Rule broken while preparing [GR4a], and a
+  `<comment>` [GR4q]; a positioned DELETE or UPDATE finds its cursor as
+  it is prepared [GR2] (D57). SQL text prepares by name too (D57). A scalar
   function plug-in says what type a `?` takes as each of its arguments
   (`ScalarFunction::parameter_type`), refused by default.
 - A query, an INSERT, and a searched UPDATE or DELETE keep their parsed

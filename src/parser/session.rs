@@ -60,7 +60,7 @@ impl Parser {
         }
         if self.next_is_kw(kw::DESCRIPTOR) {
             self.advance();
-            return self.descriptor_statement(false);
+            return self.set_descriptor();
         }
         if self.next_is_kw(kw::NAMES) {
             self.advance();

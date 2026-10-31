@@ -18,7 +18,15 @@ FETCH: move a cursor and read its row *(in a program)*
     | { ABSOLUTE | RELATIVE } <simple value specification>
 
 <target specification> ::= <parameter name> [ [ INDICATOR ] <parameter name> ]
+
+<dynamic fetch statement> ::=
+    FETCH [ [ <fetch orientation> ] FROM ] <dynamic cursor name>
+    { INTO <target specification> [ { , <target specification> }... ]
+    | INTO SQL DESCRIPTOR <descriptor name> }
 ```
+
+The `<dynamic cursor name>` is [OPEN](open.md)'s, the `<descriptor
+name>` [ALLOCATE DESCRIPTOR](allocate-descriptor.md)'s.
 
 ## DESCRIPTION
 
@@ -37,6 +45,12 @@ indicator; one shorter than a BIT target is padded with 0 bits, with the
 warning 01008. Any other value is assigned to a target as to a column,
 by its type.
 
+INTO SQL DESCRIPTOR puts the row into the items of a descriptor area,
+as [EXECUTE](execute.md) puts a single SELECT's: each value cast to its
+item's type, INDICATOR 0 and DATA the value, or INDICATOR -1 of the null
+value. A cursor of an extended name is fetched from as one of a cursor
+name. The diagnostics area names a dynamic FETCH `DYNAMIC FETCH`.
+
 FETCH runs only in a program that embeds turborel: see
 [DECLARE CURSOR](declare-cursor.md).
 
@@ -47,6 +61,9 @@ FETCH runs only in a program that embeds turborel: see
 3. The targets are as many as the cursor's columns, each a parameter of
    a type its column's value may be assigned to; a null value has a
    target with an indicator.
+4. A descriptor area's COUNT is the number of columns, each item of a
+   type its column's values are cast to; the clause is of INTO, not
+   USING.
 
 ## PRIVILEGES
 
@@ -58,6 +75,8 @@ None.
 |---|---|---|
 | 2A000 | -103 | A rule above is broken |
 | 24000 | -501 | The cursor is not open |
+| 34000 | -921 | No cursor of the extended name is allocated |
+| 07002, 07006, 07008 | -921 | The descriptor area does not match the columns, as of [EXECUTE](execute.md) (rule 4) |
 | 22002 | -301 | A null value, and its target has no indicator |
 | 02000 | 100 | Not an error: no data, the cursor past its last row or before its first |
 | 01004 | 0 | Not an error: a warning, a string cut to fit its target |
@@ -96,10 +115,16 @@ FETCH ABSOLUTE 1 FROM S INTO MY_ID, SHORT INDICATOR NAME_IND      1, SHORT = 'Ad
 FETCH LAST FROM S INTO MY_ID, MY_NAME                             -301 (22002): the value is null, and target MY_NAME has no indicator parameter [X3.135-1986 §8.6 GR8]
 ```
 
+Of the dynamic cursor D of [DECLARE CURSOR](declare-cursor.md), open:
+
+```
+FETCH D USING MY_ID, MY_NAME    -103 (2A000): the <using clause> of a FETCH is of INTO [ISO/IEC 9075:1992 §17.15 SR2]
+```
+
 ## STANDARD
 
-ISO/IEC 9075:1992 §13.3; X3.135-1986 §8.6, whose FETCH moves to the
-next row alone.
+ISO/IEC 9075:1992 §13.3, and of a dynamic cursor §17.15; X3.135-1986
+§8.6, whose FETCH moves to the next row alone.
 
 ## SEE ALSO
 

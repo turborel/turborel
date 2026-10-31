@@ -62,9 +62,6 @@ item becomes a decision in RULES.md when its design settles.
   with one. With them, [ISO/IEC 9075:1992 §12.1 SR5]: exactly one
   procedure of a module opens each cursor it declares, which a session,
   playing the module's part, does not check.
-- **Dynamic SQL in SQL text** [ISO/IEC 9075:1992 §17]: PREPARE, EXECUTE,
-  DESCRIBE and the descriptor areas, for a module or an embedded program;
-  the protocol and the Rust API prepare without them.
 - **The database's owner given in SQL**, by the owner, so it is handed on
   without stopping the server: today `Database::set_owner` and `turboreld
   user owner` give it.

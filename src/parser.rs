@@ -11,9 +11,10 @@
 
 pub use ddl::RESEAL;
 pub use domains::VALUE_COLUMN;
+pub(crate) use dynamic::descriptor_type;
 use std::collections::HashSet;
 
-use crate::ast::{ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement};
+use crate::ast::{ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
@@ -88,6 +89,10 @@ pub struct Parser {
     refused: Option<SqlError>,
     /// How a `<catalog name>` written in a name is taken.
     catalogs: Catalogs,
+    /// [ISO/IEC 9075:1992 §17.19 SR1, §17.20 SR1] Of a statement being
+    /// prepared that changes a row through a cursor and names no table, the
+    /// table of the cursor's specification.
+    implicit: Option<TableName>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -164,6 +169,7 @@ impl Parser {
             in_domain: false,
             refused: None,
             catalogs: Catalogs::Refused,
+            implicit: None,
         })
     }
 
@@ -195,6 +201,15 @@ impl Parser {
     #[must_use]
     pub fn of_definition(mut self) -> Parser {
         self.catalogs = Catalogs::Kept;
+        self
+    }
+
+    /// This parser, of a statement being prepared that changes a row
+    /// through a cursor of the table `implicit` and names no table
+    /// [ISO/IEC 9075:1992 §17.19 SR1, §17.20 SR1].
+    #[must_use]
+    pub fn implying(mut self, implicit: Option<TableName>) -> Parser {
+        self.implicit = implicit;
         self
     }
 
@@ -492,7 +507,7 @@ impl Parser {
             Tok::KeyWord(kw::DISCONNECT) => self.disconnect_statement()?,
             // \[EXTENSION\] RULES.md D42.
             Tok::KeyWord(kw::END) => self.served_statement()?,
-            // [ISO/IEC 9075:1992 §17] dynamic SQL in SQL text: refused.
+            // [ISO/IEC 9075:1992 §17] dynamic SQL in SQL text.
             Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
             Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,
 
@@ -513,7 +528,7 @@ impl Parser {
             Tok::KeyWord(kw::GET) => {
                 if self.next_is_kw(kw::DESCRIPTOR) {
                     self.advance();
-                    self.descriptor_statement(true)?
+                    self.get_descriptor()?
                 } else {
                     SqlStatement::GetDiagnostics(self.get_diagnostics()?)
                 }

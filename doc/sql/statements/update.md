@@ -33,8 +33,9 @@ the statement leaves them, so a change may pass through a value another
 row holds, as SET ID = ID + 1 on a key does. An UPDATE that changes no
 row completes with no data.
 
-The positioned form, WHERE CURRENT OF a cursor, runs only in a program
-that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
+The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
+an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
+in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
 
 ## RULES
 

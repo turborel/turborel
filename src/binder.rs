@@ -31,6 +31,7 @@ use crate::value::{DOUBLE_PRECISION, DataType, Value};
 mod case;
 mod datetime;
 mod interval;
+pub(crate) use datetime::cast_is_valid;
 pub use datetime::{function_type as datetime_function_type, literal_value as datetime_literal};
 pub use interval::{displacement_of, is_displacement};
 mod expression;

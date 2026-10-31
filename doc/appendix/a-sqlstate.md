@@ -21,6 +21,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 01002 | Warning: disconnect error |
 | 01003 | Warning: null value eliminated in set function: a set function left out a null |
 | 01004 | Warning: string data, right truncation: a string cut to fit a parameter, or by CAST |
+| 01005 | Warning: insufficient item descriptor areas: DESCRIBE of more than an SQL descriptor area's occurrences |
 | 01006 | Warning: privilege not revoked |
 | 01007 | Warning: privilege not granted |
 | 01008 | Warning: implicit zero-bit padding: a bit string padded to fit a parameter, or by CAST |
@@ -29,8 +30,14 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
 | 07001 | Dynamic SQL error: the arguments do not match the dynamic parameters |
+| 07002 | Dynamic SQL error: the INTO clause does not match the columns |
 | 07003 | Dynamic SQL error: a cursor specification cannot be executed |
+| 07004 | Dynamic SQL error: a USING clause is needed for the dynamic parameters |
 | 07005 | Dynamic SQL error: a prepared statement is no cursor specification |
+| 07006 | Dynamic SQL error: restricted data type attribute violation: a value of a type not cast to its parameter's or item's |
+| 07007 | Dynamic SQL error: an INTO clause is needed for the columns |
+| 07008 | Dynamic SQL error: invalid descriptor count: COUNT less than 0 or more than the occurrences |
+| 07009 | Dynamic SQL error: invalid descriptor index: an item number not of the occurrences |
 | 08000 | Connection exception |
 | 08001 | Connection exception: the client cannot connect |
 | 08002 | Connection exception: connection name in use |
@@ -67,8 +74,11 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2A000 | Syntax error or access rule violation in a direct SQL statement |
 | 2B000 | Dependent privilege descriptors still exist |
 | 2E000 | Invalid connection name |
+| 33000 | Invalid SQL descriptor name |
+| 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |
 | 35000 | Invalid condition number |
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
+| 3C000 | Ambiguous cursor name: a cursor declared and one allocated, of one name |
 | 3D000 | Invalid catalog name |
 | 3F000 | Invalid schema name |
 | 40000 | Transaction rollback |

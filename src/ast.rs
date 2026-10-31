@@ -25,14 +25,20 @@ pub struct TableName {
 }
 
 mod connection;
+mod cursor;
 mod diagnostics;
+mod dynamic;
 mod expression;
 mod query;
 mod schema;
 mod users;
 
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
+pub use cursor::{DeclareCursor, FetchOrientation};
 pub use diagnostics::{ConditionItem, GetDiagnostics, StatementItem};
+pub use dynamic::{
+    DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, Scope, SetDescriptor, UsingClause,
+};
 pub use expression::{
     CaseExpression, ColumnSpecification, Predicate, RowValue, SearchCondition, SetArg, SetFunctionSpecification, Sign, Subquery,
     TruthValue, ValueExpression,
@@ -260,6 +266,11 @@ pub enum SqlStatement {
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §18.1] `<get diagnostics statement>`
     GetDiagnostics(GetDiagnostics),
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §17] An `<SQL dynamic statement>`.
+    Dynamic(Box<DynamicStatement>),
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE or EXECUTE
+    /// IMMEDIATE.
+    Execute(Box<ExecuteStatement>),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §13.11, §20.1] `<temporary table
     /// declaration>`: a declared local temporary table, of kind
     /// `TemporaryKind::Declared`.
@@ -499,43 +510,6 @@ pub enum UpdateSource {
     Null,
     /// DEFAULT: the column's default.
     Default,
-}
-
-/// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §13.1] `<declare cursor>` ::=
-/// DECLARE `<cursor name>` \[INSENSITIVE\] \[SCROLL\] CURSOR FOR `<cursor
-/// specification>`
-///
-/// The `<cursor specification>` is kept as text: its `<parameter name>`s are
-/// those of the procedure that OPENs it [X3.135-1986 §8.3 SR2], so it is
-/// parsed and bound at OPEN [X3.135-1986 §8.8 GR3a].
-#[derive(Debug, Clone)]
-pub struct DeclareCursor {
-    /// The `<cursor name>`.
-    pub name: String,
-    /// INSENSITIVE was written.
-    pub insensitive: bool,
-    /// SCROLL was written.
-    pub scroll: bool,
-    /// The text of the `<cursor specification>`.
-    pub specification: String,
-}
-
-/// [ISO/IEC 9075:1992 §13.3] `<fetch orientation>` ::= NEXT | PRIOR | FIRST
-/// | LAST | {ABSOLUTE | RELATIVE} `<simple value specification>`
-#[derive(Debug, Clone)]
-pub enum FetchOrientation {
-    /// NEXT.
-    Next,
-    /// PRIOR.
-    Prior,
-    /// FIRST.
-    First,
-    /// LAST.
-    Last,
-    /// ABSOLUTE, with the row's number.
-    Absolute(ValueSpecification),
-    /// RELATIVE, with how far.
-    Relative(ValueSpecification),
 }
 
 /// [ISO/IEC 9075:1992 §14.1] The `<transaction mode>`s of a `<set

@@ -4,6 +4,8 @@ One reference page for each statement, in alphabetical order.
 
 [Volume II: SQL Reference Manual](../README.md)
 
+- [ALLOCATE CURSOR](allocate-cursor.md): allocate a cursor for a query prepared
+- [ALLOCATE DESCRIPTOR](allocate-descriptor.md): allocate an SQL descriptor area
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER TABLE](alter-table.md): change a base table
@@ -20,8 +22,11 @@ One reference page for each statement, in alphabetical order.
 - [CREATE USER](create-user.md): define a user
 - [CREATE VIEW](create-view.md): define a viewed table
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
+- [DEALLOCATE DESCRIPTOR](deallocate-descriptor.md): deallocate an SQL descriptor area
+- [DEALLOCATE PREPARE](deallocate-prepare.md): forget a statement prepared
 - [DECLARE LOCAL TEMPORARY TABLE](declare-local-temporary-table.md): declare a session's own temporary table
 - [DELETE](delete.md): delete rows
+- [DESCRIBE](describe.md): describe a statement prepared in an SQL descriptor area
 - [DISCONNECT](disconnect.md): end connections
 - [DROP ASSERTION](drop-assertion.md): drop an assertion
 - [DROP DOMAIN](drop-domain.md): drop a domain
@@ -31,11 +36,15 @@ One reference page for each statement, in alphabetical order.
 - [DROP USER](drop-user.md): drop a user
 - [DROP VIEW](drop-view.md): drop a view
 - [END CONNECTION](end-connection.md): end a connection of the server
+- [EXECUTE](execute.md): run a statement prepared
+- [EXECUTE IMMEDIATE](execute-immediate.md): prepare a statement and run it at once
 - [FETCH](fetch.md): move a cursor and read its row
+- [GET DESCRIPTOR](get-descriptor.md): read fields of an SQL descriptor area
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area
 - [GRANT](grant.md): grant privileges
 - [INSERT](insert.md): insert rows
 - [OPEN](open.md): open a cursor
+- [PREPARE](prepare.md): prepare a statement, by name
 - [REVOKE](revoke.md): revoke privileges
 - [ROLLBACK](rollback.md): end a transaction, undoing its changes
 - [SELECT](select.md): read rows
@@ -44,6 +53,7 @@ One reference page for each statement, in alphabetical order.
 - [SET CONNECTION](set-connection.md): choose the current connection
 - [SET CONSTRAINTS](set-constraints.md): set constraint modes
 - [SET DATABASE](set-database.md): change a database setting
+- [SET DESCRIPTOR](set-descriptor.md): set fields of an SQL descriptor area
 - [SET SCHEMA](set-schema.md): set the default schema
 - [SET SESSION AUTHORIZATION](set-session-authorization.md): set the session's authorization identifier
 - [SET TIME ZONE](set-time-zone.md): set the session's time zone
@@ -59,13 +69,10 @@ written against its syntax is a syntax error instead (SQLCODE -102).
 
 | Statements | Why |
 |---|---|
-| ALLOCATE DESCRIPTOR, DEALLOCATE DESCRIPTOR, GET DESCRIPTOR, SET DESCRIPTOR | Dynamic SQL in SQL text: a program prepares statements through the [client library](../../client/02-library.md) or the [embedded library](../../client/03-embedding.md), and their parameters and results are described there |
-| PREPARE, DEALLOCATE PREPARE, DESCRIBE, EXECUTE, EXECUTE IMMEDIATE | The same |
-| ALLOCATE CURSOR; OPEN, FETCH and CLOSE of a dynamic cursor; DELETE and UPDATE WHERE CURRENT OF a dynamic cursor | The same |
 | CREATE CHARACTER SET, CREATE COLLATION, CREATE TRANSLATION, DROP CHARACTER SET, DROP COLLATION, DROP TRANSLATION | One character set, SQL_TEXT, its one collation, and no translations: never others |
 | SET NAMES | The same |
 | CONNECT, SET CONNECTION, DISCONNECT, run by a session of an embedded database | They are the SQL-agent's, run by the client, not by a database ([CONNECT](connect.md)) |
 
-The standard: ISO/IEC 9075:1992 §17.2–§17.20 (dynamic SQL), §11.28–§11.33
-(character sets, collations and translations), §16.3 (SET NAMES) and
-§15.1–§15.3 (connections).
+The standard: ISO/IEC 9075:1992 §11.28–§11.33 (character sets,
+collations and translations), §16.3 (SET NAMES) and §15.1–§15.3
+(connections).

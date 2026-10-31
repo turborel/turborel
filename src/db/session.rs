@@ -134,7 +134,9 @@ impl Session {
             | SqlStatement::User(_)
             | SqlStatement::Served(_)
             | SqlStatement::GetDiagnostics(_)
+            | SqlStatement::Execute(_)
             | SqlStatement::DeclareTable(_) => (false, ""),
+            SqlStatement::Dynamic(d) => super::dynamic::changed_table(d).map_or((false, ""), |(table, rule)| (!temporary(table), rule)),
         };
         if changes && self.mode.get().access == AccessMode::ReadOnly {
             return fail(Code::TransactionState, format!("[ISO/IEC 9075:1992 {rule}] the transaction is READ ONLY"));

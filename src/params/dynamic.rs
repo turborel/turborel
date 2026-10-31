@@ -16,6 +16,7 @@
 use std::cell::{Cell, RefCell};
 
 use super::Params;
+use crate::ast::TableName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::parser::Parser;
 use crate::value::cast;
@@ -52,6 +53,9 @@ pub(crate) struct Dynamic {
     /// Whether the binding holds a value it read: a `?`'s other than as a
     /// slot, or the statement's instant (`Clocked`).
     held: Cell<bool>,
+    /// [§17.19 SR1, §17.20 SR1] Of a positioned DELETE or UPDATE that
+    /// names no table, the table of its cursor.
+    implicit: Option<TableName>,
 }
 
 /// [ISO/IEC 9075:1992 §17.6 GR4] A `?` where its context gives it no type
@@ -76,14 +80,17 @@ impl Params {
     /// parameters, their types still to be deduced.
     pub(crate) fn preparing(count: usize) -> Params {
         let types = RefCell::new(vec![None; count]);
-        Params { dynamic: Some(Dynamic { values: None, types, slots: false, held: Cell::new(false) }), ..Params::default() }
+        Params { dynamic: Some(Dynamic { values: None, types, slots: false, held: Cell::new(false), implicit: None }), ..Params::default() }
     }
 
     /// The parameters of a prepared statement being executed with `values`,
     /// one for each of its dynamic parameters.
     pub(crate) fn executing(values: Vec<Value>) -> Params {
         let types = RefCell::new(vec![None; values.len()]);
-        Params { dynamic: Some(Dynamic { values: Some(values), types, slots: false, held: Cell::new(false) }), ..Params::default() }
+        Params {
+            dynamic: Some(Dynamic { values: Some(values), types, slots: false, held: Cell::new(false), implicit: None }),
+            ..Params::default()
+        }
     }
 
     /// These parameters, of a prepared statement being executed, for
@@ -91,7 +98,11 @@ impl Params {
     pub(crate) fn keeping(&self) -> Params {
         let values = self.dynamic_values().to_vec();
         let types = RefCell::new(vec![None; values.len()]);
-        Params { dynamic: Some(Dynamic { values: Some(values), types, slots: true, held: Cell::new(false) }), ..Params::default() }
+        let implicit = self.dynamic.as_ref().and_then(|d| d.implicit.clone());
+        Params {
+            dynamic: Some(Dynamic { values: Some(values), types, slots: true, held: Cell::new(false), implicit }),
+            ..Params::default()
+        }
     }
 
     /// The values of its dynamic parameters, as given; none as a
@@ -115,6 +126,17 @@ impl Params {
         self.dynamic.as_ref().is_some_and(|d| d.held.get())
     }
 
+    /// These parameters, of a positioned DELETE or UPDATE prepared that
+    /// names no table, whose cursor's table is `implicit` [§17.19 SR1,
+    /// §17.20 SR1]: the parser of its text takes it.
+    #[must_use]
+    pub(crate) fn implying(mut self, implicit: Option<TableName>) -> Params {
+        if let Some(dynamic) = self.dynamic.as_mut() {
+            dynamic.implicit = implicit;
+        }
+        self
+    }
+
     /// A parser of `sql`, a statement with these parameters: one being
     /// prepared or executed takes `<dynamic parameter specification>`s
     /// [§6.2 SR2], any other its procedure's `<parameter name>`s; its
@@ -124,8 +146,8 @@ impl Params {
     ///
     /// Those of `Parser::new`.
     pub(crate) fn parser(&self, sql: &str, extensions: bool, catalog: &str) -> Result<Parser> {
-        let parser = if self.dynamic.is_some() {
-            Parser::for_prepare(sql, extensions)?
+        let parser = if let Some(dynamic) = &self.dynamic {
+            Parser::for_prepare(sql, extensions)?.implying(dynamic.implicit.clone())
         } else {
             Parser::for_procedure(sql, extensions, self.names())?
         };

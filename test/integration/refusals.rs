@@ -1,8 +1,8 @@
 //! Valid SQL-92 this implementation does not take: refused as valid but
 //! not implemented (SQLCODE -900, RULES.md D18), of character sets other
-//! than SQL_TEXT, collations and translations never (D32), of dynamic SQL
-//! in SQL text not yet; each read in full first, so SQL that breaks a
-//! Format is a syntax error still.
+//! than SQL_TEXT, collations and translations never (D32); each read in
+//! full first, so SQL that breaks a Format is a syntax error still, as is
+//! dynamic SQL written wrong.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -91,53 +91,6 @@ fn sql_text_is_taken_by_name() {
     a.commit().unwrap();
 }
 
-/// Verifies: [EXTENSION] RULES.md D18 [ISO/IEC 9075:1992 §17.2-§17.20]
-/// dynamic SQL in SQL text is refused as valid but not implemented
-/// (SQLCODE -900), each statement read in full: written wrong, a syntax
-/// error (SQLCODE -102).
-#[test]
-fn dynamic_sql_in_sql_text_is_refused() {
-    let db = setup();
-    let s = db.session("APP");
-    for refused in [
-        "ALLOCATE DESCRIPTOR 'D1' WITH MAX 10",
-        "ALLOCATE DESCRIPTOR GLOBAL 'D1'",
-        "DEALLOCATE DESCRIPTOR LOCAL 'D1'",
-        "GET DESCRIPTOR 'D1' :N = COUNT",
-        "GET DESCRIPTOR 'D1' VALUE 1 :T = TYPE, :L = LENGTH, :P = PRECISION",
-        "SET DESCRIPTOR 'D1' COUNT = 2",
-        "SET DESCRIPTOR GLOBAL 'D1' VALUE 1 TYPE = 1, DATA = 'x'",
-        "PREPARE S1 FROM 'SELECT ID FROM T'",
-        "PREPARE GLOBAL 'S1' FROM :TEXT",
-        "DEALLOCATE PREPARE S1",
-        "DESCRIBE S1 USING SQL DESCRIPTOR 'D1'",
-        "DESCRIBE INPUT S1 INTO SQL DESCRIPTOR 'D1'",
-        "DESCRIBE OUTPUT GLOBAL 'S1' USING SQL DESCRIPTOR 'D1'",
-        "EXECUTE S1",
-        "EXECUTE S1 INTO :A, :B USING :C",
-        "EXECUTE S1 USING SQL DESCRIPTOR 'D1'",
-        "EXECUTE IMMEDIATE 'DELETE FROM T'",
-        "ALLOCATE 'C1' INSENSITIVE SCROLL CURSOR FOR 'S1'",
-        "OPEN C1 USING SQL DESCRIPTOR 'D1'",
-        "OPEN GLOBAL 'C1'",
-        "FETCH NEXT FROM C1 USING SQL DESCRIPTOR 'D1'",
-        "FETCH GLOBAL 'C1' INTO SQL DESCRIPTOR 'D1'",
-        "CLOSE GLOBAL 'C1'",
-        "DELETE FROM T WHERE CURRENT OF GLOBAL 'C1'",
-        "UPDATE T SET ID = 1 WHERE CURRENT OF 'C1'",
-    ] {
-        assert_eq!(failed(&s, refused), Code::Unsupported, "{refused}");
-    }
-    for wrong in
-        ["PREPARE S1", "EXECUTE", "DESCRIBE S1", "GET DESCRIPTOR 'D1' VALUE 1 :T = COLOUR", "ALLOCATE 'C1' CURSOR", "FETCH GLOBAL 'C1'"]
-    {
-        assert_eq!(failed(&s, wrong), Code::Syntax, "{wrong}");
-    }
-    for refused in ["DELETE WHERE CURRENT OF C1", "UPDATE SET ID = 1 WHERE CURRENT OF C1"] {
-        assert_eq!(prepared(&s, refused), Code::Unsupported, "{refused}");
-    }
-}
-
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1, §7.10, §6.7] a direct
 /// statement may end in one semicolon; a joined table is a query on its
 /// own; TRIM takes FROM alone.
@@ -205,8 +158,13 @@ fn refused_constructs_written_wrong_are_syntax_errors() {
         "ALLOCATE DESCRIPTOR",
         "DEALLOCATE X",
         "DEALLOCATE PREPARE",
-        "GET DESCRIPTOR 'D1' :N = TYPE",
-        "GET DESCRIPTOR 'D1' VALUE 1 :T TYPE",
+        "GET DESCRIPTOR 'D1' = COUNT",
+        "GET DESCRIPTOR 'D1' VALUE 1 = TYPE",
+        "PREPARE S1",
+        "EXECUTE",
+        "DESCRIBE S1",
+        "ALLOCATE CURSOR FOR X",
+        "FETCH GLOBAL",
         "SET DESCRIPTOR 'D1' VALUE 1 COLOUR = 1",
         "SET DESCRIPTOR 'D1' COUNT 2",
         "DESCRIBE S1 USING :X",

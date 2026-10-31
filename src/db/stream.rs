@@ -217,7 +217,7 @@ mod tests {
 
     /// Whether the open cursor `name` of `s` still reads from its plan.
     fn streaming(s: &Session, name: &str) -> bool {
-        match s.inner.borrow().cursors.get(name).and_then(|c| c.open.as_ref()) {
+        match s.inner.borrow().cursors.get(&crate::db::dynamic::Name::plain(name)).and_then(|c| c.open.as_ref()) {
             Some(OpenCursor { rows: CursorRows::Table(rows), .. }) => rows.streaming(),
             _ => panic!("{name} is not an open read-only cursor"),
         }
