@@ -152,10 +152,8 @@ The registry, scopes and SET statements exist (D36). Still to do:
   written whole and grouped again row by row (`group::Spilling`), where
   partial groups made first, or partitions written by batches, would do
   (`GROUP BY K` of 400,000 keys, 382 ms).
-- **Typed vectors, further** (D31): the row
-  store's batches, and the column store's rows not yet frozen, as
-  integers and text; CHARACTER columns as text, padded as LIKE sees them;
-  a LIKE whose pattern is not a constant, over vectors and row by row
+- **Typed vectors, further** (D31): the row store's batches, and the
+  column store's rows not yet frozen, as integers and text; a LIKE whose pattern is not a constant, over vectors and row by row
   alike, its patterns split once each.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).

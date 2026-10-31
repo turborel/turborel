@@ -13,7 +13,8 @@ use crate::common::{both_ways, exec, rows, sorted};
 /// The rows written: K, a key; D, a DECIMAL(9, 2) of either sign; I, a
 /// SMALLINT, one of 5; N, a NUMERIC(18), near its limits for some rows; V,
 /// a VARCHAR(12), of 40 values and some not ASCII, a trailing space on
-/// every third; each but K null for every 7th row.
+/// every third; H, a CHARACTER(5), of 33 values, some not ASCII, read
+/// padded; each but K null for every 7th row.
 const ROWS: i64 = 10_000;
 
 /// Tables R, of the row store, and C, of the column store, alike: written,
@@ -22,8 +23,8 @@ fn both(db: &Database) -> Session {
     db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
-           CREATE TABLE R (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12))
-           CREATE TABLE C (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12))
+           CREATE TABLE R (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12), H CHAR(5))
+           CREATE TABLE C (K INTEGER PRIMARY KEY, D DECIMAL(9, 2), I SMALLINT, N NUMERIC(18), V VARCHAR(12), H CHAR(5))
              USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
@@ -33,7 +34,7 @@ fn both(db: &Database) -> Session {
             let values: Vec<String> = (first..first + 500)
                 .map(|k: i64| {
                     if k % 7 == 0 {
-                        return format!("({k}, NULL, NULL, NULL, NULL)");
+                        return format!("({k}, NULL, NULL, NULL, NULL, NULL)");
                     }
                     let d = format!("{}.{:02}", (k % 300) - 150, k % 100);
                     let n = match k % 11 {
@@ -42,7 +43,9 @@ fn both(db: &Database) -> Session {
                         _ => (k * 1_000_003).to_string(),
                     };
                     let v = if k % 17 == 0 { format!("é{}", k % 5) } else { format!("v{}{}", k % 40, if k % 3 == 0 { " " } else { "" }) };
-                    format!("({k}, {d}, {}, {n}, '{v}')", k % 5)
+                    let fixed =
+                        if k % 13 == 0 { format!("ü{}", k % 3) } else { format!("h{}{}", k % 30, if k % 3 == 0 { " " } else { "" }) };
+                    format!("({k}, {d}, {}, {n}, '{v}', '{fixed}')", k % 5)
                 })
                 .collect();
             a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
@@ -57,7 +60,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 40] = [
+const QUERIES: [&str; 47] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -101,6 +104,13 @@ const QUERIES: [&str; 40] = [
     "SELECT COUNT(*), MIN(K), MAX(K) FROM {t} GROUP BY V",
     "SELECT COUNT(*) FROM (SELECT DISTINCT V FROM {t} WHERE K > 50) AS X",
     "SELECT D, SUM(CASE WHEN I > 2 THEN I * 10 ELSE 0 END), COUNT(*) FROM {t} WHERE K < 2000 GROUP BY D",
+    "SELECT COUNT(*), MIN(K) FROM {t} WHERE H LIKE 'h1%' AND H NOT LIKE '%3'",
+    "SELECT COUNT(*) FROM {t} WHERE H LIKE '%1  ' OR H LIKE 'ü_   '",
+    "SELECT COUNT(*) FROM {t} WHERE H = 'h7' OR H = 'ü1   '",
+    "SELECT COUNT(*) FROM {t} WHERE H < 'h2' AND H >= 'h10 ' AND H <> 'h12'",
+    "SELECT COUNT(*) FROM {t} WHERE H IN ('h1', 'h2 ', 'ü2') AND H NOT IN ('h9', CAST(NULL AS CHAR(3)))",
+    "SELECT H, COUNT(*), MIN(K) FROM {t} GROUP BY H",
+    "SELECT H, CHAR_LENGTH(H) FROM {t} WHERE K BETWEEN 10 AND 40",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11 GR4,
@@ -116,11 +126,13 @@ const QUERIES: [&str; 40] = [
 /// a running sum, or a product, past 18 digits raising either way; filters
 /// that can raise of comparisons of expressions, one of a quotient, one
 /// raising; filters that cannot, of columns and negations compared, the
-/// changed rows' values judged a row at a time; of a constant, of an approximate number, of a CASE a row at a
-/// time; groups past the work area; strings, some not ASCII, some with a
-/// trailing space, LIKE patterns, compared padded, IN and NOT IN, grouped,
-/// distinct, counted; nulls among them all; rows changed and deleted after
-/// they were frozen.
+/// changed rows' values judged a row at a time; of a constant, of an
+/// approximate number, of a CASE a row at a time; groups past the work
+/// area; strings, some not ASCII, some with a trailing space, LIKE
+/// patterns, compared padded, IN and NOT IN, grouped, distinct, counted;
+/// CHARACTER strings alike, LIKE seeing them padded [ISO/IEC 9075:1992
+/// §8.5 GR5b iv]; nulls among them all; rows changed and deleted after they
+/// were frozen.
 #[test]
 fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
     let db = Database::new();

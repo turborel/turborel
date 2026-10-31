@@ -1599,11 +1599,14 @@ write-ahead logging.
     exact constant compared as `value::compare` does
     (`judge/floats.rs`); grouping keys are made of it.
 - **Texts** (`storage::Texts`, `judge/texts.rs`). From a frozen run, a
-  VARCHAR vector is one buffer of every row's text and where each ends,
-  decoded straight from varying, dictionary and constant chunks, each
-  checked UTF-8. LIKE a constant pattern, comparisons with constant
-  strings (padded), IN, IS NULL and COUNT run on the text, and grouping
-  keys are made of it.
+  VARCHAR or CHARACTER vector is one buffer of every row's text and
+  where each ends, decoded straight from varying, dictionary and constant
+  chunks, each checked UTF-8. A CHARACTER string, stored without its
+  trailing spaces, is padded to its length as it is read, so LIKE sees
+  it as row by row (`columns::padding`).
+  - LIKE a constant pattern, comparisons with constant strings
+    (padded), IN, IS NULL and COUNT run on the text, and grouping keys
+    are made of it.
 - **No row values.** Integer, float and text vectors make no per-row
   value.
 - **Codes** (`storage::Coded`). For runs of only dictionary chunks: the

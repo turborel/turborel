@@ -10,6 +10,7 @@ fn int(n: i128) -> Value {
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
 const TEXT: DataType = DataType::Varying { length: 100 };
+const CHAR: DataType = DataType::Character { length: 20 };
 
 /// The values of the chunk of all of `values`, read back.
 fn round_trip(t: &DataType, values: &[Value]) -> Vec<String> {
@@ -184,17 +185,18 @@ fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Optio
     let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Vec::new());
-    chunk.texts((from, to), (&mut text, &mut ends, &mut nulls))?;
+    chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), t)?;
     let texts = crate::storage::Texts::new(text, ends, nulls.contains(&true).then_some(nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))
 }
 
-/// Verifies: [DESIGN] RULES.md D31, a chunk's texts: every encoding of
-/// strings gives, of a range of its positions, the values read one at a
-/// time give, nulls as nulls: of varying fields, some not ASCII, some
-/// empty, some with a trailing space; a dictionary; a constant. Of
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §8.7 GR7b], a chunk's
+/// texts: every encoding of strings gives, of a range of its positions,
+/// the values read one at a time give, nulls as nulls: of varying fields,
+/// some not ASCII, some empty, some with a trailing space; a dictionary; a
+/// constant; of VARCHAR as written, of CHARACTER padded to its length. Of
 /// integers it gives none, nor past its end.
 #[test]
 fn chunks_give_their_texts() {
@@ -213,29 +215,33 @@ fn chunks_give_their_texts() {
         (0..300).map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].to_owned()) }).collect();
     let constant: Vec<Value> = (0_u32..20_u32).map(|n| if n % 5 == 0 { Value::Null } else { Value::Char("same".to_owned()) }).collect();
     for (values, kind) in [(&varying, "varying"), (&few, "a dictionary"), (&constant, "a constant")] {
-        let whole = texts_of(&TEXT, values, (0, values.len())).unwrap();
-        assert_eq!(whole.0, whole.1, "{kind}");
-        let part = texts_of(&TEXT, values, (3, 11)).unwrap();
-        assert_eq!(part.0, part.1, "{kind}, a part");
+        for t in [TEXT, CHAR] {
+            let whole = texts_of(&t, values, (0, values.len())).unwrap();
+            assert_eq!(whole.0, whole.1, "{kind} of {t:?}");
+            let part = texts_of(&t, values, (3, 11)).unwrap();
+            assert_eq!(part.0, part.1, "{kind} of {t:?}, a part");
+        }
     }
+    let padded = texts_of(&CHAR, &few, (1, 2)).unwrap();
+    assert_eq!(padded.0, [format!("grün{}", " ".repeat(16))], "padded by characters, not bytes");
     let numbers: Vec<Value> = (0_i128..10_i128).map(int).collect();
     assert_eq!(texts_of(&INTEGER, &numbers, (0, 10)), None, "integers");
     assert_eq!(texts_of(&TEXT, &constant, (0, 21)), None, "past the end");
 }
 
-/// The texts a chunk of `values`, compressed, gives of `positions` as a
-/// dictionary's codes, and its values there as they read one at a time,
-/// if it is a dictionary.
-fn coded_of(values: &[Value], positions: &[usize]) -> Option<(Vec<String>, Vec<String>)> {
-    let fields = Fields::of(&TEXT, values.iter().cloned()).unwrap();
-    let bytes = fields.chunk(&TEXT, 0, (fields.len(), true)).unwrap();
+/// The texts a chunk of `values` of `t`, compressed, gives of `positions`
+/// as a dictionary's codes, and its values there as they read one at a
+/// time, if it is a dictionary.
+fn coded_of(t: &DataType, values: &[Value], positions: &[usize]) -> Option<(Vec<String>, Vec<String>)> {
+    let fields = Fields::of(t, values.iter().cloned()).unwrap();
+    let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Vec::new());
-    chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls))?;
+    chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls), t)?;
     let dictionary = crate::storage::Coded { codes, entries: crate::storage::Texts::new(text, ends, None) };
     let texts = crate::storage::Texts::coded(dictionary, nulls.contains(&true).then_some(nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
-    let read = positions.iter().map(|&n| chunk.value(n, &TEXT).unwrap().to_string()).collect();
+    let read = positions.iter().map(|&n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))
 }
 
@@ -250,14 +256,16 @@ fn chunks_give_their_codes() {
         .map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].to_owned()) })
         .collect();
     let all: Vec<usize> = (0..300).collect();
-    let (made, read) = coded_of(&few, &all).unwrap();
+    let (made, read) = coded_of(&TEXT, &few, &all).unwrap();
     assert_eq!(made, read, "all");
+    let (made_padded, read_padded) = coded_of(&CHAR, &few, &all).unwrap();
+    assert_eq!(made_padded, read_padded, "all, of CHARACTER, padded");
     let some = [0_usize, 7, 11, 150, 299];
-    let (made_some, read_some) = coded_of(&few, &some).unwrap();
+    let (made_some, read_some) = coded_of(&TEXT, &few, &some).unwrap();
     assert_eq!(made_some, read_some, "some");
     let varying: Vec<Value> = (0_u32..30_u32).map(|n| Value::Char(format!("value {n}"))).collect();
-    assert_eq!(coded_of(&varying, &[0, 1]), None, "varying fields");
-    assert_eq!(coded_of(&few, &[300]), None, "past the end");
+    assert_eq!(coded_of(&TEXT, &varying, &[0, 1]), None, "varying fields");
+    assert_eq!(coded_of(&TEXT, &few, &[300]), None, "past the end");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, runs of one value: a sorted column of

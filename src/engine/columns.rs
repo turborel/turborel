@@ -204,30 +204,38 @@ impl<'a> Chunk<'a> {
     }
 
     /// \[DESIGN\] Its values at positions `from` to `to`, character strings
-    /// written as they are, as text pushed to `text` and where each ends to
-    /// `ends`, and whether each is null to `nulls` (`encoded::Body::texts`):
-    /// none if its encoding does not hold them as text.
-    pub fn texts(&self, (from, to): (usize, usize), (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Vec<bool>)) -> Option<()> {
+    /// of type `t`, as text pushed to `text` and where each ends to `ends`,
+    /// a CHARACTER string padded as it is read, and whether each is null to
+    /// `nulls` (`encoded::Body::texts`): none if `t` is not a character
+    /// string type or its encoding does not hold them as text.
+    pub fn texts(
+        &self,
+        (from, to): (usize, usize),
+        (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Vec<bool>),
+        t: &DataType,
+    ) -> Option<()> {
         if to > self.count {
             return None;
         }
-        self.body.texts((from, to), (text, ends), |n| self.is_null(n))?;
+        self.body.texts((from, to), (text, ends), (|n| self.is_null(n), padding(t)?))?;
         nulls.extend((from..to).map(|n| self.is_null(n)));
         Some(())
     }
 
     /// \[DESIGN\] Of a dictionary, its entries and the entry of each of
     /// `positions` pushed to `coded`, and whether each is null to `nulls`
-    /// (`encoded::Body::coded`): none if its encoding is not a dictionary.
+    /// (`encoded::Body::coded`), as `texts` gives those of type `t`: none
+    /// if its encoding is not a dictionary.
     pub fn coded(
         &self,
         positions: &[usize],
         (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
+        t: &DataType,
     ) -> Option<()> {
         if positions.iter().any(|&n| n >= self.count) {
             return None;
         }
-        self.body.coded(positions, (text, ends, codes), |n| self.is_null(n))?;
+        self.body.coded(positions, (text, ends, codes), (|n| self.is_null(n), padding(t)?))?;
         nulls.extend(positions.iter().map(|&n| self.is_null(n)));
         Some(())
     }
@@ -245,6 +253,26 @@ impl<'a> Chunk<'a> {
             return Ok(Value::Null);
         }
         self.body.value(n, t)
+    }
+}
+
+/// \[DESIGN\] Of a character string type, the characters a value of it is
+/// padded to as it is read, if any: a CHARACTER string's length, written
+/// without its trailing spaces (`record.rs`), a VARCHAR's none, written as
+/// it is; none of any other type.
+pub fn padding(t: &DataType) -> Option<Option<usize>> {
+    match t {
+        DataType::Character { length } => usize::try_from(*length).ok().map(Some),
+        DataType::Varying { .. } => Some(None),
+        DataType::Exact { .. }
+        | DataType::Approximate { .. }
+        | DataType::Bit { .. }
+        | DataType::BitVarying { .. }
+        | DataType::Date
+        | DataType::Time { .. }
+        | DataType::Timestamp { .. }
+        | DataType::Interval(_)
+        | DataType::Extension(_) => None,
     }
 }
 

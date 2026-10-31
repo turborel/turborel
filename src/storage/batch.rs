@@ -43,8 +43,9 @@ pub enum Column {
     Texts(Texts),
 }
 
-/// \[DESIGN\] Character strings as written, of a VARCHAR column as a store
-/// keeps it: their text in one buffer, and where each ends in it; or, of
+/// \[DESIGN\] Character strings as read, of a VARCHAR column as written, of
+/// a CHARACTER one padded to its length, as its values are and as LIKE
+/// sees them: their text in one buffer, and where each ends in it; or, of
 /// a store's dictionaries, each row's entry among theirs (`Coded`), so a
 /// condition is judged once of each entry, not of each row.
 #[derive(Debug, Clone, Default)]

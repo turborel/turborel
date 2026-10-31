@@ -420,21 +420,23 @@ impl Body<'_> {
 impl Body<'_> {
     /// \[DESIGN\] The text of each value at positions `from` to `to`, a
     /// character string written as it is, pushed to `text`, and where each
-    /// ends to `ends`, of those `null` says are not nulls (`Texts`): none if
-    /// the encoding is of fixed fields, a frame, runs or decimals, or a
-    /// value is not UTF-8.
+    /// ends to `ends`, of those `null` says are not nulls (`Texts`), each
+    /// padded with spaces to `pad` characters if given, as a CHARACTER
+    /// string is read: none if the encoding is of fixed fields, a frame,
+    /// runs or decimals, or a value is not UTF-8.
     pub(super) fn texts(
         &self,
         (from, to): (usize, usize),
         (text, ends): (&mut String, &mut Vec<usize>),
-        null: impl Fn(usize) -> bool,
+        (null, pad): (impl Fn(usize) -> bool, Option<usize>),
     ) -> Option<()> {
         if let Body::Fsst(coded) = self {
-            return coded.texts((from, to), (text, ends), null);
+            // Of VARCHAR texts alone (`columns.rs`), never padded.
+            return pad.is_none().then(|| coded.texts((from, to), (text, ends), null)).flatten();
         }
         for n in from..to {
             if !null(n) {
-                text.push_str(std::str::from_utf8(self.field(n)?).ok()?);
+                padded(text, std::str::from_utf8(self.field(n)?).ok()?, pad);
             }
             ends.push(text.len());
         }
@@ -446,18 +448,19 @@ impl Body<'_> {
     /// place among all those `ends` holds pushed to `codes`, 0 of those
     /// `null` says are nulls (`Coded`): none if the encoding is not a
     /// dictionary, or an entry is not UTF-8. The codes from the first of
-    /// `positions`, in order, to the last are unpacked at once.
+    /// `positions`, in order, to the last are unpacked at once. Each entry
+    /// is padded to `pad` characters if given, as `texts` pads.
     pub(super) fn coded(
         &self,
         positions: &[usize],
         (text, ends, codes): (&mut String, &mut Vec<usize>, &mut Vec<u32>),
-        null: impl Fn(usize) -> bool,
+        (null, pad): (impl Fn(usize) -> bool, Option<usize>),
     ) -> Option<()> {
         let Body::Dictionary { bits, offsets, entries, codes: packed } = self else { return None };
         let base = u32::try_from(ends.len()).ok()?;
         for e in 0..(offsets.len().checked_div(WORD)?.checked_sub(1)?) {
             let (from, to) = between(offsets, e)?;
-            text.push_str(std::str::from_utf8(entries.get(from..to)?).ok()?);
+            padded(text, std::str::from_utf8(entries.get(from..to)?).ok()?, pad);
             ends.push(text.len());
         }
         let (Some(&first), Some(&last)) = (positions.first(), positions.last()) else { return Some(()) };
@@ -514,6 +517,17 @@ fn dictionary_words(
         out.push(word.unwrap_or(0));
     })?;
     ok.then_some(())
+}
+
+/// Pushes `s` to `text`, padded with spaces to `pad` characters if given:
+/// a CHARACTER string, written without its trailing spaces, as it is read
+/// [X3.135-1986 §8.7 GR7b] (`record.rs`).
+fn padded(text: &mut String, s: &str, pad: Option<usize>) {
+    text.push_str(s);
+    if let Some(length) = pad {
+        let count = if s.is_ascii() { s.len() } else { s.chars().count() };
+        text.extend(std::iter::repeat_n(' ', length.saturating_sub(count)));
+    }
 }
 
 /// Where the `e`th of the fields `offsets` gives begins and ends.
