@@ -186,7 +186,7 @@ pub(crate) fn in_the_clear(mechanism: &dyn Mechanism) -> Result<()> {
     if !mechanism.secret() {
         return Ok(());
     }
-    let msg = format!("[DESIGN] {} is sent only over TLS or a Unix socket, never over plain TCP", mechanism.name());
+    let msg = format!("[DESIGN] {} is sent only over TLS, a Unix socket or a named pipe, never over plain TCP", mechanism.name());
     Err(Failure::from(&SqlError::new(Code::Connection, msg).with_state(SqlState::INVALID_AUTHORIZATION)))
 }
 

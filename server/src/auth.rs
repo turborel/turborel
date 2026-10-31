@@ -56,7 +56,8 @@ impl Peer {
     }
 
     /// Whether the client is on the server's own machine: a loopback
-    /// address, an IPv4 one written as IPv6 too, or a Unix socket.
+    /// address, an IPv4 one written as IPv6 too, or a Unix socket or a
+    /// named pipe.
     pub fn is_local(&self) -> bool {
         match self.origin {
             Origin::Tcp(address) => address.ip().to_canonical().is_loopback(),
@@ -145,11 +146,12 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D42: a peer is local at a loopback
     /// address, IPv4 or IPv6, an IPv4 one written as IPv6 too, and on a
-    /// Unix socket; not at any other address. A Unix socket is secure; a
-    /// TCP connection is not until TLS secures it. A peer is named by its
+    /// Unix socket or a named pipe; not at any other address. A Unix socket
+    /// or a named pipe is secure; a TCP connection is not until TLS secures
+    /// it. A peer is named by its
     /// address, or `local`.
     #[test]
-    fn a_peer_is_local_on_loopback_or_a_unix_socket() {
+    fn a_peer_is_local_on_loopback_a_unix_socket_or_a_named_pipe() {
         for (address, local) in [
             ("127.0.0.1:1", true),
             ("[::1]:1", true),

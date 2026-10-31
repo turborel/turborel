@@ -168,7 +168,7 @@ pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
 /// the server's certificate checked against its name, or over a Unix
 /// socket or named pipe; a wrong one is refused, saying why; over plain
 /// TCP nothing is sent, the client refusing (SQLSTATE 28000), saying to
-/// use TLS or a Unix socket. Without a password, a certificate presented
+/// use TLS, a Unix socket or a named pipe. Without a password, a certificate presented
 /// proves the user its common name names.
 #[test]
 fn a_password_is_sent_securely() {
@@ -191,7 +191,7 @@ fn a_password_is_sent_securely() {
     given.credentials = Credentials::Given(Password("ann's".into()));
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: None };
     let clear = turborel_cli::connect(&given, || panic!("not typed")).err().unwrap();
-    assert!(clear.contains("SQLSTATE 28000") && clear.contains("TLS or a Unix socket, never over plain TCP"), "{clear}");
+    assert!(clear.contains("SQLSTATE 28000") && clear.contains("TLS, a Unix socket or a named pipe, never over plain TCP"), "{clear}");
     #[cfg(any(unix, windows))]
     {
         given.server = Server::Socket(pki.scratch.socket("s"));

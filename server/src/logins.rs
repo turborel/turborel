@@ -11,8 +11,8 @@
 //! logins of one address waiting take turns, one a delay, so connections in
 //! parallel guess no faster. A login accepted forgets the address's
 //! failures, and so do ten minutes without one. An IPv6 address counts by
-//! its /64, the least a site is given; clients of a Unix socket count as
-//! one address.
+//! its /64, the least a site is given; clients of a Unix socket or a named
+//! pipe count as one address.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
@@ -47,7 +47,7 @@ const SITE_BITS: u32 = 64;
 enum Source {
     /// An address, an IPv6 one's site only.
     Address(IpAddr),
-    /// A Unix socket's clients.
+    /// A Unix socket's or a named pipe's clients.
     Local,
 }
 
@@ -214,8 +214,8 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D43: failures are forgotten
     /// `FORGET_AFTER` after the last; IPv6 addresses count by their /64, an
-    /// IPv4 one written as IPv6 as itself, and a Unix socket's clients as
-    /// one.
+    /// IPv4 one written as IPv6 as itself, and a Unix socket's or a named
+    /// pipe's clients as one.
     #[test]
     fn failures_are_counted_by_site_and_forgotten() {
         let logins = Logins::default();

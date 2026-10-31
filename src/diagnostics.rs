@@ -178,7 +178,7 @@ pub enum Event {
     },
     /// \[DESIGN\] A server began to take connections (RULES.md D42).
     Listening {
-        /// Where: each address, or Unix socket's path.
+        /// Where: each address, Unix socket's path or named pipe's name.
         addresses: Vec<String>,
     },
     /// \[DESIGN\] A server was told to stop: it takes no connection, and

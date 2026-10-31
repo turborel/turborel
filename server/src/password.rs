@@ -186,7 +186,7 @@ struct Checking {
 impl Exchange for Checking {
     fn step(&mut self, input: &[u8]) -> Step {
         if !self.secure {
-            return Step::Refuse("[DESIGN] a password is taken only over TLS or a Unix socket".into());
+            return Step::Refuse("[DESIGN] a password is taken only over TLS, a Unix socket or a named pipe".into());
         }
         let password = String::from_utf8_lossy(input);
         let kept = self.db.verifier(&self.user).ok().flatten();

@@ -278,9 +278,9 @@ mod tests {
     use super::*;
 
     /// Verifies: [DESIGN] RULES.md D55: a connection taken is shown
-    /// logging in, from where it came, a Unix socket's as local; idle once
-    /// authenticated, running as a statement runs; and its row goes as it
-    /// ends.
+    /// logging in, from where it came, a Unix socket's or a named pipe's
+    /// as local; idle once authenticated, running as a statement runs; and
+    /// its row goes as it ends.
     #[test]
     fn a_connection_is_shown_while_it_is_served() {
         let shown = Arc::new(Shown::default());

@@ -1,6 +1,6 @@
 //! SCRAM-SHA-256: a user proves its password without sending it, the
-//! server proving it knows the verifier; over TLS or a Unix socket, over
-//! plain TCP only if the server allows it; proofs wrong, tampered with or
+//! server proving it knows the verifier; over TLS, a Unix socket or a
+//! named pipe, over plain TCP only if the server allows it; proofs wrong, tampered with or
 //! replayed refused, and a server that does not prove itself refused by
 //! the client.
 

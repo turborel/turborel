@@ -2375,7 +2375,7 @@ operator must be able to bound what any statement takes.
   authenticated client alone, and a
   random 128-bit key. A connection whose first and only
   message is Cancel with it cancels what that session runs (D44), over
-  TCP, TLS or a Unix socket alike; the server closes it, saying nothing.
+  TCP, TLS, a Unix socket or a named pipe alike; the server closes it, saying nothing.
 - Hello and Ready exchange capabilities; version 1 defines none, so later
   ones are added without a new version.
 *Why:* drivers expect SQL-92's dynamic SQL; a client must read a large

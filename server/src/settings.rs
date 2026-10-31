@@ -230,7 +230,7 @@ fn proofs() -> [Definition; 4] {
             Kind::Choice(SWITCHES),
             Value::Char(OFF.into()),
             Effect::Connection,
-            "Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).",
+            "Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS, a Unix socket or a named pipe (OFF).",
         ),
     ]
 }

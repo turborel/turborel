@@ -73,16 +73,17 @@ fn a_user_proves_itself_by_its_password() {
 
 /// Verifies: [DESIGN] RULES.md D26, D42, D43: a client refuses to send a
 /// password over plain TCP, by `connect` or `connect_to`, before it makes
-/// a connection (SQLSTATE 28000, saying to use TLS or a Unix socket): a
-/// listener is never reached. Regression test (R-TEST-7): the password
-/// crossed the network in Hello, and only the server refused it.
+/// a connection (SQLSTATE 28000, saying to use TLS, a Unix socket or a
+/// named pipe): a listener is never reached. Regression test (R-TEST-7):
+/// the password crossed the network in Hello, and only the server refused
+/// it.
 #[test]
 fn a_password_never_leaves_over_plain_tcp() {
     let pki = pki("passwords-clear");
     let (_db, server) = served(&pki);
     let told = connection::connect(server.address, "ann", &mut Password("ann's".into())).err().unwrap();
     assert_eq!(state(&told), ("28000", -919));
-    assert!(told.message.contains("TLS or a Unix socket, never over plain TCP"), "the client's own refusal: {told}");
+    assert!(told.message.contains("TLS, a Unix socket or a named pipe, never over plain TCP"), "the client's own refusal: {told}");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let address = listener.local_addr().unwrap();

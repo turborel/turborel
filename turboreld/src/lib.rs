@@ -131,7 +131,7 @@ The database's files, fixed when it is created: --set them as it is:
   STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
 
 Clients prove who they are by a user's password, sent or proved by SCRAM-SHA-256, over
-TLS or a Unix socket only, or by a certificate of SERVER.TLS_CLIENT_CA's authorities
+TLS, a Unix socket or a named pipe only, or by a certificate of SERVER.TLS_CLIENT_CA's authorities
 whose common name is the user's; with SERVER.TRUST_LOCAL ON, a client of this machine is
 trusted instead. The database's
 owner manages users in SQL (CREATE USER, ALTER USER, DROP USER), and sets the database's

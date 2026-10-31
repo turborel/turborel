@@ -17,7 +17,7 @@
 //! The exchange does not give the password away, but one overheard lets
 //! its eavesdropper try passwords against it at its own pace, and without
 //! channel binding a server in the middle could relay it. So it is taken
-//! over TLS or a Unix socket, and over plain TCP only while
+//! over TLS, a Unix socket or a named pipe, and over plain TCP only while
 //! SERVER.SCRAM_WITHOUT_TLS is ON. A user not there is answered with a salt
 //! made of the user's name, the same each time, as a user's is, and refused
 //! as a wrong proof is, so a client cannot tell who exists.
@@ -112,7 +112,7 @@ impl Exchange for Proving {
     fn step(&mut self, input: &[u8]) -> Step {
         match std::mem::replace(&mut self.stage, Stage::Over) {
             Stage::Begun { allowed: false, .. } => Step::Refuse(
-                "[DESIGN] SCRAM-SHA-256 is taken over TLS or a Unix socket, over plain TCP only if SERVER.SCRAM_WITHOUT_TLS is ON".into(),
+                "[DESIGN] SCRAM-SHA-256 is taken over TLS, a Unix socket or a named pipe, over plain TCP only if SERVER.SCRAM_WITHOUT_TLS is ON".into(),
             ),
             Stage::Begun { allowed: true, verifier, known } => {
                 let begun = First::read(input).and_then(|first| Ok((first, scram::nonce()?)));

@@ -176,7 +176,7 @@ Each in a sentence:
 - **SERVER.MAX_STATEMENTS**: Prepared statements a connection holds at once, at most.
 - **SERVER.PASSWORD_ITERATIONS**: The PBKDF2 iterations of a password's verifier made from the start on.
 - **SERVER.PORT**: The TCP port connections are taken at.
-- **SERVER.SCRAM_WITHOUT_TLS**: Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).
+- **SERVER.SCRAM_WITHOUT_TLS**: Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS, a Unix socket or a named pipe (OFF).
 - **SERVER.SHUTDOWN_TIMEOUT_MS**: The milliseconds a server told to stop lets each connection finish its statement, before it cancels the statements and closes the connections, their transactions rolled back; 0 for no limit.
 - **SERVER.SOCKET**: The Unix socket or named pipe taken at, unless empty.
 - **SERVER.TLS**: Whether TCP connections may use TLS (ON), or must (REQUIRED).
