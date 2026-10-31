@@ -28,5 +28,6 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod keys;
 mod program;
 mod users;

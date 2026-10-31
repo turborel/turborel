@@ -79,8 +79,8 @@ Each in a sentence:
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
 - **SPILL_BATCH**: The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its WORK_MEMORY holds.
 - **STATEMENT_TIMEOUT**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
-- **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
-- **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty.
+- **STORAGE.CHECKSUM**: The hash function every file is checksummed with: of the CRC family, built in (CRC-16/ARC, CRC-16/IBM-3740, CRC-16/KERMIT, CRC-16/XMODEM, CRC-32/ISO-HDLC, CRC-32/ISCSI, CRC-64/ECMA-182, CRC-64/XZ, CRC-64/NVME); or, registered by `turboreld`, SHA-256, and HMAC-SHA-256 keyed by the key `--checksum-key` names. See [Encryption](../operator/07-encryption.md#checksums).
+- **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty. Registered by `turboreld`: LZ4, AES-256-GCM:KEY and ChaCha20-Poly1305:KEY, KEY a key of `--keys`. See [Encryption](../operator/07-encryption.md).
 - **STORAGE.PAGE_SIZE**: The bytes of a page of the data file, a power of two.
 - **STORAGE.POOL_BYTES**: The bytes of the buffer pool of the data file, reserved of MEMORY_BUDGET as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.
 - **JOBS.POLICY**: How the database's background work, its checkpoints and maintenance, runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.

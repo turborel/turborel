@@ -441,8 +441,9 @@ under R-SAFE-4.
 - Tests make their certificates with rcgen 0.14.10 (MIT or Apache-2.0),
   on aws-lc-rs, a dependency of the test support's feature `tls`, which
   the server's tests take: none is kept in the repository to expire.
-- Encryption at rest: AES-256-GCM from the same aws-lc-rs, in the crate
-  `turborel-aes`, an encoding (D48), its subkeys by HKDF-SHA256.
+- Encryption at rest: AES-256-GCM and ChaCha20-Poly1305 from the same
+  aws-lc-rs, in the crate `turborel-aes`, encodings (D48), their subkeys
+  by HKDF-SHA256.
 - Passwords: PBKDF2-HMAC-SHA256 from the same aws-lc-rs (D43), at
   SERVER.PASSWORD_ITERATIONS, 600,000 by default: OWASP's choice where
   FIPS 140 is needed, and no dependency beyond TLS's. It is not
@@ -450,9 +451,16 @@ under R-SAFE-4.
   `argon2`, its one implementation in Rust, says nothing of an audit or
   of being ready for production, and has no FIPS path. A verifier names
   its scheme, so Argon2id may come beside it.
-- Cryptographic hash functions, as `HashFunction`s (D30) for checksums a
-  forger cannot match: none yet. A digest holds 256 bits at most
-  (`hash::MAX_DIGEST_BYTES`).
+- Cryptographic hash functions, as `HashFunction`s (D30), from the same
+  aws-lc-rs, in `turborel-aes`: SHA-256 (id 11), a checksum no accident
+  matches, though one who can rewrite a file can rewrite its checksums;
+  and HMAC-SHA-256 (id 12), keyed by a keyring's key through HKDF-SHA256,
+  a checksum a forger without the key cannot match. A file records the
+  function's id alone, never the key: opened with another key, its
+  headers fail their checksums, and it is refused (SQLCODE -916).
+  `turboreld` keys it by `--checksum-key`. Neither stops a block or page
+  the database once wrote being put back where it was. A digest holds
+  256 bits at most (`hash::MAX_DIGEST_BYTES`).
 *Why:* cryptography written here would be unreviewed and likely wrong, and
 a server needs it.
 
@@ -465,7 +473,7 @@ per table.**
   colon, `AES-256-GCM:PAYROLL`: the encoding is bound to it, and records
   in its output what its decoding needs, so a file's header names only
   ids. An encoding's id is never changed or reused: 1 is LZ4, 2 is
-  AES-256-GCM; tests take 1000 and above.
+  AES-256-GCM, 3 is ChaCha20-Poly1305; tests take 1000 and above.
 - An encoding declares the most it adds to any input
   (`Encoding::overhead`): the pager keeps that room in every page, so an
   encoded page never spills to an overflow page, and the row store in
@@ -480,7 +488,11 @@ per table.**
   decoded must give the length it records, at most 255 times its own, so
   damage is refused before memory is taken for it. Input it would not
   shrink is kept as it is, behind one byte.
-- AES-256-GCM is the crate `turborel-aes`, on the aws-lc-rs of D26. Its
+- AES-256-GCM and ChaCha20-Poly1305 [RFC 8439] are the crate
+  `turborel-aes`, on the aws-lc-rs of D26: ChaCha20-Poly1305 for
+  processors without AES instructions, sealed as AES-256-GCM is, its
+  nonces drawn from aws-lc-rs's generator, its HKDF info its own, so one
+  key named by both gives each subkeys of its own. Their
   keys come from a `Keyring`, an extension point its host gives it, never
   from the database's files: the built-in `KeyDirectory` reads a
   directory an operator keeps (`turboreld --keys DIR`), a key a file of 64
@@ -492,7 +504,14 @@ per table.**
   in what is encrypted; the place it is stored and the key's name are
   authenticated, so data changed, moved or of another key is refused
   (SQLCODE -916). A key is rotated by naming another: rows written before
-  are read with their own.
+  are read with their own, until the table is sealed again
+  (`Session::reseal_table`, `turboreld ... reseal`): given a new
+  generation of its storage, as ALTER TABLE changing its engine gives it,
+  its rows copied there through its encodings now, by its transaction's
+  own writes; logged as an ALTER TABLE of no action text, which no SQL
+  writes. Committed and checkpointed, nothing of the table is read with
+  the old key, which may then be retired. A key of STORAGE.ENCODINGS
+  serves the database's life.
 - Per table, the engine seals what it stores: the data passed through a
   pipeline, headed by the pipeline's ids (`Pipeline::seal`,
   `Encodings::unseal`), every engine given the registry through
@@ -1668,7 +1687,8 @@ make.
   (R-TEST-10): tests alone depend on it.
 - The server depends on tokio 1.54.1 (MIT), for network I/O only, and on
   TLS's crates (D26), with the features rt-multi-thread, net, io-util, sync,
-  macros and time; the program adds signal, LZ4 and AES-256-GCM (D48), and rpassword for
+  macros and time; the program adds signal, LZ4, AES-256-GCM, ChaCha20-Poly1305,
+  SHA-256 and HMAC-SHA-256 (D26, D48), and rpassword for
   a password typed at a terminal (D46). Chosen as the most used and most reviewed async
   runtime of Rust; its `unsafe` is its own, and none is written here
   (R-SAFE-1). The core never sees it.
@@ -1997,7 +2017,7 @@ turboreld/test/         the program's integration test binary
 cli/src/                the command-line client `turborel` (D46)
 cli/test/               its integration test binary
 lz4/src/                LZ4 compression, an encoding plug-in (D48)
-aes/src/                AES-256-GCM encryption, an encoding plug-in (D26, D48)
+aes/src/                encryption (AES-256-GCM, ChaCha20-Poly1305) and cryptographic hash functions (D26, D48)
 support/src/            fixtures shared by the crates' tests (R-TEST-10)
 test/integration/       the integration test binary: public API only
   main.rs               crate root and module list

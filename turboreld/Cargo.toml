@@ -18,7 +18,8 @@ turborel-server = { version = "0.0.0", path = "../server" }
 # Compression for the database's files and tables (RULES.md D48).
 turborel-lz4 = { version = "0.0.0", path = "../lz4" }
 # Encryption for the database's files and tables, its keys from a
-# directory the operator keeps (RULES.md D26, D48).
+# directory the operator keeps, and cryptographic checksums (RULES.md D26,
+# D48).
 turborel-aes = { version = "0.0.0", path = "../aes" }
 # A password typed at a terminal without its echo (RULES.md D46), as the
 # command-line client reads one.

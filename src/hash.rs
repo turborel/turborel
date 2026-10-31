@@ -8,7 +8,9 @@
 //! checksummed on one machine verifies on any other.
 //!
 //! Built in: the CRC family (`hash/crc.rs`), for checksums; MurmurHash3
-//! (`hash/murmur.rs`), for hash tables and filters.
+//! (`hash/murmur.rs`), for hash tables and filters. Cryptographic ones,
+//! SHA-256 and HMAC-SHA-256, are plug-ins on a vetted crate
+//! (`turborel-aes`, RULES.md D26).
 
 pub mod crc;
 pub mod murmur;
@@ -59,8 +61,9 @@ impl Digest {
 /// * `id` is unique among the functions in use, and constant forever.
 /// * `hash_parts` of several parts equals `hash` of their concatenation, so a
 ///   caller can hash a header and a payload without copying them together.
-/// * The digest depends only on the bytes, never on the machine, and always
-///   has `digest_len` bytes.
+/// * The digest depends only on the bytes, and on what the function was
+///   made with (a keyed one's key, RULES.md D26), never on the machine, and
+///   always has `digest_len` bytes.
 /// * Methods may be called from several threads at once (`Send + Sync`).
 pub trait HashFunction: Send + Sync {
     /// Its id in file formats.

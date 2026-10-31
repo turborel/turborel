@@ -467,7 +467,8 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   columns' values, compressed and sorted, and writes them again (RULES.md
   D31). The database
   declares ENCODINGS for every table: the registered encodings its rows
-  pass through, such as LZ4 or AES-256-GCM with its key (RULES.md D48).
+  pass through, such as LZ4, or AES-256-GCM or ChaCha20-Poly1305 with its
+  key (RULES.md D48).
 - **Plug-ins** for storage engines, index methods, functions, optimizer
   rules, system tables, the log, file systems, encodings, hash functions and
   diagnostics (the extension points are listed at the top of `src/db.rs`).

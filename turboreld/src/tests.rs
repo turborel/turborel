@@ -10,7 +10,7 @@ fn args(line: &str) -> Vec<String> {
 fn config(line: &str) -> Config {
     match parse(&args(line)).unwrap() {
         Command::Serve(config) => config,
-        Command::Help | Command::Version | Command::User(..) => panic!("not a server"),
+        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) => panic!("not a server"),
     }
 }
 

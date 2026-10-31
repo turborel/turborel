@@ -39,7 +39,7 @@ Each in a sentence:
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
 - **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
-- **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own. See [Encryption](../operator/07-encryption.md).
+- **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY, ChaCha20-Poly1305:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own, until the table is sealed again (`turboreld ... reseal`). See [Encryption](../operator/07-encryption.md).
 - **OUT_OF_LINE**: Values of varying width longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
 - **STATISTICS.BUCKETS**: The buckets of each column's histogram.
 - **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.

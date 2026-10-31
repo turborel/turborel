@@ -16,7 +16,7 @@ use turborel_test_support::client::{done, rows};
 fn config(line: &[String]) -> Config {
     match turboreld::parse(line).unwrap() {
         Command::Serve(config) => config,
-        Command::Help | Command::Version | Command::User(..) => panic!("not a server"),
+        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) => panic!("not a server"),
     }
 }
 

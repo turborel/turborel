@@ -72,7 +72,7 @@ Crates (D42, D46, D48):
 | `turboreld/` | `turboreld` | the server's program: command line, signals |
 | `cli/` | `turborel-cli` | the command-line client `turborel` |
 | `lz4/` | `turborel-lz4` | LZ4 compression, an encoding plug-in |
-| `aes/` | `turborel-aes` | AES-256-GCM encryption, an encoding plug-in |
+| `aes/` | `turborel-aes` | AES-256-GCM and ChaCha20-Poly1305 encryption, SHA-256 and HMAC-SHA-256 checksums: plug-ins |
 | `support/` | `turborel-test-support` | fixtures the crates' tests share |
 | `xtask/` | `xtask` | the project's checks and tools |
 

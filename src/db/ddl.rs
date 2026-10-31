@@ -105,8 +105,7 @@ impl State {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
             Change::AlterTable { table, action, schema, zone } => {
-                let action = Parser::new(action)?.of_definition().alter_table_action()?;
-                Ok(self.alter_table((table, schema, *zone), &action, (made, None))?.0)
+                Ok(self.alter_table((table, schema, *zone), &logged_action(action)?, (made, None))?.0)
             }
             Change::Defined { auth, schema, zone, sql, placed } => self.redefine((auth, schema, *zone), sql, placed.as_ref(), made),
             Change::Schema { sql, owner, engines, zone } => self.reschema((sql, owner, *zone), engines, made),
@@ -126,6 +125,16 @@ impl State {
             | Change::Owner { .. } => Err(api(format!("[DESIGN] {change:?} is not a change a transaction makes"))),
         }
     }
+}
+
+/// The `<alter table action>` a change of definitions logged as `text`:
+/// none written, the table's storage made anew as it is, its rows sealed
+/// again (`Session::reseal_table`); else the action `text` writes.
+fn logged_action(text: &str) -> Result<AlterAction> {
+    if text.is_empty() {
+        return Ok(AlterAction::Storage(crate::ast::TableStorage::default()));
+    }
+    Parser::new(text)?.of_definition().alter_table_action()
 }
 
 impl State {

@@ -22,7 +22,7 @@ use turborel::disk::io::{FileSystem, OsFileSystem};
 use turborel::files::Noted;
 use turborel::settings::Effect;
 use turborel::value::{Decimal, Value};
-use turborel_aes::{AesGcm, KEY_BYTES, KeyDirectory, Keyring};
+use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, KEY_BYTES, KeyDirectory, Keyring, Sha256};
 use turborel_lz4::Lz4;
 
 use tokio::runtime::Runtime;
@@ -37,6 +37,7 @@ use turborel_server::settings::{self, TRUST};
 /// The usage text.
 pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
        turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
+       turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 
   --dir PATH             serve the database kept in PATH, created if there is none
   --memory               serve a database kept nowhere, lost when the server stops
@@ -48,6 +49,7 @@ pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
                          (default: standard error)
   --keys DIR             the encryption keys: a file in DIR each, named as the key,
                          of 64 hexadecimal digits (openssl rand -hex 32)
+  --checksum-key NAME    the key of --keys that HMAC-SHA-256 checksums are keyed by
   --help                 print this
   --version              print the release
 
@@ -58,6 +60,10 @@ standard input:
   user drop NAME            drop a user
   user owner NAME           make a user the database's owner
   user list                 every user, the owner marked
+
+A table's rows sealed again, through the encodings it names now, on a database no
+server holds: then a key it named before may be retired:
+  reseal AUTH.TABLE
 
 The server's settings, beside the database's:
   SERVER.HOST            hosts or addresses, by commas, to take TCP connections at
@@ -90,9 +96,11 @@ The server's settings, beside the database's:
 
 The database's files, fixed when it is created: --set them as it is:
   STORAGE.PAGE_SIZE      the bytes of a page of its data file, a power of two (default 8192)
-  STORAGE.CHECKSUM       the hash function its files are checksummed with (default CRC-32/ISCSI)
+  STORAGE.CHECKSUM       the hash function its files are checksummed with (default CRC-32/ISCSI;
+                         SHA-256, or HMAC-SHA-256 keyed by --checksum-key)
   STORAGE.ENCODINGS      the encodings its files pass through, by commas: LZ4, and
-                         AES-256-GCM:KEY with a key of --keys (default none)
+                         AES-256-GCM:KEY or ChaCha20-Poly1305:KEY with a key of --keys
+                         (default none)
   LOG.SEGMENT_SIZE       the bytes of a segment of its log (default 64 MiB)
   STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
 
@@ -106,7 +114,8 @@ then the database is closed. Past SERVER.SHUTDOWN_TIMEOUT milliseconds (default 
 and connections closed, rolled back. SIGHUP (Unix) opens the --log file again, as
 a log rotation asks.
 A table's rows may pass through encodings of their own, compressed or encrypted:
-CREATE TABLE ... WITH (ENCODINGS = 'LZ4,AES-256-GCM:KEY'), or ALTER TABLE ... SET (...).
+CREATE TABLE ... WITH (ENCODINGS = 'LZ4,AES-256-GCM:KEY'), or ALTER TABLE ... SET (...);
+rows written before keep theirs until the table is resealed.
 An encrypted table is indexed only where STORAGE.ENCODINGS encrypts the files too.";
 
 /// Where the database is kept.
@@ -129,6 +138,9 @@ pub enum Command {
     Serve(Config),
     /// A user command, on the database's directory (`users.rs`).
     User(Config, UserCommand),
+    /// A table's rows sealed again, on the database's directory
+    /// (`reseal.rs`): the table, as written.
+    Reseal(Config, String),
 }
 
 /// A server's configuration, from the command line.
@@ -145,6 +157,8 @@ pub struct Config {
     /// The owner made of a database kept nowhere as it is served, if any
     /// (`users.rs`).
     pub owner: Option<Owner>,
+    /// The key of `keys` HMAC-SHA-256 is keyed by, if any.
+    pub checksum_key: Option<String>,
 }
 
 /// What the command line `args`, without the program's name, asks for.
@@ -154,7 +168,7 @@ pub struct Config {
 /// What is wrong with it, for the operator.
 pub fn parse(args: &[String]) -> Result<Command, String> {
     let (mut store, mut settings, mut user) = (None, Vec::new(), None);
-    let (mut log, mut keys, mut owner) = (None, None, None);
+    let (mut log, mut keys, mut owner, mut checksum_key, mut reseal) = (None, None, None, None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let mut value = || rest.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -167,23 +181,29 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--log" => log = Some(PathBuf::from(value()?)),
             "--keys" => keys = Some(PathBuf::from(value()?)),
             "--owner" => owner = Some(Owner { name: value()?.clone(), password: None }),
+            "--checksum-key" => checksum_key = Some(value()?.clone()),
             "user" => {
                 user = Some(parse_user(rest.as_slice())?);
+                break;
+            }
+            "reseal" => {
+                reseal = Some(parse_reseal(rest.as_slice())?);
                 break;
             }
             other => return Err(format!("{other} is not an option\n\n{USAGE}")),
         }
     }
     let store = store.ok_or_else(|| format!("name --dir or --memory\n\n{USAGE}"))?;
-    if owner.is_some() && (store != Store::Memory || user.is_some()) {
+    if owner.is_some() && (store != Store::Memory || user.is_some() || reseal.is_some()) {
         return Err(
             "--owner makes the owner of a database kept nowhere, served with --memory: in a directory, user add NAME --owner".into()
         );
     }
-    let config = Config { store, settings, log, keys, owner };
-    Ok(match user {
-        Some(command) => Command::User(config, command),
-        None => Command::Serve(config),
+    let config = Config { store, settings, log, keys, owner, checksum_key };
+    Ok(match (user, reseal) {
+        (Some(command), _) => Command::User(config, command),
+        (None, Some(table)) => Command::Reseal(config, table),
+        (None, None) => Command::Serve(config),
     })
 }
 
@@ -256,12 +276,7 @@ fn within(config: &Config, runtime: Option<&Runtime>, work: impl FnOnce(Server) 
         hangups(runtime, sink.reopener())?;
     }
     db.set_diagnostics(Box::new(sink));
-    db.register_encoding(Box::new(Lz4)).map_err(|e| format!("cannot register LZ4: {e}"))?;
-    let keyring: Arc<dyn Keyring> = match &config.keys {
-        Some(dir) => Arc::new(NotedKeys { keys: KeyDirectory::new(dir), noted: noted(&db, dir, false)? }),
-        None => Arc::new(NoKeys),
-    };
-    db.register_encoding(Box::new(AesGcm::new(keyring))).map_err(|e| format!("cannot register AES-256-GCM: {e}"))?;
+    register(&db, config)?;
     // Those read as the database is created or opened are set before it is.
     let (early, late): (Vec<_>, Vec<_>) = config.settings.iter().partition(|(name, _)| read_as_opened(&db, name));
     let set = |(name, value): &&(String, Value)| db.set_setting(name, value).map_err(|e| format!("cannot set {name}: {e}"));
@@ -284,6 +299,30 @@ fn within(config: &Config, runtime: Option<&Runtime>, work: impl FnOnce(Server) 
         Store::Memory => Ok(()),
     };
     outcome.and(closed)
+}
+
+/// Registers with `db` the plug-ins the program ships (RULES.md D26, D48):
+/// LZ4; AES-256-GCM and ChaCha20-Poly1305 with the keys of `--keys`;
+/// SHA-256; and HMAC-SHA-256 if `--checksum-key` names its key.
+fn register(db: &Database, config: &Config) -> Result<(), String> {
+    db.register_encoding(Box::new(Lz4)).map_err(refused("LZ4"))?;
+    let keyring: Arc<dyn Keyring> = match &config.keys {
+        Some(dir) => Arc::new(NotedKeys { keys: KeyDirectory::new(dir), noted: noted(db, dir, false)? }),
+        None => Arc::new(NoKeys),
+    };
+    db.register_encoding(Box::new(AesGcm::new(Arc::clone(&keyring)))).map_err(refused("AES-256-GCM"))?;
+    db.register_encoding(Box::new(ChaCha20Poly1305::new(Arc::clone(&keyring)))).map_err(refused("ChaCha20-Poly1305"))?;
+    db.register_hash_function(Box::new(Sha256)).map_err(refused("SHA-256"))?;
+    if let Some(name) = &config.checksum_key {
+        let keyed = HmacSha256::new(&*keyring, name).map_err(refused("HMAC-SHA-256"))?;
+        db.register_hash_function(Box::new(keyed)).map_err(refused("HMAC-SHA-256"))?;
+    }
+    Ok(())
+}
+
+/// What says a plug-in, `what`, could not be registered.
+fn refused(what: &'static str) -> impl Fn(turborel::error::SqlError) -> String {
+    move |e| format!("cannot register {what}: {e}")
 }
 
 /// The file or directory at `path`, the server's, shown among `db`'s files
@@ -391,8 +430,10 @@ pub async fn signalled() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+mod reseal;
 mod users;
 
+pub use reseal::{parse_reseal, run_reseal};
 pub use users::{Owner, UserCommand, parse_user, read_owner_password, run_user};
 
 // Unit tests: the command line read (RULES.md R-TEST-1).

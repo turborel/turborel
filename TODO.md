@@ -203,16 +203,18 @@ The registry, scopes and SET statements exist (D36). Still to do:
   durable itself. A directory it declares shadowed would have its writes
   kept aside and committed at each checkpoint with the data file, as the
   built-in engines' are, which needs a checkpoint contract for it.
-- **Hash functions:** cryptographic ones (D26), as `HashFunction`
-  plug-ins from vetted crates, for checksums a forger cannot match. A
-  digest holds 256 bits at most (`MAX_DIGEST_BYTES`), so SHA-512 would
-  need it raised.
+- **Hash functions:** SHA-512 beside SHA-256 and HMAC-SHA-256 (D26),
+  which needs a digest of more than 256 bits (`MAX_DIGEST_BYTES`
+  raised). HMAC-SHA-256's key
+  is fixed for a database's life: a file records the function's id
+  alone, so changing the key means checksumming every file again.
 - **Encryption, further** (D48): keyrings of key services (a cloud KMS,
   Vault) beside the key directory; a database's files re-encrypted with
-  another key, which today means naming it at creation; a table's rows
-  sealed again after its ENCODINGS change, since rows written before keep
-  their encodings and key, so a key cannot yet be retired;
-  ChaCha20-Poly1305 for machines without AES instructions.
+  another key, which today means naming it at creation, so a key
+  STORAGE.ENCODINGS names cannot be retired. A table's rows are sealed
+  again only while it is altered (`Session::reseal_table`, `turboreld
+  ... reseal`); a statement for it, `ALTER TABLE ... RESEAL`, awaits its
+  BNF's approval.
 - **Spills, further:** compressed, through the database's compression,
   where the disk is slower than the CPU; and a spill file made before a
   table is encrypted stays as it was until its operator ends. A

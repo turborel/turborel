@@ -7,8 +7,8 @@ use std::sync::Arc;
 use super::write::{delete_searched, update_searched};
 use super::{Call, Completion, Session, State, StatementContext, slow};
 use crate::ast::{
-    ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, ServedStatement, SqlStatement,
-    TableName, UserStatement,
+    AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, ServedStatement,
+    SqlStatement, TableName, TableStorage, UserStatement,
 };
 use crate::binder::{WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
@@ -79,6 +79,33 @@ impl Session {
             self.about_cursor(&cursor);
         }
         diagnosed
+    }
+
+    /// \[EXTENSION\] Seals the rows of base table `table`, written
+    /// `AUTH.TABLE`, again, through the encodings its option ENCODINGS
+    /// names now (RULES.md D48): as ALTER TABLE changing its engine does,
+    /// in this session's transaction, it gives the table a new generation
+    /// of its storage, its rows copied there by the transaction's own
+    /// writes, its indexes made anew. Once the transaction commits and a
+    /// checkpoint follows, nothing of the table is read through the
+    /// encodings, or the keys, it named before: a key may be retired.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `table` is not written `AUTH.TABLE`; as ALTER
+    /// TABLE's otherwise [ISO/IEC 9075:1992 §11.10]: SQLCODE -104 if the
+    /// session's user does not own its schema, SQLCODE -103 if it is no
+    /// base table, or a temporary one; the copy's own, as an encoding
+    /// named that is not registered.
+    pub fn reseal_table(&self, table: &str) -> Result<Completion> {
+        let name = super::qualified_name(table)?;
+        let call = self.enter()?;
+        self.emptied(("ALTER TABLE", ""));
+        let named = TableName { auth: Some(name.auth), ident: name.ident, at: 0 };
+        let anew = AlterAction::Storage(TableStorage::default());
+        let stmt = SqlStatement::AlterTable { table: named, action: anew, text: String::new() };
+        let outcome = self.execute_parsed(&call, stmt, &mut Params::new());
+        self.diagnosed(outcome, |done| done.sqlstate())
     }
 
     /// `stmt`, parsed, run in the call `call`.

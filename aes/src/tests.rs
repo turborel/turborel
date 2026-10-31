@@ -3,15 +3,22 @@
 //! anew, the key directory, and a table's rows through it end to end
 //! (RULES.md R-TEST-1).
 
+mod chacha;
+mod checksums;
+mod reseal;
+
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use turborel::db::Database;
-use turborel::error::Code;
+use turborel::disk::encoding::Encoding;
+use turborel::error::{Code, Result};
 
 use super::*;
+use crate::sealer::SALT;
 
 /// A keyring of keys held in memory.
-struct Held(HashMap<String, [u8; KEY_BYTES]>);
+pub(crate) struct Held(pub(crate) HashMap<String, [u8; KEY_BYTES]>);
 
 impl Keyring for Held {
     fn name(&self) -> &'static str {
@@ -22,18 +29,23 @@ impl Keyring for Held {
     }
 }
 
-/// AES-256-GCM with the keys K, of 1s, and L, of 2s.
-fn aes() -> AesGcm {
-    AesGcm::new(Arc::new(Held(HashMap::from([("K".to_owned(), [1_u8; KEY_BYTES]), ("L".to_owned(), [2_u8; KEY_BYTES])]))))
+/// The keys K, of 1s, and L, of 2s.
+pub(crate) fn held() -> Arc<Held> {
+    Arc::new(Held(HashMap::from([("K".to_owned(), [1_u8; KEY_BYTES]), ("L".to_owned(), [2_u8; KEY_BYTES])])))
 }
 
-fn encrypted(aes: &AesGcm, context: u64, key: &str, input: &[u8]) -> Vec<u8> {
+/// AES-256-GCM with the keys of `held`.
+fn aes() -> AesGcm {
+    AesGcm::new(held())
+}
+
+fn encrypted(aes: &dyn Encoding, context: u64, key: &str, input: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     aes.encode_with(context, key, input, &mut out).unwrap();
     out
 }
 
-fn code(aes: &AesGcm, context: u64, input: &[u8]) -> Option<Code> {
+fn code(aes: &dyn Encoding, context: u64, input: &[u8]) -> Option<Code> {
     aes.decode(context, input, &mut Vec::new()).err().map(|e| e.code)
 }
 

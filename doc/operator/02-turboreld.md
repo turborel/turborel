@@ -7,6 +7,7 @@
 ```
 turboreld (--dir PATH | --memory) [options]
 turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
+turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 ```
 
 | Option | Meaning |
@@ -17,11 +18,14 @@ turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
 | `--set NAME=VALUE` | set the database's setting NAME as the server starts, kept with the database; more than once for more |
 | `--log FILE` | append the diagnostics, a line of JSON each, to FILE; standard error by default |
 | `--keys DIR` | the encryption keys, a file in DIR each ([Encryption](07-encryption.md)) |
+| `--checksum-key NAME` | the key of `--keys` that HMAC-SHA-256 checksums are keyed by ([Encryption](07-encryption.md#checksums)) |
 | `--help` | print the usage |
 | `--version` | print the release |
 
 `user COMMAND` manages the users of a database no server holds
-([Users](05-users.md)). The settings `--set` sets are those of
+([Users](05-users.md)); `reseal AUTH.TABLE` seals a table's rows again
+through the encodings it names now, so a key it named before may be
+retired ([Encryption](07-encryption.md#retiring-a-key)). The settings `--set` sets are those of
 [Settings](../appendix/c-settings.md), each set before the database is
 opened if it is read as the database opens, after if not, and kept with
 the database. A setting fixed when the database is made (TAKES_EFFECT

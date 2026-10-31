@@ -293,3 +293,57 @@ fn spills_are_encrypted_while_anything_is() {
     let sorted = rows(&s, "SELECT S FROM P ORDER BY S").unwrap();
     assert_eq!((sorted.len(), sorted[0].trim_end()), (6000, "plain 00000"), "read back through it");
 }
+
+/// Verifies: [EXTENSION] RULES.md D48: rows of a table written through
+/// an encoding stay sealed through it after its option ENCODINGS names
+/// another, so a database opened without the first refuses them (SQLCODE
+/// -910); sealed again (`Session::reseal_table`), by its schema's owner
+/// alone (SQLCODE -104), of a base table (-103), named AUTH.TABLE (-910),
+/// short and kept out of
+/// line alike, they are read without it, with the rows written after,
+/// also once the database is opened again, after a crash, which makes the
+/// change again from the log, and a checkpoint.
+#[test]
+fn a_tables_rows_are_sealed_again() {
+    let scratch = Scratch::new("table-encodings-reseal");
+    let dir = scratch.path("db");
+    let db = open(&dir, true);
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL, S CHARACTER(4000)) WITH (ENCODINGS = 'test scramble')")
+        .unwrap();
+    insert(&db, 0..4);
+    let s = db.session("S");
+    exec(&s, "ALTER TABLE T SET (ENCODINGS = 'test run-length')").unwrap();
+    exec(&s, "COMMIT WORK").unwrap();
+    insert(&db, 4..6);
+    drop(s);
+    db.close().unwrap();
+    assert_eq!(rows(&run_length_only(&dir).session("S"), "SELECT K FROM T"), Err(Code::Api), "rows sealed through scramble");
+
+    let db = open(&dir, true);
+    db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE U (K INTEGER) CREATE VIEW V AS SELECT K FROM U").unwrap();
+    let p = db.session("P");
+    assert_eq!(p.reseal_table("S.T").err().map(|e| e.code), Some(Code::Privilege), "not the owner's");
+    assert_eq!(p.reseal_table("P.V").err().map(|e| e.code), Some(Code::SyntaxRule), "a view");
+    assert_eq!(p.reseal_table("V").err().map(|e| e.code), Some(Code::Api), "not AUTH.TABLE");
+    exec(&p, "ROLLBACK WORK").unwrap();
+    let s = db.session("S");
+    s.reseal_table("S.T").unwrap();
+    exec(&s, "COMMIT WORK").unwrap();
+    assert_eq!(all(&db), written(0..6));
+    // A crash: recovery makes the table anew again from the log.
+    drop((s, p, db));
+    let recovered = open(&dir, true);
+    assert_eq!(all(&recovered), written(0..6));
+    recovered.close().unwrap();
+    let again = run_length_only(&dir);
+    assert_eq!(all(&again), written(0..6));
+    again.close().unwrap();
+}
+
+/// The database in `dir`, opened with the test encoding `RunLength` alone.
+fn run_length_only(dir: &Path) -> Database {
+    let db = Database::new();
+    db.register_encoding(Box::new(RunLength)).unwrap();
+    db.open_files(&os(), dir, &OpenOptions::default()).unwrap();
+    db
+}
