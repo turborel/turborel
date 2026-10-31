@@ -58,8 +58,10 @@ pub enum OpenMode {
 /// * A file created or removed survives a crash only after `sync_dir` of
 ///   its directory returns.
 /// * `lock` gives a lock no other holder of the file's lock has, in this
-///   process or another, until its `FileLock` is dropped; a holder that
-///   ends without dropping it, as a process that crashed, gives it up.
+///   process or another, until its `FileLock` is dropped, and none once
+///   it is, though a process this one started shares the file still; a
+///   holder that ends without dropping it, as a process that crashed,
+///   gives it up.
 /// * Every failure is an error (SQLCODE -915), never a panic.
 /// * Methods may be called from several threads at once (`Send + Sync`).
 pub trait FileSystem: Send + Sync {
@@ -308,14 +310,31 @@ impl FileSystem for OsFileSystem {
         sync_directory(path)
     }
     /// \[DESIGN\] `File::try_lock`: `flock` on Unix, `LockFileEx` on
-    /// Windows; the system gives it up when the process ends.
+    /// Windows; given up as it is dropped (`OsLock`), and by the system
+    /// when the process ends.
     fn lock(&self, path: &Path) -> Result<FileLock> {
         let file = owners().read(true).write(true).create(true).truncate(false).open(path).map_err(|e| failed("open", path, &e))?;
         match file.try_lock() {
-            Ok(()) => Ok(FileLock::new(file)),
+            Ok(()) => Ok(FileLock::new(OsLock(file))),
             Err(fs::TryLockError::WouldBlock) => Err(locked(path)),
             Err(fs::TryLockError::Error(e)) => Err(failed("lock", path, &e)),
         }
+    }
+}
+
+/// \[DESIGN\] A lock `OsFileSystem` gave: its file, locked, unlocked as it
+/// is dropped, before the file is closed. On Unix a lock belongs to the
+/// open file, not its descriptor, and a process this one starts shares
+/// the open file until it runs its program, which closes it then: closing
+/// the descriptor alone would leave the lock held meanwhile, and the
+/// database just closed refused as it is opened again at once.
+struct OsLock(File);
+
+impl Drop for OsLock {
+    fn drop(&mut self) {
+        // It cannot fail on a file locked; if it did, the lock would go
+        // as the file is closed everywhere, as it went before.
+        let _ = self.0.unlock();
     }
 }
 

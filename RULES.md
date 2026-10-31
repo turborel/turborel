@@ -422,7 +422,9 @@ fill it commit together, or not at all.
 - A database is open in one place at a time: opening it takes an exclusive
   lock on its directory's `lock` file (`FileSystem::lock`, the system's
   file lock), before anything there is cleared or read, and closing it
-  gives the lock up; a process that crashes gives it up with it.
+  gives the lock up, unlocked before the file is closed, so a process it
+  started, sharing the open file until it runs its program, does not
+  hold it on; a process that crashes gives it up with it.
 - A failed sync of the log stops the database taking changes, as it may
   have lost what the log held, and a later sync may succeed without it.
   The file log keeps the failure, of a commit's sync or of a segment's as

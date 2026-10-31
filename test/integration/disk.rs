@@ -102,6 +102,36 @@ fn locks_are_held_until_dropped() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D30, `FileSystem::lock`: the operating
+/// system's lock, dropped, is given up at once, though processes this one
+/// starts meanwhile share its file until they run their programs: taken
+/// again straight after, every time.
+/// Regression test (R-TEST-7): the lock went only as its file was closed
+/// everywhere, so a database closed and opened again at once, while its
+/// process started another, was refused as locked (SQLCODE -915).
+#[cfg(unix)]
+#[test]
+fn a_lock_dropped_is_free_while_processes_start() {
+    let scratch = Scratch::new("disk-locks-spawned");
+    let path = scratch.dir.join("lock");
+    let start = || {
+        for _ in 0..50_u8 {
+            assert!(std::process::Command::new("true").status().unwrap().success());
+        }
+    };
+    let starting: Vec<_> = (0..4_u8).map(|_| thread::spawn(start)).collect();
+    let fs = os();
+    let mut taken = 0_u64;
+    while starting.iter().any(|t| !t.is_finished()) {
+        drop(fs.lock(&path).unwrap());
+        drop(fs.lock(&path).unwrap_or_else(|e| panic!("taken again after {taken}: {e}")));
+        taken += 1;
+    }
+    for t in starting {
+        t.join().unwrap();
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D30, `DiskFile`: `set_size` truncates and
 /// extends with zeros; `read_exact_at` past the end fails with SQLCODE -915
 /// and says where the file ends; an offset whose range passes 2^64 bytes
