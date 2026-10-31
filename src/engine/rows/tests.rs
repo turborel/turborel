@@ -2,7 +2,8 @@
 //! row and column, a meta page against its format, an undone change's
 //! older version kept for open readers, deleted rows not written, the
 //! versions and the garbage read as of a time, a dropped table's pages
-//! freed, and a fetch priced by the pool its file shares (RULES.md
+//! freed, a fetch priced by the pool its file shares, and the pages its
+//! pool reads ahead as the settings say (RULES.md
 //! R-TEST-1, R-TEST-2, R-TEST-7). Split from rows.rs
 //! (RULES.md R-SIZE-2).
 
@@ -250,4 +251,35 @@ fn a_fetch_is_priced_by_the_pool_its_file_shares() {
     }
     let shared = small.fetch_cost();
     assert!(shared > 12.0_f64 && shared <= 14.6_f64, "{shared}");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D36: the row store gives the pages read
+/// ahead, STORAGE.READ_AHEAD_PAGES, to its pool as it is told the
+/// settings: to its data file's; and to its pages' in memory before they
+/// are made, as they are made, and after.
+#[test]
+fn its_pool_reads_ahead_the_pages_set() {
+    use crate::disk::buffer::READ_AHEAD_PAGES;
+    use crate::settings::Settings;
+    let told = |pages: i128| {
+        let mut settings = Settings::default();
+        settings.set("STORAGE.READ_AHEAD_PAGES", Some(&crate::value::Value::Exact(crate::value::Decimal::new(pages, 0)))).unwrap();
+        settings
+    };
+    let fs = crate::disk::memory::MemoryFileSystem::new();
+    let pager =
+        Pager::create(&fs, std::path::Path::new("/rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let store = RowStore::new(files.clone(), TableOptions::default());
+    assert_eq!(files.pool.read_ahead_pages(), READ_AHEAD_PAGES);
+    StorageEngine::configure(&store, &told(5));
+    assert_eq!(files.pool.read_ahead_pages(), 5_usize, "the data file's");
+    let in_memory = RowStore::sharing(TableOptions::default(), crate::engine::MemoryPages::new(1 << 20_u32));
+    StorageEngine::configure(&in_memory, &told(3));
+    let made = in_memory.files().unwrap();
+    assert_eq!(made.pool.read_ahead_pages(), 3_usize, "as its pages are made");
+    StorageEngine::configure(&in_memory, &Settings::default());
+    assert_eq!(made.pool.read_ahead_pages(), READ_AHEAD_PAGES, "after");
 }

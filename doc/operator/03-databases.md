@@ -50,9 +50,11 @@ pool set too small for the work, is refused with SQLCODE -918 too, at
 once, never waited for, but by an undo, which waits for a page to be let
 go. A scan of a table of the built-in row store, or of a B-tree index,
 whose pages lie in the file in key order, as rows inserted in that order
-lay them, reads ahead: on a page not in the pool, the 32 pages after it
-are read with it in one read of the file, at most an eighth of the
-pool's pages, those the pool holds already left as they are.
+lay them, reads ahead: on a page not in the pool, the pages after it,
+STORAGE.READ_AHEAD_PAGES of them (32 by default, 0 for none), are read
+with it in one read of the file, at most an eighth of the pool's pages,
+those the pool holds already left as they are. A change holds at once,
+for a scan under way too.
 
 ## Opening and closing
 

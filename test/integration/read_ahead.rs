@@ -1,6 +1,7 @@
 //! The buffer pool's read-ahead (RULES.md D30): the pages after a miss
 //! read into the pool in one read of the file, bounded by a share of its
-//! frames and by the pages it is told to read at once; pages it cannot
+//! frames and by the pages it is told to read at once, the database's
+//! setting STORAGE.READ_AHEAD_PAGES; pages it cannot
 //! take whole, frames it cannot have, pages in the
 //! pool already, and a failed read left to the reads that want them; and a
 //! B-link tree's forward scan reading ahead of leaves laid out in order.
@@ -16,8 +17,9 @@ use turborel::disk::io::{Durability, FileSystem, OsFileSystem};
 use turborel::disk::pager::{PageId, Pager};
 use turborel::engine::tree::{BLinkTree, Direction};
 use turborel::error::Code;
+use turborel::value::{Decimal, Value};
 
-use crate::common::{RunLength, Scratch, crc32c};
+use crate::common::{RunLength, Scratch, crc32c, rows};
 use crate::faults::{FaultyFs, Op, Rule};
 
 fn pager(fs: &dyn FileSystem, path: &Path) -> Arc<Pager> {
@@ -211,4 +213,45 @@ fn a_forward_scan_reads_ahead_of_its_leaves() {
     pool.set_read_ahead(READ_AHEAD_PAGES);
     assert_eq!(keys(Direction::Backward), (0..entries).rev().collect::<Vec<_>>());
     assert_eq!(pool.counts().read_ahead, none, "none read ahead");
+}
+
+/// STORAGE.READ_AHEAD_PAGES as INFORMATION_SCHEMA.SETTINGS shows it: its
+/// value, where it comes from, and when a change takes effect.
+const READ_AHEAD: &str = "SELECT TRIM(SETTING_VALUE), TRIM(VALUE_SOURCE), TRIM(TAKES_EFFECT) \
+                          FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.READ_AHEAD_PAGES'";
+
+/// Verifies: [DESIGN] RULES.md D30, D36: the pages a scan reads ahead are
+/// the database's setting STORAGE.READ_AHEAD_PAGES, `READ_AHEAD_PAGES`
+/// by default, taken at once; set to none, or to more than
+/// a pool's share, a table is read whole all the same; a value out of its
+/// range is refused (SQLCODE -910); the value set holds when the
+/// database is opened again.
+#[test]
+fn the_pages_read_ahead_are_a_setting() {
+    let scratch = Scratch::new("read-ahead-setting");
+    let dir = scratch.path("db");
+    let open = || {
+        let db = turborel::db::Database::new();
+        db.open_files(&crate::common::os(), &dir, &turborel::db::OpenOptions::default()).unwrap();
+        db
+    };
+    let db = open();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER, V CHARACTER(200))").unwrap();
+    let s = db.session("S");
+    let values: Vec<String> = (0..2000).map(|k| format!("({k}, 'v{k}')")).collect();
+    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    s.commit().unwrap();
+    assert_eq!(rows(&s, READ_AHEAD), Ok(vec![format!("{READ_AHEAD_PAGES},DEFAULT,STATEMENT")]));
+    let set = |pages: i128| db.set_setting("STORAGE.READ_AHEAD_PAGES", &Value::Exact(Decimal::new(pages, 0))).map_err(|e| e.code);
+    for pages in [0, 1_000_000] {
+        set(pages).unwrap();
+        assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec!["2000".to_owned()]), "{pages} pages");
+    }
+    assert_eq!(set(-1), Err(Code::Api));
+    set(0).unwrap();
+    s.commit().unwrap();
+    db.close().unwrap();
+    drop(db);
+    let again = open();
+    assert_eq!(rows(&again.session("S"), READ_AHEAD), Ok(vec!["0,DATABASE,STATEMENT".to_owned()]));
 }

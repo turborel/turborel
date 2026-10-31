@@ -63,6 +63,9 @@ pub const ENCODINGS: Key = Key(24);
 pub const LOG_SEGMENT_BYTES: Key = Key(25);
 /// See [`TABLES_ENGINE`].
 pub const POOL_BYTES: Key = Key(26);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the storage settings.
+pub const READ_AHEAD_PAGES: Key = Key(40);
 /// See [`TABLES_ENGINE`].
 pub const STATEMENT_TIMEOUT_MS: Key = Key(27);
 /// See [`TABLES_ENGINE`].
@@ -181,11 +184,8 @@ pub(super) fn builtin() -> Vec<Definition> {
         DATABASE,
         "How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.",
     ));
-    all.push(defined(
-        ("LOG.SYNC_AFTER_MS", at_least(0), count(crate::db::SYNC_AFTER_MS)),
-        DATABASE,
-        "The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.",
-    ));
+    all.push(log_sync());
+    all.push(read_ahead());
     all
 }
 
@@ -244,6 +244,17 @@ fn storage() -> [Definition; 5] {
             "The bytes of the buffer pool of the data file, reserved of MEMORY.BUDGET_BYTES as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.",
         ),
     ]
+}
+
+/// \[DESIGN\] The pages a scan reads ahead of it in one read of a file
+/// (RULES.md D30), of the buffer pool of the data file or in memory: at
+/// once, from the next read ahead on, a scan under way included.
+fn read_ahead() -> Definition {
+    defined(
+        ("STORAGE.READ_AHEAD_PAGES", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, count(crate::disk::buffer::READ_AHEAD_PAGES)),
+        DATABASE,
+        "The pages a scan of a table of the built-in row store, or of a B-tree index, reads in one read of the file after a page not in the buffer pool, at most an eighth of the pool's pages; 0 for none. A change holds from the next page so read, a scan under way included.",
+    )
 }
 
 /// \[DESIGN\] How long a statement, or a wait for a lock, may last, and how
@@ -396,6 +407,16 @@ fn spilling() -> [Definition; 2] {
             "The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.",
         ),
     ]
+}
+
+/// \[DESIGN\] How soon a commit that does not wait for the log is synced
+/// to it all the same (RULES.md D25).
+fn log_sync() -> Definition {
+    defined(
+        ("LOG.SYNC_AFTER_MS", at_least(0), count(crate::db::SYNC_AFTER_MS)),
+        DATABASE,
+        "The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.",
+    )
 }
 
 /// When a database kept in a directory checkpoints and compacts.

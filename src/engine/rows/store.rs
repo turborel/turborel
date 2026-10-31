@@ -117,6 +117,15 @@ impl RowStore {
         Ok(made)
     }
 
+    /// Has its pool read `pages` ahead at once: its files', and its pages'
+    /// in memory, made or when they are.
+    pub(super) fn set_read_ahead(&self, pages: usize) {
+        if let Some(files) = lock_builtin(&self.files).as_ref() {
+            files.pool.set_read_ahead(pages);
+        }
+        self.memory.set_read_ahead(pages);
+    }
+
     /// Sets the options of `table`, for when it is created.
     pub fn configure(&self, table: QualifiedName, options: TableOptions) {
         lock_builtin(&self.tables).insert(table, options);

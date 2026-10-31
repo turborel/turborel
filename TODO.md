@@ -144,8 +144,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   open, each new segment, and a `Log` plug-in, fixing it as made, and
   `Log::capabilities`, which the Strict policy reads at each write (D25),
   telling the value now.
-- **Read-ahead's pages as a setting** (D36): `BufferPool::set_read_ahead`
-  is called by a benchmark alone.
 - **Plug-ins' settings beyond engines' own** (D36): index methods, and
   every other kind of plug-in, declaring and told theirs as an engine's
   are (`StorageEngine::settings`, `configure`), so a plug-in reads its

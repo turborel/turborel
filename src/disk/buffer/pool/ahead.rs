@@ -26,8 +26,9 @@ use crate::memory::Undoing;
 const READ_AHEAD_SHARE: usize = 8;
 
 /// \[DESIGN\] The pages a pool reads ahead at once, unless told otherwise
-/// (`BufferPool::set_read_ahead`): 128 KiB of 4 KiB pages, one read of the
-/// file for as many pages.
+/// (`BufferPool::set_read_ahead`), as a database tells its pools its
+/// setting STORAGE.READ_AHEAD_PAGES, of which this is the default: 128 KiB
+/// of 4 KiB pages, one read of the file for as many pages.
 pub const READ_AHEAD_PAGES: usize = 32;
 
 impl BufferPool {

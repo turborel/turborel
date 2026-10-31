@@ -1166,8 +1166,9 @@ never block each other; writers meet only on the same row.
   (BRAVO) would need a reviewed exception to R-SAFE-1.
 - **Read-ahead.** A forward B-link tree scan reading a leaf that follows
   the last one in the file reads ahead (`BufferPool::read_ahead`): on a
-  miss, the next pages (32 unless told otherwise) in one file read,
-  into their own frames, at most an eighth of the pool's. It skips
+  miss, the next pages (STORAGE.READ_AHEAD_PAGES, 32 by default, a
+  change taken at once) in one file read, into their own frames, at
+  most an eighth of the pool's. It skips
   pooled pages, frames not free at once, and pages not whole in the
   read (overflowing, freed, torn), so it never fails a read; none during
   an undo. Synchronous, it saves file reads, not waits; a read-ahead
@@ -1743,9 +1744,9 @@ same results and errors is the optimizer's to choose.
   (D35).
 - **Scopes:** built-in default, database value, session value.
 - **Tunables.** A number an operator tunes a subsystem by (a memory or
-  pool size, a threshold, a background pace such as LOG.SYNC_AFTER_MS, a
-  timeout, a durability) is a setting; the constant it was named by is
-  its default.
+  pool size, the pages read ahead, a threshold, a background pace such
+  as LOG.SYNC_AFTER_MS, a timeout, a durability) is a setting; the
+  constant it was named by is its default.
 - **Constants.** These stay constants:
   - formats on disk; the standard's implementation-defined values
     (CONFORMANCE.md);

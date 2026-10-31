@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::disk::buffer::{BufferPool, FileId};
+use crate::disk::buffer::{BufferPool, FileId, READ_AHEAD_PAGES};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::{DEFAULT_PAGE_SIZE, Pager};
@@ -68,10 +68,12 @@ fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Resul
 /// then, reserved of the budget it is given. A database kept in memory
 /// gives one to its built-in engine and index methods, which share it, as
 /// a database kept in a directory shares its data file, sized by its
-/// setting STORAGE.POOL_BYTES.
+/// setting STORAGE.POOL_BYTES, its read-ahead by STORAGE.READ_AHEAD_PAGES.
 pub(crate) struct MemoryPages {
     budget: Mutex<Arc<MemoryBudget>>,
     bytes: AtomicUsize,
+    /// The pages its pool reads ahead at once (`BufferPool::read_ahead`).
+    read_ahead: AtomicUsize,
     made: Mutex<Option<(Arc<BufferPool>, FileId, usize)>>,
 }
 
@@ -79,7 +81,12 @@ impl MemoryPages {
     /// Pages whose pool will be of `bytes`, reserved of a budget of their
     /// own, limited by nothing else, until they are given another.
     pub(crate) fn new(bytes: usize) -> Arc<MemoryPages> {
-        Arc::new(MemoryPages { budget: Mutex::new(MemoryBudget::new(usize::MAX)), bytes: AtomicUsize::new(bytes), made: Mutex::new(None) })
+        Arc::new(MemoryPages {
+            budget: Mutex::new(MemoryBudget::new(usize::MAX)),
+            bytes: AtomicUsize::new(bytes),
+            read_ahead: AtomicUsize::new(READ_AHEAD_PAGES),
+            made: Mutex::new(None),
+        })
     }
 
     /// Makes `budget` the one their pool draws on, if made after.
@@ -90,6 +97,15 @@ impl MemoryPages {
     /// Makes their pool of `bytes`, if made after.
     pub(crate) fn resize(&self, bytes: usize) {
         self.bytes.store(bytes, Ordering::Release);
+    }
+
+    /// Has their pool read `pages` ahead at once, made or when it is.
+    pub(crate) fn set_read_ahead(&self, pages: usize) {
+        let made = lock_builtin(&self.made);
+        self.read_ahead.store(pages, Ordering::Release);
+        if let Some((pool, _, _)) = made.as_ref() {
+            pool.set_read_ahead(pages);
+        }
     }
 
     /// Their pool and file, made if not yet, held by `what`.
@@ -105,6 +121,7 @@ impl MemoryPages {
         let budget = Arc::clone(&lock_builtin(&self.budget));
         let bytes = self.bytes.load(Ordering::Acquire);
         let (pool, file) = memory_file_of(&budget, bytes, what)?;
+        pool.set_read_ahead(self.read_ahead.load(Ordering::Acquire));
         *made = Some((Arc::clone(&pool), file, bytes));
         Ok((pool, file))
     }

@@ -159,10 +159,14 @@ impl StorageEngine for RowStore {
     fn settings(&self) -> Vec<crate::settings::Definition> {
         (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
     }
+    /// The headers it holds; and the pages its pool reads ahead, of its
+    /// data file's or in memory (STORAGE.READ_AHEAD_PAGES), which index
+    /// methods on the same pool share.
     fn configure(&self, settings: &crate::settings::Settings) {
         if let Some(key) = settings.key(&cache::setting_name(self.name)) {
             self.headers.set_most(settings.count(key));
         }
+        self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
     }
     fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
