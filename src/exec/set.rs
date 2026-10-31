@@ -2,8 +2,11 @@
 //! constructor>`, and of EXCEPT and INTERSECT; UNION is UNION ALL, an
 //! append, under duplicate elimination (`physical.rs`). \[DESIGN\] RULES.md
 //! D38: EXCEPT and INTERSECT count the second operand's rows in memory
-//! while they fit the work area, else partition both operands alike.
-//! Split from exec.rs (RULES.md R-SIZE-2).
+//! while they fit the work area, else partition both operands alike. But
+//! for ALL, they keep the rows given already in a bag beside the counts,
+//! their work area split in two, half the counts', half the bag's, so the
+//! two hold no more than one work area. Split from exec.rs (RULES.md
+//! R-SIZE-2).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,14 +54,14 @@ pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::SetOp { op, all, left, right } = plan else { return failed(broken("a set operation is not one")) };
     let second = execute(*right, db, tx);
     let how = Kept { intersect: op == SetOp::Intersect, all };
-    match counted_rows(second, db, tx) {
-        Ok((Counted::Held(counts), work)) => {
+    match counted_rows(second, (db, tx), how) {
+        Ok((Counted::Held(counts), _, given)) => {
             let first = execute(*left, db, tx);
-            keeping(first, counts, how, &work)
+            keeping(first, counts, how, given)
         }
-        Ok((Counted::Partitioned(parts), work)) => {
+        Ok((Counted::Partitioned(parts), work, given)) => {
             let first = execute(*left, db, tx);
-            partitioned(first, (parts, how), work)
+            partitioned(first, (parts, how), (work, given))
         }
         Err(e) => failed(e),
     }
@@ -72,13 +75,16 @@ enum Counted {
 }
 
 /// The rows of `rows`, counted, in a work area of `db`, for the statement
-/// of `tx`. Kept apart from `operation`, whose frame is on the stack while
-/// its operands are made (RULES.md R-CF-6).
+/// of `tx`; and the work area of the bags of rows given already, of `how`.
+/// Kept apart from `operation`, whose frame is on the stack while its
+/// operands are made (RULES.md R-CF-6).
 #[inline(never)]
-fn counted_rows(rows: RowIter, db: &State, tx: TxId) -> Result<(Counted, Work)> {
+fn counted_rows(rows: RowIter, (db, tx): (&State, TxId), how: Kept) -> Result<(Counted, Work, Work)> {
     let mut work = Work::of(db, tx);
+    // ALL keeps no bag of rows given, so takes the whole work area.
+    let given = if how.all { work.another() } else { work.split() };
     let counts = counted(rows.map(|r| r.map(|row| (key(&row), 1))), &mut work, true)?;
-    Ok((counts, work))
+    Ok((counts, work, given))
 }
 
 /// The keys `keys`, each with a count, counted in memory while they fit
@@ -130,20 +136,20 @@ fn uncounted(record: &[u8]) -> Result<(Vec<u8>, u64)> {
 }
 
 /// The rows of `first` the set operation `how` keeps, of the second
-/// operand's `counts`.
+/// operand's `counts`, those given kept in a bag of `given`.
 #[inline(never)]
-fn keeping(first: RowIter, mut counts: Bag, how: Kept, work: &Work) -> RowIter {
-    let mut given = Bag::new(work.another());
+fn keeping(first: RowIter, mut counts: Bag, how: Kept, given: Work) -> RowIter {
+    let mut given = Bag::new(given);
     Box::new(first.filter_map(move |r| kept(how, (&mut counts, &mut given), r)))
 }
 
 /// \[DESIGN\] RULES.md D38: the rows of `first` the set operation `how`
 /// keeps, of the second operand's counts partitioned in `parts`: `first`
 /// partitioned alike, its rows numbered; each pair of partitions dealt with
-/// alone (`pair`); and the rows kept merged back by number, in `first`'s
-/// order. Never inlined, as `keeping`.
+/// alone (`pair`), those given kept in bags of `given`; and the rows kept
+/// merged back by number, in `first`'s order. Never inlined, as `keeping`.
 #[inline(never)]
-fn partitioned(first: RowIter, (parts, how): (Partitioner, Kept), mut work: Work) -> RowIter {
+fn partitioned(first: RowIter, (parts, how): (Partitioner, Kept), (mut work, given): (Work, Work)) -> RowIter {
     let run = || -> Result<RowIter> {
         let mut lefts = parts.alike(&mut work)?;
         for (n, r) in (0_u64..).zip(first) {
@@ -152,7 +158,7 @@ fn partitioned(first: RowIter, (parts, how): (Partitioner, Kept), mut work: Work
         }
         let mut sources = Vec::new();
         for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
-            pair(runs, (how, 0), &mut sources, &mut work)?;
+            pair(runs, (how, 0), &mut sources, (&mut work, &given))?;
         }
         Ok(Box::new(merge_all(sources, &mut work)?.map(|r| r.map(|(_, row)| row))))
     };
@@ -164,12 +170,12 @@ fn partitioned(first: RowIter, (parts, how): (Partitioner, Kept), mut work: Work
 /// partitioned `depth` times again before, in runs added to `sources`, in
 /// order of number: the counts in memory, or, if they outgrow `work`, both
 /// partitioned again, while SPILL.PARTITION_DEPTH allows, else in a bag,
-/// which spills.
-fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Records>, work: &mut Work) -> Result<()> {
+/// which spills; the rows given already in a bag of a work area of `given`.
+fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Records>, (work, given): (&mut Work, &Work)) -> Result<()> {
     let again = depth < work.depth();
     match counted(right.into_records()?.map(|r| r.and_then(|record| uncounted(&record))), work, again)? {
         Counted::Held(mut counts) => {
-            let (mut given, mut out) = (Bag::new(work.another()), work.run()?);
+            let (mut given, mut out) = (Bag::new(given.another()), work.run()?);
             for record in left.into_records()? {
                 let (n, row) = unnumbered(&record?, work.types())?;
                 if let Some(row) = kept(how, (&mut counts, &mut given), Ok(row)).transpose()? {
@@ -185,7 +191,7 @@ fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Reco
                 lefts.push(&key(&unnumbered(&record, work.types())?.1), &record)?;
             }
             for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
-                pair(runs, (how, depth.saturating_add(1)), &mut *sources, work)?;
+                pair(runs, (how, depth.saturating_add(1)), &mut *sources, (&mut *work, given))?;
             }
         }
     }

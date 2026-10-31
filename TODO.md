@@ -181,11 +181,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   text, padded as LIKE sees them; grouping of many groups (`GROUP BY K`
   of 400,000 keys, 382 ms, past the work area); a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
-- **Spilled sorts**: of 400,000 rows past the default WORK_MEMORY a sort
-  takes 149 ms where held whole it takes 41: each row written as a
-  record, checksummed in its page, read back and allocated again for the
-  merge. Runs of prefixes beside the records, and records read in place,
-  would spare most of it.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
 - **Statistics:** a fetch's cost does not tell a page the buffer pool
@@ -221,12 +216,12 @@ The registry, scopes and SET statements exist (D36). Still to do:
   the values a statement gave each row of a table an action may change
   [ISO/IEC 9075:1992 §11.8 GR7]: they should spill as the statement's
   effects do.
-  DISTINCT read row by row (`exec/distinct.rs`) is not told its statement,
-  so its passes over partitions look for no cancel (D44), as the others'
-  do: `exec.rs` should hand it the transaction, for `Work::of`. And it,
-  EXCEPT and INTERSECT take a second work area for a bag beside what they
-  hold (`Work::another`), up to twice WORK_MEMORY, which `Work::split`
-  would bound as grouping's is.
+- **A long transaction in memory:** a database in memory, of the default
+  MEMORY_BUDGET, fails an INSERT once its budget is all reserved, its
+  rollback failing too and its table reported damaged, within 100,000
+  single-row INSERTs into two tables in one transaction (as
+  `bench/spilling.rs` set up its tables before it committed in parts):
+  what holds the budget is to be found.
 - **Buffer pool:** a benchmark of the B-link tree in a small pool, and
   read-ahead, to make misses cheaper. Hits with one shared write measured
   87.6M/s to 151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27):

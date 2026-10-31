@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 12] = [
+pub const MUTATIONS: [Mutation; 13] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -141,5 +141,14 @@ pub const MUTATIONS: [Mutation; 12] = [
             "predicates::in_lists_are_any_equal_5_13",
         ],
         unit: &[],
+    },
+    Mutation {
+        name: "sort-merge-whole",
+        breaks: "a spilled sort's merge: rows of equal prefixes are compared by the later keys alone, their prefixes held whole or not",
+        file: "src/exec/sort/merge.rs",
+        original: "let whole = by_prefix && self.tag & other.tag & WHOLE != 0;",
+        replacement: "let whole = by_prefix;",
+        integration: &["spilled_sorts::spilled_sorts_give_the_rows_held_sorts_give"],
+        unit: &["exec::sort::merge::tests::merged_by_prefixes_as_compared_whole"],
     },
 ];

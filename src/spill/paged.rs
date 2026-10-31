@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{Area, Records, Spill, SpillArea, SpillRun, SpillTable, TempFiles};
+use super::{Area, Batch, Batches, Records, Spill, SpillArea, SpillRun, SpillTable, TempFiles};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::{DEFAULT_PAGE_SIZE, PageId, Pager};
 use crate::engine::hash::HashTable;
@@ -217,6 +217,20 @@ impl SpillRun for PagedRun {
         })))
     }
 
+    /// Each page a batch, copied out of the pool once and then freed, its
+    /// records read where they lie in the copy.
+    fn into_batches(mut self: Box<Self>) -> Result<Batches> {
+        self.flush()?;
+        let (file, pages) = (Arc::clone(&self.file), std::mem::take(&mut self.pages));
+        Ok(Box::new(pages.into_iter().map(move |id| {
+            let pool = file.pool()?;
+            let page = pool.read(file.id, id.0)?.to_vec();
+            pool.free(file.id, id)?;
+            let bounds = bounds(&page)?;
+            Ok(Batch::new(page, bounds))
+        })))
+    }
+
     fn records(&mut self) -> Result<Records> {
         self.flush()?;
         let (file, pages) = (Arc::clone(&self.file), self.pages.clone());
@@ -240,16 +254,25 @@ impl SpillRun for PagedRun {
 
 /// The records of a run's page.
 fn split(page: &[u8]) -> Result<Vec<Vec<u8>>> {
-    let mut records = Vec::new();
-    let mut rest = page;
-    while !rest.is_empty() {
-        let (len, after) = rest.split_at_checked(8).ok_or_else(corrupt)?;
-        let len = <[u8; 8]>::try_from(len).map(u64::from_le_bytes).ok().and_then(|n| usize::try_from(n).ok()).ok_or_else(corrupt)?;
-        let (record, next) = after.split_at_checked(len).ok_or_else(corrupt)?;
-        records.push(record.to_vec());
-        rest = next;
+    Ok(bounds(page)?.into_iter().filter_map(|(start, end)| page.get(start..end).map(<[u8]>::to_vec)).collect())
+}
+
+/// The bytes of a record's length before it in a run's page, a `u64`.
+const LEN_BYTES: usize = 8;
+
+/// Where each record of a run's page lies in it: its start and its end.
+fn bounds(page: &[u8]) -> Result<Vec<(usize, usize)>> {
+    let (mut bounds, mut at) = (Vec::new(), 0_usize);
+    while at < page.len() {
+        let len = page.get(at..at.saturating_add(LEN_BYTES)).ok_or_else(corrupt)?;
+        let len =
+            <[u8; LEN_BYTES]>::try_from(len).map(u64::from_le_bytes).ok().and_then(|n| usize::try_from(n).ok()).ok_or_else(corrupt)?;
+        let start = at.saturating_add(LEN_BYTES);
+        let end = start.checked_add(len).filter(|&end| end <= page.len()).ok_or_else(corrupt)?;
+        bounds.push((start, end));
+        at = end;
     }
-    Ok(records)
+    Ok(bounds)
 }
 
 #[cfg(test)]

@@ -1386,11 +1386,17 @@ catalog to keep in step.
   areas.
 - Spilling keeps the orders the planner relies on: a sort is an external
   merge, stable; the rows held, or each run, sorted by a prefix of the
-  first key, a number in the key's order, beside each row's place, those
-  of equal prefixes compared whole, or by the other keys only if every
-  prefix holds its value whole (`exec/sort/prefix.rs`), faster, as the
-  rows themselves, each in memory of its own, are no longer read for
-  every comparison; grouping and DISTINCT give their rows in the order
+  first key, a number in the key's order (of a number, a string, a
+  datetime by its instant in UTC, an interval or a bit string), beside
+  each row's place, those of equal prefixes compared whole, or by the
+  other keys only if every prefix holds its value whole
+  (`exec/sort/prefix.rs`), faster, as the rows themselves, each in memory
+  of its own, are no longer read for every comparison. A run writes each
+  row beside its prefix, which the merge compares, reading each run a
+  batch at a time (`SpillRun::into_batches`), each record where it lies,
+  and decoding a row only when prefixes tie, or a value has none, and as
+  it is given; a pass that writes a run again copies each record as it is
+  (`exec/sort/merge.rs`). Grouping and DISTINCT give their rows in the order
   their first rows came. A hash join is partitioned (Grace), its partitions
   partitioned again while they outgrow the work area, its left rows
   numbered so the joined rows are merged back into the left operand's
@@ -1404,7 +1410,11 @@ catalog to keep in step.
   and INTERSECT keep its keys in a table of the spill area, and a hash
   join, as for a partition that does not shrink, its right rows, each probe
   reading its key's rows from the table as it joins them
-  (`SpillTable::values`), never all at once.
+  (`SpillTable::values`), never all at once. DISTINCT, once it partitions,
+  and EXCEPT and INTERSECT but for ALL split their work area in two, as a
+  grouping of DISTINCT set functions does: half for the partitions and the
+  keys each holds, half for the bag beside them, of a partition's keys past
+  SPILL.PARTITION_DEPTH, or of the rows given already.
 - Runs are written in batches of SPILL_BATCH bytes; an operator reads or
   writes as many runs at once as WORK_MEMORY holds two batches of. A run
   read once gives its pages back as it is read (`SpillRun::into_records`),
@@ -1779,8 +1789,9 @@ was made, so mechanisms are plug-ins, as everything else is.
   next, and one made while nothing runs does nothing.
 - A statement looks as it reads each row of a table or an index, before
   and after the read; as a spilled operator reads back each record of the
-  runs of its work area, so passes over partitions and runs that read no
-  table (grouping, EXCEPT, INTERSECT, joins, products) stop too; and
+  runs of its work area, or each batch of them, as a sort's merge does, so
+  passes over partitions and runs that read no table (grouping, DISTINCT,
+  EXCEPT, INTERSECT, joins, products, sorts) stop too; and
   while it waits for a lock, which wakes every 20
   ms to look. A cancelled statement fails (SQLCODE -920, SQLSTATE TB920)
   and is undone as any failed statement is [X3.135-1986 §7.3 GR3b i]; its

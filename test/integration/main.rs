@@ -105,6 +105,7 @@ mod set_statements;
 mod settings;
 mod spilled_checks;
 mod spilled_rows;
+mod spilled_sorts;
 mod spilling;
 mod statements;
 mod statistics;

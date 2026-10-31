@@ -48,9 +48,9 @@ pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub use sort::compare_rows;
 
 /// [X3.135-1986 §8.3 GR3b] `rows` sorted by `keys`, in a work area of
-/// `db` that spills (RULES.md D38).
-pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State) -> RowIter {
-    sort::sort(keys, rows, db)
+/// `db` that spills (RULES.md D38), for the statement of `tx`.
+pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIter {
+    sort::sort(keys, rows, db, tx)
 }
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
@@ -133,7 +133,7 @@ fn ordered_scan(
     };
     // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
     let keys: Vec<SortKey> = order.iter().map(|&column| SortKey { column, descending: false }).collect();
-    sort::sort(&keys, Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop)), db)
+    sort::sort(&keys, Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop)), db, tx)
 }
 
 /// The rows of the product or hash join `plan`.
@@ -244,7 +244,7 @@ fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 #[inline(never)]
 fn sorted(keys: &[SortKey], input: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let rows = execute(input, db, tx);
-    sort::sort(keys, rows, db)
+    sort::sort(keys, rows, db, tx)
 }
 
 /// [X3.135-1986 §5.25 GR2, GR5, §5.11 GR7] The rows of `plan`, DISTINCT:
@@ -256,7 +256,7 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return grouped(batch::distinct_grouping(plan, width), db, tx);
     }
     let Plan::Distinct { input } = plan else { return failed(broken("a duplicate elimination is not one")) };
-    distinct::distinct_of(execute(*input, db, tx), db)
+    distinct::distinct_of(execute(*input, db, tx), db, tx)
 }
 
 /// The rows of `input`, under a filter on `cond`: a scan is told the

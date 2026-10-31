@@ -78,6 +78,47 @@ impl Area {
 /// Records read back from a run.
 pub type Records = Box<dyn Iterator<Item = Result<Vec<u8>>> + Send>;
 
+/// Records read back from a run a batch at a time.
+pub type Batches = Box<dyn Iterator<Item = Result<Batch>> + Send>;
+
+/// Records of a run read back together (`SpillRun::into_batches`): their
+/// bytes in one buffer, and where each lies in it, so a reader takes each
+/// where it lies rather than as a copy of its own.
+#[derive(Debug, Default)]
+pub struct Batch {
+    bytes: Vec<u8>,
+    bounds: Vec<(usize, usize)>,
+}
+
+impl Batch {
+    /// The records of `bytes` that `bounds` gives, each its start and end.
+    pub fn new(bytes: Vec<u8>, bounds: Vec<(usize, usize)>) -> Batch {
+        Batch { bytes, bounds }
+    }
+
+    /// A batch of one record.
+    pub fn one(record: Vec<u8>) -> Batch {
+        let end = record.len();
+        Batch { bytes: record, bounds: vec![(0, end)] }
+    }
+
+    /// How many records it holds.
+    pub fn len(&self) -> usize {
+        self.bounds.len()
+    }
+
+    /// Whether it holds none.
+    pub fn is_empty(&self) -> bool {
+        self.bounds.is_empty()
+    }
+
+    /// Its record `at`, if it has one there that lies within its bytes.
+    pub fn get(&self, at: usize) -> Option<&[u8]> {
+        let &(start, end) = self.bounds.get(at)?;
+        self.bytes.get(start..end)
+    }
+}
+
 /// \[DESIGN\] A maker of spill areas: an extension point (RULES.md D38).
 ///
 /// Contract (RULES.md R-SAFE-3):
@@ -174,6 +215,17 @@ pub trait SpillRun: Send {
     /// Its storage's errors.
     fn into_records(mut self: Box<Self>) -> Result<Records> {
         self.records()
+    }
+    /// Its records, in order, read once as `into_records` reads them, but a
+    /// batch at a time, each record read where it lies in its batch: as a
+    /// sort's merge reads them, sparing a copy of each. Default: each record
+    /// of `into_records` a batch of its own.
+    ///
+    /// # Errors
+    ///
+    /// Its storage's errors.
+    fn into_batches(self: Box<Self>) -> Result<Batches> {
+        Ok(Box::new(self.into_records()?.map(|r| r.map(Batch::one))))
     }
 }
 

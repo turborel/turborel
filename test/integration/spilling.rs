@@ -224,14 +224,19 @@ fn a_session_sets_its_own_work_memory() {
 /// wrote, after every row of its tables is read, fails (SQLCODE -920)
 /// there: grouping, of set functions and of DISTINCT ones, EXCEPT and
 /// INTERSECT, a hash join and an outer join on keys reading their
-/// partitions, and a product and an outer join on no keys their right
-/// operand's run, by batches and row by row. The session's next statement
-/// runs, giving the rows it gives unspilled. Regression test (R-TEST-7):
-/// those passes looked for no cancel, so a statement ran on until it read
-/// a table again, or to its end.
+/// partitions, a product and an outer join on no keys their right
+/// operand's run, DISTINCT its partitions, and a sort its runs as it merges
+/// them, by batches and row by row. The session's next statement runs,
+/// giving the rows it gives unspilled. Regression test (R-TEST-7): those
+/// passes looked for no cancel, so a statement ran on until it read a table
+/// again, or to its end; DISTINCT read row by row, and a sort's merge, did
+/// so still.
 #[test]
 fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
     const CANCELLED: &[&str] = &[
+        "SELECT DISTINCT S FROM U",
+        "SELECT S, K FROM T ORDER BY S",
+        "SELECT G, K FROM T ORDER BY G DESC, K",
         "SELECT G, COUNT(*), MIN(S) FROM T GROUP BY G",
         "SELECT S, COUNT(DISTINCT G) FROM T GROUP BY S",
         "SELECT S, G FROM U EXCEPT ALL SELECT S, G FROM T",
@@ -309,6 +314,40 @@ fn a_grouping_shares_its_work_area_with_its_distinct_values() {
     let halves = sizes.iter().filter(|&&b| b == HALF).count();
     let whole = sizes.iter().filter(|&&b| b == SMALL).count();
     assert!(halves >= 2 && whole <= 1 && halves + whole == sizes.len(), "{sizes:?}");
+}
+
+/// Verifies: [DESIGN] RULES.md D38: DISTINCT read row by row, and EXCEPT
+/// and INTERSECT but for ALL, once they partition, split their work area
+/// in two, half for their partitions and the keys each holds, half for the
+/// bag of a partition past SPILL.PARTITION_DEPTH, or of the rows given
+/// already, each spilling to an area of its half, so the two hold no more
+/// than WORK_MEMORY; the rows are those they give unspilled. Regression
+/// test (R-TEST-7): the bag took a work area of its own, so they held up
+/// to twice WORK_MEMORY.
+#[test]
+fn distinct_and_set_operations_share_their_work_area_with_their_bags() {
+    const BAGGED: &[&str] = &[
+        "SELECT DISTINCT W.K, T.S, T.K FROM W, T",
+        "SELECT W.K, T.S, T.K FROM W, T EXCEPT SELECT W.K, U.S, U.K FROM W, U",
+        "SELECT W.K, T.G, T.K FROM W, T INTERSECT SELECT W.K, U.G, U.K FROM W, U",
+    ];
+    let db = Database::new();
+    filled(&db);
+    let s = db.session("S");
+    exec(&s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    let in_memory: Vec<Vec<String>> = BAGGED.iter().map(|q| rows(&s, q).unwrap()).collect();
+    let counted = Counted::default();
+    db.set_spill(Box::new(counted.clone())).unwrap();
+    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("SPILL.PARTITIONS", &bytes(2)).unwrap();
+    db.set_setting("SPILL.PARTITION_DEPTH", &bytes(0)).unwrap();
+    for (q, expected) in BAGGED.iter().zip(&in_memory) {
+        assert_eq!(&rows(&s, q).unwrap(), expected, "{q}");
+        let sizes: Vec<usize> = counted.0.lock().unwrap().drain(..).collect();
+        // Areas of halves, and of the product's right operand, whole.
+        let halves = sizes.iter().filter(|&&b| b == HALF).count();
+        assert!(halves >= 2 && sizes.iter().filter(|&&b| b == SMALL).count() + halves == sizes.len(), "{q}: {sizes:?}");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D38: a key's rows built in a table of the

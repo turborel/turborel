@@ -49,7 +49,8 @@ fn tables_keep_values_of_any_length_in_order() {
 }
 
 /// Verifies: [DESIGN] RULES.md D38, `SpillRun`: records come back in the
-/// order pushed, across many pages and of any length, an empty run none.
+/// order pushed, across many pages and of any length, an empty run none;
+/// read in batches, a page each, alike, each read where it lies.
 #[test]
 fn runs_give_their_records_in_order() {
     let (_, temp) = temp();
@@ -61,6 +62,12 @@ fn runs_give_their_records_in_order() {
     }
     assert_eq!(run.records().unwrap().collect::<Result<Vec<_>>>().unwrap(), pushed);
     assert_eq!(area.run().unwrap().records().unwrap().count(), 0);
+    let batches = run.into_batches().unwrap().collect::<Result<Vec<Batch>>>().unwrap();
+    assert!(batches.len() > 1 && batches.iter().all(|b| !b.is_empty()), "a page each");
+    let read: Vec<Vec<u8>> = batches.iter().flat_map(|b| (0..b.len()).map(|at| b.get(at).unwrap().to_vec())).collect();
+    assert_eq!(read, pushed);
+    assert_eq!(batches[0].get(batches[0].len()), None);
+    assert_eq!(area.run().unwrap().into_batches().unwrap().count(), 0);
 }
 
 /// Verifies: [DESIGN] RULES.md D38, `Spill`: an area reserves its bytes of
@@ -120,6 +127,9 @@ fn byte_forms_round_trip_and_tell_keys_apart() {
     assert_eq!(split(&[1, 0, 0, 0, 0, 0, 0, 0, 9]).unwrap(), vec![vec![9_u8]]);
     assert_eq!(split(&[2, 0, 0, 0, 0, 0, 0, 0, 9]).err().map(|e| e.code), Some(Code::Corrupt));
     assert_eq!(split(&[1, 0]).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(bounds(&[1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(), vec![(8_usize, 9_usize), (17_usize, 17_usize)]);
+    assert_eq!(bounds(&[2, 0, 0, 0, 0, 0, 0, 0, 9]).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(bounds(&[u8::MAX; 8]).err().map(|e| e.code), Some(Code::Corrupt), "past any length");
 }
 
 /// The bytes of the one spill file in `/tmp` of `fs`.
@@ -133,7 +143,7 @@ fn file_bytes(fs: &Arc<dyn FileSystem>) -> u64 {
 /// once gives its pages back as they are read, so the next run of as many
 /// records is written in them and the area's file grows no more; a run
 /// read so that it may be read again keeps its pages, and the next grows
-/// the file.
+/// the file. Read in batches, a run gives them back alike.
 #[test]
 fn a_run_read_once_gives_its_pages_back() {
     let (fs, temp) = temp();
@@ -154,5 +164,9 @@ fn a_run_read_once_gives_its_pages_back() {
     assert_eq!(kept.records().unwrap().count(), 500);
     assert_eq!(kept.records().unwrap().count(), 500, "read again");
     assert_eq!(written().into_records().unwrap().count(), 500);
-    assert!(file_bytes(&fs) > once, "the kept run's pages are its own");
+    let grown = file_bytes(&fs);
+    assert!(grown > once, "the kept run's pages are its own");
+    assert_eq!(written().into_batches().unwrap().map(|b| b.unwrap().len()).sum::<usize>(), 500);
+    assert_eq!(written().into_batches().unwrap().count(), 100, "five records to a page, a batch filled past 4 KiB");
+    assert_eq!(file_bytes(&fs), grown, "read in batches, given back too");
 }

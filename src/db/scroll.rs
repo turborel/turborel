@@ -180,7 +180,7 @@ pub(super) fn ordered_ids(plan: Plan, st: &Arc<State>, tx: TxId, projection: &[u
         .unzip();
     let id_at = columns.len();
     let keyed: RowIter = Box::new(table_entries(*input, st, tx)?.map(move |read| read.and_then(|(id, row)| keyed(&row, &columns, id))));
-    for row in sort_rows(&on_keys, keyed, st) {
+    for row in sort_rows(&on_keys, keyed, st, tx) {
         ids.push(id_of(&row?, id_at)?)?;
     }
     Ok(ids)

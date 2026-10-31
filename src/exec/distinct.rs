@@ -6,6 +6,10 @@
 //! each partition's first of each key kept, a partition that outgrows the
 //! work area partitioned again, and those merged back by number
 //! (`partition.rs`), so the rows come in the order they would in memory.
+//! Its work area is then split in two, half for the partitions and the
+//! keys each holds, half for the bag of a partition past
+//! SPILL.PARTITION_DEPTH, so the two hold no more than one work area. The
+//! runs it reads back look for a cancel of its statement (RULES.md D44).
 //! Split from exec.rs (RULES.md R-SIZE-2).
 
 use std::collections::HashSet;
@@ -17,12 +21,14 @@ use crate::db::State;
 use crate::error::Result;
 use crate::spill::{Records, norm_row};
 use crate::storage::Row;
+use crate::txn::TxId;
 
-/// The rows of `input`, DISTINCT. Never inlined into the caller, whose
-/// frame is on the stack while its input is made (RULES.md R-CF-6).
+/// The rows of `input`, DISTINCT, for the statement of `tx`. Never inlined
+/// into the caller, whose frame is on the stack while its input is made
+/// (RULES.md R-CF-6).
 #[inline(never)]
-pub(super) fn distinct_of(input: RowIter, db: &State) -> RowIter {
-    Box::new(Distinct { input, seen: HashSet::new(), bytes: 0, work: Work::new(db), rest: None })
+pub(super) fn distinct_of(input: RowIter, db: &State, tx: TxId) -> RowIter {
+    Box::new(Distinct { input, seen: HashSet::new(), bytes: 0, work: Work::of(db, tx), rest: None })
 }
 
 /// A row as DISTINCT knows it.
@@ -69,8 +75,10 @@ impl Distinct {
 
     /// The rest of the input's rows, DISTINCT and not among those seen:
     /// partitioned by key, numbered, each partition's first of each key
-    /// kept, and merged back by number.
+    /// kept, and merged back by number. The work area is split before it
+    /// makes its spill area, half of it the bags'.
     fn partitioned(&mut self) -> Result<RowIter> {
+        let bags = self.work.split();
         let mut parts = Partitioner::of(&mut self.work)?;
         let input = std::mem::replace(&mut self.input, Box::new(std::iter::empty()));
         for (n, r) in (0_u64..).zip(input) {
@@ -83,7 +91,7 @@ impl Distinct {
         self.seen = HashSet::new();
         let mut sources = Vec::new();
         for run in parts.into_runs() {
-            firsts(run.into_records()?, (0, &mut sources), &mut self.work)?;
+            firsts(run.into_records()?, (0, &mut sources), (&mut self.work, &bags))?;
         }
         Ok(Box::new(merge_all(sources, &mut self.work)?.map(|r| r.map(|(_, row)| row))))
     }
@@ -93,8 +101,8 @@ impl Distinct {
 /// `depth` times again before, each in a run added to `sources`, in order
 /// of number: those held while they fit `work`; then, of the rest, those
 /// of each partition again, while SPILL.PARTITION_DEPTH allows, else those
-/// a bag of the keys, which spills, holds first.
-fn firsts(partition: Records, (depth, sources): (usize, &mut Vec<Records>), work: &mut Work) -> Result<()> {
+/// a bag of the keys, in a work area of `bags`, which spills, holds first.
+fn firsts(partition: Records, (depth, sources): (usize, &mut Vec<Records>), (work, bags): (&mut Work, &Work)) -> Result<()> {
     let (mut seen, mut bytes, mut out) = (HashSet::new(), 0_usize, work.run()?);
     let (again, mut parts, mut bag) = (depth < work.depth(), None, None);
     for record in partition {
@@ -113,14 +121,14 @@ fn firsts(partition: Records, (depth, sources): (usize, &mut Vec<Records>), work
                 None => parts.insert(Partitioner::of(work)?),
             };
             parts.push(&k, &record)?;
-        } else if bag.get_or_insert_with(|| Bag::new(work.another())).add_new(&k)? {
+        } else if bag.get_or_insert_with(|| Bag::new(bags.another())).add_new(&k)? {
             out.push(&record)?;
         }
     }
     sources.push(out.into_records()?);
     drop(seen);
     for run in parts.map(Partitioner::into_runs).unwrap_or_default() {
-        firsts(run.into_records()?, (depth.saturating_add(1), &mut *sources), work)?;
+        firsts(run.into_records()?, (depth.saturating_add(1), &mut *sources), (&mut *work, bags))?;
     }
     Ok(())
 }

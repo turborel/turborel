@@ -6,9 +6,9 @@
 //! (RULES.md R-SIZE-2).
 //!
 //! The runs of an operator's area, of the statement that runs it, look for
-//! a cancel of it as each record is read back (RULES.md D44): the passes of
-//! a spilled operator read no table's rows, which look so, yet may read
-//! many records.
+//! a cancel of it as each record, or each batch of records, is read back
+//! (RULES.md D44): the passes of a spilled operator read no table's rows,
+//! which look so, yet may read many records.
 
 use crate::value::types::TypeRegistry;
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::settings::{SPILL_BATCH, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, WORK_MEMORY, batch_bytes, work_bytes};
-use crate::spill::{Area, Records, SpillArea, SpillRun, SpillTable, WorkAreas};
+use crate::spill::{Area, Batches, Records, SpillArea, SpillRun, SpillTable, WorkAreas};
 use crate::txn::{Stop, TxId, checked};
 
 /// The bytes a key held in memory takes beyond its own: its map entry.
@@ -149,6 +149,13 @@ impl SpillRun for Stopped {
     fn into_records(self: Box<Self>) -> Result<Records> {
         let Stopped { run, stop } = *self;
         Ok(Box::new(checked(run.into_records()?, Some(stop))))
+    }
+
+    /// Looked for a cancel as each batch is read: a sort's merge reads
+    /// its runs so.
+    fn into_batches(self: Box<Self>) -> Result<Batches> {
+        let Stopped { run, stop } = *self;
+        Ok(Box::new(checked(run.into_batches()?, Some(stop))))
     }
 }
 
