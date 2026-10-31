@@ -436,8 +436,14 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   with `Database::register_type`: written in a column definition and in
   CAST by their name, `name` or `name(a [, b])`, a domain of the name in
   the default schema taken first; a value of one CAST from a character
-  string, and its DEFAULT a character string literal; compared, ordered,
-  grouped, indexed and kept unique as its type's kind says, comparable
+  string, and its DEFAULT a character string literal; stored in, by store
+  assignment, a value comparable with it as its kind says, and a
+  character string if its kind takes one (`SqlType::assigns_text`), in
+  place of ISO/IEC 9075:1992 §9.2 SR2's rule for the standard types; a
+  function's arguments declared of one (`ScalarFunction::argument_type`),
+  each stored in it as a column's value is; used with no privilege, being
+  in no schema (§4.26); compared, ordered, grouped, indexed and kept
+  unique as its type's kind says, comparable
   with values of its own type alone; logged, checkpointed and recovered;
   sent to clients as its type's name, its text and its bytes, shown as its
   text by one without the plug-in. A database whose files hold one is not

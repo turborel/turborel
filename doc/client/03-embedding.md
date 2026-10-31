@@ -326,6 +326,60 @@ fn main() -> Result<()> {
 }
 ```
 
+A function may also declare the type of each argument, by
+`argument_type`: an argument of another type is then stored in it as a
+value is in a column of that type, a number given the declared scale, a
+character string made a value of a type beyond the standard that takes
+one; one that cannot be is refused before the statement runs (SQLCODE
+-103); `return_type` is told the declared types,
+and a `?` there takes the declared type. A function declaring none is
+given its arguments as they are. One function is registered under a
+name, whatever its arguments.
+
+```rust
+use turborel::db::Database;
+use turborel::error::{Code, Result, fail};
+use turborel::functions::ScalarFunction;
+use turborel::value::{DataType, Decimal, Spelled, Value};
+
+/// WIDTH(s): the characters of s, stored in a CHARACTER(5).
+struct Width;
+
+const FIVE: DataType = DataType::Character { length: 5 };
+
+impl ScalarFunction for Width {
+    fn name(&self) -> &str {
+        "WIDTH"
+    }
+    fn argument_type(&self, _position: usize, _args: &[Option<DataType>]) -> Option<DataType> {
+        Some(FIVE)
+    }
+    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
+        match args {
+            [FIVE] => Ok(DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }),
+            _ => fail(Code::SyntaxRule, "WIDTH takes one string"),
+        }
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        match args {
+            [Value::Char(s)] => Ok(Value::Exact(Decimal::new(s.chars().count().try_into().unwrap_or(0), 0))),
+            _ => Ok(Value::Null),
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    let db = Database::new();
+    db.register_scalar_function(Box::new(Width))?;
+    let mut ann = db.session("ANN");
+    ann.enable_extensions(true);
+    let mut rows = ann.open_cursor("VALUES WIDTH('abc')")?;
+    assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("5".to_owned()));
+    assert_eq!(ann.open_cursor("VALUES WIDTH(1)").err().map(|e| e.sqlcode()), Some(-103));
+    Ok(())
+}
+```
+
 A function is called from any thread a statement runs on, so it is
 `Send` and `Sync`, and guards any state of its own.
 
@@ -339,7 +393,7 @@ files, so the definitions that name one find it:
 |---|---|
 | `register_engine` | a storage engine, `StorageEngine`: what keeps a table's rows, named by CREATE TABLE ... USING, and by the setting DEFAULT_ENGINE |
 | `register_index_method` | an index method, `IndexMethod`, named by CREATE INDEX ... USING |
-| `register_type` | a data type beyond the standard's, `SqlType` |
+| `register_type` | a data type beyond the standard's, `SqlType`, named in a column definition and CAST: a value of it is CAST from a character string, and a character string is stored in it as in a character column only if the type says it takes one (`assigns_text`); no privilege is needed to use it |
 | `register_scalar_function`, `register_aggregate_function` | functions, as above |
 | `register_encoding` | an encoding of files or tables' rows, `Encoding`, named by STORAGE.ENCODINGS and a table's ENCODINGS |
 | `register_hash_function` | a hash function for checksums, `HashFunction`, named by STORAGE.CHECKSUM |

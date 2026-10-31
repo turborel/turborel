@@ -88,24 +88,40 @@ pub const UPDATE_SEARCHED_RULE: AssignRule = AssignRule { rule: "§13.10 SR5" };
 pub const UPDATE_POSITIONED_RULE: AssignRule = AssignRule { rule: "§13.9 SR10" };
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in
-/// `col`? A character string in a character string column, a bit string in
-/// a bit string one, a number in a numeric one, a datetime in a datetime
-/// one of its fields. SQL-86's rules that a string be no longer than the column
-/// and only an exact number go to an exact column [X3.135-1986 §8.7 SR6,
-/// §8.11 SR8, §8.12 SR6] are Entry SQL's [ISO/IEC 9075:1992 §13.8, §13.9,
-/// §13.10, Leveling Rules]: a longer string is checked as it is stored
-/// [§9.2 GR3b].
+/// `col`? As `assignable` says. SQL-86's rules that a string be no longer
+/// than the column and only an exact number go to an exact column
+/// [X3.135-1986 §8.7 SR6, §8.11 SR8, §8.12 SR6] are Entry SQL's [ISO/IEC
+/// 9075:1992 §13.8, §13.9, §13.10, Leveling Rules]: a longer string is
+/// checked as it is stored [§9.2 GR3b].
 ///
 /// # Errors
 ///
 /// SQLCODE -103 citing `r` if it cannot.
 pub fn check_assignment(col: &crate::catalog::ColumnDesc, t: DataType, r: AssignRule) -> Result<()> {
-    let temporal = col.data_type.is_datetime() || t.is_datetime() || col.data_type.is_interval() || t.is_interval();
-    let datetime = if temporal { col.data_type.comparable(&t) } else { true };
-    if col.data_type.is_character() == t.is_character() && col.data_type.is_bit() == t.is_bit() && datetime {
+    if assignable(&col.data_type, &t) {
         return Ok(());
     }
     Err(rule(format!("[ISO/IEC 9075:1992 {}, §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
+}
+
+/// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in a
+/// target of type `target`? A character string in a character string, a
+/// bit string in a bit string, a number in a number, a datetime in a
+/// datetime of its fields, an interval in a comparable interval.
+/// \[EXTENSION\] Where either is a type beyond the standard, which SR2
+/// does not speak of (RULES.md D53): a value comparable with the target,
+/// as its kind says, or a character string, if the target's kind takes
+/// one (`SqlType::assigns_text`).
+pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
+    if let DataType::Extension(e) = target {
+        return target.comparable(t) || (t.is_character() && e.kind.assigns_text());
+    }
+    if let DataType::Extension(_) = t {
+        return target.comparable(t);
+    }
+    let temporal = target.is_datetime() || t.is_datetime() || target.is_interval() || t.is_interval();
+    let datetime = if temporal { target.comparable(t) } else { true };
+    target.is_character() == t.is_character() && target.is_bit() == t.is_bit() && datetime
 }
 
 /// Which statement changes the table.

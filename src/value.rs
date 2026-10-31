@@ -471,21 +471,27 @@ fn approximate(op: ArithOp, x: f64, y: f64) -> Result<Value> {
 /// [ISO/IEC 9075:1992 §9.2 GR2, GR3] Store assignment of `v` to a column,
 /// parameter or target of type `target`, as the rule `rule` (a citation,
 /// e.g. "ISO/IEC 9075:1992 §13.8 GR4b iii") applies it, as the type's kind
-/// assigns (`SqlType::assign`): null stays null. Retrieval assignment
-/// [§9.1 GR3] is the same but for strings, which its callers truncate
-/// first.
+/// assigns (`SqlType::assign`): null stays null. \[EXTENSION\] A character
+/// string assigned to a type beyond the standard whose kind takes one
+/// (`SqlType::assigns_text`) is first CAST to it (RULES.md D53).
+/// Retrieval assignment [§9.1 GR3] is the same but for strings, which its
+/// callers truncate first.
 ///
 /// # Errors
 ///
 /// SQLSTATE 22001 if a string's characters beyond the length are not all
 /// spaces; 22003 if a number has no approximation in the type; 22005 if
 /// the value is of a type that cannot be assigned to it \[SR2\], as a
-/// plug-in function might give.
+/// plug-in function might give; the CAST's errors, of a character string
+/// assigned to a type beyond the standard.
 pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
     if v.is_null() {
         return Ok(Value::Null);
     }
-    target.kind().assign(v, target, rule)
+    let kind = target.kind();
+    let from_text = matches!((&v, target), (Value::Char(_), DataType::Extension(_))) && kind.assigns_text();
+    let given = if from_text { kind.cast(v, target)? } else { v };
+    kind.assign(given, target, rule)
 }
 
 /// The citation of the rule `rule` that assigns a value, and of the

@@ -77,6 +77,12 @@ impl SqlType for Ident {
         Err(SqlError::new(Code::Data, format!("[{rule}] {v} is not an IDENT")))
     }
 
+    /// A character string of 32 hexadecimal digits is stored in it as
+    /// CAST makes it one.
+    fn assigns_text(&self) -> bool {
+        true
+    }
+
     fn cast(&self, v: Value, _: &DataType) -> Result<Value> {
         match &v {
             Value::Null => Ok(Value::Null),

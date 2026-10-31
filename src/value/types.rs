@@ -107,6 +107,17 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     /// it.
     fn assign(&self, v: Value, t: &DataType, rule: &str) -> Result<Value>;
 
+    /// \[EXTENSION\] Whether a character string is stored in a type of it
+    /// by store assignment (RULES.md D53), made a value of it as `cast`
+    /// makes one, then given to `assign`; the binder takes a character
+    /// string where a value of it is assigned [ISO/IEC 9075:1992 §9.2 SR2]
+    /// only if so. By default not: a character string becomes one only by
+    /// CAST. A built-in kind keeps the default, its assignments being the
+    /// standard's.
+    fn assigns_text(&self) -> bool {
+        false
+    }
+
     /// [ISO/IEC 9075:1992 §6.10] `v` cast to `t`.
     ///
     /// # Errors

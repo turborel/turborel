@@ -10,7 +10,7 @@ use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
-use crate::functions::{AggregateRef, ScalarFunction};
+use crate::functions::AggregateRef;
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
@@ -141,27 +141,6 @@ impl Binder<'_> {
         let (exprs, types) = self.arguments(&*f.0, args, scope)?;
         let t = f.0.return_type(&types)?;
         Ok((Expr::Call(f, exprs), t))
-    }
-
-    /// The arguments `args` of the scalar function `f`, bound: a `<dynamic
-    /// parameter specification>` among them taking the type `f` gives it,
-    /// the others bound first [ISO/IEC 9075:1992 §17.6 GR5b-d], refused
-    /// where it gives none \[GR4\].
-    fn arguments(&self, f: &dyn ScalarFunction, args: &[ValueExpression], scope: Scope<'_>) -> Result<(Vec<Expr>, Vec<DataType>)> {
-        let mut bound = Vec::new();
-        for a in args {
-            bound.push(if dynamic_of(a).is_some() { None } else { Some(self.value_expression(a, scope)?) });
-        }
-        let known: Vec<Option<DataType>> = bound.iter().map(|b| b.as_ref().map(|(_, t)| *t)).collect();
-        let mut out = Vec::new();
-        for (position, (slot, a)) in bound.into_iter().zip(args).enumerate() {
-            out.push(match (slot, f.parameter_type(position, &known)) {
-                (Some(done), _) => done,
-                (None, Some(taken)) => self.typed(a, taken, scope)?,
-                (None, None) => self.value_expression(a, scope)?,
-            });
-        }
-        Ok(out.into_iter().unzip())
     }
 
     /// [X3.135-1986 §5.9 GR4] monadic plus or minus, folded into a constant operand.

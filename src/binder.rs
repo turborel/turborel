@@ -28,6 +28,7 @@ use crate::settings::{self, Own};
 use crate::value::datetime::Clocked;
 use crate::value::{DOUBLE_PRECISION, DataType, Value};
 
+mod arguments;
 mod case;
 mod datetime;
 mod interval;

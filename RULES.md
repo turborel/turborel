@@ -712,6 +712,27 @@ and its position for a histogram. A `DataType` names its kind
   bytes; a client without the plug-in holds it as `Unregistered`, shows
   its text and sends it back as it came, and the server reads it as its
   type again.
+- Store assignment [ISO/IEC 9075:1992 §9.2 SR2] to or from a plug-in type
+  takes a value comparable with the target, as the kind says; and a
+  character string, into a type whose kind says it takes one
+  (`SqlType::assigns_text`), made a value of it as its CAST makes one.
+  By default a kind takes none, and a character string becomes one of its
+  values only by CAST. A DEFAULT's character string literal is its CAST
+  either way, a plug-in type having no literals of its own.
+- A scalar function may declare the type of each argument
+  (`ScalarFunction::argument_type`): an argument of another type is
+  stored in it by store assignment before the call, refused as the
+  statement is bound if it cannot be, and `return_type` is told the
+  declared types; a `?` there takes the declared type. By default none is
+  declared, and an argument is given as it is. One function is
+  registered under a name: none is chosen among several by its
+  arguments' types.
+- No privilege is needed to use a plug-in type: SQL-92's privileges are
+  on objects of a schema [§4.26, §11.36 SR1], USAGE on a domain,
+  character set, collation or translation, each with an owner who grants
+  it; a plug-in type is in no schema and owned by no authorization
+  identifier, registered by the program as code is, as a built-in type
+  is. A privilege on one would be an extension with no grantor.
 *Why:* a standard type is grammar as much as storage, and none is
 replaced; one contract still keeps every type, built in or not, honest to
 the same responsibilities, and a plug-in type stored, logged, indexed and

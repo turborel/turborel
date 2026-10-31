@@ -100,8 +100,17 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
     let mut columns = Vec::new();
     for k in 0..degree {
         let mut types: Vec<DataType> = bound.iter().filter_map(|r| r.get(k).and_then(|e| e.1)).collect();
-        types.extend(objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type));
-        let data_type = set_type(&types, "§7.2 GR2, §7.10 SR12b ii")?;
+        let object = objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type);
+        // [EXTENSION] Into a column of a type beyond the standard, its
+        // type, each value having been found assignable to it, a character
+        // string too (RULES.md D53), which §9.3 would not bring together
+        // with it.
+        let data_type = if let Some(extension @ DataType::Extension(_)) = object {
+            extension
+        } else {
+            types.extend(object);
+            set_type(&types, "§7.2 GR2, §7.10 SR12b ii")?
+        };
         columns.push(OutColumn { name: None, data_type, not_null: false, origin: None });
     }
     let exprs = bound.into_iter().map(|r| r.into_iter().zip(&columns).map(|((e, t), c)| conformed(e, t, c.data_type)).collect()).collect();

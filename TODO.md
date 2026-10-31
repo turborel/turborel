@@ -126,10 +126,9 @@ item becomes a decision in RULES.md when its design settles.
 - **Default warnings** [§11.5 GR1b v]: a BIT column's default shorter
   than the column is kept padded with 0 bits, and a statement that takes
   it raises no warning 01008, implicit zero-bit padding.
-- **Plug-in data types, further** (RULES.md D53): no privilege is needed
-  to write one, SQL-92 granting none on a data type; a character string is
-  stored in one only through CAST, not by store assignment; a function's
-  arguments of one are typed only as its `return_type` says.
+- **Plug-in data types, further** (RULES.md D53): a domain is never of
+  one, CREATE DOMAIN taking only a standard type's name; a function is
+  one of its name, none chosen among several by its arguments' types.
 - **Assertions, further** (RULES.md D51): more forms checked from a
   statement's change than `NOT EXISTS` and COUNT(*) of one table's rows:
   COUNT of a column, and SUM, AVG, MIN and MAX, which need the value

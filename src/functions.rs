@@ -36,6 +36,11 @@ pub use strings::CONCATENATION;
 ///
 /// Contract (RULES.md R-SAFE-3):
 /// * `name` is an upper-case `<identifier>`, not an aggregate's.
+/// * `return_type` is given the type of each argument: the type
+///   `argument_type` declares for it, if it declares one, else the
+///   argument's own.
+/// * `call` is given each argument as `return_type` was told its type: an
+///   argument of a type `argument_type` declares is assigned to it first.
 /// * `call` returns null or a value of the type `return_type` gave: a
 ///   CHARACTER no longer than its length, a number within its precision and
 ///   scale. A longer string is a data exception when stored.
@@ -64,13 +69,25 @@ pub trait ScalarFunction: Send + Sync {
     fn deterministic(&self) -> bool {
         true
     }
+    /// \[EXTENSION\] The type of argument `position`, from 0, if the
+    /// function declares one, the arguments' own types given in `args`,
+    /// none for a `<dynamic parameter specification>`. An argument of
+    /// another type is stored in it by store assignment [ISO/IEC 9075:1992
+    /// §9.2] before `call` sees it, so a character string reaches a type
+    /// beyond the standard that takes one (`SqlType::assigns_text`, RULES.md
+    /// D53); one that cannot be \[SR2\] is refused as the statement is
+    /// bound (SQLCODE -103). By default none: each argument is given as it
+    /// is, its type checked by `return_type` alone.
+    fn argument_type(&self, _position: usize, _args: &[Option<DataType>]) -> Option<DataType> {
+        None
+    }
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6 GR5] The type a `<dynamic
     /// parameter specification>` takes as argument `position`, from 0, the
     /// other arguments' types given in `args`, none for each that is itself
     /// one; none if it takes none there, where it is refused \[GR4\]. By
-    /// default none: a function says where its arguments may be one.
-    fn parameter_type(&self, _position: usize, _args: &[Option<DataType>]) -> Option<ParameterType> {
-        None
+    /// default the type `argument_type` declares there, if it declares one.
+    fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
+        self.argument_type(position, args).map(ParameterType::Of)
     }
 }
 
