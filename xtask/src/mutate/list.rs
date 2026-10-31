@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 25] = [
+pub const MUTATIONS: [Mutation; 29] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -173,8 +173,8 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-row",
         breaks: "assertions checked from changes: a row changed to break NOT EXISTS passes",
         file: "src/db/assertions/changes.rs",
-        original: "            seen.passes = seen.passes || is_in;",
-        replacement: "            seen.passes = false;",
+        original: "        self.passing.now = self.passing.now || is_in;",
+        replacement: "        self.passing.now = false;",
         integration: &[
             "assertion_changes::no_row_may_have_the_condition_11_34",
             "assertion_changes::assertions_checked_from_changes_answer_as_checked_whole",
@@ -186,8 +186,8 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-count",
         breaks: "assertions checked from changes: a count raised past its bound passes",
         file: "src/db/assertions/changes.rs",
-        original: "Safe::Fewer => self.change <= 0,",
-        replacement: "Safe::Fewer => true,",
+        original: "Kind::Count(safe) => one_snapshot && moved(*safe, (self.change > 0, self.change < 0)),",
+        replacement: "Kind::Count(safe) => one_snapshot && (*safe == Safe::Fewer || moved(*safe, (self.change > 0, self.change < 0))),",
         integration: &[
             "assertion_changes::a_count_is_held_to_its_bound_11_34",
             "assertion_changes::assertions_checked_from_changes_answer_as_checked_whole",
@@ -198,8 +198,8 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-snapshot",
         breaks: "assertions checked from changes: a count or a greatest held from a change below one snapshot",
         file: "src/db/assertions/changes.rs",
-        original: "Ok(seen.verdict(&form.kind, tx.one_snapshot()))",
-        replacement: "Ok(seen.verdict(&form.kind, true))",
+        original: "let verdict = seen.verdict(&form.kind, tx.one_snapshot());",
+        replacement: "let verdict = seen.verdict(&form.kind, true);",
         integration: &[
             "assertion_changes::a_count_read_at_each_statement_is_checked_whole_11_34",
             "assertion_forms::a_greatest_read_at_each_statement_is_checked_whole_6_5",
@@ -219,8 +219,8 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-never-null",
         breaks: "assertions checked from changes: a set function of a value that may be null held from a change, its warning lost",
         file: "src/db/assertions/forms.rs",
-        original: "    if !never_null(&x, (&table, &steps), known.catalog) {",
-        replacement: "    if false {",
+        original: "    let nulls = (!never_null(&x, (&table, &steps), known.catalog)).then(|| (steps.len(), x.clone()));",
+        replacement: "    let nulls = None::<(usize, Expr)>;",
         integration: &["assertion_forms::a_set_function_warns_as_checked_whole_6_5"],
         unit: &["db::assertions::forms::tests::a_set_functions_argument_is_never_null"],
     },
@@ -228,7 +228,7 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-reach",
         breaks: "assertions checked from changes: a greatest moved below its bound passes",
         file: "src/db/assertions/changes.rs",
-        original: "Kind::Reach(_) => self.reached || (one_snapshot && !self.touched),",
+        original: "Kind::Reach(_) => self.reached || (one_snapshot && !self.passing.now && !self.passing.before),",
         replacement: "Kind::Reach(_) => true,",
         integration: &[
             "assertion_forms::a_greatest_or_least_is_held_to_its_bound_6_5",
@@ -258,8 +258,8 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-conjuncts",
         breaks: "assertions checked from changes: the conjuncts after a false one are not evaluated",
         file: "src/db/assertions/changes.rs",
-        original: "            verdict = match (verdict, self.form_verdict(tx, form, effects)?) {",
-        replacement: "            if verdict == Verdict::Broken { break; } verdict = match (verdict, self.form_verdict(tx, form, effects)?) {",
+        original: "            let (seen, form_verdict) = self.form_verdict(tx, form, effects)?;",
+        replacement: "            if verdict == Verdict::Broken { break; } let (seen, form_verdict) = self.form_verdict(tx, form, effects)?;",
         integration: &["assertion_changes::every_conjunct_is_evaluated_on_the_change_11_34"],
         unit: &[],
     },
@@ -267,9 +267,51 @@ pub const MUTATIONS: [Mutation; 25] = [
         name: "assertion-deferred-row",
         breaks: "deferred assertions checked from their rows: a row written to break NOT EXISTS passes",
         file: "src/db/assertions/changes.rs",
-        original: "        if now.map(|row| passes(&form.steps, &row, tx)).transpose()?.unwrap_or(false) {",
-        replacement: "        if now.map(|row| passes(&form.steps, &row, tx)).transpose()?.unwrap_or(false) && false {",
+        original: "            if passes(&form.steps, &now, tx)? {",
+        replacement: "            if passes(&form.steps, &now, tx)? && false {",
         integration: &["assertion_forms::a_deferred_assertion_is_checked_from_its_rows_14_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-apart",
+        breaks: "assertions checked from changes: a greatest moved onto the bound it must not equal passes",
+        file: "src/db/assertions/changes.rs",
+        original: "Kind::Apart { .. } => self.reached || (one_snapshot && !self.passing.before && !self.outside),",
+        replacement: "Kind::Apart { .. } => self.reached || one_snapshot,",
+        integration: &[
+            "assertion_forms::a_greatest_or_least_equal_or_unequal_to_a_bound_6_5",
+            "assertion_forms::forms_checked_from_changes_answer_as_checked_whole",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-distinct-value",
+        breaks: "assertions checked from changes: a row whose distinct value changed counted as keeping it",
+        file: "src/db/assertions/changes.rs",
+        original: "let kept = is_in && was_in && value(now)? == value(before)?;",
+        replacement: "let kept = is_in && was_in;",
+        integration: &["assertion_forms::a_count_of_distinct_values_answers_as_checked_whole_6_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-null-unseen",
+        breaks: "assertions checked from changes: a set function of a value that may be null held from a change of no null, its warning lost",
+        file: "src/db/assertions/changes.rs",
+        original: "(Verdict::Holds, true, false) => Verdict::Unknown,",
+        replacement: "(Verdict::Holds, true, false) => Verdict::Holds,",
+        integration: &[
+            "assertion_forms::a_count_of_distinct_values_answers_as_checked_whole_6_5",
+            "assertion_forms::forms_checked_from_changes_answer_as_checked_whole",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-deferred-quiet",
+        breaks: "deferred assertions checked from their rows: steps that raise, or an argument that may be null, stopped at a broken row",
+        file: "src/db/assertions/changes.rs",
+        original: "            matches!(f.kind, Kind::NoRow | Kind::Bound) && f.nulls.is_none() && !raising",
+        replacement: "            matches!(f.kind, Kind::NoRow | Kind::Bound)",
+        integration: &["assertion_forms::a_deferred_assertion_of_several_forms_is_checked_from_its_rows_14_3"],
         unit: &[],
     },
 ];

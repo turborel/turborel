@@ -1,8 +1,8 @@
 //! Assertions checked from the rows a statement changed, of the forms
 //! beyond `NOT EXISTS` and COUNT(*) [ISO/IEC 9075:1992 §6.5, §11.34 GR2]
-//! (RULES.md D51): COUNT, MAX and MIN of an argument never null, a view's
-//! projection, and a deferred `NOT EXISTS` from the rows its transaction
-//! wrote. Each answers as the same assertion checked whole, which `AND 1 =
+//! (RULES.md D51): COUNT, COUNT DISTINCT, MAX and MIN, equal or unequal
+//! too, of arguments null or never null, a view's projection, and deferred
+//! forms of no row passing from the rows its transaction wrote. Each answers as the same assertion checked whole, which `AND 1 =
 //! 1` makes it: the same statements fail, with the same SQLCODE, and the
 //! same warnings are raised.
 
@@ -64,7 +64,7 @@ fn same(a: &Session, b: &Session, sql: &str, step: usize) -> Result<Completion, 
 }
 
 /// The assertions of the random test: each name, condition and attributes.
-const ASSERTED: [(&str, &str, &str); 12] = [
+const ASSERTED: [(&str, &str, &str); 19] = [
     ("COUNTED", "(SELECT COUNT(M) FROM T WHERE N > 20) <= 9", ""),
     ("REJECTED", "(SELECT COUNT(N) FROM T WHERE N > 30) < 7", ""),
     ("CEILING", "(SELECT MAX(M) FROM T WHERE K < 30) < 95", ""),
@@ -76,6 +76,17 @@ const ASSERTED: [(&str, &str, &str); 12] = [
     ("DIVIDED", "NOT EXISTS (SELECT * FROM V WHERE 50 / (M - 11) > 30)", ""),
     ("RAISED", "(SELECT MAX(100 / (N - 13)) FROM T WHERE N > 0) < 60", ""),
     ("LATER", "NOT EXISTS (SELECT * FROM T WHERE N > M + 15)", "DEFERRABLE INITIALLY DEFERRED"),
+    ("PEAK", "(SELECT MIN(M) FROM T WHERE K < 4) = 5", ""),
+    ("APART", "(SELECT MAX(N) FROM T WHERE K < 25 AND N < 13) <> 11", ""),
+    ("KINDS", "(SELECT COUNT(DISTINCT N) FROM T WHERE N < 9) <= 8", ""),
+    ("SPREAD", "(SELECT COUNT(DISTINCT M) FROM T WHERE M < 30) >= 4", ""),
+    ("LEAST", "(SELECT MIN(N) FROM T) >= 0", ""),
+    ("NULLS", "(SELECT COUNT(N) FROM T WHERE K > 5) < 30", ""),
+    (
+        "PAIRED",
+        "NOT EXISTS (SELECT * FROM T WHERE N > 45 AND M < 5) AND (SELECT MAX(M) FROM T WHERE K > 35) < 95",
+        "DEFERRABLE INITIALLY DEFERRED",
+    ),
     // Checked whole: a SUM.
     ("TOTAL", "(SELECT SUM(M) FROM T) < 3000", ""),
 ];
@@ -98,9 +109,10 @@ fn change(rng: &mut Rng) -> String {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.10.1, §6.5 GR1b, GR2b iii,
 /// §11.34 GR2, §14.3 GR4]; [DESIGN] RULES.md D15, D51, R-TEST-5: random
-/// transactions of random statements under assertions of COUNT, MAX and
-/// MIN of values never null, through views, raising errors, deferred, and
-/// a SUM, checked from their changes, answer as the same assertions
+/// transactions of random statements under assertions of COUNT, COUNT
+/// DISTINCT, MAX and MIN, equal and unequal too, of values null or never
+/// null, through views, raising errors, deferred, and a SUM, checked from
+/// their changes, answer as the same assertions
 /// checked whole: each statement and each commit the same outcome, its
 /// SQLCODE and warning, at SERIALIZABLE and at READ COMMITTED.
 #[test]
@@ -136,8 +148,8 @@ fn forms_checked_from_changes_answer_as_checked_whole() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, GR2a, §11.34 GR2];
 /// [DESIGN] RULES.md D51: COUNT of a column NOT NULL, or of one its filter
 /// rejects null of, is held from the change, raising no warning; MAX of
-/// one that may be null is checked whole, raising the warning of a null
-/// eliminated once one is, as it does.
+/// one that may be null raises the warning of a null eliminated once one
+/// is, from the change of a null, else checked whole, as it does.
 #[test]
 fn a_set_function_warns_as_checked_whole_6_5() {
     let asserted = [
@@ -316,4 +328,103 @@ fn a_deferred_assertion_made_again_is_checked_as_it_is_14_3() {
     s.run("DROP ASSERTION LATER").unwrap();
     s.commit().unwrap();
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec!["13".to_owned()]));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR2b iii, §8.2 GR1a,
+/// §11.34 GR2]; [DESIGN] RULES.md D51: MAX equal to a bound is broken by a
+/// row past it, holds of a row changed reaching it, and checks the rest
+/// whole; MIN unequal to one holds of a row changed past it, or of rows
+/// only added on its side, and checks a row leaving whole.
+#[test]
+fn a_greatest_or_least_equal_or_unequal_to_a_bound_6_5() {
+    let asserted = [("PEAK", "(SELECT MAX(M) FROM T WHERE K > 20) = 50", ""), ("APART", "(SELECT MIN(M) FROM T WHERE K < 20) <> 15", "")];
+    let ((_x, a), (_y, b)) = twins(&asserted);
+    let cases: [(&str, Option<Code>); 12] = [
+        ("INSERT INTO T VALUES (21, 1, 40, 'S')", Some(Code::Constraint)),
+        ("INSERT INTO T VALUES (21, 1, 50, 'S')", None),
+        ("INSERT INTO T VALUES (22, 1, 51, 'S')", Some(Code::Constraint)),
+        ("INSERT INTO T VALUES (22, 1, 30, 'S')", None),
+        ("UPDATE T SET M = 49 WHERE K = 21", Some(Code::Constraint)),
+        ("DELETE FROM T WHERE K = 21", Some(Code::Constraint)),
+        ("DELETE FROM T WHERE K = 1", None),
+        ("DELETE FROM T WHERE K = 2", Some(Code::Constraint)),
+        ("INSERT INTO T VALUES (11, 1, 20, 'S')", None),
+        ("UPDATE T SET M = 15 WHERE K = 2", Some(Code::Constraint)),
+        ("INSERT INTO T VALUES (12, 1, 15, 'S')", None),
+        ("UPDATE T SET M = 3 WHERE K = 12", None),
+    ];
+    for (step, (sql, expected)) in cases.into_iter().enumerate() {
+        assert_eq!(same(&a, &b, sql, step).err(), expected, "{sql}");
+        a.commit().unwrap();
+        b.commit().unwrap();
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, GR2, §11.34 GR2];
+/// [DESIGN] RULES.md D51: COUNT DISTINCT holds of rows changed keeping
+/// their values, checks a value changed whole, and an argument that may be
+/// null raises the warning of a null eliminated as the whole check does,
+/// from the change when it has a null.
+#[test]
+fn a_count_of_distinct_values_answers_as_checked_whole_6_5() {
+    let asserted =
+        [("KINDS", "(SELECT COUNT(DISTINCT N) FROM T WHERE N < 20) <= 10", ""), ("VARIED", "(SELECT COUNT(DISTINCT N) FROM T) >= 10", "")];
+    let ((_x, a), (_y, b)) = twins(&asserted);
+    let cases: [(&str, Option<Code>, Option<&str>); 7] = [
+        ("INSERT INTO T VALUES (11, 5, 1, 'S')", None, None),
+        ("INSERT INTO T VALUES (12, 15, 1, 'S')", Some(Code::Constraint), None),
+        ("UPDATE T SET N = 15 WHERE K = 11", Some(Code::Constraint), None),
+        ("UPDATE T SET M = 7 WHERE K < 5", None, None),
+        ("UPDATE T SET N = NULL WHERE K = 11", None, Some("01003")),
+        ("DELETE FROM T WHERE K = 10", Some(Code::Constraint), None),
+        ("INSERT INTO T VALUES (13, 20, 1, 'S')", None, Some("01003")),
+    ];
+    for (step, (sql, expected, warned)) in cases.into_iter().enumerate() {
+        assert_eq!(same(&a, &b, sql, step).err(), expected, "{sql}");
+        assert_eq!(a.warning().map(SqlState::as_str), warned, "{sql}");
+        a.commit().unwrap();
+        b.commit().unwrap();
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.10.1, §6.5 GR1b, §14.2
+/// GR3, §14.3 GR4]; [DESIGN] RULES.md D15, D51: a deferred assertion of
+/// forms of no row passing, MAX bounded among them, is checked from the
+/// rows written while it was deferred; one whose steps can raise an error,
+/// or whose argument may be null, whole, raising what the whole check
+/// raises.
+#[test]
+fn a_deferred_assertion_of_several_forms_is_checked_from_its_rows_14_3() {
+    let asserted = [
+        (
+            "PAIRED",
+            "NOT EXISTS (SELECT * FROM T WHERE N > M) AND (SELECT MAX(M) FROM T WHERE K > 10) < 100",
+            "DEFERRABLE INITIALLY DEFERRED",
+        ),
+        ("RAISING", "NOT EXISTS (SELECT * FROM T WHERE N < 0) AND (SELECT MAX(M) FROM T WHERE 60 / (N - 20) > 0) < 90", "DEFERRABLE"),
+        ("NULLED", "(SELECT MIN(N) FROM T) > -10", "DEFERRABLE"),
+    ];
+    let ((_x, a), (_y, b)) = twins(&asserted);
+    let script: [(&str, Option<Code>); 16] = [
+        ("INSERT INTO T VALUES (11, 1, 120, 'S')", None),
+        ("UPDATE T SET M = 60 WHERE K = 11", None),
+        ("COMMIT", None),
+        ("INSERT INTO T VALUES (12, 99, 1, 'S')", None),
+        ("SET CONSTRAINTS PAIRED IMMEDIATE", Some(Code::Constraint)),
+        ("DELETE FROM T WHERE K = 12", None),
+        ("INSERT INTO T VALUES (12, 1, 100, 'S')", None),
+        ("COMMIT", Some(Code::CommitFailed)),
+        ("SET CONSTRAINTS RAISING DEFERRED", None),
+        ("INSERT INTO T VALUES (13, -1, 1, 'S')", None),
+        ("INSERT INTO T VALUES (14, 20, 95, 'S')", None),
+        ("SET CONSTRAINTS RAISING IMMEDIATE", Some(Code::Data)),
+        ("ROLLBACK", None),
+        ("SET CONSTRAINTS NULLED DEFERRED", None),
+        ("UPDATE T SET N = NULL WHERE K = 1", None),
+        ("SET CONSTRAINTS NULLED IMMEDIATE", None),
+    ];
+    for (step, (sql, expected)) in script.into_iter().enumerate() {
+        assert_eq!(same(&a, &b, sql, step).err(), expected, "{sql}");
+    }
+    assert_eq!(a.warning().map(SqlState::as_str), Some("01003"), "checked whole, a null eliminated");
 }

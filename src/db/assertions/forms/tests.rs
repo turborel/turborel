@@ -109,6 +109,10 @@ fn named(kind: &Kind) -> &'static str {
         Kind::Count(Safe::More) => "more",
         Kind::Count(Safe::Same) => "same",
         Kind::Reach(_) => "reach",
+        Kind::Distinct(Safe::Fewer, _) => "distinct fewer",
+        Kind::Distinct(Safe::More, _) => "distinct more",
+        Kind::Distinct(Safe::Same, _) => "distinct same",
+        Kind::Apart { .. } => "apart",
     }
 }
 
@@ -184,7 +188,7 @@ fn set_functions_of_values_never_null_have_forms() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, §11.34 GR2];
 /// [DESIGN] RULES.md D51, R-TEST-8: a set function's argument is never
-/// null, so a form found, as a column of a NOT NULL or PRIMARY KEY
+/// null, so its form keeps no argument to watch for a null, as a column of a NOT NULL or PRIMARY KEY
 /// constraint not deferrable, one a filter's conjunct rejects null of
 /// (compared, IS NOT NULL, LIKE, IN, under AND or IS TRUE, through
 /// arithmetic), a constant not null, or arithmetic of those; not a
@@ -194,7 +198,10 @@ fn set_functions_of_values_never_null_have_forms() {
 fn a_set_functions_argument_is_never_null() {
     let functions = Registry::with_set_functions();
     let max = functions.aggregate("MAX").unwrap();
-    let found = |arg: Expr, rows: LogicalPlan| kinds(counted(max.clone(), Some(arg), rows, CompOp::Lt), &functions).is_some();
+    let found = |arg: Expr, rows: LogicalPlan| {
+        let mut found = forms(counted(max.clone(), Some(arg), rows, CompOp::Lt), &functions).unwrap();
+        found.pop().unwrap().nulls.is_none()
+    };
     let plus = |a: Expr, b: Expr| Expr::Arith(Box::new(a), ArithOp::Add, Box::new(b));
     let n = || Expr::Column(1);
     let listed = || Arc::new(InSet::of(vec![Value::Exact(Decimal::new(1, 0))]));
@@ -239,10 +246,8 @@ fn a_set_functions_argument_is_never_null() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, GR2b iii, iv,
 /// §11.34 GR2]; [DESIGN] RULES.md D51: no form is found of a function, a
 /// CAST, a subquery in a filter, an outer reference, a select list that can
-/// raise, a join, a grouping, COUNT of a value that may be null or
-/// DISTINCT, MAX or MIN equal or unequal to a bound or of no argument, SUM
-/// or AVG, a COUNT a plug-in replaced, an OR of conjuncts, nor of a query
-/// not an assertion's.
+/// raise, a join, a grouping, MAX of no argument, SUM or AVG, a COUNT a
+/// plug-in replaced, an OR of conjuncts, nor of a query not an assertion's.
 #[test]
 fn other_shapes_have_no_form() {
     let functions = Registry::with_set_functions();
@@ -264,11 +269,7 @@ fn other_shapes_have_no_form() {
         none_of(vec![number(1)], LogicalPlan::Distinct { input: Box::new(scan()) }),
         Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery { plan: scan(), outer: vec![Expr::Column(0)] })))),
         Cond::Not(Box::new(Cond::Const(Truth::True))),
-        counted(count.clone(), Some(Expr::Column(1)), scan(), CompOp::Le),
-        aggregated(count.clone(), (k(), true), scan(), CompOp::Le),
         counted(count.clone(), None, grouped, CompOp::Le),
-        counted(max.clone(), k(), scan(), CompOp::Eq),
-        counted(max.clone(), k(), scan(), CompOp::Ne),
         counted(max.clone(), None, scan(), CompOp::Lt),
         counted(max, Some(cast), scan(), CompOp::Lt),
         counted(sum, k(), scan(), CompOp::Le),
@@ -329,4 +330,40 @@ fn a_views_projection_is_a_step() {
     let length = functions.scalar("CHAR_LENGTH").unwrap();
     let called = view(vec![Expr::Call(length, vec![Expr::Column(1)])]);
     assert!(kinds(none_of(vec![number(1)], called), &functions).is_none());
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, GR2, GR2b iii,
+/// §8.2 GR1a, §11.34 GR2]; [DESIGN] RULES.md D51: MAX or MIN equal to a
+/// bound is two forms, below and reaching it; unequal one, apart from it;
+/// COUNT DISTINCT a count of values; and a set function of an argument
+/// that may be null keeps it, with the steps before its own.
+#[test]
+fn equal_unequal_distinct_and_nullable_have_forms() {
+    let functions = Registry::with_set_functions();
+    let [count, max, min] = ["COUNT", "MAX", "MIN"].map(|f| functions.aggregate(f).unwrap());
+    let k = || Some(Expr::Column(0));
+    let condition = [
+        counted(max.clone(), k(), scan(), CompOp::Eq),
+        counted(min.clone(), k(), scan(), CompOp::Eq),
+        counted(max.clone(), k(), scan(), CompOp::Ne),
+        counted(min, k(), scan(), CompOp::Ne),
+        aggregated(count.clone(), (k(), true), scan(), CompOp::Le),
+        aggregated(count.clone(), (k(), true), scan(), CompOp::Gt),
+        aggregated(count.clone(), (k(), true), scan(), CompOp::Eq),
+    ]
+    .into_iter()
+    .reduce(|a, b| Cond::And(Box::new(a), Box::new(b)))
+    .unwrap();
+    let found = kinds(condition, &functions);
+    let expected = ["bound", "reach", "bound", "reach", "apart", "apart", "distinct fewer", "distinct more", "distinct same"];
+    assert_eq!(found, Some(expected.to_vec()));
+    let rows = filtered(compare(Expr::Column(0), CompOp::Gt, number(0)));
+    let mut nullable = forms(counted(count, Some(Expr::Column(1)), rows.clone(), CompOp::Le), &functions).unwrap();
+    let form = nullable.pop().unwrap();
+    assert_eq!(
+        (form.steps.len(), form.nulls.map(|(at, x)| (at, format!("{x:?}")))),
+        (2_usize, Some((1_usize, format!("{:?}", Expr::Column(1)))))
+    );
+    let mut reached = forms(counted(max, Some(Expr::Column(1)), rows, CompOp::Gt), &functions).unwrap();
+    assert_eq!(reached.pop().unwrap().nulls.map(|(at, _)| at), Some(1_usize), "no step of its own");
 }

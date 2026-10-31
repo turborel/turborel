@@ -14,28 +14,39 @@
 //! sees only the rows that one keeps (`optimizer::MergeFilters`), so a row
 //! stops at the first step that does not keep it.
 //!
-//! A set function's argument `x` is of the row alone too, and never null in
-//! those rows: a null eliminated raises a warning [§6.5 GR1b], and whether
-//! one is depends on every row. It is never null if it is a column of a NOT
-//! NULL or PRIMARY KEY constraint not deferrable, whose checks come before
-//! an assertion's at a statement's end; one a conjunct of a filter is not
-//! true of when null (a comparison, IS NOT NULL, LIKE or IN of it, or of
-//! arithmetic of it); a constant not null; or arithmetic of those.
+//! A set function's argument `x` is of the row alone too. Where it is null
+//! in a row passing, the whole check raises a warning, a null eliminated
+//! [§6.5 GR1b]; whether it does depends on every row, so a form whose `x`
+//! may be null keeps it (`Form::nulls`), and changes.rs takes the change as
+//! the whole check only if a row of it shows the warning raised. `x` is
+//! never null if it is a column of a NOT NULL or PRIMARY KEY constraint not
+//! deferrable, whose checks come before an assertion's at a statement's
+//! end; one a conjunct of a filter is not true of when null (a comparison,
+//! IS NOT NULL, LIKE or IN of it, or of arithmetic of it); a constant not
+//! null; or arithmetic of those.
 //!
 //! - `NOT EXISTS (SELECT ... FROM T ...)`: no row passes (`Kind::NoRow`).
 //! - `(SELECT COUNT(*) FROM T ...) op k`, `k` a constant, either side: the
 //!   count of rows passing (`Kind::Count`); and COUNT(x), `x IS NOT NULL` a
 //!   step, which evaluates `x` as COUNT does.
+//! - COUNT(DISTINCT x) `op k`: the count of the values of `x` of the rows
+//!   passing, `x IS NOT NULL` a step (`Kind::Distinct`), values the same
+//!   as DISTINCT takes them [§6.5 GR2].
 //! - `MAX(x) < k` or `<= k`, `MIN(x) > k` or `>= k`: the greatest or least
 //!   by the comparison rules [§6.5 GR2b iii], so false exactly when a row
 //!   passing has `x op k` false: `NOT (x op k)` a step (`Kind::Bound`).
 //! - `MAX(x) > k` or `>= k`, `MIN(x) < k` or `<= k`: true if a row passing
 //!   has `x op k` true (`Kind::Reach`).
+//! - `MAX(x) = k`: `MAX(x) <= k AND MAX(x) >= k`, the same truth, unknown
+//!   both of no row [§8.2 GR1a, §8.12 GR2]; so two forms, MIN alike.
+//! - `MAX(x) <> k`: true if a row passing has `x > k`; or, a row only added,
+//!   each `x < k`, the greatest stays on its side of k (`Kind::Apart`).
+//!   MIN alike, the sides turned.
 //!
 //! DISTINCT changes no greatest or least [GR2], so MAX and MIN may have it.
 //! SUM and AVG have no form: their value, and whether they overflow [GR2b
-//! iv], depend on every row. Nor do COUNT DISTINCT, a join, a grouping, or a
-//! set function a plug-in replaced.
+//! iv], depend on every row, the running sum checked as each is added. Nor
+//! do a join, a grouping, or a set function a plug-in replaced.
 
 use crate::catalog::{Catalog, ConstraintKind, QualifiedName};
 use crate::functions::{Registry, Standard};
@@ -49,6 +60,9 @@ pub(super) struct Form {
     pub(super) table: QualifiedName,
     pub(super) steps: Vec<Step>,
     pub(super) kind: Kind,
+    /// A set function's argument that may be null, and how many of the
+    /// steps are of the rows it is evaluated on, before its own.
+    pub(super) nulls: Option<(usize, Expr)>,
 }
 
 /// What a row of the table passes, in order, to be one of a form's.
@@ -83,6 +97,12 @@ pub(super) enum Kind {
     Count(Safe),
     /// It is true if the condition is true of one of them.
     Reach(Cond),
+    /// The count of the distinct values of the expression compares so
+    /// with a constant, as `Count`.
+    Distinct(Safe, Expr),
+    /// The greatest or least is not equal to a constant: true if `beyond`
+    /// is true of one of them, and kept by rows added of `within` true.
+    Apart { beyond: Cond, within: Cond },
 }
 
 /// The changes of a count that cannot make its comparison false.
@@ -114,15 +134,16 @@ pub(super) fn forms_of(plan: &LogicalPlan, known: &Known<'_>) -> Option<Vec<Form
     }
     let mut conjuncts = Vec::new();
     split_and((**condition).clone(), &mut conjuncts);
-    conjuncts.iter().map(|c| form_of(c, known)).collect()
+    let forms: Option<Vec<Vec<Form>>> = conjuncts.iter().map(|c| form_of(c, known)).collect();
+    forms.map(|f| f.into_iter().flatten().collect())
 }
 
-/// The form of the conjunct `c`, if it has one.
-fn form_of(c: &Cond, known: &Known<'_>) -> Option<Form> {
+/// The forms of the conjunct `c`, if it has: one, or two of `MAX(x) = k`.
+fn form_of(c: &Cond, known: &Known<'_>) -> Option<Vec<Form>> {
     match c {
         Cond::Not(inner) => {
             let Cond::Exists(s) = &**inner else { return None };
-            exists_form(s)
+            exists_form(s).map(|f| vec![f])
         }
         Cond::Compare(Expr::Subquery(s, 0), op, k @ Expr::Const(_)) => aggregate_form(s, (*op, k), known),
         Cond::Compare(k @ Expr::Const(_), op, Expr::Subquery(s, 0)) => aggregate_form(s, (op.flip(), k), known),
@@ -150,41 +171,44 @@ fn exists_form(s: &Subquery) -> Option<Form> {
         &s.plan
     };
     let passing = passing(rows).filter(|_| s.outer.is_empty())?;
-    Some(Form { table: passing.table, steps: passing.steps, kind: Kind::NoRow })
+    Some(Form { table: passing.table, steps: passing.steps, kind: Kind::NoRow, nulls: None })
 }
 
 /// `(SELECT f(x) FROM T WHERE p) op k`, `f` the standard COUNT, MAX or
 /// MIN: of `s`, the subquery, `op`, the comparison with it first, and `k`.
-fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> Option<Form> {
+fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> Option<Vec<Form>> {
     let LogicalPlan::Project { exprs, input } = &s.plan else { return None };
     let LogicalPlan::Aggregate { groups, aggs, input: rows } = &**input else { return None };
     let ([Expr::Column(0)], [agg]) = (exprs.as_slice(), aggs.as_slice()) else { return None };
     let function = known.functions.standard(&agg.func).filter(|_| groups.is_empty() && s.outer.is_empty())?;
-    let Passing { table, mut steps, columns } = passing(rows)?;
+    let Passing { table, steps, columns } = passing(rows)?;
     let Some(x) = &agg.arg else {
         // COUNT(*) alone has the form (*).
-        return (function == Standard::Count).then_some(Form { table, steps, kind: Kind::Count(safe(op)) });
+        let kind = Kind::Count(safe(op));
+        return (function == Standard::Count).then(|| vec![Form { table, steps, kind, nulls: None }]);
     };
     let x = Some(x).filter(|x| row_expr(x)).map(|x| columns.as_deref().map_or_else(|| x.clone(), |c| substitute(x.clone(), c)))?;
-    if !never_null(&x, (&table, &steps), known.catalog) {
-        return None;
-    }
-    let kind = match (function, op) {
-        (Standard::Count, _) => {
-            if agg.distinct {
-                return None;
-            }
-            steps.push(Step::Keep(Cond::IsNull(x, true)));
-            Kind::Count(safe(op))
-        }
-        (Standard::Max, CompOp::Lt | CompOp::Le) | (Standard::Min, CompOp::Gt | CompOp::Ge) => {
-            steps.push(Step::Keep(Cond::Not(Box::new(Cond::Compare(x, op, k.clone())))));
-            Kind::Bound
-        }
-        (Standard::Max, CompOp::Gt | CompOp::Ge) | (Standard::Min, CompOp::Lt | CompOp::Le) => Kind::Reach(Cond::Compare(x, op, k.clone())),
-        (Standard::Max | Standard::Min, CompOp::Eq | CompOp::Ne) => return None,
+    let nulls = (!never_null(&x, (&table, &steps), known.catalog)).then(|| (steps.len(), x.clone()));
+    let form = |step: Option<Cond>, kind: Kind| {
+        let mut steps = steps.clone();
+        steps.extend(step.map(Step::Keep));
+        Form { table: table.clone(), steps, kind, nulls: nulls.clone() }
     };
-    Some(Form { table, steps, kind })
+    let compared = |by: CompOp| Cond::Compare(x.clone(), by, k.clone());
+    let bound = |by: CompOp| form(Some(Cond::Not(Box::new(compared(by)))), Kind::Bound);
+    let present = Some(Cond::IsNull(x.clone(), true));
+    Some(match (function, op) {
+        (Standard::Count, _) => {
+            let kind = if agg.distinct { Kind::Distinct(safe(op), x.clone()) } else { Kind::Count(safe(op)) };
+            vec![form(present, kind)]
+        }
+        (Standard::Max, CompOp::Lt | CompOp::Le) | (Standard::Min, CompOp::Gt | CompOp::Ge) => vec![bound(op)],
+        (Standard::Max, CompOp::Gt | CompOp::Ge) | (Standard::Min, CompOp::Lt | CompOp::Le) => vec![form(None, Kind::Reach(compared(op)))],
+        (Standard::Max, CompOp::Eq) => vec![bound(CompOp::Le), form(None, Kind::Reach(compared(CompOp::Ge)))],
+        (Standard::Min, CompOp::Eq) => vec![bound(CompOp::Ge), form(None, Kind::Reach(compared(CompOp::Le)))],
+        (Standard::Max, CompOp::Ne) => vec![form(None, Kind::Apart { beyond: compared(CompOp::Gt), within: compared(CompOp::Lt) })],
+        (Standard::Min, CompOp::Ne) => vec![form(None, Kind::Apart { beyond: compared(CompOp::Lt), within: compared(CompOp::Gt) })],
+    })
 }
 
 /// The changes of a count compared by `op`, the count first, that cannot

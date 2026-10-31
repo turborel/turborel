@@ -38,20 +38,37 @@
 //!   change cannot move the count the wrong way leaves any state that
 //!   satisfies it satisfying it once it commits; one whose change can reads
 //!   T whole, its reads checked at commit (RULES.md D29).
+//! - A count of distinct values, alike: a row passing before and now with
+//!   the same value, as DISTINCT takes it (`norm_row`), changes nothing; a
+//!   row passing now otherwise may add a value, one passing before may take
+//!   one away, whether others have it only reading T would tell.
 //! - MAX or MIN reached (`MAX(x) > k`): true after the statement if a row it
 //!   inserted or updated passes with `x op k` true, whatever the others; if
 //!   no row it changed passed before or passes now, the greatest or least is
 //!   the one before, at one snapshot as a count is; else checked whole.
+//! - MAX or MIN apart (`MAX(x) <> k`): true if a row inserted or updated
+//!   passes beyond k. Else, if rows were only added, no row changed having
+//!   passed before, each short of k, the greatest after is the one before,
+//!   on its side of k, or one of them, short of it: so it holds at one
+//!   snapshot, as a count does; else checked whole.
 //!
 //! Every form is evaluated on the change, as AND evaluates both its
 //! operands, so an error any raises is raised (RULES.md D15); the condition
-//! is false when one of them is. Any other form is checked whole.
+//! is false when one of them is. Where a set function's argument may be
+//! null, the whole check raises the warning of a null eliminated [§6.5
+//! GR1b] if any row passing has it null: a row of the change shows that,
+//! and then the warning is raised; with none, it is checked whole, as only
+//! every row tells. Any other form is checked whole.
 //!
-//! A deferred assertion whose condition is one form of no row passing is
-//! checked, when it is, from each row the transaction wrote while it was
-//! deferred (`Check::AssertedRow`): it held as it was deferred, as it was
-//! immediate then, or as each transaction before checked it, and rows are
-//! independent. Any other deferred assertion is checked whole.
+//! A deferred assertion whose forms are each of no row passing is checked,
+//! when it is, from each row the transaction wrote while it was deferred
+//! (`Check::AssertedRow`): it held as it was deferred, as it was immediate
+//! then, or as each transaction before checked it, and rows are
+//! independent. These checks stop at the first row breaking it, so this is
+//! for one NOT EXISTS, which stops so too, or for forms, MAX or MIN bounded
+//! among them, of steps that raise no error and arguments never null:
+//! whichever row comes first, none raises an error or a warning. Any other
+//! deferred assertion is checked whole.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,8 +78,11 @@ use super::super::integrity::{Check, Effects};
 use super::forms::{Form, Kind, Known, Safe, Step, forms_of};
 use crate::catalog::{ConstraintKind, QualifiedName};
 use crate::error::Result;
+use crate::error::SqlState;
 use crate::exec::{Heard, HeldRows, eval, eval_cond};
+use crate::logical::Cond;
 use crate::logical::Truth;
+use crate::spill::norm_row;
 use crate::storage::{Row, RowId};
 use crate::txn::Txn;
 
@@ -80,14 +100,27 @@ enum Verdict {
 /// What the rows of a change showed of a form.
 #[derive(Default)]
 struct Seen {
-    /// A row passes now.
-    passes: bool,
-    /// A row passed before or passes now.
-    touched: bool,
+    /// A row passes now; a row passed before.
+    passing: Sides,
     /// The rows passing now less those passing before.
     change: i64,
-    /// A row passing now has `Kind::Reach`'s condition true.
+    /// A row passing now has `Kind::Reach`'s condition, or `Kind::Apart`'s
+    /// `beyond`, true.
     reached: bool,
+    /// A row passing now has `Kind::Apart`'s `within` not true.
+    outside: bool,
+    /// Of `Kind::Distinct`: a row passing now that did not before with the
+    /// same value; one passing before that does not now with it.
+    values: Sides,
+    /// A row passing the steps before the argument's has it null.
+    null: bool,
+}
+
+/// Something of the rows of a change as they are now, and as they were.
+#[derive(Default, Clone, Copy)]
+struct Sides {
+    now: bool,
+    before: bool,
 }
 
 impl Seen {
@@ -95,26 +128,58 @@ impl Seen {
     /// one snapshot if `one_snapshot`.
     fn verdict(&self, kind: &Kind, one_snapshot: bool) -> Verdict {
         let holds = match kind {
-            Kind::NoRow | Kind::Bound => return if self.passes { Verdict::Broken } else { Verdict::Holds },
+            Kind::NoRow | Kind::Bound => return if self.passing.now { Verdict::Broken } else { Verdict::Holds },
             // The count before is the one of this transaction's snapshot.
-            Kind::Count(safe) => {
-                one_snapshot
-                    && match safe {
-                        Safe::Fewer => self.change <= 0,
-                        Safe::More => self.change >= 0,
-                        Safe::Same => self.change == 0,
-                    }
-            }
-            Kind::Reach(_) => self.reached || (one_snapshot && !self.touched),
+            Kind::Count(safe) => one_snapshot && moved(*safe, (self.change > 0, self.change < 0)),
+            Kind::Distinct(safe, _) => one_snapshot && moved(*safe, (self.values.now, self.values.before)),
+            Kind::Reach(_) => self.reached || (one_snapshot && !self.passing.now && !self.passing.before),
+            Kind::Apart { .. } => self.reached || (one_snapshot && !self.passing.before && !self.outside),
         };
         if holds { Verdict::Holds } else { Verdict::Unknown }
+    }
+
+    /// Takes in a row changed, `now` and `before` it, passing the form of
+    /// `kind` now and before as `(is_in, was_in)`.
+    fn row(&mut self, kind: &Kind, (now, before): (Option<&Row>, Option<&Row>), (is_in, was_in): (bool, bool), tx: &Txn) -> Result<()> {
+        let heard = Heard(tx.stop.warnings());
+        let true_of = |c: &Cond, row: Option<&Row>| row.map(|r| eval_cond(c, r, &heard)).transpose().map(|t| t == Some(Truth::True));
+        match kind {
+            Kind::Reach(reach) => self.reached = self.reached || (is_in && true_of(reach, now)?),
+            Kind::Apart { beyond, within } => {
+                if is_in {
+                    self.reached = self.reached || true_of(beyond, now)?;
+                    self.outside = self.outside || !true_of(within, now)?;
+                }
+            }
+            Kind::Distinct(_, x) => {
+                let value = |row: Option<&Row>| row.map(|r| eval(x, r, &heard).map(|v| norm_row(&[v]))).transpose();
+                let kept = is_in && was_in && value(now)? == value(before)?;
+                self.values.now = self.values.now || (is_in && !kept);
+                self.values.before = self.values.before || (was_in && !kept);
+            }
+            Kind::NoRow | Kind::Bound | Kind::Count(_) => {}
+        }
+        self.passing.now = self.passing.now || is_in;
+        self.passing.before = self.passing.before || was_in;
+        self.change = self.change.saturating_add(i64::from(is_in)).saturating_sub(i64::from(was_in));
+        Ok(())
+    }
+}
+
+/// Whether a change that adds to a count if `adds` and takes from it if
+/// `takes` is one of `safe`'s, that cannot make its comparison false.
+fn moved(safe: Safe, (adds, takes): (bool, bool)) -> bool {
+    match safe {
+        Safe::Fewer => !adds,
+        Safe::More => !takes,
+        Safe::Same => !adds && !takes,
     }
 }
 
 /// How the checks of a deferred assertion are made, as `Check::AssertedRow`
-/// meets it: of each row, by its one form; or, none, checked whole once,
+/// meets it: of each row, by its forms; or, none, checked whole once,
 /// made.
-pub(in crate::db) struct Asserted(Option<Form>);
+pub(in crate::db) struct Asserted(Option<Vec<Form>>);
 
 impl State {
     /// [ISO/IEC 9075:1992 §4.10.1, §11.34 GR2] That assertion `name`,
@@ -149,48 +214,60 @@ impl State {
     }
 
     /// What the change `effects` shows of an assertion whose condition is
-    /// the conjunction of `forms`: each evaluated.
+    /// the conjunction of `forms`: each evaluated. Where an argument may be
+    /// null, it holds only if a row of the change shows the warning raised
+    /// of a null eliminated, which it raises then, as the whole check would.
     fn verdict(&self, tx: &Txn, forms: &[Form], effects: &mut Effects<'_>) -> Result<Verdict> {
-        let mut verdict = Verdict::Holds;
+        let (mut verdict, mut null) = (Verdict::Holds, false);
         for form in forms {
-            verdict = match (verdict, self.form_verdict(tx, form, effects)?) {
+            let (seen, form_verdict) = self.form_verdict(tx, form, effects)?;
+            null = null || seen.null;
+            verdict = match (verdict, form_verdict) {
                 (Verdict::Broken, _) | (_, Verdict::Broken) => Verdict::Broken,
                 (Verdict::Unknown, _) | (_, Verdict::Unknown) => Verdict::Unknown,
                 (Verdict::Holds, Verdict::Holds) => Verdict::Holds,
             };
         }
-        Ok(verdict)
+        let nullable = forms.iter().any(|f| f.nulls.is_some());
+        Ok(match (verdict, nullable, null) {
+            (Verdict::Holds, true, false) => Verdict::Unknown,
+            (Verdict::Holds, _, true) => {
+                // [ISO/IEC 9075:1992 §6.5 GR1b]
+                tx.stop.warnings().raise(SqlState::NULL_VALUE_ELIMINATED);
+                Verdict::Holds
+            }
+            (Verdict::Holds, false, false) | (Verdict::Broken | Verdict::Unknown, _, _) => verdict,
+        })
     }
 
-    /// What the change `effects` shows of `form`.
-    fn form_verdict(&self, tx: &Txn, form: &Form, effects: &mut Effects<'_>) -> Result<Verdict> {
+    /// What the change `effects` shows of `form`, and what it saw.
+    fn form_verdict(&self, tx: &Txn, form: &Form, effects: &mut Effects<'_>) -> Result<(Seen, Verdict)> {
         let storage = self.storage_of(&form.table)?;
-        // Only a count and a greatest or least reached look at the rows before.
-        let before_counts = matches!(form.kind, Kind::Count(_) | Kind::Reach(_));
+        // But of no row passing, every form looks at the rows before too.
+        let before_counts = !matches!(form.kind, Kind::NoRow | Kind::Bound);
         let mut seen = Seen::default();
         effects.visit_changed(&form.table, &mut |id, before| {
-            if seen.passes && matches!(form.kind, Kind::NoRow) {
+            if seen.passing.now && matches!(form.kind, Kind::NoRow) {
                 return Ok(());
             }
             let now = storage.get(tx.id, id)?;
             let is_in = now.as_ref().map(|row| passes(&form.steps, row, tx)).transpose()?.unwrap_or(false);
-            let was_in = before.filter(|_| before_counts).map(|row| passes(&form.steps, row, tx)).transpose()?.unwrap_or(false);
-            if let (Kind::Reach(reach), Some(row), true) = (&form.kind, &now, is_in) {
-                let reached = eval_cond(reach, row, &Heard(tx.stop.warnings()))? == Truth::True;
-                seen.reached = seen.reached || reached;
+            let before = before.filter(|_| before_counts);
+            let was_in = before.map(|row| passes(&form.steps, row, tx)).transpose()?.unwrap_or(false);
+            if let (Some((at, x)), Some(row), false) = (&form.nulls, &now, seen.null) {
+                let heard = Heard(tx.stop.warnings());
+                seen.null = passes(form.steps.get(..*at).unwrap_or_default(), row, tx)? && eval(x, row, &heard)?.is_null();
             }
-            seen.passes = seen.passes || is_in;
-            seen.touched = seen.touched || is_in || was_in;
-            seen.change = seen.change.saturating_add(i64::from(is_in)).saturating_sub(i64::from(was_in));
-            Ok(())
+            seen.row(&form.kind, (now.as_ref(), before), (is_in, was_in), tx)
         })?;
-        Ok(seen.verdict(&form.kind, tx.one_snapshot()))
+        let verdict = seen.verdict(&form.kind, tx.one_snapshot());
+        Ok((seen, verdict))
     }
 
     /// Of assertion `name`, deferred, at the end of the statement that did
-    /// `effects`: if its condition is one form of no row passing, the check
-    /// of each row the statement changed in that form's table, added to
-    /// `out`; whether it was.
+    /// `effects`: if its condition is of forms of no row passing, as
+    /// `row_forms` finds, the check of each row the statement changed in
+    /// each form's table, added to `out`; whether it was.
     ///
     /// # Errors
     ///
@@ -201,25 +278,43 @@ impl State {
         effects: &mut Effects<'_>,
         out: &mut HeldRows<Check>,
     ) -> Result<bool> {
-        let Some(form) = self.row_form(name)? else { return Ok(false) };
-        effects.visit_changed(&form.table, &mut |id, _| {
-            out.push(Check::AssertedRow { table: form.table.clone(), constraint: name.clone(), id })
-        })?;
+        let Some(forms) = self.row_forms(name)? else { return Ok(false) };
+        let mut tables: Vec<&QualifiedName> = Vec::new();
+        for form in &forms {
+            if !tables.contains(&&form.table) {
+                tables.push(&form.table);
+            }
+        }
+        for table in tables {
+            effects
+                .visit_changed(table, &mut |id, _| out.push(Check::AssertedRow { table: table.clone(), constraint: name.clone(), id }))?;
+        }
         Ok(true)
     }
 
-    /// The one form of assertion `name`'s condition, if it has one, of no
-    /// row passing, stopping at the first.
-    fn row_form(&self, name: &QualifiedName) -> Result<Option<Form>> {
+    /// The forms of assertion `name`'s condition, if each is of no row
+    /// passing and a row breaks it or not alone: one NOT EXISTS, which
+    /// stops at its first row as EXISTS does; or forms of no row passing,
+    /// MAX or MIN bounded too, of steps that raise no error and arguments
+    /// never null, so whichever row is evaluated first, none raises an
+    /// error or a warning.
+    fn row_forms(&self, name: &QualifiedName) -> Result<Option<Vec<Form>>> {
         let Some(a) = self.catalog.assertion(name) else { return Ok(None) };
-        let mut forms = forms_of(&self.assertion_plan(a)?, &self.known()).unwrap_or_default();
-        let one = forms.pop().filter(|_| forms.is_empty());
-        Ok(one.filter(|form| matches!(form.kind, Kind::NoRow)))
+        let forms = forms_of(&self.assertion_plan(a)?, &self.known()).unwrap_or_default();
+        let quiet = |f: &Form| {
+            let raising = f.steps.iter().any(|s| match s {
+                Step::Keep(c) => c.can_raise(),
+                Step::Compute(_) => true,
+            });
+            matches!(f.kind, Kind::NoRow | Kind::Bound) && f.nulls.is_none() && !raising
+        };
+        let one = matches!(forms.as_slice(), [Form { kind: Kind::NoRow, .. }]);
+        Ok(Some(forms).filter(|forms| !forms.is_empty() && (one || forms.iter().all(quiet))))
     }
 
     /// [ISO/IEC 9075:1992 §4.10.1, §11.34 GR2] That row `id` of `table`, as
     /// transaction `tx` sees it, written while assertion `name` was
-    /// deferred, leaves it not false: by its form, kept in `made` for the
+    /// deferred, leaves it not false: by its forms, kept in `made` for the
     /// rows after it; or, if it has none of that table now, whole, once.
     ///
     /// # Errors
@@ -237,16 +332,18 @@ impl State {
             for t in reads {
                 self.read_lock(tx, t)?;
             }
-            let form = self.row_form(name)?.filter(|form| form.table == *table);
-            if form.is_none() {
+            let forms = self.row_forms(name)?.filter(|forms| forms.iter().any(|f| f.table == *table));
+            if forms.is_none() {
                 self.assertion_holds(tx, name, self.assertion_plan(a)?)?;
             }
-            made.insert(name.clone(), Asserted(form));
+            made.insert(name.clone(), Asserted(forms));
         }
-        let Some(Asserted(Some(form))) = made.get(name) else { return Ok(()) };
-        let now = self.storage_of(table)?.get(tx.id, id)?;
-        if now.map(|row| passes(&form.steps, &row, tx)).transpose()?.unwrap_or(false) {
-            return Err(super::broken(name));
+        let Some(Asserted(Some(forms))) = made.get(name) else { return Ok(()) };
+        let Some(now) = self.storage_of(table)?.get(tx.id, id)? else { return Ok(()) };
+        for form in forms.iter().filter(|f| f.table == *table) {
+            if passes(&form.steps, &now, tx)? {
+                return Err(super::broken(name));
+            }
         }
         Ok(())
     }

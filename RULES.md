@@ -805,11 +805,19 @@ machinery.
     less those leaving. It holds without reading T if that cannot move
     the count toward false and the transaction reads at one snapshot
     (D29); else whole. COUNT(x) is COUNT(*) of the rows `x IS NOT NULL`;
+  - COUNT(DISTINCT x) `op k`: as COUNT, a row passing before and after
+    with the same value (`norm_row`) moving nothing, any other row
+    passing after adding, before taking;
   - MAX(x) `<` or `<=` k, MIN(x) `>` or `>=` k: from rows inserted or
     updated, none past k [§6.5 GR2b iii];
   - MAX(x) `>` or `>=` k, MIN(x) `<` or `<=` k: holds if a row inserted
     or updated reaches k, or, at one snapshot, no row changed passes
-    before or after; else whole.
+    before or after; else whole;
+  - MAX(x) `=` k: the two forms `<=` and `>=`, the same truth, unknown
+    of no row [§8.2 GR1a]; MIN alike;
+  - MAX(x) `<>` k: holds if a row inserted or updated is past k, or, at
+    one snapshot, no row changed passed before and each passing after is
+    short of k; else whole. MIN alike.
 - **Steps.** Of T's row alone (columns, constants, arithmetic,
   comparisons, IS NULL, LIKE, CASE; no function, CAST, subquery or outer
   reference), so the same truth or error each time, and no warning: the
@@ -820,21 +828,25 @@ machinery.
     as it evaluates them.
   - A row stops at the first filter not true of it, the lower first, as
     `MergeFilters` keeps.
-- **Never null.** A set function's `x` is never null in those rows: a
-  column of a NOT NULL or PRIMARY KEY constraint not deferrable, one a
-  filter's conjunct is not true of when null, a constant, or arithmetic
-  of those. Else whether a null is eliminated, warning 01003 [§6.5
-  GR1b], depends on every row.
+- **Nulls.** Whether a null is eliminated, warning 01003 [§6.5 GR1b],
+  depends on every row. So where `x` may be null, the change decides
+  only if a row of it passing has `x` null: 01003 is then raised, as the
+  whole check would; else whole.
+  - Never null: a column of a NOT NULL or PRIMARY KEY constraint not
+    deferrable, one a filter's conjunct is not true of when null, a
+    constant, or arithmetic of those.
 - **Errors.** Every form is evaluated on the change, as AND evaluates
   both operands, so an error any raises is raised (D15); NOT EXISTS
   stops at its first row passing, as EXISTS does.
-- **Deferred rows.** A deferred assertion of one NOT EXISTS waits as a
-  check of each row written (`Check::AssertedRow`), evaluated when it is
-  made: it held as it was deferred, and rows are independent.
+- **Deferred rows.** A deferred assertion of forms of no row passing
+  waits as a check of each row written (`Check::AssertedRow`), evaluated
+  when it is made: it held as it was deferred, and rows are independent.
+  - These checks stop at the first row breaking it: so one NOT EXISTS,
+    or NOT EXISTS and MAX or MIN bounded of steps raising no error and
+    `x` never null, so no row's error or warning goes unraised.
 - **Whole.** Any other form; any other deferred assertion; SUM and AVG,
-  whose value and overflow depend on every row [§6.5 GR2b iv]; a join, a
-  grouping, COUNT DISTINCT; MAX or MIN `=` or `<>` k; an `x` that may be
-  null.
+  whose value and overflow [§6.5 GR2b iv] depend on every row (and on
+  the order read: `SumAcc` checks the running sum); a join; a grouping.
 - **Name.** A constraint name of its schema, for SET CONSTRAINTS and
   every other constraint's [SR2, SR7].
 - **In a `<schema definition>`,** outside any session's transaction, it

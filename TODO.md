@@ -95,14 +95,22 @@ What came after SQL-92 follows it, written from the standards' own text
   number of arguments and store assignment [ISO/IEC 9075:1992 §9.2 SR2]
   to their declared types, the most specific chosen, an ambiguous call
   refused.
-- **Assertions, further** (RULES.md D51): more forms checked from a
-  statement's change: a condition through a join or a grouping; SUM and
-  AVG, and COUNT, MAX or MIN of a value that may be null (their value,
-  overflow, or warning of a null eliminated depends on every row, which
-  only a value kept from before would tell); MAX or MIN equal or unequal
-  to a bound, and COUNT DISTINCT; and a deferred assertion of any form but
-  one `NOT EXISTS` from the changes of its transaction (a count needs each
-  row's image as the transaction began, kept to commit).
+- **Assertions, further** (RULES.md D51): forms still checked whole,
+  each needing a design the owner settles first:
+  - A join or a grouping: from a query of the change against the other
+    tables, or of the changed groups alone; no kept state, but a plan run
+    over the changed rows and its reads checked as D29's.
+  - SUM and AVG: the sum before is unknown, and `SumAcc` raises on the
+    running sum, so in the order read, where §6.5 GR2b iv judges the sum.
+    A sum kept per assertion and snapshot would serve only once overflow
+    is of the final sum.
+  - COUNT, MAX or MIN of a value that may be null, the change having no
+    null: whether the warning of a null eliminated is raised needs a
+    count of nulls kept per assertion and snapshot.
+  - A deferred count, greatest or least reached, or MAX or MIN unequal:
+    each row's image as it was deferred, kept to commit. And deferred
+    forms whose steps may raise, or `x` null: a failure held back to the
+    last row, as `KeyCheck` does.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them

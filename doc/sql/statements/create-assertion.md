@@ -84,22 +84,32 @@ reads, an assertion whose every conjunct has one of these forms is
 checked from the rows the statement changed, the others whole.
 `NOT EXISTS (SELECT ... FROM T WHERE p)` is checked from the rows the
 statement inserted or updated; so are `(SELECT MAX(x) FROM T WHERE p)`
-less than a constant, or not greater, and MIN greater, or not less.
+less than a constant, or not greater, and MIN greater, or not less
+("bounded").
 `(SELECT COUNT(*) FROM T WHERE p)` compared with a constant, and COUNT(x),
 is checked from how many rows the statement brought into the count or
 took out of it, whole only if that moves the count toward breaking the
 comparison, or the transaction reads at a snapshot of each statement.
+COUNT(DISTINCT x) alike: a row keeping its value changes nothing, and a
+row bringing a value in, or taking one out, may move the count.
 MAX greater than a constant, or not less, and MIN less, or not greater,
 holds if a row the statement inserted or updated reaches the constant,
-or if it changed none of the rows; else it is checked whole. Of each
-form, `p` and `x` are of columns, constants, arithmetic, comparisons, IS
-NULL, LIKE and CASE alone, of the one table's row, through the filters
-and columns of views of it; and `x` is never null there: a column NOT
-NULL or of the PRIMARY KEY, not DEFERRABLE, or one `p` is not true of
-when null. SUM and AVG are checked whole. A deferred assertion of one
-`NOT EXISTS` is checked from each row the transaction wrote while it was
-deferred; any other, whole, once, however many statements of the
-transaction changed a table it reads. Whichever way, a statement fails
+or if it changed none of the rows; else it is checked whole. MAX equal
+to a constant is both MAX not greater and MAX not less, MIN alike. MAX
+unequal to a constant holds if a row the statement inserted or updated
+is greater, or if it only brought in rows less than it; MIN alike; else
+it is checked whole. Of each form, `p` and `x` are of columns,
+constants, arithmetic, comparisons, IS NULL, LIKE and CASE alone, of the
+one table's row, through the filters and columns of views of it. Where
+`x` may be null there (it is not a column NOT NULL or of the PRIMARY
+KEY, not DEFERRABLE, nor one `p` is not true of when null), the warning
+of a null eliminated depends on every row: the assertion is checked from
+the change only if a row of it has `x` null, else whole. SUM and AVG
+are checked whole. A deferred assertion of one `NOT EXISTS`, or of
+conjuncts each `NOT EXISTS` or MAX or MIN bounded whose conditions raise
+no error and whose `x` is never null, is checked from each row the
+transaction wrote while it was deferred; any other, whole, once, however
+many statements of the transaction changed a table it reads. Whichever way, a statement fails
 exactly when the condition is false after it, with the same error and
 warning. SQL-86 has no assertions.
 
