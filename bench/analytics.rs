@@ -2,7 +2,9 @@
 //! (RULES.md D31), the same rows in each: a table of 16 columns and 200,000
 //! rows counted, summed by one column and by twelve, filtered to 1% by a column
 //! in the order the rows were written and by one scattered, to 10% by an
-//! indexed column, to 3 of its 10 groups by IN, grouped, and
+//! indexed column, to 3 of its 10 groups by IN, by two columns compared,
+//! by LIKE of its CHARACTER column, a constant pattern and patterns not
+//! constant, grouped, and
 //! two of its columns read whole; joined with D, a table of a row or two
 //! for each group, by an inner join, the table its right operand, by
 //! LEFT, RIGHT and FULL outer joins, and as a product; joined with
@@ -68,6 +70,12 @@ fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
     bench.measure(case("COUNT of 1% by a scattered column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE C < 2000"));
     bench.measure(case("COUNT of 10% by an indexed column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE H BETWEEN 0 AND 6666"));
     bench.measure(case("COUNT of 3 groups of 10 by IN", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE G IN (1, 4, 7) AND S IS NOT NULL"));
+    bench.measure(case("COUNT by two columns compared", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE A > D AND -B > -C"));
+    bench.measure(case("COUNT by LIKE of a CHARACTER column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE S LIKE 's 1%'"));
+    bench.measure(
+        case("COUNT by LIKE of patterns not constant", "rows"),
+        scan("SELECT COUNT(*) FROM {t} WHERE S LIKE CASE WHEN G < 5 THEN 's 1%' ELSE '%2 %' END"),
+    );
     bench.measure(case("GROUP BY 10 groups, COUNT, SUM and AVG", "rows"), scan("SELECT G, COUNT(*), SUM(A), AVG(E) FROM {t} GROUP BY G"));
     bench.measure(case("fetch 2 of 16 columns of every row", "rows"), scan("SELECT A, B FROM {t}"));
     bench.measure(case("COUNT, SUM of a join, the table right", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM D, {t} WHERE D.G = {t}.G"));

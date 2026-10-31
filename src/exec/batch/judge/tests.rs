@@ -73,6 +73,51 @@ fn conjuncts_judged_over_vectors() {
     assert_eq!((one.len(), left.is_none()), (1, true), "nothing left");
 }
 
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4]: of a
+/// filter that cannot raise, a comparison of two columns, or of a negated
+/// one, is judged over vectors of integers, scaled alike, keeping what a
+/// row's comparison keeps, a null never; over a vector of values its
+/// integers are not made, so it is judged a row at a time; one of a column
+/// the batch lacks is rest.
+#[test]
+fn comparisons_that_cannot_raise_are_judged_over_integers() {
+    let neg = |e: Expr| Expr::Neg(Box::new(e));
+    let cond = and(
+        compare(Expr::Column(4), CompOp::Gt, Expr::Column(2)),
+        and(compare(neg(Expr::Column(2)), CompOp::Le, Expr::Column(4)), compare(Expr::Column(4), CompOp::Lt, Expr::Column(9))),
+    );
+    assert!(!cond.can_raise());
+    let (judged, rest) = split(&cond, &[4, 2]);
+    assert!(matches!(judged.as_slice(), [Judged::Compared(..), Judged::Compared(..)]), "{judged:?}");
+    assert!(matches!(rest, Some(Cond::Compare(..))), "the column the batch lacks");
+    let first = crate::storage::Ints::new(vec![150, -20, 0, 7, 300], 2, Some(vec![false, false, false, true, false]));
+    let second = crate::storage::Ints::new(vec![1, -1, 0, 5, 4], 0, None);
+    let of_values = Batch { columns: vec![Column::from(first.values().to_vec()), Column::from(second.values().to_vec())], rows: 5 };
+    let of_ints = Batch { columns: vec![Column::Ints(first), Column::Ints(second)], rows: 5 };
+    let all: Vec<usize> = (0..5).collect();
+    let by_values = |j: &Judged| -> Vec<usize> {
+        let Judged::Compared(.., conjunct) = j else { panic!("{j:?}") };
+        let Cond::Compare(a, op, b) = &**conjunct else { panic!("{conjunct:?}") };
+        let at = |e: &Expr, n: usize| {
+            if let Expr::Neg(inner) = e { at_column(inner, n, &of_values).negate() } else { at_column(e, n, &of_values) }
+        };
+        all.iter().copied().filter(|&n| compared(&at(a, n), *op, &at(b, n)) == Truth::True).collect()
+    };
+    assert_eq!(judged[0].kept(&of_ints, &all), Some(vec![0, 1]), "1.50 > 1, -0.20 > -1");
+    for j in &judged {
+        assert_eq!(j.kept(&of_ints, &all), Some(by_values(j)), "{j:?}");
+        assert_eq!(j.kept(&of_values, &all), None, "{j:?}: no integers of values");
+    }
+    assert_eq!(judged[0].kept(&of_ints, &[1, 4]), Some(vec![1]), "of the rows given");
+}
+
+/// The value of column `e` of row `n` of `batch`, its first column column
+/// 4, the other 2.
+fn at_column(e: &Expr, n: usize, batch: &Batch) -> Value {
+    let Expr::Column(c) = e else { panic!("{e:?}") };
+    batch.values([4, 2].iter().position(|x| x == c).unwrap())[n].clone()
+}
+
 /// Verifies: [X3.135-1986 §5.13, §5.15, §5.18] what each conjunct judged
 /// over vectors keeps, as a row's judgment does: IS NULL a null, never
 /// unknown; IN a value equal to one of the list, not a null; NOT IN a

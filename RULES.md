@@ -1614,6 +1614,10 @@ write-ahead logging.
   differences and products of integers and exact constants run as
   integers at the scale decimals give. A result past 18 digits, or a
   quotient, is computed on values, which raise for it.
+  - A quotient stays on values: its scale is each value's own, the most
+    fractional digits that fit 18, trailing zeros dropped down to the
+    operands' scale (`Decimal::checked_div`), which one vector of one
+    scale cannot hold; at one scale its units pass 64 bits.
 - **Grouping.** An integer's key is made as its value's
   (`spill::put_norm_exact`); batch values are read in place
   (`storage::Cell`); each group's rows of a batch are gathered in order
@@ -1692,8 +1696,15 @@ write-ahead logging.
     compares: numbers by algebraic value, strings padded. The result is
     that of the OR of equalities: true, else unknown if a null is
     involved, else false. Shorter lists compare constant by constant.
+  - Two expressions compared (`A > B`, `-B > C`) of columns, exact
+    constants and negations, and in a filter that can raise of sums,
+    differences and products too, are judged as integers where the
+    batch holds them (`judge/ints.rs`), a column read in place. Where it
+    holds values, a filter that cannot raise judges that conjunct a row
+    at a time of the kept rows.
   - The rest is judged on the kept rows, each made a row. A filter that
-    can raise is judged whole, a row at a time.
+    can raise is judged over vectors only if all of it can be, each
+    conjunct of every row given; else whole, a row at a time.
 - **Projection** (`exec/batch/project.rs`). Over a stream whose tables
   all read by batch (`reads_by_batch`, a column store table's), a
   projection of only its columns, no subquery, makes each row from the

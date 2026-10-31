@@ -10,7 +10,7 @@
 use std::cmp::Ordering;
 
 use super::{Judged, Side};
-use crate::exec::batch::vector::ints::lane;
+use crate::exec::batch::vector::ints::lane_of;
 use crate::storage::{Batch, Ints};
 use crate::value::{CompOp, Decimal, Value, pow10};
 
@@ -48,14 +48,15 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
 
 /// The rows of `over`, rows of `batch`, of which `a` `op` `b` is true, each
 /// side evaluated as integers (`vector/ints.rs`) and both scaled to the
-/// greater scale: none if either's integers are not made.
+/// greater scale: none if either's integers are not made. A column is read
+/// in place, a constant once, so a side made of neither makes no vector.
 pub(super) fn compared((left, op, right): (&Side, CompOp, &Side), batch: &Batch, over: &[usize]) -> Option<Vec<usize>> {
-    let (first, second) = (lane(&left.0, &left.1, batch, Some(over))?, lane(&right.0, &right.1, batch, Some(over))?);
-    let common = first.scale.max(second.scale);
-    let factors = (pow10(common.checked_sub(first.scale)?)?, pow10(common.checked_sub(second.scale)?)?);
-    let unit = |ints: &Ints, n: usize| (!ints.is_null(n)).then(|| ints.units.get(n).copied()).flatten();
+    let first = lane_of(&left.0, &left.1, batch, Some(over))?;
+    let second = lane_of(&right.0, &right.1, batch, Some(over))?;
+    let common = first.scale().max(second.scale());
+    let factors = (pow10(common.checked_sub(first.scale())?)?, pow10(common.checked_sub(second.scale())?)?);
     let scaled = |units: i64, factor: i128| i128::from(units).checked_mul(factor);
-    let truth = |n: usize| match (unit(&first, n), unit(&second, n)) {
+    let truth = |n: usize| match (first.unit(n), second.unit(n)) {
         (Some(one), Some(other)) => holds(op, scaled(one, factors.0).zip(scaled(other, factors.1)).map(|(p, q)| p.cmp(&q))),
         (None, _) | (_, None) => false,
     };

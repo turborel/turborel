@@ -4,9 +4,12 @@
 //! judged of the rows they keep, each made a row. Judged so: a column
 //! compared with a constant; a column IS NULL or IS NOT NULL; a column IN,
 //! or NOT IN, a list of constants; a column LIKE a constant pattern, split
-//! once; of a filter that can raise an error, two expressions of columns
-//! and exact constants compared, each evaluated as integers
-//! (`vector/ints.rs`). A filter that can raise an
+//! once; two expressions of columns and exact constants compared, each
+//! evaluated as integers (`vector/ints.rs`), as `A > B` and `-B > C`, and,
+//! of a filter that can raise an error, `B * 2 > C`. Of a filter that
+//! cannot raise, such a comparison whose integers are not made, as of a
+//! column of values, is judged a row at a time of the rows kept. A filter
+//! that can raise an
 //! error is judged over vectors only if all of it can be, each conjunct of
 //! every row given, so it is judged of every row the filter row by row
 //! would judge it of; one of whose expressions no integers are made, as
@@ -44,8 +47,9 @@ pub(super) enum Judged {
     /// none if a null pattern or escape makes it unknown of every row.
     Like(usize, Option<LikePattern>),
     /// [X3.135-1986 §5.11] two expressions compared, each of a row of the
-    /// values at its places, evaluated as integers.
-    Compared(Box<Side>, CompOp, Box<Side>),
+    /// values at its places, evaluated as integers; and the conjunct, judged
+    /// a row at a time of a batch whose integers are not made.
+    Compared(Box<Side>, CompOp, Box<Side>, Box<Cond>),
 }
 
 /// An expression a comparison judged over vectors compares, of a row of
@@ -59,7 +63,7 @@ impl Judged {
     fn kept(&self, batch: &Batch, over: &[usize]) -> Option<Vec<usize>> {
         let at = match self {
             Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) => *at,
-            Judged::Compared(a, op, b) => return ints::compared((a, *op, b), batch, over),
+            Judged::Compared(a, op, b, _) => return ints::compared((a, *op, b), batch, over),
         };
         let typed = match batch.columns.get(at) {
             Some(Column::Ints(column)) => ints::kept(self, column, over),
@@ -130,7 +134,13 @@ impl Judging {
             // Of a filter that can raise, each conjunct of every row given.
             let over = if self.raising { &given } else { &kept };
             let Some(true_of) = judged.kept(batch, over) else {
-                // Integers not made: the batch judged whole, row by row.
+                // Integers not made: of a filter that cannot raise, the
+                // conjunct judged a row at a time of the rows kept; of one
+                // that can, the batch judged whole so.
+                if let (false, Judged::Compared(.., conjunct)) = (self.raising, judged) {
+                    kept = self.by_rows(conjunct, batch, &kept, runner)?;
+                    continue;
+                }
                 return self.by_rows(&self.whole, batch, &given, runner);
             };
             kept = if self.raising { both(&kept, &true_of) } else { true_of };
@@ -192,7 +202,7 @@ fn both(kept: &[usize], true_of: &[usize]) -> Vec<usize> {
 /// would be.
 fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
     let (mut judged, mut rest) = (Vec::new(), Vec::new());
-    gather(cond, (columns, cond.can_raise()), (&mut judged, &mut rest));
+    gather(cond, columns, (&mut judged, &mut rest));
     if cond.can_raise() && !rest.is_empty() {
         return (Vec::new(), Some(cond.clone()));
     }
@@ -203,14 +213,13 @@ fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
 }
 
 /// Gathers the conjuncts of `cond` into those `split` judges over vectors
-/// and the rest; comparisons of expressions among the first only of a
-/// filter that can raise, which it is `raising`.
-fn gather(cond: &Cond, (columns, raising): (&[usize], bool), (judged, rest): (&mut Vec<Judged>, &mut Vec<Cond>)) {
+/// and the rest.
+fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mut Vec<Cond>)) {
     let place = |c: usize| columns.iter().position(|&x| x == c);
     let found = match cond {
         Cond::And(a, b) => {
-            gather(a, (columns, raising), (&mut *judged, &mut *rest));
-            gather(b, (columns, raising), (judged, rest));
+            gather(a, columns, (&mut *judged, &mut *rest));
+            gather(b, columns, (judged, rest));
             return;
         }
         Cond::IsNull(Expr::Column(c), not) => place(*c).map(|at| Judged::IsNull(at, *not)),
@@ -234,10 +243,7 @@ fn gather(cond: &Cond, (columns, raising): (&[usize], bool), (judged, rest): (&m
         | Cond::Quantified(..)
         | Cond::Match { .. } => compared_with_constant(cond)
             .and_then(|(c, op, v)| Some(Judged::Compare(place(c)?, op, v.clone())))
-            // Of a filter that can raise, else judged a row at a time of
-            // the rows the rest keep, as one that cannot raise needs no
-            // more.
-            .or_else(|| raising.then(|| compared_of_integers(cond, columns)).flatten()),
+            .or_else(|| compared_of_integers(cond, columns)),
     };
     match found {
         Some(j) => judged.push(j),
@@ -272,7 +278,7 @@ fn compared_of_integers(cond: &Cond, columns: &[usize]) -> Option<Judged> {
         };
         evaluable(&made.0).then(|| Box::new(made))
     };
-    Some(Judged::Compared(side(a)?, *op, side(b)?))
+    Some(Judged::Compared(side(a)?, *op, side(b)?, Box::new(cond.clone())))
 }
 
 // Unit tests: which conjuncts of a filter are judged over vectors, and

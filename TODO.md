@@ -152,9 +152,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
   written whole and grouped again row by row (`group::Spilling`), where
   partial groups made first, or partitions written by batches, would do
   (`GROUP BY K` of 400,000 keys, 382 ms).
-- **Typed vectors, further** (D31): a filter's comparisons that cannot
-  raise (`A > B`) over vectors of integers, as raising ones are
-  (`B * 2 > 400000` 6.2 ms, `B > 200000` 2.3); quotients of them; the row
+- **Typed vectors, further** (D31): the row
   store's batches, and the column store's rows not yet frozen, as
   integers and text; CHARACTER columns as text, padded as LIKE sees them;
   a LIKE whose pattern is not a constant, over vectors and row by row

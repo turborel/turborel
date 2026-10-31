@@ -57,7 +57,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 38] = [
+const QUERIES: [&str; 40] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -86,6 +86,8 @@ const QUERIES: [&str; 38] = [
     "SELECT COUNT(*) FROM {t} WHERE D - 5 < 0 AND K + 1 > 100 AND D <> I",
     "SELECT COUNT(*), MIN(K) FROM {t} WHERE D * D > 1.5 AND -D <= 0.25",
     "SELECT COUNT(*) FROM {t} WHERE K / 2 > 1000 AND D * 2 > 0",
+    "SELECT COUNT(*), SUM(D) FROM {t} WHERE D > I AND -N < K",
+    "SELECT COUNT(*), MIN(K) FROM {t} WHERE -D >= I AND V LIKE 'v1%' AND I <> -N",
     "SELECT COUNT(*) FROM {t} WHERE V LIKE 'v1%' AND V NOT LIKE '%5'",
     "SELECT COUNT(*), MIN(K) FROM {t} WHERE V LIKE '%1 ' OR V LIKE 'é%'",
     "SELECT COUNT(*) FROM {t} WHERE V = 'v3' OR V = 'v6 '",
@@ -113,7 +115,8 @@ const QUERIES: [&str; 38] = [
 /// products of scales up to 18, one with a quotient evaluated of values;
 /// a running sum, or a product, past 18 digits raising either way; filters
 /// that can raise of comparisons of expressions, one of a quotient, one
-/// raising; of a constant, of an approximate number, of a CASE a row at a
+/// raising; filters that cannot, of columns and negations compared, the
+/// changed rows' values judged a row at a time; of a constant, of an approximate number, of a CASE a row at a
 /// time; groups past the work area; strings, some not ASCII, some with a
 /// trailing space, LIKE patterns, compared padded, IN and NOT IN, grouped,
 /// distinct, counted; nulls among them all; rows changed and deleted after

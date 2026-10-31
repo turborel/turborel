@@ -5,7 +5,9 @@
 //! [X3.135-1986 §5.9 SR4b, SR4c, GR6a] (`Decimal::checked_add`,
 //! `checked_mul`), a null of a null [GR1]. A quotient is not, nor one whose
 //! result goes past `MAX_EXACT_PRECISION` digits: those are evaluated of
-//! values, which raise of it. Split from vector.rs (RULES.md R-SIZE-2).
+//! values, which raise of it. A quotient's scale is each value's own
+//! (`Decimal::checked_div`), which integers of one scale cannot hold.
+//! Split from vector.rs (RULES.md R-SIZE-2).
 
 use crate::logical::Expr;
 use crate::storage::{Batch, Column, Ints};
@@ -14,7 +16,7 @@ use crate::value::{ArithOp, MAX_EXACT_PRECISION, Value, pow10};
 /// An expression's integers over the rows of a batch given: a column's,
 /// read in place, of those rows or all; a constant; or ones made, one a
 /// row given.
-enum Lane<'b> {
+pub(in crate::exec::batch) enum Lane<'b> {
     Column(&'b Ints, Option<&'b [usize]>),
     Const(i64, u32),
     Made(Ints),
@@ -22,7 +24,7 @@ enum Lane<'b> {
 
 impl Lane<'_> {
     /// The scale of its integers.
-    fn scale(&self) -> u32 {
+    pub(in crate::exec::batch) fn scale(&self) -> u32 {
         match self {
             Lane::Column(ints, _) => ints.scale,
             Lane::Const(_, scale) => *scale,
@@ -31,7 +33,7 @@ impl Lane<'_> {
     }
 
     /// The units of the `n`th row given, none if it is null.
-    fn unit(&self, n: usize) -> Option<i64> {
+    pub(in crate::exec::batch) fn unit(&self, n: usize) -> Option<i64> {
         let of = |ints: &Ints, r: usize| (!ints.is_null(r)).then(|| ints.units.get(r).copied()).flatten();
         match self {
             Lane::Column(ints, rows) => of(ints, rows.map_or(Some(n), |r| r.get(n).copied())?),
@@ -72,13 +74,18 @@ fn shaped(e: &Expr, depth: usize) -> bool {
 /// digits of a decimal; of a column alone, its integers given again.
 pub(in crate::exec::batch) fn lane(e: &Expr, inputs: &[usize], batch: &Batch, rows: Option<&[usize]>) -> Option<Ints> {
     let count = rows.map_or(batch.rows, <[usize]>::len);
-    let made = made(e, (inputs, batch, rows), super::DEPTH)?;
-    if let Lane::Made(ints) = made {
-        return Some(ints);
+    match lane_of(e, inputs, batch, rows)? {
+        Lane::Made(ints) => Some(ints),
+        // A column whole is its vector, copied, no row looked at.
+        Lane::Column(ints, None) => Some(Ints::new(ints.units.clone(), ints.scale, ints.nulls.clone())),
+        made @ (Lane::Column(..) | Lane::Const(..)) => each(count, made.scale(), |n| Some(made.unit(n))),
     }
-    let (units, nulls): (Vec<i64>, Vec<bool>) = (0..count).map(|n| made.unit(n).map_or((0, true), |u| (u, false))).unzip();
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Some(Ints::new(units, made.scale(), nulls))
+}
+
+/// As `lane`, its integers as `e` gives them: a column's read in place, a
+/// constant once, none made but of the operations of `e`.
+pub(in crate::exec::batch) fn lane_of<'b>(e: &'b Expr, inputs: &[usize], batch: &'b Batch, rows: Option<&'b [usize]>) -> Option<Lane<'b>> {
+    made(e, (inputs, batch, rows), super::DEPTH)
 }
 
 /// `lane`'s work, of an expression up to `depth` deep.
@@ -143,15 +150,25 @@ fn arithmetic(op: ArithOp, (x, y): (&Lane<'_>, &Lane<'_>), count: usize) -> Opti
 }
 
 /// The integers of scale `scale` that `f` gives of each of `count` rows,
-/// each a unit or a null: none if it gives none of one.
+/// each a unit or a null: none if it gives none of one. Whether each is
+/// null is kept only from the first null on, those before it not.
 fn each(count: usize, scale: u32, f: impl Fn(usize) -> Option<Option<i64>>) -> Option<Ints> {
-    let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
+    let mut units = Vec::with_capacity(count);
+    let mut nulls: Option<Vec<bool>> = None;
     for n in 0..count {
         let unit = f(n)?;
         units.push(unit.unwrap_or(0));
-        nulls.push(unit.is_none());
+        match (&mut nulls, unit) {
+            (Some(held), _) => held.push(unit.is_none()),
+            (None, None) => {
+                let mut held = Vec::with_capacity(count);
+                held.resize(n, false);
+                held.push(true);
+                nulls = Some(held);
+            }
+            (None, Some(_)) => {}
+        }
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
     Some(Ints::new(units, scale, nulls))
 }
 

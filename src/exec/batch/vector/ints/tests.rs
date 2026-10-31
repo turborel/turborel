@@ -22,17 +22,20 @@ fn batch() -> Batch {
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.9 GR1, GR4, SR4b,
 /// SR4c]: an expression of integers evaluated as integers gives the values
-/// it gives evaluated of values: a negation, sums and differences of
-/// scales unlike, products, constants of either scale, nested, a null of a
-/// null; of some rows, theirs. A quotient is not, nor an approximate
-/// constant, a column of values, a product of scales past 18, a result
-/// past 18 digits, or an expression deeper than a vector's evaluation goes.
+/// it gives evaluated of values: a column alone, a constant, a negation,
+/// sums and differences of scales unlike, products, constants of either
+/// scale, nested, a null of a null; of some rows, theirs. A quotient is
+/// not, nor an approximate constant, a column of values, a product of
+/// scales past 18, a result past 18 digits, or an expression deeper than a
+/// vector's evaluation goes.
 #[test]
 fn integers_evaluated_as_their_values_are() {
     let batch = batch();
     let inputs = [0, 1, 2];
     let (a, b) = (Expr::Column(0), Expr::Column(1));
     let alike = [
+        a.clone(),
+        exact(-25, 1),
         Expr::Neg(Box::new(b.clone())),
         arith(a.clone(), ArithOp::Add, b.clone()),
         arith(b.clone(), ArithOp::Sub, a.clone()),
