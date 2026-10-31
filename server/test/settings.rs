@@ -16,7 +16,7 @@ fn the_servers_settings_are_the_databases() {
     let listed = db.settings().unwrap();
     let effect = |name: &str| listed.iter().find(|l| l.definition.name == name).map(|l| l.definition.effect);
     assert_eq!((effect(HOST), effect(PORT), effect(WORKERS)), (Some(Effect::Start), Some(Effect::Start), Some(Effect::Statement)));
-    assert_eq!(listed.iter().filter(|l| l.definition.name.starts_with("SERVER.")).count(), 21);
+    assert_eq!(listed.iter().filter(|l| l.definition.name.starts_with("SERVER.")).count(), 24);
     assert_eq!(db.setting(PORT).unwrap().to_string(), "7422");
     assert_eq!(turborel_server::server::Protocol::name(&turborel_server::native::Native), "native");
     let refused = db.set_setting(WORKERS, &turborel::value::Value::Exact(turborel::value::Decimal::new(0, 0))).unwrap_err();

@@ -20,6 +20,7 @@ as a table as they come, and each statement's outcome.
 | `-p`, `--port PORT` | its port; 7422 by default |
 | `--socket PATH` | the server's Unix socket instead; on Windows its named pipe, as `\\.\pipe\turborel` |
 | `--tls FILE` | connect over TLS, trusting the certificates of the PEM file FILE |
+| `--tls-system-roots` | connect over TLS, trusting the platform's certificate authorities too, or alone without `--tls` |
 | `--server-name NAME` | the name the server's certificate is checked against; the host by default |
 | `--certificate FILE` | over TLS, present the certificate chain of the PEM file FILE |
 | `--key FILE` | the private key of that certificate, in the PEM file FILE |
@@ -50,9 +51,24 @@ client refuses to begin, and connects to nothing (SQLSTATE 28000). Over
 a named pipe, `--read-timeout` does not apply: once the pipe is open,
 the client waits on it as long as it must.
 
+Over TLS the client trusts the authorities of the file `--tls` names,
+and only them, unless `--tls-system-roots` asks for the platform's too:
+the keychain's on macOS, the system store's on Windows, the system's
+bundle elsewhere; or instead those of the files the environment's
+SSL_CERT_FILE and SSL_CERT_DIR name, if either is set. They are never
+trusted unless asked for: a platform trusts many authorities, any of
+which could certify a server of any name, where a server of one's own is
+usually certified by an authority of one's own. A platform's store that
+cannot be read, or holds no certificate, is a failure that says so:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 08006): cannot trust the platform's certificate authorities: it holds none
+```
+
 Without a password, a certificate presented, `--certificate` and
-`--key`, both, with `--tls`, proves the user its common name names, to a
-server that asks for one ([Certificates](../operator/05-users.md#certificates)).
+`--key`, both, with `--tls` or `--tls-system-roots`, proves the user
+its common name names, to a server that asks for one
+([Certificates](../operator/05-users.md#certificates)).
 With a password, the password proves the user, the certificate presented
 still. Without either, the client asks the server to trust it as the
 user it names, which a server does only of a client of its own machine,

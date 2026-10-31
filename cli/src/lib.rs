@@ -42,6 +42,8 @@ pub const USAGE: &str = "usage: turborel [options]
       --socket PATH      the server's Unix socket, instead; on Windows, its named
                          pipe, as \\\\.\\pipe\\turborel
       --tls FILE         over TLS, trusting the certificates of the PEM file FILE
+      --tls-system-roots over TLS, trusting the platform's certificate authorities
+                         too, or instead if --tls is not given
       --server-name NAME the name the server's certificate is checked against
                          (default the host)
       --certificate FILE over TLS, present the certificate chain of the PEM file FILE
@@ -185,9 +187,10 @@ fn targets(server: &Server) -> Result<Vec<Target>, String> {
         Server::Tcp { host, port, tls } => {
             let addresses = (host.as_str(), *port).to_socket_addrs().map_err(|e| format!("cannot find {host}: {e}"))?;
             let Some(secured) = tls else { return Ok(addresses.map(Target::Tcp).collect()) };
+            let store = tls::roots(secured.roots.as_deref(), secured.system).map_err(|e| e.to_string())?;
             let config = match &secured.identity {
-                Some((chain, key)) => tls::presenting(&secured.roots, (chain, key)),
-                None => tls::trusting(&secured.roots),
+                Some((chain, key)) => tls::presenting_to(store, (chain, key)),
+                None => tls::config(store),
             }
             .map_err(|e| e.to_string())?;
             let name = secured.name.clone().unwrap_or_else(|| host.clone());

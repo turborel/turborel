@@ -50,9 +50,10 @@ does not apply to a named pipe.
 SERVER.TLS ON offers TLS on the TCP port; REQUIRED takes TCP connections
 over TLS alone. SERVER.TLS_CERTIFICATE names the PEM file of the
 server's certificate chain, SERVER.TLS_KEY that of its private key. A
-client trusts the certificates of the PEM file it is given, `--tls`, and
-checks the server's certificate against the host it names, or
-`--server-name`.
+client trusts the certificates of the PEM file it is given, `--tls`,
+and the platform's authorities only if asked, `--tls-system-roots`
+([The Command-Line Client](../client/01-turborel.md)); it checks the
+server's certificate against the host it names, or `--server-name`.
 
 ```
 $ turboreld --dir db --set SERVER.TLS=REQUIRED \
@@ -152,11 +153,30 @@ A client whose machine or network fails never closes its connection,
 and its session would hold its transaction's locks while the server
 waited. The server turns TCP keepalive on for each connection it takes,
 so the system finds such a client out, and the server rolls its
-session back; the system's own times apply, on Linux two hours idle,
-then nine probes 75 seconds apart, unless its operator sets them
-shorter. SERVER.IDLE_TIMEOUT closes any client that keeps the server
-waiting longer; SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS closes, sooner,
-one that sends nothing while its transaction is active, its locks held:
+session back. The system's own times apply, on Linux two hours idle,
+then nine probes 75 seconds apart, unless the server's settings say
+otherwise, each read as a connection is taken, 0 for the system's own:
+
+| Setting | What |
+|---|---|
+| SERVER.KEEPALIVE_IDLE_MS | how long a connection is idle before the first probe |
+| SERVER.KEEPALIVE_INTERVAL_MS | how long between probes unanswered |
+| SERVER.KEEPALIVE_PROBES | the probes unanswered after which the connection is closed |
+
+A client gone is found out after about the idle time, then the interval
+times the probes. The systems count these times in whole seconds, so a
+time is rounded up to one; a time is at most 32767 seconds and the
+probes at most 127, Linux's limits. Linux, macOS and Windows set all
+three, as do the BSDs and illumos. Windows sets the idle time and the
+interval together: given one, the other is Windows' own default (two
+hours idle, a second between probes), whatever its registry says; its
+probes are set from Windows 10 version 1703 only, before which it
+always sends ten. On a system that cannot set a time given, every TCP
+connection fails as it is taken, and the failure is told as the event
+`accept_failed` ([Diagnostics](08-diagnostics.md)). SERVER.IDLE_TIMEOUT
+closes any client that keeps the server waiting longer;
+SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS closes, sooner, one that sends
+nothing while its transaction is active, its locks held:
 
 ```
 turborel: SQLCODE -919 (SQLSTATE 08006): the connection went past SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS, 60000 ms, with its transaction active and nothing from the client: closed

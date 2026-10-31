@@ -1,10 +1,11 @@
 //! The program, run as a process.
 
+use std::path::Path;
 use std::process::{Command, Output};
 
 use turborel::db::Database;
 
-use crate::common::start;
+use crate::common::{pki, secured, start};
 
 /// `turborel` run with `args`.
 fn program(args: &[&str]) -> Output {
@@ -32,6 +33,49 @@ fn the_program_prints_its_usage_or_what_is_wrong() {
     let addresses = std::net::ToSocketAddrs::to_socket_addrs(&("localhost", 1)).map_or(0, Iterator::count);
     let each = String::from_utf8(program(&["-h", "localhost", "-p", "1", "-U", "X", "-c", "SELECT 1"]).stderr).unwrap();
     assert_eq!(each.matches("cannot connect").count(), addresses, "{each}");
+}
+
+/// `turborel` run with `args`, the platform's certificate authorities those
+/// of the file `roots`, as the environment's SSL_CERT_FILE names it: so
+/// what the platform trusts is the test's, whatever the machine's.
+fn trusting(roots: &Path, args: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_turborel"));
+    command.args(args).env_remove(turborel_cli::PASSWORD_VARIABLE).env_remove("SSL_CERT_DIR").env("SSL_CERT_FILE", roots);
+    command.output().unwrap()
+}
+
+/// Verifies: [DESIGN] RULES.md D26, D46: `--tls-system-roots` trusts the
+/// platform's certificate authorities, alone or beside the file `--tls`
+/// names: a server whose authority the platform trusts is reached without
+/// the file; one whose authority it does not is reached only with it. A
+/// platform's store that cannot be read, or holds no certificate, is a
+/// failure that says so.
+#[test]
+fn the_platforms_authorities_are_trusted_when_asked() {
+    let (pki, other) = (pki("cli-system-roots"), pki("cli-system-roots-other"));
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER)").unwrap();
+    secured(&db, &pki, "REQUIRED");
+    let server = start(&db, &[]);
+    let port = server.address.port().to_string();
+    let line = ["-h", "localhost", "-p", &port, "-U", "X", "--tls-system-roots", "-c", "SELECT K FROM T"];
+    let platform = trusting(&pki.authority, &line);
+    assert!(platform.status.success(), "{}", String::from_utf8_lossy(&platform.stderr));
+    let elsewhere = trusting(&other.authority, &line);
+    assert!(!elsewhere.status.success());
+    let told = String::from_utf8(elsewhere.stderr).unwrap();
+    assert!(told.contains("the TLS handshake failed"), "{told}");
+    let authority = pki.authority.display().to_string();
+    let beside = trusting(&other.authority, &[&line[..], &["--tls", &authority][..]].concat());
+    assert!(beside.status.success(), "{}", String::from_utf8_lossy(&beside.stderr));
+    let empty = other.scratch.path("empty.pem");
+    std::fs::write(&empty, "").unwrap();
+    for (roots, why) in [(other.scratch.path("none.pem"), "cannot trust the platform's"), (empty, "it holds none")] {
+        let refused = trusting(&roots, &line);
+        assert!(!refused.status.success());
+        let told = String::from_utf8(refused.stderr).unwrap();
+        assert!(told.contains("cannot trust the platform's certificate authorities") && told.contains(why), "{told}");
+    }
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1]; [DESIGN] RULES.md D46: the program

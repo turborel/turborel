@@ -110,8 +110,10 @@ from the start is cheaper than retrofitting.
 
 **D3. No third-party dependencies,** in the library, the client or the
 tools. The exceptions are cryptography in plug-ins (D26), which the
-client and the protocol take only with their features `tls` and `scram`, compression in plug-ins
-(D48), tokio in the server crate (D42), tokio's signals in the
+client and the protocol take only with their features `tls` and `scram`,
+and the platform's certificate authorities, the client's only with its
+feature `system-roots` (D26), compression in plug-ins
+(D48), tokio and socket2 in the server crate (D42), tokio's signals in the
 command-line client, and rpassword in it and in `turboreld` (D46).
 *Why:* every line can be reviewed, and there is no supply chain to
 qualify.
@@ -471,9 +473,35 @@ under R-SAFE-4.
   `WebPkiClientVerifier`; the common name of a verified certificate's
   subject is read from its DER by the server's own walk of tags and
   lengths, as no vetted crate in the tree reads a subject.
-- The client trusts the authorities of the files it is given alone: the
-  platform's need rustls-native-certs or webpki-roots, neither in the
-  tree, each needing a decision of its own under R-SAFE-4.
+- The client trusts the authorities of the files it is given, and the
+  platform's only when asked (`tls::roots`; `turborel
+  --tls-system-roots`): a platform trusts many authorities, any of which
+  may certify a server of any name, where a server of one's own is
+  usually certified by an authority of one's own; so a file stays the
+  default. The platform's come from rustls-native-certs 0.8.5 (Apache-2.0,
+  ISC or MIT), the client's feature `system-roots`, which the command-line
+  client takes: of the rustls project, as rustls is, its README calling
+  it "mature and widely used" and "still maintained, but mostly for use
+  inside the platform verifier": it points new users to
+  rustls-platform-verifier, which verifies by the platform's
+  own verifier: a larger change of trust, not taken. No `unsafe` of its
+  own and no advisory. It reads the keychain on macOS by
+  security-framework 3.7.0 with security-framework-sys 2.17.0,
+  core-foundation 0.10.1, core-foundation-sys 0.8.7 and bitflags 2.13.2
+  (each MIT or Apache-2.0; kornelski's, servo's and the bitflags
+  project's, bindings to the system's frameworks, their `unsafe` the
+  calls into them); the system store on Windows by schannel 0.1.30
+  (MIT), on the windows-sys already in the tree; the system's bundle
+  elsewhere by openssl-probe 0.2.1 (MIT or Apache-2.0, now the rustls
+  project's; its one `unsafe`, setting the environment's variables, is a
+  function rustls-native-certs never calls: it calls `probe`, which only
+  looks for files), held at 0.2.1 in Cargo.lock as 0.2.2 is not
+  yet two weeks old. None of these has an advisory open (RUSTSEC-2017-0003
+  of security-framework was fixed in 0.1.12). Certificates rustls cannot
+  parse are left out; a store with none it can is refused, saying why;
+  the environment's SSL_CERT_FILE and SSL_CERT_DIR, if set, are read
+  instead of the store, as the crate does. webpki-roots, a list fixed at
+  build time, is not taken: it goes stale with the program.
 - Cryptographic hash functions, as `HashFunction`s (D30), from the same
   aws-lc-rs, in `turborel-aes`: SHA-256 (id 11), a checksum no accident
   matches, though one who can rewrite a file can rewrite its checksums;
@@ -1852,6 +1880,18 @@ make.
   a password typed at a terminal (D46). Chosen as the most used and most reviewed async
   runtime of Rust; its `unsafe` is its own, and none is written here
   (R-SAFE-1). The core never sees it.
+- TCP keepalive's times are set by socket2 0.6.5 (MIT or Apache-2.0),
+  with its feature `all`: the version and feature tokio already takes,
+  so no code enters the tree with it. Of the Rust project
+  (rust-lang/socket2), its crate owned by tokio's maintainers too, it is
+  the socket layer of tokio; its `unsafe` is its own, the system calls a
+  socket option needs, and none is written here. Its one advisory
+  (RUSTSEC-2020-0079, an unsound layout of addresses) was fixed in
+  0.3.16. Its README makes no claim of readiness beyond its support of
+  platforms: Linux, macOS and Windows are tested with each change, and
+  all it offers must work on them but what is behind `all`, which the
+  probes' count and reading the times back are; so the server's tests
+  read each time back from a socket on each of them that offers it.
 - Threads. Tokio's tasks do I/O only. Statements and the end of a session
   run on blocking workers, at most SERVER.WORKERS at once; the checks of
   an authentication on blocking threads apart, at most SERVER.MAX_LOGINS
@@ -1869,8 +1909,16 @@ make.
   held, it is closed, its session rolled back (SQLSTATE 08006). A client
   that stops reading frees its worker so, as one that stops sending
   frees its connection. TCP keepalive is on for each connection taken,
-  so the system finds out a client gone without closing, at its own
-  times; setting those needs a socket option tokio does not offer.
+  so the system finds out a client gone without closing: at its own
+  times, unless SERVER.KEEPALIVE_IDLE_MS, SERVER.KEEPALIVE_INTERVAL_MS
+  and SERVER.KEEPALIVE_PROBES say otherwise (0, the system's own, by
+  default), read as each connection is taken (`server/src/keepalive.rs`),
+  each time rounded up to whole seconds, as most systems count them,
+  and bounded by Linux's limits (32767 seconds, 127 probes). Windows sets
+  the idle time and the interval together, so one given, the other is
+  Windows' own default (2 hours, 1 second); its probes are set from
+  Windows 10 version 1703. A time a platform cannot set is refused,
+  each connection taken failing, told (`accept_failed`).
 - A client not yet authenticated holds little: its messages are of at
   most 16 KiB (`native::LOGIN_MESSAGE_BYTES`), and a message's memory is
   taken as its bytes arrive, never as its header declares.
@@ -2212,10 +2260,12 @@ cannot have.
   refused in an active one (0A001) [§15.1 GR1, §15.2 GR1], and DISCONNECT
   of a connection whose transaction is active (25000) [§15.3 GR6].
 - Where: `--host`/`--port` (127.0.0.1, 7422), `--tls FILE` trusting that
-  PEM file's certificates with `--server-name`, presenting `--certificate`
-  FILE and `--key` FILE if named, or `--socket`: a Unix socket on Unix, a
-  named pipe on Windows, refused clearly elsewhere. Every address of a
-  host is tried until one answers; a refusal is not retried.
+  PEM file's certificates, `--tls-system-roots` the platform's
+  certificate authorities too, or alone (D26), with `--server-name`,
+  presenting `--certificate` FILE and `--key` FILE if named, or
+  `--socket`: a Unix socket on Unix, a named pipe on Windows, refused
+  clearly elsewhere. Every address of a host is tried until one answers;
+  a refusal is not retried.
 - Who: `--user`, else the environment's USER or USERNAME. A password is
   typed without its echo (`-W`), or taken from TURBOREL_PASSWORD; never
   from the command line, where other users of the machine may see it.

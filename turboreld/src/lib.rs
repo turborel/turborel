@@ -99,6 +99,12 @@ The server's settings, beside the database's:
   SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS  milliseconds the server waits for a request of a
                          client in a transaction, before closing it and rolling it back
                          (default 0, none)
+  SERVER.KEEPALIVE_IDLE_MS  milliseconds a TCP connection is idle before the system
+                         probes its client (default 0, the system's own)
+  SERVER.KEEPALIVE_INTERVAL_MS  milliseconds between probes unanswered (default 0,
+                         the system's own)
+  SERVER.KEEPALIVE_PROBES  probes unanswered before the connection is closed
+                         (default 0, the system's own)
   SERVER.MAX_CONNECTIONS connections taken at once (default 256)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)

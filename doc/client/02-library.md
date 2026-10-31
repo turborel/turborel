@@ -4,7 +4,8 @@
 
 The crate `turborel-client` connects a Rust program to a turborel
 server, over the native protocol: blocking, on the standard library
-alone; over TLS with its feature `tls`; and proving a password by
+alone; over TLS with its feature `tls`, trusting the platform's
+certificate authorities too with `system-roots`; and proving a password by
 SCRAM-SHA-256 with its feature `scram`. A program that embeds the
 database uses the crate `turborel` instead, and its `Database` and
 `Session` ([The Embedded Library](03-embedding.md)).
@@ -37,7 +38,11 @@ To a server over plain TCP, `connect` and `connect_to` refuse
 `Password`, and `Scram`, before they connect (SQLSTATE 28000); of a
 stream given to `Connection::open` the caller answers for its privacy.
 A client's TLS trusts the authorities of the files it is given alone,
-not the platform's.
+unless the platform's are asked for: `tls::roots` takes those of a file,
+the platform's, or both, for `tls::config` or `tls::presenting_to`; the
+platform's only with the feature `system-roots`, which takes the crate
+rustls-native-certs. They are the store's of the platform, or those of
+the files SSL_CERT_FILE and SSL_CERT_DIR name instead, if either is set.
 
 ```rust
 use turborel_client::scram::Scram;

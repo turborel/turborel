@@ -23,6 +23,9 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["aws
 # Passwords (RULES.md D26, D43): PBKDF2-HMAC-SHA256, HMAC-SHA256 and randomness, from
 # the same aws-lc-rs as TLS's.
 aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+# TCP keepalive's times (RULES.md D42): the socket2 tokio already takes,
+# with the feature `all` tokio takes too.
+socket2 = { version = "=0.6.5", features = ["all"] }
 
 [dev-dependencies]
 turborel-client = { version = "0.0.0", path = "../client", features = ["tls", "scram"] }

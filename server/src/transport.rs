@@ -10,8 +10,10 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncWrite};
+use turborel::db::Database;
 
 use crate::auth::Peer;
+use crate::keepalive::Keepalive;
 
 /// A connection's stream.
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
@@ -37,9 +39,13 @@ pub trait Listener: Send + Sync {
     fn address(&self) -> String;
 }
 
-/// \[DESIGN\] The built-in TCP listener.
+/// \[DESIGN\] The built-in TCP listener. Each connection it takes has
+/// TCP keepalive on (`keepalive.rs`), at the times the settings of the
+/// database it is given say (`Tcp::kept_alive_by`), or the system's own.
 pub struct Tcp {
     listener: tokio::net::TcpListener,
+    /// The database whose settings give keepalive's times, if any.
+    db: Option<Database>,
 }
 
 impl Tcp {
@@ -49,7 +55,7 @@ impl Tcp {
     ///
     /// The system's, if it cannot.
     pub async fn bind(address: SocketAddr) -> io::Result<Tcp> {
-        Ok(Tcp { listener: tokio::net::TcpListener::bind(address).await? })
+        Ok(Tcp { listener: tokio::net::TcpListener::bind(address).await?, db: None })
     }
 
     /// The address it listens at: with the port the system chose, if asked
@@ -61,15 +67,33 @@ impl Tcp {
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
+
+    /// It, keepalive's times of each connection taken read from `db`'s
+    /// settings as it is taken (SERVER.KEEPALIVE_IDLE_MS,
+    /// SERVER.KEEPALIVE_INTERVAL_MS, SERVER.KEEPALIVE_PROBES).
+    #[must_use]
+    pub fn kept_alive_by(self, db: Database) -> Tcp {
+        Tcp { db: Some(db), ..self }
+    }
+
+    /// The connection `stream` taken, set up: replies are flushed whole, so
+    /// nothing waits for more to send; keepalive on, at its times.
+    ///
+    /// # Errors
+    ///
+    /// The system's, if it cannot; as `Keepalive::apply`.
+    fn set_up(&self, stream: &tokio::net::TcpStream) -> io::Result<()> {
+        stream.set_nodelay(true)?;
+        self.db.as_ref().map(Keepalive::of).unwrap_or_default().apply(stream)
+    }
 }
 
 impl Listener for Tcp {
     fn accept(&self) -> Accepting<'_> {
         Box::pin(async {
             let (accepted, address) = self.listener.accept().await?;
-            // Replies are flushed whole, so nothing waits for more to send.
-            accepted.set_nodelay(true)?;
-            let stream: Box<dyn Transport> = Box::new(kept_alive(accepted)?);
+            self.set_up(&accepted)?;
+            let stream: Box<dyn Transport> = Box::new(accepted);
             Ok((stream, Peer::tcp(address)))
         })
     }
@@ -77,23 +101,6 @@ impl Listener for Tcp {
     fn address(&self) -> String {
         self.local_addr().map_or_else(|e| format!("tcp ({e})"), |a| a.to_string())
     }
-}
-
-/// `stream`, its TCP keepalive on: so a client whose machine or network
-/// is gone, never to close the connection, is found out by the system,
-/// and its session rolled back, its locks let go, even with no
-/// SERVER.IDLE_TIMEOUT. The system's own times apply, as its operator sets
-/// them (on Linux, two hours idle by default, then nine probes 75 seconds
-/// apart). Tokio sets keepalive only on a socket it makes, so it is set
-/// through a second handle on the same socket, dropped after.
-///
-/// # Errors
-///
-/// The system's, if it cannot.
-fn kept_alive(stream: tokio::net::TcpStream) -> io::Result<tokio::net::TcpStream> {
-    let plain = stream.into_std()?;
-    tokio::net::TcpSocket::from_std_stream(plain.try_clone()?).set_keepalive(true)?;
-    tokio::net::TcpStream::from_std(plain)
 }
 
 /// \[DESIGN\] The built-in Unix socket listener. Its socket file is removed
@@ -241,23 +248,4 @@ impl Listener for Pipe {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies: [DESIGN] RULES.md D42: a TCP connection the server takes
-    /// has its keepalive on, so a client gone without closing is found out.
-    #[test]
-    fn a_connection_taken_is_kept_alive() {
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
-        runtime.block_on(async {
-            let tcp = Tcp::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
-            let client = tokio::net::TcpStream::connect(tcp.local_addr().unwrap());
-            let (connected, accepted) = tokio::join!(client, tcp.listener.accept());
-            let (taken, _) = accepted.unwrap();
-            let plain = kept_alive(taken).unwrap().into_std().unwrap();
-            assert!(tokio::net::TcpSocket::from_std_stream(plain.try_clone().unwrap()).keepalive().unwrap());
-            let other = connected.unwrap().into_std().unwrap();
-            assert!(!tokio::net::TcpSocket::from_std_stream(other).keepalive().unwrap(), "off unless set");
-        });
-    }
-}
+mod tests;

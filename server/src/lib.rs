@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod certificate;
+pub mod keepalive;
 mod limit;
 pub mod listening;
 pub mod log;

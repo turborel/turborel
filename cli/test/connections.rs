@@ -121,7 +121,7 @@ fn a_connection_made_is_proved_and_secured_as_the_first() {
     let mut given = options(&server, vec![]);
     given.user = "ann".into();
     given.credentials = Credentials::Ask;
-    let tls = Tls { roots: pki.authority.clone(), name: Some("localhost".into()), identity: None };
+    let tls = Tls { roots: Some(pki.authority.clone()), system: false, name: Some("localhost".into()), identity: None };
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: Some(tls) };
     let connection = turborel_cli::connect(&given, || Ok("ann's".into())).unwrap();
     let mut typed = vec![Err(io::Error::other("no terminal")), Ok("bob's".to_owned()), Ok("ann's".to_owned()), Ok("ann's".to_owned())];

@@ -2,8 +2,8 @@
 //! database it serves, as a plug-in's are, so they are set as any setting
 //! is, kept with the database's definitions, and listed with the others.
 //! The server reads each when it needs it: where it listens, TLS, trust
-//! and passwords' iterations as it starts; TLS's files, and what clients
-//! prove themselves by, as connections begin; its limits as statements and
+//! and passwords' iterations as it starts; TLS's files, what clients
+//! prove themselves by, and TCP keepalive's times, as connections begin; its limits as statements and
 //! connections begin, and its time to stop as it is told to, so a change
 //! of one takes effect with no restart.
 
@@ -101,6 +101,22 @@ pub const LOGIN_DELAY_MS: &str = "SERVER.LOGIN_DELAY_MS";
 /// \[DESIGN\] The default of `LOGIN_DELAY_MS`: ten seconds, a sixth of
 /// `DEFAULT_LOGIN_TIMEOUT`, so a delayed client still has time to log in.
 pub const DEFAULT_LOGIN_DELAY_MS: usize = 10_000;
+/// The milliseconds a TCP connection is idle before the system probes
+/// whether its client is still there; 0 for the system's own.
+pub const KEEPALIVE_IDLE_MS: &str = "SERVER.KEEPALIVE_IDLE_MS";
+/// The milliseconds between the system's probes of a TCP connection's
+/// client, unanswered; 0 for the system's own.
+pub const KEEPALIVE_INTERVAL_MS: &str = "SERVER.KEEPALIVE_INTERVAL_MS";
+/// The probes unanswered after which the system closes a TCP connection;
+/// 0 for the system's own.
+pub const KEEPALIVE_PROBES: &str = "SERVER.KEEPALIVE_PROBES";
+/// \[DESIGN\] The most of `KEEPALIVE_IDLE_MS` and `KEEPALIVE_INTERVAL_MS`:
+/// Linux's most, 32767 seconds (`MAX_TCP_KEEPIDLE` and
+/// `MAX_TCP_KEEPINTVL` in its `include/net/tcp.h`).
+const MOST_KEEPALIVE_MS: i128 = 32_767_000;
+/// \[DESIGN\] The most `KEEPALIVE_PROBES`: Linux's most
+/// (`MAX_TCP_KEEPCNT` in its `include/net/tcp.h`); Windows takes 255.
+const MOST_KEEPALIVE_PROBES: i128 = 127;
 
 /// \[DESIGN\] The most workers: the blocking threads a server's runtime
 /// should allow.
@@ -138,7 +154,33 @@ fn definitions() -> Vec<Definition> {
     all.extend(limits());
     all.extend(waits());
     all.extend(proofs());
+    all.extend(kept_alive());
     all
+}
+
+/// TCP keepalive's times, read as each connection is taken
+/// (`keepalive.rs`): a change taken for the connections after.
+fn kept_alive() -> [Definition; 3] {
+    [
+        limit(
+            KEEPALIVE_IDLE_MS,
+            (0, MOST_KEEPALIVE_MS),
+            0,
+            "The milliseconds a TCP connection is idle before the system probes whether its client is still there, rounded up to whole seconds; 0 for the system's own.",
+        ),
+        limit(
+            KEEPALIVE_INTERVAL_MS,
+            (0, MOST_KEEPALIVE_MS),
+            0,
+            "The milliseconds between the system's probes of a TCP connection's client, unanswered, rounded up to whole seconds; 0 for the system's own.",
+        ),
+        limit(
+            KEEPALIVE_PROBES,
+            (0, MOST_KEEPALIVE_PROBES),
+            0,
+            "The probes unanswered after which the system closes a TCP connection, its transaction rolled back; 0 for the system's own.",
+        ),
+    ]
 }
 
 /// TLS's files and what clients prove themselves by, read as each

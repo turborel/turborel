@@ -36,8 +36,12 @@ pub enum Server {
 /// How a connection is secured by TLS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tls {
-    /// The PEM file of the certificates trusted, and only them.
-    pub roots: PathBuf,
+    /// The PEM file of the certificate authorities trusted, if one is
+    /// named.
+    pub roots: Option<PathBuf>,
+    /// Whether the platform's certificate authorities are trusted too:
+    /// only when asked (`--tls-system-roots`).
+    pub system: bool,
     /// The name the server's certificate is checked against: the host's,
     /// unless one is named.
     pub name: Option<String>,
@@ -130,6 +134,7 @@ struct Named {
     user: Option<String>,
     ask: bool,
     roots: Option<PathBuf>,
+    system: bool,
     name: Option<String>,
     certificate: Option<PathBuf>,
     key: Option<PathBuf>,
@@ -171,6 +176,7 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "-U" | "--user" => named.user = Some(value()?),
             "-W" | "--password" => named.ask = true,
             "--tls" => named.roots = Some(PathBuf::from(value()?)),
+            "--tls-system-roots" => named.system = true,
             "--server-name" => named.name = Some(value()?),
             "--certificate" => named.certificate = Some(PathBuf::from(value()?)),
             "--key" => named.key = Some(PathBuf::from(value()?)),
@@ -259,10 +265,12 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
         (false, None, true) => Credentials::Certificate,
         (false, None, false) => Credentials::Trust,
     };
-    if (named.name.is_some() || identity.is_some()) && named.roots.is_none() {
-        return Err("--server-name, --certificate and --key are of TLS: name --tls too".into());
+    let secured = named.roots.is_some() || named.system;
+    if (named.name.is_some() || identity.is_some()) && !secured {
+        return Err("--server-name, --certificate and --key are of TLS: name --tls or --tls-system-roots too".into());
     }
-    let server = server(named.socket, named.host, named.port, named.roots.map(|roots| Tls { roots, name: named.name, identity }))?;
+    let tls = secured.then_some(Tls { roots: named.roots, system: named.system, name: named.name, identity });
+    let server = server(named.socket, named.host, named.port, tls)?;
     let inputs = if named.inputs.is_empty() { vec![Input::Standard] } else { named.inputs };
     let (stop_on_error, timeouts) = (named.stop_on_error, named.timeouts);
     Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts, import })
@@ -275,7 +283,7 @@ fn server(socket: Option<PathBuf>, host: Option<String>, port: Option<u16>, tls:
         return Ok(Server::Tcp { host: host.unwrap_or_else(|| DEFAULT_HOST.to_owned()), port: port.unwrap_or(DEFAULT_PORT), tls });
     };
     if host.is_some() || port.is_some() || tls.is_some() {
-        return Err("--socket names where the server is: not with --host, --port or --tls".into());
+        return Err("--socket names where the server is: not with --host, --port or TLS".into());
     }
     socket_server(path)
 }

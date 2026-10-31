@@ -40,9 +40,6 @@ authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
 on its own machine. Each item becomes a decision in RULES.md when its
 design settles.
 
-- **The client trusting the platform's authorities,** beside the files
-  it is given: it needs rustls-native-certs or webpki-roots, neither in
-  the tree, so a decision of its own under R-SAFE-4 (D26).
 - **Argon2id beside PBKDF2** (D26), once a vetted crate is: a verifier
   names its scheme, so it comes beside the one there is. SCRAM-SHA-256
   would still need PBKDF2's keys, so a user of Argon2id proves its
@@ -71,14 +68,6 @@ design settles.
   protocol version not served, of a user name that is no identifier, or
   of a mechanism not served is refused by the native protocol before
   any authenticator runs, so no `login_failed` is told of it.
-- **TCP keepalive's times as settings** (idle, interval, probes), so a
-  client gone is found out sooner than the system's default: tokio sets
-  keepalive on or off only; the times need a socket option of the
-  platform's, by a crate such as socket2 (D3).
-- **Import, pipelined** (RULES.md D59): an import's Executes sent before
-  the last is answered, as the protocol allows (D45), so a row costs no
-  round trip; a row that fails is then known after more are sent, which
-  the batch's rollback undoes.
 - **Named pipes, further** (D42): a security descriptor of the server's
   own, so only its user and the administrators may open the pipe at all,
   not others to read only; and a client's reads and writes of a pipe

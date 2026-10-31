@@ -14,7 +14,7 @@ autotests = false
 
 [dependencies]
 turborel = { version = "0.0.0", path = ".." }
-turborel-client = { version = "0.0.0", path = "../client", features = ["tls", "scram"] }
+turborel-client = { version = "0.0.0", path = "../client", features = ["tls", "scram", "system-roots"] }
 # Ctrl-C, to cancel the statement running (RULES.md D46): tokio's signals,
 # on a runtime of one thread.
 tokio = { version = "=1.54.1", default-features = false, features = ["rt", "signal"] }

@@ -177,7 +177,7 @@ fn a_password_is_sent_securely() {
     let mut given = options(&server, vec![command("SELECT 1 FROM T")]);
     given.user = "ann".into();
     given.credentials = Credentials::Ask;
-    let tls = Tls { roots: pki.authority.clone(), name: Some("localhost".into()), identity: None };
+    let tls = Tls { roots: Some(pki.authority.clone()), system: false, name: Some("localhost".into()), identity: None };
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: Some(tls) };
     let connection = turborel_cli::connect(&given, || Ok("ann's".into())).unwrap();
     assert_eq!(connection.authorization(), "ANN");
@@ -199,19 +199,19 @@ fn a_password_is_sent_securely() {
         assert_eq!(local.authorization(), "ANN");
         assert!(turborel_cli::banner(&given, &local).contains(&format!("at the socket {}, as ANN.", pki.scratch.socket("s").display())));
     }
-    let tls = Tls { roots: pki.authority.clone(), name: None, identity: None };
+    let tls = Tls { roots: Some(pki.authority.clone()), system: false, name: None, identity: None };
     given.server = Server::Tcp { host: "localhost".into(), port: server.address.port(), tls: Some(tls) };
     assert_eq!(turborel_cli::connect(&given, || panic!("not typed")).unwrap().authorization(), "ANN", "named as the host");
     let ann = client_certificate(&pki, "ann");
-    let tls = Tls { roots: pki.authority.clone(), name: None, identity: Some((ann.chain, ann.key)) };
+    let tls = Tls { roots: Some(pki.authority.clone()), system: false, name: None, identity: Some((ann.chain, ann.key)) };
     given.server = Server::Tcp { host: "localhost".into(), port: server.address.port(), tls: Some(tls) };
     given.credentials = Credentials::Certificate;
     assert_eq!(turborel_cli::connect(&given, || panic!("not typed")).unwrap().authorization(), "ANN", "by its certificate");
 }
 
 /// Verifies: [DESIGN] RULES.md D46: a server that cannot be reached, a
-/// host that cannot be found, and certificates that cannot be read are
-/// each told.
+/// host that cannot be found, certificates that cannot be read, and TLS
+/// trusting no authority are each told.
 #[test]
 fn a_server_not_reached_is_told() {
     let (_db, server) = served();
@@ -224,9 +224,13 @@ fn a_server_not_reached_is_told() {
     given.server = Server::Tcp { host: "no-such-host.invalid".into(), port: 1, tls: None };
     assert!(turborel_cli::connect(&given, || Ok(String::new())).err().unwrap().starts_with("cannot find no-such-host.invalid"));
     let scratch = Scratch::new("cli-roots");
-    let tls = Tls { roots: scratch.path("none.pem"), name: None, identity: None };
+    let tls = Tls { roots: Some(scratch.path("none.pem")), system: false, name: None, identity: None };
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: 1, tls: Some(tls) };
     assert!(turborel_cli::connect(&given, || Ok(String::new())).err().unwrap().contains("cannot read"));
+    let tls = Tls { roots: None, system: false, name: None, identity: None };
+    given.server = Server::Tcp { host: "127.0.0.1".into(), port: 1, tls: Some(tls) };
+    let untrusting = turborel_cli::connect(&given, || Ok(String::new())).err().unwrap();
+    assert!(untrusting.contains("no certificate authority is trusted"), "{untrusting}");
 }
 
 /// Verifies: [DESIGN] RULES.md D45, D46: a typed session begins with a

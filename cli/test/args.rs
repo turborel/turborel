@@ -67,7 +67,7 @@ fn options_are_taken() {
         "5",
     ];
     let options = parsed(&line, &[(PASSWORD_VARIABLE, "secret")]).unwrap();
-    let tls = Some(Tls { roots: PathBuf::from("ca.pem"), name: Some("db".into()), identity: None });
+    let tls = Some(Tls { roots: Some(PathBuf::from("ca.pem")), system: false, name: Some("db".into()), identity: None });
     assert_eq!(options.server, Server::Tcp { host: "db.example".into(), port: 7000, tls });
     let inputs = [Input::Command("SELECT 1".into()), Input::File(PathBuf::from("a.sql")), Input::Command("SELECT 2".into())];
     assert_eq!((options.user.as_str(), options.inputs.as_slice(), options.null.as_str()), ("carol", inputs.as_slice(), "<null>"));
@@ -91,7 +91,7 @@ fn a_certificate_is_presented() {
     let line = ["--tls", "ca.pem", "--certificate", "c.pem", "--key", "k.pem"];
     let options = parsed(&line, &[("USER", "u")]).unwrap();
     let identity = Some((PathBuf::from("c.pem"), PathBuf::from("k.pem")));
-    let tls = Some(Tls { roots: PathBuf::from("ca.pem"), name: None, identity: identity.clone() });
+    let tls = Some(Tls { roots: Some(PathBuf::from("ca.pem")), system: false, name: None, identity: identity.clone() });
     assert_eq!(options.server, Server::Tcp { host: "127.0.0.1".into(), port: DEFAULT_PORT, tls });
     assert!(matches!(options.credentials, Credentials::Certificate));
     let with_password = parsed(&line, &[("USER", "u"), (PASSWORD_VARIABLE, "x")]).unwrap();
@@ -110,7 +110,7 @@ fn a_wrong_command_line_is_refused() {
     assert_eq!(wrong(&["-p", "70000"]), "70000 is no port");
     assert_eq!(wrong(&["--read-timeout", "soon"]), "soon is no number of seconds");
     assert_eq!(wrong(&["--connect-timeout", "-1"]), "-1 is no number of seconds");
-    let of_tls = "--server-name, --certificate and --key are of TLS: name --tls too";
+    let of_tls = "--server-name, --certificate and --key are of TLS: name --tls or --tls-system-roots too";
     assert_eq!(wrong(&["--server-name", "db"]), of_tls);
     assert_eq!(wrong(&["--certificate", "c.pem", "--key", "k.pem"]), of_tls);
     let both = "--certificate and --key name a certificate and its key: both";
@@ -118,12 +118,32 @@ fn a_wrong_command_line_is_refused() {
         (wrong(&["--tls", "ca.pem", "--certificate", "c.pem"]), wrong(&["--tls", "ca.pem", "--key", "k.pem"])),
         (both.into(), both.into())
     );
-    let elsewhere = "--socket names where the server is: not with --host, --port or --tls";
+    let elsewhere = "--socket names where the server is: not with --host, --port or TLS";
     for other in [["--host", "h"], ["--port", "1"], ["--tls", "ca.pem"]] {
         let line = [&["--socket", "s"][..], &other[..]].concat();
         let said = wrong(&line);
         assert!(said == elsewhere || said.ends_with("Windows only"), "{said}");
     }
+    let said = wrong(&["--socket", "s", "--tls-system-roots"]);
+    assert!(said == elsewhere || said.ends_with("Unix only"), "{said}");
+}
+
+/// Verifies: [DESIGN] RULES.md D26, D46: `--tls-system-roots` asks for
+/// TLS trusting the platform's certificate authorities: beside the file
+/// `--tls` names, or alone; without it, only the file's are trusted.
+#[test]
+fn the_platforms_authorities_are_trusted_when_asked() {
+    let tls = |line: &[&str]| match parsed(line, &[("USER", "u")]).unwrap().server {
+        Server::Tcp { tls, .. } => tls,
+        #[cfg(unix)]
+        Server::Socket(_) => panic!("TCP"),
+    };
+    let alone = Tls { roots: None, system: true, name: Some("db".into()), identity: None };
+    assert_eq!(tls(&["--tls-system-roots", "--server-name", "db"]), Some(alone));
+    let both = Tls { roots: Some(PathBuf::from("ca.pem")), system: true, name: None, identity: None };
+    assert_eq!(tls(&["--tls", "ca.pem", "--tls-system-roots"]), Some(both));
+    assert_eq!(tls(&["--tls", "ca.pem"]).map(|t| t.system), Some(false), "only when asked");
+    assert_eq!(tls(&[]), None);
 }
 
 /// Verifies: [DESIGN] RULES.md D42, D46: `--socket` reaches the server at a

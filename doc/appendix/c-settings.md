@@ -97,6 +97,9 @@ Each in a sentence:
 | SERVER.HOST | 127.0.0.1 | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
 | SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.IDLE_TIMEOUT | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| SERVER.KEEPALIVE_IDLE_MS | 0 | INTEGER FROM 0 TO 32767000 | at once |  |
+| SERVER.KEEPALIVE_INTERVAL_MS | 0 | INTEGER FROM 0 TO 32767000 | at once |  |
+| SERVER.KEEPALIVE_PROBES | 0 | INTEGER FROM 0 TO 127 | at once |  |
 | SERVER.LOGIN_DELAY_MS | 10000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.LOGIN_TIMEOUT | 60000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.MAX_CONNECTIONS | 256 | INTEGER FROM 1 TO 4294967295 | at once |  |
@@ -121,6 +124,9 @@ Each in a sentence:
 - **SERVER.HOST**: Hosts or addresses, by commas, where TCP connections are taken.
 - **SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS**: The milliseconds the server waits for the next request of a client in a transaction before it closes the connection, the transaction rolled back and its locks let go; 0 for no limit.
 - **SERVER.IDLE_TIMEOUT**: The milliseconds the server waits on a client, for its next request or to take what it is sent, before it closes the connection, its transaction rolled back; 0 for no limit.
+- **SERVER.KEEPALIVE_IDLE_MS**: The milliseconds a TCP connection is idle before the system probes whether its client is still there, rounded up to whole seconds; 0 for the system's own.
+- **SERVER.KEEPALIVE_INTERVAL_MS**: The milliseconds between the system's probes of a TCP connection's client, unanswered, rounded up to whole seconds; 0 for the system's own.
+- **SERVER.KEEPALIVE_PROBES**: The probes unanswered after which the system closes a TCP connection, its transaction rolled back; 0 for the system's own.
 - **SERVER.LOGIN_DELAY_MS**: The longest, in milliseconds, a login waits after failed ones from its client's address; 0 for no wait.
 - **SERVER.LOGIN_TIMEOUT**: The milliseconds a connection has, from when it is taken, to begin TLS and authenticate, the two together, before it is closed; 0 for no limit.
 - **SERVER.MAX_CONNECTIONS**: Connections the server takes at once, at most.

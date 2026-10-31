@@ -77,7 +77,8 @@ pub async fn bind(db: &Database, protocol: &Arc<dyn Protocol>) -> Result<Vec<End
     let secured = tls(db)?;
     let mut endpoints = Vec::new();
     for address in addresses(&settings::text(db, HOST), port)? {
-        let tcp = Tcp::bind(address).await.map_err(|e| unable(format!("[DESIGN] cannot listen at {address}: {e}")))?;
+        let tcp =
+            Tcp::bind(address).await.map_err(|e| unable(format!("[DESIGN] cannot listen at {address}: {e}")))?.kept_alive_by(db.clone());
         endpoints.push(Endpoint { listener: Box::new(tcp), protocol: Arc::clone(protocol), tls: secured.clone() });
     }
     let socket = settings::text(db, SOCKET);
