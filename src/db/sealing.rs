@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use super::State;
 use crate::catalog::{QualifiedName, TableDesc};
-use crate::disk::encoding::Pipeline;
+use crate::disk::encoding::{Encoding, Pipeline};
 use crate::error::{Code, Result, SqlError};
+use crate::settings::SPILL_ENCODINGS;
 use crate::storage::{ENCODINGS, encodings_of};
 use crate::sync::lock_builtin;
 
@@ -60,15 +61,28 @@ impl State {
     }
 
     /// The encodings spill areas' files pass through
-    /// (`TempFiles::pipeline`): the first confidential encoding the
-    /// database's files or a table use, with no argument, its ephemeral key;
-    /// none if nothing is encrypted.
+    /// (`TempFiles::pipeline`): those SPILL.ENCODINGS names, as a
+    /// compression; then, unless one of those is confidential already, the
+    /// first confidential encoding the database's files or a table use,
+    /// with no argument, its ephemeral key; none if neither. If the two
+    /// make too many stages, or the encodings named cannot be had, the
+    /// encryption alone: what spills is never left in the clear for a
+    /// compression's sake.
     pub(crate) fn spill_encodings(&self) -> Pipeline {
+        let named = self.encodings.named(self.settings.word(SPILL_ENCODINGS)).unwrap_or_default();
+        let encryption = if named.confidential() { None } else { self.spill_encryption() };
+        let Some(encryption) = encryption else { return named };
+        let stages = named.stages().iter().cloned().chain([Arc::clone(&encryption)]).collect();
+        Pipeline::new(stages).or_else(|_| Pipeline::new(vec![encryption])).unwrap_or_default()
+    }
+
+    /// The first confidential encoding the database's files or a table
+    /// use, unbound: with its ephemeral key.
+    fn spill_encryption(&self) -> Option<Arc<dyn Encoding>> {
         let files = self.created.then(|| self.layout(&self.settings).ok()).flatten().map(|l| l.formats.pipeline);
         let tables: Vec<Arc<Pipeline>> = self.catalog.tables().into_iter().filter_map(|t| self.seal_of_desc(t).ok().flatten()).collect();
         let used = files.iter().chain(tables.iter().map(|p| &**p)).flat_map(Pipeline::stages).find(|s| s.confidential()).map(|s| s.id());
-        let unbound = used.and_then(|id| self.encodings.all().ok()?.into_iter().find(|e| e.id() == id));
-        unbound.and_then(|e| Pipeline::new(vec![e]).ok()).unwrap_or_default()
+        used.and_then(|id| self.encodings.all().ok()?.into_iter().find(|e| e.id() == id))
     }
 
     /// Whether the database's files are encrypted, or kept nowhere: where

@@ -584,7 +584,16 @@ per table.**
   anything, its files or a table: through the first confidential encoding
   in use, with no key named, its process's ephemeral key, drawn as it is
   first used and kept only in memory; what spills is never read by a
-  later process, so no keyring is needed. The data file's shadows hold its
+  later process, so no keyring is needed. Before it, they pass through
+  the encodings SPILL.ENCODINGS names, as LZ4, none by default, as LZ4
+  was not clearly better where the disk keeps up. Should the two make more
+  stages than a pipeline holds, the encryption alone is kept. An area
+  keeps the encodings it was made with; a list that spills
+  (`SpillList`), as a transaction's changes, makes a new area for what it
+  spills once they change (`WorkAreas::generation`), so a table
+  encrypted while a transaction runs has its later spills encrypted, the
+  runs before as they were until read or dropped; an operator's area is
+  as it was until the operator ends. The data file's shadows hold its
   pages as encoded, and the undo store its sealed records.
 - Names are checked as the option is set (SQLCODE -103 if one is not
   registered; -910 if one refuses its argument, as a key the keyring

@@ -37,6 +37,7 @@ starts, or only when the database is made.
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
 | PLANNER.SORT_COMPARE_COST | 1E-1 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | SESSION_END | COMMIT | ONE OF COMMIT, ROLLBACK | at once | *session* |
+| SPILL.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | SPILL.PARTITIONS | 64 | INTEGER FROM 2 TO 4096 | at once | *session* |
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
 | SPILL_BATCH | 16384 | INTEGER FROM 4096 TO 1048576 | at once | *session* |
@@ -75,6 +76,7 @@ Each in a sentence:
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
 - **SESSION_END**: What ends a transaction open when its session ends [X3.135-1986 §7.1 GR2]: COMMIT or ROLLBACK.
+- **SPILL.ENCODINGS**: The encodings, as compression, the files of work areas made from now on pass through, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty. `LZ4`, registered by `turboreld`, compresses what spills. A work area made before a change keeps its encodings; one a transaction keeps, for its changes, makes another for what it spills after.
 - **SPILL.PARTITIONS**: The most partitions a spilled operator (a join, grouping, DISTINCT, EXCEPT or INTERSECT) writes at once; it writes fewer if its WORK_MEMORY holds fewer runs.
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
 - **SPILL_BATCH**: The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its WORK_MEMORY holds.

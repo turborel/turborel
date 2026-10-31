@@ -63,7 +63,9 @@ impl<T> Segment<T> {
 /// \[DESIGN\] The list.
 pub struct SpillList<T> {
     space: ListSpace,
-    area: Option<Box<dyn SpillArea>>,
+    /// Its area, and the generation of the work areas' encodings it was
+    /// made with (`WorkAreas::generation`).
+    area: Option<(Box<dyn SpillArea>, u64)>,
     segments: Vec<Segment<T>>,
     held: usize,
     count: usize,
@@ -188,14 +190,18 @@ impl<T: ListItem> SpillList<T> {
         }
     }
 
-    /// `items` in a new run of its area.
+    /// `items` in a new run of its area: one made anew if the work areas'
+    /// encodings changed since it was made (RULES.md D48), so a list that
+    /// lives long, a transaction's undo entries, writes its new runs
+    /// encrypted once anything is; its runs written before stay where
+    /// they are, as they were, until read or dropped.
     fn written(&mut self, items: &[T], encode: Encode<'_, T>) -> Result<Box<dyn SpillRun>> {
-        if self.area.is_none() {
-            let areas =
-                self.space.areas.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a list that spills has no work areas"))?;
-            self.area = Some(areas.area(Area::new(self.space.limit, self.space.batch))?);
+        let areas = self.space.areas.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a list that spills has no work areas"))?;
+        let now = areas.generation();
+        if self.area.as_ref().is_none_or(|(_, made)| *made != now) {
+            self.area = Some((areas.area(Area::new(self.space.limit, self.space.batch))?, now));
         }
-        let area = self.area.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a list's area is gone"))?;
+        let (area, _) = self.area.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a list's area is gone"))?;
         let mut run = area.run()?;
         for item in items {
             run.push(&encode(item))?;

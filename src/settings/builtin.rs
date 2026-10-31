@@ -78,6 +78,8 @@ pub const JOBS_POLICY: Key = Key(32);
 pub const FILES_MAX_OPEN: Key = Key(33);
 /// See [`DEFAULT_ENGINE`].
 pub const DIAGNOSTICS_LEVEL: Key = Key(34);
+/// See [`DEFAULT_ENGINE`].
+pub const SPILL_ENCODINGS: Key = Key(35);
 
 /// The words of `EXECUTOR.BATCHES`.
 pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
@@ -157,6 +159,11 @@ pub(super) fn builtin() -> Vec<Definition> {
         ("DIAGNOSTICS.LEVEL", Kind::Choice(&crate::diagnostics::Level::WORDS), text("INFO")),
         DATABASE,
         "The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.",
+    ));
+    all.push(defined(
+        ("SPILL.ENCODINGS", Kind::Encodings, text("")),
+        DATABASE,
+        "The encodings, as compression, the files of work areas made from now on pass through, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.",
     ));
     all
 }

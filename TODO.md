@@ -206,9 +206,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
   Vault) beside the key directory; a database's files re-encrypted with
   another key, which today means naming it at creation, so a key
   STORAGE.ENCODINGS names cannot be retired.
-- **Spills, further:** compressed, through the database's compression,
-  where the disk is slower than the CPU; and a spill file made before a
-  table is encrypted stays as it was until its operator ends. A
+- **Spills, further:** SPILL.ENCODINGS compresses spill files (LZ4), off
+  by default: on 2026-10-31, 50,000-row sorts, groupings, DISTINCT, joins
+  and EXCEPT spilled in 64 KiB and 1 MiB work areas ran from 17% slower
+  (DISTINCT, 64 KiB, on disk) to 45% faster (a sort, 64 KiB, in memory),
+  most within 10%, on an SSD the system's cache kept up with; a disk
+  slower than the CPU may make it pay, to be measured there. An
+  operator's spill area made before a table is encrypted stays as it was
+  until the operator ends (a list that spills makes a new one). A
   referential action gathers the rows that match each row it acts for in
   memory (`State::matching_rows`, `db/integrity/references.rs`), as MATCH
   PARTIAL does the referenced table as it was before the statement, and

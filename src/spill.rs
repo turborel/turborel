@@ -237,6 +237,8 @@ pub trait SpillRun: Send {
 pub struct WorkAreas {
     memory: Arc<MemoryBudget>,
     place: RwLock<(Arc<dyn Spill>, Arc<TempFiles>)>,
+    /// Counts the changes of its files' encodings (`generation`).
+    generation: AtomicU64,
 }
 
 impl WorkAreas {
@@ -245,7 +247,7 @@ impl WorkAreas {
     pub(crate) fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
-        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))) }
+        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), generation: AtomicU64::new(0) }
     }
 
     /// A new area as `area` asks, reserved of the budget.
@@ -296,10 +298,22 @@ impl WorkAreas {
     }
 
     /// Writes the files of areas made from now on through `pipeline`
-    /// (`TempFiles::pipeline`).
+    /// (`TempFiles::pipeline`), a new generation of them if its encodings
+    /// are not those before.
     pub(crate) fn set_encodings(&self, pipeline: Pipeline) {
         let place = self.place.read().unwrap_or_else(PoisonError::into_inner);
-        *place.1.pipeline.write().unwrap_or_else(PoisonError::into_inner) = pipeline;
+        let mut held = place.1.pipeline.write().unwrap_or_else(PoisonError::into_inner);
+        if held.ids() != pipeline.ids() {
+            self.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        *held = pipeline;
+    }
+
+    /// \[DESIGN\] The generation of the encodings areas' files take, which
+    /// changes as they do (RULES.md D48): an area keeps its own, so one who
+    /// keeps an area long makes another when this changes (`SpillList`).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 }
 
@@ -336,10 +350,11 @@ impl TempFiles {
     }
 
     /// \[DESIGN\] The encodings its files are written through, as a spill
-    /// provider makes them (RULES.md D48): an encryption with the
-    /// process's ephemeral key while the database encrypts anything, so
-    /// what spills of an encrypted table, or of encrypted files, never
-    /// reaches the disk in the clear; none otherwise.
+    /// provider makes them (RULES.md D48): those SPILL.ENCODINGS names, as
+    /// a compression; then an encryption with the process's ephemeral key
+    /// while the database encrypts anything, so what spills of an
+    /// encrypted table, or of encrypted files, never reaches the disk in
+    /// the clear.
     pub fn pipeline(&self) -> Pipeline {
         self.pipeline.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
