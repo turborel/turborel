@@ -23,6 +23,8 @@ impl RowTable {
     /// version's row given to `removed` as it goes, a segment of garbage
     /// read at a time.
     pub(in crate::engine::rows) fn collect(&self, horizon: Timestamp, removed: Removed<'_>) -> Result<()> {
+        // Noted before anything is released (`RowTable::unpinned`).
+        self.versions.collected.fetch_max(horizon, Ordering::SeqCst);
         self.collect_undone();
         let late = !self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty();
         let due = self.versions.garbage_due.load(Ordering::SeqCst).min(self.versions.validated_due.load(Ordering::SeqCst));
@@ -59,6 +61,40 @@ impl RowTable {
         }
         self.undo.truncate()?;
         failure.map_or(Ok(()), Err)
+    }
+
+    /// What `read` makes of the entry `newest` of the row of key `k`, read by
+    /// a pass with no transaction open, the maintenance thread's, at
+    /// `horizon`, or the table's latest collection if later: none if the
+    /// row has left the tree meanwhile.
+    ///
+    /// No transaction pins the older versions such a pass goes back to, so
+    /// one may be released, and the undo store truncated, as it reads: by
+    /// a rollback, which puts back the entry naming it first, or by a
+    /// collection past the commit that superseded it, which notes its
+    /// horizon first (`Versions::collected`). So the entry and the horizon
+    /// are read again, and `read` tried again, while either has changed;
+    /// failing on the same ones, its error is a real one.
+    pub(in crate::engine::rows) fn unpinned<T>(
+        &self,
+        (k, newest): (&[u8], Vec<u8>),
+        horizon: Timestamp,
+        read: &mut dyn FnMut(Vec<u8>, Timestamp) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let latest = || horizon.max(self.versions.collected.load(Ordering::SeqCst));
+        let (mut entry, mut at) = (newest, latest());
+        loop {
+            let error = match read(entry.clone(), at) {
+                Ok(found) => return Ok(Some(found)),
+                Err(e) => e,
+            };
+            let Some(again) = self.tree.get(k)? else { return Ok(None) };
+            let later = latest();
+            if again == entry && later == at {
+                return Err(error);
+            }
+            (entry, at) = (again, later);
+        }
     }
 
     /// Removes `items`, garbage of `at`, their rows to `removed`; one that

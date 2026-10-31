@@ -13,7 +13,9 @@
 //! again from every version of its rows a reader at or after the horizon
 //! may read, an open transaction's among them; a write meanwhile counts a
 //! change of the zone, and its sum is then thrown away. A zone is never
-//! narrower than its rows, at most wider.
+//! narrower than its rows, at most wider. The older versions it reads no
+//! transaction pins for it: a row one of which is released and truncated
+//! as it reads is read again (`RowTable::unpinned`).
 //!
 //! A change undone widens nothing: a version put back widens its zone as
 //! a write does, and a row an insert added, taken out as the insert is
@@ -413,7 +415,8 @@ impl RowTable {
 
     /// The zone of the rows of zone `at`, summed up from their versions a
     /// reader at or after `horizon` may read: stale still if any is not
-    /// its row's newest committed, as a reader of it may end.
+    /// its row's newest committed, as a reader of it may end. A row read
+    /// again (`RowTable::unpinned`) may leave it wider, never narrower.
     fn zone_of(&self, at: usize, horizon: Timestamp) -> Result<Zone> {
         let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
         let (low, high) = (key(first), key(first.saturating_add(ZONE_ROWS)));
@@ -422,10 +425,15 @@ impl RowTable {
         zone.stale = false;
         for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Excluded(&high[..]), Direction::Forward) {
             let (k, newest) = entry?;
-            if !Version::parse(&newest)?.deleted {
+            let id = row_id(&k)?;
+            let mut held = |bytes: Vec<u8>, reading_at: Timestamp| {
+                let live = !Version::parse(&bytes)?.deleted;
+                self.hold_versions(&mut zone, id, bytes, reading_at)?;
+                Ok(live)
+            };
+            if self.unpinned((&k, newest), horizon, &mut held)? == Some(true) {
                 zone.rows = zone.rows.saturating_add(1);
             }
-            self.hold_versions(&mut zone, row_id(&k)?, newest, horizon)?;
         }
         Ok(zone)
     }
@@ -465,7 +473,7 @@ use saved::SEGMENT_ZONES;
 // Unit tests: zones skip blocks, keep old versions for open readers, are
 // known only once summed up after a table is opened or as a checkpoint
 // saved them, hold every row written while they are summed up, hold a
-// version put back, and are narrowed after an insert is undone (RULES.md
-// R-TEST-1).
+// version put back, are narrowed after an insert is undone, and are
+// summed up as the undo store is truncated (RULES.md R-TEST-1, R-TEST-7).
 #[cfg(test)]
 mod tests;

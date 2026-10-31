@@ -171,15 +171,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Storage and durability
 
-- **Zone sums racing the undo store's truncation** (D31): the
-  maintenance thread, summing a zone (`rows/zones.rs`), may read a row's
-  entry and then go back to the older version it names, while a
-  rollback's release of what it appended, or a commit's of what it
-  replaced, truncates the undo store under it, no transaction of the
-  table being open to hold it. The read then fails and that round of
-  maintenance with it, to be tried again: never wrong data, as positions
-  in the undo store are not reused. A pin of what the pass reads, or the
-  pass counted as a reader, would close it.
 - **Keys of key services** (D48): keyrings of key services (a cloud KMS,
   Vault) beside the key directory; a host can give one through `Keyring`,
   but turboreld takes the key directory alone.

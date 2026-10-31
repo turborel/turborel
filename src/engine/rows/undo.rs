@@ -295,6 +295,9 @@ fn decoded(record: &[u8]) -> Result<Vec<Vec<u8>>> {
     Ok(versions)
 }
 
+// A log for the tests of the store's races.
+#[cfg(test)]
+pub(super) mod hooked;
 // Unit tests: batches, read and truncated (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests;

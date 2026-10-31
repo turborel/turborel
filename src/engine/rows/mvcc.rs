@@ -204,6 +204,10 @@ pub(super) struct Versions {
     /// collect, which every transaction's end finds without a lock.
     garbage_due: AtomicU64,
     validated_due: AtomicU64,
+    /// The latest horizon the table was collected at: no reader is before
+    /// it, and what commits at or before it superseded may be gone from
+    /// the undo store (`RowTable::unpinned`).
+    collected: AtomicU64,
     /// Transactions committed whose versions are not all stamped yet: when
     /// they committed, and the rows left to stamp; none if they could not
     /// be read back, so it is never stamped and stays.

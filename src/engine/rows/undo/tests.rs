@@ -1,73 +1,11 @@
 //! Unit tests of the undo store's batches: versions read wherever their
 //! batch is, the log truncated by batch, and a batch that cannot be
-//! written; a truncation racing an append; and batches fitted to a page. Split from engine/rows/undo.rs (RULES.md R-SIZE-2).
+//! written; a truncation racing an append; and batches fitted to a page;
+//! on the log of `hooked.rs`. Split from engine/rows/undo.rs (RULES.md
+//! R-SIZE-2).
 
-use std::sync::atomic::AtomicBool;
-
+use super::hooked::{Hooked, shared};
 use super::*;
-use crate::log::{LogCapabilities, MemoryLog, Records};
-
-/// What a log does once, at a point a race would fall on.
-type Hook = Mutex<Option<Box<dyn FnOnce() + Send>>>;
-
-/// A log in memory, counting its records, whose appends fail while told
-/// to; and which does what it is given once, as its end is next asked for
-/// (`on_end`), or once its next record is appended (`on_append`).
-#[derive(Default)]
-struct Hooked {
-    log: MemoryLog,
-    failing: AtomicBool,
-    on_end: Hook,
-    on_append: Hook,
-}
-
-/// Does what `hook` holds, if anything, once.
-fn fire(hook: &Hook) {
-    let taken = lock_builtin(hook).take();
-    if let Some(work) = taken {
-        work();
-    }
-}
-
-impl Log for Hooked {
-    fn capabilities(&self) -> LogCapabilities {
-        self.log.capabilities()
-    }
-    fn append(&self, record: &[u8]) -> Result<Lsn> {
-        if self.failing.load(Ordering::Relaxed) {
-            return Err(SqlError::new(Code::Io, "[DESIGN] told to fail"));
-        }
-        let at = self.log.append(record)?;
-        fire(&self.on_append);
-        Ok(at)
-    }
-    fn sync(&self, through: Lsn) -> Result<()> {
-        self.log.sync(through)
-    }
-    fn read_from(&self, from: Lsn) -> Records<'_> {
-        self.log.read_from(from)
-    }
-    fn truncate_before(&self, before: Lsn) -> Result<()> {
-        self.log.truncate_before(before)
-    }
-    fn end(&self) -> Lsn {
-        fire(&self.on_end);
-        self.log.end()
-    }
-}
-
-impl Hooked {
-    /// The records the log holds.
-    fn records(&self) -> usize {
-        self.log.read_from(Lsn(0)).count()
-    }
-}
-
-/// `log`, as the undo store takes one.
-fn shared(log: &Arc<Hooked>) -> Arc<dyn Log> {
-    let copy: Arc<dyn Log> = Arc::<Hooked>::clone(log);
-    copy
-}
 
 /// Version `n`: its number, ten bytes of it.
 fn version(n: u32) -> Vec<u8> {
@@ -201,8 +139,7 @@ fn fitted_batches_stay_within_their_bytes() {
     let store = UndoStore::fitted(shared(&log), 444);
     let at: Vec<Lsn> = (0_u32..21_u32).map(|n| store.append(&version(n)).unwrap()).collect();
     assert_eq!(log.records(), 2, "ten to a record, the 21st gathered");
-    let records: Vec<usize> = log.log.read_from(Lsn(0)).map(|r| r.unwrap().1.len()).collect();
-    assert_eq!(records, [444_usize, 444_usize]);
+    assert_eq!(log.sizes(), [444_usize, 444_usize]);
     for (n, pos) in (0_u32..21_u32).zip(&at) {
         assert_eq!(store.read(*pos).unwrap(), version(n), "{n}");
     }

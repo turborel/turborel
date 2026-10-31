@@ -1310,6 +1310,15 @@ write-ahead logging.
   memory keeps it in memory. On disk, versions are written in batches
   of one record each (`OpenOptions::undo_batch`), read from memory until
   written.
+- **Unpinned reads.** The maintenance thread reads older versions with
+  no transaction open to pin them (`RowTable::unpinned`):
+  - one released and truncated as it reads, by a rollback or a
+    collection, makes it read the row's entry, and the table's latest
+    collection, again, and try again while either changed;
+  - a zone sum reads at that collection when it is past the horizon it
+    was given, so it never follows a version released before it began;
+  - so truncation never waits for it, and a commit takes space back at
+    once.
 
 *Scans, zones, counts and statistics*
 

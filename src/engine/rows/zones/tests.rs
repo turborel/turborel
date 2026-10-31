@@ -8,11 +8,14 @@ use crate::disk::buffer::{BufferPool, Clock};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
+use crate::engine::rows::undo::hooked::{Hooked, shared};
 use crate::engine::rows::{RowTable, TableFiles, TableOptions};
+use crate::error::Code;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::index::Probe;
-use crate::log::MemoryLog;
+use crate::log::{Log, MemoryLog};
 use crate::storage::{Condition, Conjunct, Conjunction, Row, RowId, TableStorage};
+use crate::sync::lock_builtin;
 use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
@@ -34,13 +37,19 @@ fn files() -> TableFiles {
 
 /// The tables' files, in memory, and their pager.
 fn paged() -> (Arc<Pager>, TableFiles) {
+    paged_over(Arc::new(MemoryLog::new()))
+}
+
+/// The tables' files, in memory, their older versions in `undo`, and their
+/// pager.
+fn paged_over(undo: Arc<dyn Log>) -> (Arc<Pager>, TableFiles) {
     let fs = MemoryFileSystem::new();
     let pager = Arc::new(
         Pager::create(&fs, std::path::Path::new("/rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap(),
     );
     let pool = Arc::new(BufferPool::new(512, Box::new(Clock::new(512))).unwrap());
     let file = pool.add_pager(Arc::clone(&pager));
-    (pager, TableFiles::new(pool, file, Arc::new(MemoryLog::new())))
+    (pager, TableFiles::new(pool, file, undo))
 }
 
 /// `column = value`.
@@ -333,7 +342,7 @@ fn zones_unsealable_or_malformed_are_not_known() {
     for stored in [vec![0_u8, 5, 0, 0, 0, 0, 0, 0, 0], vec![255_u8]] {
         *files.pool.write(files.file, segment).unwrap() = stored;
         let refused = RowTable::open(&files, meta, &TYPES, TableOptions::default()).err().map(|e| e.code);
-        assert_eq!(refused, Some(crate::error::Code::Corrupt));
+        assert_eq!(refused, Some(Code::Corrupt));
     }
 }
 
@@ -362,11 +371,108 @@ fn zones_a_failed_save_left_are_saved_by_the_next() {
     {
         let held: Vec<_> = others.iter().map(|&page| pool.read(file, page).unwrap()).collect();
         assert_eq!(held.len(), frames, "every frame held");
-        assert_eq!(files.save_zones().err().map(|e| e.code), Some(crate::error::Code::Resources));
+        assert_eq!(files.save_zones().err().map(|e| e.code), Some(Code::Resources));
     }
     files.save_zones().unwrap();
     drop(table);
     let opened = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
     assert!(!reads(&opened, &equal(0, -1), first) && !reads(&opened, &equal(0, -1), far), "both segments saved");
     assert_eq!(found(&opened, NO_TRANSACTION, &equal(0, 2)), ["2"]);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D29, zone maps summed up as a
+/// rollback's release truncates the undo store: the maintenance thread,
+/// having read a row's entry of a transaction open, goes back to the
+/// older version it names as the transaction rolls back and the store is
+/// truncated, no other transaction of the table open; finding it gone, it
+/// reads the row's entry again, the version put back; the store's space
+/// is taken back at once, no pass keeping it.
+///
+/// Regression test (R-TEST-7): nothing held the version for the pass, so
+/// it was gone (SQLCODE -916) and that round of maintenance failed; and,
+/// as first fixed, a pass holding the undo store kept a collection from
+/// truncating it until the pass ended, after the commit had returned.
+#[test]
+fn a_zone_summed_up_as_a_rollback_truncates_reads_the_older_version() {
+    let log = Arc::new(Hooked::default());
+    let files = paged_over(shared(&log)).1;
+    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let id = table.insert(NO_TRANSACTION, row(1)).unwrap();
+    let tx = 10_u64;
+    table.begin(tx, 1).unwrap();
+    table.update(tx, id, row(2)).unwrap();
+    assert_eq!(log.records(), 1, "the older version appended");
+    let (meddler, kept) = (Arc::clone(&table), Arc::clone(&log));
+    // As the pass reads the older version: the rollback, and the
+    // collection after it, which truncates at once, the pass still reading.
+    *lock_builtin(&log.on_read) = Some(Box::new(move || {
+        meddler.rollback(tx).unwrap();
+        meddler.gc(1, &mut |_, _| {}).unwrap();
+        assert_eq!(kept.records(), 0, "taken back as the pass reads");
+    }));
+    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(false), "read again; its sum thrown away, a change meanwhile");
+    assert!(lock_builtin(&log.on_read).is_none(), "the rollback fell where the race would");
+    assert_eq!(log.records(), 0, "truncated by the rollback's collection");
+    summed(&table, 1);
+    assert!(!reads(&table, &equal(0, 2), id), "narrowed to the version put back");
+    assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 1)), ["1"]);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D29, zone maps summed up at a horizon
+/// read before a collection: the maintenance thread, given a horizon
+/// before a commit, sums up a zone the commit's update made stale after
+/// the commit's garbage was collected and the undo store truncated; it
+/// reads at the table's latest collection instead, so it does not go back
+/// to the version removed.
+///
+/// Regression test (R-TEST-7): it went back to the version removed
+/// (SQLCODE -916), and that round of maintenance failed.
+#[test]
+fn a_zone_summed_up_at_a_horizon_before_a_collection_reads_at_the_collection() {
+    let files = files();
+    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let id = table.insert(NO_TRANSACTION, row(1)).unwrap();
+    let tx = 10_u64;
+    table.begin(tx, 1).unwrap();
+    table.update(tx, id, row(2)).unwrap();
+    table.validate(tx, 2).unwrap();
+    table.commit(tx, 2);
+    // The horizon was read as 1; the collection at 2 comes first.
+    table.gc(2, &mut |_, _| {}).unwrap();
+    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(true), "summed up, up to date");
+    assert!(!reads(&table, &equal(0, 1), id), "narrowed to the commit's version");
+    assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 2)), ["2"]);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, zone maps summed up as older versions
+/// go: a row whose older version is gone as the maintenance thread reads
+/// it, and whose entry is then gone too, is left out of the sum; one whose
+/// older version is gone, its entry and the latest collection the same,
+/// is a real loss, and the round fails (SQLCODE -916), to be tried again.
+#[test]
+fn a_zone_summed_up_as_versions_go_leaves_out_rows_gone_and_fails_on_a_loss() {
+    let log = Arc::new(Hooked::default());
+    let files = paged_over(shared(&log)).1;
+    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let id = table.insert(NO_TRANSACTION, row(1)).unwrap();
+    table.begin(10, 1).unwrap();
+    table.update(10, id, row(2)).unwrap();
+    let meddler = Arc::clone(&table);
+    // The row rolled back, then deleted outside any transaction: its entry
+    // goes, and its older version with the collection.
+    *lock_builtin(&log.on_read) = Some(Box::new(move || {
+        meddler.rollback(10).unwrap();
+        meddler.delete(NO_TRANSACTION, id).unwrap();
+        meddler.gc(1, &mut |_, _| {}).unwrap();
+    }));
+    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(false), "the row left out");
+    assert!(lock_builtin(&log.on_read).is_none());
+
+    let other = table.insert(NO_TRANSACTION, row(3)).unwrap();
+    table.begin(11, 1).unwrap();
+    table.update(11, other, row(4)).unwrap();
+    let lost = Arc::clone(&log);
+    // The older version lost, nothing else changed.
+    *lock_builtin(&log.on_read) = Some(Box::new(move || lost.truncate_before(lost.end()).unwrap()));
+    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Err(Code::Corrupt), "a real loss");
 }

@@ -125,7 +125,9 @@ impl RowTable {
         let directory = self.frozen.directory()?;
         for entry in self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward) {
             let (key, newest) = entry?;
-            let Some(record) = self.visible_from(newest, Reader::Latest)? else { continue };
+            // Read again if an older version is released as it is read.
+            let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes, Reader::Latest))?;
+            let Some(record) = visible.flatten() else { continue };
             let row = self.decode(row_id(&key)?, &record, None)?;
             builder.add(&row, record.len());
         }
