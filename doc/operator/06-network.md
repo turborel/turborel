@@ -87,8 +87,8 @@ default, no client is asked for one.
 
 The server takes its certificate, key and client authorities again
 without a restart, for the connections secured after; those secured go
-on as they are, SCRAM's binding of each to the certificate its handshake
-presented:
+on as they are, SCRAM's binding of each by `tls-server-end-point` to the
+certificate its handshake presented:
 
 - when SERVER.TLS_CERTIFICATE, SERVER.TLS_KEY or SERVER.TLS_CLIENT_CA is
   changed, as by the owner's SET DATABASE, as the next connection begins

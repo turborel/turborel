@@ -45,8 +45,8 @@ as a table as they come, and each statement's outcome.
 A password may be given in the environment variable TURBOREL_PASSWORD
 instead of typed. The client proves it by SCRAM-SHA-256, never sending
 it, and takes the server only once the server has proved it knows the
-user's verifier; over TLS the exchange is bound to the server's
-certificate, SCRAM-SHA-256-PLUS, so a server in the middle cannot relay
+user's verifier; over TLS the exchange is bound to the connection,
+SCRAM-SHA-256-PLUS, so a server in the middle cannot relay
 it ([Passwords](../operator/05-users.md#passwords)). It
 does so only over TLS, a Unix socket or a named pipe: over plain TCP the
 client refuses to begin, and connects to nothing (SQLSTATE 28000). Over

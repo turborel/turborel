@@ -24,14 +24,17 @@
 //!
 //! The server keeps StoredKey and ServerKey, never SaltedPassword, which
 //! would let whoever reads it log in. The channel is bound (`Channel`) by
-//! `tls-server-end-point` alone [RFC 5929 §4], the hash of the server's
-//! certificate (`end_point`), which both sides of a TLS connection know:
-//! the GS2 header `p=tls-server-end-point` of SCRAM-SHA-256-PLUS; `n` of a
-//! client binding none; `y` of one that could, but sees the server offer
-//! none. Another binding type, or another identity to act as, `a=`, is
-//! refused, as is a message with extensions. The protocol's Hello names
-//! the user authenticated; the `n=` of client-first is read and left
-//! aside, as it is part of AuthMessage. A password is taken as its UTF-8
+//! one of two types, which both sides of a TLS connection know:
+//! `tls-exporter` [RFC 9266 §2], keying material the connection exports
+//! (`EXPORTER_LABEL`), the GS2 header `p=tls-exporter`; or
+//! `tls-server-end-point` [RFC 5929 §4], the hash of the server's
+//! certificate (`end_point`), the header `p=tls-server-end-point`; each of
+//! SCRAM-SHA-256-PLUS. `n` is of a client binding none; `y` of one that
+//! could, but sees the server offer none. Another binding type, or another
+//! identity to act as, `a=`, is refused, as is a message with extensions.
+//! The protocol's Hello names the user authenticated; the `n=` of
+//! client-first is read and left aside, as it is part of AuthMessage. A
+//! password is taken as its UTF-8
 //! bytes, without SASLprep [RFC 5802 §2.2]: the same on both sides here,
 //! and the same of an ASCII password as SASLprep's.
 
@@ -65,6 +68,16 @@ const GS2_UNOFFERED: &str = "y,,";
 /// \[DESIGN\] The GS2 header of a client binding the channel by
 /// `tls-server-end-point` [RFC 5802 §7, RFC 5929 §4.2].
 const GS2_END_POINT: &str = "p=tls-server-end-point,,";
+/// \[DESIGN\] The GS2 header of a client binding the channel by
+/// `tls-exporter` [RFC 5802 §7, RFC 9266 §2].
+const GS2_EXPORTER: &str = "p=tls-exporter,,";
+/// The label of the keying material `tls-exporter` binds: "the ASCII
+/// string \"EXPORTER-Channel-Binding\" with no terminating NUL", its
+/// context the zero-length string [RFC 9266 §2].
+pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
+/// The bytes of the keying material `tls-exporter` binds: "32 bytes"
+/// [RFC 9266 §2].
+pub const EXPORTER_BYTES: usize = 32;
 
 /// \[DESIGN\] The channel binding of an exchange [RFC 5802 §6, §7]: the
 /// flag of its GS2 header, and the data it binds.
@@ -78,6 +91,9 @@ pub enum Channel {
     /// `p=tls-server-end-point`: bound to the server's certificate, of
     /// this hash (`end_point`). Not a secret [RFC 5929 §4.2].
     EndPoint(Vec<u8>),
+    /// `p=tls-exporter`: bound to the TLS connection itself, by the keying
+    /// material it exports of `EXPORTER_LABEL` [RFC 9266 §2]; TLS 1.3's.
+    Exporter(Vec<u8>),
 }
 
 impl Channel {
@@ -87,6 +103,7 @@ impl Channel {
             Channel::Unbound => GS2_NONE,
             Channel::Unoffered => GS2_UNOFFERED,
             Channel::EndPoint(_) => GS2_END_POINT,
+            Channel::Exporter(_) => GS2_EXPORTER,
         }
     }
 
@@ -94,8 +111,9 @@ impl Channel {
     /// whose base 64 is the `c=` of client-final.
     fn input(&self) -> Vec<u8> {
         let mut input = self.header().as_bytes().to_vec();
-        if let Channel::EndPoint(data) = self {
-            input.extend_from_slice(data);
+        match self {
+            Channel::EndPoint(data) | Channel::Exporter(data) => input.extend_from_slice(data),
+            Channel::Unbound | Channel::Unoffered => {}
         }
         input
     }

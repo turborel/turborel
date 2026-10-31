@@ -2,26 +2,30 @@
 //! `scram-sha-256-plus` (RULES.md D43; RFC 5802, RFC 7677), with the
 //! feature `scram`: the client proves it knows the password, never sending
 //! it, and takes the server only once it has proved it knows the user's
-//! verifier. Over TLS it binds the exchange to the connection by
-//! `tls-server-end-point` (RFC 5929 §4), the hash of the certificate the
-//! server presented, so a server in the middle cannot relay it. The
+//! verifier. Over TLS it binds the exchange to the connection: over TLS
+//! 1.3 by `tls-exporter` (RFC 9266), the keying material the connection
+//! exports, else by `tls-server-end-point` (RFC 5929 §4), the hash of the
+//! certificate the server presented; so a server in the middle cannot
+//! relay it. The
 //! messages and keys are the protocol's (`turborel_protocol::scram`), as
 //! the server's are.
 
 use turborel_protocol::Failure;
 use turborel_protocol::scram::{self, Channel, Client};
 
-use crate::connection::{Mechanism, Result};
+use crate::connection::{Mechanism, Result, TlsChannel};
 
 /// \[DESIGN\] The client's side of `scram-sha-256`, of a user's password:
 /// what a client proves a password by, unless the server takes only
 /// `password`.
 ///
-/// Over TLS (`Mechanism::bind`) it is `scram-sha-256-plus`, bound to the
-/// certificate the server presented; of a certificate whose signature
-/// defines no binding [RFC 5929 §4.1], `scram-sha-256` with the header `y`
-/// [RFC 5802 §6], which a server that does bind refuses, as a server in
-/// the middle would make it. Over a Unix socket or a named pipe, or plain
+/// Over TLS (`Mechanism::bind`) it is `scram-sha-256-plus`: over TLS 1.3
+/// bound by `tls-exporter`, which RFC 9266 §3 makes the binding of TLS
+/// 1.3; else by `tls-server-end-point`, to the certificate the server
+/// presented. Over TLS 1.2, of a certificate whose signature defines no
+/// binding [RFC 5929 §4.1], it is `scram-sha-256` with the header `y` [RFC
+/// 5802 §6], which a server that does bind refuses, as a server in the
+/// middle would make it. Over a Unix socket or a named pipe, or plain
 /// TCP, it binds nothing.
 ///
 /// Its exchange overheard lets the eavesdropper guess the password at
@@ -61,11 +65,11 @@ impl Scram {
 }
 
 impl Mechanism for Scram {
-    /// `scram-sha-256-plus` once bound to a certificate's hash, else
-    /// `scram-sha-256`.
+    /// `scram-sha-256-plus` once bound to a connection or a certificate's
+    /// hash, else `scram-sha-256`.
     fn name(&self) -> &str {
         match self.channel {
-            Channel::EndPoint(_) => scram::MECHANISM_PLUS,
+            Channel::EndPoint(_) | Channel::Exporter(_) => scram::MECHANISM_PLUS,
             Channel::Unbound | Channel::Unoffered => scram::MECHANISM,
         }
     }
@@ -98,10 +102,13 @@ impl Mechanism for Scram {
         !self.clear
     }
 
-    /// Bound to `certificate`'s `tls-server-end-point`, or, of one that
-    /// defines none, able to bind but offered none.
-    fn bind(&mut self, certificate: &[u8]) {
-        self.channel = scram::end_point(certificate).map_or(Channel::Unoffered, Channel::EndPoint);
+    /// Bound to `channel`'s `tls-exporter`, over TLS 1.3; else to its
+    /// certificate's `tls-server-end-point`; else, of a certificate that
+    /// defines none, able to bind but offered none. Both sides name the
+    /// type by the GS2 header, which the proof covers [RFC 5802 §6, §7].
+    fn bind(&mut self, channel: &TlsChannel) {
+        let end_point = || channel.certificate.as_deref().and_then(scram::end_point).map(Channel::EndPoint);
+        self.channel = channel.exporter.clone().map(Channel::Exporter).or_else(end_point).unwrap_or(Channel::Unoffered);
     }
 
     fn ready(&self) -> Result<()> {

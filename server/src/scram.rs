@@ -19,11 +19,13 @@
 //! its eavesdropper try passwords against it at its own pace. So it is
 //! taken over TLS, a Unix socket or a named pipe, and over plain TCP only
 //! while SERVER.SCRAM_WITHOUT_TLS is ON. Over TLS, `scram-sha-256-plus`
-//! binds it to the connection by `tls-server-end-point` (RFC 5929 §4), the
-//! hash of the certificate this server presented (`Peer::end_point`), so a
-//! server in the middle, presenting its own, cannot relay it; a client of
-//! `scram-sha-256` that could bind but believes the server cannot is
-//! refused where it can [RFC 5802 §6]. A user not there is answered with a
+//! binds it to the connection by the type the client names: `tls-exporter`
+//! (RFC 9266), over TLS 1.3, the keying material the connection exports
+//! (`Peer::exporter`); or `tls-server-end-point` (RFC 5929 §4), the hash of
+//! the certificate this server presented (`Peer::end_point`). Either way a
+//! server in the middle, holding two connections, cannot relay it; a
+//! client of `scram-sha-256` that could bind but believes the server
+//! cannot is refused where it can [RFC 5802 §6]. A user not there is answered with a
 //! salt made of the user's name, the same each time, as a user's is, and
 //! refused as a wrong proof is, so a client cannot tell who exists.
 
@@ -106,7 +108,7 @@ impl Authenticator for Scram {
     fn begin(&self, user: &str, peer: &Peer) -> Box<dyn Exchange> {
         let allowed = peer.secure || settings::text(&self.shared.db, SCRAM_WITHOUT_TLS) == turborel::settings::ON;
         let (verifier, known) = self.verifier(user);
-        let offer = (self.plus, peer.end_point.clone());
+        let offer = Offered { plus: self.plus, end_point: peer.end_point.clone(), exporter: peer.exporter.clone() };
         Box::new(Proving { user: user.to_owned(), offer, stage: Stage::Begun { allowed, verifier, known } })
     }
 }
@@ -124,12 +126,20 @@ enum Stage {
     Over,
 }
 
+/// What an exchange's mechanism and connection offer (`Offer`).
+struct Offered {
+    /// Whether its mechanism is `scram-sha-256-plus`.
+    plus: bool,
+    /// Its connection's `tls-server-end-point`, if it has one.
+    end_point: Option<Vec<u8>>,
+    /// Its connection's `tls-exporter`, if it has one.
+    exporter: Option<Vec<u8>>,
+}
+
 /// An exchange of `Scram`.
 struct Proving {
     user: String,
-    /// Whether its mechanism is `scram-sha-256-plus`, and its connection's
-    /// channel binding, if it has one.
-    offer: (bool, Option<Vec<u8>>),
+    offer: Offered,
     stage: Stage,
 }
 
@@ -145,7 +155,7 @@ impl Exchange for Proving {
                 "[DESIGN] SCRAM-SHA-256 is taken over TLS, a Unix socket or a named pipe, over plain TCP only if SERVER.SCRAM_WITHOUT_TLS is ON".into(),
             ),
             Stage::Begun { allowed: true, verifier, known } => {
-                let offer = Offer { plus: self.offer.0, end_point: self.offer.1.as_deref() };
+                let offer = Offer { plus: self.offer.plus, end_point: self.offer.end_point.as_deref(), exporter: self.offer.exporter.as_deref() };
                 let begun = First::read(input, offer).and_then(|first| Ok((first, scram::nonce()?)));
                 let (first, nonce) = match begun {
                     Ok(begun) => begun,

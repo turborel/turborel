@@ -23,7 +23,9 @@ rustls = { version = "=0.23.46", default-features = false, features = ["aws_lc_r
 rustls-native-certs = { version = "=0.8.5", optional = true }
 
 [features]
-tls = ["dep:rustls"]
+# TLS; its channel binding `tls-exporter` (`tls::channel`) takes its label
+# from the protocol's `scram`, whose aws-lc-rs rustls already has.
+tls = ["dep:rustls", "turborel-protocol/scram"]
 # Trusting the platform's certificate authorities too, when asked
 # (`tls::roots`): rustls-native-certs.
 system-roots = ["tls", "dep:rustls-native-certs"]

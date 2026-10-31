@@ -62,13 +62,24 @@ pub trait Mechanism {
     fn ready(&self) -> Result<()> {
         Ok(())
     }
-    /// The connection about to carry it is secured by TLS, and its server
-    /// presented `certificate`, as DER: a mechanism that binds itself to
-    /// its channel, as SCRAM's PLUS does, takes it, for this connection
-    /// alone. Called before `name` and `initial` by `tls::connect` and
-    /// `target::connect_to`; a program opening a TLS stream of its own
-    /// calls it before `Connection::open`. None takes it by default.
-    fn bind(&mut self, _certificate: &[u8]) {}
+    /// The connection about to carry it is secured by TLS, of `channel`:
+    /// a mechanism that binds itself to its channel, as SCRAM's PLUS does,
+    /// takes it, for this connection alone. Called before `name` and
+    /// `initial` by `tls::connect` and `target::connect_to`; a program
+    /// opening a TLS stream of its own calls it, of `tls::channel`, before
+    /// `Connection::open`. None takes it by default.
+    fn bind(&mut self, _channel: &TlsChannel) {}
+}
+
+/// \[DESIGN\] What a TLS connection's handshake gives a mechanism to bind
+/// itself to (`Mechanism::bind`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TlsChannel {
+    /// The certificate the server presented, its chain's first, as DER.
+    pub certificate: Option<Vec<u8>>,
+    /// The connection's channel binding `tls-exporter` [RFC 9266 §2]: the
+    /// keying material its session exports, over TLS 1.3 alone.
+    pub exporter: Option<Vec<u8>>,
 }
 
 /// \[DESIGN\] The client's side of `trust`: nothing to prove, so a server

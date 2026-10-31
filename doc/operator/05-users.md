@@ -54,7 +54,7 @@ all takes:
 
 | Mechanism | How |
 |---|---|
-| `scram-sha-256-plus` | SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677), over TLS: as `scram-sha-256`, the exchange bound to the TLS connection by `tls-server-end-point` (RFC 5929), the hash of the certificate the server presented. The command-line client uses it over TLS. |
+| `scram-sha-256-plus` | SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677), over TLS: as `scram-sha-256`, the exchange bound to the TLS connection. Over TLS 1.3 by `tls-exporter` (RFC 9266), keying material of that connection alone; over TLS 1.2 by `tls-server-end-point` (RFC 5929), the hash of the certificate the server presented. The command-line client uses it over TLS. |
 | `scram-sha-256` | SCRAM-SHA-256 (RFC 5802, RFC 7677): the client proves it knows the password, and the server that it knows the verifier, by a challenge and response; the password never travels. The command-line client uses it over a Unix socket or named pipe. |
 | `password` | the password is sent, inside TLS or over a Unix socket or named pipe, and checked against the verifier |
 
@@ -67,16 +67,25 @@ plain TCP all the same, for a network its operator trusts; it is OFF by
 default, and a client sends it so only if its program says.
 
 Over TLS, the binding keeps a server in the middle from relaying the
-exchange: one that presents its own certificate binds the client to
-that, which the server's own does not match, and the login is refused
-as a wrong password is. Each connection is bound to the certificate its
-handshake presented, a certificate taken again included ([Certificates
-renewed](06-network.md#certificates-renewed)). A certificate whose
-signature uses no hash, as Ed25519's, or two, defines no binding: over
-it the client asks for `scram-sha-256`, saying it could bind, and the
-server takes it. A client saying so where the server's certificate does
-define a binding is refused, as a server in the middle hiding the
-binding would make it:
+exchange: it holds one TLS connection to the client and another to the
+server, so what the client binds is not what the server binds, and the
+login is refused as a wrong password is. The client names the binding in
+its first message, and the server takes the one it names where the
+connection has it:
+
+| Binding | Where | What is bound |
+|---|---|---|
+| `tls-exporter` | TLS 1.3; the client's choice there | 32 bytes exported of the connection's own keys |
+| `tls-server-end-point` | TLS 1.2 and 1.3; the client's choice over TLS 1.2 | the hash of the certificate the server presented |
+
+Over TLS 1.2 there is no `tls-exporter`. Each connection is bound to the
+certificate its handshake presented, a certificate taken again included
+([Certificates renewed](06-network.md#certificates-renewed)). A
+certificate whose signature uses no hash, as Ed25519's, or two, defines
+no `tls-server-end-point`: over TLS 1.2 the client then asks for
+`scram-sha-256`, saying it could bind, and the server takes it. A
+client saying so where the server does offer a binding is refused, as a
+server in the middle hiding the binding would make it:
 
 ```
 turborel: SQLCODE -919 (SQLSTATE 28000): SCRAM: the client believes the server offers no channel binding, which it does: a downgrade

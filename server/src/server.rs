@@ -45,7 +45,7 @@ use crate::settings::{
 };
 use crate::settings::{count, declare, millis};
 use crate::shown::{self, Operator, Present, Shown};
-use crate::tls::{Secured, Tls};
+use crate::tls::{Handshaken, Secured, Tls};
 use crate::told::{Throttle, Told};
 use crate::transport::{Listener, Transport};
 
@@ -528,7 +528,9 @@ impl Arrival {
         let name = peer.name();
         let told = |e: &SqlError| self.services.database().tell(&Event::TlsFailed { peer: name, message: e.msg.clone() });
         match handshake.await {
-            Ok(Secured::Tls(secured, certificate, end_point)) => Some((secured, Peer { secure: true, certificate, end_point, ..peer })),
+            Ok(Secured::Tls(secured, Handshaken { certificate, end_point, exporter })) => {
+                Some((secured, Peer { secure: true, certificate, end_point, exporter, ..peer }))
+            }
             Ok(Secured::Plain(plain)) => {
                 if tls.required() {
                     self.protocol.refuse(plain, clear()).await;

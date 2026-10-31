@@ -3,6 +3,7 @@
 //! named pipe, over plain TCP only if the server allows it; proofs wrong, tampered with or
 //! replayed refused, and a server that does not prove itself refused by
 //! the client. Over TLS, SCRAM-SHA-256-PLUS binds the exchange to the
+//! connection, over TLS 1.3 by `tls-exporter`, over TLS 1.2 by the
 //! certificate the server presented: relayed or downgraded, refused.
 
 use std::net::TcpStream;
@@ -12,11 +13,11 @@ use std::sync::Arc;
 
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
-use rustls::{ClientConnection, StreamOwned};
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use turborel::db::Database;
 use turborel::value::Value;
-use turborel_client::connection::{self, Connection, Mechanism};
+use turborel_client::connection::{self, Connection, Mechanism, TlsChannel};
 use turborel_client::scram::Scram;
 use turborel_client::tls;
 use turborel_protocol::scram::{self, Client};
@@ -203,7 +204,24 @@ fn a_client_refuses_a_server_that_does_not_prove_itself() {
 /// A TLS stream to `server`, trusting `pki`'s authority, its handshake
 /// done: for a mechanism bound by hand (`Mechanism::bind`).
 fn handshaken(server: &Running, pki: &Pki) -> tls::TlsStream {
-    let config = tls::trusting(&pki.authority).unwrap();
+    handshaken_by(server, tls::trusting(&pki.authority).unwrap())
+}
+
+/// A client's TLS of version 1.2 alone, trusting `pki`'s authority.
+fn tls12(pki: &Pki) -> Arc<ClientConfig> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let versions = ClientConfig::builder_with_provider(provider).with_protocol_versions(&[&rustls::version::TLS12]).unwrap();
+    Arc::new(versions.with_root_certificates(tls::roots(Some(&pki.authority), false).unwrap()).with_no_client_auth())
+}
+
+/// The binding of a TLS connection whose server presented `certificate`,
+/// as DER, of no `tls-exporter`: as over TLS 1.2.
+fn by_certificate(certificate: Vec<u8>) -> TlsChannel {
+    TlsChannel { certificate: Some(certificate), exporter: None }
+}
+
+/// A TLS stream to `server`, by `config`, its handshake done.
+fn handshaken_by(server: &Running, config: Arc<ClientConfig>) -> tls::TlsStream {
     let mut tcp = TcpStream::connect(server.address).unwrap();
     let mut session = ClientConnection::new(config, ServerName::try_from("localhost").unwrap()).unwrap();
     while session.is_handshaking() {
@@ -232,7 +250,7 @@ fn scram_over_tls_is_bound_to_its_connection() {
     let (_db, plus) = served_by(&alone, true);
     assert_eq!(over_tls(&plus, &alone, ("ann", "ann's")).unwrap(), "ANN", "by scram-sha-256-plus");
     let mut relayed = Scram::new("ann's");
-    relayed.bind(&der_of(&both.chain));
+    relayed.bind(&by_certificate(der_of(&both.chain)));
     assert_eq!(relayed.name(), MECHANISM_PLUS);
     let refused = Connection::open(handshaken(&plus, &alone), "ann", &mut relayed).err().unwrap();
     assert_eq!(state(&refused), ("28000", -919), "{refused}");
@@ -240,13 +258,13 @@ fn scram_over_tls_is_bound_to_its_connection() {
     let unbound = Connection::open(handshaken(&server, &both), "ann", &mut Scram::new("ann's")).unwrap();
     assert_eq!(unbound.authorization(), "ANN", "a client that binds nothing");
     let mut unoffered = Scram::new("ann's");
-    unoffered.bind(&ed25519_certificate());
+    unoffered.bind(&by_certificate(ed25519_certificate()));
     assert_eq!(unoffered.name(), MECHANISM);
     let downgraded = Connection::open(handshaken(&server, &both), "ann", &mut unoffered).err().unwrap();
     let why = "SCRAM: the client believes the server offers no channel binding, which it does: a downgrade";
     assert_eq!((state(&downgraded), downgraded.message.as_str()), (("28000", -919), why));
     let mut once = Scram::new("ann's");
-    once.bind(&der_of(&both.chain));
+    once.bind(&by_certificate(der_of(&both.chain)));
     once.initial();
     assert_eq!(once.name(), MECHANISM, "a binding is of one connection");
 }
@@ -265,7 +283,63 @@ fn a_certificate_taken_again_binds_the_connections_after() {
     db.set_setting(TLS_KEY, &Value::Char(new.key.display().to_string())).unwrap();
     assert_eq!(over_tls(&server, &new, ("ann", "ann's")).unwrap(), "ANN", "bound to the new one");
     let mut stale = Scram::new("ann's");
-    stale.bind(&der_of(&old.chain));
+    stale.bind(&by_certificate(der_of(&old.chain)));
     let refused = Connection::open(handshaken(&server, &new), "ann", &mut stale).err().unwrap();
     assert_eq!(state(&refused).0, "28000", "{refused}");
+}
+
+/// Verifies: [DESIGN] RULES.md D43; RFC 9266 §2, §3: over TLS 1.3 the
+/// client binds by `tls-exporter`, 32 bytes the connection exports, which
+/// the server takes though the certificate the client names is another's:
+/// the connection, not the certificate, is bound. A client of another
+/// connection's keying material, as one is through a server in the
+/// middle relaying between two TLS connections to the same server, is
+/// refused (SQLSTATE 28000), though the certificate is the server's own.
+#[test]
+fn over_tls_1_3_scram_is_bound_by_the_exporter() {
+    let (pki, other) = (pki("scram-exporter"), pki("scram-exporter-other"));
+    let (_db, server) = served_by(&pki, true);
+    let stream = handshaken(&server, &pki);
+    let own = tls::channel(&stream);
+    assert_eq!((stream.conn.protocol_version(), own.exporter.as_ref().map(Vec::len)), (Some(rustls::ProtocolVersion::TLSv1_3), Some(32)));
+    assert_eq!(own.certificate, Some(der_of(&pki.chain)));
+    let mut bound = Scram::new("ann's");
+    bound.bind(&TlsChannel { certificate: Some(der_of(&other.chain)), ..own.clone() });
+    assert_eq!(bound.name(), MECHANISM_PLUS);
+    assert_eq!(Connection::open(stream, "ann", &mut bound).unwrap().authorization(), "ANN", "by tls-exporter");
+    let (relay, onward) = (handshaken(&server, &pki), handshaken(&server, &pki));
+    let mut relayed = Scram::new("ann's");
+    relayed.bind(&tls::channel(&relay));
+    let refused = Connection::open(onward, "ann", &mut relayed).err().unwrap();
+    assert_eq!(state(&refused), ("28000", -919), "{refused}");
+    assert_eq!(over_tls(&server, &pki, ("ann", "ann's")).unwrap(), "ANN", "tls::connect binds by tls-exporter");
+}
+
+/// Verifies: [DESIGN] RULES.md D43; RFC 9266 §2; RFC 5929 §4; RFC 5802
+/// §6: over TLS 1.2 the connection has no `tls-exporter`, so the client
+/// binds by `tls-server-end-point`, through `tls::connect` too; one bound
+/// to another certificate is refused, as is one naming `tls-exporter`
+/// there, a binding type the connection does not offer (SQLSTATE 28000).
+#[test]
+fn over_tls_1_2_scram_is_bound_by_the_certificate() {
+    let (pki, other) = (pki("scram-tls12"), pki("scram-tls12-other"));
+    let (_db, server) = served_by(&pki, true);
+    let config = tls12(&pki);
+    let stream = handshaken_by(&server, Arc::clone(&config));
+    let own = tls::channel(&stream);
+    assert_eq!((stream.conn.protocol_version(), &own), (Some(rustls::ProtocolVersion::TLSv1_2), &by_certificate(der_of(&pki.chain))));
+    let mut bound = Scram::new("ann's");
+    bound.bind(&own);
+    assert_eq!(bound.name(), MECHANISM_PLUS);
+    assert_eq!(Connection::open(stream, "ann", &mut bound).unwrap().authorization(), "ANN", "by tls-server-end-point");
+    let connected = tls::connect(server.address, ("localhost", &config), "ann", &mut Scram::new("ann's")).unwrap();
+    assert_eq!(connected.authorization(), "ANN");
+    let mut relayed = Scram::new("ann's");
+    relayed.bind(&by_certificate(der_of(&other.chain)));
+    let refused = Connection::open(handshaken_by(&server, Arc::clone(&config)), "ann", &mut relayed).err().unwrap();
+    assert_eq!(state(&refused), ("28000", -919), "{refused}");
+    let mut exporting = Scram::new("ann's");
+    exporting.bind(&TlsChannel { exporter: Some(vec![0; 32]), ..by_certificate(der_of(&pki.chain)) });
+    let unoffered = Connection::open(handshaken_by(&server, config), "ann", &mut exporting).err().unwrap();
+    assert_eq!(unoffered.message, "SCRAM: this connection offers no channel binding tls-exporter: not TLS 1.3", "{unoffered}");
 }

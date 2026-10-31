@@ -25,10 +25,11 @@ not. Each takes the user to connect as and a `Mechanism` that proves it:
   socket or a named pipe, unless `Scram::in_the_clear` says otherwise,
   for a server whose SERVER.SCRAM_WITHOUT_TLS is ON. Over TLS, by
   `tls::connect` or `connect_to`, it is SCRAM-SHA-256-PLUS, bound to the
+  connection, over TLS 1.3 by `tls-exporter`, over TLS 1.2 by the
   certificate the server presented, so a server in the middle cannot
   relay it; a program that opens a TLS stream of its own and gives it to
   `Connection::open` binds it first, by `Mechanism::bind` with
-  `tls::presented`.
+  `tls::channel`.
 - `Password`, of a password, sent whole, only over TLS, a Unix socket or
   a named pipe.
 - `Certificate`, which proves the user by the certificate presented

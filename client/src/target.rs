@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-use crate::connection::{Connection, Mechanism, Result, failed, in_the_clear};
+use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed, in_the_clear};
 use crate::timeouts::{Socket, Timeouts, io_failed};
 
 /// A stream that reads and writes, of any transport.
@@ -15,9 +15,9 @@ pub trait Duplex: Read + Write + Send {}
 
 impl<T: Read + Write + Send> Duplex for T {}
 
-/// A stream to a server, a handle on its socket, and over TLS the
-/// certificate the server presented, as DER.
-pub(crate) type Opened = (Box<dyn Duplex>, Socket, Option<Vec<u8>>);
+/// A stream to a server, a handle on its socket, and over TLS what its
+/// handshake gives a mechanism to bind to.
+pub(crate) type Opened = (Box<dyn Duplex>, Socket, Option<TlsChannel>);
 
 /// Where a server is, and how it is reached.
 #[derive(Clone)]
@@ -69,8 +69,8 @@ impl Target {
     }
 
     /// A stream to the server, as `stream_within`, a handle on its socket,
-    /// to bound its waits later, and over TLS the certificate the server
-    /// presented, as DER, to bind a mechanism to (`Mechanism::bind`).
+    /// to bound its waits later, and over TLS what its handshake gives a
+    /// mechanism to bind to (`Mechanism::bind`).
     ///
     /// # Errors
     ///
@@ -98,8 +98,8 @@ impl Target {
                 let tcp = connected(address, limit)?;
                 let socket = Socket::tcp(&tcp)?;
                 let stream = crate::tls::secured(tcp, (name, config))?;
-                let certificate = crate::tls::presented(&stream);
-                Ok((Box::new(stream), socket, certificate))
+                let channel = crate::tls::channel(&stream);
+                Ok((Box::new(stream), socket, Some(channel)))
             }
         }
     }
@@ -154,9 +154,9 @@ pub fn connect_to_within(
     if matches!(target, Target::Tcp(_)) {
         in_the_clear(mechanism)?;
     }
-    let (stream, socket, certificate) = target.opened(timeouts.connect)?;
-    if let Some(presented) = certificate {
-        mechanism.bind(&presented);
+    let (stream, socket, channel) = target.opened(timeouts.connect)?;
+    if let Some(secured) = channel {
+        mechanism.bind(&secured);
     }
     Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(target.clone()))
 }

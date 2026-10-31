@@ -142,9 +142,11 @@ fn malformed_messages_are_refused() {
 }
 
 /// The offer of SCRAM-SHA-256 where there is no channel to bind.
-const PLAIN: Offer<'static> = Offer { plus: false, end_point: None };
+const PLAIN: Offer<'static> = Offer { plus: false, end_point: None, exporter: None };
 /// A certificate's hash, as `end_point` gives it.
 const HASH: &[u8] = &[7; 32];
+/// A connection's exported keying material, as `tls-exporter` binds it.
+const EXPORTED: &[u8] = &[9; EXPORTER_BYTES];
 
 /// The server's side of an exchange begun by `first`, of what `offer`
 /// says, as `server`'s.
@@ -176,7 +178,7 @@ fn bound_of(client_final: &[u8]) -> Vec<u8> {
 /// none is offered proves, its `c=` the header alone.
 #[test]
 fn a_bound_exchange_proves_on_its_own_channel_alone() {
-    let offer = Offer { plus: true, end_point: Some(HASH) };
+    let offer = Offer { plus: true, end_point: Some(HASH), exporter: None };
     let mut client = Client::new(USER, PASSWORD).bound(Channel::EndPoint(HASH.to_vec()));
     let (server, first, client_final) = exchanged(&mut client, offer);
     assert!(first.starts_with(b"p=tls-server-end-point,,n=user,r="), "{}", String::from_utf8_lossy(&first));
@@ -192,34 +194,76 @@ fn a_bound_exchange_proves_on_its_own_channel_alone() {
     unoffered.verify(&plain.finish(&unoffered_final).unwrap()).unwrap();
 }
 
-/// A case of a header weighed: the header, whether the mechanism is
-/// PLUS, the connection's binding, and the refusal expected, if any.
-type Case<'a> = (&'a str, bool, Option<&'a [u8]>, Option<&'a str>);
+/// Verifies: [DESIGN] RFC 9266 §2, §3; RFC 5802 §6, §7: over TLS 1.3
+/// the client's header is `p=tls-exporter`, its `c=` that header then the
+/// connection's exported keying material, which the server checks against
+/// its own of the connection, and the exchange proves. A client of
+/// another connection's material, as one is through a server in the
+/// middle relaying between two TLS connections, is refused, its proof
+/// otherwise right; so is one naming `tls-exporter` whose `c=` carries
+/// the certificate's hash, a binding other than the header names. A
+/// client naming `tls-server-end-point` is still taken [RFC 5802 §6.1].
+#[test]
+fn an_exporter_bound_exchange_proves_on_its_own_connection_alone() {
+    let offer = Offer { plus: true, end_point: Some(HASH), exporter: Some(EXPORTED) };
+    let mut client = Client::new(USER, PASSWORD).bound(Channel::Exporter(EXPORTED.to_vec()));
+    let (server, first, client_final) = exchanged(&mut client, offer);
+    assert!(first.starts_with(b"p=tls-exporter,,n=user,r="), "{}", String::from_utf8_lossy(&first));
+    assert_eq!(bound_of(&client_final), [&b"p=tls-exporter,,"[..], EXPORTED].concat());
+    client.verify(&server.finish(&client_final).unwrap()).unwrap();
+    let mut relayed = Client::new(USER, PASSWORD).bound(Channel::Exporter(vec![8; EXPORTER_BYTES]));
+    let (relay, _, relayed_final) = exchanged(&mut relayed, offer);
+    let refused = relay.finish(&relayed_final).unwrap_err();
+    assert_eq!((refused.sqlstate().as_str(), refused.msg.contains("channel binding")), ("28000", true), "{}", refused.msg);
+    let mut end_point = Client::new(USER, PASSWORD).bound(Channel::EndPoint(HASH.to_vec()));
+    let (by_hash, _, hash_final) = exchanged(&mut end_point, offer);
+    end_point.verify(&by_hash.finish(&hash_final).unwrap()).unwrap();
+    let (by_hash_c, exporter_c) =
+        (encode(&[&b"p=tls-server-end-point,,"[..], HASH].concat()), encode(&[&b"p=tls-exporter,,"[..], HASH].concat()));
+    let mixed = String::from_utf8(hash_final).unwrap().replacen(&by_hash_c, &exporter_c, 1);
+    let crossed = offered(&client.first(CLIENT_NONCE), offer).finish(mixed.as_bytes()).unwrap_err();
+    assert!(crossed.msg.contains("channel binding"), "{}", crossed.msg);
+}
 
-/// Verifies: [DESIGN] RFC 5802 §6; RFC 5801 §3, §5: a header is weighed
-/// against what the server offers: `n` is taken with a channel or
-/// without; `y` only where the server offers no binding, else refused as
-/// a downgrade; `p=tls-server-end-point` only of SCRAM-SHA-256-PLUS where
-/// the connection has a binding; SCRAM-SHA-256-PLUS only with it; another
-/// binding type, or another identity, refused (SQLSTATE 28000).
+/// A case of a header weighed: the header, whether the mechanism is
+/// PLUS, the connection's bindings, `tls-server-end-point` then
+/// `tls-exporter`, and the refusal expected, if any.
+type Case<'a> = (&'a str, bool, (Option<&'a [u8]>, Option<&'a [u8]>), Option<&'a str>);
+
+/// Verifies: [DESIGN] RFC 5802 §6, §6.1; RFC 5801 §3, §5; RFC 9266 §3: a
+/// header is weighed against what the server offers: `n` is taken with a
+/// channel or without; `y` only where the server offers no binding of
+/// either type, else refused as a downgrade; `p=tls-server-end-point`
+/// and `p=tls-exporter` only of SCRAM-SHA-256-PLUS, each where the
+/// connection has that binding, as over TLS 1.2 it has no `tls-exporter`;
+/// SCRAM-SHA-256-PLUS only with one; another binding type, or another
+/// identity, refused (SQLSTATE 28000).
 #[test]
 fn a_header_is_weighed_against_the_offer() {
-    let tls = Some(HASH);
-    let cases: [Case<'_>; 11] = [
-        ("n,,", false, None, None),
-        ("n,,", false, tls, None),
-        ("y,,", false, None, None),
-        ("y,,", false, tls, Some("a downgrade")),
-        ("p=tls-server-end-point,,", true, tls, None),
-        ("p=tls-server-end-point,,", true, None, Some("offers no channel binding")),
-        ("p=tls-server-end-point,,", false, tls, Some("asks for scram-sha-256-plus")),
-        ("n,,", true, tls, Some("binds the channel")),
-        ("y,,", true, tls, Some("binds the channel")),
-        ("p=tls-unique,,", true, tls, Some("other than tls-server-end-point")),
-        ("p=tls-server-end-point,a=x,", true, tls, Some("another identity")),
+    let (none, tls12, tls13) = ((None, None), (Some(HASH), None), (Some(HASH), Some(EXPORTED)));
+    let cases: [Case<'_>; 19] = [
+        ("n,,", false, none, None),
+        ("n,,", false, tls13, None),
+        ("y,,", false, none, None),
+        ("y,,", false, tls12, Some("a downgrade")),
+        ("y,,", false, (None, Some(EXPORTED)), Some("a downgrade")),
+        ("p=tls-server-end-point,,", true, tls12, None),
+        ("p=tls-server-end-point,,", true, tls13, None),
+        ("p=tls-server-end-point,,", true, none, Some("offers no channel binding tls-server-end-point")),
+        ("p=tls-server-end-point,,", true, (None, Some(EXPORTED)), Some("offers no channel binding tls-server-end-point")),
+        ("p=tls-exporter,,", true, tls13, None),
+        ("p=tls-exporter,,", true, (None, Some(EXPORTED)), None),
+        ("p=tls-exporter,,", true, tls12, Some("offers no channel binding tls-exporter")),
+        ("p=tls-server-end-point,,", false, tls12, Some("asks for scram-sha-256-plus")),
+        ("p=tls-exporter,,", false, tls13, Some("asks for scram-sha-256-plus")),
+        ("n,,", true, tls13, Some("binds the channel")),
+        ("y,,", true, tls13, Some("binds the channel")),
+        ("p=tls-unique,,", true, tls13, Some("other than tls-exporter or tls-server-end-point")),
+        ("p=tls-server-end-point,a=x,", true, tls12, Some("another identity")),
+        ("p=tls-exporter,a=x,", true, tls13, Some("another identity")),
     ];
-    for (header, plus, end_point, refusal) in cases {
-        let read = First::read(format!("{header}n=u,r=abc").as_bytes(), Offer { plus, end_point });
+    for (header, plus, (end_point, exporter), refusal) in cases {
+        let read = First::read(format!("{header}n=u,r=abc").as_bytes(), Offer { plus, end_point, exporter });
         match refusal {
             None => assert!(read.is_ok(), "{header} {plus}"),
             Some(why) => {

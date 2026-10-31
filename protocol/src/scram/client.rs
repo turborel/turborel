@@ -47,9 +47,11 @@ impl Client {
         Client { user: user.to_owned(), password: password.to_owned(), channel: Channel::Unbound, stage: Stage::Begun }
     }
 
-    /// It, of the channel binding `channel` [RFC 5802 §6]:
-    /// `Channel::EndPoint` for SCRAM-SHA-256-PLUS over TLS, of the hash of
-    /// the certificate the server presented (`end_point`).
+    /// It, of the channel binding `channel` [RFC 5802 §6]: for
+    /// SCRAM-SHA-256-PLUS, `Channel::Exporter` over TLS 1.3, of the keying
+    /// material the connection exports [RFC 9266 §2], or
+    /// `Channel::EndPoint` over TLS, of the hash of the certificate the
+    /// server presented (`end_point`).
     #[must_use]
     pub fn bound(self, channel: Channel) -> Client {
         Client { channel, ..self }

@@ -2382,26 +2382,39 @@ is configured, seen and changed like the database's.
     client treats it as secret unless told (`Scram::in_the_clear`).
 - **`scram-sha-256-plus`** (RFC 5802 §6, RFC 7677) binds the exchange to
   its TLS connection, so a relaying server in the middle is refused.
-  - **Binding type**: `tls-server-end-point` alone (RFC 5929 §4), the
-    hash of the server's certificate: SHA-256 for an MD5 or SHA-1
-    signature, else the signature's own hash. No hash, or two, as
-    Ed25519 or RSASSA-PSS of a mask hash not its message hash: no
-    binding. `tls-unique` and `tls-exporter` are not taken.
-  - **Offer**: the protocol has no mechanism list; the server's
-    certificate is its offer. Over TLS with a binding, both mechanisms
-    are served and the client asks for PLUS (`p=`); without one, the
-    client asks for `scram-sha-256` with `y`. Off TLS, `n`.
-  - **Header rules**: PLUS only with `p=tls-server-end-point`, and only
-    where the connection has a binding; `scram-sha-256` only with `n` or
-    `y`; `y` refused where the server has a binding (a downgrade); `n`
-    taken, from a client that binds nothing. `c=` must be the header then
-    the hash, else refused as a wrong proof.
+  - **Binding types**: two.
+    - `tls-exporter` (RFC 9266 §2), over TLS 1.3 alone: 32 bytes of
+      keying material, label `EXPORTER-Channel-Binding`, empty context
+      (rustls's `export_keying_material`, both sides). It binds the
+      connection itself. Not over TLS 1.2: RFC 9266 §2 needs the
+      extended master secret there, which rustls does not report.
+    - `tls-server-end-point` (RFC 5929 §4), over TLS 1.2 and 1.3: the
+      hash of the server's certificate, SHA-256 for an MD5 or SHA-1
+      signature, else the signature's own hash. No hash, or two, as
+      Ed25519 or RSASSA-PSS of a mask hash not its message hash: none.
+    - `tls-unique` is not taken: rustls exposes no Finished message.
+  - **Offer**: the protocol has no mechanism list; the connection is the
+    offer. Over TLS with a binding, both mechanisms are served.
+  - **Client's choice**: `p=tls-exporter` over TLS 1.3, the binding RFC
+    9266 §3 makes TLS 1.3's; else `p=tls-server-end-point`; with neither
+    (TLS 1.2, a certificate of no binding), `scram-sha-256` with `y`.
+    Off TLS, `n`.
+  - **Header rules**: PLUS only with `p=tls-exporter` or
+    `p=tls-server-end-point`, each only where the connection has it (the
+    type the client names, RFC 5802 §6.1); `scram-sha-256` only with `n`
+    or `y`; `y` refused where the server has either binding (a
+    downgrade); `n` taken, from a client that binds nothing. `c=` must be
+    the header then the binding's data, else refused as a wrong proof.
+    The proof covers the header, so the type cannot be changed between.
+  - **Once a connection**: a connection is authenticated once and a
+    refusal closes it, as RFC 9266 §4.1 asks of `tls-exporter`.
   - **Which certificate**: the hash is computed as TLS's files are taken
     and kept with the configuration they make; a connection takes both at
     once, so it is bound to the certificate its handshake presented,
-    through any reload (`Peer::end_point`). The client binds to the
-    certificate it received (`Mechanism::bind`), for that connection
-    alone.
+    through any reload (`Peer::end_point`). The exporter is the
+    connection's own (`Peer::exporter`). The client binds to what its
+    handshake gave (`tls::channel`, `Mechanism::bind`), for that
+    connection alone.
   - **Format**: no new message or field: the mechanism's name in Hello
     and the GS2 header carry it, within protocol version 1 (D45).
   - **Servers**: `Scram::plus` shares its secret with `Scram`, so an

@@ -10,7 +10,8 @@ use aws_lc_rs::constant_time;
 use turborel::error::Result;
 
 use super::{
-    Channel, GS2_END_POINT, GS2_NONE, GS2_UNOFFERED, Key, Keys, attribute, decode, encode, hmac, is_nonce, refused, sha256, text, xor,
+    Channel, GS2_END_POINT, GS2_EXPORTER, GS2_NONE, GS2_UNOFFERED, Key, Keys, attribute, decode, encode, hmac, is_nonce, refused, sha256,
+    text, xor,
 };
 
 /// \[DESIGN\] The flag of a GS2 header asking for channel binding by
@@ -19,14 +20,18 @@ const OTHER_BINDING: &str = "p=";
 
 /// What a server offers an exchange [RFC 5802 §6]: whether the client
 /// asked for the mechanism bound to its channel, SCRAM-SHA-256-PLUS, and
-/// the channel binding `tls-server-end-point` of its connection, if it has
-/// one (`end_point`): over TLS, of a certificate that defines one.
+/// the channel bindings its connection has: over TLS,
+/// `tls-server-end-point` of a certificate that defines one (`end_point`),
+/// and over TLS 1.3 `tls-exporter` [RFC 9266 §2]. Of the two, the server
+/// takes the one the client names [RFC 5802 §6.1].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Offer<'a> {
     /// Whether the mechanism is SCRAM-SHA-256-PLUS.
     pub plus: bool,
-    /// The connection's channel binding data, if it has one.
+    /// The connection's `tls-server-end-point` data, if it has one.
     pub end_point: Option<&'a [u8]>,
+    /// The connection's `tls-exporter` data, if it has one.
+    pub exporter: Option<&'a [u8]>,
 }
 
 /// The client's first message, read.
@@ -40,33 +45,54 @@ pub struct First {
     nonce: String,
 }
 
+/// The flag of the GS2 header `message` begins with, and the message
+/// without that header [RFC 5802 §7]: another binding type, or another
+/// identity, refused.
+fn flag_of(message: &str) -> Result<(Flag, &str)> {
+    let flags =
+        [(GS2_NONE, Flag::Unbound), (GS2_UNOFFERED, Flag::Unoffered), (GS2_END_POINT, Flag::EndPoint), (GS2_EXPORTER, Flag::Exporter)];
+    if let Some(found) = flags.into_iter().find_map(|(header, flag)| Some((flag, message.strip_prefix(header)?))) {
+        return Ok(found);
+    }
+    // The flags `p=tls-server-end-point` and `p=tls-exporter`, before
+    // their authzid.
+    let known = [GS2_END_POINT, GS2_EXPORTER].map(|header| header.strip_suffix(',').unwrap_or(header));
+    if message.starts_with(OTHER_BINDING) && !known.iter().any(|flag| message.starts_with(flag)) {
+        return Err(refused("the client asks for a channel binding other than tls-exporter or tls-server-end-point"));
+    }
+    Err(refused("the client asks for another identity, or its header is malformed"))
+}
+
+/// The data of a binding of the connection, `data`; refused, saying
+/// `why`, if it has none [RFC 5802 §6: "the server does not support the
+/// indicated channel binding type"].
+fn offered(data: Option<&[u8]>, why: &str) -> Result<Vec<u8>> {
+    data.map(<[u8]>::to_vec).ok_or_else(|| refused(why))
+}
+
 /// The channel binding the GS2 header of `message` asks for, of the data
 /// `offer` binds, and the message without it [RFC 5802 §6]: the PLUS
-/// mechanism binds the channel and the other does not; a client that
-/// could bind, but believes the server offers none, is refused where the
-/// server does, as a mechanism list stripped of the PLUS one would be.
+/// mechanism binds the channel, by the type the client names, and the
+/// other does not; a client that could bind, but believes the server
+/// offers none, is refused where the server offers either type, as a
+/// mechanism list stripped of the PLUS one would be.
 fn binding_of<'m>(message: &'m str, offer: Offer<'_>) -> Result<(Channel, &'m str)> {
-    let flags = [(GS2_NONE, Flag::Unbound), (GS2_UNOFFERED, Flag::Unoffered), (GS2_END_POINT, Flag::EndPoint)];
-    let Some((flag, bare)) = flags.into_iter().find_map(|(header, flag)| Some((flag, message.strip_prefix(header)?))) else {
-        // The flag of `p=tls-server-end-point`, before its authzid.
-        let end_point = GS2_END_POINT.strip_suffix(',').unwrap_or(GS2_END_POINT);
-        if message.starts_with(OTHER_BINDING) && !message.starts_with(end_point) {
-            return Err(refused("the client asks for a channel binding other than tls-server-end-point"));
+    let (flag, bare) = flag_of(message)?;
+    let plus = "scram-sha-256-plus binds the channel: its header is p=tls-exporter or p=tls-server-end-point";
+    let no_end_point = "this connection offers no channel binding tls-server-end-point: not TLS, or its certificate defines none";
+    let no_exporter = "this connection offers no channel binding tls-exporter: not TLS 1.3";
+    let binds = offer.end_point.is_some() || offer.exporter.is_some();
+    let bound = match (flag, offer.plus, binds) {
+        (Flag::EndPoint, true, _) => Channel::EndPoint(offered(offer.end_point, no_end_point)?),
+        (Flag::Exporter, true, _) => Channel::Exporter(offered(offer.exporter, no_exporter)?),
+        (Flag::EndPoint, false, _) | (Flag::Exporter, false, _) => {
+            return Err(refused("a client binding its channel asks for scram-sha-256-plus"));
         }
-        return Err(refused("the client asks for another identity, or its header is malformed"));
-    };
-    let plus = "scram-sha-256-plus binds the channel: its header is p=tls-server-end-point";
-    let bound = match (flag, offer.plus, offer.end_point) {
-        (Flag::EndPoint, true, Some(data)) => Channel::EndPoint(data.to_vec()),
-        (Flag::EndPoint, true, None) => {
-            return Err(refused("this connection offers no channel binding: not TLS, or its certificate defines none"));
-        }
-        (Flag::EndPoint, false, _) => return Err(refused("a client binding its channel asks for scram-sha-256-plus")),
         (Flag::Unbound, true, _) | (Flag::Unoffered, true, _) => return Err(refused(plus)),
-        (Flag::Unoffered, false, Some(_)) => {
+        (Flag::Unoffered, false, true) => {
             return Err(refused("the client believes the server offers no channel binding, which it does: a downgrade"));
         }
-        (Flag::Unoffered, false, None) => Channel::Unoffered,
+        (Flag::Unoffered, false, false) => Channel::Unoffered,
         (Flag::Unbound, false, _) => Channel::Unbound,
     };
     Ok((bound, bare))
@@ -81,6 +107,8 @@ enum Flag {
     Unoffered,
     /// `p=tls-server-end-point`.
     EndPoint,
+    /// `p=tls-exporter`.
+    Exporter,
 }
 
 impl First {

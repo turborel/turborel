@@ -15,11 +15,17 @@
 //! presenting none is served as before, one presenting another's fails its
 //! handshake.
 //!
-//! Each connection secured knows the channel binding `tls-server-end-point`
-//! of the certificate it was presented [RFC 5929 §4] (`Peer::end_point`),
-//! for SCRAM-SHA-256-PLUS (`scram.rs`): computed once as the files are
-//! taken, and kept beside the configuration they make, so a connection
-//! has the binding of the very certificate its handshake presented.
+//! Each connection secured knows its channel bindings, for
+//! SCRAM-SHA-256-PLUS (`scram.rs`): `tls-server-end-point` of the
+//! certificate it was presented [RFC 5929 §4] (`Peer::end_point`),
+//! computed once as the files are taken, and kept beside the configuration
+//! they make, so a connection has the binding of the very certificate its
+//! handshake presented; and over TLS 1.3 `tls-exporter` [RFC 9266 §2]
+//! (`Peer::exporter`), the keying material its session exports, of the
+//! label RFC 9266 registers and an empty context. Over TLS 1.2 there is no
+//! `tls-exporter`: RFC 9266 §2 defines it there only with the extended
+//! master secret, which rustls does not report. rustls never renegotiates,
+//! which RFC 9266 §4.2 forbids of it.
 //!
 //! Its files are taken again without a restart (`Tls::reload`): when the
 //! settings naming them change, as the next connection is secured, and
@@ -46,7 +52,7 @@ use tokio_rustls::TlsAcceptor;
 use turborel::db::Database;
 use turborel::diagnostics::Event;
 use turborel::files::Noted;
-use turborel_protocol::scram::end_point;
+use turborel_protocol::scram::{EXPORTER_BYTES, EXPORTER_LABEL, end_point};
 
 use crate::settings::{self, TLS_CERTIFICATE, TLS_CLIENT_CA, TLS_KEY};
 use crate::transport::Transport;
@@ -59,13 +65,34 @@ const HANDSHAKE: u8 = 22;
 
 /// What a connection is, once its first byte is read.
 pub enum Secured {
-    /// Secured by TLS; with the common name of the certificate its client
-    /// presented, verified, if any (`Peer::certificate`), and the channel
-    /// binding of the server's certificate, if it defines one
-    /// (`Peer::end_point`).
-    Tls(Box<dyn Transport>, Option<String>, Option<Vec<u8>>),
+    /// Secured by TLS, with what its handshake tells.
+    Tls(Box<dyn Transport>, Handshaken),
     /// In the clear.
     Plain(Box<dyn Transport>),
+}
+
+/// What a connection's TLS handshake tells its authenticators (`Peer`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Handshaken {
+    /// The common name of the certificate its client presented, verified,
+    /// if any (`Peer::certificate`).
+    pub certificate: Option<String>,
+    /// The channel binding `tls-server-end-point` of the server's
+    /// certificate, if it defines one (`Peer::end_point`).
+    pub end_point: Option<Vec<u8>>,
+    /// The channel binding `tls-exporter` of the connection, over TLS 1.3
+    /// (`Peer::exporter`).
+    pub exporter: Option<Vec<u8>>,
+}
+
+/// The channel binding `tls-exporter` of `connection` [RFC 9266 §2]: its
+/// keying material of the label `EXPORTER_LABEL`, a zero-length context
+/// and 32 bytes; over TLS 1.3 alone, none else.
+fn exporter(connection: &rustls::ServerConnection) -> Option<Vec<u8>> {
+    if connection.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3) {
+        return None;
+    }
+    connection.export_keying_material(vec![0_u8; EXPORTER_BYTES], EXPORTER_LABEL, Some(&[])).ok()
 }
 
 /// The files TLS is taken from, as the settings name them.
@@ -307,8 +334,10 @@ impl Tls {
         let offered = Arc::clone(&*whole(self.offered.read()));
         let acceptor = TlsAcceptor::from(Arc::clone(&offered.config));
         let secured = acceptor.accept(prefixed).await?;
-        let presented = secured.get_ref().1.peer_certificates().and_then(<[_]>::first).and_then(|c| common_name(c));
-        Ok(Secured::Tls(Box::new(secured), presented, offered.end_point.clone()))
+        let connection = secured.get_ref().1;
+        let certificate = connection.peer_certificates().and_then(<[_]>::first).and_then(|c| common_name(c));
+        let told = Handshaken { certificate, end_point: offered.end_point.clone(), exporter: exporter(connection) };
+        Ok(Secured::Tls(Box::new(secured), told))
     }
 }
 

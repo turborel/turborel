@@ -11,10 +11,11 @@ use std::sync::Arc;
 
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{ClientConfig, ClientConnection, ProtocolVersion, RootCertStore, StreamOwned};
+use turborel_protocol::scram::{EXPORTER_BYTES, EXPORTER_LABEL};
 
 use crate::Failure;
-use crate::connection::{Connection, Mechanism, Result, failed};
+use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed};
 use crate::target::Target;
 use crate::timeouts::{Socket, Timeouts, tcp_to};
 
@@ -168,17 +169,24 @@ pub fn connect(
     let socket = Socket::tcp(&tcp)?;
     socket.limit(timeouts.connect)?;
     let stream = secured(tcp, (name, config))?;
-    if let Some(certificate) = presented(&stream) {
-        mechanism.bind(&certificate);
-    }
+    mechanism.bind(&channel(&stream));
     let reach = Target::Tls(server, name.to_owned(), Arc::clone(config));
     Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(reach))
 }
 
-/// The certificate the server of `stream` presented, its chain's first,
-/// as DER: what a mechanism binds its channel to (`Mechanism::bind`).
-pub fn presented(stream: &TlsStream) -> Option<Vec<u8>> {
-    stream.conn.peer_certificates().and_then(<[_]>::first).map(|c| c.as_ref().to_vec())
+/// What the handshake of `stream` gives a mechanism to bind its channel
+/// to (`Mechanism::bind`): the certificate the server presented, its
+/// chain's first, as DER; and over TLS 1.3 the channel binding
+/// `tls-exporter`, the keying material of the label RFC 9266 §2 gives, a
+/// zero-length context and 32 bytes. Over TLS 1.2 there is none: RFC 9266
+/// §2 defines it there only with the extended master secret, which rustls
+/// does not report.
+pub fn channel(stream: &TlsStream) -> TlsChannel {
+    let certificate = stream.conn.peer_certificates().and_then(<[_]>::first).map(|c| c.as_ref().to_vec());
+    let exporter = (stream.conn.protocol_version() == Some(ProtocolVersion::TLSv1_3))
+        .then(|| stream.conn.export_keying_material(vec![0_u8; EXPORTER_BYTES], EXPORTER_LABEL, Some(&[])).ok())
+        .flatten();
+    TlsChannel { certificate, exporter }
 }
 
 /// The connection `tcp` to the server of the name `name`, secured by TLS

@@ -40,17 +40,22 @@ pub struct Peer {
     /// PLUS mechanism binds to; none off TLS, or of a certificate that
     /// defines none.
     pub end_point: Option<Vec<u8>>,
+    /// The channel binding `tls-exporter` of the connection [RFC 9266 §2]:
+    /// the keying material its TLS 1.3 session exports
+    /// (`turborel_protocol::scram::EXPORTER_LABEL`), which SCRAM's PLUS
+    /// mechanism binds to; none off TLS, or over TLS 1.2.
+    pub exporter: Option<Vec<u8>>,
 }
 
 impl Peer {
     /// A TCP client at `address`, not secured yet.
     pub fn tcp(address: SocketAddr) -> Peer {
-        Peer { origin: Origin::Tcp(address), secure: false, certificate: None, end_point: None }
+        Peer { origin: Origin::Tcp(address), secure: false, certificate: None, end_point: None, exporter: None }
     }
 
     /// A client of a Unix socket or a named pipe: secure.
     pub fn local() -> Peer {
-        Peer { origin: Origin::Local, secure: true, certificate: None, end_point: None }
+        Peer { origin: Origin::Local, secure: true, certificate: None, end_point: None, exporter: None }
     }
 
     /// Where from, as the server shows and tells it: its address, or
