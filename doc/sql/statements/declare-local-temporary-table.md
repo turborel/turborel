@@ -54,6 +54,7 @@ refer to.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2A000 | -102 | The name is not qualified by MODULE |
+| 01008 | 0 | Not an error: a warning, a BIT default shorter than its column padded with 0 bits |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user lacks a privilege a constraint needs |
 

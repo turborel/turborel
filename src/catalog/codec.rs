@@ -124,19 +124,14 @@ fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
     }
 }
 
-/// A default: 0 for none, 1 and a value, 2 for a user's, 3 for a datetime
-/// value function's: 0 CURRENT_DATE, 1 CURRENT_TIME or 2
-/// CURRENT_TIMESTAMP, and its precision; or 4 and a bit string padded as
-/// it is taken.
+/// A default: 0 for none, 1 and a value, 2 for a user's, or 3 for a
+/// datetime value function's: 0 CURRENT_DATE, 1 CURRENT_TIME or 2
+/// CURRENT_TIMESTAMP, and its precision.
 pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
     match default {
         None => out.put_u8(0),
         Some(ColumnDefault::Value(v)) => {
             out.put_u8(1);
-            put_value(out, v);
-        }
-        Some(ColumnDefault::Padded(v)) => {
-            out.put_u8(4);
             put_value(out, v);
         }
         Some(ColumnDefault::User) => out.put_u8(2),
@@ -167,7 +162,6 @@ pub(crate) fn default(r: &mut Reader<'_>) -> Result<Option<ColumnDefault>> {
             };
             Some(ColumnDefault::Datetime(moment, r.u32()?))
         }
-        4 => Some(ColumnDefault::Padded(value(r)?)),
         _ => return Err(r.corrupt("not a column default")),
     })
 }

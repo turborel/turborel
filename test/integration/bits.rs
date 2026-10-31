@@ -177,47 +177,49 @@ fn bit_string_defaults_11_5() {
     a.commit().unwrap();
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.5 GR1b v, GR2] a bit
-/// string default shorter than its fixed-length column is extended with
-/// 0-valued bits, and a statement that takes it, for a row, raises the
-/// warning 01008, implicit zero-bit padding: an INSERT whose row it fills,
-/// by an omitted column, DEFAULT or DEFAULT VALUES; an UPDATE setting
-/// DEFAULT; a column added of rows; a domain's default; a referential
-/// action SET DEFAULT [§11.8 GR5a iii]. One that takes it for no row, a
-/// default of the column's length, or one of a varying length raises none.
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.5 GR1b v] a bit string
+/// default shorter than its fixed-length column or domain is placed in the
+/// descriptor extended with 0-valued bits, and the statement placing it
+/// completes with the warning 01008, implicit zero-bit padding: a column
+/// definition of a table definition [§11.4 GR5], of a schema definition, of
+/// an add column definition [§11.11 GR4] or of a temporary table
+/// declaration [§13.11], a column of a domain among them; a set column
+/// default clause [§11.13 GR2]; a domain definition [§11.21 GR3] and a set
+/// domain default clause [§11.23 GR2]. A default of the length, or of a
+/// varying length, raises none, nor does a statement that takes a default.
 #[test]
-fn a_default_taken_padded_warns_11_5() {
+fn a_default_placed_padded_warns_11_5() {
     use turborel::db::Completion;
     use turborel::error::SqlState;
     let padded = Ok(Completion::Warning(SqlState::ZERO_BIT_PADDING));
     let db = Database::new();
-    db.schema(
-        "CREATE SCHEMA AUTHORIZATION A
-           CREATE DOMAIN D BIT(4) DEFAULT B'11'
-           CREATE TABLE T (F BIT(4) DEFAULT B'1', V BIT VARYING(4) DEFAULT X'A', W BIT(4) DEFAULT B'1010', N INTEGER)
-           CREATE TABLE U (E D, N INTEGER)
-           CREATE TABLE P (K BIT(4) PRIMARY KEY)
-           CREATE TABLE C (K BIT(4) DEFAULT B'0' REFERENCES P ON DELETE SET DEFAULT)",
-    )
-    .unwrap();
+    assert_eq!(
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE S (F BIT(4) DEFAULT B'1')").map_err(|e| e.code),
+        padded.clone(),
+        "of a schema definition"
+    );
+    db.schema("CREATE SCHEMA AUTHORIZATION B CREATE DOMAIN D BIT(4) DEFAULT X'A'").unwrap();
     let a = db.session("A");
-    assert_eq!(exec(&a, "INSERT INTO T (N) VALUES (1)"), padded, "F omitted");
-    assert_eq!(exec(&a, "INSERT INTO T (F, N) VALUES (B'1111', 2)"), Ok(Completion::Success), "V and W omitted");
-    assert_eq!(exec(&a, "INSERT INTO T VALUES (DEFAULT, B'1', B'0000', 3)"), padded, "DEFAULT");
-    assert_eq!(exec(&a, "INSERT INTO T DEFAULT VALUES"), padded);
-    assert_eq!(exec(&a, "INSERT INTO T (N) SELECT N FROM T WHERE N > 9"), Ok(Completion::NoData), "no row");
-    assert_eq!(exec(&a, "UPDATE T SET F = DEFAULT WHERE N = 2"), padded);
-    assert_eq!(exec(&a, "UPDATE T SET V = DEFAULT, W = DEFAULT"), Ok(Completion::Success));
-    assert_eq!(squeezed(&a, "SELECT F, V, W FROM T WHERE N = 2"), ["1000,1010,1010"]);
-    assert_eq!(exec(&a, "ALTER TABLE T ADD COLUMN G BIT(3) DEFAULT B'1'"), padded, "of its rows");
-    assert_eq!(exec(&a, "ALTER TABLE U ADD COLUMN G BIT(3) DEFAULT B'1'"), Ok(Completion::Success), "of no row");
-    assert_eq!(exec(&a, "INSERT INTO U (N) VALUES (1)"), padded, "the domain's");
-    assert_eq!(squeezed(&a, "SELECT E, G FROM U"), ["1100,100"]);
-    a.run("INSERT INTO P VALUES (B'0000'), (B'1111'), (B'0101')").unwrap();
-    a.run("INSERT INTO C VALUES (B'1111')").unwrap();
-    assert_eq!(exec(&a, "DELETE FROM P WHERE K = B'0101'"), Ok(Completion::Success), "no row referred to it");
-    assert_eq!(exec(&a, "DELETE FROM P WHERE K = B'1111'"), padded, "SET DEFAULT");
-    assert_eq!(squeezed(&a, "SELECT K FROM C"), ["0000"]);
+    let made = "CREATE TABLE T (F BIT(4) DEFAULT B'1', V BIT VARYING(4) DEFAULT X'A', W BIT(4) DEFAULT B'1010', N INTEGER)";
+    assert_eq!(exec(&a, made), padded);
+    assert_eq!(exec(&a, "CREATE TABLE T2 (V BIT VARYING(4) DEFAULT B'1', W BIT(4) DEFAULT X'A')"), Ok(Completion::Success));
+    assert_eq!(exec(&a, "INSERT INTO T (N) VALUES (1)"), Ok(Completion::Success), "taking it");
+    assert_eq!(exec(&a, "UPDATE T SET F = DEFAULT"), Ok(Completion::Success));
+    assert_eq!(rows(&a, "SELECT F, V, W FROM T").unwrap(), ["1000,1010,1010"]);
+    let shown = "SELECT COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'T' AND COLUMN_NAME = 'F'";
+    assert_eq!(rows(&a, shown).unwrap(), ["B'1000'"], "the descriptor holds it padded");
+    assert_eq!(exec(&a, "ALTER TABLE T ADD COLUMN G BIT(3) DEFAULT B'1'"), padded, "§11.11 GR4");
+    assert_eq!(exec(&a, "ALTER TABLE T ALTER COLUMN W SET DEFAULT B'01'"), padded, "§11.13 GR2");
+    assert_eq!(exec(&a, "ALTER TABLE T ALTER COLUMN V SET DEFAULT B'01'"), Ok(Completion::Success), "varying");
+    assert_eq!(exec(&a, "CREATE DOMAIN E BIT(4) DEFAULT B'11'"), padded, "§11.21 GR3");
+    assert_eq!(exec(&a, "ALTER DOMAIN E SET DEFAULT B'1'"), padded, "§11.23 GR2");
+    assert_eq!(exec(&a, "ALTER DOMAIN E SET DEFAULT B'1111'"), Ok(Completion::Success));
+    assert_eq!(exec(&a, "CREATE TABLE U (E E DEFAULT B'1', H E)"), padded, "a column of a domain");
+    assert_eq!(exec(&a, "CREATE TABLE U2 (H E)"), Ok(Completion::Success), "the domain's own");
+    assert_eq!(exec(&a, "DECLARE LOCAL TEMPORARY TABLE MODULE.X (F BIT(4) DEFAULT B'1')"), padded, "§13.11");
+    a.commit().unwrap();
+    assert_eq!(exec(&a, "INSERT INTO U VALUES (DEFAULT, DEFAULT)"), Ok(Completion::Success));
+    assert_eq!(rows(&a, "SELECT E, H FROM U").unwrap(), ["1000,1111"]);
     a.rollback().unwrap();
 }
 

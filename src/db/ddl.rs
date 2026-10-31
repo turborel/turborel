@@ -256,9 +256,11 @@ impl Session {
             made.discard();
             return Err(e);
         }
+        // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
+        let padding = next.padding_of_alter(&qn, action);
         let change = Change::AlterTable { table: qn, action: text.to_owned(), schema, zone };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
-        Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)))
+        Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)).warned(padding))
     }
 
     /// Before a change of definitions to `table`, a table, view or schema
@@ -355,7 +357,6 @@ pub(super) fn copy_rows(
         | AlterAction::Storage(_) => None,
     };
     let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;
-    let mut filled = false;
     for read in Arc::clone(st.storage_of(table)?).scan(tx.id, &columns) {
         let (_, row) = read?;
         let mut new = reshape.row(row);
@@ -369,13 +370,8 @@ pub(super) fn copy_rows(
             if let Some(slot) = new.last_mut() {
                 *slot = value.clone();
             }
-            filled = true;
         }
         effects.inserted(table, next.insert_row(tx, table, &new)?)?;
-    }
-    // [§11.5 GR1b v] a default padded, taken by a row.
-    if filled && added.as_ref().is_some_and(|c| c.padded_default().is_some()) {
-        tx.stop.warnings().raise(crate::error::SqlState::ZERO_BIT_PADDING);
     }
     // The table's constraints, those of a column added among them, hold of
     // the rows copied.

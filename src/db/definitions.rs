@@ -78,9 +78,11 @@ impl Session {
                 if let Some(a) = &defined.asserted {
                     next.check_assertion(tx, a)?;
                 }
+                // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
+                let padding = held.first().and_then(|(named, _)| next.padding_of_statement(statement, named));
                 let change = Change::Defined { auth: self.auth().clone(), schema, zone, sql: text.to_owned(), placed: defined.placed };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
-                return Ok(long_texts::warned(defined.completion, text, || long_texts::of_statement(statement)));
+                return Ok(long_texts::warned(defined.completion, text, || long_texts::of_statement(statement)).warned(padding));
             }
             // Made again once the locks are held, on the definitions then.
             defined.made.iter().for_each(Made::discard);

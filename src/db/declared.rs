@@ -45,8 +45,10 @@ impl Session {
         next.catalog = Arc::from(staged);
         next.complete_tables(&names, slice::from_mut(&mut desc), slice::from_ref(&pending))?;
         let indexes = indexes_of(&desc, st.constraint_method());
+        // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
+        let padding = super::padding::of_table(&desc, t);
         lock_builtin(&self.temporaries.declared).push((desc, indexes));
-        Ok(Completion::Success)
+        Ok(Completion::Success.warned(padding))
     }
 
     /// The rules of a declared table `statement` would break, checked on

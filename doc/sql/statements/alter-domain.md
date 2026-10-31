@@ -65,6 +65,7 @@ REFERENCES a CHECK needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
+| 01008 | 0 | Not an error: a warning, a default shorter than the BIT domain padded with 0 bits |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the domain's schema, or the constraint's, or lacks a privilege the constraint needs |
 | 23000 | -201 | A row breaks the constraint added |

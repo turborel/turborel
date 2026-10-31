@@ -26,20 +26,8 @@ use crate::value::{DataType, Value};
 pub struct ObjectColumn {
     /// The column, of the table or view named.
     pub desc: ColumnDesc,
-    /// Its default value [ISO/IEC 9075:1992 §11.5], as taken
-    /// (`taken_default`).
-    pub default: Expr,
-}
-
-/// [ISO/IEC 9075:1992 §11.5 GR1b v, GR2] `value`, the default of column
-/// `c`, as a statement that takes it evaluates it: a bit string shorter
-/// than its fixed-length column cast to it, extended with 0-valued bits,
-/// which raises the warning implicit zero-bit padding [§6.10 GR7b].
-pub fn taken_default(c: &ColumnDesc, value: Value) -> Expr {
-    match c.padded_default() {
-        Some(written) => Expr::Cast(Box::new(Expr::Const(written.clone())), c.data_type),
-        None => Expr::Const(value),
-    }
+    /// Its default value [ISO/IEC 9075:1992 §11.5].
+    pub default: Value,
 }
 
 /// [ISO/IEC 9075:1992 §7.10] A `<query expression>`, bound as `nesting`
@@ -209,7 +197,7 @@ impl Binder<'_> {
                     if object.is_some_and(|o| o.desc.default_reads_instant()) {
                         self.now.note();
                     }
-                    ((object.map_or(Expr::Const(Value::Null), |o| o.default.clone()), None), *at)
+                    ((Expr::Const(object.map_or(Value::Null, |o| o.default.clone())), None), *at)
                 }
             };
             if bound.1.is_none() && objects.is_none() {

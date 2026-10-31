@@ -63,6 +63,7 @@ REFERENCES a CHECK needs.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist, or a constraint's does not |
+| 01008 | 0 | Not an error: a warning, a default shorter than the BIT domain padded with 0 bits |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks a privilege a constraint needs |
 | 25000 | -917 | The transaction is READ ONLY |

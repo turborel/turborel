@@ -118,6 +118,7 @@ says.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2A000 | -102 | The action is not written as the synopsis shows |
+| 01008 | 0 | Not an error: a warning, a BIT default shorter than its column padded with 0 bits |
 | 2A000 | -103 | A rule above is broken |
 | 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |

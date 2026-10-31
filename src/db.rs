@@ -86,6 +86,7 @@ mod indexes;
 mod integrity;
 mod long_texts;
 mod maintenance;
+mod padding;
 mod position;
 mod prepared;
 mod recovery;

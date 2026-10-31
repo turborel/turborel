@@ -72,8 +72,8 @@ A column's default is its own, written DEFAULT, else its domain's, else
 the null value. A datetime literal written without a time zone takes
 the session's ([SET TIME ZONE](set-time-zone.md)); CURRENT_DATE and the
 others are taken as the statement that inserts the row runs. A bit string
-shorter than its BIT column is padded with 0 bits as it is taken: the
-statement that takes it for a row completes with the warning 01008.
+shorter than its BIT column is padded with 0 bits, and the statement
+that defines it completes with the warning 01008.
 
 **Constraints.** NOT NULL refuses the null value. UNIQUE refuses two
 rows of the same values in its columns, of rows none of whose values is
@@ -164,6 +164,7 @@ USAGE on each domain a column is of.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist, or a constraint's does not |
+| 01008 | 0 | Not an error: a warning, a BIT default shorter than its column padded with 0 bits |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |

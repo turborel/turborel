@@ -253,8 +253,8 @@ length). A value of another kind, as a number to a character column, is
 refused as the statement is read. A string read into a parameter too
 short for it is cut to fit instead, its indicator holding its length,
 with the warning 01004; a bit string shorter than a BIT parameter is
-padded with 0 bits, with the warning 01008, as a column's default
-shorter than its BIT column is.
+padded with 0 bits, with the warning 01008, as a default shorter than
+its BIT column is when it is defined.
 
 **CAST** ( *value* AS *type* ) gives the value in another type, or a
 domain's, checking the domain's constraints:

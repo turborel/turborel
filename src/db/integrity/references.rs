@@ -230,9 +230,6 @@ impl State {
         }
         // [GR5a iii, GR6a iii] SET DEFAULT gives the child's defaults [§11.5 GR2].
         let defaults = if action == ReferentialAction::SetDefault { default_row(child, &effects.user, effects.now)? } else { Vec::new() };
-        // [§11.5 GR1b v] a default padded with 0-valued bits, if taken.
-        let pads =
-            !defaults.is_empty() && fk.columns.iter().any(|&c| child.columns.get(c).is_some_and(|col| col.padded_default().is_some()));
         let partial = fk.match_type == MatchType::Partial;
         let before = if partial { self.before_statement(tx, change.parent, effects)? } else { Vec::new() };
         // None the statement deleted: the transaction reads its own changes.
@@ -261,7 +258,6 @@ impl State {
             give((&child.name, row_id), &next, &columns, &mut acting.given)?;
             self.update_row(tx, &child.name, row_id, &next)?;
             effects.updated(&child.name, row_id, row, &columns)?;
-            padded(tx, pads);
         }
         Ok(())
     }
@@ -345,14 +341,6 @@ impl Acting {
             dropped.push(parent);
         }
         unique
-    }
-}
-
-/// [§11.5 GR1b v] The warning implicit zero-bit padding raised in `tx`'s
-/// statement, if `pads`: a row took a default padded with 0-valued bits.
-fn padded(tx: &Txn, pads: bool) {
-    if pads {
-        tx.stop.warnings().raise(SqlState::ZERO_BIT_PADDING);
     }
 }
 

@@ -357,8 +357,9 @@ restriction is lifted.
   [§6.6 GR4-GR6]; CASE and set operations of BIT VARYING if any is
   [§9.3 SR3b]; CAST to and from character strings [§6.10 GR5d, GR6d, GR7,
   GR8], not numbers [SR4]; a default of a bit string literal [§11.5 SR3a
-  ii, GR1b iv, v], a BIT one shorter than the column padded with 0 bits,
-  with the warning 01008, by each statement that takes it for a row.
+  ii, GR1b iv, v], a BIT one shorter than the column or domain padded
+  with 0 bits, the definition placing it [§11.4 GR5, §11.11 GR4, §11.13
+  GR2, §11.21 GR3, §11.23 GR2] completing with the warning 01008.
   Retrieved into a parameter, a bit string is cut to
   fit, with the warning 01004, or a BIT one padded with 0 bits, with
   01008 [§9.1 GR3f-GR3j]; CAST raises them as it cuts or pads [§6.10

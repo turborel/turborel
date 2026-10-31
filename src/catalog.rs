@@ -95,11 +95,6 @@ pub struct ColumnDomain {
 pub enum ColumnDefault {
     /// That of a `<literal>`, or the null value \[GR1a, b\].
     Value(Value),
-    /// That of a `<bit string literal>` or `<hex string literal>` shorter
-    /// than its fixed-length bit string column, as written: extended on the
-    /// right with 0-valued bits as it is taken, which raises the warning
-    /// implicit zero-bit padding \[GR1b v\].
-    Padded(Value),
     /// CURRENT_USER, SESSION_USER or SYSTEM_USER, whichever it is when the
     /// default is taken \[GR1c\]: in this implementation, the authorization
     /// identifier the statement runs under, each.
@@ -120,20 +115,9 @@ impl ColumnDesc {
         let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
         match self.default.as_ref().or(of_domain) {
             Some(ColumnDefault::Value(v)) => v.clone(),
-            Some(ColumnDefault::Padded(v)) => self.data_type.kind().cast(v.clone(), &self.data_type).unwrap_or_else(|_| v.clone()),
             Some(ColumnDefault::User) => Value::Char(auth.to_string()),
             Some(ColumnDefault::Datetime(moment, precision)) => current(*moment, *precision, now.instant()),
             None => Value::Null,
-        }
-    }
-
-    /// [ISO/IEC 9075:1992 §11.5 GR1b v] Its default, its own or its
-    /// domain's, as written, if taking it pads it with 0-valued bits.
-    pub fn padded_default(&self) -> Option<&Value> {
-        let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
-        match self.default.as_ref().or(of_domain) {
-            Some(ColumnDefault::Padded(v)) => Some(v),
-            Some(ColumnDefault::Value(_) | ColumnDefault::User | ColumnDefault::Datetime(..)) | None => None,
         }
     }
 
