@@ -81,7 +81,9 @@ string as CHARACTER, its octet length four octets a character.
 | JOBS | LABEL, STATE, THREADED, RUNS, RESTARTS, LAST_ERROR | job of the database's background work, `turborel-checkpoint`, `turborel-maintenance` or `turborel-log-sync`: IDLE, DUE or RUNNING; whether a thread of its own runs it; how often it ran, and failed by a fault; its last error, or NULL |
 
 VALUE_SOURCE says where a value comes from: DEFAULT, or the place it was
-set. [SET](statements/set-setting.md) and
+set: DATABASE, SESSION, or NODE for a node's setting, whose value is
+this node's alone, kept nowhere ([Settings](../appendix/c-settings.md)).
+[SET](statements/set-setting.md) and
 [SET DATABASE](statements/set-database.md) set the settings;
 [Settings](../appendix/c-settings.md) lists them.
 

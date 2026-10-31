@@ -40,6 +40,7 @@ pub fn declared(store: &str) -> Definition {
         kind: Kind::Integer { min: 0, max: i128::from(i64::MAX) },
         default: Value::Exact(Decimal::new(i128::try_from(HEADER_CACHE_BYTES).unwrap_or(i128::MAX), 0)),
         per_session: false,
+        node: false,
         effect: Effect::Statement,
         doc: "The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.".to_owned(),
     }

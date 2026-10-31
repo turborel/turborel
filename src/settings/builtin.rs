@@ -127,7 +127,7 @@ const FRACTION: Kind = Kind::Number { min: 0.0, max: 1.0 };
 
 /// One built-in setting.
 fn defined((name, kind, default): (&str, Kind, Value), (per_session, effect): (bool, Effect), doc: &str) -> Definition {
-    Definition { name: name.to_owned(), kind, default, per_session, effect, doc: doc.to_owned() }
+    Definition { name: name.to_owned(), kind, default, per_session, node: false, effect, doc: doc.to_owned() }
 }
 
 /// A database's setting, taking effect for the statements that begin after

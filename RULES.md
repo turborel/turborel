@@ -1062,7 +1062,7 @@ opaque bytes.**
   - a record durable before a backup acknowledges it;
   - a sync in doubt never stamped (D25); when replicated, resolved by
     consensus or the node deposed;
-  - a `node` property for settings never logged;
+  - a `node` property for settings never logged (D36);
   - reads on the primary confirming its view;
   - no at-most-once for SQL clients in alpha;
   - stale snapshot reads on backups, with a least position;
@@ -1816,6 +1816,15 @@ same results and errors is the optimizer's to choose.
   database's) reads as its default, never another value.
 - **Persistence.** The database's values are definitions, logged and
   replayed like schema changes; a session's never persist.
+- **Node settings.** A setting declared the node's (`Definition::node`,
+  D57) is the node's alone:
+  - never logged nor in an image, which replicas share;
+  - given as the node starts (`--set`, the config file, or before the
+    host opens the database), lasting while it runs;
+  - SET DATABASE changes it for the running database only;
+  - shown with VALUE_SOURCE NODE; never a session's nor fixed at
+    creation (-910 as declared);
+  - no built-in setting is one: making one so is a decision of its own.
 - **At creation.** Fixed when a database is created in its directory:
   page size, checksum (STORAGE.CHECKSUM, a registered hash function),
   encodings (STORAGE.ENCODINGS), log segment size. Given before

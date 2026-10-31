@@ -18,6 +18,13 @@ start shows the value it started with in INFORMATION_SCHEMA.SETTINGS's
 STARTED_VALUE, and IS_PENDING YES while the value set differs from it
 ([Settings](../operator/04-settings.md)).
 
+A plug-in may declare a setting a node's: its value is never logged nor
+kept with the database, which other nodes may share, but given as the
+node starts (`--set`, a configuration file, or before the program opens
+the database) and lasting while it runs. SET DATABASE changes it for the
+running database alone. INFORMATION_SCHEMA.SETTINGS shows such a value
+with VALUE_SOURCE NODE. No setting listed here is a node's.
+
 ## The database's settings
 
 | Setting | Default | Values | Takes effect | |

@@ -1,7 +1,7 @@
 //! \[DESIGN\] RULES.md D36: the settings (`settings.rs`) as the database and
 //! its sessions set, list and read them. A database setting is a
 //! definition: logged, outside any transaction, and replayed with the
-//! others (`db/recovery.rs`). Split from db.rs (RULES.md R-SIZE-2).
+//! others (`db/recovery.rs`); but a node's, never logged (D57). Split from db.rs (RULES.md R-SIZE-2).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ impl State {
     pub(super) fn define_setting(&mut self, name: &str, value: Option<&Value>) -> Result<()> {
         let key = self.settings.known(name)?;
         let definition = self.settings.definition(key).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a setting lost its definition"))?;
-        let canonical = definition.name.clone();
+        let (canonical, definition_is_node) = (definition.name.clone(), definition.node);
         if let Some(refused) = (definition.effect == settings::Effect::Creation).then(|| self.creation_refused(&canonical)).flatten() {
             return Err(SqlError::new(Code::Api, refused));
         }
@@ -73,6 +73,10 @@ impl State {
             }
         }
         self.settings.set(&canonical, value.as_ref())?;
+        // A node's value is the node's alone: never logged (RULES.md D57).
+        if definition_is_node {
+            return Ok(());
+        }
         self.log_definition(None, Change::Setting { name: canonical, value })
     }
 
@@ -120,6 +124,7 @@ impl State {
                     kind: Kind::Choice(settings::SWITCHES),
                     default: Value::Char("ON".to_owned()),
                     per_session: true,
+                    node: false,
                     effect: settings::Effect::Statement,
                     doc: format!("Whether the optimizer's rule {rule} rewrites plans: ON; or OFF, as to compare plans made without it."),
                 })?,
@@ -137,7 +142,9 @@ impl Database {
     /// \[DESIGN\] Sets the database's value of the setting `name`, in any
     /// case, for statements that begin from now on, or transactions, as
     /// the setting says; kept with the definitions, so it holds when the
-    /// database is opened again.
+    /// database is opened again. A node's setting (`Definition::node`) is
+    /// kept nowhere: its value lasts while the database runs (RULES.md
+    /// D57).
     ///
     /// # Errors
     ///
@@ -274,8 +281,9 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if a setting of its name is declared, or its default
-    /// is not of its kind.
+    /// SQLCODE -910 if a setting of its name is declared, its default is
+    /// not of its kind, or it is a node's (`Definition::node`) and a
+    /// session's or fixed at creation.
     pub fn declare_setting(&self, definition: Definition) -> Result<()> {
         let name = definition.name.clone();
         let done = self.change(|st| st.settings.declare(definition).map(|_| ()));

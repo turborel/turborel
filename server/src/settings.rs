@@ -147,7 +147,7 @@ fn whole(n: usize) -> Value {
 
 /// A setting of the server's: not a session's.
 fn setting(name: &str, kind: Kind, default: Value, effect: Effect, doc: &str) -> Definition {
-    Definition { name: name.into(), kind, default, per_session: false, effect, doc: doc.into() }
+    Definition { name: name.into(), kind, default, per_session: false, node: false, effect, doc: doc.into() }
 }
 
 /// A whole-number setting from `min` to `max`, read as each connection is

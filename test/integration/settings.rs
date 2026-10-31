@@ -169,6 +169,7 @@ fn database_settings_outlive_the_database() {
         kind: Kind::Integer { min: 1, max: 9 },
         default: whole(1),
         per_session: false,
+        node: false,
         effect: Effect::Statement,
         doc: "How deep.".into(),
     };
@@ -307,4 +308,72 @@ fn set_database_is_refused_saying_why() {
     assert_eq!(refused("SET DATABASE LOCKS.WAIT = 'ON'"), Some(Code::TransactionState));
     ann.rollback().unwrap();
     assert_eq!(db.setting("LOCKS.WAIT").unwrap().to_string(), "OFF", "nothing set");
+}
+
+/// A node's setting of the tests, as a plug-in declares one: text, taken
+/// as what reads it starts; `session` and `effect` as given.
+fn node_setting(session: bool, effect: Effect) -> Definition {
+    Definition {
+        name: "PLUGIN.HOST".into(),
+        kind: Kind::Text { max: 20 },
+        default: word(""),
+        per_session: session,
+        node: true,
+        effect,
+        doc: "Where this node listens.".into(),
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D36, D57, a node's setting: one a session
+/// sets, or fixed at creation, is refused (SQLCODE -910); given before the
+/// database opens, as STORAGE.POOL_BYTES is, it holds while it runs, shown
+/// with VALUE_SOURCE NODE; SET DATABASE changes it for the running
+/// database alone; it is in neither the log nor a checkpoint's image,
+/// which a database's own setting is in, so it survives no reopening, after
+/// a clean close or a crash: it is its default again, while the database's
+/// own setting holds.
+#[test]
+fn a_node_setting_lasts_while_the_node_runs() {
+    let db = Database::new();
+    for (session, effect) in [(true, Effect::Statement), (false, Effect::Creation)] {
+        assert_eq!(db.declare_setting(node_setting(session, effect)).err().map(|e| e.code), Some(Code::Api), "{effect:?}");
+    }
+    let scratch = Scratch::new("settings-node");
+    let dir = scratch.path("db");
+    let open = |given: Option<&str>| {
+        let db = Database::new();
+        db.declare_setting(node_setting(false, Effect::Start)).unwrap();
+        if let Some(host) = given {
+            db.set_setting("PLUGIN.HOST", &word(host)).unwrap();
+        }
+        db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+        db
+    };
+    let source = |db: &Database| {
+        let sql = "SELECT TRIM(SETTING_VALUE), TRIM(VALUE_SOURCE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'PLUGIN.HOST'";
+        crate::common::rows(&db.session("OWN"), sql).unwrap()
+    };
+    let db = open(Some("node-one"));
+    assert_eq!(source(&db), ["node-one,NODE"]);
+    db.create_user("OWN", b"x").unwrap();
+    db.set_owner("OWN").unwrap();
+    db.session("OWN").run("SET DATABASE PLUGIN.HOST = 'node-two'").unwrap();
+    db.session("OWN").run("SET DATABASE LOCKS.WAIT = 'ON'").unwrap();
+    assert_eq!(source(&db), ["node-two,NODE"]);
+    db.close().unwrap();
+    drop(db);
+    for (files, what) in [("log", "the log"), ("catalog", "an image")] {
+        let bytes = crate::common::bytes_of(&dir, files);
+        assert!(!crate::common::holds(&bytes, "PLUGIN.HOST"), "not in {what}");
+        assert!(crate::common::holds(&bytes, "LOCKS.WAIT"), "the database's own is in {what}");
+    }
+    let db = open(None);
+    assert_eq!(source(&db), [",DEFAULT"], "its default again, after a clean close");
+    assert_eq!(db.setting("LOCKS.WAIT").unwrap().to_string(), "ON");
+    db.set_setting("PLUGIN.HOST", &word("node-three")).unwrap();
+    let crashed = db;
+    let db = open(None);
+    drop(crashed);
+    assert_eq!(source(&db), [",DEFAULT"], "and after a crash");
+    assert_eq!(db.settings().unwrap().iter().find(|l| l.definition.name == "PLUGIN.HOST").map(|l| l.source), Some(Source::Default));
 }

@@ -6,8 +6,9 @@
 //! The built-in settings are declared here; a plug-in declares its own
 //! (`Database::declare_setting`). A database setting is a definition,
 //! logged and replayed with the others (RULES.md D25), so it survives the
-//! database being closed; one replayed before the plug-in that declares it
-//! is kept until it is declared. A session's settings are its own, and end
+//! database being closed, unless it is a node's (`Definition::node`, D57),
+//! whose value is never logged nor kept in an image; one replayed before
+//! the plug-in that declares it is kept until it is declared. A session's settings are its own, and end
 //! with it. A name is an SQL `<identifier>`, upper case, its parts joined by
 //! periods, a plug-in's under its own name ("ROWSTORE.X").
 
@@ -64,6 +65,11 @@ pub struct Definition {
     pub default: Value,
     /// Whether a session may set it for itself, over the database's value.
     pub per_session: bool,
+    /// \[DESIGN\] Whether it is the node's (RULES.md D36, D57): its value,
+    /// never logged nor written to an image, which the replicas of a
+    /// database share, is given as the node starts, and lasts while it
+    /// runs. Neither a session's nor fixed at creation.
+    pub node: bool,
     /// When a change takes effect.
     pub effect: Effect,
     /// What it does, one sentence.
@@ -83,6 +89,9 @@ pub enum Source {
     Database,
     /// The session's own.
     Session,
+    /// \[DESIGN\] The node's, of a node's setting (`Definition::node`): set
+    /// as the node started or since, kept nowhere.
+    Node,
 }
 
 /// A setting as a listing shows it: its definition, its value, and where
@@ -263,6 +272,9 @@ impl Settings {
         if self.key(&definition.name).is_some() {
             return Err(misuse(&format!("{} is declared twice", definition.name)));
         }
+        if definition.node && (definition.per_session || definition.effect == Effect::Creation) {
+            return Err(misuse(&format!("{} is a node's: neither a session's nor fixed at creation (RULES.md D36)", definition.name)));
+        }
         definition.default = accepted(&definition.name, &definition.kind, &definition.default)?;
         let earlier = self.pending.iter().position(|(n, _)| *n == definition.name).map(|at| self.pending.remove(at).1);
         let value = earlier.map(|v| accepted(&definition.name, &definition.kind, &v)).transpose()?;
@@ -313,9 +325,11 @@ impl Settings {
     }
 
     /// The database's values, each with its setting's name: those of the
-    /// settings declared, then those set before theirs were.
+    /// settings declared, then those set before theirs were. A node's are
+    /// not the database's: an image never holds them (RULES.md D57).
     pub(crate) fn database_values(&self) -> Vec<(String, Value)> {
-        let set = self.definitions.iter().zip(&self.values).filter_map(|(d, v)| Some((d.name.clone(), v.clone()?)));
+        let kept = self.definitions.iter().zip(&self.values).filter(|(d, _)| !d.node);
+        let set = kept.filter_map(|(d, v)| Some((d.name.clone(), v.clone()?)));
         set.chain(self.pending.iter().cloned()).collect()
     }
 
@@ -325,7 +339,13 @@ impl Settings {
         if let Some(v) = own.get(key) {
             return (v, Source::Session);
         }
-        let source = if self.values.get(key.0).is_some_and(Option::is_some) { Source::Database } else { Source::Default };
+        let set = self.values.get(key.0).is_some_and(Option::is_some);
+        let node = self.definition(key).is_some_and(|d| d.node);
+        let source = match (set, node) {
+            (false, _) => Source::Default,
+            (true, false) => Source::Database,
+            (true, true) => Source::Node,
+        };
         (self.get(key), source)
     }
 
@@ -559,6 +579,7 @@ mod tests {
             kind: range,
             default: whole(1),
             per_session: false,
+            node: false,
             effect: Effect::Statement,
             doc: String::new(),
         };

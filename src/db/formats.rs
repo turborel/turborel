@@ -105,14 +105,14 @@ impl State {
                         )));
                     }
                 }
-                (Effect::Creation | Effect::Start, settings::Source::Default | settings::Source::Session) => {
+                (Effect::Creation | Effect::Start, settings::Source::Default | settings::Source::Session | settings::Source::Node) => {
                     values.set(&d.name, Some(&kept))?;
                 }
                 // Given before it opened, or not read as it does.
                 (Effect::Start, settings::Source::Database)
                 | (
                     Effect::Statement | Effect::Transaction | Effect::Connection,
-                    settings::Source::Default | settings::Source::Database | settings::Source::Session,
+                    settings::Source::Default | settings::Source::Database | settings::Source::Session | settings::Source::Node,
                 ) => {}
             }
         }

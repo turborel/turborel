@@ -74,10 +74,6 @@ design settles.
   is refused, saying why; how far its tools' catalog queries
   (`pg_catalog`, `SHOW`) are answered is a decision to make. A protocol
   crate's dependencies are a decision of R-SAFE-4.
-- **Settings of a node** (D57): the `node` property of settings, whose
-  values are never logged. Where such a value is kept (in neither the log
-  nor a checkpoint's image, which replicas share), and what SET DATABASE
-  and INFORMATION_SCHEMA.SETTINGS do with one, are to be decided.
 - **Replication between nodes** (D57): real databases in the simulator,
   a backup compared with the primary, through the driver, a job of the
   thread manager (D55) joining a consensus, a transport, a journal and

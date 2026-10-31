@@ -32,6 +32,7 @@ fn a_settings_value_is_shown_whole() {
         kind: Kind::Text { max: 1024 },
         default: word(&path),
         per_session: false,
+        node: false,
         effect: Effect::Statement,
         doc: "A path.".into(),
     };

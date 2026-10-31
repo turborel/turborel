@@ -44,6 +44,7 @@ impl StorageEngine for Noted {
             kind: Kind::Integer { min: 1, max: 9 },
             default: whole(1),
             per_session: false,
+            node: false,
             effect: Effect::Statement,
             doc: "How deep.".to_owned(),
         }]

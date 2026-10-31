@@ -59,6 +59,7 @@ impl SystemTable for Settings {
                     Source::Default => "DEFAULT",
                     Source::Database => "DATABASE",
                     Source::Session => "SESSION",
+                    Source::Node => "NODE",
                 };
                 let effect = match d.effect {
                     Effect::Statement => "STATEMENT",
