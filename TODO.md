@@ -212,10 +212,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 - **Zones saved, a failure midway:** a checkpoint whose pool write fails
   while it saves a table's zones fails, and marks every segment to be
   saved again; no test drives that path.
-- **Freeing a page the caller pins:** `free_when_released` waits for a
-  page's pins without limit, so a caller that itself holds a pin on the
-  page it frees waits for ever; only a page latched by a hinted read is
-  waited for a bounded while.
 - **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
   through `Host`, is kept as the plug-in writes it, which makes its files
   durable itself. A directory it declares shadowed would have its writes

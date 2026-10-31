@@ -296,18 +296,19 @@ impl BufferPool {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if `file` is not a registered pager file, or the page,
-    /// unpinned, stays latched by a read that hit by its hint for longer
-    /// than any one read takes (it may be the caller's own); the pager's
-    /// errors of freeing it.
+    /// SQLCODE -910 if `file` is not a registered pager file, or the page
+    /// stays held, pinned or latched by a read that hit by its hint, for
+    /// longer than any one read takes (the hold may be the caller's own);
+    /// the pager's errors of freeing it.
     pub fn free_when_released(&self, file: FileId, id: PageId) -> Result<()> {
         self.free_page(file, id, true)
     }
 
-    /// `free`, waiting for the page's pins to be released if `wait`, else
-    /// refusing a page held. A page unpinned but latched by a read that hit
-    /// by its hint is waited for a bounded while only (`claim.rs`): the
-    /// latch may be the calling thread's own.
+    /// `free`, waiting for the page to be released if `wait`, else refusing
+    /// a page held. Either hold is waited for a bounded while only
+    /// (`claim.rs`), as it may be the calling thread's own, which no pool
+    /// tracks: a pin a while longer than a latch, as a reader holding a
+    /// pin may wait for a frame for another page meanwhile.
     fn free_page(&self, file: FileId, id: PageId, wait: bool) -> Result<()> {
         let pager = self.pager(file)?;
         let key = Key { file, id: id.0 };
@@ -331,11 +332,8 @@ impl BufferPool {
                 if !wait {
                     return Err(held());
                 }
-                if pinned {
-                    std::thread::yield_now();
-                    continue;
-                }
-                let slept = claim::latch_wait(&mut round, claim::FREE_ROUNDS);
+                let rounds = if pinned { claim::FREE_PIN_ROUNDS } else { claim::FREE_ROUNDS };
+                let slept = claim::latch_wait(&mut round, rounds);
                 if slept {
                     continue;
                 }

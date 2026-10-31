@@ -168,6 +168,54 @@ fn freeing_a_page_its_caller_holds_by_hint_is_refused() {
     assert_eq!(pool.read(file, a.0).err().map(|e| e.code), Some(Code::Api), "freed");
 }
 
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: `free_when_released` of a
+/// page the calling thread holds pinned, read on a miss, waits a bounded
+/// while, then is refused (SQLCODE -910) naming the page, not waiting for
+/// itself for ever; a page another thread pins for a moment is waited
+/// for, and freed once released.
+///
+/// Regression test (R-TEST-7): a page pinned was waited for without
+/// limit, so a caller holding a pin on the page it freed never returned.
+#[test]
+fn freeing_a_page_its_caller_pins_is_refused() {
+    let scratch = Scratch::new("buffer-free-pinned");
+    let pool = Arc::new(pool(2));
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let a = put(&pool, file, b"a");
+    let (b, c) = (put(&pool, file, b"b"), put(&pool, file, b"c"));
+    let (sender, receiver) = mpsc::channel();
+    let freer = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || {
+            let misses = pool.counts().misses;
+            let held = pool.read(file, a.0).unwrap();
+            assert_eq!((&*held, pool.counts().misses), (&b"a"[..], misses + 1), "a miss: pinned");
+            sender.send(pool.free_when_released(file, a).err().map(|e| (e.code, e.msg))).unwrap();
+        })
+    };
+    let refused = receiver.recv_timeout(REFUSAL_LIMIT).expect("refused in the end, not waiting for ever");
+    let (code, msg) = refused.expect("refused");
+    assert_eq!(code, Code::Api, "held by the caller");
+    assert!(msg.contains(&format!("page {}", a.0)), "{msg}");
+    freer.join().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let holder = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || {
+            let misses = pool.counts().misses;
+            let held = pool.read(file, b.0).unwrap();
+            assert_eq!((&*held, pool.counts().misses), (&b"b"[..], misses + 1), "a miss: pinned");
+            sender.send(()).unwrap();
+            thread::sleep(LATCH_MOMENT);
+        })
+    };
+    receiver.recv_timeout(REFUSAL_LIMIT).unwrap();
+    pool.free_when_released(file, b).unwrap();
+    holder.join().unwrap();
+    assert_eq!(pool.read(file, b.0).err().map(|e| e.code), Some(Code::Api), "freed");
+    assert_eq!(get(&pool, file, c).unwrap(), b"c");
+}
+
 /// How long a thread holds a page read by its hint, in a test where
 /// another waits for its latch: a moment, well within a claim's wait.
 const LATCH_MOMENT: Duration = Duration::from_millis(1);

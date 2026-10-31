@@ -38,8 +38,14 @@ const CLAIM_ROUNDS: u32 = 26;
 /// read that hit by its hint: some 200 ms in all. Longer than a claim's,
 /// as giving up fails the change that frees the page.
 pub(super) const FREE_ROUNDS: u32 = 200;
+/// \[DESIGN\] Rounds `free_when_released` waits for a page pinned: some
+/// 1 s in all, as a reader holding its pin may wait for a frame for
+/// another page meanwhile (some 20 ms, `CLAIM_ROUNDS`). Bounded, as the
+/// pin may be the caller's own, a programming error that would otherwise
+/// wait for ever.
+pub(super) const FREE_PIN_ROUNDS: u32 = 1000;
 
-/// Sleeps round `round` of waiting for latched frames, if fewer than
+/// Sleeps round `round` of waiting for frames held, if fewer than
 /// `rounds` were slept, and counts it; whether it slept.
 pub(super) fn latch_wait(round: &mut u32, rounds: u32) -> bool {
     if *round >= rounds {

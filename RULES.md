@@ -1028,7 +1028,10 @@ which takes it exclusively: a frame so latched is busy for a moment, so
 an eviction finding only such frames and pinned ones waits a bounded
 while for the latched, then is refused as with every frame pinned (D38),
 as the latch may be its own thread's; hits are counted on stripes by
-thread. Hot pages contend
+thread. A page freed once released, by a structure whose readers lock
+nothing, waits a bounded while for its latch, longer for its pins, then
+is refused (SQLCODE -910) naming the page, as the hold may be its own
+thread's, which the pool does not track. Hot pages contend
 on that latch still; a reader-biased latch (BRAVO) would
 need a reviewed exception to R-SAFE-1. File formats are the same
 on every platform. Each component counts its own
