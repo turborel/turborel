@@ -158,8 +158,8 @@ pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
     #[cfg(any(unix, windows))]
     db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string())).unwrap();
-    let scram = Arc::new(Scram::new(db.clone(), &made).unwrap());
-    let server = start_with(&db, &[], vec![scram, Arc::new(Certificate::new(db.clone()))]);
+    let scram = Scram::new(db.clone(), &made).unwrap();
+    let server = start_with(&db, &[], vec![Arc::new(scram.plus()), Arc::new(scram), Arc::new(Certificate::new(db.clone()))]);
     (db, server)
 }
 

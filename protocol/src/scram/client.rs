@@ -1,13 +1,15 @@
-//! \[DESIGN\] The client's side of SCRAM-SHA-256 (RFC 5802 §3, §7): its
-//! first message, its proof answering the server's first, and the server's
-//! signature checked, so the client knows the server knew the verifier.
+//! \[DESIGN\] The client's side of SCRAM-SHA-256 and SCRAM-SHA-256-PLUS
+//! (RFC 5802 §3, §6, §7): its first message, its proof answering the
+//! server's first, bound to the channel its `Channel` says, and the
+//! server's signature checked, so the client knows the server knew the
+//! verifier.
 
 use std::num::NonZeroU32;
 
 use aws_lc_rs::constant_time;
 use turborel::error::Result;
 
-use super::{GS2_NONE, Key, Keys, attribute, decode, encode, hmac, is_nonce, refused, salted_password, saslname, text, xor};
+use super::{Channel, Key, Keys, attribute, decode, encode, hmac, is_nonce, refused, salted_password, saslname, text, xor};
 
 /// How far the client has come.
 #[derive(Clone)]
@@ -23,11 +25,12 @@ enum Stage {
 }
 
 /// \[DESIGN\] A client's exchange of SCRAM-SHA-256 as `user`, by
-/// `password`.
+/// `password`; of SCRAM-SHA-256-PLUS, its channel bound (`bound`).
 #[derive(Clone)]
 pub struct Client {
     user: String,
     password: String,
+    channel: Channel,
     stage: Stage,
 }
 
@@ -39,16 +42,24 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
-    /// An exchange as `user`, by `password`.
+    /// An exchange as `user`, by `password`, binding no channel.
     pub fn new(user: &str, password: &str) -> Client {
-        Client { user: user.to_owned(), password: password.to_owned(), stage: Stage::Begun }
+        Client { user: user.to_owned(), password: password.to_owned(), channel: Channel::Unbound, stage: Stage::Begun }
+    }
+
+    /// It, of the channel binding `channel` [RFC 5802 §6]:
+    /// `Channel::EndPoint` for SCRAM-SHA-256-PLUS over TLS, of the hash of
+    /// the certificate the server presented (`end_point`).
+    #[must_use]
+    pub fn bound(self, channel: Channel) -> Client {
+        Client { channel, ..self }
     }
 
     /// client-first, of `nonce`, which should be new (`scram::nonce`):
     /// the exchange begun again.
     pub fn first(&mut self, nonce: &str) -> Vec<u8> {
         let bare = format!("n={},r={nonce}", saslname(&self.user));
-        let message = format!("{GS2_NONE}{bare}");
+        let message = format!("{}{bare}", self.channel.header());
         self.stage = Stage::Sent { bare, nonce: nonce.to_owned() };
         message.into_bytes()
     }
@@ -75,7 +86,7 @@ impl Client {
         let salted = salted_password(&self.password, &salt, iterations);
         let client_key = hmac(&salted, super::CLIENT_KEY);
         let keys = Keys::of(&salted);
-        let without_proof = format!("c={},r={both}", encode(GS2_NONE.as_bytes()));
+        let without_proof = format!("c={},r={both}", encode(&self.channel.input()));
         let auth = format!("{bare},{message},{without_proof}");
         let proof = xor(&client_key, &hmac(&keys.stored, auth.as_bytes()));
         self.stage = Stage::Proved(hmac(&keys.server, auth.as_bytes()));

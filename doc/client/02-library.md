@@ -6,7 +6,7 @@ The crate `turborel-client` connects a Rust program to a turborel
 server, over the native protocol: blocking, on the standard library
 alone; over TLS with its feature `tls`, trusting the platform's
 certificate authorities too with `system-roots`; and proving a password by
-SCRAM-SHA-256 with its feature `scram`. A program that embeds the
+SCRAM-SHA-256, or SCRAM-SHA-256-PLUS over TLS, with its feature `scram`. A program that embeds the
 database uses the crate `turborel` instead, and its `Database` and
 `Session` ([The Embedded Library](03-embedding.md)).
 
@@ -23,7 +23,12 @@ not. Each takes the user to connect as and a `Mechanism` that proves it:
   proves it knows the user's verifier. Its exchange overheard lets the
   password be guessed at leisure, so it is used only over TLS, a Unix
   socket or a named pipe, unless `Scram::in_the_clear` says otherwise,
-  for a server whose SERVER.SCRAM_WITHOUT_TLS is ON.
+  for a server whose SERVER.SCRAM_WITHOUT_TLS is ON. Over TLS, by
+  `tls::connect` or `connect_to`, it is SCRAM-SHA-256-PLUS, bound to the
+  certificate the server presented, so a server in the middle cannot
+  relay it; a program that opens a TLS stream of its own and gives it to
+  `Connection::open` binds it first, by `Mechanism::bind` with
+  `tls::presented`.
 - `Password`, of a password, sent whole, only over TLS, a Unix socket or
   a named pipe.
 - `Certificate`, which proves the user by the certificate presented

@@ -62,6 +62,13 @@ pub trait Mechanism {
     fn ready(&self) -> Result<()> {
         Ok(())
     }
+    /// The connection about to carry it is secured by TLS, and its server
+    /// presented `certificate`, as DER: a mechanism that binds itself to
+    /// its channel, as SCRAM's PLUS does, takes it, for this connection
+    /// alone. Called before `name` and `initial` by `tls::connect` and
+    /// `target::connect_to`; a program opening a TLS stream of its own
+    /// calls it before `Connection::open`. None takes it by default.
+    fn bind(&mut self, _certificate: &[u8]) {}
 }
 
 /// \[DESIGN\] The client's side of `trust`: nothing to prove, so a server

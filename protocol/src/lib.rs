@@ -9,7 +9,8 @@
 //! until the server sends Ready, with the session's authorization
 //! identifier, the key that cancels its statements, the capabilities both
 //! have and the server's product; or an Error, and closes. The steps of
-//! SCRAM-SHA-256, both sides', are `scram`, with the feature `scram`.
+//! SCRAM-SHA-256 and SCRAM-SHA-256-PLUS, both sides', are `scram`, with the
+//! feature `scram`.
 //!
 //! Then the client sends requests, and may send one before the last is
 //! answered: each is answered in turn, in order.
@@ -78,6 +79,7 @@
 //!             'E' error: failure
 //! ```
 
+pub mod der;
 mod fields;
 mod reply;
 mod request;

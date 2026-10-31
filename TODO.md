@@ -47,10 +47,12 @@ design settles.
   scheme a verifier names (today any other is refused). SCRAM-SHA-256
   still needs PBKDF2's keys, so a user of Argon2id proves its password by
   `password` alone.
-- **SCRAM's channel binding** (`tls-server-end-point`, RFC 5929), so a
-  SCRAM exchange is bound to its TLS connection and a server in the
-  middle cannot relay it: SCRAM-SHA-256-PLUS. Today a client asking for
-  it (`p=`) is refused.
+- **SCRAM's binding `tls-exporter`** (RFC 9266), beside
+  `tls-server-end-point` (D43): RFC 9266 §3 makes it the binding to
+  implement for TLS 1.3, which rustls negotiates by default; it binds the
+  TLS connection itself, not its certificate. rustls exports the keying
+  material on both sides; the mechanism takes the client's `p=` type,
+  and the client chooses it of TLS 1.3.
 - **Named pipes, further** (D42): a security descriptor of the server's
   own, so only its user and the administrators may open the pipe at all,
   not others to read only; and a client's reads and writes of a pipe

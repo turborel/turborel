@@ -63,6 +63,14 @@ pub fn client_certificate(pki: &Pki, name: &str) -> Identity {
     identity
 }
 
+/// A certificate for "localhost" signed by its own Ed25519 key, as DER: of
+/// a signature algorithm of no separate hash, so one RFC 5929 §4.1 gives
+/// no `tls-server-end-point` binding.
+pub fn ed25519_certificate() -> Vec<u8> {
+    let key = KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+    CertificateParams::new(vec!["localhost".to_owned()]).unwrap().self_signed(&key).unwrap().der().to_vec()
+}
+
 /// `db`'s server settings declared, and TLS set to `mode` with `pki`'s
 /// files.
 pub fn secured(db: &Database, pki: &Pki, mode: &str) {

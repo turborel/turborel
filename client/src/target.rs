@@ -15,6 +15,10 @@ pub trait Duplex: Read + Write + Send {}
 
 impl<T: Read + Write + Send> Duplex for T {}
 
+/// A stream to a server, a handle on its socket, and over TLS the
+/// certificate the server presented, as DER.
+pub(crate) type Opened = (Box<dyn Duplex>, Socket, Option<Vec<u8>>);
+
 /// Where a server is, and how it is reached.
 #[derive(Clone)]
 pub enum Target {
@@ -61,38 +65,41 @@ impl Target {
     /// As `stream`'s; a connection failure if it is not made within
     /// `limit`.
     pub fn stream_within(&self, limit: Option<Duration>) -> Result<Box<dyn Duplex>> {
-        self.opened(limit).map(|(stream, _)| stream)
+        self.opened(limit).map(|(stream, _, _)| stream)
     }
 
-    /// A stream to the server, as `stream_within`, and a handle on its
-    /// socket, to bound its waits later.
+    /// A stream to the server, as `stream_within`, a handle on its socket,
+    /// to bound its waits later, and over TLS the certificate the server
+    /// presented, as DER, to bind a mechanism to (`Mechanism::bind`).
     ///
     /// # Errors
     ///
     /// As `stream_within`'s.
-    pub(crate) fn opened(&self, limit: Option<Duration>) -> Result<(Box<dyn Duplex>, Socket)> {
+    pub(crate) fn opened(&self, limit: Option<Duration>) -> Result<Opened> {
         let set_up = |e: std::io::Error| failed(&format!("[DESIGN] cannot set the connection up: {e}"));
         match self {
             Target::Tcp(address) => {
                 let stream = connected(address, limit)?;
                 stream.set_nodelay(true).map_err(set_up)?;
                 let socket = Socket::tcp(&stream)?;
-                Ok((Box::new(stream), socket))
+                Ok((Box::new(stream), socket, None))
             }
             #[cfg(unix)]
             Target::Local(path) => {
                 let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
                 let socket = Socket::local(&stream)?;
                 socket.limit(limit)?;
-                Ok((Box::new(stream), socket))
+                Ok((Box::new(stream), socket, None))
             }
             #[cfg(windows)]
-            Target::Local(path) => Ok((Box::new(crate::pipe::open(path, limit)?), Socket::Pipe)),
+            Target::Local(path) => Ok((Box::new(crate::pipe::open(path, limit)?), Socket::Pipe, None)),
             #[cfg(feature = "tls")]
             Target::Tls(address, name, config) => {
                 let tcp = connected(address, limit)?;
                 let socket = Socket::tcp(&tcp)?;
-                Ok((Box::new(crate::tls::secured(tcp, (name, config))?), socket))
+                let stream = crate::tls::secured(tcp, (name, config))?;
+                let certificate = crate::tls::presented(&stream);
+                Ok((Box::new(stream), socket, certificate))
             }
         }
     }
@@ -147,6 +154,9 @@ pub fn connect_to_within(
     if matches!(target, Target::Tcp(_)) {
         in_the_clear(mechanism)?;
     }
-    let (stream, socket) = target.opened(timeouts.connect)?;
+    let (stream, socket, certificate) = target.opened(timeouts.connect)?;
+    if let Some(presented) = certificate {
+        mechanism.bind(&presented);
+    }
     Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(target.clone()))
 }

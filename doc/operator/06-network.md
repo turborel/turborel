@@ -74,6 +74,10 @@ client trusts: a self-signed certificate used as its own authority is
 refused. The client trusts the authorities of its file alone, not the
 platform's.
 
+Over TLS, a password proved by SCRAM is bound to the server's
+certificate, so a server in the middle cannot relay it
+([Passwords](05-users.md#passwords)).
+
 SERVER.TLS_CLIENT_CA names the PEM file of the authorities whose
 certificates clients may present, each then logging in as the user its
 common name names ([Certificates](05-users.md#certificates)); empty, its
@@ -83,7 +87,8 @@ default, no client is asked for one.
 
 The server takes its certificate, key and client authorities again
 without a restart, for the connections secured after; those secured go
-on as they are:
+on as they are, SCRAM's binding of each to the certificate its handshake
+presented:
 
 - when SERVER.TLS_CERTIFICATE, SERVER.TLS_KEY or SERVER.TLS_CLIENT_CA is
   changed, as by the owner's SET DATABASE, as the next connection begins

@@ -18,8 +18,9 @@
 //! rotated with the server stopped, and TLS's files are taken again as
 //! their settings change, as everywhere.
 //!
-//! Clients prove who they are by `password`, `scram-sha-256` or
-//! `certificate`, or, with SERVER.TRUST_LOCAL ON, are trusted on this machine.
+//! Clients prove who they are by `password`, `scram-sha-256`,
+//! `scram-sha-256-plus` or `certificate`, or, with SERVER.TRUST_LOCAL ON,
+//! are trusted on this machine.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -291,9 +292,11 @@ pub fn run(
     within(config, Some((&runtime, &retaken)), |mut server| {
         let db = server.database().clone();
         let credentials = Pbkdf2::of(&db);
+        let scram = Scram::new(db.clone(), &credentials).map_err(|e| e.to_string())?;
         let mut mechanisms: Vec<Arc<dyn Authenticator>> = vec![
             Arc::new(Password::new(db.clone(), &credentials).map_err(|e| e.to_string())?),
-            Arc::new(Scram::new(db.clone(), &credentials).map_err(|e| e.to_string())?),
+            Arc::new(scram.plus()),
+            Arc::new(scram),
             Arc::new(Certificate::new(db.clone())),
         ];
         if settings::text(&db, TRUST_LOCAL) == turborel::settings::ON {

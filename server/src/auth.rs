@@ -19,8 +19,9 @@ pub enum Origin {
 }
 
 /// Who connected: where from, whether what it sends is kept from others,
-/// so an authenticator may refuse a secret sent in the clear, and the
-/// certificate it presented, if any.
+/// so an authenticator may refuse a secret sent in the clear, the
+/// certificate it presented, if any, and its connection's channel binding,
+/// if it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Peer {
     /// Where from.
@@ -33,17 +34,23 @@ pub struct Peer {
     /// (`certificate.rs`); none if it presented none, or one without a
     /// single common name.
     pub certificate: Option<String>,
+    /// The channel binding `tls-server-end-point` of the connection [RFC
+    /// 5929 §4]: the hash of the certificate the server presented in its
+    /// TLS handshake (`turborel_protocol::scram::end_point`), which SCRAM's
+    /// PLUS mechanism binds to; none off TLS, or of a certificate that
+    /// defines none.
+    pub end_point: Option<Vec<u8>>,
 }
 
 impl Peer {
     /// A TCP client at `address`, not secured yet.
     pub fn tcp(address: SocketAddr) -> Peer {
-        Peer { origin: Origin::Tcp(address), secure: false, certificate: None }
+        Peer { origin: Origin::Tcp(address), secure: false, certificate: None, end_point: None }
     }
 
     /// A client of a Unix socket or a named pipe: secure.
     pub fn local() -> Peer {
-        Peer { origin: Origin::Local, secure: true, certificate: None }
+        Peer { origin: Origin::Local, secure: true, certificate: None, end_point: None }
     }
 
     /// Where from, as the server shows and tells it: its address, or

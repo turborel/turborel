@@ -521,11 +521,13 @@ log allows replicated or remote ones.
   from aws-lc-rs, in `turborel-protocol` under feature `scram`, taken by
   the server and by the client's own feature `scram`: one implementation
   for both, checked against RFC 7677's example. Its base 64 is ours: an
-  encoding, not cryptography.
+  encoding, not cryptography. Its channel binding hashes with
+  aws-lc-rs's SHA-256, -384 and -512, the certificate's signature
+  algorithm read by the protocol's own DER walk (`der`).
 - **Client certificates** (D42) are verified by rustls's
   `WebPkiClientVerifier`; the server reads the subject's common name from
-  the DER by its own tag-and-length walk, as no vetted crate in the tree
-  reads a subject.
+  the DER by its own tag-and-length walk (`turborel_protocol::der`), as
+  no vetted crate in the tree reads a subject.
 - **Trust roots.** The client trusts authorities in files it is given,
   and the platform's only on request (`tls::roots`;
   `turborel --tls-system-roots`). Files stay the default: a platform
@@ -2186,7 +2188,8 @@ make.
   taken as bytes arrive. Over a named pipe only connect is bounded.
 - **Extension points** (R-SAFE-3):
   - `auth::Authenticator`, a mechanism of as many steps as it needs;
-    built in `password`, `scram-sha-256`, `certificate` (D43), and
+    built in `password`, `scram-sha-256`, `scram-sha-256-plus`,
+    `certificate` (D43), and
     `trust` (local clients, only while SERVER.TRUST_LOCAL is ON);
   - `transport::Listener`: built in TCP, Unix sockets and named pipes;
   - `server::Protocol`: built in the native protocol.
@@ -2307,13 +2310,39 @@ is configured, seen and changed like the database's.
     each a Challenge or an Answer; an empty Answer once the server's
     signature is checked; then Ready, which the client refuses if it
     comes before that check (`Mechanism::ready`).
-  - No channel binding: a header asking for it, or for another identity,
-    is refused. Hello names the user; client-first's `n=` is read but not
-    used to name it. A password is its UTF-8 bytes, without SASLprep.
-  - An eavesdropper can guess the password from an exchange at leisure,
-    and without binding a relaying server in the middle goes unseen. So
-    plain TCP needs SERVER.SCRAM_WITHOUT_TLS ON (OFF by default); the
+  - A header asking for another identity (`a=`) is refused. Hello names
+    the user; client-first's `n=` is read but not used to name it. A
+    password is its UTF-8 bytes, without SASLprep.
+  - An eavesdropper can guess the password from an exchange at leisure.
+    So plain TCP needs SERVER.SCRAM_WITHOUT_TLS ON (OFF by default); the
     client treats it as secret unless told (`Scram::in_the_clear`).
+- **`scram-sha-256-plus`** (RFC 5802 §6, RFC 7677) binds the exchange to
+  its TLS connection, so a relaying server in the middle is refused.
+  - **Binding type**: `tls-server-end-point` alone (RFC 5929 §4), the
+    hash of the server's certificate: SHA-256 for an MD5 or SHA-1
+    signature, else the signature's own hash. No hash, or two, as
+    Ed25519 or RSASSA-PSS of a mask hash not its message hash: no
+    binding. `tls-unique` and `tls-exporter` are not taken.
+  - **Offer**: the protocol has no mechanism list; the server's
+    certificate is its offer. Over TLS with a binding, both mechanisms
+    are served and the client asks for PLUS (`p=`); without one, the
+    client asks for `scram-sha-256` with `y`. Off TLS, `n`.
+  - **Header rules**: PLUS only with `p=tls-server-end-point`, and only
+    where the connection has a binding; `scram-sha-256` only with `n` or
+    `y`; `y` refused where the server has a binding (a downgrade); `n`
+    taken, from a client that binds nothing. `c=` must be the header then
+    the hash, else refused as a wrong proof.
+  - **Which certificate**: the hash is computed as TLS's files are taken
+    and kept with the configuration they make; a connection takes both at
+    once, so it is bound to the certificate its handshake presented,
+    through any reload (`Peer::end_point`). The client binds to the
+    certificate it received (`Mechanism::bind`), for that connection
+    alone.
+  - **Format**: no new message or field: the mechanism's name in Hello
+    and the GS2 header carry it, within protocol version 1 (D45).
+  - **Servers**: `Scram::plus` shares its secret with `Scram`, so an
+    unknown user's decoy salt is the same under both; turboreld serves
+    both.
   - An unknown user gets a stable salt from its name and a server
     secret, like a real user's, and is refused as a wrong proof is. The
     command-line client uses SCRAM (D46).
@@ -2370,7 +2399,10 @@ is configured, seen and changed like the database's.
   may connect.
 *Why:* a server reached from other machines needs clients to prove who
 they are; the core keeps what is proven against without knowing how it
-was made, so mechanisms are plug-ins, as everything else is.
+was made, so mechanisms are plug-ins, as everything else is. SCRAM binds
+by `tls-server-end-point` because both sides already hold the
+certificate, whatever the TLS version, and a client bound to a relay's
+certificate fails at the real server.
 
 **D44. A running statement is cancelled from another thread.**
 - **Stop.** Statements are cancelled through the session's `Stop`

@@ -520,7 +520,7 @@ impl Arrival {
         let name = peer.name();
         let told = |e: &SqlError| self.services.database().tell(&Event::TlsFailed { peer: name, message: e.msg.clone() });
         match handshake.await {
-            Ok(Secured::Tls(secured, certificate)) => Some((secured, Peer { secure: true, certificate, ..peer })),
+            Ok(Secured::Tls(secured, certificate, end_point)) => Some((secured, Peer { secure: true, certificate, end_point, ..peer })),
             Ok(Secured::Plain(plain)) => {
                 if tls.required() {
                     self.protocol.refuse(plain, clear()).await;

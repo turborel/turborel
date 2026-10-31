@@ -1,17 +1,28 @@
-//! \[DESIGN\] The client's side of `scram-sha-256` (RULES.md D43; RFC
-//! 5802, RFC 7677), with the feature `scram`: the client proves it knows
-//! the password, never sending it, and takes the server only once it has
-//! proved it knows the user's verifier. The messages and keys are the
-//! protocol's (`turborel_protocol::scram`), as the server's are.
+//! \[DESIGN\] The client's side of `scram-sha-256` and
+//! `scram-sha-256-plus` (RULES.md D43; RFC 5802, RFC 7677), with the
+//! feature `scram`: the client proves it knows the password, never sending
+//! it, and takes the server only once it has proved it knows the user's
+//! verifier. Over TLS it binds the exchange to the connection by
+//! `tls-server-end-point` (RFC 5929 §4), the hash of the certificate the
+//! server presented, so a server in the middle cannot relay it. The
+//! messages and keys are the protocol's (`turborel_protocol::scram`), as
+//! the server's are.
 
 use turborel_protocol::Failure;
-use turborel_protocol::scram::{self, Client};
+use turborel_protocol::scram::{self, Channel, Client};
 
 use crate::connection::{Mechanism, Result};
 
 /// \[DESIGN\] The client's side of `scram-sha-256`, of a user's password:
 /// what a client proves a password by, unless the server takes only
 /// `password`.
+///
+/// Over TLS (`Mechanism::bind`) it is `scram-sha-256-plus`, bound to the
+/// certificate the server presented; of a certificate whose signature
+/// defines no binding [RFC 5929 §4.1], `scram-sha-256` with the header `y`
+/// [RFC 5802 §6], which a server that does bind refuses, as a server in
+/// the middle would make it. Over a Unix socket or a named pipe, or plain
+/// TCP, it binds nothing.
 ///
 /// Its exchange overheard lets the eavesdropper guess the password at
 /// leisure, so over plain TCP it is refused before anything is sent,
@@ -22,6 +33,10 @@ pub struct Scram {
     password: String,
     exchange: Option<Client>,
     clear: bool,
+    /// The channel binding of the connection about to carry it, as
+    /// `bind` set it; taken by `initial`, so the next connection binds
+    /// afresh.
+    channel: Channel,
 }
 
 impl std::fmt::Debug for Scram {
@@ -34,7 +49,7 @@ impl std::fmt::Debug for Scram {
 impl Scram {
     /// The proof of `password`.
     pub fn new(password: &str) -> Scram {
-        Scram { password: password.to_owned(), exchange: None, clear: false }
+        Scram { password: password.to_owned(), exchange: None, clear: false, channel: Channel::Unbound }
     }
 
     /// It, sent over plain TCP too: for a server whose
@@ -46,14 +61,20 @@ impl Scram {
 }
 
 impl Mechanism for Scram {
+    /// `scram-sha-256-plus` once bound to a certificate's hash, else
+    /// `scram-sha-256`.
     fn name(&self) -> &str {
-        scram::MECHANISM
+        match self.channel {
+            Channel::EndPoint(_) => scram::MECHANISM_PLUS,
+            Channel::Unbound | Channel::Unoffered => scram::MECHANISM,
+        }
     }
 
-    /// client-first, of a new nonce. The user is the one Hello names, so
-    /// none is given here.
+    /// client-first, of a new nonce, bound as `bind` said. The user is the
+    /// one Hello names, so none is given here.
     fn initial(&mut self) -> Vec<u8> {
-        let mut client = Client::new("", &self.password);
+        let channel = std::mem::replace(&mut self.channel, Channel::Unbound);
+        let mut client = Client::new("", &self.password).bound(channel);
         // With no randomness, no nonce: the empty one sent is refused by
         // the server as malformed.
         let first = client.first(&scram::nonce().unwrap_or_default());
@@ -75,6 +96,12 @@ impl Mechanism for Scram {
 
     fn secret(&self) -> bool {
         !self.clear
+    }
+
+    /// Bound to `certificate`'s `tls-server-end-point`, or, of one that
+    /// defines none, able to bind but offered none.
+    fn bind(&mut self, certificate: &[u8]) {
+        self.channel = scram::end_point(certificate).map_or(Channel::Unoffered, Channel::EndPoint);
     }
 
     fn ready(&self) -> Result<()> {

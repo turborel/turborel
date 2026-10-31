@@ -2,38 +2,54 @@
 //! server proving it knows the verifier; over TLS, a Unix socket or a
 //! named pipe, over plain TCP only if the server allows it; proofs wrong, tampered with or
 //! replayed refused, and a server that does not prove itself refused by
-//! the client.
+//! the client. Over TLS, SCRAM-SHA-256-PLUS binds the exchange to the
+//! certificate the server presented: relayed or downgraded, refused.
 
+use std::net::TcpStream;
 use std::num::NonZeroU32;
+use std::path::Path;
 use std::sync::Arc;
+
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::{ClientConnection, StreamOwned};
 
 use turborel::db::Database;
 use turborel::value::Value;
-use turborel_client::connection;
+use turborel_client::connection::{self, Connection, Mechanism};
 use turborel_client::scram::Scram;
 use turborel_client::tls;
 use turborel_protocol::scram::{self, Client};
 use turborel_protocol::{Reply, Request};
 use turborel_server::auth::{Authenticator, Exchange, Peer, Step};
 use turborel_server::password::{Pbkdf2, Verifier};
-use turborel_server::scram::{MECHANISM, Scram as Scrammed};
-use turborel_server::settings::SCRAM_WITHOUT_TLS;
+use turborel_server::scram::{MECHANISM, MECHANISM_PLUS, Scram as Scrammed};
+use turborel_server::settings::{SCRAM_WITHOUT_TLS, TLS_CERTIFICATE, TLS_KEY};
 use turborel_test_support::server::Raw;
 
-use crate::common::{Kept, Pki, Running, pki, secured, start_with, state};
+use crate::common::{Kept, Pki, Running, ed25519_certificate, pki, secured, start_with, state};
 
 /// A server of `pki`, its TLS offered, whose user ANN's password is
-/// "ann's", proved by SCRAM-SHA-256 beside trust; at a Unix socket or,
-/// on Windows, a named pipe too.
+/// "ann's", proved by SCRAM-SHA-256 or SCRAM-SHA-256-PLUS beside trust; at
+/// a Unix socket or, on Windows, a named pipe too.
 fn served(pki: &Pki) -> (Database, Running) {
+    served_by(pki, false)
+}
+
+/// A server as `served`'s, by SCRAM-SHA-256-PLUS alone if `plus_only`.
+fn served_by(pki: &Pki, plus_only: bool) -> (Database, Running) {
     let db = Database::new();
     secured(&db, pki, "ON");
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
     #[cfg(any(unix, windows))]
     db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string())).unwrap();
-    let scram = Arc::new(Scrammed::new(db.clone(), &made).unwrap());
-    let server = start_with(&db, &[], vec![scram]);
+    let scram = Scrammed::new(db.clone(), &made).unwrap();
+    let mut mechanisms: Vec<Arc<dyn Authenticator>> = vec![Arc::new(scram.plus())];
+    if !plus_only {
+        mechanisms.push(Arc::new(scram));
+    }
+    let server = start_with(&db, &[], mechanisms);
     (db, server)
 }
 
@@ -142,13 +158,14 @@ fn proofs_replayed_or_tampered_with_are_refused() {
     assert_eq!(salt("a"), salt("b"), "the same salt");
 }
 
-/// An authenticator that takes any client as `scram-sha-256` at once,
-/// proving nothing: an impostor. A test-local plug-in (RULES.md D6).
+/// An authenticator that takes any client as `scram-sha-256-plus`, as
+/// clients over TLS ask, at once, proving nothing: an impostor. A
+/// test-local plug-in (RULES.md D6).
 struct Impostor;
 
 impl Authenticator for Impostor {
     fn mechanism(&self) -> &'static str {
-        MECHANISM
+        MECHANISM_PLUS
     }
     fn begin(&self, user: &str, _: &Peer) -> Box<dyn Exchange> {
         Box::new(Accepting(user.to_owned()))
@@ -178,7 +195,77 @@ fn a_client_refuses_a_server_that_does_not_prove_itself() {
     assert_eq!(state(&refused).0, "08006");
     assert!(refused.message.contains("did not prove"), "{refused}");
     let mut scram = Scram::new("ann's");
-    assert!(connection::Mechanism::answer(&mut scram, b"r=x,s=AA==,i=1").is_err(), "not begun");
-    connection::Mechanism::initial(&mut scram);
-    assert!(connection::Mechanism::answer(&mut scram, b"v=AA==").is_err(), "a signature out of turn");
+    assert!(scram.answer(b"r=x,s=AA==,i=1").is_err(), "not begun");
+    scram.initial();
+    assert!(scram.answer(b"v=AA==").is_err(), "a signature out of turn");
+}
+
+/// A TLS stream to `server`, trusting `pki`'s authority, its handshake
+/// done: for a mechanism bound by hand (`Mechanism::bind`).
+fn handshaken(server: &Running, pki: &Pki) -> tls::TlsStream {
+    let config = tls::trusting(&pki.authority).unwrap();
+    let mut tcp = TcpStream::connect(server.address).unwrap();
+    let mut session = ClientConnection::new(config, ServerName::try_from("localhost").unwrap()).unwrap();
+    while session.is_handshaking() {
+        session.complete_io(&mut tcp).unwrap();
+    }
+    StreamOwned::new(session, tcp)
+}
+
+/// The DER of the first certificate of the PEM file `path`.
+fn der_of(path: &Path) -> Vec<u8> {
+    CertificateDer::from_pem_file(path).unwrap().as_ref().to_vec()
+}
+
+/// Verifies: [DESIGN] RULES.md D43; RFC 5802 §6; RFC 5929 §4: over TLS a
+/// client proves its password by SCRAM-SHA-256-PLUS, bound to the
+/// certificate the server presented, which a server of that mechanism
+/// alone takes. A client bound to another certificate, as one is through
+/// a server in the middle that presents its own and relays the exchange,
+/// is refused (SQLSTATE 28000). A client of SCRAM-SHA-256 binding nothing
+/// (`n`) is still taken over TLS; one that could bind but sees none
+/// offered (`y`), as of a certificate signed by Ed25519, which defines
+/// none, is refused where the server offers one: a downgrade.
+#[test]
+fn scram_over_tls_is_bound_to_its_connection() {
+    let (alone, both) = (pki("scram-plus"), pki("scram-bound"));
+    let (_db, plus) = served_by(&alone, true);
+    assert_eq!(over_tls(&plus, &alone, ("ann", "ann's")).unwrap(), "ANN", "by scram-sha-256-plus");
+    let mut relayed = Scram::new("ann's");
+    relayed.bind(&der_of(&both.chain));
+    assert_eq!(relayed.name(), MECHANISM_PLUS);
+    let refused = Connection::open(handshaken(&plus, &alone), "ann", &mut relayed).err().unwrap();
+    assert_eq!(state(&refused), ("28000", -919), "{refused}");
+    let (_db, server) = served(&both);
+    let unbound = Connection::open(handshaken(&server, &both), "ann", &mut Scram::new("ann's")).unwrap();
+    assert_eq!(unbound.authorization(), "ANN", "a client that binds nothing");
+    let mut unoffered = Scram::new("ann's");
+    unoffered.bind(&ed25519_certificate());
+    assert_eq!(unoffered.name(), MECHANISM);
+    let downgraded = Connection::open(handshaken(&server, &both), "ann", &mut unoffered).err().unwrap();
+    let why = "SCRAM: the client believes the server offers no channel binding, which it does: a downgrade";
+    assert_eq!((state(&downgraded), downgraded.message.as_str()), (("28000", -919), why));
+    let mut once = Scram::new("ann's");
+    once.bind(&der_of(&both.chain));
+    once.initial();
+    assert_eq!(once.name(), MECHANISM, "a binding is of one connection");
+}
+
+/// Verifies: [DESIGN] RULES.md D42, D43; RFC 5929 §4: a certificate taken
+/// again, its settings changed, binds the connections after: a client
+/// bound to the certificate the server now presents proves its password;
+/// one bound to the certificate it presented before is refused (SQLSTATE
+/// 28000).
+#[test]
+fn a_certificate_taken_again_binds_the_connections_after() {
+    let (old, new) = (pki("scram-reload-old"), pki("scram-reload-new"));
+    let (db, server) = served(&old);
+    assert_eq!(over_tls(&server, &old, ("ann", "ann's")).unwrap(), "ANN");
+    db.set_setting(TLS_CERTIFICATE, &Value::Char(new.chain.display().to_string())).unwrap();
+    db.set_setting(TLS_KEY, &Value::Char(new.key.display().to_string())).unwrap();
+    assert_eq!(over_tls(&server, &new, ("ann", "ann's")).unwrap(), "ANN", "bound to the new one");
+    let mut stale = Scram::new("ann's");
+    stale.bind(&der_of(&old.chain));
+    let refused = Connection::open(handshaken(&server, &new), "ann", &mut stale).err().unwrap();
+    assert_eq!(state(&refused).0, "28000", "{refused}");
 }

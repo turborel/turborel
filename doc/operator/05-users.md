@@ -49,22 +49,38 @@ its operator ends its connection ([Connections](06-network.md#ending-a-connectio
 
 ## Passwords
 
-A client proves a password by one of two mechanisms, which the server
-both takes:
+A client proves a password by one of these mechanisms, which the server
+all takes:
 
 | Mechanism | How |
 |---|---|
-| `scram-sha-256` | SCRAM-SHA-256 (RFC 5802, RFC 7677): the client proves it knows the password, and the server that it knows the verifier, by a challenge and response; the password never travels. The command-line client uses it. |
+| `scram-sha-256-plus` | SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677), over TLS: as `scram-sha-256`, the exchange bound to the TLS connection by `tls-server-end-point` (RFC 5929), the hash of the certificate the server presented. The command-line client uses it over TLS. |
+| `scram-sha-256` | SCRAM-SHA-256 (RFC 5802, RFC 7677): the client proves it knows the password, and the server that it knows the verifier, by a challenge and response; the password never travels. The command-line client uses it over a Unix socket or named pipe. |
 | `password` | the password is sent, inside TLS or over a Unix socket or named pipe, and checked against the verifier |
 
-Either is taken only over TLS, a Unix socket or a named pipe, never in
+Each is taken only over TLS, a Unix socket or a named pipe, never in
 the clear over TCP: the client refuses to begin so, and the server to
 take it. A SCRAM exchange does not give the password away, but one
-overheard lets the eavesdropper try passwords against it at leisure, and
-without TLS a server in the middle could relay it. SERVER.SCRAM_WITHOUT_TLS ON lets
-the server take SCRAM over plain TCP all the same, for a network its
-operator trusts; it is OFF by default, and a client sends it so only if
-its program says.
+overheard lets the eavesdropper try passwords against it at leisure.
+SERVER.SCRAM_WITHOUT_TLS ON lets the server take `scram-sha-256` over
+plain TCP all the same, for a network its operator trusts; it is OFF by
+default, and a client sends it so only if its program says.
+
+Over TLS, the binding keeps a server in the middle from relaying the
+exchange: one that presents its own certificate binds the client to
+that, which the server's own does not match, and the login is refused
+as a wrong password is. Each connection is bound to the certificate its
+handshake presented, a certificate taken again included ([Certificates
+renewed](06-network.md#certificates-renewed)). A certificate whose
+signature uses no hash, as Ed25519's, or two, defines no binding: over
+it the client asks for `scram-sha-256`, saying it could bind, and the
+server takes it. A client saying so where the server's certificate does
+define a binding is refused, as a server in the middle hiding the
+binding would make it:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 28000): SCRAM: the client believes the server offers no channel binding, which it does: a downgrade
+```
 
 A password is taken as its UTF-8 bytes, without the SASLprep of RFC
 5802: the same of an ASCII password.

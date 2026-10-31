@@ -168,8 +168,17 @@ pub fn connect(
     let socket = Socket::tcp(&tcp)?;
     socket.limit(timeouts.connect)?;
     let stream = secured(tcp, (name, config))?;
+    if let Some(certificate) = presented(&stream) {
+        mechanism.bind(&certificate);
+    }
     let reach = Target::Tls(server, name.to_owned(), Arc::clone(config));
     Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(reach))
+}
+
+/// The certificate the server of `stream` presented, its chain's first,
+/// as DER: what a mechanism binds its channel to (`Mechanism::bind`).
+pub fn presented(stream: &TlsStream) -> Option<Vec<u8>> {
+    stream.conn.peer_certificates().and_then(<[_]>::first).map(|c| c.as_ref().to_vec())
 }
 
 /// The connection `tcp` to the server of the name `name`, secured by TLS

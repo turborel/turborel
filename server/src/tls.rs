@@ -15,6 +15,12 @@
 //! presenting none is served as before, one presenting another's fails its
 //! handshake.
 //!
+//! Each connection secured knows the channel binding `tls-server-end-point`
+//! of the certificate it was presented [RFC 5929 §4] (`Peer::end_point`),
+//! for SCRAM-SHA-256-PLUS (`scram.rs`): computed once as the files are
+//! taken, and kept beside the configuration they make, so a connection
+//! has the binding of the very certificate its handshake presented.
+//!
 //! Its files are taken again without a restart (`Tls::reload`): when the
 //! settings naming them change, as the next connection is secured, and
 //! when the program asks, as `turboreld` does on SIGHUP. The connections
@@ -40,6 +46,7 @@ use tokio_rustls::TlsAcceptor;
 use turborel::db::Database;
 use turborel::diagnostics::Event;
 use turborel::files::Noted;
+use turborel_protocol::scram::end_point;
 
 use crate::settings::{self, TLS_CERTIFICATE, TLS_CLIENT_CA, TLS_KEY};
 use crate::transport::Transport;
@@ -53,8 +60,10 @@ const HANDSHAKE: u8 = 22;
 /// What a connection is, once its first byte is read.
 pub enum Secured {
     /// Secured by TLS; with the common name of the certificate its client
-    /// presented, verified, if any (`Peer::certificate`).
-    Tls(Box<dyn Transport>, Option<String>),
+    /// presented, verified, if any (`Peer::certificate`), and the channel
+    /// binding of the server's certificate, if it defines one
+    /// (`Peer::end_point`).
+    Tls(Box<dyn Transport>, Option<String>, Option<Vec<u8>>),
     /// In the clear.
     Plain(Box<dyn Transport>),
 }
@@ -95,9 +104,24 @@ struct Source {
     tried: Mutex<Files>,
 }
 
+/// A configuration, and the channel binding of the certificate it
+/// presents: taken together, so a connection has the one its handshake
+/// presented, though a reload replaces them.
+struct Offered {
+    config: Arc<ServerConfig>,
+    end_point: Option<Vec<u8>>,
+}
+
+impl Offered {
+    /// `config`, presenting `certificate`.
+    fn of(config: Arc<ServerConfig>, certificate: &CertificateDer<'_>) -> Arc<Offered> {
+        Arc::new(Offered { config, end_point: end_point(certificate) })
+    }
+}
+
 /// \[DESIGN\] TLS for a listener's connections.
 pub struct Tls {
-    config: RwLock<Arc<ServerConfig>>,
+    offered: RwLock<Arc<Offered>>,
     required: bool,
     /// Its files, shown while they are taken (RULES.md D56).
     notes: Mutex<Vec<Noted>>,
@@ -168,13 +192,15 @@ fn authorities(path: &str) -> io::Result<Option<RootCertStore>> {
 ///
 /// `InvalidData` if the chain or key is not named, a file cannot be read,
 /// holds no certificate or key, or the key does not fit the certificate.
-fn load(files: &Files) -> io::Result<Arc<ServerConfig>> {
+fn load(files: &Files) -> io::Result<Arc<Offered>> {
     if files.chain.is_empty() || files.key.is_empty() {
         return Err(invalid("TLS", "SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY name its files"));
     }
     let chain = certificates(&files.chain)?;
+    let own = chain.first().cloned().ok_or_else(|| invalid(&files.chain, "no certificate"))?;
     let private = PrivateKeyDer::from_pem_file(Path::new(&files.key)).map_err(|e| invalid(&files.key, e))?;
-    server_config(chain, private, authorities(&files.authorities)?).map_err(|e| invalid(&files.chain, e))
+    let config = server_config(chain, private, authorities(&files.authorities)?).map_err(|e| invalid(&files.chain, e))?;
+    Ok(Offered::of(config, &own))
 }
 
 /// `files`, shown among `db`'s files (RULES.md D56), each read once.
@@ -190,9 +216,17 @@ fn noted(db: &Database, files: &Files) -> io::Result<Vec<Noted>> {
 }
 
 impl Tls {
-    /// TLS by `config`; `required` if a client in the clear is refused.
-    pub fn new(config: Arc<ServerConfig>, required: bool) -> Tls {
-        Tls { config: RwLock::new(config), required, notes: Mutex::new(Vec::new()), source: None }
+    /// TLS by `config`, which presents `certificate`, its chain's first,
+    /// as `server_config` makes it of that chain; `required` if a client in
+    /// the clear is refused. The certificate's channel binding is offered
+    /// to SCRAM-SHA-256-PLUS.
+    pub fn new(config: Arc<ServerConfig>, certificate: &CertificateDer<'_>, required: bool) -> Tls {
+        Tls::offering(Offered::of(config, certificate), required)
+    }
+
+    /// TLS by `offered`.
+    fn offering(offered: Arc<Offered>, required: bool) -> Tls {
+        Tls { offered: RwLock::new(offered), required, notes: Mutex::new(Vec::new()), source: None }
     }
 
     /// TLS of `files`.
@@ -203,7 +237,7 @@ impl Tls {
     /// read, holds no certificate or key, or the key does not fit the
     /// certificate.
     pub fn from_files(files: &Files, required: bool) -> io::Result<Tls> {
-        Ok(Tls::new(load(files)?, required))
+        Ok(Tls::offering(load(files)?, required))
     }
 
     /// It, its files as `db`'s settings name them, shown among `db`'s
@@ -226,9 +260,9 @@ impl Tls {
         let Some(source) = &self.source else { return false };
         let files = Files::of(&source.db);
         whole(source.tried.lock()).clone_from(&files);
-        match load(&files).and_then(|config| Ok((config, noted(&source.db, &files)?))) {
-            Ok((config, notes)) => {
-                *whole(self.config.write()) = config;
+        match load(&files).and_then(|offered| Ok((offered, noted(&source.db, &files)?))) {
+            Ok((offered, notes)) => {
+                *whole(self.offered.write()) = offered;
                 *whole(self.notes.lock()) = notes;
                 source.db.tell(&Event::TlsReloaded { certificate: files.chain });
                 true
@@ -268,11 +302,13 @@ impl Tls {
             return Ok(Secured::Plain(Box::new(prefixed)));
         }
         self.refresh();
-        let config = Arc::clone(&*whole(self.config.read()));
-        let acceptor = TlsAcceptor::from(config);
+        // The configuration and its binding at once: a reload after leaves
+        // this connection both of the certificate it was presented.
+        let offered = Arc::clone(&*whole(self.offered.read()));
+        let acceptor = TlsAcceptor::from(Arc::clone(&offered.config));
         let secured = acceptor.accept(prefixed).await?;
         let presented = secured.get_ref().1.peer_certificates().and_then(<[_]>::first).and_then(|c| common_name(c));
-        Ok(Secured::Tls(Box::new(secured), presented))
+        Ok(Secured::Tls(Box::new(secured), presented, offered.end_point.clone()))
     }
 }
 

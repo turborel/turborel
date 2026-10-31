@@ -1,37 +1,42 @@
-//! \[DESIGN\] SCRAM-SHA-256 (RFC 5802, RFC 7677; RULES.md D43), with the
-//! feature `scram`: a challenge and response by which a client proves it
-//! knows a user's password, and the server that it knows the user's
-//! verifier, the password never sent. Both sides' messages and keys are
-//! here, so the client and the server share one implementation; the
-//! cryptography is aws-lc-rs's (D26).
+//! \[DESIGN\] SCRAM-SHA-256 and SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677;
+//! RULES.md D43), with the feature `scram`: a challenge and response by
+//! which a client proves it knows a user's password, and the server that
+//! it knows the user's verifier, the password never sent. Both sides'
+//! messages and keys are here, so the client and the server share one
+//! implementation; the cryptography is aws-lc-rs's (D26).
 //!
 //! ```text
-//! client-first:  n,,n=<user>,r=<client nonce>
+//! client-first:  <GS2 header>n=<user>,r=<client nonce>
 //! server-first:  r=<client nonce><server nonce>,s=<salt, base 64>,i=<iterations>
-//! client-final:  c=biws,r=<both nonces>,p=<ClientProof, base 64>
+//! client-final:  c=<GS2 header, then the data bound, base 64>,r=<both nonces>,
+//!                p=<ClientProof, base 64>
 //! server-final:  v=<ServerSignature, base 64>
 //!
 //! SaltedPassword  = PBKDF2-HMAC-SHA-256(password, salt, iterations)
 //! ClientKey       = HMAC(SaltedPassword, "Client Key")
 //! StoredKey       = SHA-256(ClientKey)
 //! ServerKey       = HMAC(SaltedPassword, "Server Key")
-//! AuthMessage     = client-first without "n,,", server-first, client-final
-//!                   without its proof, by commas
+//! AuthMessage     = client-first without its GS2 header, server-first,
+//!                   client-final without its proof, by commas
 //! ClientProof     = ClientKey XOR HMAC(StoredKey, AuthMessage)
 //! ServerSignature = HMAC(ServerKey, AuthMessage)
 //! ```
 //!
 //! The server keeps StoredKey and ServerKey, never SaltedPassword, which
-//! would let whoever reads it log in. No channel binding: the client sends
-//! the header `n` (none), or `y` (it could, but the server offers none);
-//! one asking for binding, `p=`, or naming another identity to act as,
-//! `a=`, is refused, as is a message with extensions. The protocol's Hello
-//! names the user authenticated; the `n=` of client-first is read and left
+//! would let whoever reads it log in. The channel is bound (`Channel`) by
+//! `tls-server-end-point` alone [RFC 5929 §4], the hash of the server's
+//! certificate (`end_point`), which both sides of a TLS connection know:
+//! the GS2 header `p=tls-server-end-point` of SCRAM-SHA-256-PLUS; `n` of a
+//! client binding none; `y` of one that could, but sees the server offer
+//! none. Another binding type, or another identity to act as, `a=`, is
+//! refused, as is a message with extensions. The protocol's Hello names
+//! the user authenticated; the `n=` of client-first is read and left
 //! aside, as it is part of AuthMessage. A password is taken as its UTF-8
-//! bytes, without SASLprep [RFC 5802 §2.2]: the same on both sides here, and
-//! the same of an ASCII password as SASLprep's.
+//! bytes, without SASLprep [RFC 5802 §2.2]: the same on both sides here,
+//! and the same of an ASCII password as SASLprep's.
 
 mod base64;
+mod binding;
 
 use std::num::NonZeroU32;
 
@@ -39,9 +44,13 @@ use aws_lc_rs::{constant_time, digest, hmac, pbkdf2};
 use turborel::error::{Code, Result, SqlError, SqlState};
 
 pub use base64::{decode, encode};
+pub use binding::end_point;
 
 /// The name of the mechanism, as a client asks for it.
 pub const MECHANISM: &str = "scram-sha-256";
+/// The name of the mechanism bound to its channel [RFC 5802 §4, RFC 7677
+/// §3], as a client asks for it.
+pub const MECHANISM_PLUS: &str = "scram-sha-256-plus";
 /// The bytes of a key, a proof or a signature: SHA-256's.
 pub const KEY_BYTES: usize = 32;
 /// \[DESIGN\] The random bytes of a nonce: 144 bits, in 24 characters of
@@ -53,6 +62,44 @@ const GS2_NONE: &str = "n,,";
 /// \[DESIGN\] The GS2 header of a client that could bind the channel, but
 /// believes the server cannot [RFC 5802 §6].
 const GS2_UNOFFERED: &str = "y,,";
+/// \[DESIGN\] The GS2 header of a client binding the channel by
+/// `tls-server-end-point` [RFC 5802 §7, RFC 5929 §4.2].
+const GS2_END_POINT: &str = "p=tls-server-end-point,,";
+
+/// \[DESIGN\] The channel binding of an exchange [RFC 5802 §6, §7]: the
+/// flag of its GS2 header, and the data it binds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Channel {
+    /// `n`: none, the client binding no channel, as over a Unix socket.
+    Unbound,
+    /// `y`: none, the client able to bind one, but the server offering
+    /// none on this connection.
+    Unoffered,
+    /// `p=tls-server-end-point`: bound to the server's certificate, of
+    /// this hash (`end_point`). Not a secret [RFC 5929 §4.2].
+    EndPoint(Vec<u8>),
+}
+
+impl Channel {
+    /// Its GS2 header.
+    fn header(&self) -> &'static str {
+        match self {
+            Channel::Unbound => GS2_NONE,
+            Channel::Unoffered => GS2_UNOFFERED,
+            Channel::EndPoint(_) => GS2_END_POINT,
+        }
+    }
+
+    /// cbind-input: its GS2 header, then the data it binds [RFC 5802 §7],
+    /// whose base 64 is the `c=` of client-final.
+    fn input(&self) -> Vec<u8> {
+        let mut input = self.header().as_bytes().to_vec();
+        if let Channel::EndPoint(data) = self {
+            input.extend_from_slice(data);
+        }
+        input
+    }
+}
 /// \[DESIGN\] What ClientKey is the HMAC of [RFC 5802 §3].
 const CLIENT_KEY: &[u8] = b"Client Key";
 /// \[DESIGN\] What ServerKey is the HMAC of [RFC 5802 §3].
@@ -154,7 +201,7 @@ mod client;
 mod server;
 
 pub use client::Client;
-pub use server::{First, Server};
+pub use server::{First, Offer, Server};
 
 #[cfg(test)]
 mod tests;

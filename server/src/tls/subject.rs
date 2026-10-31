@@ -3,7 +3,8 @@
 //! from the DER of a certificate TLS has verified, by walking its fields
 //! to the subject's, and refused if there is not exactly one. Only the
 //! lengths and tags of DER [ITU-T X.690 §8.1] are read; the signature and
-//! everything else were checked by rustls.
+//! everything else were checked by rustls; the reading is the protocol's
+//! (`turborel_protocol::der`), which the channel binding of SCRAM shares.
 //!
 //! ```text
 //! Certificate     SEQUENCE { tbsCertificate, signatureAlgorithm, signature }
@@ -13,15 +14,13 @@
 //! Name            SEQUENCE OF SET OF SEQUENCE { type OID, value ANY }
 //! ```
 
-/// \[DESIGN\] DER's tag of a SEQUENCE [X.690 §8.9], constructed.
-const SEQUENCE: u8 = 0x30;
+use turborel_protocol::der::{OID, SEQUENCE, element, expect};
+
 /// \[DESIGN\] DER's tag of a SET [X.690 §8.11], constructed.
 const SET: u8 = 0x31;
 /// \[DESIGN\] DER's tag of a certificate's version, `[0]` explicit
 /// [RFC 5280 §4.1].
 const VERSION: u8 = 0xa0;
-/// \[DESIGN\] DER's tag of an OBJECT IDENTIFIER [X.690 §8.19].
-const OID: u8 = 0x06;
 /// \[DESIGN\] The DER of id-at-commonName, 2.5.4.3 [RFC 5280 Appendix A.1]:
 /// its body, without tag and length.
 const COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
@@ -30,32 +29,6 @@ const COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
 const STRINGS: &[u8] = &[0x0c, 0x13, 0x16];
 /// The fields of tbsCertificate before the subject, but the version.
 const BEFORE_SUBJECT: usize = 4;
-
-/// The tag, body and rest of the DER element `der` begins with.
-fn element(der: &[u8]) -> Option<(u8, &[u8], &[u8])> {
-    let (&tag, rest) = der.split_first()?;
-    let (&first, rest) = rest.split_first()?;
-    let (length, rest) = if first < 0x80 {
-        (usize::from(first), rest)
-    } else {
-        // Long form: the low bits count the length's bytes, at most four.
-        let count = usize::from(first & 0x7f);
-        if count == 0 || count > 4 {
-            return None;
-        }
-        let (bytes, after) = rest.split_at_checked(count)?;
-        (bytes.iter().fold(0_usize, |n, b| n.wrapping_shl(8) | usize::from(*b)), after)
-    };
-    let (body, after) = rest.split_at_checked(length)?;
-    Some((tag, body, after))
-}
-
-/// The body of the element `der` begins with, if its tag is `tag`, and
-/// the rest after it.
-fn expect(der: &[u8], tag: u8) -> Option<(&[u8], &[u8])> {
-    let (found, body, rest) = element(der)?;
-    (found == tag).then_some((body, rest))
-}
 
 /// The body of the subject of the certificate `der`.
 fn subject(der: &[u8]) -> Option<&[u8]> {
