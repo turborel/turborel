@@ -2,11 +2,13 @@
 //! JOBS.POLICY says, each job shown with its state, its threads told as
 //! events, and stopped and started again around a close.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use turborel::db::{Database, OpenOptions};
-use turborel::error::Code;
-use turborel::threads::{JobInfo, JobPolicy, JobState};
+use turborel::error::{Code, SqlError};
+use turborel::threads::{BackgroundJob, JobInfo, JobPolicy, JobState};
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Kept, Scratch, after_crash};
@@ -161,4 +163,69 @@ fn the_last_handle_dropped_joins_its_jobs() {
     again.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
     assert_eq!(crate::common::rows(&again.session("A"), "SELECT K FROM T"), Ok(vec!["1".to_owned()]));
     again.close().unwrap();
+}
+
+/// A plug-in's job: counts its runs, and fails while told to.
+struct Counting {
+    label: &'static str,
+    runs: Arc<AtomicU64>,
+    fail: Arc<AtomicBool>,
+}
+
+impl BackgroundJob for Counting {
+    fn label(&self) -> &'static str {
+        self.label
+    }
+    fn run(&self, _db: &Database) -> turborel::error::Result<Option<Duration>> {
+        self.runs.fetch_add(1_u64, Ordering::SeqCst);
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(SqlError::new(Code::Io, "[DESIGN] the job's work failed"));
+        }
+        Ok(None)
+    }
+}
+
+/// A `Counting` job labelled `label`.
+fn counting(label: &'static str) -> Arc<Counting> {
+    Arc::new(Counting { label, runs: Arc::default(), fail: Arc::default() })
+}
+
+/// Verifies: [DESIGN] RULES.md D55: a plug-in's job added to a database
+/// (`Database::add_job`) is one of its jobs, shown with its state: asked
+/// for under MANUAL, it is due until the program runs it; its error is
+/// noted, told as an event, and returned by `run_due`; under AUTOMATIC
+/// its own thread runs it. A label not of the form `turborel-<kind>`, or
+/// one already taken, is refused (SQLCODE -910).
+#[test]
+fn a_plugins_job_runs_as_the_policy_says() {
+    let db = Database::new();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    let work = counting("turborel-counting");
+    let handle = db.add_job(Arc::clone(&work) as Arc<dyn BackgroundJob>).unwrap();
+    for label in ["counting", "turborel-", "turborel-counting", "turborel-checkpoint"] {
+        assert_eq!(db.add_job(counting(label)).err().map(|e| e.code), Some(Code::Api), "{label}");
+    }
+    assert_eq!(job(&db, "turborel-counting").state, JobState::Idle);
+    db.request_job(handle, Duration::ZERO);
+    assert_eq!(job(&db, "turborel-counting").state, JobState::Due);
+    db.run_due().unwrap();
+    assert_eq!((work.runs.load(Ordering::SeqCst), job(&db, "turborel-counting").state), (1_u64, JobState::Idle));
+
+    work.fail.store(true, Ordering::SeqCst);
+    db.request_job(handle, Duration::ZERO);
+    assert_eq!(db.run_due().err().map(|e| e.code), Some(Code::Io));
+    assert!(job(&db, "turborel-counting").last_error.is_some());
+    assert!(kept.taken().iter().any(|(_, e)| e.contains("turborel-counting") && e.contains("Failed")));
+
+    work.fail.store(false, Ordering::SeqCst);
+    db.set_job_policy(JobPolicy::Automatic).unwrap();
+    db.request_job(handle, Duration::ZERO);
+    let began = Instant::now();
+    while work.runs.load(Ordering::SeqCst) < 3_u64 && began.elapsed() < Duration::from_secs(30_u64) {
+        std::thread::sleep(Duration::from_millis(1_u64));
+    }
+    assert_eq!(work.runs.load(Ordering::SeqCst), 3_u64, "run by its thread");
+    assert!(job(&db, "turborel-counting").threaded);
 }

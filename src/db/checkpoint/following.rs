@@ -1,0 +1,66 @@
+//! \[DESIGN\] A checkpoint of a following database (RULES.md D25, D57): its
+//! log is its replica's, which it never writes, so it logs nothing. Taking
+//! turns with its replay, it collects every table's garbage, so no entry
+//! of a version awaiting collection needs logging (`Change::Stale`), and
+//! is refused while a reader still holds one; then every engine captures
+//! what it holds through the position after the last record replayed, and
+//! the image is recorded, recovery to read the log from the first record
+//! of the oldest transaction it holds, whose records it applies only as
+//! the transaction ends (`db/standby.rs`). Opened again, it recovers from
+//! that image, and follows from there (`db/standby/reopen.rs`). Not before
+//! it has replayed again what the checkpoint it was opened from holds.
+//! Split from db/checkpoint.rs (RULES.md R-SIZE-2).
+
+use super::super::files::DatabaseFiles;
+use super::super::{Database, api};
+use crate::catalog::QualifiedName;
+use crate::error::{Code, Result, SqlError};
+use crate::log::Lsn;
+use crate::sync::lock_builtin;
+use crate::txn::FollowedRecords;
+
+impl Database {
+    /// `take_checkpoint`'s work for a following database, its turn taken:
+    /// see the module's documentation.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 before it replayed again what the checkpoint it was
+    /// opened from holds; -911 while a reader holds a version awaiting
+    /// collection; -914 while a table is damaged; an engine's, or the
+    /// catalog's, errors.
+    pub(super) fn take_following_checkpoint(&self, files: &DatabaseFiles) -> Result<()> {
+        let current = self.snapshot()?;
+        let _replaying = current.tx.replaying.take("a checkpoint")?;
+        let st = self.snapshot()?;
+        let following = *lock_builtin(&st.tx.following);
+        let through = Lsn(following.replayed.0.saturating_add(1));
+        if through < following.image {
+            return Err(api(
+                "[DESIGN] RULES.md D57: a following database takes no checkpoint until it replays again what it was opened from",
+            ));
+        }
+        if let Some(table) = st.damaged_tables().first() {
+            return Err(SqlError::new(Code::Damaged, format!("[DESIGN] {table} is damaged: no checkpoint is taken until it is repaired")));
+        }
+        let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
+        st.gc(&tables);
+        let as_of = st.tx.stable();
+        for table in &tables {
+            let storage = st.storage_of(table)?;
+            if std::sync::Arc::clone(storage).garbage(as_of).next().is_some() {
+                return Err(SqlError::new(
+                    Code::Conflict,
+                    format!("[DESIGN] RULES.md D57: a reader holds versions of {table}: a following database's checkpoint waits for it"),
+                ));
+            }
+        }
+        let counted = st.tx.logged.load(std::sync::atomic::Ordering::Relaxed);
+        st.capture_engines(through)?;
+        let held = lock_builtin(&st.tx.followed).values().filter_map(FollowedRecords::first).min();
+        let image = st.image_of(false, (through, held.map_or(through, |first| first.min(through))));
+        st.record_image(files, image)?;
+        st.tx.checkpointed(counted);
+        Ok(())
+    }
+}

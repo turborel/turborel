@@ -12,9 +12,13 @@ use super::checkpoint::checkpointed;
 use super::log_sync::log_synced;
 use super::maintenance::maintained;
 use crate::error::Result;
+use crate::error::{Code, SqlError};
 use crate::settings::JOBS_POLICY;
-use crate::threads::{JobId, JobInfo, JobPolicy, Jobs, Turn};
+use crate::threads::{BackgroundJob, JobHandle, JobId, JobInfo, JobPolicy, Jobs, Turn, Work};
 use crate::value::Value;
+
+/// \[DESIGN\] What every job's label begins with (RULES.md D55).
+pub const LABEL_PREFIX: &str = "turborel-";
 
 /// The label of a database's checkpoint job and thread.
 const CHECKPOINT: &str = "turborel-checkpoint";
@@ -42,9 +46,9 @@ impl Background {
     /// The background work of a database whose snapshots share `jobs`:
     /// its checkpoint, maintenance and log sync jobs added.
     pub(super) fn over(jobs: Arc<Jobs>) -> Background {
-        let checkpoint = jobs.add(CHECKPOINT, checkpointed, None);
-        let maintenance = jobs.add(MAINTENANCE, maintained, Some(AGAIN));
-        let log_sync = jobs.add(LOG_SYNC, log_synced, None);
+        let checkpoint = jobs.add(CHECKPOINT, Work::Own(checkpointed), None);
+        let maintenance = jobs.add(MAINTENANCE, Work::Own(maintained), Some(AGAIN));
+        let log_sync = jobs.add(LOG_SYNC, Work::Own(log_synced), None);
         Background { jobs, checkpoint, maintenance, log_sync, maintenance_turn: Turn::default() }
     }
 }
@@ -69,6 +73,34 @@ impl Database {
     /// how often it ran, and its last error.
     pub fn jobs(&self) -> Vec<JobInfo> {
         self.background().jobs.infos()
+    }
+
+    /// \[DESIGN\] Adds `job`, a plug-in's background work, to the
+    /// database's jobs (RULES.md D55): run as JOBS.POLICY says once asked
+    /// for (`request_job`), and shown among them.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed, or the label does not
+    /// begin with `turborel-`, or is one of its jobs' already.
+    pub fn add_job(&self, job: Arc<dyn BackgroundJob>) -> Result<JobHandle> {
+        self.snapshot()?;
+        let label = job.label();
+        let jobs = &self.background().jobs;
+        if !label.starts_with(LABEL_PREFIX) || label.len() == LABEL_PREFIX.len() || jobs.has(label) {
+            return Err(SqlError::new(
+                Code::Api,
+                format!("[DESIGN] RULES.md D55: a job is labelled turborel-<kind>, unlike any other of its database's, not {label}"),
+            ));
+        }
+        Ok(JobHandle(jobs.add(label, Work::Plugin(job), None)))
+    }
+
+    /// \[DESIGN\] Asks for the plug-in's job `job`, `after` from now: its
+    /// thread runs it then, under AUTOMATIC; under MANUAL, the program's
+    /// next `run_due`; under PAUSED, once the policy changes.
+    pub fn request_job(&self, job: JobHandle, after: Duration) {
+        self.background().jobs.request_after(job.0, self, self.job_policy(), after);
     }
 
     /// \[DESIGN\] Sets JOBS.POLICY to `policy`, as `set_setting` does:

@@ -2,11 +2,12 @@
 //! how definitions change (RULES.md D27), and the extension points and
 //! settings reached through Rust. Split from db.rs (RULES.md R-SIZE-2).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, Weak};
 use std::thread::{self, ThreadId};
 
 mod handles;
+mod service;
 
 use handles::Program;
 pub(crate) use handles::WeakDatabase;
@@ -20,7 +21,7 @@ use super::{Session, State, qualified_name};
 use crate::catalog::{Catalog, MemoryCatalog, QualifiedName};
 use crate::diagnostics::{Diagnostics, Event, Extension, Level, NoDiagnostics};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::index::{IndexMethod, KeyOrder, Probe};
+use crate::index::IndexMethod;
 use crate::log::Log;
 use crate::memory::Host;
 use crate::optimizer::Optimizer;
@@ -84,6 +85,12 @@ struct Shared {
     /// none is rolled back or built on before recovery decides it
     /// (RULES.md D25).
     in_doubt: Mutex<Vec<Arc<Txn>>>,
+    /// How it was first opened from its files, to open it again in place
+    /// (`db/standby/reopen.rs`).
+    opening: Mutex<Option<Arc<super::standby::Opening>>>,
+    /// Its services: opened again in place, it begins another, and the
+    /// sessions of earlier ones are refused (`database/service.rs`).
+    service: AtomicU64,
 }
 
 /// One thread's turn to change the definitions. Dropping it ends the turn.
@@ -129,6 +136,8 @@ impl Database {
             background,
             program,
             in_doubt: Mutex::new(Vec::new()),
+            opening: Mutex::new(None),
+            service: AtomicU64::new(0),
         })
     }
 
@@ -577,18 +586,6 @@ impl Database {
     /// `<module authorization identifier>` [X3.135-1986 §5.4 SR2b, §5.6 GR4, §6.6 SR3].
     pub fn session(&self, auth: &str) -> Session {
         Session::new(self.clone(), auth)
-    }
-
-    /// \[DESIGN\] The entries index `name` holds, each (key, row) pair once:
-    /// a diagnostic. An engine keeping versions has one per version a
-    /// reader may still see.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if there is no such index; the index's errors.
-    pub fn index_entries(&self, name: &str) -> Result<usize> {
-        let entries = Arc::clone(self.snapshot()?.index_of(name)?).search(&Probe::All, KeyOrder::Ascending);
-        entries.into_iter().try_fold(0_usize, |n, entry| entry.map(|_| n.saturating_add(1)))
     }
 }
 

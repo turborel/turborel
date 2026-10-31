@@ -34,12 +34,20 @@ impl ListItem for Followed {
 /// \[DESIGN\] The records held of one transaction, in position order.
 pub(crate) struct FollowedRecords {
     list: SpillList<Followed>,
+    /// The position of the first, once one is held.
+    first: Option<Lsn>,
 }
 
 impl FollowedRecords {
     /// None yet, spilling in `space`.
     pub(crate) fn new(space: ListSpace) -> FollowedRecords {
-        FollowedRecords { list: SpillList::new(space) }
+        FollowedRecords { list: SpillList::new(space), first: None }
+    }
+
+    /// The position of the first it holds, if it holds one: where a
+    /// checkpoint of the database following has recovery read from.
+    pub(crate) fn first(&self) -> Option<Lsn> {
+        self.first
     }
 
     /// Holds `record`, after those held.
@@ -49,6 +57,7 @@ impl FollowedRecords {
     /// The spill area's, SQLCODE -918 if it cannot be reserved: the record
     /// is held all the same, in memory.
     pub(crate) fn push(&mut self, record: Followed) -> Result<()> {
+        self.first.get_or_insert(record.at);
         self.list.push(record, &mut encode)
     }
 
@@ -74,4 +83,16 @@ fn decode(bytes: &[u8]) -> Result<Followed> {
     let mut r = Reader::new(bytes, "held log record");
     let at = Lsn(r.u64()?);
     Ok(Followed { at, bytes: r.rest().to_vec() })
+}
+
+/// \[DESIGN\] Where a following database stands in the log it follows
+/// (`db/standby.rs`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Following {
+    /// The position its files' checkpoint held every record before, as it
+    /// was opened: records before it given again are applied already, but
+    /// those of the transactions it then holds again.
+    pub(crate) image: Lsn,
+    /// The last position it took.
+    pub(crate) replayed: Lsn,
 }

@@ -58,6 +58,7 @@
 //! closed, none opened after (RULES.md D56); a file left is told as an
 //! event.
 
+mod following;
 mod overdue;
 
 pub use overdue::OVERDUE;
@@ -106,6 +107,9 @@ impl Database {
         let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files takes checkpoints"))?;
         let _turn = files.checkpointer.taking.take("a checkpoint")?;
         let current = self.snapshot()?;
+        if matches!(current.tx.held(), Some(crate::txn::Held::Following)) {
+            return self.take_following_checkpoint(&files);
+        }
         // Not while an index is built: a checkpoint records only indexes
         // ready to be read (`Database::create_index`).
         let shut = loop {
@@ -291,10 +295,18 @@ impl State {
         let through = log.end();
         self.capture_engines(through)?;
         let counted = self.tx.logged.load(Ordering::Relaxed);
-        let image = Image {
+        let image = self.image_of(clean, (through, self.tx.oldest_logged().map_or(through, |first| first.min(through))));
+        Ok((image, counted))
+    }
+
+    /// The image of a checkpoint holding every change before `through`,
+    /// recovery reading the log from `start`, closed if `clean`, but for
+    /// the tables' locators.
+    fn image_of(&self, clean: bool, (through, start): (Lsn, Lsn)) -> Image {
+        Image {
             clean,
             through,
-            start: self.tx.oldest_logged().map_or(through, |first| first.min(through)),
+            start,
             highest: self.tx.highest(),
             snapshot: Snapshot::of(self),
             tables: Vec::new(),
@@ -305,8 +317,7 @@ impl State {
                 .filter(|(name, _)| self.catalog.index(name).is_some())
                 .map(|(name, index)| (name.clone(), self.index_generation(name), index.locator()))
                 .collect(),
-        };
-        Ok((image, counted))
+        }
     }
 
     /// Every engine's capture through `through`, what the plug-ins'
@@ -391,12 +402,24 @@ impl State {
     /// pages holding what it records are (a checkpoint record logged and
     /// synced, unless a close did), every engine's capture made durable,
     /// the image recorded with the tables' locators, the log truncated.
-    fn complete_checkpoint(&self, files: &DatabaseFiles, mut image: Image) -> Result<()> {
+    fn complete_checkpoint(&self, files: &DatabaseFiles, image: Image) -> Result<()> {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         if !image.clean {
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
         }
+        let image = self.record_image(files, image)?;
+        let logged = self.storage.values().filter(|s| s.capabilities().persistence == Persistence::Logged);
+        let needed = logged.map(|s| s.durable_through()).fold(image.start, Ord::min);
+        log.truncate_before(needed)
+    }
+}
+
+impl State {
+    /// Steps 5 and 6: the plug-ins' sealed batch committed, every engine's
+    /// capture made durable, and `image` recorded with the tables'
+    /// locators; the image recorded.
+    fn record_image(&self, files: &DatabaseFiles, mut image: Image) -> Result<Image> {
         // The plug-ins' shadowed directories first, so an engine's capture
         // is durable as its `checkpoint_finish` is called (RULES.md D56).
         self.plugins.commit_sealed()?;
@@ -405,9 +428,7 @@ impl State {
         }
         image.tables = self.storage.iter().map(|(name, storage)| (name.clone(), self.generation_of(name), storage.locator())).collect();
         files.catalog.record(&image.encode(), self.compact_after())?;
-        let logged = self.storage.values().filter(|s| s.capabilities().persistence == Persistence::Logged);
-        let needed = logged.map(|s| s.durable_through()).fold(image.start, Ord::min);
-        log.truncate_before(needed)
+        Ok(image)
     }
 }
 

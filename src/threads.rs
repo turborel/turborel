@@ -123,12 +123,56 @@ pub struct JobInfo {
 }
 
 /// The work of a job: done for the database, what it says of when to do it
-/// again unasked: at once for none left undone, after a time, or not.
-pub(crate) type Work = fn(&Database) -> Result<Option<Duration>>;
+/// again unasked: at once for none left undone, after a time, or not. The
+/// database's own, or a plug-in's (`BackgroundJob`).
+#[derive(Clone)]
+pub(crate) enum Work {
+    /// The database's own: a checkpoint, maintenance, a sync of its log.
+    Own(fn(&Database) -> Result<Option<Duration>>),
+    /// A plug-in's.
+    Plugin(Arc<dyn BackgroundJob>),
+}
+
+impl Work {
+    /// Does it, for `db`.
+    fn run(&self, db: &Database) -> Result<Option<Duration>> {
+        match self {
+            Work::Own(work) => work(db),
+            Work::Plugin(job) => job.run(db),
+        }
+    }
+}
+
+/// \[DESIGN\] Background work a plug-in gives a database (RULES.md D55):
+/// a job of the thread manager, run as JOBS.POLICY says, on a thread
+/// labelled as it is, and shown among the database's jobs
+/// (`Database::jobs`, INFORMATION_SCHEMA.JOBS), as a checkpoint is. Its
+/// errors and panics are told as events, as the database's own jobs' are.
+///
+/// Contract: `run` does its work for the database it is given, the one it
+/// was added to, and says when to do it again unasked: at once (zero),
+/// after a time, or not until asked (`Database::request_job`). It holds no
+/// strong handle of the database between runs, so the program's last
+/// handle dropped still stops and joins it.
+pub trait BackgroundJob: Send + Sync {
+    /// Its label: `turborel-<kind>`, as its thread is named.
+    fn label(&self) -> &'static str;
+    /// Does its work once.
+    ///
+    /// # Errors
+    ///
+    /// Its work's: noted, and told as an event.
+    fn run(&self, db: &Database) -> Result<Option<Duration>>;
+}
 
 /// A job's place among its database's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct JobId(usize);
+
+/// \[DESIGN\] A plug-in's job added to a database (`Database::add_job`),
+/// by which it is asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobHandle(pub(crate) JobId);
 
 /// A job: its label, its work, how long after a failure its thread tries
 /// again unasked, if at all, its thread, and what it did.
@@ -169,6 +213,11 @@ impl Jobs {
         let record = Mutex::new(Record::default());
         jobs.push(Arc::new(Job { label, work, retry, worker: Worker::default(), record }));
         JobId(jobs.len().saturating_sub(1))
+    }
+
+    /// Whether a job labelled `label` was added.
+    pub(crate) fn has(&self, label: &str) -> bool {
+        lock_builtin(&self.jobs).iter().any(|j| j.label == label)
     }
 
     fn job(&self, id: JobId) -> Option<Arc<Job>> {
@@ -274,7 +323,7 @@ impl Job {
             record.due = false;
             record.running = true;
         }
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.work)(db)));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.work.run(db)));
         let panicked = outcome.is_err();
         let done = outcome.unwrap_or_else(|_| {
             Err(SqlError::new(Code::Api, format!("[DESIGN] the work of {} panicked, and is asked for again as it comes due", self.label)))

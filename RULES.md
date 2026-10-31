@@ -1042,6 +1042,12 @@ the standard's meaning holds and programs and drivers need only SQL.
   at once or at the time asked); manual, only on `Database::run_due`
   (tests, operators choosing the time); or paused. Errors become events (D40); a panic is caught, reported, and
   the job restarted per policy.
+- **Plug-ins' jobs.** A plug-in adds background work to a database
+  (`Database::add_job`, the trait `BackgroundJob`):
+  - labelled `turborel-<kind>`, no label taken twice (SQLCODE -910);
+  - run, shown and told as the database's own, asked for by
+    `Database::request_job`; its work says when it runs again;
+  - holding no strong handle of its database between runs.
 - **Lifecycle.** A job starts, reported, when its database opens or it
   is first due; none starts once the database is closing. A failed
   close leaves jobs as they were. A database's threads are all joined
@@ -1162,7 +1168,27 @@ opaque bytes.**
     survive"); `depose`: it stops until opened again;
   - following or deposed, it refuses what it would log (SQLCODE -917),
     as a failed sync does (D25), abort records too; reads go on;
+  - `reopen`: deposed, it is opened again in place, the same handle,
+    its jobs, settings and sinks kept; sessions begun before are
+    refused (SQLCODE -910);
   - export and import come with state transfer.
+- **Following from files.** A replica's database opened from its files
+  (`Database::open_following`, `reopen`) recovers from its last
+  checkpoint alone ([VRR §5.1]: "we need to know exactly what log prefix
+  is captured on disk"), as its log's later records may not be
+  committed:
+  - it reads the records before the checkpoint's position, and the
+    stale index entries the checkpoint logged after it;
+  - a transaction open at the checkpoint is undone; the database
+    follows from its first record, holding it again, and skips what
+    the checkpoint holds;
+  - it says through where it then holds the log.
+- **Following checkpoints.** A following database's checkpoint logs
+  nothing: taking turns with its replay, it collects every version
+  first (refused, SQLCODE -911, while a reader holds one), captures
+  through the position after its last record replayed, and has
+  recovery read from the first record it holds; refused (-910) until
+  it has replayed again what it was opened from.
 - **Replicated log.** `ReplicatedLog`, a `Log` over a `Consensus` and a
   `Journal`: its positions the consensus's, `sync(p)` returning once
   `p` is committed. Of one replica for now (f = 0, a quorum of one, as
@@ -1218,8 +1244,8 @@ records, objects and files; none may need a replication change.
   backup holds what the primary holds, rows and catalog.
 
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
-`db/standby.rs`, `files/classes.rs`, `log/record/kinds.rs`,
-`replication/src`.
+`db/standby.rs`, `db/standby/reopen.rs`, `db/checkpoint/following.rs`,
+`files/classes.rs`, `log/record/kinds.rs`, `replication/src`.
 
 **D27. A thread-safe core over snapshots of the definitions.**
 - **Sharing.** A `Database` is shared across threads; extension traits

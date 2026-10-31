@@ -97,7 +97,7 @@ mod write;
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
 pub(crate) use end::remove_entries;
-pub(crate) use followed::{Followed, FollowedRecords};
+pub(crate) use followed::{Followed, FollowedRecords, Following};
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
@@ -248,6 +248,11 @@ pub(crate) struct Transactions {
     /// ended, held until it ends (`db/standby.rs`), spilled past a work
     /// area's bytes (`txn/followed.rs`).
     pub(crate) followed: Mutex<BTreeMap<TxId, FollowedRecords>>,
+    /// Following a log, where it stands in it (`db/standby.rs`).
+    pub(crate) following: Mutex<Following>,
+    /// Held while a following database replays, or takes a checkpoint, so
+    /// the two take turns.
+    pub(crate) replaying: crate::threads::Turn,
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,
@@ -307,6 +312,8 @@ impl Default for Transactions {
             held: Mutex::new(None),
             holding: AtomicBool::new(false),
             followed: Mutex::new(BTreeMap::new()),
+            following: Mutex::new(Following::default()),
+            replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
             maintenance: Mutex::new(BTreeSet::new()),
             stops: Mutex::new(HashMap::new()),

@@ -213,4 +213,5 @@ The server's threads are named `turborel-server-<n>`: its I/O threads,
 one for each processor, and the threads statements run on, made as they
 are needed, at most SERVER.WORKERS running at once. The database's own
 are `turborel-checkpoint`, `turborel-maintenance` and
-`turborel-log-sync` ([Background work](03-databases.md#background-work)).
+`turborel-log-sync`, and a plug-in's `turborel-<kind>` ([Background
+work](03-databases.md#background-work)).

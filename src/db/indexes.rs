@@ -30,7 +30,7 @@ use std::sync::Arc;
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::index::{BTREE_METHOD, HASH_METHOD, Index};
+use crate::index::{BTREE_METHOD, HASH_METHOD, Index, KeyOrder, Probe};
 use crate::log::record::Change;
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
@@ -200,6 +200,18 @@ impl State {
 }
 
 impl Database {
+    /// \[DESIGN\] The entries index `name` holds, each (key, row) pair once:
+    /// a diagnostic. An engine keeping versions has one per version a
+    /// reader may still see.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such index; the index's errors.
+    pub fn index_entries(&self, name: &str) -> Result<usize> {
+        let entries = Arc::clone(self.snapshot()?.index_of(name)?).search(&Probe::All, KeyOrder::Ascending);
+        entries.into_iter().try_fold(0_usize, |n, entry| entry.map(|_| n.saturating_add(1)))
+    }
+
     /// \[EXTENSION\] Create a secondary index named `name` on `columns` of
     /// `table` ("AUTH.TABLE"), with the index method `method`, while
     /// transactions go on reading and writing the table (see the module's

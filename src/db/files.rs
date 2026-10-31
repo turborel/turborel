@@ -53,9 +53,10 @@ use super::formats::{FileFormats, FileLayout};
 use super::image::Image;
 use super::recovery::{Definitions, Touched};
 use super::snapshot::Snapshot;
+use super::standby::Opening as FirstOpening;
 use super::stores::{CatalogStore, OpenedLog, StorePlace};
 use super::{Database, RecoveryReport, State, api};
-use crate::catalog::{IndexDesc, QualifiedName, TableDesc};
+use crate::catalog::{IndexDesc, QualifiedName};
 use crate::diagnostics::{Diagnostics, Event};
 use crate::disk::buffer::BufferPool;
 use crate::disk::encoding::Pipeline;
@@ -65,13 +66,13 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
-use crate::files::plugins::PLUGINS;
-use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod};
-use crate::log::{FileLog, FileLogOptions, Log, Lsn};
-use crate::spill::TempFiles;
-use crate::storage::{StorageEngine, TableStorage};
+use crate::index::{BTreeMethod, HashMethod};
+use crate::log::{FileLog, FileLogOptions, Log, Lsn, Records};
+use crate::storage::TableStorage;
 use crate::txn::Persistence;
-use crate::value::{DataType, Value};
+use crate::value::Value;
+
+mod reopening;
 
 const DATA: &str = "data";
 /// The directory of the spill areas' files (`spill.rs`).
@@ -118,6 +119,31 @@ impl Default for OpenOptions {
     fn default() -> Self {
         let undo = FileLogOptions { segment_size: UNDO_SEGMENT_SIZE, durability: Durability::None, ..FileLogOptions::default() };
         OpenOptions { undo, undo_batch: UNDO_BATCH }
+    }
+}
+
+/// \[DESIGN\] How a database is opened from its files: to serve, recovered
+/// from its last checkpoint and its whole log; or to follow a log a group
+/// of replicas keeps (RULES.md D57), recovered from its last checkpoint
+/// alone, with the records before it only, as records after it may not
+/// be committed: it then follows from the first record it needs again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    /// To serve.
+    Serve,
+    /// To follow.
+    Follow,
+}
+
+impl Mode {
+    /// Where the image of a database made new holds the log through: its
+    /// end, to serve; to follow, its start, as none of it is known
+    /// committed.
+    fn end(self, log: &dyn Log) -> Lsn {
+        match self {
+            Mode::Serve => log.end(),
+            Mode::Follow => Lsn(1),
+        }
     }
 }
 
@@ -250,18 +276,32 @@ impl Database {
     /// a file is not of its kind or malformed; -915 if one cannot be read or
     /// written; the errors of recovery.
     pub fn open_files(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions) -> Result<Opened> {
+        self.open_files_to(fs, dir, options, Mode::Serve)
+    }
+
+    /// `open_files`, to serve or to follow as `mode` says. How it opened is
+    /// kept, to open it again in place (`db/standby/reopen.rs`).
+    pub(super) fn open_files_to(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         // Every file it opens through its file manager (RULES.md D56),
         // registered and limited.
-        let registry = Arc::clone(&self.snapshot()?.files);
+        let state = self.snapshot()?;
+        let registry = Arc::clone(&state.files);
         registry.telling(self.events());
         let managed: Arc<dyn FileSystem> = Arc::new(FileManager::over(Arc::clone(fs), registry));
-        let opened = self.noted(self.open_from(&managed, dir, options))?;
+        self.keep_opening(FirstOpening { fs: Arc::clone(&managed), dir: dir.to_path_buf(), options: options.clone(), state })?;
+        self.open_managed(&managed, dir, options, mode)
+    }
+
+    /// `open_files`' work, through `fs`, the database's file manager, told
+    /// as an event.
+    pub(super) fn open_managed(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
+        let opened = self.noted(self.open_from(fs, dir, options, mode))?;
         self.emit(&Event::Opened(opened));
         Ok(opened)
     }
 
-    /// `open_files`' work, through `fs`, the database's file manager.
-    fn open_from(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions) -> Result<Opened> {
+    /// `open_managed`'s work.
+    fn open_from(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         let snapshot = self.snapshot()?;
         if !snapshot.catalog.tables().is_empty()
             || !snapshot.catalog.schemas().is_empty()
@@ -282,7 +322,7 @@ impl Database {
         let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading))? else {
             let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held, self.events()));
             snapshot.keep_plugins_in(&place)?;
-            return self.create_files(&place, &started);
+            return self.create_files(&place, &started, mode);
         };
         let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
         let recorded = |name: &str| image.as_ref().and_then(|i| i.snapshot.setting(name)).cloned();
@@ -305,11 +345,12 @@ impl Database {
         snapshot
             .memory
             .set_limit(recorded("MEMORY.BUDGET_BYTES").map_or(crate::memory::DEFAULT_BUDGET, |v| crate::settings::budget_bytes(&v)));
-        let (image, opened) = self.reopen_or_recover(&place, image, (&*log, cut))?;
+        let (image, opened) = self.reopen_or_recover(&place, image, (&*log, cut), mode)?;
         catalog.record(&Image { clean: false, ..image }.encode(), self.snapshot()?.compact_after())?;
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
         self.opened(&started)?;
+        self.follow_if(mode, (image.through, image.start))?;
         Ok(opened)
     }
 
@@ -318,27 +359,38 @@ impl Database {
     /// left it; else recovers it from `log`. A database stopped before its
     /// first image is made again from the log alone. The image it is now
     /// at, and how it opened.
-    fn reopen_or_recover(&self, place: &Place<'_>, image: Option<Image>, (log, cut): (&dyn Log, u64)) -> Result<(Image, Opened)> {
+    fn reopen_or_recover(
+        &self,
+        place: &Place<'_>,
+        image: Option<Image>,
+        (log, cut): (&dyn Log, u64),
+        mode: Mode,
+    ) -> Result<(Image, Opened)> {
         Ok(match image {
             Some(image) if image.clean && image.through == log.end() && cut == 0 => {
                 self.attach_pager(place, Pagers::Open)?;
-                self.reopen(&image, log)?;
+                self.reopen(&image, log, mode)?;
                 (image, Opened::Reopened)
             }
             Some(image) => {
                 self.attach_pager(place, Pagers::Open)?;
-                let report = self.reopen(&image, log)?.unwrap_or_default();
+                let report = self.reopen(&image, log, mode)?.unwrap_or_default();
                 (image, Opened::Recovered(RecoveryReport { cut, ..report }))
             }
-            // Made, but stopped before its first image: made again.
+            // Made, but stopped before its first image: made again; to
+            // follow, from nothing, as no record is known committed.
             None => {
                 self.attach_pager(place, Pagers::Create)?;
                 place.shadows.commit()?;
-                let (report, _) = self.replay(&mut log.read_from(Lsn(0)), Definitions::All)?;
+                let mut records: Records<'_> = match mode {
+                    Mode::Serve => log.read_from(Lsn(0)),
+                    Mode::Follow => Box::new(std::iter::empty()),
+                };
+                let (report, _) = self.replay(&mut records, Definitions::All)?;
                 self.change(State::rebuild_indexes)?;
-                let made = Snapshot::of(&*self.snapshot()?);
+                let defined = Snapshot::of(&*self.snapshot()?);
                 (
-                    Image { through: log.end(), start: log.end(), snapshot: made, ..Image::default() },
+                    Image { through: mode.end(log), start: mode.end(log), snapshot: defined, ..Image::default() },
                     Opened::Recovered(RecoveryReport { cut, ..report }),
                 )
             }
@@ -407,19 +459,21 @@ impl Database {
 
     /// New files for a database at `place`: its first image records its
     /// settings, those fixed at its creation among them.
-    fn create_files(&self, place: &Place<'_>, given: &[(String, Value)]) -> Result<Opened> {
+    fn create_files(&self, place: &Place<'_>, given: &[(String, Value)], mode: Mode) -> Result<Opened> {
         let catalog = self.catalog_storage().create(&place.store())?;
         self.attach_pager(place, Pagers::Create)?;
         place.shadows.commit()?;
         let log = self.log_storage(&place.log_options()).create(&place.store())?;
         let snapshot = Snapshot::of(&*self.snapshot()?);
         catalog.record(
-            &Image { through: log.end(), start: log.end(), snapshot, ..Image::default() }.encode(),
+            &Image { through: mode.end(&*log), start: mode.end(&*log), snapshot, ..Image::default() }.encode(),
             self.snapshot()?.compact_after(),
         )?;
+        let first = mode.end(&*log);
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
         self.opened(given)?;
+        self.follow_if(mode, (first, first))?;
         Ok(Opened::Created)
     }
 
@@ -457,7 +511,7 @@ impl Database {
     /// indexes; replays from `log` what the tables lack, if any lacks
     /// something, with a report of it, and mends the indexes reopened where
     /// it touched rows; builds the indexes not reopened.
-    fn reopen(&self, image: &Image, log: &dyn Log) -> Result<Option<RecoveryReport>> {
+    fn reopen(&self, image: &Image, log: &dyn Log, mode: Mode) -> Result<Option<RecoveryReport>> {
         let reopening = Reopening {
             tables: image.tables.iter().map(|(name, generation, locator)| ((name.clone(), *generation), locator.clone())).collect(),
             indexes: image.indexes.iter().map(|(name, generation, locator)| ((name.clone(), *generation), locator.clone())).collect(),
@@ -473,7 +527,11 @@ impl Database {
         let (report, mut touched) = if image.clean && oldest >= log.end() {
             (None, Touched::default())
         } else {
-            let (report, touched) = self.replay(&mut log.read_from(oldest.min(image.start)), Definitions::From(image.through))?;
+            let from = oldest.min(image.start);
+            let (report, touched) = match mode {
+                Mode::Serve => self.replay(&mut log.read_from(from), Definitions::From(image.through))?,
+                Mode::Follow => self.replay_to_image(log, from, image.through)?,
+            };
             (Some(report), touched)
         };
         self.change(|st| {
@@ -506,69 +564,4 @@ fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
     let options = FileLogOptions { pipeline: place.layout.formats.pipeline.clone(), ..place.options.undo.clone() };
     let log = FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?;
     Ok(Arc::new(log.telling(Arc::clone(&place.events))))
-}
-
-impl State {
-    /// Keeps its spill areas' files in `dir` of `fs` from now on, the spill
-    /// files a run before left removed.
-    fn keep_in(&self, fs: &Arc<dyn FileSystem>, dir: &Path) -> Result<()> {
-        self.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))
-    }
-
-    /// Keeps its plug-ins' own files at `place` from now on, in its
-    /// `plugins/`, their shadowed directories recovered (RULES.md D56):
-    /// once its files' formats are known, before its tables are opened.
-    fn keep_plugins_in(&self, place: &Place<'_>) -> Result<()> {
-        self.plugins.set_place(Arc::clone(place.fs), place.path(PLUGINS), Arc::clone(&place.layout.formats.hash))
-    }
-
-    /// The storage of the table `desc` in `engine`: reopened by its locator
-    /// while the database is reopened and the engine can, else new.
-    pub(super) fn table_storage(&mut self, engine: &dyn StorageEngine, desc: &TableDesc) -> Result<Arc<dyn TableStorage>> {
-        if let Some(reopening) = self.reopening.as_mut() {
-            let found = reopening.tables.get(&(desc.name.clone(), desc.generation));
-            let reopened = found.map(|locator| engine.open_table(desc, locator)).transpose()?.flatten();
-            if let Some(storage) = reopened {
-                return Ok(Arc::from(storage));
-            }
-            reopening.made.push(desc.name.clone());
-        }
-        Ok(Arc::from(engine.create_table(desc)?))
-    }
-
-    /// Whether the database is being opened from its files, index `name`
-    /// then left to be built once its tables are (`Database::reopen`).
-    pub(super) fn leave_unbuilt(&mut self, name: &str) -> bool {
-        let Some(reopening) = self.reopening.as_mut() else { return false };
-        if !reopening.unbuilt.iter().any(|n| n == name) {
-            reopening.unbuilt.push(name.to_owned());
-        }
-        true
-    }
-
-    /// The structure of index `index` of `method` on columns of `types`,
-    /// of table `table` as of its generation: reopened by its locator
-    /// while the database is reopened and the method can, else new; and
-    /// whether it holds its entries, which a new one does not, unless it
-    /// is built once the database is reopened.
-    pub(super) fn index_structure(
-        &mut self,
-        method: &dyn IndexMethod,
-        (index, table): (&IndexDesc, &TableDesc),
-        types: &[DataType],
-    ) -> Result<(Arc<dyn Index>, bool)> {
-        if let Some(reopening) = self.reopening.as_mut() {
-            let found = reopening.indexes.get(&(index.name.clone(), table.generation));
-            let reopened = found.map(|locator| method.open_on(types, locator, (table, index))).transpose()?.flatten();
-            if let Some(structure) = reopened {
-                return Ok((Arc::from(structure), true));
-            }
-            reopening.unbuilt.push(index.name.clone());
-            // Built once the database is reopened (`Database::reopen`).
-            return Ok((Arc::from(method.create_on(types, (table, index))?), true));
-        }
-        // Its keys are in the clear, unless the files are encrypted.
-        self.check_index_hidden(table)?;
-        Ok((Arc::from(method.create_on(types, (table, index))?), false))
-    }
 }

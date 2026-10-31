@@ -11,8 +11,9 @@
 //! * **Following** a log another replica writes, from the first records it
 //!   replays until it is promoted: it takes no change (SQLCODE -917).
 //! * **Deposed**, once it stops serving as primary: it takes no change
-//!   until it is opened again, which recovers it from its last checkpoint
-//!   and its log.
+//!   until it is opened again, in place (`Standby::reopen`), which
+//!   recovers it from its last checkpoint alone, and it follows again
+//!   (`standby/reopen.rs`).
 //!
 //! The changes it does not take are those it would write to its log, as a
 //! failed sync stops them (RULES.md D25): a row change, the commit of a
@@ -44,11 +45,13 @@
 //! a replica the log alone no longer can, are not yet part of the seam.
 
 mod merge;
+mod reopen;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use self::merge::{Merged, Stream};
+pub(in crate::db) use self::reopen::Opening;
 use super::recovery::Definitions;
 use super::{Database, State, api};
 use crate::diagnostics::Event;
@@ -57,7 +60,7 @@ use crate::log::record::{Change, Record};
 use crate::log::{Log, Lsn, sealed};
 use crate::spill::ListSpace;
 use crate::sync::lock_builtin;
-use crate::txn::{Followed, FollowedRecords, Held, NO_TRANSACTION, TxId};
+use crate::txn::{Followed, FollowedRecords, Following, Held, NO_TRANSACTION, TxId};
 
 /// \[DESIGN\] A database as a replica of a group sees it (RULES.md D57):
 /// see the module's documentation.
@@ -93,6 +96,18 @@ pub trait Standby: Send + Sync {
     ///
     /// SQLCODE -910 if a lock is poisoned.
     fn depose(&self) -> Result<()>;
+    /// Opens it again in place, deposed or following, from its files: its
+    /// state recovered from its last checkpoint alone, as the records of
+    /// its replica's log after it may not be committed; it then follows,
+    /// the same handle, its jobs, settings and sinks kept, sessions begun
+    /// before refused (`Database::open_following`). Through where it holds
+    /// the log: the records after, once committed, are given it again.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it was not opened from its files, or serves; as
+    /// `Database::open_following`.
+    fn reopen(&self) -> Result<Lsn>;
 }
 
 /// How following a log treats a record, as recovery's replay does: at
@@ -143,6 +158,8 @@ impl Standby for Database {
             (Arc::clone(&st.tx), st.list_space())
         };
         refuse_deposed(tx.held(), "replays a log")?;
+        // Taking turns with a checkpoint of what it follows.
+        let turn = tx.replaying.take("a replay")?;
         let (encodings, types) = self.openers()?;
         let mut taken = Vec::new();
         for read in records {
@@ -155,12 +172,18 @@ impl Standby for Database {
         // Taken out while records are held, as holding them may write to a
         // spill area, a plug-in (RULES.md R-ERR-4); calls take turns.
         let mut followed = std::mem::take(&mut *lock_builtin(&tx.followed));
-        let sorted = sort_out(taken, &mut followed, &space);
+        let image = lock_builtin(&tx.following).image;
+        let sorted = sort_out(taken, &mut followed, (&space, image));
         *lock_builtin(&tx.followed) = followed;
+        let mut following = lock_builtin(&tx.following);
+        *following = Following { replayed: following.replayed.max(last), ..*following };
+        drop(following);
         if let Some(e) = sorted.failed {
             self.emit(&Event::Failed(e));
         }
         self.replay_now(sorted.now, sorted.ended)?;
+        drop(turn);
+        self.checkpoint_if_due();
         Ok(last)
     }
 
@@ -190,6 +213,10 @@ impl Standby for Database {
         self.snapshot()?.tx.hold(Some(Held::Deposed));
         Ok(())
     }
+
+    fn reopen(&self) -> Result<Lsn> {
+        self.reopen_in_place()
+    }
 }
 
 /// What a call to `replay` does with the records it took: replays at
@@ -206,12 +233,24 @@ struct Sorted {
 
 /// Sorts out `taken`, each a position, its bytes and its record: each
 /// replayed at once, held in `followed` with its transaction's, spilling
-/// in `space`, or ending its transaction, whose records held are taken.
-fn sort_out(taken: Vec<(Lsn, Vec<u8>, Record)>, followed: &mut BTreeMap<TxId, FollowedRecords>, space: &ListSpace) -> Sorted {
+/// in `space`, or ending its transaction, whose records held are taken. A
+/// record before `image`, the position the checkpoint it was opened from
+/// holds every record before, is applied already, but held with a
+/// transaction it holds again (`db/standby/reopen.rs`).
+fn sort_out(
+    taken: Vec<(Lsn, Vec<u8>, Record)>,
+    followed: &mut BTreeMap<TxId, FollowedRecords>,
+    (space, image): (&ListSpace, Lsn),
+) -> Sorted {
     let mut sorted = Sorted { now: Vec::new(), ended: Vec::new(), failed: None };
     for (at, bytes, record) in taken {
+        let applied = at < image;
         match scope(&record) {
-            Scope::Now => sorted.now.push((at, record)),
+            Scope::Now => {
+                if !applied {
+                    sorted.now.push((at, record));
+                }
+            }
             Scope::Open(id) => {
                 let held = followed.entry(id).or_insert_with(|| FollowedRecords::new(space.clone()));
                 if let Err(e) = held.push(Followed { at, bytes }) {
@@ -219,8 +258,11 @@ fn sort_out(taken: Vec<(Lsn, Vec<u8>, Record)>, followed: &mut BTreeMap<TxId, Fo
                 }
             }
             Scope::Ends(id) => {
-                sorted.ended.extend(followed.remove(&id));
-                sorted.now.push((at, record));
+                let ended = followed.remove(&id);
+                if !applied {
+                    sorted.ended.extend(ended);
+                    sorted.now.push((at, record));
+                }
             }
         }
     }
@@ -241,6 +283,9 @@ impl Database {
         let mut streams: Vec<Stream<'_>> = vec![Box::new(now.into_iter().map(Ok))];
         streams.extend(ended.into_iter().map(|held| -> Stream<'_> { Box::new(held.into_records().map(open)) }));
         let (_, mut touched) = self.replay_records(&mut Merged::new(streams), Definitions::All)?;
+        // Counted toward its next checkpoint, as the changes it would log.
+        let changes = u64::try_from(touched.len()).unwrap_or(u64::MAX);
+        self.snapshot()?.tx.logged.fetch_add(changes, std::sync::atomic::Ordering::Relaxed);
         self.change(|st: &mut State| st.mend_indexes(&mut touched, |_| true))?;
         self.apply_settings()
     }

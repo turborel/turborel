@@ -83,6 +83,7 @@ mod extension_types;
 mod failures;
 mod faults;
 mod file_manager;
+mod following;
 mod functions;
 mod get_diagnostics;
 mod index_contracts;

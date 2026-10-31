@@ -223,6 +223,8 @@ struct SessionState {
 /// identifier, the module's cursors, and the current transaction.
 pub struct Session {
     db: Database,
+    /// The service of its database it began in (`database/service.rs`).
+    service: u64,
     /// Its authorization identifier [ISO/IEC 9075:1992 §4.30], which SET
     /// SESSION AUTHORIZATION sets [§16.4].
     auth: RefCell<String>,
@@ -319,6 +321,7 @@ impl Session {
 
     fn new(db: Database, auth: &str) -> Session {
         Session {
+            service: db.service(),
             db,
             auth: RefCell::new(auth.to_string()),
             started: auth.to_string(),
@@ -347,7 +350,8 @@ impl Session {
         if already_busy {
             return fail(Code::Api, "[DESIGN] the session is already running a call: a plug-in called back into it (RULES.md R-ERR-4)");
         }
-        match self.db.snapshot().and_then(|published| self.definitions(published)) {
+        let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot());
+        match published.and_then(|published| self.definitions(published)) {
             Ok(snapshot) => {
                 let snapshot = self.with_own(self.with_temporaries(snapshot));
                 self.now.set(snapshot.now(&self.own.borrow()));
