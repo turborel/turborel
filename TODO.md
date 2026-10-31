@@ -83,15 +83,26 @@ design settles.
 - **Replication**, pluggable, Viewstamped Replication first, as RULES.md
   D57 decides. Done: the one replay, `record::KINDS` and its tests, the
   files' classes and the export manifest, a commit in doubt never
-  stamped (D25). Next, with nothing visible to users: the `Standby` and
-  `StateSource` seam; the `node` property of settings; a single-node replicated
-  `Log` passing the log, durability, recovery and reopen tests. Then the
-  `Consensus`, `Transport` and `StateTransfer` traits and VR as a pure
-  state machine in a deterministic simulator; real databases in it, a
-  backup compared with the primary; continuous replay and reads on
-  backups; state transfer and log retention; the transport (mTLS,
-  settings, events, INFORMATION_SCHEMA.REPLICAS, commands);
-  reconfiguration.
+  stamped (D25); the crate `turborel-replication`, its `Consensus`,
+  `Transport` and `StateTransfer` traits, and VR as a pure state machine
+  (normal operation, view change, state transfer of the log), in a
+  deterministic simulator of `turborel-test-support`, with contract
+  tests. Next, with nothing visible to users: the `Standby` seam (the
+  core's `StateSource` is there); the `node` property of settings; a
+  single-node replicated `Log` passing the log, durability, recovery and
+  reopen tests. Then real databases in the simulator, a backup compared
+  with the primary, through the driver, a job of the thread manager
+  (D55) joining a consensus, a transport, a journal and `Standby`, which
+  tells VR where its database recovered to rather than having committed
+  records delivered again from the start; continuous replay and reads on
+  backups; state transfer (whole files, the first `StateTransfer`, and
+  its contract tests), log retention, VR's RECOVERY protocol for a
+  journal lost, and DOVIEWCHANGE and STARTVIEW carrying a suffix of the
+  log (VRR §5.3) rather than all of it; the transport (mTLS, settings,
+  events, INFORMATION_SCHEMA.REPLICAS, commands); reconfiguration. Also
+  `cargo xtask simulate --seeds N`, for sweeps longer than `verify`
+  runs, and mutations of VR for `cargo xtask mutate`, which mutates the
+  core's package only.
 
 ---
 

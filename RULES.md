@@ -976,7 +976,14 @@ Replication's own extension points are traits of the crate
 `turborel-replication` (std only): `Consensus`, a protocol as a
 deterministic state machine, `Transport` and `StateTransfer`, which
 moves an export (the core's `StateSource`); Viewstamped Replication,
-TLS over TCP and whole files are their first implementations. Approved
+TLS over TCP and whole files are their first implementations. VR is
+written from Liskov and Cowling's "Viewstamped Replication Revisited",
+departing from it for durability: a record durable before PREPAREOK;
+the view-number written before STARTVIEWCHANGE, and with v′ and the
+new log, at once, before a replica is normal in a view; a replica made
+again from its journal rejoins its view, but one that was its primary,
+which waits for the next; a new primary serves once the log it took
+over is committed and delivered. Approved
 with it: a `Log` for commit, beside a driver of those traits that knows
 no content, and the core's `Standby` seam (replay, promote, depose,
 export, import); a record durable before a backup acknowledges it; a
@@ -996,9 +1003,15 @@ fails until a kind added is listed, and another until a statement
 writing it is shown recovered to the state it left; every durable file
 the file manager registers is in the export manifest
 (`Database::export_manifest`), or carried by the log or the catalog,
-and a file in the directory of no known kind is refused; later, contract
-tests of each trait (R-SAFE-3) and a comparison of backups with the
-primary in a deterministic simulator.
+and a file in the directory of no known kind is refused; contract tests
+of `Consensus` and `Transport` run against each implementation
+(R-SAFE-3); VR runs, in the tests, hundreds of seeds of a deterministic
+simulator (`turborel-test-support`) of frames delayed, lost, duplicated
+and reordered, partitions, crashes and failing disks, which checks that
+committed records are never lost or reordered across view changes, that
+at most one primary serves a view, the one it names, and that the group
+converges once the faults stop; later, there, a comparison of backups
+with the primary.
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
 `files/classes.rs`, `log/record/kinds.rs`, `replication/src`.
 
