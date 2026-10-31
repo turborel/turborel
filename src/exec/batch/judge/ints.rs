@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use super::{Judged, Side};
 use crate::exec::batch::vector::ints::lane;
 use crate::storage::{Batch, Ints};
-use crate::value::{CompOp, Value, pow10};
+use crate::value::{CompOp, Decimal, Value, pow10};
 
 /// The rows of `kept` that `judged` keeps of `ints`, if it is judged of
 /// integers.
@@ -26,8 +26,15 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
             let truth = |u: i64| holds(*op, i128::from(u).checked_mul(factor).map(|x| x.cmp(&c)));
             Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(truth)).collect())
         }
-        // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities; NOT of it.
-        Judged::In(_, list, not) => {
+        // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities; NOT of it:
+        // a long list's by its set, each integer made the number it is.
+        Judged::In(_, set, not) => {
+            if set.hashed() {
+                let want = super::wanted(*not);
+                let keeps = |u: i64| set.truth(&Value::Exact(Decimal::new(i128::from(u), ints.scale))) == want;
+                return Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect());
+            }
+            let list = set.values();
             let scaled_list: Vec<(i128, i128)> =
                 list.iter().filter(|v| !v.is_null()).map(|v| scaled(ints.scale, v)).collect::<Option<_>>()?;
             let has_null = list.iter().any(Value::is_null);

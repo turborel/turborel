@@ -41,6 +41,12 @@ pub fn selectivity(cond: &Cond, known: Known<'_>) -> f64 {
             if *not { 1.0_f64 - nulls } else { nulls }
         }
         Cond::Quantified(_, op, _, _) => default_compare(*op, guess),
+        // An OR of equalities, taken as each other's exclusion.
+        Cond::In(e, set) => set
+            .values()
+            .iter()
+            .map(|v| if let Expr::Column(c) = e { compare((*c, CompOp::Eq, v), known) } else { guess.equal_selectivity })
+            .sum(),
         // The candidate's operator has the column on its left.
         Cond::Compare(_, op, _) => match compared_with_constant(cond) {
             Some((column, flipped, value)) => compare((column, flipped, value), known),

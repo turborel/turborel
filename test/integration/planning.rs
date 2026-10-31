@@ -454,8 +454,8 @@ fn conditions_move_into_outer_joins_7_5() {
     let s = db.session("APP");
     let lj = "SELECT T.ID, CODE FROM T LEFT JOIN U ON T.ID = U.ID";
     let cases: [(String, &[&str], &str); 12] = [
-        (format!("{lj} WHERE T.ID > 1"), &["2,NULL", "3,NULL"], "LeftOuterJoin"),
-        (format!("{lj} WHERE U.CODE = 'B'"), &["1,B  "], "HashJoin"),
+        (format!("{lj} WHERE T.ID > 1"), &["2,NULL", "3,NULL"], "LeftOuter"),
+        (format!("{lj} WHERE U.CODE = 'B'"), &["1,B  "], "IndexNestedLoop APP.T"),
         (format!("{lj} WHERE U.CODE IS NULL"), &["2,NULL", "3,NULL"], "LeftOuterJoin"),
         (format!("{lj} WHERE COALESCE(U.CODE, 'Z') = 'Z'"), &["2,NULL", "3,NULL"], "LeftOuterJoin"),
         (format!("{lj} WHERE T.ID = 1 OR U.CODE = 'B'"), &["1,A  ", "1,B  "], "LeftOuterJoin"),

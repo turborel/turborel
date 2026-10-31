@@ -81,6 +81,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
             held
         }
         Plan::IndexScan { .. }
+        | Plan::IndexJoin { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
@@ -140,6 +141,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
             reads_by_batch(left, db) && reads_by_batch(right, db)
         }
         Plan::IndexScan { .. }
+        | Plan::IndexJoin { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
@@ -194,6 +196,7 @@ fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
             ))
         }
         Plan::IndexScan { .. }
+        | Plan::IndexJoin { .. }
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }

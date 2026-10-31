@@ -12,10 +12,13 @@
 //! alone, is moved onto that operand before, over a guard
 //! (`optimizer::PushRaisingFilterIntoProduct`), and the rest is then this
 //! filter's. An outer join is planned the same way, on the equalities of
-//! its `<join condition>`.
+//! its `<join condition>`. Of an inner or a LEFT outer join, few left rows
+//! each probe an index of the right operand's table instead, if that is
+//! estimated cheaper than reading it whole (`physical/indexed.rs`).
 
+use super::indexed::{Equijoin, index_join};
 use super::{Built, PhysicalPlanner, Plan, of_left};
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, render_cond, split_and};
+use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, judged_by_sets, render_cond, split_and};
 use crate::value::CompOp;
 
 impl PhysicalPlanner<'_> {
@@ -49,12 +52,18 @@ impl PhysicalPlanner<'_> {
         // As in a product, the rows come in the order of the left operand.
         let want_left = of_left(want, width);
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
+        let ordered = !want_left.is_empty() && l.ordered;
+        // A few left rows each probing an index of the right's table.
+        if let Some((probing, rows)) = self.probed_instead((left, right), &keys, &r.plan) {
+            let join = Equijoin { width, keys: &keys, rest, outer: false };
+            return Some(Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered });
+        }
         let join = Plan::HashJoin { left: Box::new(l.plan), right: Box::new(r.plan), keys, detail };
-        let plan = match and_all(rest) {
+        let plan = match and_all(rest).map(judged_by_sets) {
             Some(c) => Plan::Filter { detail: render_cond(&c, &names), cond: c, est: None, input: Box::new(join) },
             None => join,
         };
-        Some(Built { plan, ordered: !want_left.is_empty() && l.ordered })
+        Some(Built { plan, ordered })
     }
 }
 
@@ -96,15 +105,22 @@ impl PhysicalPlanner<'_> {
         let detail = render_cond(cond, &names);
         let want_left = if kind.keeps_right() { &[] } else { of_left(want, width) };
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
+        let ordered = !want_left.is_empty() && l.ordered;
+        // Of a LEFT join, a few left rows each probing an index of the right's table.
+        let probed = (kind == OuterJoin::Left && !keys.is_empty()).then(|| self.probed_instead((left, right), &keys, &r.plan)).flatten();
+        if let Some((probing, rows)) = probed {
+            let join = Equijoin { width, keys: &keys, rest, outer: true };
+            return Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered };
+        }
         let plan = Plan::OuterJoin {
             kind,
             left: Box::new(l.plan),
             right: Box::new(r.plan),
             keys,
-            cond: and_all(rest),
+            cond: and_all(rest).map(judged_by_sets),
             widths: (width, right.width()),
             detail,
         };
-        Built { plan, ordered: !want_left.is_empty() && l.ordered }
+        Built { plan, ordered }
     }
 }

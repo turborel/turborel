@@ -167,6 +167,8 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
             rows.quantified(&values(xs, row, subqueries)?, (*op, *q))?
         }
         Cond::Unique(s) => truth(subqueries.rows(s, &outer_values(s, row, subqueries)?, None)?.unique()?),
+        // [X3.135-1986 §5.13 GR2, §5.18 GR2] the OR of its equalities, by its set.
+        Cond::In(e, set) => set.truth(&eval(e, row, subqueries)?),
         Cond::Match { values: xs, unique, match_type, subquery } => {
             let rows = subqueries.rows(subquery, &outer_values(subquery, row, subqueries)?, None)?;
             matched(&values(xs, row, subqueries)?, (*unique, *match_type), rows.rows()?)?

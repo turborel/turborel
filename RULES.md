@@ -216,7 +216,15 @@ row of the product exactly then (§5.20 GR2b). So it is moved onto its
 operand, over a guard of one row of no columns, an EXISTS of each other
 operand (`optimizer/raising.rs`), and the rest of the condition, which
 cannot raise, may be a hash join's keys and index probes. A table read
-for a filter with such a conjunct is never probed: its every row is.
+for a filter with such a conjunct is never probed, by a constant nor by
+a join's rows (D35): its every row is. An outer join's ON condition is
+applied to every row of its operands' product [ISO/IEC 9075:1992 §7.5
+GR1c], so its conjunct that can raise and reads the columns of the
+operand given nulls alone is moved onto that operand so too, over an
+EXISTS of the other (`optimizer/outer.rs`), and the join is on its
+equalities still; one of the preserved operand's columns stays, and the
+join judges every pair: that operand's rows are all kept, so no filter
+of them can be its.
 *Why:* §5.18 GR2 defines AND only by its truth table, and §5.21 GR2 and
 §5.23 GR2 apply the condition to each row and group; nothing permits
 leaving an operand unevaluated. So results never depend on the plan.
@@ -1163,7 +1171,15 @@ the format of frozen groups becomes a trait when it is.
   constants, or LIKE a constant pattern, split once and matched by bytes
   if the string is ASCII, judged over the vectors, the LIKE last
   (`exec/batch/judge.rs`), much faster than a row at a time, of either
-  store. The rest of it is judged of the rows they keep, each made a
+  store. An IN list of IN_SET_LEAST (8) constants or more is judged by a
+  set of their buckets (`value::bucket`), made once as the plan is made,
+  over vectors and row by row alike (`logical/sets.rs`, `Cond::In`): a
+  value is looked for in its bucket and compared as SQL compares, numbers
+  by algebraic value and strings padded, a string's text looked for
+  without its trailing spaces; true if one equals it, else unknown if it
+  or one of them is null, else false, as the OR of their equalities is.
+  A shorter list is compared one constant after another, which costs no
+  more. The rest of it is judged of the rows they keep, each made a
   row; one that can raise is judged whole a row at a time, as row by
   row. A projection of a stream whose expressions read only its columns,
   no subquery among them, every table of which reads by batch
@@ -1233,7 +1249,9 @@ beginning with the characters it begins with are between them: the
 filter still judges the LIKE), or an OR of these, an IN list of
 constants among them, as one probe of each of its ranges, those that
 overlap or touch joined so that no row is found twice, their index
-scans' rows appended. A number of the other kind than the column's is
+scans' rows appended in the order of their ranges, so in the index's
+order, or, read backward, the last range's first: an ORDER BY of the
+column sorts nothing. A number of the other kind than the column's is
 placed among the column's values (`physical/probe.rs`): an approximate
 number among an exact column's multiples of its scale, an exact one
 among the `f64`s, the comparison turned into one with the value it
@@ -1266,7 +1284,8 @@ picks by estimate, so a new method needs no change to the planner.
 
 **D35. The optimizer and planner.** Rules rewrite the logical plan; the
 physical planner chooses access paths and join order by estimated cost
-from the engines' statistics. Built in: hash joins on equalities, join
+from the engines' statistics. Built in: hash joins on equalities, index
+nested-loop joins, join
 ordering of chains of products, transitive predicates, sort elimination
 for ordered indexes and GROUP BY, filters pushed into views and outer
 joins, conditions that can raise an error moved onto the operand of a
@@ -1291,6 +1310,25 @@ give, as a table of a database just opened is planned until maintenance
 gathers its statistics (D31). A filter over a scan that skips the zones
 or chunks its conditions cannot match (`TableStorage::scan_share`, D31)
 is estimated to keep no more rows than the scan reads.
+An inner or LEFT outer join on equalities whose right operand reads a
+table, filtered by a condition that cannot raise an error or not, is an
+index nested-loop join (`Plan::IndexJoin`, `physical/indexed.rs`) when
+an index of the table has first columns the equalities give values of,
+of the indexed column's kind (so the index places them among its keys),
+its later columns NOT NULL (an index holds no key with a null), and the
+left operand's estimated rows times a probe's cost (its pages, a level
+of a descent each, and the rows it finds, a fetch each) is less than the
+cost of the read the hash join's right operand would be. Each left row
+probes the index for its values as it is pulled, a null finding nothing,
+nothing held; the engine is told each probe's rows are read
+(`TableStorage::read_by_condition`); the rest of the condition, the
+equalities not probed and the table's filter are judged of each pair
+found, so none may raise an error (D15); of a LEFT join, a row none is
+kept of is kept with nulls; the statement looks for a cancel before each
+probe and as each entry is read (D44). Its rows are in the left's order,
+each row's matches in the index's. Join ordering weighs a relation's
+probes beside a hash join, so a few rows are joined first to the table
+they probe.
 *Why:* the General Rules define results, not plans; any plan that gives
 the same results and errors is the optimizer's to choose.
 

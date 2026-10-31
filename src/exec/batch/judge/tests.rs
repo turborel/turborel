@@ -4,6 +4,18 @@ use super::*;
 use crate::storage::Floats;
 use crate::value::{ArithOp, Decimal};
 
+/// The set of `values`, as an IN list's (`logical/sets.rs`).
+fn set(values: Vec<Value>) -> Arc<InSet> {
+    Arc::new(InSet::of(values))
+}
+
+/// `values` made long enough to be judged by their set, with `more`
+/// values none of the rows has.
+fn long(mut values: Vec<Value>, more: impl Fn(i128) -> Value) -> Vec<Value> {
+    values.extend((0..i128::try_from(crate::logical::IN_SET_LEAST).unwrap()).map(more));
+    values
+}
+
 fn int(n: i128) -> Expr {
     Expr::Const(Value::Exact(Decimal::new(n, 0)))
 }
@@ -71,11 +83,11 @@ fn what_each_conjunct_keeps() {
     let list = vec![number(1), number(2)];
     assert!(Judged::IsNull(0, false).keeps(&Value::Null) && !Judged::IsNull(0, false).keeps(&number(1)));
     assert!(Judged::IsNull(0, true).keeps(&number(1)) && !Judged::IsNull(0, true).keeps(&Value::Null));
-    let within = Judged::In(0, list.clone(), false);
+    let within = Judged::In(0, set(list.clone()), false);
     assert!(within.keeps(&number(2)) && !within.keeps(&number(3)) && !within.keeps(&Value::Null));
-    let outside = Judged::In(0, list, true);
+    let outside = Judged::In(0, set(list), true);
     assert!(outside.keeps(&number(3)) && !outside.keeps(&number(1)) && !outside.keeps(&Value::Null));
-    let nulled = Judged::In(0, vec![number(1), Value::Null], true);
+    let nulled = Judged::In(0, set(vec![number(1), Value::Null]), true);
     assert!(!nulled.keeps(&number(3)), "a null in the list: unknown");
     assert!(Judged::Compare(0, CompOp::Ge, number(2)).keeps(&number(2)));
 }
@@ -136,9 +148,11 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
     }
     let list = vec![exact(15, 1), exact(-15, 1), exact(25, 1)];
     let with_null = vec![exact(15, 1), Value::Null];
+    let far = |n: i128| exact(n.saturating_add(1000), 0);
     for not in [false, true] {
-        judged.push(Judged::In(0, list.clone(), not));
-        judged.push(Judged::In(0, with_null.clone(), not));
+        for each in [list.clone(), with_null.clone(), long(list.clone(), far), long(with_null.clone(), far)] {
+            judged.push(Judged::In(0, set(each), not));
+        }
         judged.push(Judged::IsNull(0, not));
     }
     for j in &judged {
@@ -149,7 +163,7 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
     assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Gt, exact(0, 0)), &ints, &some), Some(vec![3]), "of the rows kept before");
     assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, Value::Approx(1.5)), &ints, &all), None, "approximate");
     assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, exact(i128::MAX, 0)), &ints, &all), None, "too large to scale");
-    assert_eq!(ints::kept(&Judged::In(0, vec![Value::Approx(1.5)], false), &ints, &all), None, "a list of an approximate");
+    assert_eq!(ints::kept(&Judged::In(0, set(vec![Value::Approx(1.5)]), false), &ints, &all), None, "a list of an approximate");
     assert_eq!(ints::kept(&Judged::Like(0, None), &ints, &all), None, "LIKE");
 }
 
@@ -186,14 +200,11 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
             judged.push(Judged::Compare(0, op, char_of(c)));
         }
     }
-    for not in [false, true] {
-        judged.push(Judged::In(0, vec![char_of("ab"), char_of("b")], not));
-        judged.push(Judged::In(0, vec![char_of("é"), Value::Null], not));
+    for (not, each) in
+        [false, true].into_iter().flat_map(|not| [(not, vec![char_of("ab"), char_of("b")]), (not, vec![char_of("é"), Value::Null])])
+    {
+        judged.extend([Judged::In(0, set(long(each.clone(), |n| char_of(&format!("x{n}")))), not), Judged::In(0, set(each), not)]);
         judged.push(Judged::IsNull(0, not));
-    }
-    for j in &judged {
-        let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
-        assert_eq!(texts::kept(j, &texts, &all), Some(by_values), "{j:?}");
     }
     // The same strings as a dictionary's codes, two entries each used
     // twice, judged once of each entry.
@@ -209,10 +220,13 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     );
     for j in &judged {
         let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
+        assert_eq!(texts::kept(j, &texts, &all).as_ref(), Some(&by_values), "{j:?}");
         assert_eq!(texts::kept(j, &by_entry, &all), Some(by_values), "{j:?}, coded");
     }
     assert_eq!(texts::kept(&Judged::Compare(0, CompOp::Eq, number(1)), &texts, &all), None, "a number");
-    assert_eq!(texts::kept(&Judged::In(0, vec![number(1)], false), &texts, &all), None, "a list of a number");
+    for list in [vec![number(1)], long(vec![number(1)], |n| char_of(&format!("x{n}")))] {
+        assert_eq!(texts::kept(&Judged::In(0, set(list), false), &texts, &all), None, "a list holding a number");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13,
@@ -230,9 +244,11 @@ fn conjuncts_judged_over_floats_keep_as_values() {
     let mut judged = vec![
         Judged::IsNull(0, false),
         Judged::IsNull(0, true),
-        Judged::In(0, vec![Value::Approx(1.5_f64), number(3), Value::Null], false),
-        Judged::In(0, vec![Value::Approx(1.5_f64), number(3)], true),
-        Judged::In(0, vec![Value::Approx(1.5_f64), Value::Null], true),
+        Judged::In(0, set(vec![Value::Approx(1.5_f64), number(3), Value::Null]), false),
+        Judged::In(0, set(vec![Value::Approx(1.5_f64), number(3)]), true),
+        Judged::In(0, set(vec![Value::Approx(1.5_f64), Value::Null]), true),
+        Judged::In(0, set(long(vec![Value::Approx(1.5_f64), number(3), Value::Null], |n| number(n.saturating_add(100)))), false),
+        Judged::In(0, set(long(vec![Value::Approx(-2.25_f64), number(0)], |n| number(n.saturating_add(100)))), true),
         Judged::Compare(0, CompOp::Eq, Value::Char("x".into())),
     ];
     for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {

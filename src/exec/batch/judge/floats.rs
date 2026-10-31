@@ -31,9 +31,19 @@ pub(super) fn kept(judged: &Judged, floats: &Floats, kept: &[usize]) -> Option<V
         Judged::IsNull(_, not) => Some(kept.iter().copied().filter(|&n| floats.is_null(n) != *not).collect()),
         Judged::Compare(_, op, constant) => keep(&|f| holds(*op, ordering(f, constant))),
         // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities: true if one
-        // is; NOT of it true only if every one is false.
-        Judged::In(_, list, false) => keep(&|f| list.iter().any(|c| ordering(f, c) == Some(Ordering::Equal))),
-        Judged::In(_, list, true) => keep(&|f| list.iter().all(|c| ordering(f, c).is_some_and(Ordering::is_ne))),
+        // is; NOT of it true only if every one is false; a long list's by its set.
+        Judged::In(_, set, not) => {
+            if set.hashed() {
+                let want = super::wanted(*not);
+                return keep(&|f| set.truth(&Value::Approx(f)) == want);
+            }
+            let list = set.values();
+            if *not {
+                keep(&|f| list.iter().all(|c| ordering(f, c).is_some_and(Ordering::is_ne)))
+            } else {
+                keep(&|f| list.iter().any(|c| ordering(f, c) == Some(Ordering::Equal)))
+            }
+        }
         Judged::Like(..) | Judged::Compared(..) => None,
     }
 }

@@ -4,9 +4,10 @@
 //! outer join whose null rows the WHERE clause rejects made the join it is
 //! then. Split from optimizer.rs (RULES.md R-SIZE-2).
 
+use super::raising::guarded;
 use super::{Rule, RuleContext, wrap};
 use crate::exec::{NoSubqueries, eval_cond};
-use crate::logical::{Cond, LogicalPlan, OuterJoin, Truth, cond_columns, map_cond_columns, split_and};
+use crate::logical::{Cond, LogicalPlan, OuterJoin, Truth, cond_columns, map_cond_columns, plan_has_outer, split_and};
 use crate::value::Value;
 
 /// See [`super::CONSTANT_FOLDING`].
@@ -29,7 +30,15 @@ pub const PUSH_FILTER_INTO_OUTER_JOIN: &str = "push_filter_into_outer_join";
 ///   matches no row, as if it were not there.
 ///
 /// Only conditions that cannot raise an error move, as they are then
-/// evaluated on other rows (RULES.md D15).
+/// evaluated on other rows (RULES.md D15); but an ON conjunct that can, of
+/// the columns of the operand that supplies nulls alone, moves onto that
+/// operand over a guard, an EXISTS of the other (`optimizer/raising.rs`),
+/// if every ON conjunct that can raise is such. The ON condition is
+/// applied to every row of the product of the operands [§7.5 GR1c], so
+/// such a conjunct is evaluated on every row of its operand when the other
+/// has a row, and on none when it has none, as over the guard. One of the
+/// preserved operand's columns stays, keeping the join from its keys: its
+/// operand's rows are all kept, so no filter of them is its.
 pub struct PushFilterIntoOuterJoin;
 
 impl Rule for PushFilterIntoOuterJoin {
@@ -159,19 +168,20 @@ impl Join<'_> {
     }
 
     /// The join, its ON conjuncts over the columns of the operand a LEFT or
-    /// RIGHT join gives nulls alone moved into that operand; `None` if there
-    /// are none, or the condition can raise an error.
+    /// RIGHT join gives nulls alone moved into that operand; of a condition
+    /// that can raise an error, those that can (`raising_pushed`); `None`
+    /// if there are none.
     fn on_pushed(&self) -> Option<LogicalPlan> {
         let nulls = match self.kind {
             OuterJoin::Left => Side::Right,
             OuterJoin::Right => Side::Left,
             OuterJoin::Full => return None,
         };
-        if self.on.can_raise() {
-            return None;
-        }
         let mut conjuncts = Vec::new();
         split_and(self.on.clone(), &mut conjuncts);
+        if self.on.can_raise() {
+            return self.raising_pushed(nulls, conjuncts);
+        }
         let (moved, kept): (Vec<Cond>, Vec<Cond>) = conjuncts.into_iter().partition(|c| side(c, self.width()) == Some(nulls));
         if moved.is_empty() {
             return None;
@@ -179,6 +189,34 @@ impl Join<'_> {
         // No conjunct left is a condition always true.
         let on = crate::logical::and_all(kept).unwrap_or(Cond::Const(Truth::True));
         Some(Join { on: &on, ..*self }.with_moved(nulls, moved))
+    }
+
+    /// The join, its ON `conjuncts` that can raise an error, each over the
+    /// columns of `nulls`, the operand it gives nulls, alone, moved onto
+    /// that operand over a guard of the other (`raising::guarded`); `None`
+    /// if another can raise, or the other has an outer reference slot,
+    /// which the guard's subquery would leave unfilled.
+    fn raising_pushed(&self, nulls: Side, conjuncts: Vec<Cond>) -> Option<LogicalPlan> {
+        let (raising, kept): (Vec<Cond>, Vec<Cond>) = conjuncts.into_iter().partition(Cond::can_raise);
+        let (operand, other) = match nulls {
+            Side::Left => (self.left, self.right),
+            Side::Right => (self.right, self.left),
+        };
+        if raising.iter().any(|c| side(c, self.width()) != Some(nulls)) || plan_has_outer(other) {
+            return None;
+        }
+        let width = self.width();
+        let moved = match nulls {
+            Side::Left => raising,
+            Side::Right => raising.into_iter().map(|c| map_cond_columns(c, &|i| i.saturating_sub(width))).collect(),
+        };
+        let operand = guarded(0, moved, &[operand, other])?;
+        let on = crate::logical::and_all(kept).unwrap_or(Cond::Const(Truth::True));
+        let join = Join { on: &on, ..*self };
+        Some(match nulls {
+            Side::Left => join.of(Some(self.kind), operand, self.right.clone()),
+            Side::Right => join.of(Some(self.kind), self.left.clone(), operand),
+        })
     }
 
     /// The join, `moved`, conditions over `side`'s columns, applied to that

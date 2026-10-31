@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use super::Subquery;
+use super::{InSet, Subquery};
 use crate::catalog::{MatchType, QualifiedName};
 use crate::functions::ScalarRef;
 use crate::value::{ArithOp, CompOp, DataType, Value, constant_prefix};
@@ -120,6 +120,10 @@ pub enum Cond {
         /// The `<table subquery>`.
         subquery: Arc<Subquery>,
     },
+    /// \[DESIGN\] An `<in predicate>` of constants judged by their set
+    /// (`logical/sets.rs`): the OR of the value's equalities with each
+    /// [X3.135-1986 §5.13 GR2], as the physical planner makes a long one.
+    In(Expr, Arc<InSet>),
 }
 
 /// How a comparison with a subquery's values is quantified.
@@ -238,6 +242,7 @@ impl Cond {
                 let values = values.into_iter().map(&mut *f).collect();
                 Cond::Match { values, unique, match_type, subquery: subquery.map_outer(f) }
             }
+            Cond::In(e, set) => Cond::In(f(e), set),
         }
     }
 
@@ -255,7 +260,7 @@ impl Cond {
                 f(a);
                 f(b);
             }
-            Cond::IsNull(e, _) => f(e),
+            Cond::IsNull(e, _) | Cond::In(e, _) => f(e),
             Cond::Like(e, pattern, escape) => {
                 f(e);
                 f(pattern);
@@ -276,7 +281,7 @@ impl Cond {
             Cond::Or(a, b) | Cond::And(a, b) => [a.subqueries(), b.subqueries()].concat(),
             Cond::Not(a) | Cond::Is(a, ..) => a.subqueries(),
             Cond::Exists(s) | Cond::Unique(s) | Cond::Quantified(.., s) | Cond::Match { subquery: s, .. } => vec![&**s],
-            Cond::Const(_) | Cond::Compare(..) | Cond::IsNull(..) | Cond::Like(..) => Vec::new(),
+            Cond::Const(_) | Cond::Compare(..) | Cond::IsNull(..) | Cond::Like(..) | Cond::In(..) => Vec::new(),
         }
     }
 
@@ -302,7 +307,8 @@ impl Cond {
             | Cond::Exists(_)
             | Cond::Unique(_)
             | Cond::Quantified(..)
-            | Cond::Match { .. } => false,
+            | Cond::Match { .. }
+            | Cond::In(..) => false,
         };
         let mut raises = own || self.subqueries().iter().any(|s| s.can_raise());
         self.for_each_expr(&mut |e| raises = raises || e.can_raise());

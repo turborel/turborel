@@ -23,7 +23,9 @@ use super::vector::ints::evaluable;
 use crate::error::{Result, SqlError};
 use crate::exec::eval::compared;
 use crate::exec::{Runner, eval_cond};
-use crate::logical::{Cond, Expr, Truth, compared_with_constant, in_list};
+use std::sync::Arc;
+
+use crate::logical::{Cond, Expr, InSet, Truth, compared_with_constant, in_list};
 use crate::storage::{Batch, Column};
 use crate::value::{CompOp, LikePattern, Value, constant_pattern};
 
@@ -36,8 +38,8 @@ pub(super) enum Judged {
     /// [X3.135-1986 §5.15] the column IS NULL, or, if the flag, IS NOT NULL.
     IsNull(usize, bool),
     /// [X3.135-1986 §5.13] the column IN the constants, or, if the flag,
-    /// NOT IN them.
-    In(usize, Vec<Value>, bool),
+    /// NOT IN them: a long list by its set, made once (`logical/sets.rs`).
+    In(usize, Arc<InSet>, bool),
     /// [X3.135-1986 §5.14] the column LIKE a constant pattern, split once;
     /// none if a null pattern or escape makes it unknown of every row.
     Like(usize, Option<LikePattern>),
@@ -80,8 +82,7 @@ impl Judged {
             Judged::IsNull(_, not) => v.is_null() != *not,
             // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities: true if one
             // is; NOT of it true only if every one is false.
-            Judged::In(_, list, false) => list.iter().any(|c| compared(v, CompOp::Eq, c) == Truth::True),
-            Judged::In(_, list, true) => list.iter().all(|c| compared(v, CompOp::Eq, c) == Truth::False),
+            Judged::In(_, set, not) => set.truth(v) == wanted(*not),
             // [X3.135-1986 §5.14 GR4, GR5] unknown of a null.
             Judged::Like(_, pattern) => {
                 if let (Some(pattern), Value::Char(s)) = (pattern, v) {
@@ -213,8 +214,8 @@ fn gather(cond: &Cond, (columns, raising): (&[usize], bool), (judged, rest): (&m
             return;
         }
         Cond::IsNull(Expr::Column(c), not) => place(*c).map(|at| Judged::IsNull(at, *not)),
-        Cond::Or(..) => in_list(cond).and_then(|(c, list)| Some(Judged::In(place(c)?, list, false))),
-        Cond::Not(inner) => in_list(inner).and_then(|(c, list)| Some(Judged::In(place(c)?, list, true))),
+        Cond::Or(..) | Cond::In(..) => listed(cond).and_then(|(c, set)| Some(Judged::In(place(c)?, set, false))),
+        Cond::Not(inner) => listed(inner).and_then(|(c, set)| Some(Judged::In(place(c)?, set, true))),
         Cond::Like(Expr::Column(c), Expr::Const(pattern), escape) => {
             let escape = match escape {
                 None => Some(None),
@@ -242,6 +243,21 @@ fn gather(cond: &Cond, (columns, raising): (&[usize], bool), (judged, rest): (&m
         Some(j) => judged.push(j),
         None => rest.push(cond.clone()),
     }
+}
+
+/// The column and constants of `cond`, if it is IN a list of them: its
+/// set, or one made of the OR of their equalities.
+fn listed(cond: &Cond) -> Option<(usize, Arc<InSet>)> {
+    if let Cond::In(Expr::Column(c), set) = cond {
+        return Some((*c, Arc::clone(set)));
+    }
+    in_list(cond).map(|(c, list)| (c, Arc::new(InSet::of(list))))
+}
+
+/// The truth an IN keeps of a row: true, or, if `not`, false, as NOT of
+/// it is then true.
+fn wanted(not: bool) -> Truth {
+    if not { Truth::False } else { Truth::True }
 }
 
 /// `cond`, if it compares two expressions of columns of `columns` and exact

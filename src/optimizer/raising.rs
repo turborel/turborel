@@ -87,7 +87,7 @@ fn operand_of(c: &Cond, starts: &[usize], operands: &[&LogicalPlan]) -> Option<u
 
 /// The operand `at` of `operands`, its conjuncts `conds` over a product of
 /// it with the guard of the others, if it has any.
-fn guarded(at: usize, conds: Vec<Cond>, operands: &[&LogicalPlan]) -> Option<LogicalPlan> {
+pub(super) fn guarded(at: usize, conds: Vec<Cond>, operands: &[&LogicalPlan]) -> Option<LogicalPlan> {
     let operand = (*operands.get(at)?).clone();
     let Some(cond) = and_all(conds) else { return Some(operand) };
     let others = operands.iter().enumerate().filter(|(n, _)| *n != at);

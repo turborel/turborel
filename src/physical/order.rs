@@ -15,7 +15,8 @@
 //! an operand is one relation, evaluated whole wherever it is placed.
 //!
 //! The order: from each relation in turn, the relation joined next is the
-//! one that costs least and yields fewest rows; the cheapest of these
+//! one that costs least and yields fewest rows, by a hash join, or by
+//! probes of an index of its table (`physical/indexed.rs`); the cheapest of these
 //! orders is taken if it is estimated cheaper than the FROM clause's by the
 //! gain PLANNER.REORDER_GAIN gives (`CostModel::reorder_gain`). The relation of the first key of the order asked for stays first.
 
@@ -37,6 +38,10 @@ struct Relation<'p> {
     /// Its estimated rows, and its table's statistics, if it reads a table.
     rows: f64,
     stats: Option<Arc<dyn Statistics>>,
+    /// Of its columns, by the chain's places, those an index of its table
+    /// answers an equality of, and the cost of each probe
+    /// (`physical/indexed.rs`).
+    probes: Vec<(usize, f64)>,
 }
 
 impl Relation<'_> {
@@ -107,7 +112,10 @@ impl PhysicalPlanner<'_> {
             return self.take_apart(input, start, relations, conds);
         }
         let (rows, stats) = self.estimate(plan)?;
-        relations.push(Relation { plan, start, width: plan.width(), rows, stats });
+        let any = |_: usize, _: &crate::value::DataType| true;
+        let probes =
+            (0..plan.width()).filter_map(|c| self.probing(plan, &[(0, c)], &any).map(|p| (c.saturating_add(start), p.cost))).collect();
+        relations.push(Relation { plan, start, width: plan.width(), rows, stats, probes });
         Some(())
     }
 
@@ -172,13 +180,14 @@ fn cost(order: &[usize], relations: &[Relation<'_>], conjuncts: &[Conjunct]) -> 
 
 /// The estimated cost of joining relation `next` to the product of
 /// `placed`, and the rows that yields: a hash join reads each side once, if
-/// a conjunct equates a column of each; a nested loop pairs every row.
+/// a conjunct equates a column of each, or each row of the product probes
+/// an index of `next`'s, if that costs less; a nested loop pairs every row.
 fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[Conjunct]) -> f64 {
     let rows = |order: &[usize]| order.iter().filter_map(|&r| relations.get(r)).map(|r| r.rows).product::<f64>();
     let inner = relations.get(next).map_or(0.0_f64, |r| r.rows);
     let outer = rows(placed) * joined_fraction(placed, relations, conjuncts);
     let mut fraction = 1.0_f64;
-    let mut hashed = false;
+    let (mut hashed, mut probe) = (false, f64::INFINITY);
     for c in conjuncts.iter().filter(|c| c.uses.contains(&next) && c.uses.iter().all(|u| *u == next || placed.contains(u))) {
         if c.uses.len() < 2 {
             continue;
@@ -186,10 +195,18 @@ fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[
         let equality = equality_fraction(&c.cond, relations);
         hashed |= equality.is_some();
         fraction *= equality.unwrap_or(c.guess);
+        probe = probe.min(probe_cost(&c.cond, relations.get(next)));
     }
     let yields = outer * inner * fraction;
-    let join = if hashed { outer + inner } else { outer * inner };
+    let join = if hashed { (outer + inner).min(outer * probe) } else { outer * inner };
     join + yields
+}
+
+/// The cost of a probe of an index of `next`'s table for a value of the
+/// other column `c` equates one of its with; infinite if none answers it.
+fn probe_cost(c: &Cond, next: Option<&Relation<'_>>) -> f64 {
+    let (Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)), Some(next)) = (c, next) else { return f64::INFINITY };
+    next.probes.iter().filter(|(column, _)| column == a || column == b).map(|(_, cost)| *cost).fold(f64::INFINITY, f64::min)
 }
 
 /// The fraction of the product of `placed` that its conjuncts keep.

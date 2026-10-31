@@ -179,7 +179,12 @@ fn predicate(rng: &mut Rng, scope: &Scope) -> String {
     match rng.below(11_usize) {
         0 | 1 => format!("{} {} {}", scope.number(rng), rng.pick(&COMPARISONS), rng.number()),
         2 => format!("{} {} {}", scope.number(rng), rng.pick(&COMPARISONS), scope.number(rng)),
-        3 => format!("{} {not}IN ({}, {}, {})", scope.number(rng), rng.number(), rng.number(), rng.number()),
+        // Three constants, or ten, which a set judges (`logical/sets.rs`).
+        3 => {
+            let length = if rng.chance(30_usize) { 10_usize } else { 3_usize };
+            let list: Vec<String> = (0..length).map(|_| rng.number()).collect();
+            format!("{} {not}IN ({})", scope.number(rng), list.join(", "))
+        }
         4 => format!("{} {not}BETWEEN {} AND {}", scope.number(rng), rng.number(), rng.number()),
         5 => format!("{} {not}LIKE {}", scope.string(rng), rng.pick(&PATTERNS)),
         6 => format!("{} IS {not}NULL", scope.column(rng)),

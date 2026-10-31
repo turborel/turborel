@@ -79,6 +79,10 @@ pub fn render_cond(c: &Cond, names: &[String]) -> String {
             };
             format!("{} MATCH{}{kind} (<subquery>)", render_row(values, names), if *unique { " UNIQUE" } else { "" })
         }
+        Cond::In(e, set) => {
+            let values: Vec<String> = set.values().iter().map(|v| render_expr(&Expr::Const(v.clone()), names)).collect();
+            format!("{} IN ({})", render_expr(e, names), values.join(", "))
+        }
         Cond::Like(e, pattern, escape) => format!(
             "{} LIKE {}{}",
             render_expr(e, names),

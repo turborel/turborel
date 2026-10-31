@@ -84,7 +84,7 @@ fn alike(c: &Cond) -> bool {
     match c {
         Cond::Const(_) => true,
         Cond::Compare(a, _, b) => plain(a) && plain(b),
-        Cond::IsNull(e, _) => plain(e),
+        Cond::IsNull(e, _) | Cond::In(e, _) => plain(e),
         Cond::Or(a, b) | Cond::And(a, b) => alike(a) && alike(b),
         Cond::Not(a) | Cond::Is(a, ..) => alike(a),
         Cond::Like(..) | Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(_) | Cond::Match { .. } => false,

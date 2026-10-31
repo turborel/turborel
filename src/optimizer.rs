@@ -227,7 +227,8 @@ fn fold_cond(c: &Cond) -> Option<Cond> {
         | Cond::Quantified(..)
         | Cond::Is(..)
         | Cond::Unique(_)
-        | Cond::Match { .. } => None,
+        | Cond::Match { .. }
+        | Cond::In(..) => None,
         Cond::Or(a, b) | Cond::And(a, b) => match (fold_cond(a), fold_cond(b)) {
             (None, None) => None,
             (left, right) => {
@@ -314,25 +315,15 @@ fn simplify(c: &Cond) -> Option<Cond> {
         }
         Cond::Not(a) => {
             let sa = simplify(a);
-            match or_same(&sa, a) {
-                // [X3.135-1986 §5.18 GR2] NOT(true) is false, NOT(false) is true, NOT(unknown) is unknown.
-                Cond::Const(t) => Some(Cond::Const(match t {
+            // [X3.135-1986 §5.18 GR2] NOT(true) is false, NOT(false) is true, NOT(unknown) is unknown.
+            if let Cond::Const(t) = or_same(&sa, a) {
+                return Some(Cond::Const(match t {
                     True => False,
                     False => True,
                     Unknown => Unknown,
-                })),
-                inner @ (Cond::Or(..)
-                | Cond::And(..)
-                | Cond::Not(_)
-                | Cond::Is(..)
-                | Cond::Compare(..)
-                | Cond::IsNull(..)
-                | Cond::Like(..)
-                | Cond::Exists(_)
-                | Cond::Unique(_)
-                | Cond::Quantified(..)
-                | Cond::Match { .. }) => sa.map(|_| Cond::Not(Box::new(inner))),
+                }));
             }
+            sa.map(|inner| Cond::Not(Box::new(inner)))
         }
         Cond::Const(_)
         | Cond::Is(..)
@@ -342,7 +333,8 @@ fn simplify(c: &Cond) -> Option<Cond> {
         | Cond::Exists(_)
         | Cond::Unique(_)
         | Cond::Quantified(..)
-        | Cond::Match { .. } => None,
+        | Cond::Match { .. }
+        | Cond::In(..) => None,
     }
 }
 

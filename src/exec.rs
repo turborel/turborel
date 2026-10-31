@@ -84,6 +84,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Filter { .. } => filtered(plan, db, tx),
         Plan::Product { .. } | Plan::HashJoin { .. } => joined_plan(plan, db, tx),
         Plan::OuterJoin { .. } => join::outer(plan, db, tx),
+        Plan::IndexJoin { .. } => join::indexed(plan, db, tx),
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
         Plan::Aggregate { .. } => grouped(plan, db, tx),
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
@@ -146,6 +147,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::OuterJoin { .. }
+        | Plan::IndexJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }

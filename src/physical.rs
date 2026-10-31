@@ -18,6 +18,7 @@
 mod access;
 mod cost;
 mod estimate;
+mod indexed;
 mod join;
 mod order;
 mod probe;
@@ -30,7 +31,8 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::index::Probe;
 use crate::logical::{
-    AggCall, Cond, Expr, LogicalPlan, OuterJoin, SetOp, SortKey, column_name, render_cond, render_expr, render_keys, split_and,
+    AggCall, Cond, Expr, LogicalPlan, OuterJoin, SetOp, SortKey, column_name, judged_by_sets, render_cond, render_expr, render_keys,
+    split_and,
 };
 use crate::system::SystemRead;
 
@@ -102,6 +104,38 @@ pub enum Plan {
         keys: Vec<(usize, usize)>,
         /// The equalities, as text.
         detail: String,
+    },
+    /// The rows of `left` joined with the rows of a table an index finds
+    /// for each, by the values of its `keys` (`physical/indexed.rs`): the
+    /// rows of a product that its equalities keep [X3.135-1986 §5.20 GR2b,
+    /// §5.21 GR2], or, `outer`, of a LEFT outer join [ISO/IEC 9075:1992
+    /// §7.5], each row of `left` no table row matches with nulls; in the
+    /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`).
+    IndexJoin {
+        /// A LEFT outer join.
+        outer: bool,
+        /// The outer input, each of its rows probing the index.
+        left: Box<Plan>,
+        /// The table read.
+        table: QualifiedName,
+        /// The index probed.
+        index: String,
+        /// The index's method, for EXPLAIN.
+        method: String,
+        /// The columns of `left` whose values each probe looks for, of the
+        /// index's first columns in order.
+        keys: Vec<usize>,
+        /// The rest of the condition, over the pair's columns: the table's
+        /// own filter's, and the join's.
+        cond: Option<Cond>,
+        /// The table's degree, the width of its nulls.
+        width: usize,
+        /// The condition, as text.
+        detail: String,
+        /// The rows each probe is estimated to find.
+        est: f64,
+        /// The planner's cost estimate of all its probes.
+        cost: f64,
     },
     /// [ISO/IEC 9075:1992 §7.5] An outer join: each row of `left` with the
     /// rows of `right` whose `keys` are equal and for which `cond` is true,
@@ -312,7 +346,8 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// A filter directly on a table becomes part of the access path; any
-    /// other keeps the order of its input.
+    /// other keeps the order of its input, its long IN lists judged by
+    /// sets (`logical::judged_by_sets`).
     fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Built {
         if let LogicalPlan::Scan { table, names, needed } = input {
             let mut conds = Vec::new();
@@ -323,8 +358,9 @@ impl<'a> PhysicalPlanner<'a> {
             return join;
         }
         let b = self.build_node(input, want);
-        let detail = render_cond(cond, &input.names());
-        Built { plan: Plan::Filter { cond: cond.clone(), detail, est: None, input: Box::new(b.plan) }, ordered: b.ordered }
+        let cond = judged_by_sets(cond.clone());
+        let detail = render_cond(&cond, &input.names());
+        Built { plan: Plan::Filter { cond, detail, est: None, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 
     /// A projected column that is a plain column reference keeps the input's
@@ -382,6 +418,7 @@ impl Plan {
             Plan::OuterJoin { left, right, cond, .. } => {
                 left.can_raise() || right.can_raise() || cond.as_ref().is_some_and(Cond::can_raise)
             }
+            Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
         }
     }
@@ -411,6 +448,11 @@ impl Plan {
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
+            Plan::IndexJoin { outer, table, index, method, detail, est, cost, .. } => writeln!(
+                out,
+                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
+                if *outer { "LeftOuter" } else { "" }
+            ),
             Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
             Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
@@ -434,7 +476,8 @@ impl Plan {
             | Plan::Aggregate { input, .. }
             | Plan::Project { input, .. }
             | Plan::Distinct { input }
-            | Plan::Sort { input, .. } => input.write(out, depth.saturating_add(1)),
+            | Plan::Sort { input, .. }
+            | Plan::IndexJoin { left: input, .. } => input.write(out, depth.saturating_add(1)),
         }
     }
 }

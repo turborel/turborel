@@ -27,10 +27,16 @@ says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
 that begin with characters; `hash` by equalities and IN lists alone. A
-part of a WHERE clause that can raise an error, as a division can, is
-evaluated on every row of the tables it reads, which are then read
-whole, so the error is raised whatever the plan. An index changes no
-result: only how fast it comes.
+`btree` index read for an ORDER BY of its columns, or for ranges of
+them an OR or an IN list names, gives the rows in its order, so they
+are not sorted again. A join whose condition equates an indexed column
+with a column of the other table, an inner join or a LEFT outer join
+whose right table is the indexed one, may look up each row of the other
+table in the index, when they are few, rather than read the indexed
+table whole. A part of a WHERE clause, or of an ON clause, that can
+raise an error, as a division can, is evaluated on every row of the
+tables it reads, which are then read whole, so the error is raised
+whatever the plan. An index changes no result: only how fast it comes.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each

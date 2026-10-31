@@ -227,8 +227,9 @@ fn higher(a: Option<(CompOp, Value)>, b: Option<(CompOp, Value)>) -> Option<(Com
 
 /// The probes of the values `equal` of an index's first columns, then of
 /// the next, of type `data_type`, by any of `alternatives`: one for each of
-/// its ranges, merged so that none overlaps another; none if one has no
-/// bound or a comparison none an index places (`coerce`).
+/// its ranges, merged so that none overlaps another, in the order of their
+/// values, so that their rows, appended, are in the index's order; none if
+/// one has no bound or a comparison none an index places (`coerce`).
 pub(super) fn probes_of_any(equal: &[Value], data_type: &DataType, alternatives: &Alternatives) -> Option<Vec<Probe>> {
     let mut intervals = Vec::new();
     for each in &alternatives.each {

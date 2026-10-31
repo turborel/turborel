@@ -155,22 +155,17 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Index nested-loop joins** (D35): plans join by a product or a hash
-  join only; a small outer operand probing an index of the inner one for
-  each of its rows needs a plan of its own, the executor running a probe
-  of each row's values.
-- **IN lists judged by a set** (D31): an IN list of constants is bound as
-  an OR of equalities and judged one equality after another, a row at a
-  time and over vectors (`exec/batch/judge.rs`); a long list would be
-  judged faster by a set of its values' buckets made once.
-- **Conditions that can raise an error, of outer joins** (D15): of an
-  outer join's ON, a conjunct that can raise an error and reads one
-  operand's columns alone keeps the join from being on its equalities
-  through a hash table, as a WHERE's no longer keeps a product from being
-  a hash join.
-- **Index probes of an OR's ranges, in order** (D34): their index scans
-  give rows a range at a time, so an ORDER BY of the column is still a
-  sort, though the ranges are apart and in order.
+- **Conditions that can raise an error, of an outer join's preserved
+  operand** (D15): of an outer join's ON, a conjunct that can raise an
+  error and reads the preserved operand's columns alone keeps the join
+  from its equalities, every pair judged: it is evaluated on each of that
+  operand's rows when the other has rows, which a join on keys would
+  need to evaluate once a row, apart from its matches.
+- **Index nested-loop joins, further** (D35): RIGHT outer joins, the
+  right operand preserved, probing the left's table; a right operand that
+  reads its table through a projection, as a view's does; and the
+  planner's estimate of a join's left operand when it is itself a join,
+  now its product's rows by the default selectivity of each equality.
 - **Batch execution, further** (RULES.md D31): RIGHT and FULL outer
   joins, and LEFT ones with a condition beyond their keys; products and
   a join's right operand built from batches; a sort, a DISTINCT of

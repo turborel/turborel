@@ -11,6 +11,7 @@
 mod expr;
 mod pushed;
 mod render;
+mod sets;
 mod subquery;
 
 use std::fmt::Write;
@@ -21,6 +22,7 @@ pub use expr::{
 };
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
+pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
 pub use subquery::{Decorrelated, Subquery, plan_has_outer};
 
 use crate::catalog::QualifiedName;

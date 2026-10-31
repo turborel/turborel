@@ -48,6 +48,7 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
         ),
         Cond::Like(Expr::Column(c), pattern, escape) => found.extend(prefixed(*c, pattern, escape.as_ref())),
         Cond::Compare(..)
+        | Cond::In(..)
         | Cond::IsNull(..)
         | Cond::Const(_)
         | Cond::Is(..)
@@ -143,14 +144,18 @@ pub fn compared_with_constant(cond: &Cond) -> Option<(usize, CompOp, &Value)> {
         | Cond::Exists(_)
         | Cond::Unique(_)
         | Cond::Quantified(..)
-        | Cond::Match { .. } => None,
+        | Cond::Match { .. }
+        | Cond::In(..) => None,
     }
 }
 
 /// The column and constants of `cond` if it is an OR of equalities of one
 /// column with constants, as an `<in predicate>` of constants is
-/// (`binder/predicates.rs`).
+/// (`binder/predicates.rs`), or their set (`logical/sets.rs`).
 pub fn in_list(cond: &Cond) -> Option<(usize, Vec<Value>)> {
+    if let Cond::In(Expr::Column(c), set) = cond {
+        return Some((*c, set.values().to_vec()));
+    }
     if let Cond::Or(a, b) = cond {
         let (c, mut list) = in_list(a)?;
         let (d, more) = in_list(b)?;

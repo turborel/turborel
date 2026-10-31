@@ -6,7 +6,7 @@ use super::estimate::{self, Known};
 use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
 use crate::index::{Index, IndexMethod, Probe};
-use crate::logical::{Cond, SortKey, and_all, pushed_conjuncts, render_cond};
+use crate::logical::{Cond, SortKey, and_all, judged_by_sets, pushed_conjuncts, render_cond};
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType};
 
@@ -137,9 +137,10 @@ impl PhysicalPlanner<'_> {
                 // all its conjuncts select only if no column it does not test
                 // may be null.
                 let untested = columns.get(c.probes.first().map_or(0, tested)..).unwrap_or_default();
-                // The rows of probes of several ranges come a range at a time.
-                let one = c.probes.len() == 1;
-                let order = if kind.ordered() && !want.is_empty() && one { index_order(&ix.columns, c.fixed, want) } else { None };
+                // The probes of several ranges, an OR's, are of ranges apart
+                // and in key order (`probe::probes_of_any`): their rows,
+                // appended, are in key order too, read backward in reverse.
+                let order = if kind.ordered() && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
                 let all_keys = matches!(c.probes.first(), Some(Probe::All));
                 if !supported || untested.iter().any(|col| !col.not_null) || all_keys && order.is_none() {
                     continue;
@@ -197,12 +198,17 @@ fn whole_key(probe: &Probe, width: usize) -> bool {
 /// conjuncts `answered`, of the rows `est` and the `cost` the planner gave
 /// them all, read `reverse` if so: one for each of its probes, the rows of
 /// each after those of the one before (an OR's ranges, none overlapping,
-/// so each row is found once). Each shows the conjuncts it answers, or its
-/// probe, if it answers some only in part, or one of several.
+/// so each row is found once, and in key order, so the rows are in the
+/// index's order, or, read backward, the last range's first). Each shows
+/// the conjuncts it answers, or its probe, if it answers some only in
+/// part, or one of several.
 fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, cost, reverse): (f64, f64, bool)) -> Plan {
     let share = cost_of(probed.probes.len());
     let whole = and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| render_cond(&c, read.names));
-    let Probed { index, method, columns, probes, .. } = probed;
+    let Probed { index, method, columns, mut probes, .. } = probed;
+    if reverse {
+        probes.reverse();
+    }
     let mut level: Vec<Plan> = probes
         .into_iter()
         .map(|probe| {
@@ -367,11 +373,13 @@ struct Filtered<'a> {
 /// answer itself, estimated to keep the fraction of the rows that the
 /// table's statistics give, no more than the access reads: a scan that
 /// skips the rows its conditions cannot match keeps the same rows of the
-/// fewer it reads, not a fraction of them again.
+/// fewer it reads, not a fraction of them again. Its long IN lists are
+/// judged by sets (`logical::judged_by_sets`).
 fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
     let plan = match and_all(conds) {
         Some(c) => {
             let est = Some((with.read * estimate::selectivity(&c, with.known)).min(with.most));
+            let c = judged_by_sets(c);
             Plan::Filter { detail: render_cond(&c, with.names), cond: c, est, input: Box::new(plan) }
         }
         None => plan,
