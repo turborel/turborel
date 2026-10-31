@@ -23,14 +23,15 @@ use turborel_test_support::server::Raw;
 use crate::common::{Kept, Pki, Running, pki, secured, start_with, state};
 
 /// A server of `pki`, its TLS offered, whose user ANN's password is
-/// "ann's", proved by SCRAM-SHA-256 beside trust; on Unix at a socket too.
+/// "ann's", proved by SCRAM-SHA-256 beside trust; at a Unix socket or,
+/// on Windows, a named pipe too.
 fn served(pki: &Pki) -> (Database, Running) {
     let db = Database::new();
     secured(&db, pki, "ON");
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
-    #[cfg(unix)]
-    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
+    #[cfg(any(unix, windows))]
+    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string())).unwrap();
     let scram = Arc::new(Scrammed::new(db.clone(), &made).unwrap());
     let server = start_with(&db, &[], vec![scram]);
     (db, server)
@@ -45,11 +46,11 @@ fn over_tls(server: &Running, pki: &Pki, (user, password): (&str, &str)) -> conn
 }
 
 /// Verifies: [DESIGN] RULES.md D43; RFC 5802: a user proves its password
-/// by SCRAM-SHA-256 over TLS, and on Unix over a socket; a wrong password
-/// and a user not there are refused alike (SQLSTATE 28000), each told to
-/// the diagnostics as a failed login; over plain TCP the client begins
-/// nothing (SQLSTATE 28000). The mechanism is named `scram-sha-256`, and
-/// the client's never shows the password.
+/// by SCRAM-SHA-256 over TLS, and over a Unix socket or, on Windows, a
+/// named pipe; a wrong password and a user not there are refused alike
+/// (SQLSTATE 28000), each told to the diagnostics as a failed login; over
+/// plain TCP the client begins nothing (SQLSTATE 28000). The mechanism is
+/// named `scram-sha-256`, and the client's never shows the password.
 #[test]
 fn a_user_proves_its_password_by_scram() {
     let pki = pki("scram");
@@ -64,9 +65,9 @@ fn a_user_proves_its_password_by_scram() {
     assert_eq!(kept.of("LoginFailed").len(), 2, "{:?}", kept.all());
     let clear = connection::connect(server.address, "ann", &mut Scram::new("ann's")).err().unwrap();
     assert!(clear.message.contains("never over plain TCP"), "{clear}");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        let local = connection::connect_local(&pki.scratch.path("s"), "ann", &mut Scram::new("ann's")).unwrap();
+        let local = connection::connect_local(&pki.scratch.socket("s"), "ann", &mut Scram::new("ann's")).unwrap();
         assert_eq!(local.authorization(), "ANN");
     }
     assert_eq!((MECHANISM, format!("{:?}", Scram::new("ann's"))), ("scram-sha-256", "Scram(..)".to_owned()));
