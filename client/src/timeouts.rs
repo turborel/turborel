@@ -74,7 +74,12 @@ impl Socket {
 
     /// Bounds each read and write of the socket by `within`; none, no
     /// limit. A named pipe's are not bounded: once it is open, it waits on
-    /// its server as long as it must.
+    /// its server as long as it must. A socket its server has closed needs
+    /// no bound, and is left as it is (`closed`).
+    ///
+    /// # Errors
+    ///
+    /// A connection failure if the system cannot bound it.
     pub(crate) fn limit(&self, within: Option<Duration>) -> Result<()> {
         let set = match self {
             Socket::Tcp(s) => s.set_read_timeout(within).and_then(|()| s.set_write_timeout(within)),
@@ -83,7 +88,25 @@ impl Socket {
             #[cfg(windows)]
             Socket::Pipe => Ok(()),
         };
-        set.map_err(|e| set_up(&e))
+        set.or_else(|e| if self.closed(&e) { Ok(()) } else { Err(e) })
+            .map_err(|e| failed(&format!("[DESIGN] cannot bound how long the connection waits: {e}")))
+    }
+
+    /// Whether `e`, of bounding the socket's waits, is the system refusing
+    /// to bound a socket that has no peer any more: as macOS refuses
+    /// (EINVAL) once a Unix socket's server has closed it, as it may as
+    /// soon as it has the client's Terminate, or a TCP connection is reset.
+    /// Nothing waits on such a socket: a read takes what the server sent,
+    /// then its end or the reset; a write fails at once.
+    fn closed(&self, e: &io::Error) -> bool {
+        let gone = match self {
+            Socket::Tcp(s) => s.peer_addr().is_err(),
+            #[cfg(unix)]
+            Socket::Local(s) => s.peer_addr().is_err(),
+            #[cfg(windows)]
+            Socket::Pipe => false,
+        };
+        e.kind() == io::ErrorKind::InvalidInput && gone
     }
 }
 
@@ -140,5 +163,47 @@ mod tests {
         assert!(!gone.message.contains("in time"), "{gone:?}");
         let none: &[SocketAddr] = &[];
         assert!(tcp_to(none, None).is_err());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D42: a socket without a peer, a Unix
+    /// socket its server has closed or a TCP connection reset, is bounded
+    /// without failing, and nothing waits on it: what the server sent is
+    /// read, then its end or the reset. Regression test (R-TEST-7): macOS
+    /// refuses to set a timeout on such a socket (EINVAL), so a connection
+    /// whose server closed it as soon as it had Terminate, before
+    /// `Connection::terminate` bounded its wait for the close, failed to
+    /// terminate, "cannot set the connection up".
+    #[cfg(unix)]
+    #[test]
+    fn a_socket_without_a_peer_is_bounded() {
+        use std::io::{Read, Write};
+        let (mut client, mut server) = std::os::unix::net::UnixStream::pair().unwrap();
+        server.write_all(b"bye").unwrap();
+        drop(server);
+        let socket = Socket::local(&client).unwrap();
+        socket.limit(Some(Duration::from_secs(1_u64))).unwrap();
+        socket.limit(None).unwrap();
+        let mut told = Vec::new();
+        client.read_to_end(&mut told).unwrap();
+        assert_eq!(told, b"bye");
+        let mut reset = reset();
+        Socket::tcp(&reset).unwrap().limit(Some(Duration::from_secs(1_u64))).unwrap();
+        assert_eq!(reset.read(&mut [0_u8; 1]).unwrap(), 0_usize, "its end, after the reset");
+    }
+
+    /// A TCP connection its server has reset, closing it with what the
+    /// client sent unread; the reset read.
+    #[cfg(unix)]
+    fn reset() -> TcpStream {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (accepted, _) = listener.accept().unwrap();
+        client.write_all(b"unread").unwrap();
+        accepted.peek(&mut [0_u8; 1]).unwrap();
+        drop(accepted);
+        let reset = client.read(&mut [0_u8; 1]);
+        assert!(reset.is_err(), "{reset:?}");
+        client
     }
 }
