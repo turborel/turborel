@@ -50,6 +50,9 @@ pub struct UndoStore {
     batches: Mutex<Batches>,
 }
 
+/// The versions of a batch, shared with its readers.
+type Versions = Arc<Vec<Vec<u8>>>;
+
 /// The batches of a batched store.
 #[derive(Default)]
 struct Batches {
@@ -57,8 +60,10 @@ struct Batches {
     number: u64,
     gathering: Vec<Vec<u8>>,
     bytes: usize,
-    /// Batches being written, by number, read from memory until they are.
-    writing: BTreeMap<u64, Arc<Vec<Vec<u8>>>>,
+    /// Batches being written, by number, read from memory until they are;
+    /// each with the log's end as it was taken, which its record will be
+    /// at or past, so a truncation keeps what is from there on.
+    writing: BTreeMap<u64, (Lsn, Versions)>,
     /// Batches written, by number: where the log holds each.
     written: BTreeMap<u64, Lsn>,
     /// The batch last read from the log, as readers going back through a
@@ -100,7 +105,7 @@ impl UndoStore {
             batches.bytes = batches.bytes.saturating_add(version.len());
             pin(&mut lock_builtin(&self.pinned), at);
             let full = batches.bytes >= self.batch || batches.gathering.len() >= MOST_VERSIONS;
-            (at, full.then(|| take_batch(&mut batches)))
+            (at, full.then(|| take_batch(&mut batches, self.log.end())))
         };
         if let Some((number, batch)) = full
             && let Err(e) = self.write(number, &batch)
@@ -146,7 +151,7 @@ impl UndoStore {
                 batches.gathering.get(at_index).cloned()
             } else {
                 let cached = batches.last.as_ref().filter(|(n, _)| *n == number).map(|(_, b)| b);
-                cached.or_else(|| batches.writing.get(&number)).and_then(|b| b.get(at_index).cloned())
+                cached.or_else(|| batches.writing.get(&number).map(|(_, b)| b)).and_then(|b| b.get(at_index).cloned())
             };
             if let Some(version) = in_memory {
                 return Ok(version);
@@ -181,25 +186,40 @@ impl UndoStore {
         if !self.released.swap(false, Ordering::AcqRel) {
             return Ok(());
         }
-        let oldest = lock_builtin(&self.pinned).first_key_value().map(|(&at, _)| at);
-        let before = if self.batch == 0 { oldest.unwrap_or_else(|| self.log.end()) } else { self.batches_before(oldest) };
+        let before = if self.batch == 0 { self.alone_before() } else { self.batches_before() };
         self.log.truncate_before(before).inspect_err(|_| self.released.store(true, Ordering::Release))
     }
 
+    /// The log position before which no version still needed is, in a
+    /// store of no batches: the oldest pinned, or the log's end if none
+    /// is. Both are read under the pins' lock, which an append holds over
+    /// its write and its pin, so a version appended meanwhile is at or past
+    /// what is returned; the end read after the lock is let go could be
+    /// past a version appended and pinned in between.
+    fn alone_before(&self) -> Lsn {
+        let pinned = lock_builtin(&self.pinned);
+        pinned.first_key_value().map_or_else(|| self.log.end(), |(&at, _)| at)
+    }
+
     /// The log position before which no batch still needed is, once those
-    /// before `oldest`'s batch, the oldest position pinned, are forgotten.
-    /// Batches may be written out of their order, so it is the least
-    /// position of those still needed, and no later than the log's end,
-    /// past which a batch being written will be.
-    fn batches_before(&self, oldest: Option<Lsn>) -> Lsn {
+    /// before the oldest pinned position's batch are forgotten. Batches may
+    /// be written out of their order, so it is the least position of those
+    /// still needed: of each written, where it is; of each being written,
+    /// the log's end as it was taken, as its record may be in the log
+    /// already, not yet recorded as written; and no later than the log's
+    /// end. The pins are read under the batches' lock, which an append
+    /// holds over its pin, so no batch gains a pin meanwhile.
+    fn batches_before(&self) -> Lsn {
         let mut batches = lock_builtin(&self.batches);
+        let oldest = lock_builtin(&self.pinned).first_key_value().map(|(&at, _)| at);
         let needed = oldest.map_or(batches.number, |at| at.0 >> INDEX_BITS);
         batches.written = batches.written.split_off(&needed);
         batches.writing = batches.writing.split_off(&needed);
         if batches.last.as_ref().is_some_and(|(n, _)| *n < needed) {
             batches.last = None;
         }
-        batches.written.values().copied().min().unwrap_or_else(|| self.log.end()).min(self.log.end())
+        let floors = batches.writing.values().map(|(floor, _)| floor);
+        batches.written.values().chain(floors).copied().min().map_or_else(|| self.log.end(), |least| least.min(self.log.end()))
     }
 
     /// How many positions are pinned: for tests and statistics.
@@ -219,14 +239,14 @@ fn index(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(INDEX_MASK) & INDEX_MASK
 }
 
-/// The batch being gathered, taken to be written: its number, and its
-/// versions, readable meanwhile; the next begun.
-fn take_batch(batches: &mut Batches) -> (u64, Arc<Vec<Vec<u8>>>) {
+/// The batch being gathered, taken to be written, the log's end `end`:
+/// its number, and its versions, readable meanwhile; the next begun.
+fn take_batch(batches: &mut Batches, end: Lsn) -> (u64, Versions) {
     let number = batches.number;
     let batch = Arc::new(std::mem::take(&mut batches.gathering));
     batches.bytes = 0;
     batches.number = number.saturating_add(1);
-    batches.writing.insert(number, Arc::clone(&batch));
+    batches.writing.insert(number, (end, Arc::clone(&batch)));
     (number, batch)
 }
 
