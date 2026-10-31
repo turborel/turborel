@@ -42,6 +42,7 @@ mod counted;
 mod discard;
 mod files;
 mod frozen;
+mod gathered;
 mod ids;
 mod meta;
 mod mvcc;
@@ -374,7 +375,9 @@ impl TableStorage for RowTable {
     }
 
     /// A table of the column store gives its frozen rows without making
-    /// each (`rows/frozen/batches.rs`).
+    /// each (`rows/frozen/batches.rs`); its tree's rows, and a table of the
+    /// row store its rows, each record decoded straight into the vectors
+    /// (`rows/gathered.rs`).
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> crate::storage::Batches {
         self.scan_batches_of(tx, columns, condition.cloned())
     }

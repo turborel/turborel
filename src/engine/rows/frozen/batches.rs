@@ -21,13 +21,14 @@ use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::group::{Group, Pages, Summary};
 use crate::engine::columns::scan::{floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at};
+use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
 use crate::engine::rows::sealing::Sealing;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, Row, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, RowId};
 use crate::value::DataType;
 use crate::value::Value;
 
@@ -44,8 +45,9 @@ pub(in crate::engine::rows) struct Batched {
     /// in order, and its runs left to read.
     group: Option<(Arc<Group>, Vec<RowId>, Vec<RowId>)>,
     runs: VecDeque<(u32, u32)>,
-    /// The rows of the tree's entries in the group's range, left to give.
-    entries: Vec<Row>,
+    /// The records, unsealed, of the tree's entries in the group's range,
+    /// left to give, each of its row.
+    entries: Vec<(RowId, Vec<u8>)>,
     /// The tree's entries, once the groups are read.
     delta: Option<Scan<TreeOf>>,
     /// The ranges of row ids of the tree's entries read with the groups'
@@ -111,35 +113,25 @@ impl Batched {
         Ok(true)
     }
 
-    /// The columns a row of the tree is decoded for: those read, and the
-    /// condition's.
-    fn decoded(&self) -> Vec<usize> {
-        let mut decoded = self.columns.clone();
-        decoded.extend(self.condition.iter().flat_map(Conjunction::columns));
-        decoded
-    }
-
-    /// The row of the tree's entry of `id`, `newest`, as the reader sees
-    /// it, `decoded` decoded, if the condition matches it.
-    fn delta_row(&self, (id, newest): (RowId, Vec<u8>), decoded: &[usize]) -> Result<Option<Row>> {
+    /// The record, unsealed, of the tree's entry of `id`, `newest`, as the
+    /// reader sees it, if the condition matches its row.
+    fn delta_record(&self, (id, newest): (RowId, Vec<u8>)) -> Result<Option<Vec<u8>>> {
         let Some(record) = self.table.visible_from(newest, self.reader)? else { return Ok(None) };
-        let row = self.table.decode(id, &record, Some(decoded))?;
-        Ok(self.condition.as_ref().is_none_or(|c| c.matches(&row)).then_some(row))
+        self.table.plain_matching((id, &record), self.condition.as_ref())
     }
 
     /// The ids of the tree's entries in `group`'s range of row ids, in
-    /// order, the rows of those the reader sees kept to give, and the range
-    /// noted as read.
+    /// order, the records of those the reader sees kept to give, and the
+    /// range noted as read.
     fn entries_in(&mut self, group: &Summary) -> Result<Vec<RowId>> {
         let (low, high) = (key(group.first), key(group.last));
-        let decoded = self.decoded();
         let mut shadowed = Vec::new();
         for entry in self.table.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
             let (k, newest) = entry?;
             let id = row_id(&k)?;
             shadowed.push(id);
-            if let Some(row) = self.delta_row((id, newest), &decoded)? {
-                self.entries.push(row);
+            if let Some(record) = self.delta_record((id, newest))? {
+                self.entries.push((id, record));
             }
         }
         self.read.push((group.first, group.last));
@@ -154,17 +146,18 @@ impl Batched {
         (from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect()
     }
 
-    /// A batch of the rows of the tree's entries left to give, if any.
-    fn entries_batch(&mut self) -> Option<Batch> {
+    /// A batch of the rows of the tree's entries left to give, if any, each
+    /// column decoded straight into its vector (`gathered.rs`).
+    fn entries_batch(&mut self) -> Result<Option<Batch>> {
         if self.entries.is_empty() {
-            return None;
+            return Ok(None);
         }
         let rest = self.entries.split_off(self.entries.len().saturating_sub(BATCH_ROWS));
-        let mut batch = Batch::empty(self.columns.len());
-        for row in &rest {
-            batch.push(row, &self.columns);
+        let mut gathering = Gathering::new(self.table.format.types(), &self.columns);
+        for (id, record) in &rest {
+            self.table.gather_plain((*id, record), &mut gathering)?;
         }
-        Some(batch)
+        Ok(Some(gathering.take()))
     }
 
     /// The batch of the run `from` to `to` of the group being read, if any
@@ -210,31 +203,27 @@ impl Batched {
     /// The next batch of the tree's rows the reader sees, if any is left.
     fn delta_batch(&mut self) -> Result<Option<Batch>> {
         let mut delta = self.delta.take().unwrap_or_else(|| RowTable::entries(&self.table));
-        let decoded = self.decoded();
-        let mut batch = Batch::empty(self.columns.len());
+        let mut gathering = Gathering::new(self.table.format.types(), &self.columns);
         let mut failed = None;
-        while batch.rows < BATCH_ROWS {
+        while gathering.rows() < BATCH_ROWS {
             let Some(entry) = delta.next() else { break };
             let found = entry.and_then(|(k, newest)| {
                 let id = row_id(&k)?;
-                if self.was_read(id) { Ok(None) } else { self.delta_row((id, newest), &decoded) }
+                let record = if self.was_read(id) { None } else { self.delta_record((id, newest))? };
+                record.map(|plain| self.table.gather_plain((id, &plain), &mut gathering)).transpose()
             });
-            match found {
-                Ok(Some(row)) => batch.push(&row, &self.columns),
-                Ok(None) => {}
-                Err(e) => {
-                    failed = Some(e);
-                    break;
-                }
+            if let Err(e) = found {
+                failed = Some(e);
+                break;
             }
         }
         self.delta = Some(delta);
-        failed.map_or(Ok((batch.rows > 0).then_some(batch)), Err)
+        failed.map_or(Ok((gathering.rows() > 0).then(|| gathering.take())), Err)
     }
 
     fn step(&mut self) -> Result<Option<Batch>> {
         loop {
-            if let Some(batch) = self.entries_batch() {
+            if let Some(batch) = self.entries_batch()? {
                 return Ok(Some(batch));
             }
             if let Some(run) = self.runs.pop_front() {

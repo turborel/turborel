@@ -1578,6 +1578,12 @@ write-ahead logging.
 - **Batches** (`TableStorage::scan_batches`). A scan gives rows as
   vectors of up to 2048 values per column, in no set order; by default
   by gathering rows.
+  - The built-in engines' tree rows, all a row store's and a column
+    store's not yet frozen, are decoded from each record straight into
+    vectors (`rows/gathered.rs`): exact numbers as integers, character
+    strings as text (CHARACTER padded), others as values; no row made.
+  - A row store table still reads a row at a time for a cursor
+    (`reads_by_batch` false): its rows are read as they are fetched.
 - **Integers** (`storage::Column`, `Ints`). An exact number a store
   keeps as an integer is a vector of integers, nulls beside; values are
   made only when first asked for.
@@ -1629,7 +1635,8 @@ write-ahead logging.
 - **Column store batches.** Each frozen vector straight from chunks, a
   condition's columns first and the rest only for rows it keeps; tree
   entries in the group's row id range, read once as the group is taken
-  up, in their rows' place; then the tree's other rows.
+  up, their records unsealed and judged by the scan's condition then,
+  in their rows' place; then the tree's other rows.
 - **Streams** (`exec/batch/stream.rs`). A plan subtree gives rows by
   batch (a stream) if it is:
   - a table's scan;

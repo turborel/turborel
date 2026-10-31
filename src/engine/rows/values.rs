@@ -4,11 +4,12 @@
 //! row; and a record decoded, all its columns or those asked for. Split
 //! from rows.rs (RULES.md R-SIZE-2).
 
+use super::gathered::Gathering;
 use super::{KEY, OWNER, RowTable, corrupt};
 use crate::disk::pager::PageId;
 use crate::engine::record::{Reference, Spill};
 use crate::error::{Code, Result, SqlError};
-use crate::storage::{Row, RowId};
+use crate::storage::{Conjunction, Row, RowId};
 
 impl RowTable {
     /// The record of row `id`, holding `row`, and the pages of its values
@@ -84,5 +85,35 @@ impl RowTable {
             Some(columns) => self.format.decode_columns_with(&record, columns, &mut fetch),
             None => self.format.decode_with(&record, &mut fetch),
         }
+    }
+
+    /// Adds the row `record` holds, row `id`'s, to `into`, each column
+    /// decoded straight into its vector (`gathered.rs`).
+    pub(in crate::engine::rows) fn gather_record(&self, (id, record): (RowId, &[u8]), into: &mut Gathering) -> Result<()> {
+        self.gather_plain((id, &self.sealing.plain_record(id, record)?), into)
+    }
+
+    /// As `gather_record`, of a record unsealed (`plain_matching`).
+    pub(in crate::engine::rows) fn gather_plain(&self, (id, plain): (RowId, &[u8]), into: &mut Gathering) -> Result<()> {
+        let mut fetch = |reference: Reference| self.get_value(id, reference);
+        into.push((&self.format, plain), &mut fetch)
+    }
+
+    /// The record `record` holds, row `id`'s, unsealed, if `condition`, if
+    /// given, matches its row, only the condition's columns decoded.
+    pub(in crate::engine::rows) fn plain_matching(
+        &self,
+        (id, record): (RowId, &[u8]),
+        condition: Option<&Conjunction>,
+    ) -> Result<Option<Vec<u8>>> {
+        let plain = self.sealing.plain_record(id, record)?;
+        if let Some(condition) = condition {
+            let mut fetch = |reference: Reference| self.get_value(id, reference);
+            let row = self.format.decode_columns_with(&plain, &condition.columns(), &mut fetch)?;
+            if !condition.matches(&row) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(plain.into_owned()))
     }
 }

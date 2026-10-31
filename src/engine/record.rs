@@ -38,6 +38,8 @@
 //! the `_with` decoders. The prefix in the reference is for filters that
 //! can decide on a value's first bytes without fetching it.
 
+use std::borrow::Cow;
+
 use super::fixed_width;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
@@ -344,18 +346,33 @@ impl RecordFormat {
     /// As `decode_with`.
     pub fn column_with(&self, bytes: &[u8], i: usize, fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Value> {
         let data_type = self.types.get(i).copied().ok_or_else(|| corrupt(&format!("it has no column {i}")))?;
-        let value = match self.field(bytes, i)? {
-            Field::Null => return Ok(Value::Null),
-            Field::Inline(field) => decode_value(field, data_type),
+        let Some(field) = self.bytes_with(bytes, i, fetch)? else { return Ok(Value::Null) };
+        decode_value(&field, data_type).ok_or_else(|| corrupt(&format!("column {i} is not a value of its type")))
+    }
+
+    /// The bytes of column `i` of a record as its type writes them, got by
+    /// `fetch` if it is out of line; none if it is null.
+    ///
+    /// # Errors
+    ///
+    /// As `decode_with`.
+    pub fn bytes_with<'a>(
+        &self,
+        bytes: &'a [u8],
+        i: usize,
+        fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>,
+    ) -> Result<Option<Cow<'a, [u8]>>> {
+        match self.field(bytes, i)? {
+            Field::Null => Ok(None),
+            Field::Inline(field) => Ok(Some(Cow::Borrowed(field))),
             Field::Outside(reference) => {
                 let fetched = fetch(reference)?;
                 if fetched.len() != reference.length {
                     return Err(corrupt(&format!("column {i}'s value out of line is not of the length its reference says")));
                 }
-                decode_value(&fetched, data_type)
+                Ok(Some(Cow::Owned(fetched)))
             }
-        };
-        value.ok_or_else(|| corrupt(&format!("column {i} is not a value of its type")))
+        }
     }
 
     /// The values a record keeps out of line.

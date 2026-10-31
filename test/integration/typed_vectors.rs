@@ -1,8 +1,8 @@
 //! \[DESIGN\] Exact numbers a batch holds as integers, and character
 //! strings it holds as text (RULES.md D31, `storage::Ints`, `Texts`):
 //! judged and fed to set functions so, they answer as row by row, of a
-//! table of the column store whose rows are frozen, as a table of the row
-//! store answers.
+//! table of the column store whose rows are frozen, and of one of the row
+//! store, whose records are decoded straight into them, alike.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -116,8 +116,8 @@ const QUERIES: [&str; 47] = [
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11 GR4,
 /// GR5, §5.13, §5.14, §5.15]: exact numbers judged and fed to set
 /// functions as integers, and character strings as text, give what they
-/// give row by row (EXECUTOR.BATCHES OFF), and what a table of the row
-/// store gives: numbers compared with constants of more and fewer digits
+/// give row by row (EXECUTOR.BATCHES OFF), of the column store and of the
+/// row store, each the same: numbers compared with constants of more and fewer digits
 /// after the point than their scale, of either sign, one that no value
 /// equals, by every comparison; IN and NOT IN lists, one holding a null,
 /// one an approximate number; numbers near the limits of 18 digits; set
@@ -141,7 +141,9 @@ fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
         let column = query.replace("{t}", "C");
         let (batched, row) = both_ways(&a, &column);
         assert_eq!(batched, row, "{column}");
-        assert_eq!(batched, sorted(&a, &query.replace("{t}", "R")), "{column}, as the row store");
+        let (rows_batched, rows_row) = both_ways(&a, &query.replace("{t}", "R"));
+        assert_eq!(rows_batched, rows_row, "{column}, of the row store");
+        assert_eq!(batched, rows_batched, "{column}, as the row store");
     }
     assert_eq!(sorted(&a, "SELECT COUNT(*) FROM C WHERE D = 1.515"), vec!["0"], "no value of scale 2 is 1.515");
     // Groups of integers past the work area, written and made after.

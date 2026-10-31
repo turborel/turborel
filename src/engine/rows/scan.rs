@@ -8,10 +8,11 @@ use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
 use super::frozen::{Batched, Merged, Merging, Ordered};
+use super::gathered::Gathering;
 use super::mvcc::Read;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
-use crate::storage::{Batches, Conjunction, RowId, Rows, batches_of};
+use crate::storage::{BATCH_ROWS, Batches, Conjunction, RowId, Rows, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -131,9 +132,15 @@ impl RowTable {
     /// The rows `tx` sees by batch, of `columns`, only those `condition`
     /// matches if given, which is then what counts as read: a table that
     /// freezes rows gives its frozen rows straight from their chunks
-    /// (`rows/frozen/batches.rs`), any other its scan's rows, gathered.
+    /// (`rows/frozen/batches.rs`), any other its tree's records, each
+    /// column decoded straight into its vector (`gathered.rs`); one that
+    /// no longer freezes but still holds groups its scan's rows, gathered.
     pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Batches {
-        if self.frozen.columns().is_none() {
+        let freezes = self.frozen.columns().is_some();
+        if !freezes && self.frozen.directory().is_ok_and(|directory| directory.groups.is_empty()) {
+            return self.gathered(tx, columns, condition.as_ref());
+        }
+        if !freezes {
             let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
             return batches_of(rows, columns);
         }
@@ -146,5 +153,34 @@ impl RowTable {
             Ok(directory) => Box::new(Batched::new(Arc::clone(&self), (reader, directory), columns.to_vec(), condition)),
             Err(e) => Box::new(iter::once(Err(e))),
         }
+    }
+
+    /// The batches of the rows `tx` sees, of `columns`, of only the zones
+    /// `condition` may match, if given, as `scan_rows` reads a table that
+    /// holds no group, leaving every row to the filter: each record's
+    /// columns decoded straight into their vectors.
+    fn gathered(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> Batches {
+        let read = condition.cloned().map_or(Read::All, Read::Condition);
+        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
+            Ok(reader) => reader,
+            Err(e) => return Box::new(iter::once(Err(e))),
+        };
+        let mut entries = Self::ranged(&self, self.zones.ranges(condition));
+        let mut gathering = Gathering::new(self.format.types(), columns);
+        Box::new(iter::from_fn(move || {
+            while gathering.rows() < BATCH_ROWS {
+                let Some(entry) = entries.next() else { break };
+                let gathered = entry.and_then(|(key, newest)| match self.visible_from(newest, reader)? {
+                    Some(record) => self.gather_record((row_id(&key)?, &record), &mut gathering),
+                    None => Ok(()),
+                });
+                if let Err(e) = gathered {
+                    // The rows gathered are given up with the scan.
+                    gathering.take();
+                    return Some(Err(e));
+                }
+            }
+            (gathering.rows() > 0).then(|| Ok(gathering.take()))
+        }))
     }
 }

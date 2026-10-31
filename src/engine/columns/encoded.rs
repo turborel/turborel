@@ -33,7 +33,7 @@ use super::alp::{Alp, Trials};
 use super::fsst::{Coded, Table};
 use super::packed::{bits_for, get, pack, packed_len, unpack};
 use super::runs::{Runs, runs_len};
-use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
+use super::{HEADER, WORD, corrupt, nulls_len, padded, read_word, too_large, word};
 use crate::error::Result;
 use crate::value::{DataType, Value};
 
@@ -517,17 +517,6 @@ fn dictionary_words(
         out.push(word.unwrap_or(0));
     })?;
     ok.then_some(())
-}
-
-/// Pushes `s` to `text`, padded with spaces to `pad` characters if given:
-/// a CHARACTER string, written without its trailing spaces, as it is read
-/// [X3.135-1986 §8.7 GR7b] (`record.rs`).
-fn padded(text: &mut String, s: &str, pad: Option<usize>) {
-    text.push_str(s);
-    if let Some(length) = pad {
-        let count = if s.is_ascii() { s.len() } else { s.chars().count() };
-        text.extend(std::iter::repeat_n(' ', length.saturating_sub(count)));
-    }
 }
 
 /// Where the `e`th of the fields `offsets` gives begins and ends.

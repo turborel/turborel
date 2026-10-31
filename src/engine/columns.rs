@@ -276,6 +276,17 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
     }
 }
 
+/// Pushes `s` to `text`, padded with spaces to `pad` characters if given
+/// (`padding`): a CHARACTER string, written without its trailing spaces,
+/// as it is read [X3.135-1986 §8.7 GR7b] (`record.rs`).
+pub fn padded(text: &mut String, s: &str, pad: Option<usize>) {
+    text.push_str(s);
+    if let Some(length) = pad {
+        let count = if s.is_ascii() { s.len() } else { s.chars().count() };
+        text.extend(std::iter::repeat_n(' ', length.saturating_sub(count)));
+    }
+}
+
 // Unit tests: chunks read back as written, fixed and varying, with nulls;
 // how many values fit; malformed chunks refused; each compressed encoding
 // chosen and read back, one value at a time and as integers, texts or
