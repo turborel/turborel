@@ -6,16 +6,18 @@
 //! the statement and recovered holds the same rows, index entries and
 //! Information Schema as before the crash. Every durable file the file
 //! manager registers is in the database's export manifest, or carried by
-//! the log or the catalog.
+//! the log or the catalog. A database following another's log, by the
+//! standby seam, replays it as recovery does, and serves once promoted.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use turborel::db::{Database, OpenOptions, Opened};
+use turborel::db::{Database, OpenOptions, Opened, Standby};
 use turborel::error::Code;
 use turborel::files::FileOwner;
 use turborel::index::BTreeMethod;
 use turborel::log::record::{KINDS, Record};
-use turborel::log::{FileLog, FileLogOptions, Log, Lsn};
+use turborel::log::{FileLog, FileLogOptions, Log, Lsn, MemoryLog};
 use turborel::value::types::TypeRegistry;
 
 use crate::common::{Scratch, after_crash, crc32c, exec, number, os, rows};
@@ -270,4 +272,104 @@ fn every_durable_file_is_exported() {
     std::fs::remove_file(dir.join("stray")).unwrap();
     assert_eq!(db.export_manifest().unwrap(), manifest);
     assert_eq!(Database::new().export_manifest().err().map(|e| e.code), Some(Code::Api));
+}
+
+/// Schema APP of the standby's tests: T with a UNIQUE key and an index on
+/// V, logged to `log`; rows 1 and 2 committed, 1 updated, a row rolled
+/// back.
+fn primary(log: &Arc<MemoryLog>) -> Database {
+    let db = Database::new();
+    db.set_log(Arc::clone(log) as Arc<dyn Log>).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHAR(10))").unwrap();
+    db.create_index("T_V", "APP.T", &["V"], "btree").unwrap();
+    committed(&db, &["INSERT INTO T VALUES (1, 'one')", "INSERT INTO T VALUES (2, 'two')", "UPDATE T SET V = 'uno' WHERE K = 1"]);
+    let s = db.session("APP");
+    s.run("INSERT INTO T VALUES (9, 'gone')").unwrap();
+    s.rollback().unwrap();
+    db
+}
+
+/// A database to follow another's log, with a log of its own, which the
+/// changes it would log are held at (`Standby`).
+fn following() -> Database {
+    let db = Database::new();
+    db.set_log(Arc::new(MemoryLog::new())).unwrap();
+    db
+}
+
+/// What the standby's tests compare: T's rows, a query by index V, and the
+/// entries of each index named.
+fn answers(db: &Database, indexes: &[&str]) -> (Vec<String>, Vec<String>, Vec<usize>) {
+    let s = db.session("APP");
+    let all = rows(&s, "SELECT K, V FROM T ORDER BY K").unwrap();
+    let by_v = rows(&s, "SELECT K FROM T WHERE V = 'uno'").unwrap();
+    (all, by_v, indexes.iter().map(|ix| db.index_entries(ix).unwrap()).collect())
+}
+
+/// Verifies: [DESIGN] RULES.md D57, the standby seam: a database given the
+/// records of another's log (`Standby::replay`) holds what the other
+/// committed, its rows and index entries, and nothing of a transaction
+/// rolled back; given the records after those in a second call, it holds
+/// what they did too, an index they define among it; from the first call it
+/// follows, taking no change (SQLCODE -917, SQLSTATE 25000) while reads go
+/// on; replay gives the position of the last record applied, 0 for none,
+/// and refuses a malformed record (SQLCODE -916).
+#[test]
+fn a_standby_replays_what_its_primary_logged() {
+    let log = Arc::new(MemoryLog::new());
+    let primary = primary(&log);
+    let standby = following();
+    assert_eq!(standby.replay(&mut std::iter::empty()).unwrap(), Lsn(0));
+    let first = log.end();
+    assert_eq!(Standby::replay(&standby, &mut log.read_from(Lsn(0))).unwrap(), Lsn(first.0 - 1));
+    assert_eq!(answers(&standby, &["T_V"]), answers(&primary, &["T_V"]));
+    assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,two       "]);
+    let refused = standby.session("APP").run("INSERT INTO T VALUES (5, 'five')").unwrap_err();
+    assert_eq!((refused.code, refused.sqlstate().as_str()), (Code::TransactionState, "25000"));
+    assert!(refused.msg.contains("follows"), "{refused}");
+
+    committed(&primary, &["DELETE FROM T WHERE K = 2", "INSERT INTO T VALUES (3, 'three')", "CREATE INDEX T_K ON T (K)"]);
+    assert_eq!(Standby::replay(&standby, &mut log.read_from(first)).unwrap(), Lsn(log.end().0 - 1));
+    assert_eq!(answers(&standby, &["T_V", "T_K"]), answers(&primary, &["T_V", "T_K"]));
+    assert_eq!(answers(&standby, &[]).0.len(), 2);
+
+    let malformed = [Ok((Lsn(1), b"not a record".to_vec()))];
+    assert_eq!(Database::new().replay(&mut malformed.into_iter()).err().map(|e| e.code), Some(Code::Corrupt));
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D25, the standby seam: a standby
+/// promoted over a log of its own takes changes again, writing them to
+/// that log, its transactions numbered past those it replayed; deposed, it
+/// takes none (SQLCODE -917), a writer open then cannot commit (-913), and
+/// reads go on; deposed, it neither replays nor is promoted (-910) until
+/// opened again. A database that never followed is promoted as it is.
+#[test]
+fn a_standby_serves_once_promoted_until_deposed() {
+    let log = Arc::new(MemoryLog::new());
+    drop(primary(&log));
+    let last = log.read_from(Lsn(0)).map(|read| Record::decode(&read.unwrap().1, &TypeRegistry::default()).unwrap().tx).max();
+    let standby = following();
+    Standby::replay(&standby, &mut log.read_from(Lsn(0))).unwrap();
+    let own = Arc::new(MemoryLog::new());
+    standby.promote(Arc::clone(&own) as Arc<dyn Log>).unwrap();
+    let s = standby.session("APP");
+    s.run("INSERT INTO T VALUES (4, 'four')").unwrap();
+    assert!(s.transaction() > last, "past the ids replayed");
+    s.commit().unwrap();
+    assert_eq!(own.read_from(Lsn(0)).count(), 2, "its insert and commit, to its own log");
+
+    let writer = standby.session("APP");
+    writer.run("INSERT INTO T VALUES (6, 'six')").unwrap();
+    standby.depose().unwrap();
+    let refused = s.run("INSERT INTO T VALUES (5, 'five')").unwrap_err();
+    assert_eq!(refused.code, Code::TransactionState);
+    assert!(refused.msg.contains("deposed"), "{refused}");
+    assert_eq!(writer.commit().err().map(|e| e.code), Some(Code::CommitFailed));
+    assert_eq!(rows(&s, "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2", "4"], "reads go on");
+    assert_eq!(Standby::replay(&standby, &mut log.read_from(Lsn(0))).err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(standby.promote(Arc::new(MemoryLog::new())).err().map(|e| e.code), Some(Code::Api));
+
+    let fresh = Database::new();
+    fresh.promote(Arc::new(MemoryLog::new())).unwrap();
+    fresh.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").unwrap();
 }

@@ -2,34 +2,25 @@
 
 mod dynamic;
 mod encodings;
-mod logs;
 
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use turborel::catalog::TableDesc;
 use turborel::db::{Completion, Database, Session};
 use turborel::diagnostics::{Diagnostics, Event, Level};
-use turborel::disk::io::{FileSystem, OsFileSystem};
 use turborel::error::Code;
-use turborel::hash::HashFunction;
-use turborel::hash::crc::{CRC32_ISCSI, Crc};
 use turborel::log::FileLogOptions;
 use turborel::params::Params;
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{Concurrency, LockWait, TxCapabilities, TxId, Undo};
-use turborel::value::{Decimal, Value};
+use turborel::value::Value;
 
+// Written once in `support/`, for the suites every log passes too.
+pub use crate::database::{LOCKING, LockingEngine, MemoryTable, after_crash, count, crc32c, number, os, rows, setup, small_pool, sorted};
+pub use crate::logs::Watched;
 pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 pub use encodings::{RunLength, Scramble};
-pub use logs::Watched;
-
-/// Schema `APP` with tables `T` (hash index on NAME, btree on AMT) and `U`;
-/// `T` holds rows 1-3 and `U` two rows.
-pub fn setup() -> Database {
-    fill(Database::new())
-}
 
 /// Schema D: tables T (btree index on N) and U, each holding 1-3; views V
 /// over T and W over V, X over U, S all of T; P may read T and V.
@@ -60,50 +51,13 @@ pub fn with_views() -> Database {
 /// `setup`, its tables in `LockingEngine`: isolated by the coordinator's
 /// table locks, for the tests of those locks.
 pub fn locking_setup() -> Database {
-    fill(locking_database())
-}
-
-fn fill(db: Database) -> Database {
-    db.schema(
-        "CREATE SCHEMA AUTHORIZATION APP
-           CREATE TABLE T (ID INTEGER NOT NULL UNIQUE, NAME CHAR(6), AMT DECIMAL(6,2), F REAL)
-           CREATE TABLE U (ID INTEGER NOT NULL, CODE CHAR(3) NOT NULL, UNIQUE (ID, CODE))",
-    )
-    .unwrap();
-    db.create_index("T_NAME", "APP.T", &["NAME"], "hash").unwrap();
-    db.create_index("T_AMT", "APP.T", &["AMT"], "btree").unwrap();
-    {
-        let s = db.session("APP");
-        s.run("INSERT INTO T VALUES (1, 'ANN', 10.50, 1.5E0)").unwrap();
-        s.run("INSERT INTO T VALUES (2, 'BOB', -3, 2)").unwrap();
-        s.run("INSERT INTO T (ID) VALUES (3)").unwrap();
-        s.run("INSERT INTO U VALUES (1, 'A')").unwrap();
-        s.run("INSERT INTO U VALUES (1, 'B')").unwrap();
-    }
-    db
-}
-
-/// All result rows as strings, or the error code.
-pub fn rows(s: &Session, sql: &str) -> Result<Vec<String>, Code> {
-    let mut c = s.open_cursor(sql).map_err(|e| e.code)?;
-    let mut out = Vec::new();
-    while let Some(r) = c.fetch().map_err(|e| e.code)? {
-        out.push(r.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
-    }
-    Ok(out)
+    crate::database::fill(locking_database())
 }
 
 /// What `rows` returns for a query whose result is `list`.
 #[expect(clippy::unnecessary_wraps, reason = "compared with the `Result` that `rows` returns")]
 pub fn expected(list: &[&str]) -> Result<Vec<String>, Code> {
     Ok(list.iter().map(|s| (*s).to_owned()).collect())
-}
-
-/// All result rows of `sql` in `s`, sorted, for results in no set order.
-pub fn sorted(s: &Session, sql: &str) -> Vec<String> {
-    let mut found = rows(s, sql).unwrap();
-    found.sort();
-    found
 }
 
 /// The error code of `sql`, which must fail.
@@ -133,11 +87,6 @@ fn more_rows(db: Database) -> Database {
     db
 }
 
-/// Number of rows `sql` returns, or `usize::MAX` if it fails.
-pub fn count(s: &Session, sql: &str) -> usize {
-    rows(s, sql).map_or(usize::MAX, |r| r.len())
-}
-
 /// The bytes of `db`'s memory budget its spill areas and their files hold,
 /// as INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows the database's owner:
 /// OWNER, made so if no one is.
@@ -156,147 +105,12 @@ pub fn exec(s: &Session, sql: &str) -> Result<Completion, Code> {
 
 pub use turborel_test_support::Scratch;
 
-/// A table in memory that leaves undo and isolation to the coordinator
-/// (`TxCapabilities::default()`): the base of the test engines that check
-/// what the coordinator does for such an engine, and of `LockingEngine`.
-/// Rows are kept by id; a deleted row leaves a hole, so ids are never given
-/// again.
-#[derive(Default)]
-pub struct MemoryTable {
-    rows: Mutex<Vec<Option<Row>>>,
-}
-
-impl MemoryTable {
-    /// Every live row, with its id, copied as of now: what a scan of it
-    /// gives, and of the test engines that wrap it.
-    pub fn live_rows(&self) -> Rows {
-        let rows: Vec<_> = self.rows.lock().unwrap().iter().enumerate().filter_map(|(i, r)| Some((i as u64, r.clone()?))).collect();
-        Box::new(rows.into_iter().map(Ok))
-    }
-
-    pub fn new() -> MemoryTable {
-        MemoryTable::default()
-    }
-}
-
-fn no_row<T>(id: RowId) -> turborel::error::Result<T> {
-    Err(turborel::error::SqlError::new(Code::Api, format!("no row {id}")))
-}
-
-impl TableStorage for MemoryTable {
-    fn insert(&self, _tx: TxId, row: Row) -> turborel::error::Result<RowId> {
-        let mut rows = self.rows.lock().unwrap();
-        rows.push(Some(row));
-        Ok(rows.len() as u64 - 1)
-    }
-    fn update(&self, _tx: TxId, id: RowId, row: Row) -> turborel::error::Result<()> {
-        match self.rows.lock().unwrap().get_mut(id as usize) {
-            Some(Some(live)) => {
-                *live = row;
-                Ok(())
-            }
-            _ => no_row(id),
-        }
-    }
-    fn delete(&self, _tx: TxId, id: RowId) -> turborel::error::Result<()> {
-        match self.rows.lock().unwrap().get_mut(id as usize) {
-            Some(slot @ Some(_)) => {
-                *slot = None;
-                Ok(())
-            }
-            _ => no_row(id),
-        }
-    }
-    fn restore(&self, _tx: TxId, id: RowId, row: Row) -> turborel::error::Result<()> {
-        let mut rows = self.rows.lock().unwrap();
-        if rows.len() <= id as usize {
-            rows.resize(id as usize + 1, None);
-        }
-        rows[id as usize] = Some(row);
-        Ok(())
-    }
-    fn get(&self, _tx: TxId, id: RowId) -> turborel::error::Result<Option<Row>> {
-        Ok(self.rows.lock().unwrap().get(id as usize).cloned().flatten())
-    }
-    fn scan(self: Arc<Self>, _: TxId, _: &[usize]) -> Rows {
-        self.live_rows()
-    }
-    fn row_count(&self) -> usize {
-        self.rows.lock().unwrap().iter().flatten().count()
-    }
-}
-
-/// An engine of `MemoryTable`s, named "locking": its tables are isolated by
-/// the coordinator's table locks and undone by its undo log.
-pub struct LockingEngine;
-
-/// The name of `LockingEngine`.
-pub const LOCKING: &str = "locking";
-
-impl StorageEngine for LockingEngine {
-    fn name(&self) -> &'static str {
-        LOCKING
-    }
-    fn create_table(&self, _desc: &TableDesc) -> turborel::error::Result<Box<dyn TableStorage>> {
-        Ok(Box::new(MemoryTable::new()))
-    }
-}
-
 /// A new database whose tables are in `LockingEngine`, by default.
 pub fn locking_database() -> Database {
     let db = Database::new();
     db.register_engine(Box::new(LockingEngine)).unwrap();
     db.use_engine(LOCKING).unwrap();
     db
-}
-
-/// CRC-32C, the checksum of the files the tests make.
-pub fn crc32c() -> Arc<dyn HashFunction> {
-    Arc::new(Crc::new(CRC32_ISCSI).unwrap())
-}
-
-/// The operating system's file system.
-pub fn os() -> Arc<dyn FileSystem> {
-    Arc::new(OsFileSystem)
-}
-
-/// The operating system's file system as a process sees it whose earlier
-/// openers of a database have all crashed: tests crash a database by
-/// leaving it, then open it again, and the system gives a crashed process's
-/// locks up (`FileSystem::lock`), so here no lock stands against another.
-pub struct AfterCrash;
-
-impl FileSystem for AfterCrash {
-    fn open(
-        &self,
-        path: &std::path::Path,
-        mode: turborel::disk::io::OpenMode,
-    ) -> turborel::error::Result<Box<dyn turborel::disk::io::DiskFile>> {
-        OsFileSystem.open(path, mode)
-    }
-    fn remove(&self, path: &std::path::Path) -> turborel::error::Result<()> {
-        OsFileSystem.remove(path)
-    }
-    fn exists(&self, path: &std::path::Path) -> turborel::error::Result<bool> {
-        OsFileSystem.exists(path)
-    }
-    fn create_dir_all(&self, path: &std::path::Path) -> turborel::error::Result<()> {
-        OsFileSystem.create_dir_all(path)
-    }
-    fn read_dir(&self, path: &std::path::Path) -> turborel::error::Result<Vec<PathBuf>> {
-        OsFileSystem.read_dir(path)
-    }
-    fn sync_dir(&self, path: &std::path::Path) -> turborel::error::Result<()> {
-        OsFileSystem.sync_dir(path)
-    }
-    fn lock(&self, _path: &std::path::Path) -> turborel::error::Result<turborel::disk::io::FileLock> {
-        Ok(turborel::disk::io::FileLock::new(()))
-    }
-}
-
-/// `AfterCrash`, for a test that crashes a database and opens it again.
-pub fn after_crash() -> Arc<dyn FileSystem> {
-    Arc::new(AfterCrash)
 }
 
 /// The bytes of the files in `dir`, and below it, whose names begin with
@@ -319,17 +133,6 @@ pub fn bytes_of(dir: &std::path::Path, prefix: &str) -> Vec<u8> {
 /// Whether `bytes` hold `text`.
 pub fn holds(bytes: &[u8], text: &str) -> bool {
     bytes.windows(text.len()).any(|w| w == text.as_bytes())
-}
-
-/// An exact number of scale 0.
-pub fn number(n: impl Into<i128>) -> Value {
-    Value::Exact(Decimal::new(n.into(), 0))
-}
-
-/// `db` given a buffer pool of `pages` pages of 8 KiB, before it is
-/// opened from its files, so pages are written back as it runs.
-pub fn small_pool(db: &Database, pages: i128) {
-    db.set_setting("STORAGE.POOL_BYTES", &number(pages * 8192)).unwrap();
 }
 
 /// File log options with 4 KiB segments, so a test fills several.

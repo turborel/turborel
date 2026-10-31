@@ -101,6 +101,7 @@ mod settings;
 mod slow;
 mod snapshot;
 mod staged_schema;
+mod standby;
 mod state;
 mod stores;
 mod stream;
@@ -135,6 +136,7 @@ use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
 pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
+pub use standby::Standby;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
 
 /// The state and transaction a statement runs in.

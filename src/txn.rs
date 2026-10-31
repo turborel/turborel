@@ -99,6 +99,7 @@ pub(crate) use end::remove_entries;
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
+pub(crate) use logging::Held;
 pub use reading::{ReadMode, Reading};
 pub use stop::Stop;
 pub(crate) use stop::Window;
@@ -237,6 +238,10 @@ pub(crate) struct Transactions {
     /// The commits written to the log but not yet synced, under
     /// LOG.COMMIT_SYNC OFF, if any (`txn/logging.rs`).
     unsynced: Mutex<Option<logging::Unsynced>>,
+    /// What holds the database's changes beside a failed sync, if anything
+    /// does (`txn/logging.rs`, RULES.md D57), and whether something does.
+    held: Mutex<Option<Held>>,
+    holding: AtomicBool,
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,
@@ -293,6 +298,8 @@ impl Default for Transactions {
             stopped: Mutex::new(None),
             stopping: AtomicBool::new(false),
             unsynced: Mutex::new(None),
+            held: Mutex::new(None),
+            holding: AtomicBool::new(false),
             uncollected: Mutex::new(BTreeSet::new()),
             maintenance: Mutex::new(BTreeSet::new()),
             stops: Mutex::new(HashMap::new()),

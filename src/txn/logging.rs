@@ -41,22 +41,66 @@ use crate::log::{Log, Lsn};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 
+/// \[DESIGN\] What holds a database's changes as it stands in a group of
+/// replicas (RULES.md D57, `db/standby.rs`): a row change, the commit of a
+/// transaction that wrote, a definition or a checkpoint is refused, as a
+/// failed sync refuses them; reads and rollbacks go on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Held {
+    /// It follows a log another replica writes, until it is promoted.
+    Following,
+    /// It served as primary and was deposed: until it is opened again.
+    Deposed,
+}
+
+impl Held {
+    /// The error a change is refused with: SQLCODE -917, as a change is in
+    /// a READ ONLY transaction [ISO/IEC 9075:1992 §13.6-§13.10 GR1].
+    fn refusal(self) -> SqlError {
+        let why = match self {
+            Held::Following => "the database follows a log another replica writes, so it takes changes only once it is promoted",
+            Held::Deposed => "the database was deposed as primary, so it takes no change until it is opened again",
+        };
+        SqlError::new(Code::TransactionState, format!("[DESIGN] RULES.md D57: {why}"))
+    }
+}
+
 impl Transactions {
     /// Whether the database takes changes: not once a sync of its log
-    /// failed.
+    /// failed, nor while it is held (`Held`).
     ///
     /// # Errors
     ///
-    /// SQLCODE -915 naming the failure, once one did.
+    /// SQLCODE -915 naming the failure, once one did; -917 while it is
+    /// held.
     pub(crate) fn taking_changes(&self) -> Result<()> {
-        if !self.stopping.load(Ordering::Acquire) {
+        if self.stopping.load(Ordering::Acquire) {
+            let cause = lock_builtin(&self.stopped).as_ref().map_or_else(String::new, SqlError::described);
+            return Err(SqlError::new(
+                Code::Io,
+                format!(
+                    "[DESIGN] a sync of the log failed, so the database takes no change until it is opened again and recovered: {cause}"
+                ),
+            ));
+        }
+        if !self.holding.load(Ordering::Acquire) {
             return Ok(());
         }
-        let cause = lock_builtin(&self.stopped).as_ref().map_or_else(String::new, SqlError::described);
-        Err(SqlError::new(
-            Code::Io,
-            format!("[DESIGN] a sync of the log failed, so the database takes no change until it is opened again and recovered: {cause}"),
-        ))
+        lock_builtin(&self.held).map_or(Ok(()), |held| Err(held.refusal()))
+    }
+
+    /// What holds the database's changes beside a failed sync, if anything
+    /// does (RULES.md D57).
+    pub(crate) fn held(&self) -> Option<Held> {
+        *lock_builtin(&self.held)
+    }
+
+    /// Holds the database's changes for `held`, or, for none, takes them
+    /// again.
+    pub(crate) fn hold(&self, held: Option<Held>) {
+        let mut slot = lock_builtin(&self.held);
+        *slot = held;
+        self.holding.store(held.is_some(), Ordering::Release);
     }
 
     /// Syncs `log` through `lsn`, once the database takes changes; a

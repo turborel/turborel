@@ -19,6 +19,7 @@ mod common;
 
 mod contract;
 mod frames;
+mod log;
 mod normal;
 mod simulation;
 mod view_change;

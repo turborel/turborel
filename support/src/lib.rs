@@ -59,6 +59,10 @@ impl Drop for Scratch {
     }
 }
 
+#[cfg(feature = "database")]
+pub mod database;
+#[cfg(feature = "database")]
+pub mod logs;
 #[cfg(feature = "replication")]
 pub mod replication;
 #[cfg(feature = "server")]

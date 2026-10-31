@@ -1022,14 +1022,31 @@ opaque bytes.**
   declares an export hook or is refused when replicated (SQLCODE -910).
 - **Opaque bytes.** Replication orders, stores and moves log records,
   checkpoint images (catalog records) and durable files undecoded. Only
-  the core's one replay, `Database::replay` (run by recovery, later a
+  the core's one replay, `Database::replay` (run by recovery and by a
   standby), interprets and applies them, so a new kind of record,
   object or file is replicated once recovery handles it.
 - **Traits.** Extension points, in crate `turborel-replication` (std
   only): `Consensus` (a protocol as a
-  deterministic state machine), `Transport`, and `StateTransfer`
-  (moves an export, the core's `StateSource`). First implementations:
-  Viewstamped Replication, TLS over TCP, whole files.
+  deterministic state machine), `Transport`, `StateTransfer`
+  (moves an export, the core's `StateSource`) and `Journal` (keeps what
+  a consensus persists). First implementations: Viewstamped
+  Replication, TLS over TCP, whole files, a journal in a core `Log`.
+- **Standby.** The core's seam, `Standby` (`db/standby.rs`), which
+  `Database` implements; the core never depends on the replication
+  crate:
+  - `replay`: the one replay, as recovery runs it; the database then
+    follows, until promoted;
+  - `promote`: it serves over a log; `depose`: it stops until opened
+    again;
+  - following or deposed, it refuses what it would log (SQLCODE -917),
+    as a failed sync does (D25); reads go on;
+  - export and import come with state transfer.
+- **Replicated log.** `ReplicatedLog`, a `Log` over a `Consensus` and a
+  `Journal`: its positions the consensus's, `sync(p)` returning once
+  `p` is committed. Of one replica for now (f = 0, a quorum of one, as
+  the paper's §2.2 counts them), driving its consensus itself;
+  `ReplicatedLogs` keeps it as a database's log, its journal the file
+  log in `log/`.
 - **VR.** From Liskov and Cowling's "Viewstamped Replication
   Revisited", departing for durability:
   - a record is durable before PREPAREOK;
@@ -1066,6 +1083,9 @@ records, objects and files; none may need a replication change.
   directory file of no known kind is refused;
 - contract tests of `Consensus` and `Transport` run against each
   implementation (R-SAFE-3);
+- the log suites (`support/src/logs.rs`: the `Log` contract,
+  durability, recovery, reopening) run against every `Log`, built in or
+  replicated;
 - VR runs hundreds of seeds of a deterministic simulator
   (`turborel-test-support`: frames delayed, lost, duplicated, reordered;
   partitions, crashes, failing disks), checking that committed records
@@ -1074,7 +1094,8 @@ records, objects and files; none may need a replication change.
   also compares backups with the primary.
 
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
-`files/classes.rs`, `log/record/kinds.rs`, `replication/src`.
+`db/standby.rs`, `files/classes.rs`, `log/record/kinds.rs`,
+`replication/src`.
 
 **D27. A thread-safe core over snapshots of the definitions.**
 - **Sharing.** A `Database` is shared across threads; extension traits

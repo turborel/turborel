@@ -6,38 +6,23 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use turborel::value::types::TypeRegistry;
 
 use turborel::catalog::TableDesc;
 use turborel::db::Database;
 use turborel::error::{Code, Result};
-use turborel::log::record::{Change, Record};
-use turborel::log::{Log, Lsn};
+use turborel::log::record::Change;
+use turborel::log::{FileLogOptions, Log, Lsn, MemoryLog};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{Persistence, Policy, TxCapabilities, TxId};
 use turborel::value::Value;
 
-use crate::common::{MemoryTable, Watched, count, crc32c, os, setup};
+use crate::common::Watched;
+use crate::common::{MemoryTable, count, os, setup};
+use crate::logs::{self, BuiltIn, kinds, records};
 
-/// The database of `setup`, logging to a fresh watched log.
+/// The database of `setup`, logging to a fresh watched memory log.
 fn logged() -> (Database, Arc<Watched>) {
-    let db = setup();
-    let log = Arc::new(Watched::default());
-    db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
-    (db, log)
-}
-
-/// The records in `log`, with their positions.
-fn records(log: &Watched) -> Vec<(Lsn, Record)> {
-    log.read_from(Lsn(0))
-        .map(|r| r.map(|(lsn, bytes)| (lsn, Record::decode(&bytes, &TypeRegistry::default()).unwrap())))
-        .collect::<Result<_>>()
-        .unwrap()
-}
-
-/// The kinds of record in `log`, in order.
-fn kinds(log: &Watched) -> Vec<String> {
-    records(log).iter().map(|(_, r)| format!("{:?}", r.change).split([' ', '{']).next().unwrap().to_owned()).collect()
+    logs::logged(Arc::new(MemoryLog::new()))
 }
 
 /// Verifies: [X3.135-1986 §8.2 GR3]; [DESIGN] RULES.md D25: a transaction's
@@ -47,22 +32,7 @@ fn kinds(log: &Watched) -> Vec<String> {
 /// synced.
 #[test]
 fn a_commit_is_its_record_made_durable() {
-    let (db, log) = logged();
-    let s = db.session("APP");
-    s.run("INSERT INTO T (ID, NAME) VALUES (10, 'TEN')").unwrap();
-    s.run("UPDATE T SET NAME = 'X' WHERE ID = 10").unwrap();
-    s.run("DELETE FROM T WHERE ID = 1").unwrap();
-    let tx = s.transaction().unwrap();
-    s.commit().unwrap();
-    assert_eq!(kinds(&log), ["Insert", "Update", "Delete", "Commit"]);
-    let all = records(&log);
-    assert!(all.iter().all(|(_, r)| r.tx == tx));
-    let (commit_lsn, commit) = all.last().unwrap();
-    assert!(matches!(commit.change, Change::Commit { at } if at > 0), "with its commit timestamp");
-    assert_eq!(*log.synced.lock().unwrap(), vec![*commit_lsn], "synced through its commit record");
-    if let Change::Update { before, after, .. } = &all[1].1.change {
-        assert_eq!((before[1].to_string(), after[1].to_string()), ("TEN   ".to_owned(), "X     ".to_owned()));
-    }
+    logs::a_commit_is_its_record_made_durable(Arc::new(MemoryLog::new()));
 }
 
 /// Verifies: [DESIGN] RULES.md D25, D36: a session whose LOG.COMMIT_SYNC
@@ -73,29 +43,7 @@ fn a_commit_is_its_record_made_durable() {
 /// log's own sync job (LOG.SYNC_AFTER_MS) is left to the program here.
 #[test]
 fn a_commit_need_not_wait_for_the_log() {
-    let db = setup();
-    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
-    let log = Arc::new(Watched::default());
-    db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
-    let (quick, careful) = (db.session("APP"), db.session("APP"));
-    let off = Value::Char("OFF".to_owned());
-    quick.set_setting("LOG.COMMIT_SYNC", &off).unwrap();
-    quick.run("INSERT INTO T (ID, NAME) VALUES (10, 'TEN')").unwrap();
-    quick.commit().unwrap();
-    assert_eq!(kinds(&log), ["Insert", "Commit"]);
-    assert!(log.synced.lock().unwrap().is_empty(), "not synced");
-    assert_eq!(count(&careful, "SELECT ID FROM T WHERE ID = 10"), 1, "seen at once");
-    careful.run("INSERT INTO T (ID, NAME) VALUES (11, 'ELEVEN')").unwrap();
-    careful.commit().unwrap();
-    let last = records(&log).last().map(|(lsn, _)| *lsn).unwrap();
-    assert_eq!(*log.synced.lock().unwrap(), vec![last], "through both commit records");
-    db.set_setting("LOG.COMMIT_SYNC", &off).unwrap();
-    let synced = log.synced.lock().unwrap().len();
-    careful.run("INSERT INTO T (ID, NAME) VALUES (12, 'TWELVE')").unwrap();
-    careful.commit().unwrap();
-    assert_eq!(log.synced.lock().unwrap().len(), synced, "the database's OFF");
-    let maybe = quick.set_setting("LOG.COMMIT_SYNC", &Value::Char("MAYBE".to_owned()));
-    assert_eq!(maybe.map_err(|e| e.sqlcode()), Err(-910_i32));
+    logs::a_commit_need_not_wait_for_the_log(Arc::new(MemoryLog::new()));
 }
 
 /// Verifies: [X3.135-1986 §8.9]; [DESIGN] RULES.md D25: a rolled-back
@@ -104,15 +52,7 @@ fn a_commit_need_not_wait_for_the_log() {
 /// nothing.
 #[test]
 fn rollbacks_and_reads_are_logged_as_needed() {
-    let (db, log) = logged();
-    let s = db.session("APP");
-    assert_eq!(count(&s, "SELECT ID FROM T"), 3);
-    s.commit().unwrap();
-    assert!(records(&log).is_empty(), "a read-only transaction logs nothing");
-    s.run("INSERT INTO T (ID) VALUES (11)").unwrap();
-    s.rollback().unwrap();
-    assert_eq!(kinds(&log), ["Insert", "Abort"]);
-    assert!(log.synced.lock().unwrap().is_empty());
+    logs::rollbacks_and_reads_are_logged_as_needed(Arc::new(MemoryLog::new()));
 }
 
 /// Verifies: [X3.135-1986 §7.3 GR3b i]; [DESIGN] RULES.md D25: a statement
@@ -121,15 +61,7 @@ fn rollbacks_and_reads_are_logged_as_needed() {
 /// transaction goes on and commits.
 #[test]
 fn a_failed_statement_is_logged_undone() {
-    let (db, log) = logged();
-    let s = db.session("APP");
-    s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
-    // T.ID is UNIQUE: the row is inserted, found a duplicate, and undone.
-    assert_eq!(s.run("INSERT INTO T (ID) VALUES (10)").err().map(|e| e.code), Some(Code::Constraint));
-    s.commit().unwrap();
-    let all = records(&log);
-    assert_eq!(kinds(&log), ["Insert", "Insert", "StatementUndone", "Commit"]);
-    assert!(matches!(all[2].1.change, Change::StatementUndone { from } if from == all[1].0), "undone from its own first change");
+    logs::a_failed_statement_is_logged_undone(Arc::new(MemoryLog::new()));
 }
 
 /// Verifies: [DESIGN] RULES.md D25, a failing log: a change that cannot be
@@ -186,7 +118,7 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 10"), 0, "another session");
     assert_eq!(count(&s, "SELECT ID FROM T WHERE ID = 10"), 0, "its own session, in a new transaction");
     assert_eq!(db.active_transactions().unwrap(), 2, "held in doubt, beside the reading one");
-    assert_eq!(kinds(&log).last().map(String::as_str), Some("Commit"));
+    assert_eq!(kinds(&*log).last().map(String::as_str), Some("Commit"));
     log.fail_syncs.store(false, Ordering::SeqCst);
     let cause = db.log_failure().expect("the failure kept");
     assert_eq!(cause.code, Code::Io);
@@ -197,7 +129,7 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     assert_eq!(count(&s, "SELECT ID FROM T"), 3, "reads go on");
     s.commit().unwrap();
     assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").err().map(|e| e.code), Some(Code::Io));
-    assert_eq!(kinds(&log).last().map(String::as_str), Some("Commit"), "nothing logged since, no abort among it");
+    assert_eq!(kinds(&*log).last().map(String::as_str), Some("Commit"), "nothing logged since, no abort among it");
 }
 
 /// The newest segment of the log of the database in `dir`.
@@ -291,19 +223,7 @@ fn a_writer_open_when_the_log_fails_rolls_back() {
 /// cannot take them, they are refused and the definitions stay as they were.
 #[test]
 fn definitions_are_logged_before_they_are_published() {
-    let (db, log) = logged();
-    db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER NOT NULL)").unwrap();
-    db.create_index("S_K", "B.S", &["K"], "btree").unwrap();
-    assert_eq!(kinds(&log), ["Schema", "CreateIndex"]);
-    assert_eq!(log.synced.lock().unwrap().len(), 2);
-    assert!(
-        matches!(&records(&log)[0].1.change, Change::Schema { sql, engines, .. } if sql.contains("CREATE TABLE S") && engines == &[("S".to_owned(), "rowstore".to_owned())])
-    );
-    log.fail_appends.store(true, Ordering::SeqCst);
-    assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION C CREATE TABLE U (K INTEGER)").err().map(|e| e.code), Some(Code::Io));
-    log.fail_appends.store(false, Ordering::SeqCst);
-    let c = db.session("C");
-    assert_eq!(c.run("INSERT INTO U VALUES (1)").err().map(|e| e.code), Some(Code::SyntaxRule), "C.U was not published");
+    logs::definitions_are_logged_before_they_are_published(Arc::new(MemoryLog::new()));
 }
 
 /// Verifies: [DESIGN] RULES.md D25: by default a database logs nothing; a
@@ -317,11 +237,11 @@ fn the_log_is_chosen_when_a_transaction_begins() {
     let log = Arc::new(Watched::default());
     db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
     early.commit().unwrap();
-    assert!(records(&log).is_empty(), "begun before the log was set");
+    assert!(records(&*log).is_empty(), "begun before the log was set");
     let later = db.session("APP");
     later.run("INSERT INTO T (ID) VALUES (11)").unwrap();
     later.commit().unwrap();
-    assert_eq!(kinds(&log), ["Insert", "Commit"]);
+    assert_eq!(kinds(&*log), ["Insert", "Commit"]);
 }
 
 /// Verifies: [DESIGN] RULES.md D25: with a file log, a committed
@@ -329,29 +249,8 @@ fn the_log_is_chosen_when_a_transaction_begins() {
 /// opened anew from them holds its changes and its commit.
 #[test]
 fn a_file_log_holds_what_was_committed() {
-    use turborel::log::{FileLog, FileLogOptions};
-
     let scratch = crate::common::Scratch::new("durability-file");
-    let dir = scratch.path("log");
-    let hash: Arc<dyn turborel::hash::HashFunction> = crc32c();
-    let log = FileLog::create(os(), &dir, Arc::clone(&hash), FileLogOptions::default()).unwrap();
-    let db = setup();
-    db.set_log(Arc::new(log)).unwrap();
-    let s = db.session("APP");
-    s.run("INSERT INTO T (ID, NAME) VALUES (10, 'TEN')").unwrap();
-    s.commit().unwrap();
-    let (reopened, _) = FileLog::open(os(), &dir, &[hash], &[], FileLogOptions::default()).unwrap();
-    let kinds: Vec<String> = reopened
-        .read_from(Lsn(0))
-        .map(|r| {
-            format!("{:?}", Record::decode(&r.unwrap().1, &TypeRegistry::default()).unwrap().change)
-                .split([' ', '{'])
-                .next()
-                .unwrap()
-                .to_owned()
-        })
-        .collect();
-    assert_eq!(kinds, ["Insert", "Commit"]);
+    logs::a_log_holds_what_was_committed(&BuiltIn(FileLogOptions::default()), &scratch.path("log"));
 }
 
 /// An engine that declares the persistence it is made with, its rows a
@@ -486,7 +385,7 @@ fn only_recovered_engines_are_logged() {
         s.run(&format!("INSERT INTO {table} VALUES (1)")).unwrap();
     }
     s.commit().unwrap();
-    let tables: Vec<String> = records(&log)
+    let tables: Vec<String> = records(&*log)
         .into_iter()
         .filter_map(|(_, r)| match r.change {
             Change::Insert { table, .. } => Some(table.ident),

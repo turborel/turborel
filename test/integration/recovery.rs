@@ -4,35 +4,19 @@
 //! have uncommitted changes undone; and recovery refuses what it cannot do.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use turborel::catalog::TableDesc;
-use turborel::db::{Database, OpenOptions, Opened, RecoveryReport};
+use turborel::db::{Database, OpenOptions, Opened};
 use turborel::error::{Code, Result};
-use turborel::log::{FileLog, FileLogOptions, Log, MemoryLog};
+use turborel::log::{FileLogOptions, Log, MemoryLog};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{Persistence, TxCapabilities, TxId};
 
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Counted, MemoryTable, Scratch, after_crash, crc32c, os, rows, sorted};
-
-fn new_log(dir: &Path) -> Arc<dyn Log> {
-    Arc::new(FileLog::create(os(), dir, crc32c(), FileLogOptions::default()).unwrap())
-}
-
-/// The log in `dir`, opened again, as after a restart.
-fn reopened(dir: &Path) -> Arc<dyn Log> {
-    Arc::new(FileLog::open(os(), dir, &[crc32c()], &[], FileLogOptions::default()).unwrap().0)
-}
-
-/// A new database recovered from `log`.
-fn recovered(log: Arc<dyn Log>) -> (Database, RecoveryReport) {
-    let db = Database::new();
-    let report = db.recover(log).unwrap();
-    (db, report)
-}
+use crate::common::{Counted, MemoryTable, Scratch, after_crash, rows, sorted};
+use crate::logs::{self, BuiltIn};
 
 /// Verifies: [X3.135-1986 §4.16, §8.2 GR3, §8.9]; [DESIGN] RULES.md D25,
 /// recovery: after a crash, a database rebuilt from its file log holds the
@@ -45,42 +29,7 @@ fn recovered(log: Arc<dyn Log>) -> (Database, RecoveryReport) {
 #[test]
 fn a_crashed_database_recovers_what_was_committed() {
     let scratch = Scratch::new("recovery-crash");
-    let dir = scratch.path("log");
-    let db = Database::new();
-    db.set_log(new_log(&dir)).unwrap();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHAR(4))").unwrap();
-    db.create_index("T_V", "A.T", &["V"], "hash").unwrap();
-    let s = db.session("A");
-    for k in 1..=4 {
-        s.run(&format!("INSERT INTO T VALUES ({k}, 'v{k}')")).unwrap();
-    }
-    s.commit().unwrap();
-    s.run("UPDATE T SET V = 'new' WHERE K = 2").unwrap();
-    s.run("DELETE FROM T WHERE K = 3").unwrap();
-    s.commit().unwrap();
-    s.run("INSERT INTO T VALUES (9, 'gone')").unwrap();
-    s.rollback().unwrap();
-    s.run("INSERT INTO T VALUES (5, 'v5')").unwrap();
-    assert!(s.run("INSERT INTO T VALUES (5, 'dup')").is_err(), "UNIQUE: undone");
-    s.commit().unwrap();
-    let expected = sorted(&db.session("A"), "SELECT K, V FROM T");
-    // A transaction still open at the crash.
-    let open = db.session("A");
-    open.run("INSERT INTO T VALUES (7, 'open')").unwrap();
-    open.run("UPDATE T SET V = 'open' WHERE K = 1").unwrap();
-    let (back, report) = recovered(reopened(&dir));
-    assert_eq!(sorted(&back.session("A"), "SELECT K, V FROM T"), expected);
-    assert_eq!(expected, ["1,v1  ", "2,new ", "4,v4  ", "5,v5  "]);
-    assert_eq!((report.definitions, report.committed, report.not_committed), (2, 3, 2), "the rollback and the open transaction did not");
-    assert_eq!(rows(&back.session("A"), "SELECT K FROM T WHERE V = 'new'"), Ok(vec!["2".into()]), "the index works");
-    let b = back.session("A");
-    assert_eq!(b.run("INSERT INTO T VALUES (1, 'x')").err().map(|e| e.code), Some(Code::Constraint), "UNIQUE is back");
-    b.run("INSERT INTO T VALUES (8, 'v8')").unwrap();
-    assert!(b.transaction().unwrap() > open.transaction().unwrap(), "past the log's transaction ids");
-    b.commit().unwrap();
-    drop((b, back));
-    let (again, _) = recovered(reopened(&dir));
-    assert_eq!(sorted(&again.session("A"), "SELECT K FROM T"), ["1", "2", "4", "5", "8"]);
+    logs::a_crashed_database_recovers_what_was_committed(&BuiltIn(FileLogOptions::default()), &scratch.path("log"));
 }
 
 /// Verifies: [DESIGN] RULES.md D25, recovery: tables are recovered into the

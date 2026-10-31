@@ -74,19 +74,23 @@ design settles.
   is refused, saying why; how far its tools' catalog queries
   (`pg_catalog`, `SHOW`) are answered is a decision to make. A protocol
   crate's dependencies are a decision of R-SAFE-4.
-- **Replication on one node** (D57), with nothing visible to users: the
-  `Standby` seam (the core's `StateSource` is there); the `node` property
-  of settings; a replicated `Log` of one node passing the log,
-  durability, recovery and reopen tests.
+- **Settings of a node** (D57): the `node` property of settings, whose
+  values are never logged. Where such a value is kept (in neither the log
+  nor a checkpoint's image, which replicas share), and what SET DATABASE
+  and INFORMATION_SCHEMA.SETTINGS do with one, are to be decided.
 - **Replication between nodes** (D57): real databases in the simulator,
   a backup compared with the primary, through the driver, a job of the
   thread manager (D55) joining a consensus, a transport, a journal and
   `Standby`, which tells VR where its database recovered to rather than
   having committed records delivered again from the start; continuous
-  replay and reads on backups; state transfer (whole files, the first
-  `StateTransfer`, and its contract tests), log retention, VR's RECOVERY
-  protocol for a journal lost, and DOVIEWCHANGE and STARTVIEW carrying a
-  suffix of the log (VRR §5.3) rather than all of it, as they do today;
+  replay (`Standby::replay` holding a transaction open across calls,
+  `promote` ending those left open) and reads on backups, and checkpoints
+  of a following database; state transfer (`Standby`'s export and import,
+  whole files, the first `StateTransfer`, and its contract tests), log
+  retention (the replicated log and its journal keep every record), VR's
+  RECOVERY protocol for a journal lost, and DOVIEWCHANGE and STARTVIEW
+  carrying a suffix of the log (VRR §5.3) rather than all of it, as they
+  do today;
   the transport (mTLS, settings, events, INFORMATION_SCHEMA.REPLICAS,
   commands); reconfiguration. Also `cargo xtask simulate --seeds N`, for
   sweeps longer than `verify` runs, and mutations of VR for `cargo xtask

@@ -16,66 +16,12 @@ use turborel::log::{FileLog, FileLogOptions, Log};
 use turborel::params::Params;
 use turborel::txn::NO_TRANSACTION;
 
-use crate::common::{LOCKING, LockingEngine, Scratch, after_crash, crc32c, exec, os, rows};
+use crate::common::{Scratch, crc32c, exec, os, rows};
+use crate::logs::{self, BuiltIn, answers, define_kept, fill_kept};
 
-/// The database in `dir`, opened with a small buffer pool, so pages are
-/// written back while it runs; `LockingEngine` registered first.
+/// The database in `dir`, its log the built-in (`logs::open_kept`).
 fn open(dir: &Path) -> (Database, Opened) {
-    let db = Database::new();
-    db.register_engine(Box::new(LockingEngine)).unwrap();
-    crate::common::small_pool(&db, 32);
-    let opened = db.open_files(&after_crash(), dir, &OpenOptions::default()).unwrap();
-    (db, opened)
-}
-
-/// Schema APP: T in the row store, with a UNIQUE key, a B-link index and a
-/// hash index; L in `LockingEngine`, whose tables keep nothing.
-fn define(db: &Database) {
-    db.place_table("APP.L", LOCKING).unwrap();
-    db.schema(
-        "CREATE SCHEMA AUTHORIZATION APP
-           CREATE TABLE T (K INTEGER NOT NULL UNIQUE, NAME CHAR(20), AMT DECIMAL(9,2))
-           CREATE TABLE L (K INTEGER NOT NULL)",
-    )
-    .unwrap();
-    db.create_index("T_NAME", "APP.T", &["NAME"], "btree").unwrap();
-    db.create_index("T_AMT", "APP.T", &["AMT"], "hash").unwrap();
-}
-
-/// 3,000 rows of T and 10 of L, committed; some updated and deleted; a
-/// transaction rolled back, and a later one changing the same row.
-fn fill(db: &Database) {
-    let s = db.session("APP");
-    for k in 0..3_000 {
-        s.run(&format!("INSERT INTO T VALUES ({k}, 'N{k}', {})", k % 50)).unwrap();
-    }
-    for k in 0..10 {
-        s.run(&format!("INSERT INTO L VALUES ({k})")).unwrap();
-    }
-    s.commit().unwrap();
-    s.run("UPDATE T SET NAME = 'changed' WHERE K < 100").unwrap();
-    s.run("DELETE FROM T WHERE K >= 2900").unwrap();
-    s.commit().unwrap();
-    s.run("UPDATE T SET AMT = 999 WHERE K = 5").unwrap();
-    s.rollback().unwrap();
-    s.run("UPDATE T SET AMT = 7 WHERE K = 5").unwrap();
-    s.commit().unwrap();
-}
-
-/// What the tests compare before and after reopening.
-fn answers(db: &Database) -> Vec<Result<Vec<String>, Code>> {
-    let s = db.session("APP");
-    [
-        "SELECT COUNT(*), SUM(AMT) FROM T",
-        "SELECT K FROM T WHERE NAME = 'N777'",
-        "SELECT COUNT(*) FROM T WHERE NAME = 'changed'",
-        "SELECT COUNT(*) FROM T WHERE AMT = 5",
-        "SELECT AMT FROM T WHERE K = 5",
-        "SELECT COUNT(*) FROM L",
-    ]
-    .iter()
-    .map(|q| rows(&s, q))
-    .collect()
+    logs::open_kept(&BuiltIn(FileLogOptions::default()), dir)
 }
 
 /// Verifies: [X3.135-1986 §4.16 "committed changes cannot be canceled"];
@@ -87,40 +33,7 @@ fn answers(db: &Database) -> Vec<Result<Vec<String>, Code>> {
 #[test]
 fn a_closed_database_reopens_in_place() {
     let scratch = Scratch::new("reopen-clean");
-    let dir = scratch.path("db");
-    let (db, opened) = open(&dir);
-    assert_eq!(opened, Opened::Created);
-    define(&db);
-    fill(&db);
-    let before = answers(&db);
-    assert_eq!(before[0], Ok(vec!["2900,71052.00".into()]));
-    assert_eq!(before[4], Ok(vec!["7.00".into()]));
-    db.close().unwrap();
-    assert_eq!(db.session("APP").run("COMMIT WORK").err().map(|e| e.code), Some(Code::Api), "closed");
-    assert_eq!(db.close().err().map(|e| e.code), Some(Code::Api));
-    drop(db);
-
-    let (db, opened) = open(&dir);
-    assert_eq!(opened, Opened::Reopened);
-    assert_eq!(answers(&db), before);
-    let s = db.session("APP");
-    assert!(
-        s.physical_plan("SELECT K FROM T WHERE NAME = 'N777'", &Params::new()).unwrap().contains("T_NAME"),
-        "the reopened index is used"
-    );
-    assert_eq!(s.run("INSERT INTO T VALUES (7, 'dup', 1)").err().map(|e| e.code), Some(Code::Constraint), "UNIQUE");
-    s.run("INSERT INTO T VALUES (5000, 'new', 1)").unwrap();
-    s.run("INSERT INTO L VALUES (99)").unwrap();
-    s.commit().unwrap();
-    drop(s);
-    db.close().unwrap();
-    drop(db);
-
-    let (db, opened) = open(&dir);
-    assert_eq!(opened, Opened::Reopened);
-    let s = db.session("APP");
-    assert_eq!(rows(&s, "SELECT K FROM T WHERE NAME = 'new'"), Ok(vec!["5000".into()]));
-    assert_eq!(rows(&s, "SELECT COUNT(*) FROM L"), Ok(vec!["11".into()]));
+    logs::a_closed_database_reopens_in_place(&BuiltIn(FileLogOptions::default()), &scratch.path("db"));
 }
 
 /// Verifies: [X3.135-1986 §4.16, §8.9]; [DESIGN] RULES.md D25, a database
@@ -131,31 +44,7 @@ fn a_closed_database_reopens_in_place() {
 #[test]
 fn a_database_not_closed_is_recovered() {
     let scratch = Scratch::new("reopen-crash");
-    let dir = scratch.path("db");
-    let (crashed, _) = open(&dir);
-    define(&crashed);
-    fill(&crashed);
-    let s = crashed.session("APP");
-    s.run("UPDATE T SET AMT = 1 WHERE K = 3").unwrap();
-    s.rollback().unwrap();
-    s.run("UPDATE T SET AMT = 2 WHERE K = 3").unwrap();
-    s.commit().unwrap();
-    let expected = answers(&crashed);
-    let open_tx = crashed.session("APP");
-    open_tx.run("INSERT INTO T VALUES (8000, 'open', 1)").unwrap();
-    open_tx.run("DELETE FROM L").unwrap();
-
-    let (db, opened) = open(&dir);
-    assert!(matches!(opened, Opened::Recovered(report) if report.committed >= 3), "{opened:?}");
-    assert_eq!(answers(&db), expected);
-    assert_eq!(rows(&db.session("APP"), "SELECT AMT FROM T WHERE K = 3"), Ok(vec!["2.00".into()]), "the later commit's value");
-    assert_eq!(rows(&db.session("APP"), "SELECT K FROM T WHERE NAME = 'open'"), Ok(vec![]));
-    db.close().unwrap();
-    drop(db);
-    let (db, opened) = open(&dir);
-    assert_eq!(opened, Opened::Reopened);
-    assert_eq!(answers(&db), expected);
-    drop((db, open_tx, s));
+    logs::a_database_not_closed_is_recovered(&BuiltIn(FileLogOptions::default()), &scratch.path("db"));
 }
 
 /// Verifies: [DESIGN] RULES.md D25, the catalog file: a record cut short by
@@ -167,8 +56,8 @@ fn a_torn_catalog_record_is_cut_off() {
     let scratch = Scratch::new("reopen-torn");
     let dir = scratch.path("db");
     let (db, _) = open(&dir);
-    define(&db);
-    fill(&db);
+    define_kept(&db);
+    fill_kept(&db);
     let expected = answers(&db);
     db.close().unwrap();
     drop(db);
@@ -278,8 +167,8 @@ fn dropped_indexes_stay_dropped() {
     let scratch = Scratch::new("reopen-drop");
     let dir = scratch.path("db");
     let (db, _) = open(&dir);
-    define(&db);
-    fill(&db);
+    define_kept(&db);
+    fill_kept(&db);
     let expected = answers(&db);
     db.drop_index("T_NAME").unwrap();
     db.close().unwrap();
@@ -318,8 +207,8 @@ fn dropped_tables_stay_dropped() {
     let scratch = Scratch::new("reopen-drop-table");
     let dir = scratch.path("db");
     let (db, _) = open(&dir);
-    define(&db);
-    fill(&db);
+    define_kept(&db);
+    fill_kept(&db);
     let s = db.session("APP");
     s.run("DROP TABLE L CASCADE").unwrap();
     s.commit().unwrap();
@@ -365,8 +254,8 @@ fn altered_tables_stay_altered() {
     let scratch = Scratch::new("reopen-alter-table");
     let dir = scratch.path("db");
     let (db, _) = open(&dir);
-    define(&db);
-    fill(&db);
+    define_kept(&db);
+    fill_kept(&db);
     let s = db.session("APP");
     s.run("ALTER TABLE T ADD COLUMN C INTEGER").unwrap();
     s.run("UPDATE T SET C = K + 1 WHERE K < 10").unwrap();

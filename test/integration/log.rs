@@ -5,7 +5,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use turborel::value::types::TypeRegistry;
 
 use turborel::disk::block::HEADER_LEN;
 use turborel::disk::io::{Durability, FileSystem, OsFileSystem};
@@ -13,6 +12,7 @@ use turborel::error::Code;
 use turborel::log::{FileLog, FileLogOptions, Log, LogRecovery, Lsn, MemoryLog};
 
 use crate::common::{Scratch, crc32c, os, small_segments};
+use crate::logs::{self, BuiltIn, all, contract, record};
 
 fn fs() -> Arc<dyn FileSystem> {
     os()
@@ -24,59 +24,6 @@ fn file_log(dir: &Path, options: FileLogOptions) -> FileLog {
 
 fn reopen(dir: &Path) -> (FileLog, LogRecovery) {
     FileLog::open(fs(), dir, &[crc32c()], &[], small_segments()).unwrap()
-}
-
-/// Record `n`: different lengths, some longer than a segment's share.
-fn record(n: usize) -> Vec<u8> {
-    format!("record {n}: {}", "x".repeat(n * 37 % 700)).into_bytes()
-}
-
-fn all(log: &dyn Log, from: Lsn) -> Vec<(Lsn, Vec<u8>)> {
-    log.read_from(from).collect::<turborel::error::Result<Vec<_>>>().unwrap()
-}
-
-/// The contract every log keeps: positions increase with appends that do
-/// not overlap; `read_from` yields exactly what was appended, in order,
-/// from any position given, or one record at a position; `sync` accepts
-/// the positions given and refuses others; `truncate_before` never removes a record at or after its
-/// position; records appended by threads at once are each read once, each
-/// thread's in the order it appended them.
-fn contract(log: &dyn Log) {
-    let start = log.end();
-    assert!(all(log, Lsn(0)).is_empty() && all(log, start).is_empty(), "a new log is empty");
-    let positions: Vec<Lsn> = (0..40).map(|n| log.append(&record(n)).unwrap()).collect();
-    assert!(positions.windows(2).all(|w| w[0] < w[1]), "positions increase");
-    assert!(*positions.last().unwrap() < log.end());
-    let read = all(log, Lsn(0));
-    assert_eq!(read, positions.iter().copied().zip((0..40).map(record)).collect::<Vec<_>>());
-    assert_eq!(all(log, positions[25]), read[25..].to_vec(), "from a position");
-    assert!(all(log, log.end()).is_empty(), "from the end");
-    for at in [0, 17, 39] {
-        assert_eq!(log.read_at(positions[at]).unwrap(), Some(record(at)), "the record at a position");
-    }
-    assert_eq!(log.read_at(log.end()).unwrap(), None, "none at the end");
-    log.sync(positions[39]).unwrap();
-    assert_eq!(log.sync(Lsn(u64::MAX)).err().map(|e| e.code), Some(Code::Api), "no such position");
-    log.truncate_before(positions[30]).unwrap();
-    let kept = all(log, Lsn(0));
-    assert!(kept.ends_with(&read[30..]), "nothing at or after the position removed");
-    assert_eq!(log.read_at(positions[30]).unwrap(), Some(record(30)), "still read at the position");
-    let threads: Vec<Vec<Lsn>> = thread::scope(|s| {
-        let appending: Vec<_> = (0..4)
-            .map(|t| s.spawn(move || (0..25).map(|n| log.append(format!("thread {t} record {n}").as_bytes()).unwrap()).collect()))
-            .collect();
-        appending.into_iter().map(|a| a.join().unwrap()).collect()
-    });
-    assert!(threads.iter().all(|mine: &Vec<Lsn>| mine.windows(2).all(|w| w[0] < w[1])), "each thread's appends in order");
-    let after = all(log, positions[39]);
-    assert_eq!(after.len(), 1 + 4 * 25, "every record appended by the threads, once");
-    assert!(threads.iter().flatten().all(|p| after.iter().any(|(q, _)| q == p)));
-    for t in 0..4 {
-        let prefix = format!("thread {t} record ");
-        let read: Vec<String> =
-            after.iter().filter_map(|(_, r)| String::from_utf8_lossy(r).strip_prefix(&prefix).map(str::to_owned)).collect();
-        assert_eq!(read, (0..25).map(|n| n.to_string()).collect::<Vec<_>>(), "thread {t}'s records read in its order");
-    }
 }
 
 /// Verifies: [DESIGN] RULES.md D25, `Log` contract, memory log: positions,
@@ -249,34 +196,8 @@ fn old_segments_sync_and_damage_stops_a_read() {
 /// decode to what was written, in order.
 #[test]
 fn records_go_through_the_log() {
-    use turborel::catalog::QualifiedName;
-    use turborel::log::record::{Change, Record};
-    use turborel::value::{Decimal, Value};
-
     let scratch = Scratch::new("log-records");
-    let dir = scratch.path("log");
-    let table = QualifiedName { auth: "A".into(), ident: "T".into() };
-    let number = |n: i128| Value::Exact(Decimal::new(n, 0));
-    let records = [
-        Record {
-            tx: 5,
-            change: Change::Insert { table: table.clone(), generation: 0, row: 1, after: vec![number(1), Value::Char("one".into())] },
-        },
-        Record {
-            tx: 5,
-            change: Change::Update { table: table.clone(), generation: 0, row: 1, before: vec![number(1)], after: vec![number(2)] },
-        },
-        Record { tx: 5, change: Change::Delete { table, generation: 0, row: 1, before: vec![number(2)] } },
-        Record { tx: 5, change: Change::Commit { at: 9 } },
-    ];
-    let log = file_log(&dir, small_segments());
-    let commit = records.iter().map(|r| log.append(&r.encode()).unwrap()).last().unwrap();
-    log.sync(commit).unwrap();
-    drop(log);
-    let (log, _) = reopen(&dir);
-    let read: Vec<Vec<u8>> =
-        all(&log, Lsn(0)).into_iter().map(|(_, bytes)| Record::decode(&bytes, &TypeRegistry::default()).unwrap().encode()).collect();
-    assert_eq!(read, records.iter().map(Record::encode).collect::<Vec<_>>());
+    logs::records_go_through(&BuiltIn(small_segments()), &scratch.path("log"));
 }
 
 /// Verifies: [DESIGN] RULES.md D25, file log: opened as known durable

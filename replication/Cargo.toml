@@ -19,7 +19,7 @@ autotests = false
 turborel = { version = "0.0.0", path = ".." }
 
 [dev-dependencies]
-turborel-test-support = { path = "../support", features = ["replication"] }
+turborel-test-support = { path = "../support", features = ["replication", "database"] }
 
 [lints]
 workspace = true

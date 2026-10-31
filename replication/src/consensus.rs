@@ -22,7 +22,9 @@ use crate::{Lsn, ReplicaEvent, ReplicaId, Role};
 /// * **Commit.** `Committed(n)` is answered only while the replica serves
 ///   as primary, between `Role(Primary { .. })` and `Role(Backup)`, never
 ///   for a smaller `n` than before, and only once a quorum of replicas
-///   holds every record through `n` durably. A record appended in one
+///   holds every record through `n` durably. `Role(Primary { .. })` is
+///   answered only once every record the replica's log holds is
+///   committed, so it commits them all. A record appended in one
 ///   service and not committed in it is resolved by one `Outcome`, once
 ///   the replica knows whether the log keeps it.
 /// * **Delivery.** `Deliver { through }` names records committed and

@@ -30,11 +30,18 @@
 
 mod common;
 mod concepts;
+/// The fixtures over a database and the suites every log passes, written
+/// once in `support/` for the tests of the replicated log too (RULES.md
+/// R-TEST-10), included so for the same reason.
+#[path = "../../support/src/database.rs"]
+mod database;
 /// The plug-in type of the tests, written once in `support/` (RULES.md
 /// R-TEST-10), included here as the core cannot depend on `support`'s
 /// build of itself.
 #[path = "../../support/src/types.rs"]
 mod ident;
+#[path = "../../support/src/logs.rs"]
+mod logs;
 
 mod assertion_changes;
 mod assertions;
