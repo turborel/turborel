@@ -7,9 +7,15 @@ Each setting, as INFORMATION_SCHEMA.SETTINGS lists it. A setting marked
 every setting is the database's to set, by
 [SET DATABASE](../sql/statements/set-database.md), by its owner, or as
 `turboreld` starts, `--set NAME=VALUE`; one that takes effect only when
-the database is made is set only then. *Takes effect* says when a
-change does: at once, from the next transaction, when the server
-starts, or only when the database is made.
+the database is made is set only then, and never of a database kept in
+memory. *Takes effect* says when a change does: at once, for the
+statements that begin after it; from the next transaction; from the
+next connection the server takes; at the next start, as the server next
+starts listening, or, of STORAGE.POOL_BYTES, as the database is next
+opened; or only when the database is made. A setting taken at the next
+start shows the value it started with in INFORMATION_SCHEMA.SETTINGS's
+STARTED_VALUE, and IS_PENDING YES while the value set differs from it
+([Settings](../operator/04-settings.md)).
 
 ## The database's settings
 
@@ -61,7 +67,7 @@ starts, or only when the database is made.
 | STORAGE.CHECKSUM | CRC-32/ISCSI | A HASH FUNCTION | when the database is made |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | when the database is made |  |
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |
-| STORAGE.POOL_BYTES | 33554432 | INTEGER FROM 65536 TO 9223372036854775807 | when the server starts |  |
+| STORAGE.POOL_BYTES | 33554432 | INTEGER FROM 65536 TO 9223372036854775807 | at the next start |  |
 | TABLES.ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
 | TRANSACTION.STRICT | ON | ONE OF ON, OFF | from the next transaction |  |
@@ -124,28 +130,28 @@ Each in a sentence:
 | Setting | Default | Values | Takes effect | |
 |---|---|---|---|---|
 | SERVER.BATCH_BYTES | 65536 | INTEGER FROM 1 TO 4294967295 | at once |  |
-| SERVER.HOST | 127.0.0.1 | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
+| SERVER.HOST | 127.0.0.1 | TEXT OF AT MOST 1024 CHARACTERS | at the next start |  |
 | SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.IDLE_TIMEOUT_MS | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
-| SERVER.KEEPALIVE_IDLE_MS | 0 | INTEGER FROM 0 TO 32767000 | at once |  |
-| SERVER.KEEPALIVE_INTERVAL_MS | 0 | INTEGER FROM 0 TO 32767000 | at once |  |
-| SERVER.KEEPALIVE_PROBES | 0 | INTEGER FROM 0 TO 127 | at once |  |
+| SERVER.KEEPALIVE_IDLE_MS | 0 | INTEGER FROM 0 TO 32767000 | from the next connection |  |
+| SERVER.KEEPALIVE_INTERVAL_MS | 0 | INTEGER FROM 0 TO 32767000 | from the next connection |  |
+| SERVER.KEEPALIVE_PROBES | 0 | INTEGER FROM 0 TO 127 | from the next connection |  |
 | SERVER.LOGIN_DELAY_MS | 10000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.LOGIN_TIMEOUT_MS | 60000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.MAX_CONNECTIONS | 256 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.MAX_LOGINS | 4 | INTEGER FROM 1 TO 64 | at once |  |
-| SERVER.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 1024 TO 4294967295 | at once |  |
+| SERVER.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 1024 TO 4294967295 | from the next connection |  |
 | SERVER.MAX_STATEMENTS | 1024 | INTEGER FROM 1 TO 4294967295 | at once |  |
-| SERVER.PASSWORD_ITERATIONS | 600000 | INTEGER FROM 10000 TO 4294967295 | when the server starts |  |
-| SERVER.PORT | 7422 | INTEGER FROM 0 TO 65535 | when the server starts |  |
-| SERVER.SCRAM_WITHOUT_TLS | OFF | ONE OF ON, OFF | at once |  |
+| SERVER.PASSWORD_ITERATIONS | 600000 | INTEGER FROM 10000 TO 4294967295 | at the next start |  |
+| SERVER.PORT | 7422 | INTEGER FROM 0 TO 65535 | at the next start |  |
+| SERVER.SCRAM_WITHOUT_TLS | OFF | ONE OF ON, OFF | from the next connection |  |
 | SERVER.SHUTDOWN_TIMEOUT_MS | 30000 | INTEGER FROM 0 TO 4294967295 | at once |  |
-| SERVER.SOCKET | (empty) | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
-| SERVER.TLS | OFF | ONE OF OFF, ON, REQUIRED | when the server starts |  |
-| SERVER.TLS_CERTIFICATE | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at once |  |
-| SERVER.TLS_CLIENT_CA | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at once |  |
-| SERVER.TLS_KEY | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at once |  |
-| SERVER.TRUST_LOCAL | OFF | ONE OF ON, OFF | when the server starts |  |
+| SERVER.SOCKET | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at the next start |  |
+| SERVER.TLS | OFF | ONE OF OFF, ON, REQUIRED | at the next start |  |
+| SERVER.TLS_CERTIFICATE | (empty) | TEXT OF AT MOST 1024 CHARACTERS | from the next connection |  |
+| SERVER.TLS_CLIENT_CA | (empty) | TEXT OF AT MOST 1024 CHARACTERS | from the next connection |  |
+| SERVER.TLS_KEY | (empty) | TEXT OF AT MOST 1024 CHARACTERS | from the next connection |  |
+| SERVER.TRUST_LOCAL | OFF | ONE OF ON, OFF | at the next start |  |
 | SERVER.WORKERS | the processors | INTEGER FROM 1 TO 1024 | at once |  |
 
 Each in a sentence:
@@ -161,7 +167,7 @@ Each in a sentence:
 - **SERVER.LOGIN_TIMEOUT_MS**: The milliseconds a connection has, from when it is taken, to begin TLS and authenticate, the two together, before it is closed; 0 for no limit.
 - **SERVER.MAX_CONNECTIONS**: Connections the server takes at once, at most.
 - **SERVER.MAX_LOGINS**: Authentications the server checks at once, at most, apart from its statements' workers.
-- **SERVER.MAX_MESSAGE_BYTES**: The longest message, in bytes, the server takes from a client.
+- **SERVER.MAX_MESSAGE_BYTES**: The longest message, in bytes, the server takes from a client, read as the client's connection is taken.
 - **SERVER.MAX_STATEMENTS**: Prepared statements a connection holds at once, at most.
 - **SERVER.PASSWORD_ITERATIONS**: The PBKDF2 iterations of a password's verifier made from the start on.
 - **SERVER.PORT**: The TCP port connections are taken at.

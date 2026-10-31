@@ -2,10 +2,12 @@
 //! database it serves, as a plug-in's are, so they are set as any setting
 //! is, kept with the database's definitions, and listed with the others.
 //! The server reads each when it needs it: where it listens, TLS, trust
-//! and passwords' iterations as it starts; TLS's files, what clients
-//! prove themselves by, and TCP keepalive's times, as connections begin; its limits as statements and
-//! connections begin, and its time to stop as it is told to, so a change
-//! of one takes effect with no restart.
+//! and passwords' iterations as it starts, recording the values it started
+//! with (`mark_started`); TLS's files, what clients prove themselves by,
+//! TCP keepalive's times and the longest message, as connections begin;
+//! its limits as statements and connections begin, and its time to stop
+//! as it is told to, so a change of one takes effect with no restart. One
+//! that cannot be read is read as its default.
 
 use std::num::NonZeroUsize;
 
@@ -50,7 +52,8 @@ const MIN_PASSWORD_ITERATIONS: i128 = 10_000;
 pub const WORKERS: &str = "SERVER.WORKERS";
 /// Connections open at once, at most.
 pub const MAX_CONNECTIONS: &str = "SERVER.MAX_CONNECTIONS";
-/// The longest message taken from a client, in bytes.
+/// The longest message taken from a client, in bytes, read as its
+/// connection is taken.
 pub const MAX_MESSAGE_BYTES: &str = "SERVER.MAX_MESSAGE_BYTES";
 /// The prepared statements a connection holds at once, at most.
 pub const MAX_STATEMENTS: &str = "SERVER.MAX_STATEMENTS";
@@ -138,6 +141,12 @@ fn setting(name: &str, kind: Kind, default: Value, effect: Effect, doc: &str) ->
     Definition { name: name.into(), kind, default, per_session: false, effect, doc: doc.into() }
 }
 
+/// A whole-number setting from `min` to `max`, read as each connection is
+/// taken.
+fn connected(name: &str, (min, max): (i128, i128), default: usize, doc: &str) -> Definition {
+    setting(name, Kind::Integer { min, max }, whole(default), Effect::Connection, doc)
+}
+
 /// A whole-number setting from `min` to `max`, read as it is needed.
 fn limit(name: &str, (min, max): (i128, i128), default: usize, doc: &str) -> Definition {
     setting(name, Kind::Integer { min, max }, whole(default), Effect::Statement, doc)
@@ -157,19 +166,19 @@ fn definitions() -> Vec<Definition> {
 /// (`keepalive.rs`): a change taken for the connections after.
 fn kept_alive() -> [Definition; 3] {
     [
-        limit(
+        connected(
             KEEPALIVE_IDLE_MS,
             (0, MOST_KEEPALIVE_MS),
             0,
             "The milliseconds a TCP connection is idle before the system probes whether its client is still there, rounded up to whole seconds; 0 for the system's own.",
         ),
-        limit(
+        connected(
             KEEPALIVE_INTERVAL_MS,
             (0, MOST_KEEPALIVE_MS),
             0,
             "The milliseconds between the system's probes of a TCP connection's client, unanswered, rounded up to whole seconds; 0 for the system's own.",
         ),
-        limit(
+        connected(
             KEEPALIVE_PROBES,
             (0, MOST_KEEPALIVE_PROBES),
             0,
@@ -188,28 +197,28 @@ fn proofs() -> [Definition; 4] {
             TLS_CERTIFICATE,
             text.clone(),
             Value::Char(String::new()),
-            Effect::Statement,
+            Effect::Connection,
             "The PEM file of the server's certificate chain, taken again for the connections after a change.",
         ),
         setting(
             TLS_KEY,
             text.clone(),
             Value::Char(String::new()),
-            Effect::Statement,
+            Effect::Connection,
             "The PEM file of the server's private key, taken again for the connections after a change.",
         ),
         setting(
             TLS_CLIENT_CA,
             text,
             Value::Char(String::new()),
-            Effect::Statement,
+            Effect::Connection,
             "The PEM file of the authorities whose certificates a TLS client may present to log in by; none asked for if empty.",
         ),
         setting(
             SCRAM_WITHOUT_TLS,
             Kind::Choice(SWITCHES),
             Value::Char(OFF.into()),
-            Effect::Statement,
+            Effect::Connection,
             "Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).",
         ),
     ]
@@ -272,11 +281,12 @@ fn limits() -> [Definition; 6] {
         ),
         limit(MAX_CONNECTIONS, (1, most), DEFAULT_MAX_CONNECTIONS, "Connections the server takes at once, at most."),
         limit(MAX_STATEMENTS, (1, most), DEFAULT_MAX_STATEMENTS, "Prepared statements a connection holds at once, at most."),
-        limit(
+        setting(
             MAX_MESSAGE_BYTES,
-            (MIN_MESSAGE_BYTES, most),
-            usize::try_from(MAX_BODY).unwrap_or(usize::MAX),
-            "The longest message, in bytes, the server takes from a client.",
+            Kind::Integer { min: MIN_MESSAGE_BYTES, max: most },
+            whole(usize::try_from(MAX_BODY).unwrap_or(usize::MAX)),
+            Effect::Connection,
+            "The longest message, in bytes, the server takes from a client, read as the client's connection is taken.",
         ),
         limit(BATCH_BYTES, (1, most), DEFAULT_BATCH_BYTES, "About how many bytes of rows the server sends in one batch."),
         limit(
@@ -340,12 +350,20 @@ pub fn declare(db: &Database) -> Result<()> {
     Ok(())
 }
 
-/// `db`'s value of the whole-number setting `name`, declared by `declare`;
-/// 1 if it cannot be read, as when the database is closed.
+/// `db`'s value of the setting `name`, declared by `declare`; its default
+/// if it cannot be read, as when the database is closed, so that a limit
+/// is never quietly another than the one declared.
+fn value(db: &Database, name: &str) -> Option<Value> {
+    db.setting(name).ok().or_else(|| definitions().into_iter().find(|d| d.name == name).map(|d| d.default))
+}
+
+/// `db`'s value of the whole-number setting `name`, declared by `declare`:
+/// its default if it cannot be read (`value`); 0 if it is no setting of
+/// the server's.
 pub fn count(db: &Database, name: &str) -> usize {
-    match db.setting(name) {
-        Ok(Value::Exact(d)) => usize::try_from(d.units).unwrap_or(usize::MAX),
-        Ok(
+    match value(db, name) {
+        Some(Value::Exact(d)) => usize::try_from(d.units).unwrap_or(usize::MAX),
+        Some(
             Value::Approx(_)
             | Value::Char(_)
             | Value::Null
@@ -354,7 +372,7 @@ pub fn count(db: &Database, name: &str) -> usize {
             | Value::Interval(_)
             | Value::Extension(_),
         )
-        | Err(_) => 1,
+        | None => 0,
     }
 }
 
@@ -365,12 +383,13 @@ pub fn millis(db: &Database, name: &str) -> Option<std::time::Duration> {
     (n > 0).then(|| std::time::Duration::from_millis(u64::try_from(n).unwrap_or(u64::MAX)))
 }
 
-/// `db`'s value of the text setting `name`, declared by `declare`; empty if
-/// it cannot be read.
+/// `db`'s value of the text setting `name`, declared by `declare`: its
+/// default if it cannot be read (`value`); empty if it is no setting of
+/// the server's.
 pub fn text(db: &Database, name: &str) -> String {
-    match db.setting(name) {
-        Ok(Value::Char(s)) => s,
-        Ok(
+    match value(db, name) {
+        Some(Value::Char(s)) => s,
+        Some(
             Value::Exact(_)
             | Value::Approx(_)
             | Value::Null
@@ -379,6 +398,41 @@ pub fn text(db: &Database, name: &str) -> String {
             | Value::Interval(_)
             | Value::Extension(_),
         )
-        | Err(_) => String::new(),
+        | None => String::new(),
+    }
+}
+
+/// Records `db`'s values of the server's settings read as it starts as
+/// those it started with, so INFORMATION_SCHEMA.SETTINGS shows one set
+/// since as waiting for a restart (RULES.md D36): as it starts listening.
+///
+/// # Errors
+///
+/// `Database::settings_started`'s.
+pub fn mark_started(db: &Database) -> Result<()> {
+    let names: Vec<String> = definitions().into_iter().filter(|d| d.effect == Effect::Start).map(|d| d.name).collect();
+    db.settings_started(&names.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+// Unit tests: the settings read when they cannot be (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [DESIGN] RULES.md D36, D42: a setting of the server's that
+    /// cannot be read, as of a database it was never declared on, is read
+    /// as its default, and one that is none of the server's as nothing.
+    /// Regression test (R-TEST-7): it was read as 1, which made the
+    /// server's limits, as of connections, 1.
+    #[test]
+    fn a_setting_not_read_is_its_default() {
+        let db = Database::new();
+        assert_eq!(count(&db, MAX_CONNECTIONS), DEFAULT_MAX_CONNECTIONS);
+        assert_eq!(millis(&db, LOGIN_TIMEOUT_MS), Some(std::time::Duration::from_secs(60_u64)));
+        assert_eq!(text(&db, HOST), DEFAULT_HOST);
+        assert_eq!((count(&db, "SERVER.NO_SUCH"), text(&db, "SERVER.NO_SUCH")), (0, String::new()));
+        declare(&db).unwrap();
+        db.set_setting(MAX_CONNECTIONS, &whole(7)).unwrap();
+        assert_eq!(count(&db, MAX_CONNECTIONS), 7);
     }
 }

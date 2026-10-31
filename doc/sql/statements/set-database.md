@@ -28,9 +28,11 @@ value keeps it, over the database's.
 
 When a change takes effect depends on the setting
 (INFORMATION_SCHEMA.SETTINGS, TAKES_EFFECT): for each statement or
-transaction that begins after it; when the server starts next or the
-database is next opened; or, for a few, only as the database is created,
-after which they are fixed. [Appendix C](../../appendix/c-settings.md)
+transaction that begins after it; for each connection the server takes
+after it; when the server starts next or the database is next opened,
+which IS_PENDING then shows waiting; or, for a few, only as the database
+is created in its directory, after which they are fixed, and never of a
+database kept in memory. [Appendix C](../../appendix/c-settings.md)
 lists every setting.
 
 ## RULES
@@ -38,7 +40,8 @@ lists every setting.
 1. Its user is the database's owner.
 2. No transaction is active.
 3. The setting exists, and is not one fixed once the database is
-   created.
+   created, nor one fixed at creation of a database kept in memory that
+   holds a schema.
 4. The value is of the setting's kind and range; a name it gives, of an
    engine, an index method, a hash function or encodings, is registered.
 

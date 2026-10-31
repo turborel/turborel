@@ -18,6 +18,30 @@ fn word(s: &str) -> Value {
 
 const LOCKS_WAIT: &str = "SELECT SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'LOCKS.WAIT'";
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1]; [DESIGN] RULES.md D36:
+/// INFORMATION_SCHEMA.SETTINGS shows a text setting's value whole, up to
+/// 1024 characters, as long as a path the server's settings take; its
+/// default too. Regression test (R-TEST-7): a value was cut to 256.
+#[test]
+fn a_settings_value_is_shown_whole() {
+    use turborel::settings::{Definition, Effect, Kind};
+    let db = setup();
+    let path = "/a".repeat(500);
+    let declared = Definition {
+        name: "PLUGIN.PATH".into(),
+        kind: Kind::Text { max: 1024 },
+        default: word(&path),
+        per_session: false,
+        effect: Effect::Statement,
+        doc: "A path.".into(),
+    };
+    db.declare_setting(declared).unwrap();
+    db.set_setting("PLUGIN.PATH", &word(&"/b".repeat(512))).unwrap();
+    let lengths = "SELECT CHAR_LENGTH(SETTING_VALUE), CHAR_LENGTH(DEFAULT_VALUE) FROM INFORMATION_SCHEMA.SETTINGS \
+                   WHERE SETTING_NAME = 'PLUGIN.PATH'";
+    assert_eq!(rows(&db.session("APP"), lengths), expected(&["1024,1000"]));
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1, §21.2.1]:
 /// INFORMATION_SCHEMA.SETTINGS has a row for every setting, with the value
 /// the reading session sees and where it comes from, its default, kind,

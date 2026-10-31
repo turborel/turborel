@@ -275,6 +275,21 @@ impl State {
         settings::lock_wait(self.settings.get(LOCKS_WAIT))
     }
 
+    /// \[DESIGN\] RULES.md D36: why the setting `name`, fixed when a
+    /// database is created in its directory, is taken no more, if it is
+    /// not: the database was created, or opened, in its directory; or it
+    /// is kept in memory, holding a schema, a table or a log, so that no
+    /// directory will create it (`Database::open_files` refuses it then).
+    pub(super) fn creation_refused(&self, name: &str) -> Option<String> {
+        if self.created {
+            return Some(format!("[DESIGN] {name} is fixed when the database is created"));
+        }
+        let in_memory = self.log.is_some() || !self.catalog.schemas().is_empty() || !self.catalog.tables().is_empty();
+        in_memory.then(|| {
+            format!("[DESIGN] {name} is fixed when a database is created in its directory: a database kept in memory does not take it")
+        })
+    }
+
     /// The records the catalog file holds before it is compacted
     /// (CATALOG.COMPACT_AFTER_IMAGES).
     pub(crate) fn compact_after(&self) -> usize {

@@ -72,7 +72,7 @@ string as CHARACTER, its octet length four octets a character.
 | TABLE_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of a table's storage engine, its value set or its default |
 | INDEXES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, IS_UNIQUE, COLUMN_NAMES | index, a UNIQUE or PRIMARY KEY constraint's among them |
 | INDEX_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of an index |
-| SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION | setting, its value for the session |
+| SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION, STARTED_VALUE, IS_PENDING | setting, its value for the session; of one taken at the next start, the value it started with, or null, and whether the value set waits for a restart |
 | USERS | USER_NAME, IS_OWNER | user: to the owner every one, to another user itself |
 | MEMORY_RESERVATIONS | RESERVED_BY, BYTES | part of the memory budget reserved, as a buffer pool's |
 | CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement |

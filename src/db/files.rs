@@ -337,8 +337,9 @@ impl Database {
 
     /// Once it is opened: its settings fixed at creation fixed, those given
     /// before it opened, of those it reads as it does, set again over the
-    /// ones its definitions held, and its budget as its settings say. Its
-    /// checkpoints are taken as they come due (`db/background.rs`).
+    /// ones its definitions held, STORAGE.POOL_BYTES marked as started, and
+    /// its budget as its settings say. Its checkpoints are taken as they
+    /// come due (`db/background.rs`).
     fn opened(&self, given: &[(String, Value)]) -> Result<()> {
         self.change(|st| {
             st.created = true;
@@ -347,6 +348,10 @@ impl Database {
         for (name, value) in given {
             self.set_setting(name, value)?;
         }
+        // Its pool made of it: a change from now on waits for it to open
+        // again.
+        let st = self.snapshot()?;
+        st.settings.mark_started(crate::settings::POOL_BYTES, None);
         self.apply_settings()
     }
 

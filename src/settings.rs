@@ -13,11 +13,13 @@
 
 mod builtin;
 mod kind;
+mod started;
+mod words;
 
 use std::sync::Arc;
 
 use crate::error::{Code, Result, SqlError};
-use crate::txn::{LockWait, Policy, SessionEnd};
+use crate::txn::Policy;
 use crate::value::{Value, pow10};
 
 pub use builtin::{
@@ -30,6 +32,9 @@ pub use builtin::{
 };
 use builtin::{builtin, whole};
 pub use kind::{Kind, column_list, column_names};
+pub use started::Started;
+use words::word_of;
+pub use words::{lock_wait, lock_wait_word, policy_word, session_end, session_end_word};
 
 /// When a change of a setting takes effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +43,8 @@ pub enum Effect {
     Statement,
     /// For every transaction that begins after it.
     Transaction,
+    /// For every connection a server takes after it, read as it is taken.
+    Connection,
     /// When what reads it starts next: a server, as it starts listening; a
     /// database kept in a directory, as it is opened.
     Start,
@@ -88,6 +95,10 @@ pub struct Listed {
     pub value: Value,
     /// Where the value comes from.
     pub source: Source,
+    /// Of one taken as what reads it starts (`Effect::Start`), the value
+    /// it was started with, if it started: a value apart from it waits
+    /// for a restart.
+    pub started: Option<Value>,
 }
 
 /// The bytes a value of MEMORY.BUDGET_BYTES says.
@@ -199,13 +210,16 @@ pub struct Settings {
     /// Values set before their settings were declared: replayed from the
     /// log before the plug-in declaring them was registered.
     pending: Vec<(String, Value)>,
+    /// The values the settings read as what reads them starts were
+    /// started with.
+    started: Arc<Started>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         let definitions = builtin();
         let values = vec![None; definitions.len()];
-        Settings { definitions: Arc::new(definitions), values, pending: Vec::new() }
+        Settings { definitions: Arc::new(definitions), values, pending: Vec::new(), started: Arc::default() }
     }
 }
 
@@ -321,9 +335,19 @@ impl Settings {
             .filter_map(|k| {
                 let key = Key(k);
                 let (value, source) = self.effective(key, own);
-                self.definition(key).map(|d| Listed { definition: d.clone(), value: value.clone(), source })
+                let definition = self.definition(key)?;
+                let started = (definition.effect == Effect::Start).then(|| self.started.get(&definition.name)).flatten();
+                Some(Listed { definition: definition.clone(), value: value.clone(), source, started })
             })
             .collect()
+    }
+
+    /// Records the database's value of `key` as the one what reads it was
+    /// started with, or `value` if given: what it took, if not what is set.
+    pub fn mark_started(&self, key: Key, value: Option<Value>) {
+        if let Some(d) = self.definition(key) {
+            self.started.record(&d.name, value.unwrap_or_else(|| self.get(key).clone()));
+        }
     }
 
     /// The whole number of `key`, 0 if it is none.
@@ -368,45 +392,6 @@ impl Settings {
     /// [X3.135-1986 §4.16] The transaction policy.
     pub fn policy(&self) -> Policy {
         if self.word(TRANSACTION_STRICT) == OFF { Policy::Permissive } else { Policy::Strict }
-    }
-}
-
-/// The word or name a value is, empty if it is none.
-fn word_of(v: &Value) -> &str {
-    if let Value::Char(s) = v { s } else { "" }
-}
-
-/// [X3.135-1986 §7.1 GR2] The session end a value says.
-pub fn session_end(v: &Value) -> SessionEnd {
-    if word_of(v) == OFF { SessionEnd::Rollback } else { SessionEnd::Commit }
-}
-
-/// The lock wait a value says.
-pub fn lock_wait(v: &Value) -> LockWait {
-    if word_of(v) == ON { LockWait::Wait } else { LockWait::NoWait }
-}
-
-/// The word of `LOCKS.WAIT` for `wait`.
-pub fn lock_wait_word(wait: LockWait) -> &'static str {
-    match wait {
-        LockWait::NoWait => OFF,
-        LockWait::Wait => ON,
-    }
-}
-
-/// The word of `SESSION.COMMIT_AT_END` for `end`.
-pub fn session_end_word(end: SessionEnd) -> &'static str {
-    match end {
-        SessionEnd::Commit => ON,
-        SessionEnd::Rollback => OFF,
-    }
-}
-
-/// The word of `TRANSACTION.STRICT` for `policy`.
-pub fn policy_word(policy: Policy) -> &'static str {
-    match policy {
-        Policy::Strict => ON,
-        Policy::Permissive => OFF,
     }
 }
 
@@ -459,6 +444,7 @@ impl Own {
 mod tests {
     use super::builtin::text;
     use super::*;
+    use crate::txn::LockWait;
     use crate::value::Decimal;
 
     /// Verifies: [DESIGN] RULES.md D36: each built-in key is its setting's

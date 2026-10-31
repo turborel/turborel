@@ -71,8 +71,9 @@ pub fn tls(db: &Database) -> Result<Option<Arc<Tls>>> {
 /// # Errors
 ///
 /// SQLCODE -915 if one cannot listen, TLS cannot be taken, or the
-/// settings name nowhere to listen.
+/// settings name nowhere to listen; -910 if the database is closed.
 pub async fn bind(db: &Database, protocol: &Arc<dyn Protocol>) -> Result<Vec<Endpoint>> {
+    settings::mark_started(db)?;
     let port = u16::try_from(settings::count(db, PORT)).map_err(|_| unable("[DESIGN] SERVER.PORT is no port".into()))?;
     let secured = tls(db)?;
     let mut endpoints = Vec::new();

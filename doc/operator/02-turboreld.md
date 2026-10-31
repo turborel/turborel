@@ -41,6 +41,14 @@ $ turboreld --dir /var/lib/turborel/main --set STORAGE.PAGE_BYTES=4096
 turboreld: cannot open /var/lib/turborel/main: SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_BYTES = 8192, fixed then: it cannot be 4096
 ```
 
+With `--memory`, no directory makes the database, so a setting fixed
+when it is made is refused, and the server does not start:
+
+```
+$ turboreld --memory --set STORAGE.PAGE_BYTES=4096
+turboreld: cannot set STORAGE.PAGE_BYTES: it is fixed when a database is created in its directory, and --memory keeps it in memory
+```
+
 ## Starting and stopping
 
 ```

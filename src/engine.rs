@@ -72,7 +72,7 @@ fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Resul
 pub(crate) struct MemoryPages {
     budget: Mutex<Arc<MemoryBudget>>,
     bytes: AtomicUsize,
-    made: Mutex<Option<(Arc<BufferPool>, FileId)>>,
+    made: Mutex<Option<(Arc<BufferPool>, FileId, usize)>>,
 }
 
 impl MemoryPages {
@@ -99,13 +99,19 @@ impl MemoryPages {
     /// As `memory_file`.
     pub(crate) fn file(&self, what: &str) -> Result<(Arc<BufferPool>, FileId), SqlError> {
         let mut made = lock_builtin(&self.made);
-        if let Some((pool, file)) = made.as_ref() {
+        if let Some((pool, file, _)) = made.as_ref() {
             return Ok((Arc::clone(pool), *file));
         }
         let budget = Arc::clone(&lock_builtin(&self.budget));
-        let (pool, file) = memory_file_of(&budget, self.bytes.load(Ordering::Acquire), what)?;
-        *made = Some((Arc::clone(&pool), file));
+        let bytes = self.bytes.load(Ordering::Acquire);
+        let (pool, file) = memory_file_of(&budget, bytes, what)?;
+        *made = Some((Arc::clone(&pool), file, bytes));
         Ok((pool, file))
+    }
+
+    /// The bytes their pool was made of, if it was made.
+    pub(crate) fn made_bytes(&self) -> Option<usize> {
+        lock_builtin(&self.made).as_ref().map(|(_, _, bytes)| *bytes)
     }
 }
 

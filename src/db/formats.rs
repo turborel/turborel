@@ -111,7 +111,7 @@ impl State {
                 // Given before it opened, or not read as it does.
                 (Effect::Start, settings::Source::Database)
                 | (
-                    Effect::Statement | Effect::Transaction,
+                    Effect::Statement | Effect::Transaction | Effect::Connection,
                     settings::Source::Default | settings::Source::Database | settings::Source::Session,
                 ) => {}
             }

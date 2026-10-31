@@ -304,8 +304,10 @@ impl Session {
         let Some(definition) = settings.key(name).and_then(|k| settings.definition(k)) else {
             return fail(Code::SyntaxRule, format!("[DESIGN] there is no setting {name}"));
         };
-        if definition.effect == crate::settings::Effect::Creation && st.created {
-            return fail(Code::SyntaxRule, format!("[DESIGN] {} is fixed when the database is created", definition.name));
+        if let Some(refused) =
+            (definition.effect == crate::settings::Effect::Creation).then(|| st.creation_refused(&definition.name)).flatten()
+        {
+            return fail(Code::SyntaxRule, refused);
         }
         let Some(given) = value else { return self.db.reset_setting(&definition.name) };
         let (v, _) = binder::value_specification(given, &self.auth(), params)?;

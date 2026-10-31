@@ -1643,7 +1643,8 @@ the same results and errors is the optimizer's to choose.
 **D36. Settings.**
 - One registry: each setting declared once, with its kind, default, whether
   a session may set it, and when a change takes effect: for each statement,
-  each transaction, or when what reads it starts, as a server's addresses.
+  each transaction, each connection a server takes, as its longest
+  message, or when what reads it starts, as a server's addresses.
   Plug-ins declare theirs the same way, the server too (D42): every
   component is configured by settings, never by a configuration of its own.
 - A storage engine declares its own (`StorageEngine::settings`), under
@@ -1689,8 +1690,15 @@ the same results and errors is the optimizer's to choose.
   | SERVER.TRUST LOCAL/OFF | SERVER.TRUST_LOCAL ON/OFF |
 - A setting's effect is the one declared: one taken for each transaction
   is taken as the transaction begins; one that waits for a restart says
-  so where settings are shown. A database kept in memory refuses those
-  fixed at creation.
+  so where settings are shown: what reads it records the value it started
+  with (`Database::settings_started`; the server as it starts listening,
+  the database its pool as it opens, or of one in memory as the pool is
+  made), which INFORMATION_SCHEMA.SETTINGS shows as STARTED_VALUE, with
+  IS_PENDING YES while the value set differs. A database kept in memory
+  refuses those fixed at creation: once it holds a schema, a table or a
+  log, as no directory will create it then, and `turboreld --memory` as
+  it starts. A setting the server cannot read, as of a database closed,
+  is read as its default, never as another value.
 - The database's values are definitions: logged and replayed like schema
   changes. A session's values never persist.
 - Some are fixed when a database is created in its directory: its page

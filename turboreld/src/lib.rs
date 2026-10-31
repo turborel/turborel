@@ -315,6 +315,11 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
     // Those read as the database is created or opened are set before it is.
     let (early, late): (Vec<_>, Vec<_>) = config.settings.iter().partition(|(name, _)| read_as_opened(&db, name));
     let set = |(name, value): &&(String, Value)| db.set_setting(name, value).map_err(|e| format!("cannot set {name}: {e}"));
+    // A database kept in memory is created in no directory (RULES.md D36).
+    let fixed = early.iter().find(|(name, _)| effect_of(&db, name) == Some(Effect::Creation)).filter(|_| config.store == Store::Memory);
+    if let Some((name, _)) = fixed {
+        return Err(format!("cannot set {name}: it is fixed when a database is created in its directory, and --memory keeps it in memory"));
+    }
     early.iter().try_for_each(set)?;
     if let Store::Dir(dir) = &config.store {
         let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
@@ -397,13 +402,16 @@ impl Keyring for NoKeys {
     }
 }
 
+/// When a change of the setting `name` of `db` takes effect, if it is one.
+fn effect_of(db: &Database, name: &str) -> Option<Effect> {
+    let settings = db.settings().unwrap_or_default();
+    settings.iter().find(|l| l.definition.name.eq_ignore_ascii_case(name.trim())).map(|l| l.definition.effect)
+}
+
 /// Whether the setting `name` of `db` is read as a database is created or
 /// opened: so set before it is.
 fn read_as_opened(db: &Database, name: &str) -> bool {
-    let settings = db.settings().unwrap_or_default();
-    settings
-        .iter()
-        .any(|l| l.definition.name.eq_ignore_ascii_case(name.trim()) && matches!(l.definition.effect, Effect::Creation | Effect::Start))
+    matches!(effect_of(db, name), Some(Effect::Creation | Effect::Start))
 }
 
 /// Serves `server` where its settings say, until `stop`, hurried at

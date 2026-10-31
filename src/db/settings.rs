@@ -33,8 +33,8 @@ impl State {
         let key = self.settings.known(name)?;
         let definition = self.settings.definition(key).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a setting lost its definition"))?;
         let canonical = definition.name.clone();
-        if definition.effect == settings::Effect::Creation && self.created {
-            return Err(SqlError::new(Code::Api, format!("[DESIGN] {canonical} is fixed when the database is created")));
+        if let Some(refused) = (definition.effect == settings::Effect::Creation).then(|| self.creation_refused(&canonical)).flatten() {
+            return Err(SqlError::new(Code::Api, refused));
         }
         let mut value = value.cloned();
         if let Some(v) = &value {
@@ -153,10 +153,11 @@ impl Database {
     }
 
     /// Gives the settings as they are now published to what reads them
-    /// held: the memory budget its limit, MEMORY.BUDGET_BYTES's; the files their
-    /// limit; the pages of a database in memory their pool's size,
-    /// STORAGE.POOL_BYTES'; and each engine the database's values
-    /// (`configure_engines`).
+    /// held: the memory budget its limit, MEMORY.BUDGET_BYTES's; the files
+    /// their limit; the pages of a database in memory their pool's size,
+    /// STORAGE.POOL_BYTES', and once their pool is made, the size it was
+    /// made of as the one started with; and each engine the database's
+    /// values (`configure_engines`).
     ///
     /// # Errors
     ///
@@ -167,7 +168,30 @@ impl Database {
         st.files.set_limit(usize::try_from(st.settings.integer(settings::FILES_MAX_OPEN)).unwrap_or(usize::MAX));
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
+        if let Some(made) = st.pages.made_bytes() {
+            st.settings.mark_started(
+                settings::POOL_BYTES,
+                Some(Value::Exact(crate::value::Decimal::new(i128::try_from(made).unwrap_or(i128::MAX), 0))),
+            );
+        }
         self.configure_engines()
+    }
+
+    /// \[DESIGN\] Records the database's values of the settings `names`,
+    /// taken as what reads them starts, as those it started with: a
+    /// server's, as it starts listening. INFORMATION_SCHEMA.SETTINGS shows
+    /// a value set apart from the one started with as waiting for a restart
+    /// (RULES.md D36).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such setting, or the database is closed.
+    pub fn settings_started(&self, names: &[&str]) -> Result<()> {
+        let st = self.snapshot()?;
+        for name in names {
+            st.settings.mark_started(st.settings.known(name)?, None);
+        }
+        Ok(())
     }
 
     /// \[DESIGN\] Tells each storage engine the database's values of the

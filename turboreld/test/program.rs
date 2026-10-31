@@ -259,6 +259,20 @@ fn the_program_prints_its_usage_or_what_is_wrong() {
     assert!(String::from_utf8(wrong.stderr).unwrap().contains("turboreld: --verbose is not an option"));
 }
 
+/// Verifies: [DESIGN] RULES.md D36, D42: `--memory` keeps the database in
+/// memory, created in no directory, so a setting fixed at creation is
+/// refused, saying why, as the Operator's Guide shows it, and the server
+/// does not start. Regression test (R-TEST-7): it was taken, and did
+/// nothing.
+#[test]
+fn a_database_in_memory_is_given_no_setting_fixed_at_creation() {
+    let given = config(&["--memory".into(), "--set".into(), "STORAGE.PAGE_BYTES=4096".into()]);
+    let refused = turboreld::run(&given, |_| panic!("not ready"), (async {}, std::future::pending())).unwrap_err();
+    let expected =
+        "cannot set STORAGE.PAGE_BYTES: it is fixed when a database is created in its directory, and --memory keeps it in memory";
+    assert_eq!(refused, expected);
+}
+
 /// Verifies: [DESIGN] RULES.md D42, D36: the usage names each setting of
 /// the server's own, as the server declares them.
 /// Regression test (R-TEST-7): SERVER.MAX_STATEMENTS was not named.

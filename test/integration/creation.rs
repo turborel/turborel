@@ -180,9 +180,54 @@ fn the_pool_is_given_as_the_database_opens() {
     drop(db);
     let db = pooled(None);
     assert_eq!(db.memory().unwrap().1, 16 * 8192, "kept");
+    assert_eq!(rows(&db.session("X"), STARTED), Ok(vec!["131072,131072,NO".to_owned()]));
     db.set_setting("STORAGE.POOL_BYTES", &number(24 * 8192)).unwrap();
     assert_eq!(db.memory().unwrap().1, 16 * 8192, "until it opens again");
+    assert_eq!(rows(&db.session("X"), STARTED), Ok(vec!["196608,131072,YES".to_owned()]), "waits for it");
     db.close().unwrap();
     drop(db);
     assert_eq!(pooled(None).memory().unwrap().1, 24 * 8192);
+}
+
+/// STORAGE.POOL_BYTES as INFORMATION_SCHEMA.SETTINGS shows it: its value,
+/// the one it started with, and whether the value waits for a restart.
+const STARTED: &str = "SELECT TRIM(SETTING_VALUE), COALESCE(TRIM(STARTED_VALUE), 'NULL'), IS_PENDING \
+                       FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.POOL_BYTES'";
+
+/// Verifies: [DESIGN] RULES.md D36, D38: a database kept in memory makes
+/// its pool of STORAGE.POOL_BYTES with its first table; till then a
+/// change is taken, and none is waiting; after, the size it was made of is
+/// the one it started with, and a change waits.
+#[test]
+fn a_pool_in_memory_says_a_change_waits() {
+    let db = Database::new();
+    let s = db.session("X");
+    db.set_setting("STORAGE.POOL_BYTES", &number(16 * 8192)).unwrap();
+    assert_eq!(rows(&s, STARTED), Ok(vec!["131072,NULL,NO".to_owned()]), "no pool made");
+    fill(&db);
+    db.set_setting("STORAGE.POOL_BYTES", &number(24 * 8192)).unwrap();
+    assert_eq!(rows(&s, STARTED), Ok(vec!["196608,131072,YES".to_owned()]), "made with its first table");
+}
+
+/// Verifies: [DESIGN] RULES.md D36: a database kept in memory, holding a
+/// schema, is created in no directory: it refuses a setting fixed at
+/// creation, by the host program and in SQL, and its default again too;
+/// one that holds nothing takes it, to be created in a directory with it.
+/// Regression test (R-TEST-7): a database in memory took them and did
+/// nothing with them.
+#[test]
+fn a_database_in_memory_refuses_settings_fixed_at_creation() {
+    let db = Database::new();
+    db.set_setting("STORAGE.PAGE_BYTES", &number(4096)).unwrap();
+    db.reset_setting("STORAGE.PAGE_BYTES").unwrap();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    fill(&db);
+    let refused = db.set_setting("STORAGE.PAGE_BYTES", &number(4096)).unwrap_err();
+    assert_eq!(refused.code, Code::Api);
+    assert!(refused.msg.contains("a database kept in memory does not take it"), "{}", refused.msg);
+    assert_eq!(db.reset_setting("LOG.SEGMENT_BYTES").err().map(|e| e.code), Some(Code::Api));
+    let in_sql = db.session("OWNER").run("SET DATABASE STORAGE.CHECKSUM = 'CRC-64/NVME'").err().map(|e| e.code);
+    assert_eq!(in_sql, Some(Code::SyntaxRule), "in SQL too, a Syntax Rule's");
+    db.set_setting("STORAGE.POOL_BYTES", &number(16 * 8192)).unwrap();
 }
