@@ -64,10 +64,13 @@ design settles.
   `Standby`, which tells VR where its database recovered to rather than
   having committed records delivered again from the start (the
   simulator models a deposed or crashed database as one new, given the
-  log from its start); a following database's records of open
-  transactions spilled past MEMORY.WORK_BYTES (held in memory now);
-  reads on backups, and checkpoints of a following database; state
-  transfer (`Standby`'s export and import,
+  log from its start); it waits on decisions: what a replica's database
+  recovers to as it opens (its journal holds records not committed, and
+  VR learns its commit-number again from the group), how that position
+  reaches VR, and which thread runs the driver across a database
+  deposed and opened again, as a job is its database's (D55); reads on
+  backups, and checkpoints of a following database; state transfer
+  (`Standby`'s export and import,
   whole files, the first `StateTransfer`, and its contract tests), log
   retention (the replicated log and its journal keep every record), VR's
   RECOVERY protocol for a journal lost, and DOVIEWCHANGE and STARTVIEW

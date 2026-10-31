@@ -86,6 +86,7 @@ mod access;
 mod capabilities;
 mod clock;
 mod end;
+mod followed;
 mod locks;
 mod logging;
 mod reading;
@@ -96,6 +97,7 @@ mod write;
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
 pub(crate) use end::remove_entries;
+pub(crate) use followed::{Followed, FollowedRecords};
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
@@ -243,8 +245,9 @@ pub(crate) struct Transactions {
     held: Mutex<Option<Held>>,
     holding: AtomicBool,
     /// Following a log, the records of each of its transactions not yet
-    /// ended, held until it ends (`db/standby.rs`).
-    pub(crate) followed: Mutex<BTreeMap<TxId, Vec<(Lsn, crate::log::record::Record)>>>,
+    /// ended, held until it ends (`db/standby.rs`), spilled past a work
+    /// area's bytes (`txn/followed.rs`).
+    pub(crate) followed: Mutex<BTreeMap<TxId, FollowedRecords>>,
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,

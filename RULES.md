@@ -1154,7 +1154,8 @@ opaque bytes.**
   - `replay`: the one replay, as recovery runs it; the database then
     follows, until promoted;
   - continuous: records end anywhere, so a transaction's are held until
-    the record ending it; the rest replay at once, as recovery's;
+    the record ending it, past MEMORY.WORK_BYTES in a spill area (D38);
+    the rest replay at once, as recovery's;
   - `promote`: it ends each transaction left open, an abort record
     appended and synced to its new log, then serves over that log
     ([VRR §4.2]: "Operations that had not committed might also

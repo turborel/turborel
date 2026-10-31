@@ -20,7 +20,7 @@ use turborel::log::record::{KINDS, Record};
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn, MemoryLog};
 use turborel::value::types::TypeRegistry;
 
-use crate::common::{Scratch, Watched, after_crash, contents, crc32c, exec, number, os, rows};
+use crate::common::{Counted, Kept, Scratch, Watched, after_crash, contents, crc32c, exec, number, os, rows};
 use crate::file_manager::keeping;
 use crate::table_settings::{Calls, Noted};
 
@@ -465,4 +465,94 @@ fn a_deposed_database_writes_nothing_to_its_log() {
     rolled_back.rollback().unwrap();
     assert_eq!(refused.commit().err().map(|e| e.code), Some(Code::CommitFailed));
     assert_eq!(own.end(), end, "nothing written once deposed");
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D38, the standby seam: the records a
+/// standby holds of a transaction not yet ended past MEMORY.WORK_BYTES are
+/// written to a spill area, not kept in memory, and read back, merged in
+/// position order with those of a transaction committed among them, as
+/// the transaction ends: committed, the standby holds what its primary
+/// holds, rows and index entries; left open, promotion ends it, the
+/// standby holding nothing of it. Regression test (R-TEST-7): a standby
+/// held every record of an open transaction in memory, however many.
+#[test]
+fn a_standby_spills_the_records_it_holds() {
+    for commit in [true, false] {
+        let log = Arc::new(MemoryLog::new());
+        let primary = primary(&log);
+        let counted = Counted::default();
+        let standby = following();
+        standby.set_spill(Box::new(counted.clone())).unwrap();
+        standby.set_setting("MEMORY.WORK_BYTES", &number(64_i64 << 10)).unwrap();
+        replay_one_by_one(&standby, &*log, Lsn(0));
+        counted.taken();
+
+        let (mark, writer) = (log.end(), primary.session("APP"));
+        for k in 100_u32..1100_u32 {
+            exec(&writer, &format!("INSERT INTO T VALUES ({k}, 'v{k}')")).unwrap();
+            if k == 600_u32 {
+                committed(&primary, &["UPDATE T SET V = 'mid' WHERE K = 2"]);
+            }
+        }
+        Standby::replay(&standby, &mut log.read_from(mark)).unwrap();
+        assert!(counted.taken() > 0, "the records held spilled");
+        assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,mid       "], "the open transaction not shown");
+
+        let ended_at = log.end();
+        if commit {
+            writer.commit().unwrap();
+            Standby::replay(&standby, &mut log.read_from(ended_at)).unwrap();
+            assert_eq!(answers(&standby, &["T_V"]), answers(&primary, &["T_V"]));
+            assert_eq!(answers(&standby, &[]).0.len(), 1002_usize);
+        } else {
+            standby.promote(Arc::new(MemoryLog::new())).unwrap();
+            assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,mid       "], "ended by promotion");
+            assert_eq!(standby.index_entries("T_V").unwrap(), 2_usize);
+        }
+    }
+}
+
+/// A spill whose areas the memory budget always refuses (SQLCODE -918).
+struct Refusing;
+
+impl turborel::spill::Spill for Refusing {
+    fn name(&self) -> &'static str {
+        "refusing"
+    }
+    fn area(
+        &self,
+        _memory: &Arc<turborel::memory::MemoryBudget>,
+        _temp: &Arc<turborel::spill::TempFiles>,
+        _area: turborel::spill::Area,
+    ) -> turborel::error::Result<Box<dyn turborel::spill::SpillArea>> {
+        Err(turborel::error::SqlError::new(Code::Resources, "[DESIGN] refused"))
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D38, D40, the standby seam: a standby
+/// whose spill area for the records it holds is refused (SQLCODE -918)
+/// tells it as an event and holds them in memory all the same, never
+/// losing one: its replay succeeds, and once the transaction commits it
+/// holds what its primary holds.
+#[test]
+fn a_standby_holds_its_records_when_they_cannot_spill() {
+    let log = Arc::new(MemoryLog::new());
+    let primary = primary(&log);
+    let (standby, kept) = (following(), Kept::default());
+    standby.set_spill(Box::new(Refusing)).unwrap();
+    standby.set_setting("MEMORY.WORK_BYTES", &number(64_i64 << 10)).unwrap();
+    standby.set_diagnostics(Box::new(kept.clone())).unwrap();
+    let writer = primary.session("APP");
+    for k in 100_u32..1100_u32 {
+        exec(&writer, &format!("INSERT INTO T VALUES ({k}, 'v{k}')")).unwrap();
+    }
+    writer.commit().unwrap();
+    let commit = Lsn(log.end().0 - 1);
+    let held: Vec<_> = log.read_from(Lsn(0)).filter(|r| r.as_ref().is_ok_and(|(at, _)| *at < commit)).collect();
+    Standby::replay(&standby, &mut held.into_iter()).unwrap();
+    assert!(kept.taken().iter().any(|(_, e)| e.contains("Failed") && e.contains("refused")), "the refusal told");
+    // The replay of the transaction, as recovery's, spills its changes.
+    standby.set_spill(Box::new(turborel::spill::PagedSpill)).unwrap();
+    Standby::replay(&standby, &mut log.read_from(commit)).unwrap();
+    assert_eq!(answers(&standby, &["T_V"]), answers(&primary, &["T_V"]));
 }

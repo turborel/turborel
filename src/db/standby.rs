@@ -22,12 +22,15 @@
 //! **Continuous replay.** A group commits a log record by record, so the
 //! records a following database is given end anywhere: within a
 //! transaction, whose commit comes in a later call. Following, it holds
-//! the records of each transaction not yet ended, and replays them with
-//! the record that ends it; the others at once, as recovery replays them
-//! wherever they stand: a definition made outside the transactions of
-//! sessions, a setting, a user, an index, a checkpoint's. So each call
-//! replays what recovery of the whole log so far would make of it, with
-//! the transactions left open undone.
+//! the records of each transaction not yet ended, each transaction's in a
+//! work area's bytes (MEMORY.WORK_BYTES) and the rest in a spill area
+//! (`txn/followed.rs`), and replays them with the record that ends it,
+//! merged in position order as they are read back (`standby/merge.rs`);
+//! the others at once, as recovery replays them wherever they stand: a
+//! definition made outside the transactions of sessions, a setting, a
+//! user, an index, a checkpoint's. So each call replays what recovery of
+//! the whole log so far would make of it, with the transactions left open
+//! undone.
 //!
 //! **Ending open transactions.** A view change keeps records that had not
 //! committed ([VRR §4.2]: "Operations that had not committed might also
@@ -40,16 +43,21 @@
 //! The export and import of a database, by which state transfer brings up
 //! a replica the log alone no longer can, are not yet part of the seam.
 
+mod merge;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use self::merge::{Merged, Stream};
 use super::recovery::Definitions;
 use super::{Database, State, api};
-use crate::error::Result;
+use crate::diagnostics::Event;
+use crate::error::{Result, SqlError};
 use crate::log::record::{Change, Record};
-use crate::log::{Log, Lsn};
+use crate::log::{Log, Lsn, sealed};
+use crate::spill::ListSpace;
 use crate::sync::lock_builtin;
-use crate::txn::{Held, NO_TRANSACTION, TxId};
+use crate::txn::{Followed, FollowedRecords, Held, NO_TRANSACTION, TxId};
 
 /// \[DESIGN\] A database as a replica of a group sees it (RULES.md D57):
 /// see the module's documentation.
@@ -130,31 +138,29 @@ fn scope(record: &Record) -> Scope {
 
 impl Standby for Database {
     fn replay(&self, records: &mut dyn Iterator<Item = Result<(Lsn, Vec<u8>)>>) -> Result<Lsn> {
-        let tx = Arc::clone(&self.snapshot()?.tx);
+        let (tx, space) = {
+            let st = self.snapshot()?;
+            (Arc::clone(&st.tx), st.list_space())
+        };
         refuse_deposed(tx.held(), "replays a log")?;
         let (encodings, types) = self.openers()?;
         let mut taken = Vec::new();
         for read in records {
             let (at, bytes) = read?;
-            taken.push((at, crate::log::sealed::open(&bytes, &encodings, &types)?));
+            let record = sealed::open(&bytes, &encodings, &types)?;
+            taken.push((at, bytes, record));
         }
         tx.hold(Some(Held::Following));
-        let last = taken.last().map_or(Lsn(0), |&(at, _)| at);
-        let mut now = Vec::new();
-        {
-            let mut followed = lock_builtin(&tx.followed);
-            for (at, record) in taken {
-                match scope(&record) {
-                    Scope::Now => now.push((at, record)),
-                    Scope::Open(id) => followed.entry(id).or_default().push((at, record)),
-                    Scope::Ends(id) => {
-                        now.extend(followed.remove(&id).unwrap_or_default());
-                        now.push((at, record));
-                    }
-                }
-            }
+        let last = taken.last().map_or(Lsn(0), |&(at, _, _)| at);
+        // Taken out while records are held, as holding them may write to a
+        // spill area, a plug-in (RULES.md R-ERR-4); calls take turns.
+        let mut followed = std::mem::take(&mut *lock_builtin(&tx.followed));
+        let sorted = sort_out(taken, &mut followed, &space);
+        *lock_builtin(&tx.followed) = followed;
+        if let Some(e) = sorted.failed {
+            self.emit(&Event::Failed(e));
         }
-        self.replay_now(now)?;
+        self.replay_now(sorted.now, sorted.ended)?;
         Ok(last)
     }
 
@@ -170,12 +176,11 @@ impl Standby for Database {
         if let Some(&(last, _)) = ends.last() {
             log.sync(last)?;
         }
-        let held: BTreeMap<TxId, Vec<(Lsn, Record)>> = {
+        let held: Vec<FollowedRecords> = {
             let mut followed = lock_builtin(&tx.followed);
-            open.iter().filter_map(|id| followed.remove_entry(id)).collect()
+            open.iter().filter_map(|id| followed.remove(id)).collect()
         };
-        ends.extend(held.into_values().flatten());
-        self.replay_now(ends)?;
+        self.replay_now(ends, held)?;
         self.set_log(log)?;
         tx.hold(None);
         Ok(())
@@ -187,16 +192,55 @@ impl Standby for Database {
     }
 }
 
+/// What a call to `replay` does with the records it took: replays at
+/// once, or holds; and the first failure to spill those it holds.
+struct Sorted {
+    /// The records replayed at once, in position order.
+    now: Vec<(Lsn, Record)>,
+    /// The records held of each transaction those end.
+    ended: Vec<FollowedRecords>,
+    /// The spill area's failure: the records are held all the same, in
+    /// memory.
+    failed: Option<SqlError>,
+}
+
+/// Sorts out `taken`, each a position, its bytes and its record: each
+/// replayed at once, held in `followed` with its transaction's, spilling
+/// in `space`, or ending its transaction, whose records held are taken.
+fn sort_out(taken: Vec<(Lsn, Vec<u8>, Record)>, followed: &mut BTreeMap<TxId, FollowedRecords>, space: &ListSpace) -> Sorted {
+    let mut sorted = Sorted { now: Vec::new(), ended: Vec::new(), failed: None };
+    for (at, bytes, record) in taken {
+        match scope(&record) {
+            Scope::Now => sorted.now.push((at, record)),
+            Scope::Open(id) => {
+                let held = followed.entry(id).or_insert_with(|| FollowedRecords::new(space.clone()));
+                if let Err(e) = held.push(Followed { at, bytes }) {
+                    sorted.failed.get_or_insert(e);
+                }
+            }
+            Scope::Ends(id) => {
+                sorted.ended.extend(followed.remove(&id));
+                sorted.now.push((at, record));
+            }
+        }
+    }
+    sorted
+}
+
 impl Database {
-    /// Replays `records`, in position order, by the one replay; then makes
-    /// the index entries of the rows it touched, as index entries are not
-    /// logged, and applies the settings it made.
-    fn replay_now(&self, mut records: Vec<(Lsn, Record)>) -> Result<()> {
-        if records.is_empty() {
+    /// Replays `now` and the records `ended` hold, merged in position
+    /// order, by the one replay; then makes the index entries of the rows
+    /// it touched, as index entries are not logged, and applies the
+    /// settings it made.
+    fn replay_now(&self, now: Vec<(Lsn, Record)>, ended: Vec<FollowedRecords>) -> Result<()> {
+        if now.is_empty() && ended.is_empty() {
             return Ok(());
         }
-        records.sort_by_key(|&(at, _)| at);
-        let (_, mut touched) = self.replay_records(&mut records.into_iter().map(Ok), Definitions::All)?;
+        let (encodings, types) = self.openers()?;
+        let open = |held: Result<Followed>| held.and_then(|f| Ok((f.at, sealed::open(&f.bytes, &encodings, &types)?)));
+        let mut streams: Vec<Stream<'_>> = vec![Box::new(now.into_iter().map(Ok))];
+        streams.extend(ended.into_iter().map(|held| -> Stream<'_> { Box::new(held.into_records().map(open)) }));
+        let (_, mut touched) = self.replay_records(&mut Merged::new(streams), Definitions::All)?;
         self.change(|st: &mut State| st.mend_indexes(&mut touched, |_| true))?;
         self.apply_settings()
     }
