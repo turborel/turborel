@@ -5,7 +5,7 @@ use turborel_client::agent::Agent;
 
 pub use turborel_test_support::Scratch;
 pub use turborel_test_support::server::{Running, start, start_with};
-pub use turborel_test_support::tls::{Pki, pki, secured};
+pub use turborel_test_support::tls::{Pki, client_certificate, pki, secured};
 
 /// Options to reach `server` as X, trusted, to run `inputs`.
 pub fn options(server: &Running, inputs: Vec<Input>) -> Options {

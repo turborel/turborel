@@ -157,6 +157,64 @@ fn sighup_opens_the_log_again() {
     assert!(after.contains(r#""event":"stopping","connections":0"#) && !after.contains(r#""event":"listening""#), "{after}");
 }
 
+/// Verifies: [DESIGN] RULES.md D40, D42: on Unix, SIGHUP takes the
+/// server's TLS certificate and key again, renewed in place in their
+/// files: the connections after are secured by the new ones; files that
+/// cannot be taken keep the ones there were, told in the log.
+#[cfg(unix)]
+#[test]
+fn sighup_takes_tls_again() {
+    use turborel_test_support::tls::pki;
+    let (old, new) = (pki("program-tls"), pki("program-tls-new"));
+    let log = old.scratch.path("log");
+    let (chain, key) = (format!("SERVER.TLS_CERTIFICATE={}", old.chain.display()), format!("SERVER.TLS_KEY={}", old.key.display()));
+    let log_at = log.display().to_string();
+    let line = [
+        "--memory",
+        "--set",
+        "SERVER.PORT=0",
+        "--set",
+        "SERVER.LOGIN_DELAY_MS=0",
+        "--set",
+        "SERVER.TLS=ON",
+        "--set",
+        &chain,
+        "--set",
+        &key,
+        "--log",
+        &log_at,
+    ];
+    let (at, stop, thread) = running(config(&line.map(str::to_owned)));
+    let address: SocketAddr = at[0].parse().unwrap();
+    // Trust is not taken: a refusal of credentials (28000) is a handshake
+    // done, a certificate not trusted a connection failed (08006).
+    let reached = |authority: &std::path::Path| {
+        let config = turborel_client::tls::trusting(authority).unwrap();
+        turborel_client::tls::connect(address, ("localhost", &config), "x", &mut Trust).err().unwrap().sqlstate
+    };
+    assert_eq!(reached(&old.authority), "28000");
+    std::fs::copy(&new.chain, &old.chain).unwrap();
+    std::fs::copy(&new.key, &old.key).unwrap();
+    let hup = || assert!(std::process::Command::new("kill").args(["-HUP", &std::process::id().to_string()]).status().unwrap().success());
+    hup();
+    let renewed = (0..10_000_u32).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        reached(&new.authority) == "28000"
+    });
+    assert!(renewed, "secured by the new certificate");
+    std::fs::write(&old.chain, b"").unwrap();
+    hup();
+    let told = (0..10_000_u32).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::fs::read_to_string(&log).unwrap_or_default().contains(r#""event":"tls_reload_failed""#)
+    });
+    assert!(told, "a failed reload told");
+    assert_eq!(reached(&new.authority), "28000", "the one there was kept");
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+    assert!(std::fs::read_to_string(&log).unwrap().contains(r#""event":"tls_reloaded""#));
+}
+
 /// Verifies: [DESIGN] RULES.md D36, D42: the program stops, saying why,
 /// when it cannot open its database, set a setting, listen at its address
 /// or at its socket, or is set to listen nowhere; it serves nothing then.

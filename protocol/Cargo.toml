@@ -13,6 +13,13 @@ autotests = false
 
 [dependencies]
 turborel = { version = "0.0.0", path = ".." }
+# SCRAM-SHA-256 (RULES.md D26, D43), only with the feature `scram`: its
+# HMAC-SHA-256, SHA-256, PBKDF2 and randomness from the aws-lc-rs of TLS.
+# Without it, the protocol has no dependency beyond turborel.
+aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"], optional = true }
+
+[features]
+scram = ["dep:aws-lc-rs"]
 
 [lints]
 workspace = true

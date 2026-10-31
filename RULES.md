@@ -108,7 +108,7 @@ from the start is cheaper than retrofitting.
 
 **D3. No third-party dependencies,** in the library, the client or the
 tools. The exceptions are cryptography in plug-ins (D26), which the
-client takes only with its feature `tls`, compression in plug-ins
+client and the protocol take only with their features `tls` and `scram`, compression in plug-ins
 (D48), tokio in the server crate (D42), tokio's signals in the
 command-line client, and rpassword in it and in `turboreld` (D46).
 *Why:* every line can be reviewed, and there is no supply chain to
@@ -460,6 +460,18 @@ under R-SAFE-4.
   `argon2`, its one implementation in Rust, says nothing of an audit or
   of being ready for production, and has no FIPS path. A verifier names
   its scheme, so Argon2id may come beside it.
+- SCRAM-SHA-256 (D43): its HMAC-SHA-256, SHA-256, PBKDF2 and randomness
+  from the same aws-lc-rs, in `turborel-protocol` with its feature
+  `scram`, which the server takes and the client with its own feature
+  `scram`: both sides one implementation, checked against RFC 7677's
+  example. Its base 64 is written here: an encoding, not cryptography.
+- Client certificates (D42) are verified by rustls's
+  `WebPkiClientVerifier`; the common name of a verified certificate's
+  subject is read from its DER by the server's own walk of tags and
+  lengths, as no vetted crate in the tree reads a subject.
+- The client trusts the authorities of the files it is given alone: the
+  platform's need rustls-native-certs or webpki-roots, neither in the
+  tree, each needing a decision of its own under R-SAFE-4.
 - Cryptographic hash functions, as `HashFunction`s (D30), from the same
   aws-lc-rs, in `turborel-aes`: SHA-256 (id 11), a checksum no accident
   matches, though one who can rewrite a file can rewrite its checksums;
@@ -1723,7 +1735,7 @@ make.
   `turborel`, the core, std only and synchronous; `turborel-protocol`, the
   native wire protocol's messages and codec, without I/O, on the core's
   types; `turborel-client`, a blocking connection over the protocol, std
-  only but for TLS with its feature `tls`, for programs that connect rather
+  only but for TLS and SCRAM with its features `tls` and `scram`, for programs that connect rather
   than embed; `turborel-server`, the server as a library, for any program
   to serve a database with; and `turboreld`, the server's program: its
   command line, its signals, the database opened and closed. The server
@@ -1781,8 +1793,9 @@ make.
   too, taken as their bytes arrive.
 - Extension points (R-SAFE-3): `auth::Authenticator`, a mechanism of
   authentication as an exchange of as many steps as it needs, built in
-  `password` (D43) and `trust`, which takes only clients of the server's
-  own machine, and only while SERVER.TRUST is LOCAL;
+  `password`, `scram-sha-256` and `certificate` (D43) and `trust`, which
+  takes only clients of the server's own machine, and only while
+  SERVER.TRUST is LOCAL;
   `transport::Listener`, built in TCP and Unix sockets; and
   `server::Protocol`, built in the native protocol.
 - TLS (D26) secures an endpoint's TCP connections, as SERVER.TLS says:
@@ -1793,7 +1806,19 @@ make.
   refused (SQLSTATE 08004). The handshake runs in the connection's own
   task. A Unix socket needs none. An authenticator knows whether its peer
   is secure (`Peer::secure`), so one taking a secret refuses it in the
-  clear.
+  clear. With SERVER.TLS_CLIENT_CA, the PEM file of authorities, each TLS
+  client is asked for a certificate of theirs, verified by rustls; one
+  presenting none is served, one presenting another's fails its
+  handshake; the common name of a verified one's subject is known to the
+  authenticators (`Peer::certificate`).
+- TLS's files are taken again without a restart (`Tls::reload`): as the
+  next connection begins TLS once SERVER.TLS_CERTIFICATE, SERVER.TLS_KEY
+  or SERVER.TLS_CLIENT_CA has changed, and on SIGHUP (Unix) from the same
+  files, for a certificate renewed in place. The connections after are
+  secured by the new ones, those secured go on; files that cannot be
+  taken leave those there were, told (`Event::TlsReloadFailed`) once a
+  change, and new ones taken are told (`Event::TlsReloaded`). SERVER.TLS
+  takes effect as the server starts.
 - The native protocol, version 1 (`turborel_protocol`, D45): framed
   messages, a kind and a little-endian length; Hello with the version, the
   user and the mechanism; every error with its SQLCODE, SQLSTATE, message,
@@ -1807,7 +1832,8 @@ make.
   failed or cut by the server stopping, it is rolled back [§20.1 GR2a].
 - Configuration is the database's settings (D36), declared by the server
   on the database it serves: SERVER.HOST, SERVER.PORT, SERVER.SOCKET and
-  the TLS settings when it starts; SERVER.WORKERS, SERVER.MAX_CONNECTIONS,
+  SERVER.TLS when it starts, TLS's files as connections begin TLS;
+  SERVER.WORKERS, SERVER.MAX_CONNECTIONS,
   SERVER.MAX_MESSAGE_BYTES, SERVER.BATCH_BYTES and the timeouts as
   statements and connections begin, so a change needs no restart.
   `turboreld --set NAME=VALUE` sets one as it starts.
@@ -1819,7 +1845,8 @@ make.
   made by the server's runtime module (D55): a slow disk or a blocked
   pipe holds up no statement; a line past the bound is dropped, counted,
   and the count told. SIGHUP (Unix) opens the file again, for a log
-  rotation; off Unix a log is rotated with the server stopped.
+  rotation, and takes TLS's files again; off Unix a log is rotated with
+  the server stopped.
 - The server's own errors are SQLCODE -919, a connection exception: SQLSTATE
   08004 for a connection refused, 08006 for one failed, 28000 for
   credentials refused [ISO/IEC 9075:1992 §22.1, Table 23].
@@ -1848,8 +1875,12 @@ is configured, seen and changed like the database's.
 - A verifier is opaque to the core. A `Credentials` plug-in makes one of a
   password (`Database::set_credentials`); the authenticator of the same
   scheme checks a password against it. The server's is PBKDF2-HMAC-SHA256
-  (D26), its verifier `$pbkdf2-sha256$i=N$salt$hash`, naming its scheme
-  and iterations, so verifiers made before a change of either still check.
+  (D26) and SCRAM-SHA-256's keys of it, its verifier
+  `$scram-sha-256$i=N$salt$StoredKey$ServerKey`, naming its scheme and
+  iterations, so verifiers made before a change of either still check.
+  It keeps StoredKey and ServerKey, never the salted password, which
+  would let whoever read it log in by SCRAM; one verifier serves both
+  mechanisms of a password.
 - The authenticator `password` takes a password only over a secure
   connection (`Peer::secure`: TLS, or a Unix socket), as the password
   travels whole. The client's side refuses it first: a connection to a
@@ -1857,6 +1888,29 @@ is configured, seen and changed like the database's.
   secret (`Mechanism::secret`), as `password` does. A user not there is
   refused as a wrong password is, after as long, the check made against
   a decoy verifier.
+- The authenticator `scram-sha-256` (RFC 5802, RFC 7677) proves the
+  password without its travelling, and proves the server to the client:
+  client-first in Hello; server-first, client-final and server-final
+  each a Challenge or an Answer; an empty Answer, the server's signature
+  checked, then Ready, which the client refuses before it
+  (`Mechanism::ready`). No channel binding: a header asking for it, or
+  for another identity, is refused; Hello names the user, the `n=` of
+  client-first left aside; a password is its UTF-8 bytes, without
+  SASLprep. An exchange overheard lets its eavesdropper guess the
+  password at leisure, and one relayed by a server in the middle cannot
+  be told without binding: so it is taken over a secure connection, over
+  plain TCP only while SERVER.SCRAM_WITHOUT_TLS is ON (OFF by default),
+  and the client's side is secret unless its program says
+  (`Scram::in_the_clear`). A user not there is answered with a salt made
+  of its name and a secret of the server's, the same each time as a
+  user's is, and refused as a wrong proof is. The command-line client
+  proves a password so (D46).
+- The authenticator `certificate` takes the client whose certificate,
+  verified against SERVER.TLS_CLIENT_CA (D42), has a subject of exactly
+  one common name, which, read as an `<identifier>`, is the user named,
+  and the user is one: `CN=ann` is ANN. One name compared whole is the
+  simplest mapping that cannot be stretched; the authorities answer for
+  whom they certify.
 - Failed logins slow their address, never their user: a user locked out
   after failures would let anyone lock out anyone. After a failure, the
   next login from the address waits 100 ms, doubled with each failure
@@ -2006,18 +2060,21 @@ cannot have.
   path beginning '/'; DEFAULT is the server the command line names, the
   connection made as the program starts. A connection is proved as the
   command line says: a password typed is asked for again; one from
-  TURBOREL_PASSWORD is sent again. No transaction spans servers, so
+  TURBOREL_PASSWORD is proved again. No transaction spans servers, so
   CONNECT and SET CONNECTION are refused in an active one (0A001)
   [§15.1 GR1, §15.2 GR1], and DISCONNECT of a connection whose
   transaction is active (25000) [§15.3 GR6].
 - Where: `--host`/`--port` (127.0.0.1, 7422), `--tls FILE` trusting that
-  PEM file's certificates with `--server-name`, or `--socket` on Unix,
+  PEM file's certificates with `--server-name`, presenting `--certificate`
+  FILE and `--key` FILE if named, or `--socket` on Unix,
   refused clearly elsewhere. Every address of a host is tried until one
   answers; a refusal is not retried.
 - Who: `--user`, else the environment's USER or USERNAME. A password is
   typed without its echo (`-W`), or taken from TURBOREL_PASSWORD; never
   from the command line, where other users of the machine may see it.
-  Without either, the server is asked to trust the user.
+  It is proved by SCRAM-SHA-256 (D43), never sent. Without one, a
+  certificate presented proves the user (`certificate`); without either,
+  the server is asked to trust the user.
 - Ctrl-C cancels the statement running (D44) by tokio's signals, on a
   thread of their own with a one-thread runtime: SIGINT on Unix, the
   console's Ctrl-C on Windows. It cancels on the current connection, as

@@ -83,6 +83,8 @@ fn fields(json: &mut Json, event: &Event) {
             json.text("message", message);
         }
         Event::TlsFailed { peer, message } => json.texts(&[("event", "tls_failed"), ("peer", peer), ("message", message)]),
+        Event::TlsReloaded { certificate } => json.texts(&[("event", "tls_reloaded"), ("certificate", certificate)]),
+        Event::TlsReloadFailed { message } => json.texts(&[("event", "tls_reload_failed"), ("message", message)]),
         Event::LoginFailed { user, peer, mechanism, message } => {
             json.texts(&[("event", "login_failed"), ("user", user), ("peer", peer), ("mechanism", mechanism), ("message", message)]);
         }
@@ -415,6 +417,11 @@ mod tests {
                 Event::TlsFailed { peer: "10.0.0.1:5000".into(), message: "bad record".into() },
                 r#""level":"warning","event":"tls_failed","peer":"10.0.0.1:5000","message":"bad record"}"#,
             ),
+            (
+                Event::TlsReloaded { certificate: "/etc/c.pem".into() },
+                r#""level":"info","event":"tls_reloaded","certificate":"/etc/c.pem"}"#,
+            ),
+            (Event::TlsReloadFailed { message: "no key".into() }, r#""level":"warning","event":"tls_reload_failed","message":"no key"}"#),
             (
                 Event::LoginFailed { user: "ANN".into(), peer: "local".into(), mechanism: "password".into(), message: "refused".into() },
                 r#""level":"warning","event":"login_failed","user":"ANN","peer":"local","mechanism":"password","message":"refused"}"#,

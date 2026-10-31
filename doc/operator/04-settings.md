@@ -40,9 +40,9 @@ says the same in words:
 
 | TAKES_EFFECT | Appendix C | When | Of |
 |---|---|---|---|
-| STATEMENT | at once | for each statement that begins after the change | most |
+| STATEMENT | at once | for each statement, or connection, that begins after the change | most, the files of TLS among them |
 | TRANSACTION | from the next transaction | for each transaction that begins after the change | LOCK_WAIT, TRANSACTION_POLICY |
-| START | when the server starts | as the server next starts, or the database is next opened | SERVER.HOST, SERVER.PORT, SERVER.SOCKET, SERVER.TLS and its files, SERVER.TRUST, SERVER.PASSWORD_ITERATIONS, STORAGE.POOL_BYTES |
+| START | when the server starts | as the server next starts, or the database is next opened | SERVER.HOST, SERVER.PORT, SERVER.SOCKET, SERVER.TLS, SERVER.TRUST, SERVER.PASSWORD_ITERATIONS, STORAGE.POOL_BYTES |
 | CREATION | only when the database is made | as the database is made in its directory; fixed after | STORAGE.PAGE_SIZE, STORAGE.CHECKSUM, STORAGE.ENCODINGS, LOG.SEGMENT_SIZE |
 
 ```sql
@@ -62,13 +62,11 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  SERVER.PORT                                                  | START
  SERVER.SOCKET                                                | START
  SERVER.TLS                                                   | START
- SERVER.TLS_CERTIFICATE                                       | START
- SERVER.TLS_KEY                                               | START
  SERVER.TRUST                                                 | START
  STORAGE.POOL_BYTES                                           | START
  LOCK_WAIT                                                    | TRANSACTION
  TRANSACTION_POLICY                                           | TRANSACTION
-(15 rows)
+(13 rows)
 ```
 
 A setting fixed when the database is made is refused after:

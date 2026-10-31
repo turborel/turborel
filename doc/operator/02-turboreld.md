@@ -88,9 +88,12 @@ committed transaction: the database is recovered as it is next opened.
 SIGHUP, on Unix, opens the `--log` file again: a log rotation moves the
 file away, then sends SIGHUP, and the lines after go to a new file at
 the same path, made the server's user's alone
-([Diagnostics](08-diagnostics.md#rotating-the-log)). It does not stop
-the server. Windows has no such signal: there, a log
-is rotated with the server stopped.
+([Diagnostics](08-diagnostics.md#rotating-the-log)). It takes TLS's
+certificate, key and client authorities again from their files too, so
+a certificate renewed in place secures the connections after
+([TLS](06-network.md#tls)). It does not stop the server. Windows has no
+such signal: there, a log is rotated with the server stopped, and TLS's
+files are taken again as their settings change.
 
 The server's threads are named `turborel-server-<n>`: its I/O threads,
 one for each processor, and the threads statements run on, made as they

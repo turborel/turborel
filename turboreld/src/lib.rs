@@ -10,12 +10,18 @@
 //!
 //! Signals (Unix): SIGTERM, as Ctrl-C everywhere, stops the server, and a
 //! second hurries it (`Server::serve_until`); SIGHUP opens the `--log`
-//! file again, for a rotation that has moved it away. Windows has no
-//! SIGHUP: a log there is rotated with the server stopped.
+//! file again, for a rotation that has moved it away, and takes TLS's
+//! certificate, key and client authorities again (`Tls::reload`), for a
+//! certificate renewed in place. Windows has no SIGHUP: a log there is
+//! rotated with the server stopped, and TLS's files are taken again as
+//! their settings change, as everywhere.
+//!
+//! Clients prove who they are by `password`, `scram-sha-256` or
+//! `certificate`, or, with SERVER.TRUST LOCAL, are trusted on this machine.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use turborel::db::{Database, OpenOptions};
 use turborel::disk::io::{FileSystem, OsFileSystem};
@@ -26,13 +32,16 @@ use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, KEY_BYTES, KeyDirectory
 use turborel_lz4::Lz4;
 
 use tokio::runtime::Runtime;
-use turborel_server::auth::Trust;
+use turborel_server::auth::{Authenticator, Trust};
+use turborel_server::certificate::Certificate;
 use turborel_server::listening;
 use turborel_server::log::{Lines, Reopener};
 use turborel_server::native::Native;
 use turborel_server::password::{Password, Pbkdf2};
+use turborel_server::scram::Scram;
 use turborel_server::server::{Protocol, Server};
 use turborel_server::settings::{self, TRUST};
+use turborel_server::tls::Tls;
 
 /// The usage text.
 pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
@@ -73,6 +82,9 @@ The server's settings, beside the database's:
   SERVER.TLS             OFF, ON (TLS offered on the TCP port) or REQUIRED (default OFF)
   SERVER.TLS_CERTIFICATE the PEM file of the server's certificate chain
   SERVER.TLS_KEY         the PEM file of the server's private key
+  SERVER.TLS_CLIENT_CA   the PEM file of the authorities whose certificates clients
+                         may present to log in by (default none)
+  SERVER.SCRAM_WITHOUT_TLS  ON: take SCRAM-SHA-256 over plain TCP too (default OFF)
   SERVER.WORKERS         statements run at once (default: one per processor)
   SERVER.LOGIN_TIMEOUT   milliseconds a client has to begin TLS and authenticate
                          (default 60000; 0 for no limit)
@@ -104,15 +116,17 @@ The database's files, fixed when it is created: --set them as it is:
   LOG.SEGMENT_SIZE       the bytes of a segment of its log (default 64 MiB)
   STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
 
-Clients prove who they are by a user's password, over TLS or a Unix socket only; with
-SERVER.TRUST LOCAL, a client of this machine is trusted instead. The database's
+Clients prove who they are by a user's password, sent or proved by SCRAM-SHA-256, over
+TLS or a Unix socket only, or by a certificate of SERVER.TLS_CLIENT_CA's authorities
+whose common name is the user's; with SERVER.TRUST LOCAL, a client of this machine is
+trusted instead. The database's
 owner manages users in SQL (CREATE USER, ALTER USER, DROP USER), and sets the database's
 settings, the server's among them, on a running server: SET DATABASE NAME = VALUE.
 Ctrl-C, or SIGTERM on Unix, stops the server: each connection finishes its statement,
 then the database is closed. Past SERVER.SHUTDOWN_TIMEOUT milliseconds (default 30000;
 0 for no limit), or at a second Ctrl-C or SIGTERM, running statements are cancelled
 and connections closed, rolled back. SIGHUP (Unix) opens the --log file again, as
-a log rotation asks.
+a log rotation asks, and takes TLS's files again, for the connections after.
 A table's rows may pass through encodings of their own, compressed or encrypted:
 CREATE TABLE ... WITH (ENCODINGS = 'LZ4,AES-256-GCM:KEY'), or ALTER TABLE ... SET (...);
 rows written before keep theirs until the table is resealed.
@@ -245,28 +259,37 @@ pub fn run(
     (stop, hurry): (impl Future<Output = ()>, impl Future<Output = ()>),
 ) -> Result<(), String> {
     let runtime = turborel_server::runtime::runtime(None).map_err(|e| format!("cannot start: {e}"))?;
-    within(config, Some(&runtime), |mut server| {
+    let retaken = Retaken::default();
+    within(config, Some((&runtime, &retaken)), |mut server| {
         let db = server.database().clone();
-        server
-            .add_authenticator(Arc::new(Password::new(db.clone(), &Pbkdf2::of(&db)).map_err(|e| e.to_string())?))
-            .map_err(|e| e.to_string())?;
+        let credentials = Pbkdf2::of(&db);
+        let mut mechanisms: Vec<Arc<dyn Authenticator>> = vec![
+            Arc::new(Password::new(db.clone(), &credentials).map_err(|e| e.to_string())?),
+            Arc::new(Scram::new(db.clone(), &credentials).map_err(|e| e.to_string())?),
+            Arc::new(Certificate::new(db.clone())),
+        ];
         if settings::text(&db, TRUST) == "LOCAL" {
-            server.add_authenticator(Arc::new(Trust)).map_err(|e| e.to_string())?;
+            mechanisms.push(Arc::new(Trust));
         }
-        runtime.block_on(serve(server, ready, (stop, hurry)))
+        mechanisms.into_iter().try_for_each(|m| server.add_authenticator(m)).map_err(|e| e.to_string())?;
+        runtime.block_on(serve(server, ready, (stop, hurry), &retaken))
     })
 }
 
+/// The server's TLS, once it serves, which SIGHUP takes again.
+type Retaken = Arc<Mutex<Option<Arc<Tls>>>>;
+
 /// Does `work` with a server of `config`'s database, its settings set as
 /// `config` says; then closes the database, if it is kept somewhere,
-/// whether `work` failed or not. On `runtime`, if given, SIGHUP opens the
-/// log file again from the start.
+/// whether `work` failed or not. On `hearing`'s runtime, if given, SIGHUP
+/// opens the log file again from the start, and takes again the TLS its
+/// slot holds.
 ///
 /// # Errors
 ///
 /// What failed, for the operator: opening or closing the database, setting
 /// a setting, or `work`.
-fn within(config: &Config, runtime: Option<&Runtime>, work: impl FnOnce(Server) -> Result<(), String>) -> Result<(), String> {
+fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnOnce(Server) -> Result<(), String>) -> Result<(), String> {
     let db = Database::new();
     // Before the database opens, so its opening is told too.
     let sink = match &config.log {
@@ -275,8 +298,8 @@ fn within(config: &Config, runtime: Option<&Runtime>, work: impl FnOnce(Server) 
         }
         None => Lines::to_stderr().map_err(|e| format!("cannot write the log: {e}"))?,
     };
-    if let Some(runtime) = runtime {
-        hangups(runtime, sink.reopener())?;
+    if let Some((runtime, retaken)) = hearing {
+        hangups(runtime, sink.reopener(), Arc::clone(retaken))?;
     }
     db.set_diagnostics(Box::new(sink));
     register(&db, config)?;
@@ -373,13 +396,18 @@ fn read_as_opened(db: &Database, name: &str) -> bool {
         .any(|l| l.definition.name.eq_ignore_ascii_case(name.trim()) && matches!(l.definition.effect, Effect::Creation | Effect::Start))
 }
 
+/// Serves `server` where its settings say, until `stop`, hurried at
+/// `hurry`; `ready` told where it listens; its TLS, if any, put in
+/// `retaken`, for SIGHUP to take again.
 async fn serve(
     server: Server,
     ready: impl FnOnce(&[String]),
     (stop, hurry): (impl Future<Output = ()>, impl Future<Output = ()>),
+    retaken: &Retaken,
 ) -> Result<(), String> {
     let native: Arc<dyn Protocol> = Arc::new(Native);
     let endpoints = listening::bind(server.database(), &native).await.map_err(|e| e.to_string())?;
+    *retaken.lock().unwrap_or_else(PoisonError::into_inner) = endpoints.iter().find_map(|e| e.tls.clone());
     let names: Vec<String> = endpoints.iter().map(|e| e.listener.address()).collect();
     // Ready as `stop` is first polled: once the server takes connections
     // and has told `listening`, so that line goes to the log a rotation
@@ -394,30 +422,37 @@ async fn serve(
 
 /// \[DESIGN\] On Unix, SIGHUP heard on `runtime` from now on, each asking
 /// `reopener` to open the log file again: for a rotation, which moves the
-/// file away and then signals; and no longer the end of the process it is
-/// by default.
+/// file away and then signals; and the TLS `retaken` holds to take its
+/// files again, on a blocking thread, for a certificate renewed in place;
+/// and no longer the end of the process it is by default.
 ///
 /// # Errors
 ///
 /// The signal cannot be heard.
 #[cfg(unix)]
-fn hangups(runtime: &Runtime, reopener: Reopener) -> Result<(), String> {
+fn hangups(runtime: &Runtime, reopener: Reopener, retaken: Retaken) -> Result<(), String> {
     use tokio::signal::unix::{SignalKind, signal};
     let _entered = runtime.enter();
     let mut hangup = signal(SignalKind::hangup()).map_err(|e| format!("cannot hear SIGHUP: {e}"))?;
     runtime.spawn(async move {
         while hangup.recv().await.is_some() {
             reopener.reopen();
+            let tls = retaken.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            if let Some(tls) = tls {
+                // Told either way (`Tls::reload`).
+                drop(tokio::task::spawn_blocking(move || tls.reload()));
+            }
         }
     });
     Ok(())
 }
 
-/// Off Unix there is no SIGHUP: a log is rotated with the server stopped.
+/// Off Unix there is no SIGHUP: a log is rotated with the server stopped,
+/// and TLS's files are taken again as their settings change.
 #[cfg(not(unix))]
 #[expect(clippy::unnecessary_wraps, reason = "fails as on Unix, where the signal may not be heard")]
-fn hangups(_: &Runtime, reopener: Reopener) -> Result<(), String> {
-    drop(reopener);
+fn hangups(_: &Runtime, reopener: Reopener, retaken: Retaken) -> Result<(), String> {
+    drop((reopener, retaken));
     Ok(())
 }
 

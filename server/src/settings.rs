@@ -2,7 +2,8 @@
 //! database it serves, as a plug-in's are, so they are set as any setting
 //! is, kept with the database's definitions, and listed with the others.
 //! The server reads each when it needs it: where it listens, TLS, trust
-//! and passwords' iterations as it starts; its limits as statements and
+//! and passwords' iterations as it starts; TLS's files, and what clients
+//! prove themselves by, as connections begin; its limits as statements and
 //! connections begin, and its time to stop as it is told to, so a change
 //! of one takes effect with no restart.
 
@@ -28,6 +29,13 @@ pub const TLS_CERTIFICATE: &str = "SERVER.TLS_CERTIFICATE";
 pub const TLS_KEY: &str = "SERVER.TLS_KEY";
 /// The words of `TLS`: none, offered, or required of TCP clients.
 pub const TLS_MODES: &[&str] = &["OFF", "ON", "REQUIRED"];
+/// The PEM file of the authorities whose certificates a TLS client may
+/// present, to log in by them (`certificate.rs`); empty, none is asked for.
+pub const TLS_CLIENT_CA: &str = "SERVER.TLS_CLIENT_CA";
+/// Whether SCRAM-SHA-256 is taken over plain TCP: OFF or ON.
+pub const SCRAM_WITHOUT_TLS: &str = "SERVER.SCRAM_WITHOUT_TLS";
+/// The words of `SCRAM_WITHOUT_TLS`.
+pub const SWITCH: &[&str] = &["OFF", "ON"];
 /// Whether a client of this machine is trusted as who it says: LOCAL or
 /// OFF.
 pub const TRUST: &str = "SERVER.TRUST";
@@ -128,12 +136,50 @@ fn definitions() -> Vec<Definition> {
     let mut all = Vec::from(started());
     all.extend(limits());
     all.extend(waits());
+    all.extend(proofs());
     all
+}
+
+/// TLS's files and what clients prove themselves by, read as each
+/// connection is secured or authenticated: a change taken for the
+/// connections after (`tls.rs`).
+fn proofs() -> [Definition; 4] {
+    let text = Kind::Text { max: MAX_TEXT };
+    [
+        setting(
+            TLS_CERTIFICATE,
+            text.clone(),
+            Value::Char(String::new()),
+            Effect::Statement,
+            "The PEM file of the server's certificate chain, taken again for the connections after a change.",
+        ),
+        setting(
+            TLS_KEY,
+            text.clone(),
+            Value::Char(String::new()),
+            Effect::Statement,
+            "The PEM file of the server's private key, taken again for the connections after a change.",
+        ),
+        setting(
+            TLS_CLIENT_CA,
+            text,
+            Value::Char(String::new()),
+            Effect::Statement,
+            "The PEM file of the authorities whose certificates a TLS client may present to log in by; none asked for if empty.",
+        ),
+        setting(
+            SCRAM_WITHOUT_TLS,
+            Kind::Choice(SWITCH),
+            Value::Char("OFF".into()),
+            Effect::Statement,
+            "Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).",
+        ),
+    ]
 }
 
 /// The settings read as the server starts: where it listens, TLS, who it
 /// trusts, and its passwords' iterations.
-fn started() -> [Definition; 8] {
+fn started() -> [Definition; 6] {
     let text = Kind::Text { max: MAX_TEXT };
     [
         setting(
@@ -150,7 +196,7 @@ fn started() -> [Definition; 8] {
             Effect::Start,
             "The TCP port connections are taken at.",
         ),
-        setting(SOCKET, text.clone(), Value::Char(String::new()), Effect::Start, "The Unix socket connections are taken at, unless empty."),
+        setting(SOCKET, text, Value::Char(String::new()), Effect::Start, "The Unix socket connections are taken at, unless empty."),
         setting(
             TLS,
             Kind::Choice(TLS_MODES),
@@ -158,14 +204,6 @@ fn started() -> [Definition; 8] {
             Effect::Start,
             "Whether TCP connections may use TLS (ON), or must (REQUIRED).",
         ),
-        setting(
-            TLS_CERTIFICATE,
-            text.clone(),
-            Value::Char(String::new()),
-            Effect::Start,
-            "The PEM file of the server's certificate chain.",
-        ),
-        setting(TLS_KEY, text, Value::Char(String::new()), Effect::Start, "The PEM file of the server's private key."),
         setting(
             TRUST,
             Kind::Choice(TRUST_MODES),

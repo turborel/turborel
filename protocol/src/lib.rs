@@ -8,7 +8,8 @@
 //! exchange with a Challenge, the client each Challenge with an Answer,
 //! until the server sends Ready, with the session's authorization
 //! identifier, the key that cancels its statements, the capabilities both
-//! have and the server's product; or an Error, and closes.
+//! have and the server's product; or an Error, and closes. The steps of
+//! SCRAM-SHA-256, both sides', are `scram`, with the feature `scram`.
 //!
 //! Then the client sends requests, and may send one before the last is
 //! answered: each is answered in turn, in order.
@@ -80,6 +81,8 @@
 mod fields;
 mod reply;
 mod request;
+#[cfg(feature = "scram")]
+pub mod scram;
 
 use turborel::binder::OutColumn;
 use turborel::bytes::Put;

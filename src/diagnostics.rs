@@ -211,6 +211,19 @@ pub enum Event {
         /// Why.
         message: String,
     },
+    /// \[DESIGN\] A server took its TLS certificate chain, key and client
+    /// authorities again, on SIGHUP or a change of their settings: the
+    /// connections after are secured by them.
+    TlsReloaded {
+        /// The certificate chain's file.
+        certificate: String,
+    },
+    /// \[DESIGN\] A server could not take its TLS files again: it keeps
+    /// those it had.
+    TlsReloadFailed {
+        /// Why.
+        message: String,
+    },
     /// \[EXTENSION\] A client was refused as the user it named: for an
     /// audit of who tried to connect (RULES.md D43). Never with what it
     /// proved by.
@@ -258,6 +271,7 @@ impl Event {
             | Event::CheckpointOverdue { .. }
             | Event::StopHurried { .. }
             | Event::TlsFailed { .. }
+            | Event::TlsReloadFailed { .. }
             | Event::LoginFailed { .. }
             | Event::ConnectionsRefused { .. } => Level::Warning,
             Event::AcceptFailed { .. } => Level::Error,
@@ -275,7 +289,8 @@ impl Event {
             | Event::OwnerChanged { .. }
             | Event::Registered { .. }
             | Event::Listening { .. }
-            | Event::Stopping { .. } => Level::Info,
+            | Event::Stopping { .. }
+            | Event::TlsReloaded { .. } => Level::Info,
         }
     }
 

@@ -9,9 +9,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
+use crate::Failure;
 use crate::connection::{Connection, Mechanism, Result, failed};
 use crate::target::Target;
 use crate::timeouts::{Socket, Timeouts, tcp_to};
@@ -27,15 +28,50 @@ pub type TlsStream = StreamOwned<ClientConnection, TcpStream>;
 /// A connection failure if the file cannot be read or holds no
 /// certificate it can trust.
 pub fn trusting(roots: &Path) -> Result<Arc<ClientConfig>> {
-    let unreadable = |e: rustls::pki_types::pem::Error| failed(&format!("[DESIGN] cannot read {}: {e}", roots.display()));
+    config(authorities(roots)?)
+}
+
+/// A client's TLS that trusts the certificates in the PEM file `roots`,
+/// and presents to the server the certificate chain in the PEM file
+/// `chain`, its own first, its private key in the PEM file `key`: for the
+/// server's mechanism `certificate` (`connection::Certificate`).
+///
+/// # Errors
+///
+/// A connection failure if a file cannot be read, holds no certificate or
+/// key, or the key does not fit the certificate.
+pub fn presenting(roots: &Path, (chain, key): (&Path, &Path)) -> Result<Arc<ClientConfig>> {
+    let certificates = CertificateDer::pem_file_iter(chain).map_err(unreadable(chain))?;
+    let certificates = certificates.collect::<std::result::Result<Vec<_>, _>>().map_err(unreadable(chain))?;
+    let private = PrivateKeyDer::from_pem_file(key).map_err(unreadable(key))?;
+    let presented = builder()?.with_root_certificates(authorities(roots)?).with_client_auth_cert(certificates, private);
+    Ok(Arc::new(presented.map_err(|e| failed(&format!("[DESIGN] cannot present {}: {e}", chain.display())))?))
+}
+
+/// The failure of the PEM file `path` that cannot be read.
+fn unreadable(path: &Path) -> impl Fn(rustls::pki_types::pem::Error) -> Failure + '_ {
+    move |e| failed(&format!("[DESIGN] cannot read {}: {e}", path.display()))
+}
+
+/// The certificates of the PEM file `roots`, to trust: one at least.
+fn authorities(roots: &Path) -> Result<RootCertStore> {
     let mut store = RootCertStore::empty();
-    for certificate in CertificateDer::pem_file_iter(roots).map_err(unreadable)? {
-        store.add(certificate.map_err(unreadable)?).map_err(|e| failed(&format!("[DESIGN] cannot trust {}: {e}", roots.display())))?;
+    for certificate in CertificateDer::pem_file_iter(roots).map_err(unreadable(roots))? {
+        store
+            .add(certificate.map_err(unreadable(roots))?)
+            .map_err(|e| failed(&format!("[DESIGN] cannot trust {}: {e}", roots.display())))?;
     }
     if store.is_empty() {
         return Err(failed(&format!("[DESIGN] {} holds no certificate", roots.display())));
     }
-    config(store)
+    Ok(store)
+}
+
+/// A client's TLS, its protocol versions chosen, its trust not yet.
+fn builder() -> Result<rustls::ConfigBuilder<ClientConfig, rustls::WantsVerifier>> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let versions = ClientConfig::builder_with_provider(provider).with_safe_default_protocol_versions();
+    versions.map_err(|e| failed(&format!("[DESIGN] cannot make TLS: {e}")))
 }
 
 /// A client's TLS that trusts the certificates of `store`.
@@ -44,10 +80,7 @@ pub fn trusting(roots: &Path) -> Result<Arc<ClientConfig>> {
 ///
 /// A connection failure if rustls cannot make it.
 pub fn config(store: RootCertStore) -> Result<Arc<ClientConfig>> {
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let versions = ClientConfig::builder_with_provider(provider).with_safe_default_protocol_versions();
-    let builder = versions.map_err(|e| failed(&format!("[DESIGN] cannot make TLS: {e}")))?;
-    Ok(Arc::new(builder.with_root_certificates(store).with_no_client_auth()))
+    Ok(Arc::new(builder()?.with_root_certificates(store).with_no_client_auth()))
 }
 
 /// Connects over TLS, by `config`, to the server named `name` at

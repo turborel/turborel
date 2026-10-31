@@ -28,8 +28,8 @@ rpassword = "=7.5.4"
 tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
 
 [dev-dependencies]
-turborel-client = { version = "0.0.0", path = "../client" }
-turborel-test-support = { path = "../support", features = ["client"] }
+turborel-client = { version = "0.0.0", path = "../client", features = ["tls", "scram"] }
+turborel-test-support = { path = "../support", features = ["tls"] }
 
 [lints]
 workspace = true

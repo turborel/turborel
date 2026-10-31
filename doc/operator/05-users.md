@@ -5,9 +5,12 @@
 ## Users and the owner
 
 A user is a name a client of the server may connect as, proving it by a
-password. The database keeps, of each, not the password but a verifier
-made of it, PBKDF2 of SERVER.PASSWORD_ITERATIONS iterations, 600,000 by
-default; nothing in the database tells the password.
+password, or by a certificate ([Certificates](#certificates)). The
+database keeps, of each, not the password but a verifier made of it:
+PBKDF2 of SERVER.PASSWORD_ITERATIONS iterations, 600,000 by default,
+with a salt of its own, and of that two keys, SCRAM-SHA-256's StoredKey
+and ServerKey. Nothing in the database tells the password, nor lets
+anyone log in who has read the verifier.
 
 One user is the database's **owner**: the first made, unless another is
 made it. The owner alone manages the users in SQL, by [CREATE
@@ -35,12 +38,54 @@ its operator ends its connection ([Connections](06-network.md#ending-a-connectio
 
 ## Passwords
 
-A password is sent only over TLS or a Unix socket, never in the clear
-over TCP: the client refuses to send it so, and the server to take it. A client gives a wrong user or password the same answer, after
-as long: `the user or the password is wrong`, SQLSTATE 28000. After a
-failed login, the next from the same address waits, longer with each
-failure, up to SERVER.LOGIN_DELAY_MS, ten seconds by default
-([Logins](06-network.md#logins)); no user is ever locked out.
+A client proves a password by one of two mechanisms, which the server
+both takes:
+
+| Mechanism | How |
+|---|---|
+| `scram-sha-256` | SCRAM-SHA-256 (RFC 5802, RFC 7677): the client proves it knows the password, and the server that it knows the verifier, by a challenge and response; the password never travels. The command-line client uses it. |
+| `password` | the password is sent, inside TLS or over a Unix socket, and checked against the verifier |
+
+Either is taken only over TLS or a Unix socket, never in the clear over
+TCP: the client refuses to begin so, and the server to take it. A SCRAM
+exchange does not give the password away, but one overheard lets the
+eavesdropper try passwords against it at leisure, and without TLS a
+server in the middle could relay it. SERVER.SCRAM_WITHOUT_TLS ON lets
+the server take SCRAM over plain TCP all the same, for a network its
+operator trusts; it is OFF by default, and a client sends it so only if
+its program says.
+
+A password is taken as its UTF-8 bytes, without the SASLprep of RFC
+5802: the same of an ASCII password.
+
+A client gives a wrong user or password the same answer, after as long,
+by either mechanism: `the user or the password is wrong`, SQLSTATE
+28000. After a failed login, the next from the same address waits,
+longer with each failure, up to SERVER.LOGIN_DELAY_MS, ten seconds by
+default ([Logins](06-network.md#logins)); no user is ever locked out.
+
+## Certificates
+
+With SERVER.TLS_CLIENT_CA naming the PEM file of the authorities it
+trusts, the server asks each TLS client for a certificate. A client
+presenting one of those authorities' logs in, by the mechanism
+`certificate`, as the user its subject's common name names, read as an
+identifier, as a user's name is: `CN=ann` logs in as ANN, if ANN is a
+user. One name, compared whole, is the mapping: whoever the authorities
+certify as ANN may log in as ANN, and no one else by that certificate.
+A certificate of other authorities fails the TLS handshake; a client
+presenting none is served as before, by a password. A certificate as
+another user, or of a name that is no user's, is refused:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 28000): the certificate is not of the user named
+```
+
+```
+$ turboreld --dir db --set SERVER.TLS=ON --set SERVER.TLS_CERTIFICATE=/etc/turborel/cert.pem \
+      --set SERVER.TLS_KEY=/etc/turborel/key.pem --set SERVER.TLS_CLIENT_CA=/etc/turborel/clients.pem
+$ turborel -h localhost -U ann --tls /etc/turborel/ca.pem --certificate ann.pem --key ann.key
+```
 
 ## Trusted local clients
 

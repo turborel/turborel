@@ -6,6 +6,8 @@ use std::path::Path;
 
 #[cfg(unix)]
 use turborel_client::connection::{self, Password, Trust};
+#[cfg(unix)]
+use turborel_client::scram::Scram;
 use turborel_test_support::Scratch;
 #[cfg(unix)]
 use turborel_test_support::client::state;
@@ -92,7 +94,7 @@ fn a_verifier_takes_the_iterations_set_as_it_starts() {
     db.open_files(&fs, &dir, &turborel::db::OpenOptions::default()).unwrap();
     for (name, iterations) in [("ANN", 10_000), ("BOB", 20_000)] {
         let verifier = String::from_utf8(db.verifier(name).unwrap().unwrap()).unwrap();
-        assert!(verifier.starts_with(&format!("$pbkdf2-sha256$i={iterations}$")), "{name}: {verifier}");
+        assert!(verifier.starts_with(&format!("$scram-sha-256$i={iterations}$")), "{name}: {verifier}");
     }
     db.close().unwrap();
 }
@@ -101,7 +103,8 @@ fn a_verifier_takes_the_iterations_set_as_it_starts() {
 /// NAME, of the password read before the server starts, the first user
 /// and owner of a database kept nowhere, as it is served: it proves
 /// itself by that password, sets the database's settings and manages
-/// users in SQL. Without the password read, the server does not start.
+/// users in SQL, who prove themselves by password or SCRAM-SHA-256.
+/// Without the password read, the server does not start.
 /// Regression test (R-TEST-7): a database kept nowhere had no owner, and
 /// could have none, so no one could configure it in SQL.
 #[cfg(unix)]
@@ -129,7 +132,8 @@ fn a_database_kept_nowhere_is_given_its_owner() {
     c.query("SET DATABASE SERVER.MAX_CONNECTIONS = 9").unwrap();
     c.query("CREATE USER bob PASSWORD 'bob''s'").unwrap();
     c.terminate().unwrap();
-    assert_eq!(connection::connect_local(&socket, "bob", &mut Password("bob's".into())).unwrap().authorization(), "BOB");
+    let scram = connection::connect_local(&socket, "bob", &mut Scram::new("bob's")).unwrap();
+    assert_eq!(scram.authorization(), "BOB", "by SCRAM-SHA-256, which the program serves too");
     stop.send(()).unwrap();
     thread.join().unwrap().unwrap();
 }

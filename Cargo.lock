@@ -693,6 +693,7 @@ dependencies = [
 name = "turborel-protocol"
 version = "0.0.0"
 dependencies = [
+ "aws-lc-rs",
  "turborel",
 ]
 

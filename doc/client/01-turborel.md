@@ -21,6 +21,8 @@ as a table as they come, and each statement's outcome.
 | `--socket PATH` | the server's Unix socket instead (Unix only) |
 | `--tls FILE` | connect over TLS, trusting the certificates of the PEM file FILE |
 | `--server-name NAME` | the name the server's certificate is checked against; the host by default |
+| `--certificate FILE` | over TLS, present the certificate chain of the PEM file FILE |
+| `--key FILE` | the private key of that certificate, in the PEM file FILE |
 | `-U`, `--user NAME` | who connects; the user of the environment by default |
 | `-W`, `--password` | prove it by a password, typed without its echo |
 | `-c`, `--command SQL` | run SQL's statements; more than once for more |
@@ -33,12 +35,19 @@ as a table as they come, and each statement's outcome.
 | `--version` | print the release |
 
 A password may be given in the environment variable TURBOREL_PASSWORD
-instead of typed. Without either, the client asks the server to trust
-it as the user it names, which a server does only of a client of its own
-machine, and only if its setting SERVER.TRUST is LOCAL; it is OFF by
-default. A password is sent only over TLS or a Unix socket: over plain
-TCP the client refuses to send it, and connects to nothing (SQLSTATE
-28000).
+instead of typed. The client proves it by SCRAM-SHA-256, never sending
+it, and takes the server only once the server has proved it knows the
+user's verifier ([Passwords](../operator/05-users.md#passwords)). It
+does so only over TLS or a Unix socket: over plain TCP the client
+refuses to begin, and connects to nothing (SQLSTATE 28000).
+
+Without a password, a certificate presented, `--certificate` and
+`--key`, both, with `--tls`, proves the user its common name names, to a
+server that asks for one ([Certificates](../operator/05-users.md#certificates)).
+With a password, the password proves the user, the certificate presented
+still. Without either, the client asks the server to trust it as the
+user it names, which a server does only of a client of its own machine,
+and only if its setting SERVER.TRUST is LOCAL; it is OFF by default.
 
 ## Typed sessions
 

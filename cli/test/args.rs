@@ -66,7 +66,7 @@ fn options_are_taken() {
         "5",
     ];
     let options = parsed(&line, &[(PASSWORD_VARIABLE, "secret")]).unwrap();
-    let tls = Some(Tls { roots: PathBuf::from("ca.pem"), name: Some("db".into()) });
+    let tls = Some(Tls { roots: PathBuf::from("ca.pem"), name: Some("db".into()), identity: None });
     assert_eq!(options.server, Server::Tcp { host: "db.example".into(), port: 7000, tls });
     let inputs = [Input::Command("SELECT 1".into()), Input::File(PathBuf::from("a.sql")), Input::Command("SELECT 2".into())];
     assert_eq!((options.user.as_str(), options.inputs.as_slice(), options.null.as_str()), ("carol", inputs.as_slice(), "<null>"));
@@ -81,6 +81,22 @@ fn options_are_taken() {
     assert_eq!(long.inputs, [Input::File(PathBuf::from("b.sql"))]);
 }
 
+/// Verifies: [DESIGN] RULES.md D43, D46: `--certificate` and `--key` name
+/// the certificate the client presents over TLS, and its key; without a
+/// password, the certificate proves the user; with one, the password does,
+/// the certificate presented still.
+#[test]
+fn a_certificate_is_presented() {
+    let line = ["--tls", "ca.pem", "--certificate", "c.pem", "--key", "k.pem"];
+    let options = parsed(&line, &[("USER", "u")]).unwrap();
+    let identity = Some((PathBuf::from("c.pem"), PathBuf::from("k.pem")));
+    let tls = Some(Tls { roots: PathBuf::from("ca.pem"), name: None, identity: identity.clone() });
+    assert_eq!(options.server, Server::Tcp { host: "127.0.0.1".into(), port: DEFAULT_PORT, tls });
+    assert!(matches!(options.credentials, Credentials::Certificate));
+    let with_password = parsed(&line, &[("USER", "u"), (PASSWORD_VARIABLE, "x")]).unwrap();
+    assert!(matches!(with_password.credentials, Credentials::Given(_)));
+}
+
 /// Verifies: [DESIGN] RULES.md D46: `--help` asks for the usage; a command
 /// line that is wrong is refused, saying why.
 #[test]
@@ -93,7 +109,14 @@ fn a_wrong_command_line_is_refused() {
     assert_eq!(wrong(&["-p", "70000"]), "70000 is no port");
     assert_eq!(wrong(&["--read-timeout", "soon"]), "soon is no number of seconds");
     assert_eq!(wrong(&["--connect-timeout", "-1"]), "-1 is no number of seconds");
-    assert_eq!(wrong(&["--server-name", "db"]), "--server-name names the server TLS checks: name --tls too");
+    let of_tls = "--server-name, --certificate and --key are of TLS: name --tls too";
+    assert_eq!(wrong(&["--server-name", "db"]), of_tls);
+    assert_eq!(wrong(&["--certificate", "c.pem", "--key", "k.pem"]), of_tls);
+    let both = "--certificate and --key name a certificate and its key: both";
+    assert_eq!(
+        (wrong(&["--tls", "ca.pem", "--certificate", "c.pem"]), wrong(&["--tls", "ca.pem", "--key", "k.pem"])),
+        (both.into(), both.into())
+    );
     let elsewhere = "--socket names where the server is: not with --host, --port or --tls";
     for other in [["--host", "h"], ["--port", "1"], ["--tls", "ca.pem"]] {
         let line = [&["--socket", "s"][..], &other[..]].concat();

@@ -105,11 +105,13 @@ Each in a sentence:
 | SERVER.MAX_STATEMENTS | 1024 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.PASSWORD_ITERATIONS | 600000 | INTEGER FROM 10000 TO 4294967295 | when the server starts |  |
 | SERVER.PORT | 7422 | INTEGER FROM 0 TO 65535 | when the server starts |  |
+| SERVER.SCRAM_WITHOUT_TLS | OFF | ONE OF OFF, ON | at once |  |
 | SERVER.SHUTDOWN_TIMEOUT | 30000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.SOCKET | (empty) | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
 | SERVER.TLS | OFF | ONE OF OFF, ON, REQUIRED | when the server starts |  |
-| SERVER.TLS_CERTIFICATE | (empty) | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
-| SERVER.TLS_KEY | (empty) | TEXT OF AT MOST 1024 CHARACTERS | when the server starts |  |
+| SERVER.TLS_CERTIFICATE | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at once |  |
+| SERVER.TLS_CLIENT_CA | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at once |  |
+| SERVER.TLS_KEY | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at once |  |
 | SERVER.TRUST | OFF | ONE OF LOCAL, OFF | when the server starts |  |
 | SERVER.WORKERS | the processors | INTEGER FROM 1 TO 1024 | at once |  |
 
@@ -127,11 +129,13 @@ Each in a sentence:
 - **SERVER.MAX_STATEMENTS**: Prepared statements a connection holds at once, at most.
 - **SERVER.PASSWORD_ITERATIONS**: The PBKDF2 iterations of a password's verifier made from the start on.
 - **SERVER.PORT**: The TCP port connections are taken at.
+- **SERVER.SCRAM_WITHOUT_TLS**: Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).
 - **SERVER.SHUTDOWN_TIMEOUT**: The milliseconds a server told to stop lets each connection finish its statement, before it cancels the statements and closes the connections, their transactions rolled back; 0 for no limit.
 - **SERVER.SOCKET**: The Unix socket connections are taken at, unless empty.
 - **SERVER.TLS**: Whether TCP connections may use TLS (ON), or must (REQUIRED).
-- **SERVER.TLS_CERTIFICATE**: The PEM file of the server's certificate chain.
-- **SERVER.TLS_KEY**: The PEM file of the server's private key.
+- **SERVER.TLS_CERTIFICATE**: The PEM file of the server's certificate chain, taken again for the connections after a change.
+- **SERVER.TLS_CLIENT_CA**: The PEM file of the authorities whose certificates a TLS client may present to log in by; none asked for if empty.
+- **SERVER.TLS_KEY**: The PEM file of the server's private key, taken again for the connections after a change.
 - **SERVER.TRUST**: Whether a client of this machine is trusted as who it says (LOCAL), or proves it as every other does (OFF).
 - **SERVER.WORKERS**: Statements the server runs at once, at most.
 

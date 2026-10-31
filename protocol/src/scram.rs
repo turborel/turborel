@@ -1,0 +1,160 @@
+//! \[DESIGN\] SCRAM-SHA-256 (RFC 5802, RFC 7677; RULES.md D43), with the
+//! feature `scram`: a challenge and response by which a client proves it
+//! knows a user's password, and the server that it knows the user's
+//! verifier, the password never sent. Both sides' messages and keys are
+//! here, so the client and the server share one implementation; the
+//! cryptography is aws-lc-rs's (D26).
+//!
+//! ```text
+//! client-first:  n,,n=<user>,r=<client nonce>
+//! server-first:  r=<client nonce><server nonce>,s=<salt, base 64>,i=<iterations>
+//! client-final:  c=biws,r=<both nonces>,p=<ClientProof, base 64>
+//! server-final:  v=<ServerSignature, base 64>
+//!
+//! SaltedPassword  = PBKDF2-HMAC-SHA-256(password, salt, iterations)
+//! ClientKey       = HMAC(SaltedPassword, "Client Key")
+//! StoredKey       = SHA-256(ClientKey)
+//! ServerKey       = HMAC(SaltedPassword, "Server Key")
+//! AuthMessage     = client-first without "n,,", server-first, client-final
+//!                   without its proof, by commas
+//! ClientProof     = ClientKey XOR HMAC(StoredKey, AuthMessage)
+//! ServerSignature = HMAC(ServerKey, AuthMessage)
+//! ```
+//!
+//! The server keeps StoredKey and ServerKey, never SaltedPassword, which
+//! would let whoever reads it log in. No channel binding: the client sends
+//! the header `n` (none), or `y` (it could, but the server offers none);
+//! one asking for binding, `p=`, or naming another identity to act as,
+//! `a=`, is refused, as is a message with extensions. The protocol's Hello
+//! names the user authenticated; the `n=` of client-first is read and left
+//! aside, as it is part of AuthMessage. A password is taken as its UTF-8
+//! bytes, without SASLprep [RFC 5802 §2.2]: the same on both sides here, and
+//! the same of an ASCII password as SASLprep's.
+
+mod base64;
+
+use std::num::NonZeroU32;
+
+use aws_lc_rs::{constant_time, digest, hmac, pbkdf2};
+use turborel::error::{Code, Result, SqlError, SqlState};
+
+pub use base64::{decode, encode};
+
+/// The name of the mechanism, as a client asks for it.
+pub const MECHANISM: &str = "scram-sha-256";
+/// The bytes of a key, a proof or a signature: SHA-256's.
+pub const KEY_BYTES: usize = 32;
+/// \[DESIGN\] The random bytes of a nonce: 144 bits, in 24 characters of
+/// base 64, too many to guess or meet again.
+pub const NONCE_BYTES: usize = 18;
+/// \[DESIGN\] The GS2 header of a client without channel binding [RFC
+/// 5802 §7]; its base 64 is the `c=` of client-final.
+const GS2_NONE: &str = "n,,";
+/// \[DESIGN\] The GS2 header of a client that could bind the channel, but
+/// believes the server cannot [RFC 5802 §6].
+const GS2_UNOFFERED: &str = "y,,";
+/// \[DESIGN\] What ClientKey is the HMAC of [RFC 5802 §3].
+const CLIENT_KEY: &[u8] = b"Client Key";
+/// \[DESIGN\] What ServerKey is the HMAC of [RFC 5802 §3].
+const SERVER_KEY: &[u8] = b"Server Key";
+
+/// A key, a proof or a signature.
+pub type Key = [u8; KEY_BYTES];
+
+/// A refusal of the exchange: credentials refused (SQLSTATE 28000).
+fn refused(why: &str) -> SqlError {
+    SqlError::new(Code::Connection, format!("[DESIGN] SCRAM: {why}")).with_state(SqlState::INVALID_AUTHORIZATION)
+}
+
+fn hmac(key: &[u8], data: &[u8]) -> Key {
+    let tag = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), data);
+    tag.as_ref().try_into().unwrap_or([0; KEY_BYTES])
+}
+
+fn sha256(data: &[u8]) -> Key {
+    digest::digest(&digest::SHA256, data).as_ref().try_into().unwrap_or([0; KEY_BYTES])
+}
+
+fn xor(a: &Key, b: &Key) -> Key {
+    std::array::from_fn(|i| a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0))
+}
+
+/// SaltedPassword: `password` hashed with `salt`, `iterations` times, as
+/// Hi of RFC 5802 §2.2 is PBKDF2-HMAC-SHA-256 of one block.
+pub fn salted_password(password: &str, salt: &[u8], iterations: NonZeroU32) -> Key {
+    let mut salted = [0_u8; KEY_BYTES];
+    pbkdf2::derive(pbkdf2::PBKDF2_HMAC_SHA256, iterations, salt, password.as_bytes(), &mut salted);
+    salted
+}
+
+/// What a server keeps of a password: StoredKey and ServerKey.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Keys {
+    /// StoredKey: SHA-256 of ClientKey.
+    pub stored: Key,
+    /// ServerKey.
+    pub server: Key,
+}
+
+impl std::fmt::Debug for Keys {
+    /// Never the keys.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keys(..)")
+    }
+}
+
+impl Keys {
+    /// The keys of `salted`, a SaltedPassword.
+    pub fn of(salted: &Key) -> Keys {
+        Keys { stored: sha256(&hmac(salted, CLIENT_KEY)), server: hmac(salted, SERVER_KEY) }
+    }
+
+    /// Whether `salted` is the SaltedPassword these are of: compared in
+    /// constant time.
+    pub fn match_salted(&self, salted: &Key) -> bool {
+        constant_time::verify_slices_are_equal(&Keys::of(salted).stored, &self.stored).is_ok()
+    }
+}
+
+/// A new nonce, of the system's randomness: printable, without a comma.
+///
+/// # Errors
+///
+/// SQLCODE -915 if the system gives no randomness.
+pub fn nonce() -> Result<String> {
+    let mut bytes = [0_u8; NONCE_BYTES];
+    aws_lc_rs::rand::fill(&mut bytes).map_err(|_| SqlError::new(Code::Io, "[DESIGN] the system gave no randomness for a nonce"))?;
+    Ok(encode(&bytes))
+}
+
+/// The value of the attribute `name` that `field` is, as `name=value`.
+fn attribute(field: Option<&str>, name: char) -> Result<&str> {
+    let text = field.ok_or_else(|| refused(&format!("the attribute {name} is missing")))?;
+    text.strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix('='))
+        .ok_or_else(|| refused(&format!("the attribute {name} was expected, not {text}")))
+}
+
+/// Whether `nonce` is one: printable ASCII but the comma [RFC 5802 §7].
+fn is_nonce(nonce: &str) -> bool {
+    !nonce.is_empty() && nonce.bytes().all(|b| (0x21..=0x7e).contains(&b) && b != b',')
+}
+
+/// `user` as a saslname: `=` and `,` written `=3D` and `=2C` [RFC 5802 §5.1].
+fn saslname(user: &str) -> String {
+    user.replace('=', "=3D").replace(',', "=2C")
+}
+
+/// The UTF-8 of `bytes`, as a message of the exchange.
+fn text(bytes: &[u8]) -> Result<&str> {
+    std::str::from_utf8(bytes).map_err(|_| refused("a message is not UTF-8"))
+}
+
+mod client;
+mod server;
+
+pub use client::Client;
+pub use server::{First, Server};
+
+#[cfg(test)]
+mod tests;

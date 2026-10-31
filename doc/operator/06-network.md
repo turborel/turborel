@@ -7,14 +7,14 @@
 The server takes TCP connections at the hosts or addresses of
 SERVER.HOST, by commas, 127.0.0.1 by default, on SERVER.PORT, 7422; port
 0 lets the system choose one, which the server says as it starts.
-SERVER.HOST empty takes no TCP connection. Over TCP, a password is sent
-only once TLS secures the connection.
+SERVER.HOST empty takes no TCP connection. Over TCP, a password is proved
+only once TLS secures the connection ([Passwords](05-users.md#passwords)).
 
 ## Unix sockets
 
 SERVER.SOCKET names a Unix socket the server takes connections at too,
 on Linux and macOS. A connection over it is secured by the system, so a
-password may be sent over it.
+password may be proved over it.
 
 ```
 $ turboreld --dir db --set SERVER.SOCKET=/run/turborel/socket
@@ -46,7 +46,33 @@ turborel: SQLCODE -919 (SQLSTATE 08006): the TLS handshake failed: invalid peer 
 
 The server's certificate is one a certificate authority issued, as the
 client trusts: a self-signed certificate used as its own authority is
-refused.
+refused. The client trusts the authorities of its file alone, not the
+platform's.
+
+SERVER.TLS_CLIENT_CA names the PEM file of the authorities whose
+certificates clients may present, each then logging in as the user its
+common name names ([Certificates](05-users.md#certificates)); empty, its
+default, no client is asked for one.
+
+### Certificates renewed
+
+The server takes its certificate, key and client authorities again
+without a restart, for the connections secured after; those secured go
+on as they are:
+
+- when SERVER.TLS_CERTIFICATE, SERVER.TLS_KEY or SERVER.TLS_CLIENT_CA is
+  changed, as by the owner's SET DATABASE, as the next connection begins
+  TLS;
+- on SIGHUP, on Unix, from the same files, for a certificate renewed in
+  place ([Signals](02-turboreld.md#signals)).
+
+Files that cannot be taken, as a key that does not fit its certificate,
+leave the server with those it had; it tells the diagnostics,
+`tls_reload_failed`, once for each change, and `tls_reloaded` once it
+takes new ones ([Diagnostics](08-diagnostics.md)). So a certificate and
+its key changed by two statements, one after the other, may be refused
+between them, and taken after the second. SERVER.TLS itself, and so
+whether TLS is offered at all, takes effect as the server starts.
 
 ## Limits on connections
 

@@ -8,24 +8,43 @@
 //! it is refused (SQLSTATE 08004), and told why. The handshake runs in the
 //! connection's own task, so a slow client never holds up the others.
 //!
-//! TLS 1.2 and 1.3, rustls's safe defaults; the client is not asked for a
-//! certificate.
+//! TLS 1.2 and 1.3, rustls's safe defaults. With SERVER.TLS_CLIENT_CA, a
+//! client may present a certificate, verified against those authorities
+//! (rustls's `WebPkiClientVerifier`), its subject's common name then known
+//! to the authenticators (`Peer::certificate`, `certificate.rs`); one
+//! presenting none is served as before, one presenting another's fails its
+//! handshake.
+//!
+//! Its files are taken again without a restart (`Tls::reload`): when the
+//! settings naming them change, as the next connection is secured, and
+//! when the program asks, as `turboreld` does on SIGHUP. The connections
+//! after are secured by the new ones; those secured go on as they are. A
+//! reload that fails keeps the files it had, and is told
+//! (`Event::TlsReloadFailed`).
+
+mod subject;
 
 use std::io;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::task::{Context, Poll};
 
-use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::WebPkiClientVerifier;
+use rustls::{RootCertStore, ServerConfig};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsAcceptor;
 
+use turborel::db::Database;
+use turborel::diagnostics::Event;
 use turborel::files::Noted;
 
+use crate::settings::{self, TLS_CERTIFICATE, TLS_CLIENT_CA, TLS_KEY};
 use crate::transport::Transport;
+
+pub use subject::common_name;
 
 /// \[DESIGN\] The first byte of a TLS record of a handshake: its content
 /// type, handshake(22) [RFC 8446 §5.1].
@@ -33,64 +52,202 @@ const HANDSHAKE: u8 = 22;
 
 /// What a connection is, once its first byte is read.
 pub enum Secured {
-    /// Secured by TLS.
-    Tls(Box<dyn Transport>),
+    /// Secured by TLS; with the common name of the certificate its client
+    /// presented, verified, if any (`Peer::certificate`).
+    Tls(Box<dyn Transport>, Option<String>),
     /// In the clear.
     Plain(Box<dyn Transport>),
 }
 
+/// The files TLS is taken from, as the settings name them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Files {
+    /// The PEM file of the server's certificate chain, its own first.
+    pub chain: String,
+    /// The PEM file of its private key.
+    pub key: String,
+    /// The PEM file of the authorities a client's certificate is verified
+    /// against; empty, none asked for.
+    pub authorities: String,
+}
+
+impl Files {
+    /// The files `db`'s settings name: SERVER.TLS_CERTIFICATE,
+    /// SERVER.TLS_KEY and SERVER.TLS_CLIENT_CA.
+    pub fn of(db: &Database) -> Files {
+        Files {
+            chain: settings::text(db, TLS_CERTIFICATE),
+            key: settings::text(db, TLS_KEY),
+            authorities: settings::text(db, TLS_CLIENT_CA),
+        }
+    }
+
+    /// Each file named.
+    fn named(&self) -> Vec<&str> {
+        [&self.chain, &self.key, &self.authorities].into_iter().map(String::as_str).filter(|f| !f.is_empty()).collect()
+    }
+}
+
+/// Where a TLS's files are named: the database whose settings name them,
+/// and the files it last tried to take.
+struct Source {
+    db: Database,
+    tried: Mutex<Files>,
+}
+
 /// \[DESIGN\] TLS for a listener's connections.
 pub struct Tls {
-    acceptor: TlsAcceptor,
+    config: RwLock<Arc<ServerConfig>>,
     required: bool,
-    /// Its files, shown while it is taken (RULES.md D56).
-    _notes: Vec<Noted>,
+    /// Its files, shown while they are taken (RULES.md D56).
+    notes: Mutex<Vec<Noted>>,
+    /// Where its files are named, if it takes them again as they change.
+    source: Option<Source>,
+}
+
+/// What a lock guards, though a panic poisoned it: it is replaced whole.
+fn whole<T>(locked: std::sync::LockResult<T>) -> T {
+    locked.unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The configuration of a server whose certificate chain is `chain`, the
-/// first its own, and whose private key is `key`.
+/// first its own, and whose private key is `key`; asking a client for a
+/// certificate of `authorities`, if given, and serving one that presents
+/// none.
 ///
 /// # Errors
 ///
 /// rustls's, if the key does not fit the certificate or its kind is not
-/// one aws-lc-rs signs with.
-pub fn server_config(chain: Vec<CertificateDer<'static>>, key: PrivateKeyDer<'static>) -> Result<Arc<ServerConfig>, rustls::Error> {
+/// one aws-lc-rs signs with, or the authorities cannot verify.
+pub fn server_config(
+    chain: Vec<CertificateDer<'static>>,
+    key: PrivateKeyDer<'static>,
+    authorities: Option<RootCertStore>,
+) -> Result<Arc<ServerConfig>, rustls::Error> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let config = ServerConfig::builder_with_provider(provider).with_safe_default_protocol_versions()?.with_no_client_auth();
+    let versions = ServerConfig::builder_with_provider(Arc::clone(&provider)).with_safe_default_protocol_versions()?;
+    let config = match authorities {
+        None => versions.with_no_client_auth(),
+        Some(roots) => {
+            let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider).allow_unauthenticated().build();
+            versions.with_client_cert_verifier(verifier.map_err(|e| rustls::Error::General(e.to_string()))?)
+        }
+    };
     Ok(Arc::new(config.with_single_cert(chain, key)?))
 }
 
-fn invalid(what: &Path, e: impl std::fmt::Display) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", what.display()))
+fn invalid(what: &str, e: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, format!("{what}: {e}"))
+}
+
+/// The certificates of the PEM file `path`: one at least.
+fn certificates(path: &str) -> io::Result<Vec<CertificateDer<'static>>> {
+    let found = CertificateDer::pem_file_iter(Path::new(path)).map_err(|e| invalid(path, e))?;
+    let found = found.collect::<Result<Vec<_>, _>>().map_err(|e| invalid(path, e))?;
+    if found.is_empty() {
+        return Err(invalid(path, "no certificate"));
+    }
+    Ok(found)
+}
+
+/// The authorities of the PEM file `path`, if it is named.
+fn authorities(path: &str) -> io::Result<Option<RootCertStore>> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let mut roots = RootCertStore::empty();
+    for certificate in certificates(path)? {
+        roots.add(certificate).map_err(|e| invalid(path, e))?;
+    }
+    Ok(Some(roots))
+}
+
+/// The configuration `files` make.
+///
+/// # Errors
+///
+/// `InvalidData` if the chain or key is not named, a file cannot be read,
+/// holds no certificate or key, or the key does not fit the certificate.
+fn load(files: &Files) -> io::Result<Arc<ServerConfig>> {
+    if files.chain.is_empty() || files.key.is_empty() {
+        return Err(invalid("TLS", "SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY name its files"));
+    }
+    let chain = certificates(&files.chain)?;
+    let private = PrivateKeyDer::from_pem_file(Path::new(&files.key)).map_err(|e| invalid(&files.key, e))?;
+    server_config(chain, private, authorities(&files.authorities)?).map_err(|e| invalid(&files.chain, e))
+}
+
+/// `files`, shown among `db`'s files (RULES.md D56), each read once.
+///
+/// # Errors
+///
+/// `Other` if the database is closed.
+fn noted(db: &Database, files: &Files) -> io::Result<Vec<Noted>> {
+    let notes = files.named().into_iter().map(|f| db.note_file(Path::new(f), false)).collect::<turborel::error::Result<Vec<_>>>();
+    let notes = notes.map_err(|e| io::Error::other(e.msg))?;
+    notes.iter().for_each(Noted::read);
+    Ok(notes)
 }
 
 impl Tls {
     /// TLS by `config`; `required` if a client in the clear is refused.
     pub fn new(config: Arc<ServerConfig>, required: bool) -> Tls {
-        Tls { acceptor: TlsAcceptor::from(config), required, _notes: Vec::new() }
+        Tls { config: RwLock::new(config), required, notes: Mutex::new(Vec::new()), source: None }
     }
 
-    /// It, its files shown as `notes` say while it is taken.
-    #[must_use]
-    pub fn noting(self, notes: Vec<Noted>) -> Tls {
-        Tls { _notes: notes, ..self }
-    }
-
-    /// TLS with the certificate chain in the PEM file `chain` and the
-    /// private key in the PEM file `key`.
+    /// TLS of `files`.
     ///
     /// # Errors
     ///
-    /// `InvalidData` if a file cannot be read, holds no certificate or
-    /// key, or the key does not fit the certificate.
-    pub fn from_files(chain: &Path, key: &Path, required: bool) -> io::Result<Tls> {
-        let certificates = CertificateDer::pem_file_iter(chain).map_err(|e| invalid(chain, e))?;
-        let certificates = certificates.collect::<Result<Vec<_>, _>>().map_err(|e| invalid(chain, e))?;
-        if certificates.is_empty() {
-            return Err(invalid(chain, "no certificate"));
+    /// `InvalidData` if the chain or key is not named, a file cannot be
+    /// read, holds no certificate or key, or the key does not fit the
+    /// certificate.
+    pub fn from_files(files: &Files, required: bool) -> io::Result<Tls> {
+        Ok(Tls::new(load(files)?, required))
+    }
+
+    /// It, its files as `db`'s settings name them, shown among `db`'s
+    /// files, taken again when the settings change or `reload` asks.
+    ///
+    /// # Errors
+    ///
+    /// `Other` if the database is closed.
+    pub fn of(self, db: &Database) -> io::Result<Tls> {
+        let files = Files::of(db);
+        let notes = noted(db, &files)?;
+        Ok(Tls { notes: Mutex::new(notes), source: Some(Source { db: db.clone(), tried: Mutex::new(files) }), ..self })
+    }
+
+    /// Takes its files again, as its database's settings name them, for
+    /// the connections after; told either way, and, failing, keeping those
+    /// it had. Whether it took them; false of a TLS not of a database's
+    /// settings.
+    pub fn reload(&self) -> bool {
+        let Some(source) = &self.source else { return false };
+        let files = Files::of(&source.db);
+        whole(source.tried.lock()).clone_from(&files);
+        match load(&files).and_then(|config| Ok((config, noted(&source.db, &files)?))) {
+            Ok((config, notes)) => {
+                *whole(self.config.write()) = config;
+                *whole(self.notes.lock()) = notes;
+                source.db.tell(&Event::TlsReloaded { certificate: files.chain });
+                true
+            }
+            Err(e) => {
+                source.db.tell(&Event::TlsReloadFailed { message: e.to_string() });
+                false
+            }
         }
-        let private = PrivateKeyDer::from_pem_file(key).map_err(|e| invalid(key, e))?;
-        Ok(Tls::new(server_config(certificates, private).map_err(|e| invalid(chain, e))?, required))
+    }
+
+    /// Takes its files again if the settings name others than it last
+    /// tried to take.
+    fn refresh(&self) {
+        let Some(source) = &self.source else { return };
+        let changed = Files::of(&source.db) != *whole(source.tried.lock());
+        if changed {
+            self.reload();
+        }
     }
 
     /// Whether a client in the clear is refused.
@@ -110,8 +267,12 @@ impl Tls {
         if first != HANDSHAKE {
             return Ok(Secured::Plain(Box::new(prefixed)));
         }
-        let secured = self.acceptor.accept(prefixed).await?;
-        Ok(Secured::Tls(Box::new(secured)))
+        self.refresh();
+        let config = Arc::clone(&*whole(self.config.read()));
+        let acceptor = TlsAcceptor::from(config);
+        let secured = acceptor.accept(prefixed).await?;
+        let presented = secured.get_ref().1.peer_certificates().and_then(<[_]>::first).and_then(|c| common_name(c));
+        Ok(Secured::Tls(Box::new(secured), presented))
     }
 }
 

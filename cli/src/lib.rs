@@ -17,7 +17,8 @@ use std::net::ToSocketAddrs;
 use turborel::error::SqlState;
 
 use turborel_client::agent::Connected;
-use turborel_client::connection::{Mechanism, Password, Trust};
+use turborel_client::connection::{Certificate, Mechanism, Trust};
+use turborel_client::scram::Scram;
 use turborel_client::target::{Target, connect_to_within};
 use turborel_client::timeouts::Timeouts;
 use turborel_client::tls;
@@ -41,6 +42,8 @@ pub const USAGE: &str = "usage: turborel [options]
       --tls FILE         over TLS, trusting the certificates of the PEM file FILE
       --server-name NAME the name the server's certificate is checked against
                          (default the host)
+      --certificate FILE over TLS, present the certificate chain of the PEM file FILE
+      --key FILE         and its private key, of the PEM file FILE
   -U, --user NAME        who connects (default the user of the environment)
   -W, --password         prove it by a password, typed without its echo
   -c, --command SQL      run SQL's statements; more than once for more
@@ -60,9 +63,11 @@ Without -c or -f, statements are read from standard input: typed at a terminal,
 each is run once a semicolon ends it, and the end of input (Ctrl-D; Ctrl-Z then
 Enter on Windows) quits. The last statement of a file needs no semicolon.
 A password may be given in the environment variable TURBOREL_PASSWORD instead;
-without either, the server is asked to trust the user, as one with SERVER.TRUST
-LOCAL does a client of its own machine. A password is sent only over TLS or a
-Unix socket: over plain TCP the client refuses to send it.
+it is proved by SCRAM-SHA-256, never sent, and only over TLS or a Unix socket:
+over plain TCP the client refuses to begin. Without a password, a certificate
+presented proves the user its common name names; without either, the server is
+asked to trust the user, as one with SERVER.TRUST LOCAL does a client of its own
+machine.
 Ctrl-C cancels the statement running. The program exits with 1 if any
 statement failed.";
 
@@ -109,8 +114,9 @@ pub fn connect(options: &Options, typed: impl FnOnce() -> std::io::Result<String
 fn mechanism(credentials: &Credentials, typed: impl FnOnce() -> std::io::Result<String>) -> Result<Box<dyn Mechanism>, String> {
     Ok(match credentials {
         Credentials::Trust => Box::new(Trust),
-        Credentials::Ask => Box::new(Password(typed().map_err(|e| format!("cannot read the password: {e}"))?)),
-        Credentials::Given(password) => Box::new(password.clone()),
+        Credentials::Ask => Box::new(Scram::new(&typed().map_err(|e| format!("cannot read the password: {e}"))?)),
+        Credentials::Given(password) => Box::new(Scram::new(&password.0)),
+        Credentials::Certificate => Box::new(Certificate),
     })
 }
 
@@ -165,7 +171,11 @@ fn targets(server: &Server) -> Result<Vec<Target>, String> {
         Server::Tcp { host, port, tls } => {
             let addresses = (host.as_str(), *port).to_socket_addrs().map_err(|e| format!("cannot find {host}: {e}"))?;
             let Some(secured) = tls else { return Ok(addresses.map(Target::Tcp).collect()) };
-            let config = tls::trusting(&secured.roots).map_err(|e| e.to_string())?;
+            let config = match &secured.identity {
+                Some((chain, key)) => tls::presenting(&secured.roots, (chain, key)),
+                None => tls::trusting(&secured.roots),
+            }
+            .map_err(|e| e.to_string())?;
             let name = secured.name.clone().unwrap_or_else(|| host.clone());
             Ok(addresses.map(|address| Target::Tls(address, name.clone(), config.clone())).collect())
         }

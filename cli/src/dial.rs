@@ -36,7 +36,7 @@ impl Dialer {
             return socket_server(PathBuf::from(address));
         }
         let tls = match &self.options.server {
-            Server::Tcp { tls, .. } => tls.as_ref().map(|t| Tls { roots: t.roots.clone(), name: None }),
+            Server::Tcp { tls, .. } => tls.as_ref().map(|t| Tls { roots: t.roots.clone(), name: None, identity: t.identity.clone() }),
             #[cfg(unix)]
             Server::Socket(_) => None,
         };

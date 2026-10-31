@@ -440,7 +440,8 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   and `DROP USER name`, by the database's owner, outside a transaction;
   through Rust, `Database::create_user`, `set_verifier`, `drop_user` and
   `set_owner`; INFORMATION_SCHEMA.USERS. A `Credentials` plug-in makes a
-  verifier of a password; the server's is PBKDF2-HMAC-SHA256.
+  verifier of a password; the server's is PBKDF2-HMAC-SHA256, keeping
+  SCRAM-SHA-256's StoredKey and ServerKey.
 - **A server's connections** (RULES.md D42), which neither standard has:
   `END CONNECTION id` ends the connection of an ID of
   INFORMATION_SCHEMA.CONNECTIONS, what it runs cancelled, its session

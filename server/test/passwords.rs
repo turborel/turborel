@@ -102,7 +102,7 @@ fn a_password_never_leaves_over_plain_tcp() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4]; [DESIGN] RULES.md D43:
 /// over the wire, the owner creates a user with a password, as the
-/// server's PBKDF2 makes its verifier, who then proves itself by it; gives
+/// server's PBKDF2 and SCRAM make its verifier, who then proves itself by it; gives
 /// it another, the old one refused then; and drops it. Another user
 /// manages none (SQLCODE -104), and sees itself alone in
 /// INFORMATION_SCHEMA.USERS. A user statement waits for no transaction:
@@ -114,7 +114,7 @@ fn the_owner_manages_users_over_the_wire() {
     let mut ann = as_user(&server, &pki, ("ann", "ann's")).unwrap();
     assert_eq!(done(&ann.query("CREATE USER carol PASSWORD 'carol''s'").unwrap()), 0);
     let kept = db.verifier("CAROL").unwrap().unwrap();
-    assert!(pbkdf2::check(&kept, "carol's") && kept.starts_with(b"$pbkdf2-sha256$i=10000$"), "{}", String::from_utf8_lossy(&kept));
+    assert!(pbkdf2::check(&kept, "carol's") && kept.starts_with(b"$scram-sha-256$i=10000$"), "{}", String::from_utf8_lossy(&kept));
     as_user(&server, &pki, ("carol", "carol's")).unwrap().terminate().unwrap();
     assert_eq!(done(&ann.query("ALTER USER carol PASSWORD 'new'").unwrap()), 0);
     assert_eq!(state(&as_user(&server, &pki, ("carol", "carol's")).err().unwrap()).0, "28000", "the old one");

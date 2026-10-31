@@ -17,26 +17,32 @@ pub enum Origin {
     Local,
 }
 
-/// Who connected: where from, and whether what it sends is kept from
-/// others, so an authenticator may refuse a secret sent in the clear.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Who connected: where from, whether what it sends is kept from others,
+/// so an authenticator may refuse a secret sent in the clear, and the
+/// certificate it presented, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Peer {
     /// Where from.
     pub origin: Origin,
     /// Whether the connection is secure: over TLS, or a Unix socket, which
     /// only this machine reaches.
     pub secure: bool,
+    /// The common name of the subject of the certificate the client
+    /// presented over TLS, once TLS verified it against SERVER.TLS_CLIENT_CA
+    /// (`certificate.rs`); none if it presented none, or one without a
+    /// single common name.
+    pub certificate: Option<String>,
 }
 
 impl Peer {
     /// A TCP client at `address`, not secured yet.
     pub fn tcp(address: SocketAddr) -> Peer {
-        Peer { origin: Origin::Tcp(address), secure: false }
+        Peer { origin: Origin::Tcp(address), secure: false, certificate: None }
     }
 
     /// A client of a Unix socket: secure.
     pub fn local() -> Peer {
-        Peer { origin: Origin::Local, secure: true }
+        Peer { origin: Origin::Local, secure: true, certificate: None }
     }
 
     /// Where from, as the server shows and tells it: its address, or

@@ -32,12 +32,14 @@ mod common;
 
 mod agents;
 mod authentication;
+mod certificates;
 mod connections;
 mod diagnostics;
 mod ending;
 mod logins;
 mod passwords;
 mod prepared;
+mod scram;
 mod settings;
 mod shown;
 mod statements;

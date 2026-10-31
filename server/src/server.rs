@@ -519,9 +519,10 @@ impl Arrival {
     async fn secured(&self, transport: Box<dyn Transport>, peer: Peer, arrived: Instant) -> Option<(Box<dyn Transport>, Peer)> {
         let Some(tls) = &self.tls else { return Some((transport, peer)) };
         let handshake = self.services.login(arrived, async { tls.secure(transport).await.map_err(|e| broken(e.to_string())) });
-        let told = |e: &SqlError| self.services.database().tell(&Event::TlsFailed { peer: peer.name(), message: e.msg.clone() });
+        let name = peer.name();
+        let told = |e: &SqlError| self.services.database().tell(&Event::TlsFailed { peer: name, message: e.msg.clone() });
         match handshake.await {
-            Ok(Secured::Tls(secured)) => Some((secured, Peer { secure: true, ..peer })),
+            Ok(Secured::Tls(secured, certificate)) => Some((secured, Peer { secure: true, certificate, ..peer })),
             Ok(Secured::Plain(plain)) => {
                 if tls.required() {
                     self.protocol.refuse(plain, clear()).await;

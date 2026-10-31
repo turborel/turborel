@@ -35,17 +35,22 @@ Each item becomes a decision in RULES.md when done:
 ## Server
 
 The server (RULES.md D42) serves sessions over its native protocol, over
-TCP with TLS or a Unix socket, its clients authenticated by password
-(D43), or trusted on its own machine. Each item becomes a decision in
-RULES.md when its design settles.
+TCP with TLS or a Unix socket, its clients authenticated by password,
+SCRAM-SHA-256 or certificate (D43), or trusted on its own machine. Each
+item becomes a decision in RULES.md when its design settles.
 
-- **TLS, further:** client certificates, as an authenticator, and the
-  client presenting one; a certificate and key taken again without a
-  restart; the client trusting the platform's authorities, beside the
-  files it is given.
-- **Passwords, further:** a challenge-and-response mechanism (SCRAM), so a
-  password never travels, even inside TLS; Argon2id beside PBKDF2 (D26),
-  once a vetted crate is.
+- **The client trusting the platform's authorities,** beside the files
+  it is given: it needs rustls-native-certs or webpki-roots, neither in
+  the tree, so a decision of its own under R-SAFE-4 (D26).
+- **Argon2id beside PBKDF2** (D26), once a vetted crate is: a verifier
+  names its scheme, so it comes beside the one there is. SCRAM-SHA-256
+  would still need PBKDF2's keys, so a user of Argon2id proves its
+  password by `password` alone.
+- **SCRAM's channel binding** (`tls-server-end-point`, RFC 5929), so a
+  SCRAM exchange is bound to its TLS connection and a server in the
+  middle cannot relay it: SCRAM-SHA-256-PLUS. And SASLprep of a password
+  (RFC 4013), for clients of other systems whose non-ASCII passwords it
+  maps.
 - **Plans kept between executions** of a prepared statement, planned again
   only when the definitions change or its values would choose another
   plan: today each execution plans anew (D45).

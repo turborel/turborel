@@ -8,6 +8,7 @@
 //! `server::Protocol`, how they are spoken to.
 
 pub mod auth;
+pub mod certificate;
 mod limit;
 pub mod listening;
 pub mod log;
@@ -15,6 +16,7 @@ pub mod logins;
 pub mod native;
 pub mod password;
 pub mod runtime;
+pub mod scram;
 pub mod server;
 pub mod settings;
 pub mod shown;

@@ -6,11 +6,15 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use turborel::db::Database;
+use turborel::value::Value;
 use turborel_cli::{Credentials, Input, Io, MORE, PROMPT, Server, Tls};
 use turborel_client::connection::Password;
-use turborel_server::password::{self as pbkdf2, Pbkdf2};
+use turborel_server::certificate::Certificate;
+use turborel_server::password::Pbkdf2;
+use turborel_server::scram::Scram;
+use turborel_server::settings::TLS_CLIENT_CA;
 
-use crate::common::{Running, Scratch, command, options, pki, ran, secured, start, start_with};
+use crate::common::{Running, Scratch, client_certificate, command, options, pki, ran, secured, start, start_with};
 
 /// A server of a database where X has table T, holding 1 and 2.
 fn served() -> (Database, Running) {
@@ -154,25 +158,29 @@ fn a_run_ends_when_it_cannot_go_on() {
     assert!(told.contains("SQLSTATE 08006"), "{told}");
 }
 
-/// A server of `pki`, its TLS offered, where ANN's password is "ann's",
-/// taken beside trust; on Unix, at a socket too.
+/// A server of `pki`, its TLS offered, its clients' certificates of
+/// `pki`'s authority taken, where ANN's password is "ann's", proved by
+/// SCRAM-SHA-256 or a certificate beside trust; on Unix, at a socket too.
 pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
     let db = Database::new();
     secured(&db, pki, "ON");
+    db.set_setting(TLS_CLIENT_CA, &Value::Char(pki.authority.display().to_string())).unwrap();
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
     #[cfg(unix)]
-    db.set_setting(turborel_server::settings::SOCKET, &turborel::value::Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
-    let password = Arc::new(pbkdf2::Password::new(db.clone(), &made).unwrap());
-    let server = start_with(&db, &[], vec![password]);
+    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
+    let scram = Arc::new(Scram::new(db.clone(), &made).unwrap());
+    let server = start_with(&db, &[], vec![scram, Arc::new(Certificate::new(db.clone()))]);
     (db, server)
 }
 
 /// Verifies: [DESIGN] RULES.md D26, D43, D46: a user proves who they are by
-/// a password, typed or from the environment, over TLS, the server's
-/// certificate checked against its name, or on Unix over a socket; a wrong
-/// one is refused, saying why; over plain TCP none is sent, the client
-/// refusing it (SQLSTATE 28000), saying to use TLS or a Unix socket.
+/// a password, typed or from the environment, by SCRAM-SHA-256, over TLS,
+/// the server's certificate checked against its name, or on Unix over a
+/// socket; a wrong one is refused, saying why; over plain TCP nothing is
+/// sent, the client refusing (SQLSTATE 28000), saying to use TLS or a Unix
+/// socket. Without a password, a certificate presented proves the user its
+/// common name names.
 #[test]
 fn a_password_is_sent_securely() {
     let pki = pki("cli-passwords");
@@ -180,7 +188,7 @@ fn a_password_is_sent_securely() {
     let mut given = options(&server, vec![command("SELECT 1 FROM T")]);
     given.user = "ann".into();
     given.credentials = Credentials::Ask;
-    let tls = Tls { roots: pki.authority.clone(), name: Some("localhost".into()) };
+    let tls = Tls { roots: pki.authority.clone(), name: Some("localhost".into()), identity: None };
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: Some(tls) };
     let connection = turborel_cli::connect(&given, || Ok("ann's".into())).unwrap();
     assert_eq!(connection.authorization(), "ANN");
@@ -202,9 +210,14 @@ fn a_password_is_sent_securely() {
         assert_eq!(local.authorization(), "ANN");
         assert!(turborel_cli::banner(&given, &local).contains(&format!("at the socket {}, as ANN.", pki.scratch.path("s").display())));
     }
-    let tls = Tls { roots: pki.authority.clone(), name: None };
+    let tls = Tls { roots: pki.authority.clone(), name: None, identity: None };
     given.server = Server::Tcp { host: "localhost".into(), port: server.address.port(), tls: Some(tls) };
     assert_eq!(turborel_cli::connect(&given, || panic!("not typed")).unwrap().authorization(), "ANN", "named as the host");
+    let ann = client_certificate(&pki, "ann");
+    let tls = Tls { roots: pki.authority.clone(), name: None, identity: Some((ann.chain, ann.key)) };
+    given.server = Server::Tcp { host: "localhost".into(), port: server.address.port(), tls: Some(tls) };
+    given.credentials = Credentials::Certificate;
+    assert_eq!(turborel_cli::connect(&given, || panic!("not typed")).unwrap().authorization(), "ANN", "by its certificate");
 }
 
 /// Verifies: [DESIGN] RULES.md D46: a server that cannot be reached, a
@@ -222,7 +235,7 @@ fn a_server_not_reached_is_told() {
     given.server = Server::Tcp { host: "no-such-host.invalid".into(), port: 1, tls: None };
     assert!(turborel_cli::connect(&given, || Ok(String::new())).err().unwrap().starts_with("cannot find no-such-host.invalid"));
     let scratch = Scratch::new("cli-roots");
-    let tls = Tls { roots: scratch.path("none.pem"), name: None };
+    let tls = Tls { roots: scratch.path("none.pem"), name: None, identity: None };
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: 1, tls: Some(tls) };
     assert!(turborel_cli::connect(&given, || Ok(String::new())).err().unwrap().contains("cannot read"));
 }

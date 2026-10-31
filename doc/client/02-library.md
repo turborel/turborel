@@ -4,7 +4,8 @@
 
 The crate `turborel-client` connects a Rust program to a turborel
 server, over the native protocol: blocking, on the standard library
-alone, and over TLS with its feature `tls`. A program that embeds the
+alone; over TLS with its feature `tls`; and proving a password by
+SCRAM-SHA-256 with its feature `scram`. A program that embeds the
 database uses the crate `turborel` instead, and its `Database` and
 `Session` ([The Embedded Library](03-embedding.md)).
 
@@ -13,13 +14,36 @@ database uses the crate `turborel` instead, and its `Database` and
 `connect` connects over TCP, `connect_local` over a Unix socket, and
 `target::connect_to` to a `Target`, which may be either, over TLS or
 not. Each takes the user to connect as and a `Mechanism` that proves it:
-`Password`, of a password, sent only over TLS or a Unix socket: to a
-server over plain TCP, `connect` and `connect_to` refuse it before they
-connect (SQLSTATE 28000), and of a stream given to `Connection::open`
-the caller answers for its privacy; or
-`Trust`, which asks the server to trust the user as it names itself, as
-a server does only of a client of its own machine, and only if its
-setting SERVER.TRUST is LOCAL, not its default.
+
+- `scram::Scram`, of a password, by SCRAM-SHA-256, with the feature
+  `scram`: what a password should be proved by. The password never
+  travels; the connection is refused (SQLSTATE 08006) unless the server
+  proves it knows the user's verifier. Its exchange overheard lets the
+  password be guessed at leisure, so it is used only over TLS or a Unix
+  socket, unless `Scram::in_the_clear` says otherwise, for a server whose
+  SERVER.SCRAM_WITHOUT_TLS is ON.
+- `Password`, of a password, sent whole, only over TLS or a Unix socket.
+- `Certificate`, which proves the user by the certificate presented
+  over TLS: `tls::presenting` makes a TLS that trusts the PEM file of
+  authorities given and presents the certificate chain and key of two
+  more.
+- `Trust`, which asks the server to trust the user as it names itself,
+  as a server does only of a client of its own machine, and only if its
+  setting SERVER.TRUST is LOCAL, not its default.
+
+To a server over plain TCP, `connect` and `connect_to` refuse
+`Password`, and `Scram`, before they connect (SQLSTATE 28000); of a
+stream given to `Connection::open` the caller answers for its privacy.
+A client's TLS trusts the authorities of the files it is given alone,
+not the platform's.
+
+```rust
+use turborel_client::scram::Scram;
+use turborel_client::tls;
+
+let config = tls::trusting(Path::new("/etc/turborel/ca.pem"))?;
+let conn = tls::connect("db.example:7422", ("db.example", &config), "ANN", &mut Scram::new("ann's"))?;
+```
 
 ```rust
 use turborel_client::connection::{connect, Trust};

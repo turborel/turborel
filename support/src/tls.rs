@@ -1,10 +1,10 @@
 //! Certificates for a server's TLS, made for each test run so none expires
-//! in the repository; and a database's settings that secure its server
-//! with them. With the feature `tls`.
+//! in the repository; certificates its clients present; and a database's
+//! settings that secure its server with them. With the feature `tls`.
 
 use std::path::PathBuf;
 
-use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
+use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair};
 use turborel::db::Database;
 use turborel::value::Value;
 use turborel_server::settings::{self, TLS, TLS_CERTIFICATE, TLS_KEY};
@@ -22,6 +22,8 @@ pub struct Pki {
     pub chain: PathBuf,
     /// The server's private key.
     pub key: PathBuf,
+    /// The authority, to issue more.
+    issuer: CertifiedIssuer<'static, KeyPair>,
 }
 
 /// The certificates of `Pki`, for the test `test`.
@@ -36,7 +38,29 @@ pub fn pki(test: &str) -> Pki {
     std::fs::write(&authority, issuer.pem()).unwrap();
     std::fs::write(&chain, certificate.pem()).unwrap();
     std::fs::write(&key_file, key.serialize_pem()).unwrap();
-    Pki { scratch, authority, chain, key: key_file }
+    Pki { scratch, authority, chain, key: key_file, issuer }
+}
+
+/// A client's certificate chain and private key, as PEM files.
+pub struct Identity {
+    /// The certificate chain.
+    pub chain: PathBuf,
+    /// The private key.
+    pub key: PathBuf,
+}
+
+/// A certificate `pki`'s authority issued a client, its subject's common
+/// name `name`, beside `pki`'s files.
+pub fn client_certificate(pki: &Pki, name: &str) -> Identity {
+    let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.distinguished_name.push(DnType::CommonName, name);
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let key = KeyPair::generate().unwrap();
+    let certificate = params.signed_by(&key, &pki.issuer).unwrap();
+    let identity = Identity { chain: pki.scratch.path(&format!("{name}.pem")), key: pki.scratch.path(&format!("{name}.key")) };
+    std::fs::write(&identity.chain, certificate.pem()).unwrap();
+    std::fs::write(&identity.key, key.serialize_pem()).unwrap();
+    identity
 }
 
 /// `db`'s server settings declared, and TLS set to `mode` with `pki`'s

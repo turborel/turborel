@@ -9,11 +9,10 @@ use std::sync::Arc;
 
 use turborel::db::Database;
 use turborel::error::{Code, Result, SqlError};
-use turborel::files::Noted;
 
 use crate::server::{Endpoint, Protocol};
-use crate::settings::{self, HOST, PORT, SOCKET, TLS, TLS_CERTIFICATE, TLS_KEY};
-use crate::tls::Tls;
+use crate::settings::{self, HOST, PORT, SOCKET, TLS};
+use crate::tls::{Files, Tls};
 use crate::transport::{Listener, Tcp};
 
 fn unable(msg: String) -> SqlError {
@@ -44,8 +43,9 @@ pub fn addresses(hosts: &str, port: u16) -> Result<Vec<SocketAddr>> {
     Ok(found)
 }
 
-/// The TLS SERVER.TLS asks for, of the files SERVER.TLS_CERTIFICATE and
-/// SERVER.TLS_KEY name; none if it is OFF.
+/// The TLS SERVER.TLS asks for, of the files SERVER.TLS_CERTIFICATE,
+/// SERVER.TLS_KEY and SERVER.TLS_CLIENT_CA name, taken again as they
+/// change (`Tls::reload`); none if it is OFF.
 ///
 /// # Errors
 ///
@@ -56,16 +56,13 @@ pub fn tls(db: &Database) -> Result<Option<Arc<Tls>>> {
     if mode == "OFF" {
         return Ok(None);
     }
-    let (chain, key) = (settings::text(db, TLS_CERTIFICATE), settings::text(db, TLS_KEY));
-    if chain.is_empty() || key.is_empty() {
+    let files = Files::of(db);
+    if files.chain.is_empty() || files.key.is_empty() {
         return Err(unable(format!("[DESIGN] SERVER.TLS is {mode}, so SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY name its files")));
     }
-    let secured = Tls::from_files(Path::new(&chain), Path::new(&key), mode == "REQUIRED");
-    let secured = secured.map_err(|e| unable(format!("[DESIGN] cannot take TLS: {e}")))?;
     // Read once, as TLS is taken, and shown while it is (RULES.md D56).
-    let notes = [chain, key].iter().map(|f| db.note_file(Path::new(f), false)).collect::<Result<Vec<_>>>()?;
-    notes.iter().for_each(Noted::read);
-    Ok(Some(Arc::new(secured.noting(notes))))
+    let secured = Tls::from_files(&files, mode == "REQUIRED").and_then(|t| t.of(db));
+    Ok(Some(Arc::new(secured.map_err(|e| unable(format!("[DESIGN] cannot take TLS: {e}")))?)))
 }
 
 /// The endpoints `db`'s settings ask for, listening, each served by

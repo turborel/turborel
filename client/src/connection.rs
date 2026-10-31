@@ -44,11 +44,23 @@ pub trait Mechanism {
     /// If it has none: the connection is then given up.
     fn answer(&mut self, challenge: &[u8]) -> Result<Vec<u8>>;
     /// Whether what it sends gives away what proves the user, as a
-    /// password does: if so, a connection over plain TCP refuses it before
-    /// anything is sent (`connect`, `target::connect_to`). None does by
-    /// default.
+    /// password does, or lets one who overhears it guess that at leisure,
+    /// as SCRAM's proof does: if so, a connection over plain TCP refuses it
+    /// before anything is sent (`connect`, `target::connect_to`). None does
+    /// by default.
     fn secret(&self) -> bool {
         false
+    }
+    /// Whether the exchange may end as the server sends Ready: a mechanism
+    /// by which the server proves itself too, as SCRAM's, refuses one that
+    /// did not.
+    ///
+    /// # Errors
+    ///
+    /// If the server has not proved itself: the connection is then given
+    /// up. None does by default.
+    fn ready(&self) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -100,6 +112,27 @@ impl Mechanism for Password {
     }
     fn secret(&self) -> bool {
         true
+    }
+}
+
+/// \[DESIGN\] The client's side of `certificate`: nothing sent, the
+/// certificate presented over TLS (`tls::presenting`, with the feature
+/// `tls`) proving the user its common name names.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Certificate;
+
+/// The name of the mechanism `Certificate` is a side of.
+pub const CERTIFICATE: &str = "certificate";
+
+impl Mechanism for Certificate {
+    fn name(&self) -> &str {
+        CERTIFICATE
+    }
+    fn initial(&mut self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn answer(&mut self, _: &[u8]) -> Result<Vec<u8>> {
+        Err(failed("[DESIGN] certificate has no answer to a challenge"))
     }
 }
 
@@ -263,6 +296,7 @@ impl<S: Read + Write> Connection<S> {
                     connection.send(&Request::Answer(answer))?;
                 }
                 Reply::Ready { authorization, key, capabilities: _, server } => {
+                    mechanism.ready()?;
                     connection.authorization = authorization;
                     connection.server = server;
                     connection.key = Some(key);

@@ -40,6 +40,9 @@ pub struct Tls {
     /// The name the server's certificate is checked against: the host's,
     /// unless one is named.
     pub name: Option<String>,
+    /// The PEM files of the certificate chain the client presents and of
+    /// its private key, if it presents one.
+    pub identity: Option<(PathBuf, PathBuf)>,
 }
 
 /// How the user proves who they are.
@@ -47,10 +50,12 @@ pub struct Tls {
 pub enum Credentials {
     /// By nothing: trusted, as a server trusts a client of its machine.
     Trust,
-    /// By a password, typed at the terminal.
+    /// By a password, typed at the terminal, proved by SCRAM-SHA-256.
     Ask,
-    /// By this password, from the environment.
+    /// By this password, from the environment, proved by SCRAM-SHA-256.
     Given(Password),
+    /// By the certificate presented over TLS (`Tls::identity`).
+    Certificate,
 }
 
 /// SQL to run, in the order named.
@@ -105,6 +110,8 @@ struct Named {
     ask: bool,
     roots: Option<PathBuf>,
     name: Option<String>,
+    certificate: Option<PathBuf>,
+    key: Option<PathBuf>,
     inputs: Vec<Input>,
     stop_on_error: bool,
     null: Option<String>,
@@ -132,6 +139,8 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "-W" | "--password" => named.ask = true,
             "--tls" => named.roots = Some(PathBuf::from(value()?)),
             "--server-name" => named.name = Some(value()?),
+            "--certificate" => named.certificate = Some(PathBuf::from(value()?)),
+            "--key" => named.key = Some(PathBuf::from(value()?)),
             "-c" | "--command" => named.inputs.push(Input::Command(value()?)),
             "-f" | "--file" => named.inputs.push(Input::File(PathBuf::from(value()?))),
             "--stop-on-error" => named.stop_on_error = true,
@@ -158,15 +167,21 @@ fn seconds(text: &str) -> Result<Option<Duration>, String> {
 /// The options `named` makes, checked.
 fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options, String> {
     let user = named.user.or_else(|| env("USER")).or_else(|| env("USERNAME")).ok_or_else(|| "name the user: --user NAME".to_owned())?;
-    let credentials = match (named.ask, env(PASSWORD_VARIABLE)) {
-        (true, _) => Credentials::Ask,
-        (false, Some(password)) => Credentials::Given(Password(password)),
-        (false, None) => Credentials::Trust,
+    let identity = match (named.certificate, named.key) {
+        (Some(certificate), Some(key)) => Some((certificate, key)),
+        (None, None) => None,
+        (Some(_), None) | (None, Some(_)) => return Err("--certificate and --key name a certificate and its key: both".into()),
     };
-    if named.name.is_some() && named.roots.is_none() {
-        return Err("--server-name names the server TLS checks: name --tls too".into());
+    let credentials = match (named.ask, env(PASSWORD_VARIABLE), identity.is_some()) {
+        (true, _, _) => Credentials::Ask,
+        (false, Some(password), _) => Credentials::Given(Password(password)),
+        (false, None, true) => Credentials::Certificate,
+        (false, None, false) => Credentials::Trust,
+    };
+    if (named.name.is_some() || identity.is_some()) && named.roots.is_none() {
+        return Err("--server-name, --certificate and --key are of TLS: name --tls too".into());
     }
-    let server = server(named.socket, named.host, named.port, named.roots.map(|roots| Tls { roots, name: named.name }))?;
+    let server = server(named.socket, named.host, named.port, named.roots.map(|roots| Tls { roots, name: named.name, identity }))?;
     let inputs = if named.inputs.is_empty() { vec![Input::Standard] } else { named.inputs };
     let (stop_on_error, null, timeouts) = (named.stop_on_error, named.null.unwrap_or_default(), named.timeouts);
     Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts })
