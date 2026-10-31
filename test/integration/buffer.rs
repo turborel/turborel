@@ -18,22 +18,22 @@ use turborel::error::{Code, Result};
 use crate::common::{Scratch, crc32c};
 use crate::faults::{FaultyFs, Op, Rule};
 
-fn pager(fs: &dyn FileSystem, path: &Path) -> Arc<Pager> {
+pub(crate) fn pager(fs: &dyn FileSystem, path: &Path) -> Arc<Pager> {
     Arc::new(Pager::create(fs, path, crc32c(), Pipeline::none(), 4096).unwrap())
 }
 
-fn pool(frames: usize) -> BufferPool {
+pub(crate) fn pool(frames: usize) -> BufferPool {
     BufferPool::new(frames, Box::new(Clock::new(frames))).unwrap()
 }
 
 /// A new page of `file` holding `content`; its number.
-fn put(pool: &BufferPool, file: FileId, content: &[u8]) -> PageId {
+pub(crate) fn put(pool: &BufferPool, file: FileId, content: &[u8]) -> PageId {
     let (id, mut page) = pool.new_page(file).unwrap();
     page.extend_from_slice(content);
     id
 }
 
-fn get(pool: &BufferPool, file: FileId, id: PageId) -> Result<Vec<u8>> {
+pub(crate) fn get(pool: &BufferPool, file: FileId, id: PageId) -> Result<Vec<u8>> {
     Ok(pool.read(file, id.0)?.to_vec())
 }
 
@@ -111,7 +111,7 @@ fn held_pages_pin_their_frames() {
 
 /// How long a read that must be refused at once is given before the test
 /// takes it to be spinning: far more than any refusal takes.
-const REFUSAL_LIMIT: Duration = Duration::from_secs(10);
+pub(crate) const REFUSAL_LIMIT: Duration = Duration::from_secs(10);
 
 /// Verifies: [DESIGN] RULES.md D30, D38, buffer pool: a page read by its
 /// hint holds its frame's latch and no pin; with that the only frame,

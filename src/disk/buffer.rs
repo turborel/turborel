@@ -114,8 +114,9 @@ fn count(counter: &AtomicU64) {
 const UNDO_WAITS: Duration = Duration::from_secs(10);
 
 /// \[DESIGN\] RULES.md D38: a page wanted while all `frames` are held, once
-/// a claim's waits for frames only latched are over (`claim.rs`). It is
-/// refused then: the pool knows no statement to bound a wait by, and
+/// a claim's waits for frames only busy for a moment are over
+/// (`claim.rs`). It is refused then: the pool knows no statement to bound
+/// a wait by, and
 /// threads each holding pages while waiting for one more would wait for
 /// each other. But an undo (`Undoing`) is never refused for want of
 /// memory, so it waits, `Ok` to try again a moment later, from when it

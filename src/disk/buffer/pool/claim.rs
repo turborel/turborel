@@ -6,18 +6,26 @@
 //! A frame proposed may be held: pinned, or latched by a read that hit by
 //! its hint (`hits.rs`), which takes the latch and no pin. A pinned frame
 //! is held for as long as its holder likes; a latched one only for as long
-//! as one read of the page takes, so it is busy for a moment. A claim tries
-//! each frame once; if none could be taken and some were only latched, it
-//! sleeps a while and tries again, for a bounded number of rounds, and is
-//! refused (SQLCODE -918) when all are pinned, or the latched ones stay
-//! latched past the rounds: the latch may be the claiming thread's own.
-//! An undo (`Undoing`) is not refused then but waits for a frame, a
-//! bounded while too (`all_held`).
+//! as one read of the page takes, so it is busy for a moment. So is an
+//! unpinned frame the eviction policy declines to propose: CLOCK spares a
+//! frame used since its hand last passed, and frames read over and over,
+//! or a hand moved on by other claims meanwhile, can see it sweep the pool
+//! twice and propose none. A claim tries each frame once; if none could be
+//! taken and some were only busy, it sleeps a while and tries again, and
+//! is refused (SQLCODE -918) when all are pinned, or the busy ones stay
+//! busy past its wait: the latch may be the claiming thread's own. The
+//! wait is bounded by rounds in which the pool did nothing else, no read
+//! hitting, missing or evicting, so a thread that is starved of the CPU
+//! while it holds a latch, on a busy server, does not get a claim refused
+//! while other reads go on; and by a longer while in all, so a latch the
+//! claiming thread holds is refused in the end however busy the pool. An
+//! undo (`Undoing`) is not refused then but waits for a frame, a bounded
+//! while too (`all_held`).
 
 use std::sync::PoisonError;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{Claim, Latch, try_latch};
 use crate::disk::buffer::{BufferPool, Key, UNDO_WAITS, all_held, count};
@@ -31,16 +39,20 @@ use crate::sync::lock_builtin;
 const LATCH_WAIT_FIRST: Duration = Duration::from_micros(10);
 /// \[DESIGN\] The longest sleep of a round.
 const LATCH_WAIT_MOST: Duration = Duration::from_millis(1);
-/// \[DESIGN\] Rounds a claim waits for latched frames before it is
-/// refused: some 20 ms in all, far more than a read of a page takes.
+/// \[DESIGN\] Rounds a claim waits for busy frames while the pool does
+/// nothing else before it is refused: some 20 ms, far more than a read of
+/// a page takes.
 const CLAIM_ROUNDS: u32 = 26;
+/// \[DESIGN\] The longest a claim waits for busy frames, however busy
+/// the pool is meanwhile.
+const CLAIM_MOST: Duration = Duration::from_millis(500);
 /// \[DESIGN\] Rounds `free_when_released` waits for a page latched by a
 /// read that hit by its hint: some 200 ms in all. Longer than a claim's,
 /// as giving up fails the change that frees the page.
 pub(super) const FREE_ROUNDS: u32 = 200;
 /// \[DESIGN\] Rounds `free_when_released` waits for a page pinned: some
 /// 1 s in all, as a reader holding its pin may wait for a frame for
-/// another page meanwhile (some 20 ms, `CLAIM_ROUNDS`). Bounded, as the
+/// another page meanwhile (up to `CLAIM_MOST`). Bounded, as the
 /// pin may be the caller's own, a programming error that would otherwise
 /// wait for ever.
 pub(super) const FREE_PIN_ROUNDS: u32 = 1000;
@@ -55,6 +67,34 @@ pub(super) fn latch_wait(round: &mut u32, rounds: u32) -> bool {
     thread::sleep(LATCH_WAIT_FIRST.saturating_mul(factor).min(LATCH_WAIT_MOST));
     *round = round.saturating_add(1);
     true
+}
+
+/// A claim's wait for frames busy for a moment: its rounds slept, the
+/// rounds in which the pool did nothing else, the pool's work last seen
+/// (`BufferPool::work`), and when it began.
+#[derive(Default)]
+struct Busy {
+    round: u32,
+    stalled: u32,
+    seen: Option<u64>,
+    since: Option<Instant>,
+}
+
+impl Busy {
+    /// Sleeps a round, the pool having done `work`, unless the wait is
+    /// over: `CLAIM_ROUNDS` rounds in which the pool did nothing else, or
+    /// `CLAIM_MOST` in all; whether it slept.
+    fn wait(&mut self, work: u64) -> bool {
+        let since = *self.since.get_or_insert_with(Instant::now);
+        if self.seen.replace(work).is_some_and(|seen| seen != work) {
+            self.stalled = 0;
+        }
+        if self.stalled >= CLAIM_ROUNDS || since.elapsed() >= CLAIM_MOST {
+            return false;
+        }
+        self.stalled = self.stalled.saturating_add(1);
+        latch_wait(&mut self.round, u32::MAX)
+    }
 }
 
 /// The frames a claim found held in this round of proposals, so the
@@ -104,7 +144,7 @@ impl BufferPool {
     /// Claims a frame for `key`: an empty one, or one the eviction policy
     /// proposes. `None` if another thread mapped `key` meanwhile.
     pub(super) fn claim(&self, key: Key) -> Result<Option<Claim>> {
-        let (mut tried, mut round, mut waited) = (Tried::default(), 0_u32, None);
+        let (mut tried, mut busy, mut waited) = (Tried::default(), Busy::default(), None);
         loop {
             match self.claim_empty(key)? {
                 Attempt::Taken(claim) => return Ok(Some(claim)),
@@ -114,11 +154,13 @@ impl BufferPool {
             let evictable = |index: usize| {
                 !tried.has(index) && self.frames.get(index).is_some_and(|f| f.pins.load(Ordering::Acquire) == 0 && f.key().is_some())
             };
-            // Frames only latched are waited for a bounded while; frames
-            // all held are refused, or waited for by an undo alone
-            // (RULES.md D38, `all_held`). Either way all are tried again.
+            // Frames only busy, latched or declined by the policy though
+            // unpinned, are waited for a bounded while; frames all held are
+            // refused, or waited for by an undo alone (RULES.md D38,
+            // `all_held`). Either way all are tried again.
             let Some(index) = self.eviction.victim(&evictable) else {
-                if !(tried.latched && latch_wait(&mut round, CLAIM_ROUNDS)) {
+                let declined = (0..self.frames.len()).any(evictable);
+                if !((tried.latched || declined) && busy.wait(self.work())) {
                     all_held(self.frames.len(), &mut waited, UNDO_WAITS)?;
                 }
                 tried = Tried::default();
@@ -131,6 +173,13 @@ impl BufferPool {
                 Attempt::Latched => tried.note(index, self.frames.len(), true),
             }
         }
+    }
+
+    /// The work the pool has done: reads that hit, missed, or evicted. A
+    /// claim waiting for busy frames waits on while it grows.
+    fn work(&self) -> u64 {
+        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        self.hints.hits().wrapping_add(get(&self.counters.misses)).wrapping_add(get(&self.counters.evictions))
     }
 
     /// An empty frame claimed for `key`, under its shard: `Taken`, `Mapped`

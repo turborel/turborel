@@ -43,6 +43,7 @@ mod batches;
 mod bits;
 mod blocks;
 mod buffer;
+mod buffer_claims;
 mod cancel;
 mod checkpoints;
 mod checks;

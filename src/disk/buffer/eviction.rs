@@ -11,8 +11,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// * It is made for a pool of a given number of frames, and only ever
 ///   proposes one of them.
 /// * `victim` proposes only frames `evictable` accepts, and `None` when it
-///   finds none. Its proposal may be stale by the time the pool acts on it;
-///   the pool checks again and asks again.
+///   finds none it would evict now (CLOCK spares frames used again while
+///   it sweeps). Its proposal may be stale by the time the pool acts on
+///   it; the pool checks again and asks again. A `None` while some frame
+///   is evictable is asked again a bounded while (`pool/claim.rs`).
 /// * Methods may be called from several threads at once and take `&self`:
 ///   the policy guards its own state. The pool calls them holding no lock;
 ///   they never call back into the pool (RULES.md R-ERR-4).
