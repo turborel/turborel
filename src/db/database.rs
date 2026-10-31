@@ -30,7 +30,7 @@ use crate::settings;
 use crate::spill::Spill;
 use crate::storage::StorageEngine;
 use crate::sync::{lock, read, write};
-use crate::txn::{Damage, LockMode, LockWait, Policy, SessionEnd};
+use crate::txn::{Damage, LockMode, LockWait, Policy, SessionEnd, Txn};
 use crate::value::Value;
 
 /// A shared handle to a database. Cloning it is cheap, and clones may be used
@@ -80,6 +80,11 @@ struct Shared {
     background: Background,
     /// What the program's handles share, while one is held (`handles.rs`).
     program: Weak<Program>,
+    /// The transactions in doubt, their commit records' syncs failed:
+    /// held, their locks and versions with them, until it is dropped, so
+    /// none is rolled back or built on before recovery decides it
+    /// (RULES.md D25).
+    in_doubt: Mutex<Vec<Arc<Txn>>>,
 }
 
 /// One thread's turn to change the definitions. Dropping it ends the turn.
@@ -124,6 +129,7 @@ impl Database {
             served: RwLock::new(None),
             background,
             program,
+            in_doubt: Mutex::new(Vec::new()),
         })
     }
 
@@ -153,6 +159,12 @@ impl Database {
             return fail(Code::Api, "[DESIGN] the database is closed");
         }
         Ok(Arc::clone(&*read(&self.0.current)?))
+    }
+
+    /// Holds `tx`, in doubt, until the database is dropped (RULES.md D25).
+    pub(super) fn hold_in_doubt(&self, tx: Arc<Txn>) {
+        // Entries are added whole, so a poisoned list is whole.
+        self.0.in_doubt.lock().unwrap_or_else(PoisonError::into_inner).push(tx);
     }
 
     /// The files it was opened from, if any.

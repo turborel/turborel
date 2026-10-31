@@ -68,7 +68,10 @@ statement, any but a query, which is read by a cursor, and gives its
 `Completion`: `Success`, `NoData`, or a
 `Warning` of its SQLSTATE. The first statement that reads or changes
 data begins a transaction; `commit` and `rollback` end it, as COMMIT
-and ROLLBACK do. A session dropped ends its transaction as the setting
+and ROLLBACK do. A `commit` that fails with SQLCODE -922 is in doubt:
+its commit record could not be synced, so whether it committed is known
+only once the database is opened again; it is not to be run again
+before then, as it may have committed. A session dropped ends its transaction as the setting
 SESSION_END says: committed, by default.
 
 A session is used by one thread at a time; it may move to another

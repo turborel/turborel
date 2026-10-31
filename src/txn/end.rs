@@ -27,9 +27,11 @@ impl State {
     ///
     /// # Errors
     ///
-    /// As for rollback, and SQLCODE -915 if the commit record was written but
-    /// could not be synced: the transaction is committed, but whether that
-    /// survives a crash is unknown.
+    /// As for rollback, and SQLCODE -922 if the commit record was written
+    /// but could not be synced: the transaction is in doubt, phase 2 not
+    /// run, so no snapshot counts it; its locks and versions stay held, for
+    /// the caller to keep until the database is dropped, and recovery
+    /// commits it if the log holds its commit record (RULES.md D25).
     pub(crate) fn commit(&self, tx: &Txn) -> Result<()> {
         self.commit_publishing(tx, &mut |_| Ok(()))
     }
@@ -74,7 +76,15 @@ impl State {
                 },
             );
         match validated {
-            Ok((participants, committing, synced)) => {
+            // In doubt: never made visible, its locks and versions held
+            // for its session to keep, as recovery decides it (RULES.md
+            // D25).
+            Ok((_, committing, Err(in_doubt))) => {
+                drop(committing);
+                drop(gate);
+                Err(in_doubt)
+            }
+            Ok((participants, committing, Ok(()))) => {
                 // Phase 2 uses storages already found, so it cannot fail part way.
                 for storage in participants {
                     storage.commit(tx.id, committing.at);
@@ -86,7 +96,7 @@ impl State {
                 drop(gate);
                 tx.release();
                 self.gc(&tables(&joined));
-                published.and(synced)
+                published
             }
             Err(e) => {
                 drop(gate);

@@ -176,14 +176,16 @@ fn changes_that_cannot_be_logged_do_not_commit() {
 }
 
 /// Verifies: [DESIGN] RULES.md D25, a failing log: when the commit record is
-/// written but cannot be synced, COMMIT reports SQLCODE -915, whether it
-/// survives a crash being unknown, and the transaction is committed: other
-/// sessions see it, as the log holds it. From then on the database takes
-/// no change, though its log syncs again, as a later sync may succeed
-/// without what the failed one lost: a row change, the commit of a
-/// transaction that wrote, a definition, each SQLCODE -915 naming the
+/// written but cannot be synced, COMMIT reports the transaction in doubt
+/// (SQLCODE -922, SQLSTATE 08007, transaction resolution unknown [ISO/IEC
+/// 9075:1992 §4.29, §22.1]): no session sees its changes, its own neither,
+/// and it stays open, held until the database is dropped. From then on the
+/// database takes no change, though its log syncs again, as a later sync
+/// may succeed without what the failed one lost: a row change, the commit
+/// of a transaction that wrote, a definition, each SQLCODE -915 naming the
 /// failure; reads, rollbacks and commits of transactions that wrote
-/// nothing go on.
+/// nothing go on. Regression test (R-TEST-7): the transaction was stamped
+/// committed, and other sessions saw what recovery could lose.
 #[test]
 fn a_failed_sync_stops_the_database_taking_changes() {
     let (db, log) = logged();
@@ -192,9 +194,11 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
     log.fail_syncs.store(true, Ordering::SeqCst);
     let error = s.commit().unwrap_err();
-    assert_eq!(error.code, Code::Io);
-    assert!(error.msg.contains("unknown"), "{error}");
-    assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 10"), 1);
+    assert_eq!((error.code, error.sqlcode(), error.sqlstate().as_str()), (Code::InDoubt, -922, "08007"));
+    assert!(error.msg.contains("opened again"), "{error}");
+    assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 10"), 0, "another session");
+    assert_eq!(count(&s, "SELECT ID FROM T WHERE ID = 10"), 0, "its own session, in a new transaction");
+    assert_eq!(db.active_transactions().unwrap(), 2, "held in doubt, beside the reading one");
     assert_eq!(kinds(&log).last().map(String::as_str), Some("Commit"));
     log.fail_syncs.store(false, Ordering::SeqCst);
     let cause = db.log_failure().expect("the failure kept");
@@ -203,10 +207,78 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     assert_eq!(refused.code, Code::Io);
     assert!(refused.msg.contains("opened again"), "{refused}");
     s.rollback().unwrap();
-    assert_eq!(count(&s, "SELECT ID FROM T"), 4, "reads go on");
+    assert_eq!(count(&s, "SELECT ID FROM T"), 3, "reads go on");
     s.commit().unwrap();
     assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").err().map(|e| e.code), Some(Code::Io));
-    assert_eq!(kinds(&log).last().map(String::as_str), Some("Commit"), "nothing logged since");
+    assert_eq!(kinds(&log).last().map(String::as_str), Some("Commit"), "nothing logged since, no abort among it");
+}
+
+/// The newest segment of the log of the database in `dir`.
+fn last_segment(dir: &std::path::Path) -> std::path::PathBuf {
+    let mut segments: Vec<std::path::PathBuf> = std::fs::read_dir(dir.join("log")).unwrap().map(|e| e.unwrap().path()).collect();
+    segments.sort();
+    segments.pop().unwrap()
+}
+
+/// Verifies: [DESIGN] RULES.md D25, a commit in doubt, over the operating
+/// system's files: a commit whose log sync fails is reported in doubt
+/// (SQLCODE -922, SQLSTATE 08007), and told as a `failed` event of level
+/// error; another session does not see its rows,
+/// and no writer is taken (-915); it stays held, so the database is not
+/// closed cleanly (-915); opened again, it is recovered from what the log
+/// holds: committed if its commit record reached the disk, its rows there;
+/// rolled back if not (the record cut off, as a write lost with the failed
+/// sync), its rows gone. Regression test (R-TEST-7): a commit whose sync
+/// failed was stamped committed, its rows seen by other sessions though
+/// recovery could lose them.
+#[test]
+fn a_commit_whose_sync_fails_is_in_doubt_until_recovered() {
+    use turborel::db::{OpenOptions, Opened};
+
+    use crate::faults::{FaultyFs, Op, Rule};
+
+    for reached in [true, false] {
+        let scratch = crate::common::Scratch::new(&format!("durability-in-doubt-{reached}"));
+        let dir = scratch.path("db");
+        let (fs, faults) = FaultyFs::with_faults();
+        let db = Database::new();
+        let kept = crate::common::Kept::default();
+        db.set_diagnostics(Box::new(kept.clone()));
+        db.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+        let (s, other) = (db.session("A"), db.session("A"));
+        s.run("INSERT INTO T VALUES (1)").unwrap();
+        s.commit().unwrap();
+        s.run("INSERT INTO T VALUES (2)").unwrap();
+        s.run("INSERT INTO T VALUES (3)").unwrap();
+        let segment = last_segment(&dir);
+        let before_commit = std::fs::metadata(&segment).unwrap().len();
+        faults.inject(Rule::fail(Op::Sync).on("/log/"));
+        let error = s.commit().unwrap_err();
+        faults.clear();
+        assert_eq!((error.code, error.sqlstate().as_str()), (Code::InDoubt, "08007"), "{error}");
+        let told = kept.taken();
+        assert!(
+            told.iter().any(|(level, e)| *level == turborel::diagnostics::Level::Error && e.contains("Failed") && e.contains("InDoubt")),
+            "told as an error: {told:?}"
+        );
+        assert_eq!(count(&other, "SELECT K FROM T"), 1, "not seen by another session");
+        assert_eq!(other.run("INSERT INTO T VALUES (4)").err().map(|e| e.code), Some(Code::Io), "no writer");
+        other.rollback().unwrap();
+        assert_eq!(db.close().err().map(|e| e.code), Some(Code::Io), "no clean close");
+        drop((s, other, db));
+        assert!(std::fs::metadata(&segment).unwrap().len() > before_commit, "the commit record written");
+        if !reached {
+            let file = std::fs::OpenOptions::new().write(true).open(&segment).unwrap();
+            file.set_len(before_commit).unwrap();
+        }
+        let again = Database::new();
+        let opened = again.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
+        assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+        let expected = if reached { 3 } else { 1 };
+        assert_eq!(count(&again.session("A"), "SELECT K FROM T"), expected, "reached the disk: {reached}");
+        again.session("A").run("INSERT INTO T VALUES (5)").unwrap();
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D25: a transaction that wrote before the
@@ -219,7 +291,7 @@ fn a_writer_open_when_the_log_fails_rolls_back() {
     writer.run("INSERT INTO T (ID) VALUES (20)").unwrap();
     other.run("INSERT INTO T (ID) VALUES (21)").unwrap();
     log.fail_syncs.store(true, Ordering::SeqCst);
-    assert_eq!(other.commit().err().map(|e| e.code), Some(Code::Io));
+    assert_eq!(other.commit().err().map(|e| e.code), Some(Code::InDoubt));
     log.fail_syncs.store(false, Ordering::SeqCst);
     let refused = writer.commit().unwrap_err();
     assert_eq!(refused.code, Code::CommitFailed);

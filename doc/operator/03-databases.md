@@ -90,9 +90,13 @@ it.
 
 If a sync of the log fails as the database runs, it may have lost what
 the log held, and a sync tried again may succeed without it; so the log
-syncs nothing more, the commit fails with SQLCODE -915, and the database
-takes no change until it is opened again, which recovers it from what
-its log holds. The failure is told as a `failed` event.
+syncs nothing more, and the database takes no change until it is opened
+again, which recovers it from what its log holds; nor is it closed
+cleanly (SQLCODE -915). The commit whose sync failed is in doubt: its
+session is told SQLCODE -922 (SQLSTATE 08007), and no session sees its
+changes. Opened again, the database commits it if its commit record
+reached the disk, and rolls it back if not. The failure is told as a
+`failed` event.
 
 ## Checkpoints
 

@@ -12,8 +12,11 @@
 //! so from the first, nothing that writes the log is accepted: a row change,
 //! the commit of a transaction that wrote, a definition, a checkpoint,
 //! whose image would claim what is not durable. Reads, rollbacks and the
-//! commits of transactions that wrote nothing go on. Opening the database
-//! again recovers it from what its log holds.
+//! commits of transactions that wrote nothing go on. The transaction whose
+//! commit record's sync failed is in doubt: never made visible, its locks
+//! and versions held, its session told (SQLCODE -922). Opening the
+//! database again recovers it from what its log holds, committing it if
+//! its commit record is there.
 //!
 //! The in-memory undo log stays: it undoes statements and transactions, and
 //! the index entries the log does not hold. The log's before-images are for
@@ -25,7 +28,7 @@ use super::{NO_TRANSACTION, Persistence, Policy, Timestamp, Transactions, Txn};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::disk::encoding::Pipeline;
-use crate::error::{Code, Result, SqlError};
+use crate::error::{Code, Result, SqlError, SqlState};
 use crate::log::record::{Change, Record};
 use crate::log::sealed;
 use crate::log::{Log, Lsn};
@@ -126,8 +129,9 @@ impl Txn {
     /// # Errors
     ///
     /// SQLCODE -913 if the transaction must roll back instead: the commit
-    /// record could not be written. Inside `Ok`, the outcome of the sync: SQLCODE -915 if it
-    /// failed, the transaction committing all the same.
+    /// record could not be written. Inside `Ok`, the outcome of the sync:
+    /// SQLCODE -922 if it failed, the transaction then in doubt (RULES.md
+    /// D25).
     pub(super) fn commit_record(&self, at: Timestamp) -> Result<Result<()>> {
         let logged = self.state()?.logged;
         let Some(log) = self.log.as_ref().filter(|_| logged) else { return Ok(Ok(())) };
@@ -138,9 +142,13 @@ impl Txn {
         let lsn = log.append(&record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
         Ok(self.shared.sync(&**log, lsn).map_err(|e| {
             SqlError::new(
-                Code::Io,
-                format!("[DESIGN] the transaction committed, but its commit record could not be synced, so whether it survives a crash is unknown: {}", e.described()),
+                Code::InDoubt,
+                format!(
+                    "[DESIGN] the commit record could not be synced, so whether the transaction committed is known only once the database is opened again and recovered from its log; until then no other session sees its changes: {}",
+                    e.described()
+                ),
             )
+            .with_state(SqlState::TRANSACTION_RESOLUTION_UNKNOWN)
         }))
     }
 

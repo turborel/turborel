@@ -49,8 +49,8 @@ None.
 |---|---|---|
 | 40002 | -913 | A deferred constraint is not satisfied: the transaction was rolled back |
 | 40001 | -911 | It conflicts with a transaction that committed first: it was rolled back, and may be run again |
-| 40000 | -913 | An engine refused to commit, an earlier statement of the transaction could not be undone, or the commit record could not be written to the log: the transaction was rolled back |
-| TB915 | -915 | The transaction committed, but its commit record could not be synced to disk, so whether it survives a crash is not known |
+| 40000 | -913 | An engine refused to commit, an earlier statement of the transaction could not be undone, or the commit record could not be written to the log, or a sync of the log failed earlier, so the database takes no change until it is opened again: the transaction was rolled back |
+| 08007 | -922 | The commit record was written but could not be synced to disk: the transaction is in doubt. No session sees its changes; the database takes no change until it is opened again, and then the transaction is committed if its commit record reached the disk, else rolled back |
 
 ## EXAMPLES
 
@@ -100,8 +100,10 @@ WORK may be left out, as SQL-92 allows. Cursors are closed [§14.3 GR2],
 temporary tables of ON COMMIT DELETE ROWS emptied [GR3], and then
 deferred constraints checked [GR4, GR5a]. Of the other failures that roll the
 transaction back [GR5b], SQLSTATE 40001 is the standard's serialization
-failure, and 40000, without a subclass, is the class alone. TB915 is this
-implementation's own: the transaction did commit.
+failure, and 40000, without a subclass, is the class alone. 08007 is the
+standard's transaction resolution unknown [§4.29]: whether the
+transaction committed cannot be verified until the database is opened
+again.
 
 ## SEE ALSO
 

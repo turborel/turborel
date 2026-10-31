@@ -161,9 +161,11 @@ impl TableStorage for SharedTable {
 }
 
 /// Verifies: [DESIGN] RULES.md D25, recovery: a `Forced` engine keeps its
-/// own data, so nothing is redone into it, and the changes of a
-/// transaction open at the crash, which it holds, are undone from their
-/// before-images: a row it inserted removed, a row it updated put back.
+/// own data, and the changes of a transaction open at the crash, which it
+/// holds, are undone from their before-images: a row it inserted removed,
+/// a row it updated put back; the changes that stand are redone into it,
+/// as one of a commit in doubt was never told it, which changes nothing
+/// of a row it holds already.
 #[test]
 fn a_forced_engine_has_uncommitted_changes_undone() {
     let log: Arc<dyn Log> = Arc::new(MemoryLog::new());
@@ -186,7 +188,7 @@ fn a_forced_engine_has_uncommitted_changes_undone() {
     let back = Database::new();
     back.register_engine(Box::new(Shared { persistence: Persistence::Forced, tables })).unwrap();
     let report = back.recover(log).unwrap();
-    assert_eq!((report.redone, report.undone), (0, 2));
+    assert_eq!((report.redone, report.undone), (1, 2));
     assert_eq!(sorted(&back.session("A"), "SELECT K, V FROM T"), ["1,kept"]);
 }
 

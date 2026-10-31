@@ -416,11 +416,17 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
-        let ended = match (ending, staged) {
-            (Some(tx), None) => st.commit(&tx),
-            (Some(tx), Some(staged)) => self.db.commit_staged(&tx, &staged),
+        let ended = match (&ending, staged) {
+            (Some(tx), None) => st.commit(tx),
+            (Some(tx), Some(staged)) => self.db.commit_staged(tx, &staged),
             (None, _) => return Ok(()),
         };
+        // In doubt, it is held, not ended (RULES.md D25).
+        if let (Some(tx), Err(e)) = (ending, &ended)
+            && e.code == Code::InDoubt
+        {
+            self.db.hold_in_doubt(tx);
+        }
         self.temporaries_ended(st, id);
         // The transaction has ended: a checkpoint, or maintenance, may
         // come due.

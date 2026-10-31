@@ -171,8 +171,9 @@ impl Database {
     /// # Errors
     ///
     /// SQLCODE -910 if it was not opened from files, or a transaction is
-    /// open; the errors of a checkpoint, or of an index method's: the
-    /// database is then left open.
+    /// open; -915 once a sync of its log failed (RULES.md D25); the errors
+    /// of a checkpoint, or of an index method's: the database is then left
+    /// open.
     pub fn close(&self) -> Result<()> {
         let closed = self.noted(self.close_files());
         if closed.is_ok() {
@@ -201,6 +202,9 @@ impl Database {
         // for the turn.
         let _shut = current.tx.gate.shut();
         self.change(|st| {
+            // After a failed sync of the log, never cleanly: opened again,
+            // it is recovered (RULES.md D25).
+            st.tx.taking_changes()?;
             if st.tx.active() > 0 {
                 return Err(api("[DESIGN] a database is closed with no transaction open"));
             }

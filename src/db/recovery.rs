@@ -19,7 +19,9 @@
 //!    one of a transaction a crash interrupted.
 //! 3. **Redo**, in order: each change that stands, of a `Logged` table, at
 //!    or after L, or whose commit record is: its version in the pages, made
-//!    before L, is not yet stamped committed.
+//!    before L, is not yet stamped committed; of a `Forced` table, every
+//!    one, as a transaction in doubt (RULES.md D25) logged its commit
+//!    record but never told the engine it committed.
 //! 4. The indexes made whole, as index entries are not logged: rebuilt from
 //!    their tables, or, for indexes reopened as the checkpoint left them,
 //!    mended where recovery touched rows (`State::mend_indexes`); the
@@ -405,8 +407,9 @@ impl Database {
     }
 
     /// Redoes `change`, which stands, if its table's engine is recovered
-    /// from the log and its pages lack it, or hold it unstamped; whether it
-    /// did.
+    /// from the log and its pages lack it, or hold it unstamped, or makes
+    /// its own writes durable but may not have been told it committed;
+    /// whether it did.
     fn redo(&self, change: &RowChange, analysis: &Analysis) -> Result<bool> {
         let st = self.snapshot()?;
         if !current(&st, change) {
@@ -415,7 +418,12 @@ impl Database {
         let storage = st.storage_of(&change.table)?;
         let durable = storage.durable_through();
         let committed_late = analysis.committed.get(&change.tx).is_some_and(|&at| at >= durable);
-        let lacks = storage.capabilities().persistence == Persistence::Logged && (change.lsn >= durable || committed_late);
+        let lacks = match storage.capabilities().persistence {
+            Persistence::Logged => change.lsn >= durable || committed_late,
+            // Its commit may have been in doubt, never told the engine.
+            Persistence::Forced => true,
+            Persistence::External | Persistence::None => false,
+        };
         if lacks {
             storage.apply(change.row, change.after.clone())?;
         }

@@ -460,8 +460,10 @@ fn only_the_recovered_checkpoints_stale_entries_are_taken_back() {
 
 /// Verifies: [DESIGN] RULES.md D25: once a sync of the log fails, a
 /// database kept in a directory takes no checkpoint, whose image would
-/// claim what the log may not hold, and cannot be closed cleanly; opened
-/// again, it is recovered from what its log holds, and takes changes again.
+/// claim what the log may not hold, and cannot be closed cleanly (SQLCODE
+/// -915); the commit whose sync failed is in doubt (-922), seen by no
+/// session; opened again, it is recovered from what its log holds, the
+/// commit record among it, and takes changes again.
 #[test]
 fn a_failed_log_sync_stops_checkpoints_until_reopened() {
     let scratch = Scratch::new("checkpoint-log-failed");
@@ -474,8 +476,9 @@ fn a_failed_log_sync_stops_checkpoints_until_reopened() {
     let s = crashed.session("APP");
     s.run("UPDATE T SET V = 'kept' WHERE K < 10").unwrap();
     faults.inject(crate::faults::Rule::fail(crate::faults::Op::Sync).on("/log/"));
-    assert_eq!(s.commit().err().map(|e| e.code), Some(Code::Io));
+    assert_eq!(s.commit().err().map(|e| e.code), Some(Code::InDoubt));
     faults.clear();
+    assert_eq!(rows(&crashed.session("APP"), "SELECT COUNT(*) FROM T WHERE V = 'kept'"), Ok(vec!["0".into()]), "in doubt");
     assert!(crashed.log_failure().is_some());
     assert_eq!(crashed.checkpoint().err().map(|e| e.code), Some(Code::Io), "no checkpoint");
     assert_eq!(crashed.close().err().map(|e| e.code), Some(Code::Io), "no clean close");

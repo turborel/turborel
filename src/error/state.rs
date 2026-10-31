@@ -135,6 +135,10 @@ impl SqlState {
     pub const INVALID_SCHEMA_NAME: SqlState = SqlState("3F000");
     /// Syntax error or access rule violation in direct SQL statement.
     pub const SYNTAX_ERROR_IN_DIRECT_STATEMENT: SqlState = SqlState("2A000");
+    /// Connection exception: transaction resolution unknown [ISO/IEC
+    /// 9075:1992 §4.29]: whether the transaction committed cannot be
+    /// verified. \[DESIGN\] Of a commit in doubt (RULES.md D25).
+    pub const TRANSACTION_RESOLUTION_UNKNOWN: SqlState = SqlState("08007");
     /// Transaction rollback.
     pub const TRANSACTION_ROLLBACK: SqlState = SqlState("40000");
     /// Transaction rollback: serialization failure.
@@ -199,6 +203,7 @@ impl SqlState {
             Code::Connection => SqlState::CONNECTION_EXCEPTION,
             Code::Cancelled => SqlState::CANCELLED,
             Code::Dynamic => SqlState::DYNAMIC_SQL_ERROR,
+            Code::InDoubt => SqlState::TRANSACTION_RESOLUTION_UNKNOWN,
             Code::CommitFailed => SqlState::TRANSACTION_ROLLBACK,
             Code::Damaged => SqlState::DAMAGED,
             Code::Io => SqlState::IO,

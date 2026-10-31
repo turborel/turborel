@@ -423,6 +423,14 @@ fill it commit together, or not at all.
   accepted (SQLCODE -915), and it cannot be closed cleanly; reads and
   rollbacks go on. Opened again, it is recovered from what its log holds
   (`Database::log_failure`).
+- A commit whose commit record is written but whose sync fails is in
+  doubt: it is never stamped (its engines are not told it committed), so
+  no session sees it, its own neither; its session is told SQLCODE -922,
+  SQLSTATE 08007 (transaction resolution unknown); its locks and versions
+  are held until the database is dropped, with no abort record, so
+  nothing builds on it or undoes it. Opened again, recovery decides it by
+  what the log holds: committed if the commit record reached the disk,
+  else rolled back.
 *Why:* one commit point makes transactions atomic across engines without
 two-phase commit. Logical records keep engines independent, and a
 pluggable log leaves room for replicated or remote ones.
@@ -827,8 +835,8 @@ TLS over TCP and whole files are their first implementations. Approved
 with it: a `Log` for commit, beside a driver of those traits that knows
 no content, and the core's `Standby` seam (replay, promote, depose,
 export, import); a record durable before a backup acknowledges it; a
-sync in doubt, when replicated, never stamped, resolved by consensus or
-the node deposed;
+sync in doubt never stamped (D25), and when replicated resolved by
+consensus or the node deposed;
 a `node` property for settings never logged; reads on the primary
 confirming its view; no at-most-once for SQL clients in alpha; stale
 snapshot reads on backups, with a least position; state transfer by the

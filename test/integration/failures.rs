@@ -293,7 +293,7 @@ fn a_failed_seal_stops_the_database() {
     }
     assert_eq!(faults.injected(), 1, "a seal failed");
     faults.clear();
-    assert_eq!(a.commit().err().map(|e| e.code), Some(Code::Io));
+    assert_eq!(a.commit().err().map(|e| e.code), Some(Code::InDoubt));
     assert_eq!(db.log_failure().map(|e| e.code), Some(Code::Io));
     let refused = a.run("INSERT INTO T VALUES (40, 'row 40')").unwrap_err();
     assert_eq!(refused.code, Code::Io);

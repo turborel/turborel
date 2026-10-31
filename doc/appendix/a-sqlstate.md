@@ -37,6 +37,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 08003 | Connection exception: connection does not exist |
 | 08004 | Connection exception: the server refused the connection |
 | 08006 | Connection exception: connection failure |
+| 08007 | Connection exception: transaction resolution unknown: a commit in doubt, its commit record not synced; decided when the database is opened again |
 | 0A000 | Feature not supported: valid SQL turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
 | 21000 | Cardinality violation: a subquery of one row gave more |
@@ -115,6 +116,7 @@ negative of an exception:
 | -919 | A connection exception |
 | -920 | The statement cancelled |
 | -921 | A dynamic SQL error |
+| -922 | A commit in doubt: whether it committed is known once the database is opened again |
 
 The standard: ISO/IEC 9075:1992 §22.1, Table 23; X3.135-1986 §7.3, of
 SQLCODE.

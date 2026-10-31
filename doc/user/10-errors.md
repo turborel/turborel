@@ -19,7 +19,9 @@ process. The SQLSTATE is the standard's code of the condition.
 [SQLSTATE and SQLCODE](../appendix/a-sqlstate.md) lists them all.
 
 A statement that fails is undone; the transaction goes on, unless the
-failure rolls it back, as a COMMIT refused does (SQLSTATE class 40).
+failure rolls it back, as a COMMIT refused does (SQLSTATE class 40). A
+COMMIT in doubt (SQLCODE -922, SQLSTATE 08007) is neither: the database
+could not make it durable, and decides it when it is opened again.
 
 ## Where an error is placed
 

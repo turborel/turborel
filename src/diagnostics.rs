@@ -289,7 +289,7 @@ impl Event {
 /// The level of a failure of `code`, if it is an event at all.
 fn worth(code: Code) -> Option<Level> {
     match code {
-        Code::Damaged | Code::Corrupt | Code::Io => Some(Level::Error),
+        Code::Damaged | Code::Corrupt | Code::Io | Code::InDoubt => Some(Level::Error),
         Code::CommitFailed | Code::Resources => Some(Level::Warning),
         Code::Lexical
         | Code::Syntax

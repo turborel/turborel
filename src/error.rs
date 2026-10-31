@@ -66,6 +66,13 @@ pub enum Code {
     /// prepared statement given values not one for each of its parameters,
     /// or executed or opened as it cannot be (SQLSTATE class 07).
     Dynamic = -921,
+    /// \[DESIGN\] A commit in doubt (RULES.md D25): its commit record was
+    /// written but could not be synced, so whether it committed is known
+    /// only once the database is opened again and recovered from what its
+    /// log holds. Meanwhile no other session sees its changes, and the
+    /// database takes no change. SQLSTATE 08007, transaction resolution
+    /// unknown [ISO/IEC 9075:1992 §4.29, §22.1].
+    InDoubt = -922,
     /// \[DESIGN\] A participant could not promise to commit, so COMMIT rolled back instead.
     CommitFailed = -913,
     /// \[DESIGN\] A change could not be undone, so its table is damaged: the
@@ -278,6 +285,7 @@ mod tests {
             Code::Connection => -919,
             Code::Cancelled => -920,
             Code::Dynamic => -921,
+            Code::InDoubt => -922,
             Code::CommitFailed => -913,
             Code::Damaged => -914,
             Code::Io => -915,
@@ -329,6 +337,7 @@ mod tests {
             Code::Connection,
             Code::Cancelled,
             Code::Dynamic,
+            Code::InDoubt,
             Code::CommitFailed,
             Code::Damaged,
             Code::Io,

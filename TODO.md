@@ -90,9 +90,9 @@ RULES.md when its design settles.
   (`pg_catalog`, `SHOW`) are answered is a decision to make.
 - **Replication**, pluggable, Viewstamped Replication first, as RULES.md
   D57 decides. Done: the one replay, `record::KINDS` and its tests, the
-  files' classes and the export manifest. Next, with nothing visible to
-  users: the `Standby` and `StateSource` seam; a sync of the log in doubt,
-  never stamped; the `node` property of settings; a single-node replicated
+  files' classes and the export manifest, a commit in doubt never
+  stamped (D25). Next, with nothing visible to users: the `Standby` and
+  `StateSource` seam; the `node` property of settings; a single-node replicated
   `Log` passing the log, durability, recovery and reopen tests. Then the
   `Consensus`, `Transport` and `StateTransfer` traits and VR as a pure
   state machine in a deterministic simulator; real databases in it, a
