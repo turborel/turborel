@@ -42,7 +42,7 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
             let keeps = |u: i64| if *not { !has_null && !equal(u) } else { equal(u) };
             Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect())
         }
-        Judged::Like(..) | Judged::Compared(..) => None,
+        Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) => None,
     }
 }
 

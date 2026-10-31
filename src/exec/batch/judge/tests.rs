@@ -1,6 +1,7 @@
 //! Unit tests of filters judged over vectors (`judge.rs`).
 
 use super::*;
+use crate::exec::NoSubqueries;
 use crate::storage::Floats;
 use crate::value::{ArithOp, Decimal};
 
@@ -103,12 +104,12 @@ fn comparisons_that_cannot_raise_are_judged_over_integers() {
         };
         all.iter().copied().filter(|&n| compared(&at(a, n), *op, &at(b, n)) == Truth::True).collect()
     };
-    assert_eq!(judged[0].kept(&of_ints, &all), Some(vec![0, 1]), "1.50 > 1, -0.20 > -1");
+    assert_eq!(judged[0].kept(&of_ints, &all, &NoSubqueries), Some(vec![0, 1]), "1.50 > 1, -0.20 > -1");
     for j in &judged {
-        assert_eq!(j.kept(&of_ints, &all), Some(by_values(j)), "{j:?}");
-        assert_eq!(j.kept(&of_values, &all), None, "{j:?}: no integers of values");
+        assert_eq!(j.kept(&of_ints, &all, &NoSubqueries), Some(by_values(j)), "{j:?}");
+        assert_eq!(j.kept(&of_values, &all, &NoSubqueries), None, "{j:?}: no integers of values");
     }
-    assert_eq!(judged[0].kept(&of_ints, &[1, 4]), Some(vec![1]), "of the rows given");
+    assert_eq!(judged[0].kept(&of_ints, &[1, 4], &NoSubqueries), Some(vec![1]), "of the rows given");
 }
 
 /// The value of column `e` of row `n` of `batch`, its first column column
@@ -305,7 +306,88 @@ fn conjuncts_judged_over_floats_keep_as_values() {
     }
     let over: Vec<usize> = (0..6).collect();
     for j in &judged {
-        assert_eq!(j.kept(&of_floats, &over), j.kept(&of_values, &over), "{j:?}");
+        assert_eq!(j.kept(&of_floats, &over, &NoSubqueries), j.kept(&of_values, &over, &NoSubqueries), "{j:?}");
     }
     assert_eq!(floats::kept(&Judged::Like(0, None), &floats, &over), None, "not of numbers");
+}
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.14]: a LIKE of a
+/// column whose pattern, or escape character, is a column or a constant
+/// not split at plan time is judged over vectors, last; one of another
+/// expression is rest.
+#[test]
+fn likes_of_patterns_not_constant_are_judged_over_vectors() {
+    let column = |at: usize| Expr::Column(at);
+    let like = |pattern: Expr, escape: Option<Expr>| Cond::Like(column(1), pattern, escape);
+    let cond = and(like(column(2), None), and(like(Expr::Const(text("a!%")), Some(column(3))), compare(column(1), CompOp::Ne, column(2))));
+    let (judged, rest) = split(&cond, &[1, 2, 3]);
+    assert!(rest.is_none(), "{rest:?}");
+    assert!(
+        matches!(
+            judged.as_slice(),
+            [Judged::Compared(..), Judged::LikeOf(0, Operand::At(1), None), Judged::LikeOf(0, Operand::Const(_), Some(Operand::At(2)))]
+        ),
+        "{judged:?}"
+    );
+    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Const(text("a%")))], Box::new(Expr::Const(Value::Null)));
+    assert!(split(&like(case, None), &[1]).0.is_empty(), "of another expression: rest");
+}
+
+/// Rows of strings, patterns and escape characters, nulls among them: as
+/// a batch of values, and as one whose strings are text; and the three
+/// columns' values.
+fn liked_rows() -> ([Batch; 2], [Vec<Value>; 3]) {
+    let strings = ["abc", "a%c", "xyz", "", "a_c", "é!z"];
+    let mut nulled: Vec<Value> = strings.iter().map(|s| text(s)).collect();
+    nulled[3] = Value::Null;
+    let patterns = vec![text("a%"), text("a!%c"), Value::Null, text("%"), text("a!_c"), text("é!!_")];
+    let escapes = vec![text("!"), text("!"), text("!"), text("!"), Value::Null, text("!")];
+    let of_values =
+        Batch { columns: vec![Column::from(nulled.clone()), Column::from(patterns.clone()), Column::from(escapes.clone())], rows: 6 };
+    let ends = strings.iter().scan(0_usize, |end: &mut usize, s| {
+        *end = end.checked_add(s.len()).unwrap();
+        Some(*end)
+    });
+    let texts = crate::storage::Texts::new(strings.concat(), ends.collect(), Some(vec![false, false, false, true, false, false]));
+    let of_texts = Batch { columns: vec![Column::Texts(texts), Column::from(patterns.clone()), Column::from(escapes.clone())], rows: 6 };
+    ([of_values, of_texts], [nulled, patterns, escapes])
+}
+
+/// The rows of `values`, strings, patterns and escapes, a row's LIKE
+/// keeps, escaped by the third if `with_escape`.
+fn liked_by_rows([strings, patterns, escapes]: &[Vec<Value>; 3], with_escape: bool) -> Vec<usize> {
+    let keeps = |n: usize| {
+        let escape = match crate::exec::eval::like_escape(with_escape.then(|| &escapes[n])) {
+            Ok(crate::exec::eval::Escape::None) => None,
+            Ok(crate::exec::eval::Escape::Of(c)) => Some(c),
+            Ok(crate::exec::eval::Escape::Null) | Err(_) => return false,
+        };
+        crate::exec::eval::like_truth(&strings[n], &patterns[n], (escape, &NoSubqueries)).unwrap() == Truth::True
+    };
+    (0..strings.len()).filter(|&n| keeps(n)).collect()
+}
+
+/// Verifies: [X3.135-1986 §5.14 GR4, GR5, ISO/IEC 9075:1992 §8.5 GR1-GR3]
+/// a LIKE of patterns not constant judged over vectors keeps what a row's
+/// LIKE keeps, of text and of values, a null string, pattern or escape
+/// never; one raising for a row, an escape of two characters, a pattern
+/// with no partitioning or a number, keeps none so, the batch then judged
+/// a row at a time; a number against a null pattern is unknown.
+#[test]
+fn likes_of_patterns_not_constant_keep_what_rows_keep() {
+    let (batches, values) = liked_rows();
+    let all: Vec<usize> = (0..6).collect();
+    for batch in &batches {
+        let plain = Judged::LikeOf(0, Operand::At(1), None);
+        assert_eq!(plain.kept(batch, &all, &NoSubqueries), Some(liked_by_rows(&values, false)), "no escape");
+        let by_column = Judged::LikeOf(0, Operand::At(1), Some(Operand::At(2)));
+        assert_eq!(by_column.kept(batch, &all, &NoSubqueries), Some(liked_by_rows(&values, true)), "escaped");
+        let doubled = Judged::LikeOf(0, Operand::At(1), Some(Operand::Const(text("!!"))));
+        assert_eq!(doubled.kept(batch, &all, &NoSubqueries), None, "an escape of two characters");
+        let unpartitioned = Judged::LikeOf(0, Operand::Const(text("a!x")), Some(Operand::Const(text("!"))));
+        assert_eq!(unpartitioned.kept(batch, &all, &NoSubqueries), None, "no partitioning");
+        let numbered = Judged::LikeOf(0, Operand::Const(number(1)), None);
+        assert_eq!(numbered.kept(batch, &[0], &NoSubqueries), None, "a number");
+        assert_eq!(numbered.kept(batch, &[3], &NoSubqueries), Some(vec![]), "a null first: unknown");
+    }
 }

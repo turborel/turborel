@@ -1699,6 +1699,13 @@ write-ahead logging.
   over the vectors its conjuncts that compare a column with a constant,
   test IS NULL or IS NOT NULL, IN or NOT IN constants, or LIKE a
   constant pattern (split once, matched by bytes if ASCII), LIKE last.
+  - A LIKE whose pattern or escape character is not a constant can
+    raise. Of a column, its pattern and escape columns or constants, it
+    is judged over vectors (`judge/likes.rs`); a row it raises for has
+    the batch judged a row at a time, so the error is that row's.
+  - Over vectors and row by row alike, such a LIKE splits each pattern
+    once for the statement (`value::LikePatterns`, held by the runner,
+    `Subqueries::like`), at most 256 held.
   - IN lists (`logical/sets.rs`, `Cond::In`) of IN_SET_LEAST (8)
     constants or more, over vectors and row by row alike, use a set of
     their buckets (`value::bucket`) made at plan time. A value is looked

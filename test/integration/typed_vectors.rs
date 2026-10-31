@@ -60,7 +60,7 @@ fn both(db: &Database) -> Session {
 }
 
 /// Queries of exact numbers: `{t}` the table, R or C.
-const QUERIES: [&str; 47] = [
+const QUERIES: [&str; 50] = [
     "SELECT COUNT(*) FROM {t} WHERE D = 1.51",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.510 OR D = -1.49",
     "SELECT COUNT(*) FROM {t} WHERE D = 1.515",
@@ -111,6 +111,9 @@ const QUERIES: [&str; 47] = [
     "SELECT COUNT(*) FROM {t} WHERE H IN ('h1', 'h2 ', 'ü2') AND H NOT IN ('h9', CAST(NULL AS CHAR(3)))",
     "SELECT H, COUNT(*), MIN(K) FROM {t} GROUP BY H",
     "SELECT H, CHAR_LENGTH(H) FROM {t} WHERE K BETWEEN 10 AND 40",
+    "SELECT COUNT(*), MIN(K) FROM {t} WHERE V LIKE V AND I < 3",
+    "SELECT COUNT(*) FROM {t} WHERE H LIKE V OR V LIKE 'v1%'",
+    "SELECT COUNT(*), MAX(K) FROM {t} WHERE V LIKE CASE WHEN I = 1 THEN 'v1%' ELSE '%3' END",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11 GR4,
@@ -131,7 +134,8 @@ const QUERIES: [&str; 47] = [
 /// area; strings, some not ASCII, some with a trailing space, LIKE
 /// patterns, compared padded, IN and NOT IN, grouped, distinct, counted;
 /// CHARACTER strings alike, LIKE seeing them padded [ISO/IEC 9075:1992
-/// §8.5 GR5b iv]; nulls among them all; rows changed and deleted after they
+/// §8.5 GR5b iv]; LIKE of patterns and escapes not constant, a column's
+/// or a CASE's, one raising; nulls among them all; rows changed and deleted after they
 /// were frozen.
 #[test]
 fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
@@ -161,6 +165,8 @@ fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
         "SELECT SUM(N) FROM {t} GROUP BY I",
         "SELECT SUM(N * 1000) FROM {t}",
         "SELECT I, MAX(N * 10) FROM {t} GROUP BY I",
+        // [ISO/IEC 9075:1992 §8.5 GR3a i] an escape not of one character.
+        "SELECT COUNT(*) FROM {t} WHERE V LIKE 'v%' ESCAPE V",
     ];
     for (table, query) in ["R", "C"].iter().flat_map(|t| raising.iter().map(move |q| (*t, *q))) {
         let sum = query.replace("{t}", table);

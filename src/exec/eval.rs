@@ -10,7 +10,7 @@ use crate::error::{Code, Result, SqlState, Warnings, fail, fail_with};
 use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
-use crate::value::{CompOp, Value, arith, cast_warned, compare, like};
+use crate::value::{CompOp, Value, arith, cast_warned, compare};
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
 /// by the `Warnings` it holds: a session's, or the optimizer's own, to
@@ -157,10 +157,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
         Cond::Compare(a, op, b) => compared(&eval(a, row, subqueries)?, *op, &eval(b, row, subqueries)?),
         // [X3.135-1986 §5.15 GR2-GR4]: IS NULL is never unknown.
         Cond::IsNull(e, not) => truth(eval(e, row, subqueries)?.is_null() != *not),
-        Cond::Like(e, pattern, escape) => {
-            let escape = escape.as_ref().map(|x| eval(x, row, subqueries)).transpose()?;
-            like_truth(&eval(e, row, subqueries)?, &eval(pattern, row, subqueries)?, escape)?
-        }
+        Cond::Like(e, pattern, escape) => liked((e, pattern, escape.as_ref()), row, subqueries)?,
         // [X3.135-1986 §5.17 GR2, GR3] true if and only if S is not empty.
         Cond::Exists(s) => truth(!subqueries.rows(s, &outer_values(s, row, subqueries)?, Some(1))?.first(1)?.is_empty()),
         Cond::Quantified(xs, op, q, s) => {
@@ -308,16 +305,44 @@ fn matched(xs: &[Value], (unique, match_type): (bool, MatchType), rows: impl Int
     Ok(truth(if unique { count == 1 } else { count > 0 }))
 }
 
-/// [X3.135-1986 §5.14 GR4, GR5] "x LIKE y": unknown if x, y, or the escape
-/// character is null [ISO/IEC 9075:1992 §8.5 GR1, GR2]; an escape
-/// character not of one character a data exception \[GR3a i\].
-fn like_truth(x: &Value, pattern: &Value, escape: Option<Value>) -> Result<Truth> {
-    let escape = match escape {
-        None => None,
+/// [X3.135-1986 §5.14] "x LIKE y ESCAPE z" of `row`: z, x and y
+/// evaluated in turn, then z judged (`like_escape`), then x matched.
+fn liked((x, y, z): (&Expr, &Expr, Option<&Expr>), row: &Row, subqueries: &dyn Subqueries) -> Result<Truth> {
+    let escape = z.map(|e| eval(e, row, subqueries)).transpose()?;
+    let (value, pattern) = (eval(x, row, subqueries)?, eval(y, row, subqueries)?);
+    let escape = match like_escape(escape.as_ref())? {
+        Escape::None => None,
+        Escape::Of(c) => Some(c),
+        Escape::Null => return Ok(Truth::Unknown),
+    };
+    like_truth(&value, &pattern, (escape, subqueries))
+}
+
+/// The escape character of a LIKE, as `like_escape` judges it.
+pub(crate) enum Escape {
+    /// None is given.
+    None,
+    /// This one.
+    Of(char),
+    /// A null, which makes the LIKE unknown.
+    Null,
+}
+
+/// [X3.135-1986 §5.14 GR4, GR5] Of "x LIKE y ESCAPE z", z's character if
+/// one is given, judged before x and y are matched: null if z is, as
+/// LIKE is then unknown [ISO/IEC 9075:1992 §8.5 GR1]; one not of one
+/// character a data exception \[GR3a i\].
+///
+/// # Errors
+///
+/// SQLCODE -301 if `escape` is not a string of one character.
+pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
+    Ok(match escape {
+        None => Escape::None,
         Some(Value::Char(e)) => {
             let mut chars = e.chars();
             match (chars.next(), chars.next()) {
-                (Some(c), None) => Some(c),
+                (Some(c), None) => Escape::Of(c),
                 _ => {
                     return fail_with(
                         Code::Data,
@@ -327,7 +352,7 @@ fn like_truth(x: &Value, pattern: &Value, escape: Option<Value>) -> Result<Truth
                 }
             }
         }
-        Some(Value::Null) => return Ok(Truth::Unknown),
+        Some(Value::Null) => Escape::Null,
         Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
             return fail_with(
                 Code::Data,
@@ -335,10 +360,22 @@ fn like_truth(x: &Value, pattern: &Value, escape: Option<Value>) -> Result<Truth
                 "[X3.135-1986 §5.14 SR3] the <escape character> is a character string",
             );
         }
-    };
+    })
+}
+
+/// [X3.135-1986 §5.14 GR4, GR5] "x LIKE y", `escape` its escape character
+/// if any (`like_escape`): unknown if x or y is null [ISO/IEC 9075:1992
+/// §8.5 GR2]; matched by `subqueries`, which may hold the pattern split
+/// (`Subqueries::like`).
+///
+/// # Errors
+///
+/// SQLCODE -301 if x or y is not a character string, or the pattern has
+/// no partitioning by the escape character.
+pub(crate) fn like_truth(x: &Value, pattern: &Value, (escape, subqueries): (Option<char>, &dyn Subqueries)) -> Result<Truth> {
     Ok(match (x, pattern) {
         (Value::Null, _) | (_, Value::Null) => Truth::Unknown,
-        (Value::Char(x), Value::Char(y)) => truth(like(x, y, escape)?),
+        (Value::Char(x), Value::Char(y)) => truth(subqueries.like(x, y, escape)?),
         _ => return fail(Code::Data, "[X3.135-1986 §5.14 SR1, SR2] LIKE matches character strings"),
     })
 }

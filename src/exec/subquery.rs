@@ -45,7 +45,7 @@ use crate::spill::heap_bytes;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::txn::{Stop, TxId};
-use crate::value::{Bucket, NormKey, Value, bucket, compare};
+use crate::value::{Bucket, LikePatterns, NormKey, Value, bucket, compare};
 
 /// \[DESIGN\] The default of EXECUTOR.DECORRELATE_AFTER_RUNS: the runs of a
 /// subquery, for as many sets of outer values, after which it is
@@ -127,6 +127,19 @@ pub trait Subqueries {
     fn warnings(&self) -> Option<&Warnings> {
         None
     }
+
+    /// [X3.135-1986 §5.14 GR5] Whether `value` matches `pattern`, `escape`
+    /// its escape character if given, of a LIKE whose pattern is not a
+    /// constant, as `value::like` says: by default its pattern split each
+    /// time; a runner's split once each, for the statement
+    /// (`value::LikePatterns`).
+    ///
+    /// # Errors
+    ///
+    /// As `value::like`.
+    fn like(&self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
+        crate::value::like(value, pattern, escape)
+    }
 }
 
 /// Where no subquery can be: refuses to run one (SQLCODE -910).
@@ -185,13 +198,15 @@ pub struct Runner {
     /// Its transaction's session's, whose warnings it hears, found the
     /// first time one is raised.
     stop: OnceCell<Option<Arc<Stop>>>,
+    /// The patterns of its LIKEs not of constants, each split once.
+    patterns: RefCell<LikePatterns>,
 }
 
 impl Runner {
     /// A runner for transaction `tx` in `db`.
     pub fn new(db: &Arc<State>, tx: TxId) -> Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
-        Runner { db: Arc::clone(db), tx, done, kept: Cell::new(0), seen, stop: OnceCell::new() }
+        Runner { db: Arc::clone(db), tx, done, kept: Cell::new(0), seen, stop: OnceCell::new(), patterns: RefCell::default() }
     }
 
     /// The rows of `plan`, optimized and planned.
@@ -310,6 +325,14 @@ impl Subqueries for Runner {
 
     fn warnings(&self) -> Option<&Warnings> {
         self.stop.get_or_init(|| self.db.tx.stop_of(self.tx)).as_deref().map(Stop::warnings)
+    }
+
+    /// Each pattern split once, held for the runner's statement.
+    fn like(&self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
+        match self.patterns.try_borrow_mut() {
+            Ok(mut patterns) => patterns.matches(value, pattern, escape),
+            Err(_) => crate::value::like(value, pattern, escape),
+        }
     }
 }
 

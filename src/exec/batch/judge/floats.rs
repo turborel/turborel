@@ -44,6 +44,6 @@ pub(super) fn kept(judged: &Judged, floats: &Floats, kept: &[usize]) -> Option<V
                 keep(&|f| list.iter().any(|c| ordering(f, c) == Some(Ordering::Equal)))
             }
         }
-        Judged::Like(..) | Judged::Compared(..) => None,
+        Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) => None,
     }
 }

@@ -4,7 +4,8 @@
 //! judged of the rows they keep, each made a row. Judged so: a column
 //! compared with a constant; a column IS NULL or IS NOT NULL; a column IN,
 //! or NOT IN, a list of constants; a column LIKE a constant pattern, split
-//! once; two expressions of columns and exact constants compared, each
+//! once, or LIKE a column's pattern, or ESCAPE a column's character, each
+//! pattern split once for the statement (`judge/likes.rs`); two expressions of columns and exact constants compared, each
 //! evaluated as integers (`vector/ints.rs`), as `A > B` and `-B > C`, and,
 //! of a filter that can raise an error, `B * 2 > C`. Of a filter that
 //! cannot raise, such a comparison whose integers are not made, as of a
@@ -25,7 +26,8 @@ use super::project::{Place, place_of};
 use super::vector::ints::evaluable;
 use crate::error::{Result, SqlError};
 use crate::exec::eval::compared;
-use crate::exec::{Runner, eval_cond};
+use crate::exec::{Runner, Subqueries, eval_cond};
+use likes::Operand;
 use std::sync::Arc;
 
 use crate::logical::{Cond, Expr, InSet, Truth, compared_with_constant, in_list};
@@ -46,6 +48,9 @@ pub(super) enum Judged {
     /// [X3.135-1986 §5.14] the column LIKE a constant pattern, split once;
     /// none if a null pattern or escape makes it unknown of every row.
     Like(usize, Option<LikePattern>),
+    /// [X3.135-1986 §5.14] the column LIKE a pattern not a constant, a
+    /// column's or a constant, ESCAPE one if given (`judge/likes.rs`).
+    LikeOf(usize, Operand, Option<Operand>),
     /// [X3.135-1986 §5.11] two expressions compared, each of a row of the
     /// values at its places, evaluated as integers; and the conjunct, judged
     /// a row at a time of a batch whose integers are not made.
@@ -59,11 +64,13 @@ pub(super) type Side = (Expr, Vec<usize>);
 impl Judged {
     /// The rows of `over`, rows of `batch`, it is true of: of integers, as
     /// integers (`judge/ints.rs`); none if it compares expressions whose
-    /// integers are not made.
-    fn kept(&self, batch: &Batch, over: &[usize]) -> Option<Vec<usize>> {
+    /// integers are not made, or is a LIKE of a pattern not a constant that
+    /// raises an error of one; such a LIKE matched by `subqueries`.
+    fn kept(&self, batch: &Batch, over: &[usize], subqueries: &dyn Subqueries) -> Option<Vec<usize>> {
         let at = match self {
             Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) => *at,
             Judged::Compared(a, op, b, _) => return ints::compared((a, *op, b), batch, over),
+            Judged::LikeOf(at, pattern, escape) => return likes::kept((*at, pattern, escape.as_ref()), batch, over, subqueries),
         };
         let typed = match batch.columns.get(at) {
             Some(Column::Ints(column)) => ints::kept(self, column, over),
@@ -96,7 +103,7 @@ impl Judged {
                 }
             }
             // Of two expressions, not of one value.
-            Judged::Compared(..) => false,
+            Judged::Compared(..) | Judged::LikeOf(..) => false,
         }
     }
 }
@@ -133,7 +140,7 @@ impl Judging {
         for judged in &self.judged {
             // Of a filter that can raise, each conjunct of every row given.
             let over = if self.raising { &given } else { &kept };
-            let Some(true_of) = judged.kept(batch, over) else {
+            let Some(true_of) = judged.kept(batch, over, runner) else {
                 // Integers not made: of a filter that cannot raise, the
                 // conjunct judged a row at a time of the rows kept; of one
                 // that can, the batch judged whole so.
@@ -208,7 +215,7 @@ fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
     }
     // A LIKE last: it costs more a row than the rest, which may leave it
     // fewer.
-    judged.sort_by_key(|j| matches!(j, Judged::Like(..)));
+    judged.sort_by_key(|j| matches!(j, Judged::Like(..) | Judged::LikeOf(..)));
     (judged, rest.into_iter().reduce(|a, b| Cond::And(Box::new(a), Box::new(b))))
 }
 
@@ -225,14 +232,7 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         Cond::IsNull(Expr::Column(c), not) => place(*c).map(|at| Judged::IsNull(at, *not)),
         Cond::Or(..) | Cond::In(..) => listed(cond).and_then(|(c, set)| Some(Judged::In(place(c)?, set, false))),
         Cond::Not(inner) => listed(inner).and_then(|(c, set)| Some(Judged::In(place(c)?, set, true))),
-        Cond::Like(Expr::Column(c), Expr::Const(pattern), escape) => {
-            let escape = match escape {
-                None => Some(None),
-                Some(Expr::Const(e)) => Some(Some(e)),
-                Some(_) => None,
-            };
-            escape.and_then(|e| constant_pattern(pattern, e)).and_then(|p| Some(Judged::Like(place(*c)?, p)))
-        }
+        Cond::Like(Expr::Column(c), pattern, escape) => liked((*c, pattern, escape.as_ref()), columns),
         Cond::Compare(..)
         | Cond::Const(_)
         | Cond::IsNull(..)
@@ -249,6 +249,33 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         Some(j) => judged.push(j),
         None => rest.push(cond.clone()),
     }
+}
+
+/// Of a LIKE of column `c`, `pattern`, `escape`, how it is judged over a
+/// batch of `columns`: of a constant pattern and escape, if any, split
+/// once; of a column's or a constant, matched a row at a time; else none.
+fn liked((c, pattern, escape): (usize, &Expr, Option<&Expr>), columns: &[usize]) -> Option<Judged> {
+    let place = columns.iter().position(|&x| x == c)?;
+    let constant = match escape {
+        None => Some(None),
+        Some(Expr::Const(e)) => Some(Some(e)),
+        Some(_) => None,
+    };
+    // Constants that may raise, with no partitioning, are rest: judged a
+    // row at a time, as every batch would be.
+    if let (Expr::Const(p), Some(e)) = (pattern, constant) {
+        return constant_pattern(p, e).map(|split| Judged::Like(place, split));
+    }
+    let operand = |e: &Expr| match place_of(e, columns)? {
+        Place::Column(at) => Some(Operand::At(at)),
+        Place::Const(v) => Some(Operand::Const(v)),
+        Place::Expr(..) => None,
+    };
+    let escape = match escape {
+        Some(e) => Some(operand(e)?),
+        None => None,
+    };
+    Some(Judged::LikeOf(place, operand(pattern)?, escape))
 }
 
 /// The column and constants of `cond`, if it is IN a list of them: its
@@ -285,6 +312,7 @@ fn compared_of_integers(cond: &Cond, columns: &[usize]) -> Option<Judged> {
 // what each keeps (RULES.md R-TEST-1).
 mod floats;
 mod ints;
+mod likes;
 mod texts;
 
 #[cfg(test)]

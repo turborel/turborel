@@ -15,6 +15,8 @@
 //! padding is involved: a `CHARACTER(5)` value 'ABC  ' does not match the
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
+use std::collections::HashMap;
+
 use super::Value;
 use crate::error::{Code, Result, SqlState, fail_with};
 
@@ -94,6 +96,47 @@ impl LikePattern {
         }
         let text: Vec<char> = value.chars().collect();
         matched(&self.specs, &text, |t, c| t == c)
+    }
+}
+
+/// \[DESIGN\] The most patterns `LikePatterns` holds split: past them, all
+/// are let go, so a LIKE of a pattern a row's column gives, unlike in
+/// every row, holds no more memory than this many.
+const PATTERNS_HELD: usize = 256;
+
+/// \[DESIGN\] Patterns split once each (`LikePattern`), each kept by its
+/// text and escape character as it is first matched, to match many
+/// strings by: so a LIKE whose pattern is not a constant splits each
+/// pattern once, not once a row (`exec/eval.rs`, `exec/batch/judge.rs`).
+#[derive(Debug, Default)]
+pub struct LikePatterns {
+    /// By escape character, each pattern split.
+    held: HashMap<Option<char>, HashMap<String, LikePattern>>,
+    /// How many are held.
+    count: usize,
+}
+
+impl LikePatterns {
+    /// [X3.135-1986 §5.14 GR5] Whether `value` matches `pattern`, `escape`
+    /// its escape character if one was given, as `like` says: the pattern
+    /// split the first time it is matched.
+    ///
+    /// # Errors
+    ///
+    /// As `like`; a pattern that raises is split again each time.
+    pub fn matches(&mut self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
+        if let Some(split) = self.held.get(&escape).and_then(|patterns| patterns.get(pattern)) {
+            return Ok(split.matches(value));
+        }
+        let split = LikePattern::new(pattern, escape)?;
+        let matched = split.matches(value);
+        if self.count >= PATTERNS_HELD {
+            self.held.clear();
+            self.count = 0;
+        }
+        self.held.entry(escape).or_default().insert(pattern.to_owned(), split);
+        self.count = self.count.saturating_add(1);
+        Ok(matched)
     }
 }
 
@@ -215,5 +258,33 @@ mod tests {
         for bad in ["A!B", "A!"] {
             assert_eq!(m("A", bad).unwrap_err().code, Code::Data, "{bad}");
         }
+    }
+
+    /// Verifies: [DESIGN] [X3.135-1986 §5.14 GR2a, GR5] patterns split once
+    /// each match as `like` does: each pattern held once, by its escape
+    /// character too, so the same text with another escape is another
+    /// pattern; one with no partitioning raises SQLCODE -301 each time and
+    /// is not held; past the most held, all are let go and matching goes
+    /// on alike.
+    #[test]
+    fn patterns_split_once_each_match_as_like() {
+        let mut patterns = LikePatterns::default();
+        let cases =
+            [("50%", "50!%", Some('!')), ("500", "50!%", Some('!')), ("50!", "50!%", None), ("ABC", "A_C", None), ("AB", "A_C", None)];
+        for _ in 0_u8..2_u8 {
+            for (value, pattern, escape) in cases {
+                assert_eq!(patterns.matches(value, pattern, escape).unwrap(), like(value, pattern, escape).unwrap(), "{value} {pattern}");
+            }
+        }
+        assert_eq!(patterns.count, 3, "50!% twice, by its escapes, and A_C");
+        for _ in 0_u8..2_u8 {
+            assert_eq!(patterns.matches("A", "A!B", Some('!')).unwrap_err().code, Code::Data);
+        }
+        assert_eq!(patterns.count, 3, "not held");
+        for n in 0..PATTERNS_HELD {
+            assert!(patterns.matches(&format!("x{n}"), &format!("x{n}%"), None).unwrap());
+        }
+        assert!(patterns.count <= PATTERNS_HELD, "let go: {}", patterns.count);
+        assert!(patterns.matches("ABC", "A_C", None).unwrap(), "after");
     }
 }
