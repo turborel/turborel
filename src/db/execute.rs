@@ -81,9 +81,9 @@ impl Session {
         diagnosed
     }
 
-    /// \[EXTENSION\] Seals the rows of base table `table`, written
-    /// `AUTH.TABLE`, again, through the encodings its option ENCODINGS
-    /// names now (RULES.md D48): as ALTER TABLE changing its engine does,
+    /// \[EXTENSION\] `ALTER TABLE table RESEAL`, of base table `table`
+    /// written `AUTH.TABLE`: seals its rows again, through the encodings its
+    /// option ENCODINGS names now (RULES.md D48): as ALTER TABLE changing its engine does,
     /// in this session's transaction, it gives the table a new generation
     /// of its storage, its rows copied there by the transaction's own
     /// writes, its indexes made anew. Once the transaction commits and a
@@ -103,7 +103,7 @@ impl Session {
         self.emptied(("ALTER TABLE", ""));
         let named = TableName { auth: Some(name.auth), ident: name.ident, at: 0 };
         let anew = AlterAction::Storage(TableStorage::default());
-        let stmt = SqlStatement::AlterTable { table: named, action: anew, text: String::new() };
+        let stmt = SqlStatement::AlterTable { table: named, action: anew, text: crate::parser::RESEAL.to_owned() };
         let outcome = self.execute_parsed(&call, stmt, &mut Params::new());
         self.diagnosed(outcome, |done| done.sqlstate())
     }

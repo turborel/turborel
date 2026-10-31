@@ -25,6 +25,19 @@ pub const MAX_DIGEST_BYTES: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HashId(pub u32);
 
+/// \[DESIGN\] The hash functions of plug-ins whose ids RULES.md D26 gives,
+/// by name: so a file checksummed with one not registered says which.
+const PLUGGED: [(HashId, &str); 2] = [(HashId(11), "SHA-256"), (HashId(12), "HMAC-SHA-256")];
+
+/// Hash function `id`, as a message names it: its id, and its name if
+/// RULES.md D26 gives the id to a plug-in's.
+pub fn described(id: HashId) -> String {
+    match PLUGGED.iter().find(|(known, _)| *known == id) {
+        Some((_, name)) => format!("{} ({name})", id.0),
+        None => id.0.to_string(),
+    }
+}
+
 /// The value of a hash function: `len` bytes, in the order the function
 /// defines (little-endian for the CRC family). The default is empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,5 +109,14 @@ mod tests {
         assert_eq!(Digest::from_le(0x0102_0304, 2).unwrap().as_bytes(), &[4, 3]);
         assert!(Digest::from_le(0, 9).is_none());
         assert_eq!(Digest::new(&[]).unwrap().as_bytes().len(), 0);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D26, D30: a hash function a file names
+    /// is described by its id, and by its name if a plug-in's id.
+    #[test]
+    fn hash_functions_are_described_by_id_and_known_name() {
+        assert_eq!(described(HashId(12)), "12 (HMAC-SHA-256)");
+        assert_eq!(described(HashId(11)), "11 (SHA-256)");
+        assert_eq!(described(HashId(9001)), "9001");
     }
 }

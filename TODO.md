@@ -211,10 +211,7 @@ The registry, scopes and SET statements exist (D36). Still to do:
 - **Encryption, further** (D48): keyrings of key services (a cloud KMS,
   Vault) beside the key directory; a database's files re-encrypted with
   another key, which today means naming it at creation, so a key
-  STORAGE.ENCODINGS names cannot be retired. A table's rows are sealed
-  again only while it is altered (`Session::reseal_table`, `turboreld
-  ... reseal`); a statement for it, `ALTER TABLE ... RESEAL`, awaits its
-  BNF's approval.
+  STORAGE.ENCODINGS names cannot be retired.
 - **Spills, further:** compressed, through the database's compression,
   where the disk is slower than the CPU; and a spill file made before a
   table is encrypted stays as it was until its operator ends. A

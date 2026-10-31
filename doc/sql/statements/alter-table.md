@@ -20,6 +20,7 @@ ALTER TABLE: change a base table
     | DROP CONSTRAINT <constraint name> <drop behavior>
     | SET ( <table option> [ { , <table option> }... ] )
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
+    | RESEAL
 
 <drop behavior> ::= CASCADE | RESTRICT
 ```
@@ -63,6 +64,15 @@ the options WITH gives. INFORMATION_SCHEMA.TABLE_OPTIONS shows them. An
 option the engine can take in place changes no row; any other change
 copies the rows to storage made anew.
 
+**RESEAL** *(extension)* copies the table's rows to storage made anew,
+as it is, and makes its indexes anew. Rows written before its option
+ENCODINGS changed keep the encodings, and the key, they were written
+with; copied, they pass through those ENCODINGS names now. Once the
+transaction commits and a checkpoint follows, nothing of the table is
+read with a key it named before, which may then be retired
+([Encryption](../../operator/07-encryption.md#retiring-a-key)). RESEAL is
+a non-reserved word: elsewhere, an identifier.
+
 A view sees the columns its tables had when it was defined: a column
 added is not one of its.
 
@@ -86,7 +96,8 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCK_WAIT =
    has from its domain is changed by [ALTER DOMAIN](alter-domain.md).
 6. A constraint added follows the rules of [CREATE TABLE](create-table.md).
 7. SET and USING: the engine is registered, and takes each option, of a
-   value it accepts; an option of columns names the table's. A temporary table names no engine or options.
+   value it accepts; an option of columns names the table's. A temporary table names no engine or options,
+   and is not resealed.
 8. A temporary table is altered only while no session's instance of it
    holds a row, the session's own included.
 9. No cursor of the transaction reads the table.
@@ -179,6 +190,17 @@ OK
 (2 rows)
 ```
 
+Its rows sealed again *(extension)*, through the encodings its
+ENCODINGS names now:
+
+```sql
+ALTER TABLE STAFF RESEAL;
+```
+
+```
+OK
+```
+
 Actions refused:
 
 ```sql
@@ -200,8 +222,8 @@ turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASCADE or RESTRICT, found end
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.10 to §11.17. A column dropped takes a table
-constraint that reads it alone, even with RESTRICT [§11.15 SR4]. SET
-and USING are extensions. SQL-86 has no ALTER TABLE.
+constraint that reads it alone, even with RESTRICT [§11.15 SR4]. SET,
+USING and RESEAL are extensions. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO
 

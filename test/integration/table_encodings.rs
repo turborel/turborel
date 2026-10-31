@@ -297,12 +297,14 @@ fn spills_are_encrypted_while_anything_is() {
 /// Verifies: [EXTENSION] RULES.md D48: rows of a table written through
 /// an encoding stay sealed through it after its option ENCODINGS names
 /// another, so a database opened without the first refuses them (SQLCODE
-/// -910); sealed again (`Session::reseal_table`), by its schema's owner
-/// alone (SQLCODE -104), of a base table (-103), named AUTH.TABLE (-910),
-/// short and kept out of
-/// line alike, they are read without it, with the rows written after,
-/// also once the database is opened again, after a crash, which makes the
-/// change again from the log, and a checkpoint.
+/// -910); sealed again by `ALTER TABLE ... RESEAL`, by its schema's owner
+/// alone (SQLCODE -104), of a base table (-103), RESEAL a word in any
+/// case and a column's name elsewhere,
+/// short and kept out of line alike, they are read without it, with
+/// the rows written after, also once the database is opened again, after
+/// a crash, which makes the change again from the log, and a checkpoint.
+/// `Session::reseal_table` does the same, its table named AUTH.TABLE
+/// (-910).
 #[test]
 fn a_tables_rows_are_sealed_again() {
     let scratch = Scratch::new("table-encodings-reseal");
@@ -320,14 +322,15 @@ fn a_tables_rows_are_sealed_again() {
     assert_eq!(rows(&run_length_only(&dir).session("S"), "SELECT K FROM T"), Err(Code::Api), "rows sealed through scramble");
 
     let db = open(&dir, true);
-    db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE U (K INTEGER) CREATE VIEW V AS SELECT K FROM U").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE U (RESEAL INTEGER) CREATE VIEW V AS SELECT RESEAL FROM U").unwrap();
     let p = db.session("P");
-    assert_eq!(p.reseal_table("S.T").err().map(|e| e.code), Some(Code::Privilege), "not the owner's");
-    assert_eq!(p.reseal_table("P.V").err().map(|e| e.code), Some(Code::SyntaxRule), "a view");
+    assert_eq!(exec(&p, "ALTER TABLE S.T RESEAL").err(), Some(Code::Privilege), "not the owner's");
+    assert_eq!(exec(&p, "ALTER TABLE V RESEAL").err(), Some(Code::SyntaxRule), "a view");
     assert_eq!(p.reseal_table("V").err().map(|e| e.code), Some(Code::Api), "not AUTH.TABLE");
+    p.reseal_table("P.U").unwrap();
     exec(&p, "ROLLBACK WORK").unwrap();
     let s = db.session("S");
-    s.reseal_table("S.T").unwrap();
+    exec(&s, "alter table t reseal").unwrap();
     exec(&s, "COMMIT WORK").unwrap();
     assert_eq!(all(&db), written(0..6));
     // A crash: recovery makes the table anew again from the log.
@@ -346,4 +349,18 @@ fn run_length_only(dir: &Path) -> Database {
     db.register_encoding(Box::new(RunLength)).unwrap();
     db.open_files(&os(), dir, &OpenOptions::default()).unwrap();
     db
+}
+
+/// Verifies: [EXTENSION] RULES.md D48, R-DOC-8: ALTER TABLE's page's
+/// example of RESEAL runs as printed, of its table STAFF of rows 1, Ada,
+/// 7200 and 2, Grace, 8100: done, its rows as they were.
+#[test]
+fn the_reseal_example_of_alter_table_runs() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(30), SALARY DECIMAL(9,2))")
+        .unwrap();
+    let ann = db.session("ANN");
+    exec(&ann, "INSERT INTO STAFF VALUES (1, 'Ada', 7200), (2, 'Grace', 8100)").unwrap();
+    assert_eq!(ann.run("ALTER TABLE STAFF RESEAL").ok(), Some(turborel::db::Completion::Success));
+    assert_eq!(rows(&ann, "SELECT ID, NAME FROM STAFF WHERE ID = 2"), Ok(vec!["2,Grace".to_owned()]));
 }

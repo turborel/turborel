@@ -504,12 +504,12 @@ per table.**
   in what is encrypted; the place it is stored and the key's name are
   authenticated, so data changed, moved or of another key is refused
   (SQLCODE -916). A key is rotated by naming another: rows written before
-  are read with their own, until the table is sealed again
-  (`Session::reseal_table`, `turboreld ... reseal`): given a new
+  are read with their own, until the table is sealed again: `ALTER TABLE
+  ... RESEAL` [EXTENSION], RESEAL a `<non-reserved word>` (also
+  `Session::reseal_table`, `turboreld ... reseal`), gives the table a new
   generation of its storage, as ALTER TABLE changing its engine gives it,
   its rows copied there through its encodings now, by its transaction's
-  own writes; logged as an ALTER TABLE of no action text, which no SQL
-  writes. Committed and checkpointed, nothing of the table is read with
+  own writes, logged as any ALTER TABLE. Committed and checkpointed, nothing of the table is read with
   the old key, which may then be retired. A key of STORAGE.ENCODINGS
   serves the database's life.
 - Per table, the engine seals what it stores: the data passed through a

@@ -57,7 +57,7 @@ fn key(keys: &Path, name: &str, byte: &str) {
 /// by that and encrypted by ChaCha20-Poly1305 under L serves a table
 /// encrypted under K; its encodings changed to L, `reseal` seals its rows
 /// again, and with K's file gone it is served, its rows read. Without
-/// `--checksum-key` it is refused, its files of hash function 12 (HMAC-SHA-256) not given;
+/// `--checksum-key` it is refused, its files of hash function 12, HMAC-SHA-256, not given;
 /// with a key not there, the program says it cannot register it; reseal
 /// refuses a database kept nowhere, a table not there, and a command line
 /// naming none or two.
@@ -90,7 +90,7 @@ fn a_key_is_retired_by_resealing_its_table() {
 
     let unkeyed = format!("--dir {} --keys {} --set SERVER.PORT=0", dir.display(), keys.display());
     let refused = turboreld::run(&config(&unkeyed), |_| panic!("not ready"), (async {}, std::future::pending())).unwrap_err();
-    assert!(refused.contains("checksummed with hash function 12, which is not given"), "{refused}");
+    assert!(refused.contains("checksummed with hash function 12 (HMAC-SHA-256), which is not given"), "{refused}");
     let missing =
         turboreld::run(&config(&format!("{unkeyed} --checksum-key K")), |_| panic!("not ready"), (async {}, std::future::pending()))
             .unwrap_err();

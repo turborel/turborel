@@ -68,7 +68,8 @@ SESSION_END says: committed, by default.
 A session is used by one thread at a time; it may move to another
 between calls. Each thread of a program has its own sessions.
 
-`reseal_table("AUTH.TABLE")` seals a table's rows again through the
+`reseal_table("AUTH.TABLE")`, as `ALTER TABLE ... RESEAL` does, seals
+a table's rows again through the
 encodings its option ENCODINGS names now, in the session's transaction,
 as its schema's owner alone may: committed and checkpointed, nothing of
 the table is read through a key it named before

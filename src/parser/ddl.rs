@@ -3,13 +3,29 @@
 //! `<drop schema statement>` [§11.2], `<drop table statement>` [§11.18],
 //! `<drop view statement>` [§11.20], `<drop domain statement>` [§11.27]
 //! and `<drop assertion statement>` [§11.35]; and the index statements and
-//! table storage clauses of this implementation (RULES.md D41). Split from
-//! parser.rs (RULES.md R-SIZE-2).
+//! table storage clauses of this implementation (RULES.md D41, D48), in
+//! the standard's notation:
+//!
+//! ```text
+//! <alter table storage> ::=
+//!       SET <table options>
+//!     | USING <engine name> [ WITH <table options> ]
+//!     | RESEAL
+//! ```
+//!
+//! An `<alter table storage>` is an `<alter table action>`. RESEAL is a
+//! `<non-reserved word>`, an identifier elsewhere: the table's storage made
+//! anew as it is, its rows sealed again through the encodings it names
+//! now. Split from parser.rs (RULES.md R-SIZE-2).
 
 use super::Parser;
 use crate::ast::{AlterAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
+
+/// \[EXTENSION\] The `<non-reserved word>` of `<alter table storage>` that
+/// seals a table's rows again (RULES.md D48).
+pub const RESEAL: &str = "RESEAL";
 
 impl Parser {
     /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN or ASSERTION,
@@ -129,7 +145,11 @@ impl Parser {
     ///
     /// The text is not an `<alter table action>` of those implemented.
     pub fn alter_table_action(&mut self) -> Result<AlterAction> {
-        // [EXTENSION] SET <table options> | USING <engine name> [WITH <table options>]
+        // [EXTENSION] SET <table options> | USING <engine name> [WITH
+        // <table options>] | RESEAL: no engine and no option.
+        if self.accept_word(RESEAL) {
+            return Ok(AlterAction::Storage(TableStorage::default()));
+        }
         if self.accept_kw(kw::SET) {
             return Ok(AlterAction::Storage(TableStorage { engine: None, options: self.table_options()? }));
         }

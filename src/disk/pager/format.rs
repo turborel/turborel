@@ -126,7 +126,10 @@ pub(super) fn read_header(bytes: &[u8], hashes: &[Arc<dyn HashFunction>], path: 
     }
     let id = HashId(field(bytes, HASH_AT).map(u32::from_le_bytes).unwrap_or_default());
     let hash = hashes.iter().find(|h| h.id() == id).ok_or_else(|| {
-        SqlError::new(Code::Api, format!("[DESIGN] {} is checksummed with hash function {}, which is not given", path.display(), id.0))
+        SqlError::new(
+            Code::Api,
+            format!("[DESIGN] {} is checksummed with hash function {}, which is not given", path.display(), crate::hash::described(id)),
+        )
     })?;
     let stored = bytes.get(DIGEST_AT..DIGEST_AT.saturating_add(hash.digest_len()));
     if stored != Some(hash.hash(bytes.get(..DIGEST_AT).unwrap_or_default()).as_bytes()) {

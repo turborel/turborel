@@ -468,7 +468,8 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   D31). The database
   declares ENCODINGS for every table: the registered encodings its rows
   pass through, such as LZ4, or AES-256-GCM or ChaCha20-Poly1305 with its
-  key (RULES.md D48).
+  key (RULES.md D48); `ALTER TABLE ... RESEAL` copies a table's rows
+  through those it names now, RESEAL a non-reserved word.
 - **Plug-ins** for storage engines, index methods, functions, optimizer
   rules, system tables, the log, file systems, encodings, hash functions and
   diagnostics (the extension points are listed at the top of `src/db.rs`).

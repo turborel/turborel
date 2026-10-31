@@ -5,10 +5,10 @@
 //! descriptor, the table's storage told (`TableStorage::reconfigure`); a
 //! change of engine, or of an option that needs a rebuild, gives the table
 //! a new generation of its storage, made with them, and its rows are
-//! copied there, as for a change of its columns (`db/alter.rs`). An action
-//! of no engine and no option, which no SQL writes, gives the table a new
+//! copied there, as for a change of its columns (`db/alter.rs`). `ALTER
+//! TABLE ... RESEAL`, of no engine and no option, gives the table a new
 //! generation as it is: its rows sealed again through the encodings it
-//! names now (`Session::reseal_table`, RULES.md D48). Split from
+//! names now (RULES.md D48). Split from
 //! db/alter.rs (RULES.md R-SIZE-2).
 
 use super::{Made, Reshape};
@@ -170,9 +170,9 @@ impl State {
         }
         let mut next = self.stored(&desc, storage)?;
         let declared = self.options_of(&next.engine);
-        // No engine and no option, which SQL never writes (SET takes one at
-        // least): the storage made anew as it is, its rows sealed again
-        // through the table's encodings now (`Session::reseal_table`).
+        // RESEAL, of no engine and no option (SET takes one at least): the
+        // storage made anew as it is, its rows sealed again through the
+        // table's encodings now.
         let anew = storage.engine.is_none() && storage.options.is_empty();
         if !anew && next.engine == desc.engine && !needs_rebuild(&declared, &desc.options, &next.options) {
             let mut catalog = self.catalog.duplicate();

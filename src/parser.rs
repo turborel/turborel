@@ -9,6 +9,7 @@
 //! Syntax that is valid SQL but not implemented reports `Code::Unsupported`
 //! rather than a misleading syntax error.
 
+pub use ddl::RESEAL;
 pub use domains::VALUE_COLUMN;
 use std::collections::HashSet;
 

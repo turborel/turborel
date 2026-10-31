@@ -70,17 +70,28 @@ ALTER TABLE S.SECRET SET (ENCODINGS = 'ChaCha20-Poly1305:SPARE');
 COMMIT;
 ```
 
-then, the server stopped, seal the table's rows again:
+then seal the table's rows again, by its schema's owner, while the
+server runs:
+
+```sql
+ALTER TABLE S.SECRET RESEAL;
+COMMIT;
+```
+
+or, the server stopped:
 
 ```
 $ turboreld --dir db --keys keys reseal S.SECRET
 S.SECRET sealed again
 ```
 
-`reseal` copies the table's rows anew through the encodings it names
-now, makes its indexes anew, commits, and closes the database, which
-checkpoints it. Once each table that named the old key is sealed again,
-its file may leave the key directory. A key STORAGE.ENCODINGS names
+Either copies the table's rows anew through the encodings it names now,
+and makes its indexes anew ([ALTER TABLE](../sql/statements/alter-table.md));
+`reseal` commits, and closes the database, which checkpoints it.
+Committed, the rows need the old key no more once a checkpoint follows
+(CHECKPOINT.AFTER_CHANGES, CHECKPOINT.AFTER_BYTES, or the database
+closed). Once each table that named the old key is sealed again, and
+checkpointed, its file may leave the key directory. A key STORAGE.ENCODINGS names
 encrypts every file, and is kept for the database's life.
 
 ## Checksums
@@ -102,7 +113,7 @@ $ turboreld --dir db --keys keys --checksum-key MASTER --set STORAGE.CHECKSUM=HM
 A database checksummed with HMAC-SHA-256 is opened only with
 `--checksum-key` naming the same key. Without one, it is refused, its
 hash function not given (SQLCODE -910, `checksummed with hash function
-12, which is not given`); with another key, its files fail their
+12 (HMAC-SHA-256), which is not given`); with another key, its files fail their
 checksums, and it is refused as damaged (SQLCODE -916). An encryption
 authenticates what it encrypts already: the checksum matters most to
 files not encrypted.
