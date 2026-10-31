@@ -5,7 +5,7 @@
 //! Split from functions.rs (RULES.md R-SIZE-2).
 
 use crate::storage::Ints;
-use crate::value::{Decimal, MAX_EXACT_PRECISION, Value, pow10};
+use crate::value::{Decimal, Value};
 
 /// The units of `ints` of the rows `rows`, or all, not null.
 fn units<'i>(ints: &'i Ints, rows: Option<&'i [usize]>) -> Box<dyn Iterator<Item = i64> + 'i> {
@@ -28,14 +28,14 @@ pub(super) fn count(ints: &Ints, rows: Option<&[usize]>) -> usize {
 }
 
 /// `start` plus each of the rows `rows` of `ints`, or all, not null, in
-/// turn, and whether one was: none if a running sum goes past the most
-/// units an exact number holds [X3.135-1986 §5.8 GR4e], as adding them
-/// one by one as decimals would raise of it (`Decimal::checked_add`).
+/// turn, and whether one was: none if 128 bits cannot hold the sum, as
+/// adding them one by one as decimals would find (`Decimal::wide_add`).
+/// No sum so far is judged against `MAX_EXACT_PRECISION`: the total
+/// alone is [ISO/IEC 9075:1992 §6.5 GR2b iv].
 pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[usize]>) -> Option<(i128, bool)> {
-    let bound = pow10(MAX_EXACT_PRECISION)?;
     let (mut total, mut any) = (start, false);
     for u in units(ints, rows) {
-        total = total.checked_add(i128::from(u)).filter(|t| t.checked_abs().is_some_and(|a| a < bound))?;
+        total = total.checked_add(i128::from(u))?;
         any = true;
     }
     Some((total, any))

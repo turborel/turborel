@@ -137,6 +137,7 @@ mod statements;
 mod statistics;
 mod stores;
 mod subqueries;
+mod sums;
 mod system_tables;
 mod table_encodings;
 mod table_settings;

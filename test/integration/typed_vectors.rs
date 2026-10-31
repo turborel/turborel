@@ -126,7 +126,8 @@ const QUERIES: [&str; 50] = [
 /// one an approximate number; numbers near the limits of 18 digits; set
 /// functions grouped and not, of expressions, negations, differences and
 /// products of scales up to 18, one with a quotient evaluated of values;
-/// a running sum, or a product, past 18 digits raising either way; filters
+/// a sum within 18 digits given, one past them, or a product, raising
+/// either way; filters
 /// that can raise of comparisons of expressions, one of a quotient, one
 /// raising; filters that cannot, of columns and negations compared, the
 /// changed rows' values judged a row at a time; of a constant, of an
@@ -157,8 +158,12 @@ fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
     assert_eq!(batched, row, "{spilled}");
     assert_eq!(batched, sorted(&a, &spilled.replace(" C ", " R ")), "{spilled}, as the row store");
     exec(&a, "SET MEMORY.WORK_BYTES = DEFAULT").unwrap();
-    // [X3.135-1986 §5.8 GR4e] a running sum past 18 digits raises, of
-    // integers as of decimals, though the sum of all is within them.
+    // [ISO/IEC 9075:1992 §6.5 GR2b iv] a sum whose total is within 18
+    // digits gives it, of integers as of decimals; one whose total is
+    // past them raises, as does a product past them.
+    let within = "SELECT I, SUM(N) FROM {t} WHERE I IN (1, 4, 9) GROUP BY I";
+    let (batched, row) = both_ways(&a, &within.replace("{t}", "C"));
+    assert_eq!((&batched, &row), (&sorted(&a, &within.replace("{t}", "R")), &batched), "{within}");
     let raising = [
         "SELECT COUNT(*) FROM {t} WHERE N * 1000 > 0 AND I = 1",
         "SELECT SUM(N) FROM {t}",

@@ -52,7 +52,11 @@ impl Decimal {
     }
 
     /// [X3.135-1986 §5.9 GR6a] a result "shall be exactly representable" in our precision.
-    fn checked(self) -> Result<Decimal> {
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -301 if it needs more than `MAX_EXACT_PRECISION` digits.
+    pub fn checked(self) -> Result<Decimal> {
         if self.fits(MAX_EXACT_PRECISION, MAX_EXACT_PRECISION) { Ok(self) } else { too_big() }
     }
 
@@ -72,6 +76,16 @@ impl Decimal {
             (Some(a), Some(b)) => a.checked_add(b).map_or_else(too_big, |sum| Decimal::new(sum, s).checked()),
             _ => too_big(),
         }
+    }
+
+    /// \[DESIGN\] The sum at the scale of `checked_add`, not judged
+    /// against `MAX_EXACT_PRECISION` but held in the 128 bits of `units`:
+    /// a set function's total so far, of which [ISO/IEC 9075:1992 §6.5
+    /// GR2b iv] judges only the last (`checked`). None if 128 bits cannot
+    /// hold it.
+    pub fn wide_add(self, o: Decimal) -> Option<Decimal> {
+        let s = self.scale.max(o.scale);
+        Some(Decimal::new(self.at_scale(s)?.checked_add(o.at_scale(s)?)?, s))
     }
 
     /// The difference, with the scale of `checked_add`.

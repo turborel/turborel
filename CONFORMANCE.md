@@ -270,7 +270,9 @@ restriction is lifted.
 - **Set functions** [§6.5] of any value expression, including over outer
   references [SR4, SR5]. One that eliminates a null completes its
   statement with the warning null value eliminated in set function,
-  01003 [GR1b], read by batches or row by row.
+  01003 [GR1b], read by batches or row by row. SUM judges its total
+  alone against the range of its result, 22003 out of it [GR2b iv], and
+  AVG its mean [GR2b ii], whatever order the rows come in.
 - **Joined tables** [§7.5]: CROSS, INNER, LEFT, RIGHT, FULL and UNION
   joins, with ON, NATURAL or USING, nested and in parentheses; derived
   tables with AS and column lists [§6.3].
@@ -602,6 +604,7 @@ SQLCODE -900 (RULES.md D18).
 | Exact precision | 18 digits, for NUMERIC, DECIMAL and exact literals | [§5.5 SR6, SR7] and [§5.2 SR4] set no maximum. | `value.rs`, `parser/data_type.rs` |
 | FLOAT precision | 53 binary digits; approximate literals within the range of a double | [§5.5 SR10] allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser.rs` |
 | `<unsigned integer>` | 4,294,967,295 | [§5.2] sets no maximum. | `parser.rs` |
+| A sum of SUM or AVG on the way to its total | 128 bits: past some 10^20 exact values of 18 digits, or 10^18 intervals of 9 digits of days | ISO/IEC 9075:1992 [§6.5 GR2b iv] judges only the total against the range of the result, so whether a sum raises does not depend on the order of its rows (RULES.md D15); each sum before it is kept wider than the result, but not without bound. | `functions/sum.rs` |
 | Index entry | An encoded key plus an 8-byte row id. A B-link tree index holds 2,020 bytes at the default 8 KiB page, 996 at 4 KiB, and 16,356 at 64 KiB. A hash index holds 8,136 bytes at 8 KiB and 65,480 at 64 KiB. These figures assume the default 4-byte CRC-32C checksum. | A B-link node must hold at least four entries to split. A row's long values go out of line, but an index key is compared in its node, so it stays whole. A table's rows are not limited this way. STORAGE.PAGE_BYTES, chosen when the database is created, raises the limit. | `index/blink.rs`, `index/hash.rs`, `engine/tree.rs` |
 | SQL descriptor areas | 64 at once, of a session | ISO/IEC 9075:1992 [§17.2 GR3] leaves the number to the implementation, and names no exception past it. Direct SQL allocates them, a server's clients among it. | `db/dynamic/areas.rs` |
 | Nesting depth | 64 levels of the syntax tree: about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |

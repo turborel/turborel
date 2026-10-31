@@ -3,7 +3,7 @@
 //! value made of each: how many are not null, their sum, and the greatest
 //! or least, each of the rows given or all, nulls left out [X3.135-1986
 //! §5.8 GR1], in the order a row at a time takes them, so each total is
-//! the same. Split from functions.rs (RULES.md R-SIZE-2).
+//! the same; and how a sum is kept (`Wide`). Split from functions.rs (RULES.md R-SIZE-2).
 
 use std::cmp::Ordering;
 
@@ -24,20 +24,60 @@ pub(super) fn count(floats: &Floats, rows: Option<&[usize]>) -> usize {
     numbers(floats, rows).count()
 }
 
-/// `start`, if any, plus each of the rows `rows` of `floats`, or all, not
-/// null, in order, and whether there is a sum, of `start` or of one: none
-/// if a running sum is not finite, which `arith` refuses [X3.135-1986 §5.9
-/// SR5].
-pub(super) fn sum_from(start: Option<f64>, floats: &Floats, rows: Option<&[usize]>) -> Option<(f64, bool)> {
-    let mut sum = start;
+/// Adds to `sum` each of the rows `rows` of `floats`, or all, not null, in
+/// order, as `Wide::with` adds a value; whether there was one.
+pub(super) fn sum_into(sum: &mut Wide, floats: &Floats, rows: Option<&[usize]>) -> bool {
+    let mut any = false;
     for f in numbers(floats, rows) {
-        let next = sum.map_or(f, |s| s + f);
-        if !next.is_finite() {
-            return None;
-        }
-        sum = Some(next);
+        *sum = sum.with(f);
+        any = true;
     }
-    Some((sum.unwrap_or(0.0_f64), sum.is_some()))
+    any
+}
+
+/// 2^64, by which `Wide` scales back up the values it keeps in `big`.
+const SHIFT: f64 = f64::from_bits(1087_u64 << 52);
+/// 2^-64, by which `Wide` scales them down: multiplied, exactly.
+const UNSHIFT: f64 = f64::from_bits(959_u64 << 52);
+/// 2^-900: the least magnitude `Wide` scales down, so that none scaled is
+/// subnormal and loses a bit.
+const TINY: f64 = f64::from_bits(123_u64 << 52);
+
+/// \[DESIGN\] RULES.md D15: an approximate sum that leaves the range of
+/// `f64` only if its total does, whatever the order its values came in
+/// [ISO/IEC 9075:1992 §6.5 GR2b iv]. A value of magnitude 2^-900 or more
+/// is added to `big` scaled by 2^-64, exactly, so `big` takes the same
+/// roundings as the plain sum but cannot overflow before 2^63 values; the
+/// rest are added to `small`, which cannot either. Of values all such,
+/// the total is the plain sum's, in the same order.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Wide {
+    big: f64,
+    small: f64,
+}
+
+impl Wide {
+    /// No value yet: each part -0, which adds to any value as nothing,
+    /// so a sum of -0s is -0.
+    pub(super) const EMPTY: Wide = Wide { big: -0.0_f64, small: -0.0_f64 };
+
+    /// The sum with `f` added.
+    #[must_use]
+    pub(super) fn with(self, f: f64) -> Wide {
+        if f.abs() >= TINY { Wide { big: self.big + f * UNSHIFT, ..self } } else { Wide { small: self.small + f, ..self } }
+    }
+
+    /// The sum: not finite if out of the range of `f64`.
+    pub(super) fn total(self) -> f64 {
+        self.big * SHIFT + self.small
+    }
+
+    /// The sum divided by `n`, the mean of `n` values, which is in range
+    /// even where the sum is not.
+    pub(super) fn over(self, n: f64) -> f64 {
+        let total = self.total();
+        if total.is_finite() { total / n } else { self.big / n * SHIFT + self.small / n }
+    }
 }
 
 /// The greatest, if `max`, or least of the rows `rows` of `floats`, or

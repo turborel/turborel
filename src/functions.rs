@@ -24,13 +24,15 @@ use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
 use crate::value::Spelled;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value, arith};
+use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value};
 
 mod extremes;
 use extremes::Extreme;
 mod floats;
 mod ints;
 mod strings;
+mod sum;
+use sum::{AvgAcc, SumAcc};
 
 pub use strings::CONCATENATION;
 
@@ -136,7 +138,10 @@ pub trait Accumulator {
     ///
     /// # Errors
     ///
-    /// The running result is out of range [X3.135-1986 §5.8 GR4e, GR4f].
+    /// The value cannot be taken in. The built-in SUM and AVG raise here
+    /// only of a sum 128 bits cannot hold, a limit: a result out of range is
+    /// raised by `finish` [ISO/IEC 9075:1992 §6.5 GR2b iv], so whether it
+    /// is does not depend on the order of the values (RULES.md D15).
     fn update(&mut self, v: &Value) -> Result<()>;
     /// \[DESIGN\] Called with a vector of the argument's values (RULES.md
     /// D31): of those at `rows`, or all, each not null, as `update` is.
@@ -379,8 +384,9 @@ impl Accumulator for CountAcc {
     }
 }
 
-/// SUM. [X3.135-1986 §5.8 SR9b] exact with scale S stays exact with scale S. [X3.135-1986 §5.8 GR4e] the sum
-/// shall be within range. [X3.135-1986 §5.8 GR4c] null when S is empty.
+/// SUM. [X3.135-1986 §5.8 SR9b] exact with scale S stays exact with scale S. [ISO/IEC 9075:1992 §6.5 GR2b iv]
+/// the sum, not each sum on the way to it, shall be within range (`sum.rs`). [X3.135-1986 §5.8 GR4c] null when S is
+/// empty.
 struct Sum;
 
 impl AggregateFunction for Sum {
@@ -406,89 +412,12 @@ impl AggregateFunction for Sum {
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(SumAcc(Value::Null, result))
+        Box::new(SumAcc::new(result))
     }
 }
 
-/// The sum so far, and the type of the result.
-struct SumAcc(Value, DataType);
-
-impl Accumulator for SumAcc {
-    fn update(&mut self, v: &Value) -> Result<()> {
-        self.0 = if self.0.is_null() { v.clone() } else { arith(ArithOp::Add, &self.0, v)? };
-        Ok(())
-    }
-    /// Exact numbers summed as decimals, nothing cloned, as `arith` sums
-    /// them (`Decimal::checked_add`); others by `update`.
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
-        let mut add = |v: &Value| match (&mut self.0, v) {
-            (_, Value::Null) => Ok(()),
-            (Value::Exact(sum), Value::Exact(d)) => {
-                *sum = sum.checked_add(*d)?;
-                Ok(())
-            }
-            (_, _) => self.update(v),
-        };
-        match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).try_for_each(&mut add),
-            None => values.iter().try_for_each(&mut add),
-        }
-    }
-    /// The integers added to the sum as integers, of one scale; else, or
-    /// if a running sum goes out of range, as decimals, which raise of it.
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
-        let start = if self.0.is_null() {
-            Some(0)
-        } else if let Value::Exact(d) = &self.0
-            && d.scale == ints.scale
-        {
-            Some(d.units)
-        } else {
-            None
-        };
-        match start.and_then(|s| ints::sum_from(s, ints, rows)) {
-            Some((total, true)) => self.0 = Value::Exact(Decimal::new(total, ints.scale)),
-            Some((_, false)) => {}
-            None => self.update_many(ints.values(), rows)?,
-        }
-        Ok(())
-    }
-    /// The numbers added as `f64`s, in order; if a running sum is not
-    /// finite, by `update_many`, which raises of it.
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
-        let start = match &self.0 {
-            Value::Null => None,
-            Value::Approx(s) => Some(*s),
-            Value::Char(_) | Value::Exact(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
-                return self.update_many(floats.values(), rows);
-            }
-        };
-        match floats::sum_from(start, floats, rows) {
-            Some((total, true)) => self.0 = Value::Approx(total),
-            Some((_, false)) => {}
-            None => self.update_many(floats.values(), rows)?,
-        }
-        Ok(())
-    }
-    /// [ISO/IEC 9075:1992 §6.5 SR9e] an interval in the argument's fields.
-    fn finish(&self) -> Result<Value> {
-        in_fields(self.0.clone(), self.1)
-    }
-}
-
-/// `v`, if an interval and `t` an interval type, in `t`'s fields.
-///
-/// # Errors
-///
-/// SQLSTATE 22015 if they cannot hold it.
-fn in_fields(v: Value, t: DataType) -> Result<Value> {
-    match (&v, t) {
-        (Value::Interval(i), DataType::Interval(q)) => crate::value::types::interval::fitted(i, q),
-        _ => Ok(v),
-    }
-}
-
-/// AVG. [X3.135-1986 §5.8 GR4f] the average; the running sum shall be within range.
+/// AVG. [ISO/IEC 9075:1992 §6.5 GR2b ii] the average, which alone shall be within range (`sum.rs`): SQL-92 drops
+/// the range of the sum that [X3.135-1986 §5.8 GR4f] sets (RULES.md D32).
 struct Avg;
 
 impl AggregateFunction for Avg {
@@ -517,46 +446,7 @@ impl AggregateFunction for Avg {
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(AvgAcc { sum: SumAcc(Value::Null, result), count: 0, result })
-    }
-}
-
-struct AvgAcc {
-    sum: SumAcc,
-    count: i128,
-    result: DataType,
-}
-
-impl Accumulator for AvgAcc {
-    fn update(&mut self, v: &Value) -> Result<()> {
-        self.count = self.count.saturating_add(1);
-        self.sum.update(v)
-    }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
-        let counted = match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
-            None => values.iter().filter(|v| !v.is_null()).count(),
-        };
-        self.count = self.count.saturating_add(i128::try_from(counted).unwrap_or(i128::MAX));
-        self.sum.update_many(values, rows)
-    }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
-        self.count = self.count.saturating_add(i128::try_from(ints::count(ints, rows)).unwrap_or(i128::MAX));
-        self.sum.update_ints(ints, rows)
-    }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
-        self.count = self.count.saturating_add(i128::try_from(floats::count(floats, rows)).unwrap_or(i128::MAX));
-        self.sum.update_floats(floats, rows)
-    }
-    fn finish(&self) -> Result<Value> {
-        match (&self.sum.0, self.result) {
-            (Value::Null, _) => Ok(Value::Null),
-            // The sum divided by the count at the result scale.
-            (Value::Exact(d), DataType::Exact { scale, .. }) => Ok(Value::Exact(d.quotient_at(Decimal::new(self.count, 0), scale)?)),
-            // An approximate sum gives an approximate average; an
-            // interval's, an interval in its fields.
-            (sum, _) => in_fields(arith(ArithOp::Div, sum, &Value::Exact(Decimal::new(self.count, 0)))?, self.result),
-        }
+        Box::new(AvgAcc::new(result))
     }
 }
 

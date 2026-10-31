@@ -262,6 +262,18 @@ position identifies it anyway.
     (`Plan::OuterJoin`'s own conditions).
   - A raising one over both operands' columns has every pair judged: the
     join has no keys.
+- **SUM and AVG** judge their result alone, once [ISO/IEC 9075:1992 §6.5
+  GR2b iv: "If the sum is not within the range of the data type of the
+  result"], so the order rows come in, which the plan sets, never decides
+  an overflow (`functions/sum.rs`). Each sum on the way is kept wider:
+  - exact numbers in 128 bits, not 18 digits; intervals in 128 bits of
+    units, not their leading field's digits; past 128 bits, a limit
+    some 10^18 values or more reach, -900 (D18) as a value is taken;
+  - approximate numbers of magnitude 2^-900 or more scaled by 2^-64, so
+    no sum on the way overflows; only a total within rounding of the
+    largest double may round past it in one order and not another;
+  - AVG judges its mean, not its sum: SQL-92 [GR2b ii] drops the range
+    of the sum X3.135-1986 §5.8 GR4f sets (D32).
 
 *Why:* §5.18 GR2 defines AND only by its truth table, and §5.21 GR2 and
 §5.23 GR2 apply the condition to each row and group; nothing permits
@@ -1594,13 +1606,14 @@ write-ahead logging.
     unpacked.
   - COUNT, SUM, AVG, MIN and MAX are fed, and comparisons with
     constants, IS NULL and IN judged, as integers scaled once to one
-    scale; a running sum is checked per value as decimals check it.
+    scale; a sum is kept in 128 bits as decimals keep it, its total
+    judged as it is finished (D15).
 - **Floats** (`storage::Floats`). From such a run, an approximate column
   is `f64`s: 8-byte fields read as for integers, their bits the number;
   ALP a run at a time.
-  - COUNT, SUM, AVG, MIN and MAX are fed. SUM adds in row order, so the
-    same total, checked as `arith` checks it; a sum out of range is
-    redone a value at a time so it raises alike.
+  - COUNT, SUM, AVG, MIN and MAX are fed. SUM adds in row order as a
+    value at a time does (`functions/floats.rs` `Wide`), so the same
+    total, judged as it is finished (D15).
   - Comparisons with constants, IN and IS NULL are judged on it, an
     exact constant compared as `value::compare` does
     (`judge/floats.rs`); grouping keys are made of it.

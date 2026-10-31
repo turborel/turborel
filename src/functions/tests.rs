@@ -97,7 +97,7 @@ fn an_accumulator_of_update_alone_is_fed_vectors() {
 /// COUNT, SUM, AVG, MAX and MIN fed approximate numbers as a vector
 /// (`Floats`) give what they give a value at a time: nulls left out, of
 /// the rows asked or all, -0 and 0 alike, after a sum begun; a sum out of
-/// range refused alike.
+/// range refused alike, as it is finished.
 #[test]
 fn set_functions_fed_floats_total_as_values() {
     let numbers = vec![1.5_f64, 0.0_f64, -2.25_f64, 0.1_f64, -0.0_f64, 7.0_f64, 0.0_f64];
@@ -118,8 +118,10 @@ fn set_functions_fed_floats_total_as_values() {
     }
     let huge = Floats::new(vec![f64::MAX, f64::MAX], None);
     let mut sum = Sum.accumulator(approx);
-    let refused = sum.update_floats(&huge, None).err().map(|e| e.code);
+    sum.update_floats(&huge, None).unwrap();
     let mut by_values = Sum.accumulator(approx);
-    assert_eq!(refused, by_values.update_many(huge.values(), None).err().map(|e| e.code));
+    by_values.update_many(huge.values(), None).unwrap();
+    let refused = sum.finish().err().map(|e| e.code);
+    assert_eq!(refused, by_values.finish().err().map(|e| e.code));
     assert!(refused.is_some(), "out of range");
 }
