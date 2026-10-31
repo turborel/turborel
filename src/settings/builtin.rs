@@ -94,6 +94,9 @@ pub const CHECKPOINT_OVERDUE_FACTOR: Key = Key(38);
 pub const LOG_SYNC_AFTER_MS: Key = Key(39);
 /// See [`TABLES_ENGINE`].
 pub const LOG_DURABILITY: Key = Key(41);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the storage settings.
+pub const SYSTEM_CACHE_BYTES: Key = Key(42);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -189,6 +192,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(log_sync());
     all.push(read_ahead());
     all.push(log_durability());
+    all.push(system_cache());
     all
 }
 
@@ -257,6 +261,17 @@ fn read_ahead() -> Definition {
         ("STORAGE.READ_AHEAD_PAGES", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, count(crate::disk::buffer::READ_AHEAD_PAGES)),
         DATABASE,
         "The pages a scan of a table of the built-in row store, or of a B-tree index, reads in one read of the file after a page not in the buffer pool, at most an eighth of the pool's pages; 0 for none. A change holds from the next page so read, a scan under way included.",
+    )
+}
+
+/// \[DESIGN\] The bytes of the data file the system's cache is taken to
+/// hold beyond the buffer pool (RULES.md D35): of the planner's cost of a
+/// fetch the pool misses, at once.
+fn system_cache() -> Definition {
+    defined(
+        ("STORAGE.SYSTEM_CACHE_BYTES", at_least(0), count(crate::engine::rows::SYSTEM_CACHE_BYTES)),
+        DATABASE,
+        "The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.",
     )
 }
 

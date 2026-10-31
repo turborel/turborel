@@ -46,6 +46,10 @@ pub struct TableFiles {
     pub(super) counts: Arc<Mutex<Vec<Weak<Counted>>>>,
     /// The tables opened of its files that counted their rows by a pass.
     pub(super) passes: Arc<AtomicU64>,
+    /// The bytes of its file the system's cache is taken to hold beyond
+    /// the pool, as its store is told (STORAGE.SYSTEM_CACHE_BYTES); until
+    /// then, all of it.
+    pub(super) system_cache: Arc<AtomicU64>,
 }
 
 impl TableFiles {
@@ -71,6 +75,7 @@ impl TableFiles {
             zones: Arc::default(),
             counts: Arc::default(),
             passes: Arc::default(),
+            system_cache: Arc::new(AtomicU64::new(u64::MAX)),
         }
     }
 

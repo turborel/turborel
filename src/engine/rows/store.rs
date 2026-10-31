@@ -29,6 +29,7 @@ impl RowStore {
     pub fn new(files: TableFiles, defaults: TableOptions) -> RowStore {
         let work = Arc::clone(&files.work);
         let headers: Arc<HeaderCache> = Arc::default();
+        let system_cache = Some(Arc::clone(&files.system_cache));
         RowStore {
             files: Mutex::new(Some(TableFiles { headers: Arc::clone(&headers), ..files })),
             headers,
@@ -39,6 +40,7 @@ impl RowStore {
             encodings: Mutex::default(),
             name: ROW_STORE,
             checkpoints: true,
+            system_cache,
         }
     }
 
@@ -72,6 +74,7 @@ impl RowStore {
             encodings: Mutex::default(),
             name: ROW_STORE,
             checkpoints: true,
+            system_cache: None,
         }
     }
 

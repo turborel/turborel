@@ -425,3 +425,37 @@ fn a_filters_estimate_is_no_more_than_its_scan_reads() {
     let found = rows(&s, sql).unwrap();
     assert_eq!(found.len(), 10, "{found:?}");
 }
+
+/// Verifies: [DESIGN] RULES.md D35, D36: a fetch the buffer pool misses is
+/// priced as read from the system's cache by the share of the data file
+/// past the pool that STORAGE.SYSTEM_CACHE_BYTES holds, the rest as read
+/// from the disk: a fortieth of a table whose file is many times its pool
+/// of 64 KiB is found through its index while the cache is taken to hold
+/// the file, by a scan once it is taken to hold none, and through the
+/// index again once set back; each the same rows.
+#[test]
+fn a_fetch_from_the_disk_is_priced_above_one_from_the_cache() {
+    let scratch = Scratch::new("statistics-system-cache");
+    let db = Database::new();
+    db.set_setting("STORAGE.POOL_BYTES", &number(65_536_i64)).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.open_files(&os(), &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL, G INTEGER NOT NULL, V CHARACTER(100))").unwrap();
+    let s = db.session("S");
+    for from in (0..4_000_u32).step_by(500) {
+        let values: Vec<String> = (from..from + 500).map(|k| format!("({k}, {}, 'v{k}')", k % 40)).collect();
+        s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    db.create_index("T_G", "S.T", &["G"], "btree").unwrap();
+    db.maintain().unwrap();
+    let sql = "SELECT MAX(V) FROM T WHERE G = 7";
+    let indexed = || s.physical_plan(sql, &Params::new()).unwrap().contains("IndexScan");
+    assert!(indexed(), "the file in the cache: the index");
+    db.set_setting("STORAGE.SYSTEM_CACHE_BYTES", &number(0_i64)).unwrap();
+    assert!(!indexed(), "none of it in the cache: a scan");
+    let scanned = rows(&s, sql).unwrap();
+    db.set_setting("STORAGE.SYSTEM_CACHE_BYTES", &number(1_i64 << 30_i32)).unwrap();
+    assert!(indexed(), "in the cache again: the index");
+    assert_eq!(rows(&s, sql).unwrap(), scanned);
+}

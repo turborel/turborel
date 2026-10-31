@@ -1555,11 +1555,8 @@ write-ahead logging.
 - **Cost model.** A scan is priced by the columns it reads:
   - a tree row 0.8, plus up to 0.2 as all its columns are read;
   - a frozen row 0.25, plus up to 0.75;
-  - a fetch by id 4.4 for a table the buffer pool holds, rising as it
-    holds less, to 14.6 for one it holds none of; 10% more when all rows
-    are frozen. Held share is of the table's bytes (rows by width) or of
-    its file's pages in use if more, as a file's tables and indexes
-    share its pool.
+  - a fetch by id as D35 says (*Fetch costs*); 10% more when all rows
+    are frozen.
   - The weights follow the costs `bench/analytics.rs` compares; a
     mispriced fetch picks an index where a scan costs less, or the
     reverse.
@@ -1808,6 +1805,23 @@ picks by estimate, so a new method needs no change to the planner.
   else the defaults PLANNER.EQUAL_SELECTIVITY, RANGE_SELECTIVITY and
   NULL_FRACTION, as for a just-opened database's tables until
   maintenance gathers statistics (D31).
+- **Fetch costs** (`rows/frozen.rs`). A row store's fetch by id is
+  priced by where its page is found, a row scanned costing 1:
+  - held by the buffer pool 4.4; missed and in the system's cache 14.6;
+    missed and read from the disk 1188;
+  - the pool's share: of the pages the table's own lookups by id read,
+    those it missed (`Tally`, `BLinkTree::missed_share`), once 64 are
+    counted, halved past 65,536; before, the pool's bytes over the
+    table's (rows by width);
+  - the cache's share: STORAGE.SYSTEM_CACHE_BYTES over the data file's
+    pages in use past the pool, all if none are, or for a database in
+    memory;
+  - the weights from `bench/analytics.rs` and `bench/pages.rs` (pages
+    read beyond the cache, of a file larger than memory).
+  - The cache's size is a setting, as reading it from the system takes
+    `unsafe` (R-SAFE-1); its default, 1 GiB, a few times the default
+    memory budget, prices a file up to that past the pool as in the
+    cache.
 - **Skipping scans.** A filter over a scan that skips zones or chunks its
   conditions cannot match (`TableStorage::scan_share`, D31) is estimated
   to keep no more rows than the scan reads.

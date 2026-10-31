@@ -1,8 +1,10 @@
 //! How fast the pager reads and writes pages (RULES.md D30): writes and
 //! reads of default-size pages, in order and scattered, on one and on
-//! several threads; contents that overflow one page; and writes each
-//! followed by a sync. Run with `cargo xtask bench`, on the harness
-//! (RULES.md R-BENCH-1).
+//! several threads; contents that overflow one page; writes each
+//! followed by a sync; and, with `UNCACHED_VAR` set, scattered reads of
+//! pages the system's cache does not hold, of a file larger than the
+//! machine's memory, written first. Run with `cargo xtask bench`, on the
+//! harness (RULES.md R-BENCH-1).
 
 #![allow(
     clippy::unwrap_used,
@@ -30,6 +32,13 @@ const SYNCED_WRITES: u64 = 100;
 /// Content sizes that overflow, and the bytes of each written per run.
 const OVERFLOW_SIZES: [usize; 2] = [64 * 1024, 1024 * 1024];
 const OVERFLOW_BYTES: usize = 256 * 1024 * 1024;
+/// The variable giving the GiB of the file of `uncached`, larger than the
+/// machine's memory; unset, it is not measured.
+const UNCACHED_VAR: &str = "TURBOREL_BENCH_UNCACHED_GIB";
+/// Pages read in each run of `uncached`.
+const UNCACHED_READS: u64 = 4_000;
+/// Threads writing the file of `uncached`.
+const UNCACHED_WRITERS: usize = 4;
 
 /// A pass over every page.
 #[derive(Clone, Copy)]
@@ -85,6 +94,38 @@ fn main() {
             SYNCED_WRITES
         });
     }
+    drop(pager);
+    uncached(&bench);
+}
+
+/// \[DESIGN\] Scattered reads of pages the system's cache does not hold
+/// (RULES.md D35: the cost of a fetch read from a disk), with no `unsafe`
+/// (R-SAFE-1) to drop the cache: a file of `UNCACHED_VAR` GiB, more than
+/// the machine's memory, written in order, then read scattered in its
+/// first quarter, which the three after have pushed out of the cache; each
+/// run, and the warm-up, of pages of its own.
+fn uncached(bench: &Bench) {
+    let Some(gib) = std::env::var(UNCACHED_VAR).ok().and_then(|v| v.parse::<u64>().ok()) else { return };
+    let pager = bench.pager("uncached");
+    let total = gib * 1024 * 1024 * 1024 / u64::from(DEFAULT_PAGE_SIZE);
+    pager.allocate(total);
+    on_threads(UNCACHED_WRITERS, |t| {
+        let payload = vec![5_u8; pager.inline_capacity()];
+        for n in (t as u64..total).step_by(UNCACHED_WRITERS) {
+            pager.write(PageId(n), &payload).unwrap();
+        }
+    });
+    pager.sync(Durability::Data).unwrap();
+    let quarter = total / 4;
+    let mut run = 0_u64;
+    let mut content = Vec::new();
+    bench.measure(Case::new(format!("read scattered, beyond the cache ({gib} GiB)"), "pages").bytes(DEFAULT_PAGE_SIZE as usize), || {
+        for n in 0..UNCACHED_READS {
+            pager.read(PageId(scatter(run * UNCACHED_READS + n, quarter)), &mut content).unwrap();
+        }
+        run += 1;
+        UNCACHED_READS
+    });
 }
 
 /// Runs `workload` over every page once, split between `threads` threads;

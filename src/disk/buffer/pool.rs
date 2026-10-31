@@ -234,13 +234,18 @@ impl BufferPool {
     /// waited for (RULES.md D38); the errors of reading the page or block,
     /// or of writing back the page whose frame it takes.
     pub fn read(&self, file: FileId, id: u64) -> Result<PageRef<'_>> {
-        let key = Key { file, id };
+        self.read_noting(Key { file, id }).map(|(page, _)| page)
+    }
+
+    /// Holds `key` for reading, as `read`; and whether the pool missed it
+    /// (`tally.rs`).
+    pub(super) fn read_noting(&self, key: Key) -> Result<(PageRef<'_>, bool)> {
         if let Some(page) = self.read_hinted(key) {
-            return Ok(page);
+            return Ok((page, false));
         }
-        let frame = self.hold(key, Fill::Read)?;
+        let (frame, missed) = self.hold(key, Fill::Read)?;
         let pin = Pin(frame);
-        Ok(PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) })
+        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) }, missed))
     }
 
     /// Holds page `id` of pager file `file` for writing; it is dirty from
@@ -251,7 +256,7 @@ impl BufferPool {
     /// As `read`; SQLCODE -910 also if `file` is a block file.
     pub fn write(&self, file: FileId, id: PageId) -> Result<PageMut<'_>> {
         self.pager(file)?;
-        let frame = self.hold(Key { file, id: id.0 }, Fill::Read)?;
+        let (frame, _) = self.hold(Key { file, id: id.0 }, Fill::Read)?;
         Ok(Self::held_for_writing(frame))
     }
 
@@ -268,7 +273,7 @@ impl BufferPool {
         let pager = self.pager(file)?;
         let id = pager.allocate(1).first().map_or(PageId(0), |e| e.start);
         match pager.reserve(id).and_then(|()| self.hold(Key { file, id: id.0 }, Fill::Empty)) {
-            Ok(frame) => Ok((id, Self::held_for_writing(frame))),
+            Ok((frame, _)) => Ok((id, Self::held_for_writing(frame))),
             Err(e) => {
                 // Never written, so nothing refers to it.
                 let _ = pager.free(&[Extent { start: id, count: 1 }]);
@@ -363,13 +368,13 @@ impl BufferPool {
 
 impl BufferPool {
     /// Pins the frame holding `key`, filling one if none does; the hint of
-    /// `key` the frame.
-    fn hold(&self, key: Key, fill: Fill) -> Result<&Frame> {
+    /// `key` the frame. Whether it filled one.
+    fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
         loop {
             if let Some(pinned) = self.pin_mapped(key)? {
                 if let Some(frame) = self.settled_holding(pinned, key)? {
                     self.hints.note(key, pinned.0);
-                    return Ok(frame);
+                    return Ok((frame, false));
                 }
                 // Its load failed, or it was put back: try again.
                 continue;
@@ -377,7 +382,7 @@ impl BufferPool {
             if let Some(claim) = self.claim(key)? {
                 let frame = self.fill(key, claim, fill)?;
                 self.hints.note(key, claim.frame);
-                return Ok(frame);
+                return Ok((frame, true));
             }
         }
     }

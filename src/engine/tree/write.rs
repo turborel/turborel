@@ -46,10 +46,11 @@ impl BLinkTree {
     /// The buffer pool's errors; SQLCODE -916 if a node is malformed.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let _guard = self.epochs.guard();
-        let (_, value) = self.descend(Target::Key(key), 0, &mut Path::default(), |leaf| match leaf.search(key)? {
-            Ok(at) => Ok(Some(leaf.entry(at)?.1.to_vec())),
-            Err(_) => Ok(None),
-        })?;
+        let (_, value) =
+            self.descend(Target::Key(key), 0, &mut Path { tallied: true, ..Path::default() }, |leaf| match leaf.search(key)? {
+                Ok(at) => Ok(Some(leaf.entry(at)?.1.to_vec())),
+                Err(_) => Ok(None),
+            })?;
         Ok(value)
     }
 

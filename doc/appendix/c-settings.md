@@ -80,6 +80,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |
 | STORAGE.POOL_BYTES | 33554432 | INTEGER FROM 65536 TO 9223372036854775807 | at the next start |  |
 | STORAGE.READ_AHEAD_PAGES | 32 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| STORAGE.SYSTEM_CACHE_BYTES | 1073741824 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | TABLES.ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
 | TRANSACTION.STRICT | ON | ONE OF ON, OFF | from the next transaction |  |
@@ -137,6 +138,7 @@ Each in a sentence:
 - **STORAGE.PAGE_BYTES**: The bytes of a page of the data file, a power of two.
 - **STORAGE.POOL_BYTES**: The bytes of the buffer pool of the data file, reserved of MEMORY.BUDGET_BYTES as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.
 - **STORAGE.READ_AHEAD_PAGES**: The pages a scan of a table of the built-in row store, or of a B-tree index, reads in one read of the file after a page not in the buffer pool, at most an eighth of the pool's pages; 0 for none. A change holds from the next page so read, a scan under way included.
+- **STORAGE.SYSTEM_CACHE_BYTES**: The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.
 - **TABLES.ENGINE**: The storage engine of tables a schema creates.
 - **TABLES.UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.
 - **TRANSACTION.STRICT**: ON refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; OFF allows it.

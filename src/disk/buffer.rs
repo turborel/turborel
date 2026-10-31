@@ -27,6 +27,7 @@
 mod eviction;
 mod hits;
 mod pool;
+mod tally;
 
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -35,6 +36,7 @@ use std::time::{Duration, Instant};
 
 pub use eviction::{Clock, Eviction};
 pub use pool::READ_AHEAD_PAGES;
+pub use tally::Tally;
 
 use super::block::BlockFile;
 use super::pager::Pager;

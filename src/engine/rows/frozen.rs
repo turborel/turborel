@@ -63,11 +63,22 @@ use crate::value::Value;
 const ROW: f64 = 0.8;
 const ROW_COLUMNS: f64 = 0.2;
 /// \[DESIGN\] The cost of a row fetched by id through an index, a row of
-/// all columns scanned costing 1: of a table the buffer pool holds, and
-/// more as it holds less of it, to that of one it holds none of
-/// (`bench/analytics.rs`).
-const ROW_FETCH_HELD: f64 = 4.4;
-const ROW_FETCH_READ: f64 = 14.6;
+/// all columns scanned costing 1 (`bench/analytics.rs`): its page held by
+/// the buffer pool; missed by the pool and read from the system's cache;
+/// and read from the disk, that cost more by a page read from the disk
+/// less one from the cache (`bench/pages.rs`), in rows scanned.
+pub(super) const ROW_FETCH_HELD: f64 = 4.4;
+pub(super) const ROW_FETCH_CACHED: f64 = 14.6;
+pub(super) const ROW_FETCH_DISK: f64 = 1188.0;
+/// \[DESIGN\] The lookups by key a table's tree counts before the pages
+/// they missed price its fetches, and not its bytes against the pool's.
+pub(super) const LEAST_LOOKUPS: u64 = 64;
+/// \[DESIGN\] STORAGE.SYSTEM_CACHE_BYTES by default: the bytes of the
+/// data file the system's cache is taken to hold beyond the pool. A
+/// machine of the default budget (MEMORY.BUDGET_BYTES, 256 MiB) is taken
+/// to leave its cache a few times as much; a file up to this past its pool
+/// is priced as it was measured, in the cache.
+pub const SYSTEM_CACHE_BYTES: u64 = 1 << 30;
 /// \[DESIGN\] Bytes of a row's entry in the tree besides its record: its
 /// key, its version and its slot.
 const ENTRY_BYTES: f64 = 32.0;
@@ -421,27 +432,44 @@ impl RowTable {
         if all > 0.0_f64 { ((all - frozen).max(0.0_f64) + read).min(all) / all } else { 1.0_f64 }
     }
 
-    /// The share of the table's rows the buffer pool may hold: its bytes,
-    /// of the rows' as their statistics' width says, else as a page each
-    /// holds a hundred, all if it has no row; or, as the pool is shared by
-    /// every table and index of its file, of the bytes of the file's pages
-    /// in use, if more, as if each held a like share of the pool.
-    fn held_share(&self) -> f64 {
+    /// The share of its fetches' pages the buffer pool holds: as its tree's
+    /// lookups found them (`BLinkTree::missed_share`), once it has counted
+    /// `LEAST_LOOKUPS`; before, the pool's bytes of the table's, by its
+    /// statistics' width, else as a page each holds a hundred, all if it
+    /// has no row.
+    pub(super) fn held_share(&self) -> f64 {
+        if let Some(missed) = self.tree.missed_share(LEAST_LOOKUPS) {
+            return 1.0_f64 - missed;
+        }
         let count = |n: usize| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
         let page = count(self.pool.capacity(self.file).unwrap_or(4096));
         let pool = count(self.pool.frames()) * page;
         let width = self.gathered.get().map_or(page / 100.0_f64, |s| s.width.max(1.0_f64));
         let table = count(self.counted.live.load(Ordering::Acquire)) * (width + ENTRY_BYTES);
-        let file = crate::stats::parts::count(self.pool.pages_in_use(self.file).unwrap_or(0)) * page;
-        if table > 0.0_f64 { (pool / table.max(file)).min(1.0_f64) } else { 1.0_f64 }
+        if table > 0.0_f64 { (pool / table).min(1.0_f64) } else { 1.0_f64 }
     }
 
-    /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`).
+    /// The share of the pages the pool misses the system's cache holds: of
+    /// the file's pages in use past the pool's, as many as
+    /// STORAGE.SYSTEM_CACHE_BYTES; all if none are past it.
+    fn cached_share(&self) -> f64 {
+        let pages = |n: u64| crate::stats::parts::count(n);
+        let page = self.pool.capacity(self.file).ok().and_then(|c| u64::try_from(c).ok()).unwrap_or(4096).max(1);
+        let cache = pages(self.system_cache.load(Ordering::Acquire).checked_div(page).unwrap_or(u64::MAX));
+        let frames = pages(u64::try_from(self.pool.frames()).unwrap_or(u64::MAX));
+        let past = pages(self.pool.pages_in_use(self.file).unwrap_or(0)) - frames;
+        if past > 0.0_f64 { (cache / past).min(1.0_f64) } else { 1.0_f64 }
+    }
+
+    /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`):
+    /// `ROW_FETCH_HELD` of the share the pool holds; of the rest, as read
+    /// from the system's cache by the share it holds, else from the disk;
+    /// `FROZEN_FETCH` more as all the rows are frozen.
     pub(super) fn frozen_fetch_cost(&self) -> f64 {
         let (frozen, all) = self.frozen_share();
         let share = if all > 0.0_f64 { (frozen / all).min(1.0_f64) } else { 0.0_f64 };
-        let held = self.held_share();
-        let fetch = ROW_FETCH_HELD + (ROW_FETCH_READ - ROW_FETCH_HELD) * (1.0_f64 - held);
+        let missed = ROW_FETCH_DISK + (ROW_FETCH_CACHED - ROW_FETCH_DISK) * self.cached_share();
+        let fetch = ROW_FETCH_HELD + (missed - ROW_FETCH_HELD) * (1.0_f64 - self.held_share());
         fetch * (1.0_f64 + FROZEN_FETCH * share)
     }
 

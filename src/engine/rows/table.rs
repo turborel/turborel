@@ -133,6 +133,7 @@ impl RowTable {
             freezes: Arc::clone(&files.freezes),
             zones,
             headers: Arc::clone(&files.headers),
+            system_cache: Arc::clone(&files.system_cache),
         })
     }
 

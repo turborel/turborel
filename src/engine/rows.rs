@@ -62,6 +62,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
+pub use frozen::SYSTEM_CACHE_BYTES;
 use frozen::{Frozen, Merged, Merging};
 use ids::IdBlocks;
 use ids::{key, no_row, row_id};
@@ -137,6 +138,10 @@ pub struct RowStore {
     /// The headers of its tables' frozen row groups held in memory, of
     /// the database's budget once attached (`columns/cache.rs`).
     headers: Arc<cache::HeaderCache>,
+    /// STORAGE.SYSTEM_CACHE_BYTES, as its tables over files on a disk
+    /// price their fetches by it; none for a store in memory, whose files
+    /// are all held.
+    system_cache: Option<Arc<AtomicU64>>,
 }
 
 impl StorageEngine for RowStore {
@@ -228,14 +233,18 @@ impl Configurable for RowStore {
     fn settings(&self) -> Vec<crate::settings::Definition> {
         (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
     }
-    /// The headers it holds; and the pages its pool reads ahead, of its
-    /// data file's or in memory (STORAGE.READ_AHEAD_PAGES), which index
-    /// methods on the same pool share.
+    /// The headers it holds; the pages its pool reads ahead, of its data
+    /// file's or in memory (STORAGE.READ_AHEAD_PAGES), which index methods
+    /// on the same pool share; and, over files on a disk, the bytes of
+    /// them the system's cache holds (STORAGE.SYSTEM_CACHE_BYTES).
     fn configure(&self, settings: &crate::settings::Settings) {
         if let Some(key) = settings.key(&cache::setting_name(self.name)) {
             self.headers.set_most(settings.count(key));
         }
         self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
+        if let Some(cache) = &self.system_cache {
+            cache.store(u64::try_from(settings.count(crate::settings::SYSTEM_CACHE_BYTES)).unwrap_or(u64::MAX), Ordering::Release);
+        }
     }
 }
 
@@ -277,6 +286,9 @@ pub struct RowTable {
     zones: Arc<Zones>,
     /// Its store's headers of frozen row groups held (`TableFiles::headers`).
     headers: Arc<cache::HeaderCache>,
+    /// The bytes of its file the system's cache is taken to hold beyond the
+    /// pool (`TableFiles::system_cache`).
+    system_cache: Arc<AtomicU64>,
 }
 
 impl TableStorage for RowTable {

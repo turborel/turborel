@@ -156,13 +156,11 @@ The registry, scopes and SET statements exist (D36). Still to do:
   alike, its patterns split once each.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
-- **Statistics:** a fetch's cost does not tell a page the system's cache
-  holds from one read from a disk: a page the buffer pool misses is
-  priced as the system's cache gave it, so a read from a disk is priced
-  too cheap. Telling them apart takes no `unsafe` (R-SAFE-1): a setting
-  of the cache's size, say. The pool's share of a table is taken as the
-  pool over its file's pages in use, the same for each of the file's
-  tables and indexes, not as each is read.
+- **Statistics, further** (D35): an index's probe is priced by its pages,
+  PLANNER.INDEX_DESCENT_COST each, whether the pool holds them or not;
+  only a table's fetches are priced by what its lookups missed (`Tally`),
+  as an index's probes, ranges of its tree, are not counted. The system's
+  cache is taken as STORAGE.SYSTEM_CACHE_BYTES says, not as it is.
 
 ---
 

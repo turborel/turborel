@@ -62,7 +62,7 @@ pub use write::Update;
 #[cfg(test)]
 use write::{Mode, Written};
 
-use crate::disk::buffer::{BufferPool, FileId};
+use crate::disk::buffer::{BufferPool, FileId, Tally};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 
@@ -114,6 +114,9 @@ pub struct BLinkTree {
     capacity: usize,
     locks: Locks,
     counters: Counters,
+    /// Its lookups by key and the pages they read that the pool missed
+    /// (`BufferPool::read_tallied`), for the planner's costs.
+    tally: Tally,
     /// The operations under way by epoch, and the pages taken out
     /// (`reclaim.rs`).
     epochs: reclaim::Epochs,
@@ -156,6 +159,8 @@ struct Path {
     stack: Vec<PageId>,
     /// Whether to keep `low`.
     track_low: bool,
+    /// Whether the descent is a lookup the tree's tally counts.
+    tallied: bool,
     /// The key below the range of the node it stopped at; none for the
     /// leftmost node of its level.
     low: Option<Vec<u8>>,
@@ -242,6 +247,7 @@ impl BLinkTree {
             capacity,
             locks: Locks::new(),
             counters: Counters::default(),
+            tally: Tally::default(),
             epochs: reclaim::Epochs::new(),
         }
     }
@@ -311,6 +317,12 @@ impl BLinkTree {
         self.epochs.all_retired().into_iter().try_for_each(|p| self.pool.free(self.file, p))
     }
 
+    /// The pages its lookups by key (`get`) read that the pool missed, per
+    /// lookup, at most 1, once at least `least` are counted.
+    pub fn missed_share(&self, least: u64) -> Option<f64> {
+        self.tally.missed_share(least)
+    }
+
     /// The counters now.
     pub fn counts(&self) -> TreeCounts {
         let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
@@ -349,8 +361,10 @@ impl BLinkTree {
     fn descend<R>(&self, target: Target<'_>, level: u8, path: &mut Path, at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<(PageId, R)> {
         let mut id = PageId(self.root.load(Ordering::Acquire));
         let mut expected = None;
+        let tally = path.tallied.then_some(&self.tally);
+        tally.inspect(|t| t.lookup());
         loop {
-            let page = self.pool.read(self.file, id.0)?;
+            let page = self.pool.read_tallied(self.file, id.0, tally)?;
             let node = Node::parse(&page)?;
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));

@@ -56,6 +56,16 @@ with it in one read of the file, at most an eighth of the pool's pages,
 those the pool holds already left as they are. A change holds at once,
 for a scan under way too.
 
+The planner prices a row fetched through an index by where its page is
+found: in the buffer pool, as the table's own lookups have found its
+pages there; else in the operating system's cache, or on the disk. How
+much of the data file past the pool that cache holds is
+STORAGE.SYSTEM_CACHE_BYTES (1 GiB by default): set it to the memory the
+machine leaves its cache, or to 0 to price every page the pool misses as
+read from the disk, so that a scan is chosen over an index sooner. It
+changes no result, only plans, from the next statement planned; a
+database kept in memory ignores it.
+
 ## Opening and closing
 
 As it opens, a database is **created**, if its directory holds no
