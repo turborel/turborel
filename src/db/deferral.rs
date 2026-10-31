@@ -6,6 +6,7 @@
 //! IMMEDIATE ran [§14.3 GR4], and rolls back if one is not satisfied
 //! [GR5a]. The checks wait in the session (`integrity::Deferral`).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::integrity::{Check, Checking, Cursored, Effects, mode_name};
@@ -81,9 +82,11 @@ impl Session {
 
     /// The waiting checks of the constraints `named`, or of all, made, in
     /// transaction `tx`: done with if they hold, else kept; those `gone`
-    /// says dropped first. The checks are read back from the list they
-    /// wait in, which is kept until they are done with, so none is lost if
-    /// one cannot be read.
+    /// says dropped first. Each check over all a constraint reads waits
+    /// once (`Deferral::wholes`), so it is made once [ISO/IEC 9075:1992
+    /// §4.10.1]. The checks are read back from the list they wait in, which
+    /// is kept until they are done with, so none is lost if one cannot be
+    /// read.
     ///
     /// # Errors
     ///
@@ -91,12 +94,15 @@ impl Session {
     /// spill area's.
     fn check_deferred(&self, st: &Arc<State>, tx: &Txn, (named, gone): Chosen<'_>) -> Result<()> {
         let (mut now, mut later) = (HeldRows::new(st.list_space()), HeldRows::new(st.list_space()));
+        let (mut checked_now, mut waiting) = (HashSet::new(), HashSet::new());
         self.deferral.borrow_mut().pending.visit(&mut |c| {
             if gone(c) {
                 Ok(())
             } else if named.is_none_or(|n| st.constraint_of(c).is_some_and(|d| n.contains(mode_name(d)))) {
+                checked_now.extend(c.whole());
                 now.push(c.clone())
             } else {
+                waiting.extend(c.whole());
                 later.push(c.clone())
             }
         })?;
@@ -107,8 +113,10 @@ impl Session {
         let checked = checked.and(tx.check_reads(false));
         if checked.is_err() {
             later.append(now);
+            waiting.extend(checked_now);
         }
-        self.deferral.borrow_mut().pending = later;
+        let mut deferral = self.deferral.borrow_mut();
+        (deferral.pending, deferral.wholes) = (later, waiting);
         checked
     }
 

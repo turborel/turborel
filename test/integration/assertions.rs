@@ -3,8 +3,13 @@
 //! ends, or at commit if deferred; their rules, their drops, and what the
 //! Information Schema shows of them.
 
-use turborel::db::Database;
-use turborel::error::Code;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use turborel::db::{Database, Session};
+use turborel::error::{Code, Result};
+use turborel::functions::{Accumulator, AggregateFunction};
+use turborel::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
 use crate::common::{count, exec, rows};
 
@@ -212,4 +217,85 @@ fn assertions_are_kept() {
     db.close().unwrap();
     drop(db);
     kept(&open(&dir));
+}
+
+/// The standard COUNT, as a plug-in that counts the counts it begins: how
+/// often a constraint of a COUNT is checked.
+struct Counted(Arc<AtomicUsize>);
+struct Tally(i128);
+impl AggregateFunction for Counted {
+    fn name(&self) -> &'static str {
+        "COUNT"
+    }
+    fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
+    }
+    fn accumulator(&self, _r: DataType) -> Box<dyn Accumulator> {
+        self.0.fetch_add(1_usize, Ordering::Relaxed);
+        Box::new(Tally(0_i128))
+    }
+}
+impl Accumulator for Tally {
+    fn update(&mut self, _v: &Value) -> Result<()> {
+        self.0 += 1_i128;
+        Ok(())
+    }
+    fn finish(&self) -> Result<Value> {
+        Ok(Value::Exact(Decimal::new(self.0, 0)))
+    }
+}
+
+/// The counts `counts` tells were begun as session `s` runs `work` and
+/// then `end`, from the end of the work.
+fn counts_of(counts: &AtomicUsize, s: &Session, work: &[&str], end: &str) -> usize {
+    for sql in work {
+        s.run(sql).unwrap();
+    }
+    let before = counts.load(Ordering::Relaxed);
+    s.run(end).unwrap();
+    counts.load(Ordering::Relaxed) - before
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.10.1, §14.2, §14.3 GR4,
+/// GR5a]; [DESIGN] RULES.md D51: a deferred assertion, and a deferred
+/// CHECK reading another table, are checked once at commit, however many
+/// statements of the transaction changed a table they read: as for one
+/// statement; a violation still rolls back; SET CONSTRAINTS IMMEDIATE
+/// checks each once, and keeps those that fail for the next.
+#[test]
+fn a_deferred_check_is_made_once_14_3() {
+    let db = Database::new();
+    let counts = Arc::new(AtomicUsize::new(0_usize));
+    db.register_aggregate_function(Box::new(Counted(Arc::clone(&counts)))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) CREATE TABLE U (K INTEGER)").unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (1), (2), (3)").unwrap();
+    a.run("INSERT INTO U VALUES (1), (2)").unwrap();
+    a.run("CREATE ASSERTION FEW CHECK ((SELECT COUNT(*) FROM T) < 7) DEFERRABLE INITIALLY DEFERRED").unwrap();
+    a.run("ALTER TABLE U ADD CONSTRAINT UNDER CHECK (K <= (SELECT COUNT(*) FROM T)) DEFERRABLE INITIALLY DEFERRED").unwrap();
+    a.commit().unwrap();
+    // T of rows 1 to 4, and U of 1 and 2, at each check.
+    let once = counts_of(&counts, &a, &["INSERT INTO T VALUES (4)"], "COMMIT");
+    assert!(once > 0_usize, "checked at commit");
+    let many = [
+        "INSERT INTO T VALUES (5)",
+        "INSERT INTO U VALUES (3)",
+        "UPDATE T SET K = K + 1 WHERE K = 5",
+        "DELETE FROM T WHERE K = 6",
+        "DELETE FROM U WHERE K = 3",
+        "UPDATE T SET K = K",
+    ];
+    assert_eq!(counts_of(&counts, &a, &many, "COMMIT"), once, "each once");
+    for k in 5..=7 {
+        a.run(&format!("INSERT INTO T VALUES ({k})")).unwrap();
+    }
+    assert_eq!(a.commit().err().map(|e| e.code), Some(Code::CommitFailed), "FEW");
+    assert_eq!(count(&a, "SELECT K FROM T"), 4_usize, "rolled back");
+    for k in 5..=7 {
+        a.run(&format!("INSERT INTO T VALUES ({k})")).unwrap();
+    }
+    assert_eq!(exec(&a, "SET CONSTRAINTS ALL IMMEDIATE").err(), Some(Code::Constraint), "FEW");
+    let again = ["DELETE FROM T WHERE K > 4", "UPDATE U SET K = K"];
+    assert_eq!(counts_of(&counts, &a, &again, "SET CONSTRAINTS ALL IMMEDIATE"), once, "kept, and each made once");
+    assert_eq!(counts_of(&counts, &a, &[], "COMMIT"), 0_usize, "none waits for commit");
 }

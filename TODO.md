@@ -120,9 +120,6 @@ What came after SQL-92 follows it, written from the standards' own text
   kept, and a SUM's nulls and overflow depend on every row); a condition
   through a view or a join; and a deferred assertion from the changes of
   its transaction.
-- **Deferred checks made once:** a deferred assertion, or a CHECK reading
-  other tables, is checked whole at commit once for each statement that
-  deferred it (`HeldRows::push` keeps every one): once would do.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them

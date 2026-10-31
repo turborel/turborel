@@ -89,8 +89,9 @@ moves the count toward breaking the comparison, or the transaction reads
 at a snapshot of each statement. Of each form, `p` is of columns,
 constants, arithmetic, comparisons, IS NULL, LIKE and CASE alone, of the
 one table's row; the conjuncts of an AND are taken each. A deferred
-assertion is checked whole. Whichever way, a statement fails exactly
-when the condition is false after it. SQL-86 has no assertions.
+assertion is checked whole, once, however many statements of the
+transaction changed a table it reads. Whichever way, a statement fails
+exactly when the condition is false after it. SQL-86 has no assertions.
 
 ## SEE ALSO
 

@@ -206,7 +206,23 @@ impl Check {
             Check::Assertion { .. } => None,
         }
     }
+
+    /// Of a check of a constraint over all it reads, not of a row: which it
+    /// is, the same whichever statement asked for it. One made when the
+    /// constraint is checked [ISO/IEC 9075:1992 §4.10.1] does the work of
+    /// all.
+    pub(super) fn whole(&self) -> Option<Whole> {
+        match self {
+            Check::Table { table, constraint } => Some((Some(table.clone()), constraint.clone())),
+            Check::Assertion { constraint } => Some((None, constraint.clone())),
+            Check::Row { .. } | Check::Unique { .. } | Check::Referenced { .. } => None,
+        }
+    }
 }
+
+/// A check over all a constraint reads (`Check::whole`): its table, none of
+/// an assertion's, and the constraint.
+pub(super) type Whole = (Option<QualifiedName>, QualifiedName);
 
 /// [ISO/IEC 9075:1992 §4.28, §14.2] The constraint mode of each constraint
 /// in a session's transaction, as SET CONSTRAINTS left it, and the checks
@@ -218,14 +234,17 @@ pub(super) struct Deferral {
     pub(super) all: Option<bool>,
     /// The mode SET CONSTRAINTS gave each constraint it named since.
     pub(super) named: HashMap<QualifiedName, bool>,
-    /// The checks waiting.
+    /// The checks waiting: a check over all a constraint reads only once.
     pub(super) pending: HeldRows<Check>,
+    /// Which checks over all a constraint reads are waiting, so a statement
+    /// that asks for one again adds none.
+    pub(super) wholes: HashSet<Whole>,
 }
 
 impl Default for Deferral {
     /// None waiting, and no mode set: as a transaction begins.
     fn default() -> Deferral {
-        Deferral { all: None, named: HashMap::new(), pending: HeldRows::new(ListSpace::default()) }
+        Deferral { all: None, named: HashMap::new(), pending: HeldRows::new(ListSpace::default()), wholes: HashSet::new() }
     }
 }
 
@@ -236,8 +255,15 @@ impl Deferral {
         c.attributes.deferrable && self.named.get(mode_name(c)).copied().or(self.all).unwrap_or(c.attributes.initially_deferred)
     }
 
-    /// `more` checks to wait, after those waiting.
-    pub(super) fn defer(&mut self, more: HeldRows<Check>) {
+    /// Whether `check` is one over all a constraint reads, waiting already.
+    pub(super) fn waits(&self, check: &Check) -> bool {
+        check.whole().is_some_and(|w| self.wholes.contains(&w))
+    }
+
+    /// `more` checks to wait, after those waiting; `wholes`, those of them
+    /// over all a constraint reads, none waiting already.
+    pub(super) fn defer(&mut self, more: HeldRows<Check>, wholes: Vec<Whole>) {
+        self.wholes.extend(wholes);
         if self.pending.is_empty() {
             self.pending = more;
         } else {
@@ -317,7 +343,7 @@ impl State {
     fn checked(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'_>) -> Result<()> {
         self.referential_actions(tx, &mut effects)?;
         let checks = self.checks(&mut effects)?;
-        let mut deferred = HeldRows::new(effects.space.clone());
+        let (mut deferred, mut wholes) = (HeldRows::new(effects.space.clone()), Vec::new());
         let modes = effects.deferral;
         {
             let deferral = modes.borrow();
@@ -325,7 +351,14 @@ impl State {
             for check in checks {
                 let check = check?;
                 let Some(c) = self.constraint_of(&check) else { continue };
-                if deferral.deferred(c) {
+                let deferred_now = deferral.deferred(c);
+                if deferred_now && deferral.waits(&check) {
+                    // A check over all it reads, waiting already: once
+                    // does for every statement that asks for it.
+                    continue;
+                }
+                if deferred_now {
+                    wholes.extend(check.whole());
                     deferred.push(check)?;
                 } else if let Check::Assertion { constraint } = &check {
                     // Immediate, so it held as the statement began.
@@ -336,7 +369,7 @@ impl State {
             }
             checking.finish()?;
         }
-        effects.deferral.borrow_mut().defer(deferred);
+        effects.deferral.borrow_mut().defer(deferred, wholes);
         Ok(())
     }
 

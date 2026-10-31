@@ -726,6 +726,10 @@ machinery.
   row means it is broken [GR2].
 - **When.** Checked when made and at the end of each statement changing
   a table it reads, its reads locked shared; at commit if deferred.
+- **Deferred, once.** A deferred assertion, or deferred CHECK reading
+  other tables, waits once however many statements changed what it
+  reads (`Deferral::wholes`), so is checked once at commit or SET
+  CONSTRAINTS ... IMMEDIATE [§4.10.1]. A row's checks are each kept.
 - **From a change.** Checked immediate at a statement's end, it held at
   the statement's start. So two forms of a conjunct of its condition are
   checked from the changed rows (`Effects::changed_rows`,
