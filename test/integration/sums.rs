@@ -131,3 +131,28 @@ fn a_spilled_grouping_judges_each_total() {
     assert_eq!((batched, by_rows), (sorted.clone(), sorted), "spilled");
     assert!(counted.taken() > 0, "the grouping spilled");
 }
+
+/// Verifies: [DESIGN] RULES.md D15 [ISO/IEC 9075:1992 §6.5 GR2b iv, SR9e]:
+/// SUM of an INTERVAL DAY(2) column is of its fields: 99, 1 and -1 days
+/// sum to 99 in every order written, by batches and row by row; a total
+/// of 100 days is out of the range of the result, "data exception-numeric
+/// value out of range", 22003 and SQLCODE -301, as for any SUM, not the
+/// 22015 of interval arithmetic.
+#[test]
+fn an_interval_sum_out_of_range_is_22003() {
+    let db = Database::new();
+    let mut schema = String::from("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (D INTERVAL DAY(2))");
+    for n in 0..ORDERS.len() {
+        write!(schema, " CREATE TABLE I{n} (D INTERVAL DAY(2))").unwrap();
+    }
+    db.schema(&schema).unwrap();
+    let a = db.session("A");
+    for (n, order) in ORDERS.iter().enumerate() {
+        let values: Vec<String> = order.iter().map(|&at| format!("(INTERVAL '{}' DAY)", ["99", "1", "-1"][at])).collect();
+        a.run(&format!("INSERT INTO I{n} VALUES {}", values.join(", "))).unwrap();
+        let (batched, by_rows) = both_ways(&a, &format!("SELECT SUM(D) FROM I{n}"));
+        assert_eq!((batched, by_rows), (vec!["99".to_owned()], vec!["99".to_owned()]), "order {order:?}");
+    }
+    a.run("INSERT INTO P VALUES (INTERVAL '99' DAY), (INTERVAL '1' DAY)").unwrap();
+    assert_eq!(refused(&a, "SELECT SUM(D) FROM P"), ("22003".to_owned(), -301));
+}

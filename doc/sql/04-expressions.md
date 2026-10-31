@@ -185,9 +185,9 @@ completes with a warning, SQLSTATE 01003, null value eliminated in set
 function: so does the scalar subquery above, as Barbara's salary is
 null.
 
-SUM is refused only if its total does not fit its type, whatever order
-the rows are read in: SQLSTATE 22003 past 18 digits of exact numbers or
-the range of approximate ones, 22015 past an interval's leading field.
+SUM is refused, SQLSTATE 22003, only if its total does not fit its
+type, whatever order the rows are read in: past 18 digits of exact
+numbers, the range of approximate ones, or an interval's leading field.
 So 999999999999999999, 1 and -1 sum to 999999999999999999. AVG is
 refused only if the mean does not fit.
 

@@ -156,7 +156,8 @@ fn exact_and_approximate_values_sum_approximately() {
 /// Verifies: [DESIGN] RULES.md D15 [ISO/IEC 9075:1992 §6.5 GR2b iv,
 /// SR9e]: SUM of intervals whose sum on the way leaves 9 digits of days,
 /// but whose total does not, gives it in every order; AVG their mean; a
-/// total its fields cannot hold is 22015; one 128 bits cannot, -900.
+/// total its fields cannot hold is 22003, numeric value out of range, as
+/// GR2b iv names for any SUM, not 22015; one 128 bits cannot, -900.
 #[test]
 fn an_interval_sum_is_judged_as_a_total() {
     let q = Qualifier::new(Field::Day, Field::Day, 9, 0);
@@ -173,7 +174,7 @@ fn an_interval_sum_is_judged_as_a_total() {
     assert_eq!(avg.finish().unwrap().to_string(), days(most).to_string());
     let mut past = Sum.accumulator(DataType::Interval(q));
     past.update_many(&[days(most), days(1_i128)], None).unwrap();
-    assert_eq!(past.finish().unwrap_err().sqlstate().to_string(), "22015");
+    assert_eq!(past.finish().unwrap_err().sqlstate().to_string(), "22003");
     let huge = Value::Interval(Interval { units: i128::MAX, qualifier: q });
     let mut bits = Sum.accumulator(DataType::Interval(q));
     bits.update(&huge).unwrap();

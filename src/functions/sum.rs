@@ -136,12 +136,20 @@ impl Accumulator for SumAcc {
     }
     /// [ISO/IEC 9075:1992 §6.5 GR2b iv] The sum, judged: of exact numbers,
     /// within `MAX_EXACT_PRECISION` digits; of approximate ones, finite;
-    /// of intervals, in the argument's fields [SR9e].
+    /// of intervals, in the argument's fields [SR9e]. Out of range, of
+    /// any type, it is "data exception-numeric value out of range", 22003.
     fn finish(&self) -> Result<Value> {
         match &self.total {
             Total::Exact(d) => Ok(Value::Exact(d.checked()?)),
             Total::Approx(w) => finite(w.total()),
-            Total::Empty | Total::Interval(_) | Total::Other(_) => in_fields(self.total.value(), self.result),
+            Total::Interval(i) => in_fields(Value::Interval(*i), self.result).or_else(|_| {
+                fail_with(
+                    Code::Data,
+                    SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
+                    format!("[ISO/IEC 9075:1992 §6.5 GR2b iv] the sum {i} is not within the range of {}", self.result),
+                )
+            }),
+            Total::Empty | Total::Other(_) => in_fields(self.total.value(), self.result),
         }
     }
 }

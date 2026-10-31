@@ -269,6 +269,8 @@ position identifies it anyway.
   - exact numbers in 128 bits, not 18 digits; intervals in 128 bits of
     units, not their leading field's digits; past 128 bits, a limit
     some 10^18 values or more reach, -900 (D18) as a value is taken;
+  - a total out of its result's range is 22003 of any type, intervals
+    too [GR2b iv], not the 22015 of interval arithmetic;
   - approximate numbers of magnitude 2^-900 or more scaled by 2^-64, so
     no sum on the way overflows; only a total within rounding of the
     largest double may round past it in one order and not another;
