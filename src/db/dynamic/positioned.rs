@@ -8,6 +8,7 @@ use super::{Name, dynamic_error};
 use crate::ast::{Scope, TableName};
 use crate::binder;
 use crate::catalog::QualifiedName;
+use crate::db::prepared::Preparer;
 use crate::db::{CursorRows, OpenCursor, Session, State, rule};
 use crate::error::{Result, SqlState};
 use crate::lexer::{Tok, Token, delim, kw};
@@ -39,8 +40,16 @@ impl Session {
     /// \[GR2b\]; 3C000 if more than one is \[GR2a\]; of one that names no
     /// table, 26000 if the cursor's statement is not prepared, SQLCODE -103
     /// if its specification reads no updatable table [§17.19 SR2, §13.6
-    /// SR3].
-    pub(crate) fn positioned_reference(&self, st: &State, tokens: &[Token]) -> Result<(Option<Name>, Option<TableName>)> {
+    /// SR3]. \[DESIGN\] Prepared by the API, `by`, one that names its table
+    /// and no cursor of whose name is there is taken, its cursor found as
+    /// it runs, as it was before SQL text prepared statements (RULES.md
+    /// D58).
+    pub(in crate::db) fn positioned_reference(
+        &self,
+        st: &State,
+        tokens: &[Token],
+        by: Preparer,
+    ) -> Result<(Option<Name>, Option<TableName>)> {
         let words: Vec<&Tok> = tokens.iter().map(|t| &t.tok).filter(|t| **t != Tok::Delimiter(delim::SEMICOLON)).collect();
         let positioned = matches!(words.first(), Some(Tok::KeyWord(kw::DELETE | kw::UPDATE)));
         let [.., Tok::KeyWord(kw::CURRENT), Tok::KeyWord(kw::OF), Tok::Identifier(cursor), Tok::End] = words.as_slice() else {
@@ -49,8 +58,15 @@ impl Session {
         if !positioned {
             return Ok((None, None));
         }
-        let (key, specification) = self.dynamic_cursor_named(cursor)?;
-        if !matches!(words.get(1), Some(Tok::KeyWord(kw::WHERE | kw::SET))) {
+        let no_table = matches!(words.get(1), Some(Tok::KeyWord(kw::WHERE | kw::SET)));
+        let (key, specification) = match self.dynamic_cursor_named(cursor) {
+            Ok(found) => found,
+            Err(e) => {
+                let missing = e.sqlstate() == SqlState::INVALID_CURSOR_NAME;
+                return if missing && by == Preparer::Api && !no_table { Ok((None, None)) } else { Err(e) };
+            }
+        };
+        if !no_table {
             return Ok((Some(key), None));
         }
         let text = match specification? {

@@ -67,7 +67,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D51 | Assertions: a query whose rows break it |
 | D52 | A view's REFERENCES: from what its columns are drawn from |
 | D54 | Datetimes and intervals: UTC, the session's zone, a clock |
-| D57 | Dynamic SQL in SQL text: a session plays the module |
+| D58 | Dynamic SQL in SQL text: a session plays the module |
 | **Architecture** | |
 | D25 | Durability: one log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -749,7 +749,7 @@ statement's datetimes on when within it each is evaluated; a time
 without time zone is kept as SQL-92, the standard implemented, says,
 until a later standard's reading is taken.
 
-**D57. Dynamic SQL in SQL text: a session plays the module.**
+**D58. Dynamic SQL in SQL text: a session plays the module.**
 - The statements of ISO/IEC 9075:1992 §17 run by `Session::execute`, as
   any `<SQL procedure statement>` does, the session in the `<module>`'s
   part (D32 claims no module language): PREPARE, EXECUTE, EXECUTE
@@ -777,7 +777,13 @@ until a later standard's reading is taken.
   initiating.
 - A positioned DELETE or UPDATE prepared finds its cursor as it is
   prepared, a declared cursor's or an allocated one's [§17.6 GR2], and
-  one of no table takes that cursor's [§17.19 SR1, §17.20 SR1].
+  one of no table takes that cursor's [§17.19 SR1, §17.20 SR1]. PREPARE
+  and EXECUTE IMMEDIATE refuse a statement with a `<comment>` [§17.6
+  GR4q] and one whose cursor is not there (SQLSTATE 34000); the API's
+  prepare (D45), not §17's PREPARE, takes both, as it always has: a
+  driver's SQL often carries comments, and a program may prepare a
+  positioned statement before it declares its cursor, the cursor then
+  found as the statement runs.
 - Implementation-defined: a descriptor area allocated without WITH MAX
   has 100 occurrences, at most 1,000 [§17.2 SR2, GR3]; a session holds 64
   areas at once, more refused as beyond a limit (D18); a plug-in's type
@@ -2048,9 +2054,11 @@ operator must be able to bound what any statement takes.
   `execute_prepared` [§17.10] and `open_prepared` [§17.13, §17.14] run it
   with values, each cast to its parameter's type [§17.9 GR5]. A `?` where
   GR5 gives none is refused (SQLSTATE 37000) [GR4], and so is every
-  Format, Syntax or Access Rule broken while preparing [GR4a], and a
-  `<comment>` [GR4q]; a positioned DELETE or UPDATE finds its cursor as
-  it is prepared [GR2] (D57). SQL text prepares by name too (D57). A scalar
+  Format, Syntax or Access Rule broken while preparing [GR4a]. A
+  `<comment>` is taken, as clients and drivers send them, though SQL's
+  PREPARE refuses one [GR4q] (D58); a positioned DELETE or UPDATE finds
+  its cursor as it is prepared [GR2], or, none of its name being there,
+  as it runs, as before. SQL text prepares by name too (D58). A scalar
   function plug-in says what type a `?` takes as each of its arguments
   (`ScalarFunction::parameter_type`), refused by default.
 - A query, an INSERT, and a searched UPDATE or DELETE keep their parsed

@@ -1,6 +1,6 @@
 //! Dynamic SQL in SQL text [ISO/IEC 9075:1992 §17]: PREPARE, EXECUTE,
 //! EXECUTE IMMEDIATE, DEALLOCATE PREPARE and DESCRIBE, run by a session
-//! with its program's parameters (RULES.md D57); the names of prepared
+//! with its program's parameters (RULES.md D58); the names of prepared
 //! statements [§5.4], and what each statement refuses.
 
 use turborel::db::{Completion, Session};
@@ -206,4 +206,28 @@ fn dynamic_statements_are_not_prepared_17_6() {
     for refused in ["PREPARE S FROM X", "EXECUTE S", "ALLOCATE DESCRIPTOR 'D'", "DEALLOCATE PREPARE S"] {
         assert_eq!(s.prepare(refused).err().map(|e| e.sqlstate().as_str()), Some("37000"), "{refused}");
     }
+}
+
+/// Verifies: [EXTENSION] RULES.md D45, D58 [ISO/IEC 9075:1992 §17.6 GR2,
+/// GR4q] Regression test (R-TEST-7): the API's prepare, not §17's PREPARE,
+/// takes a statement with a `<comment>`, and a positioned one whose cursor
+/// is not declared yet, which finds it as it runs; PREPARE in SQL text
+/// refuses both (37000, 34000).
+#[test]
+fn the_api_prepare_takes_comments_and_later_cursors_d58() {
+    let db = setup();
+    let s = db.session("APP");
+    let commented = s.prepare("-- the first row\nDELETE FROM T WHERE ID = 1").unwrap();
+    assert_eq!(s.execute_prepared(&commented, &[]).unwrap(), Completion::Success);
+    let positioned = s.prepare("DELETE FROM T WHERE CURRENT OF LATER").unwrap();
+    s.declare_cursor("DECLARE LATER CURSOR FOR SELECT T.ID FROM T").unwrap();
+    let mut p = dynamic_host();
+    run(&s, "OPEN LATER", &mut p).unwrap();
+    run(&s, "FETCH LATER INTO N", &mut p).unwrap();
+    assert_eq!(s.execute_prepared(&positioned, &[]).unwrap(), Completion::Success, "found as it runs");
+    text(&mut p, "-- the first row\nDELETE FROM T WHERE ID = 3");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000"), "GR4q");
+    text(&mut p, "DELETE FROM T WHERE CURRENT OF NONE");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("34000"), "GR2b");
+    assert_eq!(rows(&s, "SELECT ID FROM T").unwrap(), ["3"]);
 }

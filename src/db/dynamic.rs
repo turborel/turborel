@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §17] Dynamic SQL in SQL text, run by a
-//! session (RULES.md D57): its prepared statements, cursors and SQL
+//! session (RULES.md D58): its prepared statements, cursors and SQL
 //! descriptor areas, named as §5.4 names them. The session plays the part
 //! of the `<module>` [§5.4 GR12, GR13]: a `<statement name>` and a LOCAL
 //! extended name are of it, a GLOBAL one of the SQL-session, and each is

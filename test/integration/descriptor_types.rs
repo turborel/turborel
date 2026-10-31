@@ -98,7 +98,7 @@ fn what_makes_an_item_valid_17_1() {
     assert_eq!(run(&s, "EXECUTE V INTO SQL DESCRIPTOR 'D'", &mut p), Err("07002"), "no type of Table 18");
 }
 
-/// Verifies: [EXTENSION] RULES.md D53, D57 [ISO/IEC 9075:1992 §17.1 Table
+/// Verifies: [EXTENSION] RULES.md D53, D58 [ISO/IEC 9075:1992 §17.1 Table
 /// 18, §17.9 GR3e] a plug-in's type is described by the code -1, and an
 /// item of it takes its column's value; TYPE set -1 describes no type
 /// (07002).

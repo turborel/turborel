@@ -178,7 +178,7 @@ fn the_operators_guide_runs_as_printed() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D57: the SQL Reference Manual's
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D58: the SQL Reference Manual's
 /// examples of dynamic SQL that direct SQL runs, of SQL descriptor areas
 /// and EXECUTE IMMEDIATE, run as printed, as ANN, one page after another.
 #[test]

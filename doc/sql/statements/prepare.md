@@ -36,8 +36,10 @@ INSERT, a searched or positioned UPDATE or DELETE, a statement of
 schemas, of transactions or of the session. Each `?` in it is a dynamic
 parameter, whose type is that of where it stands, as the
 [client library](../../client/02-library.md) prepares a statement; it
-takes its value as the statement is executed. The statement is checked
-against the definitions as it is prepared, and again as it runs: they
+takes its value as the statement is executed. Unlike the client
+library's prepare, PREPARE refuses a statement with a comment, and a
+positioned UPDATE or DELETE whose cursor is not there. The statement is
+checked against the definitions as it is prepared, and again as it runs: they
 may have changed meanwhile. It is kept across transactions. A positioned
 UPDATE or DELETE finds its cursor as it is prepared: the cursor of the
 name declared, or allocated; one that names no table, `DELETE WHERE

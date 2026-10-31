@@ -103,6 +103,19 @@ impl Prepared {
     }
 }
 
+/// Who prepares a statement: the API (`Session::prepare`, a server's
+/// protocol), or SQL text's PREPARE or EXECUTE IMMEDIATE, of §17's rules
+/// in full (RULES.md D58).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Preparer {
+    /// `Session::prepare`: a statement with a `<comment>` is taken, as
+    /// clients send them, and a positioned statement's cursor that is not
+    /// there is looked for as it runs.
+    Api,
+    /// PREPARE or EXECUTE IMMEDIATE [§17.6, §17.11].
+    Sql,
+}
+
 /// [ISO/IEC 9075:1992 §17.6 GR4] `e`, raised preparing a statement: a
 /// statement that breaks a Format, a Syntax Rule or an Access Rule is of
 /// class 37 here, not of direct SQL's 2A [§20.1 GR5].
@@ -163,9 +176,11 @@ impl Session {
     ///
     /// Those of the statement's Format, Syntax and Access Rules, of SQLSTATE
     /// 37000 \[GR4a\]: so too if it is not a `<preparable statement>`, or a
-    /// `?` takes no type where it stands, or it has a `<comment>` \[GR4\];
-    /// of a positioned DELETE or UPDATE, SQLSTATE 34000 if no cursor of its
-    /// name is declared or allocated, 3C000 if more than one is \[GR2\].
+    /// `?` takes no type where it stands \[GR4\]; of a positioned DELETE or
+    /// UPDATE that names no table, SQLSTATE 34000 if no cursor of its name
+    /// is declared or allocated; of any, 3C000 if more than one is \[GR2\].
+    /// \[DESIGN\] A `<comment>` is taken, which SQL's PREPARE refuses
+    /// \[GR4q\] (RULES.md D58).
     pub fn prepare(&self, sql: &str) -> Result<Prepared> {
         let made = self.prepared(sql).map_err(in_dynamic);
         self.diagnosed(made, |_| SqlState::SUCCESSFUL_COMPLETION)
@@ -176,25 +191,25 @@ impl Session {
         let call = self.enter()?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <prepare statement>.
         self.emptied(("PREPARE", ""));
-        self.prepared_with(call.state(), sql)
+        self.prepared_with(call.state(), sql, Preparer::Api)
     }
 
     /// `sql` prepared as `prepare` prepares it, the diagnostics area left
     /// as it is: of EXECUTE IMMEDIATE [ISO/IEC 9075:1992 §17.11 GR4].
     pub(super) fn prepared_quietly(&self, sql: &str) -> Result<Prepared> {
         let call = self.enter()?;
-        self.prepared_with(call.state(), sql).map_err(in_dynamic)
+        self.prepared_with(call.state(), sql, Preparer::Sql).map_err(in_dynamic)
     }
 
-    /// `sql` prepared against the definitions `st`.
-    pub(super) fn prepared_with(&self, st: &State, sql: &str) -> Result<Prepared> {
+    /// `sql` prepared against the definitions `st`, by `by`.
+    pub(super) fn prepared_with(&self, st: &State, sql: &str, by: Preparer) -> Result<Prepared> {
         let tokens = lex(sql)?;
-        if has_comment(sql, &tokens) {
+        if by == Preparer::Sql && has_comment(sql, &tokens) {
             let msg = "[ISO/IEC 9075:1992 §17.6 GR4q] a statement prepared has no <comment>";
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
         }
         let kind = kind_of(&tokens);
-        let (cursor, implicit) = self.positioned_reference(st, &tokens)?;
+        let (cursor, implicit) = self.positioned_reference(st, &tokens, by)?;
         let mut parser =
             crate::parser::Parser::for_prepare(sql, self.extensions)?.in_catalog(&st.catalog_name()).implying(implicit.clone());
         let mut single_row = false;

@@ -178,10 +178,11 @@ restriction is lifted.
   the Rust API (`Session::prepare`, `execute_prepared`, `open_prepared`)
   and a server's protocol (RULES.md D45), with `<dynamic parameter
   specification>`s [§6.2] whose types are deduced as §17.6 GR5 says and
-  refused where it gives none [GR4]; a statement with a `<comment>` is
-  refused [GR4q].
+  refused where it gives none [GR4]. A statement with a `<comment>` is
+  taken there, as drivers send them; PREPARE in SQL text refuses it
+  [GR4q] (RULES.md D58).
 - **Dynamic SQL in SQL text** [§17.1–§17.20], run by a session with its
-  program's parameters, the session playing the module (RULES.md D57):
+  program's parameters, the session playing the module (RULES.md D58):
   PREPARE [§17.6], DEALLOCATE PREPARE [§17.7], DESCRIBE INPUT and OUTPUT
   [§17.8], EXECUTE with arguments or a descriptor area, of a `<dynamic
   single row select statement>` INTO them [§17.9, §17.10], EXECUTE

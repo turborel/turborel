@@ -1,7 +1,7 @@
 //! SQL descriptor areas [ISO/IEC 9075:1992 §17.1-§17.5, §17.8, §17.9]:
 //! ALLOCATE, DEALLOCATE, GET and SET DESCRIPTOR, DESCRIBE's filling of one
 //! by the codes of Tables 18 to 20, and EXECUTE's values of one, and into
-//! one (RULES.md D57).
+//! one (RULES.md D58).
 
 use turborel::db::{Completion, Session};
 use turborel::error::{Code, SqlState};

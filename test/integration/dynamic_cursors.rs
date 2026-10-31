@@ -2,7 +2,7 @@
 //! declare cursor>` declares, of a statement name; one ALLOCATE CURSOR
 //! allocates, of an extended name; their OPEN, FETCH and CLOSE; the
 //! positioned DELETE and UPDATE through them, prepared too, of no table
-//! (RULES.md D57).
+//! (RULES.md D58).
 
 use turborel::db::{Completion, Session};
 use turborel::error::Code;

@@ -12,7 +12,7 @@ use super::descriptor::Item;
 use super::using::Targets;
 use super::{Name, dynamic_error, value_of};
 use crate::ast::{DynamicName, ExecuteStatement, ExtendedName, UsingClause, ValueSpecification};
-use crate::db::prepared::in_dynamic;
+use crate::db::prepared::{Preparer, in_dynamic};
 use crate::db::{Completion, Prepared, Session, State, cursor_error};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::params::Params;
@@ -70,7 +70,7 @@ impl Session {
         if self.inner.borrow().dynamic.statements.contains_key(&key) {
             self.deallocate(&key)?;
         }
-        let prepared = self.prepared_with(st, &text).map_err(|e| unplaced(in_dynamic(e)))?;
+        let prepared = self.prepared_with(st, &text, Preparer::Sql).map_err(|e| unplaced(in_dynamic(e)))?;
         let declared = self.inner.borrow().cursors.iter().any(|(n, c)| n.scope.is_none() && c.statement.as_ref() == Some(&key));
         if declared && !prepared.is_query() {
             let msg = format!("[ISO/IEC 9075:1992 §17.6 GR9b ii] statement {key} is a dynamic cursor's, so a <cursor specification>");
