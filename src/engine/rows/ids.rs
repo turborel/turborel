@@ -123,7 +123,10 @@ impl RowTable {
             return Ok(());
         }
         let reserved = id.saturating_add(RESERVE);
-        *self.pool.write(self.file, self.meta)? = meta_content(self.meta_with(reserved));
+        self.counted.holding(|rows| {
+            *self.pool.write(self.file, self.meta)? = meta_content(self.meta_with(reserved, rows));
+            Ok(())
+        })?;
         self.reserved.store(reserved, Ordering::Release);
         Ok(())
     }
@@ -131,12 +134,15 @@ impl RowTable {
     /// Writes the meta page as the table is now.
     pub(super) fn write_meta(&self) -> Result<()> {
         let _reserving = lock(&self.reserving)?;
-        *self.pool.write(self.file, self.meta)? = meta_content(self.meta_with(self.reserved.load(Ordering::Acquire)));
-        Ok(())
+        self.counted.holding(|rows| {
+            *self.pool.write(self.file, self.meta)? = meta_content(self.meta_with(self.reserved.load(Ordering::Acquire), rows));
+            Ok(())
+        })
     }
 
-    /// What its meta page names, the row ids below `reserved` reserved.
-    fn meta_with(&self, reserved: u64) -> Meta {
-        Meta { tree: self.tree.meta(), reserved, directory: self.frozen.stored(), zones: self.zones.directory() }
+    /// What its meta page names, the row ids below `reserved` reserved,
+    /// `rows` its count of rows as last saved (`rows/counted.rs`).
+    fn meta_with(&self, reserved: u64, rows: u64) -> Meta {
+        Meta { tree: self.tree.meta(), reserved, directory: self.frozen.stored(), zones: self.zones.directory(), rows }
     }
 }

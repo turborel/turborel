@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use turborel::catalog::{QualifiedName, TableDesc};
-use turborel::db::{Database, OpenOptions, Opened};
+use turborel::db::{Database, OpenOptions, Opened, Session};
 use turborel::error::{Code, Result};
 use turborel::log::record::{Change, Record};
 use turborel::log::{Log, Lsn, MemoryLog};
@@ -520,4 +520,51 @@ fn a_failed_checkpoint_keeps_its_count() {
     s.commit().unwrap();
     db.run_due().unwrap();
     assert_eq!(db.checkpoints_taken(), failed + 1, "due again at once");
+}
+
+/// The rows the planner takes table `table` to hold, its engine's count
+/// (`TableStorage::row_count`), as a sequential scan's plan shows them.
+fn counted(s: &Session, table: &str) -> String {
+    let plan = s.physical_plan(&format!("SELECT * FROM {table}"), &Params::new()).unwrap();
+    plan.split("rows=").nth(1).and_then(|r| r.split(',').next()).unwrap_or_else(|| panic!("{plan}")).to_owned()
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D25, a row store table's count of rows
+/// kept with its pages: reopened after a clean close, it holds the count
+/// the close saved; after a crash, the count its last checkpoint saved,
+/// moved by recovery's redo and undo, is exact: rows inserted and deleted
+/// after the checkpoint, committed, are counted; a deletion of a
+/// transaction open at the checkpoint, captured by it, and an insert of
+/// one open at the crash, are undone, and not counted.
+#[test]
+fn a_tables_count_of_rows_survives_close_and_crash() {
+    let scratch = Scratch::new("checkpoint-row-count");
+    let dir = scratch.path("db");
+    let (closed, _) = open(&dir, i64::MAX);
+    define(&closed);
+    let s = closed.session("APP");
+    s.run("DELETE FROM T WHERE K < 10").unwrap();
+    s.commit().unwrap();
+    closed.close().unwrap();
+    drop((s, closed));
+    let (crashed, opened) = open(&dir, i64::MAX);
+    assert!(matches!(opened, Opened::Reopened), "{opened:?}");
+    let (open_tx, later) = (crashed.session("APP"), crashed.session("APP"));
+    assert_eq!(counted(&later, "T"), "990", "as the close saved it");
+    open_tx.run("DELETE FROM T WHERE K >= 900").unwrap();
+    later.run("INSERT INTO T SELECT K + 5000, V FROM T WHERE K < 60").unwrap();
+    later.commit().unwrap();
+    crashed.checkpoint().unwrap();
+    later.run("INSERT INTO T SELECT K + 6000, V FROM T WHERE K < 30").unwrap();
+    later.run("DELETE FROM T WHERE K < 15").unwrap();
+    later.commit().unwrap();
+    later.run("INSERT INTO T VALUES (9999, 'open')").unwrap();
+    assert_eq!(counted(&later, "T"), "956", "990 - 100 + 50 + 20 - 5 + 1, the open transactions' too");
+
+    let (db, opened) = open(&dir, i64::MAX);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let s = db.session("APP");
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T").unwrap(), ["1055"], "990 + 50 + 20 - 5");
+    assert_eq!(counted(&s, "T"), "1055");
+    drop((s, db, open_tx, later, crashed));
 }

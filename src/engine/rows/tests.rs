@@ -40,7 +40,7 @@ fn stale_references_are_refused() {
     assert_eq!(table.get_value(8, reference).err().map(|e| e.code), Some(Code::Corrupt), "another row");
     let other_column = Reference { column: 1, ..reference };
     assert_eq!(table.get_value(7, other_column).err().map(|e| e.code), Some(Code::Corrupt), "another column");
-    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13 };
+    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13, rows: 17 };
     assert_eq!(parse_meta(&meta_content(meta)), Some(meta));
     assert_eq!(parse_meta(&[TABLE_FORMAT; 3]), None);
     let mut other_format = meta_content(meta);

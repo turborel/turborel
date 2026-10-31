@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::UndoStore;
+use super::counted::Counted;
 use super::zones::Zones;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::shadow::ShadowFileSystem;
@@ -40,6 +41,11 @@ pub struct TableFiles {
     /// The zone maps of its tables open, saved at each checkpoint
     /// (`rows/zones/saved.rs`).
     pub(super) zones: Arc<Mutex<Vec<Weak<Zones>>>>,
+    /// The counts of rows of its tables open, saved at each checkpoint
+    /// (`rows/counted.rs`).
+    pub(super) counts: Arc<Mutex<Vec<Weak<Counted>>>>,
+    /// The tables opened of its files that counted their rows by a pass.
+    pub(super) passes: Arc<AtomicU64>,
 }
 
 impl TableFiles {
@@ -63,6 +69,8 @@ impl TableFiles {
             freezes: Arc::default(),
             headers: Arc::default(),
             zones: Arc::default(),
+            counts: Arc::default(),
+            passes: Arc::default(),
         }
     }
 

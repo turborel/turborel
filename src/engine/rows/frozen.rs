@@ -431,7 +431,7 @@ impl RowTable {
         let page = count(self.pool.capacity(self.file).unwrap_or(4096));
         let pool = count(self.pool.frames()) * page;
         let width = self.gathered.get().map_or(page / 100.0_f64, |s| s.width.max(1.0_f64));
-        let table = count(self.live.load(Ordering::Acquire)) * (width + ENTRY_BYTES);
+        let table = count(self.counted.live.load(Ordering::Acquire)) * (width + ENTRY_BYTES);
         let file = crate::stats::parts::count(self.pool.pages_in_use(self.file).unwrap_or(0)) * page;
         if table > 0.0_f64 { (pool / table.max(file)).min(1.0_f64) } else { 1.0_f64 }
     }
@@ -448,7 +448,10 @@ impl RowTable {
     /// The rows frozen, and all the table's rows, as costs.
     fn frozen_share(&self) -> (f64, f64) {
         let frozen = self.frozen.directory().map_or(0, |d| d.rows());
-        (crate::storage::cost_of(usize::try_from(frozen).unwrap_or(usize::MAX)), crate::storage::cost_of(self.live.load(Ordering::Acquire)))
+        (
+            crate::storage::cost_of(usize::try_from(frozen).unwrap_or(usize::MAX)),
+            crate::storage::cost_of(self.counted.live.load(Ordering::Acquire)),
+        )
     }
 
     /// Notes a commit at `at`, for COLUMNSTORE.FREEZE_DELAY.

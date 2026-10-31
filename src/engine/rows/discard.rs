@@ -53,6 +53,6 @@ impl RowTable {
         }
         self.zones.free_pages()?;
         self.tree.free()?;
-        self.pool.free(self.file, self.meta)
+        self.counted.free_meta()
     }
 }

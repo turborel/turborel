@@ -162,9 +162,9 @@ impl RowTable {
     /// Counts a change undone: an insert taken out, or a deletion put back.
     pub(super) fn count_undone(&self, version: &Version<'_>, inserted: bool) {
         if inserted {
-            self.live.fetch_sub(1, Ordering::AcqRel);
+            self.counted.live.fetch_sub(1, Ordering::AcqRel);
         } else if version.deleted {
-            self.live.fetch_add(1, Ordering::AcqRel);
+            self.counted.live.fetch_add(1, Ordering::AcqRel);
         }
     }
 }

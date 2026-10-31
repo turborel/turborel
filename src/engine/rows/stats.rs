@@ -1,8 +1,8 @@
 //! \[DESIGN\] The row store's statistics (RULES.md D31): gathered in one
 //! pass over the newest committed version of every row, decoded whole, its
 //! width the bytes of its record in the leaf, and over the frozen rows no
-//! entry of the tree stands for. A table opened counts its rows as it
-//! opens, and has no statistics until first asked for, once recovery is
+//! entry of the tree stands for. A table opened knows its count of rows
+//! as it opens (`rows/counted.rs`), and has no statistics until first asked for, once recovery is
 //! done (`rows/recovery.rs`): then they are due, and the database's
 //! maintenance thread gathers them (`TableStorage::maintain`), the planner
 //! meanwhile estimating without them, so no statement waits for a pass

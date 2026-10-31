@@ -1,9 +1,10 @@
 //! \[DESIGN\] A row-store table made, or opened from its meta page
 //! (RULES.md D31). Split from engine/rows.rs (RULES.md R-SIZE-2).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::counted::Counted;
 use super::ids::IdBlocks;
 use super::meta::{Meta, meta_content, parse_meta};
 use super::mvcc::Versions;
@@ -25,6 +26,8 @@ pub(super) struct Found {
     reserved: u64,
     /// The page listing its zone maps' pages, 0 for none.
     zones: u64,
+    /// Its count of rows as its meta page holds it.
+    rows: u64,
 }
 
 impl RowTable {
@@ -40,17 +43,18 @@ impl RowTable {
         let zones = if options.columns.is_none() && keeps_any(types) { files.pool.new_page(files.file)?.0.0 } else { 0 };
         let meta = {
             let (meta, mut page) = files.pool.new_page(files.file)?;
-            *page = meta_content(Meta { tree: tree.meta(), reserved: RESERVE, directory: 0, zones });
+            *page = meta_content(Meta { tree: tree.meta(), reserved: RESERVE, directory: 0, zones, rows: 0 });
             meta
         };
-        RowTable::with(files, Found { meta, tree, reserved: RESERVE, zones }, types, options)
+        RowTable::with(files, Found { meta, tree, reserved: RESERVE, zones, rows: 0 }, types, options)
     }
 
     /// Opens the table whose meta page is `meta`, of columns of `types`:
-    /// row ids go on past those it reserved, its rows are counted by their
-    /// newest versions as it opens, its zone maps read as its last
-    /// checkpoint saved them (`rows/zones/saved.rs`), and its statistics
-    /// are gathered when first asked for (`rows/recovery.rs`).
+    /// row ids go on past those it reserved, its count of rows and its
+    /// zone maps read as its last checkpoint saved them
+    /// (`rows/counted.rs`, `rows/zones/saved.rs`), its rows counted by
+    /// their newest versions instead if its file is not shadowed, and its
+    /// statistics are gathered when first asked for (`rows/recovery.rs`).
     ///
     /// # Errors
     ///
@@ -73,17 +77,25 @@ impl RowTable {
             parse_meta(&page).ok_or_else(|| corrupt(&format!("page {} is not a table's meta page of this format", meta.0)))?
         };
         let tree = BLinkTree::open(Arc::clone(&files.pool), files.file, named.tree)?;
-        let (reserved, zones) = (named.reserved, named.zones);
-        let table = RowTable::with(files, Found { meta, tree, reserved, zones }, types, options)?.sealed(sealing);
+        let (reserved, zones, rows) = (named.reserved, named.zones, named.rows);
+        let table = RowTable::with(files, Found { meta, tree, reserved, zones, rows }, types, options)?.sealed(sealing);
         table.load_directory(named.directory)?;
         table.zones.load(reserved)?;
-        table.live.store(table.count_newest()?, Ordering::Release);
+        let live = if files.counts_kept() {
+            usize::try_from(rows).unwrap_or(usize::MAX)
+        } else {
+            files.passed();
+            table.count_newest()?
+        };
+        table.counted.live.store(live, Ordering::Release);
         table.gathered.gather_when_asked();
         Ok(table)
     }
 
     fn with(files: &TableFiles, found: Found, types: &[DataType], options: TableOptions) -> Result<RowTable> {
-        let Found { meta, tree, reserved, zones: directory } = found;
+        let Found { meta, tree, reserved, zones: directory, rows } = found;
+        let counted = Arc::new(Counted::new((&files.pool, files.file), meta, rows));
+        files.note_counted(&counted)?;
         let sealing = Arc::new(Sealing::plain());
         let place = (directory != 0).then(|| Place {
             pool: Arc::clone(&files.pool),
@@ -112,7 +124,7 @@ impl RowTable {
             blocks: IdBlocks::new(),
             reserved: AtomicU64::new(reserved),
             reserving: Mutex::new(()),
-            live: AtomicUsize::new(0),
+            counted,
             gathered: Gathered::new(options.statistics),
             durable: Arc::clone(&files.durable),
             discarded: AtomicBool::new(false),

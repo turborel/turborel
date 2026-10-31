@@ -38,6 +38,7 @@
 //! (`db/checkpoint.rs`); its locator, the meta page and that position,
 //! finds it again in its file (`StorageEngine::open_table`).
 
+mod counted;
 mod discard;
 mod files;
 mod frozen;
@@ -57,7 +58,7 @@ mod version;
 mod zones;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
@@ -169,8 +170,8 @@ impl StorageEngine for RowStore {
         Ok(Some(Box::new(RowTable::open_with(&files, (meta, &types), options, self.sealing(desc))?)))
     }
 
-    /// Saves its tables' zone maps (`rows/zones/saved.rs`); writes back
-    /// every page and the pager's free list; a file shadowed
+    /// Saves its tables' zone maps and counts of rows
+    /// (`rows/zones/saved.rs`, `rows/counted.rs`); writes back every page and the pager's free list; a file shadowed
     /// (`TableFiles::shadowed`) holds them in memory and seals that batch,
     /// its commit left to `checkpoint_finish`; one not shadowed is synced
     /// now.
@@ -184,7 +185,8 @@ impl StorageEngine for RowStore {
         if let Some(shadows) = &files.shadows {
             // What is written now is kept in memory: no I/O with writers held.
             shadows.hold()?;
-            let captured = files.save_zones().and_then(|()| files.pool.sync(files.file, Durability::Full));
+            let captured =
+                files.save_zones().and_then(|()| files.save_counts()).and_then(|()| files.pool.sync(files.file, Durability::Full));
             if let Err(e) = captured.and_then(|()| shadows.seal()) {
                 let _ = shadows.release();
                 return Err(e);
@@ -193,6 +195,7 @@ impl StorageEngine for RowStore {
             return Ok(());
         }
         files.save_zones()?;
+        files.save_counts()?;
         files.pool.sync(files.file, Durability::Full)?;
         files.durable.fetch_max(at.0, Ordering::AcqRel);
         Ok(())
@@ -231,7 +234,8 @@ pub struct RowTable {
     reserved: AtomicU64,
     /// Held while the reservation is moved and the meta page written.
     reserving: Mutex<()>,
-    live: AtomicUsize,
+    /// Its count of rows, saved at each checkpoint (`rows/counted.rs`).
+    counted: Arc<counted::Counted>,
     /// Its statistics (`rows/stats.rs`).
     gathered: Gathered,
     /// The store's durable position (`TableFiles`).
@@ -261,7 +265,7 @@ impl TableStorage for RowTable {
                 // Widened once written, so a zone summed meanwhile either
                 // read the row or is summed again (`rows/zones.rs`).
                 self.zones.widen(id, Some(&row), false);
-                self.live.fetch_add(1, Ordering::AcqRel);
+                self.counted.live.fetch_add(1, Ordering::AcqRel);
                 self.gathered.changed();
                 Ok(id)
             }
@@ -287,7 +291,7 @@ impl TableStorage for RowTable {
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
         self.write_version(tx, id, None)?;
         self.zones.widen(id, None, true);
-        self.live.fetch_sub(1, Ordering::AcqRel);
+        self.counted.live.fetch_sub(1, Ordering::AcqRel);
         self.gathered.changed();
         Ok(())
     }
@@ -302,7 +306,7 @@ impl TableStorage for RowTable {
         let (record, pages) = self.encode(id, &row)?;
         let restored = match self.insert_version(tx, id, &record) {
             Ok(true) => {
-                self.live.fetch_add(1, Ordering::AcqRel);
+                self.counted.live.fetch_add(1, Ordering::AcqRel);
                 Ok(())
             }
             Ok(false) => self.write_version(tx, id, Some(&record)),
@@ -357,7 +361,7 @@ impl TableStorage for RowTable {
     }
 
     fn row_count(&self) -> usize {
-        self.live.load(Ordering::Acquire)
+        self.counted.live.load(Ordering::Acquire)
     }
 
     /// A row of the tree costs 0.8, up to 1 as all its columns are read; a

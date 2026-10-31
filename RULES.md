@@ -1114,6 +1114,18 @@ the format of frozen groups becomes a trait when it is.
   IN list of a column in the rows' order, or IS NULL of nulls kept
   together, reads only a few blocks; a scan nothing skips, and an insert,
   pay a little for keeping the zones.
+- A row store table's count of rows, those whose newest version is not
+  a deletion (`rows/counted.rs`), is kept with its pages too: each
+  checkpoint, writers held, writes it into the table's meta page if it
+  changed, so the pages captured hold the count of the versions they
+  hold. A table opened from a shadowed file, which holds after a crash
+  exactly what its last checkpoint captured, reads it with no pass over
+  its rows; recovery moves it as it writes each row's newest version, by
+  whether the version replaced was a row, so a change written again that
+  the pages already hold moves it not at all, and the count is exact
+  after a crash as after a close. A file not shadowed may hold pages
+  written after its last checkpoint, so a table opened from one counts
+  its rows by a pass.
 - The planner prices a scan by the share of the rows the conditions it
   will be told may match (`TableStorage::scan_share`, `logical::pushed_conjuncts`,
   the executor's same): the row store's zones' rows they may match, of

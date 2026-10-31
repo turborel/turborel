@@ -100,7 +100,7 @@ impl RowTable {
     pub(in crate::engine::rows) fn freeze_wanted(&self) -> bool {
         let Ok(Some(columns)) = read(&self.frozen.columns).map(|c| *c) else { return false };
         let frozen = self.frozen.directory().map_or(0, |d| d.rows());
-        let live = u64::try_from(self.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
+        let live = u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
         let waited = lock_builtin(&self.frozen.tried).is_none_or(|at| at.elapsed() >= RETRY);
         let shadowed = usize::try_from(self.frozen.shadowed.load(Ordering::Acquire)).unwrap_or(usize::MAX);
         (waited && live.saturating_sub(frozen) >= columns.due())
@@ -132,7 +132,7 @@ impl RowTable {
     fn freeze_rows(&self, columns: Columns, cutoff: Timestamp) -> Result<bool> {
         let due = columns.due();
         let frozen = self.frozen.directory()?.rows();
-        let live = u64::try_from(self.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
+        let live = u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
         let waited = lock_builtin(&self.frozen.tried).is_none_or(|at| at.elapsed() >= RETRY);
         if live.saturating_sub(frozen) < due || !waited {
             return Ok(false);

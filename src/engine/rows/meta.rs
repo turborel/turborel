@@ -1,13 +1,14 @@
 //! \[DESIGN\] What finds a table of the row store (RULES.md D31): its meta
 //! page, which names its tree, the row ids reserved, its frozen row
-//! groups and its zone maps, and its locator, which the catalog keeps
-//! (`StorageEngine::open_table`).
+//! groups and its zone maps, and keeps its count of rows; and its
+//! locator, which the catalog keeps (`StorageEngine::open_table`).
 //!
 //! ```text
 //! meta page:  format u8 (TABLE_FORMAT) | tree's meta page u64 |
 //!             ids reserved u64 | the first page of its groups' directory
 //!             u64, 0 for none (`rows/frozen.rs`) | the page listing
 //!             its zone maps' pages u64, 0 for none (`rows/zones/saved.rs`)
+//!             | rows as of its last checkpoint u64 (`rows/counted.rs`)
 //! locator:    meta page u64 | durable position u64
 //! ```
 //!
@@ -17,7 +18,7 @@ use crate::disk::pager::PageId;
 
 /// The format of a table's meta page.
 pub const TABLE_FORMAT: u8 = 1;
-const META_LEN: usize = 33;
+const META_LEN: usize = 41;
 /// Bytes of a page number or a position.
 const WORD: usize = 8;
 
@@ -44,13 +45,16 @@ pub(super) struct Meta {
     pub(super) directory: u64,
     /// The page listing its zone maps' pages, 0 for none.
     pub(super) zones: u64,
+    /// Its rows whose newest version is not a deletion, as its last
+    /// checkpoint wrote them.
+    pub(super) rows: u64,
 }
 
 /// The content of a table's meta page.
 pub(super) fn meta_content(meta: Meta) -> Vec<u8> {
     let mut content = Vec::with_capacity(META_LEN);
     content.push(TABLE_FORMAT);
-    for word in [meta.tree.0, meta.reserved, meta.directory, meta.zones] {
+    for word in [meta.tree.0, meta.reserved, meta.directory, meta.zones, meta.rows] {
         content.extend_from_slice(&word.to_le_bytes());
     }
     content
@@ -59,9 +63,15 @@ pub(super) fn meta_content(meta: Meta) -> Vec<u8> {
 /// What `content` names, if it is a table's meta page.
 pub(super) fn parse_meta(content: &[u8]) -> Option<Meta> {
     let word = |at: usize| content.get(at..at.checked_add(WORD)?).and_then(|b| <[u8; WORD]>::try_from(b).ok()).map(u64::from_le_bytes);
-    let zones = match (content.first().copied(), content.len()) {
-        (Some(TABLE_FORMAT), META_LEN) => word(1 + 3 * WORD)?,
+    match (content.first().copied(), content.len()) {
+        (Some(TABLE_FORMAT), META_LEN) => {}
         (Some(_) | None, _) => return None,
-    };
-    Some(Meta { tree: PageId(word(1)?), reserved: word(1 + WORD)?, directory: word(1 + 2 * WORD)?, zones })
+    }
+    Some(Meta {
+        tree: PageId(word(1)?),
+        reserved: word(1 + WORD)?,
+        directory: word(1 + 2 * WORD)?,
+        zones: word(1 + 3 * WORD)?,
+        rows: word(1 + 4 * WORD)?,
+    })
 }
