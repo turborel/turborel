@@ -12,6 +12,7 @@
 //! time, from midnight UTC, within a day; of a date, its midnight's, from
 //! 0001-01-01.
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -44,6 +45,53 @@ pub struct Now {
     pub utc: i64,
     /// The displacement.
     pub zone: i16,
+}
+
+/// \[DESIGN\] `Now` as a statement is bound with it: reading its instant
+/// notes, where a note is asked for, that the binding holds the instant, so
+/// a plan made of it is not kept for another execution (RULES.md D45). Its
+/// displacement is read freely: what keeps a plan compares it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Clocked<'a> {
+    now: Now,
+    read: Option<&'a Cell<bool>>,
+}
+
+impl<'a> Clocked<'a> {
+    /// `now`, its instant's reads noted in `read`, if given.
+    pub fn new(now: Now, read: Option<&'a Cell<bool>>) -> Clocked<'a> {
+        Clocked { now, read }
+    }
+
+    /// The instant and the displacement, the read noted.
+    pub fn instant(self) -> Now {
+        self.note();
+        self.now
+    }
+
+    /// Notes the instant read: of a value made of it elsewhere, as a
+    /// column's default.
+    pub fn note(self) {
+        if let Some(read) = self.read {
+            read.set(true);
+        }
+    }
+
+    /// The displacement alone.
+    pub fn zone(self) -> i16 {
+        self.now.zone
+    }
+
+    /// Where its reads are noted, if anywhere.
+    pub fn noted(self) -> Option<&'a Cell<bool>> {
+        self.read
+    }
+}
+
+impl From<Now> for Clocked<'_> {
+    fn from(now: Now) -> Self {
+        Clocked { now, read: None }
+    }
 }
 
 /// Which datetime type a value is of [ISO/IEC 9075:1992 §4.5.1]: which

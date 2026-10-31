@@ -180,7 +180,7 @@ pub(super) fn default_row(desc: &TableDesc, auth: &str, now: Now) -> Result<Row>
 ///
 /// As `default_row`.
 pub(super) fn default_value(c: &ColumnDesc, auth: &str, now: Now) -> Result<Value> {
-    assign(c.default_value(auth, now), &c.data_type, "ISO/IEC 9075:1992 §11.5 GR2")
+    assign(c.default_value(auth, now.into()), &c.data_type, "ISO/IEC 9075:1992 §11.5 GR2")
 }
 
 impl State {

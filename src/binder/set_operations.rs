@@ -183,7 +183,13 @@ impl Binder<'_> {
                     ((e, Some(t)), *at)
                 }
                 RowElement::Null(at) => ((Expr::Const(Value::Null), None), *at),
-                RowElement::Default(at) => ((Expr::Const(object.map_or(Value::Null, |o| o.default.clone())), None), *at),
+                RowElement::Default(at) => {
+                    // A default of the statement's instant holds it (RULES.md D45).
+                    if object.is_some_and(|o| o.desc.default_reads_instant()) {
+                        self.now.note();
+                    }
+                    ((Expr::Const(object.map_or(Value::Null, |o| o.default.clone())), None), *at)
+                }
             };
             if bound.1.is_none() && objects.is_none() {
                 return Err(rule("[ISO/IEC 9075:1992 §7.1 SR1] NULL and DEFAULT are values only of the rows an INSERT inserts").or_at(at));

@@ -259,7 +259,7 @@ impl Binder<'_> {
             }
             args.push(ze);
         }
-        Ok((Expr::Call(ScalarRef(Arc::new(AtZone { local: self.now.zone })), args), zoned(t)))
+        Ok((Expr::Call(ScalarRef(Arc::new(AtZone { local: self.now.zone() })), args), zoned(t)))
     }
 
     /// [ISO/IEC 9075:1992 §8.11] `left` OVERLAPS `right`: rows of two

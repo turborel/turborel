@@ -553,3 +553,40 @@ pub fn both_ways(s: &Session, sql: &str) -> (Vec<String>, Vec<String>) {
     exec(s, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
     (batched, rows)
 }
+
+/// xorshift64*: a small generator, enough to pick among forms and values:
+/// the random tests' (RULES.md R-TEST-5), from a fixed seed.
+pub struct Rng(u64);
+
+impl Rng {
+    /// A generator from `seed`; xorshift needs a state not zero.
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed.max(1_u64))
+    }
+
+    pub fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12_u32;
+        self.0 ^= self.0 << 25_u32;
+        self.0 ^= self.0 >> 27_u32;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D_u64)
+    }
+
+    /// A number in `0..n`.
+    pub fn below(&mut self, n: usize) -> usize {
+        usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+    }
+
+    /// True `percent` times in a hundred.
+    pub fn chance(&mut self, percent: usize) -> bool {
+        self.below(100_usize) < percent
+    }
+
+    pub fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
+        items[self.below(items.len())]
+    }
+
+    /// A small integer, as SQL text, negative ones among them.
+    pub fn number(&mut self) -> String {
+        (i64::try_from(self.below(21_usize)).unwrap() - 6_i64).to_string()
+    }
+}

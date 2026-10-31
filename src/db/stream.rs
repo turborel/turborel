@@ -26,11 +26,12 @@ use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, fail};
 use crate::exec::{HeldIter, HeldRows, RowIter, execute};
+use crate::logical::LogicalPlan;
 use crate::physical::Plan;
 use crate::spill::ListSpace;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
-use crate::txn::{Stop, TxId};
+use crate::txn::{Stop, TxId, Txn};
 use crate::value::datetime::show_in;
 
 /// \[DESIGN\] The rows of a read-only cursor.
@@ -48,6 +49,22 @@ pub(super) struct Stream {
 }
 
 impl Stream {
+    /// The rows of `logical`, a query's bound plan, planned and opened for
+    /// transaction `tx`, after taking shared locks on the tables it reads
+    /// [X3.135-1986 §8.8 GR3b].
+    ///
+    /// # Errors
+    ///
+    /// A lock is not granted; as `open`.
+    pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
+        let (optimized, _, physical) = super::plan(st, logical);
+        let reads = optimized.tables();
+        for t in &reads {
+            st.read_lock(tx, t)?;
+        }
+        Stream::open(physical, reads, st, tx.id)
+    }
+
     /// The rows of `physical`, which reads `reads`, for transaction `tx`:
     /// read now if the plan can raise an error, else as they are fetched.
     ///

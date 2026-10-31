@@ -51,9 +51,12 @@ item becomes a decision in RULES.md when its design settles.
   middle cannot relay it: SCRAM-SHA-256-PLUS. And SASLprep of a password
   (RFC 4013), for clients of other systems whose non-ASCII passwords it
   maps.
-- **Plans kept between executions** of a prepared statement, planned again
-  only when the definitions change or its values would choose another
-  plan: today each execution plans anew (D45).
+- **Plans kept, further** (RULES.md D45): the access paths kept too, for
+  values that would choose the same ones, where each execution now
+  rewrites and plans the kept bound plan; positioned UPDATE and DELETE
+  kept as the searched ones are; and a session's declared local temporary
+  tables, which make its catalog anew at each call, kept by what they
+  are rather than by the catalog's identity.
 - **Stored, named modules** [X3.135-1986 §7]: their procedures run with
   the module's identifier, so at first only that identifier may associate
   with one. With them, [ISO/IEC 9075:1992 §12.1 SR5]: exactly one

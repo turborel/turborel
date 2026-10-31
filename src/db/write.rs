@@ -3,24 +3,29 @@
 //! searched UPDATE and DELETE [X3.135-1986 §8.5, §8.12]. Split from db.rs
 //! (RULES.md R-SIZE-2).
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use super::assignment::{candidate, check_option};
 use super::defaults::default_row;
 use super::integrity::Effects;
+use super::prepared::{Keeping, KeptPlan};
 use super::{Session, State, StatementContext, plan, rule, set_columns};
 use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, RowElement, SelectList, SelectSublist};
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{HeldRows, Runner, execute, row_entries};
+use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
 use crate::storage::{Row, RowId};
 use crate::txn::Txn;
+use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
+#[derive(Debug, Clone)]
 pub(super) struct Target {
     /// The base table: it, or an updatable view's [X3.135-1986 §6.5 GR2].
     name: QualifiedName,
@@ -41,6 +46,16 @@ impl Target {
         self.object.iter().filter_map(|&c| self.desc.columns.get(c))
     }
 
+    /// It, its defaults those of a statement run under `auth` at `now`: as
+    /// a prepared statement's kept plan takes it again (RULES.md D45).
+    ///
+    /// # Errors
+    ///
+    /// As `default_row`.
+    pub(super) fn refreshed(self, auth: &str, now: Now) -> Result<Target> {
+        Ok(Target { defaults: default_row(&self.desc, auth, now)?, ..self })
+    }
+
     /// [X3.135-1986 §8.7 GR1a, b, GR5, GR7] the candidate row for the
     /// insert values `values`: each column's default [ISO/IEC 9075:1992
     /// §13.8 GR4b i], null if it has none, but for the object columns, each
@@ -59,19 +74,26 @@ impl Target {
 }
 
 impl Session {
-    /// [X3.135-1986 §8.7] `<insert statement>`
+    /// [X3.135-1986 §8.7] `<insert statement>`; of a prepared statement,
+    /// with the plans it keeps (RULES.md D45).
     /// The rows it inserted [ISO/IEC 9075:1992 §18.1 GR1e i].
-    pub(super) fn insert_statement(&self, st: &Arc<State>, tx: &Txn, stmt: &InsertStatement, params: &Params) -> Result<usize> {
-        let target = self.insert_target(st, stmt)?;
-        let mut rows = match &stmt.source {
-            InsertSource::Query(query) => self.query_rows(StatementContext { st, tx }, &target, query, params)?,
+    pub(super) fn insert_statement(
+        &self,
+        cx: StatementContext<'_>,
+        stmt: &InsertStatement,
+        params: &Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<usize> {
+        let StatementContext { st, tx } = cx;
+        let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
+        let mut rows = if let Some(logical) = query {
+            query_rows(cx, &target, logical)?
+        } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default.
-            InsertSource::DefaultValues => {
-                let mut one = HeldRows::new(st.list_space());
-                one.push(target.defaults.clone())?;
-                one
-            }
+            let mut one = HeldRows::new(st.list_space());
+            one.push(target.defaults.clone())?;
+            one
         };
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() {
@@ -90,14 +112,42 @@ impl Session {
         Ok(rows.len())
     }
 
+    /// The table `stmt` inserts into and the plan of the rows its query
+    /// gives, if it has one: of a prepared statement, as it keeps them,
+    /// its values filled in (RULES.md D45).
+    fn insert_bound(
+        &self,
+        st: &State,
+        stmt: &InsertStatement,
+        params: &Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<(Target, Option<LogicalPlan>)> {
+        let values = params.dynamic_values();
+        if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
+            let target = target.refreshed(&self.auth(), self.now.get())?;
+            return Ok((target, query.map(|q| filled(q, values)).transpose()?));
+        }
+        let kept = keeping.map(|_| params.keeping());
+        let binding = kept.as_ref().unwrap_or(params);
+        let target = self.insert_target(st, stmt, binding.noted())?;
+        let query = match &stmt.source {
+            InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
+            InsertSource::DefaultValues => None,
+        };
+        let Some(k) = keeping else { return Ok((target, query)) };
+        k.made((!binding.held()).then(|| KeptPlan::Insert(Box::new(target.clone()), query.clone())))?;
+        Ok((target, query.map(|q| filled(q, values)).transpose()?))
+    }
+
     /// [X3.135-1986 §8.7 SR1-SR4] the table `stmt` inserts into, which is
     /// not read-only, and its object columns: through an updatable view,
-    /// its base table's [X3.135-1986 §6.5 GR2].
-    pub(super) fn insert_target(&self, st: &State, stmt: &InsertStatement) -> Result<Target> {
+    /// its base table's [X3.135-1986 §6.5 GR2]. A view's read of the
+    /// statement's instant is noted in `noted`, if given (`Clocked`).
+    pub(super) fn insert_target(&self, st: &State, stmt: &InsertStatement, noted: Option<&Cell<bool>>) -> Result<Target> {
         let held = self.auth();
         let auth = held.as_str();
         let name = qualify(&stmt.table, &self.default_schema());
-        let target = binder::write_target(st, &name, ("§8.7 SR2", auth)).or_at(stmt.table.at)?;
+        let target = binder::write_target(st, &name, ("§8.7 SR2", auth), noted).or_at(stmt.table.at)?;
         let desc = &target.named;
         let object: Vec<usize> = match &stmt.columns {
             None => (0..desc.columns.len()).collect(),
@@ -136,11 +186,9 @@ impl Session {
         self.bound(st, params, |bound| binder::bind_insert_query(bound, query, &objects))
     }
 
-    /// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the
-    /// candidate rows of a `<query expression>`, one for each row of its
-    /// result, which is evaluated in full before any row is inserted.
-    fn query_rows(&self, cx: StatementContext<'_>, target: &Target, query: &QueryExpression, params: &Params) -> Result<HeldRows<Row>> {
-        let StatementContext { st, tx } = cx;
+    /// The plan of the rows of `query` inserted into `target`, its degree
+    /// and its columns' types checked [X3.135-1986 §8.7 SR5, SR6].
+    fn insert_query(&self, st: &State, target: &Target, query: &QueryExpression, params: &Params) -> Result<LogicalPlan> {
         let bound = self.bound_insert(st, target, query, params)?;
         if bound.columns.len() != target.object.len() {
             let (n, m) = (bound.columns.len(), target.object.len());
@@ -169,17 +217,26 @@ impl Session {
                 }
             }
         }
-        let (optimized, _, physical) = plan(st, bound.plan);
-        for t in optimized.tables() {
-            st.read_lock(tx, &t)?;
-        }
-        // Held up to WORK_MEMORY, the rest spilled (RULES.md D38).
-        let mut rows = HeldRows::new(st.list_space());
-        for values in execute(physical, st, tx.id) {
-            rows.push(target.candidate(values?)?)?;
-        }
-        Ok(rows)
+        Ok(bound.plan)
     }
+}
+
+/// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the
+/// candidate rows of a `<query expression>`, bound as `logical`, one for
+/// each row of its result, which is evaluated in full before any row is
+/// inserted.
+fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -> Result<HeldRows<Row>> {
+    let StatementContext { st, tx } = cx;
+    let (optimized, _, physical) = plan(st, logical);
+    for t in optimized.tables() {
+        st.read_lock(tx, &t)?;
+    }
+    // Held up to WORK_MEMORY, the rest spilled (RULES.md D38).
+    let mut rows = HeldRows::new(st.list_space());
+    for values in execute(physical, st, tx.id) {
+        rows.push(target.candidate(values?)?)?;
+    }
+    Ok(rows)
 }
 
 /// The object rows of a searched UPDATE or DELETE, found before any is

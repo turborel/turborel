@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 13] = [
+pub const MUTATIONS: [Mutation; 15] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -150,5 +150,23 @@ pub const MUTATIONS: [Mutation; 13] = [
         replacement: "let whole = by_prefix;",
         integration: &["spilled_sorts::spilled_sorts_give_the_rows_held_sorts_give"],
         unit: &["exec::sort::merge::tests::merged_by_prefixes_as_compared_whole"],
+    },
+    Mutation {
+        name: "kept-plan-definitions",
+        breaks: "kept plans: a prepared statement's plan kept across a change of the catalog",
+        file: "src/db/prepared/plans.rs",
+        original: " && Weak::ptr_eq(&self.catalog, &other.catalog);",
+        replacement: ";",
+        integration: &["kept_plans::a_kept_plan_follows_the_transactions_own_definitions"],
+        unit: &[],
+    },
+    Mutation {
+        name: "kept-plan-instant",
+        breaks: "kept plans: a plan holding the statement's instant kept for the next execution",
+        file: "src/value/datetime.rs",
+        original: "            read.set(true);",
+        replacement: "            read.set(false);",
+        integration: &["kept_plans::a_plan_holding_the_instant_is_made_at_each_execution"],
+        unit: &[],
     },
 ];

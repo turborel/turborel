@@ -35,7 +35,7 @@ pub(super) enum Place {
 /// reference, in it or in the conditions of a CASE in it.
 fn plain(e: &Expr) -> bool {
     let own = match e {
-        Expr::Subquery(..) | Expr::Outer(..) => false,
+        Expr::Subquery(..) | Expr::Outer(..) | Expr::Dynamic(_) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| c.subqueries().is_empty()),
         Expr::Column(_) | Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) => true,
     };
@@ -55,6 +55,7 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::Arith(..)
         | Expr::Call(..)
         | Expr::Outer(..)
+        | Expr::Dynamic(_)
         | Expr::Case(..)
         | Expr::Cast(..)
         | Expr::Domain(..)

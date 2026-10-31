@@ -19,6 +19,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
         Expr::Neg(x) => format!("-{}", render_expr(x, names)),
         Expr::Arith(a, op, b) => format!("({} {} {})", render_expr(a, names), op.symbol(), render_expr(b, names)),
         Expr::Outer(_, name) => name.clone(),
+        Expr::Dynamic(_) => "?".to_owned(),
         Expr::Call(f, args) => {
             format!("{}({})", f.0.name(), args.iter().map(|a| render_expr(a, names)).collect::<Vec<_>>().join(", "))
         }

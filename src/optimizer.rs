@@ -209,7 +209,7 @@ fn fold_expr(e: &Expr) -> Option<Expr> {
 /// Whether `e`, not a constant, can be computed now: an operation on
 /// constants alone, calling only a deterministic function.
 fn computable(e: &Expr) -> bool {
-    let mut constant = !matches!(e, Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Subquery(..));
+    let mut constant = !matches!(e, Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Subquery(..));
     if let Expr::Call(func, _) = e {
         constant = constant && func.0.deterministic();
     }
@@ -501,6 +501,7 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::Arith(..)
                 | Expr::Call(..)
                 | Expr::Outer(..)
+                | Expr::Dynamic(_)
                 | Expr::Case(..)
                 | Expr::Cast(..)
                 | Expr::Domain(..)

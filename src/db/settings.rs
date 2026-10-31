@@ -17,6 +17,7 @@ use crate::storage::TableOption;
 use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
 use crate::value::Value;
+use crate::value::datetime::Clocked;
 
 impl State {
     /// Sets the database's value of the setting `name`, or its default
@@ -348,7 +349,8 @@ impl Session {
     /// Those of `bind`.
     pub(super) fn bound<T>(&self, st: &State, params: &Params, bind: impl FnOnce(Context<'_>) -> Result<T>) -> Result<T> {
         let (own, schema) = (self.own.borrow(), self.schema.borrow());
-        bind(Context { own: &own, schema: &schema, now: self.now.get(), ..Context::new(st, &self.auth(), params) })
+        let now = Clocked::new(self.now.get(), params.noted());
+        bind(Context { own: &own, schema: &schema, now, ..Context::new(st, &self.auth(), params) })
     }
 
     /// What ends its open transaction when it ends (`SESSION_END`).

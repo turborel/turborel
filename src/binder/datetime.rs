@@ -14,7 +14,7 @@ use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::Expr;
 use crate::value::Spelled;
-use crate::value::datetime::{Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
+use crate::value::datetime::{Clocked, Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, field_name};
 use crate::value::types::datetime::{cast_at, current};
 use crate::value::{DataType, Decimal, SMALLINT_PRECISION, Value, pow10};
@@ -35,15 +35,15 @@ pub(super) fn type_of(moment: Moment, precision: u32, zoned: bool) -> DataType {
 
 /// [ISO/IEC 9075:1992 §5.3 SR15-SR18] The value and type of the
 /// `<datetime literal>` `w`: of its `<time zone interval>`, WITH TIME ZONE,
-/// or else of the session's displacement, `now`'s; of as many digits of
+/// or else of the session's displacement, `zone`; of as many digits of
 /// the second's fraction as it writes.
 ///
 /// # Errors
 ///
 /// SQLSTATE 22007 if its instant's year in UTC leaves 0001 to 9999 [§6.1
 /// GR6].
-pub(crate) fn literal(w: &Written, now: Now) -> Result<(Value, DataType)> {
-    let d = Datetime::of_local(w.moment, w.local, w.zone.unwrap_or(now.zone), w.zone.is_some(), w.precision);
+pub(crate) fn literal(w: &Written, zone: i16) -> Result<(Value, DataType)> {
+    let d = Datetime::of_local(w.moment, w.local, w.zone.unwrap_or(zone), w.zone.is_some(), w.precision);
     if !d.in_range() {
         return fail_with(
             Code::Data,
@@ -77,10 +77,10 @@ impl ScalarFunction for CastAt {
 /// `e`, of type `from`, as the SQL-session `now` gives shows it: a datetime
 /// without time zone in its displacement [§6.1 GR5], so its fields are
 /// read as shown; any other as it is.
-pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
+pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
     match from {
         DataType::Time { zoned: false, .. } | DataType::Timestamp { zoned: false, .. } => {
-            Expr::Call(ScalarRef(Arc::new(CastAt { to: from, now })), vec![e])
+            Expr::Call(ScalarRef(Arc::new(CastAt { to: from, now: now.instant() })), vec![e])
         }
         DataType::Date
         | DataType::Time { .. }
@@ -100,7 +100,7 @@ pub(super) fn shown(e: Expr, from: DataType, now: Now) -> Expr {
 /// in a column of type `to`: a time or timestamp without time zone, in one
 /// WITH TIME ZONE, of the session's displacement, `now`'s, which it
 /// implies; any other as it is.
-pub(super) fn stored(e: Expr, from: DataType, to: DataType, now: Now) -> Expr {
+pub(super) fn stored(e: Expr, from: DataType, to: DataType, now: Clocked<'_>) -> Expr {
     if takes_zone(from, to) { shown(e, from, now) } else { e }
 }
 
@@ -267,7 +267,7 @@ impl Binder<'_> {
         }
         let t = function_type(f);
         let precision = if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { precision } else { 0 };
-        Ok((Expr::Const(current(f.moment, precision, self.now)), t))
+        Ok((Expr::Const(current(f.moment, precision, self.now.instant())), t))
     }
 
     /// [ISO/IEC 9075:1992 §6.6] EXTRACT (`field` FROM `source`), its source
@@ -304,7 +304,7 @@ impl Binder<'_> {
         if !castable(&from, &to) {
             return Err(SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {from} to {to} is not valid")));
         }
-        Ok(Expr::Call(ScalarRef(Arc::new(CastAt { to, now: self.now })), vec![e]))
+        Ok(Expr::Call(ScalarRef(Arc::new(CastAt { to, now: self.now.instant() })), vec![e]))
     }
 }
 

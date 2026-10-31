@@ -144,6 +144,7 @@ impl WriteKind {
 
 /// The object table of an UPDATE or DELETE, its SET clauses, and the plan
 /// that finds its object rows.
+#[derive(Debug, Clone)]
 pub struct BoundWrite {
     /// The table or view the statement names.
     pub named: QualifiedName,
@@ -261,7 +262,7 @@ pub fn bind_write(
     let Context { db, auth, .. } = cx;
     let clause = kind.clause();
     let name = qualify(table, cx.schema);
-    let target = write_target(db, &name, (kind.read_only_rule(), cx.user)).or_at(table.at)?;
+    let target = write_target(db, &name, (kind.read_only_rule(), cx.user), cx.now.noted()).or_at(table.at)?;
     let desc = &target.named;
     // SR1 of each clause: DELETE, or UPDATE on each object column.
     let needed = match kind {

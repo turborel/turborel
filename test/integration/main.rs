@@ -77,6 +77,7 @@ mod intervals;
 mod isolation;
 mod joined_tables;
 mod joins;
+mod kept_plans;
 mod language;
 mod log;
 mod memory;

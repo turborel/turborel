@@ -73,6 +73,7 @@ fn compared(c: &Cond) -> Option<Compared> {
             | Expr::Arith(..)
             | Expr::Call(..)
             | Expr::Outer(..)
+            | Expr::Dynamic(_)
             | Expr::Case(..)
             | Expr::Cast(..)
             | Expr::Domain(..)

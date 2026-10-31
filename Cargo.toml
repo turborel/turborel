@@ -162,3 +162,8 @@ allow_attributes_without_reason = "warn"                  # R-DEV-1
 name = "cursors"
 path = "bench/cursors.rs"
 harness = false
+
+[[bench]]
+name = "prepared"
+path = "bench/prepared.rs"
+harness = false

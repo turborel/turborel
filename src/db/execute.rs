@@ -4,17 +4,17 @@
 
 use std::sync::Arc;
 
+use super::prepared::{Keeping, Plans};
 use super::write::{delete_searched, update_searched};
-use super::{Call, Completion, Session, State, StatementContext, slow};
+use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
     AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, ServedStatement,
     SqlStatement, TableName, TableStorage, UserStatement,
 };
-use crate::binder::{WriteKind, bind_write, qualify};
+use crate::binder::{Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
-use crate::txn::Txn;
 
 impl Session {
     /// Execute an `<SQL statement>` [X3.135-1986 §7.3]. `params` plays the part
@@ -26,7 +26,7 @@ impl Session {
     /// Any error of the statement, which is then undone [X3.135-1986 §7.3
     /// GR3b i]; SQLCODE -914 if undoing it failed too.
     pub fn execute(&self, sql: &str, params: &mut Params) -> Result<Completion> {
-        self.execute_as(sql, params, false)
+        self.execute_as(sql, params, None)
     }
 
     /// Runs an `<SQL statement>` with no parameters.
@@ -38,26 +38,28 @@ impl Session {
         self.execute(sql, &mut Params::new())
     }
 
-    /// `execute`, of a statement `prepared` (`execute_prepared`): the
-    /// diagnostics area then names EXECUTE, and the statement as its
-    /// DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c, GR1d].
-    pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: bool) -> Result<Completion> {
+    /// `execute`, of a statement `prepared` (`execute_prepared`), with the
+    /// plans it keeps: the diagnostics area then names EXECUTE, and the
+    /// statement as its DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c,
+    /// GR1d].
+    pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<&Plans>) -> Result<Completion> {
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), sql, &self.auth());
-        let parsed = params.validate().and_then(|()| params.parser(sql, self.extensions, &call.state().catalog_name())?.sql_statement());
+        let keeping = prepared.map(|plans| self.keeping(call.state(), plans));
+        let parsed = self.parsed(&call, sql, params, keeping.as_ref());
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
-        if let Ok(SqlStatement::GetDiagnostics(get)) = &parsed {
+        if let Ok(SqlStatement::GetDiagnostics(get)) = parsed.as_deref() {
             return self.get_diagnostics(call.state(), get, params);
         }
         if parsed.is_err() && diagnostics_statement(sql) {
             return parsed.map(|_| Completion::Success);
         }
-        let command = parsed.as_ref().map_or("", command_of);
-        self.emptied(if prepared { ("EXECUTE", command) } else { (command, "") });
+        let command = parsed.as_deref().map_or("", command_of);
+        self.emptied(if prepared.is_some() { ("EXECUTE", command) } else { (command, "") });
         let outcome = parsed.and_then(|stmt| {
             let target = target_of(&stmt).map(|t| qualify(t, &self.default_schema()));
-            self.execute_parsed(&call, stmt, params).map_err(|e| match target {
+            self.execute_parsed(&call, &stmt, params, keeping.as_ref()).map_err(|e| match target {
                 Some(t) => e.or_about_table(t.parts()),
                 None => e,
             })
@@ -104,24 +106,44 @@ impl Session {
         let named = TableName { auth: Some(name.auth), ident: name.ident, at: 0 };
         let anew = AlterAction::Storage(TableStorage::default());
         let stmt = SqlStatement::AlterTable { table: named, action: anew, text: crate::parser::RESEAL.to_owned() };
-        let outcome = self.execute_parsed(&call, stmt, &mut Params::new());
+        let outcome = self.execute_parsed(&call, &stmt, &mut Params::new(), None);
         self.diagnosed(outcome, |done| done.sqlstate())
     }
 
+    /// `sql`, parsed with `params`: of a prepared statement, as it keeps
+    /// it, while what it was parsed with holds (RULES.md D45).
+    fn parsed(&self, call: &Call<'_>, sql: &str, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Arc<SqlStatement>> {
+        if let Some(kept) = keeping.map(Keeping::statement).transpose()?.flatten() {
+            return Ok(kept);
+        }
+        params.validate()?;
+        let stmt = Arc::new(params.parser(sql, self.extensions, &call.state().catalog_name())?.sql_statement()?);
+        if let Some(k) = keeping {
+            k.keep_statement(Arc::clone(&stmt))?;
+        }
+        Ok(stmt)
+    }
+
     /// `stmt`, parsed, run in the call `call`.
-    fn execute_parsed(&self, call: &Call<'_>, stmt: SqlStatement, params: &mut Params) -> Result<Completion> {
+    fn execute_parsed(
+        &self,
+        call: &Call<'_>,
+        stmt: &SqlStatement,
+        params: &mut Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<Completion> {
         let st = call.state();
         let tx = match stmt {
             SqlStatement::Commit => return self.db.noted(self.commit_in(call)).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §4.22.7] not transaction initiating.
-            SqlStatement::SetConstraints { names, deferred } => return self.set_constraints(call, names.as_deref(), deferred),
+            SqlStatement::SetConstraints { names, deferred } => return self.set_constraints(call, names.as_deref(), *deferred),
             SqlStatement::Rollback => return self.db.noted(self.rollback_in(st)).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
-            SqlStatement::SetTransaction(modes) => return self.set_transaction(&modes, params).map(|()| Completion::Success),
-            SqlStatement::SetSchema(v) => return self.set_schema(st, &v, params).map(|()| Completion::Success),
-            SqlStatement::SetCatalog(v) => return self.set_catalog(st, &v, params).map(|()| Completion::Success),
+            SqlStatement::SetTransaction(modes) => return self.set_transaction(modes, params).map(|()| Completion::Success),
+            SqlStatement::SetSchema(v) => return self.set_schema(st, v, params).map(|()| Completion::Success),
+            SqlStatement::SetCatalog(v) => return self.set_catalog(st, v, params).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
-            SqlStatement::SetSessionAuthorization(v) => return self.set_session_authorization(&v, params).map(|()| Completion::Success),
+            SqlStatement::SetSessionAuthorization(v) => return self.set_session_authorization(v, params).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §15] the SQL-agent's, a client's.
             SqlStatement::Connection(_) => {
                 return fail(
@@ -132,19 +154,19 @@ impl Session {
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetTimeZone(v) => return self.set_time_zone(st, v.as_ref(), params).map(|()| Completion::Success),
             SqlStatement::SetSetting { name, value } => {
-                return self.set_named(st, &name, value.as_ref(), params).map(|()| Completion::Success);
+                return self.set_named(st, name, value.as_ref(), params).map(|()| Completion::Success);
             }
             SqlStatement::SetDatabase { name, value } => {
-                return self.set_database(st, &name, value.as_ref(), params).map(|()| Completion::Success);
+                return self.set_database(st, name, value.as_ref(), params).map(|()| Completion::Success);
             }
-            SqlStatement::Index(index) => return self.index_statement(st, &index),
-            SqlStatement::User(user) => return self.user_statement(&user),
-            SqlStatement::Served(served) => return self.served_statement(&served),
+            SqlStatement::Index(index) => return self.index_statement(st, index),
+            SqlStatement::User(user) => return self.user_statement(user),
+            SqlStatement::Served(served) => return self.served_statement(served),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
-            SqlStatement::GetDiagnostics(get) => return self.get_diagnostics(st, &get, params),
+            SqlStatement::GetDiagnostics(get) => return self.get_diagnostics(st, get, params),
             // [ISO/IEC 9075:1992 §13.11 GR4] for the session, in no
             // transaction.
-            SqlStatement::DeclareTable(t) => return self.declare_table(st, &t),
+            SqlStatement::DeclareTable(t) => return self.declare_table(st, t),
             SqlStatement::Insert(_)
             | SqlStatement::UpdateSearched { .. }
             | SqlStatement::DeleteSearched { .. }
@@ -159,47 +181,56 @@ impl Session {
             | SqlStatement::Schema { .. } => self.ensure_transaction(st),
         };
         call.runs(&tx);
-        self.may_run(st, &stmt)?;
+        self.may_run(st, stmt)?;
         tx.begin_statement(|| !self.cursors_open())?;
         // [X3.135-1986 §7.3 GR3b i] a failed statement is undone; if that fails
         // too, the damage is the error reported, and it names the first one.
-        self.db.noted(self.run_statement(st, &tx, stmt, params).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e)))
+        let cx = StatementContext { st, tx: &tx };
+        self.db.noted(self.run_statement(cx, stmt, params, keeping).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e)))
     }
 
     /// Runs a statement that runs in the transaction `tx`: not COMMIT,
-    /// ROLLBACK or another that `execute_parsed` runs itself.
-    fn run_statement(&self, st: &Arc<State>, tx: &Txn, stmt: SqlStatement, params: &mut Params) -> Result<Completion> {
+    /// ROLLBACK or another that `execute_parsed` runs itself; of a prepared
+    /// statement, with the plans it keeps.
+    fn run_statement(
+        &self,
+        cx: StatementContext<'_>,
+        stmt: &SqlStatement,
+        params: &mut Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<Completion> {
+        let StatementContext { st, tx } = cx;
         match stmt {
-            SqlStatement::Insert(ins) => self.insert_statement(st, tx, &ins, params).map(|n| self.affected(n)),
+            SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::UpdateSearched { table, set, where_clause } => {
-                let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdateSearched, &table, &set, where_clause.as_ref()))?;
+                let bind = |b: Context<'_>| bind_write(b, WriteKind::UpdateSearched, table, set, where_clause.as_ref());
+                let w = self.write_bound(st, params, keeping, bind)?;
                 self.settle_cursors(st, &w.table);
-                update_searched(StatementContext { st, tx }, &w, self.effects(st)).map(|n| self.affected(n))
+                update_searched(cx, &w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::DeleteSearched { table, where_clause } => {
-                let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::DeleteSearched, &table, &[], where_clause.as_ref()))?;
+                let bind = |b: Context<'_>| bind_write(b, WriteKind::DeleteSearched, table, &[], where_clause.as_ref());
+                let w = self.write_bound(st, params, keeping, bind)?;
                 self.settle_cursors(st, &w.table);
-                delete_searched(StatementContext { st, tx }, &w, self.effects(st)).map(|n| self.affected(n))
+                delete_searched(cx, &w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::UpdatePositioned { table, set, cursor } => {
-                let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::UpdatePositioned, &table, &set, None))?;
+                let w = self.bound(st, params, |b| bind_write(b, WriteKind::UpdatePositioned, table, set, None))?;
                 self.settle_cursors(st, &w.table);
-                self.update_positioned(StatementContext { st, tx }, (&cursor.0, cursor.1), &w)
+                self.update_positioned(cx, (&cursor.0, cursor.1), &w)
             }
             SqlStatement::DeletePositioned { table, cursor } => {
-                let w = self.bound(st, params, |cx| bind_write(cx, WriteKind::DeletePositioned, &table, &[], None))?;
+                let w = self.bound(st, params, |b| bind_write(b, WriteKind::DeletePositioned, table, &[], None))?;
                 self.settle_cursors(st, &w.table);
-                self.delete_positioned(StatementContext { st, tx }, (&cursor.0, cursor.1), &w)
+                self.delete_positioned(cx, (&cursor.0, cursor.1), &w)
             }
-            SqlStatement::Open(name) => self.open(st, tx, &name, params),
-            SqlStatement::Fetch { cursor, orientation, targets } => {
-                self.fetch(StatementContext { st, tx }, &cursor, (&orientation, &targets), params)
-            }
-            SqlStatement::Close(name) => self.close(&name),
-            SqlStatement::Select { query, targets } => self.select_into(StatementContext { st, tx }, &query, &targets, params),
-            SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, &object, behavior),
-            SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (&table, &action, &text)),
-            SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, &statement, &text),
+            SqlStatement::Open(name) => self.open(st, tx, name, params),
+            SqlStatement::Fetch { cursor, orientation, targets } => self.fetch(cx, cursor, (orientation, targets), params),
+            SqlStatement::Close(name) => self.close(name),
+            SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
+            SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
+            SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (table, action, text)),
+            SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, statement, text),
             // `execute_parsed` runs these itself, and never here.
             SqlStatement::Commit
             | SqlStatement::Rollback

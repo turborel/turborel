@@ -212,8 +212,17 @@ fn main() -> Result<(), turborel::error::SqlError> {
 `parameters` gives the type each takes, `columns` a query's columns.
 `execute_prepared` runs it with values for them, in order;
 `open_prepared` runs a prepared query, and gives its cursor. A prepared
-statement is bound and planned again each time it runs, against the
-definitions then, and stays valid across transactions.
+statement stays valid across transactions. A query, an INSERT, and a
+searched UPDATE or DELETE keep their plan between executions: each
+execution puts its values in the kept plan and chooses indexes by them.
+The plan is made again when the definitions change (a table altered, an
+index made or dropped, a privilege granted or revoked, the transaction's
+own uncommitted changes among them), when a setting of the database or
+of the session is set, or when the session's schema, authorization
+identifier or time zone changes; a plan that holds the statement's
+instant, of CURRENT_TIMESTAMP in the statement or a view it reads, or of
+a DEFAULT it writes, is made at each execution. `plans_made` counts the plans a statement's
+executions made.
 
 ```rust
 use turborel::db::Database;
@@ -231,6 +240,7 @@ fn main() -> Result<(), turborel::error::SqlError> {
     let by_id = ann.prepare("SELECT NAME FROM STAFF WHERE ID = ?")?;
     let mut rows = ann.open_prepared(&by_id, &[Value::Exact(Decimal::new(2, 0))])?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("Grace".to_owned()));
+    assert_eq!(insert.plans_made(), 1);
     Ok(())
 }
 ```

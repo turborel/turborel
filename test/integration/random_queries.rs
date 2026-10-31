@@ -17,7 +17,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::threads::JobPolicy;
 
-use crate::common::{exec, rows, set_all_rules};
+use crate::common::{Rng, exec, rows, set_all_rules};
 
 /// The seed of a run when `SEED_VAR` gives none.
 const DEFAULT_SEED: u64 = 0x5EED_1992_0000_0001;
@@ -28,42 +28,6 @@ const SEED_VAR: &str = "TURBOREL_QUERY_SEED";
 const DEFAULT_COUNT: u64 = 250;
 /// The environment variable that gives another number of queries.
 const COUNT_VAR: &str = "TURBOREL_QUERY_COUNT";
-
-/// xorshift64*: a small generator, enough to pick among forms and values.
-struct Rng(u64);
-
-impl Rng {
-    /// A generator from `seed`; xorshift needs a state not zero.
-    fn new(seed: u64) -> Rng {
-        Rng(seed.max(1_u64))
-    }
-
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12_u32;
-        self.0 ^= self.0 << 25_u32;
-        self.0 ^= self.0 >> 27_u32;
-        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D_u64)
-    }
-
-    /// A number in `0..n`.
-    fn below(&mut self, n: usize) -> usize {
-        usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
-    }
-
-    /// True `percent` times in a hundred.
-    fn chance(&mut self, percent: usize) -> bool {
-        self.below(100_usize) < percent
-    }
-
-    fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
-        items[self.below(items.len())]
-    }
-
-    /// A small integer, as SQL text, negative ones among them.
-    fn number(&mut self) -> String {
-        (i64::try_from(self.below(21_usize)).unwrap() - 6_i64).to_string()
-    }
-}
 
 /// The tables, each of the columns `NUMBERS` and `STRINGS`: A of the row
 /// store with a B-link and a hash index, B of the column store, C of the

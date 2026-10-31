@@ -67,6 +67,8 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
             left.and_then(|x| right.map(|y| (x, y)))
                 .and_then(|(x, y)| (0..count).map(|n| arith(*op, x.at(n), y.at(n))).collect::<Result<Vec<Value>>>().map(Lane::Made))
         }
-        Expr::Call(..) | Expr::Outer(..) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => return None,
+        Expr::Call(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => {
+            return None;
+        }
     })
 }

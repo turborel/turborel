@@ -294,12 +294,8 @@ impl Session {
     /// The rows of a read-only cursor's specification, after taking
     /// shared locks on the tables it reads [X3.135-1986 §8.8 GR3b].
     fn open_rows(&self, st: &Arc<State>, tx: &Txn, spec: &CursorSpecification, params: &Params) -> Result<(Vec<OutColumn>, Stream)> {
-        let c = self.compile(st, spec, params)?;
-        let reads = c.optimized.tables();
-        for t in &reads {
-            st.read_lock(tx, t)?;
-        }
-        Ok((c.columns, Stream::open(c.physical, reads, st, tx.id)?))
+        let bound = self.bound(st, params, |cx| bind_cursor(cx, spec))?;
+        Ok((bound.columns, Stream::planned(st, tx, bound.plan)?))
     }
 
     /// [ISO/IEC 9075:1992 §11.8 GR8] The rows changed through each cursor
@@ -492,36 +488,63 @@ impl Session {
     pub fn open_cursor(&self, sql: &str) -> Result<Cursor> {
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <direct select statement:
         // multiple rows>.
-        self.open_with(sql, &Params::new(), ("SELECT", ""))
+        self.open_with(("SELECT", ""), |call| self.open_in(call, sql, &Params::new()))
     }
 
-    /// An unnamed cursor of `sql`, as `open_cursor` opens it, with the
-    /// parameters `params`: a prepared statement's dynamic ones; the
-    /// diagnostics area naming it as `command` says.
-    pub(super) fn open_with(&self, sql: &str, params: &Params, command: (&'static str, &'static str)) -> Result<Cursor> {
+    /// An unnamed cursor `open` opens in a call, as `open_cursor` opens
+    /// one: the diagnostics area naming it as `command` says.
+    pub(super) fn open_with(
+        &self,
+        command: (&'static str, &'static str),
+        open: impl FnOnce(&super::Call<'_>) -> Result<Cursor>,
+    ) -> Result<Cursor> {
         let call = self.enter()?;
         self.emptied(command);
-        let opened = self.open_in(&call, sql, params);
+        let opened = open(&call);
         // [ISO/IEC 9075:1992 §3.3.4.1] with a warning its rows raised as it
         // opened (`Session::warning`).
         let warned = Completion::Success.warned(self.raised());
         self.diagnosed(opened, |_| warned.sqlstate())
     }
 
-    /// `open_with`'s cursor, in the call `call`.
+    /// The cursor of `sql`, with the parameters `params`, in the call
+    /// `call`.
     fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
-        let mut timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth());
-        let spec = self.parse_cursor(call.state(), sql, params)?;
+        let timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth());
+        let spec = self.unnamed_specification(call.state(), sql, params)?;
+        self.unnamed(call, timed, |st, tx| self.open_rows(st, tx, &spec, params))
+    }
+
+    /// `sql`, the specification of an unnamed cursor, parsed with
+    /// `params`.
+    ///
+    /// # Errors
+    ///
+    /// It does not parse; it is FOR UPDATE: no positioned statement names
+    /// an unnamed cursor.
+    pub(super) fn unnamed_specification(&self, st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
+        let spec = self.parse_cursor(st, sql, params)?;
         if let Some(Updatability::Update(_)) = spec.updatability {
             return Err(rule(
                 "[DESIGN] an unnamed cursor is read-only: no positioned statement names it, so it is not FOR UPDATE".to_owned(),
             ));
         }
+        Ok(spec)
+    }
+
+    /// An unnamed cursor, opened in the call `call` and the session's
+    /// transaction over the rows `rows` gives, its work timed by `timed`.
+    pub(super) fn unnamed(
+        &self,
+        call: &super::Call<'_>,
+        mut timed: Option<super::slow::Timed<String>>,
+        rows: impl FnOnce(&Arc<State>, &Txn) -> Result<(Vec<OutColumn>, Stream)>,
+    ) -> Result<Cursor> {
         let st = call.state();
         let tx = self.ensure_transaction(st);
         call.runs(&tx);
         tx.begin_statement(|| !self.cursors_open())?;
-        let (columns, rows) = self.open_rows(st, &tx, &spec, params).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e))?;
+        let (columns, rows) = rows(st, &tx).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e))?;
         let rows = Arc::new(Mutex::new(Some(rows)));
         self.inner.borrow_mut().anonymous.push(Arc::downgrade(&rows));
         if let Some(opened) = timed.as_mut() {

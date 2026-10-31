@@ -25,7 +25,7 @@ use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::logical::{AggCall, Cond, LogicalPlan, SortKey, Truth};
 use crate::params::{ParameterType, Params};
 use crate::settings::{self, Own};
-use crate::value::datetime::Now;
+use crate::value::datetime::Clocked;
 use crate::value::{DOUBLE_PRECISION, DataType, Value};
 
 mod case;
@@ -127,7 +127,7 @@ pub struct Context<'a> {
     pub referencing: Option<&'a Referencing>,
     /// [ISO/IEC 9075:1992 §6.8 GR3, §4.5.1] The instant its statement runs
     /// at, and its SQL-session's time zone displacement.
-    pub now: Now,
+    pub now: Clocked<'a>,
 }
 
 pub use purpose::Purpose;
@@ -146,7 +146,7 @@ impl<'a> Context<'a> {
     pub fn new(db: &'a State, auth: &'a str, params: &'a Params) -> Context<'a> {
         let (purpose, own) = (Purpose::Query, &settings::NONE);
         Context {
-            now: db.now(own),
+            now: db.now(own).into(),
             db,
             auth,
             schema: auth,
@@ -204,7 +204,7 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         ValueSpecification::Literal(Literal::Bit(b)) => (Value::Bits(b.clone()), DataType::Bit { length: b.len() }),
         // [ISO/IEC 9075:1992 §5.3 SR15-SR18] here of UTC: a statement's
         // binder gives its session's displacement (`Binder::value_specification`).
-        ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, Now::default())?,
+        ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, 0)?,
         // [ISO/IEC 9075:1992 §5.3 SR20] of its qualifier.
         ValueSpecification::Literal(Literal::Interval(i)) => (Value::Interval(*i), DataType::Interval(i.qualifier)),
         // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
@@ -419,7 +419,7 @@ struct Binder<'a> {
     /// again, aggregated [ISO/IEC 9075:1992 §7.9 SR7].
     aggregated: Cell<bool>,
     /// Its statement's instant and time zone (`Context::now`).
-    now: Now,
+    now: Clocked<'a>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its

@@ -12,7 +12,7 @@ use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpressio
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{AggregateRef, ScalarFunction};
 use crate::lexer::kw;
-use crate::logical::{AggCall, Expr, render_expr};
+use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
 use crate::value::Spelled;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
@@ -62,8 +62,11 @@ impl Binder<'_> {
     /// specification>` taking the type `taken` its context gives it.
     pub(super) fn typed(&self, e: &ValueExpression, taken: ParameterType, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         if let Some((index, at)) = dynamic_of(e) {
-            let (value, t) = self.params.dynamic_value(index, Some(taken)).or_at(at)?;
-            return Ok((Expr::Const(value), t));
+            let (value, t) = self.params.dynamic_typed(index, Some(taken)).or_at(at)?;
+            // Of a statement to be kept, a slot its value fills as each
+            // execution begins (RULES.md D45).
+            let bound = if self.params.slots() { Expr::Dynamic(Slot { index, data_type: t, at }) } else { Expr::Const(value) };
+            return Ok((bound, t));
         }
         self.value_expression(e, scope)
     }
@@ -96,7 +99,7 @@ impl Binder<'_> {
             ));
         }
         if let ValueSpecification::Literal(Literal::Datetime(w)) = vs {
-            return super::datetime::literal(w, self.now);
+            return super::datetime::literal(w, self.now.zone());
         }
         if let ValueSpecification::Literal(Literal::Interval(i)) = vs {
             return Ok((Value::Interval(*i), DataType::Interval(i.qualifier)));

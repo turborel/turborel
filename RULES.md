@@ -1994,9 +1994,31 @@ operator must be able to bound what any statement takes.
   Format, Syntax or Access Rule broken while preparing [GR4a]. A scalar
   function plug-in says what type a `?` takes as each of its arguments
   (`ScalarFunction::parameter_type`), refused by default.
-- Each execution binds and plans the statement again, its values as
-  constants, so the planner chooses indexes by them; the definitions it
-  was prepared against may have changed [§17.6 GR10].
+- A query, an INSERT, and a searched UPDATE or DELETE keep their parsed
+  text and bound plan between executions, each `?` its context types a
+  slot (`Expr::Dynamic`); another statement keeps its parsed text. Each
+  execution fills the slots with its values, cast to their types [§17.9
+  GR5], then rewrites and plans the plan: the access paths are chosen by
+  its values and the statistics of then, as for the statement written
+  with them, so no generic plan is run for values it does not suit
+  (`db/prepared/plans.rs`, `logical/dynamic.rs`).
+- What is kept holds while what it was bound with does: the snapshot's
+  generation (every published change of definitions, settings,
+  functions, optimizer rules); the catalog it read, by identity, which
+  every change makes anew, a transaction's uncommitted ones and GRANT
+  and REVOKE among them; the authorization identifier, default schema,
+  time zone and own settings of the executing session; whether
+  extensions are on. Else the statement is bound again, its Syntax and
+  Access Rules checked against the definitions of then [§17.6 GR10]: a
+  privilege revoked is missing at the next execution. A session's
+  declared local temporary tables make its catalog anew at each call, so
+  their statements are bound at each execution.
+- A binding that reads a value, a `?`'s other than as a slot or the
+  statement's instant (CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, a
+  datetime CAST, a DEFAULT of them written, in the statement or a view it
+  reads; `value::datetime::Clocked`), is not kept: it is made at each
+  execution. An INSERT's columns not written take their defaults anew.
+  `Prepared::plans_made` counts the plans made; its clones share them.
 - The protocol: Prepare, Prepared with the parameters' types and the
   columns; Execute with values and a row limit, a query's cursor opened
   and its rows sent up to the limit, then Suspended if it has more, which
@@ -2024,7 +2046,10 @@ operator must be able to bound what any statement takes.
 - Hello and Ready exchange capabilities; version 1 defines none, so later
   ones are added without a new version.
 *Why:* drivers expect SQL-92's dynamic SQL; a client must read a large
-result in parts, and must be able to stop what it started. A cancel on its
+result in parts, and must be able to stop what it started. Parsing and
+binding are what a statement run often repeats for nothing; planning per
+execution keeps the plan its values choose, and invalidating by what the
+binding read keeps the results those of binding anew. A cancel on its
 own connection needs no second writer on the first, which a TLS stream
 cannot have.
 

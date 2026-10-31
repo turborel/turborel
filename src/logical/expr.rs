@@ -29,6 +29,18 @@ pub struct DomainChecks {
     pub checks: Vec<(QualifiedName, Cond)>,
 }
 
+/// \[EXTENSION\] A `<dynamic parameter specification>` in a kept plan
+/// (`Expr::Dynamic`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Slot {
+    /// Its place among the statement's `?`s, from 0.
+    pub index: usize,
+    /// The type its context gave it [ISO/IEC 9075:1992 §17.6 GR5].
+    pub data_type: DataType,
+    /// Where it is written, for an error of its value's CAST.
+    pub at: usize,
+}
+
 /// [X3.135-1986 §5.18] "true", "false", or "unknown".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Truth {
@@ -60,6 +72,11 @@ pub enum Expr {
     /// the column's name, for display. Replaced by that value before the
     /// plan runs (`Subquery::bound`).
     Outer(usize, String),
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §6.2, §17.9 GR5] A `<dynamic
+    /// parameter specification>` of a prepared statement's plan, kept
+    /// between its executions (RULES.md D45): replaced by its value, cast
+    /// to its type, before the plan is planned and run (`logical/dynamic.rs`).
+    Dynamic(Slot),
     /// [ISO/IEC 9075:1992 §6.9] A `<case expression>`, NULLIF and COALESCE
     /// among them: the result of the first WHEN whose condition is true,
     /// else of the ELSE \[GR1, GR2\].
@@ -145,7 +162,7 @@ impl Expr {
     #[must_use]
     pub fn map_children(self, f: &mut dyn FnMut(Expr) -> Expr) -> Expr {
         match self {
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) => self,
+            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) => self,
             Expr::Neg(x) => Expr::Neg(Box::new(f(*x))),
             Expr::Arith(a, op, b) => {
                 let a = f(*a);
@@ -166,7 +183,7 @@ impl Expr {
     /// reaches them.
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a Expr)) {
         match self {
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) => {}
+            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) => {}
             Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) => f(x),
             Expr::Arith(a, _, b) => {
                 f(a);
@@ -193,7 +210,7 @@ impl Expr {
     pub fn can_raise(&self) -> bool {
         match self {
             Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => true,
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Neg(_) | Expr::Case(..) => {
+            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) => {
                 let mut raises = false;
                 self.for_each_child(&mut |e| raises = raises || e.can_raise());
                 if let Expr::Case(whens, _) = self {

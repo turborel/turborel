@@ -8,6 +8,7 @@
 //! a Scan outputs its table's columns, a Product the left's then the right's,
 //! an Aggregate its grouping columns then one column per set function.
 
+mod dynamic;
 mod expr;
 mod pushed;
 mod render;
@@ -16,9 +17,10 @@ mod subquery;
 
 use std::fmt::Write;
 
+pub use dynamic::{filled, filled_expr};
 pub use expr::{
-    Cond, DomainChecks, Expr, Quantifier, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs, map_expr_columns,
-    or_all, split_and,
+    Cond, DomainChecks, Expr, Quantifier, Slot, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs,
+    map_expr_columns, or_all, split_and,
 };
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use render::{column_name, render_cond, render_expr, render_keys};
@@ -196,7 +198,14 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>) {
         Expr::Case(whens, _) => out.extend(whens.iter().flat_map(|(c, _)| c.subqueries())),
         // A domain's constraints are run for the value CAST, and read their tables.
         Expr::Domain(_, d) => d.checks.iter().for_each(|(_, c)| out.extend(cond_subqueries(c))),
-        Expr::Column(_) | Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Call(..) | Expr::Outer(..) | Expr::Cast(..) => {}
+        Expr::Column(_)
+        | Expr::Const(_)
+        | Expr::Neg(_)
+        | Expr::Arith(..)
+        | Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Cast(..) => {}
     }
     e.for_each_child(&mut |child| expr_subqueries(child, out));
 }

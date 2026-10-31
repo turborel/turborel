@@ -59,6 +59,7 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
             f.0.call(&values)
         }
         Expr::Outer(_, name) => Err(broken(&format!("the outer reference {name} has no value"))),
+        Expr::Dynamic(slot) => Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1)))),
         // [ISO/IEC 9075:1992 §6.9 GR2] the first WHEN true gives the result,
         // the others not evaluated; else the ELSE.
         Expr::Case(whens, otherwise) => {

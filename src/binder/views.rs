@@ -25,8 +25,9 @@ use crate::params::Params;
 use crate::parser::Parser;
 use crate::settings::{self, Own};
 use crate::system::{self, DEFINITION_SCHEMA, INFORMATION_SCHEMA, SystemTable, SystemView, desc_of};
-use crate::value::datetime::Now;
+use crate::value::datetime::Clocked;
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 /// An updatable view, read as its base table.
@@ -82,7 +83,7 @@ pub(super) struct Reader<'a> {
     pub(super) own: &'a Own,
     pub(super) user: &'a str,
     pub(super) definitions: bool,
-    pub(super) now: Now,
+    pub(super) now: Clocked<'a>,
 }
 
 impl<'a> Reader<'a> {
@@ -158,8 +159,13 @@ fn bind_system_view(db: &State, view: &SystemView, Reader { purpose, own, user, 
 ///
 /// Its query does not bind: a defect.
 pub(crate) fn system_view_columns(db: &State, view: &SystemView) -> Result<Vec<ColumnDesc>> {
-    let reader =
-        Reader { purpose: Purpose::Query, own: &settings::NONE, user: INFORMATION_SCHEMA, definitions: true, now: db.now(&settings::NONE) };
+    let reader = Reader {
+        purpose: Purpose::Query,
+        own: &settings::NONE,
+        user: INFORMATION_SCHEMA,
+        definitions: true,
+        now: db.now(&settings::NONE).into(),
+    };
     Ok(described(&bind_system_view(db, view, reader)?.columns))
 }
 
@@ -302,8 +308,9 @@ pub struct WriteTarget {
 /// # Errors
 ///
 /// `name` is not defined [X3.135-1986 §5.4 SR5], or is a read-only table,
-/// which `read_only` (e.g. "§8.7 SR2") forbids.
-pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, &str)) -> Result<WriteTarget> {
+/// which `read_only` (e.g. "§8.7 SR2") forbids. A view's instant read is
+/// noted in `noted`, if given (`Clocked`).
+pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, &str), noted: Option<&Cell<bool>>) -> Result<WriteTarget> {
     if [INFORMATION_SCHEMA, DEFINITION_SCHEMA].contains(&name.auth.as_str()) {
         return Err(SqlError::new(
             Code::Privilege,
@@ -311,15 +318,24 @@ pub fn write_target(db: &State, name: &QualifiedName, (read_only, user): (&str, 
         )
         .about(Subject::table(name.parts())));
     }
-    let Named { desc, source, .. } =
-        named(db, name, Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false, now: db.now(&settings::NONE) })?;
+    let Named { desc, source, .. } = named(
+        db,
+        name,
+        Reader {
+            purpose: Purpose::Query,
+            own: &settings::NONE,
+            user,
+            definitions: false,
+            now: Clocked::new(db.now(&settings::NONE), noted),
+        },
+    )?;
     match &source {
         Source::Table => {
             let map = (0..desc.columns.len()).collect();
             Ok(WriteTarget { named: desc.clone(), base: desc, map, checks: Vec::new(), cond: None, source })
         }
         Source::Base(vb) => {
-            let checks = spanned(db, name, (vb, user))?;
+            let checks = spanned(db, name, (vb, user), noted)?;
             let (base, map, cond) = (vb.base.clone(), vb.map.clone(), vb.cond.clone());
             Ok(WriteTarget { named: desc, base, map, checks, cond, source })
         }
@@ -351,8 +367,9 @@ pub struct ViewCheck {
 /// [ISO/IEC 9075:1992 §11.19 GR9, GR11] The views WITH CHECK OPTION the
 /// updatable view `name`, read as `vb`, spans: itself, and each view under
 /// it, down to the base table, read as `user` reads it.
-fn spanned(db: &State, name: &QualifiedName, (vb, user): (&ViewBase, &str)) -> Result<Vec<ViewCheck>> {
-    let reader = Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false, now: db.now(&settings::NONE) };
+fn spanned(db: &State, name: &QualifiedName, (vb, user): (&ViewBase, &str), noted: Option<&Cell<bool>>) -> Result<Vec<ViewCheck>> {
+    let now = Clocked::new(db.now(&settings::NONE), noted);
+    let reader = Reader { purpose: Purpose::Query, own: &settings::NONE, user, definitions: false, now };
     let mut checks = Vec::new();
     let (mut at, mut read) = (name.clone(), vb.clone());
     while let Some(view) = db.catalog.view(&at) {

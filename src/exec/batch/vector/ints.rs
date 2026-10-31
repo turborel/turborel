@@ -55,9 +55,14 @@ fn shaped(e: &Expr, depth: usize) -> bool {
         Expr::Column(_) | Expr::Const(Value::Exact(_)) => true,
         Expr::Neg(operand) => shaped(operand, deeper),
         Expr::Arith(a, op, b) => *op != ArithOp::Div && shaped(a, deeper) && shaped(b, deeper),
-        Expr::Const(_) | Expr::Call(..) | Expr::Outer(..) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => {
-            false
-        }
+        Expr::Const(_)
+        | Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::Domain(..)
+        | Expr::Subquery(..) => false,
     }
 }
 
@@ -95,7 +100,14 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
             let operands = (made(left, (inputs, batch, rows), deeper)?, made(right, (inputs, batch, rows), deeper)?);
             arithmetic(*op, (&operands.0, &operands.1), rows.map_or(batch.rows, <[usize]>::len)).map(Lane::Made)
         }
-        Expr::Const(_) | Expr::Call(..) | Expr::Outer(..) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => None,
+        Expr::Const(_)
+        | Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::Domain(..)
+        | Expr::Subquery(..) => None,
     }
 }
 

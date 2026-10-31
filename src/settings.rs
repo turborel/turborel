@@ -417,6 +417,11 @@ impl Own {
         self.0.is_empty()
     }
 
+    /// Whether it sets the values `other` sets, of the same settings.
+    pub fn same_as(&self, other: &Own) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().all(|(k, v)| other.get(*k).is_some_and(|w| w.to_literal() == v.to_literal()))
+    }
+
     /// Its value of `key`, if it set one.
     pub fn get(&self, key: Key) -> Option<&Value> {
         self.0.iter().find(|(k, _)| *k == key).map(|(_, v)| v)

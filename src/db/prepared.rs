@@ -5,11 +5,18 @@
 //! opened as a cursor [§17.13, §17.14], as often as asked, each time with values
 //! for its parameters [§17.9 GR5].
 //!
-//! Each execution binds and plans the statement again, with its values as
-//! constants, so the planner picks indexes by them; a plan kept between
-//! executions may come later. The statement is checked against the
-//! definitions as each execution begins: what it was prepared against may
-//! have changed [§17.6 GR10].
+//! A query, an INSERT and a searched UPDATE or DELETE keep their plan
+//! between executions, bound again only when what it was bound with
+//! changed (`prepared/plans.rs`, RULES.md D45); each execution fills in its
+//! values and chooses the access paths by them. The statement is checked
+//! against the definitions as they are when an execution binds it: what it
+//! was prepared against may have changed [§17.6 GR10].
+
+mod plans;
+
+use std::sync::Arc;
+
+pub(super) use plans::{Keeping, KeptPlan, Plans};
 
 use super::{Completion, Cursor, Session, State};
 use crate::ast::SqlStatement;
@@ -30,13 +37,15 @@ enum Kind {
     Statement,
 }
 
-/// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6] A prepared statement.
+/// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6] A prepared statement. Its
+/// clones share the plans it keeps (RULES.md D45).
 #[derive(Debug, Clone)]
 pub struct Prepared {
     sql: String,
     kind: Kind,
     parameters: Vec<ParameterType>,
     columns: Vec<OutColumn>,
+    plans: Arc<Plans>,
 }
 
 impl Prepared {
@@ -60,6 +69,15 @@ impl Prepared {
     /// Whether it is a `<dynamic select statement>`, opened as a cursor.
     pub fn is_query(&self) -> bool {
         self.kind == Kind::Query
+    }
+
+    /// \[DESIGN\] How many plans its executions, its clones' too, made: one
+    /// kept while what it was made with holds, another each time that
+    /// changed, and one for each execution whose plan holds a value it read
+    /// (RULES.md D45). Only a query, an INSERT, and a searched UPDATE or
+    /// DELETE make one.
+    pub fn plans_made(&self) -> u64 {
+        self.plans.made()
     }
 }
 
@@ -141,7 +159,7 @@ impl Session {
             )
             .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
         })?;
-        Ok(Prepared { sql: sql.to_owned(), kind, parameters, columns })
+        Ok(Prepared { sql: sql.to_owned(), kind, parameters, columns, plans: Arc::default() })
     }
 
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
@@ -149,7 +167,7 @@ impl Session {
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
             SqlStatement::Insert(ins) => {
-                let target = self.insert_target(st, ins)?;
+                let target = self.insert_target(st, ins, None)?;
                 if let crate::ast::InsertSource::Query(query) = &ins.source {
                     self.bound_insert(st, &target, query, params)?;
                 }
@@ -227,7 +245,7 @@ impl Session {
         if p.kind == Kind::Schema {
             return self.direct(&p.sql).map(|_| Completion::Success);
         }
-        self.execute_as(&p.sql, &mut params, true)
+        self.execute_as(&p.sql, &mut params, Some(&p.plans))
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.14] Opens `p`, a query, as an
@@ -243,7 +261,8 @@ impl Session {
             let msg = "[ISO/IEC 9075:1992 §17.13 GR2] a prepared statement opened as a cursor is a <cursor specification>".to_owned();
             return Err(dynamic(SqlState::NOT_A_CURSOR_SPECIFICATION, msg));
         }
+        let params = Self::values_for(p, values)?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <dynamic open statement>.
-        self.open_with(&p.sql, &Self::values_for(p, values)?, ("DYNAMIC OPEN", "SELECT"))
+        self.open_with(("DYNAMIC OPEN", "SELECT"), |call| self.open_kept(call, p, &params))
     }
 }
