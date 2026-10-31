@@ -18,11 +18,15 @@ tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-t
 # Certificates made for each test run, so none expires in the repository:
 # with the feature `tls`.
 rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "crypto", "pem"], optional = true }
+# A deterministic simulator of replicas (RULES.md D57): with the feature
+# `replication`.
+turborel-replication = { path = "../replication", optional = true }
 
 [features]
 client = ["dep:turborel-client"]
 server = ["client", "dep:turborel", "dep:turborel-protocol", "dep:turborel-server", "dep:tokio"]
 tls = ["server", "dep:rcgen"]
+replication = ["dep:turborel", "dep:turborel-replication"]
 
 [lints]
 workspace = true

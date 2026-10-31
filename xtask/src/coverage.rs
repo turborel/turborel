@@ -1,6 +1,6 @@
 //! RULES.md R-COV: structural coverage of the product's crates (the
 //! library, the wire protocol, the client, the server and its program, the
-//! command-line client, and the LZ4 and AES-256-GCM plug-ins) by their
+//! command-line client, the LZ4 and AES-256-GCM plug-ins, and replication) by their
 //! tests, measured with rustc's
 //! source-based coverage (`-C instrument-coverage`) and the LLVM tools of the
 //! pinned toolchain.
@@ -26,10 +26,19 @@ use crate::error::{Error, Result};
 use crate::files;
 
 /// The packages whose coverage is measured.
-pub const PACKAGES: [&str; 8] =
-    ["turborel", "turborel-protocol", "turborel-client", "turborel-server", "turboreld", "turborel-cli", "turborel-lz4", "turborel-aes"];
+pub const PACKAGES: [&str; 9] = [
+    "turborel",
+    "turborel-protocol",
+    "turborel-client",
+    "turborel-server",
+    "turboreld",
+    "turborel-cli",
+    "turborel-lz4",
+    "turborel-aes",
+    "turborel-replication",
+];
 /// The measured sources, relative to the workspace root.
-const MEASURED_DIRS: [&str; 8] = [
+const MEASURED_DIRS: [&str; 9] = [
     files::LIBRARY_DIR,
     files::PROTOCOL_DIR,
     files::CLIENT_DIR,
@@ -38,6 +47,7 @@ const MEASURED_DIRS: [&str; 8] = [
     files::CLI_DIR,
     files::LZ4_DIR,
     files::AES_DIR,
+    files::REPLICATION_DIR,
 ];
 /// Everything coverage writes, relative to the workspace root.
 const OUT_DIR: &str = "target/coverage";

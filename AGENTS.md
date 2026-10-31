@@ -61,7 +61,7 @@ cargo xtask mutate [NAME]        # break each listed mechanism, expect its tests
 
 ## Where things are
 
-Crates (D42, D46, D48):
+Crates (D42, D46, D48, D57):
 
 | Path | Crate | What |
 |---|---|---|
@@ -73,6 +73,7 @@ Crates (D42, D46, D48):
 | `cli/` | `turborel-cli` | the command-line client `turborel` |
 | `lz4/` | `turborel-lz4` | LZ4 compression, an encoding plug-in |
 | `aes/` | `turborel-aes` | AES-256-GCM and ChaCha20-Poly1305 encryption, SHA-256, SHA-512 and HMAC-SHA-256 checksums: plug-ins |
+| `replication/` | `turborel-replication` | replication's extension points (`Consensus`, `Transport`, `StateTransfer`), std only |
 | `support/` | `turborel-test-support` | fixtures the crates' tests share |
 | `xtask/` | `xtask` | the project's checks and tools |
 

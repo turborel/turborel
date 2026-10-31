@@ -29,6 +29,29 @@ pub struct ExportedFile {
     pub owner: FileOwner,
 }
 
+/// \[DESIGN\] An export of a database (RULES.md D57): its last
+/// checkpoint's image and the durable files of its manifest, read as they
+/// were when the export began. Replication moves it to another replica
+/// without decoding it (a `StateTransfer` of crate `turborel-replication`);
+/// the core makes one and installs one.
+///
+/// Contract: `image` and `files` do not change for the life of the source;
+/// `read` of file `file` at offset `at` fills `into` from the file as the
+/// export began, and returns how many bytes it filled, fewer only at the
+/// file's end, so a source read twice gives the same bytes.
+pub trait StateSource: Send {
+    /// The checkpoint's image: an opaque catalog record.
+    fn image(&self) -> &[u8];
+    /// The durable files, as the manifest lists them.
+    fn files(&self) -> &[ExportedFile];
+    /// Reads file `file` (an index into `files`) at offset `at` into `into`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no file `file`; -915 if it cannot be read.
+    fn read(&mut self, file: usize, at: u64, into: &mut [u8]) -> Result<usize>;
+}
+
 impl Database {
     /// \[DESIGN\] The durable files of this database, kept in a directory,
     /// as its last checkpoint left them, but its log's and its catalog's:

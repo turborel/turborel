@@ -21,6 +21,8 @@ pub const CLI_DIR: &str = "cli/src";
 pub const LZ4_DIR: &str = "lz4/src";
 /// The AES-256-GCM plug-in's sources (RULES.md D26, D48).
 pub const AES_DIR: &str = "aes/src";
+/// Replication's sources (RULES.md D57).
+pub const REPLICATION_DIR: &str = "replication/src";
 /// Directories, relative to the workspace root, that hold the project's Rust code.
 pub const SOURCE_DIRS: &[&str] = &[
     LIBRARY_DIR,
@@ -36,6 +38,8 @@ pub const SOURCE_DIRS: &[&str] = &[
     "cli/test",
     LZ4_DIR,
     AES_DIR,
+    REPLICATION_DIR,
+    "replication/test",
     "support/src",
     "xtask/src",
 ];

@@ -1,0 +1,30 @@
+[package]
+name = "turborel-replication"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Replication for turborel (RULES.md D57): its extension points, Consensus, Transport and StateTransfer, and Viewstamped Replication as a deterministic state machine. Content-agnostic: it orders opaque records."
+license = "BSD-2-Clause"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["database", "replication", "consensus", "turborel"]
+categories = ["database-implementations"]
+# Not published: replication is built in stages (RULES.md D57).
+publish = false
+# The test target is declared below, in `test/`.
+autotests = false
+
+[dependencies]
+# Positions, errors and the export seam; std only, no other crate.
+turborel = { version = "0.0.0", path = ".." }
+
+[dev-dependencies]
+turborel-test-support = { path = "../support", features = ["replication"] }
+
+[lints]
+workspace = true
+
+# ONE integration test binary (RULES.md D5).
+[[test]]
+name = "replication"
+path = "test/main.rs"

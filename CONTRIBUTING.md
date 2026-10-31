@@ -148,7 +148,7 @@ Reported-by: A Reporter <reporter@example.org>
   | `disk` | `disk/`: I/O, blocks, pages, the buffer pool, encodings |
   | `value` | `value/`, `functions/`, `hash/` |
   | `settings` | `settings/`, `memory.rs`, `diagnostics.rs` |
-  | `protocol`, `client`, `server`, `turboreld`, `cli`, `lz4` | their crates |
+  | `protocol`, `client`, `server`, `turboreld`, `cli`, `lz4`, `replication` | their crates |
   | `xtask`, `bench`, `test`, `support` | the tools, benchmarks and shared test fixtures |
   | `doc` | `doc/`, README.md, RULES.md, CONFORMANCE.md, TODO.md, AGENTS.md, CLAUDE.md, this file |
   | `treewide` | a mechanical change across many areas |

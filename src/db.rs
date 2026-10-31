@@ -125,7 +125,7 @@ pub use checkpoint::OVERDUE;
 pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
 pub(crate) use database::WeakDatabase;
-pub use export::ExportedFile;
+pub use export::{ExportedFile, StateSource};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
 pub use formats::FileFormats;
 pub use image::IMAGE_FORMAT;

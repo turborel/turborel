@@ -771,6 +771,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "turborel-replication"
+version = "0.0.0"
+dependencies = [
+ "turborel",
+ "turborel-test-support",
+]
+
+[[package]]
 name = "turborel-server"
 version = "0.0.0"
 dependencies = [
@@ -794,6 +802,7 @@ dependencies = [
  "turborel",
  "turborel-client",
  "turborel-protocol",
+ "turborel-replication",
  "turborel-server",
 ]
 

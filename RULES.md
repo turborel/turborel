@@ -972,8 +972,10 @@ checkpoint images (catalog records) and durable files, and never decodes
 them. What a record means and how it is applied is the core's one replay,
 `Database::replay`, which recovery runs and a standby will run: a new
 kind of record, object or file is replicated once recovery handles it.
-Replication's own extension points are traits, `Consensus`, `Transport`
-and `StateTransfer`, added as it is built; Viewstamped Replication,
+Replication's own extension points are traits of the crate
+`turborel-replication` (std only): `Consensus`, a protocol as a
+deterministic state machine, `Transport` and `StateTransfer`, which
+moves an export (the core's `StateSource`); Viewstamped Replication,
 TLS over TCP and whole files are their first implementations. Approved
 with it: a `Log` for commit, beside a driver of those traits that knows
 no content, and the core's `Standby` seam (replay, promote, depose,
@@ -998,7 +1000,7 @@ and a file in the directory of no known kind is refused; later, contract
 tests of each trait (R-SAFE-3) and a comparison of backups with the
 primary in a deterministic simulator.
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
-`files/classes.rs`, `log/record/kinds.rs`.
+`files/classes.rs`, `log/record/kinds.rs`, `replication/src`.
 
 **D27. A thread-safe core over snapshots of the definitions.**
 - A `Database` is shared between threads, and every extension trait is
