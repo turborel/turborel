@@ -8,7 +8,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{exec, locking_database, rows, spill_bytes};
+use crate::common::{Scratch, exec, locking_database, os, rows, spill_bytes};
 
 /// The smallest MEMORY.WORK_BYTES, 64 KiB.
 const SMALL: i128 = 64 << 10;
@@ -271,4 +271,86 @@ fn a_transaction_past_the_budget_commits_what_it_did() {
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec![k.to_string()]));
     let last = k - 1;
     assert_eq!(rows(&s, &format!("SELECT K FROM T WHERE S = 's{last}'")), Ok(vec![last.to_string()]));
+}
+
+/// A database in `dir`, of `T (K, V)` of `ROWS` rows committed, its
+/// changes and garbage spilled past 4 KiB, and of an empty `O.U`; and a
+/// session of it.
+fn held_on_disk(dir: &std::path::Path) -> (Database, Session) {
+    let db = Database::new();
+    db.open_files(&os(), dir, &turborel::db::OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER) WITH (TRANSACTIONS.HELD_BYTES = 4096)")
+        .unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION O CREATE TABLE U (K INTEGER)").unwrap();
+    let s = db.session("S");
+    for from in (0..ROWS).step_by(500) {
+        let values: Vec<String> = (from..from + 500).map(|k| format!("({k}, {k})")).collect();
+        s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    (db, s)
+}
+
+/// How many spill files `dir`'s `tmp` holds.
+fn spill_files(dir: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir.join("tmp")) else { return 0 };
+    entries.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x.eq_ignore_ascii_case("spill"))).count()
+}
+
+/// Verifies: [X3.135-1986 §8.9 GR1]; [DESIGN] RULES.md D29, D38: the
+/// garbage a ROLLBACK of changes to committed rows makes, spilled past
+/// TRANSACTIONS.HELD_BYTES, is collected as the transaction ends when no
+/// other transaction is open in the table, so a database at rest keeps no
+/// spill area; so too that of a statement undone before it. Regression
+/// test (R-TEST-7): it was kept past the rolled-back transaction's own
+/// snapshot, its area in `tmp/` until a later commit.
+#[test]
+fn a_rollbacks_garbage_is_collected_at_once() {
+    let scratch = Scratch::new("rollback-garbage");
+    let dir = scratch.path("db");
+    let (db, s) = held_on_disk(&dir);
+    s.run("UPDATE T SET V = V + 1").unwrap();
+    assert!(spill_files(&dir) > 0, "its changes spilled");
+    s.rollback().unwrap();
+    assert_eq!((spill_bytes(&db), spill_files(&dir)), (0, 0), "no area kept");
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE K = V"), Ok(vec![ROWS.to_string()]));
+    s.run("UPDATE T SET V = V + 1 WHERE K < 1500").unwrap();
+    // Every K the same: a UNIQUE violation, the statement undone.
+    assert!(exec(&s, "UPDATE T SET K = 7").is_err());
+    s.rollback().unwrap();
+    assert_eq!((spill_bytes(&db), spill_files(&dir)), (0, 0), "nor of the statement undone");
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE K = V"), Ok(vec![ROWS.to_string()]));
+}
+
+/// Verifies: [X3.135-1986 §4.16, §8.9 GR1]; [DESIGN] RULES.md D29: the
+/// garbage of a ROLLBACK is kept while another transaction open in the
+/// table may go back to the versions it holds, that transaction reading
+/// its snapshot throughout, and collected once it ends, though one begun
+/// in the table after the rollback is still open; one open only in
+/// another table, though it holds the horizon back, keeps none.
+#[test]
+fn a_rollbacks_garbage_waits_for_the_tables_other_readers() {
+    let scratch = Scratch::new("rollback-garbage-readers");
+    let dir = scratch.path("db");
+    let (db, s) = held_on_disk(&dir);
+    let (reader, elsewhere) = (db.session("S"), db.session("O"));
+    let same = "SELECT COUNT(*) FROM T WHERE K = V";
+    assert_eq!(rows(&elsewhere, "SELECT COUNT(*) FROM U"), Ok(vec!["0".into()]));
+    s.run("UPDATE T SET V = V + 1").unwrap();
+    s.rollback().unwrap();
+    assert_eq!((spill_bytes(&db), spill_files(&dir)), (0, 0), "the other table's reader keeps none");
+    elsewhere.commit().unwrap();
+    assert_eq!(rows(&reader, same), Ok(vec![ROWS.to_string()]));
+    s.run("UPDATE T SET V = V + 1").unwrap();
+    assert_eq!(rows(&reader, same), Ok(vec![ROWS.to_string()]), "read through the versions replaced");
+    s.rollback().unwrap();
+    assert!(spill_bytes(&db) > 0, "kept for the reader");
+    assert_eq!(rows(&reader, same), Ok(vec![ROWS.to_string()]));
+    // Begun in the table after the rollback, it finds the rows put back.
+    let later = db.session("S");
+    assert_eq!(rows(&later, same), Ok(vec![ROWS.to_string()]));
+    reader.commit().unwrap();
+    assert_eq!((spill_bytes(&db), spill_files(&dir)), (0, 0), "collected as it ends, the later one open");
+    assert_eq!(rows(&later, same), Ok(vec![ROWS.to_string()]));
+    later.commit().unwrap();
 }

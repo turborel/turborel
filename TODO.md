@@ -199,12 +199,15 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Storage and durability
 
-- **A rollback's garbage kept in tmp/:** a ROLLBACK of changes to
-  committed rows leaves garbage of each (`Dead::Undone`), keyed past the
-  rolled-back transaction's snapshot, which spills to an area of its own
-  past TRANSACTIONS.HELD_BYTES and stays until a later commit moves the
-  horizon past it: on a database at rest, until it closes. It could be
-  collected at once when no other transaction is open in the table.
+- **Zone sums racing the undo store's truncation** (D31): the
+  maintenance thread, summing a zone (`rows/zones.rs`), may read a row's
+  entry and then go back to the older version it names, while a
+  rollback's release of what it appended, or a commit's of what it
+  replaced, truncates the undo store under it, no transaction of the
+  table being open to hold it. The read then fails and that round of
+  maintenance with it, to be tried again: never wrong data, as positions
+  in the undo store are not reused. A pin of what the pass reads, or the
+  pass counted as a reader, would close it.
 - **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
   through `Host` (`PluginFiles::directory`), is kept as the plug-in writes
   it, which makes its files durable itself. A directory it declares

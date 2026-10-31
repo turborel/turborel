@@ -43,9 +43,11 @@
 //!   same, by a table of late stamps that reads consult, and stamped later.
 //! * **Rollback** puts back, newest first, the entries its changes
 //!   replaced; a statement's failure does so back to its savepoint. What
-//!   an undone change appended to the undo store is kept until every
+//!   an undone change appended to the undo store is kept until every other
 //!   transaction then open in the table has ended: one may have read the
-//!   undone version and be going back from it.
+//!   undone version and be going back from it. Kept by those transactions,
+//!   not by timestamp, so it is released at the next collection once they
+//!   have, though no commit has moved the horizon (`gc.rs`).
 //! * **Garbage collection.** When a commit is past the horizon, the oldest
 //!   snapshot open, what it superseded is garbage: the older versions it
 //!   appended, the own versions it replaced, and its deletions, which then
@@ -177,7 +179,8 @@ enum Dead {
     Deletion(RowId),
     /// A committed version appended for a change that was undone: no
     /// version in the tree refers to it, but a reader that read the undone
-    /// version before it was taken out may still go back to it.
+    /// version before it was taken out may still go back to it. Kept
+    /// apart from a commit's garbage, in `Versions::undone`.
     Undone(Lsn),
 }
 
@@ -191,6 +194,11 @@ pub(super) struct Versions {
     validated: Mutex<Vec<Validated>>,
     /// By commit timestamp, each a list that spills.
     garbage: Mutex<BTreeMap<Timestamp, SpillList<Dead>>>,
+    /// The versions undone changes appended (`Dead::Undone`), by the newest
+    /// transaction then open in the table besides the one undoing
+    /// (`NO_TRANSACTION`: none), each a list that spills: released once
+    /// none of those is open.
+    undone: Mutex<BTreeMap<TxId, SpillList<Dead>>>,
     /// The earliest timestamp of the garbage, and of the validated, kept
     /// under their locks (0: unknown): a horizon before both has nothing to
     /// collect, which every transaction's end finds without a lock.
@@ -442,15 +450,15 @@ impl RowTable {
         };
         for segment in undone.into_segments(true, &decode_change) {
             for change in segment?.into_iter().rev() {
-                self.undo_change(change)?;
+                self.undo_change(tx, change)?;
             }
         }
         Ok(())
     }
 
-    /// Undoes `change`: the entry it replaced put back, or the row it
-    /// added taken out.
-    fn undo_change(&self, change: Change) -> Result<()> {
+    /// Undoes `change` of `tx`: the entry it replaced put back, or the row
+    /// it added taken out.
+    fn undo_change(&self, tx: TxId, change: Change) -> Result<()> {
         {
             let k = key(change.id);
             let inserted = change.before.is_none() && change.appended.is_none();
@@ -471,7 +479,7 @@ impl RowTable {
                 deleted
             };
             if let Some(appended) = change.appended {
-                self.add_garbage(self.past_open(), vec![Dead::Undone(appended)]);
+                self.add_undone(tx, appended);
             }
             // What is taken out is the transaction's own version: its values
             // out of line are its own too.
@@ -482,13 +490,6 @@ impl RowTable {
             }
         }
         Ok(())
-    }
-
-    /// A timestamp past the snapshot of every transaction open in the table:
-    /// garbage kept until the horizon reaches it outlives them all.
-    fn past_open(&self) -> Timestamp {
-        let open = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        open.values().map(|o| lock_builtin(o).snapshot).max().unwrap_or_default().saturating_add(1)
     }
 
     /// Ends `tx` without committing it here.

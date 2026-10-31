@@ -1109,7 +1109,8 @@ program driving several sessions from one thread must not.
   refused (SQLCODE -911), and commit checks nothing read has changed
   (serializable). Unreadable versions are removed as transactions end,
   when alone the horizon moves: in tables each touched and any table
-  with versions awaiting collection.
+  with versions awaiting collection. A version an undone change kept
+  waits only for the other transactions then open in its table.
 - **Commit.** Atomic across engines: each validates at the commit
   timestamp, then each commits at it. A transaction that wrote nothing
   commits at its snapshot, unchecked.

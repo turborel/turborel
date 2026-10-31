@@ -1,7 +1,9 @@
 //! \[DESIGN\] Garbage collection of row versions (RULES.md D29, D31): what a
-//! commit superseded, removed once its timestamp is past the horizon, and
-//! the bookkeeping of transactions no other can be ordered against. Split
-//! from mvcc.rs (RULES.md R-SIZE-2); see its documentation.
+//! commit superseded, removed once its timestamp is past the horizon; what
+//! an undone change appended, released once the transactions then open in
+//! the table have ended; and the bookkeeping of transactions no other can
+//! be ordered against. Split from mvcc.rs (RULES.md R-SIZE-2); see its
+//! documentation.
 
 use std::mem;
 use std::sync::atomic::Ordering;
@@ -10,20 +12,22 @@ use super::lists::{decode_dead, encode_dead};
 use super::{Dead, Maker, Version};
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Result, SqlError};
+use crate::log::Lsn;
 use crate::spill::SpillList;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
-use crate::txn::{Timestamp, TxId};
+use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
 impl RowTable {
     /// Removes the garbage of commits at or before `horizon`, each removed
     /// version's row given to `removed` as it goes, a segment of garbage
     /// read at a time.
     pub(in crate::engine::rows) fn collect(&self, horizon: Timestamp, removed: Removed<'_>) -> Result<()> {
+        self.collect_undone();
         let late = !self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty();
         let due = self.versions.garbage_due.load(Ordering::SeqCst).min(self.versions.validated_due.load(Ordering::SeqCst));
         if !late && horizon < due {
-            return Ok(());
+            return self.undo.truncate();
         }
         self.stamp_late();
         let ready = {
@@ -68,10 +72,12 @@ impl RowTable {
         }
     }
 
-    /// Whether anything awaits collection: garbage, transactions validated
-    /// that others may be ordered against, or stamps left to make.
+    /// Whether anything awaits collection: garbage, versions undone changes
+    /// appended, transactions validated that others may be ordered
+    /// against, or stamps left to make.
     pub(in crate::engine::rows) fn awaits_collection(&self) -> bool {
         !lock_builtin(&self.versions.garbage).is_empty()
+            || !lock_builtin(&self.versions.undone).is_empty()
             || !lock_builtin(&self.versions.validated).is_empty()
             || !self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
     }
@@ -86,6 +92,50 @@ impl RowTable {
             list.push(item, &mut encode_dead).unwrap_or_default();
         }
         self.versions.garbage_due.fetch_min(at, Ordering::SeqCst);
+    }
+
+    /// Adds the version a change of `tx` appended, `appended`, the change
+    /// undone, to be released once no other transaction open in the table
+    /// now is: a reader of the table begins in it before it reads, so one
+    /// that read the undone version and may go back to `appended` is open
+    /// in it now. `tx` is not counted: it reads its own versions, never
+    /// the committed ones they replaced. Not by timestamp, as a commit's
+    /// garbage is: a reader that begins in the table from now on finds
+    /// the version put back, whatever its snapshot, and a timestamp past
+    /// the snapshots of those open would wait for a commit to come.
+    pub(super) fn add_undone(&self, tx: TxId, appended: Lsn) {
+        let space = self.versions.space();
+        // Under the lock collection reads the transactions open by, so it
+        // never releases by what was open before this is added.
+        let mut undone = lock_builtin(&self.versions.undone);
+        let newest =
+            self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().filter(|&&by| by != tx).max().copied();
+        let list = undone.entry(newest.unwrap_or(NO_TRANSACTION)).or_insert_with(|| SpillList::new(space));
+        // An item that cannot be written is held all the same.
+        list.push(Dead::Undone(appended), &mut encode_dead).unwrap_or_default();
+    }
+
+    /// Releases the versions undone changes appended for which no
+    /// transaction open in the table then is still open: those added when
+    /// each open then is older than the oldest open now.
+    fn collect_undone(&self) {
+        let ready = {
+            let mut undone = lock_builtin(&self.versions.undone);
+            if undone.is_empty() {
+                return;
+            }
+            let oldest = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().min().copied();
+            let later = oldest.map(|tx| undone.split_off(&tx)).unwrap_or_default();
+            mem::replace(&mut *undone, later)
+        };
+        // A segment that cannot be read back is lost, its versions kept in
+        // the undo store until the database closes.
+        let segments = ready.into_values().flat_map(|list| list.into_segments(false, &decode_dead));
+        for item in segments.flatten().flatten() {
+            // Each a `Dead::Undone`, which only releases its position, of no
+            // timestamp.
+            let _ = self.remove_dead(&item, 0, &mut |_, _| {});
+        }
     }
 
     fn remove_dead(&self, dead: &Dead, at: Timestamp, removed: Removed<'_>) -> Result<()> {
