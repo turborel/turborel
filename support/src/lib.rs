@@ -59,6 +59,8 @@ impl Drop for Scratch {
     }
 }
 
+#[cfg(feature = "replication")]
+pub mod replication;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "tls")]

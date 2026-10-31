@@ -7,7 +7,8 @@
 //! tested against (R-SAFE-3):
 //!
 //! * [`Consensus`]: a protocol that orders records, as a deterministic state
-//!   machine, with no I/O, clock or thread of its own.
+//!   machine, with no I/O, clock or thread of its own; [`Vr`], Viewstamped
+//!   Replication, is the first.
 //! * [`Transport`]: what moves frames between replicas.
 //! * [`StateTransfer`]: how an export of a database crosses to a replica
 //!   too far behind for the log alone.
@@ -32,11 +33,13 @@
 mod consensus;
 mod transfer;
 mod transport;
+pub mod vr;
 
 pub use consensus::{Consensus, Input, Output, Recovered};
 pub use transfer::StateTransfer;
 pub use transport::Transport;
 pub use turborel::log::Lsn;
+pub use vr::{Vr, VrOptions};
 
 /// \[EXTENSION\] A replica: its number among the members of a group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

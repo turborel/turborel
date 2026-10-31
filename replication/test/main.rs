@@ -14,3 +14,8 @@
     missing_docs,
     reason = "test code: a panic is a test failure (RULES.md R-TEST-4)"
 )]
+
+mod common;
+
+mod frames;
+mod normal;
