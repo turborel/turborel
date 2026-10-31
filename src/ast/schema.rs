@@ -74,13 +74,15 @@ pub struct AssertionDefinition {
 
 /// [ISO/IEC 9075:1992 §11.21] `<domain definition>` ::= CREATE DOMAIN
 /// `<domain name>` \[AS\] `<data type>` \[`<default clause>`\] \[`<domain
-/// constraint>`...\]
+/// constraint>`...\]; \[EXTENSION\] or of a type beyond the standard
+/// (RULES.md D53).
 #[derive(Debug)]
 pub struct DomainDefinition {
     /// The `<domain name>`.
     pub name: TableName,
-    /// The `<data type>`.
-    pub data_type: DataType,
+    /// The `<data type>`, or \[EXTENSION\] a type beyond the standard: a
+    /// name alone is one, never a domain.
+    pub data_type: TypeName,
     /// The `<default option>` of its `<default clause>`, if written.
     pub default: Option<DefaultOption>,
     /// The `<domain constraint>`s: each a `<check constraint definition>`,

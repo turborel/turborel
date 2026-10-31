@@ -831,11 +831,13 @@ each time.
   taking `&[DataType]`, encode with no registry at hand. Values are
   `Value::Extension` (kind plus bytes), so comparison and hashing need no
   registry either.
-- **Naming.** Written `name` or `name(a [, b])`, where a `<domain name>`
-  may be: a column definition and CAST. An unqualified name is a domain
-  of the default schema if one exists, else the plug-in type. Not in
-  CREATE DOMAIN, whose `<data type>` [ISO/IEC 9075:1992 §11.21] is a
-  standard one.
+- **Naming.** Written `name` or `name(a [, b])`:
+  - where a `<domain name>` may be (a column definition, CAST), an
+    unqualified name is a domain of the default schema if one exists,
+    else the plug-in type;
+  - in CREATE DOMAIN, in place of its `<data type>` [ISO/IEC 9075:1992
+    §11.21], a name alone is the plug-in type; a domain's name, which
+    §11.21 does not take there, is refused.
 - **Storage** is by name: catalog, log, spilled rows and undo read it
   back through the registry (`bytes::Reader::with_types`); a database
   whose files name an unregistered type does not open.
@@ -855,7 +857,10 @@ each time.
   is declared and arguments pass as is.
 - **One per name.** One scalar function per name, never chosen among
   several by argument types: one function's `return_type` may accept
-  several. Registering a name again replaces the function.
+  several. Registering a name again, a standard function's too, is
+  refused (SQLCODE -910), so no session's calls change under it on a
+  running server. The five set functions alone are replaced by an
+  aggregate of their name.
 - **Privileges.** None is needed to use a plug-in type. SQL-92's
   privileges are on schema objects [§4.26, §11.36 SR1] (USAGE on a
   domain, character set, collation or translation), granted by an owner;

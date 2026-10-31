@@ -20,7 +20,11 @@ CREATE DOMAIN: define a domain
 
 The `<default option>` and `<constraint attributes>` are those of
 [CREATE TABLE](create-table.md). In a domain constraint, VALUE stands
-for the value of a column of the domain.
+for the value of a column of the domain. The data types are in [Data
+Types](../02-data-types.md); a domain may also be of a type a plug-in
+registers *(extension)*, written by its name and, in parentheses, one or
+two unsigned integers it takes. A name alone here is that type, never
+another domain.
 
 ## DESCRIPTION
 
@@ -42,15 +46,17 @@ CREATE DOMAIN runs within the session's transaction: ROLLBACK undoes it.
    without a schema is of the session's default schema.
 2. No domain of the schema has the name.
 3. The default is of the data type, as a column's default is.
-4. A constraint's name is new in its schema, which exists, and which the
+4. The data type is not a domain; a name alone is a type a plug-in
+   registered, with the parameters it takes *(extension)*.
+5. A constraint's name is new in its schema, which exists, and which the
    domain's schema's owner owns *(extension)*. A name written without a
    schema is of the session's default schema; in a CREATE SCHEMA, of the
    schema being defined, and no other.
-5. A constraint's condition follows the rules of a CHECK; the only
+6. A constraint's condition follows the rules of a CHECK; the only
    column it names is VALUE.
-6. No constraint CASTs to the domain, nor to a domain one of whose
+7. No constraint CASTs to the domain, nor to a domain one of whose
    constraints does, however far.
-7. The transaction is not READ ONLY.
+8. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 

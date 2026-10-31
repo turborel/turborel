@@ -1,5 +1,5 @@
 //! Data types beyond the standard, plug-ins (RULES.md D53): registered,
-//! written in column definitions and CAST, stored, compared, indexed,
+//! written in column definitions, CAST and domains, stored, compared, indexed,
 //! spilled, logged and recovered, as a built-in type is; a database whose
 //! files hold one opened only with it registered; a character string
 //! stored in one that takes it; functions declaring arguments of one.
@@ -166,6 +166,44 @@ fn names_of_plug_in_types() {
     a.commit().unwrap();
 }
 
+/// The DATA_TYPE of domain `name` in the Information Schema, as `a` sees it.
+fn domain_type(a: &turborel::db::Session, name: &str) -> Vec<String> {
+    let described = format!("SELECT DATA_TYPE FROM INFORMATION_SCHEMA.DOMAINS WHERE DOMAIN_NAME = '{name}'");
+    rows(a, &described).unwrap().iter().map(|r| r.trim_end().to_owned()).collect()
+}
+
+/// Verifies: [EXTENSION] RULES.md D53; [ISO/IEC 9075:1992 §11.21, §6.10
+/// GR13, §21.2.5] a domain of a type beyond the standard, its name alone:
+/// its default and constraint hold of a column of it and of a CAST to it;
+/// the Information Schema describes it by its kind; a domain's name, a
+/// name no type's, a type in a schema or with parameters it does not take
+/// is refused, and COLLATE as for any domain.
+#[test]
+fn a_domain_of_a_plug_in_type() {
+    let db = identified();
+    let a = db.session("A");
+    a.run(&format!("CREATE DOMAIN KEYS AS IDENT DEFAULT '{}' CHECK (VALUE <> {})", hex(7), cast(0))).unwrap();
+    a.run("CREATE TABLE V (K KEYS, N INTEGER)").unwrap();
+    a.run("INSERT INTO V (N) VALUES (1)").unwrap();
+    a.run(&format!("INSERT INTO V VALUES ({}, 2)", cast(5))).unwrap();
+    assert_eq!(exec(&a, &format!("INSERT INTO V VALUES ({}, 3)", cast(0))).err(), Some(Code::Constraint), "its CHECK");
+    assert_eq!(rows(&a, "SELECT N, K FROM V ORDER BY N").unwrap(), [format!("1,{}", hex(7)), format!("2,{}", hex(5))]);
+    assert_eq!(rows(&a, &format!("SELECT CAST('{}' AS KEYS) FROM V WHERE N = 1", hex(9))).unwrap(), [hex(9)], "CAST");
+    let zero = format!("SELECT CAST('{}' AS KEYS) FROM V WHERE N = 1", hex(0));
+    assert_eq!(rows(&a, &zero).err(), Some(Code::Constraint), "a CAST checked");
+    assert_eq!(domain_type(&a, "KEYS"), ["IDENT"]);
+    for (bad, why) in [
+        ("CREATE DOMAIN D AS KEYS", "a domain"),
+        ("CREATE DOMAIN D AS NOPE", "no type NOPE"),
+        ("CREATE DOMAIN D AS B.IDENT", "a type is in no schema"),
+        ("CREATE DOMAIN D AS IDENT(4)", "IDENT takes no parameters"),
+    ] {
+        assert_eq!(exec(&a, bad).err(), Some(Code::SyntaxRule), "{why}");
+    }
+    assert_eq!(exec(&a, "CREATE DOMAIN D AS IDENT COLLATE X").err(), Some(Code::Unsupported), "COLLATE");
+    a.commit().unwrap();
+}
+
 /// Verifies: [EXTENSION] RULES.md D53, D38: with MEMORY.WORK_BYTES at its least,
 /// values of a type beyond the standard are sorted and grouped through the
 /// spill area, and read back as they were.
@@ -194,9 +232,10 @@ fn plug_in_values_spill() {
 }
 
 /// Verifies: [EXTENSION] RULES.md D53, D25: a table of a type beyond the
-/// standard, and its rows, are kept by the catalog and the log, after a
-/// crash and after a clean close, read with the type registered; a database
-/// whose files hold one is not opened without it (SQLCODE -910).
+/// standard, and its rows, and a domain of it defined in a `<schema
+/// definition>`, are kept by the catalog and the log, after a crash and
+/// after a clean close, read with the type registered; a database whose
+/// files hold one is not opened without it (SQLCODE -910).
 #[test]
 fn plug_in_types_are_kept() {
     let scratch = Scratch::new("plug-in-types");
@@ -209,7 +248,7 @@ fn plug_in_types_are_kept() {
         db.open_files(&os(), &dir, &OpenOptions::default()).map(|_| db)
     };
     let db = open(true).unwrap();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K IDENT UNIQUE, N INTEGER)").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE DOMAIN KEYS IDENT CREATE TABLE T (K KEYS UNIQUE, N INTEGER)").unwrap();
     let a = db.session("A");
     a.run(&format!("INSERT INTO T VALUES ({}, 1), ({}, 2)", cast(1), cast(2))).unwrap();
     a.commit().unwrap();
@@ -218,6 +257,7 @@ fn plug_in_types_are_kept() {
         let a = db.session("A");
         assert_eq!(rows(&a, "SELECT K FROM T ORDER BY K").unwrap(), [hex(1), hex(2)]);
         assert_eq!(exec(&a, &format!("INSERT INTO T VALUES ({}, 3)", cast(1))).err(), Some(Code::Constraint), "its index kept");
+        assert_eq!(domain_type(&a, "KEYS"), ["IDENT"], "its domain kept");
         a.rollback().unwrap();
     };
     let db = open(true).unwrap();

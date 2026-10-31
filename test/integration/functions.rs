@@ -203,6 +203,22 @@ fn a_name_is_either_scalar_or_aggregate() {
     assert_eq!(rows(&s, "SELECT F(ID) FROM T WHERE ID = 1"), Ok(vec!["NULL".to_owned()]));
 }
 
+/// Verifies: [EXTENSION] RULES.md D53: one scalar function for each name: a
+/// second registration of a name is refused with SQLCODE -910, a standard
+/// function's name too, and the first goes on being called.
+///
+/// Regression test (R-TEST-7): a second registration replaced the first
+/// silently, on a running database too, the standard UPPER as well.
+#[test]
+fn a_scalar_function_is_not_replaced() {
+    let db = with_twice();
+    assert_eq!(db.register_scalar_function(Box::new(NamedScalar("TWICE"))).map_err(|e| e.code), Err(Code::Api));
+    assert_eq!(db.register_scalar_function(Box::new(NamedScalar("UPPER"))).map_err(|e| e.code), Err(Code::Api));
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
+    assert_eq!(rows(&s, "SELECT TWICE(ID), UPPER('ab') FROM T WHERE ID = 1"), Ok(vec!["2,AB".to_owned()]));
+}
+
 /// A function that breaks its contract: it declares CHARACTER(6) and returns
 /// ten characters.
 struct TooLong;

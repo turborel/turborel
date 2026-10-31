@@ -219,28 +219,26 @@ impl Registry {
     /// functions of SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
     pub fn with_set_functions() -> Registry {
         let count = AggregateRef(Arc::new(Count));
-        let mut r = Registry { scalars: HashMap::new(), aggregates: HashMap::new(), count: count.clone() };
-        for f in strings::functions() {
-            r.scalars.insert(f.name().to_string(), ScalarRef(f));
-        }
+        let scalars = strings::functions().into_iter().map(|f| (f.name().to_string(), ScalarRef(f))).collect();
         let set_functions: Vec<Arc<dyn AggregateFunction>> =
-            vec![count.0, Arc::new(Sum), Arc::new(Avg), Arc::new(Extreme { max: true }), Arc::new(Extreme { max: false })];
-        for f in set_functions {
-            r.aggregates.insert(f.name().to_string(), AggregateRef(f));
-        }
-        r
+            vec![Arc::clone(&count.0), Arc::new(Sum), Arc::new(Avg), Arc::new(Extreme { max: true }), Arc::new(Extreme { max: false })];
+        let aggregates = set_functions.into_iter().map(|f| (f.name().to_string(), AggregateRef(f))).collect();
+        Registry { scalars, aggregates, count }
     }
 
-    /// Adds or replaces a scalar function.
+    /// Adds a scalar function, one for each name (RULES.md D53).
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if the name is an aggregate function's: a call could not
-    /// tell which is meant.
+    /// SQLCODE -910 if the name is an aggregate function's (a call could not
+    /// tell which is meant), or a scalar function's, a standard one's too.
     pub fn add_scalar(&mut self, f: Arc<dyn ScalarFunction>) -> Result<()> {
         let name = f.name().to_string();
         if self.aggregates.contains_key(&name) {
             return fail(Code::Api, format!("[EXTENSION] {name} is already an aggregate function; a name cannot be both"));
+        }
+        if self.scalars.contains_key(&name) {
+            return fail(Code::Api, format!("[EXTENSION] {name} is already a scalar function, and is not replaced"));
         }
         self.scalars.insert(name, ScalarRef(f));
         Ok(())

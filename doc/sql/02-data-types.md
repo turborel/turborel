@@ -6,7 +6,7 @@ Every value is of a data type, and every column, parameter and
 expression has one. A column may also be of a [domain](statements/create-domain.md),
 which is a data type with a default and constraints, or *(extension)* of
 a type a plug-in registers, written by its name and, in parentheses, one
-or two unsigned integers it takes.
+or two unsigned integers it takes; so may a domain.
 
 ```
 <data type> ::=

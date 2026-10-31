@@ -190,16 +190,17 @@ impl State {
                 rule(format!("[ISO/IEC 9075:1992 §11.21 SR1] schema {} has a domain {} already", qn.auth, qn.ident)).or_at(d.name.at)
             );
         }
-        let default = d.default.as_ref().map(|o| default_of(d.data_type, o, zone)).transpose().or_at(d.name.at)?;
+        let data_type = self.domain_type(&d.data_type, schema)?;
+        let default = d.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose().or_at(d.name.at)?;
         let mut constraints = Vec::new();
         for c in &d.constraints {
-            let made = self.domain_constraint((&qn, schema), d.data_type, (c, &constraints), bound)?;
+            let made = self.domain_constraint((&qn, schema), data_type, (c, &constraints), bound)?;
             constraints.push(made);
         }
         self.not_in_own_usage(&qn, &constraints).or_at(d.name.at)?;
         let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).collect::<Vec<_>>();
         let mut catalog = self.catalog.duplicate();
-        catalog.put_domain(DomainDesc { name: qn, data_type: d.data_type, default, constraints, usage: Vec::new() });
+        catalog.put_domain(DomainDesc { name: qn, data_type, default, constraints, usage: Vec::new() });
         self.catalog = Arc::from(catalog);
         Ok(Defined { locks: reads.into_iter().map(|t| (t, LockMode::Shared)).collect(), ..Defined::default() })
     }

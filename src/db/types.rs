@@ -62,27 +62,56 @@ impl State {
     /// parameters it does not take; -104 if `auth` holds no USAGE on the
     /// domain.
     pub(crate) fn resolve_type(&self, of: &TypeName, (schema, auth): (&str, &str)) -> Result<(DataType, Option<&DomainDesc>)> {
-        let extension = |name: &TableName, params: &[u32]| -> Result<DataType> {
-            let kind =
-                self.types.kind(&name.ident).filter(|_| name.auth.is_none()).ok_or_else(|| {
-                    rule(format!("[ISO/IEC 9075:1992 §11.4 SR4] there is no domain or type {}", name.ident)).or_at(name.at)
-                })?;
-            kind.check_params(params).or_at(name.at)?;
-            let params = TypeParams::of(params)
-                .ok_or_else(|| rule(format!("[DESIGN] the type {} takes at most {MAX_PARAMS} parameters", name.ident)))?;
-            Ok(DataType::Extension(ExtensionType { kind, params }))
-        };
+        let missing = "[ISO/IEC 9075:1992 §11.4 SR4] there is no domain or type";
         match of {
             TypeName::Data(t) => Ok((*t, None)),
             TypeName::Domain(name) => {
                 let qn = qualify(name, schema);
                 if name.auth.is_none() && self.catalog.domain(&qn).is_none() && self.types.get(&name.ident).is_some() {
-                    return Ok((extension(name, &[])?, None));
+                    return Ok((self.extension_type((name, &[]), missing)?, None));
                 }
                 let domain = self.usable_domain(&qn, auth).or_at(name.at)?;
                 Ok((domain.data_type, Some(domain)))
             }
-            TypeName::Extension { name, params } => Ok((extension(name, params)?, None)),
+            TypeName::Extension { name, params } => Ok((self.extension_type((name, params), missing)?, None)),
         }
+    }
+
+    /// [ISO/IEC 9075:1992 §11.21] The data type of a `<domain definition>`
+    /// in schema `schema`: its `<data type>`, or \[EXTENSION\] a type
+    /// beyond the standard, registered (RULES.md D53). A name alone is the
+    /// type, never a domain: §11.21 takes no domain of a domain.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it names a domain, or no type registered, or one
+    /// with parameters it does not take.
+    pub(crate) fn domain_type(&self, of: &TypeName, schema: &str) -> Result<DataType> {
+        let missing = "[ISO/IEC 9075:1992 §11.21] there is no type";
+        match of {
+            TypeName::Data(t) => Ok(*t),
+            TypeName::Domain(name) => {
+                if self.catalog.domain(&qualify(name, schema)).is_some() {
+                    let msg = format!("[ISO/IEC 9075:1992 §11.21] a domain's <data type> is no domain, as {} is", name.ident);
+                    return Err(rule(msg).or_at(name.at));
+                }
+                self.extension_type((name, &[]), missing)
+            }
+            TypeName::Extension { name, params } => self.extension_type((name, params), missing),
+        }
+    }
+
+    /// \[EXTENSION\] The type beyond the standard `name` with `params`,
+    /// registered (RULES.md D53); else refused, `missing` the message.
+    fn extension_type(&self, (name, params): (&TableName, &[u32]), missing: &str) -> Result<DataType> {
+        let kind = self
+            .types
+            .kind(&name.ident)
+            .filter(|_| name.auth.is_none())
+            .ok_or_else(|| rule(format!("{missing} {}", name.ident)).or_at(name.at))?;
+        kind.check_params(params).or_at(name.at)?;
+        let params = TypeParams::of(params)
+            .ok_or_else(|| rule(format!("[DESIGN] the type {} takes at most {MAX_PARAMS} parameters", name.ident)))?;
+        Ok(DataType::Extension(ExtensionType { kind, params }))
     }
 }

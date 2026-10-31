@@ -441,7 +441,9 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
 - **Data types beyond the standard** (RULES.md D53), plug-ins registered
   with `Database::register_type`: written in a column definition and in
   CAST by their name, `name` or `name(a [, b])`, a domain of the name in
-  the default schema taken first; a value of one CAST from a character
+  the default schema taken first; in CREATE DOMAIN too, as its data type
+  in place of ISO/IEC 9075:1992 §11.21's `<data type>`, a name alone
+  the type, never a domain; a value of one CAST from a character
   string, and its DEFAULT a character string literal; stored in, by store
   assignment, a value comparable with it as its kind says, and a
   character string if its kind takes one (`SqlType::assigns_text`), in
@@ -501,7 +503,9 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   rules, system tables, the log, file systems, encodings, hash functions and
   diagnostics (the extension points are listed at the top of `src/db.rs`).
 - **Function call syntax** for registered functions, in sessions whose
-  setting SQL.FUNCTION_CALLS is ON.
+  setting SQL.FUNCTION_CALLS is ON. One scalar function for each name,
+  none chosen by its arguments' types; a second registration of a name
+  is refused (RULES.md D53).
 
 ---
 

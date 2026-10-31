@@ -359,7 +359,8 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if an aggregate function has the same name.
+    /// SQLCODE -910 if an aggregate function has the same name, or a
+    /// scalar function, a standard one too: none is replaced (RULES.md D53).
     pub fn register_scalar_function(&self, f: Box<dyn ScalarFunction>) -> Result<()> {
         let name = f.name().to_owned();
         let done = self.change(|st| st.functions.add_scalar(Arc::from(f)));

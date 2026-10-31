@@ -290,7 +290,10 @@ A program may add scalar functions, and set functions, of its own:
 `register_scalar_function` takes an implementation of the trait
 `ScalarFunction`, of a name, the type of its result for the types of
 its arguments, and the value of a call; `register_aggregate_function` a
-set function's, and replaces a standard one of its name. A call,
+set function's, and replaces a standard one of its name. A scalar
+function is one for each name, whatever its arguments' types: a second
+of a name already registered, a standard one's such as UPPER too, is
+refused (SQLCODE -910), and the first stays. A call,
 `NAME(arguments)`, is syntax the standards do not have *(extension)*:
 a session takes it only once its setting SQL.FUNCTION_CALLS is ON, and
 refuses it until then, as SQL does (SQLCODE -102).

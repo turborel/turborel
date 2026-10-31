@@ -19,13 +19,21 @@ pub const VALUE_COLUMN: &str = "VALUE";
 impl Parser {
     /// [ISO/IEC 9075:1992 §11.21] `<domain definition>` ::= CREATE DOMAIN
     /// `<domain name>` \[AS\] `<data type>` \[`<default clause>`\]
-    /// \[`<domain constraint>`...\]
+    /// \[`<domain constraint>`...\] \[`<collate clause>`\]; \[EXTENSION\]
+    /// or of a type beyond the standard (RULES.md D53), a name alone the
+    /// type, never a domain, as the binder takes it:
+    ///
+    /// ```text
+    /// <domain definition> ::=
+    ///     CREATE DOMAIN <domain name> [ AS ] { <data type> | <extension type> }
+    ///       [ <default clause> ] [ <domain constraint>... ] [ <collate clause> ]
+    /// ```
     pub(super) fn domain_definition(&mut self) -> Result<DomainDefinition> {
         self.expect_kw(kw::CREATE)?;
         self.expect_kw(kw::DOMAIN)?;
         let name = self.table_name()?;
         self.accept_kw(kw::AS);
-        let data_type = self.data_type()?;
+        let data_type = self.type_name()?;
         let default = if self.accept_kw(kw::DEFAULT) { Some(self.default_option()?) } else { None };
         let mut constraints = Vec::new();
         while self.is_kw(kw::CONSTRAINT) || self.is_kw(kw::CHECK) {

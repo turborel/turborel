@@ -15,7 +15,8 @@
 
 use super::State;
 use crate::ast::{
-    AlterAction, AlterDomainAction, ColumnDefinition, DefaultOption, Literal, Schema, SchemaStatement, TableDefinition, TableElement,
+    AlterAction, AlterDomainAction, ColumnDefinition, DefaultOption, DomainDefinition, Literal, Schema, SchemaStatement, TableDefinition,
+    TableElement,
 };
 use crate::binder::qualify;
 use crate::catalog::{QualifiedName, TableDesc};
@@ -59,7 +60,7 @@ impl State {
     pub(super) fn padding_of_statement(&self, statement: &SchemaStatement, object: &QualifiedName) -> Option<SqlState> {
         let padded = match statement {
             SchemaStatement::Table(t) => return of_columns(self.catalog.table(object), columns_of(t)),
-            SchemaStatement::Domain(d) => pads(d.data_type, d.default.as_ref()),
+            SchemaStatement::Domain(d) => self.catalog.domain(object).is_some_and(|desc| pads(desc.data_type, d.default.as_ref())),
             SchemaStatement::AlterDomain(a) => match &a.action {
                 AlterDomainAction::SetDefault(o) => self.catalog.domain(object).is_some_and(|d| pads(d.data_type, Some(o))),
                 AlterDomainAction::DropDefault | AlterDomainAction::AddConstraint(_) | AlterDomainAction::DropConstraint(_) => false,
@@ -91,7 +92,8 @@ impl State {
     /// as these definitions hold it, if a default of a table or domain of
     /// it pads.
     pub(super) fn padding_of_schema(&self, schema: &Schema) -> Option<SqlState> {
-        let domains = schema.domains.iter().any(|d| pads(d.data_type, d.default.as_ref()));
+        let typed = |d: &DomainDefinition| self.catalog.domain(&qualify(&d.name, &schema.name)).map(|desc| desc.data_type);
+        let domains = schema.domains.iter().any(|d| typed(d).is_some_and(|t| pads(t, d.default.as_ref())));
         let tables =
             || schema.tables.iter().any(|t| of_columns(self.catalog.table(&qualify(&t.name, &schema.name)), columns_of(t)).is_some());
         (domains || tables()).then_some(SqlState::ZERO_BIT_PADDING)
