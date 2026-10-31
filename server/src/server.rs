@@ -398,7 +398,8 @@ impl Server {
         self.serve_until(endpoints, stop, std::future::pending()).await;
     }
 
-    /// Serves `endpoints` until `stop` is done; then takes no connection,
+    /// Serves `endpoints` until `stop` is done, first polled once it takes
+    /// connections and has told `listening`; then takes no connection,
     /// lets each finish its statement and closes it, and returns once all
     /// are. Past SERVER.SHUTDOWN_TIMEOUT, or once `hurry` is done, which is
     /// first polled once `stop` is, so a signal it waits for is the next

@@ -229,8 +229,11 @@ fn setting(text: &str) -> Result<(String, Value), String> {
 
 /// Serves `config` until `stop` is done, hurried once `hurry` is
 /// (`Server::serve_until`), then closes the database, if it is kept
-/// somewhere. `ready` is given where it listens, once it does. From the
-/// start, SIGHUP opens the log file again (Unix).
+/// somewhere. `ready` is given where it listens, once it does and its
+/// diagnostics have told `listening`; it runs on the server's runtime, so
+/// it should not wait long. From the start, SIGHUP opens the log file again
+/// (Unix): so before `ready`, and a signal sent once it is cannot end the
+/// process.
 ///
 /// # Errors
 ///
@@ -378,7 +381,13 @@ async fn serve(
     let native: Arc<dyn Protocol> = Arc::new(Native);
     let endpoints = listening::bind(server.database(), &native).await.map_err(|e| e.to_string())?;
     let names: Vec<String> = endpoints.iter().map(|e| e.listener.address()).collect();
-    ready(&names);
+    // Ready as `stop` is first polled: once the server takes connections
+    // and has told `listening`, so that line goes to the log a rotation
+    // signalled at once moves away. SIGHUP is heard already (`within`).
+    let stop = async move {
+        ready(&names);
+        stop.await;
+    };
     server.serve_until(endpoints, stop, hurry).await;
     Ok(())
 }

@@ -20,14 +20,25 @@ fn config(line: &[String]) -> Config {
     }
 }
 
-/// Runs `config` on a thread until the returned sender is used or dropped:
-/// where it listens, and its outcome once it stops.
-fn running(config: Config) -> (Vec<String>, tokio::sync::oneshot::Sender<()>, std::thread::JoinHandle<Result<(), String>>) {
+/// A server running on a thread: where it listens, what stops it once
+/// used or dropped, and its outcome once it stops.
+type Running = (Vec<String>, tokio::sync::oneshot::Sender<()>, std::thread::JoinHandle<Result<(), String>>);
+
+/// Runs `config` on a thread until the returned sender is used or dropped.
+fn running(config: Config) -> Running {
+    running_then(config, |_| {})
+}
+
+/// Runs `config` as `running` does, doing `then` as it is ready, before
+/// the test is told where it listens.
+fn running_then(config: Config, then: impl FnOnce(&[String]) + Send + 'static) -> Running {
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let (tell, told) = mpsc::channel();
-    let thread = std::thread::spawn(move || {
-        turboreld::run(&config, |at| tell.send(at.to_vec()).unwrap(), (async { drop(stopped.await) }, std::future::pending()))
-    });
+    let ready = move |at: &[String]| {
+        then(at);
+        tell.send(at.to_vec()).unwrap();
+    };
+    let thread = std::thread::spawn(move || turboreld::run(&config, ready, (async { drop(stopped.await) }, std::future::pending())));
     match told.recv() {
         Ok(at) => (at, stop, thread),
         Err(mpsc::RecvError) => panic!("it stopped before it listened: {:?}", thread.join().unwrap()),
@@ -109,26 +120,32 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
 /// file again, as a log rotation asks once it has moved the file away:
 /// the lines before go to the file moved, those after to a new one at the
 /// path; and the server goes on, then stops cleanly when told. Told where
-/// it listens, and that it stops.
+/// it listens, and that it stops. The rotation is done as soon as the
+/// program is ready, as a supervisor may: SIGHUP is heard by then, and
+/// `listening` told, in the file moved.
 ///
 /// Regression test (R-TEST-7): SIGHUP ended the server uncleanly, and the
-/// log was never opened again.
+/// log was never opened again. Regression test (R-TEST-7): the program was
+/// ready before it told `listening`, so a rotation then put that line in
+/// the new file.
 #[cfg(unix)]
 #[test]
 fn sighup_opens_the_log_again() {
     let scratch = Scratch::new("program-sighup");
     let log = scratch.path("log");
     let line = ["--memory", "--set", "SERVER.PORT=0", "--log", &log.display().to_string()];
-    let (at, stop, thread) = running(config(&line.map(str::to_owned)));
-    std::fs::rename(&log, scratch.path("log.1")).unwrap();
-    let hup = std::process::Command::new("kill").args(["-HUP", &std::process::id().to_string()]).status().unwrap();
-    assert!(hup.success());
-    // Opened again by the sink's thread, as the signal is heard.
-    let reopened = (0..10_000_u32).any(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(1));
-        log.exists()
+    let (path, moved) = (log.clone(), scratch.path("log.1"));
+    let (at, stop, thread) = running_then(config(&line.map(str::to_owned)), move |_| {
+        std::fs::rename(&path, moved).unwrap();
+        let hup = std::process::Command::new("kill").args(["-HUP", &std::process::id().to_string()]).status().unwrap();
+        assert!(hup.success());
+        // Opened again by the sink's thread, as the signal is heard.
+        let reopened = (0..10_000_u32).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            path.exists()
+        });
+        assert!(reopened, "a new log at the path");
     });
-    assert!(reopened, "a new log at the path");
     // Alive: it answers, refusing trust, which it is not set to take.
     let refused = connection::connect(at[0].parse::<SocketAddr>().unwrap(), "X", &mut Trust).err().unwrap();
     assert_eq!(state(&refused).0, "28000");
