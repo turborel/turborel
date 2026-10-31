@@ -7,24 +7,22 @@
 //! root) pin it at once; and claimed for another page under the shards of
 //! both, locked exclusively in shard order, after checking it is still
 //! unpinned, and latching it exclusively without waiting, as a read that
-//! hit by its hint holds its latch but no pin (`hits.rs`): a frame found
-//! held is not tried again, and when every frame was, the claim is refused
-//! (RULES.md D38); then it is marked loading, and the old page's content
-//! is written back and the new one read with no lock held. A dirty old
-//! page stays mapped to the frame until it is written back, so a thread
-//! wanting it waits for the frame rather than reading the file's older
-//! copy. A thread that waited for a frame checks that it holds the page it
-//! wanted, and tries again if not, so a load or a write-back that fails
-//! need only put the frame back as it was.
+//! hit by its hint holds its latch but no pin (`hits.rs`; how a claim
+//! treats frames held, `claim.rs`); then it is marked loading, and the old
+//! page's content is written back and the new one read with no lock held.
+//! A dirty old page stays mapped to the frame until it is written back, so
+//! a thread wanting it waits for the frame rather than reading the file's
+//! older copy. A thread that waited for a frame checks that it holds the
+//! page it wanted, and tries again if not, so a load or a write-back that
+//! fails need only put the frame back as it was.
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
-use super::{
-    BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, Tried, UNDO_WAITS,
-    all_held, count,
-};
+mod claim;
+
+use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::io::Durability;
 use crate::disk::pager::{Extent, PageId, Pager};
@@ -298,17 +296,23 @@ impl BufferPool {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if `file` is not a registered pager file; the pager's
+    /// SQLCODE -910 if `file` is not a registered pager file, or the page,
+    /// unpinned, stays latched by a read that hit by its hint for longer
+    /// than any one read takes (it may be the caller's own); the pager's
     /// errors of freeing it.
     pub fn free_when_released(&self, file: FileId, id: PageId) -> Result<()> {
         self.free_page(file, id, true)
     }
 
     /// `free`, waiting for the page's pins to be released if `wait`, else
-    /// refusing a page held.
+    /// refusing a page held. A page unpinned but latched by a read that hit
+    /// by its hint is waited for a bounded while only (`claim.rs`): the
+    /// latch may be the calling thread's own.
     fn free_page(&self, file: FileId, id: PageId, wait: bool) -> Result<()> {
         let pager = self.pager(file)?;
         let key = Key { file, id: id.0 };
+        let held = || SqlError::new(Code::Api, format!("[DESIGN] page {} of file {} is held, so it cannot be freed", id.0, file.0));
+        let mut round = 0_u32;
         loop {
             let mut map = self.map(key)?;
             let Some(&index) = map.get(&key) else { break };
@@ -320,14 +324,22 @@ impl BufferPool {
                 continue;
             }
             // Held: pinned, or latched by a read that hit by its hint.
-            let latch = if frame.pins.load(Ordering::Acquire) > 0 { None } else { try_latch(frame) };
+            let pinned = frame.pins.load(Ordering::Acquire) > 0;
+            let latch = if pinned { None } else { try_latch(frame) };
             let Some(mut content) = latch else {
-                if wait {
-                    drop(map);
+                drop(map);
+                if !wait {
+                    return Err(held());
+                }
+                if pinned {
                     std::thread::yield_now();
                     continue;
                 }
-                return Err(SqlError::new(Code::Api, format!("[DESIGN] page {} of file {} is held, so it cannot be freed", id.0, file.0)));
+                let slept = claim::latch_wait(&mut round, claim::FREE_ROUNDS);
+                if slept {
+                    continue;
+                }
+                return Err(held());
             };
             map.remove(&key);
             frame.set_key(None);
@@ -399,70 +411,6 @@ impl BufferPool {
         }
         self.eviction.accessed(index);
         Ok(Some(frame))
-    }
-
-    /// Claims a frame for `key`: an empty one, or one the eviction policy
-    /// proposes, checked again under both pages' shards. `None` if `key`
-    /// was mapped meanwhile.
-    fn claim(&self, key: Key) -> Result<Option<Claim>> {
-        let (mut tried, mut waited) = (Tried::default(), None);
-        loop {
-            {
-                let mut map = self.map(key)?;
-                if map.contains_key(&key) {
-                    return Ok(None);
-                }
-                if let Some(index) = lock_builtin(&self.empty).pop() {
-                    // An empty frame's latch is held only by a read that
-                    // found it holds no page, and lets go at once.
-                    let frame = self.frame(index)?;
-                    let latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
-                    return self.take(&mut map, (index, latch), key, None).map(Some);
-                }
-            }
-            let evictable = |index: usize| {
-                !tried.has(index) && self.frames.get(index).is_some_and(|f| f.pins.load(Ordering::Acquire) == 0 && f.key().is_some())
-            };
-            // All held: refused, or an undo waits and tries all again.
-            let Some(index) = self.eviction.victim(&evictable) else {
-                all_held(self.frames.len(), &mut waited, UNDO_WAITS)?;
-                tried = Tried::default();
-                continue;
-            };
-            let frame = self.frame(index)?;
-            let Some(old) = frame.key() else { continue };
-            let (mut map, mut old_map) = self.maps(key, old)?;
-            if map.contains_key(&key) {
-                return Ok(None);
-            }
-            // Still the page it held, unpinned (pins rise only under its
-            // shard) and not latched by a read that hit by its hint.
-            let latch = (frame.key() == Some(old) && frame.pins.load(Ordering::Acquire) == 0).then(|| try_latch(frame)).flatten();
-            if let Some(latch) = latch {
-                count(&self.counters.evictions);
-                let claim = self.take(&mut map, (index, latch), key, Some(old))?;
-                // A dirty page stays mapped until written back (`fill`).
-                if claim.write_back.is_none() {
-                    old_map.as_mut().unwrap_or(&mut map).remove(&old);
-                }
-                return Ok(Some(claim));
-            }
-            tried.note(index, self.frames.len()); // held: not proposed again
-        }
-    }
-
-    /// Maps frame `index`, latched exclusively, to `key` in `map`, its
-    /// shard's, pinned and loading; `old` is the page it held, written back
-    /// only if dirty.
-    fn take(&self, map: &mut MurmurMap<Key, usize>, (index, latch): (usize, Latch<'_>), key: Key, old: Option<Key>) -> Result<Claim> {
-        let frame = self.frame(index)?;
-        map.insert(key, index);
-        frame.pins.fetch_add(1, Ordering::AcqRel);
-        frame.set_key(Some(key));
-        frame.loading.store(true, Ordering::Release);
-        drop(latch);
-        let dirty = frame.dirty.swap(false, Ordering::AcqRel);
-        Ok(Claim { frame: index, write_back: old.filter(|_| dirty) })
     }
 
     /// Writes back what `claim`'s frame held if it must, then fills it for

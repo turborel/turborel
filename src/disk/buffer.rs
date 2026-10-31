@@ -107,8 +107,9 @@ fn count(counter: &AtomicU64) {
 /// frame is held (`all_held`) before it is refused.
 const UNDO_WAITS: Duration = Duration::from_secs(10);
 
-/// \[DESIGN\] RULES.md D38: a page wanted while all `frames` are held. It
-/// is refused at once: the pool knows no statement to bound a wait by, and
+/// \[DESIGN\] RULES.md D38: a page wanted while all `frames` are held, once
+/// a claim's waits for frames only latched are over (`claim.rs`). It is
+/// refused then: the pool knows no statement to bound a wait by, and
 /// threads each holding pages while waiting for one more would wait for
 /// each other. But an undo (`Undoing`) is never refused for want of
 /// memory, so it waits, `Ok` to try again a moment later, from when it
@@ -216,33 +217,6 @@ pub struct BufferPool {
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
     _reservation: Option<Reservation>,
-}
-
-/// The frames a claim found held after the eviction policy proposed them:
-/// pinned, or latched by a read that hit by its hint (`hits.rs`), which
-/// may be the claiming thread's own. They are not proposed again, so a
-/// claim tries each frame at most once and is refused when all are held
-/// (RULES.md D38), never spinning on one it cannot latch. Allocated only
-/// when a frame is found held, so a claim that takes the first frame
-/// proposed allocates nothing.
-#[derive(Default)]
-struct Tried(Vec<bool>);
-
-impl Tried {
-    /// Whether frame `index` was tried.
-    fn has(&self, index: usize) -> bool {
-        self.0.get(index).copied().unwrap_or(false)
-    }
-
-    /// Notes frame `index`, of a pool of `frames`, tried.
-    fn note(&mut self, index: usize, frames: usize) {
-        if self.0.is_empty() {
-            self.0.resize(frames, false);
-        }
-        if let Some(tried) = self.0.get_mut(index) {
-            *tried = true;
-        }
-    }
 }
 
 /// A pin on a frame, released when dropped.

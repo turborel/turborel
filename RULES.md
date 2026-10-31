@@ -860,8 +860,11 @@ names in its header those it was written with, and is read with them, and
 a file added to others is written as they were. A buffer pool read that
 hits writes one thing shared, its frame's latch: a table of hints, read
 without a lock, finds the frame, and the latch keeps it from eviction,
-which takes it exclusively, counting a frame so latched as held, as one
-pinned (D38); hits are counted on stripes by thread. Hot pages contend
+which takes it exclusively: a frame so latched is busy for a moment, so
+an eviction finding only such frames and pinned ones waits a bounded
+while for the latched, then is refused as with every frame pinned (D38),
+as the latch may be its own thread's; hits are counted on stripes by
+thread. Hot pages contend
 on that latch still; a reader-biased latch (BRAVO) would
 need a reviewed exception to R-SAFE-1. File formats are the same
 on every platform. Each component counts its own
@@ -1395,8 +1398,9 @@ catalog to keep in step.
 - A database has one budget, in bytes (MEMORY_BUDGET). Every buffer pool
   reserves its pages of it when made and gives them back when dropped; a
   reservation past the budget is refused (SQLCODE -918). A page wanted
-  while every frame of its pool is held is refused too, -918, at once,
-  never waited for: the pool, below every engine (D30), knows no
+  while every frame of its pool is held is refused too, -918, waited
+  for only a moment, while frames latched by a read let go:
+  the pool, below every engine (D30), knows no
   statement to bound a wait by, and threads each holding pages while
   waiting for one more would wait for each other; the pool is too small
   for the work.

@@ -3,10 +3,10 @@
 //! lock, says where each page's frame was last found; the frame is latched
 //! shared without waiting, and checked to hold the page and not be filling.
 //! The latch keeps the frame from eviction, which takes it exclusively
-//! (`pool.rs`), so no pin is taken: an eviction counts a frame so latched
-//! as held, as one pinned, refused when all are (RULES.md D38). A hit is
-//! counted on a stripe of the counters by thread, each on its own cache
-//! line.
+//! (`pool.rs`), so no pin is taken: an eviction takes a frame so latched
+//! as busy for a moment, waited for a bounded while (`pool/claim.rs`). A
+//! hit is counted on a stripe of the counters by thread, each on its own
+//! cache line.
 //!
 //! A hint is only a guess, written as the locked way finds or fills a page:
 //! one stale, or a frame latched exclusively, sends the read the locked way.

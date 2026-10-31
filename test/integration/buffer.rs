@@ -140,6 +140,128 @@ fn a_page_read_by_its_hint_holds_its_frame() {
     assert_eq!(get(&pool, file, a).unwrap(), b"a", "released, the frame is taken");
 }
 
+/// Verifies: [DESIGN] RULES.md D30, buffer pool: `free_when_released` of a
+/// page the calling thread holds read by its hint, latched and unpinned,
+/// waits a bounded while, then is refused (SQLCODE -910), not waiting for
+/// itself for ever; released, the page is freed.
+///
+/// Regression test (R-TEST-7): it yielded and looked again for ever.
+#[test]
+fn freeing_a_page_its_caller_holds_by_hint_is_refused() {
+    let scratch = Scratch::new("buffer-free-hinted");
+    let pool = Arc::new(pool(2));
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let a = put(&pool, file, b"a");
+    let (sender, receiver) = mpsc::channel();
+    let freer = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || {
+            let held = pool.read(file, a.0).unwrap();
+            assert_eq!((&*held, pool.counts().misses), (&b"a"[..], 0_u64), "a hit: by its hint");
+            sender.send(pool.free_when_released(file, a).err().map(|e| e.code)).unwrap();
+        })
+    };
+    let refused = receiver.recv_timeout(REFUSAL_LIMIT).expect("refused in the end, not waiting for ever");
+    assert_eq!(refused, Some(Code::Api), "held by the caller");
+    freer.join().unwrap();
+    pool.free_when_released(file, a).unwrap();
+    assert_eq!(pool.read(file, a.0).err().map(|e| e.code), Some(Code::Api), "freed");
+}
+
+/// How long a thread holds a page read by its hint, in a test where
+/// another waits for its latch: a moment, well within a claim's wait.
+const LATCH_MOMENT: Duration = Duration::from_millis(1);
+
+/// Verifies: [DESIGN] RULES.md D30, D38, buffer pool: with the only frame
+/// latched by another thread's read by its hint, unpinned, a read of
+/// another page waits for the latch to be let go, a moment later, and then
+/// takes the frame, rather than being refused (SQLCODE -918).
+#[test]
+fn a_claim_waits_for_a_frame_latched_for_a_moment() {
+    let scratch = Scratch::new("buffer-hinted-moment");
+    let pool = Arc::new(pool(1));
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let (a, b) = (put(&pool, file, b"a"), put(&pool, file, b"b"));
+    let (sender, receiver) = mpsc::channel();
+    let holder = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || {
+            let held = pool.read(file, b.0).unwrap();
+            assert_eq!((&*held, pool.counts().misses), (&b"b"[..], 0_u64), "a hit: by its hint");
+            sender.send(()).unwrap();
+            thread::sleep(LATCH_MOMENT);
+        })
+    };
+    receiver.recv_timeout(REFUSAL_LIMIT).unwrap();
+    assert_eq!(get(&pool, file, a).unwrap(), b"a", "waited for, the frame is taken");
+    holder.join().unwrap();
+}
+
+/// Threads each reading its own page over and over, by its hint, one
+/// fewer than the pool's frames; the pages one more thread reads in turn,
+/// none of them in the pool; and the rounds of each.
+const HOT_READERS: u8 = 4;
+const COLD_PAGES: u8 = 8;
+const HOT_ROUNDS: usize = 2000;
+const COLD_ROUNDS: usize = 300;
+/// How long a hot reader holds its page, and then lets it go, each round:
+/// half the time latched.
+const HOT_HOLD: Duration = Duration::from_micros(50);
+/// How long the threads are given before the test takes them to be stuck.
+const STUCK_LIMIT: Duration = Duration::from_secs(120);
+
+/// One page read by its hint, held for `HOT_HOLD`, then let go as long.
+fn read_hot(pool: &BufferPool, file: FileId, id: PageId, content: u8) {
+    let page = pool.read(file, id.0).unwrap();
+    assert_eq!(&*page, &[content]);
+    thread::sleep(HOT_HOLD);
+    drop(page);
+    thread::sleep(HOT_HOLD);
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D38, buffer pool: threads holding
+/// pages read by their hints, latched for a moment and unpinned, while
+/// another reads pages not in the pool, claiming frames, and each, its
+/// page evicted, claims one again; with as many frames as threads, no read
+/// is refused (no SQLCODE -918) and none hangs; every page reads as
+/// written.
+#[test]
+fn claims_wait_for_frames_latched_by_hinted_reads() {
+    let scratch = Scratch::new("buffer-hinted-busy");
+    let pool = Arc::new(pool(usize::from(HOT_READERS) + 1));
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let cold: Vec<PageId> = (0..COLD_PAGES).map(|n| put(&pool, file, &[HOT_READERS + n])).collect();
+    let hot: Vec<PageId> = (0..HOT_READERS).map(|n| put(&pool, file, &[n])).collect();
+    let (sender, receiver) = mpsc::channel();
+    let mut threads: Vec<_> = (0..HOT_READERS)
+        .zip(hot)
+        .map(|(n, id)| {
+            let (pool, sender) = (Arc::clone(&pool), sender.clone());
+            thread::spawn(move || {
+                (0..HOT_ROUNDS).for_each(|_| read_hot(&pool, file, id, n));
+                sender.send(()).unwrap();
+            })
+        })
+        .collect();
+    threads.push({
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || {
+            for round in 0..COLD_ROUNDS {
+                let n = round % cold.len();
+                assert_eq!(get(&pool, file, cold[n]).unwrap(), [HOT_READERS + u8::try_from(n).unwrap()]);
+            }
+            sender.send(()).unwrap();
+        })
+    });
+    for _ in 0..threads.len() {
+        receiver.recv_timeout(STUCK_LIMIT).expect("every thread done, none refused or stuck");
+    }
+    for t in threads {
+        t.join().unwrap();
+    }
+    assert!(pool.counts().evictions > 0, "the cold reader claimed frames");
+}
+
 /// Verifies: [DESIGN] RULES.md D30, buffer pool: a block file's blocks are
 /// cached for reading, a second read being a hit; they cannot be written
 /// through the pool, nor pages made in a block file (SQLCODE -910); an
