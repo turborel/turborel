@@ -57,25 +57,13 @@ use crate::value::types::TypeRegistry;
 /// The version of the format this code writes and reads.
 pub const RECORD_VERSION: u8 = 1;
 
-/// The tags of the kinds of record.
-const INSERT: u8 = 1;
-const UPDATE: u8 = 2;
-const DELETE: u8 = 3;
-const COMMIT: u8 = 4;
-const ABORT: u8 = 5;
-const SCHEMA: u8 = 6;
-const CREATE_INDEX: u8 = 7;
-const STATEMENT_UNDONE: u8 = 8;
-const CHECKPOINT: u8 = 9;
-const DROP_INDEX: u8 = 10;
-const DROP: u8 = 11;
-const ALTER_TABLE: u8 = 12;
-const SETTING: u8 = 13;
-const ALTER_INDEX: u8 = 14;
-const STALE: u8 = 15;
-const USER: u8 = 16;
-const OWNER: u8 = 17;
-const DEFINED: u8 = 18;
+mod kinds;
+
+pub use kinds::KINDS;
+use kinds::{
+    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, SCHEMA, SETTING,
+    STALE, STATEMENT_UNDONE, UPDATE, USER,
+};
 
 /// The tags of the kinds of object a drop record names.
 const DROPPED_TABLE: u8 = 1;
@@ -294,7 +282,7 @@ impl Record {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.put_u8(RECORD_VERSION);
-        out.put_u8(kind(&self.change));
+        out.put_u8(self.change.kind());
         out.put_u64(self.tx);
         match &self.change {
             Change::Insert { table, generation, row, after } => put_row_change(&mut out, (table, *generation, *row), &[after]),
@@ -473,30 +461,6 @@ fn put_strs(out: &mut Vec<u8>, strs: &[String]) {
     out.put_u32(u32::try_from(strs.len()).unwrap_or(u32::MAX));
     for s in strs {
         out.put_str(s);
-    }
-}
-
-/// The tag of `change`'s kind.
-fn kind(change: &Change) -> u8 {
-    match change {
-        Change::Insert { .. } => INSERT,
-        Change::Update { .. } => UPDATE,
-        Change::Delete { .. } => DELETE,
-        Change::Commit { .. } => COMMIT,
-        Change::Abort => ABORT,
-        Change::Checkpoint => CHECKPOINT,
-        Change::StatementUndone { .. } => STATEMENT_UNDONE,
-        Change::Stale { .. } => STALE,
-        Change::Schema { .. } => SCHEMA,
-        Change::Defined { .. } => DEFINED,
-        Change::CreateIndex { .. } => CREATE_INDEX,
-        Change::DropIndex { .. } => DROP_INDEX,
-        Change::AlterIndex { .. } => ALTER_INDEX,
-        Change::Drop { .. } => DROP,
-        Change::AlterTable { .. } => ALTER_TABLE,
-        Change::Setting { .. } => SETTING,
-        Change::User { .. } => USER,
-        Change::Owner { .. } => OWNER,
     }
 }
 

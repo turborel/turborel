@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
-use super::{FileInfo, Registry, Use};
+use super::{FileInfo, FileKind, Registry, Use};
 
 /// What is noted of a file.
 pub(super) struct Entry {
@@ -20,14 +20,12 @@ pub(super) struct Entry {
 impl Entry {
     pub(super) fn info(&self) -> FileInfo {
         let count = |u: Use| self.counts.get(u.at()).map_or(0, |c| c.load(Ordering::Relaxed));
-        FileInfo {
-            path: self.path.clone(),
-            open: self.open.load(Ordering::Relaxed),
-            reads: count(Use::Read),
-            writes: count(Use::Write),
-            syncs: count(Use::Sync),
-            noted: true,
-        }
+        FileInfo::at(
+            &self.path,
+            FileKind::Server,
+            self.open.load(Ordering::Relaxed),
+            [count(Use::Read), count(Use::Write), count(Use::Sync)],
+        )
     }
 }
 

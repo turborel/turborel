@@ -92,6 +92,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D53 | Data types: one contract, standard types built in |
 | D55 | Threads: one manager, each thread labelled and shown |
 | D56 | Files: one manager a database, its open files limited, each shown |
+| D57 | Replicated state: the log, the catalog and the durable files, as opaque bytes |
 
 ### The project
 
@@ -401,7 +402,7 @@ fill it commit together, or not at all.
   engine's state as of a log position, so the log can be truncated behind
   it; the row store's file is shadowed, so after a crash it is exactly as
   the last checkpoint left it. Recovery reopens the tables, then redoes and
-  undoes from the log.
+  undoes from the log, by the database's one replay (D57).
 - A checkpoint is due after CHECKPOINT.AFTER_CHANGES row changes
   logged since the last taken, a failed one leaving them counted. The
   log is kept from the last checkpoint or the first record of the oldest
@@ -808,6 +809,45 @@ descriptors a server held, nor showed them; a failed rotation, a file
 left behind, a directory not synced, went unseen. One manager makes
 each file visible and bounded, and gives engines what the database's
 own files have.
+
+**D57. Replicated state: the log, the catalog and the durable files, as
+opaque bytes.**
+*Decision:* all durable state of a database is in its `Log`, its
+`CatalogStore`, or the files its file manager registers as durable
+(D56). A feature keeping durable state anywhere else declares an export
+hook, or is refused in a replicated database (SQLCODE -910). Replication
+orders, stores and moves three kinds of opaque bytes, log records,
+checkpoint images (catalog records) and durable files, and never decodes
+them. What a record means and how it is applied is the core's one replay,
+`Database::replay`, which recovery runs and a standby will run: a new
+kind of record, object or file is replicated once recovery handles it.
+Replication's own extension points are traits, `Consensus`, `Transport`
+and `StateTransfer`, added as it is built; Viewstamped Replication,
+TLS over TCP and whole files are their first implementations. Approved
+with it: a `Log` for commit, beside a driver of those traits that knows
+no content, and the core's `Standby` seam (replay, promote, depose,
+export, import); a record durable before a backup acknowledges it; a
+sync in doubt, when replicated, never stamped, resolved by consensus or
+the node deposed;
+a `node` property for settings never logged; reads on the primary
+confirming its view; no at-most-once for SQL clients in alpha; stale
+snapshot reads on backups, with a least position; state transfer by the
+durable files the file manager knows; the traits and VR in a crate of
+their own, the network in the server.
+*Why:* most of SQL-92 and all after it is still to build, each with
+new records, objects and files; none may need a change to replication.
+*Consequences:* checks fail the build or `verify`: replay matches on
+`Change` with no wildcard arm (R-CF-3), so a kind added does not
+compile until replayed; `record::KINDS` lists every kind, and a test
+fails until a kind added is listed, and another until a statement
+writing it is shown recovered to the state it left; every durable file
+the file manager registers is in the export manifest
+(`Database::export_manifest`), or carried by the log or the catalog,
+and a file in the directory of no known kind is refused; later, contract
+tests of each trait (R-SAFE-3) and a comparison of backups with the
+primary in a deterministic simulator.
+*See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
+`files/classes.rs`, `log/record/kinds.rs`.
 
 **D27. A thread-safe core over snapshots of the definitions.**
 - A `Database` is shared between threads, and every extension trait is

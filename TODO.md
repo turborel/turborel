@@ -88,11 +88,18 @@ RULES.md when its design settles.
   still speaks turborel's SQL: what it sends in its own system's dialect
   is refused, saying why; how far its tools' catalog queries
   (`pg_catalog`, `SHOW`) are answered is a decision to make.
-- **Replication**, pluggable, Viewstamped Replication first. Most likely a
-  `Log` whose `sync` returns once a quorum holds the record, so commit needs
-  no change. To settle: whether replication is a kind of `Log` or a plug-in
-  of its own; how replicas agree on the order of records; view changes;
-  state transfer from checkpoints; reads on backups.
+- **Replication**, pluggable, Viewstamped Replication first, as RULES.md
+  D57 decides. Done: the one replay, `record::KINDS` and its tests, the
+  files' classes and the export manifest. Next, with nothing visible to
+  users: the `Standby` and `StateSource` seam; a sync of the log in doubt,
+  never stamped; the `node` property of settings; a single-node replicated
+  `Log` passing the log, durability, recovery and reopen tests. Then the
+  `Consensus`, `Transport` and `StateTransfer` traits and VR as a pure
+  state machine in a deterministic simulator; real databases in it, a
+  backup compared with the primary; continuous replay and reads on
+  backups; state transfer and log retention; the transport (mTLS,
+  settings, events, INFORMATION_SCHEMA.REPLICAS, commands);
+  reconfiguration.
 
 ---
 

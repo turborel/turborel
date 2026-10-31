@@ -95,6 +95,7 @@ mod random_queries;
 mod recovery;
 mod refusals;
 mod reopen;
+mod replicated_state;
 mod revoke;
 mod rowstore;
 mod schema_statements;

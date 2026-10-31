@@ -33,7 +33,8 @@ fn a_server_shows_its_connections_to_the_owner() {
 }
 
 /// Verifies: [DESIGN] RULES.md D56, D43: a server's own files are shown to
-/// the database's owner in INFORMATION_SCHEMA.FILES, of KIND SERVER: its
+/// the database's owner in INFORMATION_SCHEMA.FILES, of KIND SERVER and
+/// no CLASS, not being the database's: its
 /// TLS certificate chain and key, read once as it took TLS and closed;
 /// on Unix its socket, open while it listens. Another user sees none.
 #[test]
@@ -50,7 +51,7 @@ fn a_server_shows_its_files_to_the_owner() {
         expected.push(format!("{},YES,0", socket.display()));
     }
     let server = start(&db, &[]);
-    let files = "SELECT PATH, IS_OPEN, READS FROM INFORMATION_SCHEMA.FILES WHERE KIND = 'SERVER' ORDER BY PATH";
+    let files = "SELECT PATH, IS_OPEN, READS FROM INFORMATION_SCHEMA.FILES WHERE KIND = 'SERVER' AND CLASS IS NULL ORDER BY PATH";
     assert_eq!(rows(&server.connect("OWNER").query(files).unwrap()), expected);
     assert_eq!(rows(&server.connect("X").query(files).unwrap()), Vec::<String>::new(), "not the owner");
 }

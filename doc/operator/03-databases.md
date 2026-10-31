@@ -133,14 +133,19 @@ rather than succeed over writes lost. If more files are opened again in a
 minute than the limit, it is too low for the work, and a
 `files_reopened` warning says so, at most once a minute
 ([Diagnostics](08-diagnostics.md)). The database's owner sees each file in
-INFORMATION_SCHEMA.FILES, its kind, whether it is open, and its reads,
-writes and syncs. The server's own files are there too, of KIND SERVER,
+INFORMATION_SCHEMA.FILES, its kind, its class of durability, whether it
+is open, and its reads, writes and syncs. The class says what a crash
+leaves of the file: DURABLE, the data file, the catalog, the log and a
+plug-in's own files, kept; DURABLE AT COMMIT, the data file's side files,
+whose writes reach it at a checkpoint; UNSYNCED, the log of older row
+versions, begun anew as the database opens; SCRATCH, spill files,
+removed. The server's own files are there too, of KIND SERVER and no class,
 though not under the limit: the `--log` file and the socket while they
 are open, the TLS certificate chain and key, read as the server starts,
 and the `--keys` directory, a read for each key taken from it:
 
 ```sql
-SELECT KIND, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND;
+SELECT KIND, CLASS, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND, CLASS;
 ```
 
 ## Background work

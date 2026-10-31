@@ -222,30 +222,41 @@ impl Database {
         if !self.snapshot()?.catalog.tables().is_empty() {
             return Err(SqlError::new(Code::Api, "[DESIGN] recovery rebuilds a database from its log, so it must begin with no schema"));
         }
-        let (report, _) = self.replay_log(&*log, Lsn(0), Definitions::All)?;
+        let (report, _) = self.replay(&mut log.read_from(Lsn(0)), Definitions::All)?;
         self.change(State::rebuild_indexes)?;
         self.set_log(log)?;
         self.budget_from_settings()?;
         Ok(report)
     }
 
-    /// Reads `log` from `from`: analysis, definitions replayed as
-    /// `definitions` says, then undo and redo; the counters moved past the
-    /// ids and timestamps read. What it did, and the rows it read changes
-    /// of.
-    pub(super) fn replay_log(&self, log: &dyn Log, from: Lsn, definitions: Definitions) -> Result<(RecoveryReport, Touched)> {
+    /// \[DESIGN\] The one replay of the database (RULES.md D57): applies
+    /// `records`, each a position and the bytes a `Log` holds there, opaque
+    /// to whoever reads them, in position order: analysis, definitions
+    /// replayed as `definitions` says, then undo and redo; the counters
+    /// moved past the ids and timestamps read. What it did, and the rows it
+    /// read changes of. Recovery is this replay of its log from a
+    /// checkpoint's start, or from the log's; whatever else follows a log
+    /// (a standby) runs it too, so a kind of record recovery handles needs
+    /// nothing more. Each kind is matched without a wildcard, in
+    /// `replay_record`, `replay_definition` and `Analysis::note`, so a kind
+    /// added does not compile until it is replayed.
+    pub(super) fn replay(
+        &self,
+        records: &mut dyn Iterator<Item = Result<(Lsn, Vec<u8>)>>,
+        definitions: Definitions,
+    ) -> Result<(RecoveryReport, Touched)> {
         let mut report = RecoveryReport::default();
         let mut analysis = Analysis::default();
         let mut changes = Touched::new(self.snapshot()?.list_space());
         let mut replaying = Replaying { definitions, pending: HashMap::new() };
         let encodings = Arc::clone(&self.snapshot()?.encodings);
         let types = self.snapshot()?.types.clone();
-        for read in log.read_from(from) {
+        for read in records {
             let (lsn, bytes) = read?;
             let record = crate::log::sealed::open(&bytes, &encodings, &types)?;
             report.records = report.records.saturating_add(1);
             analysis.note(lsn, &record);
-            if let Some(change) = self.replay(lsn, record, &mut replaying, &mut report)? {
+            if let Some(change) = self.replay_record(lsn, record, &mut replaying, &mut report)? {
                 changes.push(change, &mut encode_change)?;
             }
         }
@@ -271,7 +282,7 @@ impl Database {
     /// Replays a definition: one made outside transactions at once, one a
     /// transaction made at its commit record, if `replaying` says so;
     /// returns a row change, kept for undo and redo.
-    fn replay(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Option<RowChange>> {
+    fn replay_record(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Option<RowChange>> {
         let tx = record.tx;
         let change = |table, generation, row, before, after| Some(RowChange { lsn, tx, table, generation, row, before, after });
         Ok(match record.change {

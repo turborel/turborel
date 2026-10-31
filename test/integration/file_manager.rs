@@ -53,7 +53,7 @@ fn a_database_of_more_files_than_its_limit() {
     let kinds = shown("SELECT DISTINCT KIND FROM INFORMATION_SCHEMA.FILES ORDER BY KIND");
     assert!(["CATALOG", "DATA", "LOG", "UNDO"].iter().all(|k| kinds.contains(&(*k).to_owned())), "{kinds:?}");
     // As the Operator's Guide shows it.
-    assert!(shown("SELECT KIND, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND").len() >= 4);
+    assert!(shown("SELECT KIND, CLASS, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND, CLASS").len() >= 4);
     assert_eq!(rows(&db.session("OTHER"), "SELECT COUNT(*) FROM INFORMATION_SCHEMA.FILES"), Ok(vec!["0".into()]));
     a.commit().unwrap();
     db.checkpoint().unwrap();
@@ -115,11 +115,11 @@ fn closing_removes_spill_files_and_closes_every_file() {
 }
 
 /// What a plug-in was given as it was registered.
-type Given = Arc<Mutex<Option<Host>>>;
+pub(crate) type Given = Arc<Mutex<Option<Host>>>;
 
 /// A plug-in engine keeping, for each table it makes, a file of its own in
 /// its directory, and a scratch file; its rows kept by a row store.
-struct Keeping {
+pub(crate) struct Keeping {
     rows: RowStore,
     host: Given,
     kept: Mutex<Vec<Box<dyn DiskFile>>>,
@@ -150,7 +150,7 @@ impl StorageEngine for Keeping {
 }
 
 /// The engine, and what it is given.
-fn keeping() -> (Box<Keeping>, Given) {
+pub(crate) fn keeping() -> (Box<Keeping>, Given) {
     let host = Given::default();
     let engine = Keeping { rows: RowStore::in_memory(TableOptions::default()), host: Arc::clone(&host), kept: Mutex::new(Vec::new()) };
     (Box::new(engine), host)

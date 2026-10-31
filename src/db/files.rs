@@ -43,7 +43,7 @@
 //! image again, not clean, so a crash from then on is recovered.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::checkpoint::Checkpointer;
@@ -77,7 +77,7 @@ const TEMP: &str = "tmp";
 /// The directory of the log of older row versions.
 const UNDO: &str = "undo";
 /// The file locked while the database is open.
-const LOCK: &str = "lock";
+pub(super) const LOCK: &str = "lock";
 
 /// \[DESIGN\] The row changes after which a checkpoint is taken, by default.
 pub const CHECKPOINT_AFTER: u64 = 100_000;
@@ -140,6 +140,8 @@ pub(super) struct DatabaseFiles {
     pub(super) checkpointer: Checkpointer,
     /// The lock of its directory, until it is closed.
     pub(super) held: Mutex<Option<Arc<FileLock>>>,
+    /// Its directory, and the file system of its file manager it is in.
+    pub(super) dir: (Arc<dyn FileSystem>, PathBuf),
 }
 
 /// \[DESIGN\] While a database is reopened: the locators of its tables and
@@ -185,7 +187,7 @@ impl<'a> Place<'a> {
         Place { fs, dir, layout, shadows, options, held, events }
     }
 
-    fn path(&self, name: &str) -> std::path::PathBuf {
+    fn path(&self, name: &str) -> PathBuf {
         self.dir.join(name)
     }
 
@@ -208,7 +210,8 @@ impl<'a> Place<'a> {
     /// What the database keeps of its files.
     fn files(&self, catalog: Box<dyn CatalogStore>) -> DatabaseFiles {
         let held = Mutex::new(Some(Arc::clone(&self.held)));
-        DatabaseFiles { catalog, shadows: Arc::clone(&self.shadows), checkpointer: Checkpointer::default(), held }
+        let dir = (Arc::clone(self.fs), self.dir.to_path_buf());
+        DatabaseFiles { catalog, shadows: Arc::clone(&self.shadows), checkpointer: Checkpointer::default(), held, dir }
     }
 }
 
@@ -319,7 +322,7 @@ impl Database {
             None => {
                 self.attach_pager(place, Pagers::Create)?;
                 place.shadows.commit()?;
-                let (report, _) = self.replay_log(log, Lsn(0), Definitions::All)?;
+                let (report, _) = self.replay(&mut log.read_from(Lsn(0)), Definitions::All)?;
                 self.change(State::rebuild_indexes)?;
                 let made = Snapshot::of(&*self.snapshot()?);
                 (
@@ -453,7 +456,7 @@ impl Database {
         let (report, mut touched) = if image.clean && oldest >= log.end() {
             (None, Touched::default())
         } else {
-            let (report, touched) = self.replay_log(log, oldest.min(image.start), Definitions::From(image.through))?;
+            let (report, touched) = self.replay(&mut log.read_from(oldest.min(image.start)), Definitions::From(image.through))?;
             (Some(report), touched)
         };
         self.change(|st| {

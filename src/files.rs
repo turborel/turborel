@@ -21,7 +21,8 @@
 //! writes lost.
 //!
 //! The registry is the database's, shared by its snapshots, so
-//! INFORMATION_SCHEMA.FILES shows each file (`system/files.rs`). As the
+//! INFORMATION_SCHEMA.FILES shows each file (`system/files.rs`), of its
+//! kind, class of durability and owner (`classes.rs`). As the
 //! database closes, every descriptor is closed (`Registry::close_all`),
 //! a file with writes not yet synced synced first, before its directory's
 //! lock is given up, and none is opened after.
@@ -83,6 +84,23 @@ pub struct FileInfo {
     /// Whether it is not the database's, but noted as another's: a
     /// server's (`Registry::note`).
     pub noted: bool,
+    /// Its kind, by its name and its directory's (`classes.rs`).
+    pub kind: FileKind,
+    /// Its class of durability; none for a file not the database's.
+    pub class: Option<FileClass>,
+    /// Whose it is.
+    pub owner: FileOwner,
+}
+
+impl FileInfo {
+    /// The file at `path`, of `kind`, open if `open`, of `counts` (reads,
+    /// writes and syncs): noted as another's if it is a server's; its
+    /// class and owner known by its kind and path.
+    fn at(path: &Path, kind: FileKind, open: bool, counts: [u64; 3]) -> FileInfo {
+        let [reads, writes, syncs] = counts;
+        let noted = kind == FileKind::Server;
+        FileInfo { path: path.to_path_buf(), open, reads, writes, syncs, noted, kind, class: kind.class(), owner: kind.owner(path) }
+    }
 }
 
 /// A file of the manager's: where it is, how it is opened again, and its
@@ -373,14 +391,7 @@ impl Handle {
     fn info(&self) -> FileInfo {
         let count = |u: Use| self.counts.get(u.at()).map_or(0, |c| c.load(Ordering::Relaxed));
         let open = self.file.try_read().map_or(true, |f| f.is_some());
-        FileInfo {
-            path: self.path.clone(),
-            open,
-            reads: count(Use::Read),
-            writes: count(Use::Write),
-            syncs: count(Use::Sync),
-            noted: false,
-        }
+        FileInfo::at(&self.path, FileKind::of(&self.path), open, [count(Use::Read), count(Use::Write), count(Use::Sync)])
     }
 }
 
@@ -494,10 +505,12 @@ impl FileSystem for FileManager {
     }
 }
 
+mod classes;
 mod noted;
 pub mod plugins;
 mod told;
 
+pub use classes::{FileClass, FileKind, FileOwner};
 pub use noted::Noted;
 
 // Unit tests: the limit kept by closing the file used least recently,

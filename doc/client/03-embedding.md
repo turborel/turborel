@@ -18,6 +18,12 @@ if there is none, and recovering it if it was not closed
 through a `FileSystem` and `OpenOptions` of the program's own. A
 database kept in a directory is closed by `close`, with no
 transaction open: it writes a checkpoint and gives the directory up.
+`export_manifest` lists the durable files of a database kept in a
+directory as its last checkpoint left them, each with its length and
+owner, but its log's and its catalog's: what a copy of the database
+needs besides its log and its catalog. A file in its directory of no
+kind the database knows is refused (SQLCODE -910), as a copy would
+leave it behind.
 
 A `Database` is a handle: cloned, it is the same database, and it may
 be shared by any number of threads. Its settings are set by

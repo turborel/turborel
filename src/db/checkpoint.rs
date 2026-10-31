@@ -239,8 +239,10 @@ impl Database {
 #[derive(Default)]
 pub(super) struct Checkpointer {
     /// Taken while a checkpoint is, so checkpoints take turns; refusing
-    /// one asked for from within a checkpoint (RULES.md R-ERR-4).
-    taking: Turn,
+    /// one asked for from within a checkpoint (RULES.md R-ERR-4). An
+    /// export takes it too, so no checkpoint changes the files it lists
+    /// (`db/export.rs`).
+    pub(super) taking: Turn,
     taken: AtomicU64,
     failure: Mutex<Option<SqlError>>,
     /// When checkpoints overdue were last told (`overdue.rs`).

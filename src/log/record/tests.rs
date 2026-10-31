@@ -33,6 +33,7 @@ fn every_kind() -> Vec<Record> {
         Change::Delete { table: table(), generation: 7, row: 0, before: edge_row() },
         Change::Commit { at: 42 },
         Change::Abort,
+        Change::Checkpoint,
         Change::StatementUndone { from: Lsn(u64::MAX) },
         Change::Stale { through: Lsn(9), index: "I".into(), row: u64::MAX, key: edge_row() },
         Change::Schema {
@@ -142,4 +143,23 @@ fn what_is_not_a_record_is_refused() {
     let count = huge.len() - 4;
     huge[count..].copy_from_slice(&u32::MAX.to_le_bytes());
     assert_eq!(corrupt(&huge), Some(Code::Corrupt));
+}
+
+/// Verifies: [DESIGN] RULES.md D57, `KINDS`: it lists every kind of record
+/// and only those: each tag `Record::decode` reads as a kind (any but those
+/// it refuses as of no kind) is listed, once, in tag order; and the
+/// records of every kind, each of a kind `Change::kind` gives, cover the
+/// list, so each is read back as written.
+#[test]
+fn kinds_are_listed() {
+    let known = |tag: u8| match Record::decode(&[&[RECORD_VERSION, tag][..], &1_u64.to_le_bytes()].concat(), &TypeRegistry::default()) {
+        Ok(_) => true,
+        Err(e) => !e.msg.contains("no kind of record has tag"),
+    };
+    let read: Vec<u8> = (0_u8..=u8::MAX).filter(|&tag| known(tag)).collect();
+    assert_eq!(read, KINDS.to_vec(), "the tags decode reads, in order, are KINDS");
+    let mut written: Vec<u8> = every_kind().iter().map(|r| r.change.kind()).collect();
+    written.sort_unstable();
+    written.dedup();
+    assert_eq!(written, KINDS.to_vec(), "every kind is read back as written");
 }
