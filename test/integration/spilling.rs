@@ -86,6 +86,9 @@ const QUERIES: &[&str] = &[
     "SELECT W.K, T.K FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
     "SELECT E.K, T.K FROM E FULL OUTER JOIN T ON E.K < T.K",
     "SELECT T.K, V.K FROM T LEFT OUTER JOIN V ON T.K = V.C",
+    "SELECT T.K, U.K FROM T LEFT OUTER JOIN U ON T.G = U.G AND 10 / (T.K + 1) < 1",
+    "SELECT T.K, U.K FROM T RIGHT OUTER JOIN U ON T.G = U.G AND 10 / (U.K + 1) < 1",
+    "SELECT T.K, U.K FROM T FULL OUTER JOIN U ON T.G = U.G AND 10 / (T.K + 1) < 1 AND 10 / (U.K + 1) < 1",
     "SELECT G FROM T EXCEPT SELECT G FROM U",
     "SELECT G FROM T EXCEPT ALL SELECT G FROM U",
     "SELECT G FROM T INTERSECT SELECT G FROM U",
@@ -146,6 +149,31 @@ fn operators_spill_and_give_the_same_rows() {
     // A grouping of DISTINCT set functions splits its work area in two.
     assert!(counted.0.lock().unwrap().iter().all(|&b| b == SMALL || b == HALF));
     assert_eq!(db.set_setting("WORK_MEMORY", &bytes(SMALL - 1)).err().map(|e| e.code), Some(Code::Api), "below its least");
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075:1992 §7.5 GR1c]; RULES.md D15, D38:
+/// with WORK_MEMORY at its least, an outer join on keys whose ON conjunct
+/// that can raise an error reads one operand's columns alone, its
+/// operands partitioned, judges it of every row of that operand when the
+/// other has rows: its error is raised of a row that matches nothing by
+/// its keys, U's of a null key among them, and none when the other
+/// operand is empty.
+#[test]
+fn a_partitioned_outer_join_judges_each_operands_own_condition() {
+    let db = Database::new();
+    filled(&db);
+    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    let s = db.session("S");
+    let cases = [
+        // U's row 2900, of a null G, divides by zero.
+        ("SELECT T.K FROM T FULL OUTER JOIN U ON T.G = U.G AND 10 / (U.K - 2900) < 1", Err(Code::Data)),
+        ("SELECT W.K FROM W LEFT OUTER JOIN T ON W.K + 5000 = T.K AND 1 / (W.K - 3) < 1", Err(Code::Data)),
+        ("SELECT E.K FROM E FULL OUTER JOIN U ON E.K = U.G AND 10 / (U.K - 2900) < 1", Ok(ROWS)),
+        ("SELECT E.K FROM U LEFT OUTER JOIN E ON E.K = U.G AND 10 / (U.K - 2900) < 1", Ok(ROWS)),
+    ];
+    for (query, expected) in cases {
+        assert_eq!(rows(&s, query).map(|r| r.len()), expected, "{query}");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D38: a spill area is reserved of the memory

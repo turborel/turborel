@@ -153,6 +153,14 @@ pub enum Plan {
         keys: Vec<(usize, usize)>,
         /// The rest of the `<join condition>`, over the pair's columns.
         cond: Option<Cond>,
+        /// Its conjuncts that can raise an error over the columns of one
+        /// operand alone, the left's and the right's, each over that
+        /// operand's own columns: each evaluated on every row of its
+        /// operand when the other has a row, as on every row of their
+        /// product [ISO/IEC 9075:1992 §7.5 GR1c], and a row it is not true
+        /// of matches none (RULES.md D15). Boxed, as few joins have them
+        /// and every frame that holds a plan holds its largest variant.
+        own: Own,
         /// The degrees of `left` and `right`, the widths of the nulls.
         widths: (usize, usize),
         /// The condition, as text.
@@ -396,6 +404,10 @@ fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
     if want.iter().all(|k| k.column < width) { want } else { &[] }
 }
 
+/// An outer join's own conditions, of its left operand's columns and of
+/// its right's (`Plan::OuterJoin`), if either has one.
+pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
+
 impl Plan {
     /// Whether running it can raise an error of a General Rule (an
     /// overflow, a division by zero, a subquery's cardinality): through a
@@ -415,8 +427,9 @@ impl Plan {
             | Plan::Append { left, right }
             | Plan::SetOp { left, right, .. } => left.can_raise() || right.can_raise(),
             Plan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
-            Plan::OuterJoin { left, right, cond, .. } => {
-                left.can_raise() || right.can_raise() || cond.as_ref().is_some_and(Cond::can_raise)
+            Plan::OuterJoin { left, right, cond, own, .. } => {
+                let owned = own.as_deref().is_some_and(|(l, r)| [l, r].iter().any(|c| c.as_ref().is_some_and(Cond::can_raise)));
+                left.can_raise() || right.can_raise() || owned || cond.as_ref().is_some_and(Cond::can_raise)
             }
             Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),

@@ -227,9 +227,13 @@ applied to every row of its operands' product [ISO/IEC 9075:1992 §7.5
 GR1c], so its conjunct that can raise and reads the columns of the
 operand given nulls alone is moved onto that operand so too, over an
 EXISTS of the other (`optimizer/outer.rs`), and the join is on its
-equalities still; one of the preserved operand's columns stays, and the
-join judges every pair: that operand's rows are all kept, so no filter
-of them can be its.
+equalities still. One of the preserved operand's columns stays in the
+join, as that operand's rows are all kept, so no filter of them can be
+its: a join on keys judges it of each of that operand's rows once the
+other is known to have one, a row it is not true of matching none, and
+so too any such conjunct of either operand that did not move
+(`Plan::OuterJoin`'s own conditions); a conjunct that can raise and
+reads both operands' columns has every pair judged, the join on no keys.
 *Why:* §5.18 GR2 defines AND only by its truth table, and §5.21 GR2 and
 §5.23 GR2 apply the condition to each row and group; nothing permits
 leaving an operand unevaluated. So results never depend on the plan.

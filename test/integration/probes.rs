@@ -370,8 +370,7 @@ fn long_in_lists_are_judged_by_a_set() {
 /// the operand given nulls alone, is evaluated on every row of that
 /// operand when the other has rows, as on every row of their product, so
 /// the join is on its equalities still; its error is raised whatever rows
-/// match, and none when the preserved operand is empty. One of the
-/// preserved operand's columns keeps every pair judged.
+/// match, and none when the preserved operand is empty.
 #[test]
 fn a_raising_on_conjunct_of_the_operand_given_nulls_moves() {
     let db = with_few();
@@ -386,15 +385,58 @@ fn a_raising_on_conjunct_of_the_operand_given_nulls_moves() {
     assert!(s.explain(right, &Params::new()).unwrap().contains("EXISTS"));
     let raising = "SELECT E.K FROM E LEFT JOIN S ON E.K = S.K AND 100 / (S.K - 9) < 0";
     assert_eq!(rows(&s, raising), Err(Code::Data), "of a row no row of E matches");
-    let preserved = "SELECT E.K FROM E LEFT JOIN S ON E.K = S.K AND 100 / (E.K - 8) < 0";
-    assert!(!s.explain(preserved, &Params::new()).unwrap().contains("EXISTS"));
-    assert_eq!(rows(&s, preserved), Err(Code::Data));
     // The same rows and errors without the rule; none of an empty E.
     crate::common::set_rule(&db, PUSH_FILTER_INTO_OUTER_JOIN, false);
     assert_eq!((sorted(&s, query), rows(&s, raising)), (joined_rows, Err(Code::Data)));
     crate::common::set_rule(&db, PUSH_FILTER_INTO_OUTER_JOIN, true);
     s.run("DELETE FROM E").unwrap();
     assert_eq!(rows(&s, raising), Ok(Vec::new()));
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075:1992 §7.5 GR1c]; RULES.md D15, D35: an
+/// ON conjunct of an outer join that can raise an error, of the columns of
+/// one operand alone, the preserved one's among them, is judged of every
+/// row of that operand when the other has rows, as on every row of their
+/// product, and the join is on its equalities still (hashed on them): a
+/// row it is not true of matches none, its error is raised though the row
+/// matches nothing by its keys, and none is raised when the other operand
+/// is empty. LEFT, RIGHT and FULL joins, read by batches and row by row.
+#[test]
+fn a_raising_on_conjunct_of_one_operand_is_judged_of_its_rows() {
+    let db = with_few();
+    let s = db.session("P");
+    let lonely = ["1000,NULL", "4,4", "8,NULL", "8,NULL", "NULL,NULL"];
+    let own = "AND 100 / (E.K - 7) < 1";
+    for query in [
+        format!("SELECT E.K, S.K FROM E LEFT JOIN S ON E.K = S.K {own}"),
+        format!("SELECT E.K, S.K FROM S RIGHT JOIN E ON E.K = S.K {own}"),
+    ] {
+        assert_eq!(both_ways(&s, &query), (lonely.map(String::from).to_vec(), lonely.map(String::from).to_vec()), "{query}");
+        let plan = s.explain(&query, &Params::new()).unwrap();
+        assert!(plan.contains("(hashed on "), "{query}: {plan}");
+    }
+    let full = format!("SELECT E.K, S.K FROM E FULL JOIN S ON E.K = S.K {own} AND S.K / (S.K - 300) > -1");
+    let (batched, by_rows) = both_ways(&s, &full);
+    assert_eq!((batched.len(), batched.contains(&"4,4".to_owned())), (304, true), "{batched:?}");
+    assert_eq!(batched, by_rows);
+    // Errors of rows no row of the other operand matches by its keys.
+    let raising = [
+        "SELECT E.K FROM E LEFT JOIN S ON E.K = S.K AND 100 / (E.K - 1000) < 1",
+        "SELECT E.K FROM S RIGHT JOIN E ON E.K = S.K AND 100 / (E.K - 1000) < 1",
+        "SELECT E.K FROM E FULL JOIN S ON E.K = S.K AND 100 / (S.K - 200) < 1",
+        "SELECT E.K FROM E FULL JOIN S ON E.K = S.K AND 100 / (E.K - 1000) < 1 AND 100 / (S.K - 200) < 1",
+    ];
+    for query in raising {
+        assert_eq!(rows(&s, query), Err(Code::Data), "{query}");
+    }
+    // None of an operand when the other is empty.
+    s.run("DELETE FROM E").unwrap();
+    assert_eq!(rows(&s, raising[2]).map(|r| r.len()), Ok(300));
+    s.run("DELETE FROM S").unwrap();
+    s.run("INSERT INTO E (K) VALUES (1000)").unwrap();
+    for query in raising {
+        assert_eq!(rows(&s, query), Ok(vec!["1000".to_owned()]), "{query}");
+    }
 }
 
 /// Verifies: [X3.135-1986 §8.3 GR3b]; [DESIGN] RULES.md D34: the index

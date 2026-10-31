@@ -19,7 +19,8 @@ pub const PUSH_FILTER_INTO_OUTER_JOIN: &str = "push_filter_into_outer_join";
 ///
 /// * A WHERE conjunct over the preserved operand's columns alone, of a LEFT
 ///   or RIGHT join, keeps the rows of the join made from rows of that
-///   operand it keeps: the same, filtered first.
+///   operand it keeps: the same, filtered first; unless the ON condition
+///   can raise an error, as it is then evaluated on fewer rows.
 /// * A WHERE conjunct over the other operand's columns alone that is not
 ///   true when they are null keeps none of the rows a preserved operand
 ///   gives with nulls: the join is the inner join, or, of a FULL join, the
@@ -37,8 +38,9 @@ pub const PUSH_FILTER_INTO_OUTER_JOIN: &str = "push_filter_into_outer_join";
 /// applied to every row of the product of the operands [§7.5 GR1c], so
 /// such a conjunct is evaluated on every row of its operand when the other
 /// has a row, and on none when it has none, as over the guard. One of the
-/// preserved operand's columns stays, keeping the join from its keys: its
-/// operand's rows are all kept, so no filter of them is its.
+/// preserved operand's columns stays: its operand's rows are all kept, so
+/// no filter of them is its; the join judges it of each of that operand's
+/// rows itself, still on its keys (`physical/join.rs`).
 pub struct PushFilterIntoOuterJoin;
 
 impl Rule for PushFilterIntoOuterJoin {
@@ -53,7 +55,9 @@ impl Rule for PushFilterIntoOuterJoin {
                     return None;
                 }
                 let join = Join { kind: *kind, on, left, right };
-                join.simplified(cond).or_else(|| join.preserved_pushed(cond))
+                // An ON that can raise is applied to every row of the
+                // product [§7.5 GR1c]: the preserved operand is not filtered first.
+                join.simplified(cond).or_else(|| (!on.can_raise()).then(|| join.preserved_pushed(cond)).flatten())
             }
             LogicalPlan::OuterJoin { kind, cond: on, left, right } => Join { kind: *kind, on, left, right }.on_pushed(),
             LogicalPlan::Scan { .. }

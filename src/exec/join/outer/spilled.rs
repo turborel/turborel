@@ -24,6 +24,7 @@ use super::super::super::{RowIter, failed};
 use super::super::key;
 use super::{PLACE_BYTES, Spec, chunked};
 use crate::error::{Code, Result, SqlError};
+use crate::logical::Cond;
 use crate::spill::{Records, SpillRun, bucket_key, row_bytes};
 use crate::storage::Row;
 use crate::value::Bucket;
@@ -52,28 +53,51 @@ pub(super) struct Sources {
 fn partitioned(left: RowIter, (held, rest): (Vec<Row>, RowIter), spec: &Spec, work: &mut Work) -> Result<RowIter> {
     let parts = Parts::new(spec, work)?;
     let (rights, lonely_right) = parts.rights(held.into_iter().map(Ok).chain(rest), spec, work)?;
-    let (lefts, lonely_left) = parts.lefts(left, spec, work)?;
-    let mut sources = Sources { left: vec![lonely_left.into_records()?], right: vec![lonely_right.into_records()?] };
+    let (lefts, lonely_left, any_left) = parts.lefts(left, spec, work)?;
+    // The right's own condition judged of each of its rows as the left has
+    // one [ISO/IEC 9075:1992 §7.5 GR1c].
+    let judged = spec.own.1.as_ref().filter(|_| any_left);
+    let lonely_right = alone_rights(lonely_right.into_records()?, (spec, judged), work)?;
+    let mut sources = Sources { left: vec![lonely_left.into_records()?], right: vec![lonely_right] };
     for ((right, bytes), probes) in rights.into_iter().zip(lefts) {
-        pair((right, bytes, probes), (spec, 0), &mut sources, work)?;
+        pair((right, bytes, probes), (spec, judged, 0), &mut sources, work)?;
     }
     let left_rows = merge_all(sources.left, work)?;
     let right_rows = merge_all(sources.right, work)?;
     Ok(Box::new(left_rows.chain(right_rows).map(|r| r.map(|(_, row)| row))))
 }
 
+/// The right operand's numbered rows of a null key, `records`, each after
+/// nulls if the right is preserved, in a run of `work`; the right's own
+/// condition, `judged` if the left has a row, judged of each, though such
+/// a row matches nothing.
+fn alone_rights(records: Records, (spec, judged): (&Spec, Option<&Cond>), work: &mut Work) -> Result<Records> {
+    let mut out = work.run()?;
+    for record in records {
+        let (n, row) = unnumbered(&record?, work.types())?;
+        if judged.is_some() {
+            spec.right_may_match(&row)?;
+        }
+        if spec.kind.keeps_right() {
+            out.push(&numbered(n, &spec.right_alone(&row)))?;
+        }
+    }
+    out.into_records()
+}
+
 /// Joins the right partition `right`, of `bytes`, with its left partition
-/// `probes`, at `depth` from the first, their rows added to `sources`: the
-/// pair partitioned again if the right outgrows the work area and the
-/// depth allows, else joined a part of the right at a time.
+/// `probes`, at `depth` from the first, their rows added to `sources`, the
+/// right's own condition `judged` of each of its rows, if given: the pair
+/// partitioned again if the right outgrows the work area and the depth
+/// allows, else joined a part of the right at a time.
 fn pair(
     (right, bytes, probes): (Box<dyn SpillRun>, usize, Box<dyn SpillRun>),
-    (spec, depth): (&Spec, usize),
+    (spec, judged, depth): (&Spec, Option<&Cond>, usize),
     sources: &mut Sources,
     work: &mut Work,
 ) -> Result<()> {
     if bytes <= work.limit() || depth >= work.depth() {
-        return chunked::joined((right.into_records()?, probes), spec, sources, work);
+        return chunked::joined((right.into_records()?, probes), (spec, judged), sources, work);
     }
     let parts = Parts::new(spec, work)?;
     let rights = parts.split(right.into_records()?, (spec, true), work)?;
@@ -81,7 +105,7 @@ fn pair(
     let shrank = rights.iter().all(|(_, b)| *b < bytes);
     let lefts = parts.split(probes.into_records()?, (spec, false), work)?;
     for ((sub, sub_bytes), sub_probes) in rights.into_iter().zip(lefts.into_iter().map(|(run, _)| run)) {
-        pair((sub, sub_bytes, sub_probes), (spec, if shrank { depth.saturating_add(1) } else { usize::MAX }), sources, work)?;
+        pair((sub, sub_bytes, sub_probes), (spec, judged, if shrank { depth.saturating_add(1) } else { usize::MAX }), sources, work)?;
     }
     Ok(())
 }
@@ -113,8 +137,8 @@ impl Parts {
     }
 
     /// The right operand `rows`, numbered, in partitions, each with the
-    /// bytes its rows take held in memory; and, of a preserved right, its
-    /// rows with a null key, after nulls.
+    /// bytes its rows take held in memory; and, of a preserved right or
+    /// one with a condition of its own, its rows with a null key.
     fn rights(&self, rows: impl Iterator<Item = Result<Row>>, spec: &Spec, work: &mut Work) -> Result<Partitioned> {
         let mut runs = self.runs(work)?;
         let mut lonely = work.run()?;
@@ -127,8 +151,8 @@ impl Parts {
                     run.push(&numbered(n, &row))?;
                 }
                 None => {
-                    if spec.kind.keeps_right() {
-                        lonely.push(&numbered(n, &spec.right_alone(&row)))?;
+                    if spec.kind.keeps_right() || spec.own.1.is_some() {
+                        lonely.push(&numbered(n, &row))?;
                     }
                 }
             }
@@ -136,14 +160,20 @@ impl Parts {
         Ok((runs, lonely))
     }
 
-    /// The left operand `rows`, numbered, in partitions; and, of a
-    /// preserved left, its rows with a null key, with nulls.
+    /// The left operand `rows`, numbered, in partitions; of a preserved
+    /// left, its rows with a null key or not matched as their own condition
+    /// is not true of them, with nulls; and whether it had a row. The right
+    /// has rows, as it outgrew the work area, so the left's own condition
+    /// is judged of each [ISO/IEC 9075:1992 §7.5 GR1c].
     fn lefts(&self, rows: RowIter, spec: &Spec, work: &mut Work) -> Result<Lefts> {
         let mut runs = self.runs(work)?;
         let mut lonely = work.run()?;
+        let mut any = false;
         for (n, r) in (0_u64..).zip(rows) {
             let row = r?;
-            match key(&row, spec.keys.iter().map(|k| k.0))? {
+            any = true;
+            let keyed = if spec.left_may_match(&row)? { key(&row, spec.keys.iter().map(|k| k.0))? } else { None };
+            match keyed {
                 Some(b) => runs.get_mut(self.of(&b)).ok_or_else(lost)?.0.push(&numbered(n, &row))?,
                 None => {
                     if spec.kind.keeps_left() {
@@ -152,7 +182,7 @@ impl Parts {
                 }
             }
         }
-        Ok((runs.into_iter().map(|(run, _)| run).collect(), lonely))
+        Ok((runs.into_iter().map(|(run, _)| run).collect(), lonely, any))
     }
 
     /// The numbered rows of a partition, `records`, of the right operand
@@ -177,8 +207,9 @@ impl Parts {
 /// null key.
 type Partitioned = (Vec<(Box<dyn SpillRun>, usize)>, Box<dyn SpillRun>);
 
-/// The left operand's partitions, and its rows of a null key.
-type Lefts = (Vec<Box<dyn SpillRun>>, Box<dyn SpillRun>);
+/// The left operand's partitions, its rows that match nothing, and
+/// whether it had a row.
+type Lefts = (Vec<Box<dyn SpillRun>>, Box<dyn SpillRun>, bool);
 
 /// The error of a partition not as it was written.
 pub(super) fn lost() -> SqlError {

@@ -20,6 +20,7 @@ use super::super::key;
 use super::spilled::{Sources, lost};
 use super::{PLACE_BYTES, Spec};
 use crate::error::Result;
+use crate::logical::Cond;
 use crate::spill::{Records, SpillRun, row_bytes};
 use crate::storage::Row;
 use crate::value::Bucket;
@@ -31,12 +32,18 @@ const UNMATCHED: u8 = 0;
 
 /// Joins the numbered rows of a right partition, `right`, with those of
 /// its left partition, `probes`, a part of `right` at a time, as `spec`
-/// says, their rows added to `sources`.
-pub(super) fn joined((right, mut probes): (Records, Box<dyn SpillRun>), spec: &Spec, sources: &mut Sources, work: &mut Work) -> Result<()> {
+/// says, the right's own condition `judged` of each of its rows, if
+/// given, their rows added to `sources`.
+pub(super) fn joined(
+    (right, mut probes): (Records, Box<dyn SpillRun>),
+    (spec, judged): (&Spec, Option<&Cond>),
+    sources: &mut Sources,
+    work: &mut Work,
+) -> Result<()> {
     let mut right = right.peekable();
     let mut before: Option<Records> = None;
     loop {
-        let mut part = Part::of(&mut right, &spec.keys, work)?;
+        let mut part = Part::of(&mut right, (spec, judged.is_some()), work)?;
         let last = right.peek().is_none();
         let mut out = work.run()?;
         let mut flags = if last { None } else { Some(work.run()?) };
@@ -75,16 +82,20 @@ struct Part {
 
 impl Part {
     /// The next rows of `right`, numbered rows hashed on their columns of
-    /// `keys`, as many as `work` holds, and one at least.
-    fn of(right: &mut Peekable<Records>, keys: &[(usize, usize)], work: &Work) -> Result<Part> {
+    /// `spec`'s keys, as many as `work` holds, and one at least; if
+    /// `judged`, those the right's own condition is not true of held
+    /// unhashed, so they match none.
+    fn of(right: &mut Peekable<Records>, (spec, judged): (&Spec, bool), work: &Work) -> Result<Part> {
         let mut part = Part { rows: Vec::new(), buckets: HashMap::new(), matched: Vec::new() };
         let mut bytes = 0_usize;
         while bytes <= work.limit() {
             let Some(record) = right.next() else { break };
             let (n, row) = unnumbered(&record?, work.types())?;
             bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
-            let b = key(&row, keys.iter().map(|k| k.1))?.ok_or_else(lost)?;
-            part.buckets.entry(b).or_default().push(part.rows.len());
+            let b = key(&row, spec.keys.iter().map(|k| k.1))?.ok_or_else(lost)?;
+            if !judged || spec.right_may_match(&row)? {
+                part.buckets.entry(b).or_default().push(part.rows.len());
+            }
             part.rows.push((n, row));
             part.matched.push(false);
         }

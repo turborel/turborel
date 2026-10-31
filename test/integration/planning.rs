@@ -485,6 +485,10 @@ fn conditions_move_into_outer_joins_7_5() {
     let raising = format!("{lj} WHERE 1 / (T.ID - 2) > 0");
     assert_eq!(with_and_without_rules(&db, &raising), [Err(Code::Data), Err(Code::Data)]);
     assert!(!moved(&raising), "D15");
+    // Regression test (R-TEST-7): the WHERE conjunct was moved into T, so
+    // the ON, which can raise, was not applied to T's row 2 [§7.5 GR1c].
+    let raising_on = "SELECT T.ID FROM T LEFT JOIN U ON T.ID = U.ID AND 1 / (T.ID - 2) > 0 WHERE T.ID <> 2";
+    assert_eq!(with_and_without_rules(&db, raising_on), [Err(Code::Data), Err(Code::Data)]);
 }
 
 /// A database with S.T of `rows` rows: K a key, A and B both K mod 10, with

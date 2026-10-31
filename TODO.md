@@ -166,12 +166,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Conditions that can raise an error, of an outer join's preserved
-  operand** (D15): of an outer join's ON, a conjunct that can raise an
-  error and reads the preserved operand's columns alone keeps the join
-  from its equalities, every pair judged: it is evaluated on each of that
-  operand's rows when the other has rows, which a join on keys would
-  need to evaluate once a row, apart from its matches.
 - **Index nested-loop joins, further** (D35): RIGHT outer joins, the
   right operand preserved, probing the left's table; a right operand that
   reads its table through a projection, as a view's does; and the

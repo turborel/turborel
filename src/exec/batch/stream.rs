@@ -58,7 +58,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     match plan {
         Plan::SeqScan { table, columns, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
         Plan::Filter { input, .. } => layout(input, db),
-        Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, .. } => {
+        Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, own: None, .. } => {
             let (mut columns, left_width) = layout(left, db)?;
             let (right_columns, right_width) = layout(right, db)?;
             columns.extend(right_columns.iter().map(|&c| c.saturating_add(left_width)));
@@ -137,7 +137,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::SeqScan { table, order, .. } => order.is_empty() && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
-        Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, .. } => {
+        Plan::HashJoin { left, right, .. } | Plan::OuterJoin { kind: OuterJoin::Left, left, right, cond: None, own: None, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
         }
         Plan::IndexScan { .. }
@@ -181,7 +181,9 @@ fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
             Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
         }
         Plan::HashJoin { left, right, keys, .. } => joined((*left, *right, keys), Kind::Inner, db, tx),
-        Plan::OuterJoin { kind: OuterJoin::Left, left, right, keys, cond: None, .. } => joined((*left, *right, keys), Kind::Left, db, tx),
+        Plan::OuterJoin { kind: OuterJoin::Left, left, right, keys, cond: None, own: None, .. } => {
+            joined((*left, *right, keys), Kind::Left, db, tx)
+        }
         Plan::Project { exprs, input, .. } => {
             let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
             let picks = picked(&exprs, &columns).ok_or_else(|| crate::exec::broken("a projection that gives no batches"))?;

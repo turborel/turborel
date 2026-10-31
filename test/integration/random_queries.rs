@@ -108,17 +108,25 @@ impl Scope {
 }
 
 /// A `<from clause>` and the scope it makes: one table, a product, an
-/// inner, outer or full join, or three tables.
+/// inner, outer or full join, one whose ON divides by one operand's
+/// column, or three tables.
 fn from_clause(rng: &mut Rng) -> (String, Scope) {
     let (x, y, z) = (rng.pick(&TABLES), rng.pick(&TABLES), rng.pick(&TABLES));
     let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect();
     let on = |rng: &mut Rng| format!("X.{0} = Y.{0}", rng.pick(&NUMBERS));
-    let (from, scope) = match rng.below(7_usize) {
+    let (from, scope) = match rng.below(8_usize) {
         0 | 1 => (format!("{x} X"), names(&["X"])),
         2 => (format!("{x} X, {y} Y"), names(&["X", "Y"])),
         3 => (format!("{x} X JOIN {y} Y ON {}", on(rng)), names(&["X", "Y"])),
         4 => (format!("{x} X {} JOIN {y} Y ON {}", rng.pick(&["LEFT", "RIGHT", "FULL"]), on(rng)), names(&["X", "Y"])),
         5 => (format!("{x} X LEFT JOIN {y} Y ON {} AND Y.N > {}", on(rng), rng.number()), names(&["X", "Y"])),
+        6 => {
+            let (kind, own) = (rng.pick(&["LEFT", "RIGHT", "FULL"]), rng.pick(&["X", "Y"]));
+            // As `Scope::divisor`: at times N, zero now and then.
+            let divisor = if rng.chance(15_usize) { format!("{own}.N") } else { format!("({own}.G + 1)") };
+            let on = format!("{} AND {own}.K / {divisor} > {}", on(rng), rng.number());
+            (format!("{x} X {kind} JOIN {y} Y ON {on}"), names(&["X", "Y"]))
+        }
         _ => (format!("{x} X JOIN {y} Y ON {} JOIN {z} Z ON Y.G = Z.G", on(rng)), names(&["X", "Y", "Z"])),
     };
     (from, Scope { names: scope, depth: 0 })

@@ -9,8 +9,12 @@
 //! held in memory has a flag for each row, whether it matched, counted in
 //! the work area with it; one in a run has none, and of a preserved right,
 //! the left rows are kept in a run too, so each right row is tried again
-//! with every left row once the left is read. Split from exec/join.rs
-//! (RULES.md R-SIZE-2).
+//! with every left row once the left is read. Of a join on keys, an
+//! operand's own condition, its ON conjuncts that can raise an error of
+//! its columns alone, is judged of each of its rows once the other is
+//! known to have one, as on every row of their product [§7.5 GR1c], and a
+//! row it is not true of matches none (RULES.md D15). Split from
+//! exec/join.rs (RULES.md R-SIZE-2).
 
 mod chunked;
 mod spilled;
@@ -43,6 +47,11 @@ pub(super) struct Spec {
     pub(super) keys: Vec<(usize, usize)>,
     /// The rest of the `<join condition>`, over the pair's columns.
     pub(super) cond: Option<Cond>,
+    /// Its conjuncts that can raise an error of the left's columns alone
+    /// and of the right's, each over its operand's own: each judged of
+    /// every row of its operand when the other has a row, a row it is not
+    /// true of matching none (`Plan::OuterJoin`, RULES.md D15).
+    pub(super) own: (Option<Cond>, Option<Cond>),
     /// The degrees of the left and right operands, the widths of the nulls.
     pub(super) widths: (usize, usize),
     pub(super) runner: Runner,
@@ -66,6 +75,18 @@ impl Spec {
         Ok(Some(joined))
     }
 
+    /// Whether left row `l` may match a right row: its own condition, if
+    /// it has one, true of it. Asked only when the right has a row.
+    pub(super) fn left_may_match(&self, l: &Row) -> Result<bool> {
+        may_match(self.own.0.as_ref(), l, &self.runner)
+    }
+
+    /// Whether right row `r` may match a left row: its own condition, if
+    /// it has one, true of it. Asked only when the left has a row.
+    pub(super) fn right_may_match(&self, r: &Row) -> Result<bool> {
+        may_match(self.own.1.as_ref(), r, &self.runner)
+    }
+
     /// Left row `l` with nulls for a right row.
     pub(super) fn left_alone(&self, l: &Row) -> Row {
         l.iter().cloned().chain(std::iter::repeat_n(Value::Null, self.widths.1)).collect()
@@ -77,16 +98,31 @@ impl Spec {
     }
 }
 
+/// Whether `own`, an operand's own condition, if there is one, is true of
+/// its row `row` [ISO/IEC 9075:1992 §7.5 GR1c].
+fn may_match(own: Option<&Cond>, row: &Row, runner: &Runner) -> Result<bool> {
+    match own {
+        Some(c) => Ok(eval_cond(c, row, runner)? == Truth::True),
+        None => Ok(true),
+    }
+}
+
 /// [ISO/IEC 9075:1992 §7.5 GR1c, GR2-GR5] The outer join `plan`. The right
 /// operand is read first, and the left only if it succeeded. Never inlined
 /// into `execute`, whose frame every level of a plan adds to the stack
 /// (RULES.md R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::OuterJoin { kind, left, right, keys, cond, widths, .. } = plan else {
+    let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } = plan else {
         return failed(SqlError::new(Code::Api, "[DESIGN] an outer join is not one"));
     };
-    let spec = Spec { kind, keys, cond, widths, runner: Runner::new(db, tx) };
+    // An operand's own conditions are judged before its rows are matched
+    // by keys; with none, every pair is judged, all of its condition.
+    if keys.is_empty() && own.is_some() {
+        return failed(SqlError::new(Code::Api, "[DESIGN] an outer join on no keys has an operand's own condition"));
+    }
+    let own = own.map_or((None, None), |own| *own);
+    let spec = Spec { kind, keys, cond, own, widths, runner: Runner::new(db, tx) };
     let mut work = Work::of(db, tx);
     let rows = execute(*right, db, tx);
     if spec.keys.is_empty() {
@@ -191,6 +227,11 @@ struct OuterRows {
     left: RowIter,
     right: Side,
     matched: Matched,
+    /// The rows of the right operand.
+    right_rows: usize,
+    /// Of each right row, once the left has given a row, whether its own
+    /// condition bars it from matching; none until then, or with none.
+    barred: Option<Vec<bool>>,
     /// The left row being paired, the right rows it is still to be tried
     /// with, and whether one matched it.
     current: Option<(Row, Numbered, bool)>,
@@ -208,7 +249,7 @@ impl OuterRows {
             Side::Scanned(Rescanned::Spilled(..)) => Matched::Lefts(None),
             Side::Scanned(Rescanned::Held(_)) | Side::Hashed(_) => Matched::Flags(vec![false; count]),
         };
-        OuterRows { spec, left, right, matched, current: None, tail: None, work }
+        OuterRows { spec, left, right, matched, right_rows: count, barred: None, current: None, tail: None, work }
     }
 
     /// The next row of the left row being paired, if it gives one more;
@@ -216,6 +257,9 @@ impl OuterRows {
     fn paired(&mut self) -> Result<Option<Row>> {
         let Some((l, candidates, found)) = &mut self.current else { return Ok(None) };
         while let Some((n, r)) = candidates.next().transpose()? {
+            if self.barred.as_ref().and_then(|b| b.get(n)).copied().unwrap_or(false) {
+                continue;
+            }
             if let Some(joined) = self.spec.joined(l, &r)? {
                 *found = true;
                 if let Matched::Flags(flags) = &mut self.matched
@@ -243,8 +287,28 @@ impl OuterRows {
             };
             run.push(&row_record(&l))?;
         }
-        let candidates = self.right.candidates(&l, &self.spec.keys)?;
+        self.bar()?;
+        // Its own condition judged of it as the right has a row [§7.5 GR1c].
+        let candidates = if self.right_rows > 0 && self.spec.left_may_match(&l)? {
+            self.right.candidates(&l, &self.spec.keys)?
+        } else {
+            Box::new(std::iter::empty())
+        };
         self.current = Some((l, candidates, false));
+        Ok(())
+    }
+
+    /// Judges the right operand's own condition of each of its rows, once,
+    /// as the left gives its first row [ISO/IEC 9075:1992 §7.5 GR1c].
+    fn bar(&mut self) -> Result<()> {
+        if self.barred.is_some() || self.spec.own.1.is_none() {
+            return Ok(());
+        }
+        let mut barred = Vec::with_capacity(self.right_rows);
+        for numbered in self.right.all()? {
+            barred.push(!self.spec.right_may_match(&numbered?.1)?);
+        }
+        self.barred = Some(barred);
         Ok(())
     }
 
@@ -298,5 +362,35 @@ impl Iterator for OuterRows {
 
     fn next(&mut self) -> Option<Result<Row>> {
         self.step().transpose()
+    }
+}
+
+// Unit tests: plans the executor cannot run (RULES.md R-TEST-1, R-ERR-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::MemoryCatalog;
+    use crate::txn::NO_TRANSACTION;
+
+    /// Verifies: [DESIGN] RULES.md D15: an outer join on no keys whose
+    /// operand has a condition of its own, which only a join on keys
+    /// judges apart from its pairs, yields SQLCODE -910 rather than
+    /// leaving it unjudged (RULES.md R-ERR-1).
+    #[test]
+    fn an_operands_own_condition_needs_keys() {
+        let st = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
+        let none = || Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });
+        let plan = Plan::OuterJoin {
+            kind: OuterJoin::Left,
+            left: none(),
+            right: none(),
+            keys: Vec::new(),
+            cond: None,
+            own: Some(Box::new((Some(Cond::Const(Truth::True)), None))),
+            widths: (0, 0),
+            detail: String::new(),
+        };
+        let code = outer(plan, &st, NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
+        assert_eq!(code, Some(Code::Api));
     }
 }
