@@ -23,6 +23,7 @@ mod ahead;
 mod format;
 mod free;
 mod known;
+mod live;
 mod overflow;
 mod sync;
 
@@ -33,8 +34,9 @@ use std::sync::{Arc, Condvar, Mutex};
 pub use format::FORMAT_VERSION;
 use format::{KIND_DATA, KIND_NEW, KIND_TRUNK, META_AT, Meta, NONE, PAGE_NUMBER_BYTES};
 use free::FreeList;
+use live::Encoded;
 
-use super::encoding::{Encoding, Pipeline};
+use super::encoding::{Encoding, LivePipeline, Pipeline};
 use super::io::{DiskFile, Durability, FileSystem, OpenMode, begin_file};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::{HashFunction, HashId};
@@ -136,8 +138,8 @@ pub struct Pager {
     file: Box<dyn DiskFile>,
     path: PathBuf,
     hash: Arc<dyn HashFunction>,
-    /// The encodings every page's content passes through.
-    pipeline: Pipeline,
+    /// The encodings every page's content passes through (`live.rs`).
+    pipeline: Encoded,
     page_size: usize,
     free: Mutex<FreeList>,
     /// Pages written to the file: past them a page reads as new.
@@ -167,7 +169,9 @@ impl Pager {
     /// \[DESIGN\] As `create`, its creation not made durable: a scratch
     /// file, as a spill area's is, that nothing reads once its maker is
     /// gone, and that a crash leaves among the temporary files cleared as
-    /// the database opens.
+    /// the database opens. Its pages pass through the pipeline `pipeline`
+    /// holds as each is written (RULES.md D48); its header names the one
+    /// it holds now.
     ///
     /// # Errors
     ///
@@ -176,10 +180,13 @@ impl Pager {
         fs: &dyn FileSystem,
         path: &Path,
         hash: Arc<dyn HashFunction>,
-        pipeline: Pipeline,
+        pipeline: &Arc<LivePipeline>,
         page_size: u32,
     ) -> Result<Pager> {
-        Pager::made(fs, path, hash, (pipeline, page_size), false)
+        let (live, first) = Encoded::live(pipeline);
+        let mut pager = Pager::made(fs, path, hash, (first, page_size), false)?;
+        pager.pipeline = live;
+        Ok(pager)
     }
 
     /// `create`'s work, made durable if `durable`.
@@ -198,7 +205,7 @@ impl Pager {
         })?;
         let file = begin_file(fs, path, &format::header(&*hash, &pipeline, page_size, size), durable)?;
         let mut pager = Pager::new(file, path, hash, size);
-        pager.pipeline = pipeline;
+        pager.pipeline = Encoded::Fixed(pipeline);
         Ok(pager)
     }
 
@@ -241,7 +248,7 @@ impl Pager {
             file.sync(Durability::Full)?;
         }
         let mut pager = Pager::new(file, path, hash, size);
-        pager.pipeline = pipeline;
+        pager.pipeline = Encoded::Fixed(pipeline);
         *lock_builtin(&pager.free) = FreeList::new(meta.pages);
         lock_builtin(&pager.sync_state).sequence = meta.sequence;
         pager.on_file.store(on_file, Ordering::Release);
@@ -256,7 +263,7 @@ impl Pager {
             file,
             path: path.to_path_buf(),
             hash,
-            pipeline: Pipeline::none(),
+            pipeline: Encoded::Fixed(Pipeline::none()),
             page_size,
             free: Mutex::new(FreeList::new(0)),
             on_file: AtomicU64::new(0),

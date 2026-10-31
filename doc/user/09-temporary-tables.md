@@ -87,7 +87,8 @@ transaction of the session first reads or writes the table. What the
 pool does not hold is written to a spill file in the database's `tmp/`
 directory, so a session's rows may be many times the budget. The file
 is encrypted while the database encrypts anything, as other spill files
-are. It is removed as ON COMMIT DELETE ROWS empties the rows and when
+are: a page written once anything is encrypted is, though the file was
+made before. It is removed as ON COMMIT DELETE ROWS empties the rows and when
 the session ends; one a crash leaves is removed as the database opens.
 No change to the rows is logged, and none is recovered. A database
 kept in memory keeps the file in memory too, of its budget.

@@ -222,3 +222,39 @@ fn older_versions_of_an_instance_spill_to_its_file() {
     drop(s);
     assert_eq!(spill_files(&dir).0, 0, "the session's end removes its file");
 }
+
+/// Verifies: [EXTENSION] RULES.md D48, D49: an instance whose file was
+/// made while nothing was encrypted, written on after another session's
+/// ALTER TABLE encrypts a table, writes its pages through the encryption
+/// from then on, in the same file, its undo pages too, so the rows
+/// written after, and their older versions, never reach the disk in the
+/// clear; every row reads back, an UPDATE rolled back.
+///
+/// Regression test (R-TEST-7): the file kept the encodings it was made
+/// with, its pages written in the clear as long as the instance lived.
+#[test]
+fn an_instance_made_before_a_table_is_encrypted_writes_encrypted_after() {
+    let scratch = Scratch::new("temporary-spills-encrypted-after");
+    let dir = scratch.path("db");
+    let db = open(&dir, true);
+    db.schema("CREATE SCHEMA AUTHORIZATION E CREATE TABLE P (K INTEGER)").unwrap();
+    let s = db.session("S");
+    fill(&s, "T");
+    exec(&s, "COMMIT WORK").unwrap();
+    assert!(holds(&bytes_of(&dir.join("tmp"), ""), "plain 0"), "nothing encrypted: as it is");
+    exec(&db.session("E"), "ALTER TABLE P SET (ENCODINGS = 'test scramble')").unwrap();
+    let late = |k: u32| format!("late {k:05} ").repeat(80);
+    let values: Vec<String> = (ROWS..ROWS * 2).map(|k| format!("({k}, 0, '{}')", late(k))).collect();
+    for chunk in values.chunks(200) {
+        exec(&s, &format!("INSERT INTO T VALUES {}", chunk.join(", "))).unwrap();
+    }
+    exec(&s, "COMMIT WORK").unwrap();
+    assert_eq!(spill_files(&dir).0, 1, "the same file");
+    assert!(!holds(&bytes_of(&dir.join("tmp"), ""), "late "), "written after: encrypted");
+    exec(&s, "UPDATE T SET S = 'changed' WHERE K >= 4000").unwrap();
+    assert!(!holds(&bytes_of(&dir.join("tmp"), ""), "late "), "older versions in the undo pages: encrypted");
+    exec(&s, "ROLLBACK WORK").unwrap();
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T"), "8000");
+    assert_eq!(s_of(&s, "T", 0), [text(0).trim_end()]);
+    assert_eq!(s_of(&s, "T", 7999), [late(7999).trim_end()]);
+}

@@ -4,8 +4,10 @@
 //! applies them in order (compress, then encrypt), reading in reverse. The
 //! block manager encodes each block's payload, the pager each page's whole
 //! content; both record the pipeline's ids in their file's header, so a
-//! file is always read through the pipeline it was written with. An empty
-//! pipeline, the default, costs nothing.
+//! file is always read through the pipeline it was written with. A scratch
+//! file's pages take the pipeline a `LivePipeline` holds as each is
+//! written, each naming its own. An empty pipeline, the default, costs
+//! nothing.
 //!
 //! An encoding may change the length of what it encodes; both components
 //! store any length. One that does not help a particular input (data that
@@ -24,7 +26,7 @@
 
 use std::borrow::Cow;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use crate::error::{Code, Result, SqlError};
 
@@ -258,6 +260,38 @@ impl Pipeline {
             current = Cow::Owned(next);
         }
         Ok(current)
+    }
+}
+
+/// \[DESIGN\] A pipeline changed while files are written through it: a
+/// scratch file (`Pager::create_scratch`) takes the one it holds as each
+/// page is written, so a change reaches files made before it, as a spill
+/// area's made before a table is encrypted (RULES.md D48). Shared by those
+/// files and what changes it.
+#[derive(Default)]
+pub struct LivePipeline {
+    /// Its pipeline, and how many times it was set.
+    held: RwLock<(u64, Arc<Pipeline>)>,
+}
+
+impl LivePipeline {
+    /// The pipeline it holds.
+    pub fn get(&self) -> Pipeline {
+        Pipeline::clone(&self.current().1)
+    }
+
+    /// The pipeline it holds, and how many times it was set before: what a
+    /// file compares with the last it took, to take it again only when it
+    /// changed.
+    pub fn current(&self) -> (u64, Arc<Pipeline>) {
+        let held = self.held.read().unwrap_or_else(PoisonError::into_inner);
+        (held.0, Arc::clone(&held.1))
+    }
+
+    /// Holds `pipeline` from now on.
+    pub fn set(&self, pipeline: Pipeline) {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        *held = (held.0.wrapping_add(1), Arc::new(pipeline));
     }
 }
 

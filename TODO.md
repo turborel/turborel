@@ -204,10 +204,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
   matching row of each row changed (`db/integrity/actions.rs`).
 - **Spills, further:** SPILL.ENCODINGS compresses spill files (LZ4), off
   by default: on 2026-10-31 it ran from 17% slower to 45% faster, most
-  within 10%, on an SSD the system's cache kept up with; a disk slower
-  than the CPU may make it pay, to be measured there. An operator's spill
-  area made before a table is encrypted stays as it was until the
-  operator ends (a list that spills makes a new one), as D48 allows.
+  within 10%, on an SSD the system's cache kept up with. With each spill
+  write delayed 200 us (the faults file system, a temporary bench; reads
+  not delayed; the machine busy, spreads 10% to 180%), LZ4 ran 15% to
+  101% faster at 64 KiB (sort 24K to 43K rows/s, DISTINCT 44K to 88K,
+  hash join 24K to 42K) and 9% to 97% at 1 MiB; at 50 us, from 35%
+  slower (hash join, 64 KiB) to 84% faster. Whether to make it the
+  default, or a setting's choice by the disk, is to decide; a quiet
+  machine and a real slow disk would confirm the figures.
 - **Buffer pool's latch:** hits with one shared write measured 87.6M/s to
   151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27): four
   still read less than one, on the frame's latch. A reader-biased latch

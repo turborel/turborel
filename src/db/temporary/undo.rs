@@ -3,7 +3,7 @@
 //! pages of the instance's own scratch file (`db/temporary/pages.rs`), so
 //! they share its pool of MEMORY.WORK_BYTES reserved of the budget, go to
 //! the file as the pool evicts them, through the encodings spill files
-//! take, and are removed with it: never logged, never recovered. The undo
+//! take as each is written (RULES.md D48), and are removed with it: never logged, never recovered. The undo
 //! store over it (`engine/rows/undo.rs`) gathers versions in batches of a
 //! page's content, so a record is mostly one page. Split from
 //! db/temporary/storage.rs (RULES.md R-SIZE-2).

@@ -19,7 +19,9 @@
 //!              kind | 3 reserved | entries u32 | next page u64 | (start u64, count u64)*
 //! ```
 //!
-//! A data page's content is as the file's encoding pipeline left it. A data
+//! A data page's content is as the file's encoding pipeline left it; a
+//! scratch file's begins with a byte naming which of the pipelines it was
+//! written through did (`live.rs`). A data
 //! page lists the first `INLINE_EXTENTS` extents of its overflow
 //! itself, so most overflowing content needs no directory page; directories
 //! list the rest. A trunk lists free runs. `NONE` stands for no page. A body of all zeros, never

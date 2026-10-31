@@ -662,13 +662,20 @@ per table.**
   SPILL.ENCODINGS, as LZ4: none by default, as LZ4 was not clearly better
   where the disk keeps up. If the two exceed a pipeline's stages, only
   the encryption is kept.
-- **Spill generations.** An area keeps the encodings it was made with. A
-  list that spills (`SpillList`), as a transaction's changes, opens a new
-  area when they change (`WorkAreas::generation`): a table encrypted
-  mid-transaction gets later spills encrypted, earlier runs unchanged
-  until read or dropped. An operator's area is unchanged until it ends.
-  The data file's shadows hold pages as encoded, the undo store sealed
-  records.
+- **Spill changes.** A spill file's pages take the spill encodings in
+  use as each is written (`LivePipeline`, `disk/pager/live.rs`), so a
+  table encrypted while an area lives gets every later page encrypted:
+  - every holder alike: sort runs, partitions, tables, held rows, lists,
+    temporary tables' files and undo pages; no copy, no memory beyond
+    the area's;
+  - pages written before stay as they were until rewritten or freed;
+  - a page's content leads with a byte naming its pipeline, at most 256
+    a file, kept in memory: no later process reads spills;
+  - a pipeline of the same ids replaces the one before (an encoding's
+    output records what decoding needs);
+  - a provider plug-in writes so too (`Spill`'s contract).
+- **Shadows.** The data file's shadows hold pages as encoded, the undo
+  store sealed records.
 - **Checks.** Names are checked when the option is set: SQLCODE -103 if
   not registered, -910 if one refuses its argument (as a key the keyring
   lacks). A database missing an encoding a table names still opens; that
@@ -678,7 +685,10 @@ written here would be unreviewed; aws-lc-rs is already vetted for TLS,
 with a FIPS 140-3 build. What compresses well, or must be hidden, differs
 by table. Tables share one data file whose pages keep their slots
 whatever their encoded length, so the engine seals, not the pager; keys
-live outside the database, or encrypting it would hide nothing.
+live outside the database, or encrypting it would hide nothing. Spill
+files follow a change page by page: moving holders to new areas would
+copy their tables and still write the pages left in a pool in the
+clear; refusing to write would fail other sessions' statements.
 
 **D49. Temporary tables: each session's instance.**
 - **Definition.** A global or created local temporary table [ISO/IEC
@@ -696,7 +706,8 @@ live outside the database, or encrypting it would hide nothing.
   a buffer pool of the session's MEMORY.WORK_BYTES reserved of the
   budget (`db/temporary/pages.rs`). What the pool does not hold is
   written to the file, so an instance may outgrow the budget.
-  - The file takes the spill files' encodings (D48), fixed when made.
+  - The file takes the spill files' encodings (D48) as each page is
+    written.
   - It is removed as DELETE ROWS empties the instance, or the instance
     goes; a crash leaves it to be cleared at the next open (D56).
   - Older versions a transaction keeps go to an undo store over a log

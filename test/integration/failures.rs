@@ -138,7 +138,7 @@ fn a_file_half_made_is_removed() {
     let path = scratch.path("f");
     let make: [&dyn Fn() -> turborel::error::Result<()>; 3] = [
         &|| Pager::create(&*fs, &path, crc32c(), Pipeline::none(), PAGE).map(drop),
-        &|| Pager::create_scratch(&*fs, &path, crc32c(), Pipeline::none(), PAGE).map(drop),
+        &|| Pager::create_scratch(&*fs, &path, crc32c(), &Arc::default(), PAGE).map(drop),
         &|| BlockFile::create(&*fs, &path, crc32c(), Pipeline::none(), BlockOptions::default()).map(drop),
     ];
     for (n, made) in make.iter().enumerate() {

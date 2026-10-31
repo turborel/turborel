@@ -178,7 +178,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(defined(
         ("SPILL.ENCODINGS", Kind::Encodings, text("")),
         DATABASE,
-        "The encodings, as compression, the files of work areas made from now on pass through, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.",
+        "The encodings, as compression, the pages of work areas' files pass through as each is written from now on, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.",
     ));
     all.extend(switches());
     all.push(defined(

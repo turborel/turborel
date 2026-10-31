@@ -41,7 +41,7 @@ pub use paged::PagedSpill;
 pub use sort::sorted_records;
 
 use crate::bytes::Reader;
-use crate::disk::encoding::Pipeline;
+use crate::disk::encoding::{LivePipeline, Pipeline};
 use crate::disk::io::FileSystem;
 use crate::disk::memory::MemoryFileSystem;
 use crate::error::Result;
@@ -127,7 +127,9 @@ impl Batch {
 /// * `area` reserves `area.bytes` of `memory` for the area while it lives,
 ///   refusing with SQLCODE -918 if the budget cannot grant them, and holds
 ///   no more memory than that, whatever its tables and runs hold: what does
-///   not fit goes to storage, in files of `temp` if it keeps files.
+///   not fit goes to storage, in files of `temp` if it keeps files,
+///   written through the encodings `TempFiles::pipeline` gives as each
+///   part is written, of an area made before a change too (RULES.md D48).
 /// * Everything an area made is gone once the area and its tables and runs
 ///   are dropped.
 /// * Methods may be called from several threads at once; an area, a table
@@ -246,8 +248,6 @@ pub trait SpillRun: Send {
 pub struct WorkAreas {
     memory: Arc<MemoryBudget>,
     place: RwLock<(Arc<dyn Spill>, Arc<TempFiles>)>,
-    /// Counts the changes of its files' encodings (`generation`).
-    generation: AtomicU64,
 }
 
 impl WorkAreas {
@@ -256,7 +256,7 @@ impl WorkAreas {
     pub(crate) fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
-        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), generation: AtomicU64::new(0) }
+        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))) }
     }
 
     /// A new area as `area` asks, reserved of the budget.
@@ -280,15 +280,16 @@ impl WorkAreas {
     }
 
     /// Keeps the files of areas made from now on in `temp`, once the files
-    /// left there are removed (`TempFiles::clear`).
+    /// left there are removed (`TempFiles::clear`): their encodings the
+    /// ones before, shared, so a change reaches files made before too.
     ///
     /// # Errors
     ///
     /// SQLCODE -915 if they cannot be.
-    pub(crate) fn set_temp(&self, temp: TempFiles) -> Result<()> {
+    pub(crate) fn set_temp(&self, mut temp: TempFiles) -> Result<()> {
         temp.clear()?;
         let mut place = self.place.write().unwrap_or_else(PoisonError::into_inner);
-        *temp.pipeline.write().unwrap_or_else(PoisonError::into_inner) = place.1.pipeline();
+        temp.pipeline = Arc::clone(&place.1.pipeline);
         place.1 = Arc::new(temp);
         Ok(())
     }
@@ -311,23 +312,11 @@ impl WorkAreas {
         temp.clear()
     }
 
-    /// Writes the files of areas made from now on through `pipeline`
-    /// (`TempFiles::pipeline`), a new generation of them if its encodings
-    /// are not those before.
+    /// Writes the pages of areas' files through `pipeline` from now on
+    /// (`TempFiles::pipeline`): of areas made before too (RULES.md D48).
     pub(crate) fn set_encodings(&self, pipeline: Pipeline) {
-        let place = self.place.read().unwrap_or_else(PoisonError::into_inner);
-        let mut held = place.1.pipeline.write().unwrap_or_else(PoisonError::into_inner);
-        if held.ids() != pipeline.ids() {
-            self.generation.fetch_add(1, Ordering::AcqRel);
-        }
-        *held = pipeline;
-    }
-
-    /// \[DESIGN\] The generation of the encodings areas' files take, which
-    /// changes as they do (RULES.md D48): an area keeps its own, so one who
-    /// keeps an area long makes another when this changes (`SpillList`).
-    pub fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
+        let temp = Arc::clone(&self.place.read().unwrap_or_else(PoisonError::into_inner).1);
+        temp.pipeline.set(pipeline);
     }
 }
 
@@ -347,7 +336,7 @@ pub struct TempFiles {
     fs: Arc<dyn FileSystem>,
     dir: PathBuf,
     /// The encodings its files pass through (`WorkAreas::set_encodings`).
-    pipeline: RwLock<Pipeline>,
+    pipeline: Arc<LivePipeline>,
     /// Tells these files apart from other databases' of this process.
     prefix: String,
     next: AtomicU64,
@@ -360,7 +349,7 @@ impl TempFiles {
     /// Files in `dir` of `fs`.
     pub fn new(fs: Arc<dyn FileSystem>, dir: &Path) -> TempFiles {
         let prefix = format!("turborel-{}-{}", std::process::id(), MADE.fetch_add(1, Ordering::Relaxed));
-        TempFiles { fs, dir: dir.to_path_buf(), pipeline: RwLock::default(), prefix, next: AtomicU64::new(0) }
+        TempFiles { fs, dir: dir.to_path_buf(), pipeline: Arc::default(), prefix, next: AtomicU64::new(0) }
     }
 
     /// \[DESIGN\] The encodings its files are written through, as a spill
@@ -369,8 +358,18 @@ impl TempFiles {
     /// while the database encrypts anything, so what spills of an
     /// encrypted table, or of encrypted files, never reaches the disk in
     /// the clear.
+    ///
+    /// It changes while files are written: a provider writes each page, or
+    /// block, of a file it made before through the one it holds then, as
+    /// the built-in one does (`Pager::create_scratch`), so nothing reaches
+    /// the disk in the clear once anything is encrypted.
     pub fn pipeline(&self) -> Pipeline {
-        self.pipeline.read().unwrap_or_else(PoisonError::into_inner).clone()
+        self.pipeline.get()
+    }
+
+    /// The encodings its files pass through, as they change.
+    pub fn live_pipeline(&self) -> &Arc<LivePipeline> {
+        &self.pipeline
     }
 
     /// Its file system.

@@ -1,8 +1,8 @@
 //! \[DESIGN\] The built-in spill provider (`spill.rs`): an area is a temporary
 //! pager file of its own in a buffer pool of the area's size, reserved of
 //! the memory budget, so its pages are written to the file as the pool
-//! evicts them, through the encodings its temporary files are given
-//! (`TempFiles::pipeline`). Its tables are linear hash tables (`engine/hash.rs`); a
+//! evicts them, through the encodings its temporary files are given as
+//! each is written (`TempFiles::pipeline`). Its tables are linear hash tables (`engine/hash.rs`); a
 //! value too long for one of their entries is kept in a page of its own,
 //! the entry holding its page. Its runs are pages of records, each page a
 //! batch of records written at once. The file is removed when the area and
@@ -43,7 +43,9 @@ impl Spill for PagedSpill {
 /// \[DESIGN\] A temporary pager file of `TempFiles` in a buffer pool of its
 /// own, reserved of the memory budget, so its pages are written to the
 /// file as the pool evicts them, through the encodings its temporary files
-/// are given (`TempFiles::pipeline`); its creation is not made durable
+/// are given as each is written (`TempFiles::pipeline`), so a table
+/// encrypted while it lives gets its later pages encrypted (RULES.md D48);
+/// its creation is not made durable
 /// (`Pager::create_scratch`). It is removed when dropped. An area's is
 /// shared by the area and what is made in it; a temporary table's
 /// instance has one too (RULES.md D49).
@@ -65,7 +67,7 @@ impl ScratchFile {
     pub(crate) fn create(memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, bytes: usize, what: &str) -> Result<ScratchFile> {
         let path = temp.path()?;
         let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
-        let pager = Pager::create_scratch(&**temp.fs(), &path, hash, temp.pipeline(), DEFAULT_PAGE_SIZE)?;
+        let pager = Pager::create_scratch(&**temp.fs(), &path, hash, temp.live_pipeline(), DEFAULT_PAGE_SIZE)?;
         let page_size = pager.page_size();
         let made = BufferPool::in_budget(memory, (bytes, page_size), what).map(Arc::new);
         let pool = match made {
