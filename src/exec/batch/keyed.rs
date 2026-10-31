@@ -26,6 +26,11 @@ pub(in crate::exec) fn whole_width(plan: &Plan, db: &State) -> Option<usize> {
 
 /// Appends the key of `cell` to `out`: the bytes `spill::put_norm` gives of
 /// its value, made without making it.
+#[expect(
+    clippy::inline_always,
+    reason = "R-DEV-1: a step of every row grouped, kept inline: as a call it adds a call a row, which a grouping's instructions show"
+)]
+#[inline(always)]
 pub(in crate::exec) fn put_key(cell: Cell<'_>, out: &mut Vec<u8>) {
     match cell {
         Cell::Value(v) => put_norm(v, out),

@@ -195,6 +195,26 @@ pub trait Accumulator {
     fn update_rows(&mut self, rows: usize) -> Result<()> {
         (0..rows).try_for_each(|_| self.update(&Value::Null))
     }
+    /// \[DESIGN\] Appends its state so far to `out`, as bytes `merge` takes
+    /// in another accumulator of its function and result type (RULES.md
+    /// D38, D53): a grouping past its work area then writes groups partly
+    /// made, not their rows. Whether it has one: by default it has none,
+    /// writes nothing, and its rows are written, so it is given them all.
+    fn write_state(&self, _out: &mut Vec<u8>) -> bool {
+        false
+    }
+    /// \[DESIGN\] Takes in `state`, as `write_state` wrote it of an accumulator
+    /// of its function and result type given the values after those it
+    /// was given, and before any it is given next: as if it had been given
+    /// them. It judges no result: `finish` does.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if `state` is not one it writes; by default, as it
+    /// writes none.
+    fn merge(&mut self, _state: &[u8]) -> Result<()> {
+        fail(Code::Corrupt, "[DESIGN] a set function's state that it never writes")
+    }
     /// The result for the values seen so far, possibly none.
     ///
     /// # Errors
@@ -377,6 +397,16 @@ impl Accumulator for CountAcc {
     }
     fn update_rows(&mut self, rows: usize) -> Result<()> {
         self.0 = self.0.saturating_add(i128::try_from(rows).unwrap_or(i128::MAX));
+        Ok(())
+    }
+    /// The count, its 16 bytes.
+    fn write_state(&self, out: &mut Vec<u8>) -> bool {
+        out.extend_from_slice(&self.0.to_le_bytes());
+        true
+    }
+    fn merge(&mut self, state: &[u8]) -> Result<()> {
+        let n = <[u8; 16]>::try_from(state).map(i128::from_le_bytes);
+        self.0 = self.0.saturating_add(n.or_else(|_| fail(Code::Corrupt, "[DESIGN] a state of COUNT is not 16 bytes"))?);
         Ok(())
     }
     fn finish(&self) -> Result<Value> {

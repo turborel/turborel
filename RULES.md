@@ -946,6 +946,21 @@ each time.
   refused (SQLCODE -910), so no session's calls change under it on a
   running server. The five set functions alone are replaced by an
   aggregate of their name.
+- **Set functions' states** (`Accumulator::write_state`, `merge`).
+  Optional:
+  - `write_state` appends what an accumulator holds so far; `merge`
+    takes one in, written by one of the same function and result type
+    of the values after its own, as if given them; it judges nothing,
+    `finish` does. A merge of what it did not write is SQLCODE -916.
+  - Built in: COUNT (its count), MAX and MIN (the best value, as the
+    value codec writes it; a tie keeps the one first given), SUM and AVG
+    of exact numbers and intervals (the total kept wider than the result,
+    and AVG's count), so a merge never judges a sum on the way.
+  - None: SUM and AVG of approximate numbers, whose total depends on
+    the order of the additions; MAX and MIN of a plug-in type, read back
+    only through the registry; a plug-in's by default.
+  - A grouping uses them only if every set function of it writes one
+    (D31, D38); else it writes its rows.
 - **Privileges.** None is needed to use a plug-in type. SQL-92's
   privileges are on schema objects [§4.26, §11.36 SR1] (USAGE on a
   domain, character set, collation or translation), granted by an owner;
@@ -1798,17 +1813,40 @@ write-ahead logging.
   other tables it reads a row at a time, as reading ahead gains nothing.
 - **Groups held** (`batch/groups.rs`). In the work area, in order of
   first rows. Each row's key is built in a kept buffer (`batch::put_key`).
-- **Groups past it** (`groups/spilled.rs`). Rows of groups not yet held
-  are written by batch:
+- **Partial groups** (`batch/groups.rs`). If every set function writes
+  its state (`Accumulator::write_state`, D53), groups not held may be
+  made partly before they spill again:
+  - the rows past the work area are first written by batch, the
+    cheapest to read back once; groups are made partly only of a
+    partition, or a pass, that outgrows the work area again, whose rows
+    would be written again;
+  - there, groups are held in the whole work area until they first fill
+    it, so one that fits costs what it did;
+  - then, if they took 4 rows or pieces each, as keys that repeat do,
+    the later half of them is written as pieces, each to its key's
+    partition (its first row's number, grouping values and states,
+    `spilled/records.rs`), and their room holds groups partly made of
+    the rows past those held (`groups/table.rs`); else rows are written;
+  - once groups partly made fill their room, each is written as a piece,
+    and the room emptied; once they took fewer than 4 rows or pieces
+    each, the grouping makes none partly from then on, its partitions'
+    too, and writes rows: a piece costs more to write and read back than
+    a row written by batch;
+  - a partition read back merges its pieces into their groups in the
+    order written (`Accumulator::merge`), held, partly made, or new.
+  - So each set function takes its values in the order it would without
+    them; a null taken out warns as each row is fed; nothing is judged
+    until `finish`.
+- **Groups past it** (`groups/spilled.rs`). Else rows of groups not yet
+  held are written by batch:
   - of each batch, each partition's rows one record (at most 256 rows):
     their numbers, then each column, integers as units, scale and nulls,
     others as values;
   - each partition read back as batches, integers as integers, and
-    grouped again by batch; partitioned again, or made in passes, as
-    D38 says;
-  - every pass's groups merged with the held groups by number.
-  - Groups are not made partly before they spill: a plug-in's
-    accumulator is opaque (D38), so only rows are written.
+    grouped again by batch.
+- **Either way**, a partition is partitioned again, or made in passes,
+  as D38 says, and every pass's groups, put in order of first rows, are
+  merged with the held groups by number.
 - **Projected streams** (`project::computed`). A projection of a
   stream's columns is a stream of those vectors, moved. So is one of
   other expressions of its columns, no subquery: each evaluated only on
@@ -2247,10 +2285,13 @@ catalog to keep in step.
   A run read once returns its pages as read (`SpillRun::into_records`),
   so a merge holds only what it has still to read; one read again (a
   product's right operand, a subquery's rows) keeps them.
-- **Accumulators.** A plug-in's is opaque, never written out: past
-  SPILL.PARTITION_DEPTH, grouping makes a partition in passes, each
-  leaving the groups it has no room for to the next. Grouping by batch
-  writes those rows by batch (D31).
+- **Accumulators.** One that writes no state (`Accumulator::write_state`,
+  D53) is opaque, never written out: past SPILL.PARTITION_DEPTH,
+  grouping makes a partition in passes, each leaving the groups it has
+  no room for to the next. Grouping by batch writes those rows by batch,
+  or, of a partition that outgrows the work area again, if every set
+  function writes its state and keys repeat, groups partly made, the
+  work area split once groups first fill it (D31).
 - **Outer join on keys.** Partitioned like the hash join, both operands
   numbered: each left row with its matches or nulls, in the left's
   order, then unmatched right rows, in the right's; partitions

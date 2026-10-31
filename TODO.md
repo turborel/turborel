@@ -143,17 +143,22 @@ The registry, scopes and SET statements exist (D36). Still to do:
   probing keeps its typed vectors. An outer join whose right operand
   outgrows the work area still joins row by row, partitioned or from a
   run, its rows gathered into batches after.
-- **Operators over vectors, further** (D31, D38): grouping past the work
-  area writes every row of a group not held, as a plug-in's accumulator
-  cannot write its state; partial groups made first need `Accumulator`
-  to write and merge one (a design to agree: `GROUP BY K` of 400,000
-  keys of the column store, 378 ms, 623 before rows were written by
-  batch). A spilled sort is bound by its runs (`ORDER BY C` of 200,000
-  rows of the column store, 49 ms, 50 before it sorted vectors): records
-  made through the value codec (an integer 21 bytes) and pages written
-  one by one; runs of vectors, integers at their width, would be fewer
-  bytes. A spilled run's pages are freed through the pager's free list,
-  each costing more than the record it held.
+- **Operators over vectors, further** (D31, D38): a grouping of a set
+  function that writes no state (a plug-in's, SUM or AVG of approximate
+  numbers) still writes every row of a group not held. Groups are made
+  partly only of a partition that outgrows the work area again, as a
+  piece costs about as much as 6 rows written by batch (a group made at
+  each level, states through the value codec, a merge a call each): of
+  50,000 keys of 8 rows each past 4 MiB, a grouping makes none partly
+  (1% more instructions than before), past 64 KiB 14% fewer. Pieces
+  written by batch, their states as vectors, would make them pay sooner.
+  A spilled sort is bound by its
+  runs (`ORDER BY C` of 200,000 rows of the column store, 49 ms, 50
+  before it sorted vectors): records made through the value codec (an
+  integer 21 bytes) and pages written one by one; runs of vectors,
+  integers at their width, would be fewer bytes. A spilled run's pages
+  are freed through the pager's free list, each costing more than the
+  record it held.
 - **Typed vectors, further** (D31): a LIKE whose pattern is another
   expression (a CASE) leaves its filter judged whole a row at a time,
   each pattern split once (`S LIKE CASE ...` of 200,000 rows of the

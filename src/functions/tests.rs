@@ -125,3 +125,69 @@ fn set_functions_fed_floats_total_as_values() {
     assert_eq!(refused, by_values.finish().err().map(|e| e.code));
     assert!(refused.is_some(), "out of range");
 }
+
+/// The result of `function`'s accumulator of `result` fed `values` whole,
+/// and of one fed those before `at` that merged the state of one fed the
+/// rest.
+fn merged(function: &dyn AggregateFunction, result: DataType, values: &[Value], at: usize) -> (String, String) {
+    let (mut all, mut before, mut after) = (function.accumulator(result), function.accumulator(result), function.accumulator(result));
+    all.update_many(values, None).unwrap();
+    before.update_many(&values[..at], None).unwrap();
+    after.update_many(&values[at..], None).unwrap();
+    let mut state = Vec::new();
+    assert!(after.write_state(&mut state));
+    before.merge(&state).unwrap();
+    (format!("{:?}", all.finish()), format!("{:?}", before.finish()))
+}
+
+/// Verifies: [DESIGN] RULES.md D53, D15 [ISO/IEC 9075:1992 §6.5 GR2b]:
+/// COUNT, SUM, AVG, MAX and MIN of exact numbers, and SUM and AVG of
+/// intervals, write their states, and one that merges another's gives
+/// what one given every value gives, wherever the values are split: a sum
+/// on the way past 18 digits is not judged, nor a total past them until
+/// it is finished; MAX and MIN of ties keep the value given first, 'a'
+/// before 'a  '. SUM and AVG of approximate numbers, MAX and MIN of a
+/// plug-in's type, and a plug-in's accumulator by default write none; a
+/// state not the function's own is refused, SQLCODE -916.
+#[test]
+fn set_functions_merge_their_states_as_their_values() {
+    use crate::value::datetime::Field;
+    use crate::value::interval::{Interval, Qualifier, unit};
+    use crate::value::types::{ExtensionType, TypeParams, UNREGISTERED_KIND};
+    let exact = |u: i128| Value::Exact(Decimal::new(u, 2_u32));
+    let most = crate::value::pow10(18_u32).unwrap() - 1_i128;
+    let numbers = [exact(most), exact(1_i128), Value::Null, exact(-1_i128), exact(-250_i128), exact(7_i128)];
+    let money = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
+    let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
+    for function in functions {
+        for at in 0..=numbers.len() {
+            let (all, split) = merged(function, money, &numbers, at);
+            assert_eq!(all, split, "{} split at {at}", function.name());
+        }
+    }
+    let past = [exact(most), exact(most)];
+    assert_eq!(merged(&Sum, money, &past, 1_usize).1, merged(&Sum, money, &past, 0_usize).0, "judged as finished");
+    let q = Qualifier::new(Field::Day, Field::Day, 9, 0);
+    let days = |n: i128| Value::Interval(Interval { units: n * unit(Field::Day), qualifier: q });
+    let intervals = [days(999_999_999_i128), days(1_i128), days(-1_i128)];
+    let sums: [&dyn AggregateFunction; 2] = [&Sum, &Avg];
+    for function in sums {
+        let (all, split) = merged(function, DataType::Interval(q), &intervals, 1_usize);
+        assert_eq!(all, split, "{} of intervals", function.name());
+    }
+    let ties = [Value::Char("a".to_owned()), Value::Char("a  ".to_owned())];
+    let text = DataType::Varying { length: 3 };
+    assert_eq!(merged(&Extreme { max: true }, text, &ties, 1_usize).1, "Ok(Char(\"a\"))");
+    let double = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
+    let mut none = Vec::new();
+    assert!(!Sum.accumulator(double).write_state(&mut none) && !Avg.accumulator(double).write_state(&mut none));
+    let point = DataType::Extension(ExtensionType { kind: &UNREGISTERED_KIND, params: TypeParams::default() });
+    assert!(!Extreme { max: true }.accumulator(point).write_state(&mut none));
+    assert!(!Listed(Vec::new()).write_state(&mut none));
+    assert_eq!(none.len(), 0_usize, "nothing written");
+    assert_eq!(Listed(Vec::new()).merge(&[]).err().map(|e| e.code), Some(Code::Corrupt));
+    for function in functions {
+        let refused = function.accumulator(money).merge(&[0xff_u8]).err().map(|e| e.code);
+        assert_eq!(refused, Some(Code::Corrupt), "{}", function.name());
+    }
+}

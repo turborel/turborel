@@ -9,9 +9,10 @@
 //! where it can be (`vector.rs`); under a filter, only of the rows it
 //! keeps (`judge.rs`). Groups are held in the work area, each the grouping
 //! values and their set functions, given in the order their first rows
-//! came; the rows of groups past it are written by batch, each partition
-//! grouped again by batch, and merged by number with those held
-//! (`groups.rs`). A null a set function's argument takes out raises its
+//! came; groups past it are made partly before they spill, if their set
+//! functions write their states, else their rows are written by batch;
+//! each partition grouped again by batch, and merged by number with those
+//! held (`groups.rs`). A null a set function's argument takes out raises its
 //! warning [ISO/IEC 9075:1992 §6.5 GR1b], as a row at a time does. The
 //! rows of a stream are read whole so too by a sort, EXCEPT and INTERSECT
 //! (`keyed.rs`).

@@ -36,7 +36,7 @@ fn row(k: i64) -> String {
 /// Tables R, of the row store, and C, of the column store in groups of
 /// 2048, of schema A, alike: written, C's rows frozen, then some changed,
 /// deleted and added, in each.
-fn both(db: &Database) -> Session {
+pub(crate) fn both(db: &Database) -> Session {
     db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A

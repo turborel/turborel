@@ -10,8 +10,10 @@
 
 use super::floats::{self, Wide};
 use super::{Accumulator, ints};
+use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::storage::{Floats, Ints};
+use crate::value::codec::{put_value, value};
 use crate::value::interval::{Interval, MAX_LEADING_PRECISION};
 use crate::value::{ArithOp, DataType, Decimal, Value, arith};
 
@@ -134,6 +136,24 @@ impl Accumulator for SumAcc {
         }
         Ok(())
     }
+    /// \[DESIGN\] RULES.md D53: of an exact or interval result, the total
+    /// so far, unjudged, as the value codec writes it, null of none; none
+    /// of an approximate one, whose total depends on the order it is added
+    /// in.
+    fn write_state(&self, out: &mut Vec<u8>) -> bool {
+        if matches!(self.result, DataType::Approximate { .. }) {
+            return false;
+        }
+        put_value(out, &self.total.value());
+        true
+    }
+    /// The total of `state` added as `update` adds a value: unjudged.
+    fn merge(&mut self, state: &[u8]) -> Result<()> {
+        let mut reader = Reader::new(state, "a state of SUM");
+        let total = value(&mut reader)?;
+        reader.finish()?;
+        self.update(&total)
+    }
     /// [ISO/IEC 9075:1992 §6.5 GR2b iv] The sum, judged: of exact numbers,
     /// within `MAX_EXACT_PRECISION` digits; of approximate ones, finite;
     /// of intervals, in the argument's fields [SR9e]. Out of range, of
@@ -219,6 +239,24 @@ impl Accumulator for AvgAcc {
     fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
         self.count = self.count.saturating_add(i128::try_from(floats::count(floats, rows)).unwrap_or(i128::MAX));
         self.sum.update_floats(floats, rows)
+    }
+    /// \[DESIGN\] RULES.md D53: its count, 16 bytes, then its sum's state;
+    /// none if its sum has none.
+    fn write_state(&self, out: &mut Vec<u8>) -> bool {
+        let start = out.len();
+        out.extend_from_slice(&self.count.to_le_bytes());
+        let written = self.sum.write_state(out);
+        if !written {
+            out.truncate(start);
+        }
+        written
+    }
+    fn merge(&mut self, state: &[u8]) -> Result<()> {
+        let Some((count, sum)) = state.split_first_chunk::<16>() else {
+            return fail(Code::Corrupt, "[DESIGN] a state of AVG is short");
+        };
+        self.count = self.count.saturating_add(i128::from_le_bytes(*count));
+        self.sum.merge(sum)
     }
     /// [ISO/IEC 9075:1992 §6.5 GR2b ii] The mean, judged alone: the sum
     /// divided by the count, of an exact result at its scale.
