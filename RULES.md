@@ -703,18 +703,24 @@ live outside the database, or encrypting it would hide nothing.
   owned by its authorization identifier (`db/declared.rs`), invisible to
   other sessions and the Information Schema.
 - **ALTER TABLE** is refused (SQLSTATE TB911) while another transaction
-  has an instance's rows open; while it runs, no other transaction
+  has an instance's rows open, or wrote them and committed after the
+  altering transaction's snapshot; while it runs, no other transaction
   begins on an instance. Instances are tracked by session
   (`temporary::Uses`).
-  - ADD and DROP COLUMN give each instance holding rows a successor of
-    the new generation, its rows copied by the altering transaction and
-    checked at once against the table's constraints. Each session
-    switches at commit; a statement or transaction begun earlier no
-    longer reads it (`TableLock::check_generation`).
-  - Rows are checked only against their session's instances, so the copy
-    is refused while another session holds rows and a table constraint
-    reads another table.
-  - Any other action needs every instance empty.
+  - **Open sessions.** A session mid-transaction on the table is never
+    reshaped under it: the ALTER waits for it as for a lock, refused.
+  - **Columns.** ADD and DROP COLUMN give each instance holding rows a
+    successor of the new generation, its rows copied by the altering
+    transaction. Each session switches at commit; a statement or
+    transaction begun earlier no longer reads it
+    (`TableLock::check_generation`).
+  - **No row changed.** Any other action is every session's at once,
+    instances kept in place.
+  - **Checks.** Each session's rows are checked at once against the
+    table's constraints, a constraint added among them, as that session
+    sees the database: its own instance of each temporary table
+    (`db/temporary/reshape.rs`). An index added gets entries of each
+    instance checked.
 - **CREATE INDEX** defines it, built-in methods only. An instance builds
   its entries in its pages when its session first sees the index: empty
   if no rows; from every version if no transaction has them open; else
@@ -723,7 +729,10 @@ live outside the database, or encrypting it would hide nothing.
   its pages freed in the file.
 *Why:* the standard gives each session's rows a schema of its own
 [§4.9]; giving the session's view of the definitions its own storage
-does so without changing how a table is found, bound or checked.
+does so without changing how a table is found, bound or checked. One
+definition serves every session, so ALTER TABLE changes each one's
+rows; refusing it while another has them open keeps a transaction's
+table as it began.
 
 **D50. Domains: their constraints copied onto their columns.**
 - **Catalog.** A domain [ISO/IEC 9075:1992 §11.21] is described with its

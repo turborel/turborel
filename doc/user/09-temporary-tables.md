@@ -60,14 +60,17 @@ Another session, at once, finds NOTES empty: its rows are its own.
 ## Changing a temporary table
 
 ALTER TABLE ADD COLUMN and DROP COLUMN change every session's rows of a
-temporary table, the column added taking its default in each, and the
-table's constraints are checked of each session's rows. Until the
+temporary table, the column added taking its default in each. Another
+change, of a constraint or a default, changes no row, and is every
+session's at once. The table's constraints, one added among them, are
+checked of each session's rows, as that session sees the other
+temporary tables a constraint reads: its own rows of them. Until the
 transaction altering the table ends, other sessions neither read nor
 write their rows of it; and it waits for none: it is refused (SQLSTATE
 TB911) while another session's transaction has its rows of the table
-open, to be run again once that one ends. Another change, of a
-constraint or a default, is made only while no session holds a row of
-the table ([ALTER TABLE](../sql/statements/alter-table.md)).
+open, or if one committed rows of it after the altering transaction
+began, to be run again once that one ends, or in a new transaction
+([ALTER TABLE](../sql/statements/alter-table.md)).
 
 CREATE INDEX on a temporary table gives each session an index of its own
 rows, made as its next statement begins; a session whose transaction

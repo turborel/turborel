@@ -92,6 +92,7 @@ impl State {
     /// commits, as it holds the table's exclusive lock; or, without `tx`,
     /// with every version of its rows, unless the database is being opened
     /// from its files, which reopens or builds it (`index_structure`).
+    /// Empty, of a temporary table.
     fn unique_index(&mut self, qn: &QualifiedName, name: &str, columns: &[usize], tx: Option<&Txn>) -> Result<Arc<dyn Index>> {
         let desc = self.base_table(qn)?;
         let ix = self.constraint_index(qn, name, columns.to_vec());
@@ -100,6 +101,12 @@ impl State {
         );
         let types = desc.types(columns).unwrap_or_default();
         let (structure, built) = self.index_structure(&*method, (&ix, &desc), &types)?;
+        // [DESIGN] A temporary table's own storage holds no row: each
+        // session's instance makes its entries of its own rows (RULES.md
+        // D49), which `storage_of` gives in a session's definitions.
+        if desc.temporary.is_some() {
+            return Ok(structure);
+        }
         match tx {
             Some(tx) => {
                 let all: Vec<usize> = (0..desc.columns.len()).collect();

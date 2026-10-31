@@ -41,7 +41,7 @@ use crate::storage::TableStorage;
 use crate::sync::lock_builtin;
 use crate::txn::{TableLock, Timestamp, TxId, remove_entries};
 use pages::Place;
-use storage::Rows_;
+use storage::{Entries, Rows_};
 
 /// A session's instances of the temporary tables, each by its table and
 /// the generation of its definition.
@@ -136,16 +136,6 @@ impl Session {
         let bytes = work_bytes(st.settings.effective(MEMORY_WORK_BYTES, &self.own.borrow()).0);
         Place { budget: Arc::clone(&st.memory), work: Arc::clone(&st.work), bytes }
     }
-
-    /// [ISO/IEC 9075:1992 §11.10] Its instance of temporary table `name`,
-    /// of generation `generation`, given entries, empty, of `indexes`: its
-    /// transaction's ALTER TABLE added them, while no instance holds a row.
-    pub(super) fn add_empty_entries(&self, (name, generation): (&QualifiedName, u32), indexes: &[IndexDesc]) {
-        let found = lock_builtin(&self.temporaries.made).get(&(name.clone(), generation)).cloned();
-        if let Some(instance) = found {
-            instance.rows.add_empty(indexes);
-        }
-    }
 }
 
 /// [ISO/IEC 9075:1992 §11.8 SR4, SR5; §11.9 SR3, SR4] That `from` may
@@ -224,17 +214,26 @@ impl Instance {
     /// if `written`, its entries of each index `st` gives the table.
     fn on(&self, st: &State, name: &QualifiedName, written: bool) -> Arc<State> {
         let mut copy = State::clone(st);
-        if written {
+        let entries = if written {
             let indexes: Vec<IndexDesc> = st.catalog.indexes(name).into_iter().cloned().collect();
-            for (index, entries) in self.rows.entries(&indexes) {
-                let entries: Arc<dyn Index> = entries;
-                copy.indexes.insert(index, entries);
-            }
+            self.rows.entries(&indexes)
+        } else {
+            Vec::new()
+        };
+        self.put(&mut copy, name, entries);
+        Arc::new(copy)
+    }
+
+    /// Makes it table `name`'s in `st`: its rows and lock, and `entries`,
+    /// its entries of indexes, by name.
+    fn put(&self, st: &mut State, name: &QualifiedName, entries: Vec<(String, Arc<Entries>)>) {
+        for (index, of) in entries {
+            let of: Arc<dyn Index> = of;
+            st.indexes.insert(index, of);
         }
         let rows: Arc<dyn TableStorage> = Arc::<Rows_>::clone(&self.rows);
-        copy.storage.insert(name.clone(), rows);
-        copy.locks.insert(name.clone(), Arc::clone(&self.lock));
-        Arc::new(copy)
+        st.storage.insert(name.clone(), rows);
+        st.locks.insert(name.clone(), Arc::clone(&self.lock));
     }
 }
 

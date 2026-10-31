@@ -84,12 +84,6 @@ design settles.
 What came after SQL-92 follows it, written from the standards' own text
 (RULES.md D32).
 
-- **ALTER TABLE of a temporary table in use**, refused where it need not
-  be: ADD or DROP COLUMN while another session holds rows and a
-  constraint of the table reads another table, as the copy checks
-  constraints against the altering session's instances alone; any other
-  action, SET or DROP DEFAULT and DROP CONSTRAINT too, which change no
-  row, while any instance holds a row.
 - **Function overloading** (RULES.md D53): one scalar function is
   registered for each name, none chosen among several by its arguments'
   types. Overloading is shared with SQL-invoked functions (stored

@@ -226,10 +226,10 @@ impl Session {
         }
         self.prepare_change(st, tx, &qn)?;
         // [DESIGN] Of a temporary table, no other transaction using an
-        // instance of it meanwhile (RULES.md D49).
+        // instance of it meanwhile, nor one having written one since this
+        // transaction's snapshot (RULES.md D49).
         if temporary.is_some() {
-            let column = matches!(action, AlterAction::AddColumn(_) | AlterAction::DropColumn { .. });
-            st.temporaries.alter(&qn, tx.id, column)?;
+            st.temporaries.alter(&qn, (tx.id, tx.snapshot()))?;
         }
         let mut next = State::clone(st);
         let zone = self.now.get().zone;
@@ -245,12 +245,12 @@ impl Session {
             // [§11.12 GR1] a default changes no row, nor does an option
             // changed in place.
             (None, AlterAction::AlterColumn { .. } | AlterAction::Storage(_)) => Ok(()),
-            (None, _) => {
-                if temporary.is_some() {
-                    self.add_empty_entries((&qn, st.generation_of(&qn)), &added_indexes(st, &next, &qn));
-                }
-                validate_rows(&next, tx, &qn, self.effects(&next))
-            }
+            // [DESIGN] Of a temporary table, each session's rows, as it sees
+            // them (`db/temporary/reshape.rs`).
+            (None, _) => match temporary {
+                Some(_) => self.validate_instances((st, &next), tx, (&qn, action)),
+                None => validate_rows(&next, tx, &qn, self.effects(&next)),
+            },
         };
         if let Err(e) = checked {
             made.discard();
@@ -321,12 +321,6 @@ impl Database {
         taken.into_iter().for_each(Dropped::discard);
         committed
     }
-}
-
-/// The indexes of `table` in `next` that `st` does not give it.
-fn added_indexes(st: &State, next: &State, table: &QualifiedName) -> Vec<crate::catalog::IndexDesc> {
-    let had = st.catalog.indexes(table);
-    next.catalog.indexes(table).into_iter().filter(|ix| !had.iter().any(|h| h.name == ix.name)).cloned().collect()
 }
 
 /// Copies the rows of `table` that transaction `tx` sees in `st` into its

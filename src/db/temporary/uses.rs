@@ -8,7 +8,8 @@
 //! adds or drops a column gives each instance that holds rows a successor,
 //! of the new definition, its rows copied there, which the session takes
 //! in its place once the transaction commits, or which is forgotten if it
-//! rolls back.
+//! rolls back. Any other action changes no row, so leaves each instance in
+//! place.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
@@ -17,7 +18,6 @@ use super::storage::Rows_;
 use super::{Instance, Instances};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
-use crate::storage::TableStorage;
 use crate::sync::lock_builtin;
 use crate::txn::{Timestamp, TxId};
 
@@ -51,6 +51,14 @@ impl Registry {
     fn sessions(&mut self) -> Vec<Arc<Instances>> {
         self.sessions.retain(|w| w.strong_count() > 0);
         self.sessions.iter().filter_map(Weak::upgrade).collect()
+    }
+
+    /// The instance of temporary table `name` of `session`, `weak` it
+    /// downgraded: the successor the transaction altering it made, or the
+    /// instance of generation `generation`.
+    fn instance_of(&self, session: &Instances, weak: &Weak<Instances>, (name, generation): (&QualifiedName, u32)) -> Option<Instance> {
+        let succeeded = self.tables.get(name).and_then(|u| u.successors.iter().find(|(s, _)| s.ptr_eq(weak)));
+        succeeded.map(|(_, i)| i.clone()).or_else(|| lock_builtin(session).get(&(name.clone(), generation)).cloned())
     }
 }
 
@@ -92,30 +100,32 @@ impl Uses {
         Ok(())
     }
 
-    /// [ISO/IEC 9075:1992 §11.10] Transaction `tx` alters temporary table
-    /// `name`, adding or dropping a column if `column`: no other begins on
-    /// an instance of it until it ends.
+    /// [ISO/IEC 9075:1992 §11.10] Transaction `tx`, reading at `snapshot`,
+    /// alters temporary table `name`: no other begins on an instance of it
+    /// until it ends. Any session's instance may hold rows; none is open to
+    /// another transaction, so none of its transactions reads the table as
+    /// it was, and `tx` sees each one's rows as they are.
     ///
     /// # Errors
     ///
-    /// SQLCODE -911 if another transaction has an instance's rows open;
-    /// or, unless `column`, an instance holds a row.
-    pub(in crate::db) fn alter(&self, name: &QualifiedName, tx: TxId, column: bool) -> Result<()> {
+    /// SQLCODE -911 if another transaction has an instance's rows open, or
+    /// wrote them and committed after `snapshot`.
+    pub(in crate::db) fn alter(&self, name: &QualifiedName, (tx, snapshot): (TxId, Timestamp)) -> Result<()> {
         let mut registry = lock_builtin(&self.0);
         for session in registry.sessions() {
             for ((of, _), instance) in lock_builtin(&session).iter() {
-                if of != name {
+                let rows = &instance.rows;
+                if of != name || rows.made().is_none() {
                     continue;
                 }
-                let rows = &instance.rows;
-                if rows.made().is_some() && rows.open_to_other(tx) {
+                if rows.open_to_other(tx) {
                     return Err(conflict(format!(
                         "[DESIGN] another transaction has the rows of a session's instance of temporary table {name} open: it is altered once that one ends (RULES.md D49)"
                     )));
                 }
-                if !column && rows.row_count() > 0 {
+                if rows.written_after(snapshot) {
                     return Err(conflict(format!(
-                        "[DESIGN] temporary table {name} has rows in a session's instance: only a column is added or dropped while one does (RULES.md D49)"
+                        "[DESIGN] a session's instance of temporary table {name} has rows committed after this transaction began, which it does not see: it is altered by a transaction begun since (RULES.md D49)"
                     )));
                 }
             }
@@ -130,17 +140,22 @@ impl Uses {
     pub(super) fn instances_of(&self, name: &QualifiedName, generation: u32) -> Vec<(Weak<Instances>, Instance)> {
         let mut registry = lock_builtin(&self.0);
         let sessions = registry.sessions();
-        let successors = registry.tables.get(name).map(|u| u.successors.clone()).unwrap_or_default();
         let mut out = Vec::new();
         for session in sessions {
             let weak = Arc::downgrade(&session);
-            let succeeded = successors.iter().find(|(s, _)| s.ptr_eq(&weak)).map(|(_, i)| i.clone());
-            let found = succeeded.or_else(|| lock_builtin(&session).get(&(name.clone(), generation)).cloned());
-            if let Some(instance) = found {
+            if let Some(instance) = registry.instance_of(&session, &weak, (name, generation)) {
                 out.push((weak, instance));
             }
         }
         out
+    }
+
+    /// `session`'s instance of temporary table `name`, as `instances_of`
+    /// gives it; none if it has none, or is gone.
+    pub(super) fn instance_of(&self, session: &Weak<Instances>, name: &QualifiedName, generation: u32) -> Option<Instance> {
+        let registry = lock_builtin(&self.0);
+        let made = session.upgrade()?;
+        registry.instance_of(&made, session, (name, generation))
     }
 
     /// `successor` takes the place of `session`'s instance of temporary

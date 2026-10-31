@@ -305,8 +305,9 @@ restriction is lifted.
   which tables each refers to [§11.8 SR4, SR5; §11.9 SR3, SR4] and their
   privileges [§10.3 SR2]; altered [§11.10] while no other transaction
   has a session's instance's rows open, a column added to or dropped from
-  each session's rows [§11.11 GR2, §11.15 GR4], any other change made
-  while no instance holds a row; indexed by CREATE INDEX, each session's
+  each session's rows [§11.11 GR2, §11.15 GR4], any other change every
+  session's at once, a constraint added checked of each session's rows
+  [§11.16 GR2]; indexed by CREATE INDEX, each session's
   instance of its own rows (RULES.md D49); and **declared local temporary
   tables** [§13.11], DECLARE LOCAL TEMPORARY TABLE MODULE.T, a session's
   own, in no view of the Information Schema, never altered, dropped,

@@ -7,6 +7,7 @@
 //! db/temporary.rs (RULES.md R-SIZE-2).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::Uses;
@@ -31,7 +32,8 @@ const SCRATCH: TxCapabilities =
 
 /// \[DESIGN\] An instance's rows: none until a transaction first reads or
 /// writes them (`TableStorage::begin`), then a table of a row store in its
-/// pages; the transactions that began on them and have not ended; and its
+/// pages; the transactions that began on them and have not ended, those
+/// that wrote them, and when the last that wrote them committed; and its
 /// entries of each index, by name, in its pages too.
 pub(super) struct Rows_ {
     pub(super) desc: TableDesc,
@@ -39,6 +41,11 @@ pub(super) struct Rows_ {
     uses: Arc<Uses>,
     made: Mutex<Option<Arc<dyn TableStorage>>>,
     pub(super) open: Mutex<Vec<TxId>>,
+    /// Those of `open` that wrote its rows.
+    writers: Mutex<Vec<TxId>>,
+    /// When the last transaction that wrote its rows committed; 0 if none
+    /// did.
+    written_at: AtomicU64,
     indexes: Mutex<HashMap<String, Arc<Entries>>>,
     /// Last, so dropped after the rows and entries made in them.
     pages: Arc<Pages>,
@@ -53,6 +60,8 @@ impl Rows_ {
             uses: Arc::clone(uses),
             made: Mutex::default(),
             open: Mutex::default(),
+            writers: Mutex::default(),
+            written_at: AtomicU64::new(0),
             indexes: Mutex::default(),
             pages: Arc::new(Pages::new(place, &desc.name.to_string())),
         }
@@ -93,8 +102,25 @@ impl Rows_ {
         Ok(rows)
     }
 
+    /// Whether a transaction that wrote its rows committed after
+    /// `snapshot`, so that a transaction reading at it does not see them.
+    pub(super) fn written_after(&self, snapshot: Timestamp) -> bool {
+        self.written_at.load(Ordering::Acquire) > snapshot
+    }
+
+    /// The rows, made if they are not, for transaction `tx` to write.
+    fn write(&self, tx: TxId) -> Result<Arc<dyn TableStorage>> {
+        let rows = self.make(tx)?;
+        let mut writers = lock_builtin(&self.writers);
+        if !writers.contains(&tx) {
+            writers.push(tx);
+        }
+        Ok(rows)
+    }
+
     /// Transaction `tx` ended.
     fn ended(&self, tx: TxId) {
+        lock_builtin(&self.writers).retain(|&t| t != tx);
         lock_builtin(&self.open).retain(|&t| t != tx);
     }
 
@@ -142,9 +168,8 @@ impl Rows_ {
         out
     }
 
-    /// Its entries of `indexes`, empty, for those it has none of: its
-    /// transaction's ALTER TABLE added them, while no instance of the table
-    /// holds a row (`Uses::alter`).
+    /// Its entries of `indexes`, empty, for those it has none of: it is a
+    /// successor, of no row yet (`db/temporary/reshape.rs`).
     pub(super) fn add_empty(&self, indexes: &[IndexDesc]) {
         let mut kept = lock_builtin(&self.indexes);
         for ix in indexes {
@@ -168,15 +193,63 @@ impl Rows_ {
         if !lock_builtin(&self.open).is_empty() {
             return Err(SqlError::new(Code::Conflict, "[DESIGN] the rows are open to a transaction".to_owned()));
         }
-        let columns = &entries.index.columns;
-        for read in rows.versions(Timestamp::MAX, Timestamp::MAX, columns) {
-            let (id, row) = read?;
-            let key = project(&row, columns).ok_or_else(|| api(format!("[DESIGN] a row is shorter than index {}", entries.index.name)))?;
-            if !key.iter().any(crate::value::Value::is_null) {
-                entries.insert(Key(key), id)?;
+        entries.add(rows.versions(Timestamp::MAX, Timestamp::MAX, &entries.index.columns))
+    }
+
+    /// Its entries of each index of `indexes`, by name, for transaction
+    /// `tx`, of another session or its own, to check its rows against
+    /// ALTER TABLE's constraints (`db/temporary/reshape.rs`): those it has
+    /// of the same columns and method; else made now, and kept unless it
+    /// has others of the name. Those of an index of `added`, which `tx`
+    /// adds, so which goes if it rolls back, of the rows `tx` sees if it
+    /// has begun on them (`Rows_::fill`); any other's as `entries` makes
+    /// them. Else entries that refuse every use.
+    ///
+    /// # Errors
+    ///
+    /// The rows' and the index's, making entries of an index added.
+    pub(super) fn entries_for(&self, indexes: &[IndexDesc], (added, tx): (&[String], TxId)) -> Result<Vec<(String, Arc<Entries>)>> {
+        let mut kept = lock_builtin(&self.indexes);
+        let mut out = Vec::new();
+        for ix in indexes {
+            let held = kept.get(&ix.name).cloned();
+            if let Some(entries) = held.as_ref().filter(|e| same_index(&e.index, ix)) {
+                out.push((ix.name.clone(), Arc::clone(entries)));
+                continue;
             }
+            let made = Arc::new(Entries::new(&self.desc, ix, &self.pages));
+            let complete = if added.contains(&ix.name) { self.fill(&made, tx)? } else { self.complete(&made).is_ok() };
+            if !complete {
+                out.push((ix.name.clone(), Arc::new(Entries::refusing(&self.desc, ix))));
+                continue;
+            }
+            if held.is_none() {
+                kept.insert(ix.name.clone(), Arc::clone(&made));
+            }
+            out.push((ix.name.clone(), made));
         }
-        Ok(())
+        Ok(out)
+    }
+
+    /// `entries`, new, of an index transaction `tx` adds, given an entry of
+    /// each of its rows `tx` sees, if `tx` has begun on them, as no other
+    /// transaction then has (`Uses::alter`): those every later transaction
+    /// of its session sees if `tx` commits; else of each version of them.
+    /// Whether it could: not while another transaction has them open.
+    ///
+    /// # Errors
+    ///
+    /// The rows' and the index's, making entries.
+    fn fill(&self, entries: &Entries, tx: TxId) -> Result<bool> {
+        let Some(rows) = self.made() else { return Ok(true) };
+        let open = lock_builtin(&self.open).clone();
+        if open.iter().any(|&t| t != tx) {
+            return Ok(false);
+        }
+        let columns = &entries.index.columns;
+        let read = if open.contains(&tx) { rows.scan(tx, columns) } else { rows.versions(Timestamp::MAX, Timestamp::MAX, columns) };
+        entries.add(read)?;
+        Ok(true)
     }
 }
 
@@ -192,16 +265,16 @@ fn no_rows() -> Rows {
 
 impl TableStorage for Rows_ {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
-        self.make(tx)?.insert(tx, row)
+        self.write(tx)?.insert(tx, row)
     }
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.make(tx)?.update(tx, id, row)
+        self.write(tx)?.update(tx, id, row)
     }
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.make(tx)?.delete(tx, id)
+        self.write(tx)?.delete(tx, id)
     }
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.make(tx)?.restore(tx, id, row)
+        self.write(tx)?.restore(tx, id, row)
     }
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
         self.made().map_or(Ok(None), |rows| rows.get(tx, id))
@@ -250,6 +323,10 @@ impl TableStorage for Rows_ {
         if let Some(rows) = self.made() {
             rows.commit(tx, at);
         }
+        // Noted before it ends, so `Uses::alter` sees it open or written.
+        if lock_builtin(&self.writers).contains(&tx) {
+            self.written_at.fetch_max(at, Ordering::AcqRel);
+        }
         self.ended(tx);
     }
     fn durable_through(&self) -> Lsn {
@@ -291,6 +368,23 @@ impl Entries {
 
     fn made(&self) -> Option<Arc<dyn Index>> {
         lock_builtin(&self.made).clone()
+    }
+
+    /// An entry of each row `read` gives whose key has no null.
+    ///
+    /// # Errors
+    ///
+    /// The read's, and the index's.
+    fn add(&self, read: Rows) -> Result<()> {
+        let columns = &self.index.columns;
+        for each in read {
+            let (id, row) = each?;
+            let key = project(&row, columns).ok_or_else(|| api(format!("[DESIGN] a row is shorter than index {}", self.index.name)))?;
+            if !key.iter().any(crate::value::Value::is_null) {
+                self.insert(Key(key), id)?;
+            }
+        }
+        Ok(())
     }
 
     /// The refusal of a use of refusing entries.
