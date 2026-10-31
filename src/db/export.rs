@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use super::files::LOCK;
 use super::{Database, api};
-use crate::disk::io::{FileSystem, OpenMode};
+use crate::disk::io::{OpenMode, walk};
 use crate::error::Result;
 use crate::files::{FileClass, FileKind, FileOwner};
 
@@ -88,21 +88,4 @@ impl Database {
         }
         Ok(listed)
     }
-}
-
-/// Every file under `dir` of `fs`, by path: an entry that reads as a
-/// directory is one, and is walked in turn.
-fn walk(fs: &dyn FileSystem, dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut found = Vec::new();
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(at) = pending.pop() {
-        for entry in fs.read_dir(&at)? {
-            match fs.read_dir(&entry) {
-                Ok(_) => pending.push(entry),
-                Err(_) => found.push(entry),
-            }
-        }
-    }
-    found.sort();
-    Ok(found)
 }

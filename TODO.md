@@ -180,12 +180,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   maintenance with it, to be tried again: never wrong data, as positions
   in the undo store are not reused. A pin of what the pass reads, or the
   pass counted as a reader, would close it.
-- **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
-  through `Host` (`PluginFiles::directory`), is kept as the plug-in writes
-  it, which makes its files durable itself. A directory it declares
-  shadowed would be wrapped in `ShadowFileSystem`, its writes kept aside,
-  sealed and committed in the checkpoint's two phases beside the data
-  file's, and recovered as the database opens.
 - **Keys of key services** (D48): keyrings of key services (a cloud KMS,
   Vault) beside the key directory; a host can give one through `Keyring`,
   but turboreld takes the key directory alone.

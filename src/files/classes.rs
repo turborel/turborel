@@ -9,6 +9,7 @@
 use std::path::Path;
 
 use super::plugins::PLUGINS;
+use crate::disk::shadow::is_side_file;
 
 /// \[DESIGN\] A file's class of durability (RULES.md D56).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,9 +17,9 @@ pub enum FileClass {
     /// Synced as its owner says, kept across a crash: the catalog, the
     /// data file, the log, a plug-in's own files.
     Durable,
-    /// What is written to it reaches its file at a commit: the data file's
-    /// side files (`disk/shadow.rs`), whose batch not committed a crash
-    /// throws away.
+    /// What is written to it reaches its file at a commit: the side files
+    /// (`disk/shadow.rs`) of the data file and of plug-ins' shadowed
+    /// directories' files, whose batch not committed a crash throws away.
     DurableAtCommit,
     /// Never synced, begun anew at each open: the log of older row
     /// versions.
@@ -64,7 +65,8 @@ pub enum FileOwner {
 pub enum FileKind {
     /// The data file of the built-in engines and index methods.
     Data,
-    /// One of the data file's side files.
+    /// A side file of the data file, or of a file of a plug-in's shadowed
+    /// directory (`files/plugins.rs`).
     Shadow,
     /// One of the catalog's files.
     Catalog,
@@ -86,11 +88,15 @@ impl FileKind {
     /// The kind of the file at `path`, by its name and its directory's: the
     /// data file and its side files, the catalog, a segment of the log or
     /// of older row versions, a spill file, a plug-in's own file (in a
-    /// directory of `plugins/`, first, whatever its name), or another.
+    /// directory of `plugins/`, first, whatever its name, but a side
+    /// file's), or another.
     pub fn of(path: &Path) -> FileKind {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
         let dir = path.parent().and_then(Path::file_name).and_then(|n| n.to_str()).unwrap_or_default();
-        if path.ancestors().skip(2).any(|a| a.file_name().is_some_and(|n| n == PLUGINS)) {
+        let plugins = path.ancestors().skip(2).any(|a| a.file_name().is_some_and(|n| n == PLUGINS));
+        if plugins && is_side_file(path) {
+            FileKind::Shadow
+        } else if plugins {
             FileKind::Plugin
         } else if name == "data" {
             FileKind::Data
@@ -140,7 +146,8 @@ impl FileKind {
     /// plug-in its directory is named for.
     pub fn owner(self, path: &Path) -> FileOwner {
         match self {
-            FileKind::Data | FileKind::Shadow | FileKind::Catalog | FileKind::Undo => FileOwner::Database,
+            FileKind::Data | FileKind::Catalog | FileKind::Undo => FileOwner::Database,
+            FileKind::Shadow => plugin_of(path).map_or(FileOwner::Database, FileOwner::Plugin),
             FileKind::Log => FileOwner::Log,
             FileKind::Spill => FileOwner::Spill,
             FileKind::Plugin => plugin_of(path).map_or(FileOwner::Unknown, FileOwner::Plugin),
@@ -183,6 +190,7 @@ mod tests {
             ("db/lock", FileKind::Other, None, FileOwner::Unknown),
             ("db/plugins/mine/data", FileKind::Plugin, durable, mine()),
             ("db/plugins/mine/parts/0", FileKind::Plugin, durable, mine()),
+            ("db/plugins/mine/parts/0.shadow1", FileKind::Shadow, Some(FileClass::DurableAtCommit), mine()),
         ] {
             let found = FileKind::of(Path::new(path));
             assert_eq!((found, found.class(), found.owner(Path::new(path))), (kind, class, owner), "{path}");

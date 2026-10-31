@@ -1040,8 +1040,20 @@ stoppable, and lets tests and operators choose when work runs.
   first, failures reported.
 - **Engines.** Engines and index methods get the manager through `Host`,
   like the memory budget (D38): their own directory under the
-  database's, kept as written (none is shadowed yet), and scratch
-  files, all shown, limited and closed like the database's.
+  database's, shadowed or not as they declare, and scratch files, all
+  shown, limited and closed like the database's.
+- **Shadowed.** A plug-in declares its directory as written (the
+  default) or shadowed (`PluginFiles::declare`) as it is registered,
+  before asking for it.
+  - What it writes, makes and removes there reaches the disk only at a
+    checkpoint (`disk/shadow.rs`): held while engines capture, sealed
+    after them, committed before their `checkpoint_finish`, beside the
+    data file.
+  - Recovered as the database opens, before its tables: after a crash
+    the directory is as the last checkpoint left it.
+  - Each file commits on its own, through side files `NAME.shadow0` and
+    `.shadow1` (names refused there), shown as SHADOW, durable at commit,
+    never exported. A database in memory keeps it as written.
 - **In memory.** An in-memory database's files, scratch too, live in
   `MemoryFileSystem`, bytes reserved from MEMORY.BUDGET_BYTES, never in
   the system's temporary directory.

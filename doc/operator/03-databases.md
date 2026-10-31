@@ -14,7 +14,7 @@ A database kept in a directory holds there:
 | `log/` | the write-ahead log, in segments |
 | `undo/` | older versions of rows, for readers of earlier snapshots |
 | `tmp/` | the work areas of large sorts, joins and groupings |
-| `plugins/` | the files of plug-in engines and index methods, each in a directory of its name, made as one first keeps a file |
+| `plugins/` | the files of plug-in engines and index methods, each in a directory of its name, made as one first keeps a file; a plug-in that declares its directory shadowed has its writes reach it at checkpoints, through side files `NAME.shadow0` and `NAME.shadow1`, so a crash leaves it as the last checkpoint did |
 | `lock` | held while a server, or a program, has the database open |
 
 `undo/` and `tmp/` are made anew each time the database opens. The
@@ -163,8 +163,9 @@ minute than the limit, it is too low for the work, and a
 INFORMATION_SCHEMA.FILES, its kind, its class of durability, whether it
 is open, and its reads, writes and syncs. The class says what a crash
 leaves of the file: DURABLE, the data file, the catalog, the log and a
-plug-in's own files, kept; DURABLE AT COMMIT, the data file's side files,
-whose writes reach it at a checkpoint; UNSYNCED, the log of older row
+plug-in's own files, kept; DURABLE AT COMMIT, the side files of the data
+file and of a plug-in's shadowed directory, whose writes reach their files
+at a checkpoint; UNSYNCED, the log of older row
 versions, begun anew as the database opens; SCRATCH, spill files, a
 session's temporary tables' among them,
 removed. The server's own files are there too, of KIND SERVER and no class,

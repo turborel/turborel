@@ -155,7 +155,9 @@ pub trait StorageEngine: Send + Sync {
         Ok(())
     }
     /// Makes what the last `checkpoint` captured durable, writers going on
-    /// meanwhile. Default: nothing.
+    /// meanwhile; what it wrote to its directory declared shadowed
+    /// (`PluginFiles::declare`, RULES.md D56) is durable already. Default:
+    /// nothing.
     ///
     /// # Errors
     ///

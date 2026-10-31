@@ -16,6 +16,8 @@
 //! undo/              the row store's older row versions
 //!                    (`engine/rows/undo.rs`), removed when the database
 //!                    opens
+//! plugins/           plug-ins' own files (`files/plugins.rs`), a
+//!                    directory each, as written or shadowed as declared
 //! ```
 //!
 //! Older row versions go to a log of their own on disk, so a long-running
@@ -279,6 +281,7 @@ impl Database {
         let reading = FileFormats { pipeline: Pipeline::none(), ..snapshot.layout(&snapshot.settings)?.formats };
         let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading))? else {
             let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held, self.events()));
+            snapshot.keep_plugins_in(&place)?;
             return self.create_files(&place, &started);
         };
         let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
@@ -290,6 +293,7 @@ impl Database {
             layout.durability = Durability::of(&word);
         }
         let place = Place::new(fs, dir, layout, (options, held, self.events()));
+        snapshot.keep_plugins_in(&place)?;
         // Read in the encodings its files name; opened again in its own
         // formats, their encodings bound to their arguments (a key's name),
         // as what it records from now on is written through them.
@@ -505,12 +509,17 @@ fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
 }
 
 impl State {
-    /// Keeps its spill areas' files, and its plug-ins' own, in `dir` of
-    /// `fs` from now on, the spill files a run before left removed.
+    /// Keeps its spill areas' files in `dir` of `fs` from now on, the spill
+    /// files a run before left removed.
     fn keep_in(&self, fs: &Arc<dyn FileSystem>, dir: &Path) -> Result<()> {
-        self.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))?;
-        self.plugins.set_place(Arc::clone(fs), dir.join(PLUGINS));
-        Ok(())
+        self.work.set_temp(TempFiles::new(Arc::clone(fs), &dir.join(TEMP)))
+    }
+
+    /// Keeps its plug-ins' own files at `place` from now on, in its
+    /// `plugins/`, their shadowed directories recovered (RULES.md D56):
+    /// once its files' formats are known, before its tables are opened.
+    fn keep_plugins_in(&self, place: &Place<'_>) -> Result<()> {
+        self.plugins.set_place(Arc::clone(place.fs), place.path(PLUGINS), Arc::clone(&place.layout.formats.hash))
     }
 
     /// The storage of the table `desc` in `engine`: reopened by its locator

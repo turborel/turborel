@@ -102,6 +102,7 @@ mod mvcc;
 mod named_schemas;
 mod pages;
 mod planning;
+mod plugin_files;
 mod plugin_settings;
 mod positions;
 mod predicates;

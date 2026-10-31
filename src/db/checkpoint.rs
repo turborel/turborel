@@ -12,8 +12,10 @@
 //! 2. has every engine capture what it holds through L
 //!    (`StorageEngine::checkpoint`): the row store writes its pages and its
 //!    pager's free list into its shadowed file (`disk/shadow.rs`), no sync,
-//!    and seals that batch; and holds back collection of every table with
-//!    indexes, noting the last commit captured;
+//!    and seals that batch; what plug-ins write meanwhile to their
+//!    shadowed directories (RULES.md D56) is held in memory, then sealed;
+//!    and holds back collection of every table with indexes, noting the
+//!    last commit captured;
 //!
 //! and opens the gate again. Then, writers going on,
 //!
@@ -24,9 +26,10 @@
 //! 4. logs and syncs a checkpoint record, so every record before L is
 //!    durable before the pages holding what they record are, and the
 //!    stale entries before the image naming them;
-//! 5. has every engine make its capture durable
-//!    (`StorageEngine::checkpoint_finish`): the row store commits the sealed
-//!    batch, so after a crash its tables are as they were at L;
+//! 5. commits the plug-ins' sealed batch, then has every engine make its
+//!    capture durable (`StorageEngine::checkpoint_finish`): the row store
+//!    commits the sealed batch, so after a crash its tables are as they
+//!    were at L;
 //! 6. records the image in the catalog file: the definitions, each table's
 //!    and index's locator, L, and the position of the first record of the oldest
 //!    transaction open at L, from which recovery reads the log;
@@ -286,9 +289,7 @@ impl State {
             self.tx.sync(&*log, at)?;
         }
         let through = log.end();
-        for engine in self.engines.values() {
-            engine.checkpoint(through)?;
-        }
+        self.capture_engines(through)?;
         let counted = self.tx.logged.load(Ordering::Relaxed);
         let image = Image {
             clean,
@@ -306,6 +307,18 @@ impl State {
                 .collect(),
         };
         Ok((image, counted))
+    }
+
+    /// Every engine's capture through `through`, what the plug-ins'
+    /// shadowed directories write meanwhile held in memory, then sealed
+    /// (RULES.md D56); given up if one fails.
+    fn capture_engines(&self, through: Lsn) -> Result<()> {
+        self.plugins.hold()?;
+        let captured = self.engines.values().try_for_each(|engine| engine.checkpoint(through)).and_then(|()| self.plugins.seal());
+        if captured.is_err() {
+            let _ = self.plugins.release();
+        }
+        captured
     }
 
     /// Whether a checkpoint may be taken. Not once a sync of the log
@@ -384,6 +397,9 @@ impl State {
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
         }
+        // The plug-ins' shadowed directories first, so an engine's capture
+        // is durable as its `checkpoint_finish` is called (RULES.md D56).
+        self.plugins.commit_sealed()?;
         for engine in self.engines.values() {
             engine.checkpoint_finish()?;
         }

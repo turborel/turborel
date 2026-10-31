@@ -261,6 +261,27 @@ pub trait DiskFile: Send + Sync {
     }
 }
 
+/// Every file under `dir` of `fs`, by path, sorted: an entry that reads as
+/// a directory is one, and is walked in turn.
+///
+/// # Errors
+///
+/// SQLCODE -915 if `dir` cannot be read.
+pub(crate) fn walk(fs: &dyn FileSystem, dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in fs.read_dir(&at)? {
+            match fs.read_dir(&entry) {
+                Ok(_) => pending.push(entry),
+                Err(_) => found.push(entry),
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
 /// \[DESIGN\] A new file at `path` of `fs`, beginning with `header`, and,
 /// if `durable`, synced with its directory, so a crash after leaves it
 /// whole. One that fails once made is removed: it holds nothing, and may
