@@ -1,5 +1,6 @@
 //! \[DESIGN\] Where an instance of a temporary table keeps its pages
-//! (RULES.md D49): its rows and its entries of each index share one
+//! (RULES.md D49): its rows, its entries of each index and the older
+//! versions its transactions keep (`db/temporary/undo.rs`) share one
 //! scratch file of the database's temporary files (`ScratchFile`), as a
 //! spill area does (D38), in a buffer pool of the session's
 //! MEMORY.WORK_BYTES reserved of the memory budget; so what the pool does

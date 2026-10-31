@@ -1,6 +1,6 @@
 //! Unit tests of the undo store's batches: versions read wherever their
 //! batch is, the log truncated by batch, and a batch that cannot be
-//! written; and a truncation racing an append. Split from engine/rows/undo.rs (RULES.md R-SIZE-2).
+//! written; a truncation racing an append; and batches fitted to a page. Split from engine/rows/undo.rs (RULES.md R-SIZE-2).
 
 use std::sync::atomic::AtomicBool;
 
@@ -187,4 +187,33 @@ fn a_batch_being_written_while_the_store_is_truncated_is_kept() {
     assert_eq!(log.records(), 1, "the first batch removed, the second kept");
     assert_eq!(store.read(second).unwrap(), version(1));
     assert_eq!(store.read(first).err().map(|e| e.code), Some(Code::Corrupt));
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D49: a fitted store writes a batch
+/// before the next version would carry its record past its bytes, so
+/// every record fits them: ten versions of forty bytes, each with its
+/// length, and the count make a record of 444 bytes, so a fit of 444
+/// takes ten to a record and one of 443 nine; a version longer than the
+/// fit is a batch alone. Each is read back as appended.
+#[test]
+fn fitted_batches_stay_within_their_bytes() {
+    let log = Arc::new(Hooked::default());
+    let store = UndoStore::fitted(shared(&log), 444);
+    let at: Vec<Lsn> = (0_u32..21_u32).map(|n| store.append(&version(n)).unwrap()).collect();
+    assert_eq!(log.records(), 2, "ten to a record, the 21st gathered");
+    let records: Vec<usize> = log.log.read_from(Lsn(0)).map(|r| r.unwrap().1.len()).collect();
+    assert_eq!(records, [444_usize, 444_usize]);
+    for (n, pos) in (0_u32..21_u32).zip(&at) {
+        assert_eq!(store.read(*pos).unwrap(), version(n), "{n}");
+    }
+    let tighter = Arc::new(Hooked::default());
+    let nine = UndoStore::fitted(shared(&tighter), 443);
+    for n in 0_u32..10_u32 {
+        nine.append(&version(n)).unwrap();
+    }
+    assert_eq!(tighter.records(), 1, "nine to a record, the tenth gathered");
+    let lengthy = nine.append(&[7_u8; 1000]).unwrap();
+    let after = nine.append(&version(11)).unwrap();
+    assert_eq!(tighter.records(), 3, "the tenth's batch, then the long one alone");
+    assert_eq!((nine.read(lengthy).unwrap(), nine.read(after).unwrap()), (vec![7_u8; 1000], version(11)));
 }

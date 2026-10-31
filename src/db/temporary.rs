@@ -10,7 +10,8 @@
 //! the definition, which stay empty. An instance's rows are made when a
 //! transaction of the session first reads or writes it, its entries of
 //! each index when its session first sees the index (`Rows_::entries`),
-//! both in its pages: a buffer pool of the session's MEMORY.WORK_BYTES,
+//! both in its pages, with the older versions its transactions keep
+//! (`db/temporary/undo.rs`): a buffer pool of the session's MEMORY.WORK_BYTES,
 //! of the database's budget, over a scratch file among the database's
 //! temporary files (`db/temporary/pages.rs`). No change to it is logged:
 //! none is recovered [§4.9]. A table of ON COMMIT DELETE ROWS is emptied
@@ -23,6 +24,7 @@
 mod pages;
 mod reshape;
 mod storage;
+mod undo;
 mod uses;
 
 pub(crate) use uses::Uses;

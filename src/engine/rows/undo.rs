@@ -1,7 +1,8 @@
 //! \[DESIGN\] The undo store of the row store (RULES.md D31): the older
 //! committed versions of rows, appended to a `Log`, so they go to block
-//! files in segments (`FileLog`), or to memory (`MemoryLog`), as the log
-//! plugged in. Every table of a row store shares it.
+//! files in segments (`FileLog`), to memory (`MemoryLog`), or to pages of
+//! a temporary table's file (`db/temporary/undo.rs`), as the log plugged
+//! in. Every table of a row store shares it.
 //!
 //! A version is appended when a transaction first changes a row, and is
 //! needed while a reader may go back to it: until the transaction rolls
@@ -14,6 +15,8 @@
 //! written as one record once it holds enough, so an update writes a few
 //! large records rather than one small one per row; the log's block
 //! manager leaves batching to the components above it (`disk/block.rs`).
+//! A store over a log of pages (`fitted`) writes a batch before the next
+//! version would carry its record past a page, so a record is one page.
 //! A version's position is then its batch's number and its index in the
 //! batch, and the store keeps where each batch it wrote is in the log.
 //! Versions of a batch not yet written are read from memory: the batch
@@ -34,6 +37,9 @@ const INDEX_BITS: u32 = 16;
 const INDEX_MASK: u64 = (1 << INDEX_BITS) - 1;
 /// The most versions a batch holds.
 const MOST_VERSIONS: usize = 1 << INDEX_BITS;
+/// Bytes of a batch's record before its versions, a `u32` count, and
+/// before each version, its length, a `u32`.
+const LENGTH_BYTES: usize = 4;
 
 /// \[DESIGN\] The undo store: a log of older versions, with the positions
 /// still needed.
@@ -42,6 +48,9 @@ pub struct UndoStore {
     /// Bytes of versions gathered before they are written as one record;
     /// 0 writes each alone, its position the log's.
     batch: usize,
+    /// Whether a batch is written before a version would carry its record
+    /// past `batch` bytes, rather than once its versions reach them.
+    fit: bool,
     /// The positions still needed, each with how many hold it.
     pinned: Mutex<BTreeMap<Lsn, usize>>,
     /// Whether a position was released since the last truncation: only then
@@ -82,7 +91,16 @@ impl UndoStore {
     /// batches of `bytes`: for a log whose each record costs a write.
     pub fn batched(log: Arc<dyn Log>, bytes: usize) -> UndoStore {
         let (pinned, batches) = (Mutex::new(BTreeMap::new()), Mutex::new(Batches::default()));
-        UndoStore { log, batch: bytes, pinned, released: AtomicBool::new(false), batches }
+        UndoStore { log, batch: bytes, fit: false, pinned, released: AtomicBool::new(false), batches }
+    }
+
+    /// An undo store keeping its versions in `log`, as `batched`, each
+    /// batch written before the next version would carry its record past
+    /// `bytes`, which should be more than 0: for a log whose each record is
+    /// a page of `bytes` of content. A version too long for one is a batch
+    /// alone.
+    pub fn fitted(log: Arc<dyn Log>, bytes: usize) -> UndoStore {
+        UndoStore { fit: true, ..UndoStore::batched(log, bytes.max(1)) }
     }
 
     /// Appends `version`, pinned; its position. The append and the pin are
@@ -100,12 +118,14 @@ impl UndoStore {
         }
         let (at, full) = {
             let mut batches = lock_builtin(&self.batches);
+            let early = self.overflows(&batches, version).then(|| take_batch(&mut batches, self.log.end()));
             let at = Lsn(batches.number.checked_shl(INDEX_BITS).unwrap_or(u64::MAX) | index(batches.gathering.len()));
             batches.gathering.push(version.to_vec());
             batches.bytes = batches.bytes.saturating_add(version.len());
             pin(&mut lock_builtin(&self.pinned), at);
-            let full = batches.bytes >= self.batch || batches.gathering.len() >= MOST_VERSIONS;
-            (at, full.then(|| take_batch(&mut batches, self.log.end())))
+            let reached = !self.fit && batches.bytes >= self.batch;
+            let full = reached || batches.gathering.len() >= MOST_VERSIONS;
+            (at, early.or_else(|| full.then(|| take_batch(&mut batches, self.log.end()))))
         };
         if let Some((number, batch)) = full
             && let Err(e) = self.write(number, &batch)
@@ -116,6 +136,15 @@ impl UndoStore {
             return Err(e);
         }
         Ok(at)
+    }
+
+    /// Whether `version`, gathered into `batches`, would carry the record
+    /// of a fitted store's batch past its bytes, the batch holding any:
+    /// its count, then each version's length and bytes (`write`).
+    fn overflows(&self, batches: &Batches, version: &[u8]) -> bool {
+        let lengths = batches.gathering.len().saturating_add(2).saturating_mul(LENGTH_BYTES);
+        let record = lengths.saturating_add(batches.bytes).saturating_add(version.len());
+        self.fit && !batches.gathering.is_empty() && record > self.batch
     }
 
     /// Writes batch `number`, then records where it is: no lock held over

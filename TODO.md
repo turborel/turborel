@@ -90,13 +90,6 @@ design settles.
 What came after SQL-92 follows it, written from the standards' own text
 (RULES.md D32).
 
-- **Temporary tables, further** (RULES.md D49): an instance's rows and
-  entries spill to a file, but the older versions its transactions keep
-  (committed rows a transaction updates or deletes) go to an undo store
-  over a log in memory, outside MEMORY.BUDGET_BYTES, until the
-  transaction ends: an UPDATE of every row of a large instance holds a
-  copy of it in memory. They should spill too, as the database's undo
-  log does, to files of `tmp/` (which holds files alone today).
 - **ALTER TABLE of a temporary table in use**, refused where it need not
   be: ADD or DROP COLUMN while another session holds rows and a
   constraint of the table reads another table, as the copy checks

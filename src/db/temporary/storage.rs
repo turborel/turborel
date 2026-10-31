@@ -1,7 +1,8 @@
 //! \[DESIGN\] What an instance of a temporary table stores (RULES.md D49):
 //! its rows, in a row store made when a transaction first reads or writes
 //! them, and its entries of each index its session's definitions give the
-//! table, each made complete or not at all; all in the instance's pages
+//! table, each made complete or not at all; and the older versions its
+//! transactions keep (`db/temporary/undo.rs`); all in the instance's pages
 //! (`db/temporary/pages.rs`), which spill to a scratch file. Split from
 //! db/temporary.rs (RULES.md R-SIZE-2).
 
@@ -10,12 +11,13 @@ use std::sync::{Arc, Mutex};
 
 use super::Uses;
 use super::pages::{Pages, Place};
+use super::undo::PagedLog;
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::api;
-use crate::engine::rows::{RowStore, TableFiles, TableOptions};
+use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
-use crate::log::{Lsn, MemoryLog};
+use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage, project};
@@ -80,9 +82,11 @@ impl Rows_ {
             return Ok(Arc::clone(rows));
         }
         let (pool, file) = self.pages.file()?;
-        // Older versions stay in memory: a transaction's own, as collection
-        // follows its end (RULES.md D49).
-        let engine = RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default());
+        // Older versions go to the pages too, a batch of them to a page
+        // (RULES.md D49).
+        let batch = pool.capacity(file)?;
+        let undo = UndoStore::fitted(Arc::new(PagedLog::new(Arc::clone(&pool), file)), batch);
+        let engine = RowStore::new(TableFiles::over(pool, file, undo), TableOptions::default());
         engine.use_work(Arc::clone(&self.pages.place.work));
         let rows: Arc<dyn TableStorage> = Arc::from(engine.create_table(&self.desc)?);
         *made = Some(Arc::clone(&rows));

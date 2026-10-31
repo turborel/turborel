@@ -1,5 +1,6 @@
 //! Temporary tables larger than the memory budget (RULES.md D49): each
-//! session's instance keeps its rows and index entries in a buffer pool of
+//! session's instance keeps its rows, index entries and the older versions
+//! its transactions keep in a buffer pool of
 //! MEMORY.WORK_BYTES over a spill file of the database's `tmp/`, written
 //! through the encodings spill files take (D38, D48), removed as the
 //! instance is emptied or its session ends, and cleared after a crash.
@@ -178,4 +179,46 @@ fn an_instance_spills_encrypted_while_anything_is() {
     assert!(!holds(&bytes_of(&dir.join("tmp"), ""), "plain 0"), "a table encrypted: so is the instance");
     assert_eq!(s_of(&s, "G", 3999), [text(3999).trim_end()]);
     assert_eq!(one(&s, "SELECT COUNT(*) FROM G"), "4000");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.9, §14.3]; [DESIGN] RULES.md
+/// D38, D49: an UPDATE, then a DELETE, of every row of an instance twice
+/// as large as MEMORY.BUDGET_BYTES keep the older versions in the
+/// instance's file, which grows by about the instance, not in memory;
+/// each rolled back restores every row, and a committed UPDATE leaves
+/// them changed. The session's end removes the file.
+/// Regression test (R-TEST-7): the older versions went to a log in
+/// memory, outside the budget, until the transaction ended, so the file
+/// did not grow.
+#[test]
+fn older_versions_of_an_instance_spill_to_its_file() {
+    let scratch = Scratch::new("temporary-spills-undo");
+    let dir = scratch.path("db");
+    let db = open(&dir, true);
+    let s = db.session("S");
+    fill(&s, "T");
+    exec(&s, "COMMIT WORK").unwrap();
+    let before = spill_files(&dir).1;
+    exec(&s, "UPDATE T SET S = 'changed'").unwrap();
+    let grown = spill_files(&dir).1;
+    assert!(grown >= before + u64::try_from(BUDGET).unwrap(), "older versions in the file: {before} to {grown}");
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T WHERE S = 'changed'"), "4000");
+    exec(&s, "ROLLBACK WORK").unwrap();
+    assert_eq!(s_of(&s, "T", 3210), [text(3210).trim_end()], "restored");
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T WHERE S = 'changed'"), "0");
+
+    exec(&s, "DELETE FROM T").unwrap();
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T"), "0");
+    exec(&s, "ROLLBACK WORK").unwrap();
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T"), "4000", "restored");
+    assert_eq!(s_of(&s, "T", 17), [text(17).trim_end()]);
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T WHERE V = 7"), "80", "the hash index, restored");
+
+    exec(&s, "UPDATE T SET S = 'changed'").unwrap();
+    exec(&s, "COMMIT WORK").unwrap();
+    assert_eq!(one(&s, "SELECT COUNT(*) FROM T WHERE S = 'changed'"), "4000");
+    let (limit, reserved) = db.memory().unwrap();
+    assert!(reserved <= limit, "{reserved} of {limit}");
+    drop(s);
+    assert_eq!(spill_files(&dir).0, 0, "the session's end removes its file");
 }

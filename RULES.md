@@ -677,15 +677,17 @@ live outside the database, or encrypting it would hide nothing.
   special. It is made when a session's transaction first touches it, and
   dies with the session. Its changes are not logged: never recovered
   [§4.9].
-- **Pages.** Rows and index entries of an instance share one spill file
-  of the database's temporary files (D38), through a buffer pool of the
-  session's MEMORY.WORK_BYTES reserved of the budget
-  (`db/temporary/pages.rs`). What the pool does not hold is written to
-  the file, so an instance may outgrow the budget.
+- **Pages.** Rows, index entries and older versions of an instance
+  share one spill file of the database's temporary files (D38), through
+  a buffer pool of the session's MEMORY.WORK_BYTES reserved of the
+  budget (`db/temporary/pages.rs`). What the pool does not hold is
+  written to the file, so an instance may outgrow the budget.
   - The file takes the spill files' encodings (D48), fixed when made.
   - It is removed as DELETE ROWS empties the instance, or the instance
     goes; a crash leaves it to be cleared at the next open (D56).
-  - Older versions a transaction keeps stay in memory, unbudgeted.
+  - Older versions a transaction keeps go to an undo store over a log
+    of the file's pages, a batch to a page (`db/temporary/undo.rs`),
+    freed as the transaction ends.
   - A database in memory keeps the file in memory of its budget (D56).
 - **ON COMMIT.** DELETE ROWS empties an instance as its transaction ends,
   committed or rolled back: as GR3 of §14.3 leaves it, or as it was. A
