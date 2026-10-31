@@ -248,8 +248,9 @@ impl Runner {
     /// Keeps `found`, the rows of the run `key`, of outer values `outer`,
     /// if what is kept fits the work area, counting the key, its entry and
     /// the rows held in memory twice, as a comparison with them makes as
-    /// much again of them (`subquery/quantified.rs`); or, of rows that
-    /// spilled, their area, so they are kept only alone. The rows of a
+    /// much again of them (`subquery/quantified.rs`); rows that spilled
+    /// count as a whole work area, so with outer values they are never
+    /// kept. The rows of a
     /// subquery with no outer references are kept whatever they hold, as
     /// they are its only run: one for each subquery of the statement, as
     /// each of its operators has a work area of its own.
