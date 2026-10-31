@@ -1,6 +1,6 @@
 //! Cancelling a running statement (RULES.md D44), from another thread: as
 //! it reads, as its cursor is fetched from, and as it waits for a lock;
-//! and by STATEMENT_TIMEOUT and LOCK_TIMEOUT.
+//! and by STATEMENT.TIMEOUT_MS and LOCKS.TIMEOUT_MS.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -195,26 +195,26 @@ fn a_statement_cancelled_as_it_waits_for_a_lock_stops_waiting() {
 }
 
 /// Verifies: [DESIGN] RULES.md D44: a statement that runs longer than its
-/// session's STATEMENT_TIMEOUT, here waiting for a lock, is cancelled
+/// session's STATEMENT.TIMEOUT_MS, here waiting for a lock, is cancelled
 /// (SQLCODE -920) once the time is past, saying so; the session's next
 /// statement runs, and 0 sets no limit.
 #[test]
 fn a_statement_past_its_timeout_is_cancelled() {
     let (db, holder) = locked();
     let waiter = db.session("X");
-    waiter.run("SET STATEMENT_TIMEOUT = 30").unwrap();
+    waiter.run("SET STATEMENT.TIMEOUT_MS = 30").unwrap();
     let began = std::time::Instant::now();
     let failed = waiter.run("INSERT INTO L VALUES (2)").unwrap_err();
     assert!(began.elapsed() >= std::time::Duration::from_millis(30), "{:?}", began.elapsed());
     assert_eq!(failed.code, Code::Cancelled);
-    assert!(failed.msg.contains("STATEMENT_TIMEOUT"), "{}", failed.msg);
+    assert!(failed.msg.contains("STATEMENT.TIMEOUT_MS"), "{}", failed.msg);
     holder.commit().unwrap();
-    waiter.run("SET STATEMENT_TIMEOUT = 0").unwrap();
+    waiter.run("SET STATEMENT.TIMEOUT_MS = 0").unwrap();
     waiter.run("INSERT INTO L VALUES (2)").unwrap();
 }
 
 /// Verifies: [DESIGN] RULES.md D44: a statement reading past its
-/// STATEMENT_TIMEOUT is cancelled as it reads on (SQLCODE -920), and
+/// STATEMENT.TIMEOUT_MS is cancelled as it reads on (SQLCODE -920), and
 /// undone.
 #[test]
 fn a_statement_reading_past_its_timeout_is_cancelled() {
@@ -224,7 +224,7 @@ fn a_statement_reading_past_its_timeout_is_cancelled() {
         s.run(&format!("INSERT INTO G VALUES ({k})")).unwrap();
     }
     s.commit().unwrap();
-    s.run("SET STATEMENT_TIMEOUT = 20").unwrap();
+    s.run("SET STATEMENT.TIMEOUT_MS = 20").unwrap();
     arm(&gate);
     let stalling = std::thread::spawn(move || {
         heard.recv().unwrap();
@@ -238,18 +238,18 @@ fn a_statement_reading_past_its_timeout_is_cancelled() {
 }
 
 /// Verifies: [DESIGN] RULES.md D28: a statement that waits for a lock
-/// longer than LOCK_TIMEOUT is refused (SQLCODE -911), saying so; its
+/// longer than LOCKS.TIMEOUT_MS is refused (SQLCODE -911), saying so; its
 /// transaction goes on, and once the holder commits the statement runs.
 #[test]
 fn a_wait_for_a_lock_past_its_timeout_is_refused() {
     let (db, holder) = locked();
     let waiter = db.session("X");
-    waiter.run("SET LOCK_TIMEOUT = 30").unwrap();
+    waiter.run("SET LOCKS.TIMEOUT_MS = 30").unwrap();
     let began = std::time::Instant::now();
     let failed = waiter.run("INSERT INTO L VALUES (2)").unwrap_err();
     assert!(began.elapsed() >= std::time::Duration::from_millis(30), "{:?}", began.elapsed());
     assert_eq!(failed.code, Code::Conflict);
-    assert!(failed.msg.contains("LOCK_TIMEOUT"), "{}", failed.msg);
+    assert!(failed.msg.contains("LOCKS.TIMEOUT_MS"), "{}", failed.msg);
     holder.commit().unwrap();
     waiter.run("INSERT INTO L VALUES (2)").unwrap();
 }

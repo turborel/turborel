@@ -279,7 +279,7 @@ fn spills_are_encrypted_while_anything_is() {
     let db = open(&dir, true);
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE P (K INTEGER, S CHARACTER(60))").unwrap();
     filled_with(&db, "P", ("plain", 6000));
-    db.set_setting("WORK_MEMORY", &turborel::value::Value::Exact(turborel::value::Decimal::new(64 << 10, 0))).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &turborel::value::Value::Exact(turborel::value::Decimal::new(64 << 10, 0))).unwrap();
     let s = db.session("S");
     let spilled = |query: &str| {
         let mut c = s.open_cursor(query).unwrap();

@@ -136,7 +136,7 @@ fn all_held(frames: usize, waited: &mut Option<Instant>, bound: Duration) -> Res
     Err(SqlError::new(
         Code::Resources,
         format!(
-            "[DESIGN] RULES.md D38: all {frames} frames of the buffer pool are held at once: it is too small for the work (STORAGE.POOL_BYTES, or WORK_MEMORY for a spill area)"
+            "[DESIGN] RULES.md D38: all {frames} frames of the buffer pool are held at once: it is too small for the work (STORAGE.POOL_BYTES, or MEMORY.WORK_BYTES for a spill area)"
         ),
     ))
 }

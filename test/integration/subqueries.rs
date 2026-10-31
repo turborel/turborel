@@ -310,7 +310,7 @@ fn views_with_subqueries_7_9() {
 /// on either side match nothing [§5.11 GR2]; an exact key equals an
 /// approximate one by value [§5.11 GR4]. The reference wraps the equality
 /// as `(... OR 1 = 0)`, which keeps the subquery from being decorrelated;
-/// the same whatever runs EXECUTOR.DECORRELATE_AFTER waits for (RULES.md
+/// the same whatever runs EXECUTOR.DECORRELATE_AFTER_RUNS waits for (RULES.md
 /// D36).
 #[test]
 fn decorrelated_subqueries_give_what_each_run_gives_5_21() {
@@ -342,10 +342,10 @@ fn decorrelated_subqueries_give_what_each_run_gives_5_21() {
         "SELECT K FROM T WHERE V >= ALL (SELECT W FROM U WHERE U.K = T.K AND U.W < 4)",
         "SELECT K FROM T WHERE V = (SELECT W FROM U WHERE U.K = T.K)",
     ];
-    // Decorrelated after EXECUTOR.DECORRELATE_AFTER runs: by default, at
+    // Decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs: by default, at
     // once, and never.
     for (after, sql) in [8, 0, 1_000_000].into_iter().flat_map(|after| queries.map(|q| (after, q))) {
-        db.set_setting("EXECUTOR.DECORRELATE_AFTER", &crate::common::number(after)).unwrap();
+        db.set_setting("EXECUTOR.DECORRELATE_AFTER_RUNS", &crate::common::number(after)).unwrap();
         let reference = sql.replace("U.K = T.K", "(U.K = T.K OR 1 = 0)").replace("T.K = U.K", "(T.K = U.K OR 1 = 0)");
         let sorted = |q: &str| {
             rows(&s, q).map(|mut r| {
@@ -355,7 +355,7 @@ fn decorrelated_subqueries_give_what_each_run_gives_5_21() {
         };
         assert_eq!(sorted(sql), sorted(&reference), "{sql}, after {after}");
     }
-    db.reset_setting("EXECUTOR.DECORRELATE_AFTER").unwrap();
+    db.reset_setting("EXECUTOR.DECORRELATE_AFTER_RUNS").unwrap();
     assert_eq!(code(&s, "SELECT K FROM T WHERE V = (SELECT W FROM U WHERE U.K = T.K)"), Code::Cardinality, "key 4 has two rows");
 }
 

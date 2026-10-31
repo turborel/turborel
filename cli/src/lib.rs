@@ -81,7 +81,7 @@ A password may be given in the environment variable TURBOREL_PASSWORD instead;
 it is proved by SCRAM-SHA-256, never sent, and only over TLS, a Unix socket or a
 named pipe: over plain TCP the client refuses to begin. Without a password, a
 certificate presented proves the user its common name names; without either,
-the server is asked to trust the user, as one with SERVER.TRUST LOCAL does a
+the server is asked to trust the user, as one with SERVER.TRUST_LOCAL ON does a
 client of its own machine.
 An import begins with no transaction active; a row that fails stops it, its
 batch rolled back, and says the record and line. Ctrl-C cancels the statement

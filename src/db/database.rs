@@ -380,13 +380,13 @@ impl Database {
     }
 
     /// \[DESIGN\] Choose the storage engine for tables in subsequent
-    /// `<schema>`s: the setting `DEFAULT_ENGINE`.
+    /// `<schema>`s: the setting `TABLES.ENGINE`.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if no engine has that name.
     pub fn use_engine(&self, name: &str) -> Result<()> {
-        self.set_setting("DEFAULT_ENGINE", &Value::Char(name.to_owned()))
+        self.set_setting("TABLES.ENGINE", &Value::Char(name.to_owned()))
     }
 
     /// \[DESIGN\] Choose the storage engine for one table, "AUTH.TABLE", before
@@ -459,7 +459,7 @@ impl Database {
     ///
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_transaction_policy(&self, policy: Policy) -> Result<()> {
-        self.set_setting("TRANSACTION_POLICY", &Value::Char(settings::policy_word(policy).to_owned()))
+        self.set_setting("TRANSACTION.STRICT", &Value::Char(settings::policy_word(policy).to_owned()))
     }
 
     /// \[DESIGN\] Whether a transaction that finds a table locked against it
@@ -470,7 +470,7 @@ impl Database {
     ///
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_lock_wait(&self, wait: LockWait) -> Result<()> {
-        self.set_setting("LOCK_WAIT", &Value::Char(settings::lock_wait_word(wait).to_owned()))
+        self.set_setting("LOCKS.WAIT", &Value::Char(settings::lock_wait_word(wait).to_owned()))
     }
 
     /// What happens to an open transaction when a session ends: the choice is
@@ -481,7 +481,7 @@ impl Database {
     ///
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_session_end(&self, end: SessionEnd) -> Result<()> {
-        self.set_setting("SESSION_END", &Value::Char(settings::session_end_word(end).to_owned()))
+        self.set_setting("SESSION.COMMIT_AT_END", &Value::Char(settings::session_end_word(end).to_owned()))
     }
 
     /// \[DESIGN\] The log transactions begun from now on write to (RULES.md

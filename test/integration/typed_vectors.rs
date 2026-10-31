@@ -130,12 +130,12 @@ fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
     }
     assert_eq!(sorted(&a, "SELECT COUNT(*) FROM C WHERE D = 1.515"), vec!["0"], "no value of scale 2 is 1.515");
     // Groups of integers past the work area, written and made after.
-    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     let spilled = "SELECT K, N, SUM(D), MAX(I) FROM C GROUP BY K, N";
     let (batched, row) = both_ways(&a, spilled);
     assert_eq!(batched, row, "{spilled}");
     assert_eq!(batched, sorted(&a, &spilled.replace(" C ", " R ")), "{spilled}, as the row store");
-    exec(&a, "SET WORK_MEMORY = DEFAULT").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = DEFAULT").unwrap();
     // [X3.135-1986 §5.8 GR4e] a running sum past 18 digits raises, of
     // integers as of decimals, though the sum of all is within them.
     let raising = [

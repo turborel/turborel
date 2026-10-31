@@ -9,91 +9,90 @@ use super::{Definition, Effect, Key, Kind};
 use crate::value::{Decimal, Value};
 
 /// The built-in settings, each at its key's place (`builtin`).
-pub const DEFAULT_ENGINE: Key = Key(0);
-/// See [`DEFAULT_ENGINE`].
-pub const UNIQUE_INDEX_METHOD: Key = Key(1);
-/// See [`DEFAULT_ENGINE`].
-pub const TRANSACTION_POLICY: Key = Key(2);
-/// See [`DEFAULT_ENGINE`].
-pub const LOCK_WAIT: Key = Key(3);
-/// See [`DEFAULT_ENGINE`].
-pub const SESSION_END: Key = Key(4);
-/// See [`DEFAULT_ENGINE`].
+pub const TABLES_ENGINE: Key = Key(0);
+/// See [`TABLES_ENGINE`].
+pub const TABLES_UNIQUE_INDEX_METHOD: Key = Key(1);
+/// See [`TABLES_ENGINE`].
+pub const TRANSACTION_STRICT: Key = Key(2);
+/// See [`TABLES_ENGINE`].
+pub const LOCKS_WAIT: Key = Key(3);
+/// See [`TABLES_ENGINE`].
+pub const SESSION_COMMIT_AT_END: Key = Key(4);
+/// See [`TABLES_ENGINE`].
 pub const OPTIMIZER_MAX_PASSES: Key = Key(5);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const INDEX_DESCENT_COST: Key = Key(6);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const SORT_COMPARE_COST: Key = Key(7);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const CATALOG_NAME: Key = Key(8);
-/// See [`DEFAULT_ENGINE`].
-pub const MEMORY_BUDGET: Key = Key(9);
-/// See [`DEFAULT_ENGINE`].
-pub const WORK_MEMORY: Key = Key(10);
-/// See [`DEFAULT_ENGINE`].
-pub const SPILL_BATCH: Key = Key(11);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
+pub const MEMORY_BUDGET_BYTES: Key = Key(9);
+/// See [`TABLES_ENGINE`].
+pub const MEMORY_WORK_BYTES: Key = Key(10);
+/// See [`TABLES_ENGINE`].
+pub const SPILL_BATCH_BYTES: Key = Key(11);
+/// See [`TABLES_ENGINE`].
 pub const EQUAL_SELECTIVITY: Key = Key(12);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const RANGE_SELECTIVITY: Key = Key(13);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const NULL_FRACTION: Key = Key(14);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const REORDER_GAIN: Key = Key(15);
-/// See [`DEFAULT_ENGINE`].
-pub const DECORRELATE_AFTER: Key = Key(16);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
+pub const DECORRELATE_AFTER_RUNS: Key = Key(16);
+/// See [`TABLES_ENGINE`].
 pub const SPILL_PARTITIONS: Key = Key(17);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const SPILL_PARTITION_DEPTH: Key = Key(18);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const CHECKPOINT_AFTER_CHANGES: Key = Key(19);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const CHECKPOINT_AFTER_BYTES: Key = Key(20);
-/// See [`DEFAULT_ENGINE`].
-pub const CATALOG_COMPACT_AFTER: Key = Key(21);
-/// See [`DEFAULT_ENGINE`].
-pub const PAGE_SIZE: Key = Key(22);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
+pub const CATALOG_COMPACT_AFTER_IMAGES: Key = Key(21);
+/// See [`TABLES_ENGINE`].
+pub const PAGE_BYTES: Key = Key(22);
+/// See [`TABLES_ENGINE`].
 pub const CHECKSUM: Key = Key(23);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const ENCODINGS: Key = Key(24);
-/// See [`DEFAULT_ENGINE`].
-pub const LOG_SEGMENT_SIZE: Key = Key(25);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
+pub const LOG_SEGMENT_BYTES: Key = Key(25);
+/// See [`TABLES_ENGINE`].
 pub const POOL_BYTES: Key = Key(26);
-/// See [`DEFAULT_ENGINE`].
-pub const STATEMENT_TIMEOUT: Key = Key(27);
-/// See [`DEFAULT_ENGINE`].
-pub const LOCK_TIMEOUT: Key = Key(28);
-/// See [`DEFAULT_ENGINE`].
-pub const SLOW_STATEMENT: Key = Key(29);
-/// See [`DEFAULT_ENGINE`].
-pub const TIME_ZONE: Key = Key(30);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
+pub const STATEMENT_TIMEOUT_MS: Key = Key(27);
+/// See [`TABLES_ENGINE`].
+pub const LOCKS_TIMEOUT_MS: Key = Key(28);
+/// See [`TABLES_ENGINE`].
+pub const SLOW_STATEMENT_MS: Key = Key(29);
+/// See [`TABLES_ENGINE`].
+pub const SESSION_TIME_ZONE: Key = Key(30);
+/// See [`TABLES_ENGINE`].
 pub const EXECUTOR_BATCHES: Key = Key(31);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const JOBS_POLICY: Key = Key(32);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const FILES_MAX_OPEN: Key = Key(33);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const DIAGNOSTICS_LEVEL: Key = Key(34);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const SPILL_ENCODINGS: Key = Key(35);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const COMMIT_SYNC: Key = Key(36);
-/// See [`DEFAULT_ENGINE`].
+/// See [`TABLES_ENGINE`].
 pub const FUNCTION_CALLS: Key = Key(37);
 
-/// The words of a setting turning something on or off: of
-/// `EXECUTOR.BATCHES`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS` and each
-/// optimizer rule's.
-pub const SWITCHES: &[&str] = &["ON", "OFF"];
-/// The words of `LOCK_WAIT`; below it, those of `SESSION_END` and
-/// `TRANSACTION_POLICY`.
-pub(super) const LOCK_WAITS: &[&str] = &["NO_WAIT", "WAIT"];
-const SESSION_ENDS: &[&str] = &["COMMIT", "ROLLBACK"];
-const POLICIES: &[&str] = &["STRICT", "PERMISSIVE"];
+/// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
+/// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
+/// rule's, and the others.
+pub const SWITCHES: &[&str] = &[ON, OFF];
+/// The word of a two-way choice taken.
+pub const ON: &str = "ON";
+/// The word of a two-way choice not taken.
+pub const OFF: &str = "OFF";
 
 /// A character string value.
 pub(super) fn text(s: &str) -> Value {
@@ -136,7 +135,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     let mut all = Vec::from(definitions());
     all.extend(cost());
     all.push(defined(
-        ("CATALOG_NAME", Kind::Identifier, text("TURBOREL")),
+        ("CATALOG.NAME", Kind::Identifier, text("TURBOREL")),
         DATABASE,
         "The name of the catalog the schemata are in, as the Information Schema gives it [ISO/IEC 9075:1992 §21.2.2].",
     ));
@@ -147,7 +146,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.extend(storage());
     all.extend(limits());
     all.push(defined(
-        ("EXECUTOR.BATCHES", Kind::Choice(SWITCHES), text("ON")),
+        ("EXECUTOR.BATCHES", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
         "Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.",
     ));
@@ -181,12 +180,12 @@ pub(super) fn builtin() -> Vec<Definition> {
 fn switches() -> [Definition; 2] {
     [
         defined(
-            ("LOG.COMMIT_SYNC", Kind::Choice(SWITCHES), text("ON")),
+            ("LOG.COMMIT_SYNC", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
             "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint or the database closing.",
         ),
         defined(
-            ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text("OFF")),
+            ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(OFF)),
             SESSION,
             "Whether a statement may call a function by the syntax NAME(arguments), which the standards do not have: ON; or refuses it, as SQL does, OFF.",
         ),
@@ -201,7 +200,7 @@ fn storage() -> [Definition; 5] {
     let created = (false, Effect::Creation);
     [
         defined(
-            ("STORAGE.PAGE_SIZE", Kind::Integer { min: MIN_PAGE_SIZE.into(), max: MAX_PAGE_SIZE.into() }, count(DEFAULT_PAGE_SIZE)),
+            ("STORAGE.PAGE_BYTES", Kind::Integer { min: MIN_PAGE_SIZE.into(), max: MAX_PAGE_SIZE.into() }, count(DEFAULT_PAGE_SIZE)),
             created,
             "The bytes of a page of the data file, a power of two.",
         ),
@@ -216,14 +215,18 @@ fn storage() -> [Definition; 5] {
             "The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty.",
         ),
         defined(
-            ("LOG.SEGMENT_SIZE", Kind::Integer { min: MIN_SEGMENT_SIZE.into(), max: MAX_SEGMENT_SIZE.into() }, count(DEFAULT_SEGMENT_SIZE)),
+            (
+                "LOG.SEGMENT_BYTES",
+                Kind::Integer { min: MIN_SEGMENT_SIZE.into(), max: MAX_SEGMENT_SIZE.into() },
+                count(DEFAULT_SEGMENT_SIZE),
+            ),
             created,
             "The bytes after which a segment of the log is ended and the next begun.",
         ),
         defined(
             ("STORAGE.POOL_BYTES", at_least(1_i128 << 16_i32), count(crate::db::POOL_BYTES)),
             (false, Effect::Start),
-            "The bytes of the buffer pool of the data file, reserved of MEMORY_BUDGET as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.",
+            "The bytes of the buffer pool of the data file, reserved of MEMORY.BUDGET_BYTES as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.",
         ),
     ]
 }
@@ -234,22 +237,22 @@ fn storage() -> [Definition; 5] {
 fn limits() -> [Definition; 4] {
     [
         defined(
-            ("STATEMENT_TIMEOUT", at_least(0), whole(0)),
+            ("STATEMENT.TIMEOUT_MS", at_least(0), whole(0)),
             SESSION,
             "The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.",
         ),
         defined(
-            ("LOCK_TIMEOUT", at_least(0), whole(0)),
+            ("LOCKS.TIMEOUT_MS", at_least(0), whole(0)),
             SESSION,
-            "The milliseconds a statement waits for a lock, under LOCK_WAIT WAIT, before it is refused (SQLCODE -911); 0 for no limit.",
+            "The milliseconds a statement waits for a lock, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.",
         ),
         defined(
-            ("DIAGNOSTICS.SLOW_STATEMENT", at_least(0), whole(0)),
+            ("DIAGNOSTICS.SLOW_STATEMENT_MS", at_least(0), whole(0)),
             DATABASE,
             "The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.",
         ),
         defined(
-            ("TIME_ZONE", Kind::Displacement, text("+00:00")),
+            ("SESSION.TIME_ZONE", Kind::Displacement, text("+00:00")),
             SESSION,
             "The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.",
         ),
@@ -260,29 +263,29 @@ fn limits() -> [Definition; 4] {
 fn definitions() -> [Definition; 5] {
     [
         defined(
-            ("DEFAULT_ENGINE", Kind::Engine, text(crate::engine::rows::ROW_STORE)),
+            ("TABLES.ENGINE", Kind::Engine, text(crate::engine::rows::ROW_STORE)),
             DATABASE,
             "The storage engine of tables a schema creates.",
         ),
         defined(
-            ("UNIQUE_INDEX_METHOD", Kind::IndexMethod, text(crate::index::BTREE_METHOD)),
+            ("TABLES.UNIQUE_INDEX_METHOD", Kind::IndexMethod, text(crate::index::BTREE_METHOD)),
             DATABASE,
             "The index method behind the UNIQUE constraints of tables created from now on.",
         ),
         defined(
-            ("TRANSACTION_POLICY", Kind::Choice(POLICIES), text("STRICT")),
+            ("TRANSACTION.STRICT", Kind::Choice(SWITCHES), text(ON)),
             (false, Effect::Transaction),
-            "STRICT refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; PERMISSIVE allows it.",
+            "ON refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; OFF allows it.",
         ),
         defined(
-            ("LOCK_WAIT", Kind::Choice(LOCK_WAITS), text("NO_WAIT")),
+            ("LOCKS.WAIT", Kind::Choice(SWITCHES), text(OFF)),
             (true, Effect::Transaction),
-            "WAIT waits for a lock another transaction holds; NO_WAIT refuses the statement at once.",
+            "ON waits for a lock another transaction holds; OFF refuses the statement at once.",
         ),
         defined(
-            ("SESSION_END", Kind::Choice(SESSION_ENDS), text("COMMIT")),
+            ("SESSION.COMMIT_AT_END", Kind::Choice(SWITCHES), text(ON)),
             (true, Effect::Statement),
-            "What ends a transaction open when its session ends [X3.135-1986 §7.1 GR2]: COMMIT or ROLLBACK.",
+            "Whether a transaction open when its session ends is committed, ON, or rolled back, OFF [X3.135-1986 §7.1 GR2].",
         ),
     ]
 }
@@ -313,19 +316,19 @@ fn cost() -> [Definition; 3] {
 fn memory() -> [Definition; 3] {
     [
         defined(
-            ("MEMORY_BUDGET", at_least(1_i128 << 20_i32), count(crate::memory::DEFAULT_BUDGET)),
+            ("MEMORY.BUDGET_BYTES", at_least(1_i128 << 20_i32), count(crate::memory::DEFAULT_BUDGET)),
             DATABASE,
             "The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.",
         ),
         defined(
-            ("WORK_MEMORY", at_least(64_i128 << 10_i32), count(crate::spill::DEFAULT_WORK_MEMORY)),
+            ("MEMORY.WORK_BYTES", at_least(64_i128 << 10_i32), count(crate::spill::DEFAULT_WORK_MEMORY)),
             SESSION,
-            "The bytes a sort, hash join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY_BUDGET; so too the rows a cursor reads ahead of its fetches or keeps to scroll among, and those an INSERT, UPDATE or DELETE chooses before it changes any, and what it did, kept for the checks of its constraints, a deferred one's until made.",
+            "The bytes a sort, hash join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY.BUDGET_BYTES; so too the rows a cursor reads ahead of its fetches or keeps to scroll among, and those an INSERT, UPDATE or DELETE chooses before it changes any, and what it did, kept for the checks of its constraints, a deferred one's until made.",
         ),
         defined(
-            ("SPILL_BATCH", Kind::Integer { min: 4_i128 << 10_i32, max: 1_i128 << 20_i32 }, count(crate::spill::DEFAULT_SPILL_BATCH)),
+            ("SPILL.BATCH_BYTES", Kind::Integer { min: 4_i128 << 10_i32, max: 1_i128 << 20_i32 }, count(crate::spill::DEFAULT_SPILL_BATCH)),
             SESSION,
-            "The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its WORK_MEMORY holds.",
+            "The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its MEMORY.WORK_BYTES holds.",
         ),
     ]
 }
@@ -356,7 +359,7 @@ fn guesses() -> [Definition; 5] {
             "A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.",
         ),
         defined(
-            ("EXECUTOR.DECORRELATE_AFTER", Kind::Integer { min: 0, max: 1_000_000 }, count(crate::exec::DEFAULT_DECORRELATE_AFTER)),
+            ("EXECUTOR.DECORRELATE_AFTER_RUNS", Kind::Integer { min: 0, max: 1_000_000 }, count(crate::exec::DEFAULT_DECORRELATE_AFTER)),
             DATABASE,
             "The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.",
         ),
@@ -370,7 +373,7 @@ fn spilling() -> [Definition; 2] {
         defined(
             ("SPILL.PARTITIONS", Kind::Integer { min: 2, max: 4096 }, count(DEFAULT_PARTITIONS)),
             SESSION,
-            "The most partitions a spilled operator (a join, grouping, DISTINCT, EXCEPT or INTERSECT) writes at once; it writes fewer if its WORK_MEMORY holds fewer runs.",
+            "The most partitions a spilled operator (a join, grouping, DISTINCT, EXCEPT or INTERSECT) writes at once; it writes fewer if its MEMORY.WORK_BYTES holds fewer runs.",
         ),
         defined(
             ("SPILL.PARTITION_DEPTH", Kind::Integer { min: 0, max: 64 }, count(DEFAULT_PARTITION_DEPTH)),
@@ -395,7 +398,7 @@ fn durability() -> [Definition; 3] {
             "The bytes written to the data file since the last checkpoint after which the end of a transaction takes one.",
         ),
         defined(
-            ("CATALOG.COMPACT_AFTER", Kind::Integer { min: 1, max: 1_000_000 }, count(COMPACT_AFTER)),
+            ("CATALOG.COMPACT_AFTER_IMAGES", Kind::Integer { min: 1, max: 1_000_000 }, count(COMPACT_AFTER)),
             DATABASE,
             "The images the catalog file holds after which the next is written, alone, to the other file.",
         ),

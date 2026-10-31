@@ -24,7 +24,7 @@ A user is a name a client signs in as; what it may do is the privileges
 granted to its authorization identifier, as to any. A session the host
 program of an embedded database starts may be of any identifier, a user
 or not. Every client of a server proves it is a user, unless the
-server's setting SERVER.TRUST is LOCAL, not its default, which trusts a
+server's setting SERVER.TRUST_LOCAL is ON, not its default, which trusts a
 client of its own machine as whoever it says it is
 ([Users](../../operator/05-users.md)).
 

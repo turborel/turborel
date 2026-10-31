@@ -9,17 +9,17 @@
 //! bounded channel, so a client reading slowly holds the worker but never
 //! more than a few batches of memory; a client gone closes the channel,
 //! and the worker stops fetching. The session ends on a worker too: as
-//! SESSION_END says once the client terminates it, a commit that fails
+//! SESSION.COMMIT_AT_END says once the client terminates it, a commit that fails
 //! sent as the client's error before the connection closes; rolled back
 //! if the connection ends otherwise, lost or failed, cut by the server
 //! stopping or ended by its operator, as a direct invocation of SQL that
 //! terminated unexpectedly [ISO/IEC 9075:1992 §20.1 GR2a].
 //!
-//! A connection has SERVER.LOGIN_TIMEOUT to authenticate, in messages of
+//! A connection has SERVER.LOGIN_TIMEOUT_MS to authenticate, in messages of
 //! at most `LOGIN_MESSAGE_BYTES`, its checks run apart from the workers
 //! and slowed after failures from its address (`logins.rs`). It is closed,
 //! its session rolled back, once it has kept the server waiting
-//! SERVER.IDLE_TIMEOUT for a request, or to take what it is sent, or
+//! SERVER.IDLE_TIMEOUT_MS for a request, or to take what it is sent, or
 //! SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS for a request while its
 //! transaction is active. A session of a user is ended at its next request
 //! once the user is dropped (RULES.md D43).
@@ -139,7 +139,7 @@ async fn serve(connection: Connection) {
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
-    // Told within SERVER.IDLE_TIMEOUT, as any reply: a client that takes
+    // Told within SERVER.IDLE_TIMEOUT_MS, as any reply: a client that takes
     // nothing would hold the connection open.
     let closing = async {
         match ended {
@@ -290,7 +290,7 @@ fn work_of(request: Request) -> Result<Option<Work>> {
 }
 
 /// The work of the client's next request, none for Terminate: waited for
-/// SERVER.IDLE_TIMEOUT, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too if
+/// SERVER.IDLE_TIMEOUT_MS, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too if
 /// `in_transaction`. Refused (SQLSTATE 28000) if the session is `user`'s,
 /// and the user has been dropped since it logged in.
 async fn next_work(
@@ -311,7 +311,7 @@ async fn next_work(
 
 /// Runs the client's requests in `admitted`'s session until it terminates,
 /// the connection fails or the server stops; then ends the session on a
-/// worker: as SESSION_END says if the client terminated it, its failure
+/// worker: as SESSION.COMMIT_AT_END says if the client terminated it, its failure
 /// returned to be sent before the connection closes; else rolled back
 /// [ISO/IEC 9075:1992 §20.1 GR2a]. Shown running while a request is.
 async fn run(wire: &mut Wire, (services, present): (&Services, &Present), admitted: Admitted) -> Result<()> {
@@ -344,7 +344,7 @@ async fn run(wire: &mut Wire, (services, present): (&Services, &Present), admitt
     }
 }
 
-/// Ends `held`'s session on a worker as SESSION_END says, its client
+/// Ends `held`'s session on a worker as SESSION.COMMIT_AT_END says, its client
 /// having terminated it [ISO/IEC 9075:1992 §20.1 GR2a]: a commit that
 /// fails, as a deferred constraint not satisfied, is the client's error.
 async fn terminated(services: &Services, held: Held) -> Result<()> {
@@ -378,7 +378,7 @@ async fn exchange(wire: &mut Wire, (services, present): (&Services, &Present), l
     let forwarding = async move {
         while let Some(reply) = receiver.recv().await {
             // A client that stops taking what it is sent holds a worker:
-            // it is given SERVER.IDLE_TIMEOUT, as one sending nothing is.
+            // it is given SERVER.IDLE_TIMEOUT_MS, as one sending nothing is.
             services.idle(wire.send(&reply)).await?;
             if receiver.is_empty() {
                 services.idle(wire.flush()).await?;

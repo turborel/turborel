@@ -197,7 +197,7 @@ impl HashIndex {
             return Err(SqlError::new(
                 Code::Unsupported,
                 format!(
-                    "[DESIGN] an index entry of {} bytes is longer than the limit of {} bytes for this database's page size; a database created with a larger STORAGE.PAGE_SIZE holds longer entries",
+                    "[DESIGN] an index entry of {} bytes is longer than the limit of {} bytes for this database's page size; a database created with a larger STORAGE.PAGE_BYTES holds longer entries",
                     out.len(),
                     self.table.max_entry()
                 ),

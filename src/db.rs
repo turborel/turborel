@@ -23,7 +23,7 @@
 //! | `ScalarFunction`    | SQL-92 string functions | \[EXTENSION\] call syntax       |
 //! | `Rule`              | ten rewrite rules     | optimizer                        |
 //! | `Diagnostics`       | none: events dropped  | the database's events (RULES.md D40) |
-//! | `Spill`             | `PagedSpill`          | operators past WORK_MEMORY (RULES.md D38) |
+//! | `Spill`             | `PagedSpill`          | operators past MEMORY.WORK_BYTES (RULES.md D38) |
 //! | `Credentials`       | none: no password kept | CREATE and ALTER USER (RULES.md D43) |
 //! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
@@ -50,7 +50,7 @@ use crate::logical::LogicalPlan;
 use crate::optimizer::RuleContext;
 use crate::parser::Parser;
 use crate::physical::{PhysicalPlanner, Plan};
-use crate::settings::{COMMIT_SYNC, LOCK_TIMEOUT, STATEMENT_TIMEOUT};
+use crate::settings::{COMMIT_SYNC, LOCKS_TIMEOUT_MS, STATEMENT_TIMEOUT_MS};
 use crate::sync::lock_builtin;
 use crate::txn::{SessionEnd, Stop, TxId, Txn, Window};
 
@@ -346,8 +346,8 @@ impl Session {
                 let snapshot = self.with_own(self.with_temporaries(snapshot));
                 self.now.set(snapshot.now(&self.own.borrow()));
                 let millis = |key| u64::try_from(snapshot.settings.integer(key)).unwrap_or(0);
-                self.stop.set_timeout(millis(STATEMENT_TIMEOUT));
-                self.stop.set_lock_timeout(millis(LOCK_TIMEOUT));
+                self.stop.set_timeout(millis(STATEMENT_TIMEOUT_MS));
+                self.stop.set_lock_timeout(millis(LOCKS_TIMEOUT_MS));
                 Ok(Call { session: self, snapshot, running: RefCell::new(None), _window: self.stop.window(), timed: None })
             }
             Err(e) => {
@@ -453,14 +453,14 @@ impl Session {
 
     /// [X3.135-1986 §7.1 GR2, ISO/IEC 9075:1992 §20.1 GR2a] Ends the
     /// session's transaction after its last statement: committed or rolled
-    /// back as SESSION_END says, and rolled back if a constraint is not
+    /// back as SESSION.COMMIT_AT_END says, and rolled back if a constraint is not
     /// satisfied; its failure returned, where dropping the session would
     /// lose it. A server calls it when its client terminates the session,
     /// which then has no transaction left to end when it is dropped.
     ///
     /// # Errors
     ///
-    /// As `commit`'s, or `rollback`'s, as SESSION_END says.
+    /// As `commit`'s, or `rollback`'s, as SESSION.COMMIT_AT_END says.
     pub fn end(&self) -> Result<()> {
         let ending = self.session_end(self.enter()?.state());
         match ending {

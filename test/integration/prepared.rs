@@ -176,7 +176,7 @@ fn a_parameter_with_no_type_is_refused() {
         "SELECT SUBSTRING(? FROM 1) FROM T",
         "SELECT ? || ? FROM T",
         "SELECT CASE WHEN K = 1 THEN ? ELSE 'b' END FROM T",
-        "SET LOCK_WAIT = ?",
+        "SET LOCKS.WAIT = ?",
     ];
     for sql in refused {
         let e = s.prepare(sql).unwrap_err();

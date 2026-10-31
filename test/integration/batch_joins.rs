@@ -146,7 +146,7 @@ fn outer_joins_by_batch_answer_as_row_by_row() {
 fn a_partitioned_join_by_batch_answers_as_row_by_row() {
     let db = Database::new();
     let a = tables(&db);
-    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     let (batched, row) = both_ways(&a, "SELECT F.G, COUNT(*), SUM(R.B) FROM F, R WHERE F.K = R.K GROUP BY F.G");
     assert_eq!(batched, row);
     // A product's right operand, outgrowing it, read again from a run.

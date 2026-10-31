@@ -25,8 +25,8 @@ to it, a foreign key that references it among them, leaving the table.
 
 DROP TABLE runs within the session's transaction: ROLLBACK undoes it.
 Until the transaction ends, others read the table as it was; one that
-writes it is refused (SQLSTATE TB911), or waits after `SET LOCK_WAIT =
-'WAIT'`.
+writes it is refused (SQLSTATE TB911), or waits after `SET LOCKS.WAIT =
+'ON'`.
 
 ## RULES
 

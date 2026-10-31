@@ -12,7 +12,7 @@
 //! beyond a statement's own
 //! making (a damaged table, corrupt data, an I/O error, a commit that
 //! failed, memory refused), and statements slower than
-//! DIAGNOSTICS.SLOW_STATEMENT. A failure of a statement's own SQL (a syntax
+//! DIAGNOSTICS.SLOW_STATEMENT_MS. A failure of a statement's own SQL (a syntax
 //! error, a violated constraint, a conflict) is the client's, returned to
 //! it, and is no event. Events carry no row data, but for a slow
 //! statement's text, and no wall-clock time: the sink stamps them as it
@@ -143,7 +143,7 @@ pub enum Event {
         /// What happened.
         change: ThreadChange,
     },
-    /// A statement whose work took DIAGNOSTICS.SLOW_STATEMENT or longer: a
+    /// A statement whose work took DIAGNOSTICS.SLOW_STATEMENT_MS or longer: a
     /// call, or a cursor's opening and fetches (`db/slow.rs`). Its text is
     /// as its session gave it, values written in it included; none while
     /// anything of the database is encrypted (RULES.md D56).
@@ -182,12 +182,12 @@ pub enum Event {
         addresses: Vec<String>,
     },
     /// \[DESIGN\] A server was told to stop: it takes no connection, and
-    /// lets each finish its statement until SERVER.SHUTDOWN_TIMEOUT.
+    /// lets each finish its statement until SERVER.SHUTDOWN_TIMEOUT_MS.
     Stopping {
         /// The connections it had.
         connections: u64,
     },
-    /// \[DESIGN\] A server stopping went past SERVER.SHUTDOWN_TIMEOUT, or
+    /// \[DESIGN\] A server stopping went past SERVER.SHUTDOWN_TIMEOUT_MS, or
     /// was told to stop again: the statements its sessions ran were
     /// cancelled, and its connections closed, their sessions rolled back.
     StopHurried {
@@ -204,7 +204,7 @@ pub enum Event {
         message: String,
     },
     /// \[DESIGN\] A client's TLS handshake failed, or did not end within
-    /// SERVER.LOGIN_TIMEOUT.
+    /// SERVER.LOGIN_TIMEOUT_MS.
     TlsFailed {
         /// Who: an address, or `local`.
         peer: String,

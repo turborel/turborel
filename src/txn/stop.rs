@@ -12,7 +12,7 @@
 //! cancelled one fails there (SQLCODE -920), and is undone as any failed
 //! statement is [X3.135-1986 §7.3 GR3b i]; its transaction goes on.
 //!
-//! A generation may have a deadline, STATEMENT_TIMEOUT after it begins
+//! A generation may have a deadline, STATEMENT.TIMEOUT_MS after it begins
 //! (`set_timeout`): past it, the generation is cancelled as by a cancel,
 //! and fails saying so. The clock is read every `CLOCK_EVERY` looks as rows
 //! are read, so a row costs no more than a count, and at every look while
@@ -38,10 +38,10 @@ pub struct Stop {
     cancelled: AtomicU64,
     /// The generation its deadline passed in.
     expired: AtomicU64,
-    /// STATEMENT_TIMEOUT, in milliseconds, for the generations that begin
+    /// STATEMENT.TIMEOUT_MS, in milliseconds, for the generations that begin
     /// from now on; 0 for none.
     timeout: AtomicU64,
-    /// LOCK_TIMEOUT, in milliseconds; 0 for none.
+    /// LOCKS.TIMEOUT_MS, in milliseconds; 0 for none.
     lock_timeout: AtomicU64,
     /// The deadline of the generation running, in nanoseconds since
     /// `epoch`; 0 for none.
@@ -83,7 +83,7 @@ fn cancelled() -> SqlError {
 
 /// The error of a statement past its deadline (SQLCODE -920).
 fn expired(timeout: u64) -> SqlError {
-    SqlError::new(Code::Cancelled, format!("[DESIGN] the statement ran longer than STATEMENT_TIMEOUT, {timeout} ms, and was cancelled"))
+    SqlError::new(Code::Cancelled, format!("[DESIGN] the statement ran longer than STATEMENT.TIMEOUT_MS, {timeout} ms, and was cancelled"))
 }
 
 impl Stop {
@@ -99,13 +99,13 @@ impl Stop {
     }
 
     /// Makes `millis`, if not 0, the deadline of each generation that
-    /// begins from now on, after it begins (STATEMENT_TIMEOUT).
+    /// begins from now on, after it begins (STATEMENT.TIMEOUT_MS).
     pub(crate) fn set_timeout(&self, millis: u64) {
         self.timeout.store(millis, Ordering::SeqCst);
     }
 
     /// Makes `millis`, if not 0, the longest a statement from now on waits
-    /// for a lock (LOCK_TIMEOUT).
+    /// for a lock (LOCKS.TIMEOUT_MS).
     pub(crate) fn set_lock_timeout(&self, millis: u64) {
         self.lock_timeout.store(millis, Ordering::SeqCst);
     }

@@ -21,7 +21,7 @@ once ANN grants BOB SELECT on DEPT, it gives DEPT.
 Its names are of the types SQL_IDENTIFIER, CHARACTER VARYING(128), and
 its texts of CHARACTER_DATA, CHARACTER VARYING(32767); a text longer than
 that, as a long view's definition, is shown null. The catalog is named
-TURBOREL, unless the setting CATALOG_NAME names it otherwise.
+TURBOREL, unless the setting CATALOG.NAME names it otherwise.
 
 ## The views
 
@@ -87,16 +87,16 @@ set. [SET](statements/set-setting.md) and
 
 ```sql
 SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, IS_SESSION_SETTABLE FROM INFORMATION_SCHEMA.SETTINGS
-    WHERE SETTING_NAME IN ('LOCK_WAIT', 'MEMORY_BUDGET', 'TIME_ZONE');
+    WHERE SETTING_NAME IN ('LOCKS.WAIT', 'MEMORY.BUDGET_BYTES', 'SESSION.TIME_ZONE');
 SELECT * FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS;
 ```
 
 ```
  SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE | IS_SESSION_SETTABLE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------+---------------------
- LOCK_WAIT                                                    | NO_WAIT                                                      | DEFAULT      | YES
- MEMORY_BUDGET                                                | 268435456                                                    | DEFAULT      | NO
- TIME_ZONE                                                    | +00:00                                                       | DEFAULT      | YES
+ LOCKS.WAIT                                                   | OFF                                                          | DEFAULT      | YES
+ MEMORY.BUDGET_BYTES                                          | 268435456                                                    | DEFAULT      | NO
+ SESSION.TIME_ZONE                                            | +00:00                                                       | DEFAULT      | YES
 (3 rows)
  RESERVED_BY                                                  |                BYTES
 --------------------------------------------------------------+----------------------

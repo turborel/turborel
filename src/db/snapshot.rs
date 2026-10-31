@@ -205,7 +205,7 @@ mod tests {
         )
         .unwrap();
         db.create_index("C_V", "A.C", &["V", "K"], "hash").unwrap();
-        db.set_setting("WORK_MEMORY", &Value::Exact(crate::value::Decimal::new(1 << 20, 0))).unwrap();
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(crate::value::Decimal::new(1 << 20, 0))).unwrap();
         db.create_user("ANN", &[0, 255, 7]).unwrap();
         db.create_user("bob", &[]).unwrap();
         db.set_owner("ANN").unwrap();

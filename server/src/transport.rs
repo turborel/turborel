@@ -177,7 +177,7 @@ impl Drop for Local {
 /// (`Peer::local`). Who of this machine may connect is as the system's
 /// default security for a pipe says: its creator, the administrators and
 /// the system fully; others may open it to read only, so they can send
-/// nothing, Hello neither, and are closed when SERVER.LOGIN_TIMEOUT runs
+/// nothing, Hello neither, and are closed when SERVER.LOGIN_TIMEOUT_MS runs
 /// out. A pipe is gone once its last instance closes: there is no file to
 /// remove.
 #[cfg(windows)]

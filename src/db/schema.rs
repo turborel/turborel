@@ -150,7 +150,7 @@ impl State {
         Ok((index, cols, built))
     }
 
-    /// The one catalog's name, the setting CATALOG_NAME [ISO/IEC 9075:1992
+    /// The one catalog's name, the setting CATALOG.NAME [ISO/IEC 9075:1992
     /// §5.4 SR20, §21.2.2].
     pub(crate) fn catalog_name(&self) -> String {
         self.settings.get(CATALOG_NAME).to_string().trim_end().to_owned()
@@ -556,7 +556,7 @@ mod tests {
     fn unknown_engines_and_methods_are_refused_before_any_change() {
         let mut st = state();
         assert_eq!(st.check_new_objects(&[table("nope", false)]).err().map(|e| e.code), Some(Code::Api));
-        st.settings.set("UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
+        st.settings.set("TABLES.UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
         assert_eq!(st.check_new_objects(&[table(ROW_STORE, true)]).err().map(|e| e.code), Some(Code::Api));
         assert_eq!(
             st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), None).err().map(|e| e.code),
@@ -573,7 +573,7 @@ mod tests {
         let catalog = Arc::clone(&st.catalog);
         assert_eq!(st.apply_schema(&*catalog, &[table("nope", false)], vec![], None).err().map(|e| e.code), Some(Code::Api));
         let mut no_method = state();
-        no_method.settings.set("UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
+        no_method.settings.set("TABLES.UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
         let other = Arc::clone(&no_method.catalog);
         assert_eq!(no_method.apply_schema(&*other, &[table(ROW_STORE, true)], vec![], None).err().map(|e| e.code), Some(Code::Api));
     }

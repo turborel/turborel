@@ -15,7 +15,7 @@
 //!   Other transactions' changes it cannot see: they wait for its locks, or
 //!   its engine reads as of its snapshot (RULES.md D29).
 //!
-//! Rows read ahead of their fetch so are held up to WORK_MEMORY, the rest
+//! Rows read ahead of their fetch so are held up to MEMORY.WORK_BYTES, the rest
 //! spilled (`exec/held.rs`, RULES.md D38). Reading ahead stops at the first
 //! error, which is fetched after the rows read before it, and ends them.
 

@@ -23,10 +23,11 @@ server of the same release always work together.
 ## Alpha
 
 turborel is in alpha, version **0.0.0**, until its first release. While
-its version is 0.y.z nothing is promised: SQL's behaviour, the Rust API,
-the protocol and the files a database is kept in may change in any
-release. A database made by one may not open with another, and is made
-again from its SQL.
+its version is 0.y.z nothing is promised: SQL's behaviour, the settings
+and their names, the Rust API, the protocol and the files a database is
+kept in may change in any release. A setting renamed is renamed in
+place, its old name no longer known, with no alias. A database made by
+one may not open with another, and is made again from its SQL.
 
 The first stable release is **1.0.0**.
 

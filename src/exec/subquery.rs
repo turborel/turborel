@@ -11,7 +11,7 @@
 //! are constants, and optimizes and plans it as any query: a correlated
 //! comparison becomes one an index can answer.
 //!
-//! A subquery run EXECUTOR.DECORRELATE_AFTER times, for as many sets of values,
+//! A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times, for as many sets of values,
 //! is run once more instead without its equalities with outer references,
 //! if it can be (`Subquery::decorrelated`): its rows are kept by those
 //! columns' values (`value::bucket`), and the rows for any outer values
@@ -47,7 +47,7 @@ use crate::sync::lock_builtin;
 use crate::txn::{Stop, TxId};
 use crate::value::{Bucket, NormKey, Value, bucket, compare};
 
-/// \[DESIGN\] The default of EXECUTOR.DECORRELATE_AFTER: the runs of a
+/// \[DESIGN\] The default of EXECUTOR.DECORRELATE_AFTER_RUNS: the runs of a
 /// subquery, for as many sets of outer values, after which it is
 /// decorrelated, if it can be.
 pub const DEFAULT_DECORRELATE_AFTER: usize = 8;
@@ -201,7 +201,7 @@ impl Runner {
     }
 
     /// The rows of `subquery`, at `at`, by key, once it ran
-    /// EXECUTOR.DECORRELATE_AFTER times, if it can be decorrelated; this run is
+    /// EXECUTOR.DECORRELATE_AFTER_RUNS times, if it can be decorrelated; this run is
     /// counted.
     fn keyed(&self, subquery: &Subquery, at: usize) -> Result<Option<Arc<Keyed>>> {
         let runs = {
@@ -215,7 +215,7 @@ impl Runner {
             s.runs = s.runs.saturating_add(1);
             s.runs
         };
-        if runs <= self.db.settings.count(crate::settings::DECORRELATE_AFTER) {
+        if runs <= self.db.settings.count(crate::settings::DECORRELATE_AFTER_RUNS) {
             return Ok(None);
         }
         let keyed = match subquery.decorrelated() {

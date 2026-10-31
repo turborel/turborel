@@ -231,7 +231,7 @@ fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -
     for t in optimized.tables() {
         st.read_lock(tx, &t)?;
     }
-    // Held up to WORK_MEMORY, the rest spilled (RULES.md D38).
+    // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
     let mut rows = HeldRows::new(st.list_space());
     for values in execute(physical, st, tx.id) {
         rows.push(target.candidate(values?)?)?;
@@ -240,7 +240,7 @@ fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -
 }
 
 /// The object rows of a searched UPDATE or DELETE, found before any is
-/// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to WORK_MEMORY, the
+/// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to MEMORY.WORK_BYTES, the
 /// rest spilled (RULES.md D38).
 pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: &BoundWrite) -> Result<HeldRows<(RowId, Row)>> {
     // T, to be written, and the tables its subqueries read.

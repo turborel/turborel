@@ -69,7 +69,7 @@ fn a_key_is_retired_by_resealing_its_table() {
     key(&keys, "K", "0a");
     key(&keys, "L", "0b");
     let base = format!("--dir {} --keys {} --checksum-key L", dir.display(), keys.display());
-    let server = format!("{base} --set SERVER.PORT=0 --set SERVER.TRUST=LOCAL");
+    let server = format!("{base} --set SERVER.PORT=0 --set SERVER.TRUST_LOCAL=ON");
     let created = format!("{server} --set STORAGE.CHECKSUM=hmac-sha-256 --set STORAGE.ENCODINGS=chacha20-poly1305:L");
     let made = served(
         config(&created),
@@ -111,7 +111,7 @@ fn a_key_is_retired_by_resealing_its_table() {
 #[test]
 fn a_database_is_checksummed_with_sha_512() {
     let scratch = Scratch::new("turboreld-sha512");
-    let server = format!("--dir {} --set SERVER.PORT=0 --set SERVER.TRUST=LOCAL", scratch.path("db").display());
+    let server = format!("--dir {} --set SERVER.PORT=0 --set SERVER.TRUST_LOCAL=ON", scratch.path("db").display());
     let made = served(
         config(&format!("{server} --set STORAGE.CHECKSUM=sha-512")),
         &["CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (S VARCHAR(20))", "INSERT INTO T VALUES ('wide')", "COMMIT WORK"],

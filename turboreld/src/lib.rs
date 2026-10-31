@@ -17,7 +17,7 @@
 //! their settings change, as everywhere.
 //!
 //! Clients prove who they are by `password`, `scram-sha-256` or
-//! `certificate`, or, with SERVER.TRUST LOCAL, are trusted on this machine.
+//! `certificate`, or, with SERVER.TRUST_LOCAL ON, are trusted on this machine.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -41,7 +41,7 @@ use turborel_server::native::Native;
 use turborel_server::password::{Password, Pbkdf2};
 use turborel_server::scram::Scram;
 use turborel_server::server::{Protocol, Server};
-use turborel_server::settings::{self, TRUST};
+use turborel_server::settings::{self, TRUST_LOCAL};
 use turborel_server::tls::Tls;
 
 /// The usage text.
@@ -88,14 +88,14 @@ The server's settings, beside the database's:
                          may present to log in by (default none)
   SERVER.SCRAM_WITHOUT_TLS  ON: take SCRAM-SHA-256 over plain TCP too (default OFF)
   SERVER.WORKERS         statements run at once (default: one per processor)
-  SERVER.LOGIN_TIMEOUT   milliseconds a client has to begin TLS and authenticate
+  SERVER.LOGIN_TIMEOUT_MS  milliseconds a client has to begin TLS and authenticate
                          (default 60000; 0 for no limit)
   SERVER.MAX_LOGINS      authentications checked at once, apart from the workers (default 4)
   SERVER.LOGIN_DELAY_MS  the longest a login waits after failed ones from its address
                          (default 10000; 0 for no wait)
-  SERVER.IDLE_TIMEOUT    milliseconds the server waits on a client, for a request or to
+  SERVER.IDLE_TIMEOUT_MS milliseconds the server waits on a client, for a request or to
                          take its rows, before closing it and rolling it back (default 0, none)
-  SERVER.SHUTDOWN_TIMEOUT  milliseconds a server told to stop lets statements finish,
+  SERVER.SHUTDOWN_TIMEOUT_MS  milliseconds a server told to stop lets statements finish,
                          before it cancels them (default 30000; 0 for no limit)
   SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS  milliseconds the server waits for a request of a
                          client in a transaction, before closing it and rolling it back
@@ -110,28 +110,28 @@ The server's settings, beside the database's:
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)
   SERVER.BATCH_BYTES     about how many bytes of rows go in a batch (default 64 KiB)
-  SERVER.TRUST           OFF: every client proves who it is (default);
-                         LOCAL: trust a client of this machine as who it says
+  SERVER.TRUST_LOCAL     OFF: every client proves who it is (default);
+                         ON: trust a client of this machine as who it says
   SERVER.PASSWORD_ITERATIONS  PBKDF2 iterations of a password made (default 600000)
 
 The database's files, fixed when it is created: --set them as it is:
-  STORAGE.PAGE_SIZE      the bytes of a page of its data file, a power of two (default 8192)
+  STORAGE.PAGE_BYTES     the bytes of a page of its data file, a power of two (default 8192)
   STORAGE.CHECKSUM       the hash function its files are checksummed with (default CRC-32/ISCSI;
                          SHA-256, or HMAC-SHA-256 keyed by --checksum-key)
   STORAGE.ENCODINGS      the encodings its files pass through, by commas: LZ4, and
                          AES-256-GCM:KEY or ChaCha20-Poly1305:KEY with a key of --keys
                          (default none)
-  LOG.SEGMENT_SIZE       the bytes of a segment of its log (default 64 MiB)
+  LOG.SEGMENT_BYTES      the bytes of a segment of its log (default 64 MiB)
   STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
 
 Clients prove who they are by a user's password, sent or proved by SCRAM-SHA-256, over
 TLS or a Unix socket only, or by a certificate of SERVER.TLS_CLIENT_CA's authorities
-whose common name is the user's; with SERVER.TRUST LOCAL, a client of this machine is
+whose common name is the user's; with SERVER.TRUST_LOCAL ON, a client of this machine is
 trusted instead. The database's
 owner manages users in SQL (CREATE USER, ALTER USER, DROP USER), and sets the database's
 settings, the server's among them, on a running server: SET DATABASE NAME = VALUE.
 Ctrl-C, or SIGTERM on Unix, stops the server: each connection finishes its statement,
-then the database is closed. Past SERVER.SHUTDOWN_TIMEOUT milliseconds (default 30000;
+then the database is closed. Past SERVER.SHUTDOWN_TIMEOUT_MS milliseconds (default 30000;
 0 for no limit), or at a second Ctrl-C or SIGTERM, running statements are cancelled
 and connections closed, rolled back. SIGHUP (Unix) opens the --log file again, as
 a log rotation asks, and takes TLS's files again, for the connections after.
@@ -277,7 +277,7 @@ pub fn run(
             Arc::new(Scram::new(db.clone(), &credentials).map_err(|e| e.to_string())?),
             Arc::new(Certificate::new(db.clone())),
         ];
-        if settings::text(&db, TRUST) == "LOCAL" {
+        if settings::text(&db, TRUST_LOCAL) == turborel::settings::ON {
             mechanisms.push(Arc::new(Trust));
         }
         mechanisms.into_iter().try_for_each(|m| server.add_authenticator(m)).map_err(|e| e.to_string())?;

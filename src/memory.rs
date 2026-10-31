@@ -10,7 +10,7 @@
 //! holds it, and the budget lists those held (`reservations`), as
 //! INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows them.
 //!
-//! The limit is the setting MEMORY_BUDGET's (`settings.rs`). The budget is
+//! The limit is the setting MEMORY.BUDGET_BYTES's (`settings.rs`). The budget is
 //! one for the database, shared by every snapshot of its definitions, and
 //! told the setting's value whenever a change of it is published.
 
@@ -26,7 +26,7 @@ use crate::files::plugins::PluginFiles;
 use crate::spill::WorkAreas;
 use crate::sync::lock_builtin;
 
-/// \[DESIGN\] The default MEMORY_BUDGET: 256 MiB.
+/// \[DESIGN\] The default MEMORY.BUDGET_BYTES: 256 MiB.
 pub const DEFAULT_BUDGET: usize = 256 << 20;
 
 /// \[DESIGN\] A database's memory budget: its limit, and what is reserved

@@ -32,7 +32,7 @@ not. Each takes the user to connect as and a `Mechanism` that proves it:
   more.
 - `Trust`, which asks the server to trust the user as it names itself,
   as a server does only of a client of its own machine, and only if its
-  setting SERVER.TRUST is LOCAL, not its default.
+  setting SERVER.TRUST_LOCAL is ON, not its default.
 
 To a server over plain TCP, `connect` and `connect_to` refuse
 `Password`, and `Scram`, before they connect (SQLSTATE 28000); of a
@@ -61,7 +61,7 @@ println!("{}, as {}", conn.server(), conn.authorization());
 ```
 
 A connection is a session of the server's. `terminate` ends it, its
-transaction as the setting SESSION_END says. A commit that fails then,
+transaction as the setting SESSION.COMMIT_AT_END says. A commit that fails then,
 as one of a deferred constraint not satisfied (SQLSTATE 40002), rolls
 the transaction back, and `terminate` gives its `Failure`. It waits for
 the server to close at most as the connection's read timeout says, else

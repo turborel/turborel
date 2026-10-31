@@ -41,7 +41,7 @@ pub fn declared(store: &str) -> Definition {
         default: Value::Exact(Decimal::new(i128::try_from(HEADER_CACHE_BYTES).unwrap_or(i128::MAX), 0)),
         per_session: false,
         effect: Effect::Statement,
-        doc: "The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY_BUDGET as they are held; 0 for none, each read as it is needed.".to_owned(),
+        doc: "The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.".to_owned(),
     }
 }
 /// \[DESIGN\] The bytes reserved of the budget at once: 1 MiB.

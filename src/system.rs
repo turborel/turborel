@@ -266,7 +266,7 @@ pub(crate) fn yes(is: bool) -> Value {
 }
 
 /// [ISO/IEC 9075:1992 §21.2.2] The name of the catalog: the setting
-/// CATALOG_NAME's.
+/// CATALOG.NAME's.
 pub(crate) fn catalog_name(seen: &Seen<'_>) -> Value {
     seen.state.settings.get(crate::settings::CATALOG_NAME).clone()
 }

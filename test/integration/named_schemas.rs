@@ -143,7 +143,7 @@ fn owners_are_logged() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4 SR9c, SR10, SR20, §6.4,
 /// §7.9]: a name may be qualified by its catalog, the one there is, named
-/// by the setting CATALOG_NAME: a table's, a column reference's
+/// by the setting CATALOG.NAME: a table's, a column reference's
 /// qualifier's, a `<qualifier>.*`'s, in a statement run, prepared, a
 /// cursor declared and opened, explained, or a schema defined; it names
 /// what the name without it does. Another catalog's name is refused
@@ -184,7 +184,7 @@ fn a_name_is_qualified_by_the_one_catalog() {
         Some(Code::SyntaxRule)
     );
     s.commit().unwrap();
-    db.set_setting("CATALOG_NAME", &Value::Char("SHOP".into())).unwrap();
+    db.set_setting("CATALOG.NAME", &Value::Char("SHOP".into())).unwrap();
     let renamed = db.session("U");
     assert_eq!(rows(&renamed, "SELECT K FROM S.V"), Ok(vec!["1".into()]), "the view as it was checked");
     assert_eq!(rows(&renamed, "SELECT K FROM SHOP.S.T"), Ok(vec!["1".into()]));

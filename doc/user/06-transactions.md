@@ -43,7 +43,7 @@ UPDATE EMPLOYEES SET SALARY = 1 WHERE ID = 1;
 turborel: SQLCODE -911 (SQLSTATE TB911): a row it would change was changed by a transaction this one does not see, or is being changed; run the transaction again
 ```
 
-`SET LOCK_WAIT = 'WAIT'` makes a statement wait for a lock another
+`SET LOCKS.WAIT = 'ON'` makes a statement wait for a lock another
 transaction holds, rather than be refused at once
 ([SET](../sql/statements/set-setting.md)). A commit that could not keep
 the transactions serializable is refused, SQLSTATE 40001, the

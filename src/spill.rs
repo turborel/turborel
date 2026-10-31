@@ -1,6 +1,6 @@
 //! \[DESIGN\] Where operators that outgrow memory put their rows (RULES.md
 //! D38): an extension point, `Spill`. An operator that has used its work
-//! area (the setting WORK_MEMORY) asks for an area of its own, reserved of
+//! area (the setting MEMORY.WORK_BYTES) asks for an area of its own, reserved of
 //! the database's memory budget, and makes in it what it needs:
 //!
 //! * a **table** (`SpillTable`): byte keys to byte values, a key's values
@@ -49,11 +49,11 @@ use crate::value::codec::{put_row, row};
 use crate::value::types::TypeRegistry;
 use crate::value::{Bucket, Decimal, NormKey, Value};
 
-/// \[DESIGN\] The default WORK_MEMORY: what an operator holds in memory
+/// \[DESIGN\] The default MEMORY.WORK_BYTES: what an operator holds in memory
 /// before it spills, 4 MiB.
 pub const DEFAULT_WORK_MEMORY: usize = 4 << 20;
 
-/// \[DESIGN\] The default SPILL_BATCH: the bytes of records a run gathers
+/// \[DESIGN\] The default SPILL.BATCH_BYTES: the bytes of records a run gathers
 /// before it writes them, 16 KiB.
 pub const DEFAULT_SPILL_BATCH: usize = 16 << 10;
 

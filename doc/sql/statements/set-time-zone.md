@@ -22,10 +22,10 @@ datetime literal written without one, of CURRENT_TIME and
 CURRENT_TIMESTAMP, and of a time or timestamp without time zone CAST to
 one with time zone.
 
-LOCAL sets it back to the database's: the setting TIME_ZONE, `+00:00`
+LOCAL sets it back to the database's: the setting SESSION.TIME_ZONE, `+00:00`
 unless the database sets another. A session begins with the database's.
 
-The displacement is the session's own value of the setting TIME_ZONE;
+The displacement is the session's own value of the setting SESSION.TIME_ZONE;
 INFORMATION_SCHEMA.SETTINGS shows it. SET TIME ZONE begins no
 transaction, may run within one, and is not undone by ROLLBACK.
 
@@ -89,7 +89,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): SET TIME ZONE takes an INTERVAL HOUR TO
 
 ISO/IEC 9075:1992 §16.5, the `<set local time zone statement>`. The
 displacement a session begins with, which LOCAL sets again, is
-implementation-defined [GR1a]: here, the database's setting TIME_ZONE.
+implementation-defined [GR1a]: here, the database's setting SESSION.TIME_ZONE.
 Keeping it as a session's own setting, shown in
 INFORMATION_SCHEMA.SETTINGS, is an extension. SQL-86 has no datetimes.
 

@@ -84,7 +84,7 @@ impl Parser {
     }
 
     /// Whether the token `i` on begins a setting's name: an identifier, or
-    /// a key word a period follows, as of DIAGNOSTICS.SLOW_STATEMENT, so
+    /// a key word a period follows, as of DIAGNOSTICS.SLOW_STATEMENT_MS, so
     /// no statement SET of a key word, as SET CATALOG, is taken for one.
     fn at_setting_name(&self, i: usize) -> bool {
         if let Tok::Identifier(_) = self.peek_at(i) {

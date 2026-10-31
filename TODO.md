@@ -117,9 +117,9 @@ design settles.
 - **Temporary tables, further** (RULES.md D49): an instance reserves
   in-memory pools of the database's budget (2 MiB for its rows, and for
   each index) when first written, and its pages are files in memory of
-  MEMORY_BUDGET, so an instance larger than the budget leaves is refused
+  MEMORY.BUDGET_BYTES, so an instance larger than the budget leaves is refused
   (SQLCODE -918): it should spill to the session's temporary files past
-  WORK_MEMORY instead. An ALTER TABLE adding or dropping a column is
+  MEMORY.WORK_BYTES instead. An ALTER TABLE adding or dropping a column is
   refused while another session holds rows and a constraint of the table
   reads another table, as the copy checks constraints against the
   altering session's instances; one other than adding or dropping a

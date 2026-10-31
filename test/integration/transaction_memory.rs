@@ -1,6 +1,6 @@
 //! The memory a transaction holds (RULES.md D38): the coordinator's undo
 //! entries, for engines that do not undo their own changes and for
-//! indexes, are held up to WORK_MEMORY, then written to runs of a spill
+//! indexes, are held up to MEMORY.WORK_BYTES, then written to runs of a spill
 //! area reserved of the memory budget, and read back to undo a statement
 //! or the transaction [X3.135-1986 §7.3 GR3b i, §8.9 GR1].
 
@@ -10,7 +10,7 @@ use turborel::value::{Decimal, Value};
 
 use crate::common::{exec, locking_database, rows, spill_bytes};
 
-/// The smallest WORK_MEMORY, 64 KiB.
+/// The smallest MEMORY.WORK_BYTES, 64 KiB.
 const SMALL: i128 = 64 << 10;
 /// Rows of `T`: each changed adds undo entries for its row and two indexes.
 const ROWS: usize = 3000;
@@ -28,7 +28,7 @@ fn filled(db: &Database) {
 }
 
 /// Verifies: [X3.135-1986 §7.3 GR3b i, §8.9 GR1]; [DESIGN] RULES.md D38:
-/// a transaction's undo entries past WORK_MEMORY are written to a spill
+/// a transaction's undo entries past MEMORY.WORK_BYTES are written to a spill
 /// area reserved of the budget; a statement that fails after them is
 /// undone, its changes read back from the area, leaving those before it;
 /// ROLLBACK undoes the rest, rows and index entries; the area is given
@@ -38,7 +38,7 @@ fn filled(db: &Database) {
 fn undo_entries_spill_and_are_read_back() {
     for db in [Database::new(), locking_database()] {
         filled(&db);
-        db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
         let s = db.session("S");
         s.run("UPDATE T SET V = 'changed'").unwrap();
         assert!(spill_bytes(&db) > 0, "an area reserved");
@@ -216,9 +216,9 @@ fn garbage_is_read_and_collected_a_segment_at_a_time() {
 /// in `T`.
 fn past_the_budget(db: &Database) -> (Session, usize) {
     const MIB: i128 = 1 << 20;
-    db.set_setting("MEMORY_BUDGET", &Value::Exact(Decimal::new(3 * MIB, 0))).unwrap();
+    db.set_setting("MEMORY.BUDGET_BYTES", &Value::Exact(Decimal::new(3 * MIB, 0))).unwrap();
     db.set_setting("STORAGE.POOL_BYTES", &Value::Exact(Decimal::new(MIB, 0))).unwrap();
-    db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, S CHARACTER(500)) WITH (TRANSACTIONS.HELD_BYTES = 4096)",
     )
@@ -239,7 +239,7 @@ fn past_the_budget(db: &Database) -> (Session, usize) {
 /// Verifies: [X3.135-1986 §7.3 GR3b i, §8.9 GR1]; [DESIGN] RULES.md D19,
 /// D38: undoing is never refused by the memory budget. Regression test
 /// (R-TEST-7): a transaction of a database in memory that inserts a row a
-/// statement until MEMORY_BUDGET refuses one (SQLCODE -918) has that
+/// statement until MEMORY.BUDGET_BYTES refuses one (SQLCODE -918) has that
 /// statement undone, the rows before kept; ROLLBACK then undoes the rest,
 /// rows and index entries, damaging no table, where reading its changes
 /// back to undo them was refused for want of memory and damaged it.

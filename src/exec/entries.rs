@@ -73,13 +73,13 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
 
 /// The rows `table_entries` gives, every one read now, before any is
 /// changed: the object rows of a searched UPDATE or DELETE [X3.135-1986
-/// §8.12 GR1, §8.5 GR1]. Held up to WORK_MEMORY, the rest spilled
+/// §8.12 GR1, §8.5 GR1]. Held up to MEMORY.WORK_BYTES, the rest spilled
 /// (`exec/held.rs`, RULES.md D38).
 ///
 /// # Errors
 ///
 /// A row's search condition fails, the statement is cancelled or runs past
-/// STATEMENT_TIMEOUT (SQLCODE -920), `plan` is not a table access or names
+/// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` is not a table access or names
 /// a table or index that does not exist (SQLCODE -910), or the rows cannot
 /// be spilled (SQLCODE -918 if the area cannot be reserved).
 pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<HeldRows<(RowId, Row)>> {

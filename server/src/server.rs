@@ -11,7 +11,7 @@
 //! The server stops when told: no connection is taken after that, each
 //! connection finishes the statement it runs and is closed, and `serve`
 //! returns once every one is; the database is then the caller's, to close.
-//! Past SERVER.SHUTDOWN_TIMEOUT, or told to stop again, it hurries: the
+//! Past SERVER.SHUTDOWN_TIMEOUT_MS, or told to stop again, it hurries: the
 //! statements its sessions run are cancelled (RULES.md D44), and every
 //! wait on a client ends, so each connection is closed, its session rolled
 //! back.
@@ -39,7 +39,7 @@ use crate::auth::{Authenticator, Peer};
 use crate::limit::{Held, Limit};
 use crate::logins::Logins;
 use crate::password::Pbkdf2;
-use crate::settings::{IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, SHUTDOWN_TIMEOUT, WORKERS};
+use crate::settings::{IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, SHUTDOWN_TIMEOUT_MS, WORKERS};
 use crate::settings::{count, declare, millis};
 use crate::shown::{self, Operator, Present, Shown};
 use crate::tls::{Secured, Tls};
@@ -69,7 +69,7 @@ enum Stage {
     Serving,
     /// Told to stop: each connection finishes its statement.
     Stopping,
-    /// Past SERVER.SHUTDOWN_TIMEOUT, or told again: statements cancelled,
+    /// Past SERVER.SHUTDOWN_TIMEOUT_MS, or told again: statements cancelled,
     /// waits on clients ended.
     Hurried,
 }
@@ -95,7 +95,7 @@ pub type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
 ///
 /// Contract (RULES.md R-SAFE-3): `serve` runs a connection to its end:
 /// authenticates it through the services' authenticators, each check on
-/// a login's thread (`Services::logins`) within SERVER.LOGIN_TIMEOUT of
+/// a login's thread (`Services::logins`) within SERVER.LOGIN_TIMEOUT_MS of
 /// `Connection::arrived` (`Services::login`), runs each statement on a
 /// worker (`Services::run`), and ends when the client goes, the server
 /// stops (`Services::stopping`) or its operator ends it
@@ -120,7 +120,7 @@ pub struct Connection {
     /// Its row of INFORMATION_SCHEMA.CONNECTIONS, for what serves it to
     /// say who logged in and whether a statement runs (`shown.rs`).
     pub present: Present,
-    /// When it was taken: its SERVER.LOGIN_TIMEOUT runs from then, TLS's
+    /// When it was taken: its SERVER.LOGIN_TIMEOUT_MS runs from then, TLS's
     /// handshake and authentication within the one limit
     /// (`Services::login`).
     pub arrived: Instant,
@@ -205,7 +205,7 @@ impl Services {
         &self.0.logins
     }
 
-    /// `work`, if it is done within SERVER.LOGIN_TIMEOUT of `arrived`, when
+    /// `work`, if it is done within SERVER.LOGIN_TIMEOUT_MS of `arrived`, when
     /// the connection was taken: as it is secured and authenticated, the
     /// two within the one limit, so a client that never finishes does not
     /// hold its place.
@@ -214,17 +214,17 @@ impl Services {
     ///
     /// `work`'s; a connection failure if the time ran out.
     pub async fn login<T>(&self, arrived: Instant, work: impl Future<Output = Result<T>>) -> Result<T> {
-        self.bounded(LOGIN_TIMEOUT, arrived, work, "to begin TLS and authenticate").await
+        self.bounded(LOGIN_TIMEOUT_MS, arrived, work, "to begin TLS and authenticate").await
     }
 
-    /// `work`, if it is done within SERVER.IDLE_TIMEOUT: as the server waits
+    /// `work`, if it is done within SERVER.IDLE_TIMEOUT_MS: as the server waits
     /// on its client, for a request or to take what it is sent.
     ///
     /// # Errors
     ///
     /// `work`'s; a connection failure if the time ran out.
     pub async fn idle<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        self.bounded(IDLE_TIMEOUT, Instant::now(), work, "with nothing from or to the client").await
+        self.bounded(IDLE_TIMEOUT_MS, Instant::now(), work, "with nothing from or to the client").await
     }
 
     /// `work`, if it is done within the milliseconds of the setting `name`
@@ -240,12 +240,12 @@ impl Services {
         };
         tokio::select! {
             done = timed => done,
-            () = self.hurried() => Err(broken("[DESIGN] the server is stopping, past SERVER.SHUTDOWN_TIMEOUT or told again: closed")),
+            () = self.hurried() => Err(broken("[DESIGN] the server is stopping, past SERVER.SHUTDOWN_TIMEOUT_MS or told again: closed")),
         }
     }
 
     /// `work`, if it is done within SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
-    /// and SERVER.IDLE_TIMEOUT, the shorter: as the server waits for the
+    /// and SERVER.IDLE_TIMEOUT_MS, the shorter: as the server waits for the
     /// next request of a client whose transaction is active, its locks
     /// held.
     ///
@@ -401,7 +401,7 @@ impl Server {
     /// Serves `endpoints` until `stop` is done, first polled once it takes
     /// connections and has told `listening`; then takes no connection,
     /// lets each finish its statement and closes it, and returns once all
-    /// are. Past SERVER.SHUTDOWN_TIMEOUT, or once `hurry` is done, which is
+    /// are. Past SERVER.SHUTDOWN_TIMEOUT_MS, or once `hurry` is done, which is
     /// first polled once `stop` is, so a signal it waits for is the next
     /// one, it hurries: cancels every session's statement and ends every
     /// wait on a client. It runs on the caller's runtime, whose blocking
@@ -425,7 +425,7 @@ impl Server {
         let _ = announce.send(Stage::Stopping);
         services.database().tell(&Event::Stopping { connections: u64::try_from(limits.0.held()).unwrap_or(u64::MAX) });
         let deadline = async {
-            match millis(services.database(), SHUTDOWN_TIMEOUT) {
+            match millis(services.database(), SHUTDOWN_TIMEOUT_MS) {
                 Some(limit) => tokio::time::sleep(limit).await,
                 None => std::future::pending().await,
             }

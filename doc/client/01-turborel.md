@@ -72,7 +72,7 @@ its common name names, to a server that asks for one
 With a password, the password proves the user, the certificate presented
 still. Without either, the client asks the server to trust it as the
 user it names, which a server does only of a client of its own machine,
-and only if its setting SERVER.TRUST is LOCAL; it is OFF by default.
+and only if its setting SERVER.TRUST_LOCAL is ON; it is OFF by default.
 
 ## Typed sessions
 
@@ -142,7 +142,7 @@ $ echo $?
 ```
 
 A transaction a run leaves open is ended as the session ends: committed,
-unless the setting SESSION_END is ROLLBACK. A commit that fails then, as
+unless the setting SESSION.COMMIT_AT_END is OFF. A commit that fails then, as
 one of a deferred constraint not satisfied (SQLSTATE 40002), is told,
 the transaction rolled back, and the program exits with 1.
 

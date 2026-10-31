@@ -292,7 +292,9 @@ impl Database {
         let OpenedLog { log, cut } = self.log_at(&place, image.as_ref().map_or(Lsn(0), |i| i.through))?;
         // The budget the pool is made in: the one recorded, before the
         // definitions are made again.
-        snapshot.memory.set_limit(recorded("MEMORY_BUDGET").map_or(crate::memory::DEFAULT_BUDGET, |v| crate::settings::budget_bytes(&v)));
+        snapshot
+            .memory
+            .set_limit(recorded("MEMORY.BUDGET_BYTES").map_or(crate::memory::DEFAULT_BUDGET, |v| crate::settings::budget_bytes(&v)));
         let (image, opened) = self.reopen_or_recover(&place, image, (&*log, cut))?;
         catalog.record(&Image { clean: false, ..image }.encode(), self.snapshot()?.compact_after())?;
         self.set_log(log)?;

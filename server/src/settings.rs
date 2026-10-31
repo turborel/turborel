@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 
 use turborel::db::Database;
 use turborel::error::Result;
-use turborel::settings::{Definition, Effect, Kind};
+use turborel::settings::{Definition, Effect, Kind, OFF, SWITCHES};
 use turborel::value::{Decimal, Value};
 use turborel_protocol::{DEFAULT_PORT, MAX_BODY};
 
@@ -33,15 +33,10 @@ pub const TLS_MODES: &[&str] = &["OFF", "ON", "REQUIRED"];
 /// The PEM file of the authorities whose certificates a TLS client may
 /// present, to log in by them (`certificate.rs`); empty, none is asked for.
 pub const TLS_CLIENT_CA: &str = "SERVER.TLS_CLIENT_CA";
-/// Whether SCRAM-SHA-256 is taken over plain TCP: OFF or ON.
+/// Whether SCRAM-SHA-256 is taken over plain TCP: ON or OFF.
 pub const SCRAM_WITHOUT_TLS: &str = "SERVER.SCRAM_WITHOUT_TLS";
-/// The words of `SCRAM_WITHOUT_TLS`.
-pub const SWITCH: &[&str] = &["OFF", "ON"];
-/// Whether a client of this machine is trusted as who it says: LOCAL or
-/// OFF.
-pub const TRUST: &str = "SERVER.TRUST";
-/// The words of `TRUST`.
-pub const TRUST_MODES: &[&str] = &["LOCAL", "OFF"];
+/// Whether a client of this machine is trusted as who it says: ON or OFF.
+pub const TRUST_LOCAL: &str = "SERVER.TRUST_LOCAL";
 /// The PBKDF2 iterations of a password's verifier made from the server's
 /// start on.
 pub const PASSWORD_ITERATIONS: &str = "SERVER.PASSWORD_ITERATIONS";
@@ -65,22 +60,22 @@ pub const DEFAULT_MAX_STATEMENTS: usize = 1024;
 pub const BATCH_BYTES: &str = "SERVER.BATCH_BYTES";
 /// The milliseconds a connection has, from when it is taken, to be secured
 /// and authenticated, the two together; 0 for no limit.
-pub const LOGIN_TIMEOUT: &str = "SERVER.LOGIN_TIMEOUT";
-/// \[DESIGN\] The default of `LOGIN_TIMEOUT`: a minute, as PostgreSQL's
+pub const LOGIN_TIMEOUT_MS: &str = "SERVER.LOGIN_TIMEOUT_MS";
+/// \[DESIGN\] The default of `LOGIN_TIMEOUT_MS`: a minute, as PostgreSQL's
 /// authentication_timeout.
-pub const DEFAULT_LOGIN_TIMEOUT: usize = 60_000;
+pub const DEFAULT_LOGIN_TIMEOUT_MS: usize = 60_000;
 /// The milliseconds the server waits on a client, for its next request or
 /// to take what it is sent, before it closes the connection; 0 for no
 /// limit.
-pub const IDLE_TIMEOUT: &str = "SERVER.IDLE_TIMEOUT";
+pub const IDLE_TIMEOUT_MS: &str = "SERVER.IDLE_TIMEOUT_MS";
 /// The milliseconds a server told to stop lets its connections finish
 /// their statements, before it cancels them and closes the connections; 0
 /// for no limit.
-pub const SHUTDOWN_TIMEOUT: &str = "SERVER.SHUTDOWN_TIMEOUT";
-/// \[DESIGN\] The default of `SHUTDOWN_TIMEOUT`: half a minute, so a
+pub const SHUTDOWN_TIMEOUT_MS: &str = "SERVER.SHUTDOWN_TIMEOUT_MS";
+/// \[DESIGN\] The default of `SHUTDOWN_TIMEOUT_MS`: half a minute, so a
 /// statement near its end finishes, and a stop asked by a service manager
 /// ends before it gives up and kills the server.
-pub const DEFAULT_SHUTDOWN_TIMEOUT: usize = 30_000;
+pub const DEFAULT_SHUTDOWN_TIMEOUT_MS: usize = 30_000;
 /// The milliseconds the server waits for the next request of a client
 /// whose transaction is active, before it closes the connection, the
 /// transaction rolled back and its locks let go; 0 for no limit.
@@ -99,7 +94,7 @@ pub const DEFAULT_MAX_LOGINS: usize = 4;
 /// from its address; 0 for no wait.
 pub const LOGIN_DELAY_MS: &str = "SERVER.LOGIN_DELAY_MS";
 /// \[DESIGN\] The default of `LOGIN_DELAY_MS`: ten seconds, a sixth of
-/// `DEFAULT_LOGIN_TIMEOUT`, so a delayed client still has time to log in.
+/// `DEFAULT_LOGIN_TIMEOUT_MS`, so a delayed client still has time to log in.
 pub const DEFAULT_LOGIN_DELAY_MS: usize = 10_000;
 /// The milliseconds a TCP connection is idle before the system probes
 /// whether its client is still there; 0 for the system's own.
@@ -212,8 +207,8 @@ fn proofs() -> [Definition; 4] {
         ),
         setting(
             SCRAM_WITHOUT_TLS,
-            Kind::Choice(SWITCH),
-            Value::Char("OFF".into()),
+            Kind::Choice(SWITCHES),
+            Value::Char(OFF.into()),
             Effect::Statement,
             "Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).",
         ),
@@ -248,11 +243,11 @@ fn started() -> [Definition; 6] {
             "Whether TCP connections may use TLS (ON), or must (REQUIRED).",
         ),
         setting(
-            TRUST,
-            Kind::Choice(TRUST_MODES),
-            Value::Char("OFF".into()),
+            TRUST_LOCAL,
+            Kind::Choice(SWITCHES),
+            Value::Char(OFF.into()),
             Effect::Start,
-            "Whether a client of this machine is trusted as who it says (LOCAL), or proves it as every other does (OFF).",
+            "Whether a client of this machine is trusted as who it says (ON), or proves it as every other does (OFF).",
         ),
         setting(
             PASSWORD_ITERATIONS,
@@ -298,21 +293,21 @@ fn waits() -> [Definition; 5] {
     let most = i128::from(u32::MAX);
     [
         limit(
-            LOGIN_TIMEOUT,
+            LOGIN_TIMEOUT_MS,
             (0, most),
-            DEFAULT_LOGIN_TIMEOUT,
+            DEFAULT_LOGIN_TIMEOUT_MS,
             "The milliseconds a connection has, from when it is taken, to begin TLS and authenticate, the two together, before it is closed; 0 for no limit.",
         ),
         limit(
-            IDLE_TIMEOUT,
+            IDLE_TIMEOUT_MS,
             (0, most),
             0,
             "The milliseconds the server waits on a client, for its next request or to take what it is sent, before it closes the connection, its transaction rolled back; 0 for no limit.",
         ),
         limit(
-            SHUTDOWN_TIMEOUT,
+            SHUTDOWN_TIMEOUT_MS,
             (0, most),
-            DEFAULT_SHUTDOWN_TIMEOUT,
+            DEFAULT_SHUTDOWN_TIMEOUT_MS,
             "The milliseconds a server told to stop lets each connection finish its statement, before it cancels the statements and closes the connections, their transactions rolled back; 0 for no limit.",
         ),
         limit(

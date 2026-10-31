@@ -59,7 +59,7 @@ fn database(dir: &Path) -> Database {
         exec(&s, &format!("INSERT INTO P VALUES {}", chunk.join(", "))).unwrap();
     }
     exec(&s, "COMMIT WORK").unwrap();
-    db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(64 << 10, 0))).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(64 << 10, 0))).unwrap();
     db
 }
 

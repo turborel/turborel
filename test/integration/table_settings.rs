@@ -322,7 +322,7 @@ pub(crate) fn noted() -> (Database, Calls) {
     for option in noted_options() {
         db.declare_table_option("noted", option).unwrap();
     }
-    db.set_setting("UNIQUE_INDEX_METHOD", &Value::Char("noted".into())).unwrap();
+    db.set_setting("TABLES.UNIQUE_INDEX_METHOD", &Value::Char("noted".into())).unwrap();
     (db, calls)
 }
 

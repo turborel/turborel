@@ -56,7 +56,7 @@ impl Database {
     /// `schema`, the `<schema definition>` `sql` owned by `implicit` if it
     /// names no AUTHORIZATION [ISO/IEC 9075:1992 §11.1 SR2b]; a datetime it
     /// writes without a displacement of `zone`, a session's, or else the
-    /// database's TIME_ZONE [§5.3 SR18].
+    /// database's SESSION.TIME_ZONE [§5.3 SR18].
     pub(super) fn schema_of(&self, sql: &str, (implicit, zone): (Option<&str>, Option<i16>)) -> Result<Completion> {
         let current = self.snapshot()?;
         // Its name held, as a session's is (`db/staged_schema.rs`), taken

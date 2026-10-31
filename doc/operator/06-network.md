@@ -36,9 +36,9 @@ the name. It refuses clients of other machines. Who of this machine may
 connect is as Windows secures a pipe by default: the server's own user,
 the administrators and the system fully; any other user may open the
 pipe to read only, so can send nothing, and is closed once
-SERVER.LOGIN_TIMEOUT runs out. Each such client holds a connection
+SERVER.LOGIN_TIMEOUT_MS runs out. Each such client holds a connection
 until then, under SERVER.MAX_CONNECTIONS; where other users of the
-machine are not trusted, keep SERVER.TRUST OFF, as it is by default,
+machine are not trusted, keep SERVER.TRUST_LOCAL OFF, as it is by default,
 so every client proves who it is.
 
 A client waits for a pipe busy as long as its connect timeout; once the
@@ -108,10 +108,10 @@ whether TLS is offered at all, takes effect as the server starts.
 | SERVER.MAX_STATEMENTS | prepared statements of a connection, 1,024 |
 | SERVER.MAX_MESSAGE_BYTES | the longest message a client sends, 16 MiB |
 | SERVER.BATCH_BYTES | about the bytes of rows in a batch sent, 64 KiB |
-| SERVER.LOGIN_TIMEOUT | the milliseconds a client has to begin TLS and authenticate, the two together, from when the connection is taken, 60,000 |
+| SERVER.LOGIN_TIMEOUT_MS | the milliseconds a client has to begin TLS and authenticate, the two together, from when the connection is taken, 60,000 |
 | SERVER.MAX_LOGINS | logins checked at once, apart from SERVER.WORKERS, 4 |
 | SERVER.LOGIN_DELAY_MS | the longest a login waits after failed ones from its address, 10,000; 0, no wait |
-| SERVER.IDLE_TIMEOUT | the milliseconds the server waits on a client before closing it, its transaction rolled back; 0, no limit |
+| SERVER.IDLE_TIMEOUT_MS | the milliseconds the server waits on a client before closing it, its transaction rolled back; 0, no limit |
 | SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | the milliseconds the server waits for the next request of a client whose transaction is active, before closing it, its transaction rolled back; 0, no limit |
 
 A connection past SERVER.MAX_CONNECTIONS is refused, told why once its
@@ -173,7 +173,7 @@ hours idle, a second between probes), whatever its registry says; its
 probes are set from Windows 10 version 1703 only, before which it
 always sends ten. On a system that cannot set a time given, every TCP
 connection fails as it is taken, and the failure is told as the event
-`accept_failed` ([Diagnostics](08-diagnostics.md)). SERVER.IDLE_TIMEOUT
+`accept_failed` ([Diagnostics](08-diagnostics.md)). SERVER.IDLE_TIMEOUT_MS
 closes any client that keeps the server waiting longer;
 SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS closes, sooner, one that sends
 nothing while its transaction is active, its locks held:

@@ -24,7 +24,7 @@ use turborel::value::{Decimal, Value};
 const ROWS: u64 = 50_000;
 /// Rows of each table the setup inserts in one transaction.
 const PER_COMMIT: u64 = 1_000;
-/// WORK_MEMORY and SPILL_BATCH: a work area that holds every operator's
+/// MEMORY.WORK_BYTES and SPILL.BATCH_BYTES: a work area that holds every operator's
 /// rows, then 1 MiB, and the least, 64 KiB, both of which spill, in the
 /// default batch, 16 KiB, and the least, 4 KiB.
 const MEMORIES: &[(i128, i128, &str)] = &[
@@ -49,8 +49,8 @@ fn main() {
     let db = database();
     let s = db.session("B");
     for &(memory, batch, how) in MEMORIES {
-        db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(memory, 0))).unwrap();
-        db.set_setting("SPILL_BATCH", &Value::Exact(Decimal::new(batch, 0))).unwrap();
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(memory, 0))).unwrap();
+        db.set_setting("SPILL.BATCH_BYTES", &Value::Exact(Decimal::new(batch, 0))).unwrap();
         for &(operator, sql, read) in QUERIES {
             bench.measure(Case::new(format!("{operator}, {how}"), "rows read"), || {
                 fetched(&s, sql);

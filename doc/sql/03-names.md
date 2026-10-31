@@ -40,7 +40,7 @@ one name. A user's name is an authorization identifier.
 
 ## Catalog-qualified names
 
-A database is one catalog, named by its setting CATALOG_NAME, TURBOREL
+A database is one catalog, named by its setting CATALOG.NAME, TURBOREL
 unless set. A schema's name may be qualified by it, and so an object's:
 `TURBOREL.ANN.STAFF`. A catalog named that is not it is refused:
 
@@ -58,7 +58,7 @@ turborel: SQLCODE -103 (SQLSTATE 3D000): the one catalog is TURBOREL, not OTHER 
 ```
 
 A definition kept by the database, a view's query or a constraint's
-condition, keeps the catalog name it was written with: if CATALOG_NAME
+condition, keeps the catalog name it was written with: if CATALOG.NAME
 changes, it reads as before.
 
 ## MODULE

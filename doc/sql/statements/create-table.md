@@ -107,7 +107,7 @@ default, empties them as each transaction ends; PRESERVE ROWS keeps
 them. See [Temporary Tables](../../user/09-temporary-tables.md).
 
 **Storage** *(extension)*. USING names the engine that keeps the table's
-rows, else the database's setting DEFAULT_ENGINE; WITH sets the engine's
+rows, else the database's setting TABLES.ENGINE; WITH sets the engine's
 options for the table. INFORMATION_SCHEMA.TABLE_OPTIONS shows them, and
 [Appendix G](../../appendix/g-table-options.md) lists the built-in
 engines'. A temporary table names neither.

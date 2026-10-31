@@ -1,5 +1,5 @@
 //! \[DESIGN\] An operator's work area (RULES.md D38): what it may hold in
-//! memory, the setting WORK_MEMORY's bytes, and once it holds more, a spill
+//! memory, the setting MEMORY.WORK_BYTES's bytes, and once it holds more, a spill
 //! area of as many bytes, reserved of the memory budget, made when first
 //! needed (`spill.rs`). And the keys an operator counts, kept in memory
 //! until they outgrow it, then in a table of its area. Split from exec.rs
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::settings::{SPILL_BATCH, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, WORK_MEMORY, batch_bytes, work_bytes};
+use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, batch_bytes, work_bytes};
 use crate::spill::{Area, Batches, Records, SpillArea, SpillRun, SpillTable, WorkAreas};
 use crate::txn::{Stop, TxId, checked};
 
@@ -44,7 +44,7 @@ pub(super) struct Work {
 impl Work {
     /// The work area of an operator of `db`.
     pub(super) fn new(db: &State) -> Work {
-        let (limit, batch) = (work_bytes(db.settings.get(WORK_MEMORY)), batch_bytes(db.settings.get(SPILL_BATCH)));
+        let (limit, batch) = (work_bytes(db.settings.get(MEMORY_WORK_BYTES)), batch_bytes(db.settings.get(SPILL_BATCH_BYTES)));
         let partitions = (db.settings.count(SPILL_PARTITIONS), db.settings.count(SPILL_PARTITION_DEPTH));
         Work { limit, batch, partitions, areas: Arc::clone(&db.work), area: None, types: db.types.clone(), stop: None }
     }

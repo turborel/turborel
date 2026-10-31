@@ -17,9 +17,9 @@ The database's value is set as the server starts, by `--set NAME=VALUE`,
 or on a running server by its owner, in SQL:
 
 ```sql
-SET DATABASE LOCK_WAIT = 'WAIT';
+SET DATABASE LOCKS.WAIT = 'ON';
 SET DATABASE SERVER.MAX_CONNECTIONS TO 512;
-SET DATABASE LOCK_WAIT = DEFAULT;
+SET DATABASE LOCKS.WAIT = DEFAULT;
 ```
 
 ```
@@ -41,9 +41,9 @@ says the same in words:
 | TAKES_EFFECT | Appendix C | When | Of |
 |---|---|---|---|
 | STATEMENT | at once | for each statement, or connection, that begins after the change | most, the files of TLS among them |
-| TRANSACTION | from the next transaction | for each transaction that begins after the change | LOCK_WAIT, TRANSACTION_POLICY |
-| START | when the server starts | as the server next starts, or the database is next opened | SERVER.HOST, SERVER.PORT, SERVER.SOCKET, SERVER.TLS, SERVER.TRUST, SERVER.PASSWORD_ITERATIONS, STORAGE.POOL_BYTES |
-| CREATION | only when the database is made | as the database is made in its directory; fixed after | STORAGE.PAGE_SIZE, STORAGE.CHECKSUM, STORAGE.ENCODINGS, LOG.SEGMENT_SIZE |
+| TRANSACTION | from the next transaction | for each transaction that begins after the change | LOCKS.WAIT, TRANSACTION.STRICT |
+| START | when the server starts | as the server next starts, or the database is next opened | SERVER.HOST, SERVER.PORT, SERVER.SOCKET, SERVER.TLS, SERVER.TRUST_LOCAL, SERVER.PASSWORD_ITERATIONS, STORAGE.POOL_BYTES |
+| CREATION | only when the database is made | as the database is made in its directory; fixed after | STORAGE.PAGE_BYTES, STORAGE.CHECKSUM, STORAGE.ENCODINGS, LOG.SEGMENT_BYTES |
 
 ```sql
 SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
@@ -53,26 +53,26 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
 ```
  SETTING_NAME                                                 | TAKES_EFFECT
 --------------------------------------------------------------+--------------
- LOG.SEGMENT_SIZE                                             | CREATION
+ LOG.SEGMENT_BYTES                                            | CREATION
  STORAGE.CHECKSUM                                             | CREATION
  STORAGE.ENCODINGS                                            | CREATION
- STORAGE.PAGE_SIZE                                            | CREATION
+ STORAGE.PAGE_BYTES                                           | CREATION
  SERVER.HOST                                                  | START
  SERVER.PASSWORD_ITERATIONS                                   | START
  SERVER.PORT                                                  | START
  SERVER.SOCKET                                                | START
  SERVER.TLS                                                   | START
- SERVER.TRUST                                                 | START
+ SERVER.TRUST_LOCAL                                           | START
  STORAGE.POOL_BYTES                                           | START
- LOCK_WAIT                                                    | TRANSACTION
- TRANSACTION_POLICY                                           | TRANSACTION
+ LOCKS.WAIT                                                   | TRANSACTION
+ TRANSACTION.STRICT                                           | TRANSACTION
 (13 rows)
 ```
 
 A setting fixed when the database is made is refused after:
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): STORAGE.PAGE_SIZE is fixed when the database is created
+turborel: SQLCODE -103 (SQLSTATE 2A000): STORAGE.PAGE_BYTES is fixed when the database is created
 ```
 
 ## Reading settings

@@ -16,7 +16,7 @@ use crate::diagnostics::Extension;
 use crate::disk::encoding::{Encoding, Pipeline};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
-use crate::settings::{self, CHECKSUM, ENCODINGS, Effect, LOG_SEGMENT_SIZE, PAGE_SIZE, POOL_BYTES, Settings};
+use crate::settings::{self, CHECKSUM, ENCODINGS, Effect, LOG_SEGMENT_BYTES, PAGE_BYTES, POOL_BYTES, Settings};
 use crate::value::Value;
 
 /// \[EXTENSION\] How a database's files are written and read: new files
@@ -76,9 +76,9 @@ impl State {
         let formats = FileFormats { hash, pipeline, hashes: self.hashes.clone(), encodings };
         Ok(FileLayout {
             formats,
-            page_size: u32::try_from(size(PAGE_SIZE, "STORAGE.PAGE_SIZE")?)
-                .map_err(|_| api("[DESIGN] STORAGE.PAGE_SIZE is out of range"))?,
-            segment_size: size(LOG_SEGMENT_SIZE, "LOG.SEGMENT_SIZE")?,
+            page_size: u32::try_from(size(PAGE_BYTES, "STORAGE.PAGE_BYTES")?)
+                .map_err(|_| api("[DESIGN] STORAGE.PAGE_BYTES is out of range"))?,
+            segment_size: size(LOG_SEGMENT_BYTES, "LOG.SEGMENT_BYTES")?,
             pool_bytes: usize::try_from(size(POOL_BYTES, "STORAGE.POOL_BYTES")?).unwrap_or(usize::MAX),
         })
     }

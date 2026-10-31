@@ -1,4 +1,4 @@
-//! Spilled sorts (RULES.md D38): a sort past WORK_MEMORY writes its runs
+//! Spilled sorts (RULES.md D38): a sort past MEMORY.WORK_BYTES writes its runs
 //! with each row's prefix of its first key beside it and merges them by
 //! those prefixes, giving the rows of every kind of key, ascending or
 //! descending, nulls among them, in the order, stably, a sort held in
@@ -93,11 +93,11 @@ fn sorts(column: &str) -> Vec<String> {
 }
 
 /// Verifies: [X3.135-1986 §8.3 GR3b]; [ISO/IEC 9075:1992 §8.2 GR4, GR5,
-/// GR6]; [DESIGN] RULES.md D38: a sort past the smallest WORK_MEMORY,
+/// GR6]; [DESIGN] RULES.md D38: a sort past the smallest MEMORY.WORK_BYTES,
 /// merged by its rows' prefixes in passes, gives the rows of a key of every
 /// kind with prefixes, ASC and DESC, nulls last ascending, then by another
 /// key, in the order, stably, the sort held in memory gives, whatever
-/// SPILL_BATCH.
+/// SPILL.BATCH_BYTES.
 #[test]
 fn spilled_sorts_give_the_rows_held_sorts_give() {
     let db = Database::new();
@@ -108,9 +108,9 @@ fn spilled_sorts_give_the_rows_held_sorts_give() {
     assert_eq!(held[0].last().map(|r| r.starts_with("NULL")), Some(true), "nulls last, ascending");
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     for batch in [16_usize << 10, 4 << 10] {
-        db.set_setting("SPILL_BATCH", &bytes(batch)).unwrap();
+        db.set_setting("SPILL.BATCH_BYTES", &bytes(batch)).unwrap();
         for (q, expected) in queries.iter().zip(&held) {
             assert_eq!(&rows(&s, q).unwrap(), expected, "{q}, batch {batch}");
             assert!(counted.taken() > 0, "{q} spilled");
@@ -133,6 +133,6 @@ fn timestamps_with_time_zone_sort_by_their_instants() {
         rows(s, "SELECT K, TZ, C, D FROM X ORDER BY TZ, K").unwrap().iter().map(|r| r.split(',').next().unwrap().to_owned()).collect()
     };
     assert_eq!(keys(&s), expected, "held");
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     assert_eq!(keys(&s), expected, "spilled");
 }

@@ -27,7 +27,7 @@
 //!    mended where recovery touched rows (`State::mend_indexes`); the
 //!    transaction counter moved past every id and timestamp read.
 //!
-//! The row changes read are kept in a list that spills past WORK_MEMORY
+//! The row changes read are kept in a list that spills past MEMORY.WORK_BYTES
 //! (`recovery/changes.rs`, RULES.md D38), read a segment at a time by each
 //! pass, so recovery holds a work area's bytes of them however much of the
 //! log it reads.
@@ -537,10 +537,10 @@ impl State {
 
     /// As `fill_index`, into `index`, new, which nothing else reads or
     /// writes meanwhile: loaded whole (`Index::load`), in a work area of
-    /// the database's WORK_MEMORY.
+    /// the database's MEMORY.WORK_BYTES.
     pub(super) fn load_index(&self, index: &dyn Index, table: &QualifiedName, columns: &[usize], as_of: Timestamp) -> Result<()> {
-        use crate::settings::{SPILL_BATCH, WORK_MEMORY, batch_bytes, work_bytes};
-        let area = Area::new(work_bytes(self.settings.get(WORK_MEMORY)), batch_bytes(self.settings.get(SPILL_BATCH)));
+        use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, work_bytes};
+        let area = Area::new(work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
         index.load(&mut self.entries_for(table, columns, as_of)?, (&self.work, area))
     }
 

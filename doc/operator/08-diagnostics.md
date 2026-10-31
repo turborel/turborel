@@ -30,13 +30,13 @@ Each has its `time`, in UTC to the millisecond, its `level`, `info`,
 | `user_changed` | info | `name`, `dropped`, `true` or `false` | a user is made, given a password or dropped |
 | `owner_changed` | info | `name` | the database is given an owner |
 | `failed` | error for SQLCODE -914, -915, -916 and -922; warning for -913 and -918 | `sqlcode`, `sqlstate`, `message` | a failure an operator must know of: a table damaged (-914), an I/O error (-915), as a file not read, a log segment that could not be begun (told once until one is), a log segment that could not be synced (the database then takes no change until it is opened again), files left as the database closed, a file whose sync failed as it was to be closed ([Open files](03-databases.md#open-files)), a file nothing needs, as a spill file done with, that could not be removed; stored data corrupt (-916); a commit rolled back (-913); a commit in doubt, its commit record not synced (-922); memory or another resource refused (-918) |
-| `slow_statement` | warning | `user`, `millis`, `statement` | a statement worked longer than DIAGNOSTICS.SLOW_STATEMENT |
+| `slow_statement` | warning | `user`, `millis`, `statement` | a statement worked longer than DIAGNOSTICS.SLOW_STATEMENT_MS |
 | `files_reopened` | warning | `reopened`, `limit` | more of the database's files were opened again in a minute, `reopened`, than FILES.MAX_OPEN, `limit`, lets be open; told at most once a minute ([Open files](03-databases.md#open-files)) |
 | `listening` | info | `addresses`, an array of each address and socket | the server takes connections |
 | `stopping` | info | `connections`, those it has | the server is told to stop |
-| `stop_hurried` | warning | `sessions`, those whose statements were cancelled | the server, stopping, went past SERVER.SHUTDOWN_TIMEOUT or was told to stop again ([Signals](02-turboreld.md#signals)) |
+| `stop_hurried` | warning | `sessions`, those whose statements were cancelled | the server, stopping, went past SERVER.SHUTDOWN_TIMEOUT_MS or was told to stop again ([Signals](02-turboreld.md#signals)) |
 | `accept_failed` | error | `failures`, since last told, `message` | the server could not take a connection, as when it has no file descriptor left; told at most once a minute |
-| `tls_failed` | warning | `peer`, `message` | a client's TLS handshake failed, or did not end within SERVER.LOGIN_TIMEOUT |
+| `tls_failed` | warning | `peer`, `message` | a client's TLS handshake failed, or did not end within SERVER.LOGIN_TIMEOUT_MS |
 | `tls_reloaded` | info | `certificate`, the chain's file | the server took its TLS files again, on SIGHUP or a change of their settings ([TLS](06-network.md#tls)) |
 | `tls_reload_failed` | warning | `message` | the server could not take its TLS files again, and keeps those it had |
 | `login_failed` | warning | `user`, `peer`, `mechanism`, `message` | a client was refused as the user it named, by the mechanism it asked for, or before any was asked: for a protocol version not served, a user name that is no identifier (then as written), or a mechanism not served; never with its password |
@@ -90,11 +90,11 @@ A log to standard error is rotated by whatever reads it.
 
 ## Slow statements
 
-DIAGNOSTICS.SLOW_STATEMENT, in milliseconds, tells each statement whose
+DIAGNOSTICS.SLOW_STATEMENT_MS, in milliseconds, tells each statement whose
 work takes as long or longer, 0 for none, the default:
 
 ```sql
-SET DATABASE DIAGNOSTICS.SLOW_STATEMENT = 50;
+SET DATABASE DIAGNOSTICS.SLOW_STATEMENT_MS = 50;
 ```
 
 ```

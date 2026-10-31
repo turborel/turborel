@@ -37,8 +37,8 @@ given otherwise, the database is not opened, and the server does not
 start:
 
 ```
-$ turboreld --dir /var/lib/turborel/main --set STORAGE.PAGE_SIZE=4096
-turboreld: cannot open /var/lib/turborel/main: SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_SIZE = 8192, fixed then: it cannot be 4096
+$ turboreld --dir /var/lib/turborel/main --set STORAGE.PAGE_BYTES=4096
+turboreld: cannot open /var/lib/turborel/main: SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_BYTES = 8192, fixed then: it cannot be 4096
 ```
 
 ## Starting and stopping
@@ -71,7 +71,7 @@ connections, each connection finishes the statement it runs, its
 transaction rolled back, and the database is closed cleanly, which the
 diagnostics tell as `stopping`, then `closed`.
 
-A statement that runs on is given SERVER.SHUTDOWN_TIMEOUT, 30,000
+A statement that runs on is given SERVER.SHUTDOWN_TIMEOUT_MS, 30,000
 milliseconds by default, 0 for no limit. Past it, or at a second Ctrl-C
 or SIGTERM, the server hurries, told as `stop_hurried`: the statement
 each session runs is cancelled, as a client's cancel does, every
@@ -79,7 +79,7 @@ connection is closed, its transaction rolled back, and the database is
 then closed cleanly as before:
 
 ```
-$ turboreld --dir /var/lib/turborel/main --set SERVER.SHUTDOWN_TIMEOUT=5000
+$ turboreld --dir /var/lib/turborel/main --set SERVER.SHUTDOWN_TIMEOUT_MS=5000
 turboreld: listening at 127.0.0.1:7422
 ```
 

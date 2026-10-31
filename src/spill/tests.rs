@@ -82,7 +82,7 @@ fn keys_of_every_kind() {
 /// the standard alike; the values that hold nothing apart count none.
 /// Regression test (R-TEST-7): a bit string or a plug-in's value counted
 /// as the size of a value alone, however many bytes it held, so rows of
-/// them overran WORK_MEMORY.
+/// them overran MEMORY.WORK_BYTES.
 #[test]
 fn rows_count_the_bytes_their_values_hold() {
     let long = "1".repeat(8000usize);

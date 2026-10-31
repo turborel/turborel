@@ -24,7 +24,7 @@ use crate::common::{MemoryTable, Scratch, after_crash, number, os, rows, small_p
 fn open(dir: &Path, after: i64) -> (Database, Opened) {
     let db = Database::new();
     small_pool(&db, 32);
-    db.set_setting("LOG.SEGMENT_SIZE", &number(16 * 1024)).unwrap();
+    db.set_setting("LOG.SEGMENT_BYTES", &number(16 * 1024)).unwrap();
     let opened = db.open_files(&after_crash(), dir, &OpenOptions::default()).unwrap();
     due(&db, after, i64::MAX);
     (db, opened)

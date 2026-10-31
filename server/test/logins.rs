@@ -14,7 +14,7 @@ use turborel_protocol::{Reply, Request};
 use turborel_server::logins::FIRST_DELAY;
 use turborel_server::native::LOGIN_MESSAGE_BYTES;
 use turborel_server::password::{self as pbkdf2, Pbkdf2};
-use turborel_server::settings::{BATCH_BYTES, LOGIN_DELAY_MS, LOGIN_TIMEOUT, MAX_LOGINS, PASSWORD_ITERATIONS, WORKERS};
+use turborel_server::settings::{BATCH_BYTES, LOGIN_DELAY_MS, LOGIN_TIMEOUT_MS, MAX_LOGINS, PASSWORD_ITERATIONS, WORKERS};
 
 use crate::common::{Pki, Running, pki, secured, set, start, start_with, state};
 
@@ -47,7 +47,7 @@ fn logins_never_wait_for_the_workers() {
         filling.run(&format!("INSERT INTO T VALUES ({k}, 'row')")).unwrap();
     }
     filling.commit().unwrap();
-    let server = start(&db, &[(WORKERS, 1), (MAX_LOGINS, 1), (BATCH_BYTES, 1), (LOGIN_TIMEOUT, 5000)]);
+    let server = start(&db, &[(WORKERS, 1), (MAX_LOGINS, 1), (BATCH_BYTES, 1), (LOGIN_TIMEOUT_MS, 5000)]);
     let mut waiting = server.raw();
     waiting.hello("X");
     // Four megabytes of rows, more than the sockets hold, not read yet.
@@ -141,7 +141,7 @@ fn messages_before_a_login_are_small() {
     assert!(refused.message.contains("within a message"), "{}", refused.message);
 }
 
-/// Verifies: [DESIGN] RULES.md D42: SERVER.LOGIN_TIMEOUT bounds TLS's
+/// Verifies: [DESIGN] RULES.md D42: SERVER.LOGIN_TIMEOUT_MS bounds TLS's
 /// handshake and authentication together, from when the connection is
 /// taken: a client slow to begin TLS, then slow to say Hello, each within
 /// the limit but not the two, is closed (SQLSTATE 08006). Regression test
@@ -151,7 +151,7 @@ fn one_limit_bounds_tls_and_authentication() {
     let pki = pki("logins-limit");
     let db = Database::new();
     secured(&db, &pki, "ON");
-    let server = start(&db, &[(LOGIN_TIMEOUT, 1000)]);
+    let server = start(&db, &[(LOGIN_TIMEOUT_MS, 1000)]);
     let mut tcp = TcpStream::connect(server.address).unwrap();
     std::thread::sleep(Duration::from_millis(600));
     let config = tls::trusting(&pki.authority).unwrap();

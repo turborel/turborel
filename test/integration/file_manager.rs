@@ -30,7 +30,7 @@ fn a_database_of_more_files_than_its_limit() {
     let dir = scratch.path("db");
     let open = || {
         let db = Database::new();
-        db.set_setting("LOG.SEGMENT_SIZE", &Value::Exact(Decimal::new(4096, 0))).unwrap();
+        db.set_setting("LOG.SEGMENT_BYTES", &Value::Exact(Decimal::new(4096, 0))).unwrap();
         db.set_setting("FILES.MAX_OPEN", &Value::Exact(Decimal::new(4, 0))).unwrap();
         db.open_files(&os(), &dir, &OpenOptions { undo: small_segments(), ..OpenOptions::default() }).unwrap();
         db

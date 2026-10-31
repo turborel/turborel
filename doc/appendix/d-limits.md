@@ -36,5 +36,5 @@ FROM clause. A deeper one is refused rather than run out of stack.
 | Prepared statements of a connection | SERVER.MAX_STATEMENTS, 1,024 by default |
 
 An index's key is compared whole in its page, so it is limited where a
-row is not; STORAGE.PAGE_SIZE, chosen as a database is made, raises the
+row is not; STORAGE.PAGE_BYTES, chosen as a database is made, raises the
 limit.

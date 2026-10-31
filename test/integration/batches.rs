@@ -156,7 +156,7 @@ fn groups_by_batch_answer_as_row_by_row() {
     assert_eq!(columns[1].len(), 100, "97 texts, 'changed', 'new' and null");
     assert!(columns[4].is_empty(), "no row, no group");
     // One group for each row: past a work area of 64 KiB.
-    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     let many = "SELECT K, COUNT(*), SUM(N) FROM {t} GROUP BY K";
     assert_eq!(sorted(&a, &many.replace("{t}", "C")), sorted(&a, &many.replace("{t}", "R")));
     // A table of rows gives its batches in the order of its scan: its
@@ -214,7 +214,7 @@ fn datetimes_group_by_batch_as_row_by_row() {
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM (SELECT W FROM T GROUP BY W) X"), Ok(vec!["1".to_owned()]), "one instant");
     // Row by row as by batch, DISTINCT too, and joined on them past the
     // work area, partitioned by their keys.
-    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     for column in ["D", "I", "W"] {
         for sql in [
             format!("SELECT {}, COUNT(*) FROM T GROUP BY {column}", shown(column)),
@@ -373,7 +373,7 @@ fn distinct_by_batch_answers_as_row_by_row() {
     }
     assert_eq!(alike("SELECT DISTINCT G FROM C").len(), 7);
     assert_eq!(alike("SELECT DISTINCT N FROM C WHERE K < -100"), Vec::<String>::new());
-    exec(&a, "SET WORK_MEMORY = 65536").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     // Not of K, a key, of which every row is distinct already, and which
     // so needs no DISTINCT at all.
     let pairs: Vec<Vec<String>> = ["R", "C"].iter().map(|table| alike(&format!("SELECT DISTINCT N, S FROM {table}"))).collect();

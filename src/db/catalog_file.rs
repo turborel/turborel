@@ -5,7 +5,7 @@
 //! the file is opened, so the one before it stands; a record damaged, valid
 //! ones after it, refuses the file (SQLCODE -916, `disk/block/tail.rs`).
 //!
-//! The file is `catalog.0` or `catalog.1`. Once one holds CATALOG.COMPACT_AFTER
+//! The file is `catalog.0` or `catalog.1`. Once one holds CATALOG.COMPACT_AFTER_IMAGES
 //! records, or an append to it failed (a block file then takes no more),
 //! the next is written alone to the other, made anew, which is
 //! synced with its directory before the first is removed: the catalog
@@ -79,7 +79,7 @@ fn unframed(bytes: &[u8]) -> Result<Numbered> {
 fn name(which: usize) -> &'static str {
     if which == 0 { "catalog.0" } else { "catalog.1" }
 }
-/// \[DESIGN\] The default of CATALOG.COMPACT_AFTER: the records a catalog
+/// \[DESIGN\] The default of CATALOG.COMPACT_AFTER_IMAGES: the records a catalog
 /// file holds before the next goes to a new one.
 pub const COMPACT_AFTER: usize = 64;
 

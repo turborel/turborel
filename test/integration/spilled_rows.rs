@@ -1,6 +1,6 @@
 //! Spilling of what cursors and data-changing statements hold (RULES.md
 //! D38): rows a cursor reads ahead or keeps to scroll, and the rows a
-//! write chooses before it changes any, held past WORK_MEMORY in spill
+//! write chooses before it changes any, held past MEMORY.WORK_BYTES in spill
 //! areas. Split from spilling.rs (RULES.md R-SIZE-2).
 
 use turborel::db::{Completion, Cursor, Database, Session};
@@ -41,7 +41,7 @@ fn counted_database() -> (Database, Counted, Session) {
 
 /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.8 GR3b]. Regression
 /// test (R-TEST-7): a cursor held every row it read ahead of its fetches
-/// in memory. With WORK_MEMORY at its least, a cursor whose plan can raise
+/// in memory. With MEMORY.WORK_BYTES at its least, a cursor whose plan can raise
 /// an error, its rows read at OPEN, holds them in a spill area, and gives
 /// the rows it gives in memory; one read as it is fetched from holds none,
 /// until its transaction changes the table it reads: it then reads the
@@ -51,8 +51,8 @@ fn a_cursor_holds_its_rows_by_spilling() {
     let (db, counted, s) = counted_database();
     let raising = "SELECT K + 1, S FROM T";
     let (all_raising, all_scanned) = (rows(&s, raising).unwrap(), rows(&s, SCANNED).unwrap());
-    assert_eq!(counted.taken(), 0, "the default WORK_MEMORY holds them");
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    assert_eq!(counted.taken(), 0, "the default MEMORY.WORK_BYTES holds them");
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     let mut c = s.open_cursor(raising).unwrap();
     assert!(counted.taken() > 0, "read at OPEN, and spilled");
     assert_eq!(fetch_all(&mut c), all_raising);
@@ -76,8 +76,8 @@ fn a_cursor_past_the_budget_fails() {
     let db = Database::new();
     filled(&db);
     let s = db.session("S");
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-    db.set_setting("MEMORY_BUDGET", &bytes(1 << 20)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.BUDGET_BYTES", &bytes(1 << 20)).unwrap();
     assert_eq!(s.open_cursor("SELECT K + 1, S FROM T").err().map(|e| e.code), Some(Code::Resources), "at OPEN");
     let mut c = s.open_cursor(SCANNED).unwrap();
     assert!(c.fetch().unwrap().is_some());
@@ -110,7 +110,7 @@ fn fetched(s: &Session, p: &mut Params, how: &str) -> Option<String> {
 
 /// Verifies: [DESIGN] RULES.md D38 [ISO/IEC 9075:1992 §13.3 GR2–GR5].
 /// Regression test (R-TEST-7): a SCROLL cursor kept every row it read in
-/// memory. With WORK_MEMORY at its least, it keeps them in a spill area,
+/// memory. With MEMORY.WORK_BYTES at its least, it keeps them in a spill area,
 /// and moves to the row each orientation names, as it does in memory:
 /// NEXT, PRIOR, FIRST, LAST, ABSOLUTE and RELATIVE, back and forth across
 /// the rows it spilled.
@@ -118,7 +118,7 @@ fn fetched(s: &Session, p: &mut Params, how: &str) -> Option<String> {
 fn a_scroll_cursor_keeps_its_rows_by_spilling() {
     let (db, counted, s) = counted_database();
     let keys = rows(&s, "SELECT K FROM T").unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     s.declare_cursor("DECLARE C SCROLL CURSOR FOR SELECT K FROM T").unwrap();
     let mut p = target();
     s.execute("OPEN C", &mut p).unwrap();
@@ -145,7 +145,7 @@ fn a_scroll_cursor_keeps_its_rows_by_spilling() {
 
 /// Verifies: [DESIGN] RULES.md D38 [ISO/IEC 9075:1992 §13.1 GR3, §13.9].
 /// Regression test (R-TEST-7): an updatable cursor sorted its rows in
-/// memory. With WORK_MEMORY at its least, its rows, in its order, are
+/// memory. With MEMORY.WORK_BYTES at its least, its rows, in its order, are
 /// sorted at OPEN in a work area that spills; it gives them in the order it
 /// gives in memory, and a positioned UPDATE changes the row it is on.
 #[test]
@@ -161,7 +161,7 @@ fn an_updatable_cursor_sorts_its_rows_by_spilling() {
     let mut orders = Vec::new();
     for small in [false, true] {
         if small {
-            db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+            db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
         }
         let mut p = target().declare("G_OUT", integer, Value::Null);
         s.execute("OPEN C", &mut p).unwrap();
@@ -182,7 +182,7 @@ fn an_updatable_cursor_sorts_its_rows_by_spilling() {
 /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.5 GR1, §8.7 GR3, §8.12
 /// GR1; ISO/IEC 9075:1992 §13.10 GR6]. Regression test (R-TEST-7): a
 /// searched UPDATE or DELETE, and an INSERT of a query, held every row it
-/// chose in memory. With WORK_MEMORY at its least, each holds them in a
+/// chose in memory. With MEMORY.WORK_BYTES at its least, each holds them in a
 /// spill area, every one chosen before any is changed, and changes the
 /// rows it changes in memory: an INSERT of the table's own rows adds each
 /// once, an UPDATE of the key it chooses rows by changes each once.
@@ -194,7 +194,7 @@ fn writes_hold_their_rows_by_spilling() {
         // Its changes held in memory, so the statements' rows alone spill.
         s.run("ALTER TABLE T SET (TRANSACTIONS.HELD_BYTES = 67108864)").unwrap();
         if small {
-            db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+            db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
         }
         for write in [
             "INSERT INTO T SELECT K + 3000, G, S FROM T",

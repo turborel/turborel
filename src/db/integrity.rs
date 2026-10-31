@@ -21,7 +21,7 @@
 //!
 //! What a statement did, each row's id and an UPDATE's or DELETE's old
 //! values, the checks gathered of it, and the checks of deferred
-//! constraints waiting, are held as lists that spill past WORK_MEMORY
+//! constraints waiting, are held as lists that spill past MEMORY.WORK_BYTES
 //! (`integrity/held.rs`, RULES.md D38): read back in order, the rows of
 //! each UNIQUE constraint checked as they come (`integrity/keys.rs`).
 

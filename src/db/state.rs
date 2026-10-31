@@ -22,8 +22,8 @@ use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
 use crate::settings::{
-    self, DEFAULT_ENGINE, INDEX_DESCENT_COST, LOCK_WAIT, SORT_COMPARE_COST, SPILL_BATCH, Settings, UNIQUE_INDEX_METHOD, WORK_MEMORY,
-    batch_bytes, work_bytes,
+    self, INDEX_DESCENT_COST, LOCKS_WAIT, MEMORY_WORK_BYTES, SORT_COMPARE_COST, SPILL_BATCH_BYTES, Settings, TABLES_ENGINE,
+    TABLES_UNIQUE_INDEX_METHOD, batch_bytes, work_bytes,
 };
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
@@ -64,7 +64,7 @@ pub struct State {
     /// `table_options` (RULES.md D41).
     pub(crate) index_options: Vec<(String, TableOption)>,
     pub(crate) methods: HashMap<String, Arc<dyn IndexMethod>>,
-    /// Engines chosen for particular tables, overriding `DEFAULT_ENGINE`.
+    /// Engines chosen for particular tables, overriding `TABLES.ENGINE`.
     pub(super) placement: HashMap<QualifiedName, String>,
     /// The hash functions registered: a file is read with the one it
     /// names, and new files checksummed with STORAGE.CHECKSUM's.
@@ -245,40 +245,40 @@ impl State {
     }
 
     /// \[DESIGN\] Where a list of this snapshot's spills (RULES.md D38): as
-    /// many bytes held as WORK_MEMORY says, in batches of SPILL_BATCH's, in
+    /// many bytes held as MEMORY.WORK_BYTES says, in batches of SPILL.BATCH_BYTES's, in
     /// its work areas.
     pub(crate) fn list_space(&self) -> UndoSpace {
-        let (limit, batch) = (work_bytes(self.settings.get(WORK_MEMORY)), batch_bytes(self.settings.get(SPILL_BATCH)));
+        let (limit, batch) = (work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
         UndoSpace { limit, batch, areas: Some(Arc::clone(&self.work)), types: self.types.clone() }
     }
 
     /// The engine of tables a schema creates, but those placed
-    /// (`DEFAULT_ENGINE`).
+    /// (`TABLES.ENGINE`).
     pub(crate) fn table_engine(&self) -> &str {
-        self.settings.word(DEFAULT_ENGINE)
+        self.settings.word(TABLES_ENGINE)
     }
 
-    /// The index method behind UNIQUE constraints (`UNIQUE_INDEX_METHOD`).
+    /// The index method behind UNIQUE constraints (`TABLES.UNIQUE_INDEX_METHOD`).
     pub(crate) fn constraint_method(&self) -> &str {
-        self.settings.word(UNIQUE_INDEX_METHOD)
+        self.settings.word(TABLES_UNIQUE_INDEX_METHOD)
     }
 
     /// What to do with an engine that cannot give the guarantees of
-    /// [X3.135-1986 §4.16] (`TRANSACTION_POLICY`).
+    /// [X3.135-1986 §4.16] (`TRANSACTION.STRICT`).
     pub(crate) fn policy(&self) -> Policy {
         self.settings.policy()
     }
 
     /// Whether a transaction waits for a lock another holds, but for a
-    /// session's own setting (`LOCK_WAIT`).
+    /// session's own setting (`LOCKS.WAIT`).
     pub(crate) fn lock_wait(&self) -> LockWait {
-        settings::lock_wait(self.settings.get(LOCK_WAIT))
+        settings::lock_wait(self.settings.get(LOCKS_WAIT))
     }
 
     /// The records the catalog file holds before it is compacted
-    /// (CATALOG.COMPACT_AFTER).
+    /// (CATALOG.COMPACT_AFTER_IMAGES).
     pub(crate) fn compact_after(&self) -> usize {
-        self.settings.count(settings::CATALOG_COMPACT_AFTER)
+        self.settings.count(settings::CATALOG_COMPACT_AFTER_IMAGES)
     }
 
     /// The weights and guesses of the physical planner (`PLANNER.*`).

@@ -3,7 +3,7 @@
 //! table locked against it is refused at once (`LockWait::NoWait`) or waits
 //! until the holder ends (`LockWait::Wait`), unless waiting would deadlock or
 //! could never end, which is refused at once. A wait ends refused past
-//! `LOCK_TIMEOUT`, or when its statement is cancelled. Split from txn.rs
+//! `LOCKS.TIMEOUT_MS`, or when its statement is cancelled. Split from txn.rs
 //! (RULES.md R-SIZE-4).
 //!
 //! Each table has a lock of its own (RULES.md D29), so transactions on
@@ -301,7 +301,7 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -911 if the table is locked and the setting is no-wait, or if
-    /// waiting would deadlock, could never end, or lasts past `LOCK_TIMEOUT`;
+    /// waiting would deadlock, could never end, or lasts past `LOCKS.TIMEOUT_MS`;
     /// SQLCODE -920 if its statement is cancelled or past its deadline
     /// (`Stop::check_now`); SQLCODE -910 if a lock is
     /// poisoned.
@@ -353,7 +353,7 @@ fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: Lock
             )));
         }
         if let Some(most) = tx.stop.lock_timeout().filter(|&most| began.elapsed() >= most) {
-            break Err(refused(&format!("{table} stayed locked by another transaction past LOCK_TIMEOUT, {} ms", most.as_millis())));
+            break Err(refused(&format!("{table} stayed locked by another transaction past LOCKS.TIMEOUT_MS, {} ms", most.as_millis())));
         }
         waits_for.insert(tx.id, ids);
         drop(waits_for);

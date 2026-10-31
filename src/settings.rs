@@ -21,11 +21,12 @@ use crate::txn::{LockWait, Policy, SessionEnd};
 use crate::value::{Value, pow10};
 
 pub use builtin::{
-    CATALOG_COMPACT_AFTER, CATALOG_NAME, CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES, CHECKSUM, COMMIT_SYNC, DECORRELATE_AFTER,
-    DEFAULT_ENGINE, DIAGNOSTICS_LEVEL, ENCODINGS, EQUAL_SELECTIVITY, EXECUTOR_BATCHES, FILES_MAX_OPEN, FUNCTION_CALLS, INDEX_DESCENT_COST,
-    JOBS_POLICY, LOCK_TIMEOUT, LOCK_WAIT, LOG_SEGMENT_SIZE, MEMORY_BUDGET, NULL_FRACTION, OPTIMIZER_MAX_PASSES, PAGE_SIZE, POOL_BYTES,
-    RANGE_SELECTIVITY, REORDER_GAIN, SESSION_END, SLOW_STATEMENT, SORT_COMPARE_COST, SPILL_BATCH, SPILL_ENCODINGS, SPILL_PARTITION_DEPTH,
-    SPILL_PARTITIONS, STATEMENT_TIMEOUT, SWITCHES, TIME_ZONE, TRANSACTION_POLICY, UNIQUE_INDEX_METHOD, WORK_MEMORY,
+    CATALOG_COMPACT_AFTER_IMAGES, CATALOG_NAME, CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES, CHECKSUM, COMMIT_SYNC,
+    DECORRELATE_AFTER_RUNS, DIAGNOSTICS_LEVEL, ENCODINGS, EQUAL_SELECTIVITY, EXECUTOR_BATCHES, FILES_MAX_OPEN, FUNCTION_CALLS,
+    INDEX_DESCENT_COST, JOBS_POLICY, LOCKS_TIMEOUT_MS, LOCKS_WAIT, LOG_SEGMENT_BYTES, MEMORY_BUDGET_BYTES, MEMORY_WORK_BYTES,
+    NULL_FRACTION, OFF, ON, OPTIMIZER_MAX_PASSES, PAGE_BYTES, POOL_BYTES, RANGE_SELECTIVITY, REORDER_GAIN, SESSION_COMMIT_AT_END,
+    SESSION_TIME_ZONE, SLOW_STATEMENT_MS, SORT_COMPARE_COST, SPILL_BATCH_BYTES, SPILL_ENCODINGS, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS,
+    STATEMENT_TIMEOUT_MS, SWITCHES, TABLES_ENGINE, TABLES_UNIQUE_INDEX_METHOD, TRANSACTION_STRICT,
 };
 use builtin::{builtin, whole};
 pub use kind::{Kind, column_list, column_names};
@@ -89,7 +90,7 @@ pub struct Listed {
     pub source: Source,
 }
 
-/// The bytes a value of MEMORY_BUDGET says.
+/// The bytes a value of MEMORY.BUDGET_BYTES says.
 pub fn budget_bytes(value: &Value) -> usize {
     bytes(value, crate::memory::DEFAULT_BUDGET)
 }
@@ -99,12 +100,12 @@ pub fn pool_bytes(value: &Value) -> usize {
     bytes(value, crate::db::POOL_BYTES)
 }
 
-/// The bytes a value of WORK_MEMORY says.
+/// The bytes a value of MEMORY.WORK_BYTES says.
 pub fn work_bytes(value: &Value) -> usize {
     bytes(value, crate::spill::DEFAULT_WORK_MEMORY)
 }
 
-/// The bytes a value of SPILL_BATCH says.
+/// The bytes a value of SPILL.BATCH_BYTES says.
 pub fn batch_bytes(value: &Value) -> usize {
     bytes(value, crate::spill::DEFAULT_SPILL_BATCH)
 }
@@ -361,12 +362,12 @@ impl Settings {
 
     /// Whether `key`, a setting of `SWITCHES`, is ON.
     pub fn is_on(&self, key: Key) -> bool {
-        self.word(key) == "ON"
+        self.word(key) == ON
     }
 
     /// [X3.135-1986 §4.16] The transaction policy.
     pub fn policy(&self) -> Policy {
-        if self.word(TRANSACTION_POLICY) == "PERMISSIVE" { Policy::Permissive } else { Policy::Strict }
+        if self.word(TRANSACTION_STRICT) == OFF { Policy::Permissive } else { Policy::Strict }
     }
 }
 
@@ -377,35 +378,35 @@ fn word_of(v: &Value) -> &str {
 
 /// [X3.135-1986 §7.1 GR2] The session end a value says.
 pub fn session_end(v: &Value) -> SessionEnd {
-    if word_of(v) == "ROLLBACK" { SessionEnd::Rollback } else { SessionEnd::Commit }
+    if word_of(v) == OFF { SessionEnd::Rollback } else { SessionEnd::Commit }
 }
 
 /// The lock wait a value says.
 pub fn lock_wait(v: &Value) -> LockWait {
-    if word_of(v) == "WAIT" { LockWait::Wait } else { LockWait::NoWait }
+    if word_of(v) == ON { LockWait::Wait } else { LockWait::NoWait }
 }
 
-/// The word of `LOCK_WAIT` for `wait`.
+/// The word of `LOCKS.WAIT` for `wait`.
 pub fn lock_wait_word(wait: LockWait) -> &'static str {
     match wait {
-        LockWait::NoWait => "NO_WAIT",
-        LockWait::Wait => "WAIT",
+        LockWait::NoWait => OFF,
+        LockWait::Wait => ON,
     }
 }
 
-/// The word of `SESSION_END` for `end`.
+/// The word of `SESSION.COMMIT_AT_END` for `end`.
 pub fn session_end_word(end: SessionEnd) -> &'static str {
     match end {
-        SessionEnd::Commit => "COMMIT",
-        SessionEnd::Rollback => "ROLLBACK",
+        SessionEnd::Commit => ON,
+        SessionEnd::Rollback => OFF,
     }
 }
 
-/// The word of `TRANSACTION_POLICY` for `policy`.
+/// The word of `TRANSACTION.STRICT` for `policy`.
 pub fn policy_word(policy: Policy) -> &'static str {
     match policy {
-        Policy::Strict => "STRICT",
-        Policy::Permissive => "PERMISSIVE",
+        Policy::Strict => ON,
+        Policy::Permissive => OFF,
     }
 }
 
@@ -456,7 +457,7 @@ impl Own {
 // Unit tests: the registry's kinds and scopes (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests {
-    use super::builtin::{LOCK_WAITS, text};
+    use super::builtin::text;
     use super::*;
     use crate::value::Decimal;
 
@@ -466,38 +467,38 @@ mod tests {
     fn builtin_keys_are_their_settings() {
         let s = Settings::default();
         let names = [
-            (DEFAULT_ENGINE, "DEFAULT_ENGINE"),
-            (UNIQUE_INDEX_METHOD, "UNIQUE_INDEX_METHOD"),
-            (TRANSACTION_POLICY, "TRANSACTION_POLICY"),
-            (LOCK_WAIT, "LOCK_WAIT"),
-            (SESSION_END, "SESSION_END"),
+            (TABLES_ENGINE, "TABLES.ENGINE"),
+            (TABLES_UNIQUE_INDEX_METHOD, "TABLES.UNIQUE_INDEX_METHOD"),
+            (TRANSACTION_STRICT, "TRANSACTION.STRICT"),
+            (LOCKS_WAIT, "LOCKS.WAIT"),
+            (SESSION_COMMIT_AT_END, "SESSION.COMMIT_AT_END"),
             (OPTIMIZER_MAX_PASSES, "OPTIMIZER.MAX_PASSES"),
             (INDEX_DESCENT_COST, "PLANNER.INDEX_DESCENT_COST"),
             (SORT_COMPARE_COST, "PLANNER.SORT_COMPARE_COST"),
-            (CATALOG_NAME, "CATALOG_NAME"),
-            (MEMORY_BUDGET, "MEMORY_BUDGET"),
-            (WORK_MEMORY, "WORK_MEMORY"),
-            (SPILL_BATCH, "SPILL_BATCH"),
+            (CATALOG_NAME, "CATALOG.NAME"),
+            (MEMORY_BUDGET_BYTES, "MEMORY.BUDGET_BYTES"),
+            (MEMORY_WORK_BYTES, "MEMORY.WORK_BYTES"),
+            (SPILL_BATCH_BYTES, "SPILL.BATCH_BYTES"),
             (EQUAL_SELECTIVITY, "PLANNER.EQUAL_SELECTIVITY"),
             (RANGE_SELECTIVITY, "PLANNER.RANGE_SELECTIVITY"),
             (NULL_FRACTION, "PLANNER.NULL_FRACTION"),
             (REORDER_GAIN, "PLANNER.REORDER_GAIN"),
-            (DECORRELATE_AFTER, "EXECUTOR.DECORRELATE_AFTER"),
+            (DECORRELATE_AFTER_RUNS, "EXECUTOR.DECORRELATE_AFTER_RUNS"),
             (EXECUTOR_BATCHES, "EXECUTOR.BATCHES"),
             (SPILL_PARTITIONS, "SPILL.PARTITIONS"),
             (SPILL_PARTITION_DEPTH, "SPILL.PARTITION_DEPTH"),
             (CHECKPOINT_AFTER_CHANGES, "CHECKPOINT.AFTER_CHANGES"),
             (CHECKPOINT_AFTER_BYTES, "CHECKPOINT.AFTER_BYTES"),
-            (CATALOG_COMPACT_AFTER, "CATALOG.COMPACT_AFTER"),
-            (PAGE_SIZE, "STORAGE.PAGE_SIZE"),
+            (CATALOG_COMPACT_AFTER_IMAGES, "CATALOG.COMPACT_AFTER_IMAGES"),
+            (PAGE_BYTES, "STORAGE.PAGE_BYTES"),
             (CHECKSUM, "STORAGE.CHECKSUM"),
             (ENCODINGS, "STORAGE.ENCODINGS"),
-            (LOG_SEGMENT_SIZE, "LOG.SEGMENT_SIZE"),
+            (LOG_SEGMENT_BYTES, "LOG.SEGMENT_BYTES"),
             (POOL_BYTES, "STORAGE.POOL_BYTES"),
-            (STATEMENT_TIMEOUT, "STATEMENT_TIMEOUT"),
-            (LOCK_TIMEOUT, "LOCK_TIMEOUT"),
-            (SLOW_STATEMENT, "DIAGNOSTICS.SLOW_STATEMENT"),
-            (TIME_ZONE, "TIME_ZONE"),
+            (STATEMENT_TIMEOUT_MS, "STATEMENT.TIMEOUT_MS"),
+            (LOCKS_TIMEOUT_MS, "LOCKS.TIMEOUT_MS"),
+            (SLOW_STATEMENT_MS, "DIAGNOSTICS.SLOW_STATEMENT_MS"),
+            (SESSION_TIME_ZONE, "SESSION.TIME_ZONE"),
             (JOBS_POLICY, "JOBS.POLICY"),
             (FILES_MAX_OPEN, "FILES.MAX_OPEN"),
             (DIAGNOSTICS_LEVEL, "DIAGNOSTICS.LEVEL"),
@@ -559,8 +560,8 @@ mod tests {
         let number = Kind::Number { min: 0.0_f64, max: 1.0_f64 };
         assert_eq!(shown(accepted("X", &number, &Value::Exact(Decimal::new(5_i128, 1_u32)))), Some(Value::Approx(0.5).to_literal()));
         assert!(accepted("X", &number, &Value::Approx(f64::NAN)).is_err());
-        assert_eq!(shown(accepted("X", &Kind::Choice(LOCK_WAITS), &text(" wait "))), Some("'WAIT'".to_owned()));
-        assert!(accepted("X", &Kind::Choice(LOCK_WAITS), &text("SOMETIMES")).is_err());
+        assert_eq!(shown(accepted("X", &Kind::Choice(SWITCHES), &text(" on "))), Some("'ON'".to_owned()));
+        assert!(accepted("X", &Kind::Choice(SWITCHES), &text("SOMETIMES")).is_err());
 
         let mut s = Settings::default();
         s.set("plugin.depth", Some(&whole(3))).unwrap();
@@ -579,11 +580,11 @@ mod tests {
         assert_eq!((s.integer(key), s.effective(key, &Own::default()).1), (1, Source::Default));
 
         let mut own = Own::default();
-        own.set(&s, "lock_wait", Some(&text("wait"))).unwrap();
-        assert_eq!(lock_wait(s.effective(LOCK_WAIT, &own).0), LockWait::Wait);
+        own.set(&s, "locks.wait", Some(&text("on"))).unwrap();
+        assert_eq!(lock_wait(s.effective(LOCKS_WAIT, &own).0), LockWait::Wait);
         assert!(own.set(&s, "PLUGIN.DEPTH", Some(&whole(2))).is_err(), "the database's");
         assert!(own.set(&s, "NO.SUCH", None).is_err());
-        own.set(&s, "LOCK_WAIT", None).unwrap();
-        assert_eq!(s.effective(LOCK_WAIT, &own).1, Source::Default);
+        own.set(&s, "LOCKS.WAIT", None).unwrap();
+        assert_eq!(s.effective(LOCKS_WAIT, &own).1, Source::Default);
     }
 }

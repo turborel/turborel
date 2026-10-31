@@ -19,7 +19,7 @@ a `?`.
 ## DESCRIPTION
 
 SET CATALOG sets the catalog that names written without one are of. A
-database is one catalog, named by its setting CATALOG_NAME, TURBOREL
+database is one catalog, named by its setting CATALOG.NAME, TURBOREL
 unless set; it is the default catalog already, so SET CATALOG of its name
 changes nothing, and of any other is refused. The value is read as an
 identifier, its spaces trimmed: `' turborel '` names TURBOREL.

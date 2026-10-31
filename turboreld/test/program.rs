@@ -60,13 +60,13 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     let scratch = Scratch::new("program");
     let dir = scratch.path("db").display().to_string();
     let mut line = vec!["--dir".into(), dir.clone(), "--set".into(), "SERVER.PORT=0".into(), "--set".into(), "SERVER.WORKERS=2".into()];
-    // A client of this machine trusted, as SERVER.TRUST is not by default.
-    line.extend(["--set".into(), "SERVER.TRUST=LOCAL".into()]);
+    // A client of this machine trusted, as SERVER.TRUST_LOCAL is not by default.
+    line.extend(["--set".into(), "SERVER.TRUST_LOCAL=ON".into()]);
     let keys = scratch.path("keys");
     std::fs::create_dir_all(&keys).unwrap();
     std::fs::write(keys.join("MASTER"), "ab".repeat(32)).unwrap();
     let keys = keys.display().to_string();
-    line.extend(["--set".into(), "STORAGE.PAGE_SIZE=16384".into(), "--set".into(), "STORAGE.ENCODINGS=lz4,aes-256-gcm:MASTER".into()]);
+    line.extend(["--set".into(), "STORAGE.PAGE_BYTES=16384".into(), "--set".into(), "STORAGE.ENCODINGS=lz4,aes-256-gcm:MASTER".into()]);
     line.extend(["--keys".into(), keys.clone()]);
     let log = scratch.path("log");
     line.extend(["--log".into(), log.display().to_string()]);
@@ -94,12 +94,12 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     let without =
         turboreld::run(&config(&["--dir".into(), dir.clone()]), |_| panic!("not ready"), (async {}, std::future::pending())).unwrap_err();
     assert!(without.contains("cannot open") && without.contains("--keys"), "{without}");
-    let changed = config(&["--dir".into(), dir.clone(), "--keys".into(), keys.clone(), "--set".into(), "STORAGE.PAGE_SIZE=4096".into()]);
+    let changed = config(&["--dir".into(), dir.clone(), "--keys".into(), keys.clone(), "--set".into(), "STORAGE.PAGE_BYTES=4096".into()]);
     let refused = turboreld::run(&changed, |_| panic!("not ready"), (async {}, std::future::pending())).unwrap_err();
     // As the Operator's Guide shows it, of a database made with 16384.
-    let fixed = "SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_SIZE = 16384, fixed then: it cannot be 4096";
+    let fixed = "SQLCODE -910 (SQLSTATE TB910): the database was created with STORAGE.PAGE_BYTES = 16384, fixed then: it cannot be 4096";
     assert_eq!(refused, format!("cannot open {dir}: {fixed}"));
-    let same = config(&["--dir".into(), dir.clone(), "--keys".into(), keys.clone(), "--set".into(), "STORAGE.PAGE_SIZE=16384".into()]);
+    let same = config(&["--dir".into(), dir.clone(), "--keys".into(), keys.clone(), "--set".into(), "STORAGE.PAGE_BYTES=16384".into()]);
     let (_, stop, thread) = running(same);
     drop(stop);
     thread.join().unwrap().unwrap();
@@ -107,7 +107,7 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     assert_eq!(at.len(), if cfg!(any(unix, windows)) { 2 } else { 1 }, "kept: {at:?}");
     let mut c = connection::connect(at[0].parse::<SocketAddr>().unwrap(), "X", &mut Trust).unwrap();
     assert_eq!(rows(&c.query("SELECT K FROM T").unwrap()), ["7"]);
-    let page = "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.PAGE_SIZE'";
+    let page = "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.PAGE_BYTES'";
     assert_eq!(rows(&c.query(page).unwrap()), ["16384"]);
     let encodings = "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.ENCODINGS'";
     assert_eq!(rows(&c.query(encodings).unwrap()), ["LZ4,AES-256-GCM:MASTER"]);
@@ -311,7 +311,7 @@ fn the_program_stops_cleanly_when_terminated() {
     use std::io::{BufRead, BufReader};
     let program = env!("CARGO_BIN_EXE_turboreld");
     let mut child = std::process::Command::new(program)
-        .args(["--memory", "--set", "SERVER.PORT=0", "--set", "SERVER.TRUST=LOCAL"])
+        .args(["--memory", "--set", "SERVER.PORT=0", "--set", "SERVER.TRUST_LOCAL=ON"])
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();

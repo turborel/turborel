@@ -31,7 +31,7 @@ fn a_database_tells_its_sink_of_its_life() {
     assert_eq!(s.run("SELEC K FROM T").err().map(|e| e.code), Some(Code::Syntax));
     s.commit().unwrap();
     db.checkpoint().unwrap();
-    db.set_setting("LOCK_WAIT", &Value::Char("WAIT".into())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
     db.register_index_method(Box::new(BTreeMethod::in_memory())).unwrap();
     drop(s);
     db.close().unwrap();
@@ -48,7 +48,7 @@ fn a_database_tells_its_sink_of_its_life() {
             info("Opened(Created)"),
             info("Thread { label: \"turborel-maintenance\", change: Started }"),
             info("CheckpointTaken(1)"),
-            info("SettingChanged { name: \"LOCK_WAIT\", value: Some(Char(\"WAIT\")) }"),
+            info("SettingChanged { name: \"LOCKS.WAIT\", value: Some(Char(\"ON\")) }"),
             registered(Extension::IndexMethod, "btree"),
             info("Thread { label: \"turborel-maintenance\", change: Stopped }"),
             info("Closed"),
@@ -70,7 +70,7 @@ fn failures_an_operator_must_know_of_are_events() {
     let kept = Kept::default();
     let db = Database::new();
     db.set_diagnostics(Box::new(kept.clone()));
-    db.set_setting("MEMORY_BUDGET", &Value::Exact(Decimal::new(1 << 20, 0))).unwrap();
+    db.set_setting("MEMORY.BUDGET_BYTES", &Value::Exact(Decimal::new(1 << 20, 0))).unwrap();
     kept.taken();
     let refused = db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap_err();
     assert_eq!(refused.code, Code::Resources);
@@ -134,7 +134,7 @@ fn slow(kept: &Kept) -> Vec<String> {
 }
 
 /// Verifies: [DESIGN] RULES.md D40: a statement whose work takes
-/// DIAGNOSTICS.SLOW_STATEMENT or longer, here waiting for a lock, is told to
+/// DIAGNOSTICS.SLOW_STATEMENT_MS or longer, here waiting for a lock, is told to
 /// the sink as slow, with who ran it and its text, failed or not; one
 /// quicker is not, nor any while the setting is 0.
 #[test]
@@ -143,12 +143,12 @@ fn a_slow_statement_is_told() {
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone()));
     let waiter = db.session("X");
-    waiter.run("SET LOCK_TIMEOUT = 40").unwrap();
+    waiter.run("SET LOCKS.TIMEOUT_MS = 40").unwrap();
     assert!(waiter.run("INSERT INTO L VALUES (2)").is_err(), "waited, then refused");
     assert_eq!(slow(&kept), Vec::<String>::new(), "none while the setting is 0");
-    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT", &Value::Exact(Decimal::new(20, 0))).unwrap();
+    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT_MS", &Value::Exact(Decimal::new(20, 0))).unwrap();
     assert!(waiter.run("INSERT INTO L VALUES (2)").is_err());
-    waiter.run("SET LOCK_TIMEOUT = 0").unwrap();
+    waiter.run("SET LOCKS.TIMEOUT_MS = 0").unwrap();
     let told = slow(&kept);
     assert_eq!(told.len(), 1, "the wait, not the SET: {told:?}");
     assert!(told[0].contains(r#"user: "X""#) && told[0].contains("INSERT INTO L VALUES (2)"), "{told:?}");
@@ -166,9 +166,9 @@ fn a_slow_statement_of_an_encrypted_database_is_told_without_its_text() {
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE SECRET (V CHARACTER(10)) WITH (ENCODINGS = 'test scramble')").unwrap();
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone()));
-    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT", &Value::Exact(Decimal::new(20, 0))).unwrap();
+    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT_MS", &Value::Exact(Decimal::new(20, 0))).unwrap();
     let waiter = db.session("X");
-    waiter.run("SET LOCK_TIMEOUT = 40").unwrap();
+    waiter.run("SET LOCKS.TIMEOUT_MS = 40").unwrap();
     assert!(waiter.run("INSERT INTO L VALUES (2)").is_err(), "waited, then refused");
     let told = slow(&kept);
     assert_eq!(told.len(), 1, "{told:?}");
@@ -185,7 +185,7 @@ fn a_cursor_is_timed_by_its_work() {
     let (db, gate, heard, go) = gated();
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone()));
-    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT", &Value::Exact(Decimal::new(20, 0))).unwrap();
+    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT_MS", &Value::Exact(Decimal::new(20, 0))).unwrap();
     let s = db.session("X");
     let mut idle = s.open_cursor("SELECT K FROM G").unwrap();
     assert!(idle.fetch().unwrap().is_some());
@@ -218,7 +218,7 @@ fn a_failed_rotation_of_the_log_is_told() {
     let scratch = Scratch::new("diagnostics-rotation");
     let (fs, faults) = crate::faults::FaultyFs::with_faults();
     let db = Database::new();
-    db.set_setting("LOG.SEGMENT_SIZE", &Value::Exact(Decimal::new(4096, 0))).unwrap();
+    db.set_setting("LOG.SEGMENT_BYTES", &Value::Exact(Decimal::new(4096, 0))).unwrap();
     db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone()));

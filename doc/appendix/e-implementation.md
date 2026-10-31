@@ -22,14 +22,14 @@ choices:
 | The longest fraction of a second | 6 digits, microseconds |
 | An interval's leading field | at most 9 digits |
 | The difference of two datetimes | truncated, toward 0, to its least field |
-| A session's time zone | the setting TIME_ZONE, +00:00 unless set |
+| A session's time zone | the setting SESSION.TIME_ZONE, +00:00 unless set |
 | CURRENT_USER, SESSION_USER, SYSTEM_USER | each the session's authorization identifier |
 | The default schema | the session's authorization identifier, until SET SCHEMA |
-| The catalog's name | the setting CATALOG_NAME, TURBOREL unless set |
+| The catalog's name | the setting CATALOG.NAME, TURBOREL unless set |
 | What a CREATE SCHEMA needs | a session's own schema, its AUTHORIZATION its own identifier |
 | Whether a session may SET SESSION AUTHORIZATION | a session begun by the database's owner, to any; any other, only to its own |
 | The isolation levels | SERIALIZABLE as itself; REPEATABLE READ as snapshot isolation; READ COMMITTED and READ UNCOMMITTED with a snapshot of each statement |
-| A session's end with a transaction open | COMMIT, or ROLLBACK, as the setting SESSION_END says |
+| A session's end with a transaction open | COMMIT, or ROLLBACK, as the setting SESSION.COMMIT_AT_END says |
 | The diagnostics area | one condition, of the last statement; MORE is N |
 | An SQL-server's name | an address, 'host:port' or a socket's path |
 | A view | not materialized: its query is read into each query that reads it |

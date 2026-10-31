@@ -65,9 +65,9 @@ fn a_database_keeps_the_formats_it_was_created_with() {
     let dir = scratch.path("db");
     let (db, opened) = open(&dir, |db| {
         db.register_hash_function(plugged()).unwrap();
-        db.set_setting("STORAGE.PAGE_SIZE", &number(16384)).unwrap();
+        db.set_setting("STORAGE.PAGE_BYTES", &number(16384)).unwrap();
         db.set_setting("STORAGE.CHECKSUM", &text("test-crc")).unwrap();
-        db.set_setting("LOG.SEGMENT_SIZE", &number(8192)).unwrap();
+        db.set_setting("LOG.SEGMENT_BYTES", &number(8192)).unwrap();
     })
     .unwrap();
     assert_eq!(opened, Opened::Created);
@@ -83,7 +83,7 @@ fn a_database_keeps_the_formats_it_was_created_with() {
     assert_eq!(rows(&db.session("A"), "SELECT COUNT(*) FROM T"), Ok(vec!["300".into()]));
     let kept = |name: &str| db.setting(name).unwrap().to_string();
     assert_eq!(
-        (kept("STORAGE.PAGE_SIZE"), kept("STORAGE.CHECKSUM"), kept("LOG.SEGMENT_SIZE")),
+        (kept("STORAGE.PAGE_BYTES"), kept("STORAGE.CHECKSUM"), kept("LOG.SEGMENT_BYTES")),
         ("16384".into(), "TEST-CRC".into(), "8192".into())
     );
     let shown = rows(
@@ -132,15 +132,15 @@ fn a_database_created_with_encodings_writes_through_them() {
 fn settings_fixed_at_creation_stay_fixed() {
     let scratch = Scratch::new("creation-fixed");
     let dir = scratch.path("db");
-    let (db, _) = open(&dir, |db| db.set_setting("STORAGE.PAGE_SIZE", &number(4096)).unwrap()).unwrap();
-    assert_eq!(db.set_setting("STORAGE.PAGE_SIZE", &number(8192)).err().map(|e| e.code), Some(Code::Api));
+    let (db, _) = open(&dir, |db| db.set_setting("STORAGE.PAGE_BYTES", &number(4096)).unwrap()).unwrap();
+    assert_eq!(db.set_setting("STORAGE.PAGE_BYTES", &number(8192)).err().map(|e| e.code), Some(Code::Api));
     db.create_user("OWNER", b"x").unwrap();
     db.set_owner("OWNER").unwrap();
-    let refused = db.session("OWNER").run("SET DATABASE LOG.SEGMENT_SIZE = 8192").err().map(|e| e.code);
+    let refused = db.session("OWNER").run("SET DATABASE LOG.SEGMENT_BYTES = 8192").err().map(|e| e.code);
     assert_eq!(refused, Some(Code::SyntaxRule), "in SQL too, a Syntax Rule's");
     db.close().unwrap();
     drop(db);
-    let given = |size: i128| open(&dir, |db| db.set_setting("STORAGE.PAGE_SIZE", &number(size)).unwrap());
+    let given = |size: i128| open(&dir, |db| db.set_setting("STORAGE.PAGE_BYTES", &number(size)).unwrap());
     assert_eq!(given(8192).err().map(|e| e.code), Some(Code::Api), "created with 4096");
     let (db, opened) = given(4096).unwrap();
     assert_eq!(opened, Opened::Reopened);
@@ -155,7 +155,7 @@ fn settings_fixed_at_creation_stay_fixed() {
     assert_eq!(fresh.register_encoding(Box::new(RunLength)).err().map(|e| e.code), Some(Code::Api));
     assert_eq!(fresh.register_hash_function(Box::new(Crc::new(CRC32_ISCSI).unwrap())).err().map(|e| e.code), Some(Code::Api));
     let scratch_bad = Scratch::new("creation-bad-page");
-    let bad = open(&scratch_bad.path("db"), |db| db.set_setting("STORAGE.PAGE_SIZE", &number(5000)).unwrap());
+    let bad = open(&scratch_bad.path("db"), |db| db.set_setting("STORAGE.PAGE_BYTES", &number(5000)).unwrap());
     assert_eq!(bad.err().map(|e| e.code), Some(Code::Api), "not a power of two");
 }
 

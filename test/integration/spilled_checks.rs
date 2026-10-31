@@ -1,7 +1,7 @@
 //! Spilling of what a data-changing statement did, kept for its
 //! constraints' checks at its end, and of the checks of deferred
 //! constraints, kept until they are made (RULES.md D38): held past
-//! WORK_MEMORY in spill areas, every constraint's outcome as it is in
+//! MEMORY.WORK_BYTES in spill areas, every constraint's outcome as it is in
 //! memory. Split from spilling.rs (RULES.md R-SIZE-2).
 
 use turborel::db::{Database, Session};
@@ -59,7 +59,7 @@ fn database(small: bool) -> (Database, Counted, Session) {
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
     if small {
-        db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+        db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     }
     (db, counted, s)
 }
@@ -67,7 +67,7 @@ fn database(small: bool) -> (Database, Counted, Session) {
 /// Verifies: [DESIGN] RULES.md D38 [ISO/IEC 9075:1992 §10.6 GR3, §11.8 GR2,
 /// GR5]. Regression test (R-TEST-7): what a statement did, each row's id
 /// and the old values of those deleted, was held in memory for the checks
-/// at its end. With WORK_MEMORY at its least, a DELETE of one row whose
+/// at its end. With MEMORY.WORK_BYTES at its least, a DELETE of one row whose
 /// referential action deletes thousands holds them in a spill area, and
 /// ends as it does in memory: done, the rows deleted with it; or, a NO
 /// ACTION foreign key broken after them, refused, SQLCODE -201, and undone,
@@ -92,7 +92,7 @@ fn a_statements_effects_spill_and_are_checked() {
 }
 
 /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §6.4 GR2, §8.12; ISO/IEC
-/// 9075:1992 §11.6 GR3, §11.7 GR2]: with WORK_MEMORY at its least, an
+/// 9075:1992 §11.6 GR3, §11.7 GR2]: with MEMORY.WORK_BYTES at its least, an
 /// UPDATE, an INSERT or a DELETE of thousands of rows, its effects and
 /// their checks spilled, ends as it does in memory: a key passing through
 /// duplicates and ending unique is done; a duplicate of a PRIMARY KEY or a
@@ -126,7 +126,7 @@ fn a_statements_checks_spill_with_the_same_outcomes() {
 
 /// Verifies: [DESIGN] RULES.md D38 [ISO/IEC 9075:1992 §10.6 GR3, §14.2
 /// GR3, §14.3 GR4, GR5a]. Regression test (R-TEST-7): the checks of a
-/// deferred constraint waited in memory until made. With WORK_MEMORY at
+/// deferred constraint waited in memory until made. With MEMORY.WORK_BYTES at
 /// its least, those of an UPDATE of thousands of rows wait in a spill
 /// area, held while the transaction runs and freed as it commits, rolls
 /// back, or they are made; and each ends as in memory: SET CONSTRAINTS

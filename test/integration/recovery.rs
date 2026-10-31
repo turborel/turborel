@@ -205,7 +205,7 @@ fn recovery_refuses_what_it_cannot_do() {
 }
 
 /// Verifies: [X3.135-1986 §4.16]; [DESIGN] RULES.md D25, D38: the row
-/// changes recovery reads past WORK_MEMORY are written to spill areas and
+/// changes recovery reads past MEMORY.WORK_BYTES are written to spill areas and
 /// read back to undo, redo and mend the indexes: committed changes stand,
 /// the open transaction's are undone, newest first, and the index holds
 /// one entry a row,
@@ -221,7 +221,7 @@ fn recovery_reads_its_changes_a_segment_at_a_time() {
         (db, opened)
     };
     let (crashed, _) = open(&Counted::default());
-    crashed.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(64 << 10, 0))).unwrap();
+    crashed.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(64 << 10, 0))).unwrap();
     crashed.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHARACTER(40))").unwrap();
     crashed.create_index("T_V", "S.T", &["V"], "btree").unwrap();
     crashed.checkpoint().unwrap();

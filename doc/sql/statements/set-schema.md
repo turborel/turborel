@@ -35,7 +35,7 @@ table in it fails as the table is not found.
 1. The value is a character string.
 2. Trimmed of spaces, it is a schema name: an identifier, or a catalog's
    name, a period and an identifier.
-3. A catalog it names is the one catalog, the setting CATALOG_NAME.
+3. A catalog it names is the one catalog, the setting CATALOG.NAME.
 
 ## PRIVILEGES
 

@@ -414,7 +414,7 @@ pub(crate) struct Txn {
     /// while constraints are checked.
     checking: AtomicBool,
     /// Whether it waits for a lock another holds: its session's setting
-    /// when it began (`LOCK_WAIT`).
+    /// when it began (`LOCKS.WAIT`).
     pub(crate) lock_wait: LockWait,
     /// Whether its commit waits for its commit record to be synced: its
     /// session's LOG.COMMIT_SYNC as it commits, set then

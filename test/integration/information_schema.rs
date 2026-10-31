@@ -195,7 +195,7 @@ fn privileges_are_described_21_2_10() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1, §21.2.2, §21.2.18,
 /// §21.2.19, §21.3.2, §21.3.26]: the Definition Schema cannot be accessed in an
 /// SQL-statement, nor a schema of either made; the views cannot be
-/// updated; the catalog's name is the setting CATALOG_NAME's; the
+/// updated; the catalog's name is the setting CATALOG.NAME's; the
 /// character set and collation are SQL_TEXT, PAD SPACE; and a view that
 /// reads one shows what its reader sees, CURRENT_USER being the reader's
 /// [§4.26, §6.2 GR9], SELECT on it grantable, SELECT on the Information
@@ -217,7 +217,7 @@ fn the_information_schema_is_the_databases_21_1() {
     }
     assert_eq!(exec(&s, "DELETE FROM INFORMATION_SCHEMA.TABLES"), Err(Code::Privilege));
     assert_eq!(exec(&s, "UPDATE INFORMATION_SCHEMA.COLUMNS SET COLUMN_NAME = 'X'"), Err(Code::Privilege));
-    db.set_setting("CATALOG_NAME", &Value::Char("SHOP".into())).unwrap();
+    db.set_setting("CATALOG.NAME", &Value::Char("SHOP".into())).unwrap();
     assert_eq!(seen(&s, "SELECT * FROM INFORMATION_SCHEMA.INFORMATION_SCHEMA_CATALOG_NAME"), ["SHOP"]);
     assert_eq!(seen(&s, "SELECT TABLE_CATALOG FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'P'"), ["SHOP"]);
     assert_eq!(

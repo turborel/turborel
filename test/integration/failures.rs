@@ -279,7 +279,7 @@ fn a_failed_seal_stops_the_database() {
     let scratch = Scratch::new("failures-db-seal");
     let (fs, faults) = FaultyFs::with_faults();
     let db = Database::new();
-    db.set_setting("LOG.SEGMENT_SIZE", &Value::Exact(Decimal::new(4096, 0))).unwrap();
+    db.set_setting("LOG.SEGMENT_BYTES", &Value::Exact(Decimal::new(4096, 0))).unwrap();
     db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone()));

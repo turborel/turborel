@@ -14,7 +14,7 @@ owns schemas and holds privileges: a user's, of a server's client.
 **base table**: a table that holds rows, as CREATE TABLE makes one; not
 a view.
 
-**catalog**: the database's schemas together, named by CATALOG_NAME.
+**catalog**: the database's schemas together, named by CATALOG.NAME.
 
 **checkpoint**: a point at which a database kept in a directory has
 written its changes to its data file, so recovery reads the log only

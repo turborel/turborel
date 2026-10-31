@@ -50,7 +50,7 @@ fn the_catalog_holds_the_definitions_as_they_are() {
     for n in 0..100 {
         db.create_index("T_V", "S.T", &["V"], "btree").unwrap();
         db.drop_index("T_V").unwrap();
-        db.set_setting("WORK_MEMORY", &turborel::value::Value::Exact(turborel::value::Decimal::new((1 << 20) + n, 0))).unwrap();
+        db.set_setting("MEMORY.WORK_BYTES", &turborel::value::Value::Exact(turborel::value::Decimal::new((1 << 20) + n, 0))).unwrap();
     }
     db.create_index("T_V", "S.T", &["V"], "btree").unwrap();
     let s = db.session("S");
@@ -66,7 +66,7 @@ fn the_catalog_holds_the_definitions_as_they_are() {
     let s = db.session("S");
     assert_eq!(rows(&s, "SELECT K, V, W FROM T WHERE V = 20"), Ok(vec!["2,20,7".into()]));
     assert_eq!(db.index_entries("T_V").unwrap(), 2);
-    let listed = rows(&s, "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'WORK_MEMORY'").unwrap();
+    let listed = rows(&s, "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'MEMORY.WORK_BYTES'").unwrap();
     assert_eq!(listed, [((1 << 20) + 99).to_string()]);
 }
 

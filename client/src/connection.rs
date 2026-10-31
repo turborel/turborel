@@ -480,7 +480,7 @@ impl<S: Read + Write> Connection<S> {
     }
 
     /// Ends the connection, once the server has ended its session as
-    /// SESSION_END says and closed it: waiting for it at most as its read
+    /// SESSION.COMMIT_AT_END says and closed it: waiting for it at most as its read
     /// timeout says, else `TERMINATE_WITHIN`, and taking at most a reply's
     /// bytes.
     ///
@@ -488,7 +488,7 @@ impl<S: Read + Write> Connection<S> {
     ///
     /// A connection failure, if Terminate cannot be sent, or the server
     /// does not close in time; the server's error, if it sends one rather
-    /// than close: a commit that fails as SESSION_END ends the session,
+    /// than close: a commit that fails as SESSION.COMMIT_AT_END ends the session,
     /// its transaction rolled back (SQLSTATE 40002 for a deferred
     /// constraint not satisfied).
     pub fn terminate(mut self) -> Result<()> {

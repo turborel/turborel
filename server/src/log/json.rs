@@ -349,12 +349,12 @@ mod tests {
             (Event::Closed, r#""level":"info","event":"closed"}"#.to_owned()),
             (Event::CheckpointTaken(7), r#""level":"info","event":"checkpoint_taken","taken":7}"#.to_owned()),
             (
-                Event::SettingChanged { name: "WORK_MEMORY".into(), value: Some(Value::Char("x".into())) },
-                r#""level":"info","event":"setting_changed","name":"WORK_MEMORY","value":"'x'"}"#.to_owned(),
+                Event::SettingChanged { name: "MEMORY.WORK_BYTES".into(), value: Some(Value::Char("x".into())) },
+                r#""level":"info","event":"setting_changed","name":"MEMORY.WORK_BYTES","value":"'x'"}"#.to_owned(),
             ),
             (
-                Event::SettingChanged { name: "WORK_MEMORY".into(), value: None },
-                r#""level":"info","event":"setting_changed","name":"WORK_MEMORY","value":null}"#.to_owned(),
+                Event::SettingChanged { name: "MEMORY.WORK_BYTES".into(), value: None },
+                r#""level":"info","event":"setting_changed","name":"MEMORY.WORK_BYTES","value":null}"#.to_owned(),
             ),
             (Event::UserChanged { name: "ANN".into(), dropped: true }, r#""level":"info","event":"user_changed","name":"ANN","dropped":true}"#.to_owned()),
             (Event::UserChanged { name: "ANN".into(), dropped: false }, r#""level":"info","event":"user_changed","name":"ANN","dropped":false}"#.to_owned()),

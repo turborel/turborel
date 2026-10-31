@@ -100,7 +100,7 @@ $ turborel -h localhost -U ann --tls /etc/turborel/ca.pem --certificate ann.pem 
 
 ## Trusted local clients
 
-With SERVER.TRUST LOCAL, the server takes a client of its own machine as
+With SERVER.TRUST_LOCAL ON, the server takes a client of its own machine as
 the user it names, with no password, a user or not. It is OFF by
 default: every client proves who it is. LOCAL suits a machine of one
 operator; on a machine of many accounts, any of them could connect as

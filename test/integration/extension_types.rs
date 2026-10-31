@@ -166,7 +166,7 @@ fn names_of_plug_in_types() {
     a.commit().unwrap();
 }
 
-/// Verifies: [EXTENSION] RULES.md D53, D38: with WORK_MEMORY at its least,
+/// Verifies: [EXTENSION] RULES.md D53, D38: with MEMORY.WORK_BYTES at its least,
 /// values of a type beyond the standard are sorted and grouped through the
 /// spill area, and read back as they were.
 #[test]
@@ -185,8 +185,8 @@ fn plug_in_values_spill() {
     assert!(in_memory.first().is_some_and(|r| r.len() > 9000), "enough rows to spill");
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
-    db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(64 << 10, 0))).unwrap();
-    db.set_setting("SPILL_BATCH", &Value::Exact(Decimal::new(4 << 10, 0))).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(64 << 10, 0))).unwrap();
+    db.set_setting("SPILL.BATCH_BYTES", &Value::Exact(Decimal::new(4 << 10, 0))).unwrap();
     for (q, expected) in queries.iter().zip(&in_memory) {
         assert_eq!(&sorted(&a, q), expected, "{q}, spilled");
         assert!(counted.taken() > 0, "{q} spilled");

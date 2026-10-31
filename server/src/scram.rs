@@ -78,7 +78,7 @@ impl Authenticator for Scram {
     }
 
     fn begin(&self, user: &str, peer: &Peer) -> Box<dyn Exchange> {
-        let allowed = peer.secure || settings::text(&self.db, SCRAM_WITHOUT_TLS) == "ON";
+        let allowed = peer.secure || settings::text(&self.db, SCRAM_WITHOUT_TLS) == turborel::settings::ON;
         let (verifier, known) = self.verifier(user);
         Box::new(Proving { user: user.to_owned(), stage: Stage::Begun { allowed, verifier, known } })
     }

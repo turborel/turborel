@@ -1,5 +1,5 @@
 //! What the server tells of itself (RULES.md D40, D42): where it listens,
-//! that it stops, and hurries past SERVER.SHUTDOWN_TIMEOUT or told again;
+//! that it stops, and hurries past SERVER.SHUTDOWN_TIMEOUT_MS or told again;
 //! accepts that failed, TLS and logins that failed, and connections
 //! refused, floods told once a minute.
 
@@ -14,7 +14,7 @@ use turborel_client::connection::{self, Trust};
 use turborel_server::auth::{Authenticator, Exchange, Peer, Step};
 use turborel_server::native::Native;
 use turborel_server::server::{Endpoint, Server};
-use turborel_server::settings::{MAX_CONNECTIONS, SHUTDOWN_TIMEOUT};
+use turborel_server::settings::{MAX_CONNECTIONS, SHUTDOWN_TIMEOUT_MS};
 use turborel_server::transport::{Accepting, Listener};
 
 use crate::common::{Kept, pki, rows, secured, start, start_with, state};
@@ -55,7 +55,7 @@ fn waiting(address: std::net::SocketAddr) -> std::thread::JoinHandle<Option<Stri
 }
 
 /// Verifies: [DESIGN] RULES.md D40, D42, D44: a server tells where it
-/// listens as it starts, and that it stops; past SERVER.SHUTDOWN_TIMEOUT
+/// listens as it starts, and that it stops; past SERVER.SHUTDOWN_TIMEOUT_MS
 /// it hurries, told: the statement a session runs is cancelled, and its
 /// connection closed, its session rolled back; so the server stops before
 /// a long statement ends.
@@ -65,7 +65,7 @@ fn waiting(address: std::net::SocketAddr) -> std::thread::JoinHandle<Option<Stri
 #[test]
 fn a_stop_past_its_deadline_cancels_statements() {
     let (db, kept) = database();
-    let server = start(&db, &[(SHUTDOWN_TIMEOUT, 50)]);
+    let server = start(&db, &[(SHUTDOWN_TIMEOUT_MS, 50)]);
     let address = server.address.to_string();
     let running = waiting(server.address);
     server.stop();
@@ -77,14 +77,14 @@ fn a_stop_past_its_deadline_cancels_statements() {
 }
 
 /// Verifies: [DESIGN] RULES.md D42: a server told to stop a second time
-/// hurries at once, SERVER.SHUTDOWN_TIMEOUT 0, no limit, notwithstanding;
+/// hurries at once, SERVER.SHUTDOWN_TIMEOUT_MS 0, no limit, notwithstanding;
 /// one whose connections end in time is not hurried.
 #[test]
 fn a_second_stop_hurries_the_server() {
     let (db, kept) = database();
     let mut server = Server::new(db.clone()).unwrap();
     crate::common::set(&db, turborel_server::settings::PORT, 0);
-    crate::common::set(&db, SHUTDOWN_TIMEOUT, 0);
+    crate::common::set(&db, SHUTDOWN_TIMEOUT_MS, 0);
     server.add_authenticator(Arc::new(turborel_server::auth::Trust)).unwrap();
     let runtime = turborel_server::runtime::runtime(Some(1)).unwrap();
     let native: Arc<dyn turborel_server::server::Protocol> = Arc::new(Native);
@@ -98,7 +98,7 @@ fn a_second_stop_hurries_the_server() {
     runtime.block_on(serving).unwrap();
     assert!(running.join().unwrap().is_some());
     assert_eq!(kept.of("StopHurried"), ["StopHurried { sessions: 1 }"]);
-    let calm = start(&db, &[(SHUTDOWN_TIMEOUT, 0)]);
+    let calm = start(&db, &[(SHUTDOWN_TIMEOUT_MS, 0)]);
     calm.connect("X").terminate().unwrap();
     calm.stop();
     assert_eq!(kept.of("StopHurried").len(), 1, "not hurried");

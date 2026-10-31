@@ -186,9 +186,9 @@ fn rows_come_in_batches_after_their_description() {
 
 /// Verifies: [X3.135-1986 §7.1 GR2]; [ISO/IEC 9075:1992 §20.1 GR2a];
 /// [DESIGN] RULES.md D42: a session the client terminates ends as
-/// SESSION_END says, committed by default, rolled back when set so; one
+/// SESSION.COMMIT_AT_END says, committed by default, rolled back when set so; one
 /// whose connection is lost, or cut by the server stopping, terminated
-/// unexpectedly, so is rolled back whatever SESSION_END says; the client
+/// unexpectedly, so is rolled back whatever SESSION.COMMIT_AT_END says; the client
 /// cut off is told so (SQLSTATE 08006), and its connection takes no more.
 #[test]
 fn a_session_ends_as_its_connection_does() {
@@ -223,7 +223,7 @@ fn a_session_ends_as_its_connection_does() {
 
 /// Verifies: [X3.135-1986 §7.1 GR2]; [ISO/IEC 9075:1992 §14.3 GR5a, §20.1
 /// GR2a]; [DESIGN] RULES.md D19, D42: a session the client terminates,
-/// committed as SESSION_END says, whose commit fails as a deferred
+/// committed as SESSION.COMMIT_AT_END says, whose commit fails as a deferred
 /// constraint is not satisfied, is rolled back, and its client told why
 /// (SQLSTATE 40002) before the connection closes; one whose commit
 /// succeeds terminates without error. Regression test (R-TEST-7): the

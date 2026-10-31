@@ -1,6 +1,6 @@
 //! \[DESIGN\] What a data-changing statement did, and the checks of its
 //! constraints, as records of a list that spills (RULES.md D38,
-//! `exec/held.rs`): held up to WORK_MEMORY, then written to runs of a
+//! `exec/held.rs`): held up to MEMORY.WORK_BYTES, then written to runs of a
 //! spill area, for the checks at its end, and those of deferred
 //! constraints until they are made. Split from db/integrity.rs (RULES.md
 //! R-SIZE-2).

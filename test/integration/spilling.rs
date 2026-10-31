@@ -1,4 +1,4 @@
-//! Spilling (RULES.md D38): operators that hold more rows than WORK_MEMORY
+//! Spilling (RULES.md D38): operators that hold more rows than MEMORY.WORK_BYTES
 //! spill them to areas of the database's spill provider, reserved of the
 //! memory budget, and give the rows, in the order, they give in memory.
 
@@ -13,7 +13,7 @@ use turborel::value::{Decimal, Value};
 
 use crate::common::{Counted, Scratch, exec, os, rows};
 
-/// The smallest WORK_MEMORY, 64 KiB.
+/// The smallest MEMORY.WORK_BYTES, 64 KiB.
 pub(crate) const SMALL: usize = 64 << 10;
 /// Half of it, as a grouping of DISTINCT set functions splits it.
 const HALF: usize = 32 << 10;
@@ -108,14 +108,14 @@ const QUERIES: &[&str] = &[
     "SELECT COUNT(DISTINCT S), COUNT(DISTINCT G), COUNT(*) FROM T",
 ];
 
-/// Verifies: [DESIGN] RULES.md D38: with WORK_MEMORY at its least, a sort,
+/// Verifies: [DESIGN] RULES.md D38: with MEMORY.WORK_BYTES at its least, a sort,
 /// grouping, DISTINCT, a hash join, a product, LEFT, RIGHT and FULL outer
 /// joins on keys and on no keys [ISO/IEC 9075:1992 §7.5], EXCEPT,
 /// INTERSECT and UNION, the rows of subqueries, kept and decorrelated, for
 /// IN, EXISTS, ALL, UNIQUE and MATCH, and the values of DISTINCT set
 /// functions spill to
-/// areas of WORK_MEMORY's bytes, of the provider given (`set_spill`), and
-/// give the rows, in the order, they give in memory, whatever SPILL_BATCH,
+/// areas of MEMORY.WORK_BYTES's bytes, of the provider given (`set_spill`), and
+/// give the rows, in the order, they give in memory, whatever SPILL.BATCH_BYTES,
 /// SPILL.PARTITIONS and SPILL.PARTITION_DEPTH;
 /// the areas' memory goes back to the budget once the query is read. A
 /// hash join's and an outer join's partitions are partitioned again while
@@ -129,15 +129,15 @@ fn operators_spill_and_give_the_same_rows() {
     db.set_spill(Box::new(counted.clone())).unwrap();
     let s = db.session("S");
     let in_memory: Vec<Vec<String>> = QUERIES.iter().map(|q| rows(&s, q).unwrap()).collect();
-    assert_eq!(counted.taken(), 0, "the default WORK_MEMORY holds them all");
+    assert_eq!(counted.taken(), 0, "the default MEMORY.WORK_BYTES holds them all");
     let reserved = db.memory().unwrap().1;
 
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     // The default batch, then the least, with which a join partitions most;
     // then two partitions, partitioned again while they outgrow the work
     // area, and never, built in tables or joined in parts.
     for (batch, partitions, depth) in [(16 << 10, 64, 8), (4 << 10, 64, 8), (16 << 10, 2, 8), (16 << 10, 2, 0)] {
-        db.set_setting("SPILL_BATCH", &bytes(batch)).unwrap();
+        db.set_setting("SPILL.BATCH_BYTES", &bytes(batch)).unwrap();
         db.set_setting("SPILL.PARTITIONS", &bytes(partitions)).unwrap();
         db.set_setting("SPILL.PARTITION_DEPTH", &bytes(depth)).unwrap();
         for (q, expected) in QUERIES.iter().zip(&in_memory) {
@@ -148,11 +148,11 @@ fn operators_spill_and_give_the_same_rows() {
     }
     // A grouping of DISTINCT set functions splits its work area in two.
     assert!(counted.0.lock().unwrap().iter().all(|&b| b == SMALL || b == HALF));
-    assert_eq!(db.set_setting("WORK_MEMORY", &bytes(SMALL - 1)).err().map(|e| e.code), Some(Code::Api), "below its least");
+    assert_eq!(db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL - 1)).err().map(|e| e.code), Some(Code::Api), "below its least");
 }
 
 /// Verifies: [DESIGN] [ISO/IEC 9075:1992 §7.5 GR1c]; RULES.md D15, D38:
-/// with WORK_MEMORY at its least, an outer join on keys whose ON conjunct
+/// with MEMORY.WORK_BYTES at its least, an outer join on keys whose ON conjunct
 /// that can raise an error reads one operand's columns alone, its
 /// operands partitioned, judges it of every row of that operand when the
 /// other has rows: its error is raised of a row that matches nothing by
@@ -162,7 +162,7 @@ fn operators_spill_and_give_the_same_rows() {
 fn a_partitioned_outer_join_judges_each_operands_own_condition() {
     let db = Database::new();
     filled(&db);
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     let s = db.session("S");
     let cases = [
         // U's row 2900, of a null G, divides by zero.
@@ -178,7 +178,7 @@ fn a_partitioned_outer_join_judges_each_operands_own_condition() {
 
 /// Verifies: [DESIGN] RULES.md D38: a spill area is reserved of the memory
 /// budget: one the budget can grant is made, one it cannot is refused
-/// (SQLCODE -918), and the query with it; under the default WORK_MEMORY,
+/// (SQLCODE -918), and the query with it; under the default MEMORY.WORK_BYTES,
 /// which holds its rows, the same query needs no area.
 #[test]
 fn a_spill_area_past_the_budget_is_refused() {
@@ -189,12 +189,12 @@ fn a_spill_area_past_the_budget_is_refused() {
     let in_memory = rows(&s, SORT).unwrap();
     let reserved = db.memory().unwrap().1;
     assert!(reserved >= 1 << 20, "the engine's pool");
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
-    db.set_setting("MEMORY_BUDGET", &bytes(reserved + (1 << 20))).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.BUDGET_BYTES", &bytes(reserved + (1 << 20))).unwrap();
     assert_eq!(rows(&s, SORT).unwrap(), in_memory, "an area the budget grants");
-    db.set_setting("MEMORY_BUDGET", &bytes(1 << 20)).unwrap();
+    db.set_setting("MEMORY.BUDGET_BYTES", &bytes(1 << 20)).unwrap();
     assert_eq!(rows(&s, SORT).err(), Some(Code::Resources), "one it cannot");
-    db.reset_setting("WORK_MEMORY").unwrap();
+    db.reset_setting("MEMORY.WORK_BYTES").unwrap();
     assert_eq!(rows(&s, SORT).unwrap(), in_memory, "no area needed");
 }
 
@@ -208,7 +208,7 @@ fn a_kept_database_spills_to_its_directory() {
     let db = Database::new();
     db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
     filled(&db);
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     let s = db.session("S");
     let mut c = s.open_cursor("SELECT S, K FROM T ORDER BY S").unwrap();
     assert!(c.fetch().unwrap().is_some());
@@ -224,9 +224,9 @@ fn a_kept_database_spills_to_its_directory() {
     assert_eq!(std::fs::read_dir(dir.join("tmp")).unwrap().count(), 0, "a file left is removed");
 }
 
-/// Verifies: [DESIGN] RULES.md D36, D38: WORK_MEMORY is a session's to set:
+/// Verifies: [DESIGN] RULES.md D36, D38: MEMORY.WORK_BYTES is a session's to set:
 /// its statements spill in work areas of its size, another session's in
-/// the database's, which hold them; SET WORK_MEMORY TO DEFAULT takes the
+/// the database's, which hold them; SET MEMORY.WORK_BYTES TO DEFAULT takes the
 /// database's again. The rows are the same either way.
 #[test]
 fn a_session_sets_its_own_work_memory() {
@@ -236,18 +236,18 @@ fn a_session_sets_its_own_work_memory() {
     db.set_spill(Box::new(counted.clone())).unwrap();
     let (small, other) = (db.session("S"), db.session("S"));
     let sort = "SELECT S, K FROM T ORDER BY S";
-    exec(&small, &format!("SET WORK_MEMORY = {SMALL}")).unwrap();
+    exec(&small, &format!("SET MEMORY.WORK_BYTES = {SMALL}")).unwrap();
     let spilled = rows(&small, sort).unwrap();
     let sizes: Vec<usize> = counted.0.lock().unwrap().drain(..).collect();
     assert!(!sizes.is_empty() && sizes.iter().all(|&b| b == SMALL), "{sizes:?}");
     assert_eq!(rows(&other, sort).unwrap(), spilled, "the same rows");
     assert_eq!(counted.taken(), 0, "another session's in the database's work area");
-    exec(&small, "SET WORK_MEMORY TO DEFAULT").unwrap();
+    exec(&small, "SET MEMORY.WORK_BYTES TO DEFAULT").unwrap();
     assert_eq!(rows(&small, sort).unwrap(), spilled);
     assert_eq!(counted.taken(), 0, "the database's again");
 }
 
-/// Verifies: [DESIGN] RULES.md D38, D44: with WORK_MEMORY at its least, a
+/// Verifies: [DESIGN] RULES.md D38, D44: with MEMORY.WORK_BYTES at its least, a
 /// statement cancelled as a spilled operator begins to read back what it
 /// wrote, after every row of its tables is read, fails (SQLCODE -920)
 /// there: grouping, of set functions and of DISTINCT ones, EXCEPT and
@@ -280,7 +280,7 @@ fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
     let in_memory: Vec<Vec<String>> = CANCELLED.iter().map(|q| rows(&s, q).unwrap()).collect();
     let cancelling = Cancelling::default();
     db.set_spill(Box::new(cancelling.clone())).unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     for batches in ["ON", "OFF"] {
         exec(&s, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
         for (q, expected) in CANCELLED.iter().zip(&in_memory) {
@@ -310,7 +310,7 @@ fn kept_subquery_rows_stay_within_the_work_area() {
     assert_ne!(in_memory, Vec::<String>::new());
     let peak = Peak::default();
     db.set_spill(Box::new(peak.clone())).unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     let reserved = db.memory().unwrap().1;
     assert_eq!(rows(&s, CORRELATED).unwrap(), in_memory);
     let most = peak.taken();
@@ -322,11 +322,11 @@ fn kept_subquery_rows_stay_within_the_work_area() {
 /// Verifies: [DESIGN] RULES.md D38: a grouping of DISTINCT set functions
 /// splits its work area in two, half for its groups and half for the bag
 /// of the values they took, each spilling to an area of its half, so the
-/// two hold no more than WORK_MEMORY; the rows are those it gives
+/// two hold no more than MEMORY.WORK_BYTES; the rows are those it gives
 /// unspilled. The rows of the query, read as its cursor opens as its set
 /// functions may raise an error, are held apart, in an area of their own.
 /// Regression test (R-TEST-7): the bag took a work area of its own, so
-/// the grouping held up to twice WORK_MEMORY.
+/// the grouping held up to twice MEMORY.WORK_BYTES.
 #[test]
 fn a_grouping_shares_its_work_area_with_its_distinct_values() {
     const GROUPED: &str = "SELECT S, COUNT(DISTINCT G), COUNT(DISTINCT K) FROM T GROUP BY S";
@@ -336,7 +336,7 @@ fn a_grouping_shares_its_work_area_with_its_distinct_values() {
     let in_memory = rows(&s, GROUPED).unwrap();
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     assert_eq!(rows(&s, GROUPED).unwrap(), in_memory);
     let sizes: Vec<usize> = counted.0.lock().unwrap().drain(..).collect();
     let halves = sizes.iter().filter(|&&b| b == HALF).count();
@@ -349,9 +349,9 @@ fn a_grouping_shares_its_work_area_with_its_distinct_values() {
 /// in two, half for their partitions and the keys each holds, half for the
 /// bag of a partition past SPILL.PARTITION_DEPTH, or of the rows given
 /// already, each spilling to an area of its half, so the two hold no more
-/// than WORK_MEMORY; the rows are those they give unspilled. Regression
+/// than MEMORY.WORK_BYTES; the rows are those they give unspilled. Regression
 /// test (R-TEST-7): the bag took a work area of its own, so they held up
-/// to twice WORK_MEMORY.
+/// to twice MEMORY.WORK_BYTES.
 #[test]
 fn distinct_and_set_operations_share_their_work_area_with_their_bags() {
     const BAGGED: &[&str] = &[
@@ -366,7 +366,7 @@ fn distinct_and_set_operations_share_their_work_area_with_their_bags() {
     let in_memory: Vec<Vec<String>> = BAGGED.iter().map(|q| rows(&s, q).unwrap()).collect();
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     db.set_setting("SPILL.PARTITIONS", &bytes(2)).unwrap();
     db.set_setting("SPILL.PARTITION_DEPTH", &bytes(0)).unwrap();
     for (q, expected) in BAGGED.iter().zip(&in_memory) {
@@ -398,7 +398,7 @@ fn a_probe_reads_its_keys_rows_as_it_joins() {
     let s = db.session("S");
     let in_memory: Vec<Vec<String>> = PROBED.iter().map(|q| rows(&s, q).unwrap()).collect();
     db.set_spill(Box::new(Streamed)).unwrap();
-    db.set_setting("WORK_MEMORY", &bytes(SMALL)).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     for (q, expected) in PROBED.iter().zip(&in_memory) {
         assert_eq!(&rows(&s, q).unwrap(), expected, "{q}");
     }

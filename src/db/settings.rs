@@ -12,7 +12,7 @@ use crate::diagnostics::{Event, Extension};
 use crate::error::{Code, Result, SqlError};
 use crate::log::record::Change;
 use crate::params::Params;
-use crate::settings::{self, Definition, Kind, LOCK_WAIT, Listed, SESSION_END};
+use crate::settings::{self, Definition, Kind, LOCKS_WAIT, Listed, SESSION_COMMIT_AT_END};
 use crate::storage::{StorageEngine, TableOption};
 use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
@@ -153,7 +153,7 @@ impl Database {
     }
 
     /// Gives the settings as they are now published to what reads them
-    /// held: the memory budget its limit, MEMORY_BUDGET's; the files their
+    /// held: the memory budget its limit, MEMORY.BUDGET_BYTES's; the files their
     /// limit; the pages of a database in memory their pool's size,
     /// STORAGE.POOL_BYTES'; and each engine the database's values
     /// (`configure_engines`).
@@ -163,7 +163,7 @@ impl Database {
     /// SQLCODE -910 if the database is closed.
     pub(super) fn apply_settings(&self) -> Result<()> {
         let st = self.snapshot()?;
-        st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET)));
+        st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET_BYTES)));
         st.files.set_limit(usize::try_from(st.settings.integer(settings::FILES_MAX_OPEN)).unwrap_or(usize::MAX));
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
@@ -427,9 +427,9 @@ impl Session {
         bind(Context { own: &own, schema: &schema, now, ..Context::new(st, &self.auth(), params) })
     }
 
-    /// What ends its open transaction when it ends (`SESSION_END`).
+    /// What ends its open transaction when it ends (`SESSION.COMMIT_AT_END`).
     pub(super) fn session_end(&self, st: &State) -> SessionEnd {
-        settings::session_end(st.settings.effective(SESSION_END, &self.own.borrow()).0)
+        settings::session_end(st.settings.effective(SESSION_COMMIT_AT_END, &self.own.borrow()).0)
     }
 
     /// `st`, its settings this session's own over the database's, so its
@@ -445,8 +445,8 @@ impl Session {
         Arc::new(copy)
     }
 
-    /// Whether its transactions wait for locks (`LOCK_WAIT`).
+    /// Whether its transactions wait for locks (`LOCKS.WAIT`).
     pub(super) fn lock_wait(&self, st: &State) -> LockWait {
-        settings::lock_wait(st.settings.effective(LOCK_WAIT, &self.own.borrow()).0)
+        settings::lock_wait(st.settings.effective(LOCKS_WAIT, &self.own.borrow()).0)
     }
 }

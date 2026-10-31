@@ -45,7 +45,7 @@ fn main() -> Result<(), turborel::error::SqlError> {
     db.close()?;
     drop(db);
     let again = Database::open(&dir)?;
-    let page = again.setting("STORAGE.PAGE_SIZE")?;
+    let page = again.setting("STORAGE.PAGE_BYTES")?;
     assert_eq!(page.to_string(), "8192");
     assert!(matches!(page, Value::Exact(_)));
     again.close()?;
@@ -55,7 +55,7 @@ fn main() -> Result<(), turborel::error::SqlError> {
 ```
 
 The session that inserted the row was dropped at the end of its
-statement's line, its transaction committed as SESSION_END says, so the
+statement's line, its transaction committed as SESSION.COMMIT_AT_END says, so the
 row was kept.
 
 ## Sessions
@@ -72,7 +72,7 @@ and ROLLBACK do. A `commit` that fails with SQLCODE -922 is in doubt:
 its commit record could not be synced, so whether it committed is known
 only once the database is opened again; it is not to be run again
 before then, as it may have committed. A session dropped ends its transaction as the setting
-SESSION_END says: committed, by default.
+SESSION.COMMIT_AT_END says: committed, by default.
 
 A session is used by one thread at a time; it may move to another
 between calls. Each thread of a program has its own sessions.
@@ -399,7 +399,7 @@ files, so the definitions that name one find it:
 
 | Registered by | What |
 |---|---|
-| `register_engine` | a storage engine, `StorageEngine`: what keeps a table's rows, named by CREATE TABLE ... USING, and by the setting DEFAULT_ENGINE |
+| `register_engine` | a storage engine, `StorageEngine`: what keeps a table's rows, named by CREATE TABLE ... USING, and by the setting TABLES.ENGINE |
 | `register_index_method` | an index method, `IndexMethod`, named by CREATE INDEX ... USING |
 | `register_type` | a data type beyond the standard's, `SqlType`, named in a column definition and CAST: a value of it is CAST from a character string, and a character string is stored in it as in a character column only if the type says it takes one (`assigns_text`); no privilege is needed to use it |
 | `register_scalar_function`, `register_aggregate_function` | functions, as above |

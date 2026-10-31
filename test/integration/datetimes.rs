@@ -104,7 +104,7 @@ fn datetimes_are_assigned_9_2() {
     a.run("INSERT INTO T (Z) VALUES (TIMESTAMP '2024-06-01 00:00:00')").unwrap();
     assert_eq!(rows(&a, "SELECT Z FROM T WHERE D IS NULL").unwrap(), ["2024-06-01 00:00:00.000000+00:00"], "of the session's displacement");
     // [§6.1 GR5] one read from a table too, in the session's displacement.
-    a.run("SET TIME_ZONE = '+02:00'").unwrap();
+    a.run("SET SESSION.TIME_ZONE = '+02:00'").unwrap();
     a.run("INSERT INTO T (D, Z) SELECT DATE '2000-01-01', S FROM T WHERE S IS NOT NULL").unwrap();
     a.run("UPDATE T SET Z = S WHERE D = DATE '2024-01-02'").unwrap();
     assert_eq!(
@@ -147,9 +147,9 @@ fn datetimes_compare_8_2() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.8 GR1-GR3, SR1; §4.5.1]
 /// CURRENT_DATE, CURRENT_TIME and CURRENT_TIMESTAMP are the clock's
 /// instant, of a type WITH TIME ZONE, in the session's displacement,
-/// TIME_ZONE, of the precision written; a time or timestamp without time
+/// SESSION.TIME_ZONE, of the precision written; a time or timestamp without time
 /// zone is kept in UTC, so it shows in the session's displacement [§6.1
-/// SR5]; TIME_ZONE takes a displacement from -12:59 to +13:00.
+/// SR5]; SESSION.TIME_ZONE takes a displacement from -12:59 to +13:00.
 #[test]
 fn current_datetimes_6_8() {
     let db = datetimes();
@@ -159,13 +159,13 @@ fn current_datetimes_6_8() {
         rows(&a, "SELECT CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP FROM T").unwrap(),
         ["2024-02-29,12:34:56+00:00,2024-02-29 12:34:56.789+00:00,2024-02-29 12:34:56.789012+00:00"]
     );
-    a.run("SET TIME_ZONE = '-12:59'").unwrap();
+    a.run("SET SESSION.TIME_ZONE = '-12:59'").unwrap();
     assert_eq!(
         rows(&a, "SELECT CURRENT_DATE, CURRENT_TIME(1), S FROM T").unwrap(),
         ["2024-02-28,23:35:56.7-12:59,2023-12-31 21:01:00.000"]
     );
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM T WHERE S = TIMESTAMP '2023-12-31 21:01:00'").unwrap(), ["1"], "a literal in it too");
-    assert_eq!(exec(&a, "SET TIME_ZONE = '+13:01'").err(), Some(Code::Data));
+    assert_eq!(exec(&a, "SET SESSION.TIME_ZONE = '+13:01'").err(), Some(Code::Data));
     assert_eq!(code(&a, "SELECT CURRENT_TIME(7) FROM T"), Code::Unsupported);
     a.commit().unwrap();
 }
@@ -223,7 +223,7 @@ fn extract_6_6() {
         .unwrap(),
         ["-5,-30,0,NULL"]
     );
-    a.run("SET TIME_ZONE = '+02:00'").unwrap();
+    a.run("SET SESSION.TIME_ZONE = '+02:00'").unwrap();
     assert_eq!(rows(&a, "SELECT EXTRACT(HOUR FROM S), EXTRACT(DAY FROM CURRENT_TIMESTAMP) FROM T").unwrap(), ["9,29"], "as shown");
     for bad in ["EXTRACT(HOUR FROM D)", "EXTRACT(YEAR FROM H)", "EXTRACT(TIMEZONE_HOUR FROM S)", "EXTRACT(DAY FROM 1)"] {
         assert_eq!(code(&a, &format!("SELECT {bad} FROM T")), Code::SyntaxRule, "{bad}");
@@ -308,7 +308,7 @@ fn datetimes_are_kept() {
 /// Schema A, defined in `dir`, by a session of displacement +02:00:
 /// table T, its column S's default written without a displacement, its
 /// column U's added by ALTER TABLE, its column V of domain W's; and schema
-/// Z, by the operator, the database's TIME_ZONE +03:00, its table R's
+/// Z, by the operator, the database's SESSION.TIME_ZONE +03:00, its table R's
 /// column S's default so too.
 fn defaults_in(dir: &std::path::Path) -> Database {
     let db = Database::new();
@@ -325,7 +325,7 @@ fn defaults_in(dir: &std::path::Path) -> Database {
         a.run(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
     }
     a.commit().unwrap();
-    db.set_setting("TIME_ZONE", &turborel::value::Value::Char("+03:00".into())).unwrap();
+    db.set_setting("SESSION.TIME_ZONE", &turborel::value::Value::Char("+03:00".into())).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION Z CREATE TABLE R (S TIMESTAMP WITH TIME ZONE DEFAULT TIMESTAMP '2026-01-01 12:00:00') \
          GRANT INSERT, SELECT ON R TO A",
@@ -352,7 +352,7 @@ fn defaults_kept(db: &Database) {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3 SR18, §11.5 SR3a v]: a
 /// default's datetime literal written without a displacement is of the
 /// defining session's, or, a schema defined by the operator, of the
-/// database's TIME_ZONE; so it stays after recovery and a checkpoint,
+/// database's SESSION.TIME_ZONE; so it stays after recovery and a checkpoint,
 /// whatever the session reading it.
 #[test]
 fn a_default_takes_the_defining_displacement_5_3() {

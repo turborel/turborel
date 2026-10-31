@@ -27,14 +27,14 @@ away. A directory that already exists keeps its mode. On Windows they
 take the permissions of the directory they are made in.
 
 The log begins a new segment as the current one reaches
-LOG.SEGMENT_SIZE. If one cannot be begun, as when the disk is full,
+LOG.SEGMENT_BYTES. If one cannot be begun, as when the disk is full,
 the current segment grows past that size, commits going on, until one
 can be; the failure is told once as a `failed` event
 ([Diagnostics](08-diagnostics.md)).
 
 A database made with `--memory` has no directory: it is gone when the
 server stops. Its pages, its temporary tables' rows and what its queries
-spill are all kept in memory, of its MEMORY_BUDGET, never in the
+spill are all kept in memory, of its MEMORY.BUDGET_BYTES, never in the
 system's temporary directory: a statement that needs a page past the
 budget is refused with SQLCODE -918, and what was written before it
 stays. Undoing is never refused: the refused statement, or a ROLLBACK,
@@ -42,7 +42,7 @@ takes what it needs to undo, even past the budget, until it gives back
 what the undone changes held.
 
 The data file's pages are read through a buffer pool of
-STORAGE.POOL_BYTES, and what a query spills through one of WORK_MEMORY.
+STORAGE.POOL_BYTES, and what a query spills through one of MEMORY.WORK_BYTES.
 A page wanted while every page of its pool is held at once, as by a
 pool set too small for the work, is refused with SQLCODE -918 too, at
 once, never waited for, but by an undo, which waits for a page to be let

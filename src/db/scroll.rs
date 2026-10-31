@@ -1,7 +1,7 @@
 //! The rows a cursor is moved among by FETCH (`db/position.rs`): a
 //! scrollable read-only cursor's, kept as they are read, and an updatable
 //! cursor's, each derived as the cursor reaches it. Each cursor holds its
-//! rows, or their ids, up to WORK_MEMORY, the rest spilled (`exec/held.rs`,
+//! rows, or their ids, up to MEMORY.WORK_BYTES, the rest spilled (`exec/held.rs`,
 //! RULES.md D38). Split from db/cursor.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;

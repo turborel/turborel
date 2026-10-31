@@ -1,5 +1,5 @@
 //! \[DESIGN\] Statements told to the diagnostics as slow (RULES.md D40):
-//! one whose work took DIAGNOSTICS.SLOW_STATEMENT or longer becomes an
+//! one whose work took DIAGNOSTICS.SLOW_STATEMENT_MS or longer becomes an
 //! `Event::SlowStatement`, with its text and who ran it; with no text while
 //! anything of the database is encrypted, so no value meant for an
 //! encrypted table reaches a log in the clear (RULES.md D56, D48). A
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use super::{Database, State};
 use crate::diagnostics::Event;
-use crate::settings::SLOW_STATEMENT;
+use crate::settings::SLOW_STATEMENT_MS;
 
 /// A statement's work, timed.
 pub(super) struct Timed<T> {
@@ -27,9 +27,9 @@ pub(super) struct Timed<T> {
 
 impl<T: AsRef<str>> Timed<T> {
     /// The work of `text`, run by `user`, timed from now, if `st`'s
-    /// DIAGNOSTICS.SLOW_STATEMENT asks for it.
+    /// DIAGNOSTICS.SLOW_STATEMENT_MS asks for it.
     pub(super) fn of(st: &State, text: T, user: &str) -> Option<Timed<T>> {
-        let millis = u64::try_from(st.settings.integer(SLOW_STATEMENT)).ok().filter(|&m| m > 0)?;
+        let millis = u64::try_from(st.settings.integer(SLOW_STATEMENT_MS)).ok().filter(|&m| m > 0)?;
         let after = Duration::from_millis(millis);
         let text = st.spill_encodings().stages().is_empty().then_some(text);
         Some(Timed { text, user: user.to_owned(), after, since: Some(Instant::now()), busy: Duration::ZERO })

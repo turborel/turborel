@@ -195,7 +195,7 @@ pub trait CatalogStorage: Send + Sync {
 /// documentation.
 pub trait CatalogStore: Send + Sync {
     /// Records `record`, durably. `compact_after`, the setting
-    /// CATALOG.COMPACT_AFTER, is how many records the database would have
+    /// CATALOG.COMPACT_AFTER_IMAGES, is how many records the database would have
     /// it hold before it keeps only the last: a store that keeps only the
     /// last anyway may ignore it.
     ///

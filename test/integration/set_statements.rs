@@ -171,11 +171,11 @@ fn a_value_refused_is_told_in_words() {
     let db = turborel::db::Database::new();
     db.create_user("A", b"").unwrap();
     let s = db.session("A");
-    let code = s.run("SET DATABASE DEFAULT_ENGINE = 'nope'").err().map(|e| e.code);
+    let code = s.run("SET DATABASE TABLES.ENGINE = 'nope'").err().map(|e| e.code);
     assert_eq!(code, Some(Code::Data), "not the API's misuse");
     let told = |sql: &str| s.execute(sql, &mut Params::new()).unwrap_err().msg;
-    assert_eq!(told("SET LOCK_WAIT = 'SOMETIMES'"), "LOCK_WAIT takes ONE OF NO_WAIT, WAIT, not 'SOMETIMES'");
-    assert_eq!(told("SET WORK_MEMORY = 'big'"), "WORK_MEMORY takes INTEGER FROM 65536 TO 9223372036854775807, not 'big'");
+    assert_eq!(told("SET LOCKS.WAIT = 'SOMETIMES'"), "LOCKS.WAIT takes ONE OF ON, OFF, not 'SOMETIMES'");
+    assert_eq!(told("SET MEMORY.WORK_BYTES = 'big'"), "MEMORY.WORK_BYTES takes INTEGER FROM 65536 TO 9223372036854775807, not 'big'");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1 GR6b iii, iv]: a

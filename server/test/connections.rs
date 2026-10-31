@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use turborel::db::Database;
 use turborel_client::connection::{self, Trust};
 use turborel_protocol::{Completed, Reply, Request};
-use turborel_server::settings::{BATCH_BYTES, IDLE_TIMEOUT, LOGIN_TIMEOUT, MAX_CONNECTIONS, MAX_MESSAGE_BYTES};
+use turborel_server::settings::{BATCH_BYTES, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_MESSAGE_BYTES};
 
 use crate::common::{set, start, state};
 
@@ -77,40 +77,40 @@ fn reconnected(server: &crate::common::Running) -> connection::Connection<std::n
 }
 
 /// Verifies: [DESIGN] RULES.md D42: a client that does not authenticate
-/// within SERVER.LOGIN_TIMEOUT is told so (SQLSTATE 08006) and closed, and
+/// within SERVER.LOGIN_TIMEOUT_MS is told so (SQLSTATE 08006) and closed, and
 /// its place is free for another.
 #[test]
 fn a_client_slow_to_authenticate_is_closed() {
     let db = Database::new();
-    let server = start(&db, &[(MAX_CONNECTIONS, 1), (LOGIN_TIMEOUT, 50)]);
+    let server = start(&db, &[(MAX_CONNECTIONS, 1), (LOGIN_TIMEOUT_MS, 50)]);
     let mut raw = server.raw();
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
-    assert!(refused.message.contains("SERVER.LOGIN_TIMEOUT"), "{}", refused.message);
+    assert!(refused.message.contains("SERVER.LOGIN_TIMEOUT_MS"), "{}", refused.message);
     drop(reconnected(&server));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1 GR2a]; [DESIGN] RULES.md
-/// D42: a connection that sends nothing for SERVER.IDLE_TIMEOUT is told so
+/// D42: a connection that sends nothing for SERVER.IDLE_TIMEOUT_MS is told so
 /// (SQLSTATE 08006) and closed, its open transaction rolled back.
 #[test]
 fn an_idle_connection_is_closed_and_rolled_back() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER)").unwrap();
-    let server = start(&db, &[(MAX_CONNECTIONS, 1), (IDLE_TIMEOUT, 50)]);
+    let server = start(&db, &[(MAX_CONNECTIONS, 1), (IDLE_TIMEOUT_MS, 50)]);
     let mut raw = server.raw();
     raw.hello("X");
     raw.send(&Request::Query("INSERT INTO T VALUES (1)".into()));
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
-    assert!(refused.message.contains("SERVER.IDLE_TIMEOUT"), "{}", refused.message);
+    assert!(refused.message.contains("SERVER.IDLE_TIMEOUT_MS"), "{}", refused.message);
     let mut c = reconnected(&server);
     assert_eq!(crate::common::rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["0"], "rolled back");
 }
 
 /// Verifies: [DESIGN] RULES.md D42: a client that stops taking its rows
-/// for SERVER.IDLE_TIMEOUT is let go: the worker sending them is freed,
+/// for SERVER.IDLE_TIMEOUT_MS is let go: the worker sending them is freed,
 /// the session rolled back, and the connection's place freed.
 #[test]
 fn a_client_not_taking_its_rows_is_let_go() {
@@ -121,7 +121,7 @@ fn a_client_not_taking_its_rows_is_let_go() {
         filling.run(&format!("INSERT INTO T VALUES ({k}, 'row')")).unwrap();
     }
     filling.commit().unwrap();
-    let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1), (IDLE_TIMEOUT, 100)]);
+    let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1), (IDLE_TIMEOUT_MS, 100)]);
     let mut raw = server.raw();
     raw.hello("X");
     raw.send(&Request::Query("DELETE FROM T WHERE K = 0".into()));

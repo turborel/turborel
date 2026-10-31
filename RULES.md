@@ -809,7 +809,7 @@ sent as a built-in one is.
   WITH TIME ZONE. Without time zone, its displacement is the session's,
   implied [§6.1 GR5]: a value retrieved is shown in it, so it shows
   differently in a session of another zone. A date is its days.
-- A session's displacement is the setting TIME_ZONE, the database's by
+- A session's displacement is the setting SESSION.TIME_ZONE, the database's by
   default, `+00:00`, and its own if it sets one, by SET TIME ZONE [§16.5]
   or as any setting; SET TIME ZONE LOCAL takes the database's again.
 - An interval is its months, of a year-month interval, or its
@@ -825,7 +825,7 @@ sent as a built-in one is.
   none, takes UTC.
 - A default's datetime literal without a displacement is of the
   defining session's [§5.3 SR18], or, of a schema the operator defines,
-  of the database's TIME_ZONE. The displacement is logged with the
+  of the database's SESSION.TIME_ZONE. The displacement is logged with the
   definition (`Change::Schema`, `Defined`, `AlterTable`), so recovery
   makes the same default, no session being there.
 - The clock is a plug-in (`Database::set_clock`), the system's by
@@ -953,7 +953,7 @@ the work at a time of its own choosing.
   database's, shadowed or not as they declare, and scratch files; what
   they open is theirs to show, limit and close as the database's.
 - Files of a database in memory are of `MemoryFileSystem`, their bytes
-  reserved of MEMORY_BUDGET; its scratch files too, never the system's
+  reserved of MEMORY.BUDGET_BYTES; its scratch files too, never the system's
   temporary directory.
 - On Unix, files are made readable and writable by their owner alone
   (0600), directories 0700.
@@ -1051,8 +1051,8 @@ with the primary.
 and no lock cycle can form through the definitions.
 
 **D28. Transactions may wait for locks; deadlocks are refused.** The
-setting LOCK_WAIT says whether a statement meeting a lock waits or is
-refused at once (SQLCODE -911); LOCK_TIMEOUT, a session's setting in
+setting LOCKS.WAIT says whether a statement meeting a lock waits or is
+refused at once (SQLCODE -911); LOCKS.TIMEOUT_MS, a session's setting in
 milliseconds, bounds a wait, past which the statement is refused so too. A wait that would close a cycle is refused
 at once, as is a wait on the waiting thread's own call. The refused
 statement is undone; its transaction goes on.
@@ -1139,7 +1139,7 @@ module, buffer pool, MVCC and row ids: `rowstore` keeps each row's values
 together; `columnstore` keeps rows written so, then freezes them into
 groups of each column's values together (below), its tables' files the
 row store's, which checkpoints them for both. A table chooses by USING,
-else DEFAULT_ENGINE, and moves by ALTER TABLE ... USING. A hybrid (PAX),
+else TABLES.ENGINE, and moves by ALTER TABLE ... USING. A hybrid (PAX),
 each page holding a group's rows' columns apart, is the next store, and
 the format of frozen groups becomes a trait when it is.
 - A table is a B-link tree (Lehman and Yao, 1981) keyed by a logical 64-bit
@@ -1552,7 +1552,7 @@ the rows SQL's comparison by algebraic value keeps
 [X3.135-1986 §5.11 GR4].
 An index built from its table while nothing else writes it (rebuilt as a
 database opens, or for an engine the coordinator locks) is loaded whole
-(`Index::load`): `btree` sorts its entries in a work area of WORK_MEMORY,
+(`Index::load`): `btree` sorts its entries in a work area of MEMORY.WORK_BYTES,
 spilling past it, and loads its tree from them; a method that does not
 inserts them one by one.
 Index-only scans are not done: a versioned engine has an entry for each
@@ -1668,8 +1668,25 @@ the same results and errors is the optimizer's to choose.
 - Names: each setting is of a group, `GROUP.NAME`, a plug-in's under its
   own name; a quantity names its unit (`_BYTES`, `_MS`); a word means one
   thing throughout; choices take one vocabulary (`ON`, `OFF`, and words of
-  their own only where two will not do). During alpha a name is changed
-  in place (VERSIONING.md).
+  their own only where two will not do); a threshold names what it counts
+  after AFTER (`_AFTER_CHANGES`, `_AFTER_IMAGES`). The standard's SET
+  statements keep their syntax: SET TIME ZONE sets SESSION.TIME_ZONE.
+  During alpha a name is changed in place, no alias kept (VERSIONING.md);
+  so were these (old → new):
+
+  | Old | New |
+  |---|---|
+  | DEFAULT_ENGINE, UNIQUE_INDEX_METHOD | TABLES.ENGINE, TABLES.UNIQUE_INDEX_METHOD |
+  | TRANSACTION_POLICY STRICT/PERMISSIVE | TRANSACTION.STRICT ON/OFF |
+  | LOCK_WAIT WAIT/NO_WAIT, LOCK_TIMEOUT | LOCKS.WAIT ON/OFF, LOCKS.TIMEOUT_MS |
+  | SESSION_END COMMIT/ROLLBACK, TIME_ZONE | SESSION.COMMIT_AT_END ON/OFF, SESSION.TIME_ZONE |
+  | CATALOG_NAME, CATALOG.COMPACT_AFTER | CATALOG.NAME, CATALOG.COMPACT_AFTER_IMAGES |
+  | MEMORY_BUDGET, WORK_MEMORY, SPILL_BATCH | MEMORY.BUDGET_BYTES, MEMORY.WORK_BYTES, SPILL.BATCH_BYTES |
+  | EXECUTOR.DECORRELATE_AFTER | EXECUTOR.DECORRELATE_AFTER_RUNS |
+  | STORAGE.PAGE_SIZE, LOG.SEGMENT_SIZE | STORAGE.PAGE_BYTES, LOG.SEGMENT_BYTES |
+  | STATEMENT_TIMEOUT, DIAGNOSTICS.SLOW_STATEMENT | STATEMENT.TIMEOUT_MS, DIAGNOSTICS.SLOW_STATEMENT_MS |
+  | SERVER.LOGIN_TIMEOUT, SERVER.IDLE_TIMEOUT, SERVER.SHUTDOWN_TIMEOUT | the same, `_MS` |
+  | SERVER.TRUST LOCAL/OFF | SERVER.TRUST_LOCAL ON/OFF |
 - A setting's effect is the one declared: one taken for each transaction
   is taken as the transaction begins; one that waits for a restart says
   so where settings are shown. A database kept in memory refuses those
@@ -1709,7 +1726,7 @@ Schema, give the standard's answers with no second description of the
 catalog to keep in step.
 
 **D38. The memory budget, and spilling.**
-- A database has one budget, in bytes (MEMORY_BUDGET). Every buffer pool
+- A database has one budget, in bytes (MEMORY.BUDGET_BYTES). Every buffer pool
   reserves its pages of it when made and gives them back when dropped; a
   reservation past the budget is refused (SQLCODE -918). A page wanted
   while every frame of its pool is held is refused too, -918, waited
@@ -1737,7 +1754,7 @@ catalog to keep in step.
   shows the database's owner each one held and its bytes, and anyone else
   none, as a spill area tells what others' statements do.
 - An operator that holds rows (a sort, grouping, DISTINCT, a hash join's
-  right operand, EXCEPT and INTERSECT) holds up to WORK_MEMORY of them in
+  right operand, EXCEPT and INTERSECT) holds up to MEMORY.WORK_BYTES of them in
   memory, a setting a session may set for itself: its statements read the
   settings it set over the database's (D36); a row counts its values and
   what each holds apart from itself (a string's characters, a bit string's
@@ -1782,8 +1799,8 @@ catalog to keep in step.
   grouping of DISTINCT set functions does: half for the partitions and the
   keys each holds, half for the bag beside them, of a partition's keys past
   SPILL.PARTITION_DEPTH, or of the rows given already.
-- Runs are written in batches of SPILL_BATCH bytes; an operator reads or
-  writes as many runs at once as WORK_MEMORY holds two batches of. A run
+- Runs are written in batches of SPILL.BATCH_BYTES; an operator reads or
+  writes as many runs at once as MEMORY.WORK_BYTES holds two batches of. A run
   read once gives its pages back as it is read (`SpillRun::into_records`),
   so a merge holds no more than it has still to read; one read again, a
   product's right operand or a subquery's rows, keeps them. A plug-in's
@@ -1819,7 +1836,7 @@ catalog to keep in step.
   least and greatest of the values before it. Never by comparing the row
   with every row.
 - The rows a statement holds past its operators are held up to
-  WORK_MEMORY too, then written to runs of a spill area, in a list that
+  MEMORY.WORK_BYTES too, then written to runs of a spill area, in a list that
   spills (`spill/list.rs`, `exec/held.rs`): a read-only cursor's rows read
   at OPEN, its plan able to raise an error, or read before its
   transaction changes a table it reads, given back in order, each run
@@ -1842,7 +1859,7 @@ catalog to keep in step.
   which is only written while the database runs.
 - What a transaction holds is bounded as an operator's is. The
   coordinator's undo entries, for indexes and for engines that do not undo
-  their own changes, are held up to WORK_MEMORY, then written to runs of a
+  their own changes, are held up to MEMORY.WORK_BYTES, then written to runs of a
   spill area, and read back a run at a time to undo a statement or the
   transaction. The row store tracks up to TRANSACTIONS.TRACKED_ROWS rows of
   a transaction's reads, or writes, of a table for the commit's check, and
@@ -1891,7 +1908,7 @@ with `Database::set_diagnostics`; by default they are dropped.
   plug-in registered; users and the owner changed (D43); a failure of the
   database's making (a damaged table, corrupt data, an I/O error, a failed
   commit, memory refused), with its error; and a statement whose work took
-  DIAGNOSTICS.SLOW_STATEMENT or longer, with who ran it and its text, as
+  DIAGNOSTICS.SLOW_STATEMENT_MS or longer, with who ran it and its text, as
   written, values in it included. A statement's work is its call; a
   cursor's, its opening and its fetches, told once it is done with, not
   the time between, which is its client's. A server tells what it does
@@ -2012,10 +2029,10 @@ make.
   channel, in batches of about SERVER.BATCH_BYTES, so a client reading slowly holds a worker but never
   more than a few batches of memory. A connection runs one request at a
   time, so no more wait for a worker than there are connections.
-- A client's time is bounded: it has SERVER.LOGIN_TIMEOUT (a minute by
+- A client's time is bounded: it has SERVER.LOGIN_TIMEOUT_MS (a minute by
   default), from when its connection is taken, to begin TLS and
   authenticate, the two together; and once the server has waited on it
-  SERVER.IDLE_TIMEOUT (no limit by default) for a request, or to take
+  SERVER.IDLE_TIMEOUT_MS (no limit by default) for a request, or to take
   what it is sent, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS (no limit by
   default) for a request while its transaction is active, its locks
   held, it is closed, its session rolled back (SQLSTATE 08006). A client
@@ -2056,7 +2073,7 @@ make.
   authentication as an exchange of as many steps as it needs, built in
   `password`, `scram-sha-256` and `certificate` (D43) and `trust`, which
   takes only clients of the server's own machine, and only while
-  SERVER.TRUST is LOCAL;
+  SERVER.TRUST_LOCAL is ON;
   `transport::Listener`, built in TCP, Unix sockets and named pipes; and
   `server::Protocol`, built in the native protocol.
 - TLS (D26) secures an endpoint's TCP connections, as SERVER.TLS says:
@@ -2087,7 +2104,7 @@ make.
 - A connection has one session, of the authorization identifier its
   authenticator accepts. Each statement is a `<direct SQL statement>`
   [ISO/IEC 9075:1992 §20.1] (`Session::direct`); a client creates only its
-  own schema [§11.1 AR1]. A session ends as SESSION_END says when its
+  own schema [§11.1 AR1]. A session ends as SESSION.COMMIT_AT_END says when its
   client terminates it (`Session::end`), a commit that fails sent to the
   client as its error before the connection closes; otherwise, lost,
   failed or cut by the server stopping, it is rolled back [§20.1 GR2a].
@@ -2122,7 +2139,7 @@ make.
   a client is local (`Peer::local`), secure as a Unix socket's. Who of the
   machine may connect is the system's default security for a pipe: its
   creator, the administrators and the system fully, any other user to
-  read only, so able to send nothing, closed at SERVER.LOGIN_TIMEOUT. A
+  read only, so able to send nothing, closed at SERVER.LOGIN_TIMEOUT_MS. A
   narrower descriptor needs the system's API through `unsafe`, which is
   not written here (R-SAFE-1). The client opens the pipe as a file, of
   std alone, letting the server identify but never impersonate it, and
@@ -2131,7 +2148,7 @@ make.
   not bounded.
 - Told to stop, the server takes no connection, lets each finish its
   statement, rolls its session back and closes it; then the database is
-  closed. Past SERVER.SHUTDOWN_TIMEOUT (30 s by default, 0 for no
+  closed. Past SERVER.SHUTDOWN_TIMEOUT_MS (30 s by default, 0 for no
   limit), or told to stop again, it hurries: each session's statement is
   cancelled (D44), and every wait on a client ends, so each connection
   is closed, its session rolled back; the database is then closed as
@@ -2204,7 +2221,7 @@ is configured, seen and changed like the database's.
   who it is as it logged in, and the operator may end one that should
   not go on (D42).
 - The authenticator `trust` takes a client as the user it names, of the
-  server's own machine alone, and only if SERVER.TRUST is LOCAL. It is
+  server's own machine alone, and only if SERVER.TRUST_LOCAL is ON. It is
   OFF by default, so every client proves who it is unless the operator
   says otherwise: on a machine of many accounts, any of them could
   otherwise connect as the owner.
@@ -2259,7 +2276,7 @@ was made, so mechanisms are plug-ins, as everything else is.
   and is undone as any failed statement is [X3.135-1986 §7.3 GR3b i]; its
   transaction goes on. A cursor's rows cut short by a cancel stay so:
   every later fetch fails too, none seeming the last.
-- STATEMENT_TIMEOUT, a session's setting in milliseconds (no limit by
+- STATEMENT.TIMEOUT_MS, a session's setting in milliseconds (no limit by
   default), cancels a statement as a cancel does once it has run that
   long: each call and each fetch alone, its deadline set as its window
   opens. A row read looks at the clock every 64th time, so a row costs a

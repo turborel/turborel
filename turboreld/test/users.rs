@@ -139,7 +139,7 @@ fn a_database_kept_nowhere_is_given_its_owner() {
 }
 
 /// Verifies: [DESIGN] RULES.md D43: a database whose users an operator
-/// added is served: with SERVER.TRUST OFF, its default, a client proves
+/// added is served: with SERVER.TRUST_LOCAL OFF, its default, a client proves
 /// itself by its password over a Unix socket or named pipe, and trust is not served
 /// (SQLSTATE 28000).
 /// User commands are refused on a database a server holds.
@@ -150,7 +150,7 @@ fn users_an_operator_added_connect_by_password() {
     let dir = scratch.path("db");
     let socket = scratch.socket("s");
     user(&dir, &UserCommand::Add { name: "ann".into(), owner: true }, "ann's").unwrap();
-    // SERVER.TRUST is OFF by default.
+    // SERVER.TRUST_LOCAL is OFF by default.
     let line = format!("--dir {} --set SERVER.HOST= --set SERVER.SOCKET={}", dir.display(), socket.display());
     let served = config(&line);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

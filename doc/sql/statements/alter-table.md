@@ -78,8 +78,8 @@ added is not one of its.
 
 ALTER TABLE runs within the session's transaction: ROLLBACK undoes it.
 Until the transaction ends, others read the table as it was; one that
-writes it is refused (SQLSTATE TB911), or, after `SET LOCK_WAIT =
-'WAIT'` ([SET](set-setting.md)), waits for it.
+writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
+'ON'` ([SET](set-setting.md)), waits for it.
 
 ## RULES
 

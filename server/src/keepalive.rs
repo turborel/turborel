@@ -1,7 +1,7 @@
 //! \[DESIGN\] TCP keepalive (RULES.md D42): on for each TCP connection the
 //! server takes, so a client whose machine or network is gone, never to
 //! close the connection, is found out by the system, and its session
-//! rolled back, its locks let go, even with no SERVER.IDLE_TIMEOUT. Its
+//! rolled back, its locks let go, even with no SERVER.IDLE_TIMEOUT_MS. Its
 //! times are the system's own unless SERVER.KEEPALIVE_IDLE_MS,
 //! SERVER.KEEPALIVE_INTERVAL_MS and SERVER.KEEPALIVE_PROBES say otherwise,
 //! read as each connection is taken; they are set by socket2's socket

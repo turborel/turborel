@@ -11,7 +11,7 @@
 //! aggregation or projection of tables' scans reads them a batch at a time
 //! where it can (`exec/batch.rs`, EXECUTOR.BATCHES). Operators that must
 //! hold rows (sorts, grouping, DISTINCT, joins and products, EXCEPT and
-//! INTERSECT, subqueries' rows) hold up to WORK_MEMORY of them in memory
+//! INTERSECT, subqueries' rows) hold up to MEMORY.WORK_BYTES of them in memory
 //! and spill the rest (`exec/work.rs`, RULES.md D38); so do the rows a
 //! statement holds past them, a cursor's or a write's (`exec/held.rs`).
 
@@ -410,7 +410,7 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D38, D31 [X3.135-1986 §8.3 GR3b]: a scan
     /// planned in an order its table no longer gives is read and sorted in
-    /// a work area that spills: with WORK_MEMORY at its least, its rows come
+    /// a work area that spills: with MEMORY.WORK_BYTES at its least, its rows come
     /// in order; runs that cannot be read back fail it (SQLCODE -915), so
     /// its rows were written to them.
     #[test]
@@ -421,7 +421,7 @@ mod tests {
         const ROWS: i128 = 5000;
         for broken in [false, true] {
             let mut st = state();
-            st.settings.set("WORK_MEMORY", Some(&Value::Exact(Decimal::new(64 << 10, 0)))).unwrap();
+            st.settings.set("MEMORY.WORK_BYTES", Some(&Value::Exact(Decimal::new(64 << 10, 0)))).unwrap();
             st.work = areas(Some(Arc::new(Held { broken })), usize::MAX);
             let name = QualifiedName { auth: "A".into(), ident: "N".into() };
             let data_type = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
