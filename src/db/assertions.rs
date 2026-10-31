@@ -9,7 +9,10 @@
 //! [SR8]. A row of it is the assertion broken. It is checked at the end
 //! of each statement that changes a table it reads, as the constraints of
 //! a table are (`db/integrity.rs`), or at commit if deferred; and as it is
-//! defined.
+//! defined. Checked at a statement's end, it is checked from the rows the
+//! statement changed where its form allows (`assertions/changes.rs`).
+
+mod changes;
 
 use std::sync::Arc;
 
@@ -25,6 +28,13 @@ use crate::logical::LogicalPlan;
 use crate::params::Params;
 use crate::parser::Parser;
 use crate::txn::{LockMode, Txn};
+
+/// [ISO/IEC 9075:1992 §11.34 GR2] Assertion `name` is false (SQLCODE -201,
+/// SQLSTATE 23000), about it.
+fn broken(name: &QualifiedName) -> SqlError {
+    let subject = Subject { constraint: Some(name.parts()), ..Subject::default() };
+    SqlError::new(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.34 GR2] assertion {name} is false")).about(subject)
+}
 
 impl State {
     /// [ISO/IEC 9075:1992 §11.34] CREATE ASSERTION `a`, its names in schema
@@ -145,10 +155,19 @@ impl State {
         for t in reads {
             self.read_lock(tx, t)?;
         }
-        let (_, _, physical) = plan(self, self.assertion_plan(a)?);
+        self.assertion_holds(tx, name, self.assertion_plan(a)?)
+    }
+
+    /// That assertion `name`, whose query is `bound`, is not false, its
+    /// query run whole, its reads locked.
+    ///
+    /// # Errors
+    ///
+    /// As `check_assertion`.
+    fn assertion_holds(self: &Arc<Self>, tx: &Txn, name: &QualifiedName, bound: LogicalPlan) -> Result<()> {
+        let (_, _, physical) = plan(self, bound);
         if execute(physical, self, tx.id).next().transpose()?.is_some() {
-            let subject = Subject { constraint: Some(name.parts()), ..Subject::default() };
-            return Err(SqlError::new(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.34 GR2] assertion {name} is false")).about(subject));
+            return Err(broken(name));
         }
         Ok(())
     }

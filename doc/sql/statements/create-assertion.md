@@ -79,9 +79,18 @@ turborel: SQLCODE -913 (SQLSTATE 40002): the transaction is rolled back: asserti
 
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.34. An assertion is checked whole after each
-statement that changes a table it reads, however little it changed.
-SQL-86 has no assertions.
+ISO/IEC 9075:1992 §11.34. After a statement that changes a table it
+reads, an assertion of one of two forms is checked from the rows the
+statement changed, the others whole: `NOT EXISTS (SELECT ... FROM T WHERE
+p)`, of the rows the statement inserted or updated; and `(SELECT COUNT(*)
+FROM T WHERE p)` compared with a constant, from how many rows the
+statement brought into the count or took out of it, whole only if that
+moves the count toward breaking the comparison, or the transaction reads
+at a snapshot of each statement. Of each form, `p` is of columns,
+constants, arithmetic, comparisons, IS NULL, LIKE and CASE alone, of the
+one table's row; the conjuncts of an AND are taken each. A deferred
+assertion is checked whole. Whichever way, a statement fails exactly
+when the condition is false after it. SQL-86 has no assertions.
 
 ## SEE ALSO
 

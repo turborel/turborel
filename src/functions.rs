@@ -193,18 +193,21 @@ impl fmt::Debug for AggregateRef {
 pub struct Registry {
     scalars: HashMap<String, ScalarRef>,
     aggregates: HashMap<String, AggregateRef>,
+    /// The standard COUNT, which a plug-in of its name may replace.
+    count: AggregateRef,
 }
 
 impl Registry {
     /// A registry holding the five SQL-86 set functions, and the string
     /// functions of SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
     pub fn with_set_functions() -> Registry {
-        let mut r = Registry { scalars: HashMap::new(), aggregates: HashMap::new() };
+        let count = AggregateRef(Arc::new(Count));
+        let mut r = Registry { scalars: HashMap::new(), aggregates: HashMap::new(), count: count.clone() };
         for f in strings::functions() {
             r.scalars.insert(f.name().to_string(), ScalarRef(f));
         }
         let set_functions: Vec<Arc<dyn AggregateFunction>> =
-            vec![Arc::new(Count), Arc::new(Sum), Arc::new(Avg), Arc::new(Extreme { max: true }), Arc::new(Extreme { max: false })];
+            vec![count.0, Arc::new(Sum), Arc::new(Avg), Arc::new(Extreme { max: true }), Arc::new(Extreme { max: false })];
         for f in set_functions {
             r.aggregates.insert(f.name().to_string(), AggregateRef(f));
         }
@@ -248,6 +251,12 @@ impl Registry {
     /// The aggregate function named `name`, if one is registered.
     pub fn aggregate(&self, name: &str) -> Option<AggregateRef> {
         self.aggregates.get(name).cloned()
+    }
+
+    /// Whether `f` is the standard COUNT [X3.135-1986 §5.8], no plug-in
+    /// of its name.
+    pub(crate) fn is_standard_count(&self, f: &AggregateRef) -> bool {
+        std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&self.count.0))
     }
 }
 

@@ -36,6 +36,7 @@ mod concepts;
 #[path = "../../support/src/types.rs"]
 mod ident;
 
+mod assertion_changes;
 mod assertions;
 mod batch_joins;
 mod batches;

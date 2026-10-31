@@ -133,9 +133,11 @@ item becomes a decision in RULES.md when its design settles.
   to write one, SQL-92 granting none on a data type; a character string is
   stored in one only through CAST, not by store assignment; a function's
   arguments of one are typed only as its `return_type` says.
-- **Assertions, further** (RULES.md D51): an assertion is checked whole
-  after each statement that changes a table it reads, however little it
-  changed.
+- **Assertions, further** (RULES.md D51): more forms checked from a
+  statement's change than `NOT EXISTS` and COUNT(*) of one table's rows:
+  COUNT of a column, and SUM, AVG, MIN and MAX, which need the value
+  before kept or bounded; a condition through a view or a join; and a
+  deferred assertion from the changes of its transaction.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them.

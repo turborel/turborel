@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 15] = [
+pub const MUTATIONS: [Mutation; 19] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -167,6 +167,48 @@ pub const MUTATIONS: [Mutation; 15] = [
         original: "            read.set(true);",
         replacement: "            read.set(false);",
         integration: &["kept_plans::a_plan_holding_the_instant_is_made_at_each_execution"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-row",
+        breaks: "assertions checked from changes: a row changed to break NOT EXISTS passes",
+        file: "src/db/assertions/changes.rs",
+        original: "                broken = kept;",
+        replacement: "                broken = false;",
+        integration: &[
+            "assertion_changes::no_row_may_have_the_condition_11_34",
+            "assertion_changes::assertions_checked_from_changes_answer_as_checked_whole",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-count",
+        breaks: "assertions checked from changes: a count raised past its bound passes",
+        file: "src/db/assertions/changes.rs",
+        original: "Some(Safe::Fewer) => change <= 0,",
+        replacement: "Some(Safe::Fewer) => true,",
+        integration: &[
+            "assertion_changes::a_count_is_held_to_its_bound_11_34",
+            "assertion_changes::assertions_checked_from_changes_answer_as_checked_whole",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-count-snapshot",
+        breaks: "assertions checked from changes: a count held from a change below one snapshot",
+        file: "src/db/assertions/changes.rs",
+        original: "if safe.is_some() && !tx.one_snapshot() {",
+        replacement: "if safe.is_some() && false {",
+        integration: &["assertion_changes::a_count_read_at_each_statement_is_checked_whole_11_34"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-count-replaced",
+        breaks: "assertions checked from changes: a COUNT a plug-in replaced held as the standard one",
+        file: "src/db/assertions/changes.rs",
+        original: " && functions.is_standard_count(&agg.func);",
+        replacement: ";",
+        integration: &["assertion_changes::a_count_replaced_is_checked_whole_11_34"],
         unit: &[],
     },
 ];

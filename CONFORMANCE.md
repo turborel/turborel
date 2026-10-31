@@ -356,8 +356,9 @@ restriction is lifted.
   column, and USAGE_PRIVILEGES.
 - **Assertions** [§11.34, §11.35] (RULES.md D51): CREATE ASSERTION, in a
   schema definition too, checked as it is made and at the end of each
-  statement that changes a table it reads, or at commit if deferred, and
-  set by SET CONSTRAINTS; DROP ASSERTION; a table or column it reads
+  statement that changes a table it reads, from the rows it changed where
+  the assertion's form allows, or at commit if deferred, and set by SET
+  CONSTRAINTS; DROP ASSERTION; a table or column it reads
   dropped only with CASCADE, which takes it, as DROP SCHEMA does. In the
   Information Schema: ASSERTIONS, CHECK_CONSTRAINTS and the constraint
   usage views.

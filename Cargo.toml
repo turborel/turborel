@@ -167,3 +167,8 @@ harness = false
 name = "prepared"
 path = "bench/prepared.rs"
 harness = false
+
+[[bench]]
+name = "assertions"
+path = "bench/assertions.rs"
+harness = false

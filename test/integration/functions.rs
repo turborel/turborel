@@ -30,8 +30,10 @@ impl ScalarFunction for Twice {
     }
 }
 
-/// Replaces the standard COUNT, to show set functions are plugins too.
-struct CountTimesTen;
+/// Replaces the standard COUNT, to show set functions are plugins too;
+/// and that an assertion of COUNT so replaced is checked whole
+/// (`assertion_changes.rs`).
+pub(crate) struct CountTimesTen;
 struct Acc(i128);
 impl AggregateFunction for CountTimesTen {
     fn name(&self) -> &'static str {

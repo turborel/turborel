@@ -38,6 +38,12 @@ impl Txn {
         self.snapshot.load(Ordering::SeqCst)
     }
 
+    /// Whether it reads at one snapshot, its own: SERIALIZABLE or
+    /// REPEATABLE READ.
+    pub(crate) fn one_snapshot(&self) -> bool {
+        self.reading != Reading::Statement
+    }
+
     /// How it reads now, as its participants are told.
     pub(super) fn read_mode(&self) -> ReadMode {
         ReadMode { snapshot: self.snapshot(), checked: self.reading == Reading::Serializable || self.checking.load(Ordering::SeqCst) }

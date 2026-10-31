@@ -631,14 +631,32 @@ it reads and the columns of each it sees.
   A row of it is the assertion broken [GR2].
 - It is checked as it is made, and at the end of each statement that
   changes a table it reads, its reads locked shared, or at commit if it is
-  deferred. Its name is a constraint name of its schema, for SET
+  deferred.
+- Checked immediate at a statement's end, it held as the statement began,
+  so two forms of a conjunct of its condition, each over one table T and
+  a condition `p` of T's row alone (columns, constants, arithmetic,
+  comparisons, IS NULL, LIKE, CASE: no function, CAST, subquery, outer
+  reference, so the same truth or error each time, and no warning), are
+  checked from the rows the statement changed (`Effects::changed_rows`,
+  `db/assertions/changes.rs`): `NOT EXISTS (SELECT ... FROM T WHERE p)`
+  from the rows it inserted or updated, as a CHECK is; `(SELECT COUNT(*)
+  FROM T WHERE p) op k`, of a constant `k` and the standard COUNT, from
+  the rows brought into the count less those taken out, held without
+  reading T if that cannot move the count toward false and the
+  transaction reads at one snapshot (D29), else checked whole. Every other
+  form, and a deferred assertion, is checked whole. SUM, AVG, MIN and MAX
+  are checked whole: a SUM's nulls and its overflow depend on every row,
+  which the change does not show. Its name is a constraint name of its schema, for SET
   CONSTRAINTS and for every other constraint's [SR2, SR7].
 - One in a `<schema definition>`, made outside any session's
   transaction, is checked in one of its own, reading the newest committed
   rows; it is not checked again as the log is replayed.
 *Why:* a CHECK with a subquery is already checked over all of what it
 reads, deferred and logged; an assertion is one with no table of its own,
-and needs no new machinery but its query.
+and needs no new machinery but its query. Checking it whole costs a read
+of its tables for each statement, however little it changed; the forms
+checked from a change are those whose result provably equals the whole
+check's, given that it held as the statement began.
 
 **D52. A view's REFERENCES: from what its columns are drawn from.** The
 privileges of a view's owner on it are found from its tables'
