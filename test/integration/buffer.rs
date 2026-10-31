@@ -4,7 +4,7 @@
 //! the pool at once.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -107,6 +107,37 @@ fn held_pages_pin_their_frames() {
     pool.free(file, b).unwrap();
     assert_eq!(pool.read(file, b.0).err().map(|e| e.code), Some(Code::Api), "freed in the pager");
     assert_eq!(get(&pool, file, a).unwrap(), b"a");
+}
+
+/// How long a read that must be refused at once is given before the test
+/// takes it to be spinning: far more than any refusal takes.
+const REFUSAL_LIMIT: Duration = Duration::from_secs(10);
+
+/// Verifies: [DESIGN] RULES.md D30, D38, buffer pool: a page read by its
+/// hint holds its frame's latch and no pin; with that the only frame,
+/// another page is refused at once (SQLCODE -918), as with a pin.
+///
+/// Regression test (R-TEST-7): the frame looked evictable, being unpinned,
+/// but could not be latched, and the read wanting it spun for ever.
+#[test]
+fn a_page_read_by_its_hint_holds_its_frame() {
+    let scratch = Scratch::new("buffer-hinted-held");
+    let pool = Arc::new(pool(1));
+    let file = pool.add_pager(pager(&OsFileSystem, &scratch.path("p")));
+    let (a, b) = (put(&pool, file, b"a"), put(&pool, file, b"b"));
+    let (sender, receiver) = mpsc::channel();
+    let reader = {
+        let pool = Arc::clone(&pool);
+        thread::spawn(move || {
+            let held = pool.read(file, b.0).unwrap();
+            assert_eq!((&*held, pool.counts().misses), (&b"b"[..], 0_u64), "a hit: by its hint");
+            sender.send(pool.read(file, a.0).err().map(|e| e.code)).unwrap();
+        })
+    };
+    let refused = receiver.recv_timeout(REFUSAL_LIMIT).expect("refused at once, not spinning");
+    assert_eq!(refused, Some(Code::Resources), "the only frame is held");
+    reader.join().unwrap();
+    assert_eq!(get(&pool, file, a).unwrap(), b"a", "released, the frame is taken");
 }
 
 /// Verifies: [DESIGN] RULES.md D30, buffer pool: a block file's blocks are

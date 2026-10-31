@@ -7,21 +7,22 @@
 //! root) pin it at once; and claimed for another page under the shards of
 //! both, locked exclusively in shard order, after checking it is still
 //! unpinned, and latching it exclusively without waiting, as a read that
-//! hit by its hint holds its latch but no pin (`hits.rs`); then
-//! it is marked loading, and the old page's content is written back and the
-//! new one read with no lock held. A dirty old page stays mapped to the
-//! frame until it is written back, so a thread wanting it waits for the
-//! frame rather than reading the file's older copy. A thread that waited
-//! for a frame checks that it holds the page it wanted, and tries again if
-//! not, so a load or a write-back that fails need only put the frame back
-//! as it was.
+//! hit by its hint holds its latch but no pin (`hits.rs`): a frame found
+//! held is not tried again, and when every frame was, the claim is refused
+//! (RULES.md D38); then it is marked loading, and the old page's content
+//! is written back and the new one read with no lock held. A dirty old
+//! page stays mapped to the frame until it is written back, so a thread
+//! wanting it waits for the frame rather than reading the file's older
+//! copy. A thread that waited for a frame checks that it holds the page it
+//! wanted, and tries again if not, so a load or a write-back that fails
+//! need only put the frame back as it was.
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
 use super::{
-    BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, UNDO_WAITS,
+    BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, Tried, UNDO_WAITS,
     all_held, count,
 };
 use crate::disk::block::{BlockFile, BlockId};
@@ -401,10 +402,10 @@ impl BufferPool {
     }
 
     /// Claims a frame for `key`: an empty one, or one the eviction policy
-    /// proposes, checked again under the shards of both pages. `None` if
-    /// another thread mapped `key` meanwhile.
+    /// proposes, checked again under both pages' shards. `None` if `key`
+    /// was mapped meanwhile.
     fn claim(&self, key: Key) -> Result<Option<Claim>> {
-        let mut waited = None;
+        let (mut tried, mut waited) = (Tried::default(), None);
         loop {
             {
                 let mut map = self.map(key)?;
@@ -419,10 +420,13 @@ impl BufferPool {
                     return self.take(&mut map, (index, latch), key, None).map(Some);
                 }
             }
-            let evictable = |index: usize| self.frames.get(index).is_some_and(|f| f.pins.load(Ordering::Acquire) == 0 && f.key().is_some());
-            // Refused, or waited for by an undo alone (RULES.md D38).
+            let evictable = |index: usize| {
+                !tried.has(index) && self.frames.get(index).is_some_and(|f| f.pins.load(Ordering::Acquire) == 0 && f.key().is_some())
+            };
+            // All held: refused, or an undo waits and tries all again.
             let Some(index) = self.eviction.victim(&evictable) else {
                 all_held(self.frames.len(), &mut waited, UNDO_WAITS)?;
+                tried = Tried::default();
                 continue;
             };
             let frame = self.frame(index)?;
@@ -431,9 +435,8 @@ impl BufferPool {
             if map.contains_key(&key) {
                 return Ok(None);
             }
-            // Still the page it held, and unpinned, now that both shards are
-            // locked: pins rise only under the shard of the page held; and
-            // not latched by a read that hit by its hint.
+            // Still the page it held, unpinned (pins rise only under its
+            // shard) and not latched by a read that hit by its hint.
             let latch = (frame.key() == Some(old) && frame.pins.load(Ordering::Acquire) == 0).then(|| try_latch(frame)).flatten();
             if let Some(latch) = latch {
                 count(&self.counters.evictions);
@@ -444,6 +447,7 @@ impl BufferPool {
                 }
                 return Ok(Some(claim));
             }
+            tried.note(index, self.frames.len()); // held: not proposed again
         }
     }
 

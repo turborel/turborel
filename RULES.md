@@ -860,8 +860,9 @@ names in its header those it was written with, and is read with them, and
 a file added to others is written as they were. A buffer pool read that
 hits writes one thing shared, its frame's latch: a table of hints, read
 without a lock, finds the frame, and the latch keeps it from eviction,
-which takes it exclusively; hits are counted on stripes by thread. Hot
-pages contend on that latch still; a reader-biased latch (BRAVO) would
+which takes it exclusively, counting a frame so latched as held, as one
+pinned (D38); hits are counted on stripes by thread. Hot pages contend
+on that latch still; a reader-biased latch (BRAVO) would
 need a reviewed exception to R-SAFE-1. File formats are the same
 on every platform. Each component counts its own
 work for the heuristics above it.

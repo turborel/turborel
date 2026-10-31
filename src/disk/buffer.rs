@@ -218,6 +218,33 @@ pub struct BufferPool {
     _reservation: Option<Reservation>,
 }
 
+/// The frames a claim found held after the eviction policy proposed them:
+/// pinned, or latched by a read that hit by its hint (`hits.rs`), which
+/// may be the claiming thread's own. They are not proposed again, so a
+/// claim tries each frame at most once and is refused when all are held
+/// (RULES.md D38), never spinning on one it cannot latch. Allocated only
+/// when a frame is found held, so a claim that takes the first frame
+/// proposed allocates nothing.
+#[derive(Default)]
+struct Tried(Vec<bool>);
+
+impl Tried {
+    /// Whether frame `index` was tried.
+    fn has(&self, index: usize) -> bool {
+        self.0.get(index).copied().unwrap_or(false)
+    }
+
+    /// Notes frame `index`, of a pool of `frames`, tried.
+    fn note(&mut self, index: usize, frames: usize) {
+        if self.0.is_empty() {
+            self.0.resize(frames, false);
+        }
+        if let Some(tried) = self.0.get_mut(index) {
+            *tried = true;
+        }
+    }
+}
+
 /// A pin on a frame, released when dropped.
 struct Pin<'a>(&'a Frame);
 
