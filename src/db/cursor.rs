@@ -20,6 +20,7 @@ use crate::exec::{Runner, execute};
 use crate::logical::{Cond, LogicalPlan, and_all};
 use crate::params::Params;
 use crate::physical::Plan;
+use crate::settings::FUNCTION_CALLS;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::Txn;
@@ -271,8 +272,8 @@ impl Session {
         }
     }
 
-    pub(super) fn parse_cursor(&self, st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
-        params.parser(sql, self.extensions, &st.catalog_name())?.cursor_specification()
+    pub(super) fn parse_cursor(st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
+        params.parser(sql, st.settings.is_on(FUNCTION_CALLS), &st.catalog_name())?.cursor_specification()
     }
 
     pub(super) fn compile(&self, st: &State, spec: &CursorSpecification, params: &Params) -> Result<Compiled> {
@@ -406,7 +407,7 @@ impl Session {
             return cursor_error(&name.name, format!("[X3.135-1986 §8.8 GR1] cursor {name} is already open"));
         }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
-        let spec = self.parse_cursor(st, text, params)?;
+        let spec = Self::parse_cursor(st, text, params)?;
         let wanted = wanted(&spec, flags)?;
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {

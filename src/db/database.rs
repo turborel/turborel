@@ -311,12 +311,13 @@ impl Database {
     }
 
     /// \[DESIGN\] Adds or replaces a storage engine, under its name, once
-    /// it has taken what the database provides (`StorageEngine::attach`).
+    /// it has taken what the database provides (`StorageEngine::attach`),
+    /// its settings declared and their values told it (`configure_engines`).
     ///
     /// # Errors
     ///
-    /// The engine's, from `attach`.
-    /// SQLCODE -910 if called back from a plug-in.
+    /// The engine's, from `attach`; SQLCODE -910 if called back from a
+    /// plug-in, or a setting it declares is refused (`declare_engine_settings`).
     pub fn register_engine(&self, engine: Box<dyn StorageEngine>) -> Result<()> {
         let name = engine.name();
         engine.attach(&self.host()?)?;
@@ -325,10 +326,11 @@ impl Database {
             if let Some(o) = engine.table_options().iter().find(|o| st.table_options.iter().any(|(_, p)| p.name == o.name)) {
                 return fail(Code::Api, format!("[DESIGN] the table option {} of engine {name} is a plug-in's", o.name));
             }
+            st.declare_engine_settings(&*engine)?;
             st.engines.insert(name.to_owned(), Arc::from(engine));
             Ok(())
         });
-        self.registered((Extension::Engine, name), done)
+        self.registered((Extension::Engine, name), done.and_then(|()| self.configure_engines()))
     }
 
     /// \[DESIGN\] Adds or replaces an index method, under its name, once it
@@ -353,7 +355,7 @@ impl Database {
     }
 
     /// \[EXTENSION\] Register a scalar function. Callable only from sessions
-    /// that enable the function call syntax.
+    /// that take the function call syntax (SQL.FUNCTION_CALLS ON).
     ///
     /// # Errors
     ///
@@ -405,15 +407,20 @@ impl Database {
         })
     }
 
-    /// \[DESIGN\] Runs `change` on the rule-based optimizer: add rules, enable
-    /// or disable them, list them. The change is published when `change`
-    /// returns; statements already running keep the rules they started with.
+    /// \[DESIGN\] Runs `change` on the rule-based optimizer: add rules, list
+    /// them. Published when `change` returns, each rule added with its
+    /// setting (`optimizer::switch_name`, RULES.md D36); statements already
+    /// running keep the rules they started with.
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if called back from a plug-in or from inside such a closure.
+    /// SQLCODE -910 if called back from a plug-in or from inside such a
+    /// closure, or a rule's setting is refused (`State::switch_rules`).
     pub fn with_optimizer<T>(&self, change: impl FnOnce(&mut Optimizer) -> T) -> Result<T> {
-        self.change(|st| Ok(change(&mut st.optimizer)))
+        self.change(|st| {
+            let out = change(&mut st.optimizer);
+            st.switch_rules().map(|()| out)
+        })
     }
 
     /// \[DESIGN\] Runs `change` on the weights used by the physical planner, as

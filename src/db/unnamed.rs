@@ -48,7 +48,7 @@ impl Session {
     /// `call`.
     fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
         let timed = super::slow::Timed::of(call.state(), sql.to_owned(), &self.auth());
-        let spec = self.unnamed_specification(call.state(), sql, params)?;
+        let spec = Self::unnamed_specification(call.state(), sql, params)?;
         self.unnamed(call, timed, |st, tx| self.open_rows(st, tx, &spec, params))
     }
 
@@ -59,8 +59,8 @@ impl Session {
     ///
     /// It does not parse; it is FOR UPDATE: no positioned statement names
     /// an unnamed cursor.
-    pub(super) fn unnamed_specification(&self, st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
-        let spec = self.parse_cursor(st, sql, params)?;
+    pub(super) fn unnamed_specification(st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
+        let spec = Self::parse_cursor(st, sql, params)?;
         if let Some(Updatability::Update(_)) = spec.updatability {
             return Err(rule(
                 "[DESIGN] an unnamed cursor is read-only: no positioned statement names it, so it is not FOR UPDATE".to_owned(),

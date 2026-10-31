@@ -63,13 +63,27 @@ fn with_twice() -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] a function call is a syntax error unless extensions are enabled.
+/// Verifies: [EXTENSION] RULES.md D36, D45: a function call is a syntax
+/// error unless SQL.FUNCTION_CALLS is ON: a session's own value, set in
+/// SQL, for it alone; the database's for every session that sets none; a
+/// prepared statement is parsed again once the value it was prepared
+/// under changes.
 #[test]
-fn function_calls_need_extensions_enabled() {
+fn function_calls_are_a_setting() {
     let db = with_twice();
-    let s = db.session("APP");
+    let (s, other) = (db.session("APP"), db.session("APP"));
+    let sql = "SELECT TWICE(ID) FROM T WHERE ID = 1";
     // Off by default: <identifier>( is not SQL-86.
-    assert_eq!(code(&s, "SELECT TWICE(ID) FROM T"), Code::Syntax);
+    assert_eq!(code(&s, sql), Code::Syntax);
+    s.run("SET SQL.FUNCTION_CALLS = 'on'").unwrap();
+    assert_eq!(rows(&s, sql), Ok(vec!["2".into()]));
+    assert_eq!(code(&other, sql), Code::Syntax, "the session's own");
+    let twice = s.prepare(sql).unwrap();
+    s.run("SET SQL.FUNCTION_CALLS = 'OFF'").unwrap();
+    assert_eq!(s.execute_prepared(&twice, &[]).map(|_| ()).map_err(|e| e.code), Err(Code::Dynamic), "parsed again");
+    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
+    assert_eq!(rows(&other, sql), Ok(vec!["2".into()]), "the database's");
+    assert_eq!(code(&s, sql), Code::Syntax, "under the session's own");
 }
 
 /// Verifies: [EXTENSION] a `ScalarFunction` plug-in is called in value
@@ -77,8 +91,8 @@ fn function_calls_need_extensions_enabled() {
 #[test]
 fn a_scalar_plug_in_is_called_in_expressions() {
     let db = with_twice();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     assert_eq!(rows(&s, "SELECT TWICE(AMT) FROM T WHERE ID = 1"), Ok(vec!["21.00".into()]));
     assert_eq!(rows(&s, "SELECT SUM(TWICE(ID)) FROM T"), Ok(vec!["12".into()]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE EXISTS (SELECT * FROM U WHERE TWICE(U.ID) = TWICE(T.ID))"), Ok(vec!["1".into()]));
@@ -88,8 +102,8 @@ fn a_scalar_plug_in_is_called_in_expressions() {
 #[test]
 fn a_scalar_plug_in_checks_its_argument_types() {
     let db = with_twice();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     assert_eq!(code(&s, "SELECT TWICE(NAME) FROM T"), Code::SyntaxRule);
 }
 
@@ -97,8 +111,8 @@ fn a_scalar_plug_in_checks_its_argument_types() {
 #[test]
 fn an_unregistered_function_is_refused() {
     let db = with_twice();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     assert_eq!(code(&s, "SELECT MISSING(ID) FROM T"), Code::SyntaxRule);
 }
 
@@ -135,8 +149,8 @@ fn only_deterministic_functions_are_folded() {
     let db = setup();
     db.register_scalar_function(Box::new(NonDeterministicConstant)).unwrap();
     db.register_scalar_function(Box::new(Twice)).unwrap();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     let plan = s.explain("SELECT TWICE(2), SEQ(1) FROM T", &Params::new()).unwrap();
     let physical = plan.split("-- physical:").nth(1).unwrap();
     assert!(physical.contains("Project 4, SEQ(1)"), "{plan}");
@@ -184,8 +198,8 @@ fn a_name_is_either_scalar_or_aggregate() {
     db.register_aggregate_function(Box::new(NamedAggregate("G"))).unwrap();
     assert_eq!(db.register_scalar_function(Box::new(NamedScalar("G"))).map_err(|e| e.code), Err(Code::Api));
     assert_eq!(db.register_scalar_function(Box::new(NamedScalar("COUNT"))).map_err(|e| e.code), Err(Code::Api));
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     assert_eq!(rows(&s, "SELECT F(ID) FROM T WHERE ID = 1"), Ok(vec!["NULL".to_owned()]));
 }
 
@@ -214,8 +228,8 @@ impl ScalarFunction for TooLong {
 fn a_value_longer_than_its_declared_type_is_a_data_exception() {
     let db = setup();
     db.register_scalar_function(Box::new(TooLong)).unwrap();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     let update = s.execute("UPDATE T SET NAME = LONG(NAME) WHERE ID = 1", &mut Params::new());
     assert_eq!(update.map_err(|e| e.code), Err(Code::Data));
     assert_eq!(rows(&s, "SELECT NAME FROM T WHERE ID = 1"), Ok(vec!["ANN   ".to_owned()]));
@@ -227,8 +241,8 @@ fn a_value_longer_than_its_declared_type_is_a_data_exception() {
 fn extension_aggregates_take_one_argument() {
     let db = setup();
     db.register_aggregate_function(Box::new(NamedAggregate("TALLY"))).unwrap();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     assert_eq!(rows(&s, "SELECT TALLY(ID) FROM T"), Ok(vec!["30".into()]));
     assert_eq!(code(&s, "SELECT TALLY(ID, ID) FROM T"), Code::SyntaxRule);
 }

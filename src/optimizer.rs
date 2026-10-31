@@ -27,10 +27,10 @@ use crate::db::State;
 use crate::error::Warnings;
 use crate::exec::{Heard, NoSubqueries, eval, eval_cond};
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
-use crate::settings::OPTIMIZER_MAX_PASSES;
+use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 
-/// The names of the built-in rules, as EXPLAIN shows them and `set_enabled`
-/// takes them.
+/// The names of the built-in rules, as EXPLAIN shows them and their
+/// settings name them (`switch_name`).
 pub const CONSTANT_FOLDING: &str = "constant_folding";
 /// See [`CONSTANT_FOLDING`].
 pub const SIMPLIFY_CONDITIONS: &str = "simplify_conditions";
@@ -70,7 +70,8 @@ pub struct RuleContext<'a> {
 ///   fixed point; the driver stops after `OPTIMIZER.MAX_PASSES` otherwise.
 /// * The plan keeps the shapes the executor runs: every leaf a `Scan` of a
 ///   catalog table, a `System` table's rows, or `Values`.
-/// * `name` is unique and constant; `set_enabled` finds the rule by it.
+/// * `name` is unique and constant: the setting `OPTIMIZER.NAME` turns the
+///   rule on or off (`switch_name`).
 /// * The `RuleContext` is read-only: a rule must not change the database.
 /// * Methods may be called from several threads at once (`Send + Sync`): an
 ///   implementation guards its own state.
@@ -84,20 +85,39 @@ pub trait Rule: Send + Sync {
     fn apply(&self, plan: &LogicalPlan, ctx: &RuleContext<'_>) -> Option<LogicalPlan>;
 }
 
-/// The rules, in the order they are tried, and which are disabled.
+/// \[DESIGN\] The group of the settings turning each rule on or off
+/// (RULES.md D36): `OPTIMIZER.CONSTANT_FOLDING`, ON or OFF.
+pub const SWITCH_GROUP: &str = "OPTIMIZER";
+
+/// The name of the setting that turns the rule `rule` on or off: its name
+/// upper case, in `SWITCH_GROUP`.
+pub fn switch_name(rule: &str) -> String {
+    format!("{SWITCH_GROUP}.{}", rule.to_ascii_uppercase())
+}
+
+/// A rule, and the setting that turns it on or off, once declared.
+#[derive(Clone)]
+struct Switched {
+    rule: Arc<dyn Rule>,
+    switch: Option<Key>,
+}
+
+/// The rules, in the order they are tried, each turned on or off by a
+/// setting of its own (`switch_name`), so a session may turn one off for
+/// itself and the database's choice is kept with its definitions
+/// (RULES.md D36).
 #[derive(Clone)]
 pub struct Optimizer {
-    rules: Vec<Arc<dyn Rule>>,
-    disabled: HashSet<String>,
+    rules: Vec<Switched>,
 }
 
 impl Optimizer {
     /// An optimizer with no rules: plans are left as bound.
     pub fn empty() -> Optimizer {
-        Optimizer { rules: Vec::new(), disabled: HashSet::new() }
+        Optimizer { rules: Vec::new() }
     }
 
-    /// An optimizer with the built-in rules, all enabled.
+    /// An optimizer with the built-in rules.
     pub fn with_builtin_rules() -> Optimizer {
         let mut o = Optimizer::empty();
         o.add(Box::new(ConstantFolding));
@@ -115,37 +135,39 @@ impl Optimizer {
         o
     }
 
-    /// Rules run in the order they were added.
+    /// Rules run in the order they were added. Its setting is declared as
+    /// the change that adds it is published (`Database::with_optimizer`).
     pub fn add(&mut self, rule: Box<dyn Rule>) {
-        self.rules.push(Arc::from(rule));
+        self.rules.push(Switched { rule: Arc::from(rule), switch: None });
     }
 
-    /// Enable or disable a rule by name. Returns false if there is no such rule.
-    pub fn set_enabled(&mut self, name: &str, on: bool) -> bool {
-        if !self.rules.iter().any(|r| r.name() == name) {
-            return false;
+    /// Each rule's name, in the order they run.
+    pub fn rules(&self) -> Vec<&'static str> {
+        self.rules.iter().map(|r| r.rule.name()).collect()
+    }
+
+    /// The names of the rules whose settings are not yet declared.
+    pub(crate) fn unswitched(&self) -> Vec<&'static str> {
+        self.rules.iter().filter(|r| r.switch.is_none()).map(|r| r.rule.name()).collect()
+    }
+
+    /// Makes `key` the setting that turns the rule `name` on or off.
+    pub(crate) fn switched(&mut self, name: &str, key: Key) {
+        for r in self.rules.iter_mut().filter(|r| r.rule.name() == name) {
+            r.switch = Some(key);
         }
-        if on {
-            self.disabled.remove(name);
-        } else {
-            self.disabled.insert(name.to_string());
-        }
-        true
     }
 
-    /// Each rule's name and whether it is enabled, in the order they run.
-    pub fn rules(&self) -> Vec<(&'static str, bool)> {
-        self.rules.iter().map(|r| (r.name(), !self.disabled.contains(r.name()))).collect()
-    }
-
-    /// Rewrite to a fixpoint. Returns the plan and the names of the rules
-    /// that fired, in order.
+    /// Rewrite to a fixpoint, by the rules `ctx`'s settings leave on.
+    /// Returns the plan and the names of the rules that fired, in order.
     pub fn optimize(&self, mut plan: LogicalPlan, ctx: &RuleContext<'_>) -> (LogicalPlan, Vec<&'static str>) {
         let mut trace = Vec::new();
+        let settings = &ctx.db.settings;
+        let on: Vec<&dyn Rule> = self.rules.iter().filter(|r| r.switch.is_none_or(|k| settings.is_on(k))).map(|r| &*r.rule).collect();
         // A safety net against rules that keep undoing each other.
-        let passes = usize::try_from(ctx.db.settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
+        let passes = usize::try_from(settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
         for _ in 0..passes {
-            let (p, changed) = self.pass(plan, ctx, &mut trace);
+            let (p, changed) = pass(&on, plan, ctx, &mut trace);
             plan = p;
             if !changed {
                 break;
@@ -153,22 +175,24 @@ impl Optimizer {
         }
         (plan, trace)
     }
+}
 
-    fn pass(&self, plan: LogicalPlan, ctx: &RuleContext<'_>, trace: &mut Vec<&'static str>) -> (LogicalPlan, bool) {
-        let mut changed = false;
-        let plan = plan.map_inputs(|input| {
-            let (p, c) = self.pass(input, ctx, trace);
-            changed |= c;
-            p
-        });
-        for rule in self.rules.iter().filter(|r| !self.disabled.contains(r.name())) {
-            if let Some(p) = rule.apply(&plan, ctx) {
-                trace.push(rule.name());
-                return (p, true);
-            }
+/// One pass of the rules `on` over `plan`, its inputs first: the plan, and
+/// whether a rule fired.
+fn pass(on: &[&dyn Rule], plan: LogicalPlan, ctx: &RuleContext<'_>, trace: &mut Vec<&'static str>) -> (LogicalPlan, bool) {
+    let mut changed = false;
+    let plan = plan.map_inputs(|input| {
+        let (p, c) = pass(on, input, ctx, trace);
+        changed |= c;
+        p
+    });
+    for rule in on {
+        if let Some(p) = rule.apply(&plan, ctx) {
+            trace.push(rule.name());
+            return (p, true);
         }
-        (plan, changed)
     }
+    (plan, changed)
 }
 
 // ===========================================================================

@@ -345,7 +345,7 @@ impl Database {
         for (name, value) in given {
             self.set_setting(name, value)?;
         }
-        self.budget_from_settings()
+        self.apply_settings()
     }
 
     /// The log at `place`, of the database's log storage, known durable

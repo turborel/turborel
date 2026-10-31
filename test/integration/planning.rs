@@ -9,14 +9,14 @@ use turborel::error::{self, Code};
 use turborel::logical::{Cond, LogicalPlan, Truth};
 use turborel::optimizer::{
     CONSTANT_FOLDING, MERGE_FILTERS, PUSH_FILTER_INTO_OUTER_JOIN, PUSH_FILTER_INTO_PRODUCT, PUSH_HAVING_INTO_WHERE,
-    REMOVE_REDUNDANT_DISTINCT, Rule, RuleContext, SIMPLIFY_CONDITIONS,
+    REMOVE_REDUNDANT_DISTINCT, Rule, RuleContext, SIMPLIFY_CONDITIONS, switch_name,
 };
 use turborel::params::Params;
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::TxId;
 
 use crate::common::{MemoryTable, Scratch, after_crash, big, code, rows, set_all_rules, setup};
-use turborel::value::Spelled;
+use turborel::value::{Spelled, Value};
 
 /// Verifies: [DESIGN] access path selection; [EXTENSION] indexes
 #[test]
@@ -272,8 +272,9 @@ impl Rule for DropTrueFilters {
 fn custom_rules_plug_in() {
     let db = setup();
     // Disable the built-in rule that would do the same job...
-    assert!(db.with_optimizer(|o| o.set_enabled(SIMPLIFY_CONDITIONS, false)).unwrap());
-    assert!(!db.with_optimizer(|o| o.set_enabled("no_such_rule", false)).unwrap());
+    crate::common::set_rule(&db, SIMPLIFY_CONDITIONS, false);
+    let off = Value::Char("OFF".to_owned());
+    assert_eq!(db.set_setting(&switch_name("no_such_rule"), &off).map_err(|e| e.sqlcode()), Err(-910_i32), "no such rule");
     let s = db.session("APP");
     assert!(s.physical_plan("SELECT ID FROM T WHERE 1 = 1", &Params::new()).unwrap().contains("Filter TRUE"));
     drop(s);

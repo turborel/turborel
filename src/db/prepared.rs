@@ -27,6 +27,7 @@ use crate::binder::{self, OutColumn, WriteKind, bind_write};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::{ParameterType, Params};
+use crate::settings::FUNCTION_CALLS;
 use crate::value::Value;
 
 /// What a prepared statement is.
@@ -210,8 +211,9 @@ impl Session {
         }
         let kind = kind_of(&tokens);
         let (cursor, implicit) = self.positioned_reference(st, &tokens, by)?;
-        let mut parser =
-            crate::parser::Parser::for_prepare(sql, self.extensions)?.in_catalog(&st.catalog_name()).implying(implicit.clone());
+        let mut parser = crate::parser::Parser::for_prepare(sql, st.settings.is_on(FUNCTION_CALLS))?
+            .in_catalog(&st.catalog_name())
+            .implying(implicit.clone());
         let mut single_row = false;
         let (columns, params) = match kind {
             Kind::Query => {

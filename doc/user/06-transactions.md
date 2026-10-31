@@ -9,7 +9,9 @@ at all. The first statement that reads or changes data begins one;
 [COMMIT](../sql/statements/commit.md) ends it, its changes made lasting
 and seen by all, and [ROLLBACK](../sql/statements/rollback.md) ends it,
 its changes undone. A statement that fails is undone alone; the
-transaction goes on. A COMMIT once done survives a crash.
+transaction goes on. A COMMIT once done survives a crash, unless the
+session set LOG.COMMIT_SYNC OFF, so as not to wait for the log
+([Settings](../operator/04-settings.md#a-sessions-own)).
 
 Definitions, as CREATE SCHEMA and CREATE TABLE, run within the
 transaction too, and are undone by ROLLBACK; the statements of users and

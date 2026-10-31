@@ -50,7 +50,7 @@ use crate::logical::LogicalPlan;
 use crate::optimizer::RuleContext;
 use crate::parser::Parser;
 use crate::physical::{PhysicalPlanner, Plan};
-use crate::settings::{LOCK_TIMEOUT, STATEMENT_TIMEOUT};
+use crate::settings::{COMMIT_SYNC, LOCK_TIMEOUT, STATEMENT_TIMEOUT};
 use crate::sync::lock_builtin;
 use crate::txn::{SessionEnd, Stop, TxId, Txn, Window};
 
@@ -221,7 +221,6 @@ pub struct Session {
     auth: RefCell<String>,
     /// The authorization identifier it began with [§16.4 GR4].
     started: String,
-    extensions: bool,
     inner: RefCell<SessionState>,
     /// Set while a call runs, so a plug-in calling back into this session is
     /// refused (RULES.md R-ERR-4).
@@ -316,7 +315,6 @@ impl Session {
             db,
             auth: RefCell::new(auth.to_string()),
             started: auth.to_string(),
-            extensions: false,
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),
             deferral: RefCell::new(Deferral::default()),
@@ -356,12 +354,6 @@ impl Session {
                 Err(e)
             }
         }
-    }
-
-    /// \[EXTENSION\] Accept the `<identifier>`(`<args>`) function call syntax.
-    /// Off by default, so a session refuses a function call as SQL does.
-    pub fn enable_extensions(&mut self, on: bool) {
-        self.extensions = on;
     }
 
     /// The current transaction, if one is active.
@@ -423,6 +415,9 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
+        if let Some(tx) = &ending {
+            tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
+        }
         let ended = match (&ending, staged) {
             (Some(tx), None) => st.commit(tx),
             (Some(tx), Some(staged)) => self.db.commit_staged(tx, &staged),

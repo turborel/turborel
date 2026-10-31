@@ -227,7 +227,7 @@ impl Database {
         let (report, _) = self.replay(&mut log.read_from(Lsn(0)), Definitions::All)?;
         self.change(State::rebuild_indexes)?;
         self.set_log(log)?;
-        self.budget_from_settings()?;
+        self.apply_settings()?;
         Ok(report)
     }
 

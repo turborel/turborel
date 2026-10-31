@@ -201,8 +201,8 @@ impl ScalarFunction for CallsBack {
 fn calls_back_into_the_database_do_not_panic_or_hang() {
     let db = crate::common::locking_setup();
     db.register_scalar_function(Box::new(CallsBack(db.clone()))).unwrap();
-    let mut s = db.session("APP");
-    s.enable_extensions(true);
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
     assert_eq!(crate::common::code(&s, "SELECT CALLS_BACK(ID) FROM T"), Code::Conflict);
     // Waiting would never end: the holder runs on the same thread.
     db.set_lock_wait(turborel::txn::LockWait::Wait).unwrap();

@@ -9,7 +9,7 @@
 //!
 //! \[EXTENSION\] SQL-86 has no syntax for calling any other function. As an opt-in,
 //! non-standard extension ([X3.135-1986 §3.4] allows "user options to process nonconforming
-//! SQL language"), a session can accept `<identifier>`(`<args>`) and resolve it
+//! SQL language"), a session whose SQL.FUNCTION_CALLS is ON accepts `<identifier>`(`<args>`) and resolves it
 //! to a registered `ScalarFunction` or `AggregateFunction`.
 //!
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from

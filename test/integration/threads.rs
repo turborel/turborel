@@ -138,8 +138,8 @@ fn changes_take_turns() {
     for r in registrars {
         r.join().unwrap();
     }
-    let mut s = db.session("A");
-    s.enable_extensions(true);
+    let s = db.session("A");
+    crate::common::function_calls(&s);
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
     s.run("INSERT INTO T VALUES (1)").unwrap();
     for i in 0..THREADS {

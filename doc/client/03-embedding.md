@@ -77,6 +77,13 @@ SESSION_END says: committed, by default.
 A session is used by one thread at a time; it may move to another
 between calls. Each thread of a program has its own sessions.
 
+`Database::set_owner` makes a user the database's owner, unchecked, as
+the program holding the database may. `Session::set_owner` does it for
+a session of the owner alone, outside a transaction (SQLCODE -104 for
+another's, -917 in a transaction, -103 for a name not a user's): the
+owner hands the database on, and its sessions go on as the owner no
+more ([Users](../operator/05-users.md)).
+
 `reseal_table("AUTH.TABLE")`, as `ALTER TABLE ... RESEAL` does, seals
 a table's rows again through the
 encodings its option ENCODINGS names now, in the session's transaction,
@@ -284,8 +291,8 @@ A program may add scalar functions, and set functions, of its own:
 its arguments, and the value of a call; `register_aggregate_function` a
 set function's, and replaces a standard one of its name. A call,
 `NAME(arguments)`, is syntax the standards do not have *(extension)*:
-a session takes it only once `enable_extensions` lets it, and refuses
-it until then, as SQL does (SQLCODE -102).
+a session takes it only once its setting SQL.FUNCTION_CALLS is ON, and
+refuses it until then, as SQL does (SQLCODE -102).
 
 ```rust
 use turborel::db::Database;
@@ -317,9 +324,9 @@ impl ScalarFunction for Twice {
 fn main() -> Result<()> {
     let db = Database::new();
     db.register_scalar_function(Box::new(Twice))?;
-    let mut ann = db.session("ANN");
+    let ann = db.session("ANN");
     assert_eq!(ann.run("VALUES TWICE(21)").unwrap_err().sqlcode(), -102);
-    ann.enable_extensions(true);
+    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
     let mut rows = ann.open_cursor("VALUES TWICE(21)")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("42".to_owned()));
     Ok(())
@@ -371,8 +378,8 @@ impl ScalarFunction for Width {
 fn main() -> Result<()> {
     let db = Database::new();
     db.register_scalar_function(Box::new(Width))?;
-    let mut ann = db.session("ANN");
-    ann.enable_extensions(true);
+    let ann = db.session("ANN");
+    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
     let mut rows = ann.open_cursor("VALUES WIDTH('abc')")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("5".to_owned()));
     assert_eq!(ann.open_cursor("VALUES WIDTH(1)").err().map(|e| e.sqlcode()), Some(-103));
@@ -399,6 +406,15 @@ files, so the definitions that name one find it:
 | `register_hash_function` | a hash function for checksums, `HashFunction`, named by STORAGE.CHECKSUM |
 | `register_system_table` | a table of the Information Schema's kind, `SystemTable` |
 | `set_diagnostics` | where the database's events go, `Diagnostics` ([Diagnostics](../operator/08-diagnostics.md)); `tell` gives it one of the program's own, as a server's, those below DIAGNOSTICS.LEVEL dropped |
+
+An engine may declare settings of the database's, under its own name
+(`StorageEngine::settings`), as the column store declares
+COLUMNSTORE.HEADER_CACHE_BYTES; it is told their values as it is
+registered, as each changes and as the database opens
+(`StorageEngine::configure`), and never calls back into the database
+to read them. `with_optimizer` adds rules to the optimizer (`Rule`),
+each with its setting, OPTIMIZER and its name, which turns it on or
+off, as the built-in rules' do ([Settings](../appendix/c-settings.md)).
 
 The built-in engines are `rowstore`, the default, and `columnstore`
 ([Table Options](../appendix/g-table-options.md)); the built-in index

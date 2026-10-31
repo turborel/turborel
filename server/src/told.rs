@@ -1,6 +1,8 @@
 //! \[DESIGN\] What the server tells of itself (RULES.md D40, D42), through
 //! the database it serves (`Database::tell`): failed logins, each, as an
-//! audit of who tried to connect; and what may come in floods, failed
+//! audit of who tried to connect, those a Hello's refusal ends before any
+//! authenticator runs too, each slowed as the others by its address's
+//! failures (`logins.rs`); and what may come in floods, failed
 //! accepts and connections refused, counted and told at most once in
 //! `QUIET`, so a flood does not flood the log.
 
@@ -10,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use turborel::db::Database;
 use turborel::diagnostics::Event;
+use turborel::error::SqlError;
 
 use crate::auth::{Authenticator, Exchange, Peer, Step};
 
@@ -40,6 +43,16 @@ impl Throttle {
             self.count.swap(0, Ordering::Relaxed)
         })
     }
+}
+
+/// Tells of a login `why` refused before any authenticator ran: a Hello
+/// of a protocol version not served, of a user name that is no
+/// identifier, or of a mechanism not served. The user as the Hello names
+/// it, read as an `<identifier>` if it is one, the peer, and the
+/// mechanism named.
+pub(crate) fn hello_refused(db: &Database, (user, peer, mechanism): (&str, &Peer, &str), why: &SqlError) {
+    let user = turborel::lexer::authorization_identifier(user).unwrap_or_else(|_| user.to_owned());
+    db.tell(&Event::LoginFailed { user, peer: peer.name(), mechanism: mechanism.to_owned(), message: why.msg.clone() });
 }
 
 /// \[DESIGN\] An authenticator whose refusals are told: the user named,

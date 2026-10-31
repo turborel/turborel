@@ -210,12 +210,26 @@ impl connection::Mechanism for Proof {
 fn a_failed_login_is_told_without_its_proof() {
     let (db, kept) = database();
     let server = start_with(&db, &[], vec![Arc::new(Refusing)]);
-    let mut stream = TcpStream::connect(server.address).unwrap();
+    let peer = hello(server.address, (1, "ann", "secret"));
+    let refused = connection::connect(server.address, "BOB", &mut Proof).err().unwrap();
+    assert_eq!(state(&refused).0, "28000");
+    let told = kept.of("LoginFailed");
+    assert_eq!(told.len(), 2, "{told:?}");
+    assert_eq!(told[0], format!(r#"LoginFailed {{ user: "ANN", peer: "{peer}", mechanism: "secret", message: "[DESIGN] not proven" }}"#));
+    assert!(told[1].contains(r#"user: "BOB""#), "{told:?}");
+    assert!(kept.all().iter().all(|e| !e.contains("hunter2")), "never the proof");
+}
+
+/// A Hello of `version`, naming `user` and `mechanism`, its proof
+/// "hunter2", sent to `address` over a connection of its own, read to its
+/// end: the connection's own address.
+fn hello(address: std::net::SocketAddr, (version, user, mechanism): (u32, &str, &str)) -> std::net::SocketAddr {
+    let mut stream = TcpStream::connect(address).unwrap();
     let peer = stream.local_addr().unwrap();
     let hello = turborel_protocol::Request::Hello {
-        version: 1,
-        user: "ann".into(),
-        mechanism: "secret".into(),
+        version,
+        user: user.into(),
+        mechanism: mechanism.into(),
         initial: b"hunter2".to_vec(),
         capabilities: vec![],
     };
@@ -224,12 +238,36 @@ fn a_failed_login_is_told_without_its_proof() {
     stream.write_all(&bytes).unwrap();
     let mut rest = Vec::new();
     stream.read_to_end(&mut rest).unwrap();
-    let refused = connection::connect(server.address, "BOB", &mut Proof).err().unwrap();
-    assert_eq!(state(&refused).0, "28000");
+    peer
+}
+
+/// Verifies: [EXTENSION] RULES.md D40, D42, D43: a login the native
+/// protocol refuses before any authenticator runs is told as one an
+/// authenticator refuses: a Hello of a protocol version not served, the
+/// user read as an identifier; of a user name that is no identifier, as
+/// written; of a mechanism not served; never the proof.
+///
+/// Regression test (R-TEST-7): these were refused untold.
+#[test]
+fn a_hello_refused_before_authentication_is_told() {
+    let (db, kept) = database();
+    let server = start_with(&db, &[], vec![Arc::new(Refusing)]);
+    let version = hello(server.address, (2, "ann", "secret"));
+    let unnamed = hello(server.address, (1, "a b", "secret"));
+    let unserved = hello(server.address, (1, "ann", "nothing"));
     let told = kept.of("LoginFailed");
-    assert_eq!(told.len(), 2, "{told:?}");
-    assert_eq!(told[0], format!(r#"LoginFailed {{ user: "ANN", peer: "{peer}", mechanism: "secret", message: "[DESIGN] not proven" }}"#));
-    assert!(told[1].contains(r#"user: "BOB""#), "{told:?}");
+    assert_eq!(told.len(), 3, "{told:?}");
+    assert_eq!(
+        told[0],
+        format!(
+            r#"LoginFailed {{ user: "ANN", peer: "{version}", mechanism: "secret", message: "protocol version 2 is not served; this server speaks 1" }}"#
+        )
+    );
+    assert!(told[1].starts_with(&format!(r#"LoginFailed {{ user: "a b", peer: "{unnamed}", mechanism: "secret", message: ""#)), "{told:?}");
+    assert_eq!(
+        told[2],
+        format!(r#"LoginFailed {{ user: "ANN", peer: "{unserved}", mechanism: "nothing", message: "mechanism nothing is not served" }}"#)
+    );
     assert!(kept.all().iter().all(|e| !e.contains("hunter2")), "never the proof");
 }
 

@@ -97,3 +97,41 @@ SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTING
 
 A change of the database's value is told to the diagnostics,
 `setting_changed`.
+
+## A session's own
+
+A session may turn some things on or off for itself, over the
+database's value, with [SET](../sql/statements/set-setting.md):
+whether its commits wait for the log, LOG.COMMIT_SYNC; whether it takes
+the function call syntax, SQL.FUNCTION_CALLS; and each of the
+optimizer's rules, OPTIMIZER and the rule's name, as to see a plan made
+without it. A rule a program adds to the optimizer has its setting too.
+
+```sql
+SET LOG.COMMIT_SYNC = 'OFF';
+SET OPTIMIZER.PREDICATE_TRANSITIVITY = 'OFF';
+SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS
+    WHERE SETTING_NAME IN ('LOG.COMMIT_SYNC', 'OPTIMIZER.PREDICATE_TRANSITIVITY', 'SQL.FUNCTION_CALLS')
+    ORDER BY SETTING_NAME;
+SET LOG.COMMIT_SYNC TO DEFAULT;
+SET OPTIMIZER.PREDICATE_TRANSITIVITY TO DEFAULT;
+```
+
+```
+OK
+OK
+ SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ LOG.COMMIT_SYNC                                              | OFF                                                          | SESSION
+ OPTIMIZER.PREDICATE_TRANSITIVITY                             | OFF                                                          | SESSION
+ SQL.FUNCTION_CALLS                                           | OFF                                                          | DEFAULT
+(3 rows)
+OK
+OK
+```
+
+A commit of LOG.COMMIT_SYNC OFF returns once its commit record is
+written, before the log is synced: its changes are seen by others at
+once, and a crash before the log is next synced, by a commit that
+waits, a definition, a checkpoint or the database closing, loses it, as
+it loses every commit after it. The database stays whole either way.

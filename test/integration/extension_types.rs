@@ -292,8 +292,8 @@ impl ScalarFunction for IdentByte {
 fn a_function_declares_its_arguments_types() {
     let db = identified();
     db.register_scalar_function(Box::new(IdentByte)).unwrap();
-    let mut a = db.session("A");
-    a.enable_extensions(true);
+    let a = db.session("A");
+    crate::common::function_calls(&a);
     a.run(&format!("INSERT INTO T VALUES ({}, 1)", cast(7))).unwrap();
     assert_eq!(rows(&a, "SELECT IDENT_BYTE(K, 16) FROM T").unwrap(), ["7"], "of a column");
     let given = format!("'0A{}'", "0".repeat(30));

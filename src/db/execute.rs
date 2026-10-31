@@ -16,6 +16,7 @@ use crate::binder::{BoundWrite, Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
+use crate::settings::FUNCTION_CALLS;
 
 /// A positioned DELETE or UPDATE run through a cursor (`Session::positioned`).
 type Positioned = fn(&Session, StatementContext<'_>, (&Name, usize), &BoundWrite) -> Result<Completion>;
@@ -51,7 +52,7 @@ impl Session {
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), sql, &self.auth());
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
-        let parsed = self.parsed(&call, sql, params, keeping.as_ref());
+        let parsed = Self::parsed(&call, sql, params, keeping.as_ref());
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
         if let Ok(SqlStatement::GetDiagnostics(get)) = parsed.as_deref() {
@@ -123,12 +124,13 @@ impl Session {
 
     /// `sql`, parsed with `params`: of a prepared statement, as it keeps
     /// it, while what it was parsed with holds (RULES.md D45).
-    fn parsed(&self, call: &Call<'_>, sql: &str, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Arc<SqlStatement>> {
+    fn parsed(call: &Call<'_>, sql: &str, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Arc<SqlStatement>> {
         if let Some(kept) = keeping.map(Keeping::statement).transpose()?.flatten() {
             return Ok(kept);
         }
         params.validate()?;
-        let stmt = Arc::new(params.parser(sql, self.extensions, &call.state().catalog_name())?.sql_statement()?);
+        let stmt =
+            Arc::new(params.parser(sql, call.state().settings.is_on(FUNCTION_CALLS), &call.state().catalog_name())?.sql_statement()?);
         if let Some(k) = keeping {
             k.keep_statement(Arc::clone(&stmt))?;
         }

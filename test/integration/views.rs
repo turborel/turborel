@@ -350,7 +350,7 @@ fn filters_reach_into_views_6_5() {
         found.push(crate::common::sorted(&s, sql));
     }
     for rule in rules {
-        assert!(db.with_optimizer(|o| o.set_enabled(rule, false)).unwrap());
+        crate::common::set_rule(&db, rule, false);
     }
     let s = db.session("S");
     let without: Vec<_> = queries.iter().map(|(sql, _)| crate::common::sorted(&s, sql)).collect();

@@ -74,6 +74,7 @@ use stats::Gathered;
 pub use undo::UndoStore;
 use zones::Zones;
 
+use super::columns::cache;
 use super::record::{RecordFormat, Spill};
 use super::tree::BLinkTree;
 use crate::catalog::{QualifiedName, TableDesc};
@@ -134,7 +135,7 @@ pub struct RowStore {
     checkpoints: bool,
     /// The headers of its tables' frozen row groups held in memory, of
     /// the database's budget once attached (`columns/cache.rs`).
-    headers: Arc<crate::engine::columns::cache::HeaderCache>,
+    headers: Arc<cache::HeaderCache>,
 }
 
 impl StorageEngine for RowStore {
@@ -152,6 +153,16 @@ impl StorageEngine for RowStore {
     }
     fn table_options(&self) -> Vec<crate::storage::TableOption> {
         options::declared(self.defaults)
+    }
+    /// The column store's, whose tables freeze rows into groups: the
+    /// bytes of their headers it holds (`columns/cache.rs`).
+    fn settings(&self) -> Vec<crate::settings::Definition> {
+        (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
+    }
+    fn configure(&self, settings: &crate::settings::Settings) {
+        if let Some(key) = settings.key(&cache::setting_name(self.name)) {
+            self.headers.set_most(settings.count(key));
+        }
     }
     fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
@@ -253,7 +264,7 @@ pub struct RowTable {
     /// checkpoint.
     zones: Arc<Zones>,
     /// Its store's headers of frozen row groups held (`TableFiles::headers`).
-    headers: Arc<crate::engine::columns::cache::HeaderCache>,
+    headers: Arc<cache::HeaderCache>,
 }
 
 impl TableStorage for RowTable {

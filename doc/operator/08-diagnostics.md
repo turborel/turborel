@@ -39,7 +39,7 @@ Each has its `time`, in UTC to the millisecond, its `level`, `info`,
 | `tls_failed` | warning | `peer`, `message` | a client's TLS handshake failed, or did not end within SERVER.LOGIN_TIMEOUT |
 | `tls_reloaded` | info | `certificate`, the chain's file | the server took its TLS files again, on SIGHUP or a change of their settings ([TLS](06-network.md#tls)) |
 | `tls_reload_failed` | warning | `message` | the server could not take its TLS files again, and keeps those it had |
-| `login_failed` | warning | `user`, `peer`, `mechanism`, `message` | a client was refused as the user it named, by the mechanism it asked for: never with its password |
+| `login_failed` | warning | `user`, `peer`, `mechanism`, `message` | a client was refused as the user it named, by the mechanism it asked for, or before any was asked: for a protocol version not served, a user name that is no identifier (then as written), or a mechanism not served; never with its password |
 | `connections_refused` | warning | `refused`, since last told, `limit` | connections were refused past SERVER.MAX_CONNECTIONS, `limit`; told at most once a minute ([Limits on connections](06-network.md#limits-on-connections)) |
 | `other` | as the event's | `debug`, the event as the server's program prints it | an event the program writing the log does not know, of a later database |
 

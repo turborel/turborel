@@ -171,6 +171,14 @@ impl State {
             building: HashSet::new(),
         };
         st.attach_builtins(&memory);
+        // The built-in engines' and rules' settings, of short names none
+        // declared yet, cannot be refused; a rule without one would be on,
+        // an engine without one at its default.
+        let engines: Vec<Arc<dyn StorageEngine>> = st.engines.values().cloned().collect();
+        for engine in engines {
+            let _ = st.declare_engine_settings(&*engine);
+        }
+        let _ = st.switch_rules();
         st
     }
 
@@ -184,6 +192,8 @@ impl State {
         engine.use_work(Arc::clone(&st.work));
         engine.use_encodings(Arc::clone(&st.encodings));
         let columns = RowStore::columns_sharing(TableOptions::default(), Arc::clone(&st.pages));
+        // The headers of its frozen groups held of the budget too (RULES.md D38).
+        columns.use_budget(Arc::clone(memory));
         columns.use_work(Arc::clone(&st.work));
         columns.use_encodings(Arc::clone(&st.encodings));
         st.engines.insert(COLUMN_STORE.to_owned(), Arc::new(columns));

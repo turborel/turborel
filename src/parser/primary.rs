@@ -80,7 +80,7 @@ impl Parser {
         if matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             if !self.extensions {
                 return Err(self.syntax(
-                    "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an opt-in [EXTENSION]); expected a <value expression>",
+                    "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an [EXTENSION], taken while SQL.FUNCTION_CALLS is ON); expected a <value expression>",
                 ));
             }
             return self.function_call();

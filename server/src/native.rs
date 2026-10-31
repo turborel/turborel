@@ -28,6 +28,7 @@ mod requests;
 mod wire;
 
 use std::future::Future;
+use std::sync::Arc;
 
 use requests::{Held, Work};
 use tokio::sync::mpsc;
@@ -37,10 +38,11 @@ use turborel::value::types::TypeRegistry;
 use turborel_protocol::{Reply, Request, VERSION, broken};
 use wire::Wire;
 
-use crate::auth::{Exchange, Peer, Step};
+use crate::auth::{Authenticator, Exchange, Peer, Step};
 use crate::server::{Connection, Protocol, Registered, Services, Serving};
 use crate::settings;
 use crate::shown::Present;
+use crate::told;
 use crate::transport::Transport;
 
 /// \[DESIGN\] Batches of replies in flight between a worker and its
@@ -185,25 +187,28 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
 /// Authenticates the client of `hello`: its version, user, mechanism and
 /// first bytes; its session, once Ready is sent with its cancel key, and
 /// its user shown (`Present`), its statements cancelled as an operator
-/// ends it.
+/// ends it. Its address waits its turn after failed logins first
+/// (`logins.rs`), so a Hello refused before any authenticator runs is
+/// slowed, counted and told as a proof refused is.
 async fn authenticate(
     wire: &mut Wire,
     (peer, present): (&Peer, &Present),
     services: &Services,
     hello: (u32, String, String, Vec<u8>),
 ) -> Result<Admitted> {
-    let (version, user, mechanism, initial) = hello;
-    if version != VERSION {
-        return Err(rejected(format!("[DESIGN] protocol version {version} is not served; this server speaks {VERSION}")));
-    }
-    // [ISO/IEC 9075:1992 §5.4] the user is an <authorization identifier>:
-    // an <identifier>, a regular one in upper case.
-    let user = turborel::lexer::authorization_identifier(&user).map_err(|e| refused(format!("[DESIGN] {}", e.msg)))?;
-    let authenticator =
-        services.authenticator(&mechanism).ok_or_else(|| refused(format!("[DESIGN] mechanism {mechanism} is not served")))?;
+    let (version, given, mechanism, initial) = hello;
+    let (logins, db) = (services.logins(), services.database());
+    logins.wait_turn(db, peer).await;
+    let (user, authenticator) = match admitted(services, version, &given, &mechanism) {
+        Ok(admitted) => admitted,
+        Err(e) => {
+            logins.failed(db, peer);
+            told::hello_refused(db, (&given, peer, &mechanism), &e);
+            return Err(e);
+        }
+    };
     let exchange = authenticator.begin(&user, peer);
     let authorization = exchanged(wire, (peer, present), services, (exchange, initial)).await?;
-    let db = services.database();
     // A user's session lasts while the user does (RULES.md D43).
     let member = db.is_user(&authorization)?.then(|| authorization.clone());
     let session = db.session(&authorization);
@@ -214,10 +219,27 @@ async fn authenticate(
     Ok(Admitted { session, key, user: member })
 }
 
+/// The user a Hello of `version`, naming `user` and `mechanism`, logs in
+/// as, and the authenticator of its mechanism; refused, before any
+/// authenticator runs, if the version is not served (SQLSTATE 08004), or
+/// the user is no identifier, or the mechanism is not served (28000).
+fn admitted(services: &Services, version: u32, user: &str, mechanism: &str) -> Result<(String, Arc<dyn Authenticator>)> {
+    if version != VERSION {
+        return Err(rejected(format!("[DESIGN] protocol version {version} is not served; this server speaks {VERSION}")));
+    }
+    // [ISO/IEC 9075:1992 §5.4] the user is an <authorization identifier>:
+    // an <identifier>, a regular one in upper case.
+    let user = turborel::lexer::authorization_identifier(user).map_err(|e| refused(format!("[DESIGN] {}", e.msg)))?;
+    let authenticator =
+        services.authenticator(mechanism).ok_or_else(|| refused(format!("[DESIGN] mechanism {mechanism} is not served")))?;
+    Ok((user, authenticator))
+}
+
 /// The authorization identifier `exchange` accepts, given the client's
 /// `initial` bytes and its answers to the challenges sent it: each step
-/// checked apart from the workers, once the client's address has waited
-/// its turn after failed logins, its failure counted (`logins.rs`).
+/// checked apart from the workers, the client's address having waited its
+/// turn after failed logins (`authenticate`), its failure counted
+/// (`logins.rs`).
 async fn exchanged(
     wire: &mut Wire,
     (peer, present): (&Peer, &Present),
@@ -225,7 +247,6 @@ async fn exchanged(
     (begun, initial): (Box<dyn Exchange>, Vec<u8>),
 ) -> Result<String> {
     let (logins, db) = (services.logins(), services.database());
-    logins.wait_turn(db, peer).await;
     let (mut exchange, mut input) = (begun, initial);
     loop {
         let (taken, step) = logins

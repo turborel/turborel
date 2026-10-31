@@ -33,6 +33,7 @@ use crate::catalog::TableDesc;
 use crate::error::Result;
 use crate::log::Lsn;
 use crate::memory::Host;
+use crate::settings::{Definition, Settings};
 use crate::stats::Statistics;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 use crate::value::Value;
@@ -85,6 +86,9 @@ pub fn cost_of(rows: usize) -> f64 {
 /// * `attach` is called once, as the engine is registered, before any other
 ///   method but `name`; the memory its caches hold it reserves of the
 ///   `Host`'s budget, giving it back as they are dropped (RULES.md D38).
+/// * `settings` names each setting under the engine's name (RULES.md D36);
+///   `configure` is called with no lock of the database held, and takes
+///   effect for what the engine does after it returns.
 /// * Methods may be called from several threads at once (`Send + Sync`): an
 ///   implementation guards its own state.
 /// * No method may call back into the `Database` or its sessions (RULES.md
@@ -115,6 +119,21 @@ pub trait StorageEngine: Send + Sync {
     fn attach(&self, _host: &Host) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] The database's settings it declares (RULES.md D36), each
+    /// named under its own name ("ROWSTORE.X"), with its kind and default,
+    /// not for a session to set: declared as it is registered, a value
+    /// the database was given before kept, one declared already kept as
+    /// it is. Default: none.
+    fn settings(&self) -> Vec<Definition> {
+        Vec::new()
+    }
+    /// \[DESIGN\] Takes the database's values of the settings, `settings`,
+    /// as they are published: once it is registered, after each change of
+    /// one, and once the database is opened, its values replayed. The
+    /// engine reads its own (`Settings::key`, `get`), and keeps what it
+    /// needs; the values are a copy, never changed under it. Default:
+    /// nothing, for an engine that declares none.
+    fn configure(&self, _settings: &Settings) {}
     /// The storage for a new, empty table described by `desc`.
     ///
     /// # Errors

@@ -15,6 +15,7 @@ use turborel::log::record::{Change, Record};
 use turborel::log::{Log, LogCapabilities, Lsn, MemoryLog, Records};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{Persistence, Policy, TxCapabilities, TxId};
+use turborel::value::Value;
 
 use crate::common::{MemoryTable, count, crc32c, os, setup};
 
@@ -109,6 +110,35 @@ fn a_commit_is_its_record_made_durable() {
     if let Change::Update { before, after, .. } = &all[1].1.change {
         assert_eq!((before[1].to_string(), after[1].to_string()), ("TEN   ".to_owned(), "X     ".to_owned()));
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D36: a session whose LOG.COMMIT_SYNC
+/// is OFF commits once its commit record is written, unsynced, its rows
+/// seen by others at once; the next commit of a session of ON syncs
+/// through its own record, and so the first's; the database's value is
+/// every session's that sets none; a value not ON or OFF is refused.
+#[test]
+fn a_commit_need_not_wait_for_the_log() {
+    let (db, log) = logged();
+    let (quick, careful) = (db.session("APP"), db.session("APP"));
+    let off = Value::Char("OFF".to_owned());
+    quick.set_setting("LOG.COMMIT_SYNC", &off).unwrap();
+    quick.run("INSERT INTO T (ID, NAME) VALUES (10, 'TEN')").unwrap();
+    quick.commit().unwrap();
+    assert_eq!(kinds(&log), ["Insert", "Commit"]);
+    assert!(log.synced.lock().unwrap().is_empty(), "not synced");
+    assert_eq!(count(&careful, "SELECT ID FROM T WHERE ID = 10"), 1, "seen at once");
+    careful.run("INSERT INTO T (ID, NAME) VALUES (11, 'ELEVEN')").unwrap();
+    careful.commit().unwrap();
+    let last = records(&log).last().map(|(lsn, _)| *lsn).unwrap();
+    assert_eq!(*log.synced.lock().unwrap(), vec![last], "through both commit records");
+    db.set_setting("LOG.COMMIT_SYNC", &off).unwrap();
+    let synced = log.synced.lock().unwrap().len();
+    careful.run("INSERT INTO T (ID, NAME) VALUES (12, 'TWELVE')").unwrap();
+    careful.commit().unwrap();
+    assert_eq!(log.synced.lock().unwrap().len(), synced, "the database's OFF");
+    let maybe = quick.set_setting("LOG.COMMIT_SYNC", &Value::Char("MAYBE".to_owned()));
+    assert_eq!(maybe.map_err(|e| e.sqlcode()), Err(-910_i32));
 }
 
 /// Verifies: [X3.135-1986 §8.9]; [DESIGN] RULES.md D25: a rolled-back
@@ -516,12 +546,12 @@ fn only_recovered_engines_are_logged() {
 #[test]
 fn applying_a_change_twice_is_applying_it_once() {
     let table = MemoryTable::new();
-    let row = || vec![turborel::value::Value::Char("v".into())];
+    let row = || vec![Value::Char("v".into())];
     for _ in 0..2 {
         table.apply(5, Some(row())).unwrap();
     }
     assert_eq!((table.row_count(), table.get(0, 5).unwrap().map(|r| r[0].to_string())), (1, Some("v".to_owned())));
-    table.apply(5, Some(vec![turborel::value::Value::Char("w".into())])).unwrap();
+    table.apply(5, Some(vec![Value::Char("w".into())])).unwrap();
     assert_eq!(table.get(0, 5).unwrap().map(|r| r[0].to_string()), Some("w".to_owned()));
     for _ in 0..2 {
         table.apply(5, None).unwrap();

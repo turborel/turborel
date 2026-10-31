@@ -13,6 +13,7 @@ use crate::db::{CursorRows, OpenCursor, Session, State, rule};
 use crate::error::{Result, SqlState};
 use crate::lexer::{Tok, Token, delim, kw};
 use crate::parser::Parser;
+use crate::settings::FUNCTION_CALLS;
 
 /// Where the table of a cursor's specification is found.
 enum Specification {
@@ -73,7 +74,7 @@ impl Session {
             Specification::Open(named) => return Ok((Some(key), Some(written(named)))),
             Specification::Text(text) => text,
         };
-        let spec = Parser::for_prepare(&text, self.extensions)?.in_catalog(&st.catalog_name()).cursor_specification()?;
+        let spec = Parser::for_prepare(&text, st.settings.is_on(FUNCTION_CALLS))?.in_catalog(&st.catalog_name()).cursor_specification()?;
         let named = binder::updatable_in(&spec, &*st.catalog, &self.default_schema()).ok_or_else(|| {
             rule(format!(
                 "[ISO/IEC 9075:1992 §17.19 SR2, §17.20 SR2, §13.6 SR3] cursor {key} is not updatable: it names no table to change"

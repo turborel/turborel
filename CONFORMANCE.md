@@ -493,8 +493,8 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
 - **Plug-ins** for storage engines, index methods, functions, optimizer
   rules, system tables, the log, file systems, encodings, hash functions and
   diagnostics (the extension points are listed at the top of `src/db.rs`).
-- **Function call syntax** for registered functions, in sessions that enable
-  it (`Session::enable_extensions`).
+- **Function call syntax** for registered functions, in sessions whose
+  setting SQL.FUNCTION_CALLS is ON.
 
 ---
 

@@ -13,7 +13,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::record::Change;
 use crate::params::Params;
 use crate::settings::{self, Definition, Kind, LOCK_WAIT, Listed, SESSION_END};
-use crate::storage::TableOption;
+use crate::storage::{StorageEngine, TableOption};
 use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
 use crate::value::Value;
@@ -75,6 +75,62 @@ impl State {
         self.settings.set(&canonical, value.as_ref())?;
         self.log_definition(None, Change::Setting { name: canonical, value })
     }
+
+    /// Declares the settings `engine` declares (`StorageEngine::settings`),
+    /// those declared already kept as they are: an engine registered again
+    /// under its name, as one opened from its files replacing the one in
+    /// memory, declares its own again.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if one is not under the engine's name (RULES.md D36),
+    /// or its default is not of its kind.
+    pub(super) fn declare_engine_settings(&mut self, engine: &dyn StorageEngine) -> Result<()> {
+        let group = format!("{}.", engine.name().to_ascii_uppercase());
+        for definition in engine.settings() {
+            if !definition.name.to_ascii_uppercase().starts_with(&group) {
+                let name = &definition.name;
+                return Err(SqlError::new(
+                    Code::Api,
+                    format!("[DESIGN] the setting {name} of engine {} is not under its name", engine.name()),
+                ));
+            }
+            if self.settings.key(&definition.name).is_none() {
+                self.settings.declare(definition)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Declares the setting of each optimizer rule that has none yet,
+    /// ON by default, a session's to set for itself (`optimizer::switch_name`);
+    /// one declared before, as of a rule added again, is taken again.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a setting of a rule's name is another kind's, or its
+    /// name is too long for a setting's.
+    pub(crate) fn switch_rules(&mut self) -> Result<()> {
+        for rule in self.optimizer.unswitched() {
+            let name = crate::optimizer::switch_name(rule);
+            let key = match self.settings.key(&name) {
+                Some(key) => key,
+                None => self.settings.declare(Definition {
+                    name: name.clone(),
+                    kind: Kind::Choice(settings::SWITCHES),
+                    default: Value::Char("ON".to_owned()),
+                    per_session: true,
+                    effect: settings::Effect::Statement,
+                    doc: format!("Whether the optimizer's rule {rule} rewrites plans: ON; or OFF, as to compare plans made without it."),
+                })?,
+            };
+            if self.settings.definition(key).is_none_or(|d| d.kind != Kind::Choice(settings::SWITCHES)) {
+                return Err(SqlError::new(Code::Api, format!("[DESIGN] {name} is a setting of another kind than a rule's")));
+            }
+            self.optimizer.switched(rule, key);
+        }
+        Ok(())
+    }
 }
 
 impl Database {
@@ -93,22 +149,40 @@ impl Database {
         self.change(|st| st.define_setting(name, Some(value)))?;
         self.emit(&Event::SettingChanged { name: name.to_ascii_uppercase(), value: Some(value.clone()) });
         self.apply_job_policy();
-        self.budget_from_settings()
+        self.apply_settings()
     }
 
-    /// Tells the memory budget its limit, the setting MEMORY_BUDGET's, as
-    /// it is now published, and the pages of a database in memory their
-    /// pool's size, STORAGE.POOL_BYTES'.
+    /// Gives the settings as they are now published to what reads them
+    /// held: the memory budget its limit, MEMORY_BUDGET's; the files their
+    /// limit; the pages of a database in memory their pool's size,
+    /// STORAGE.POOL_BYTES'; and each engine the database's values
+    /// (`configure_engines`).
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if the database is closed.
-    pub(super) fn budget_from_settings(&self) -> Result<()> {
+    pub(super) fn apply_settings(&self) -> Result<()> {
         let st = self.snapshot()?;
         st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET)));
         st.files.set_limit(usize::try_from(st.settings.integer(settings::FILES_MAX_OPEN)).unwrap_or(usize::MAX));
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
+        self.configure_engines()
+    }
+
+    /// \[DESIGN\] Tells each storage engine the database's values of the
+    /// settings as they are now published (`StorageEngine::configure`):
+    /// with no lock held, from a snapshot, so an engine reads its settings
+    /// without calling back into the database (RULES.md R-ERR-4).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub(super) fn configure_engines(&self) -> Result<()> {
+        let st = self.snapshot()?;
+        for engine in st.engines.values() {
+            engine.configure(&st.settings);
+        }
         Ok(())
     }
 
@@ -147,7 +221,7 @@ impl Database {
         self.change(|st| st.define_setting(name, None))?;
         self.emit(&Event::SettingChanged { name: name.to_ascii_uppercase(), value: None });
         self.apply_job_policy();
-        self.budget_from_settings()
+        self.apply_settings()
     }
 
     /// \[DESIGN\] The database's value of the setting `name`.

@@ -377,7 +377,12 @@ fill it commit together, or not at all.
 - One logical log per database holds row changes (table, row id, before-
   and after-image) and changes of definitions, in a versioned,
   engine-neutral format. A transaction commits when its commit record is
-  durable; commit order is log order.
+  durable; commit order is log order. A session whose LOG.COMMIT_SYNC is
+  OFF (D36) is answered once its commit record is written, not synced:
+  the transaction is seen at once, and becomes durable with the log's
+  next sync, of a commit that waits, a definition or a checkpoint, each
+  syncing every record before its own; a crash before then loses it, and
+  every commit after it, so recovery still finds a prefix of the commits.
 - The `Log` that stores the records is a plug-in, with a memory log and a
   segmented file log with group commit built in. A database kept in a
   directory makes or opens its log through a `LogStorage`, a plug-in too,
@@ -1525,7 +1530,12 @@ for ordered indexes and GROUP BY, filters pushed into views and outer
 joins, conditions that can raise an error moved onto the operand of a
 product they read (D15), and decorrelation of repeated subqueries. A
 rewrite is made only where it cannot change a result or an error (D15).
-Rules are plug-ins.
+Rules are plug-ins (`Database::with_optimizer`). Each rule, built in or
+added, is turned on or off by a setting of its own (D36), OPTIMIZER and
+its name upper case (`optimizer::switch_name`), ON by default, a
+session's to set for itself: declared as the rule is added, a value
+given before, as the database was opened again, kept until it is; a
+rule whose setting would be another kind's is refused.
 An index path is costed from the index method's own answers where it
 gives them: the rows a probe selects (`Index::estimate`), the pages it
 reads to find them (`Index::probe_pages`, a hash table's one bucket, a
@@ -1572,6 +1582,17 @@ the same results and errors is the optimizer's to choose.
   each transaction, or when what reads it starts, as a server's addresses.
   Plug-ins declare theirs the same way, the server too (D42): every
   component is configured by settings, never by a configuration of its own.
+- A storage engine declares its own (`StorageEngine::settings`), under
+  its name, as it declares its tables' options (D41), and is told the
+  database's values (`StorageEngine::configure`) as it is registered, after
+  each change and once the database is opened, its values replayed: from
+  a snapshot, with no lock held, so it never calls back into the database
+  to read them (R-ERR-4). The column store so bounds the headers of its
+  frozen groups it holds (COLUMNSTORE.HEADER_CACHE_BYTES).
+- A session turns for itself, over the database's value: whether its
+  commits wait for the log (LOG.COMMIT_SYNC, D25), whether it takes the
+  function call syntax (SQL.FUNCTION_CALLS), and each optimizer rule
+  (D35).
 - Scopes: a built-in default, the database's value, a session's own value.
 - A number an operator tunes a subsystem by (a size of memory or a pool,
   a threshold, a pace of background work, a timeout, a durability) is a
@@ -1813,8 +1834,13 @@ with `Database::set_diagnostics`; by default they are dropped.
   itself through the database it serves (`Database::tell`): where it
   listens, that it stops and hurries, accepts that failed, TLS
   handshakes and logins that failed (the user, peer and mechanism, never
-  the proof), and connections refused past SERVER.MAX_CONNECTIONS; what
-  may come in floods, at most once a minute, counted.
+  the proof), those the native protocol refuses before any authenticator
+  runs among them (a Hello of a protocol version not served, of a user
+  name that is no identifier, told as written, or of a mechanism not
+  served), each slowed and counted by its address as a proof refused is
+  (D43), so they flood no faster; and connections refused past
+  SERVER.MAX_CONNECTIONS; what may come in floods, at most once a minute,
+  counted.
 - DIAGNOSTICS.LEVEL, the database's, ERROR, WARNING or INFO (the
   default), is the least level told: an event below it reaches no sink.
 - Not events: a failure of a statement's own SQL (syntax, privileges,
@@ -2099,7 +2125,9 @@ is configured, seen and changed like the database's.
   simplest mapping that cannot be stretched; the authorities answer for
   whom they certify.
 - Failed logins slow their address, never their user: a user locked out
-  after failures would let anyone lock out anyone. After a failure, the
+  after failures would let anyone lock out anyone. A Hello refused before
+  any authenticator runs is a failure too, its address waiting its turn
+  first. After a failure, the
   next login from the address waits 100 ms, doubled with each failure
   after, up to SERVER.LOGIN_DELAY_MS (ten seconds by default), its
   logins waiting taking turns a delay apart; one accepted, or ten minutes
@@ -2118,7 +2146,10 @@ is configured, seen and changed like the database's.
   otherwise connect as the owner.
 - The database's owner is a user: the first one created, so a database
   never has users and no owner; or another the host program or `turboreld
-  user owner` makes it; it cannot be dropped until another owns the database. In
+  user owner` makes it, or the owner's own session hands it on
+  (`Session::set_owner`), checked and made in one change of the
+  definitions, outside a transaction, its sessions going on as the owner
+  no more; it cannot be dropped until another owns the database. In
   SQL, the owner alone manages users: `CREATE USER`, `ALTER USER` and
   `DROP USER` (`parser/users.rs` gives their BNF, in the standard's
   notation). INFORMATION_SCHEMA.USERS shows the owner every user, any
@@ -2199,8 +2230,9 @@ operator must be able to bound what any statement takes.
   functions, optimizer rules); the catalog it read, by identity, which
   every change makes anew, a transaction's uncommitted ones and GRANT
   and REVOKE among them; the authorization identifier, default schema,
-  time zone and own settings of the executing session; whether
-  extensions are on. Else the statement is bound again, its Syntax and
+  time zone and own settings of the executing session, whether it takes
+  the function call syntax (SQL.FUNCTION_CALLS) among them. Else the
+  statement is bound again, its Syntax and
   Access Rules checked against the definitions of then [§17.6 GR10]: a
   privilege revoked is missing at the next execution. A session's
   declared local temporary tables make its catalog anew at each call, so

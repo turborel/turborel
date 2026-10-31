@@ -80,9 +80,15 @@ pub const FILES_MAX_OPEN: Key = Key(33);
 pub const DIAGNOSTICS_LEVEL: Key = Key(34);
 /// See [`DEFAULT_ENGINE`].
 pub const SPILL_ENCODINGS: Key = Key(35);
+/// See [`DEFAULT_ENGINE`].
+pub const COMMIT_SYNC: Key = Key(36);
+/// See [`DEFAULT_ENGINE`].
+pub const FUNCTION_CALLS: Key = Key(37);
 
-/// The words of `EXECUTOR.BATCHES`.
-pub(super) const SWITCHES: &[&str] = &["ON", "OFF"];
+/// The words of a setting turning something on or off: of
+/// `EXECUTOR.BATCHES`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS` and each
+/// optimizer rule's.
+pub const SWITCHES: &[&str] = &["ON", "OFF"];
 /// The words of `LOCK_WAIT`; below it, those of `SESSION_END` and
 /// `TRANSACTION_POLICY`.
 pub(super) const LOCK_WAITS: &[&str] = &["NO_WAIT", "WAIT"];
@@ -165,7 +171,26 @@ pub(super) fn builtin() -> Vec<Definition> {
         DATABASE,
         "The encodings, as compression, the files of work areas made from now on pass through, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.",
     ));
+    all.extend(switches());
     all
+}
+
+/// \[DESIGN\] What a session may turn on or off for itself: whether its
+/// commits wait for the log, and whether it takes the function call
+/// syntax.
+fn switches() -> [Definition; 2] {
+    [
+        defined(
+            ("LOG.COMMIT_SYNC", Kind::Choice(SWITCHES), text("ON")),
+            SESSION,
+            "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint or the database closing.",
+        ),
+        defined(
+            ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text("OFF")),
+            SESSION,
+            "Whether a statement may call a function by the syntax NAME(arguments), which the standards do not have: ON; or refuses it, as SQL does, OFF.",
+        ),
+    ]
 }
 
 /// \[DESIGN\] A database's files: their formats, fixed when it is created,

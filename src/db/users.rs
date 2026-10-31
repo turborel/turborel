@@ -259,6 +259,34 @@ impl Session {
         Ok(())
     }
 
+    /// \[EXTENSION\] Hands the database on to the user `name`, by its owner,
+    /// so a running server's owner is changed from a client (RULES.md
+    /// D43): outside a transaction, as a definition is made; checked and
+    /// made in one change of the definitions, so of two owners' sessions
+    /// handing it on at once, the second is refused. Logged and told as
+    /// `Database::set_owner` does. A session of the owner before goes on,
+    /// as the owner no more from its next statement.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -917 in a transaction; -104 if the session's identifier is
+    /// not the owner's, or the database has none; -103 if there is no
+    /// user `name`; the log's errors.
+    pub fn set_owner(&self, name: &str) -> Result<()> {
+        if self.inner.borrow().tx.is_some() {
+            return fail(Code::TransactionState, "[EXTENSION] the database is handed on outside a transaction: commit or roll back first");
+        }
+        let me = self.auth().clone();
+        self.db.change(|st| {
+            if st.users.owner() != Some(me.as_str()) {
+                return fail(Code::Privilege, format!("[EXTENSION] only the database's owner hands it on, and {me} is not it"));
+            }
+            st.define_owner(name)
+        })?;
+        self.db.emit(&Event::OwnerChanged { name: name.to_owned() });
+        Ok(())
+    }
+
     /// \[EXTENSION\] Runs the user statement `stmt`: by the database's
     /// owner only, outside a transaction.
     ///

@@ -327,6 +327,7 @@ impl Transactions {
             reading,
             checking: AtomicBool::new(false),
             lock_wait,
+            sync_commit: AtomicBool::new(true),
             open: AtomicBool::new(true),
             shared: Arc::clone(self),
             log,
@@ -415,6 +416,10 @@ pub(crate) struct Txn {
     /// Whether it waits for a lock another holds: its session's setting
     /// when it began (`LOCK_WAIT`).
     pub(crate) lock_wait: LockWait,
+    /// Whether its commit waits for its commit record to be synced: its
+    /// session's LOG.COMMIT_SYNC as it commits, set then
+    /// (`Txn::set_sync_commit`); so by default.
+    sync_commit: AtomicBool,
     /// Whether its snapshot is still counted open.
     open: AtomicBool,
     shared: Arc<Transactions>,

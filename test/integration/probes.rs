@@ -198,7 +198,7 @@ fn a_raising_conjunct_of_one_operand_keeps_the_hash_join() {
     let plan = s.explain(spanning, &Params::new()).unwrap();
     assert!(!plan.contains("HashJoin") && !plan.contains(PUSH_RAISING_FILTER_INTO_PRODUCT), "{plan}");
     // The same rows and errors without the rule.
-    assert!(db.with_optimizer(|o| o.set_enabled(PUSH_RAISING_FILTER_INTO_PRODUCT, false)).unwrap());
+    crate::common::set_rule(&db, PUSH_RAISING_FILTER_INTO_PRODUCT, false);
     let product = s.explain(query, &Params::new()).unwrap();
     assert!(!product.contains("HashJoin") && !product.contains("IndexNestedLoop"), "{product}");
     assert_eq!(rows(&s, query), joined);
@@ -390,9 +390,9 @@ fn a_raising_on_conjunct_of_the_operand_given_nulls_moves() {
     assert!(!s.explain(preserved, &Params::new()).unwrap().contains("EXISTS"));
     assert_eq!(rows(&s, preserved), Err(Code::Data));
     // The same rows and errors without the rule; none of an empty E.
-    assert!(db.with_optimizer(|o| o.set_enabled(PUSH_FILTER_INTO_OUTER_JOIN, false)).unwrap());
+    crate::common::set_rule(&db, PUSH_FILTER_INTO_OUTER_JOIN, false);
     assert_eq!((sorted(&s, query), rows(&s, raising)), (joined_rows, Err(Code::Data)));
-    assert!(db.with_optimizer(|o| o.set_enabled(PUSH_FILTER_INTO_OUTER_JOIN, true)).unwrap());
+    crate::common::set_rule(&db, PUSH_FILTER_INTO_OUTER_JOIN, true);
     s.run("DELETE FROM E").unwrap();
     assert_eq!(rows(&s, raising), Ok(Vec::new()));
 }

@@ -62,12 +62,9 @@ design settles.
   procedure of a module opens each cursor it declares, which a session,
   playing the module's part, does not check.
 - **The database's owner given in SQL**, by the owner, so it is handed on
-  without stopping the server: today `Database::set_owner` and `turboreld
-  user owner` give it.
-- **Logins refused before an authenticator, told** (D40): a Hello of a
-  protocol version not served, of a user name that is no identifier, or
-  of a mechanism not served is refused by the native protocol before
-  any authenticator runs, so no `login_failed` is told of it.
+  without stopping the server: the Rust API under it is
+  `Session::set_owner` (RULES.md D43); its statement's BNF is to be
+  agreed before it is built.
 - **Named pipes, further** (D42): a security descriptor of the server's
   own, so only its user and the administrators may open the pipe at all,
   not others to read only; and a client's reads and writes of a pipe
@@ -142,21 +139,21 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 - **Constants still to move onto the registry**, each keeping today's
   value as its default:
-  - log durability, once the log can change it while open;
-  - turning the optimizer's rules on and off, one setting each: today
-    `Database::with_optimizer` does, and what it sets is lost when the
-    database is opened again;
+  - the log's durability (`OpenOptions::durability`), once the log can
+    change it while open: a `Log` plug-in, and the file log's segments,
+    each made synced or not, fix it as they are made, and the Strict
+    policy weighs it at each write (D25); a session's commits not
+    waiting for the log are LOG.COMMIT_SYNC;
   - each to be put on the registry or documented as fixed: the undo log's
     batch and segment sizes (`UNDO_BATCH`, `UNDO_SEGMENT_SIZE`), the
     largest block (`DEFAULT_MAX_BLOCK`), an engine's default fetch cost
     (`DEFAULT_FETCH_COST`), the entries an index counts for an estimate
     (`COUNTED`), the precision of distinct counts (`REGISTER_BITS`), and
     the server's batches of replies in flight on a connection
-    (`IN_FLIGHT`) and its pause after a failed accept (`ACCEPT_BACKOFF`),
-    and the bytes of frozen groups' headers a store holds
-    (`HEADER_CACHE_BYTES`).
-- **Session settings to add:** commit durability, optimizer overrides, and
-  the function call syntax (today `Session::enable_extensions`).
+    (`IN_FLIGHT`) and its pause after a failed accept (`ACCEPT_BACKOFF`).
+- **Index methods' settings,** declared and told as an engine's are
+  (`StorageEngine::settings`, `configure`, D36), so a plug-in index
+  method reads its own without calling back into the database.
 
 ---
 
@@ -194,6 +191,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Storage and durability
 
+- **Commits not waiting for the log** (LOG.COMMIT_SYNC OFF, D25) are
+  made durable only by the log's next sync, of a commit that waits, a
+  definition or a checkpoint: a sync of the log at a pace of its own, a
+  setting, would bound what a crash loses.
+- **A rolled-back table's spilled change list:** after a ROLLBACK, a
+  row-store table's spilled change-list area stays in tmp/ for a while
+  (seen while testing SPILL.ENCODINGS, which it predates): find what
+  holds it.
 - **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
   through `Host`, is kept as the plug-in writes it, which makes its files
   durable itself. A directory it declares shadowed would have its writes

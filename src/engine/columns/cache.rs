@@ -1,23 +1,49 @@
 //! \[DESIGN\] The headers of frozen row groups held in memory (RULES.md
 //! D31): a group's header, read from its pages, is kept while it was read
 //! recently, so a group a query reads again is not read again; of a store's
-//! tables together, `HEADER_CACHE_BYTES` at most, as `Group::bytes`
-//! reckons them, the one read longest ago given up first. What it holds is
+//! tables together, as many bytes as its setting says at most
+//! (`COLUMNSTORE.HEADER_CACHE_BYTES`, `HEADER_CACHE_BYTES` by default), as
+//! `Group::bytes` reckons them, the one read longest ago given up first. What it holds is
 //! reserved of the database's memory budget, a `CHUNK` at a time; a header
 //! the budget has no room for is read each time it is needed.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::group::Group;
 use crate::disk::buffer::FileId;
 use crate::disk::pager::PageId;
 use crate::memory::{MemoryBudget, Reservation};
+use crate::settings::{Definition, Effect, Kind};
 use crate::sync::lock_builtin;
+use crate::value::{Decimal, Value};
 
-/// \[DESIGN\] The most bytes of headers a store holds: 16 MiB, the
-/// headers of about 500 groups of 65,536 rows of three columns.
+/// \[DESIGN\] The most bytes of headers a store holds by default: 16 MiB,
+/// the headers of about 500 groups of 65,536 rows of three columns.
 pub const HEADER_CACHE_BYTES: usize = 16 << 20;
+/// \[DESIGN\] The name of the setting of the most bytes of headers a store
+/// holds, under the store's own name (RULES.md D36).
+const HEADER_CACHE_SETTING: &str = "HEADER_CACHE_BYTES";
+
+/// The name of the setting of the most bytes of headers the store `store`
+/// holds: `COLUMNSTORE.HEADER_CACHE_BYTES`.
+pub fn setting_name(store: &str) -> String {
+    format!("{}.{HEADER_CACHE_SETTING}", store.to_ascii_uppercase())
+}
+
+/// The setting of the most bytes of headers the store `store` holds, a
+/// database's, taking effect at once.
+pub fn declared(store: &str) -> Definition {
+    Definition {
+        name: setting_name(store),
+        kind: Kind::Integer { min: 0, max: i128::from(i64::MAX) },
+        default: Value::Exact(Decimal::new(i128::try_from(HEADER_CACHE_BYTES).unwrap_or(i128::MAX), 0)),
+        per_session: false,
+        effect: Effect::Statement,
+        doc: "The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY_BUDGET as they are held; 0 for none, each read as it is needed.".to_owned(),
+    }
+}
 /// \[DESIGN\] The bytes reserved of the budget at once: 1 MiB.
 const CHUNK: usize = 1 << 20;
 
@@ -44,7 +70,7 @@ struct Headers {
 /// \[DESIGN\] The headers of a store's groups held in memory.
 pub struct HeaderCache {
     headers: Mutex<Headers>,
-    most: usize,
+    most: AtomicUsize,
     budget: RwLock<Option<Arc<MemoryBudget>>>,
 }
 
@@ -57,7 +83,15 @@ impl Default for HeaderCache {
 impl HeaderCache {
     /// A cache of `most` bytes at most, holding none yet.
     pub fn new(most: usize) -> HeaderCache {
-        HeaderCache { headers: Mutex::default(), most, budget: RwLock::new(None) }
+        HeaderCache { headers: Mutex::default(), most: AtomicUsize::new(most), budget: RwLock::new(None) }
+    }
+
+    /// Makes `most` the bytes it holds at most from now on, giving up the
+    /// headers read longest ago until it holds no more.
+    pub fn set_most(&self, most: usize) {
+        self.most.store(most, Ordering::Relaxed);
+        let mut headers = lock_builtin(&self.headers);
+        while headers.bytes > most && headers.oldest() {}
     }
 
     /// Makes `budget` the one what it holds is reserved of.
@@ -85,13 +119,13 @@ impl HeaderCache {
     /// those read longest ago as it must; none if it is larger than the
     /// cache, or the budget has no room for it.
     pub fn put(&self, (file, page): (FileId, PageId), group: &Arc<Group>) {
-        let bytes = group.bytes();
-        if bytes > self.most {
+        let (bytes, most) = (group.bytes(), self.most.load(Ordering::Relaxed));
+        if bytes > most {
             return;
         }
         let mut headers = lock_builtin(&self.headers);
         headers.forget((file, page));
-        while headers.bytes.saturating_add(bytes) > self.most && headers.oldest() {}
+        while headers.bytes.saturating_add(bytes) > most && headers.oldest() {}
         let budget = self.budget.read().ok().and_then(|b| b.clone());
         while headers.reserved_bytes() < headers.bytes.saturating_add(bytes) {
             match budget.as_ref().map(|b| b.reserve(CHUNK, "the headers of frozen row groups")) {
@@ -195,6 +229,30 @@ mod tests {
         let small = HeaderCache::new(size.saturating_sub(1));
         small.put((FILE, PageId(1)), &group(1));
         assert_eq!(small.held(), (0, 0), "larger than the bound");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D31, D36, headers held: a bound lowered
+    /// gives up the headers read longest ago until the cache holds no
+    /// more, and bounds those put after; raised, it holds more again; 0
+    /// holds none. Its setting is named under the store's name.
+    #[test]
+    fn a_bound_changed_takes_effect_at_once() {
+        let size = group(0).bytes();
+        let cache = HeaderCache::new(size.saturating_mul(3));
+        for page in 1..=3_u64 {
+            cache.put((FILE, PageId(page)), &group(page));
+        }
+        cache.set_most(size);
+        assert_eq!(cache.held(), (size, 1));
+        assert!(cache.get((FILE, PageId(3))).is_some(), "the one read last kept");
+        cache.put((FILE, PageId(4)), &group(4));
+        assert_eq!(cache.held(), (size, 1), "bounded after");
+        cache.set_most(size.saturating_mul(2));
+        cache.put((FILE, PageId(5)), &group(5));
+        assert_eq!(cache.held(), (size.saturating_mul(2), 2), "raised");
+        cache.set_most(0);
+        assert_eq!(cache.held(), (0, 0), "none");
+        assert_eq!(setting_name("columnstore"), "COLUMNSTORE.HEADER_CACHE_BYTES");
     }
 
     /// Verifies: [DESIGN] RULES.md D31, D38, headers held: what the cache

@@ -164,6 +164,36 @@ fn user_statements_are_refused_saying_why() {
     assert_eq!(db.users().unwrap(), ["ANN"], "nothing done");
 }
 
+/// Verifies: [EXTENSION] RULES.md D40, D43: the owner's session hands the
+/// database on to another user (`Session::set_owner`), told and kept; the
+/// session goes on, the owner no more: it manages no user, nor hands the
+/// database on again. Refused, nothing changed: by any but the owner
+/// (SQLCODE -104), or with none; in a transaction (-917); to one not a
+/// user (-103).
+#[test]
+fn the_owner_hands_the_database_on() {
+    let db = Database::new();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone()));
+    let ann = db.session("ANN");
+    assert_eq!(code(ann.set_owner("ANN")), Some(Code::Privilege), "no owner");
+    db.create_user("ANN", b"").unwrap();
+    db.create_user("BOB", b"").unwrap();
+    assert_eq!(code(db.session("BOB").set_owner("BOB")), Some(Code::Privilege), "not the owner");
+    assert_eq!(code(ann.set_owner("CAROL")), Some(Code::SyntaxRule), "not a user");
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER)").unwrap();
+    exec(&ann, "INSERT INTO T VALUES (1)").unwrap();
+    assert_eq!(code(ann.set_owner("BOB")), Some(Code::TransactionState), "in a transaction");
+    ann.commit().unwrap();
+    assert_eq!(db.owner().unwrap().as_deref(), Some("ANN"), "nothing changed");
+    ann.set_owner("BOB").unwrap();
+    assert_eq!(db.owner().unwrap().as_deref(), Some("BOB"));
+    assert!(kept.taken().iter().any(|(_, e)| e == r#"OwnerChanged { name: "BOB" }"#), "told");
+    assert_eq!(exec(&ann, "DROP USER bob"), Err(Code::Privilege), "the owner no more");
+    assert_eq!(code(ann.set_owner("ANN")), Some(Code::Privilege));
+    assert_eq!(rows(&ann, "SELECT K FROM T"), Ok(vec!["1".to_owned()]), "going on");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1]; [DESIGN] RULES.md D43:
 /// INFORMATION_SCHEMA.USERS shows the owner every user and whether it owns
 /// the database; any other user, only itself; an identifier not a user,

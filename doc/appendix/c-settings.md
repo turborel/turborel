@@ -19,6 +19,7 @@ starts, or only when the database is made.
 | CATALOG_NAME | TURBOREL | AN IDENTIFIER | at once |  |
 | CHECKPOINT.AFTER_BYTES | 67108864 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | CHECKPOINT.AFTER_CHANGES | 100000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
+| COLUMNSTORE.HEADER_CACHE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | DEFAULT_ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
@@ -27,9 +28,21 @@ starts, or only when the database is made.
 | FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | LOCK_TIMEOUT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | LOCK_WAIT | NO_WAIT | ONE OF NO_WAIT, WAIT | from the next transaction | *session* |
+| LOG.COMMIT_SYNC | ON | ONE OF ON, OFF | at once | *session* |
 | LOG.SEGMENT_SIZE | 67108864 | INTEGER FROM 4096 TO 1099511627775 | when the database is made |  |
 | MEMORY_BUDGET | 268435456 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
+| OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
+| OPTIMIZER.MERGE_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PREDICATE_TRANSITIVITY | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_FILTER_INTO_OUTER_JOIN | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_FILTER_THROUGH_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_FILTER_THROUGH_PROJECT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_HAVING_INTO_WHERE | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.REMOVE_REDUNDANT_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.INDEX_DESCENT_COST | 1E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | PLANNER.NULL_FRACTION | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
@@ -41,6 +54,7 @@ starts, or only when the database is made.
 | SPILL.PARTITIONS | 64 | INTEGER FROM 2 TO 4096 | at once | *session* |
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
 | SPILL_BATCH | 16384 | INTEGER FROM 4096 TO 1048576 | at once | *session* |
+| SQL.FUNCTION_CALLS | OFF | ONE OF ON, OFF | at once | *session* |
 | STATEMENT_TIMEOUT | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | STORAGE.CHECKSUM | CRC-32/ISCSI | A HASH FUNCTION | when the database is made |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | when the database is made |  |
@@ -58,6 +72,7 @@ Each in a sentence:
 - **CATALOG_NAME**: The name of the catalog the schemata are in, as the Information Schema gives it [ISO/IEC 9075:1992 §21.2.2].
 - **CHECKPOINT.AFTER_BYTES**: The bytes written to the data file since the last checkpoint after which the end of a transaction takes one.
 - **CHECKPOINT.AFTER_CHANGES**: The row changes logged after which the end of a transaction takes a checkpoint.
+- **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY_BUDGET as they are held; 0 for none, each read as it is needed.
 - **DEFAULT_ENGINE**: The storage engine of tables a schema creates.
 - **DIAGNOSTICS.LEVEL**: The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.
 - **DIAGNOSTICS.SLOW_STATEMENT**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
@@ -66,9 +81,21 @@ Each in a sentence:
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
 - **LOCK_TIMEOUT**: The milliseconds a statement waits for a lock, under LOCK_WAIT WAIT, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCK_WAIT**: WAIT waits for a lock another transaction holds; NO_WAIT refuses the statement at once.
+- **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint or the database closing.
 - **LOG.SEGMENT_SIZE**: The bytes after which a segment of the log is ended and the next begun.
 - **MEMORY_BUDGET**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.
+- **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
+- **OPTIMIZER.MERGE_FILTERS**: Whether the optimizer's rule merge_filters rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PREDICATE_TRANSITIVITY**: Whether the optimizer's rule predicate_transitivity rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_FILTER_INTO_OUTER_JOIN**: Whether the optimizer's rule push_filter_into_outer_join rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_FILTER_THROUGH_DISTINCT**: Whether the optimizer's rule push_filter_through_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_FILTER_THROUGH_PROJECT**: Whether the optimizer's rule push_filter_through_project rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_HAVING_INTO_WHERE**: Whether the optimizer's rule push_having_into_where rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_raising_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.REMOVE_REDUNDANT_DISTINCT**: Whether the optimizer's rule remove_redundant_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.SIMPLIFY_CONDITIONS**: Whether the optimizer's rule simplify_conditions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, a row read in sequence costing 1.
 - **PLANNER.NULL_FRACTION**: The fraction of a column's values taken to be null when the statistics do not tell.
@@ -80,6 +107,7 @@ Each in a sentence:
 - **SPILL.PARTITIONS**: The most partitions a spilled operator (a join, grouping, DISTINCT, EXCEPT or INTERSECT) writes at once; it writes fewer if its WORK_MEMORY holds fewer runs.
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
 - **SPILL_BATCH**: The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its WORK_MEMORY holds.
+- **SQL.FUNCTION_CALLS**: Whether a statement may call a function by the syntax NAME(arguments), which the standards do not have: ON; or refuses it, as SQL does, OFF.
 - **STATEMENT_TIMEOUT**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with: of the CRC family, built in (CRC-32/ISCSI, CRC-32/ISO-HDLC, CRC-64/ECMA-182, CRC-64/XZ, CRC-64/NVME); or, registered by `turboreld`, SHA-256, SHA-512, and HMAC-SHA-256 keyed by the key `--checksum-key` names. See [Encryption](../operator/07-encryption.md#checksums).
 - **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty. Registered by `turboreld`: LZ4, AES-256-GCM:KEY and ChaCha20-Poly1305:KEY, KEY a key of `--keys`. See [Encryption](../operator/07-encryption.md).
@@ -147,4 +175,6 @@ Each in a sentence:
 - **SERVER.TRUST**: Whether a client of this machine is trusted as who it says (LOCAL), or proves it as every other does (OFF).
 - **SERVER.WORKERS**: Statements the server runs at once, at most.
 
-Plug-ins may declare settings of their own, listed alike.
+Plug-ins may declare settings of their own, listed alike: a storage
+engine its own, under its name; a rule added to the optimizer, OPTIMIZER
+and its name, as the built-in rules have.

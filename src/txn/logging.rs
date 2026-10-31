@@ -122,9 +122,20 @@ impl Txn {
         }
     }
 
+    /// Whether its commit waits for its commit record to be synced: as its
+    /// session's LOG.COMMIT_SYNC says as it commits.
+    pub(crate) fn set_sync_commit(&self, sync: bool) {
+        self.sync_commit.store(sync, Ordering::Relaxed);
+    }
+
     /// Writes the commit record, at commit timestamp `at`, and syncs it, if
-    /// the transaction logged a change. The commit record's position is the
-    /// order of commits (RULES.md D25).
+    /// the transaction logged a change, unless its session's LOG.COMMIT_SYNC
+    /// is OFF (`set_sync_commit`): then the record is synced by the log's
+    /// next sync, of a later commit, a definition or a checkpoint, each of
+    /// which syncs every record before its own; until then a failure of
+    /// the system loses it, and recovery undoes the transaction, as every
+    /// one committed after it whose record is lost with it. The commit
+    /// record's position is the order of commits (RULES.md D25).
     ///
     /// # Errors
     ///
@@ -140,6 +151,9 @@ impl Txn {
         self.shared.taking_changes().map_err(|e| refused(e.described()))?;
         let record = Record { tx: self.id, change: Change::Commit { at } }.encode();
         let lsn = log.append(&record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
+        if !self.sync_commit.load(Ordering::Relaxed) {
+            return Ok(Ok(()));
+        }
         Ok(self.shared.sync(&**log, lsn).map_err(|e| {
             SqlError::new(
                 Code::InDoubt,

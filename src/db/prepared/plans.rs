@@ -15,7 +15,7 @@
 //! uncommitted ones and privileges granted and revoked among them; the
 //! authorization identifier, which privileges are checked and CURRENT_USER
 //! is valued by; the default schema; the time zone displacement; the
-//! session's own settings; and whether extensions are on. An execution
+//! session's own settings, SQL.FUNCTION_CALLS among them. An execution
 //! that finds any of them changed binds the statement again, so its
 //! Syntax and Access Rules are checked again, against the definitions of
 //! then [ISO/IEC 9075:1992 §17.6 GR10]: a privilege revoked is missing at
@@ -84,7 +84,6 @@ pub(in crate::db) struct Key {
     auth: String,
     schema: String,
     zone: i16,
-    extensions: bool,
     own: Own,
 }
 
@@ -92,7 +91,7 @@ impl Key {
     /// Whether what is kept with `self` holds for `other`.
     fn holds_for(&self, other: &Key) -> bool {
         let definitions = self.generation == other.generation && Weak::ptr_eq(&self.catalog, &other.catalog);
-        let session = (&self.auth, &self.schema, self.zone, self.extensions) == (&other.auth, &other.schema, other.zone, other.extensions);
+        let session = (&self.auth, &self.schema, self.zone) == (&other.auth, &other.schema, other.zone);
         definitions && session && self.own.same_as(&other.own)
     }
 }
@@ -175,7 +174,6 @@ impl Session {
             auth: self.auth().clone(),
             schema: self.default_schema(),
             zone: self.now.get().zone,
-            extensions: self.extensions,
             own: self.own.borrow().clone(),
         };
         Keeping { plans, key }
@@ -216,7 +214,7 @@ impl Session {
         if let Some(KeptPlan::Query(columns, plan)) = k.plan()? {
             return self.unnamed(call, timed, |snapshot, tx| Ok((columns, Stream::planned(snapshot, tx, filled(plan, values)?)?)));
         }
-        let spec = self.unnamed_specification(st, &p.sql, params)?;
+        let spec = Self::unnamed_specification(st, &p.sql, params)?;
         self.unnamed(call, timed, |snapshot, tx| {
             let binding = params.keeping();
             let bound = self.bound(snapshot, &binding, |cx| bind_cursor(cx, &spec))?;
