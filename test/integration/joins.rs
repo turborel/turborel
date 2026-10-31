@@ -8,8 +8,9 @@
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
+use turborel::value::Value;
 
-use crate::common::{both_ways, code, rows, sorted};
+use crate::common::{both_ways, code, exec, rows, sorted};
 
 /// Schema J: numbers exact (A), approximate (B) and exact again (E), and
 /// strings of two lengths (C, D), with nulls and repeated keys.
@@ -247,24 +248,80 @@ fn an_ordered_left_operand_is_not_built() {
     assert_eq!((found.len(), found.first().map(String::as_str), found.last().map(String::as_str)), (27, Some("291,582"), Some("299,598")));
 }
 
-/// Verifies: [DESIGN] RULES.md D15, D35: a hash join whose operands can
-/// both raise an error keeps building its right, of more rows, as the
-/// left built first would raise its error instead: BIG's division by
-/// zero is raised, not SMALL's subquery of more than one row.
+/// The codes `sql` fails with by each plan given here: with the raising
+/// conjuncts moved onto their operands or not
+/// (`PUSH_RAISING_FILTER_INTO_PRODUCT`), by batches and row by row.
+fn codes(s: &Session, sql: &str) -> Vec<Code> {
+    let mut found = Vec::new();
+    for rule in ["ON", "OFF"] {
+        exec(s, &format!("SET OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT = '{rule}'")).unwrap();
+        for batches in ["ON", "OFF"] {
+            exec(s, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+            found.push(code(s, sql));
+        }
+    }
+    exec(s, "SET OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT = 'ON'").unwrap();
+    exec(s, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+    found
+}
+
+/// Verifies: [DESIGN] RULES.md D15, D35: a hash join builds the operand of
+/// fewer rows though both operands can raise an error. Whatever the plan
+/// (hash join or nested loop, by batches or row by row, the raising
+/// conjuncts moved onto their operands or not) the statement raises an
+/// error, one its conjuncts can raise: BIG's division by zero or SMALL's
+/// subquery of more than one row; with one of them alone, that one.
+/// Regression test (R-TEST-7): the hash join kept building BIG, of more
+/// rows, to raise its error first.
 #[test]
-fn operands_that_can_raise_are_not_swapped() {
+fn operands_that_can_raise_raise_one_of_their_errors() {
     let db = built_operands();
     let s = db.session("J");
-    let sql = "SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND SMALL.W = (SELECT K FROM BIG) AND BIG.V / BIG.K > 0";
-    let plan = s.physical_plan(sql, &Params::new()).unwrap();
-    assert!(plan.contains("HashJoin") && !first_operand(&plan, "HashJoin").contains("J.BIG"), "{plan}");
-    assert_eq!(code(&s, sql), Code::Data);
+    let both = "SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND SMALL.W = (SELECT K FROM BIG) AND BIG.V / BIG.K > 0";
+    let plan = s.physical_plan(both, &Params::new()).unwrap();
+    assert!(first_operand(&plan, "HashJoin").contains("BIG"), "BIG probes SMALL built: {plan}");
+    let nested = "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0 = BIG.K AND SMALL.W = (SELECT K FROM BIG) AND BIG.V / BIG.K > 0";
+    let product = "SELECT * FROM SMALL, BIG WHERE SMALL.W = (SELECT K FROM BIG) AND BIG.V / BIG.K > 0";
+    for sql in [both, nested, product] {
+        for c in codes(&s, sql) {
+            assert!(matches!(c, Code::Data | Code::Cardinality), "{sql}: {c:?}");
+        }
+    }
+    let alone = [
+        ("SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND BIG.V / BIG.K > 0", Code::Data),
+        ("SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND SMALL.W = (SELECT K FROM BIG)", Code::Cardinality),
+    ];
+    for (sql, expected) in alone {
+        assert_eq!(codes(&s, sql), vec![expected; 4], "{sql}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D15, D35: operands of a chain of products
+/// that can each raise an error raise one of their errors in any join
+/// order, the FROM clause's or the cheapest (PLANNER.REORDER_GAIN), each
+/// operand read whole: T's division by zero or U's subquery of more than
+/// one row.
+#[test]
+fn any_join_order_raises_one_of_the_errors() {
+    let db = large_and_small();
+    let s = db.session("J");
+    let sql = "SELECT T.V, U.W, S.K FROM T, U, S WHERE T.K = S.K AND U.K = S.K AND T.V / (T.K - 5) >= 0 AND U.W = (SELECT K FROM S)";
+    let mut plans = Vec::new();
+    for gain in [0.0_f64, 0.999_f64] {
+        db.set_setting("PLANNER.REORDER_GAIN", &Value::Approx(gain)).unwrap();
+        plans.push(s.physical_plan(sql, &Params::new()).unwrap());
+        for c in codes(&s, sql) {
+            assert!(matches!(c, Code::Data | Code::Cardinality), "{c:?}");
+        }
+    }
+    assert_ne!(plans.first(), plans.last(), "the orders differ");
 }
 
 /// Verifies: [DESIGN] RULES.md D35: a RIGHT outer join is planned as the
 /// LEFT one of its operands swapped, its left built, unless its left has
-/// more rows, or an operand or a conjunct can raise an error (D15); the rows are the
-/// RIGHT join's [ISO/IEC 9075:1992 §7.5 GR5], each row of the right no row
+/// more rows or a conjunct the join keeps can raise an error (one over the
+/// preserved operand's columns alone), though an operand can; the rows
+/// are the RIGHT join's [ISO/IEC 9075:1992 §7.5 GR5], each row of the right no row
 /// of the left matches, a null key's too, with nulls, by batches and row
 /// by row alike.
 #[test]
@@ -288,6 +345,12 @@ fn a_right_join_is_the_left_join_swapped() {
             "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND SMALL.W / 2 > 0",
             "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K AND SMALL.W / 2 > 0",
             45,
+            true,
+        ),
+        (
+            "SELECT * FROM SMALL RIGHT JOIN BIG ON SMALL.K = BIG.K AND BIG.V / 2 > 0",
+            "SELECT SMALL.*, BIG.* FROM BIG LEFT JOIN SMALL ON SMALL.K = BIG.K AND BIG.V / 2 > 0",
+            45,
             false,
         ),
         (
@@ -300,7 +363,7 @@ fn a_right_join_is_the_left_join_swapped() {
             "SELECT * FROM SMALL RIGHT JOIN (SELECT K, V / 2 FROM BIG) AS H (K, V) ON SMALL.K = H.K",
             "SELECT SMALL.*, H.* FROM (SELECT K, V / 2 FROM BIG) AS H (K, V) LEFT JOIN SMALL ON SMALL.K = H.K",
             45,
-            false,
+            true,
         ),
     ];
     for (sql, left, n, swapped) in cases {

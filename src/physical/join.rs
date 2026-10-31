@@ -24,9 +24,13 @@
 //! swapped, the left built, unless the left's order is the order asked
 //! for; a RIGHT outer join is the LEFT one of its operands swapped, unless
 //! its left has more; each under a projection putting the columns back in
-//! order (`Flip`). Swapped, the other operand is read first, so neither
-//! may raise an error, nor the condition, which then cannot tell which is
-//! read first (D15).
+//! order (`Flip`). Swapped, the other operand is read first: of operands
+//! that can both raise an error, the other's may be raised, as evaluation
+//! order is implementation-dependent [ISO/IEC 9075:1992 §3.3.4.4]
+//! (D15); whether one is raised is the same, as each operand is read
+//! whole either way. A RIGHT join is swapped only if it keeps no
+//! conjunct that can raise (no operand's own, `Parted::keyed_alone`), so
+//! the LEFT join is probed by batches (D31).
 
 use super::indexed::{Equijoin, index_join, right_index_join};
 use super::{Built, PhysicalPlanner, Plan, of_left};
@@ -69,7 +73,7 @@ impl PhysicalPlanner<'_> {
             return Some(Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered });
         }
         // The left built instead, if it has fewer rows; its order is lost.
-        if !ordered && self.larger(right, left) && may_swap(&l.plan, &r.plan) {
+        if !ordered && self.larger(right, left) {
             let flip = Flip { width, right_width: right.width() };
             let flipped = flip.names(&names);
             let rest = rest.into_iter().map(|c| flip.cond(c)).collect();
@@ -84,13 +88,6 @@ impl PhysicalPlanner<'_> {
     fn larger(&self, a: &LogicalPlan, b: &LogicalPlan) -> bool {
         self.rows_of(a).zip(self.rows_of(b)).is_some_and(|(of_a, of_b)| of_a > of_b)
     }
-}
-
-/// Whether a join whose operands are `left` and `right` may be planned as
-/// the join of them swapped, the other read first: if neither can raise an
-/// error, so which raises first does not depend on the plan (RULES.md D15).
-fn may_swap(left: &Plan, right: &Plan) -> bool {
-    !left.can_raise() && !right.can_raise()
 }
 
 /// The hash join of `left` and `right` on `keys`, the left `width` columns
@@ -271,7 +268,7 @@ impl PhysicalPlanner<'_> {
         }
         // A RIGHT join as the LEFT one of its operands swapped, which
         // builds its left and probes it by batches.
-        if kind == OuterJoin::Right && parted.keyed_alone() && !self.larger(left, right) && may_swap(&l.plan, &r.plan) {
+        if kind == OuterJoin::Right && parted.keyed_alone() && !self.larger(left, right) {
             let flip = Flip { width, right_width: right.width() };
             let flipped = flip.names(&names);
             let detail = render_cond(&flip.cond(cond.clone()), &flipped);

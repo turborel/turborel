@@ -56,7 +56,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D22 | No instrumented MC/DC |
 | D24 | Format errors name tokens, not clauses |
 | **SQL semantics** | |
-| D15 | Run-time errors do not depend on the plan |
+| D15 | Whether a run-time error is raised does not depend on the plan |
 | D18 | A limit the standard does not set is not a syntax error |
 | D19 | A failed undo damages its table |
 | D32 | SQL-86 and SQL-92 are one language |
@@ -234,10 +234,14 @@ position identifies it anyway.
 
 ### SQL semantics
 
-**D15. Run-time errors do not depend on the plan.**
+**D15. Whether a run-time error is raised does not depend on the plan.**
 - **Rule.** A WHERE or HAVING conjunct that can raise an error is
   evaluated on every row or group the clause covers, whatever the access
   path or rewrite.
+- **Which error.** Where several rows or conjuncts would raise, the
+  statement raises the first the plan meets, which may differ by plan:
+  the operand a hash join builds, the join order, an OPTIMIZER setting.
+  One of them is raised under every plan; with one alone, that one.
 - **Products.** One over one operand's columns runs on all its rows if
   every other operand has a row, else on none, as the product holds
   them (§5.20 GR2b). It moves onto its operand over a guard (a row of no
@@ -261,7 +265,10 @@ position identifies it anyway.
 
 *Why:* §5.18 GR2 defines AND only by its truth table, and §5.21 GR2 and
 §5.23 GR2 apply the condition to each row and group; nothing permits
-leaving an operand unevaluated.
+leaving an operand unevaluated. The order is not fixed: §3.3.4.4 says
+"it is implementation-dependent whether expressions are actually
+evaluated left to right, particularly when operands or operators might
+cause conditions to be raised" (Annex C item 5).
 
 *Exception:*
 - **EXISTS** stops at the first row its subquery's condition keeps,
@@ -1738,9 +1745,10 @@ picks by estimate, so a new method needs no change to the planner.
   - a RIGHT outer join on keys is planned as the LEFT one of its
     operands swapped, probed by batches (D31), unless its left has more;
   - either under a projection putting the columns back in order;
-  - never if an operand or a conjunct can raise an error: the built
-    operand is read first, so which error is raised would depend on the
-    plan (D15).
+  - an operand that can raise an error may be built: each operand is
+    read whole either way, so only which error comes first changes
+    (D15). A RIGHT join keeping an ON conjunct that can raise is not
+    swapped: a LEFT one with such a conjunct is not probed by batches.
 
 *Why:* the General Rules define results, not plans; any plan giving the
 same results and errors is the optimizer's to choose.

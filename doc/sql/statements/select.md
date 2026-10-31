@@ -108,6 +108,11 @@ SELECT on each table and view the query names.
 An error is placed at the construct it is about, its character position
 told.
 
+A condition is evaluated on every row it applies to, so whether an error
+is raised does not depend on how the query is run. Where several rows or
+conditions would raise one, which of their errors is raised may change
+with the plan: as the tables grow, or a setting changes.
+
 ## EXAMPLES
 
 The table these examples read:
