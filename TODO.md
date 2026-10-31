@@ -167,8 +167,10 @@ The registry, scopes and SET statements exist (D36). Still to do:
 ## Query processing
 
 - **Batch execution, further** (RULES.md D31): RIGHT and FULL outer
-  joins, and LEFT ones with a condition beyond their keys; products and
-  a join's right operand built from batches; a sort, a DISTINCT of
+  joins, and products, probing by batches: their operands are read by
+  batches, but their rows joined row by row and gathered into batches
+  after, as a probe by batches needs a flag of each right row held and
+  the right's rows of a null key kept; a sort, a DISTINCT of
   expressions, EXCEPT and INTERSECT over streams; typed vectors further:
   a filter's comparisons of expressions over vectors of integers
   (`B * 2 > 400000` 9.5 ms, `B > 200000` 2.3), quotients of them, the
@@ -176,6 +178,13 @@ The registry, scopes and SET statements exist (D36). Still to do:
   text, padded as LIKE sees them; grouping of many groups (`GROUP BY K`
   of 400,000 keys, 382 ms, past the work area); a LIKE whose pattern is
   not a constant judged over vectors, its patterns split once each.
+- **A hash join's operand to build** (D35): an inner join builds its
+  right operand, as join ordering leaves it, however many more rows it
+  has than the left: `SELECT COUNT(*), SUM(F.A) FROM D, F WHERE D.G =
+  F.G`, D of 12 rows and F of 200,000 of 10 values of G, builds F,
+  partitioned and joined in parts past the work area, many times slower
+  than F probing D built. The planner could build the operand of fewer
+  rows, the join's columns then put back in order.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
 - **Statistics:** a fetch's cost does not tell a page the buffer pool

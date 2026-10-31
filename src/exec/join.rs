@@ -16,9 +16,10 @@ mod rescan;
 
 pub(super) use indexed::indexed;
 pub(super) use outer::outer;
+pub(in crate::exec) use outer::{Joining, outer_of};
 pub(in crate::exec) use partitioned::joined as partitioned_joined;
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
-pub(super) use rescan::Rescanned;
+pub(in crate::exec) use rescan::{Rescanned, product};
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -46,7 +47,7 @@ pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<(usize, usize)>>,
     let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {
-            Ok((right, _)) => rescan::product(execute(left, db, tx), right),
+            Ok((right, _)) => product(execute(left, db, tx), right),
             Err(e) => failed(e),
         };
     };

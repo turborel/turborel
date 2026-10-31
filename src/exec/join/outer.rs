@@ -30,7 +30,7 @@ use super::rescan::{Pass, Rescanned};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, OuterJoin, Truth};
-use crate::physical::Plan;
+use crate::physical::{Own, Plan};
 use crate::spill::{SpillRun, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -107,15 +107,41 @@ fn may_match(own: Option<&Cond>, row: &Row, runner: &Runner) -> Result<bool> {
     }
 }
 
-/// [ISO/IEC 9075:1992 §7.5 GR1c, GR2-GR5] The outer join `plan`. The right
-/// operand is read first, and the left only if it succeeded. Never inlined
-/// into `execute`, whose frame every level of a plan adds to the stack
-/// (RULES.md R-CF-6).
+/// What an outer join matches on and keeps, apart from its operands
+/// (`Plan::OuterJoin`).
+pub(in crate::exec) struct Joining {
+    pub(in crate::exec) kind: OuterJoin,
+    pub(in crate::exec) keys: Vec<(usize, usize)>,
+    pub(in crate::exec) cond: Option<Cond>,
+    pub(in crate::exec) own: Own,
+    pub(in crate::exec) widths: (usize, usize),
+}
+
+/// [ISO/IEC 9075:1992 §7.5 GR1c, GR2-GR5] The outer join `plan`. Never
+/// inlined into `execute`, whose frame every level of a plan adds to the
+/// stack (RULES.md R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } = plan else {
         return failed(SqlError::new(Code::Api, "[DESIGN] an outer join is not one"));
     };
+    let later = Arc::clone(db);
+    let left_rows = move || execute(*left, &later, tx);
+    outer_of(Joining { kind, keys, cond, own, widths }, execute(*right, db, tx), left_rows, (db, tx))
+}
+
+/// The outer join `joining` says of the rows `left` makes and the right
+/// operand's rows `right`: those are read first, and `left` made only if
+/// they were read. Never inlined into its callers, whose frames are on the
+/// stack while the operands are made (RULES.md R-CF-6).
+#[inline(never)]
+pub(in crate::exec) fn outer_of(
+    joining: Joining,
+    right: RowIter,
+    left: impl FnOnce() -> RowIter,
+    (db, tx): (&Arc<State>, TxId),
+) -> RowIter {
+    let Joining { kind, keys, cond, own, widths } = joining;
     // An operand's own conditions are judged before its rows are matched
     // by keys; with none, every pair is judged, all of its condition.
     if keys.is_empty() && own.is_some() {
@@ -124,19 +150,18 @@ pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let own = own.map_or((None, None), |own| *own);
     let spec = Spec { kind, keys, cond, own, widths, runner: Runner::new(db, tx) };
     let mut work = Work::of(db, tx);
-    let rows = execute(*right, db, tx);
     if spec.keys.is_empty() {
-        return match Rescanned::of(rows, &mut work) {
-            Ok((scanned, count)) => Box::new(OuterRows::new(execute(*left, db, tx), (Side::Scanned(scanned), count), (spec, work))),
+        return match Rescanned::of(right, &mut work) {
+            Ok((scanned, count)) => Box::new(OuterRows::new(left(), (Side::Scanned(scanned), count), (spec, work))),
             Err(e) => failed(e),
         };
     }
-    match held(rows, &spec.keys, work.limit()) {
+    match held(right, &spec.keys, work.limit()) {
         Ok(Held::All(table)) => {
             let count = table.rows.len();
-            Box::new(OuterRows::new(execute(*left, db, tx), (Side::Hashed(table), count), (spec, work)))
+            Box::new(OuterRows::new(left(), (Side::Hashed(table), count), (spec, work)))
         }
-        Ok(Held::Part(rows, rest)) => spilled::joined(execute(*left, db, tx), (rows, rest), &spec, work),
+        Ok(Held::Part(rows, rest)) => spilled::joined(left(), (rows, rest), &spec, work),
         Err(e) => failed(e),
     }
 }

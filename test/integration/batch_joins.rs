@@ -1,7 +1,7 @@
 //! \[DESIGN\] Joins read a batch at a time (RULES.md D31,
-//! `exec/batch/stream.rs`): an aggregation or a projection over inner hash
-//! joins and LEFT outer joins of scans, filtered or not, gives what it
-//! gives row by row.
+//! `exec/batch/joined.rs`): an aggregation or a projection over inner hash
+//! joins and LEFT, RIGHT and FULL outer joins of scans, filtered or not,
+//! gives what it gives row by row.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -50,7 +50,10 @@ fn tables(db: &Database) -> Session {
 }
 
 /// Queries of a join: `{t}` the table, F or R.
-const JOINED: [&str; 7] = [
+const JOINED: [&str; 10] = [
+    "SELECT COUNT(*), SUM({t}.B), MAX(D.NAME) FROM D, {t} WHERE D.G = {t}.G",
+    "SELECT COUNT(*), SUM({t}.B), MIN(D.NAME) FROM {t}, D WHERE {t}.K < 300",
+    "SELECT D.NAME, COUNT(*), SUM({t}.B) FROM D, {t} WHERE {t}.S = 'a' AND D.G > {t}.G GROUP BY D.NAME",
     "SELECT COUNT(*), SUM({t}.B) FROM {t}, D WHERE {t}.G = D.G",
     "SELECT D.NAME, COUNT(*), SUM({t}.B), MAX({t}.K) FROM {t}, D WHERE {t}.G = D.G GROUP BY D.NAME",
     "SELECT COUNT(*), SUM({t}.B * 2 - D.G) FROM {t}, D WHERE {t}.G = D.G AND {t}.B > D.G * 100",
@@ -60,8 +63,15 @@ const JOINED: [&str; 7] = [
     "SELECT {t}.K, DC.NAME FROM {t}, DC WHERE {t}.G = DC.G AND {t}.K < 60",
 ];
 
-/// Queries of a LEFT outer join: `{t}` the table, F or R.
-const OUTER: [&str; 6] = [
+/// Queries of an outer join: `{t}` the table, F or R.
+const OUTER: [&str; 13] = [
+    "SELECT COUNT(*), COUNT(D.NAME), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B > D.G * 100",
+    "SELECT D.NAME, COUNT(*), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B > D.G GROUP BY D.NAME",
+    "SELECT D.NAME, COUNT({t}.K), SUM({t}.B) FROM {t} RIGHT JOIN D ON {t}.G = D.G GROUP BY D.NAME",
+    "SELECT COUNT(*), COUNT(D.NAME), SUM({t}.B) FROM {t} FULL JOIN D ON {t}.G = D.G AND D.NAME <> 'one'",
+    "SELECT {t}.K, D.NAME FROM D FULL JOIN {t} ON {t}.G = D.G AND {t}.S = 'a' WHERE {t}.K < 30 OR {t}.K IS NULL",
+    "SELECT COUNT(*), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B / (D.G + 1) > 100",
+    "SELECT COUNT(*), COUNT(D.NAME) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B / ({t}.G + 1) > 100",
     "SELECT COUNT(*), COUNT(D.NAME), SUM({t}.B) FROM {t} LEFT OUTER JOIN D ON {t}.G = D.G",
     "SELECT D.NAME, COUNT(*), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G GROUP BY D.NAME",
     "SELECT {t}.K, D.NAME FROM {t} LEFT JOIN D ON {t}.G = D.G WHERE {t}.K < 40",
@@ -71,12 +81,12 @@ const OUTER: [&str; 6] = [
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.20 GR2b, §5.11 GR2]:
-/// an aggregation or a projection over inner hash joins read by batches
-/// gives what one read row by row gives (EXECUTOR.BATCHES OFF), of a
-/// table of either store: a null key joining nothing, a key of two rows
-/// joining each, CHAR keys equal as their padding makes them, a filter
-/// over the join, one told a scan, three tables, grouped or not, a set
-/// function of an expression.
+/// an aggregation or a projection over inner hash joins and products read
+/// by batches gives what one read row by row gives (EXECUTOR.BATCHES
+/// OFF), of a table of either store: a null key joining nothing, a key of
+/// two rows joining each, CHAR keys equal as their padding makes them, a
+/// filter over the join, one told a scan, three tables, grouped or not, a
+/// set function of an expression, the large table the right operand.
 #[test]
 fn joins_by_batch_answer_as_row_by_row() {
     let db = Database::new();
@@ -91,14 +101,17 @@ fn joins_by_batch_answer_as_row_by_row() {
     assert_eq!(rows(&a, "SELECT P.N, COUNT(*) FROM F, P WHERE F.S = P.S GROUP BY P.N").map(|r| r.len()), Ok(2), "'b' is 'b    '");
 }
 
-/// Verifies: [DESIGN] RULES.md D31 [ISO/IEC 9075:1992 §7.5 GR4, GR5b]: an
-/// aggregation or a projection over a LEFT outer join read by batches
-/// gives what one read row by row gives, of a table of either store: a
-/// left row no right row matches, its key null or not, with nulls; one
-/// matched by two, twice; the join filtered; one with a condition beyond
-/// its keys; a small left operand of a large right.
+/// Verifies: [DESIGN] RULES.md D31 [ISO/IEC 9075:1992 §7.5 GR1c, GR4,
+/// GR5]: an aggregation or a projection over an outer join read by
+/// batches gives what one read row by row gives, of a table of either
+/// store: a left row no right row matches, its key null or not, with
+/// nulls; one matched by two, twice; the join filtered; a condition
+/// beyond its keys, of both operands or of one, that can raise an error
+/// or not; a small left operand of a large right; RIGHT and FULL joins,
+/// a right row no left row matches after nulls. An error of a row of an
+/// operand is raised both ways.
 #[test]
-fn left_joins_by_batch_answer_as_row_by_row() {
+fn outer_joins_by_batch_answer_as_row_by_row() {
     let db = Database::new();
     let a = tables(&db);
     for query in OUTER {
@@ -111,6 +124,18 @@ fn left_joins_by_batch_answer_as_row_by_row() {
     // Of 6000 rows, 1/7 have G = 1, joined twice; G = 6 and null, alone.
     let counted = rows(&a, "SELECT COUNT(*), COUNT(D.NAME) FROM F LEFT JOIN D ON F.G = D.G");
     assert_eq!(counted.map(|r| r.len()), Ok(1));
+    for raising in [
+        "SELECT COUNT(*) FROM F FULL JOIN D ON F.G = D.G AND F.B / (F.K - 7) > 0",
+        "SELECT COUNT(*) FROM D RIGHT JOIN F ON F.G = D.G AND F.B / (F.K - 7) > 0",
+        "SELECT COUNT(*) FROM DC FULL JOIN (SELECT * FROM F WHERE B / (K - 7) > 0) AS V ON V.G = DC.G",
+        "SELECT COUNT(*) FROM (SELECT * FROM F WHERE B / (K - 7) > 0) AS V RIGHT JOIN DC ON V.G = DC.G",
+        "SELECT COUNT(*) FROM F, (SELECT * FROM DC WHERE 1 / (G - 3) > 0) AS V",
+    ] {
+        exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+        assert_eq!(rows(&a, raising).err(), Some(Code::Data), "{raising}");
+        exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        assert_eq!(rows(&a, raising).err(), Some(Code::Data), "{raising}");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D38: a join whose right operand
@@ -124,10 +149,17 @@ fn a_partitioned_join_by_batch_answers_as_row_by_row() {
     exec(&a, "SET WORK_MEMORY = 65536").unwrap();
     let (batched, row) = both_ways(&a, "SELECT F.G, COUNT(*), SUM(R.B) FROM F, R WHERE F.K = R.K GROUP BY F.G");
     assert_eq!(batched, row);
-    // A LEFT join's right operand, outgrowing it, moved to a table.
+    // A product's right operand, outgrowing it, read again from a run.
+    let (batched, row) = both_ways(&a, "SELECT D.NAME, COUNT(*), MAX(F.B) FROM D, F WHERE F.S = 'b' GROUP BY D.NAME");
+    assert_eq!(batched, row);
+    // A LEFT join's right operand, outgrowing it, moved to a table; a
+    // RIGHT or FULL join's, partitioned as the row path partitions it.
     for left in [
         "SELECT F.G, COUNT(R.K), SUM(R.B) FROM F LEFT JOIN R ON F.K = R.B GROUP BY F.G",
         "SELECT D.NAME, COUNT(F.K) FROM D LEFT JOIN F ON D.G = F.G GROUP BY D.NAME",
+        "SELECT F.G, COUNT(R.K), SUM(R.B) FROM F LEFT JOIN R ON F.K = R.B AND R.G <> F.G GROUP BY F.G",
+        "SELECT R.G, COUNT(F.K), SUM(R.B) FROM F RIGHT JOIN R ON F.K = R.B GROUP BY R.G",
+        "SELECT D.NAME, COUNT(F.K), COUNT(*) FROM D FULL JOIN F ON D.G = F.G GROUP BY D.NAME",
     ] {
         let (batched, row) = both_ways(&a, left);
         assert_eq!(batched, row, "{left}");

@@ -1420,16 +1420,26 @@ the format of frozen groups becomes a trait when it is.
   tree's other rows. A subtree of a plan gives its rows by batch (a
   stream, `exec/batch/stream.rs`) if it is a table's scan; a filter of
   one, told the simple conjuncts of its condition, or of another stream,
-  each batch with the rows kept of it; or an inner hash join whose left
-  operand is a stream: its right read first, row by row, and built as the
-  row path builds it; held in the work area, each of the left's batches
-  probes it, a batch of joined rows made of each, the left's columns then
-  the right's; partitioned, the joined rows made row by row and gathered.
-  A join's count or grouped sum so runs much faster than row by row, of
-  either store. A LEFT outer join on keys, no other condition, of streams
-  is one too, each left row no right row matches joined with nulls; its
+  each batch with the rows kept of it; or a join of streams, each column
+  its keys and conditions read held by their batches
+  (`exec/batch/joined.rs`): its right operand read first, of its batches'
+  rows if its tables read by batch (a column store's), else row by row.
+  An inner hash join, and a LEFT outer join on keys whose condition
+  beyond them cannot raise an error and whose operands have no condition
+  of their own (D15), build it as the row path builds it; held in the
+  work area, each of the left's batches probes it, a batch of joined rows
+  made of each, the left's columns then the right's, the condition judged
+  of each pair of equal keys, of a row of the pair's values, a LEFT
+  join's left row no right row matches joined with nulls; partitioned, an
+  inner join's joined rows made row by row and gathered; a LEFT join's
   right operand, outgrowing the work area, moved to a table of the spill
-  area, so every left row probes it in order, and gains alike. An
+  area, so every left row probes it in order. A join's count or grouped
+  sum so runs much faster than row by row, of either store. Any other
+  outer join (RIGHT, FULL, a LEFT one whose condition can raise or whose
+  operand has a condition of its own), and a product, join their
+  operands' batches' rows as the row path joins rows, and gather the
+  joined rows into batches, so their operands are scanned and filtered
+  by batch. An
   aggregation whose set functions count rows or take a column, none
   DISTINCT, grouped by columns the stream holds or not at all, of a
   stream, feeds them from the vectors (`exec/batch.rs`), each a column's

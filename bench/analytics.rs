@@ -3,8 +3,11 @@
 //! rows counted, summed by one column and by twelve, filtered to 1% by a column
 //! in the order the rows were written and by one scattered, to 10% by an
 //! indexed column, to 3 of its 10 groups by IN, grouped, and
-//! two of its columns read whole; and one row fetched by its key, the
-//! transactional work beside them. Each is measured on F, a row store
+//! two of its columns read whole; joined with D, a table of a row or two
+//! for each group, by an inner join, the table its right operand, by
+//! LEFT, RIGHT and FULL outer joins, and as a product; DISTINCT of an
+//! expression; and one row fetched by its key, the transactional work
+//! beside them. Each is measured on F, a row store
 //! table, then on FC, a column store one. Rates are of the table's rows
 //! read, but the key's, of queries. Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
@@ -66,6 +69,15 @@ fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
     bench.measure(case("COUNT of 3 groups of 10 by IN", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE G IN (1, 4, 7) AND S IS NOT NULL"));
     bench.measure(case("GROUP BY 10 groups, COUNT, SUM and AVG", "rows"), scan("SELECT G, COUNT(*), SUM(A), AVG(E) FROM {t} GROUP BY G"));
     bench.measure(case("fetch 2 of 16 columns of every row", "rows"), scan("SELECT A, B FROM {t}"));
+    bench.measure(case("COUNT, SUM of a join, the table right", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM D, {t} WHERE D.G = {t}.G"));
+    bench.measure(
+        case("COUNT, SUM of a LEFT join, a condition", "rows"),
+        scan("SELECT COUNT(*), SUM({t}.A) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.A > D.G"),
+    );
+    bench.measure(case("COUNT, SUM of a RIGHT join", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM D RIGHT JOIN {t} ON D.G = {t}.G"));
+    bench.measure(case("COUNT, SUM of a FULL join", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM {t} FULL JOIN D ON {t}.G = D.G"));
+    bench.measure(case("COUNT, SUM of a product of 10% by D", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM {t}, D WHERE {t}.C < 20000"));
+    bench.measure(case("DISTINCT of an expression, 10 groups", "rows"), scan("SELECT DISTINCT G * 2 FROM {t}"));
     bench.measure(case("fetch one row of 16 columns by its key", "queries"), || {
         for n in 0..LOOKUPS {
             fetched(s, &format!("SELECT * FROM {table} WHERE K = {}", scatter(n, ROWS)));
@@ -88,7 +100,8 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 /// Schema B with tables F, in the row store, and FC, in the column store,
 /// each of the same `ROWS` rows: K its key; G one of 10 groups; B
 /// in the order the rows are written, C scattered; the others numbers of
-/// a few distributions, E exact with a fraction, and S text.
+/// a few distributions, E exact with a fraction, and S text; and D, of the
+/// row store, a name for each group, two for group 1, and one of none.
 fn database() -> Database {
     let db = Database::new();
     db.schema(
@@ -98,7 +111,8 @@ fn database() -> Database {
              N INTEGER, O INTEGER, P INTEGER, S CHAR(16))
            CREATE TABLE FC (K INTEGER PRIMARY KEY, G INTEGER NOT NULL, A INTEGER, B INTEGER, C INTEGER,
              D INTEGER, E DECIMAL(9,2), H INTEGER, I INTEGER, J INTEGER, L INTEGER, M INTEGER,
-             N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) USING columnstore",
+             N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) USING columnstore
+           CREATE TABLE D (G INTEGER, NAME VARCHAR(10))",
     )
     .unwrap();
     let s = db.session("B");
@@ -129,6 +143,7 @@ fn database() -> Database {
             s.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
         }
     }
+    s.run("INSERT INTO D VALUES (0, 'zero'), (1, 'one'), (1, 'uno'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five'), (6, 'six'), (7, 'seven'), (8, 'eight'), (9, 'nine'), (NULL, 'none')").unwrap();
     s.commit().unwrap();
     // FC's rows frozen, as the maintenance thread would have them.
     db.maintain().unwrap();

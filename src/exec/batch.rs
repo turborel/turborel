@@ -14,6 +14,7 @@
 //! (`group::Spilling`). A null a set function's argument takes out raises
 //! its warning [ISO/IEC 9075:1992 §6.5 GR1b], as a row at a time does.
 
+mod joined;
 mod judge;
 mod project;
 mod stream;

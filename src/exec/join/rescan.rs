@@ -121,7 +121,7 @@ impl Gathering {
 
 /// [X3.135-1986 §5.20 GR2b] every row of `left` concatenated with every row
 /// of `right`, in `left`'s order, then `right`'s.
-pub(super) fn product(left: RowIter, right: Rescanned) -> RowIter {
+pub(in crate::exec) fn product(left: RowIter, right: Rescanned) -> RowIter {
     Box::new(Product { left, right, current: None })
 }
 
