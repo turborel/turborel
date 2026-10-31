@@ -10,5 +10,5 @@
 mod group;
 mod journal;
 
-pub use group::{Group, Node};
+pub use group::{Frame, Group, Make, Node};
 pub use journal::Journal;

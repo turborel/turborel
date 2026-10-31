@@ -22,7 +22,7 @@ impl Vr {
         self.log.push(record.clone());
         let op = self.op();
         out.push(Output::Assigned(Lsn(op)));
-        Vr::persist(op, record.clone(), out);
+        self.persist(op, record.clone(), out);
         self.own.insert(op, record.clone());
         let prepare = Message::Prepare(Prepare { view: self.view, record, op, commit: self.commit });
         self.broadcast(&prepare, out);
@@ -38,25 +38,42 @@ impl Vr {
     /// message to the primary". \[DESIGN\] Departure: the PREPAREOK waits
     /// for the record to be durable (`persisted`). A PREPARE already held
     /// is answered again, as its PREPAREOK may have been lost.
-    ///
-    /// [VRR §4.1]: "Replicas only process normal protocol messages
-    /// containing a view-number that matches the view-number they know. If
-    /// the sender is behind, the receiver drops the message."
     pub(super) fn on_prepare(&mut self, m: Prepare, out: &mut Vec<Output>) {
-        if m.view != self.view || self.status != Status::Normal || self.is_primary() {
+        if !self.in_view(m.view, out) {
             return;
         }
-        self.timers.heard = 0;
         let next = self.op().saturating_add(1);
         match m.op.cmp(&next) {
-            Ordering::Greater => self.get_state(out),
+            Ordering::Greater => self.get_state(self.op(), out),
             Ordering::Equal => {
                 self.log.push(m.record.clone());
-                Vr::persist(m.op, m.record, out);
+                self.persist(m.op, m.record, out);
             }
             Ordering::Less => self.acknowledge(out),
         }
         self.learn_commit(m.commit, out);
+    }
+
+    /// Whether a backup takes a PREPARE or COMMIT of `view` from its
+    /// primary. [VRR §4.1]: "Replicas only process normal protocol messages
+    /// containing a view-number that matches the view-number they know. If
+    /// the sender is behind, the receiver drops the message. If the sender
+    /// is ahead, the replica performs a state transfer". So too a replica in
+    /// a view change for `view` whose primary is already normal in it: its
+    /// STARTVIEW was lost.
+    fn in_view(&mut self, view: u64, out: &mut Vec<Output>) -> bool {
+        if view < self.view {
+            return false;
+        }
+        let behind = view > self.view || self.status == Status::ViewChange;
+        if behind {
+            self.later_view(view, out);
+            return false;
+        }
+        if self.status == Status::Normal {
+            self.timers.heard = 0;
+        }
+        self.status == Status::Normal
     }
 
     /// ⟨PREPAREOK v, n, i⟩ for every record durable, which "indicate[s]
@@ -107,7 +124,7 @@ impl Vr {
     /// committed of it is known at once.
     pub(super) fn learn_commit(&mut self, commit: u64, out: &mut Vec<Output>) {
         if commit > self.op() {
-            self.get_state(out);
+            self.get_state(self.op(), out);
         }
         let known = commit.min(self.op());
         if known > self.commit {
@@ -118,31 +135,41 @@ impl Vr {
 
     /// [VRR §4.1 step 6]: the primary's ⟨COMMIT v, k⟩.
     pub(super) fn on_commit(&mut self, m: Commit, out: &mut Vec<Output>) {
-        if m.view != self.view || self.status != Status::Normal || self.is_primary() {
-            return;
+        if self.in_view(m.view, out) {
+            self.learn_commit(m.commit, out);
         }
-        self.timers.heard = 0;
-        self.learn_commit(m.commit, out);
     }
 
     /// What follows a commit-number advanced: a serving primary's database
-    /// told, and the records delivered.
-    fn after_commit(&mut self, out: &mut Vec<Output>) {
+    /// told, records in doubt resolved, and the records delivered.
+    pub(super) fn after_commit(&mut self, out: &mut Vec<Output>) {
         if self.lead.serving {
             out.push(Output::Committed(Lsn(self.commit)));
             let commit = self.commit;
             self.own.retain(|&at, _| at > commit);
         }
+        while let Some(entry) = self.in_doubt.first_entry() {
+            if *entry.key() > self.commit {
+                break;
+            }
+            let (at, record) = entry.remove_entry();
+            let kept = self.record(at) == Some(&record);
+            out.push(Output::Outcome { at: Lsn(at), kept });
+        }
         self.deliver(out);
     }
 
     /// The records committed and durable here delivered to the database,
-    /// but to a serving primary's, which wrote them.
+    /// but to a serving primary's, which wrote them, and to a new primary's
+    /// only through the log it took over.
     pub(super) fn deliver(&mut self, out: &mut Vec<Output>) {
         if self.lead.serving {
             return;
         }
-        let through = self.commit.min(self.durable);
+        let mut through = self.commit.min(self.durable);
+        if self.status == Status::Normal && self.is_primary() {
+            through = through.min(self.lead.inherited);
+        }
         if through > self.delivered {
             self.delivered = through;
             out.push(Output::Deliver { through: Lsn(through) });
@@ -150,13 +177,19 @@ impl Vr {
     }
 
     /// The journal made the record at `at` durable: one `Persisted` for
-    /// each `Persist`, in order. A backup acknowledges; a primary counts
-    /// its own copy.
+    /// each `Persist`, in order. One answering a write a `PersistState` has
+    /// made durable since tells nothing. A backup acknowledges; a primary
+    /// counts its own copy.
     pub(super) fn persisted(&mut self, at: u64, out: &mut Vec<Output>) {
-        if at != self.durable.saturating_add(1) || at > self.op() {
+        self.writes.taken = self.writes.taken.saturating_add(1);
+        let stale = self.writes.taken <= self.writes.synced;
+        if stale || at != self.durable.saturating_add(1) || at > self.op() {
             return;
         }
         self.durable = at;
+        if self.status != Status::Normal {
+            return self.deliver(out);
+        }
         if self.is_primary() {
             self.try_commit(out);
         } else {
@@ -165,23 +198,46 @@ impl Vr {
         }
     }
 
-    /// The timer: a primary sends its heartbeat; a backup counts how long
-    /// it has not heard from its primary, and asks again for state.
+    /// The timer. A primary sends its heartbeat. A backup counts how long
+    /// it has not heard from its primary, and a replica how long its view
+    /// change or state transfer has lasted: past the timeout, it starts a
+    /// view change to the next view [VRR §4.2]: "A view change may not
+    /// succeed, e.g., because the new primary fails. In this case the
+    /// replicas will start a further view change". Meanwhile, at each
+    /// heartbeat, it sends again what it is waiting on an answer to.
     pub(super) fn tick(&mut self, out: &mut Vec<Output>) {
         self.timers.beat = self.timers.beat.saturating_add(1);
         let beat = self.timers.beat >= self.options.heartbeat_ticks;
         if beat {
             self.timers.beat = 0;
+            self.asked = None;
         }
-        if self.is_primary() {
+        let leading = self.status == Status::Normal && self.is_primary();
+        if leading {
             if beat {
                 self.heartbeat(out);
             }
-        } else {
-            self.timers.heard = self.timers.heard.saturating_add(1);
-            if beat {
-                self.asked = None;
+            return;
+        }
+        self.timers.heard = self.timers.heard.saturating_add(1);
+        if self.timers.heard >= self.options.view_timeout_ticks {
+            return self.start_view_change(self.view.saturating_add(1), out);
+        }
+        if beat {
+            self.send_again(out);
+        }
+    }
+
+    /// What a replica waiting on others sends again at a heartbeat.
+    fn send_again(&mut self, out: &mut Vec<Output>) {
+        match self.status {
+            Status::Normal => {}
+            Status::ViewChange => {
+                if self.change.open {
+                    self.send_view_change(out);
+                }
             }
+            Status::Transfer => self.get_state(self.commit, out),
         }
     }
 
@@ -204,11 +260,26 @@ impl Vr {
         }
     }
 
-    /// The primary of a view begins to serve: its database may append.
+    /// The primary of a view begins to serve, its database to append, once
+    /// the log it took over is committed and delivered.
     pub(super) fn serve(&mut self, out: &mut Vec<Output>) {
-        if self.status == Status::Normal && self.is_primary() && !self.lead.serving {
+        let inherited = self.lead.inherited;
+        let ready = self.commit >= inherited && self.delivered >= inherited;
+        if self.status == Status::Normal && self.is_primary() && !self.lead.serving && ready {
             self.lead.serving = true;
             out.push(Output::Role(Role::Primary { view: self.view }));
+        }
+    }
+
+    /// A serving primary leaves its service: its records not committed are
+    /// in doubt, and its database, deposed, opens again from its last
+    /// checkpoint, so what is committed is delivered again from the start.
+    pub(super) fn depose(&mut self, out: &mut Vec<Output>) {
+        if self.lead.serving {
+            self.lead.serving = false;
+            out.push(Output::Role(Role::Backup));
+            self.in_doubt.append(&mut self.own);
+            self.delivered = 0;
         }
     }
 }

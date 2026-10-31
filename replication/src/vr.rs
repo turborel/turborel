@@ -21,23 +21,41 @@
 //!   toward a quorum only once its own copy is durable. So commit means a
 //!   quorum holds the record durably, and the group survives losing power
 //!   everywhere at once.
+//! * The view-number is written (`PersistState`) before a replica sends
+//!   STARTVIEWCHANGE or DOVIEWCHANGE, and with v′ and the new log before it
+//!   takes part in a view as normal. [VRR §8.2] notes this is "the approach
+//!   used in the original version of VR"; the STARTVIEWCHANGE round is
+//!   kept all the same.
+//! * A replica made again from its journal ([`Vr::restart`]) rejoins as
+//!   [VRR §4.3] has one whose disk is intact do: "it is the same as a node
+//!   that has been unable to communicate for some period of time". Its
+//!   RECOVERY protocol is for a journal lost, and is a later stage. One that
+//!   was the primary of its view does not serve in it again: records it
+//!   sent may have been committed by its backups though its own copy did
+//!   not survive, so it waits for the next view change; so too one that was
+//!   in a view change, which it takes no further part in.
 //! * The primary's database learns of commit through `Committed`, and does
 //!   not wait to execute a request: it wrote the record before appending
-//!   it. Backups' databases are delivered committed records to replay.
+//!   it. Backups' databases are delivered committed records to replay. A
+//!   new primary serves only once the log it took over is committed and
+//!   delivered, so its database has replayed every record before it writes
+//!   its own; [VRR §4.2 step 4] has it accept requests at once.
 //!
-//! Normal operation is in `vr/normal.rs`, state transfer in
-//! `vr/transfer.rs`, the frames in `vr/frame.rs`.
+//! Normal operation is in `vr/normal.rs`, the view change in
+//! `vr/view_change.rs`, state transfer in `vr/transfer.rs`, the frames in
+//! `vr/frame.rs`.
 
 mod frame;
 mod normal;
 mod transfer;
+mod view_change;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use turborel::error::{Code, Result, SqlError};
 
-use self::frame::Message;
-use crate::{Consensus, Input, Lsn, Output, ReplicaEvent, ReplicaId};
+use self::frame::{Message, ViewState};
+use crate::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId};
 
 /// Its name, as [`Consensus::name`] gives it.
 pub const NAME: &str = "vr";
@@ -47,7 +65,9 @@ pub const NAME: &str = "vr";
 /// ⟨COMMIT v, k⟩ message" [VRR §4.1 step 6].
 pub const HEARTBEAT_TICKS: u64 = 2;
 /// \[DESIGN\] Ticks a backup waits to hear from its primary, by default,
-/// before it starts a view change [VRR §4.2].
+/// before it starts a view change: "If a timeout expires without a
+/// communication from the primary, the replicas carry out a view change to
+/// switch to a new primary" [VRR §4.2].
 pub const VIEW_TIMEOUT_TICKS: u64 = 10;
 /// \[DESIGN\] Records a primary sends again to a backup at each heartbeat,
 /// past the last it acknowledged, by default: [VRR §4.1] leaves
@@ -59,9 +79,11 @@ pub const RESEND_RECORDS: u64 = 8;
 /// settings REPLICATION.HEARTBEAT_MS and REPLICATION.VIEW_TIMEOUT_MS).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VrOptions {
-    /// Ticks between a primary's heartbeats.
+    /// Ticks between a primary's heartbeats, and between messages of a view
+    /// change or state transfer sent again.
     pub heartbeat_ticks: u64,
-    /// Ticks without word from the primary before a view change.
+    /// Ticks without word from the primary, or in a view change or state
+    /// transfer, before the next view change.
     pub view_timeout_ticks: u64,
     /// Records sent again to a backup at each heartbeat.
     pub resend_records: u64,
@@ -73,11 +95,18 @@ impl Default for VrOptions {
     }
 }
 
-/// \[EXTENSION\] "The current status" [VRR §4, Figure 2].
+/// \[EXTENSION\] "The current status, either normal, view-change, or
+/// recovering" [VRR §4, Figure 2].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     /// Normal: processing records.
     Normal,
+    /// In a view change.
+    ViewChange,
+    /// \[EXTENSION\] Fetching the log of a later view it learned of, before
+    /// it takes part in it [VRR §5.2]. \[VRR\]'s recovering status, for a
+    /// journal lost, is a later stage.
+    Transfer,
 }
 
 /// \[EXTENSION\] Where a replica stands, for the operator.
@@ -99,12 +128,25 @@ pub struct Standing {
     pub applied: Lsn,
 }
 
+/// Counts of journal writes, by which a `Persisted` is matched to the
+/// `Persist` it answers: one each, in order.
+#[derive(Debug, Default)]
+struct Writes {
+    /// `Persist`s given.
+    given: u64,
+    /// `Persisted`s taken.
+    taken: u64,
+    /// `Persist`s given before the last `PersistState`, which made them
+    /// durable: their `Persisted` tell nothing new.
+    synced: u64,
+}
+
 /// The ticks counted since things happened.
 #[derive(Debug, Default)]
 struct Timers {
-    /// Since a backup last heard from its primary.
+    /// Since a backup last heard from its primary, or the status changed.
     heard: u64,
-    /// Since the last heartbeat or resending.
+    /// Since the last heartbeat or message sent again.
     beat: u64,
 }
 
@@ -113,8 +155,34 @@ struct Timers {
 struct Lead {
     /// Each backup's PREPAREOK with the highest op-number, in this view.
     acked: BTreeMap<ReplicaId, u64>,
+    /// The op-number of the log it took over: records through it are
+    /// delivered to its database before it serves.
+    inherited: u64,
     /// Whether its database serves: `Role(Primary)` given.
     serving: bool,
+}
+
+/// A DOVIEWCHANGE's log and numbers.
+#[derive(Debug, Clone)]
+struct Candidate {
+    log: Vec<Vec<u8>>,
+    normal_view: u64,
+    op: u64,
+    commit: u64,
+}
+
+/// What a view change has gathered, for the view-number it is in.
+#[derive(Debug, Default)]
+struct Change {
+    /// Whether this replica started it, and so may take part in it: one
+    /// made again from its journal waits for the next (`Vr::restart`).
+    open: bool,
+    /// The replicas STARTVIEWCHANGE came from.
+    started: BTreeSet<ReplicaId>,
+    /// Whether this replica sent its DOVIEWCHANGE.
+    done: bool,
+    /// The new primary's: the DOVIEWCHANGEs, by replica.
+    candidates: BTreeMap<ReplicaId, Candidate>,
 }
 
 /// \[EXTENSION\] Viewstamped Replication: one replica's state machine.
@@ -124,6 +192,8 @@ pub struct Vr {
     me: ReplicaId,
     options: VrOptions,
     view: u64,
+    /// v′: "the latest view in which its status was normal".
+    normal_view: u64,
     status: Status,
     /// The log: the record at position n is at index n − 1.
     log: Vec<Vec<u8>>,
@@ -133,16 +203,23 @@ pub struct Vr {
     /// Through where `Deliver` has named.
     delivered: u64,
     applied: u64,
+    writes: Writes,
     timers: Timers,
     lead: Lead,
+    change: Change,
     /// The records this replica appended while serving, not yet committed.
     own: BTreeMap<u64, Vec<u8>>,
+    /// Records appended in a service that ended before they were committed:
+    /// in doubt until the commit-number passes them.
+    in_doubt: BTreeMap<u64, Vec<u8>>,
     /// A GETSTATE asked and not yet answered, by the op-number it named.
     asked: Option<u64>,
 }
 
 impl Vr {
-    /// \[EXTENSION\] A replica `me` of a new group of `members`, in view 0.
+    /// \[EXTENSION\] A replica `me` of a new group of `members`, in view 0,
+    /// its journal empty: once, when the group is made. A replica that ran
+    /// before is made again by `restart`, even with its journal empty.
     ///
     /// # Errors
     ///
@@ -163,17 +240,48 @@ impl Vr {
             me,
             options,
             view: 0,
+            normal_view: 0,
             status: Status::Normal,
             log: Vec::new(),
             commit: 0,
             durable: 0,
             delivered: 0,
             applied: 0,
+            writes: Writes::default(),
             timers: Timers::default(),
             lead: Lead::default(),
+            change: Change::default(),
             own: BTreeMap::new(),
+            in_doubt: BTreeMap::new(),
             asked: None,
         })
+    }
+
+    /// \[EXTENSION\] Replica `me` made again after a crash, from what its
+    /// journal held: its records are durable, and it rejoins in the view it
+    /// wrote last, normal there if it was normal there and was not its
+    /// primary, else in a view change (see the module's documentation).
+    /// Its commit-number is learned again from the group, and what is
+    /// committed delivered again from the start: the driver gives the core
+    /// only what it has not applied.
+    ///
+    /// # Errors
+    ///
+    /// As `new`; SQLCODE -916 if the state is malformed.
+    pub fn restart(members: &[ReplicaId], me: ReplicaId, options: VrOptions, recovered: Recovered) -> Result<Vr> {
+        let mut vr = Vr::new(members, me, options)?;
+        let state = match recovered.state {
+            Some(bytes) => ViewState::decode(&bytes)?,
+            None => ViewState::default(),
+        };
+        vr.view = state.view;
+        vr.normal_view = state.normal_view;
+        vr.log = recovered.records;
+        vr.durable = vr.op();
+        if state.view != state.normal_view || vr.is_primary() {
+            vr.status = Status::ViewChange;
+        }
+        Ok(vr)
     }
 
     /// \[EXTENSION\] Where this replica stands.
@@ -241,8 +349,18 @@ impl Vr {
     }
 
     /// Writes `record` at `at` to the journal.
-    fn persist(at: u64, record: Vec<u8>, out: &mut Vec<Output>) {
+    fn persist(&mut self, at: u64, record: Vec<u8>, out: &mut Vec<Output>) {
         out.push(Output::Persist { at: Lsn(at), record });
+        self.writes.given = self.writes.given.saturating_add(1);
+    }
+
+    /// Writes the view-number and v′, which makes the journal durable
+    /// through the log's end.
+    fn persist_state(&mut self, out: &mut Vec<Output>) {
+        let state = ViewState { view: self.view, normal_view: self.normal_view };
+        out.push(Output::PersistState(state.encode()));
+        self.writes.synced = self.writes.given;
+        self.durable = self.op();
     }
 
     /// Takes a frame from `from`, refusing it if `from` is no other member
@@ -264,7 +382,10 @@ impl Vr {
         let sender = match &message {
             Message::Prepare(m) => self.primary_of(m.view),
             Message::Commit(m) => self.primary_of(m.view),
+            Message::StartView(m) => self.primary_of(m.view),
             Message::PrepareOk(m) => m.replica,
+            Message::StartViewChange(m) => m.replica,
+            Message::DoViewChange(m) => m.replica,
             Message::GetState(m) => m.replica,
             Message::NewState(_) => from,
         };
@@ -275,6 +396,9 @@ impl Vr {
             Message::Prepare(m) => self.on_prepare(m, out),
             Message::PrepareOk(m) => self.on_prepare_ok(m, out),
             Message::Commit(m) => self.on_commit(m, out),
+            Message::StartViewChange(m) => self.on_start_view_change(m, out),
+            Message::DoViewChange(m) => self.on_do_view_change(m, out),
+            Message::StartView(m) => self.on_start_view(m, out),
             Message::GetState(m) => self.on_get_state(m, out),
             Message::NewState(m) => self.on_new_state(m, out),
         }

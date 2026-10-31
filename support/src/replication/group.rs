@@ -9,8 +9,8 @@ use turborel_replication::{Consensus, Input, Lsn, Output, Recovered, ReplicaId};
 use super::Journal;
 
 /// Makes a replica's consensus: of the group's members, as one of them,
-/// from what its journal recovered (empty for a new replica).
-pub type Make = Box<dyn Fn(&[ReplicaId], ReplicaId, Recovered) -> Box<dyn Consensus>>;
+/// new (`None`) or again after a crash, from what its journal recovered.
+pub type Make = Box<dyn Fn(&[ReplicaId], ReplicaId, Option<Recovered>) -> Box<dyn Consensus>>;
 
 /// A frame sent and not yet delivered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +72,7 @@ impl Group {
             .iter()
             .map(|&id| Node {
                 id,
-                consensus: make(members, id, Recovered::default()),
+                consensus: make(members, id, None),
                 journal: Journal::default(),
                 applied: Vec::new(),
                 outputs: Vec::new(),
@@ -171,7 +171,7 @@ impl Group {
         let members = self.members.clone();
         let node = self.nodes.iter_mut().find(|n| n.id == id).unwrap();
         node.journal.crash(reached);
-        node.consensus = (self.make)(&members, id, node.journal.recovered());
+        node.consensus = (self.make)(&members, id, Some(node.journal.recovered()));
         node.applied.clear();
     }
 }

@@ -27,7 +27,8 @@ fn get_state(op: u64, replica: ReplicaId) -> Vec<u8> {
 
 /// Whether `out` is exactly one refusal of a frame from `from`.
 fn refused(out: &[Output], from: ReplicaId) -> bool {
-    matches!(out, [Output::Event(ReplicaEvent::FrameRefused { from: f, .. })] if *f == from)
+    let [Output::Event(ReplicaEvent::FrameRefused { from: f, .. })] = out else { return false };
+    *f == from
 }
 
 /// Verifies: [DESIGN] RULES.md D57 robustness: a frame empty, of no tag,
@@ -77,9 +78,9 @@ fn misattributed_frames_are_refused() {
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.1, §5.2] messages out of place
-/// are dropped: of another view; a PREPARE, COMMIT or NEWSTATE to the
-/// primary; a PREPAREOK to a backup; a GETSTATE past the receiver's log or
-/// of another view; a NEWSTATE beginning past the receiver's log.
+/// are dropped: a NEWSTATE to the primary; a PREPAREOK to a backup; a
+/// GETSTATE past the receiver's log or of another view; a NEWSTATE
+/// beginning past the receiver's log.
 #[test]
 fn messages_out_of_place_are_dropped() {
     let mut group = serving(3);
@@ -94,7 +95,6 @@ fn messages_out_of_place_are_dropped() {
     let mut later_get_state = frame(7, &[1, 0]);
     later_get_state.extend_from_slice(&OTHER.0.to_le_bytes());
     let cases = [
-        (PRIMARY, BACKUP, frame(3, &[3, 0])),
         (BACKUP, PRIMARY, frame(8, &[0, 0, 0, 0, 0])),
         (OTHER, BACKUP, prepare_ok),
         (OTHER, PRIMARY, get_state(5, OTHER)),

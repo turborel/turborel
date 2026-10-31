@@ -19,3 +19,4 @@ mod common;
 
 mod frames;
 mod normal;
+mod view_change;
