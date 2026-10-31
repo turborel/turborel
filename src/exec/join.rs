@@ -16,10 +16,10 @@ mod rescan;
 
 pub(super) use indexed::indexed;
 pub(super) use outer::outer;
-pub(in crate::exec) use outer::{Joining, outer_of};
-pub(in crate::exec) use partitioned::joined as partitioned_joined;
+pub(in crate::exec) use outer::{Holding, Joining, Prepared, prepared};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
-pub(in crate::exec) use rescan::{Rescanned, product};
+pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
+pub(in crate::exec) use rescan::{Pass, Rescanned, product};
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -86,7 +86,7 @@ pub(in crate::exec) enum Full {
 /// A hash join's right operand: built, or in partitions.
 pub(in crate::exec) enum Right {
     Held(Built),
-    Partitioned(partitioned::Partitions),
+    Partitioned(Partitions),
 }
 
 /// The rows of a bucket of a `Built`, as they are read: the place of the
@@ -114,7 +114,7 @@ impl Built {
             built.add(b, row)?;
             if bytes > work.limit() {
                 return match full {
-                    Full::Partition => Ok(Right::Partitioned(partitioned::Partitions::of(built, rows, work)?)),
+                    Full::Partition => Ok(Right::Partitioned(Partitions::of(built, rows, work)?)),
                     Full::Table => built.spilled(rows, work).map(Right::Held),
                 };
             }
@@ -277,11 +277,17 @@ fn equal(keys: &[(usize, usize)], l: &Row, r: &Row) -> Result<bool> {
 /// Gives `each` left row `l` concatenated with each row of `right` whose
 /// keys equal its own, in order, as its bucket is read.
 fn each_match(right: &Built, l: &Row, mut each: impl FnMut(Row) -> Result<()>) -> Result<()> {
+    each_pair(right, l, |r| each(l.iter().chain(r.iter()).cloned().collect()))
+}
+
+/// Gives `each` each row of `right` whose keys equal those of left row
+/// `l`, in order, as its bucket is read.
+pub(in crate::exec) fn each_pair(right: &Built, l: &Row, mut each: impl FnMut(&Row) -> Result<()>) -> Result<()> {
     let Some(b) = key(l, right.keys.iter().map(|k| k.0))? else { return Ok(()) };
     for r in right.bucket_rows(&b)? {
         let r = r?;
         if equal(&right.keys, l, &r)? {
-            each(l.iter().chain(r.iter()).cloned().collect())?;
+            each(&r)?;
         }
     }
     Ok(())

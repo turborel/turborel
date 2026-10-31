@@ -9,6 +9,8 @@
 //! no value made; any other reads them as values, made the first time it
 //! asks. Split from storage.rs (RULES.md R-SIZE-2).
 
+mod gathered;
+
 use std::sync::OnceLock;
 
 use super::{Row, Rows};

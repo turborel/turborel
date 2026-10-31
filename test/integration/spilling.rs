@@ -254,8 +254,9 @@ fn a_session_sets_its_own_work_memory() {
 /// INTERSECT, a hash join and an outer join on keys reading their
 /// partitions, a product and an outer join on no keys their right
 /// operand's run, DISTINCT its partitions, and a sort its runs as it merges
-/// them, by batches and row by row. The session's next statement runs,
-/// giving the rows it gives unspilled. Regression test (R-TEST-7): those
+/// them, by batches and row by row, the joins of an aggregation read by
+/// batches too. The session's next statement runs, giving the rows it
+/// gives unspilled. Regression test (R-TEST-7): those
 /// passes looked for no cancel, so a statement ran on until it read a table
 /// again, or to its end; DISTINCT read row by row, and a sort's merge, did
 /// so still.
@@ -273,6 +274,10 @@ fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
         "SELECT T.K, V.K FROM T FULL OUTER JOIN V ON T.K = V.C",
         "SELECT W.K, T.K FROM W, T",
         "SELECT W.K, T.K FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
+        "SELECT COUNT(*), SUM(U.K) FROM T, U WHERE T.G = U.G",
+        "SELECT COUNT(*), COUNT(V.K) FROM T FULL OUTER JOIN V ON T.K = V.C",
+        "SELECT COUNT(*), MAX(T.K) FROM W, T",
+        "SELECT COUNT(*), COUNT(W.K) FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
     ];
     let db = Database::new();
     filled(&db);

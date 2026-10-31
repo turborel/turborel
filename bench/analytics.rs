@@ -5,7 +5,8 @@
 //! indexed column, to 3 of its 10 groups by IN, grouped, and
 //! two of its columns read whole; joined with D, a table of a row or two
 //! for each group, by an inner join, the table its right operand, by
-//! LEFT, RIGHT and FULL outer joins, and as a product; DISTINCT of an
+//! LEFT, RIGHT and FULL outer joins, and as a product; joined with
+//! itself, its right operand past the work area; DISTINCT of an
 //! expression; and one row fetched by its key, the transactional work
 //! beside them. Each is measured on F, a row store
 //! table, then on FC, a column store one. Rates are of the table's rows
@@ -77,6 +78,10 @@ fn measure(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
     bench.measure(case("COUNT, SUM of a RIGHT join", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM D RIGHT JOIN {t} ON D.G = {t}.G"));
     bench.measure(case("COUNT, SUM of a FULL join", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM {t} FULL JOIN D ON {t}.G = D.G"));
     bench.measure(case("COUNT, SUM of a product of 10% by D", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM {t}, D WHERE {t}.C < 20000"));
+    bench.measure(
+        case("COUNT, SUM of a join past the work area, partitioned", "rows"),
+        scan("SELECT COUNT(*), SUM(T1.A) FROM {t} AS T1, {t} AS T2 WHERE T1.B = T2.B"),
+    );
     bench.measure(case("DISTINCT of an expression, 10 groups", "rows"), scan("SELECT DISTINCT G * 2 FROM {t}"));
     bench.measure(case("fetch one row of 16 columns by its key", "queries"), || {
         for n in 0..LOOKUPS {

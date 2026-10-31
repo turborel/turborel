@@ -30,7 +30,8 @@
 //! (D15); whether one is raised is the same, as each operand is read
 //! whole either way. A RIGHT join is swapped only if it keeps no
 //! conjunct that can raise (no operand's own, `Parted::keyed_alone`), so
-//! the LEFT join is probed by batches (D31).
+//! the LEFT join is probed by batches as a hash join is, its right moved
+//! to a table past the work area, not partitioned (D31).
 
 use super::indexed::{Equijoin, index_join, right_index_join};
 use super::{Built, PhysicalPlanner, Plan, of_left};

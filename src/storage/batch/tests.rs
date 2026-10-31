@@ -79,3 +79,34 @@ fn columns_of_approximate_numbers() {
     assert_eq!(shown(&Column::Floats(floats).into_values()), ["1.5E0", "-0E0", "NULL"]);
     assert!(Floats::default().values().is_empty());
 }
+
+/// Verifies: [DESIGN] RULES.md D31, a column gathered by row, as a join
+/// pairs a batch's rows: each kind gathered as one of its kind, a row taken
+/// again as often as picked, in the order picked, a null where none is
+/// picked or the row's is null; texts of a store's dictionaries keep their
+/// entries; a vector of nulls is of values.
+#[test]
+fn columns_gathered_by_row_keep_their_kind() {
+    let picks = [Some(2_usize), None, Some(0_usize), Some(2_usize)];
+    let ints = Column::Ints(Ints::new(vec![150_i64, -3_i64, 7_i64], 2_u32, Some(vec![false, true, false])));
+    let Column::Ints(gathered) = ints.gathered(&picks) else { panic!("integers") };
+    assert_eq!(shown(gathered.values()), ["0.07", "NULL", "1.50", "0.07"]);
+    let Column::Ints(whole) = ints.gathered(&[Some(0_usize), Some(2_usize)]) else { panic!("integers") };
+    assert!(whole.nulls.is_none(), "no row null, no nulls kept");
+    let Column::Floats(floats) = Column::Floats(Floats::new(vec![1.5_f64, 2.5_f64, -1.0_f64], None)).gathered(&picks) else {
+        panic!("numbers")
+    };
+    assert_eq!(shown(floats.values()), ["-1E0", "NULL", "1.5E0", "-1E0"]);
+    let texts = Texts::new("abcde".to_owned(), vec![1_usize, 3_usize, 5_usize], Some(vec![false, false, true]));
+    let Column::Texts(plain) = Column::Texts(texts).gathered(&[Some(1_usize), None, Some(2_usize), Some(0_usize)]) else { panic!("texts") };
+    assert_eq!((plain.get(0_usize), plain.get(1_usize), plain.get(2_usize), plain.get(3_usize)), (Some("bc"), None, None, Some("a")));
+    let entries = Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None);
+    let coded = Column::Texts(Texts::coded(Coded { codes: vec![1_u32, 0_u32, 1_u32], entries }, None));
+    let Column::Texts(recoded) = coded.gathered(&picks) else { panic!("texts") };
+    assert!(recoded.coded.is_some(), "entries kept");
+    assert_eq!(shown(recoded.values()), ["y", "NULL", "y", "y"]);
+    let values = Column::from(vec![Value::Char("v".into()), Value::Null, exact(5_i128, 0_u32)]);
+    assert_eq!(shown(values.gathered(&picks).values()), ["5", "NULL", "v", "5"]);
+    let Column::Values(nulls) = Column::nulls(2_usize) else { panic!("values") };
+    assert!(nulls.len() == 2_usize && nulls.iter().all(Value::is_null));
+}

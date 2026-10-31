@@ -1,7 +1,7 @@
 //! \[DESIGN\] Joins read a batch at a time (RULES.md D31,
 //! `exec/batch/joined.rs`): an aggregation or a projection over inner hash
-//! joins and LEFT, RIGHT and FULL outer joins of scans, filtered or not,
-//! gives what it gives row by row.
+//! joins, products and LEFT, RIGHT and FULL outer joins of scans, filtered
+//! or not, gives what it gives row by row, in the order asked of it.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -50,7 +50,7 @@ fn tables(db: &Database) -> Session {
 }
 
 /// Queries of a join: `{t}` the table, F or R.
-const JOINED: [&str; 10] = [
+const JOINED: [&str; 12] = [
     "SELECT COUNT(*), SUM({t}.B), MAX(D.NAME) FROM D, {t} WHERE D.G = {t}.G",
     "SELECT COUNT(*), SUM({t}.B), MIN(D.NAME) FROM {t}, D WHERE {t}.K < 300",
     "SELECT D.NAME, COUNT(*), SUM({t}.B) FROM D, {t} WHERE {t}.S = 'a' AND D.G > {t}.G GROUP BY D.NAME",
@@ -61,10 +61,12 @@ const JOINED: [&str; 10] = [
     "SELECT E.TAG, COUNT(*), SUM({t}.B) FROM {t}, D, E WHERE {t}.G = D.G AND D.NAME = E.NAME GROUP BY E.TAG",
     "SELECT P.N, COUNT(*) FROM {t}, P WHERE {t}.S = P.S GROUP BY P.N",
     "SELECT {t}.K, DC.NAME FROM {t}, DC WHERE {t}.G = DC.G AND {t}.K < 60",
+    "SELECT D.NAME, COUNT(*), SUM({t}.B), MAX({t}.S) FROM D, {t} GROUP BY D.NAME",
+    "SELECT {t}.K, {t}.B, D.NAME FROM {t}, D WHERE {t}.K < 25",
 ];
 
 /// Queries of an outer join: `{t}` the table, F or R.
-const OUTER: [&str; 13] = [
+const OUTER: [&str; 20] = [
     "SELECT COUNT(*), COUNT(D.NAME), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B > D.G * 100",
     "SELECT D.NAME, COUNT(*), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B > D.G GROUP BY D.NAME",
     "SELECT D.NAME, COUNT({t}.K), SUM({t}.B) FROM {t} RIGHT JOIN D ON {t}.G = D.G GROUP BY D.NAME",
@@ -78,6 +80,13 @@ const OUTER: [&str; 13] = [
     "SELECT COUNT(*), MIN({t}.K) FROM {t} LEFT JOIN D ON {t}.G = D.G WHERE D.NAME IS NULL",
     "SELECT COUNT(*), SUM({t}.B) FROM {t} LEFT JOIN D ON {t}.G = D.G AND D.NAME <> 'uno'",
     "SELECT D.NAME, COUNT({t}.K), SUM({t}.B) FROM D LEFT JOIN {t} ON D.G = {t}.G GROUP BY D.NAME",
+    "SELECT COUNT(*), COUNT(D.NAME), SUM({t}.B) FROM {t} FULL JOIN D ON {t}.G = D.G AND 10 / (D.G + 1) > 1 AND {t}.B / ({t}.G + 1) > 100",
+    "SELECT D.NAME, COUNT({t}.K), SUM({t}.B) FROM {t} RIGHT JOIN D ON {t}.G = D.G AND 10 / (D.G + 1) > 1 GROUP BY D.NAME",
+    "SELECT COUNT(*), COUNT(D.NAME), SUM({t}.B) FROM {t} FULL JOIN D ON {t}.G > D.G + 4",
+    "SELECT COUNT(*), COUNT(D.NAME), COUNT({t}.K) FROM {t} FULL JOIN D ON {t}.B / (D.G + 1) > 400",
+    "SELECT D.NAME, COUNT({t}.K) FROM {t} RIGHT JOIN D ON {t}.G < D.G - 4 GROUP BY D.NAME",
+    "SELECT {t}.K, {t}.B, {t}.S, D.NAME FROM {t} FULL JOIN D ON {t}.G = D.G AND {t}.K < 20",
+    "SELECT {t}.K, D.NAME FROM {t} LEFT JOIN D ON {t}.G = D.G AND {t}.B / ({t}.G + 1) > 100 WHERE {t}.K < 50",
 ];
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.20 GR2b, §5.11 GR2]:
@@ -107,9 +116,12 @@ fn joins_by_batch_answer_as_row_by_row() {
 /// store: a left row no right row matches, its key null or not, with
 /// nulls; one matched by two, twice; the join filtered; a condition
 /// beyond its keys, of both operands or of one, that can raise an error
-/// or not; a small left operand of a large right; RIGHT and FULL joins,
-/// a right row no left row matches after nulls. An error of a row of an
-/// operand is raised both ways.
+/// or not, an operand's own condition judged as the other has a row; a
+/// join on no keys, every pair judged; a small left operand of a large
+/// right; RIGHT and FULL joins, a right row no left row matches after
+/// nulls, its key null or not. An error of a row of an operand is raised
+/// both ways; EXISTS of a join that raises past its first row stops at it
+/// both ways (RULES.md D15).
 #[test]
 fn outer_joins_by_batch_answer_as_row_by_row() {
     let db = Database::new();
@@ -130,12 +142,22 @@ fn outer_joins_by_batch_answer_as_row_by_row() {
         "SELECT COUNT(*) FROM DC FULL JOIN (SELECT * FROM F WHERE B / (K - 7) > 0) AS V ON V.G = DC.G",
         "SELECT COUNT(*) FROM (SELECT * FROM F WHERE B / (K - 7) > 0) AS V RIGHT JOIN DC ON V.G = DC.G",
         "SELECT COUNT(*) FROM F, (SELECT * FROM DC WHERE 1 / (G - 3) > 0) AS V",
+        "SELECT COUNT(*) FROM (SELECT * FROM F WHERE B / (K - 7) > 0) AS V, D",
+        "SELECT COUNT(*) FROM (SELECT * FROM F WHERE B / (K - 7) > 0) AS V, D WHERE V.G = D.G",
+        "SELECT COUNT(*) FROM (SELECT * FROM F WHERE B / (K - 7) > 0) AS V LEFT JOIN D ON V.G = D.G",
+        "SELECT COUNT(*) FROM (SELECT * FROM F WHERE B / (K - 7) > 0) AS V FULL JOIN D ON V.G = D.G",
+        "SELECT COUNT(*) FROM F FULL JOIN D ON F.G = D.G AND 10 / (D.G - 3) > 0",
+        "SELECT COUNT(*) FROM F FULL JOIN D ON F.B / (D.G - 3) > 0",
     ] {
         exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
         assert_eq!(rows(&a, raising).err(), Some(Code::Data), "{raising}");
         exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
         assert_eq!(rows(&a, raising).err(), Some(Code::Data), "{raising}");
     }
+    // F's rows of K < 7 are joined before that of K = 7 raises.
+    let first = "SELECT COUNT(*) FROM D WHERE EXISTS (SELECT F.K FROM F FULL JOIN DC ON F.G = DC.G AND F.B / (F.K - 7) > 0)";
+    let (batched, row) = both_ways(&a, first);
+    assert_eq!((batched, row), (vec!["8".to_owned()], vec!["8".to_owned()]));
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D38: a join whose right operand
@@ -167,4 +189,58 @@ fn a_partitioned_join_by_batch_answers_as_row_by_row() {
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM F, R WHERE F.K = R.K"), Ok(vec!["6000".to_owned()]));
     let raising = "SELECT COUNT(*) FROM F, D WHERE F.G = D.G AND F.B / (D.G - D.G) > 0";
     assert_eq!(rows(&a, raising).err(), Some(Code::Data), "division by zero");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D38 [X3.135-1986 §8.3 GR3b]: a join of
+/// streams whose left operand is read in its groups' order, the planner
+/// asking it for an ORDER BY, gives its rows in that order by batches as
+/// row by row, its right operand past the work area or not: an inner hash
+/// join partitioned, its joined rows merged into the left's order; a
+/// product whose right operand is in a run, read again for each left row;
+/// an outer join.
+#[test]
+fn joins_by_batch_keep_their_left_operands_order() {
+    let db = Database::new();
+    let a = tables(&db);
+    a.run(
+        "CREATE TABLE O (K INTEGER, G INTEGER, B INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, COLUMNSTORE.ORDER = 'G')",
+    )
+    .unwrap();
+    a.run("INSERT INTO O SELECT K, G, B FROM R WHERE K < 3000").unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    for query in [
+        "SELECT O.G, R.G, COUNT(*), SUM(R.B) FROM O, R WHERE O.K = R.B GROUP BY O.G, R.G ORDER BY O.G",
+        "SELECT O.G, R.G, COUNT(*), SUM(R.B) FROM O, R WHERE R.K < 2000 AND O.K < 40 GROUP BY O.G, R.G ORDER BY O.G",
+        "SELECT O.G, D.NAME, COUNT(*) FROM O LEFT JOIN D ON O.G = D.G AND O.B / (O.K + 1) > 0 GROUP BY O.G, D.NAME ORDER BY O.G",
+    ] {
+        let explained = a.explain(query, &turborel::params::Params::new()).unwrap();
+        let plan = explained.split("-- physical:").nth(1).unwrap_or_default();
+        assert!(plan.contains("in order of") && !plan.contains("Sort"), "{plan}");
+        let batched = rows(&a, query);
+        exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+        assert_eq!(batched, rows(&a, query), "{query}");
+        exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D44: a product read by batches whose
+/// operands are held in memory, reading no table as it pairs them, looks
+/// for a cancel as it makes each batch: past its STATEMENT.TIMEOUT_MS it is
+/// cancelled (SQLCODE -920). Regression test (R-TEST-7): a product of
+/// held operands made its batches without looking, so a count of a
+/// billion pairs ran on to its end.
+#[test]
+fn a_product_by_batches_is_cancelled_as_it_pairs() {
+    let db = Database::new();
+    let a = tables(&db);
+    a.run("CREATE TABLE T (K INTEGER)").unwrap();
+    a.run("INSERT INTO T VALUES (1)").unwrap();
+    for _ in 0..10 {
+        a.run("INSERT INTO T SELECT K FROM T").unwrap();
+    }
+    a.commit().unwrap();
+    exec(&a, "SET STATEMENT.TIMEOUT_MS = 50").unwrap();
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM T A, T B, T C").err(), Some(Code::Cancelled));
 }

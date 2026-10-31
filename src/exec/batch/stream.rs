@@ -2,9 +2,9 @@
 //! given a batch at a time, for an aggregation or a projection over it to
 //! read. A subtree gives them if it is a table's scan; a filter of one,
 //! told the simple conjuncts of its condition (`scanned`), or of any other
-//! stream; an inner hash join or an outer join of streams [ISO/IEC
-//! 9075:1992 §7.5] (`joined.rs`); a projection of columns of a stream, its
-//! batches the vectors of those columns, in order, moved; one of
+//! stream; an inner hash join, a product or an outer join of streams
+//! [ISO/IEC 9075:1992 §7.5] (`joined.rs`); a projection of columns of a
+//! stream, its batches the vectors of those columns, in order, moved; one of
 //! expressions of its columns, each evaluated of the rows a batch keeps
 //! (`project::computed`); or the rows of
 //! two streams each holding every column of their rows, alike

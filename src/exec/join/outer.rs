@@ -13,7 +13,9 @@
 //! operand's own condition, its ON conjuncts that can raise an error of
 //! its columns alone, is judged of each of its rows once the other is
 //! known to have one, as on every row of their product [§7.5 GR1c], and a
-//! row it is not true of matches none (RULES.md D15). Split from
+//! row it is not true of matches none (RULES.md D15). A join of streams
+//! has its right operand held so, if it fits the work area, and probes it
+//! by batches (`prepared`, `exec/batch/joined/outer.rs`). Split from
 //! exec/join.rs (RULES.md R-SIZE-2).
 
 mod chunked;
@@ -41,20 +43,20 @@ use crate::value::{Bucket, Value, compare};
 pub(super) const PLACE_BYTES: usize = size_of::<usize>() + 1;
 
 /// What an outer join matches on, and keeps.
-pub(super) struct Spec {
-    pub(super) kind: OuterJoin,
+pub(in crate::exec) struct Spec {
+    pub(in crate::exec) kind: OuterJoin,
     /// Pairs of a left column and a right column that are equal.
-    pub(super) keys: Vec<(usize, usize)>,
+    pub(in crate::exec) keys: Vec<(usize, usize)>,
     /// The rest of the `<join condition>`, over the pair's columns.
-    pub(super) cond: Option<Cond>,
+    pub(in crate::exec) cond: Option<Cond>,
     /// Its conjuncts that can raise an error of the left's columns alone
     /// and of the right's, each over its operand's own: each judged of
     /// every row of its operand when the other has a row, a row it is not
     /// true of matching none (`Plan::OuterJoin`, RULES.md D15).
-    pub(super) own: (Option<Cond>, Option<Cond>),
+    pub(in crate::exec) own: (Option<Cond>, Option<Cond>),
     /// The degrees of the left and right operands, the widths of the nulls.
-    pub(super) widths: (usize, usize),
-    pub(super) runner: Runner,
+    pub(in crate::exec) widths: (usize, usize),
+    pub(in crate::exec) runner: Runner,
 }
 
 impl Spec {
@@ -77,7 +79,7 @@ impl Spec {
 
     /// Whether left row `l` may match a right row: its own condition, if
     /// it has one, true of it. Asked only when the right has a row.
-    pub(super) fn left_may_match(&self, l: &Row) -> Result<bool> {
+    pub(in crate::exec) fn left_may_match(&self, l: &Row) -> Result<bool> {
         may_match(self.own.0.as_ref(), l, &self.runner)
     }
 
@@ -135,20 +137,11 @@ pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// they were read. Never inlined into its callers, whose frames are on the
 /// stack while the operands are made (RULES.md R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn outer_of(
-    joining: Joining,
-    right: RowIter,
-    left: impl FnOnce() -> RowIter,
-    (db, tx): (&Arc<State>, TxId),
-) -> RowIter {
-    let Joining { kind, keys, cond, own, widths } = joining;
-    // An operand's own conditions are judged before its rows are matched
-    // by keys; with none, every pair is judged, all of its condition.
-    if keys.is_empty() && own.is_some() {
-        return failed(SqlError::new(Code::Api, "[DESIGN] an outer join on no keys has an operand's own condition"));
-    }
-    let own = own.map_or((None, None), |own| *own);
-    let spec = Spec { kind, keys, cond, own, widths, runner: Runner::new(db, tx) };
+fn outer_of(joining: Joining, right: RowIter, left: impl FnOnce() -> RowIter, (db, tx): (&Arc<State>, TxId)) -> RowIter {
+    let spec = match spec_of(joining, (db, tx)) {
+        Ok(spec) => spec,
+        Err(e) => return failed(e),
+    };
     let mut work = Work::of(db, tx);
     if spec.keys.is_empty() {
         return match Rescanned::of(right, &mut work) {
@@ -164,6 +157,91 @@ pub(in crate::exec) fn outer_of(
         Ok(Held::Part(rows, rest)) => spilled::joined(left(), (rows, rest), &spec, work),
         Err(e) => failed(e),
     }
+}
+
+/// What `joining` matches on and keeps, its subqueries run as `tx` runs
+/// them.
+///
+/// # Errors
+///
+/// An operand's own condition of a join on no keys (SQLCODE -910).
+fn spec_of(joining: Joining, (db, tx): (&Arc<State>, TxId)) -> Result<Spec> {
+    let Joining { kind, keys, cond, own, widths } = joining;
+    // An operand's own conditions are judged before its rows are matched
+    // by keys; with none, every pair is judged, all of its condition.
+    if keys.is_empty() && own.is_some() {
+        return Err(SqlError::new(Code::Api, "[DESIGN] an outer join on no keys has an operand's own condition"));
+    }
+    let own = own.map_or((None, None), |own| *own);
+    Ok(Spec { kind, keys, cond, own, widths, runner: Runner::new(db, tx) })
+}
+
+/// \[DESIGN\] The right operand of an outer join made ready for a probe
+/// by batches (`exec/batch/joined`, RULES.md D31): held in memory, or,
+/// past the work area, left to the row path.
+pub(in crate::exec) enum Prepared {
+    Held(Holding),
+    Rowwise(Rowwise),
+}
+
+/// An outer join's right operand held in memory: what the join matches on
+/// and keeps, the operand's rows, of a join on keys the places of each
+/// bucket's rows, in order (none of a join on no keys, every row a
+/// candidate), and the work area they are counted in.
+pub(in crate::exec) struct Holding {
+    pub(in crate::exec) spec: Spec,
+    pub(in crate::exec) rows: Arc<Vec<Row>>,
+    pub(in crate::exec) buckets: Option<HashMap<Vec<Bucket>, Arc<[usize]>>>,
+    /// Held while the rows are.
+    _work: Work,
+}
+
+/// An outer join whose right operand outgrew its work area, joined as the
+/// row path joins it once given its left operand's rows.
+pub(in crate::exec) struct Rowwise {
+    spec: Spec,
+    right: Past,
+    work: Work,
+}
+
+/// The right operand of a `Rowwise`: of a join on keys, the rows that came
+/// before it was full, and the rest; of one on none, in a run.
+enum Past {
+    Part(Vec<Row>, RowIter),
+    Scanned(Rescanned, usize),
+}
+
+impl Rowwise {
+    /// The rows of the join of `left` with its right operand.
+    pub(in crate::exec) fn joined(self, left: RowIter) -> RowIter {
+        match self.right {
+            Past::Part(rows, rest) => spilled::joined(left, (rows, rest), &self.spec, self.work),
+            Past::Scanned(scanned, count) => Box::new(OuterRows::new(left, (Side::Scanned(scanned), count), (self.spec, self.work))),
+        }
+    }
+}
+
+/// The right operand's rows `right` of the outer join `joining` says,
+/// read: held in memory if they fit the work area, of a join on keys with
+/// the places of each bucket's rows, as `outer_of` holds them.
+///
+/// # Errors
+///
+/// The right operand's; the spill area's; as `spec_of`.
+pub(in crate::exec) fn prepared(joining: Joining, right: RowIter, (db, tx): (&Arc<State>, TxId)) -> Result<Prepared> {
+    let spec = spec_of(joining, (db, tx))?;
+    let mut work = Work::of(db, tx);
+    if spec.keys.is_empty() {
+        let (scanned, count) = Rescanned::of(right, &mut work)?;
+        return Ok(match scanned {
+            Rescanned::Held(rows) => Prepared::Held(Holding { spec, rows, buckets: None, _work: work }),
+            spilled @ Rescanned::Spilled(..) => Prepared::Rowwise(Rowwise { spec, right: Past::Scanned(spilled, count), work }),
+        });
+    }
+    Ok(match held(right, &spec.keys, work.limit())? {
+        Held::All(table) => Prepared::Held(Holding { spec, rows: table.rows, buckets: Some(table.buckets), _work: work }),
+        Held::Part(rows, rest) => Prepared::Rowwise(Rowwise { spec, right: Past::Part(rows, rest), work }),
+    })
 }
 
 /// The right operand of an outer join on keys, in memory: its rows, and for

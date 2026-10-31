@@ -15,8 +15,11 @@
 //! planner relies on. Each left row is numbered as it is read, each
 //! partition's joined rows written in its left rows' order with their
 //! numbers, and the partitions' joined rows merged by number, in passes
-//! of as many as the work area reads at once. Split from exec/join.rs
-//! (RULES.md R-SIZE-2).
+//! of as many as the work area reads at once. A join of streams whose
+//! left operand's order is not asked for takes the pairs in turn
+//! (`Pending`) and gives each pair's joined rows by batches as they are
+//! made, written to no run (`exec/batch/joined/parted.rs`). Split from
+//! exec/join.rs (RULES.md R-SIZE-2).
 
 use std::hash::{BuildHasher, RandomState};
 
@@ -28,6 +31,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::spill::{Records, SpillRun, bucket_key, record_row, row_bytes, row_record};
 use crate::storage::Row;
 use crate::value::Bucket;
+use crate::value::types::TypeRegistry;
 
 /// \[DESIGN\] The default of SPILL.PARTITIONS: the most partitions a join
 /// writes at once.
@@ -125,46 +129,91 @@ pub(in crate::exec) fn joined(left: RowIter, parts: Partitions, mut work: Work) 
 }
 
 /// `joined`'s work: the left operand partitioned, each pair of partitions
-/// joined, and their joined rows merged.
+/// joined, and their joined rows, numbered, merged.
 fn merged(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Merge> {
-    let mut numbers = 0_u64..;
-    let lefts = parts.lefts(left.map(|r| r.map(|row| (numbers.next().unwrap_or(u64::MAX), row))), work)?;
-    let mut sources = Vec::new();
-    pairs((parts, lefts), work, (&mut sources, 0))?;
-    merge_all(sources, work)
-}
-
-/// Joins each pair of partitions of `parts` and `lefts`, their joined rows,
-/// numbered, added to `sources`; a right partition that outgrows the work
-/// area is partitioned again, at `depth` from the first.
-fn pairs(
-    (parts, lefts): (Partitions, Vec<Box<dyn SpillRun>>),
-    work: &mut Work,
-    (sources, depth): (&mut Vec<Records>, usize),
-) -> Result<()> {
+    let mut pending = Pending::of(left, parts, work)?;
     let types = work.types().clone();
-    for ((right, bytes), probes) in parts.right.into_iter().zip(lefts) {
-        let held = types.clone();
-        let rows = right.into_records()?.map(move |r| r.and_then(|record| record_row(&record, &held)));
-        if bytes > work.limit() && depth < work.depth() {
-            let mut sub = Partitions::new(parts.keys.clone(), work)?;
-            sub.add_rights(rows)?;
-            // A partition that did not shrink is built in a table.
-            let shrank = sub.right.iter().all(|(_, b)| *b < bytes);
-            let probed = types.clone();
-            let sub_lefts = sub.lefts(probes.into_records()?.map(move |r| r.and_then(|record| unnumbered(&record, &probed))), work)?;
-            pairs((sub, sub_lefts), work, (&mut *sources, if shrank { depth.saturating_add(1) } else { usize::MAX }))?;
-            continue;
-        }
-        let Right::Held(built) = Built::of(rows, parts.keys.clone(), (&mut *work, Full::Table))? else { return Err(lost()) };
+    let mut sources = Vec::new();
+    while let Some((built, probes)) = pending.next(work)? {
         let mut out = work.run()?;
-        for record in probes.into_records()? {
+        for record in probes {
             let (n, l) = unnumbered(&record?, &types)?;
             each_match(&built, &l, |row| out.push(&numbered(n, &row)))?;
         }
         sources.push(out.into_records()?);
     }
-    Ok(())
+    merge_all(sources, work)
+}
+
+/// \[DESIGN\] The pairs of a partitioned hash join's partitions not yet
+/// joined, each taken in turn: its right partition built in memory, or,
+/// past the work area, partitioned again with its left, by another hash,
+/// up to SPILL.PARTITION_DEPTH times, or built in a table of the spill
+/// area once that depth is passed or it did not shrink.
+pub(in crate::exec) struct Pending {
+    keys: Vec<(usize, usize)>,
+    types: TypeRegistry,
+    pairs: Vec<Pair>,
+}
+
+/// A pair of partitions: the right's run and the bytes its rows take held
+/// in memory, the left's run of numbered rows, and how many times they
+/// were partitioned again.
+struct Pair {
+    right: Box<dyn SpillRun>,
+    bytes: usize,
+    left: Box<dyn SpillRun>,
+    depth: usize,
+}
+
+impl Pending {
+    /// The pairs of the partitioned right operand `parts` and of the left
+    /// operand `left`, its rows numbered in the order they came and
+    /// written to partitions of `work`.
+    ///
+    /// # Errors
+    ///
+    /// The left operand's; the spill area's.
+    pub(in crate::exec) fn of(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Pending> {
+        let mut numbers = 0_u64..;
+        let lefts = parts.lefts(left.map(|r| r.map(|row| (numbers.next().unwrap_or(u64::MAX), row))), work)?;
+        let mut pending = Pending { keys: parts.keys.clone(), types: work.types().clone(), pairs: Vec::new() };
+        pending.add(parts, lefts, 0);
+        Ok(pending)
+    }
+
+    /// Adds the pairs of `parts` and `lefts`, partitioned `depth` times.
+    fn add(&mut self, parts: Partitions, lefts: Vec<Box<dyn SpillRun>>, depth: usize) {
+        // Taken from the end: the first partitions first.
+        let pairs = parts.right.into_iter().zip(lefts).map(|((right, bytes), left)| Pair { right, bytes, left, depth });
+        self.pairs.extend(pairs.rev());
+    }
+
+    /// The next pair of partitions to join: the right built, and the left's
+    /// numbered rows, as records; none once every pair is taken.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    pub(in crate::exec) fn next(&mut self, work: &mut Work) -> Result<Option<(Built, Records)>> {
+        while let Some(Pair { right, bytes, left, depth }) = self.pairs.pop() {
+            let held = self.types.clone();
+            let rows = right.into_records()?.map(move |r| r.and_then(|record| record_row(&record, &held)));
+            if bytes > work.limit() && depth < work.depth() {
+                let mut sub = Partitions::new(self.keys.clone(), work)?;
+                sub.add_rights(rows)?;
+                // A partition that did not shrink is built in a table.
+                let shrank = sub.right.iter().all(|(_, b)| *b < bytes);
+                let probed = self.types.clone();
+                let sub_lefts = sub.lefts(left.into_records()?.map(move |r| r.and_then(|record| unnumbered(&record, &probed))), work)?;
+                self.add(sub, sub_lefts, if shrank { depth.saturating_add(1) } else { usize::MAX });
+                continue;
+            }
+            let Right::Held(built) = Built::of(rows, self.keys.clone(), (&mut *work, Full::Table))? else { return Err(lost()) };
+            return Ok(Some((built, left.into_records()?)));
+        }
+        Ok(None)
+    }
 }
 
 /// The error of a partition that is not where it was put.

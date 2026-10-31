@@ -1631,20 +1631,43 @@ write-ahead logging.
   - a join of streams (`exec/batch/joined.rs`), the columns its keys and
     conditions read held by their batches. The right operand is read
     first, by batch if its tables allow (a column store's), else by row.
-- **Hash join.** An inner hash join, and a LEFT one on keys whose
-  further condition cannot raise and whose operands have no condition of
-  their own (D15), build as the row path does. Held in the work area,
-  each left batch probes it, making a batch of joined rows, left columns
-  then right. The condition is judged for each pair of equal keys, on a
+- **Joined batches** (`joined/pairs.rs`). A join makes a batch of
+  joined rows at a time, left columns then right:
+  - left vectors gathered from the batch probing, each of its own kind
+    (`Column::gathered`), so a column passing through keeps its
+    integers, numbers or texts; right columns of values;
+  - a batch whose probe raises gives its earlier joined rows first, then
+    the error (D15);
+  - each batch is made only while the statement is not cancelled (D44),
+    as a join of operands held in memory reads no table as it pairs.
+- **Hash join.** An inner hash join, and a LEFT one whose condition
+  cannot raise and whose operands have no condition of their own (D15),
+  build as the row path does. Held in the work area, each left batch
+  probes it. The condition is judged for each pair of equal keys, on a
   row of the pair's values; an unmatched LEFT row is joined with nulls.
-  - Partitioned: an inner join's rows are made row by row and gathered;
-    a LEFT join's right operand outgrowing the work area moves to a
+  - Partitioned: each pair of partitions in turn, its right built, its
+    left rows probing it, their rows put in batches as made, not merged
+    into the left's order (`joined/parted.rs`);
+  - a LEFT join's right operand outgrowing the work area moves to a
     spill-area table, which every left row probes in order.
-- **Other joins.** Other outer joins (FULL, a RIGHT one not planned as
-  a LEFT one (D35), a LEFT one whose condition can raise or whose
-  operand has its own condition) and
-  products join batch rows as the row path does and gather the results
-  into batches, so operands are still read by batch.
+- **Outer joins.** Any other (FULL, a RIGHT one not planned as a LEFT
+  one (D35), a LEFT one whose condition can raise or whose operand has
+  its own condition) holds its right as the row path does: on keys
+  hashed, on none each row a candidate; a flag per row, whether it
+  matched (`joined/outer.rs`).
+  - Each left batch probes it, operands' own conditions and the
+    condition judged as the row path judges them.
+  - Once the left is read, a preserved right's unmatched rows, null keys
+    among them, follow after nulls.
+  - A right past the work area: joined as the row path joins it,
+    partitioned or from a run, its rows gathered into batches.
+- **Products** (`joined/nested.rs`). Each left batch is paired with the
+  right: held in memory, each left row with every right row in turn; in
+  a run, read once a batch, each right row with every row of the batch.
+- **Order.** A left operand the planner asks for in an order (a scan in
+  its table's) is read so and gathered into batches, and its joins keep
+  it: a partitioned join merges by number, a product reads its run again
+  for each left row.
 - **Aggregation** (`exec/batch.rs`). Of a stream, set functions that
   count rows or take a column, none DISTINCT, grouped by stream columns
   or not at all, are fed from the vectors:
@@ -1879,7 +1902,7 @@ picks by estimate, so a new method needs no change to the planner.
   - an operand that can raise an error may be built: each operand is
     read whole either way, so only which error comes first changes
     (D15). A RIGHT join keeping an ON conjunct that can raise is not
-    swapped: a LEFT one with such a conjunct is not probed by batches.
+    swapped; it is probed by batches as it is (D31).
 
 *Why:* the General Rules define results, not plans; any plan giving the
 same results and errors is the optimizer's to choose.

@@ -140,15 +140,12 @@ The registry, scopes and SET statements exist (D36). Still to do:
   same: which plan to keep, and when to plan again, is a decision to
   make (a generic plan beside the values' own, kept while it costs no
   more, is one way).
-- **Joins by batches** (RULES.md D31): FULL outer joins, RIGHT and LEFT
-  ones whose condition can raise or whose operand has a condition of its
-  own (a RIGHT one too if an operand can raise, or its left has more
-  rows), and products: their operands are read by batches, but their rows
-  joined (a product's paired) row by row and gathered into batches after,
-  as a probe by batches needs a flag of each right row held and the
-  right's rows of a null key kept; so too an inner join's partitions past
-  the work area. A join's batches lose their typed vectors (`Column::
-  Values`).
+- **Joins by batches** (RULES.md D31): a join's right operand is held as
+  rows, so its columns leave the join as values (`Column::Values`), as do
+  a partitioned join's left columns, read back from runs; only the batch
+  probing keeps its typed vectors. An outer join whose right operand
+  outgrows the work area still joins row by row, partitioned or from a
+  run, its rows gathered into batches after.
 - **Operators over vectors** (D31): a sort, EXCEPT and INTERSECT over
   streams, of their operands' vectors, not of rows made of them; grouping
   of many groups: past the work area each row of a group not held is
