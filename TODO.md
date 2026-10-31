@@ -54,7 +54,8 @@ item becomes a decision in RULES.md when its design settles.
 - **Plans kept, further** (RULES.md D45): the access paths kept too, for
   values that would choose the same ones, where each execution now
   rewrites and plans the kept bound plan; positioned UPDATE and DELETE
-  kept as the searched ones are; and a session's declared local temporary
+  kept as the searched ones are; a dynamic cursor's query (RULES.md D58),
+  bound anew at each OPEN; and a session's declared local temporary
   tables, which make its catalog anew at each call, kept by what they
   are rather than by the catalog's identity.
 - **Stored, named modules** [X3.135-1986 §7]: their procedures run with
