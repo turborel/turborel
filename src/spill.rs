@@ -1,7 +1,6 @@
-//! \[DESIGN\] Where operators that outgrow memory put their rows (RULES.md
-//! D38): an extension point, `Spill`. An operator that has used its work
-//! area (the setting MEMORY.WORK_BYTES) asks for an area of its own, reserved of
-//! the database's memory budget, and makes in it what it needs:
+//! \[DESIGN\] Where operators past their work area (MEMORY.WORK_BYTES) put
+//! their rows (RULES.md D38), an extension point (`Spill`): each makes, in
+//! an area of its own reserved of the database's memory budget, what it needs:
 //!
 //! * a **table** (`SpillTable`): byte keys to byte values, a key's values
 //!   in the order added, as a hash join's right operand or the rows of a
@@ -11,7 +10,7 @@
 //!   next.
 //!
 //! Made of runs: a list that spills (`spill/list.rs`), and byte records
-//! sorted (`spill/sort.rs`).
+//! sorted (`spill/sort.rs`); of a table, a map that spills (`spill/map.rs`).
 //!
 //! The built-in provider (`spill/paged.rs`) keeps an area in a temporary
 //! pager file of its own, through a buffer pool of the area's size, so
@@ -24,6 +23,7 @@
 //! exactly when the operator would find them equal.
 
 mod list;
+pub(crate) mod map;
 pub(crate) mod paged;
 mod sort;
 #[cfg(test)]

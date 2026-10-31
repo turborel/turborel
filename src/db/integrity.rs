@@ -1,6 +1,6 @@
 //! \[EXTENSION\] Constraints checked at the end of each statement [ISO/IEC
 //! 9075:1992 §10.6 GR3]: what a statement did to rows (`Effects`), its
-//! referential actions run first [§11.8 GR5, GR6] (`integrity/references.rs`),
+//! referential actions run first [§11.8 GR5, GR6] (`integrity/actions.rs`),
 //! which may do more, then each constraint those rows may have broken
 //! (`Check`): NOT NULL, CHECK [§11.6 GR3], each FOREIGN KEY of the rows
 //! [§11.8 GR2], UNIQUE and PRIMARY KEY [§11.7 GR2], those to the rows
@@ -23,8 +23,10 @@
 //! values, the checks gathered of it, and the checks of deferred
 //! constraints waiting, are held as lists that spill past MEMORY.WORK_BYTES
 //! (`integrity/held.rs`, RULES.md D38): read back in order, the rows of
-//! each UNIQUE constraint checked as they come (`integrity/keys.rs`).
+//! each UNIQUE constraint checked as they come (`integrity/keys.rs`). What
+//! the referential actions keep is bounded alike (`integrity/actions.rs`).
 
+mod actions;
 mod gather;
 mod held;
 mod keys;

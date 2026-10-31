@@ -219,14 +219,14 @@ The registry, scopes and SET statements exist (D36). Still to do:
   creation, a file recording the function's id alone; so a key of either
   cannot be retired, and changing one means encrypting or checksumming
   every file again.
-- **Referential checks and actions, bounded:** what they gather is held
-  in memory, unbounded and not of the budget: the rows that match each
-  row an action is for (`State::matching_rows`,
-  `db/integrity/references.rs`), the referenced table as it was before
-  the statement for MATCH PARTIAL, read whole for each change, and the
-  values a statement gave each row of a table an action may change
-  [ISO/IEC 9075:1992 §11.8 GR7]. They should spill as the statement's
-  effects do.
+- **Referential searches, further:** a search through an index of the
+  columns searched (`db/integrity/references.rs`) takes every row id of
+  the key at once (`Index::rows`), in memory and not of the budget: all
+  the children of a parent; a probe of the whole key (`Index::search`)
+  would read them as taken. With MATCH PARTIAL, the rows each matching
+  row matched before the statement [ISO/IEC 9075:1992 §11.8 GR4] are
+  found by reading the referenced table as it was, once for each
+  matching row of each row changed (`db/integrity/actions.rs`).
 - **Spills, further:** SPILL.ENCODINGS compresses spill files (LZ4), off
   by default: on 2026-10-31 it ran from 17% slower to 45% faster, most
   within 10%, on an SSD the system's cache kept up with; a disk slower
