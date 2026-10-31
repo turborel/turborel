@@ -281,11 +281,13 @@ the log is what can put it right.
 
 **D32. SQL-86 and SQL-92 are one language.** ISO/IEC 9075:1992 extends
 X3.135-1986; where they differ, the newer wins, and a restriction SQL-92
-keeps only for Entry or Intermediate SQL is lifted. Later standards will be
-added the same way. The texts are kept locally, untracked, and cited as
-`[X3.135-1986 §…]` and `[ISO/IEC 9075:1992 §…]`. Not claimed: the module
-language and embedded SQL. Never implemented: character sets other than the
-one there is, and collations.
+keeps only for Entry or Intermediate SQL is lifted. SQL-92 comes in full
+first; later standards, through SQL:2023, are added the same way after,
+each written from its own text, never from memory or other products. The
+texts are kept locally, untracked, and cited as `[X3.135-1986 §…]` and
+`[ISO/IEC 9075:1992 §…]`. Not claimed: the module language and embedded
+SQL. Never implemented: character sets other than the one there is,
+collations and translations, and leap seconds (CONFORMANCE.md).
 *Why:* one consistent language serves programs better than a choice of
 dialects; one character set keeps comparison, keys and storage simple.
 
@@ -628,8 +630,9 @@ storage empty. Its rows are each session's.
   the session's own instance: its rows, its indexes and its lock
   (`db/temporary.rs`), so binding, constraints and indexes need nothing
   of their own for it.
-- An instance is made in memory, of the database's budget, when the
-  session first writes it, and is gone with the session. Its changes are
+- An instance is made in memory, of the database's budget, when a
+  transaction of the session first reads or writes it, and is gone with
+  the session. Its changes are
   not logged: they are never recovered [§4.9].
 - ON COMMIT DELETE ROWS empties an instance as its transaction ends,
   committed or rolled back: as GR3 of §14.3 leaves it, or as it was.
@@ -951,7 +954,8 @@ the work at a time of its own choosing.
   told.
 - Engines and index methods take the manager through `Host`, as they take
   the memory budget (D38): a directory of their own under the
-  database's, shadowed or not as they declare, and scratch files; what
+  database's, kept as they write it (none is shadowed yet), and scratch
+  files; what
   they open is theirs to show, limit and close as the database's.
 - Files of a database in memory are of `MemoryFileSystem`, their bytes
   reserved of MEMORY.BUDGET_BYTES; its scratch files too, never the system's
@@ -1671,8 +1675,8 @@ the same results and errors is the optimizer's to choose.
   and what it spends on its estimates; limits that guard the reading of a
   format (a block's longest payload); how often the diagnostics are told
   of one trouble (a minute); and the answer to a failure of the system's
-  (the pause after an accept fails). What `OpenOptions` keeps (the log of
-  older row versions) is the host program's to give.
+  (the pause after an accept fails). What `OpenOptions` keeps (the log's
+  durability, until it is a setting, and the log of older row versions) is the host program's to give.
 - Names: each setting is of a group, `GROUP.NAME`, a plug-in's under its
   own name; a quantity names its unit (`_BYTES`, `_MS`); a word means one
   thing throughout; choices take one vocabulary (`ON`, `OFF`, and words of
@@ -2351,7 +2355,8 @@ operator must be able to bound what any statement takes.
   datetime CAST, a DEFAULT of them written, in the statement or a view it
   reads; `value::datetime::Clocked`), is not kept: it is made at each
   execution. An INSERT's columns not written take their defaults anew.
-  `Prepared::plans_made` counts the plans made; its clones share them.
+  `Prepared::plans_made` counts the bound plans made, not those a kept
+  one served; its clones share them.
 - The protocol: Prepare, Prepared with the parameters' types and the
   columns; Execute with values and a row limit, a query's cursor opened
   and its rows sent up to the limit, then Suspended if it has more, which
