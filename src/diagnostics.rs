@@ -325,6 +325,11 @@ fn worth(code: Code) -> Option<Level> {
     }
 }
 
+/// \[DESIGN\] The name of a sink that gives none of its own
+/// (`Diagnostics::name`): the group of no built-in setting, so what it
+/// declares is never taken for the database's own (RULES.md D36).
+pub const DIAGNOSTICS_PLUGIN: &str = "diagnostics_plugin";
+
 /// \[DESIGN\] Where the database's events go: an extension point (RULES.md
 /// D40).
 ///
@@ -335,6 +340,17 @@ fn worth(code: Code) -> Option<Level> {
 /// * It never calls back into the `Database` or its sessions (RULES.md
 ///   R-ERR-4), and never panics.
 pub trait Diagnostics: Send + Sync {
+    /// Its name, for its settings: by default `DIAGNOSTICS_PLUGIN`, which
+    /// no built-in setting is under (RULES.md D36).
+    fn name(&self) -> &'static str {
+        DIAGNOSTICS_PLUGIN
+    }
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any: declared as the
+    /// database is given it (`Database::set_diagnostics`). Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// Takes `event`.
     fn event(&self, event: &Event);
 }

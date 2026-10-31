@@ -32,7 +32,7 @@ fn database() -> (Database, Kept) {
     db.create_user("OWN", b"").unwrap();
     db.set_owner("OWN").unwrap();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     (db, kept)
 }
 

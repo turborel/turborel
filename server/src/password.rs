@@ -21,9 +21,12 @@
 
 use std::fmt::Write as _;
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use turborel::db::{Credentials, Database};
 use turborel::error::{Code, Result, SqlError};
+use turborel::settings::{Configurable, Settings};
+use turborel::value::Value;
 use turborel_protocol::scram::{Key, Keys, salted_password};
 
 use crate::auth::{Authenticator, Exchange, Peer, Step};
@@ -40,10 +43,15 @@ pub const SALT_BYTES: usize = 16;
 const DEFAULT: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
 
 /// \[DESIGN\] What makes verifiers: PBKDF2-HMAC-SHA256, at `iterations`,
-/// and SCRAM's keys of it.
-#[derive(Debug, Clone, Copy)]
+/// and SCRAM's keys of it. Given to the database as its credentials, it
+/// is told SERVER.PASSWORD_ITERATIONS as any plug-in is told its settings
+/// (`Configurable`, RULES.md D36), and takes it as the setting's effect
+/// says, as the server starts: until the server has started, the value
+/// set; then the one it started with, until it starts again.
+#[derive(Debug)]
 pub struct Pbkdf2 {
-    iterations: NonZeroU32,
+    /// Never 0: set only from a `NonZeroU32`.
+    iterations: AtomicU32,
 }
 
 /// `bytes` in hex, two lower-case digits each.
@@ -105,7 +113,7 @@ pub fn check(verifier: &[u8], password: &str) -> bool {
 impl Pbkdf2 {
     /// Verifiers of `iterations` iterations.
     pub fn new(iterations: NonZeroU32) -> Pbkdf2 {
-        Pbkdf2 { iterations }
+        Pbkdf2 { iterations: AtomicU32::new(iterations.get()) }
     }
 
     /// Verifiers of the iterations SERVER.PASSWORD_ITERATIONS of `db` says.
@@ -116,7 +124,7 @@ impl Pbkdf2 {
 
     /// The iterations of the verifiers it makes.
     pub fn iterations(&self) -> NonZeroU32 {
-        self.iterations
+        NonZeroU32::new(self.iterations.load(Ordering::Relaxed)).unwrap_or(DEFAULT)
     }
 
     /// The verifier of `password`, with a new random salt.
@@ -127,8 +135,9 @@ impl Pbkdf2 {
     pub fn make(&self, password: &str) -> Result<String> {
         let mut salt = [0_u8; SALT_BYTES];
         aws_lc_rs::rand::fill(&mut salt).map_err(|_| SqlError::new(Code::Io, "[DESIGN] the system gave no randomness for a salt"))?;
-        let keys = Keys::of(&salted_password(password, &salt, self.iterations));
-        Ok(format!("${SCHEME}$i={}${}${}${}", self.iterations, hex(&salt), hex(&keys.stored), hex(&keys.server)))
+        let iterations = self.iterations();
+        let keys = Keys::of(&salted_password(password, &salt, iterations));
+        Ok(format!("${SCHEME}$i={iterations}${}${}${}", hex(&salt), hex(&keys.stored), hex(&keys.server)))
     }
 }
 
@@ -137,8 +146,32 @@ impl Credentials for Pbkdf2 {
         SCHEME
     }
 
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        Some(self)
+    }
+
     fn verifier(&self, _: &str, password: &str) -> Result<Vec<u8>> {
         Ok(self.make(password)?.into_bytes())
+    }
+}
+
+/// The iterations `value` gives, if it is a whole number of them.
+fn iterations_of(value: &Value) -> Option<NonZeroU32> {
+    if let Value::Exact(d) = value { u32::try_from(d.units).ok().and_then(NonZeroU32::new) } else { None }
+}
+
+impl Configurable for Pbkdf2 {
+    /// SERVER.PASSWORD_ITERATIONS, declared by the server
+    /// (`settings::declare`), which takes effect as the server starts
+    /// (RULES.md D36): the value it started with once it has
+    /// (`Settings::started_with`), else the value set. Not declared, as
+    /// on a database no server declared it on, the iterations stay.
+    fn configure(&self, settings: &Settings) {
+        let Some(key) = settings.key(PASSWORD_ITERATIONS) else { return };
+        let taken = settings.started_with(key).unwrap_or_else(|| settings.get(key).clone());
+        if let Some(iterations) = iterations_of(&taken) {
+            self.iterations.store(iterations.get(), Ordering::Relaxed);
+        }
     }
 }
 
@@ -255,5 +288,21 @@ mod tests {
         }
         assert!(!check(&[0xff, 0xfe], "x"));
         assert_eq!(unhex("0aFf"), Some(vec![0x0a, 0xff]));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D36, R-ERR-1: a value of no whole
+    /// iterations (none, zero, past 32 bits) gives none, so the verifiers'
+    /// iterations stay as they were; so they do on a database no server
+    /// declared SERVER.PASSWORD_ITERATIONS on.
+    #[test]
+    fn iterations_not_whole_are_not_taken() {
+        let whole = |n: i128| Value::Exact(turborel::value::Decimal::new(n, 0));
+        assert_eq!(iterations_of(&whole(10_000_i128)), Some(NonZeroU32::new(10_000_u32).unwrap()));
+        assert_eq!(iterations_of(&Value::Null), None);
+        assert_eq!(iterations_of(&whole(0_i128)), None);
+        assert_eq!(iterations_of(&whole(i128::from(u32::MAX).checked_add(1_i128).unwrap())), None);
+        let made = Pbkdf2::new(FEW);
+        made.configure(&Settings::default());
+        assert_eq!(made.iterations(), FEW);
     }
 }

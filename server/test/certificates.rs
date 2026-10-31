@@ -97,7 +97,7 @@ fn tls_files_are_taken_again_as_their_settings_change() {
     let (old, new) = (pki("reload-old"), pki("reload-new"));
     let kept = Kept::default();
     let db = Database::new();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     secured(&db, &old, "ON");
     let server = start_with(&db, &[], vec![]);
     over_tls(&server, &old, "localhost").unwrap().terminate().unwrap();

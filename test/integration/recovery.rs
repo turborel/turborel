@@ -238,7 +238,7 @@ fn a_damaged_log_is_refused_and_a_torn_one_reported() {
     std::fs::write(&segment, &torn).unwrap();
     let kept = crate::common::Kept::default();
     let db = Database::new();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     let opened = db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
     let Opened::Recovered(report) = opened else { panic!("{opened:?}") };
     assert_eq!(report.cut, 10);

@@ -5,8 +5,24 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// \[DESIGN\] The name of a clock that gives none of its own
+/// (`Clock::name`): the group of no built-in setting, so what it declares
+/// is never taken for the database's own (RULES.md D36).
+pub const CLOCK_PLUGIN: &str = "clock_plugin";
+
 /// A source of the current instant.
 pub trait Clock: Send + Sync {
+    /// Its name, for its settings: by default `CLOCK_PLUGIN`, which no
+    /// built-in setting is under (RULES.md D36).
+    fn name(&self) -> &'static str {
+        CLOCK_PLUGIN
+    }
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any: declared as the
+    /// database is given it (`Database::set_clock`). Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// Microseconds from 1970-01-01 00:00:00 UTC to now; before it,
     /// negative.
     fn now(&self) -> i64;

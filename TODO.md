@@ -117,13 +117,6 @@ What came after SQL-92 follows it, written from the standards' own text
 
 The registry, scopes and SET statements exist (D36). Still to do:
 
-- **Settings of the last plug-ins** (D36): a `Log` given by
-  `Database::set_log`, a diagnostics sink and a clock have no name to
-  declare settings under, so no `Configurable` yet; and the server's
-  verifiers (`password::Pbkdf2`) read SERVER.PASSWORD_ITERATIONS as made,
-  so `turboreld` sets them again after its settings, where the hook
-  would tell them.
-
 ---
 
 ## Query processing

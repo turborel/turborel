@@ -10,7 +10,8 @@ use turborel_client::target::{Target, connect_to};
 use turborel_client::tls;
 use turborel_protocol::Request;
 use turborel_server::password::{self as pbkdf2, Pbkdf2};
-use turborel_server::settings::PASSWORD_ITERATIONS;
+use turborel_server::server::Server;
+use turborel_server::settings::{PASSWORD_ITERATIONS, mark_started};
 
 use crate::common::{Pki, Running, done, pki, rows, secured, set, start_with, state};
 
@@ -131,4 +132,34 @@ fn the_owner_manages_users_over_the_wire() {
     assert_eq!(done(&ann.query("DROP USER carol").unwrap()), 0);
     assert_eq!(state(&as_user(&server, &pki, ("carol", "new")).err().unwrap()).0, "28000", "dropped");
     assert_eq!(connection::connect(server.address, "carol", &mut Trust).unwrap().authorization(), "CAROL", "trust is another mechanism");
+}
+
+/// Verifies: [DESIGN] RULES.md D36, D43: the verifiers the server makes
+/// of the users SQL creates take SERVER.PASSWORD_ITERATIONS as the server
+/// starts, told it as any plug-in is told its settings: until it has
+/// started, each value set; once it has, the value it started with, a
+/// change shown waiting for a restart; and the new one once it starts
+/// again.
+#[test]
+fn verifiers_take_the_iterations_as_the_server_starts() {
+    let db = Database::new();
+    db.create_user("ANN", b"none").unwrap();
+    db.set_owner("ANN").unwrap();
+    let _server = Server::new(db.clone()).unwrap();
+    let ann = db.session("ANN");
+    let made = |user: &str| {
+        ann.run(&format!("CREATE USER {user} PASSWORD 'x'")).unwrap();
+        pbkdf2::Verifier::read(&db.verifier(user).unwrap().unwrap()).unwrap().iterations.get()
+    };
+    set(&db, PASSWORD_ITERATIONS, FEW.checked_mul(2_i128).unwrap());
+    assert_eq!(made("BOB"), 20_000_u32, "the value set, before the server starts");
+    mark_started(&db).unwrap();
+    set(&db, PASSWORD_ITERATIONS, FEW);
+    assert_eq!(made("CAROL"), 20_000_u32, "kept as it started");
+    let pending = "SELECT STARTED_VALUE, IS_PENDING FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'SERVER.PASSWORD_ITERATIONS'";
+    let shown = ann.open_cursor(pending).unwrap().fetch().unwrap().unwrap();
+    assert_eq!(shown.iter().map(|v| v.to_string().trim().to_owned()).collect::<Vec<_>>(), ["20000", "YES"]);
+    ann.run("COMMIT").unwrap();
+    mark_started(&db).unwrap();
+    assert_eq!(made("DAN"), 10_000_u32, "started again");
 }

@@ -334,7 +334,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
     if let Some((runtime, retaken)) = hearing {
         hangups(runtime, sink.reopener(), Arc::clone(retaken))?;
     }
-    db.set_diagnostics(Box::new(sink));
+    db.set_diagnostics(Box::new(sink)).map_err(|e| e.to_string())?;
     register(&db, config)?;
     let given = config_file::given(&db, config, entries)?;
     // Those read as the database is created or opened are set before it is.
@@ -355,10 +355,9 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
     }
     let outcome = Server::new(db.clone()).map_err(|e| e.to_string()).and_then(|server| {
         // The server's own, declared by `Server::new`, are set once it is
-        // made; the verifiers it makes of the users SQL creates are made
-        // again, so they take SERVER.PASSWORD_ITERATIONS as given here.
+        // made; its verifiers are told SERVER.PASSWORD_ITERATIONS as given
+        // here, as every plug-in is told its settings (RULES.md D36).
         late.iter().try_for_each(set)?;
-        db.set_credentials(Box::new(Pbkdf2::of(&db))).map_err(|e| e.to_string())?;
         config.owner.as_ref().map_or(Ok(()), |owner| users::make_owner(&db, owner))?;
         work(server)
     });

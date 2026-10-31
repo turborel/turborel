@@ -370,6 +370,13 @@ impl Settings {
         }
     }
 
+    /// The value of `key` what reads it started with, if it has started
+    /// (`mark_started`): what a plug-in keeps of a setting it takes as it
+    /// starts (`Effect::Start`), though a reader other than itself starts.
+    pub fn started_with(&self, key: Key) -> Option<Value> {
+        self.started.get(&self.definition(key)?.name)
+    }
+
     /// The whole number of `key`, 0 if it is none.
     pub fn integer(&self, key: Key) -> i128 {
         if let Value::Exact(d) = self.get(key) { d.units } else { 0 }

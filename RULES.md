@@ -957,7 +957,8 @@ sent like built-in ones.
   definition (`Change::Schema`, `Defined`, `AlterTable`), so recovery,
   with no session, makes the same default.
 - **Clock.** A plug-in (`Database::set_clock`), the system's by default;
-  tests set one that stands still (R-TEST-5).
+  tests set one that stands still (R-TEST-5). Its settings, by the
+  plug-ins' hook (D36).
 *Why:* a server's results must not depend on the host's zone, nor a
 statement's datetimes on when within it each is evaluated; a time without
 time zone is kept as SQL-92, the implemented standard, says, until a
@@ -1865,7 +1866,11 @@ same results and errors is the optimizer's to choose.
   (default: none):
   - the kinds: engines, index methods, functions, system tables, data
     types, hash functions, encodings, catalog and log storages,
-    credentials, a server's connections, spills;
+    credentials, a server's connections, spills, logs, diagnostics sinks,
+    clocks;
+  - a log, sink or clock giving no name is named `log_plugin`,
+    `diagnostics_plugin` or `clock_plugin`, the group of no built-in
+    setting;
   - declared under its name as it is registered; one outside it, or a
     built-in's, refuses the plug-in;
   - told the values when registered, after each change, and once the
@@ -1873,8 +1878,12 @@ same results and errors is the optimizer's to choose.
     it never calls back (R-ERR-4);
   - a setting of effect Start it keeps as it started, recording it
     (`Settings::mark_started`).
+  - one whose reader starts apart from it reads the value started with
+    (`Settings::started_with`); recording that value tells every plug-in
+    again (`Database::settings_started`).
   - So the column store bounds the frozen-group headers it holds
-    (COLUMNSTORE.HEADER_CACHE_BYTES).
+    (COLUMNSTORE.HEADER_CACHE_BYTES), and the server's verifiers take
+    SERVER.PASSWORD_ITERATIONS (D43).
 - **Logs.** The database's log is told LOG.DURABILITY
   (`Log::set_durability`) when given and after each change, the same
   way, from a snapshot (D25).
@@ -2182,6 +2191,7 @@ between components, and implementations are replaceable.
 - **Sink.** The database reports its life, and failures an operator must
   know, as typed events (`diagnostics::Event`) to a `Diagnostics` plug-in
   set with `Database::set_diagnostics`; by default they are dropped.
+  It declares and reads settings by the plug-ins' hook (D36).
 - **Database events.**
   - opened (created, reopened, or recovered, with recovery's report) and
     closed; a checkpoint; a setting changed; a plug-in registered;
@@ -2472,6 +2482,9 @@ is configured, seen and changed like the database's.
   StoredKey and ServerKey, never the salted password, which would let its
   reader log in by SCRAM.
   One verifier serves both mechanisms.
+- **Iterations**: SERVER.PASSWORD_ITERATIONS, told the server's
+  credentials by the plug-ins' hook (D36): the value set until the
+  server starts, then the one it started with, until it starts again.
 - **`password`** needs a secure connection (`Peer::secure`: TLS, Unix
   socket or named pipe): the password travels whole. The client refuses
   first, sending no Hello over plain TCP for a secret mechanism

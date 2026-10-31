@@ -178,7 +178,9 @@ impl Database {
     /// taken as what reads them starts, as those it started with: a
     /// server's, as it starts listening. INFORMATION_SCHEMA.SETTINGS shows
     /// a value set apart from the one started with as waiting for a restart
-    /// (RULES.md D36).
+    /// (RULES.md D36). Each plug-in is then told the values, so one that
+    /// keeps a setting as its reader started (`Settings::started_with`), as
+    /// the server's verifiers keep SERVER.PASSWORD_ITERATIONS, takes it.
     ///
     /// # Errors
     ///
@@ -188,7 +190,7 @@ impl Database {
         for name in names {
             st.settings.mark_started(st.settings.known(name)?, None);
         }
-        Ok(())
+        self.configure_plugins()
     }
 
     /// \[EXTENSION\] Notes the file at `path`, which the database does not

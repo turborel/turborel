@@ -226,7 +226,7 @@ fn a_failed_job_is_kept_told_and_shown() {
     let failing = Arc::new(AtomicBool::new(false));
     let db = Database::new();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.register_engine(Box::new(Flaky { failing: Arc::clone(&failing) })).unwrap();
     db.open_files(&after_crash(), &scratch.path("db"), &OpenOptions::default()).unwrap();
     db.create_user("OWNER", b"x").unwrap();

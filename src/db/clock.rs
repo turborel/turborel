@@ -13,16 +13,21 @@ use crate::value::datetime::{Now, parse_displacement, utc_of_unix};
 
 impl Database {
     /// \[DESIGN\] Sets the clock CURRENT_DATE, CURRENT_TIME and
-    /// CURRENT_TIMESTAMP read, for the statements that begin after it.
+    /// CURRENT_TIMESTAMP read, for the statements that begin after it; its
+    /// settings declared and told it (`Configurable`, RULES.md D36).
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if a lock is poisoned.
+    /// SQLCODE -910 if a lock is poisoned, or a setting it declares is
+    /// refused (RULES.md D36).
     pub fn set_clock(&self, clock: Arc<dyn Clock>) -> Result<()> {
+        let told = Arc::clone(&clock);
         self.change(|st| {
+            st.declare_plugin(clock.name(), clock.configurable())?;
             st.clock = clock;
             Ok(())
-        })
+        })?;
+        self.tell_plugin(told.configurable())
     }
 }
 

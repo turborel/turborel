@@ -282,7 +282,7 @@ fn a_failed_seal_stops_the_database() {
     db.set_setting("LOG.SEGMENT_BYTES", &Value::Exact(Decimal::new(4096, 0))).unwrap();
     db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(200))").unwrap();
     // The next segment is synced as it is made, then the full one as it is
     // sealed: that one fails.

@@ -39,6 +39,8 @@ impl State {
         self.encodings.all().unwrap_or_default().iter().for_each(|e| tell(e.configurable(), settings));
         self.types.configurables().for_each(|k| tell(Some(k), settings));
         tell(self.work.spill().configurable(), settings);
+        tell(self.log.as_ref().and_then(|l| l.configurable()), settings);
+        tell(self.clock.configurable(), settings);
     }
 }
 
@@ -78,6 +80,7 @@ impl Database {
         st.tell_plugins();
         let settings = &st.settings;
         tell(self.catalog_storage().configurable(), settings);
+        tell(self.diagnostics().configurable(), settings);
         if let Some(log) = self.log_storage_set() {
             tell(log.configurable(), settings);
         }

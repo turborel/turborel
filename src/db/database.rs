@@ -235,9 +235,23 @@ fn poisoned_turn() -> SqlError {
 impl Database {
     // ----- extension points -----
 
-    /// \[DESIGN\] Sends its events to `sink` from now on (RULES.md D40).
-    pub fn set_diagnostics(&self, sink: Box<dyn Diagnostics>) {
-        *self.0.diagnostics.write().unwrap_or_else(PoisonError::into_inner) = Arc::from(sink);
+    /// \[DESIGN\] Sends its events to `sink` from now on (RULES.md D40). Its
+    /// settings are declared and told it (`Configurable`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed, or a setting it declares is
+    /// refused (RULES.md D36).
+    pub fn set_diagnostics(&self, sink: Box<dyn Diagnostics>) -> Result<()> {
+        let sink: Arc<dyn Diagnostics> = Arc::from(sink);
+        self.declare_plugin(sink.name(), sink.configurable())?;
+        *self.0.diagnostics.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&sink);
+        self.tell_plugin(sink.configurable())
+    }
+
+    /// Where its events go now (`set_diagnostics`).
+    pub(super) fn diagnostics(&self) -> Arc<dyn Diagnostics> {
+        Arc::clone(&self.0.diagnostics.read().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// \[DESIGN\] Makes the spill areas of its operators, and of its
@@ -284,8 +298,7 @@ impl Database {
     pub(crate) fn emit(&self, event: &Event) {
         let least = read(&self.0.current).map_or(Level::Info, |st| Level::of(st.settings.word(settings::DIAGNOSTICS_LEVEL)));
         if event.level() <= least {
-            let sink = Arc::clone(&self.0.diagnostics.read().unwrap_or_else(PoisonError::into_inner));
-            sink.event(event);
+            self.diagnostics().event(event);
         }
     }
 
@@ -466,18 +479,23 @@ impl Database {
 
     /// \[DESIGN\] The log transactions begun from now on write to (RULES.md
     /// D25), their commit point, told LOG.DURABILITY (`Log::set_durability`)
-    /// now and at each change. By default there is none, nothing logged, as
+    /// now and at each change, and its settings declared and told it
+    /// (`Configurable`). By default there is none, nothing logged, as
     /// engines keeping nothing between runs need none; a `MemoryLog` keeps
     /// every record until truncated. Open transactions keep their log.
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
+    /// SQLCODE -910 if called back from a plug-in, a lock is poisoned, or a
+    /// setting it declares is refused (RULES.md D36).
     pub fn set_log(&self, log: Arc<dyn Log>) -> Result<()> {
+        let told = Arc::clone(&log);
         self.change(|st| {
+            st.declare_plugin(log.name(), log.configurable())?;
             st.log = Some(log);
             Ok(())
         })?;
+        self.tell_plugin(told.configurable())?;
         self.tell_durability()
     }
 

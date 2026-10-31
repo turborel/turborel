@@ -73,7 +73,7 @@ fn a_user_proves_its_password_by_scram() {
     let pki = pki("scram");
     let kept = Kept::default();
     let (db, server) = served(&pki);
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     assert_eq!(over_tls(&server, &pki, ("ann", "ann's")).unwrap(), "ANN");
     let wrong = over_tls(&server, &pki, ("ann", "bob's")).unwrap_err();
     let nobody = over_tls(&server, &pki, ("carol", "ann's")).unwrap_err();

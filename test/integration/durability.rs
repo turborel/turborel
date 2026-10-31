@@ -162,7 +162,7 @@ fn a_commit_whose_sync_fails_is_in_doubt_until_recovered() {
         let (fs, faults) = FaultyFs::with_faults();
         let db = Database::new();
         let kept = crate::common::Kept::default();
-        db.set_diagnostics(Box::new(kept.clone()));
+        db.set_diagnostics(Box::new(kept.clone())).unwrap();
         db.open_files(&fs, &dir, &OpenOptions::default()).unwrap();
         db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
         let (s, other) = (db.session("A"), db.session("A"));

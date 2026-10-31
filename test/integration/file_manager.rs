@@ -102,7 +102,7 @@ fn closing_removes_spill_files_and_closes_every_file() {
     let dir = scratch.path("db");
     let kept = Kept::default();
     let db = Database::new();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
     std::fs::create_dir_all(dir.join("tmp")).unwrap();
     let stray = dir.join("tmp").join("left-0.spill");

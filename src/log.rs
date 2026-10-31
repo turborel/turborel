@@ -27,6 +27,11 @@ use crate::disk::io::Durability;
 use crate::error::{Code, Result, SqlError};
 use crate::sync::lock_builtin;
 
+/// \[DESIGN\] The name of a log that gives none of its own (`Log::name`):
+/// the group of no built-in setting, so what it declares is never taken
+/// for the database's own (RULES.md D36).
+pub const LOG_PLUGIN: &str = "log_plugin";
+
 /// \[DESIGN\] A log position: where a record is. Positions only increase in
 /// the order records are appended; the database orders commits, and engines
 /// their row versions, by them (RULES.md D25, D29).
@@ -63,6 +68,17 @@ pub type Records<'a> = Box<dyn Iterator<Item = Result<(Lsn, Vec<u8>)>> + 'a>;
 /// * Methods may be called from several threads at once (`Send + Sync`), and
 ///   never call back into the database (RULES.md R-ERR-4).
 pub trait Log: Send + Sync {
+    /// Its name, for its settings: by default `LOG_PLUGIN`, which no
+    /// built-in setting is under (RULES.md D36).
+    fn name(&self) -> &'static str {
+        LOG_PLUGIN
+    }
+    /// \[DESIGN\] Itself as it declares settings and is told them
+    /// (`Configurable`, RULES.md D36), if it has any: declared as the
+    /// database is given it (`Database::set_log`). Default: none.
+    fn configurable(&self) -> Option<&dyn crate::settings::Configurable> {
+        None
+    }
     /// What the log promises now: a log whose durability changes while it
     /// is open (`set_durability`) tells the one it keeps now, which the
     /// Strict policy reads at each write (RULES.md D25).

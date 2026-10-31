@@ -103,7 +103,7 @@ fn an_unwaited_commit_is_durable_once_its_job_runs() {
 fn the_job_syncs_on_its_thread_after_its_time() {
     let (db, log) = watched(JobPolicy::Automatic);
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.set_setting("LOG.SYNC_AFTER_MS", &number(1_i32)).unwrap();
     let before = log.synced.lock().unwrap().len();
     unwaited(&db, 10_i32);
@@ -133,7 +133,7 @@ fn a_close_stops_the_job() {
     let dir = scratch.path("db");
     let db = Database::new();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
     db.set_setting("LOG.SYNC_AFTER_MS", &number(600_000_i32)).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER)").unwrap();
@@ -164,7 +164,7 @@ fn a_close_stops_the_job() {
 fn a_failed_sync_in_the_job_stops_changes() {
     let (db, log) = watched(JobPolicy::Manual);
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     unwaited(&db, 10_i32);
     log.fail_syncs.store(true, Ordering::SeqCst);
     assert_eq!(db.run_due().err().map(|e| e.code), Some(Code::Io));

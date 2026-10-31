@@ -39,7 +39,7 @@ fn code<T>(r: Result<T>) -> Option<Code> {
 fn users_are_kept_with_their_verifiers() {
     let db = Database::new();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     assert_eq!((db.users().unwrap(), db.owner().unwrap()), (Vec::<String>::new(), None));
     db.create_user("ANN", b"one").unwrap();
     db.create_user("bob", b"").unwrap();
@@ -174,7 +174,7 @@ fn user_statements_are_refused_saying_why() {
 fn the_owner_hands_the_database_on() {
     let db = Database::new();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     let ann = db.session("ANN");
     assert_eq!(code(ann.set_owner("ANN")), Some(Code::Privilege), "no owner");
     db.create_user("ANN", b"").unwrap();

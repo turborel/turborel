@@ -348,7 +348,8 @@ impl Drop for Counted {
 impl Server {
     /// A server of `db`, with no authenticator yet; the server's settings
     /// declared on `db`, unless they are already, and its passwords'
-    /// verifiers made as they say (`password::Pbkdf2`), for the users SQL
+    /// verifiers made as they say (`password::Pbkdf2`, told
+    /// SERVER.PASSWORD_ITERATIONS as it changes), for the users SQL
     /// creates; and its tables, CONNECTIONS and SERVER, and what END and
     /// CANCEL CONNECTION reach its connections by (`Operator`), registered
     /// with it (`shown.rs`), in place of any of a server before.

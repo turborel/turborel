@@ -78,4 +78,22 @@ mod tests {
         Bare.configure(&settings);
         assert_eq!(settings.list(&super::super::Own::default()).len(), before);
     }
+
+    /// Verifies: [DESIGN] RULES.md D36: a log, a diagnostics sink and a
+    /// clock that give no name of their own are named by default under no
+    /// built-in setting's group, so a setting one declares there is never
+    /// taken for the database's; and give no hook by default.
+    #[test]
+    fn a_log_a_sink_and_a_clock_are_named_apart_from_built_in_groups() {
+        use crate::clock::{CLOCK_PLUGIN, Clock, SystemClock};
+        use crate::diagnostics::{DIAGNOSTICS_PLUGIN, Diagnostics, NoDiagnostics};
+        use crate::log::{LOG_PLUGIN, Log, MemoryLog};
+        let (log, sink, clock) = (MemoryLog::new(), NoDiagnostics, SystemClock);
+        assert_eq!([log.name(), sink.name(), clock.name()], [LOG_PLUGIN, DIAGNOSTICS_PLUGIN, CLOCK_PLUGIN]);
+        assert!(log.configurable().is_none() && sink.configurable().is_none() && clock.configurable().is_none());
+        for name in [LOG_PLUGIN, DIAGNOSTICS_PLUGIN, CLOCK_PLUGIN] {
+            let group = format!("{}.", super::canonical(name));
+            assert!(!super::builtin().iter().any(|b| b.name.starts_with(&group)), "{name}");
+        }
+    }
 }

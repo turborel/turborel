@@ -35,7 +35,7 @@ fn written(db: &Database) {
 fn manual_work_waits_for_the_program() {
     let db = Database::new();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.set_job_policy(JobPolicy::Manual).unwrap();
     assert_eq!(db.setting("JOBS.POLICY").unwrap().to_string(), "MANUAL");
     written(&db);
@@ -58,7 +58,7 @@ fn manual_work_waits_for_the_program() {
 fn automatic_work_runs_on_threads_paused_waits() {
     let db = Database::new();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     written(&db);
     assert!(job(&db, "turborel-maintenance").threaded, "started as it came due");
     db.set_job_policy(JobPolicy::Paused).unwrap();

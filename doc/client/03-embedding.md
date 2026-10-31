@@ -412,8 +412,10 @@ files, so the definitions that name one find it:
 | `set_diagnostics` | where the database's events go, `Diagnostics` ([Diagnostics](../operator/08-diagnostics.md)); `tell` gives it one of the program's own, as a server's, those below DIAGNOSTICS.LEVEL dropped |
 
 A plug-in of any kind above, and a catalog's or a log's storage, the
-credentials, a server's connections and a spill, may declare settings
-of the database's, under its own name, as the column store declares
+credentials, a server's connections, a spill, a log (`set_log`) and a
+clock (`set_clock`), may declare settings of the database's, under its
+own name (a log, a sink or a clock giving none is named `log_plugin`,
+`diagnostics_plugin` or `clock_plugin`), as the column store declares
 COLUMNSTORE.HEADER_CACHE_BYTES: it gives itself as its `Configurable`
 (`configurable`), whose `settings` it declares. It is told their values
 as it is registered, as each changes and as the database opens

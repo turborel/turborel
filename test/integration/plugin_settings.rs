@@ -7,14 +7,16 @@
 use std::sync::Arc;
 
 use turborel::catalog::ColumnDesc;
+use turborel::clock::Clock;
 use turborel::db::{CatalogFiles, CatalogStorage, CatalogStore, Credentials, Database, FileLogs, LogStorage, OpenOptions, OpenedLog};
 use turborel::db::{ServedConnections, StorePlace};
+use turborel::diagnostics::{Diagnostics, Event};
 use turborel::disk::encoding::{Encoding, EncodingId};
 use turborel::error::{Code, Result, SqlError};
 use turborel::functions::{Accumulator, AggregateFunction, ScalarFunction};
 use turborel::hash::{Digest, HashFunction, HashId};
 use turborel::index::{Index, IndexMethod};
-use turborel::log::Log;
+use turborel::log::{Log, LogCapabilities, Lsn, MemoryLog, Records};
 use turborel::memory::MemoryBudget;
 use turborel::settings::{Configurable, Effect};
 use turborel::spill::{Area, PagedSpill, Spill, SpillArea, TempFiles};
@@ -243,6 +245,64 @@ impl Spill for Spilled {
     }
 }
 
+/// A log in memory, "notedwal".
+struct Logged(MemoryLog, Noted);
+
+impl Log for Logged {
+    fn name(&self) -> &'static str {
+        "notedwal"
+    }
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        Some(&self.1)
+    }
+    fn capabilities(&self) -> LogCapabilities {
+        self.0.capabilities()
+    }
+    fn append(&self, record: &[u8]) -> Result<Lsn> {
+        self.0.append(record)
+    }
+    fn sync(&self, through: Lsn) -> Result<()> {
+        self.0.sync(through)
+    }
+    fn read_from(&self, from: Lsn) -> Records<'_> {
+        self.0.read_from(from)
+    }
+    fn truncate_before(&self, before: Lsn) -> Result<()> {
+        self.0.truncate_before(before)
+    }
+    fn end(&self) -> Lsn {
+        self.0.end()
+    }
+}
+
+/// A diagnostics sink that drops every event, "notedsink".
+struct Sink(Noted);
+
+impl Diagnostics for Sink {
+    fn name(&self) -> &'static str {
+        "notedsink"
+    }
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        Some(&self.0)
+    }
+    fn event(&self, _: &Event) {}
+}
+
+/// A clock standing at 1970-01-01, "notedclock".
+struct Still(Noted);
+
+impl Clock for Still {
+    fn name(&self) -> &'static str {
+        "notedclock"
+    }
+    fn configurable(&self) -> Option<&dyn Configurable> {
+        Some(&self.0)
+    }
+    fn now(&self) -> i64 {
+        0
+    }
+}
+
 /// Registers a plug-in, its hook the one given, as the database takes it.
 type Register = fn(&Database, Noted) -> Result<()>;
 
@@ -262,6 +322,9 @@ fn kinds() -> Vec<(&'static str, Register)> {
         ("NOTEDSERVED.DEPTH", |db, n| db.set_served_connections(Box::new(Served(n)))),
         ("NOTEDSPILL.DEPTH", |db, n| db.set_spill(Box::new(Spilled("notedspill", n)))),
         ("NOTEDTYPE.DEPTH", |db, n| db.register_type(Box::new(Named("NOTEDTYPE", Some(n))))),
+        ("NOTEDWAL.DEPTH", |db, n| db.set_log(Arc::new(Logged(MemoryLog::new(), n)))),
+        ("NOTEDSINK.DEPTH", |db, n| db.set_diagnostics(Box::new(Sink(n)))),
+        ("NOTEDCLOCK.DEPTH", |db, n| db.set_clock(Arc::new(Still(n)))),
     ]
 }
 
@@ -278,10 +341,11 @@ fn shown(db: &Database, setting: &str) -> Vec<String> {
 /// Verifies: [DESIGN] RULES.md D36, R-SAFE-3: a plug-in of every kind (an
 /// index method, a scalar and an aggregate function, a system table, a
 /// catalog's and a log's storage, a hash function, an encoding,
-/// credentials, a server's connections, a spill, a data type) declares its
-/// setting as it is registered and is told its value: its default at
-/// once, each value the database is given after, its default again once
-/// reset; INFORMATION_SCHEMA.SETTINGS shows it.
+/// credentials, a server's connections, a spill, a data type, a log, a
+/// diagnostics sink, a clock) declares its setting as it is registered
+/// and is told its value: its default at once, each value the database is
+/// given after, its default again once reset; INFORMATION_SCHEMA.SETTINGS
+/// shows it.
 #[test]
 fn a_plug_in_of_every_kind_reads_its_settings_as_they_are_published() {
     for (setting, register) in kinds() {

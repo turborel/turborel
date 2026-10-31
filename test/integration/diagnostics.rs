@@ -22,7 +22,7 @@ fn a_database_tells_its_sink_of_its_life() {
     let dir = scratch.path("db");
     let kept = Kept::default();
     let db = Database::new();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     assert_eq!(db.open_files(&os(), &dir, &OpenOptions::default()).unwrap(), Opened::Created);
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").unwrap();
     let s = db.session("A");
@@ -55,7 +55,7 @@ fn a_database_tells_its_sink_of_its_life() {
         ]
     );
     let again = Database::new();
-    again.set_diagnostics(Box::new(kept.clone()));
+    again.set_diagnostics(Box::new(kept.clone())).unwrap();
     again.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
     let reopened = kept.taken();
     assert_eq!(reopened.last(), Some(&info("Opened(Reopened)")), "{reopened:?}");
@@ -69,7 +69,7 @@ fn a_database_tells_its_sink_of_its_life() {
 fn failures_an_operator_must_know_of_are_events() {
     let kept = Kept::default();
     let db = Database::new();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.set_setting("MEMORY.BUDGET_BYTES", &Value::Exact(Decimal::new(1 << 20, 0))).unwrap();
     kept.taken();
     let refused = db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap_err();
@@ -92,7 +92,7 @@ fn failures_an_operator_must_know_of_are_events() {
 fn events_below_the_level_are_not_told() {
     let kept = Kept::default();
     let db = Database::new();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     let (info, warning) = (Event::Listening { addresses: vec![] }, Event::StopHurried { sessions: 1 });
     let error = Event::AcceptFailed { failures: 1, message: "no file descriptor left".into() };
     let levels = |kept: &Kept| kept.taken().into_iter().map(|(level, _)| level).collect::<Vec<_>>();
@@ -141,7 +141,7 @@ fn slow(kept: &Kept) -> Vec<String> {
 fn a_slow_statement_is_told() {
     let (db, holder) = locked();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     let waiter = db.session("X");
     waiter.run("SET LOCKS.TIMEOUT_MS = 40").unwrap();
     assert!(waiter.run("INSERT INTO L VALUES (2)").is_err(), "waited, then refused");
@@ -165,7 +165,7 @@ fn a_slow_statement_of_an_encrypted_database_is_told_without_its_text() {
     db.register_encoding(Box::new(Scramble)).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE SECRET (V CHARACTER(10)) WITH (ENCODINGS = 'test scramble')").unwrap();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.set_setting("DIAGNOSTICS.SLOW_STATEMENT_MS", &Value::Exact(Decimal::new(20, 0))).unwrap();
     let waiter = db.session("X");
     waiter.run("SET LOCKS.TIMEOUT_MS = 40").unwrap();
@@ -184,7 +184,7 @@ fn a_slow_statement_of_an_encrypted_database_is_told_without_its_text() {
 fn a_cursor_is_timed_by_its_work() {
     let (db, gate, heard, go) = gated();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.set_setting("DIAGNOSTICS.SLOW_STATEMENT_MS", &Value::Exact(Decimal::new(20, 0))).unwrap();
     let s = db.session("X");
     let mut idle = s.open_cursor("SELECT K FROM G").unwrap();
@@ -221,7 +221,7 @@ fn a_failed_rotation_of_the_log_is_told() {
     db.set_setting("LOG.SEGMENT_BYTES", &Value::Exact(Decimal::new(4096, 0))).unwrap();
     db.open_files(&fs, &scratch.path("db"), &OpenOptions::default()).unwrap();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(200))").unwrap();
     faults.inject(crate::faults::Rule::fail(crate::faults::Op::Open).on(&format!("log{}segment-", std::path::MAIN_SEPARATOR)));
     let a = db.session("A");
@@ -246,7 +246,7 @@ fn overdue_after_one(scratch: &Scratch, fs: &std::sync::Arc<dyn turborel::disk::
     db.set_setting("CHECKPOINT.AFTER_CHANGES", &Value::Exact(Decimal::new(1, 0))).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
     let kept = Kept::default();
-    db.set_diagnostics(Box::new(kept.clone()));
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
     (db, kept)
 }
 
