@@ -91,10 +91,13 @@ What came after SQL-92 follows it, written from the standards' own text
   action, SET or DROP DEFAULT and DROP CONSTRAINT too, which change no
   row, while any instance holds a row.
 - **Plug-in data types, further** (RULES.md D53): CREATE DOMAIN takes only
-  a standard type, never a plug-in one; and one scalar function is
-  registered for each name, none chosen among several by its arguments'
-  types, as D53 decides today. The second is shared with SQL-invoked
-  functions (stored procedures, below).
+  a standard type, never a plug-in one: a plug-in type there is new
+  syntax of `<domain definition>`, its extension BNF awaiting approval.
+  One scalar function is registered for each name, none chosen among
+  several by its arguments' types, and registering a name again replaces
+  the function silently, on a running server too; a refusal (SQLCODE
+  -910) is proposed. Overloading is shared with SQL-invoked functions
+  (stored procedures, below), whose resolution it should follow.
 - **Assertions, further** (RULES.md D51): more forms checked from a
   statement's change than `NOT EXISTS` and COUNT(*) of one table's
   filtered rows: COUNT of a column (its warning of nulls eliminated

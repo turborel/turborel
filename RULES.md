@@ -831,8 +831,11 @@ each time.
   taking `&[DataType]`, encode with no registry at hand. Values are
   `Value::Extension` (kind plus bytes), so comparison and hashing need no
   registry either.
-- **Naming.** Written `name` or `name(a [, b])`. An unqualified name is a
-  domain of the default schema if one exists, else the plug-in type.
+- **Naming.** Written `name` or `name(a [, b])`, where a `<domain name>`
+  may be: a column definition and CAST. An unqualified name is a domain
+  of the default schema if one exists, else the plug-in type. Not in
+  CREATE DOMAIN, whose `<data type>` [ISO/IEC 9075:1992 §11.21] is a
+  standard one.
 - **Storage** is by name: catalog, log, spilled rows and undo read it
   back through the registry (`bytes::Reader::with_types`); a database
   whose files name an unregistered type does not open.
@@ -849,8 +852,10 @@ each time.
   (`ScalarFunction::argument_type`): other types are converted by store
   assignment before the call, or refused at binding; `return_type` gets
   the declared types, and a `?` takes the declared type. By default none
-  is declared and arguments pass as is. One function per name, never
-  chosen among several by argument types.
+  is declared and arguments pass as is.
+- **One per name.** One scalar function per name, never chosen among
+  several by argument types: one function's `return_type` may accept
+  several. Registering a name again replaces the function.
 - **Privileges.** None is needed to use a plug-in type. SQL-92's
   privileges are on schema objects [§4.26, §11.36 SR1] (USAGE on a
   domain, character set, collation or translation), granted by an owner;
