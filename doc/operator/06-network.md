@@ -132,6 +132,14 @@ no more of it than that. Either way the diagnostics are told, as
 `connections_refused`, at most once a minute
 ([Diagnostics](08-diagnostics.md)).
 
+A connection, served or refused, gives back its place as the server
+closes it, before its client can see it closed: a client that ends its
+connection with the server at its limit may connect again at once. Over
+TLS the place is given back before the server's closing message
+(close_notify) is sent; a client that does not take that message keeps
+its socket open, outside the limit, for SERVER.IDLE_TIMEOUT_MS at most,
+or until the server hurries to stop if that is 0.
+
 ## Logins
 
 A client logging in holds little of the server. Until it is

@@ -2288,6 +2288,17 @@ make.
     SERVER.MAX_STATEMENTS (prepared statements per connection),
     SERVER.MAX_LOGINS, SERVER.LOGIN_DELAY_MS and the timeouts, so a
     change needs no restart.
+- **Closing.** A connection's place (SERVER.MAX_CONNECTIONS, or a
+  refusal's of SERVER.MAX_REFUSALS) and its row of
+  INFORMATION_SCHEMA.CONNECTIONS are given back as its stream shuts
+  down or drops, before the socket closes (`holding.rs`).
+  - A client that has seen its connection closed is never counted:
+    not by the limits, `stopping`, nor CONNECTIONS.
+  - Over TLS they go before close_notify is sent: a client that does
+    not take it keeps its socket open outside the limit, for
+    SERVER.IDLE_TIMEOUT_MS at most (until the server hurries, if 0).
+  - *Why:* a client that ends a connection at the limit and connects
+    again at once must not be refused.
 - **Start options.** `turboreld --set NAME=VALUE` sets one;
   `turboreld --config FILE` sets a configuration file's (D36), all
   checked as setting names before any is set, errors with line and

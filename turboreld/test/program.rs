@@ -12,6 +12,8 @@ use turborel_test_support::Scratch;
 #[cfg(unix)]
 use turborel_test_support::client::state;
 use turborel_test_support::client::{done, rows};
+#[cfg(unix)]
+use turborel_test_support::server::Raw;
 
 pub(crate) fn config(line: &[String]) -> Config {
     match turboreld::parse(line).unwrap() {
@@ -127,7 +129,9 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
 /// Regression test (R-TEST-7): SIGHUP ended the server uncleanly, and the
 /// log was never opened again. Regression test (R-TEST-7): the program was
 /// ready before it told `listening`, so a rotation then put that line in
-/// the new file.
+/// the new file. Regression test (R-TEST-7): a connection refused could
+/// still be counted as the server stopped, after its client saw it
+/// closed.
 #[cfg(unix)]
 #[test]
 fn sighup_opens_the_log_again() {
@@ -146,20 +150,17 @@ fn sighup_opens_the_log_again() {
         });
         assert!(reopened, "a new log at the path");
     });
-    // Alive: it answers, refusing trust, which it is not set to take.
-    let refused = connection::connect(at[0].parse::<SocketAddr>().unwrap(), "X", &mut Trust).err().unwrap();
-    assert_eq!(state(&refused).0, "28000");
+    // Alive: it answers, refusing trust, which it is not set to take; its
+    // place given back before the client sees the connection closed.
+    let mut raw = Raw(std::net::TcpStream::connect(at[0].parse::<SocketAddr>().unwrap()).unwrap());
+    assert_eq!(state(&raw.hello_refused("X")).0, "28000");
     stop.send(()).unwrap();
     thread.join().unwrap().unwrap();
     let rotated = std::fs::read_to_string(scratch.path("log.1")).unwrap();
     assert!(rotated.contains(&format!(r#""event":"listening","addresses":["{}"]"#, at[0])), "{rotated}");
-    // `stopping` counts the connections still open: the refused one may
-    // be, its place given back only once its task ends, after the client
-    // has read the refusal; so the line is looked for, not its count.
-    let stopping = r#""event":"stopping","connections":"#;
-    assert!(!rotated.contains(stopping), "{rotated}");
+    assert!(!rotated.contains(r#""event":"stopping""#), "{rotated}");
     let after = std::fs::read_to_string(&log).unwrap();
-    assert!(after.contains(stopping) && !after.contains(r#""event":"listening""#), "{after}");
+    assert!(after.contains(r#""event":"stopping","connections":0"#) && !after.contains(r#""event":"listening""#), "{after}");
 }
 
 /// Verifies: [DESIGN] RULES.md D40, D42: on Unix, SIGHUP takes the

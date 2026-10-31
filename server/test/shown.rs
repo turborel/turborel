@@ -32,6 +32,34 @@ fn a_server_shows_its_connections_to_the_owner() {
     assert_eq!(rows(&other.query(counts).unwrap()), Vec::<String>::new());
 }
 
+/// Times a client connects and ends its connection.
+const ENDED: u32 = 300;
+
+/// Verifies: [DESIGN] RULES.md D42, D55: a connection's row of
+/// INFORMATION_SCHEMA.CONNECTIONS goes before its client sees it closed:
+/// once a client has ended its connection, the owner, reading embedded,
+/// never finds it listed, nor counted in INFORMATION_SCHEMA.SERVER.
+///
+/// Regression test (R-TEST-7): the row went only once the connection's
+/// task ended, after the socket closed, so it was listed a moment after.
+#[test]
+fn a_connection_its_client_saw_closed_is_not_listed() {
+    let db = Database::new();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    let server = start(&db, &[]);
+    let owner = db.session("OWNER");
+    let listed = "SELECT (SELECT COUNT(*) FROM INFORMATION_SCHEMA.CONNECTIONS), CONNECTIONS FROM INFORMATION_SCHEMA.SERVER";
+    for _ in 0..ENDED {
+        server.connect("X").terminate().unwrap();
+        let mut cursor = owner.open_cursor(listed).unwrap();
+        let row = cursor.fetch().unwrap().unwrap();
+        drop(cursor);
+        assert_eq!((row[0].to_string(), row[1].to_string()), ("0".to_owned(), "0".to_owned()), "none listed nor counted");
+    }
+    owner.rollback().unwrap();
+}
+
 /// Verifies: [DESIGN] RULES.md D56, D43: a server's own files are shown to
 /// the database's owner in INFORMATION_SCHEMA.FILES, of KIND SERVER and
 /// no CLASS, not being the database's: its

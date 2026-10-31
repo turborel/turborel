@@ -36,6 +36,7 @@ use turborel::txn::Stop;
 use turborel_protocol::{CancelKey, KEY_BYTES, broken};
 
 use crate::auth::{Authenticator, Peer};
+use crate::holding::{Hold, Holding};
 use crate::limit::{Held, Limit};
 use crate::logins::Logins;
 use crate::password::Pbkdf2;
@@ -492,22 +493,29 @@ impl Arrival {
     /// Secures `transport` as the endpoint says, then serves it if its
     /// `place` is under the limit of connections, else refuses it; in its
     /// own task, so neither TLS nor a refusal holds up the connections after
-    /// it. Its place is given back as it ends.
+    /// it. Its place, and its row of CONNECTIONS, are given back as its
+    /// stream shuts down or is dropped, before its client can see it
+    /// closed (`holding.rs`): the stream is held so below TLS, for a
+    /// handshake that fails, and above, before TLS's close_notify.
     async fn welcome(self, transport: Box<dyn Transport>, peer: Peer, place: Place) {
         let arrived = Instant::now();
-        let Some((transport, peer)) = self.secured(transport, peer, arrived).await else { return };
-        match place {
-            Place::Served(held) => {
-                let present = self.services.0.shown.connected(&peer);
-                self.protocol.serve(Connection { transport, peer, services: self.services, present, arrived }).await;
-                drop(held);
-            }
-            Place::Refused(held) => {
-                self.services.0.shown.refused.fetch_add(1, Ordering::Relaxed);
-                self.services.refused();
-                self.protocol.refuse(transport, too_many()).await;
-                drop(held);
-            }
+        let (served, taken) = match place {
+            Place::Served(taken) => (true, taken),
+            Place::Refused(taken) => (false, taken),
+        };
+        let kept = Hold::new();
+        kept.keep(taken);
+        let transport: Box<dyn Transport> = Box::new(Holding::new(transport, kept.clone()));
+        let Some((secured, peer)) = self.secured(transport, peer, arrived).await else { return };
+        let above: Box<dyn Transport> = Box::new(Holding::new(secured, kept.clone()));
+        if served {
+            let (present, listed) = self.services.0.shown.connected(&peer);
+            kept.keep(listed);
+            self.protocol.serve(Connection { transport: above, peer, services: self.services, present, arrived }).await;
+        } else {
+            self.services.0.shown.refused.fetch_add(1, Ordering::Relaxed);
+            self.services.refused();
+            self.protocol.refuse(above, too_many()).await;
         }
     }
 

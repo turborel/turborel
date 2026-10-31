@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use turborel::db::Database;
 use turborel_client::connection::{self, Trust};
 use turborel_protocol::{Completed, Reply, Request};
-use turborel_server::settings::{BATCH_BYTES, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_MESSAGE_BYTES};
+use turborel_server::settings::{BATCH_BYTES, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_MESSAGE_BYTES, MAX_REFUSALS};
 
 use crate::common::{set, start, state};
 
@@ -54,16 +54,41 @@ fn connections_past_the_limit_are_refused() {
     assert_eq!(state(&refused), ("08004", -919));
     assert!(refused.message.contains("the server has as many connections as it takes"), "{}", refused.message);
     first.terminate().unwrap();
-    // The connection's task ends just after it closes the connection.
-    let again = (0..1000).find_map(|_| {
-        std::thread::yield_now();
-        connection::connect(server.address, "X", &mut Trust).ok()
-    });
-    assert!(again.is_some());
+    let again = server.connect("X");
     set(&db, MAX_CONNECTIONS, 2);
     let more = connection::connect(server.address, "X", &mut Trust).unwrap();
     assert_eq!(state(&connection::connect(server.address, "X", &mut Trust).err().unwrap()).0, "08004", "two, no more");
     drop((again, more));
+}
+
+/// Times a client ends its connection and connects again at once.
+const RECONNECTS: u32 = 300;
+
+/// Verifies: [DESIGN] RULES.md D42: a connection's place under
+/// SERVER.MAX_CONNECTIONS is given back before its client sees it closed:
+/// at the limit, a client that ends its connection and connects again at
+/// once is never refused; nor one refused past the limit, once it has
+/// seen its refusal closed.
+///
+/// Regression test (R-TEST-7): the place was given back only once the
+/// connection's task ended, after the socket closed, so a client quick to
+/// connect again was refused now and then (SQLSTATE 08004).
+#[test]
+fn a_client_that_saw_its_connection_closed_is_not_counted() {
+    let db = Database::new();
+    let server = start(&db, &[(MAX_CONNECTIONS, 1)]);
+    for _ in 0..RECONNECTS {
+        server.connect("X").terminate().unwrap();
+    }
+    let held = server.connect("X");
+    // Refused past the limit: its place among the refusals in flight,
+    // SERVER.MAX_REFUSALS of them, given back as its refusal closes.
+    set(&db, MAX_REFUSALS, 1);
+    for _ in 0..RECONNECTS {
+        let mut raw = server.raw();
+        assert_eq!(state(&raw.refusal()).0, "08004", "told why, not closed untold");
+    }
+    drop(held);
 }
 
 /// A connection to `server` taken once it frees its one place, tried for

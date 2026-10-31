@@ -189,3 +189,24 @@ fn tls_says_why_it_cannot_be_taken() {
     std::fs::write(pki.scratch.path("bad.pem"), b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n").unwrap();
     assert!(tls::trusting(&pki.scratch.path("bad.pem")).err().unwrap().message.contains("cannot trust"));
 }
+
+/// Times a client over TLS ends its connection and connects again at once.
+const RECONNECTS_OVER_TLS: u32 = 50;
+
+/// Verifies: [DESIGN] RULES.md D42: over TLS, a connection's place under
+/// SERVER.MAX_CONNECTIONS is given back before close_notify is sent: at
+/// the limit, a client that ends its connection and connects again at
+/// once is never refused.
+///
+/// Regression test (R-TEST-7): the place was given back only once the
+/// connection's task ended, after it closed.
+#[test]
+fn a_client_over_tls_that_saw_its_connection_closed_is_not_counted() {
+    let pki = pki("tls-reconnects");
+    let db = Database::new();
+    secured(&db, &pki, "REQUIRED");
+    let server = start(&db, &[(settings::MAX_CONNECTIONS, 1)]);
+    for _ in 0..RECONNECTS_OVER_TLS {
+        over_tls(&server, &pki, "localhost").unwrap().terminate().unwrap();
+    }
+}

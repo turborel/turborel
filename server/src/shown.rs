@@ -61,8 +61,9 @@ struct Entry {
 }
 
 /// \[DESIGN\] A connection's row of CONNECTIONS, while it is served: what
-/// serves it says who logged in and whether a statement runs; dropped, the
-/// row goes.
+/// serves it says who logged in and whether a statement runs. The row
+/// goes with its `Listed`, which the connection's stream holds, so before
+/// its client can see the connection closed (`holding.rs`).
 pub struct Present {
     shown: Arc<Shown>,
     id: u64,
@@ -70,13 +71,14 @@ pub struct Present {
 }
 
 impl Shown {
-    /// The row of a connection taken from `peer`, logging in.
-    pub(crate) fn connected(self: &Arc<Self>, peer: &Peer) -> Present {
+    /// The row of a connection taken from `peer`, logging in; it goes as
+    /// the `Listed` is dropped.
+    pub(crate) fn connected(self: &Arc<Self>, peer: &Peer) -> (Present, Listed) {
         let id = self.next.fetch_add(1, Ordering::Relaxed).saturating_add(1);
         let (end, ended) = watch::channel(false);
         let entry = Entry { user: None, peer: peer.name(), secure: peer.secure, state: "LOGIN", end: Arc::new(end), stop: None };
         self.locked().insert(id, entry);
-        Present { shown: Arc::clone(self), id, ended }
+        (Present { shown: Arc::clone(self), id, ended }, Listed { shown: Arc::clone(self), id })
     }
 
     /// Cancels what the connection `id` runs, if it is served.
@@ -146,7 +148,13 @@ impl Present {
     }
 }
 
-impl Drop for Present {
+/// A connection's row of CONNECTIONS, removed as it is dropped.
+pub(crate) struct Listed {
+    shown: Arc<Shown>,
+    id: u64,
+}
+
+impl Drop for Listed {
     fn drop(&mut self) {
         self.shown.locked().remove(&self.id);
     }
@@ -280,11 +288,11 @@ mod tests {
     /// Verifies: [DESIGN] RULES.md D55: a connection taken is shown
     /// logging in, from where it came, a Unix socket's or a named pipe's
     /// as local; idle once authenticated, running as a statement runs; and
-    /// its row goes as it ends.
+    /// its row goes as its `Listed` does, not with what serves it.
     #[test]
     fn a_connection_is_shown_while_it_is_served() {
         let shown = Arc::new(Shown::default());
-        let present = shown.connected(&Peer::local());
+        let (present, kept) = shown.connected(&Peer::local());
         let row = |of: &Shown| of.locked().values().next().map(|e| (e.user.clone(), e.peer.clone(), e.secure, e.state));
         assert_eq!(row(&shown), Some((None, "local".to_owned(), true, "LOGIN")));
         present.authenticated("ANN");
@@ -294,6 +302,8 @@ mod tests {
         present.running(false);
         assert_eq!(row(&shown).map(|r| r.3), Some("IDLE"));
         drop(present);
+        assert_eq!(row(&shown).map(|r| r.3), Some("IDLE"), "kept by its row");
+        drop(kept);
         assert!(shown.locked().is_empty(), "gone");
     }
 
@@ -305,17 +315,17 @@ mod tests {
     fn an_operator_ends_a_connection_by_its_id() {
         let shown = Arc::new(Shown::default());
         let operator = Operator::of(&shown);
-        let present = shown.connected(&Peer::local());
+        let (present, row) = shown.connected(&Peer::local());
         present.authenticated("ANN");
         present.stoppable(Arc::new(Stop::default()));
-        let other = shown.connected(&Peer::local());
+        let (other, _other_row) = shown.connected(&Peer::local());
         assert_eq!(operator.connections(), [(1, Some("ANN".to_owned())), (2, None)]);
         assert!(!operator.end(9), "none served");
         assert!(operator.end(1));
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
         runtime.block_on(present.ended());
         assert!(!*other.ended.borrow(), "the other goes on");
-        drop(present);
+        drop((present, row));
         assert_eq!(operator.connections(), [(2, None)]);
     }
 }
