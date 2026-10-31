@@ -133,7 +133,8 @@ pub trait LogStorage: Send + Sync {
 /// place's formats.
 #[derive(Clone, Default)]
 pub struct FileLogs {
-    /// Its segments' size and durability.
+    /// Its segments' size, and its durability as it is made or opened,
+    /// changed after by `Log::set_durability` (LOG.DURABILITY).
     pub options: FileLogOptions,
 }
 

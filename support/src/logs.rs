@@ -31,6 +31,7 @@ use std::thread;
 
 use turborel::catalog::QualifiedName;
 use turborel::db::{Database, LogStorage, OpenOptions, Opened, RecoveryReport};
+use turborel::disk::io::Durability;
 use turborel::error::{Code, Result, SqlError};
 use turborel::log::record::{Change, Record};
 use turborel::log::{FileLog, FileLogOptions, Log, LogCapabilities, Lsn, MemoryLog, Records};
@@ -154,7 +155,8 @@ pub fn records_go_through(kind: &dyn LogKind, dir: &Path) {
 }
 
 /// A log over another, `inner`, that records which positions were synced,
-/// and fails its appends or syncs while told to.
+/// and the durabilities it is told (`Log::set_durability`), passed on to
+/// `inner`; and fails its appends or syncs while told to.
 pub struct Watched {
     /// The log it watches.
     pub inner: Arc<dyn Log>,
@@ -166,6 +168,10 @@ pub struct Watched {
     pub fail_syncs: AtomicBool,
     /// Whether it says it is durable.
     pub durable: bool,
+    /// Whether it says it is durable as `inner` does, not as `durable` does.
+    pub follows: bool,
+    /// The durabilities it was told, in order.
+    pub told: Mutex<Vec<Durability>>,
     /// Appends that still succeed before the rest fail, if set.
     pub appends_left: Mutex<Option<usize>>,
 }
@@ -179,6 +185,8 @@ impl Watched {
             fail_appends: AtomicBool::default(),
             fail_syncs: AtomicBool::default(),
             durable: false,
+            follows: false,
+            told: Mutex::default(),
             appends_left: Mutex::default(),
         }
     }
@@ -193,7 +201,11 @@ impl Default for Watched {
 
 impl Log for Watched {
     fn capabilities(&self) -> LogCapabilities {
-        LogCapabilities { durable: self.durable }
+        if self.follows { self.inner.capabilities() } else { LogCapabilities { durable: self.durable } }
+    }
+    fn set_durability(&self, durability: Durability) {
+        self.told.lock().unwrap().push(durability);
+        self.inner.set_durability(durability);
     }
     fn append(&self, record: &[u8]) -> Result<Lsn> {
         let mut left = self.appends_left.lock().unwrap();

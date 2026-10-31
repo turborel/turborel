@@ -465,10 +465,10 @@ impl Database {
     }
 
     /// \[DESIGN\] The log transactions begun from now on write to (RULES.md
-    /// D25): their commit point. By default there is none, and nothing is
-    /// logged, as engines that keep nothing between runs need none; a
-    /// `MemoryLog` keeps every record until truncated. Transactions already
-    /// open keep the log they began with.
+    /// D25), their commit point, told LOG.DURABILITY (`Log::set_durability`)
+    /// now and at each change. By default there is none, nothing logged, as
+    /// engines keeping nothing between runs need none; a `MemoryLog` keeps
+    /// every record until truncated. Open transactions keep their log.
     ///
     /// # Errors
     ///
@@ -477,7 +477,8 @@ impl Database {
         self.change(|st| {
             st.log = Some(log);
             Ok(())
-        })
+        })?;
+        self.tell_durability()
     }
 
     /// How many transactions are open, across all sessions.

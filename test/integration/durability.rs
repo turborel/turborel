@@ -308,6 +308,15 @@ impl TableStorage for DeclaredTable {
 /// a log whose durability is `durable`; and the log.
 fn declared(policy: Policy, durable: bool) -> (Database, Arc<Watched>) {
     let db = Database::new();
+    declare_in(&db, policy);
+    let log = Arc::new(Watched { durable, ..Watched::default() });
+    db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
+    (db, log)
+}
+
+/// `db` given schema P holding table L, F, E and N in engines that declare
+/// `Logged`, `Forced`, `External` and `None`, under `policy`.
+pub(crate) fn declare_in(db: &Database, policy: Policy) {
     for (persistence, table) in
         [(Persistence::Logged, "L"), (Persistence::Forced, "F"), (Persistence::External, "E"), (Persistence::None, "N")]
     {
@@ -319,14 +328,11 @@ fn declared(policy: Policy, durable: bool) -> (Database, Arc<Watched>) {
     db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE L (K INTEGER) CREATE TABLE F (K INTEGER) CREATE TABLE E (K INTEGER) CREATE TABLE N (K INTEGER)")
         .unwrap();
     db.set_transaction_policy(policy).unwrap();
-    let log = Arc::new(Watched { durable, ..Watched::default() });
-    db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
-    (db, log)
 }
 
 /// The code of inserting into `table` in a transaction of its own, which
 /// is then rolled back.
-fn insert_alone(db: &Database, table: &str) -> Option<Code> {
+pub(crate) fn insert_alone(db: &Database, table: &str) -> Option<Code> {
     let s = db.session("P");
     let code = s.run(&format!("INSERT INTO {table} VALUES (1)")).err().map(|e| e.code);
     s.rollback().unwrap();

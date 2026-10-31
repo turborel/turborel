@@ -31,10 +31,19 @@
 //! succeed without it, as some systems forget a failed write once they
 //! report it; so no record appended before is ever claimed durable after
 //! it (RULES.md D25). The database stops taking changes at the next sync.
+//!
+//! Its durability (RULES.md D25, D36: LOG.DURABILITY) changes while it is
+//! open (`Log::set_durability`), and holds at once: each sync from then on
+//! syncs as it says, `Durability::None` none, and `capabilities` tells it;
+//! each segment begun after is made as it says, its creation synced or
+//! not. Only a sync that syncs claims records durable, so the first sync
+//! after a change from `None` syncs the segments sealed unsynced, and the
+//! directory their entries are in, before the one it is asked for: every
+//! record before it is then durable, as `Log::sync` promises.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
 
 use super::{Log, LogCapabilities, Lsn, Records};
@@ -64,13 +73,18 @@ pub const DEFAULT_SEGMENT_SIZE: u64 = 64 * 1024 * 1024;
 pub const MIN_SEGMENT_SIZE: u64 = 4096;
 /// \[DESIGN\] The largest segment size: a position's block id bits.
 pub const MAX_SEGMENT_SIZE: u64 = OFFSET_MASK;
+/// \[DESIGN\] The durability a file log syncs with by default, and the
+/// default of LOG.DURABILITY: the data and what reading it back needs,
+/// enough for a record synced to be read after a crash.
+pub const DEFAULT_DURABILITY: Durability = Durability::Data;
 
 /// How a file log behaves.
 #[derive(Clone)]
 pub struct FileLogOptions {
     /// Bytes after which a segment is ended and the next begun.
     pub segment_size: u64,
-    /// How durable `sync` makes records.
+    /// How durable `sync` makes records as the log is made or opened;
+    /// changed while it is open by `Log::set_durability`.
     pub durability: Durability,
     /// The encodings records pass through (RULES.md D30).
     pub pipeline: Pipeline,
@@ -82,7 +96,7 @@ impl Default for FileLogOptions {
     fn default() -> Self {
         FileLogOptions {
             segment_size: DEFAULT_SEGMENT_SIZE,
-            durability: Durability::Data,
+            durability: DEFAULT_DURABILITY,
             pipeline: Pipeline::none(),
             blocks: BlockOptions::default(),
         }
@@ -150,6 +164,11 @@ pub struct FileLog {
     dir: PathBuf,
     hash: Arc<dyn HashFunction>,
     options: FileLogOptions,
+    /// How durable its syncs make records now (`durability_code`).
+    durability: AtomicU8,
+    /// Whether a segment's entry in its directory may not be durable: one
+    /// made, or found as it was opened, while its durability was `None`.
+    entries_unsynced: AtomicBool,
     /// The segment appends go to.
     active: RwLock<Arc<Segment>>,
     /// Every segment not truncated, by number.
@@ -166,6 +185,24 @@ pub struct FileLog {
     told: AtomicBool,
     /// The failure of a sync, once one failed: every later sync fails.
     failure: Mutex<Option<SqlError>>,
+}
+
+/// `durability` as `FileLog::durability` keeps it.
+fn durability_code(durability: Durability) -> u8 {
+    match durability {
+        Durability::None => 0,
+        Durability::Data => 1,
+        Durability::Full => 2,
+    }
+}
+
+/// The durability `FileLog::durability` keeps as `code`.
+fn durability_of(code: u8) -> Durability {
+    match code {
+        0 => Durability::None,
+        1 => Durability::Data,
+        _ => Durability::Full,
+    }
 }
 
 /// The position of block `id` of segment `number`.
@@ -246,7 +283,7 @@ impl FileLog {
         if fs.read_dir(dir)?.iter().any(|p| segment_number(p).is_some()) {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} already holds a log", dir.display())));
         }
-        let first = segment_file(&*fs, &dir.join(segment_name(0)), Arc::clone(&hash), &options)?;
+        let first = segment_file(&*fs, &dir.join(segment_name(0)), Arc::clone(&hash), (&options, options.durability))?;
         FileLog::over(fs, dir, hash, options, vec![Segment::new(0, first)])
     }
 
@@ -278,10 +315,13 @@ impl FileLog {
     ) -> Result<FileLog> {
         let active =
             segments.last().map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {} holds no log", dir.display())))?;
+        let unsynced = options.durability == Durability::None;
         Ok(FileLog {
             fs,
             dir: dir.to_path_buf(),
             hash,
+            durability: AtomicU8::new(durability_code(options.durability)),
+            entries_unsynced: AtomicBool::new(unsynced),
             options,
             active: RwLock::new(active),
             segments: Mutex::new(segments.into_iter().map(|s| (s.number, s)).collect()),
@@ -315,6 +355,11 @@ impl FileLog {
         }
     }
 
+    /// How durable its syncs make records now.
+    pub(super) fn durability(&self) -> Durability {
+        durability_of(self.durability.load(Ordering::Acquire))
+    }
+
     /// The segment numbered `number`, if it is kept.
     fn segment(&self, number: u64) -> Option<Arc<Segment>> {
         lock_builtin(&self.segments).get(&number).map(Arc::clone)
@@ -330,10 +375,15 @@ impl FileLog {
     }
 }
 
-/// A new segment's block file at `path`, its creation synced unless the
-/// log is never synced (`Durability::None`).
-fn segment_file(fs: &dyn FileSystem, path: &Path, hash: Arc<dyn HashFunction>, options: &FileLogOptions) -> Result<BlockFile> {
-    match options.durability {
+/// A new segment's block file at `path`, of `options`, its creation synced
+/// unless the log syncs nothing now (`Durability::None`).
+fn segment_file(
+    fs: &dyn FileSystem,
+    path: &Path,
+    hash: Arc<dyn HashFunction>,
+    (options, durability): (&FileLogOptions, Durability),
+) -> Result<BlockFile> {
+    match durability {
         Durability::None => BlockFile::create_unsynced(fs, path, hash, options.pipeline.clone(), options.blocks),
         Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, options.pipeline.clone(), options.blocks),
     }
@@ -349,7 +399,11 @@ fn check_segment_size(size: u64) -> Result<()> {
 
 impl Log for FileLog {
     fn capabilities(&self) -> LogCapabilities {
-        LogCapabilities { durable: self.options.durability != Durability::None }
+        LogCapabilities { durable: self.durability() != Durability::None }
+    }
+
+    fn set_durability(&self, durability: Durability) {
+        self.durability.store(durability_code(durability), Ordering::Release);
     }
 
     fn append(&self, record: &[u8]) -> Result<Lsn> {
@@ -379,7 +433,13 @@ impl Log for FileLog {
         for older in earlier {
             self.seal(&older)?;
         }
-        self.sync_through(&segment, id)
+        let durability = self.durability();
+        // A log syncing nothing claims nothing durable.
+        if durability == Durability::None {
+            return Ok(());
+        }
+        self.sync_entries(number)?;
+        self.sync_through(&segment, id, durability)
     }
 
     fn read_from(&self, from: Lsn) -> Records<'_> {
@@ -396,8 +456,8 @@ impl Log for FileLog {
             self.fs.remove(&self.dir.join(segment_name(n)))?;
             lock_builtin(&self.segments).remove(&n);
         }
-        // A log never synced does not sync its removals either.
-        match self.options.durability {
+        // A log syncing nothing does not sync its removals either.
+        match self.durability() {
             Durability::None => Ok(()),
             Durability::Data | Durability::Full => self.fs.sync_dir(&self.dir),
         }

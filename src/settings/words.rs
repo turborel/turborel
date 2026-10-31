@@ -1,9 +1,11 @@
 //! \[DESIGN\] The words of the built-in two-way choices (RULES.md D36),
 //! ON and OFF, as the transaction coordinator's types: LOCKS.WAIT,
-//! SESSION.COMMIT_AT_END and TRANSACTION.STRICT. Split from settings.rs
-//! (RULES.md R-SIZE-2).
+//! SESSION.COMMIT_AT_END and TRANSACTION.STRICT; and LOG.DURABILITY's, as
+//! the log's. Split from settings.rs (RULES.md R-SIZE-2).
 
-use super::{OFF, ON};
+use super::builtin::LOG_DURABILITY;
+use super::{OFF, ON, Settings};
+use crate::disk::io::Durability;
 use crate::txn::{LockWait, Policy, SessionEnd};
 use crate::value::Value;
 
@@ -44,4 +46,10 @@ pub fn policy_word(policy: Policy) -> &'static str {
         Policy::Strict => ON,
         Policy::Permissive => OFF,
     }
+}
+
+/// The durability of the log LOG.DURABILITY says, of `settings` (RULES.md
+/// D25).
+pub fn log_durability(settings: &Settings) -> Durability {
+    Durability::of(settings.word(LOG_DURABILITY))
 }

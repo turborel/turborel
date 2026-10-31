@@ -4,7 +4,8 @@
 //! For the tests of the storage foundation's failure paths: what each
 //! component does when an open, read, write, sync or removal fails; and,
 //! as it notes the size of each file at its last sync, for those of what
-//! a failure of the system loses: the writes no sync covered.
+//! a failure of the system loses: the writes no sync covered; and each
+//! sync's durability, for those of what is synced how.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -112,6 +113,8 @@ pub struct Faults {
     injected: AtomicUsize,
     /// The size of each file synced, as its last sync left it.
     synced: Mutex<HashMap<PathBuf, u64>>,
+    /// Each sync of a file done, in order: its path and durability.
+    syncs: Mutex<Vec<(PathBuf, Durability)>>,
 }
 
 impl Faults {
@@ -132,6 +135,12 @@ impl Faults {
     /// Faults injected so far.
     pub fn injected(&self) -> usize {
         self.injected.load(Ordering::SeqCst)
+    }
+
+    /// Each sync of a file done so far, its path and durability, in order;
+    /// and forgets them.
+    pub fn take_syncs(&self) -> Vec<(PathBuf, Durability)> {
+        std::mem::take(&mut *self.syncs.lock().unwrap())
     }
 
     /// Cuts the file at `path` to the size its last sync left it, 0 if
@@ -272,6 +281,7 @@ impl DiskFile for FaultyFile {
         self.inner.sync(durability)?;
         let size = self.inner.size()?;
         self.faults.synced.lock().unwrap().insert(self.path.clone(), size);
+        self.faults.syncs.lock().unwrap().push((self.path.clone(), durability));
         Ok(())
     }
 }

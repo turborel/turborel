@@ -106,6 +106,20 @@ changes. Opened again, the database commits it if its commit record
 reached the disk, and rolls it back if not. The failure is told as a
 `failed` event.
 
+How durable a sync of the log makes what it holds is LOG.DURABILITY:
+DATA, the default, the log's data on the device with what reading it
+back needs; FULL, all of its files' metadata too; NONE, never synced,
+so a failure of the system, not of the database alone, may lose any
+commit, and a table whose engine needs a durable log is then refused
+under TRANSACTION.STRICT ON. A change holds at once, from the log's next
+sync, and each segment of the log begun after is made as it says; the
+first sync after NONE makes every record before it durable too, the
+change of the setting, made under NONE, among them.
+
+```sql
+SET DATABASE LOG.DURABILITY = 'FULL'
+```
+
 ## Checkpoints
 
 A checkpoint writes the changes since the last to the data file, so a

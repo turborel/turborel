@@ -44,6 +44,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | LOCKS.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | LOCKS.WAIT | OFF | ONE OF ON, OFF | from the next transaction | *session* |
 | LOG.COMMIT_SYNC | ON | ONE OF ON, OFF | at once | *session* |
+| LOG.DURABILITY | DATA | ONE OF NONE, DATA, FULL | at once |  |
 | LOG.SEGMENT_BYTES | 67108864 | INTEGER FROM 4096 TO 1099511627775 | when the database is made |  |
 | LOG.SYNC_AFTER_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | MEMORY.BUDGET_BYTES | 268435456 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
@@ -100,6 +101,7 @@ Each in a sentence:
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock another transaction holds; OFF refuses the statement at once.
 - **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.
+- **LOG.DURABILITY**: How durable a sync of the log makes what it holds: NONE, never synced, so a failure of the system may lose any commit, and TRANSACTION.STRICT takes the log as not durable; DATA, its data on the device with what reading it back needs; FULL, with all of its files' metadata too. A change holds from the log's next sync, which after NONE makes every record before it durable too, and each segment of the log begun after is made as it says; a log plug-in takes it as far as it can.
 - **LOG.SEGMENT_BYTES**: The bytes after which a segment of the log is ended and the next begun.
 - **LOG.SYNC_AFTER_MS**: The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.
 - **MEMORY.BUDGET_BYTES**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.

@@ -38,6 +38,32 @@ pub enum Durability {
     Full,
 }
 
+impl Durability {
+    /// The words LOG.DURABILITY takes (RULES.md D36), in the order of the
+    /// durabilities.
+    pub const WORDS: [&'static str; 3] = ["NONE", "DATA", "FULL"];
+
+    /// The durability `word` names, `Data` for any other.
+    pub fn of(word: &str) -> Durability {
+        if word.eq_ignore_ascii_case("NONE") {
+            Durability::None
+        } else if word.eq_ignore_ascii_case("FULL") {
+            Durability::Full
+        } else {
+            Durability::Data
+        }
+    }
+
+    /// The word LOG.DURABILITY takes for it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Durability::None => "NONE",
+            Durability::Data => "DATA",
+            Durability::Full => "FULL",
+        }
+    }
+}
+
 /// How to open a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenMode {

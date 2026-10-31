@@ -90,12 +90,10 @@ pub const POOL_BYTES: usize = 32 << 20;
 
 /// \[DESIGN\] How a database kept in a directory is opened: what its
 /// files do not fix. What they do is its settings fixed at creation
-/// (`db/formats.rs`); its buffer pool, the setting STORAGE.POOL_BYTES.
+/// (`db/formats.rs`); its buffer pool, the setting STORAGE.POOL_BYTES; its
+/// log's durability, LOG.DURABILITY.
 #[derive(Clone)]
 pub struct OpenOptions {
-    /// How durable the built-in log's syncs make its records (`FileLogs`),
-    /// when no other log storage is set (`Database::set_log_storage`).
-    pub durability: Durability,
     /// The options of the log of older row versions (`undo/`): by default
     /// segments of `UNDO_SEGMENT_SIZE`, never synced.
     pub undo: FileLogOptions,
@@ -117,7 +115,7 @@ pub const UNDO_SEGMENT_SIZE: u64 = 16 << 20;
 impl Default for OpenOptions {
     fn default() -> Self {
         let undo = FileLogOptions { segment_size: UNDO_SEGMENT_SIZE, durability: Durability::None, ..FileLogOptions::default() };
-        OpenOptions { durability: FileLogOptions::default().durability, undo, undo_batch: UNDO_BATCH }
+        OpenOptions { undo, undo_batch: UNDO_BATCH }
     }
 }
 
@@ -198,12 +196,13 @@ impl<'a> Place<'a> {
         StorePlace::new(self.fs, self.dir, &self.layout.formats).telling(&self.events)
     }
 
-    /// The options of the built-in log.
+    /// The options of the built-in log: its durability as it is opened,
+    /// told it again once the database is (`Database::apply_settings`).
     fn log_options(&self) -> FileLogOptions {
         let segment_size = self.layout.segment_size;
         FileLogOptions {
             segment_size,
-            durability: self.options.durability,
+            durability: self.layout.durability,
             pipeline: self.layout.formats.pipeline.clone(),
             ..FileLogOptions::default()
         }
@@ -278,19 +277,24 @@ impl Database {
         // Its catalog is read in whatever registered formats it names: its
         // own are recorded in it.
         let reading = FileFormats { pipeline: Pipeline::none(), ..snapshot.layout(&snapshot.settings)?.formats };
-        let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading), options)? else {
+        let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading))? else {
             let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held, self.events()));
             return self.create_files(&place, &started);
         };
         let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
         let recorded = |name: &str| image.as_ref().and_then(|i| i.snapshot.setting(name)).cloned();
         let values = snapshot.recorded(&recorded)?;
-        let place = Place::new(fs, dir, snapshot.layout(&values)?, (options, held, self.events()));
+        let mut layout = snapshot.layout(&values)?;
+        // Its log opened syncing as it last did, until its settings say.
+        if let Some(Value::Char(word)) = recorded("LOG.DURABILITY") {
+            layout.durability = Durability::of(&word);
+        }
+        let place = Place::new(fs, dir, layout, (options, held, self.events()));
         // Read in the encodings its files name; opened again in its own
         // formats, their encodings bound to their arguments (a key's name),
         // as what it records from now on is written through them.
         drop(found);
-        let catalog = self.catalog_at(&place.store(), options)?.ok_or_else(|| api("[DESIGN] the catalog went as the database opened"))?;
+        let catalog = self.catalog_at(&place.store())?.ok_or_else(|| api("[DESIGN] the catalog went as the database opened"))?;
         let OpenedLog { log, cut } = self.log_at(&place, image.as_ref().map_or(Lsn(0), |i| i.through))?;
         // The budget the pool is made in: the one recorded, before the
         // definitions are made again.
@@ -382,10 +386,10 @@ impl Database {
     ///
     /// SQLCODE -910 if it finds none, but a database's log is there: the
     /// catalog is kept by another storage. The storage's errors.
-    fn catalog_at(&self, place: &StorePlace<'_>, options: &OpenOptions) -> Result<Option<Box<dyn CatalogStore>>> {
+    fn catalog_at(&self, place: &StorePlace<'_>) -> Result<Option<Box<dyn CatalogStore>>> {
         let storage = self.catalog_storage();
         let found = storage.open(place)?;
-        let logs = self.log_storage(&FileLogOptions { durability: options.durability, ..FileLogOptions::default() });
+        let logs = self.log_storage(&FileLogOptions::default());
         // Only looked for: opening it would recover it.
         if found.is_none() && logs.exists(place)? {
             return Err(api(format!(

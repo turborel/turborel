@@ -77,6 +77,9 @@ design settles.
   commands); reconfiguration. Also `cargo xtask simulate --seeds N`, for
   sweeps longer than `verify` runs, and mutations of VR for `cargo xtask
   mutate`, which mutates the core's package only.
+  A replicated log's journal keeps the durability of its
+  `FileLogOptions`, not LOG.DURABILITY (D25): changing it while a
+  replica runs bears on VR's safety and needs a decision.
 
 ---
 
@@ -113,12 +116,6 @@ What came after SQL-92 follows it, written from the standards' own text
 
 The registry, scopes and SET statements exist (D36). Still to do:
 
-- **The log's durability as a setting** (D36), today
-  `OpenOptions::durability`, by default Data: the file log fixes it at
-  open for every segment (`log/file.rs`). It must change while the log is
-  open, each new segment, and a `Log` plug-in, fixing it as made, and
-  `Log::capabilities`, which the Strict policy reads at each write (D25),
-  telling the value now.
 - **Settings of the last plug-ins** (D36): a `Log` given by
   `Database::set_log`, a diagnostics sink and a clock have no name to
   declare settings under, so no `Configurable` yet; and the server's

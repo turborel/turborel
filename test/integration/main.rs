@@ -95,6 +95,7 @@ mod joins;
 mod kept_plans;
 mod language;
 mod log;
+mod log_durability;
 mod log_sync;
 mod memory;
 mod mvcc;

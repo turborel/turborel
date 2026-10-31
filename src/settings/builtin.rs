@@ -2,7 +2,7 @@
 //! in groups: transactions and definitions, planning, the catalog's name,
 //! memory, the planner's guesses, spilling, durability, storage, limits,
 //! the executor, the threads of background work (RULES.md D55), and the
-//! log's own pace of syncs. A default its subsystem names by a constant is
+//! log's own pace of syncs and its durability. A default its subsystem names by a constant is
 //! that constant.
 //! Split from settings.rs (RULES.md R-SIZE-2).
 
@@ -92,6 +92,8 @@ pub const FUNCTION_CALLS: Key = Key(37);
 pub const CHECKPOINT_OVERDUE_FACTOR: Key = Key(38);
 /// See [`TABLES_ENGINE`].
 pub const LOG_SYNC_AFTER_MS: Key = Key(39);
+/// See [`TABLES_ENGINE`].
+pub const LOG_DURABILITY: Key = Key(41);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -186,6 +188,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     ));
     all.push(log_sync());
     all.push(read_ahead());
+    all.push(log_durability());
     all
 }
 
@@ -416,6 +419,18 @@ fn log_sync() -> Definition {
         ("LOG.SYNC_AFTER_MS", at_least(0), count(crate::db::SYNC_AFTER_MS)),
         DATABASE,
         "The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.",
+    )
+}
+
+/// \[DESIGN\] How durable a sync of the log makes its records (RULES.md
+/// D25): at once, from the log's next sync, and each segment of the file
+/// log begun after made as it says.
+fn log_durability() -> Definition {
+    use crate::disk::io::Durability;
+    defined(
+        ("LOG.DURABILITY", Kind::Choice(&Durability::WORDS), text(crate::log::DEFAULT_DURABILITY.word())),
+        DATABASE,
+        "How durable a sync of the log makes what it holds: NONE, never synced, so a failure of the system may lose any commit, and TRANSACTION.STRICT takes the log as not durable; DATA, its data on the device with what reading it back needs; FULL, with all of its files' metadata too. A change holds from the log's next sync, which after NONE makes every record before it durable too, and each segment of the log begun after is made as it says; a log plug-in takes it as far as it can.",
     )
 }
 

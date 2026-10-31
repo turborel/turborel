@@ -14,6 +14,7 @@ use std::sync::Arc;
 use super::{Database, State, api};
 use crate::diagnostics::Extension;
 use crate::disk::encoding::{Encoding, Pipeline};
+use crate::disk::io::Durability;
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
 use crate::settings::{self, CHECKSUM, ENCODINGS, Effect, LOG_SEGMENT_BYTES, PAGE_BYTES, POOL_BYTES, Settings};
@@ -52,6 +53,9 @@ pub(super) struct FileLayout {
     pub(super) segment_size: u64,
     /// The bytes of its buffer pool.
     pub(super) pool_bytes: usize,
+    /// How durable its log's syncs make its records, as it is opened
+    /// (LOG.DURABILITY).
+    pub(super) durability: Durability,
 }
 
 impl State {
@@ -80,6 +84,7 @@ impl State {
                 .map_err(|_| api("[DESIGN] STORAGE.PAGE_BYTES is out of range"))?,
             segment_size: size(LOG_SEGMENT_BYTES, "LOG.SEGMENT_BYTES")?,
             pool_bytes: usize::try_from(size(POOL_BYTES, "STORAGE.POOL_BYTES")?).unwrap_or(usize::MAX),
+            durability: settings::log_durability(values),
         })
     }
 

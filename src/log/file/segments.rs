@@ -67,15 +67,15 @@ impl FileLog {
         ))
     }
 
-    /// Keeps `e`, the failure of a sync of segment `number`, if it is the
-    /// first, and tells it; returns it.
-    fn failed(&self, e: SqlError, number: u64) -> SqlError {
+    /// Keeps `e`, the failure of a sync of `what` (segment N, or the
+    /// directory), if it is the first, and tells it; returns it.
+    fn failed(&self, e: SqlError, what: &str) -> SqlError {
         let mut failure = lock_builtin(&self.failure);
         if failure.is_none() {
             *failure = Some(e.clone());
             drop(failure);
             let why = format!(
-                "[DESIGN] the log in {} could not sync segment {number}, so every later sync of it fails, and the database takes no change until it is opened again: {}",
+                "[DESIGN] the log in {} could not sync {what}, so every later sync of it fails, and the database takes no change until it is opened again: {}",
                 self.dir.display(),
                 e.msg
             );
@@ -92,7 +92,12 @@ impl FileLog {
         if self.fs.exists(&path)? {
             self.fs.remove(&path)?;
         }
-        let blocks = segment_file(&*self.fs, &path, Arc::clone(&self.hash), &self.options)?;
+        let durability = self.durability();
+        let blocks = segment_file(&*self.fs, &path, Arc::clone(&self.hash), (&self.options, durability))?;
+        // Its entry made, not synced: the first sync that syncs syncs it.
+        if durability == Durability::None {
+            self.entries_unsynced.store(true, Ordering::Release);
+        }
         let next = Segment::new(number, blocks);
         lock_builtin(&self.segments).insert(number, Arc::clone(&next));
         *self.active.write().unwrap_or_else(PoisonError::into_inner) = next;
@@ -100,26 +105,48 @@ impl FileLog {
         Ok(())
     }
 
-    /// Seals `segment`, no longer current: waits for its appends, syncs it.
+    /// Seals `segment`, no longer current: waits for its appends, syncs it
+    /// as the log's durability says now. One sealed while that was `None`
+    /// is synced by the first seal after it is not.
     pub(super) fn seal(&self, segment: &Segment) -> Result<()> {
-        if segment.sealed.load(Ordering::Acquire) {
+        let synced = segment.durable_end.load(Ordering::Acquire) >= segment.blocks.end().0;
+        if segment.sealed.load(Ordering::Acquire) && synced {
             return Ok(());
         }
         self.healthy()?;
         segment.drain();
-        // A log never synced asks for no sync.
-        if self.options.durability != Durability::None {
-            segment.blocks.sync(self.options.durability).map_err(|e| self.failed(e, segment.number))?;
+        let durability = self.durability();
+        // A log syncing nothing asks for no sync, and claims nothing durable.
+        if durability != Durability::None {
+            segment.blocks.sync(durability).map_err(|e| self.failed(e, &format!("segment {}", segment.number)))?;
+            segment.durable_end.fetch_max(segment.blocks.end().0, Ordering::AcqRel);
         }
-        segment.durable_end.fetch_max(segment.blocks.end().0, Ordering::AcqRel);
         segment.sealed.store(true, Ordering::Release);
         Ok(())
     }
 
-    /// Makes block `id` of `segment` durable, grouping with other syncs: if
-    /// one is running, wait for it, then check again; otherwise sync for
-    /// everyone, through the blocks published when the sync began.
-    pub(super) fn sync_through(&self, segment: &Segment, id: BlockId) -> Result<()> {
+    /// Syncs the directory, and the one it is in, if a segment's entry in
+    /// it may not be durable, made while the log synced nothing; a failure
+    /// fails every later sync, as a segment's does. `number` is the
+    /// segment synced after it, for the message.
+    pub(super) fn sync_entries(&self, number: u64) -> Result<()> {
+        // Taken before the sync: an entry made during it asks again.
+        if !self.entries_unsynced.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let parent = self.dir.parent().filter(|p| !p.as_os_str().is_empty());
+        let synced = self.fs.sync_dir(&self.dir).and_then(|()| parent.map_or(Ok(()), |p| self.fs.sync_dir(p)));
+        synced.map_err(|e| {
+            self.entries_unsynced.store(true, Ordering::Release);
+            self.failed(e, &format!("its directory before segment {number}"))
+        })
+    }
+
+    /// Makes block `id` of `segment` durable as `durability`, not `None`,
+    /// says, grouping with other syncs: if one is running, wait for it,
+    /// then check again; otherwise sync for everyone, through the blocks
+    /// published when the sync began.
+    pub(super) fn sync_through(&self, segment: &Segment, id: BlockId, durability: Durability) -> Result<()> {
         if id.0 < segment.durable_end.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -139,7 +166,7 @@ impl FileLog {
         *syncing = true;
         drop(syncing);
         let end = segment.blocks.end();
-        let synced = segment.blocks.sync(self.options.durability).map_err(|e| self.failed(e, segment.number));
+        let synced = segment.blocks.sync(durability).map_err(|e| self.failed(e, &format!("segment {}", segment.number)));
         if synced.is_ok() {
             segment.durable_end.fetch_max(end.0, Ordering::AcqRel);
             add(&self.counters.syncs, 1);

@@ -135,10 +135,11 @@ impl Database {
 
     /// Gives the settings as they are now published to what reads them
     /// held: the memory budget its limit, MEMORY.BUDGET_BYTES's; the files
-    /// their limit; the pages of a database in memory their pool's size,
-    /// STORAGE.POOL_BYTES', and once their pool is made, the size it was
-    /// made of as the one started with; and each plug-in the database's
-    /// values (`configure_plugins`).
+    /// their limit; the log its durability, LOG.DURABILITY's
+    /// (`Log::set_durability`); the pages of a database in memory their
+    /// pool's size, STORAGE.POOL_BYTES', and once their pool is made, the
+    /// size it was made of as the one started with; and each plug-in the
+    /// database's values (`configure_plugins`).
     ///
     /// # Errors
     ///
@@ -147,6 +148,7 @@ impl Database {
         let st = self.snapshot()?;
         st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET_BYTES)));
         st.files.set_limit(usize::try_from(st.settings.integer(settings::FILES_MAX_OPEN)).unwrap_or(usize::MAX));
+        self.tell_durability()?;
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
         if let Some(made) = st.pages.made_bytes() {
@@ -156,6 +158,20 @@ impl Database {
             );
         }
         self.configure_plugins()
+    }
+
+    /// Tells its log, if it has one, LOG.DURABILITY (`Log::set_durability`):
+    /// from a snapshot, no lock held, as the log is a plug-in (R-ERR-4).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub(super) fn tell_durability(&self) -> Result<()> {
+        let st = self.snapshot()?;
+        if let Some(log) = &st.log {
+            log.set_durability(settings::log_durability(&st.settings));
+        }
+        Ok(())
     }
 
     /// \[DESIGN\] Records the database's values of the settings `names`,

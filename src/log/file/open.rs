@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 
 use super::{FileLog, FileLogOptions, LogRecovery, Segment, check_segment_size, segment_number, split};
 use crate::disk::block::{BlockFile, BlockId, HEADER_LEN, ReadWith, Recovery};
-use crate::disk::io::{FileSystem, OpenMode};
+use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
 use crate::log::{Log, Lsn};
 
@@ -72,8 +72,14 @@ impl FileLog {
         let mut options = options;
         options.pipeline = newest.blocks.pipeline().clone();
         let count = u64::try_from(segments.len()).unwrap_or(u64::MAX);
+        // Opened syncing nothing, the older segments are not taken as
+        // durable: a run before may have left them unsynced, so the first
+        // sync after the log's durability rises syncs them.
+        let durable = options.durability != Durability::None;
         for older in segments.iter().take(segments.len().saturating_sub(1)) {
-            older.durable_end.store(older.blocks.end().0, Ordering::Release);
+            if durable {
+                older.durable_end.store(older.blocks.end().0, Ordering::Release);
+            }
             older.sealed.store(true, Ordering::Release);
         }
         let log = FileLog::over(fs, dir, hash, options, segments)?;

@@ -442,6 +442,20 @@ filling it commit together or not at all.
   - its failed sync stops the database taking changes, as any failed
     sync of the log;
   - close stops it, then syncs the log itself.
+- **Log durability.** LOG.DURABILITY (D36): NONE, DATA (default) or
+  FULL, changed while the log is open:
+  - at once: each sync from then on syncs as it says, NONE not at all,
+    and `Log::capabilities` tells it, which Strict reads at each write;
+    not from the next segment, as capabilities must tell what a sync
+    does now;
+  - the file log makes each segment begun after as it says, its
+    creation synced or not; a plug-in is told it (`Log::set_durability`)
+    and takes it as far as it can; the memory log is never durable;
+  - only a sync that syncs claims records durable, so the first after
+    NONE first syncs the segments sealed unsynced and their directory:
+    every record before it is then durable, as `Log::sync` promises;
+  - a log opens with the value its last image records, and is told the
+    one replayed once the database is open.
 - **Plug-ins.** The `Log` is a plug-in: built in, a memory log and a
   segmented file log with group commit. A database in a directory opens
   its log, as its catalog, through a plug-in `LogStorage`
@@ -1804,6 +1818,9 @@ same results and errors is the optimizer's to choose.
     (`Settings::mark_started`).
   - So the column store bounds the frozen-group headers it holds
     (COLUMNSTORE.HEADER_CACHE_BYTES).
+- **Logs.** The database's log is told LOG.DURABILITY
+  (`Log::set_durability`) when given and after each change, the same
+  way, from a snapshot (D25).
 - **Sessions** set for themselves, over the database's value: whether
   commits wait for the log (LOG.COMMIT_SYNC, D25); whether the function
   call syntax is accepted (SQL.FUNCTION_CALLS); each optimizer rule
@@ -1878,8 +1895,8 @@ same results and errors is the optimizer's to choose.
   at open (STORAGE.POOL_BYTES), given before it opens, hold from then
   on.
 - **`OpenOptions`** keeps only what the files do not fix, for the host
-  program to give: the log's durability (until it is a setting) and the
-  log of older row versions.
+  program to give: the log of older row versions. The log's durability
+  is a setting, LOG.DURABILITY (D25), kept with the others.
 - **Privileges.** Only the database's owner (D43) changes its values; a
   session sets its own. The Rust API is unrestricted: the host program
   holds the database.

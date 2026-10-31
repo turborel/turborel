@@ -19,8 +19,11 @@ pub mod sealed;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-pub use file::{DEFAULT_SEGMENT_SIZE, FileLog, FileLogOptions, LogCounts, LogRecovery, MAX_SEGMENT_SIZE, MIN_SEGMENT_SIZE};
+pub use file::{
+    DEFAULT_DURABILITY, DEFAULT_SEGMENT_SIZE, FileLog, FileLogOptions, LogCounts, LogRecovery, MAX_SEGMENT_SIZE, MIN_SEGMENT_SIZE,
+};
 
+use crate::disk::io::Durability;
 use crate::error::{Code, Result, SqlError};
 use crate::sync::lock_builtin;
 
@@ -60,8 +63,16 @@ pub type Records<'a> = Box<dyn Iterator<Item = Result<(Lsn, Vec<u8>)>> + 'a>;
 /// * Methods may be called from several threads at once (`Send + Sync`), and
 ///   never call back into the database (RULES.md R-ERR-4).
 pub trait Log: Send + Sync {
-    /// What the log promises.
+    /// What the log promises now: a log whose durability changes while it
+    /// is open (`set_durability`) tells the one it keeps now, which the
+    /// Strict policy reads at each write (RULES.md D25).
     fn capabilities(&self) -> LogCapabilities;
+    /// Makes its syncs from now on as durable as `durability` says, as far
+    /// as it can: the database's LOG.DURABILITY, told as the database is
+    /// given the log and after each change of it (RULES.md D25, D36). What
+    /// it then promises, `capabilities` tells. Default: nothing changes, a
+    /// log that keeps one durability keeping it.
+    fn set_durability(&self, _durability: Durability) {}
     /// Appends `record`; its position.
     ///
     /// # Errors
@@ -101,7 +112,8 @@ pub trait Log: Send + Sync {
     fn end(&self) -> Lsn;
 }
 
-/// \[DESIGN\] A log in memory: records survive only as long as the process.
+/// \[DESIGN\] A log in memory: records survive only as long as the process,
+/// whatever LOG.DURABILITY says (`Log::set_durability`, not overridden).
 /// Positions are 1, 2, 3, ...; appends take turns under one short lock.
 #[derive(Debug, Default)]
 pub struct MemoryLog {

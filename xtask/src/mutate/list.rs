@@ -72,7 +72,7 @@ pub const MUTATIONS: [Mutation; 19] = [
         name: "file-log-sync",
         breaks: "the file log's sync: its blocks are counted durable without a sync",
         file: "src/log/file/segments.rs",
-        original: "let synced = segment.blocks.sync(self.options.durability).map_err(|e| self.failed(e, segment.number));",
+        original: "let synced = segment.blocks.sync(durability).map_err(|e| self.failed(e, &format!(\"segment {}\", segment.number)));",
         replacement: "let synced: Result<()> = Ok(());",
         integration: &[
             "failures::a_log_survives_failed_rotations_and_syncs",

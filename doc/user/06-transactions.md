@@ -12,7 +12,9 @@ its changes undone. A statement that fails is undone alone; the
 transaction goes on. A COMMIT once done survives a crash, unless the
 session set LOG.COMMIT_SYNC OFF, so as not to wait for the log: then
 only once the log is next synced, within LOG.SYNC_AFTER_MS
-([Settings](../operator/04-settings.md#a-sessions-own)).
+([Settings](../operator/04-settings.md#a-sessions-own)); or the
+database's LOG.DURABILITY is NONE: then a failure of the system may
+lose it ([Databases](../operator/03-databases.md#recovery-after-a-crash)).
 
 Definitions, as CREATE SCHEMA and CREATE TABLE, run within the
 transaction too, and are undone by ROLLBACK; the statements of users and

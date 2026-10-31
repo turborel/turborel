@@ -55,7 +55,7 @@ fn last(log: &Watched) -> Lsn {
 }
 
 /// The newest segment of the log of the database in `dir`.
-fn last_segment(dir: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn last_segment(dir: &std::path::Path) -> std::path::PathBuf {
     let mut segments: Vec<std::path::PathBuf> = std::fs::read_dir(dir.join("log")).unwrap().map(|e| e.unwrap().path()).collect();
     segments.sort();
     segments.pop().unwrap()
