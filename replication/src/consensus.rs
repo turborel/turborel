@@ -30,7 +30,10 @@ use crate::{Lsn, ReplicaEvent, ReplicaId, Role};
 /// * **Delivery.** `Deliver { through }` names records committed and
 ///   durable on this replica, which the driver gives the core's replay in
 ///   order; the records the replica appended itself as primary are never
-///   delivered to it while it serves.
+///   delivered to it while it serves. The driver tells where its database
+///   holds the log, as it is opened (`Opened`): from its files when the
+///   replica starts, and again once deposed (`Role(Backup)`); delivery
+///   then names only records after that position.
 /// * **The journal.** The driver carries out the outputs in order. Each
 ///   `Persist` and `Truncate` changes its journal of records; `PersistState`
 ///   writes the protocol's own state, and makes it and every journal output
@@ -70,6 +73,10 @@ pub enum Input {
     Applied(Lsn),
     /// A state transfer installed an export taken at this position.
     Installed(Lsn),
+    /// \[EXTENSION\] The core's database, opened from its files (as the
+    /// replica starts, or again once deposed), holds the log through this
+    /// position, every record of it committed: delivery resumes after it.
+    Opened(Lsn),
 }
 
 /// \[EXTENSION\] What a consensus tells its driver to do.

@@ -250,7 +250,7 @@ impl Consensus for Scripted {
         match input {
             Input::Tick => out.push(Output::Role(Role::Primary { view: 0 })),
             Input::Append(record) => out.extend((self.answer)(record)),
-            Input::Received { .. } | Input::Persisted(_) | Input::Applied(_) | Input::Installed(_) => {}
+            Input::Received { .. } | Input::Persisted(_) | Input::Applied(_) | Input::Installed(_) | Input::Opened(_) => {}
         }
     }
 }

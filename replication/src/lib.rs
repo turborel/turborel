@@ -17,9 +17,11 @@
 //!
 //! [`ReplicatedLog`] is a core `Log` over a consensus and a journal: of one
 //! replica for now, which drives its consensus itself, and as the log of a
-//! database kept in a directory, [`ReplicatedLogs`]. A driver joining
-//! replicas, a job of the thread manager (D55), with a transport and the
-//! core's `Standby`, is built in a later stage, and is not here.
+//! database kept in a directory, [`ReplicatedLogs`]. [`Driver`] joins a
+//! replica of a group: its consensus, journal and transport and the core's
+//! `Standby` seam of its database, which writes to the driver's log
+//! ([`GroupLog`]); a job of the thread manager (D55, [`DriverJob`]) runs
+//! its turns.
 //!
 //! # Sources
 //!
@@ -36,6 +38,7 @@
 //! Where turborel departs from \[VRR\], the code says so, with the reason.
 
 mod consensus;
+pub mod driver;
 mod journal;
 mod log;
 mod storage;
@@ -44,6 +47,7 @@ mod transport;
 pub mod vr;
 
 pub use consensus::{Consensus, Input, Output, Recovered};
+pub use driver::{Driver, DriverJob, GroupLog, GroupLogs, Parts};
 pub use journal::{Journal, LogJournal};
 pub use log::{MakeAlone, ReplicatedLog, TICKS_ALONE};
 pub use storage::{ALONE, ReplicatedLogs, STORAGE_NAME, vr_alone};

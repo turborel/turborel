@@ -261,9 +261,9 @@ impl Vr {
     /// journal held: its records are durable, and it rejoins in the view it
     /// wrote last, normal there if it was normal there and was not its
     /// primary, else in a view change (see the module's documentation).
-    /// Its commit-number is learned again from the group, and what is
-    /// committed delivered again from the start: the driver gives the core
-    /// only what it has not applied.
+    /// Its commit-number is learned again from the group; its driver tells
+    /// where its database, opened from its files, holds the log
+    /// (`Input::Opened`), and what is committed after it is delivered.
     ///
     /// # Errors
     ///
@@ -417,6 +417,7 @@ impl Consensus for Vr {
             Input::Tick => self.tick(out),
             Input::Persisted(at) => self.persisted(at.0, out),
             Input::Applied(at) => self.applied = self.applied.max(at.0),
+            Input::Opened(at) => self.opened(at.0, out),
             // VR keeps its whole log (log retention is a later stage), so it
             // never asks for a state transfer, and none is installed.
             Input::Installed(_) => {}

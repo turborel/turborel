@@ -1,8 +1,10 @@
 //! Real databases in the deterministic simulator (RULES.md D57): each VR
-//! replica keeps a turborel database, which follows its replica's log
-//! through the core's `Standby` seam and serves SQL while its replica is
-//! primary. After runs of faults at random, every backup must hold what
-//! the primary holds; and a backup promoted by a view change serves.
+//! replica has the crate's driver over a turborel database kept in files,
+//! which follows its replica's log through the core's `Standby` seam,
+//! serves SQL while its replica is primary, is opened again in place once
+//! deposed, and from its last checkpoint once crashed. After runs of
+//! faults at random, every backup must hold what the primary holds; and a
+//! backup promoted by a view change serves.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -36,13 +38,15 @@ fn calm_plan() -> Plan {
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.1] [VRR §4.2] in groups of three
-/// replicas each keeping a real database, through frames delayed, lost,
-/// duplicated and reordered, partitions, crashes and failing disks, while
-/// the primary's database runs transactions spanning moments: after the
-/// calm, every backup has replayed the committed log and holds what the
+/// replicas each keeping a real database driven by the crate's driver,
+/// through frames delayed, lost, duplicated and reordered, partitions,
+/// crashes and failing disks, while the primary's database runs
+/// transactions spanning moments and the databases take checkpoints:
+/// after the calm, every backup holds the committed log and what the
 /// primary holds, the same rows, index entries and Information Schema;
 /// and the faults were met: commits in doubt, transactions left open by a
-/// primary stopped, and backups promoted.
+/// primary stopped, backups promoted, checkpoints of following databases,
+/// and databases opened again from their files after a crash.
 #[test]
 fn backups_hold_what_the_primary_holds() {
     let make: Make = Arc::new(make_vr);
@@ -59,6 +63,8 @@ fn backups_hold_what_the_primary_holds() {
     let met = |f: fn(&DatabaseReport) -> bool| reports.iter().filter(|&r| f(r)).count();
     let (doubted, interrupted, promoted) = (met(|r| r.in_doubt > 0), met(|r| r.interrupted > 0), met(|r| r.promoted > 0));
     assert!(doubted > 0 && interrupted > 0 && promoted > 0, "faults hardly met: {doubted} {interrupted} {promoted}");
+    let (checkpointed, reopened) = (met(|r| r.following_checkpoints > 0), met(|r| r.reopened > 0));
+    assert!(checkpointed > 0 && reopened > 0, "recovery hardly met: {checkpointed} {reopened}");
 }
 
 /// Verifies: [DESIGN] RULES.md D57, R-TEST-5 a run of real databases is
@@ -80,10 +86,10 @@ fn a_seed_makes_its_run_of_databases_again() {
 #[test]
 fn a_promoted_backup_serves() {
     let make: Make = Arc::new(make_vr);
-    let mut group = Replicas::new(1, &calm_plan(), &make);
+    let mut group = Replicas::new(1, &calm_plan(), &make).unwrap();
     group.moments(50).unwrap();
     assert_eq!(group.primary(), Some(0));
-    let first = group.database(0).clone();
+    let first = group.database(0).unwrap();
     first.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER)").unwrap();
     let s = first.session("APP");
     s.run("INSERT INTO T VALUES (1, 10)").unwrap();
@@ -91,14 +97,14 @@ fn a_promoted_backup_serves() {
     s.commit().unwrap();
     s.run("INSERT INTO T VALUES (3, 30)").unwrap();
     group.moments(50).unwrap();
-    assert_eq!(rows(&group.database(1).session("APP"), "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2"]);
+    assert_eq!(rows(&group.database(1).unwrap().session("APP"), "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2"]);
 
     group.crash(0).unwrap();
     drop((s, first));
     group.moments(300).unwrap();
     let primary = group.primary().unwrap();
     assert_ne!(primary, 0, "a backup serves the next view");
-    let serving = group.database(primary).clone();
+    let serving = group.database(primary).unwrap();
     let writer = serving.session("APP");
     assert_eq!(rows(&writer, "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2"], "the transaction left open ended");
     writer.run("INSERT INTO T VALUES (4, 40)").unwrap();
@@ -106,5 +112,5 @@ fn a_promoted_backup_serves() {
     group.moments(300).unwrap();
     let report = group.compare().unwrap();
     assert_eq!((report.compared, report.promoted), (2, 1));
-    assert_eq!(rows(&group.database(0).session("APP"), "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2", "4"]);
+    assert_eq!(rows(&group.database(0).unwrap().session("APP"), "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2", "4"]);
 }

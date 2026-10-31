@@ -1195,6 +1195,20 @@ opaque bytes.**
   the paper's §2.2 counts them), driving its consensus itself;
   `ReplicatedLogs` keeps it as a database's log, its journal the file
   log in `log/`.
+- **Driver.** `Driver` (`replication/src/driver.rs`), content-blind,
+  joins a consensus, a journal, a transport and a database's `Standby`:
+  - a struct stepped without threads: a turn takes the frames arrived,
+    the ticks due and the journal's writes made durable, then carries
+    out what the database is asked, in order, with no lock held;
+  - a job of the thread manager runs the turns (`DriverJob`,
+    `turborel-replica`); the simulator calls the same turn;
+  - its log (`GroupLog`): the database's, given by `GroupLogs` as it
+    opens; a sync waits through a seam (`Wait`) for the commit, or
+    fails in doubt once the service it was appended in ended (D25);
+  - a promotion syncing on the driver's own thread moves its inputs
+    on there;
+  - deposed, the database is opened again in place, and VR told where
+    it holds the log (`Input::Opened`).
 - **VR.** From Liskov and Cowling's "Viewstamped Replication
   Revisited", departing for durability:
   - a record is durable before PREPAREOK;
@@ -1203,7 +1217,10 @@ opaque bytes.**
   - a replica rebuilt from its journal rejoins its view, unless it was
     that view's primary, which waits for the next;
   - a new primary serves once the log it took over is committed and
-    delivered.
+    delivered;
+  - told where its database holds the log as it is opened
+    (`Input::Opened`), it delivers only what follows, the position its
+    own: no RECOVERY message, its journal intact.
 - **Approved with it.**
   - a `Log` for commit beside a content-blind driver of the traits, and
     the core's `Standby` seam (replay, promote, depose, export, import);
@@ -1239,9 +1256,11 @@ records, objects and files; none may need a replication change.
   partitions, crashes, failing disks), checking that committed records
   survive view changes in order, at most one primary serves a view (the
   one it names), and the group converges once faults stop;
-- the simulator also runs real databases, one a replica, through
-  `Standby` alone, the primary's taking SQL: after each run every
-  backup holds what the primary holds, rows and catalog.
+- the simulator runs every replica through the real `Driver`, its
+  database modelled or a real one kept in files, the primary's taking
+  SQL, each taking checkpoints, opened again in place once deposed and
+  from its files once crashed: after each run every backup holds what
+  the primary holds, rows and catalog.
 
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
 `db/standby.rs`, `db/standby/reopen.rs`, `db/checkpoint/following.rs`,

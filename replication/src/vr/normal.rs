@@ -273,13 +273,26 @@ impl Vr {
 
     /// A serving primary leaves its service: its records not committed are
     /// in doubt, and its database, deposed, opens again from its last
-    /// checkpoint, so what is committed is delivered again from the start.
+    /// checkpoint; its driver then tells where it holds the log
+    /// (`opened`).
     pub(super) fn depose(&mut self, out: &mut Vec<Output>) {
         if self.lead.serving {
             self.lead.serving = false;
             out.push(Output::Role(Role::Backup));
             self.in_doubt.append(&mut self.own);
-            self.delivered = 0;
         }
+    }
+
+    /// \[EXTENSION\] Its database, opened from its files, holds the log
+    /// through `at`, every record of it committed (RULES.md D57): delivery
+    /// resumes after it, of what is committed and durable here. [VRR §5.1]
+    /// has a recovering replica's application state tell the log prefix
+    /// "captured on disk", "so that we obtain all the requests after that
+    /// point, and so that we avoid rerunning operations that ran before the
+    /// node failed"; its journal intact, it tells only itself.
+    pub(super) fn opened(&mut self, at: u64, out: &mut Vec<Output>) {
+        self.delivered = at;
+        self.applied = at;
+        self.deliver(out);
     }
 }

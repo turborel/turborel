@@ -19,6 +19,7 @@ mod common;
 
 mod contract;
 mod databases;
+mod driver;
 mod frames;
 mod log;
 mod normal;

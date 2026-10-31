@@ -1,30 +1,41 @@
-//! Real databases in the simulator (RULES.md D57): each replica of the
-//! [`World`] keeps a turborel `Database`, in memory, which carries out its
-//! replica's effects through the core's `Standby` seam alone: it replays
-//! the records delivered, following; it is promoted, over a [`SimLog`] of
-//! its replica, when its replica serves; deposed and opened again from
-//! what it knew committed when its replica stops; lost when it crashes.
-//! The primary's database takes SQL at random, its sessions' transactions
-//! spanning moments, so the records a backup is given end inside
-//! transactions, a view change leaves some open, and a commit waits on
-//! the group as the world moves on. At the end every backup must hold what
-//! the primary holds: the same rows and the same catalog.
+//! Real databases in the simulator (RULES.md D57): each replica keeps a
+//! turborel `Database` in a directory of a file system in memory, kept
+//! across its crashes, whose log is its driver's (`GroupLogs`). Opened to
+//! follow (`Database::open_following`), it recovers from its last
+//! checkpoint alone, and its driver delivers it the committed records
+//! after; promoted when its replica serves; deposed and opened again in
+//! place when its replica stops; lost when it crashes, and opened again
+//! from its files when its replica is made again. The primary's database
+//! takes SQL at random, its sessions' transactions spanning moments, so
+//! the records a backup is given end inside transactions, a view change
+//! leaves some open, and a commit waits on the group as the world moves
+//! on; and the databases take checkpoints at random, the backups' as
+//! following databases. At the end every backup must hold what the
+//! primary holds: the same rows and the same catalog.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use turborel::db::{Database, Session, Standby};
+use turborel::db::{Database, OpenOptions, Session, Standby};
+use turborel::disk::io::FileSystem;
+use turborel::disk::memory::MemoryFileSystem;
 use turborel::error::Code;
-use turborel::log::{Log, Lsn, MemoryLog};
+use turborel::log::Lsn;
 use turborel::value::Value;
+use turborel_replication::{Driver, GroupLogs};
 
 use super::super::group::Make;
-use super::{Effect, Plan, Report, Rng, SimLog, Violation, World};
+use super::{Host, Plan, Report, Rng, Runner, Violation};
 use crate::database::{contents, number, rows};
 
 /// The users whose sessions a database's contents are read through.
 const READERS: [&str; 1] = ["APP"];
+/// The directory of each replica's database.
+const DIR: &str = "/db";
 /// The schema the primary's database defines first.
 const SCHEMA: &str = "CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER)";
+/// Per mille, at each moment, that a database up takes a checkpoint.
+const CHECKPOINTS: u32 = 10;
 /// The kinds of action the primary's database takes, by weight: insert,
 /// update, delete, a statement undone, commit, rollback, a table defined
 /// in a transaction, an index, a setting.
@@ -67,54 +78,94 @@ pub struct DatabaseReport {
     pub interrupted: u64,
     /// Databases promoted in a view after the first.
     pub promoted: u64,
+    /// Checkpoints taken by following databases.
+    pub following_checkpoints: u64,
+    /// Databases opened again from their files after a crash.
+    pub reopened: u64,
     /// Backups compared with the primary at the end.
     pub compared: usize,
 }
 
-/// One replica's database.
-struct Replica {
-    db: Database,
-    /// Whether it serves as primary.
-    serving: bool,
-    /// The last record replayed.
-    replayed: Lsn,
-    /// Its session with a transaction open, serving.
-    open: Option<Session>,
+/// Each replica's file system, kept across its crashes, its database
+/// while it is up, and its session with a transaction open, serving, with
+/// the view it was opened in: a handle, shared with the run's ground.
+#[derive(Default, Clone)]
+pub struct Files(Arc<Mutex<Kept>>);
+
+/// What `Files` keeps.
+#[derive(Default)]
+struct Kept {
+    systems: Vec<Arc<dyn FileSystem>>,
+    databases: Vec<Option<Database>>,
+    open: Vec<Option<(Session, u64)>>,
+    /// Databases opened again after a crash.
+    opened: u64,
+    /// Transactions open as their database stopped serving or crashed.
+    interrupted: u64,
 }
 
-impl Replica {
-    /// A new database, in memory, empty: its jobs run only when asked, and
-    /// it takes no checkpoint, so its work is the simulation's alone; it
-    /// logs to a log of its own until promoted, at which a change it would
-    /// log while following is refused.
-    fn new() -> Replica {
-        let db = Database::new();
-        db.set_setting("JOBS.POLICY", &Value::Char("MANUAL".into())).unwrap();
-        db.set_setting("CHECKPOINT.AFTER_CHANGES", &number(i64::MAX)).unwrap();
-        db.set_log(Arc::new(MemoryLog::new())).unwrap();
-        Replica { db, serving: false, replayed: Lsn(0), open: None }
+impl Files {
+    /// What it keeps, locked.
+    fn kept(&self) -> std::sync::MutexGuard<'_, Kept> {
+        self.0.lock().unwrap()
     }
 
-    /// Replays `records`, the next after those it holds, following.
-    fn replay(&mut self, records: Vec<(Lsn, Vec<u8>)>) -> Result<(), String> {
-        if records.first().is_some_and(|&(at, _)| at.0 != self.replayed.0 + 1) {
-            return Err(format!("records from {:?} given after {:?}", records.first().map(|r| r.0), self.replayed));
+    /// Replica `index`'s database, while it is up.
+    fn database(&self, index: usize) -> Option<Database> {
+        self.kept().databases.get(index).cloned().flatten()
+    }
+
+    /// Replica `index`'s session open, taken.
+    fn take_open(&self, index: usize) -> Option<(Session, u64)> {
+        self.kept().open.get_mut(index).and_then(Option::take)
+    }
+
+    /// Keeps `session` as replica `index`'s open, of `view`, while its
+    /// database is up.
+    fn keep_open(&self, index: usize, session: Session, view: u64) {
+        let mut kept = self.kept();
+        if kept.databases[index].is_some() {
+            kept.open[index] = Some((session, view));
         }
-        let given = records.last().map(|&(at, _)| at);
-        let taken = Standby::replay(&self.db, &mut records.into_iter().map(Ok)).map_err(|e| format!("its replay failed: {e}"))?;
-        if given.is_some_and(|last| last != taken) {
-            return Err(format!("its replay took through {taken:?}, given through {given:?}"));
+    }
+}
+
+impl Host for Files {
+    fn open(&mut self, index: usize, driver: &Arc<Driver>) -> Result<(Arc<dyn Standby>, Lsn), Violation> {
+        let fs = {
+            let mut kept = self.kept();
+            kept.opened += u64::from(kept.systems.len() > index);
+            while kept.systems.len() <= index {
+                kept.systems.push(Arc::new(MemoryFileSystem::new()));
+                kept.databases.push(None);
+                kept.open.push(None);
+            }
+            Arc::clone(&kept.systems[index])
+        };
+        let db = Database::new();
+        let opened = (|| {
+            db.set_setting("JOBS.POLICY", &Value::Char("MANUAL".into()))?;
+            db.set_setting("CHECKPOINT.AFTER_CHANGES", &number(i64::MAX))?;
+            db.set_log_storage(Box::new(GroupLogs::of(Arc::clone(driver))))?;
+            db.open_following(&fs, Path::new(DIR), &OpenOptions::default())
+        })();
+        let holds = opened.map_err(|e| format!("replica {}: its database did not open: {e}", index + 1))?;
+        self.kept().databases[index] = Some(db.clone());
+        Ok((Arc::new(db), holds))
+    }
+
+    fn crashed(&mut self, index: usize) {
+        let mut kept = self.kept();
+        kept.databases[index] = None;
+        if kept.open[index].take().is_some() {
+            kept.interrupted += 1;
         }
-        self.replayed = given.unwrap_or(self.replayed);
-        Ok(())
     }
 }
 
 /// A group of replicas, each with a real database, in a world.
 pub struct Replicas {
-    world: Arc<Mutex<World>>,
-    plan: Plan,
-    members: Vec<Replica>,
+    runner: Runner<Files>,
     rng: Rng,
     /// The next key the primary's database inserts.
     next: u64,
@@ -124,51 +175,54 @@ pub struct Replicas {
 impl Replicas {
     /// A group of `plan` from `seed`, each replica made by `make`, each
     /// database new.
-    pub fn new(seed: u64, plan: &Plan, make: &Make) -> Replicas {
-        let world = World::new(seed, *plan, Arc::clone(make));
-        let members = (0..world.replicas()).map(|_| Replica::new()).collect();
-        let rng = Rng::new(seed.rotate_left(32));
-        Replicas { world: Arc::new(Mutex::new(world)), plan: *plan, members, rng, next: 0, report: DatabaseReport::default() }
+    ///
+    /// # Errors
+    ///
+    /// The first violation found.
+    pub fn new(seed: u64, plan: &Plan, make: &Make) -> Result<Replicas, Violation> {
+        let runner = Runner::new(seed, *plan, make, Files::default())?;
+        Ok(Replicas { runner, rng: Rng::new(seed.rotate_left(32)), next: 0, report: DatabaseReport::default() })
     }
 
-    /// The world, locked.
-    fn world(&self) -> std::sync::MutexGuard<'_, World> {
-        self.world.lock().unwrap()
-    }
-
-    /// The first violation found, if one was.
-    fn check(&self) -> Result<(), Violation> {
-        self.world().failed().map_or(Ok(()), |why| Err(why.clone()))
-    }
-
-    /// Runs the plan's moments: at each, the world moves on, its effects
-    /// are carried out, and the primary's database perhaps acts.
+    /// Runs the plan's moments: at each, the group moves on, the primary's
+    /// database perhaps acts, and a database perhaps takes a checkpoint.
     ///
     /// # Errors
     ///
     /// The first violation found.
     pub fn run(&mut self) -> Result<(), Violation> {
-        while !self.world().over() {
+        while !self.runner.world().over() {
             self.moments(1)?;
-            let now = self.world().now();
-            if self.plan.appending(now) && self.rng.chance(self.plan.append) {
+            let now = self.runner.world().now();
+            if self.runner.plan.appending(now) && self.rng.chance(self.runner.plan.append) {
                 self.act()?;
             }
+            if self.runner.plan.appending(now) && self.rng.chance(CHECKPOINTS) {
+                self.checkpoint();
+            }
         }
-        self.carry_out()
+        Ok(())
     }
 
-    /// Moves the world on `count` moments, carrying out the effects.
+    /// Moves the group on `count` moments.
     ///
     /// # Errors
     ///
     /// The first violation found.
     pub fn moments(&mut self, count: u64) -> Result<(), Violation> {
         for _ in 0..count {
-            self.world().moment()?;
-            self.carry_out()?;
+            let promoted = self.runner.primary();
+            self.runner.moment()?;
+            self.forget_stopped();
+            let now = self.runner.primary();
+            self.report.promoted += u64::from(now.is_some() && now != promoted && self.view(now) > 0);
         }
         Ok(())
+    }
+
+    /// The view replica `index` serves, 0 if none.
+    fn view(&self, index: Option<usize>) -> u64 {
+        index.and_then(|i| self.runner.driver(i)).and_then(|d| d.serving()).unwrap_or(0)
     }
 
     /// Replica `index` crashes now.
@@ -177,90 +231,56 @@ impl Replicas {
     ///
     /// The first violation found.
     pub fn crash(&mut self, index: usize) -> Result<(), Violation> {
-        self.world().crash(index);
-        self.carry_out()
+        self.runner.crash(index)?;
+        self.forget_stopped();
+        Ok(())
+    }
+
+    /// The sessions of databases no longer serving the view they were
+    /// opened in let go: their transactions were interrupted.
+    fn forget_stopped(&mut self) {
+        for index in 0..self.replicas() {
+            let view = self.runner.driver(index).and_then(|d| d.serving());
+            let mut kept = self.runner.host.kept();
+            if kept.open[index].as_ref().is_some_and(|(_, opened)| view != Some(*opened)) {
+                kept.open[index] = None;
+                kept.interrupted += 1;
+            }
+        }
+    }
+
+    /// How many replicas the group has.
+    fn replicas(&self) -> usize {
+        self.runner.world().replicas()
     }
 
     /// The replica whose database serves as primary, if one does.
     pub fn primary(&self) -> Option<usize> {
-        self.members.iter().position(|r| r.serving)
+        self.runner.primary()
     }
 
-    /// The database of replica `index`.
-    pub fn database(&self, index: usize) -> &Database {
-        &self.members[index].db
+    /// The database of replica `index`, while it is up.
+    pub fn database(&self, index: usize) -> Option<Database> {
+        self.runner.host.database(index)
     }
 
-    /// The effects queued carried out, in order, until none is queued: a
-    /// promotion's sync may queue more.
-    fn carry_out(&mut self) -> Result<(), Violation> {
-        loop {
-            let effects = self.world().take_effects();
-            if effects.is_empty() {
-                return self.check();
-            }
-            for (index, effect) in effects {
-                self.apply(index, effect).map_err(|why| self.world().fail(&format!("replica {}: {why}", index + 1)))?;
-            }
-        }
-    }
-
-    /// Carries out `effect` on the database of replica `index`.
-    fn apply(&mut self, index: usize, effect: Effect) -> Result<(), String> {
-        match effect {
-            Effect::Deliver(records) => self.members[index].replay(records),
-            Effect::Serve(view) => self.promote(index, view),
-            Effect::Stop(records) => {
-                self.members[index].db.depose().map_err(|e| e.to_string())?;
-                self.replace(index);
-                self.members[index].replay(records)
-            }
-            Effect::Crash => {
-                self.replace(index);
-                Ok(())
-            }
-        }
-    }
-
-    /// The database of replica `index` replaced by a new one: deposed and
-    /// opened again, or lost in a crash.
-    fn replace(&mut self, index: usize) {
-        let old = std::mem::replace(&mut self.members[index], Replica::new());
-        if old.open.is_some() {
-            self.report.interrupted += 1;
-        }
-    }
-
-    /// Promotes the database of replica `index`, serving `view`, over its
-    /// replica's log. Its promotion fails only if its replica stops serving
-    /// meanwhile, or crashes.
-    fn promote(&mut self, index: usize, view: u64) -> Result<(), String> {
-        let log = SimLog::new(&self.world, index);
-        let life = self.world().lives(index);
-        match self.members[index].db.promote({
-            let log: Arc<dyn Log> = Arc::new(log);
-            log
-        }) {
-            Ok(()) => {
-                self.members[index].serving = true;
-                self.report.promoted += u64::from(view > 0);
-                Ok(())
-            }
-            Err(e) => {
-                let world = self.world();
-                let still = world.serving(index) == Some(view) && world.lives(index) == life;
-                if still { Err(format!("its promotion failed while it serves: {e}")) } else { Ok(()) }
-            }
+    /// A database up, at random, takes a checkpoint, if it can.
+    fn checkpoint(&mut self) {
+        let index = self.rng.index(self.replicas());
+        let Some(db) = self.database(index) else { return };
+        let following = self.runner.driver(index).is_some_and(|d| d.serving().is_none());
+        if db.checkpoint().is_ok() && following {
+            self.report.following_checkpoints += 1;
         }
     }
 
     /// The primary's database acts once, at random.
     fn act(&mut self) -> Result<(), Violation> {
         let Some(index) = self.primary() else { return Ok(()) };
-        let db = self.members[index].db.clone();
+        let Some(db) = self.database(index) else { return Ok(()) };
         if rows(&db.session("APP"), "SELECT COUNT(*) FROM T").is_err() {
             let _ = db.schema(SCHEMA);
-            return self.carry_out();
+            return self.runner.world().check();
         }
         let action = pick(&mut self.rng);
         self.next += 1;
@@ -275,13 +295,15 @@ impl Replicas {
             }
             Action::Insert | Action::Update | Action::Delete | Action::Undone | Action::Table => {
                 let sql = self.statement(action, key);
-                let session = self.members[index].open.get_or_insert_with(|| db.session("APP"));
+                let view = self.view(Some(index));
+                let (session, opened) = self.runner.host.take_open(index).unwrap_or_else(|| (db.session("APP"), view));
                 for statement in sql {
                     let _ = session.run(&statement);
                 }
+                self.runner.host.keep_open(index, session, opened);
             }
         }
-        self.carry_out()
+        self.runner.world().check()
     }
 
     /// The statements of `action`, its key `key`.
@@ -300,7 +322,7 @@ impl Replicas {
     /// Ends the open transaction of replica `index`'s database, if one is
     /// open: commits it, or rolls it back.
     fn end(&mut self, index: usize, commit: bool) {
-        let Some(session) = self.members[index].open.take() else { return };
+        let Some((session, _)) = self.runner.host.take_open(index) else { return };
         if !commit {
             let _ = session.rollback();
             return;
@@ -311,7 +333,7 @@ impl Replicas {
         }
     }
 
-    /// The end: the primary's open transaction rolled back, every backup
+    /// The end: the primary's open transaction rolled back; every backup
     /// holds the committed log and what the primary holds, its rows and its
     /// catalog; the outcomes told agree with the log.
     ///
@@ -319,18 +341,19 @@ impl Replicas {
     ///
     /// The first violation found.
     pub fn compare(&mut self) -> Result<DatabaseReport, Violation> {
-        let seed = self.world().seed();
-        let Some(primary) = self.primary() else { return Err(format!("seed {seed}: no database serves after the calm")) };
-        if let Some(session) = self.members[primary].open.take() {
+        let seed = self.runner.world().seed();
+        let primary = self.primary().ok_or_else(|| format!("seed {seed}: no database serves after the calm"))?;
+        if let Some((session, _)) = self.runner.host.take_open(primary) {
             let _ = session.rollback();
         }
-        let expected = contents(&self.members[primary].db, &READERS);
-        let committed = u64::try_from(self.world().committed_log().len()).unwrap();
-        for (index, replica) in self.members.iter().enumerate().filter(|&(i, _)| i != primary) {
-            if replica.replayed.0 != committed {
-                return Err(format!("seed {seed}: replica {} replayed {} records of {committed}", index + 1, replica.replayed.0));
+        let expected = contents(&self.database(primary).unwrap(), &READERS);
+        let committed = u64::try_from(self.runner.world().committed_log().len()).unwrap();
+        for index in (0..self.replicas()).filter(|&i| i != primary) {
+            let holds = self.runner.driver(index).map_or(0, |d| d.holds().0);
+            if holds != committed {
+                return Err(format!("seed {seed}: replica {} holds {holds} records of {committed}", index + 1));
             }
-            let found = contents(&replica.db, &READERS);
+            let found = contents(&self.database(index).unwrap(), &READERS);
             if let Some((a, b)) = found.iter().zip(&expected).find(|(a, b)| a != b) {
                 return Err(format!("seed {seed}: replica {} holds {a}, its primary {b}", index + 1));
             }
@@ -339,8 +362,9 @@ impl Replicas {
             }
             self.report.compared += 1;
         }
-        let replication = self.world().finish()?;
-        self.report.replication = replication;
+        self.report.reopened = self.runner.host.kept().opened;
+        self.report.interrupted = self.runner.host.kept().interrupted;
+        self.report.replication = self.runner.world().finish()?;
         Ok(self.report)
     }
 }
@@ -365,7 +389,7 @@ fn pick(rng: &mut Rng) -> Action {
 ///
 /// The first violation found, naming the seed.
 pub fn simulate_databases(seed: u64, plan: &Plan, make: &Make) -> Result<DatabaseReport, Violation> {
-    let mut replicas = Replicas::new(seed, plan, make);
+    let mut replicas = Replicas::new(seed, plan, make)?;
     replicas.run()?;
     replicas.compare()
 }
