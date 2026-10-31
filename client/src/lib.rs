@@ -7,6 +7,7 @@
 pub mod agent;
 mod cancel;
 pub mod connection;
+pub mod import;
 pub mod statements;
 pub mod target;
 pub mod timeouts;

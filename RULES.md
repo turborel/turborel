@@ -90,6 +90,7 @@ Contents: [1 Decisions](#1-decisions) · [2 Layout](#2-project-layout) ·
 | D44 | A running statement is cancelled from another thread |
 | D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
+| D59 | Import: rows from a pluggable source, over a connection |
 | D53 | Data types: one contract, standard types built in |
 | D55 | Threads: one manager, each thread labelled and shown |
 | D56 | Files: one manager a database, its open files limited, each shown |
@@ -2202,6 +2203,61 @@ cannot have.
 a program. Its rows streamed keep its memory bounded whatever the result;
 a password kept off the command line and out of the terminal's echo is
 not seen by others.
+
+**D59. Import: rows from a pluggable source, over a connection.**
+- The client library imports (`turborel_client::import`): `import`
+  inserts the records of a `Source` into a table over a connection; the
+  command-line client's `--import` is one caller of it. `Source` is a
+  trait any program may implement: its headings, names and types if it
+  knows them, asked once; then its records, one at a time, each a value
+  for each field and where it began, its record number and, of a source
+  of lines, its line. A source holds a record at a time, and refuses a
+  record past a bound of its own, so an import's memory is bounded
+  whatever its input's size. `import` is generic over it, no `dyn`
+  (R-SAFE-3).
+- Built in: `Delimited`, of two dialects. CSV as RFC 4180 §2 writes it:
+  a record a line, ended by CR LF or LF, the last one's optional; an
+  optional header; a field enclosed in quotes to hold the delimiter, a
+  quote, written twice, or a line break; a delimiter other than the
+  comma, if named. Tab-separated text: fields split at tabs, never
+  quoted. A field not in quotes written as the text for null, empty by
+  default, is null; a quoted empty field is the empty string. Text is
+  UTF-8, a byte order mark beginning it passed over. A quote in a field
+  not quoted, or anything but the delimiter after a closing quote, is
+  refused, saying the record, its line and the field. A record is at
+  most the protocol's longest body, 16 MiB, by default. The reader is
+  written in the tree (D3).
+- Rows go in through the protocol's Prepare and Execute (D45), which
+  need no change: the columns are those the source's headings name,
+  each read as an `<identifier>`, or else the table's, in order, as the
+  description of a prepared `SELECT *` of it gives them [ISO/IEC
+  9075:1992 §17.9 GR3]; one INSERT is prepared, a `?` for each column,
+  each taking its column's type [§17.6 GR5]. The server casts each value
+  to it [§17.9 GR5f, g], but a string for a character string column,
+  which the client assigns as INSERT does [§13.8 GR4b iii, §9.2 GR3b,
+  GR3e], so one too long is refused (22001), not cut with a warning as
+  CAST cuts it [§6.10 GR5c ii, GR6c ii]. The table's name is read as a
+  `<table name>` and sent as delimited identifiers, so nothing else is
+  taken into the SQL. A row is one Execute, answered before the next.
+- An import begins with no transaction active, as it commits: one
+  active is refused. Its rows are committed a batch at a time, 1000 by
+  default, all at once for 0. A row refused, by the server or as too
+  long, or a record of too many or too few fields, stops it: the batch
+  under way is rolled back, and the error says the record, its line,
+  why, and how many rows were committed. Told to skip bad rows, it reports such a row and goes
+  on, if the row alone was undone: the transaction is still active, or
+  had no rows. A connection lost, a statement cancelled (D44), or a
+  record the source cannot read stops it all the same.
+- The command-line client (D46): `--import FILE`, an input in turn with
+  `-c` and `-f`; `--table`, `--format csv` or `tsv`, `--header`,
+  `--delimiter`, `--batch`, `--skip-bad-rows`; `--null` gives the text
+  both shown for null and read as null. A row skipped fails the run.
+*Why:* operators load data that other systems write, CSV above all. A
+source as a trait lets any program import any format without the client
+knowing it; the built-in reader is short enough to write and review in
+the tree. A prepared INSERT keeps the protocol as it is and puts the
+server's casts and constraints on every row; batches bound what a
+failure rolls back, and a record at a time bounds memory.
 
 ---
 

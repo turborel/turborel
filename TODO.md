@@ -74,11 +74,10 @@ item becomes a decision in RULES.md when its design settles.
   client gone is found out sooner than the system's default: tokio sets
   keepalive on or off only; the times need a socket option of the
   platform's, by a crate such as socket2 (D3).
-- **Import**, on the client: rows read from a source and inserted into a
-  table over a connection, the source pluggable (a trait any program may
-  implement, built-in ones for common formats), so the command-line client
-  imports from any source a plug-in reads. Its design, and which sources
-  are built in, become a decision in RULES.md when it settles.
+- **Import, pipelined** (RULES.md D59): an import's Executes sent before
+  the last is answered, as the protocol allows (D45), so a row costs no
+  round trip; a row that fails is then known after more are sent, which
+  the batch's rollback undoes.
 - **Named pipes** as the local transport on Windows, where Unix sockets
   are not served.
 - **Configuration files** in a subset of TOML, read by our own parser, the

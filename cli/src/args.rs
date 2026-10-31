@@ -1,11 +1,12 @@
 //! \[DESIGN\] The command line of `turborel` (RULES.md D46): where the
-//! server is, who connects, and the SQL to run. Split from lib.rs (RULES.md
-//! R-SIZE-4).
+//! server is, who connects, the SQL to run, and the files to import
+//! (D59). Split from lib.rs (RULES.md R-SIZE-4).
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use turborel_client::connection::Password;
+use turborel_client::import::{DEFAULT_BATCH, Dialect, Import};
 use turborel_client::timeouts::Timeouts;
 
 /// The host connected to, unless one is named.
@@ -67,7 +68,24 @@ pub enum Input {
     File(PathBuf),
     /// Statements read from standard input, typed if it is a terminal.
     Standard,
+    /// Rows of a file, imported as `Options::import` says (RULES.md D59).
+    Import(PathBuf),
 }
+
+/// How the files `--import` names are read, and where their rows go
+/// (RULES.md D59).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Importing {
+    /// The table, the batches, whether bad rows are skipped.
+    pub into: Import,
+    /// How the files are written.
+    pub dialect: Dialect,
+}
+
+/// The formats `--format` names.
+const CSV: &str = "csv";
+/// Tab-separated text.
+const TSV: &str = "tsv";
 
 /// What a session is to do.
 #[derive(Debug, Clone)]
@@ -82,11 +100,14 @@ pub struct Options {
     pub inputs: Vec<Input>,
     /// Whether the first statement that fails ends a run not typed.
     pub stop_on_error: bool,
-    /// What a null value is shown as.
+    /// What a null value is shown as, and what a field imported is
+    /// written as to be null.
     pub null: String,
     /// How long it waits on the server: to connect and log in, and for
     /// each reply after.
     pub timeouts: Timeouts,
+    /// How files are imported, if any are.
+    pub import: Option<Importing>,
 }
 
 /// What the command line asks for.
@@ -116,6 +137,18 @@ struct Named {
     stop_on_error: bool,
     null: Option<String>,
     timeouts: Timeouts,
+    import: NamedImport,
+}
+
+/// What the command line named of an import, before it is checked.
+#[derive(Debug, Default)]
+struct NamedImport {
+    table: Option<String>,
+    format: Option<String>,
+    header: bool,
+    delimiter: Option<String>,
+    batch: Option<u64>,
+    skip: bool,
 }
 
 /// What the command line `args`, without the program's name, asks for;
@@ -147,6 +180,13 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "--null" => named.null = Some(value()?),
             "--connect-timeout" => named.timeouts.connect = seconds(&value()?)?,
             "--read-timeout" => named.timeouts.read = seconds(&value()?)?,
+            "--import" => named.inputs.push(Input::Import(PathBuf::from(value()?))),
+            "--table" => named.import.table = Some(value()?),
+            "--format" => named.import.format = Some(value()?),
+            "--header" => named.import.header = true,
+            "--delimiter" => named.import.delimiter = Some(value()?),
+            "--batch" => named.import.batch = Some(rows(&value()?)?),
+            "--skip-bad-rows" => named.import.skip = true,
             other => return Err(format!("{other} is not an option\n\n{}", crate::USAGE)),
         }
     }
@@ -164,8 +204,49 @@ fn seconds(text: &str) -> Result<Option<Duration>, String> {
     Ok((n > 0).then(|| Duration::from_secs(n)))
 }
 
+/// The number of rows `text` names.
+fn rows(text: &str) -> Result<u64, String> {
+    text.parse().map_err(|_| format!("{text} is no number of rows"))
+}
+
+/// How the files `inputs` names are imported, if it names any, as
+/// `named` says, null written `null`: an import's options only with one,
+/// and its table always.
+fn importing(inputs: &[Input], named: &NamedImport, null: &str) -> Result<Option<Importing>, String> {
+    if !inputs.iter().any(|i| matches!(i, Input::Import(_))) {
+        let any = named.table.is_some() || named.format.is_some() || named.delimiter.is_some() || named.batch.is_some();
+        if any || named.header || named.skip {
+            return Err(
+                "--table, --format, --header, --delimiter, --batch and --skip-bad-rows are of an import: name --import FILE too".into()
+            );
+        }
+        return Ok(None);
+    }
+    let Some(table) = &named.table else { return Err("--import needs the table its rows go into: --table NAME".into()) };
+    let format = named.format.as_deref().unwrap_or(CSV);
+    let mut dialect = if format.eq_ignore_ascii_case(CSV) {
+        Dialect::csv()
+    } else if format.eq_ignore_ascii_case(TSV) {
+        Dialect::tsv()
+    } else {
+        return Err(format!("{format} is no format: {CSV} or {TSV}"));
+    };
+    if let Some(text) = &named.delimiter {
+        let mut chars = text.chars();
+        let (Some(one), None) = (chars.next(), chars.next()) else { return Err(format!("--delimiter is one character, not {text:?}")) };
+        dialect = dialect.with_delimiter(one)?;
+    }
+    if named.header {
+        dialect = dialect.with_header();
+    }
+    let into = Import { batch: named.batch.unwrap_or(DEFAULT_BATCH), skip: named.skip, ..Import::into(table) };
+    Ok(Some(Importing { into, dialect: dialect.with_null(null) }))
+}
+
 /// The options `named` makes, checked.
 fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options, String> {
+    let null = named.null.clone().unwrap_or_default();
+    let import = importing(&named.inputs, &named.import, &null)?;
     let user = named.user.or_else(|| env("USER")).or_else(|| env("USERNAME")).ok_or_else(|| "name the user: --user NAME".to_owned())?;
     let identity = match (named.certificate, named.key) {
         (Some(certificate), Some(key)) => Some((certificate, key)),
@@ -183,8 +264,8 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
     }
     let server = server(named.socket, named.host, named.port, named.roots.map(|roots| Tls { roots, name: named.name, identity }))?;
     let inputs = if named.inputs.is_empty() { vec![Input::Standard] } else { named.inputs };
-    let (stop_on_error, null, timeouts) = (named.stop_on_error, named.null.unwrap_or_default(), named.timeouts);
-    Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts })
+    let (stop_on_error, timeouts) = (named.stop_on_error, named.timeouts);
+    Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts, import })
 }
 
 /// Where the server is: at the Unix socket `socket`, if one is named, and

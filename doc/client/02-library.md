@@ -141,6 +141,40 @@ time zone changed since, and at each execution if it holds the
 statement's instant, as [The Embedded Library](03-embedding.md#prepared-statements)
 tells.
 
+## Importing
+
+`import::import` inserts the rows of a `Source` into a table over a
+connection, as the command-line client's `--import` does ([The
+turborel Command](01-turborel.md#importing)). A `Source` is any type
+that gives `headings`, its fields' names, and types if it knows them,
+or none; then each `record`, a value for each field and where it
+began, its record number and line, until it gives none. It holds a
+record at a time, so a source of any size is read in bounded memory.
+`Delimited` reads CSV (`Dialect::csv`) and tab-separated text
+(`Dialect::tsv`) from any `BufRead`, with a header, a delimiter and a
+text for null as its `Dialect` says.
+
+`Import` names the table, how many rows are committed at a time
+(`batch`, `DEFAULT_BATCH` 1000, 0 for all at once), and whether a row
+that fails is skipped (`skip`), each given to the closure passed. The
+connection's session must have no transaction active. A row that
+fails ends the import with an `ImportError`: where its record began,
+why (`Cause::Input`, the source's, or `Cause::Sql`, a `Failure`), how
+many rows were committed and how many of the batch rolled back.
+
+```rust
+use std::fs::File;
+use std::io::BufReader;
+use turborel_client::import::{Delimited, Dialect, Import, import};
+
+let file = BufReader::new(File::open("staff.csv")?);
+let mut source = Delimited::new(file, Dialect::csv().with_header());
+let done = import(&mut conn, &mut source, &Import::into("STAFF"), &mut |skipped| {
+    eprintln!("{skipped}");
+})?;
+// done.rows: 2
+```
+
 ## The SQL-agent
 
 `agent::Agent` holds a program's connections, each named, one current,

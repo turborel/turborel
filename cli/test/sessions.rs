@@ -1,7 +1,7 @@
 //! Sessions: statements run over a connection to a server, their results
 //! shown, their failures told.
 
-use std::io::{self, Write};
+use std::io;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use turborel_server::password::Pbkdf2;
 use turborel_server::scram::Scram;
 use turborel_server::settings::TLS_CLIENT_CA;
 
-use crate::common::{Running, Scratch, client_certificate, command, options, pki, ran, secured, start, start_with};
+use crate::common::{Closed, Running, Scratch, client_certificate, command, options, pki, ran, secured, start, start_with};
 
 /// A server of a database where X has table T, holding 1 and 2.
 fn served() -> (Database, Running) {
@@ -120,18 +120,6 @@ fn typed_statements_are_prompted_for() {
     assert_eq!(run.out, format!("{PROMPT}{PROMPT}{MORE}OK\n{PROMPT}\n"));
     let piped = ran(&given, "INSERT INTO T VALUES (2, 'b')", false);
     assert_eq!((piped.succeeded, piped.out.as_str()), (true, "OK\n"));
-}
-
-/// Output that cannot be written.
-struct Closed;
-
-impl Write for Closed {
-    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-        Err(io::Error::other("closed"))
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 /// Verifies: [DESIGN] RULES.md D42, D46: once the connection is lost, the

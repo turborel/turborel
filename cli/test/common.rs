@@ -17,6 +17,7 @@ pub fn options(server: &Running, inputs: Vec<Input>) -> Options {
         stop_on_error: false,
         null: String::new(),
         timeouts: turborel_client::timeouts::Timeouts::default(),
+        import: None,
     }
 }
 
@@ -37,6 +38,18 @@ pub fn ran(options: &Options, standard: &str, typed: bool) -> Ran {
     let succeeded = turborel_cli::run(&mut agent, options, io);
     agent.terminate().unwrap();
     Ran { succeeded, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
+}
+
+/// Output that cannot be written.
+pub struct Closed;
+
+impl std::io::Write for Closed {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("closed"))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Statements given on the command line.

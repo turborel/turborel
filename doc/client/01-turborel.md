@@ -28,7 +28,14 @@ as a table as they come, and each statement's outcome.
 | `-c`, `--command SQL` | run SQL's statements; more than once for more |
 | `-f`, `--file FILE` | run FILE's statements; more than once for more |
 | `--stop-on-error` | end the run at the first statement that fails |
-| `--null TEXT` | show a null value as TEXT; nothing by default |
+| `--null TEXT` | show a null value as TEXT, and import a field written TEXT as null; nothing by default |
+| `--import FILE` | insert FILE's rows into the table `--table` names; more than once for more, in turn with `-c` and `-f` ([Importing](#importing)) |
+| `--table NAME` | the table rows are imported into |
+| `--format FORMAT` | how an imported file is written: `csv`, the default, or `tsv` |
+| `--header` | an imported file's first line names the columns of its fields |
+| `--delimiter CHAR` | the character between an imported file's fields; a comma for `csv`, a tab for `tsv` by default |
+| `--batch ROWS` | commit each ROWS rows imported; 1000 by default, 0 for all at once |
+| `--skip-bad-rows` | tell a row that fails to import, and import the rest |
 | `--connect-timeout SECONDS` | wait at most SECONDS to connect, begin TLS and for each step of the login; 30 by default, 0 for no limit |
 | `--read-timeout SECONDS` | wait at most SECONDS for each reply of the server; 0, no limit, by default, as a statement may run long |
 | `--help` | print the usage |
@@ -121,6 +128,97 @@ unless the setting SESSION_END is ROLLBACK. A commit that fails then, as
 one of a deferred constraint not satisfied (SQLSTATE 40002), is told,
 the transaction rolled back, and the program exits with 1.
 
+## Importing
+
+`--import FILE` inserts the rows of FILE into the table `--table`
+names, in its turn among the statements `-c` and `-f` name. A file is
+CSV, as RFC 4180 writes it, unless `--format tsv` says it is
+tab-separated:
+
+- **CSV**: a record a line, ended by CR LF or LF, the last one's
+  optional; fields split at commas, or at the character `--delimiter`
+  names, their spaces kept. A field may be enclosed in double quotes,
+  and must be to hold the delimiter, a quote or a line break; a quote in
+  it is written twice. A quote in a field not enclosed, or anything but
+  the delimiter after a closing quote, is refused.
+- **Tab-separated**: a record a line, fields split at tabs, never
+  quoted; a field holds no tab and no line break.
+
+A field not enclosed in quotes is null if it is written as `--null`
+says: by default an empty field, so `1,,x` has a null between, and
+`1,"",x` the empty string. Text is UTF-8; a byte order mark beginning
+the file is passed over. A record is at most 16 MiB.
+
+With `--header`, the first line names the columns the fields go into,
+each name read as an identifier: `name` is the column NAME, `"Name"`
+written in the file as `"""Name"""` the column Name; a column not named
+takes its default. Without it, each record has a field for each column
+of the table, in order. Each value is cast to its column's type, as a
+dynamic parameter's is; a string too long for a character string
+column is refused (SQLSTATE 22001), not cut.
+
+The rows are inserted through one prepared INSERT, `--batch` rows to a
+transaction, each batch committed. An import begins with no transaction
+active: one a statement before it left open is refused, as the import
+would commit it. A row that fails stops the import: the client tells
+the record, the line it began on and why, and how many rows were
+committed before; the batch under way is rolled back. The run then goes
+on, unless `--stop-on-error` ends it. With `--skip-bad-rows`, a row
+that fails, or has too many or too few fields, is told and skipped, and
+the rest are imported; a run with a row skipped exits with 1. A record
+that cannot be read, as one whose quote is never closed, stops the
+import even so.
+
+A table, and a file with a header, imported into it:
+
+```sql
+CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(20), HIRED DATE);
+COMMIT
+```
+
+```
+OK
+OK
+```
+
+```
+$ cat staff.csv
+id,name,hired
+1,Ada,1980-01-02
+2,"Hopper, Grace",
+$ turborel -U ann --import staff.csv --table STAFF --header
+OK, 2 rows imported
+```
+
+A row that fails stops the import, its batch rolled back; told to, the
+client skips it, and imports the rest:
+
+```
+$ cat more.csv
+3,Eve,1999-12-31
+4,Bob,someday
+5,Carol,2001-05-06
+$ turborel -U ann --import more.csv --table STAFF
+turborel: more.csv: record 2, line 2: SQLCODE -301 (SQLSTATE 22018): 'someday' is no DATE literal's string [ISO/IEC 9075:1992 §6.10 GR9a ii, GR10a ii, GR11a ii]; 0 rows committed, 1 rolled back
+$ turborel -U ann --import more.csv --table STAFF --skip-bad-rows
+turborel: more.csv: record 2, line 2: SQLCODE -301 (SQLSTATE 22018): 'someday' is no DATE literal's string [ISO/IEC 9075:1992 §6.10 GR9a ii, GR10a ii, GR11a ii]; skipped
+OK, 2 rows imported, 1 skipped
+```
+
+```sql
+SELECT ID, NAME, HIRED FROM STAFF ORDER BY ID
+```
+
+```
+           ID | NAME                 | HIRED
+--------------+----------------------+------------
+            1 | Ada                  | 1980-01-02
+            2 | Hopper, Grace        | NULL
+            3 | Eve                  | 1999-12-31
+            5 | Carol                | 2001-05-06
+(4 rows)
+```
+
 ## Connections
 
 The client connects as it starts, its connection the default one.
@@ -154,9 +252,9 @@ turborel: SQLCODE -920 (SQLSTATE TB920): the statement was cancelled
 
 ## Exit status
 
-0 if every statement succeeded; 1 if one failed, or the client could not
-connect, or its command line is wrong; 130 if Ctrl-C ended it before it
-connected.
+0 if every statement and import succeeded; 1 if one failed, or an
+import skipped a row, or the client could not connect, or its command
+line is wrong; 130 if Ctrl-C ended it before it connected.
 
 ```
 $ turborel -p 1 -U ann -c "VALUES 1"

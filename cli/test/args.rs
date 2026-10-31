@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use std::time::Duration;
 
-use turborel_cli::{Command, Credentials, DEFAULT_PORT, Input, Options, PASSWORD_VARIABLE, Server, Tls, parse};
+use turborel_cli::{Command, Credentials, DEFAULT_PORT, Importing, Input, Options, PASSWORD_VARIABLE, Server, Tls, parse};
+use turborel_client::import::{Dialect, Import};
 use turborel_client::timeouts::{CONNECT_WITHIN, Timeouts};
 
 /// The options of `line`, in an environment of `vars`.
@@ -134,4 +135,49 @@ fn a_socket_is_reached_on_unix() {
     assert_eq!(reached.unwrap().server, Server::Socket(PathBuf::from("/run/turborel.sock")));
     #[cfg(not(unix))]
     assert_eq!(reached.unwrap_err(), "--socket: a Unix socket is reached on Unix only");
+}
+
+/// Verifies: [DESIGN] RULES.md D59: `--import` names a file whose rows are
+/// imported, in turn with the statements named, into the table `--table`
+/// names, as CSV unless `--format` says tab-separated, any case, with the
+/// header, delimiter, batch and skipping named; null written as `--null`
+/// says. By default: CSV, no header, 1000 rows a batch, stopping at a bad
+/// row.
+#[test]
+fn imports_are_named() {
+    let line = ["-c", "SELECT 1", "--import", "a.tsv", "--table", "X.T", "--format", "TSV", "--header", "--delimiter", ";"];
+    let more = ["--batch", "5", "--skip-bad-rows", "--null", "NULL", "--import", "b.tsv"];
+    let options = parsed(&[&line[..], &more[..]].concat(), &[("USER", "u")]).unwrap();
+    let inputs = [Input::Command("SELECT 1".into()), Input::Import(PathBuf::from("a.tsv")), Input::Import(PathBuf::from("b.tsv"))];
+    assert_eq!(options.inputs, inputs);
+    let dialect = Dialect::tsv().with_delimiter(';').unwrap().with_header().with_null("NULL");
+    let into = Import { table: "X.T".into(), batch: 5, skip: true };
+    assert_eq!(options.import, Some(Importing { into, dialect }));
+    let plain = parsed(&["--import", "a.csv", "--table", "T", "--format", "csv"], &[("USER", "u")]).unwrap();
+    assert_eq!(plain.import, Some(Importing { into: Import::into("T"), dialect: Dialect::csv().with_null("") }));
+    assert_eq!(Import::into("T").batch, 1000);
+    assert_eq!(parsed(&[], &[("USER", "u")]).unwrap().import, None);
+}
+
+/// Verifies: [DESIGN] RULES.md D59: an import's command line that is wrong
+/// is refused, saying why: no table; an import's options without one; a
+/// format not known; a delimiter not one character, or a quote; a batch
+/// not a number.
+#[test]
+fn a_wrong_import_is_refused() {
+    let wrong = |line: &[&str]| parsed(line, &[("USER", "u")]).unwrap_err();
+    assert_eq!(wrong(&["--import", "a.csv"]), "--import needs the table its rows go into: --table NAME");
+    let without = "--table, --format, --header, --delimiter, --batch and --skip-bad-rows are of an import: name --import FILE too";
+    for alone in
+        [&["--table", "T"][..], &["--format", "csv"], &["--header"], &["--delimiter", ";"], &["--batch", "1"], &["--skip-bad-rows"]]
+    {
+        assert_eq!(wrong(alone), without, "{alone:?}");
+    }
+    let import = ["--import", "a.csv", "--table", "T"];
+    let with = |more: &[&str]| wrong(&[&import[..], more].concat());
+    assert_eq!(with(&["--format", "json"]), "json is no format: csv or tsv");
+    assert_eq!(with(&["--delimiter", ";;"]), "--delimiter is one character, not \";;\"");
+    assert_eq!(with(&["--delimiter", ""]), "--delimiter is one character, not \"\"");
+    assert!(with(&["--delimiter", "\""]).starts_with("[DESIGN] a delimiter is one ASCII character"));
+    assert_eq!(with(&["--batch", "many"]), "many is no number of rows");
 }

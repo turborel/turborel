@@ -2,7 +2,8 @@
 //! (RULES.md D46): SQL given on its command line, read from files or typed,
 //! run over a connection (`turborel_client`), one statement at a time, each
 //! a `<direct SQL statement>` [ISO/IEC 9075:1992 §20.1]; a query's rows
-//! shown as a table as they come. A library, `main.rs` its one caller, so
+//! shown as a table as they come; files' rows imported into tables
+//! (RULES.md D59). A library, `main.rs` its one caller, so
 //! tests reach all of it.
 
 mod args;
@@ -26,10 +27,10 @@ use turborel_client::tls;
 /// A failure, as the server reports it.
 pub use turborel_client::Failure;
 
-pub use args::{Command, Credentials, DEFAULT_HOST, DEFAULT_PORT, Input, Options, PASSWORD_VARIABLE, Server, Tls, parse};
+pub use args::{Command, Credentials, DEFAULT_HOST, DEFAULT_PORT, Importing, Input, Options, PASSWORD_VARIABLE, Server, Tls, parse};
 pub use dial::Dialer;
 pub use interrupt::{Handlers, Interrupts};
-pub use run::{Io, MORE, PROMPT, Statements, run};
+pub use run::{FileSource, Io, MORE, PROMPT, Statements, run};
 pub use show::{MAX_WIDTH, Table};
 pub use split::Splitter;
 
@@ -49,7 +50,18 @@ pub const USAGE: &str = "usage: turborel [options]
   -c, --command SQL      run SQL's statements; more than once for more
   -f, --file FILE        run FILE's statements; more than once for more
       --stop-on-error    end the run at the first statement that fails
-      --null TEXT        show a null value as TEXT (default nothing)
+      --null TEXT        show a null value as TEXT, and import a field TEXT as
+                         null (default nothing)
+      --import FILE      insert FILE's rows into the table --table names; more
+                         than once for more, in turn with -c and -f
+      --table NAME       the table rows are imported into
+      --format FORMAT    how FILE is written: csv (default) or tsv
+      --header           FILE's first line names the columns of its fields
+      --delimiter CHAR   the character between fields (default a comma for csv,
+                         a tab for tsv)
+      --batch ROWS       commit each ROWS rows imported (default 1000; 0 for all
+                         at once)
+      --skip-bad-rows    tell a row that fails, and import the rest
       --connect-timeout SECONDS
                          wait at most SECONDS to connect and log in (default 30;
                          0 for no limit)
@@ -68,8 +80,9 @@ over plain TCP the client refuses to begin. Without a password, a certificate
 presented proves the user its common name names; without either, the server is
 asked to trust the user, as one with SERVER.TRUST LOCAL does a client of its own
 machine.
-Ctrl-C cancels the statement running. The program exits with 1 if any
-statement failed.";
+An import begins with no transaction active; a row that fails stops it, its
+batch rolled back, and says the record and line. Ctrl-C cancels the statement
+running. The program exits with 1 if any statement or row failed.";
 
 /// How the end of typed input is given: Ctrl-D, or on Windows Ctrl-Z then
 /// Enter.
