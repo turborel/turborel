@@ -98,12 +98,13 @@ encrypts every file, and is kept for the database's life.
 
 Every block and page of the database's files carries a checksum, of the
 hash function STORAGE.CHECKSUM names as the database is made: by
-default CRC-32/ISCSI, which finds damage, not a forger. Two
+default CRC-32/ISCSI, which finds damage, not a forger. Three
 cryptographic ones are served:
 
 | STORAGE.CHECKSUM | What it stops |
 |---|---|
 | `SHA-256` | damage, and changes made without the checksums written again |
+| `SHA-512` | the same, its checksums of 512 bits |
 | `HMAC-SHA-256` | a forger without its key, `--checksum-key NAME` of `--keys` |
 
 ```

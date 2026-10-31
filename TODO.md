@@ -199,11 +199,9 @@ The registry, scopes and SET statements exist (D36). Still to do:
   durable itself. A directory it declares shadowed would have its writes
   kept aside and committed at each checkpoint with the data file, as the
   built-in engines' are, which needs a checkpoint contract for it.
-- **Hash functions:** SHA-512 beside SHA-256 and HMAC-SHA-256 (D26),
-  which needs a digest of more than 256 bits (`MAX_DIGEST_BYTES`
-  raised). HMAC-SHA-256's key
-  is fixed for a database's life: a file records the function's id
-  alone, so changing the key means checksumming every file again.
+- **Hash functions:** HMAC-SHA-256's key is fixed for a database's
+  life: a file records the function's id alone, so changing the key
+  means checksumming every file again.
 - **Encryption, further** (D48): keyrings of key services (a cloud KMS,
   Vault) beside the key directory; a database's files re-encrypted with
   another key, which today means naming it at creation, so a key

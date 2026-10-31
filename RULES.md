@@ -505,13 +505,17 @@ under R-SAFE-4.
 - Cryptographic hash functions, as `HashFunction`s (D30), from the same
   aws-lc-rs, in `turborel-aes`: SHA-256 (id 11), a checksum no accident
   matches, though one who can rewrite a file can rewrite its checksums;
-  and HMAC-SHA-256 (id 12), keyed by a keyring's key through HKDF-SHA256,
-  a checksum a forger without the key cannot match. A file records the
-  function's id alone, never the key: opened with another key, its
-  headers fail their checksums, and it is refused (SQLCODE -916).
-  `turboreld` keys it by `--checksum-key`. Neither stops a block or page
+  SHA-512 (id 13), the same of 512 bits; and HMAC-SHA-256 (id 12),
+  keyed by a keyring's key through HKDF-SHA256, a checksum a forger
+  without the key cannot match. A file records the function's id alone,
+  never the key: opened with another key, its headers fail their
+  checksums, and it is refused (SQLCODE -916). `turboreld` keys it by
+  `--checksum-key`. None stops a block or page
   the database once wrote being put back where it was. A digest holds
-  256 bits at most (`hash::MAX_DIGEST_BYTES`).
+  512 bits at most (`hash::MAX_DIGEST_BYTES`), which every format that
+  stores one has room for: a block file's header, a pager file's header
+  and meta slots; a block's or a page's trailer is the function's own
+  size, and a page's body the page less it.
 *Why:* cryptography written here would be unreviewed and likely wrong, and
 a server needs it.
 
@@ -1876,7 +1880,7 @@ make.
 - The server depends on tokio 1.54.1 (MIT), for network I/O only, and on
   TLS's crates (D26), with the features rt-multi-thread, net, io-util, sync,
   macros and time; the program adds signal, LZ4, AES-256-GCM, ChaCha20-Poly1305,
-  SHA-256 and HMAC-SHA-256 (D26, D48), and rpassword for
+  SHA-256, SHA-512 and HMAC-SHA-256 (D26, D48), and rpassword for
   a password typed at a terminal (D46). Chosen as the most used and most reviewed async
   runtime of Rust; its `unsafe` is its own, and none is written here
   (R-SAFE-1). The core never sees it.

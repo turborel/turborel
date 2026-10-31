@@ -5,6 +5,8 @@
 //! - SHA-256 [FIPS 180-4]: a checksum no accident matches, nor any change a
 //!   forger makes without writing the checksum again; one who can rewrite
 //!   a file can rewrite its checksums too, as they are of nothing secret.
+//! - SHA-512 [FIPS 180-4]: the same, its digest of 512 bits, for whoever's
+//!   rules ask for it.
 //! - HMAC-SHA-256 [RFC 2104]: a checksum keyed by a key of a keyring, so a
 //!   forger without the key cannot match it. Its key is HKDF-SHA256
 //!   [RFC 5869] of the named key, info of its own, so a key named for an
@@ -15,7 +17,7 @@
 //! Neither stops a forger from putting back a page or block the database
 //! once wrote at the same place: their checksums are its own.
 
-use aws_lc_rs::digest::{self, SHA256};
+use aws_lc_rs::digest::{self, Algorithm, SHA256, SHA512};
 use aws_lc_rs::hkdf::{HKDF_SHA256, Salt};
 use aws_lc_rs::hmac::{self, HMAC_SHA256};
 use turborel::error::{Code, Result, SqlError};
@@ -34,8 +36,15 @@ pub const SHA256_NAME: &str = "SHA-256";
 pub const HMAC_SHA256_ID: HashId = HashId(12);
 /// Its name.
 pub const HMAC_SHA256_NAME: &str = "HMAC-SHA-256";
-/// Bytes of either's digest.
-const DIGEST_BYTES: usize = 32;
+/// \[EXTENSION\] SHA-512's id in file formats: never changed or reused
+/// (RULES.md D30).
+pub const SHA512_ID: HashId = HashId(13);
+/// Its name, as FIPS 180-4 writes it.
+pub const SHA512_NAME: &str = "SHA-512";
+/// Bytes of a digest of SHA-256 or HMAC-SHA-256: 256 bits.
+const SHA256_BYTES: usize = 32;
+/// Bytes of a digest of SHA-512: 512 bits.
+const SHA512_BYTES: usize = 64;
 /// What HKDF derives an HMAC key for.
 const INFO: &[u8] = b"turborel HMAC-SHA-256 checksum key";
 
@@ -50,15 +59,39 @@ impl HashFunction for Sha256 {
         SHA256_NAME
     }
     fn digest_len(&self) -> usize {
-        DIGEST_BYTES
+        SHA256_BYTES
     }
     fn hash_parts(&self, parts: &[&[u8]]) -> Digest {
-        let mut context = digest::Context::new(&SHA256);
-        for part in parts {
-            context.update(part);
-        }
-        Digest::new(context.finish().as_ref()).unwrap_or_default()
+        digest_of(&SHA256, parts)
     }
+}
+
+/// \[EXTENSION\] SHA-512 [FIPS 180-4], named "SHA-512".
+pub struct Sha512;
+
+impl HashFunction for Sha512 {
+    fn id(&self) -> HashId {
+        SHA512_ID
+    }
+    fn name(&self) -> &'static str {
+        SHA512_NAME
+    }
+    fn digest_len(&self) -> usize {
+        SHA512_BYTES
+    }
+    fn hash_parts(&self, parts: &[&[u8]]) -> Digest {
+        digest_of(&SHA512, parts)
+    }
+}
+
+/// The digest of `parts`, concatenated, by `algorithm`: never more than
+/// `MAX_DIGEST_BYTES`, which is SHA-512's.
+fn digest_of(algorithm: &'static Algorithm, parts: &[&[u8]]) -> Digest {
+    let mut context = digest::Context::new(algorithm);
+    for part in parts {
+        context.update(part);
+    }
+    Digest::new(context.finish().as_ref()).unwrap_or_default()
 }
 
 /// \[EXTENSION\] HMAC-SHA-256 [RFC 2104], named "HMAC-SHA-256", keyed by a
@@ -102,7 +135,7 @@ impl HashFunction for HmacSha256 {
         HMAC_SHA256_NAME
     }
     fn digest_len(&self) -> usize {
-        DIGEST_BYTES
+        SHA256_BYTES
     }
     fn hash_parts(&self, parts: &[&[u8]]) -> Digest {
         let mut context = hmac::Context::with_key(&self.key);

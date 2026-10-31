@@ -104,3 +104,18 @@ fn a_key_is_retired_by_resealing_its_table() {
         assert!(said.contains("reseal takes one table"), "{said}");
     }
 }
+
+/// Verifies: [EXTENSION] RULES.md D26, D30: the program registers SHA-512:
+/// a database created with STORAGE.CHECKSUM naming it keeps a row, and
+/// served again, without the setting, reads it back.
+#[test]
+fn a_database_is_checksummed_with_sha_512() {
+    let scratch = Scratch::new("turboreld-sha512");
+    let server = format!("--dir {} --set SERVER.PORT=0 --set SERVER.TRUST=LOCAL", scratch.path("db").display());
+    let made = served(
+        config(&format!("{server} --set STORAGE.CHECKSUM=sha-512")),
+        &["CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (S VARCHAR(20))", "INSERT INTO T VALUES ('wide')", "COMMIT WORK"],
+    );
+    assert_eq!(made, ["0"]);
+    assert_eq!(served(config(&server), &["SELECT S FROM T"]), ["wide"]);
+}

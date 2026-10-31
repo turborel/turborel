@@ -9,15 +9,18 @@
 //!
 //! Built in: the CRC family (`hash/crc.rs`), for checksums; MurmurHash3
 //! (`hash/murmur.rs`), for hash tables and filters. Cryptographic ones,
-//! SHA-256 and HMAC-SHA-256, are plug-ins on a vetted crate
+//! SHA-256, SHA-512 and HMAC-SHA-256, are plug-ins on a vetted crate
 //! (`turborel-aes`, RULES.md D26).
 
 pub mod crc;
 pub mod murmur;
 
-/// \[DESIGN\] The most bytes a digest holds: 256 bits, enough for the widest
-/// hash expected (a cryptographic one, RULES.md D26).
-pub const MAX_DIGEST_BYTES: usize = 32;
+/// \[DESIGN\] The most bytes a digest holds: 512 bits, SHA-512's (RULES.md
+/// D26). Every format that stores a digest has room for this many: a block
+/// file's header (`disk/block/format.rs`), a pager file's header and meta
+/// slots (`disk/pager/format.rs`); a block's and a page's trailer take the
+/// function's own `digest_len`, and a page's body is the page less it.
+pub const MAX_DIGEST_BYTES: usize = 64;
 
 /// \[DESIGN\] Identifies a hash function in file formats. An id, once given,
 /// is never changed or reused: a file written with it must always be read
@@ -27,7 +30,7 @@ pub struct HashId(pub u32);
 
 /// \[DESIGN\] The hash functions of plug-ins whose ids RULES.md D26 gives,
 /// by name: so a file checksummed with one not registered says which.
-const PLUGGED: [(HashId, &str); 2] = [(HashId(11), "SHA-256"), (HashId(12), "HMAC-SHA-256")];
+const PLUGGED: [(HashId, &str); 3] = [(HashId(11), "SHA-256"), (HashId(12), "HMAC-SHA-256"), (HashId(13), "SHA-512")];
 
 /// Hash function `id`, as a message names it: its id, and its name if
 /// RULES.md D26 gives the id to a plug-in's.
@@ -40,10 +43,18 @@ pub fn described(id: HashId) -> String {
 
 /// The value of a hash function: `len` bytes, in the order the function
 /// defines (little-endian for the CRC family). The default is empty.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Digest {
     bytes: [u8; MAX_DIGEST_BYTES],
     len: usize,
+}
+
+// Written out: the standard library derives `Default` for arrays of at
+// most 32 elements.
+impl Default for Digest {
+    fn default() -> Digest {
+        Digest { bytes: [0; MAX_DIGEST_BYTES], len: 0 }
+    }
 }
 
 impl Digest {
@@ -117,6 +128,7 @@ mod tests {
     fn hash_functions_are_described_by_id_and_known_name() {
         assert_eq!(described(HashId(12)), "12 (HMAC-SHA-256)");
         assert_eq!(described(HashId(11)), "11 (SHA-256)");
+        assert_eq!(described(HashId(13)), "13 (SHA-512)");
         assert_eq!(described(HashId(9001)), "9001");
     }
 }

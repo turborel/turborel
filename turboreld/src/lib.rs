@@ -28,7 +28,7 @@ use turborel::disk::io::{FileSystem, OsFileSystem};
 use turborel::files::Noted;
 use turborel::settings::Effect;
 use turborel::value::{Decimal, Value};
-use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, KEY_BYTES, KeyDirectory, Keyring, Sha256};
+use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, KEY_BYTES, KeyDirectory, Keyring, Sha256, Sha512};
 use turborel_lz4::Lz4;
 
 use tokio::runtime::Runtime;
@@ -336,7 +336,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
 
 /// Registers with `db` the plug-ins the program ships (RULES.md D26, D48):
 /// LZ4; AES-256-GCM and ChaCha20-Poly1305 with the keys of `--keys`;
-/// SHA-256; and HMAC-SHA-256 if `--checksum-key` names its key.
+/// SHA-256 and SHA-512; and HMAC-SHA-256 if `--checksum-key` names its key.
 fn register(db: &Database, config: &Config) -> Result<(), String> {
     db.register_encoding(Box::new(Lz4)).map_err(refused("LZ4"))?;
     let keyring: Arc<dyn Keyring> = match &config.keys {
@@ -346,6 +346,7 @@ fn register(db: &Database, config: &Config) -> Result<(), String> {
     db.register_encoding(Box::new(AesGcm::new(Arc::clone(&keyring)))).map_err(refused("AES-256-GCM"))?;
     db.register_encoding(Box::new(ChaCha20Poly1305::new(Arc::clone(&keyring)))).map_err(refused("ChaCha20-Poly1305"))?;
     db.register_hash_function(Box::new(Sha256)).map_err(refused("SHA-256"))?;
+    db.register_hash_function(Box::new(Sha512)).map_err(refused("SHA-512"))?;
     if let Some(name) = &config.checksum_key {
         let keyed = HmacSha256::new(&*keyring, name).map_err(refused("HMAC-SHA-256"))?;
         db.register_hash_function(Box::new(keyed)).map_err(refused("HMAC-SHA-256"))?;

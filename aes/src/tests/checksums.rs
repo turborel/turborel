@@ -1,5 +1,5 @@
-//! Unit tests of SHA-256 and HMAC-SHA-256: known answers of FIPS 180-4's
-//! and RFC 4231's examples, the hash function contract (RULES.md
+//! Unit tests of SHA-256, SHA-512 and HMAC-SHA-256: known answers of FIPS
+//! 180-4's and RFC 4231's examples, the hash function contract (RULES.md
 //! R-SAFE-3), keys refused (R-TEST-2), and a database's files checksummed
 //! with each, reopened, changed and refused (R-TEST-1).
 
@@ -14,7 +14,10 @@ use turborel::value::Value;
 
 use super::chacha::bytes;
 use super::held;
-use crate::{HMAC_SHA256_ID, HmacSha256, SHA256_ID, Sha256};
+use crate::{HMAC_SHA256_ID, HmacSha256, SHA256_ID, SHA512_ID, Sha256, Sha512};
+
+/// Bytes of a SHA-256 digest.
+const SHA256_BYTES: usize = 32;
 
 /// Verifies: [EXTENSION] RULES.md D26, D30 [FIPS 180-4]: SHA-256 gives the
 /// digests of the standard's examples, "abc" and the 448-bit message, and
@@ -29,7 +32,30 @@ fn sha_256_gives_the_known_answers() {
     assert_eq!(digest(b""), bytes("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
     assert_eq!(Sha256.hash_parts(&[b"ab", b"", b"c"]).as_bytes(), digest(b"abc"));
     assert_ne!(digest(b"abd"), digest(b"abc"));
-    assert_eq!((Sha256.id(), Sha256.name(), Sha256.digest_len()), (SHA256_ID, "SHA-256", MAX_DIGEST_BYTES));
+    assert_eq!((Sha256.id(), Sha256.name(), Sha256.digest_len()), (SHA256_ID, "SHA-256", SHA256_BYTES));
+}
+
+/// Verifies: [EXTENSION] RULES.md D26, D30 [FIPS 180-4]: SHA-512 gives the
+/// digests of the standard's examples, "abc" and the 896-bit message, and
+/// of the empty message, each of `MAX_DIGEST_BYTES`, the widest a digest
+/// holds; a digest of parts is that of their concatenation; a byte changed
+/// changes it; its id 13, name and length fixed.
+#[test]
+fn sha_512_gives_the_known_answers() {
+    let digest = |data: &[u8]| Sha512.hash(data).as_bytes().to_vec();
+    let abc =
+        "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f";
+    assert_eq!(digest(b"abc"), bytes(abc));
+    let long = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
+    let of_long =
+        "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909";
+    assert_eq!(digest(long), bytes(of_long));
+    let empty =
+        "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
+    assert_eq!(digest(b""), bytes(empty));
+    assert_eq!(Sha512.hash_parts(&[b"ab", b"", b"c"]).as_bytes(), digest(b"abc"));
+    assert_ne!(digest(b"abd"), digest(b"abc"));
+    assert_eq!((Sha512.id(), Sha512.name(), Sha512.digest_len()), (SHA512_ID, "SHA-512", MAX_DIGEST_BYTES));
 }
 
 /// Verifies: [EXTENSION] RULES.md D26, D30 [RFC 4231 §4.2, §4.3]:
@@ -45,7 +71,7 @@ fn hmac_sha_256_gives_the_known_answers() {
     assert_eq!(second.hash(b"what do ya want for nothing?").as_bytes(), digest);
     assert_eq!(second.hash_parts(&[b"what do ya ", b"want for nothing?"]).as_bytes(), digest);
     assert_ne!(first.hash(b"what do ya want for nothing?").as_bytes(), digest, "another key");
-    assert_eq!((second.id(), second.name(), second.digest_len()), (HMAC_SHA256_ID, "HMAC-SHA-256", MAX_DIGEST_BYTES));
+    assert_eq!((second.id(), second.name(), second.digest_len()), (HMAC_SHA256_ID, "HMAC-SHA-256", SHA256_BYTES));
 }
 
 /// Verifies: [EXTENSION] RULES.md D26: HMAC-SHA-256 is keyed by a key of
@@ -116,7 +142,8 @@ fn block_file(dir: &Path) -> std::path::PathBuf {
 }
 
 /// Verifies: [EXTENSION] RULES.md D26, D30: a database created with
-/// STORAGE.CHECKSUM naming SHA-256, or HMAC-SHA-256 keyed by K, reopens
+/// STORAGE.CHECKSUM naming SHA-256, SHA-512 (its digests of 64 bytes in
+/// every header, block and page), or HMAC-SHA-256 keyed by K, reopens
 /// with it, its rows read back; opened with HMAC-SHA-256 keyed by another
 /// key, it is refused (SQLCODE -916), as is one whose file's header was
 /// changed, a reserved byte of it.
@@ -126,6 +153,10 @@ fn a_database_is_checksummed_with_each_and_reopened() {
     let sha = scratch.path("sha");
     made(&sha, Box::new(Sha256));
     assert_eq!(row(&sha, Box::new(Sha256)), "kept");
+    let wide = scratch.path("sha512");
+    made(&wide, Box::new(Sha512));
+    assert_eq!(row(&wide, Box::new(Sha512)), "kept");
+    assert_eq!(checksummed(&wide, Box::new(Sha256)).err().map(|e| e.code), Some(Code::Api), "its hash function not given");
 
     let keys = held();
     let keyed = |name: &str| -> Box<dyn HashFunction> { Box::new(HmacSha256::new(&*keys, name).unwrap()) };

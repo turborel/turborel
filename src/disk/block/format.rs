@@ -22,7 +22,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::hash::{HashFunction, HashId};
 
 /// Bytes of the file header; the first block starts here. Room for the
-/// fields and a digest of up to 256 bits.
+/// fields and a digest of up to `MAX_DIGEST_BYTES`, 512 bits.
 pub const HEADER_LEN: u64 = 128;
 /// `HEADER_LEN` as a buffer size.
 pub(super) const HEADER_BYTES: usize = 128;
@@ -35,6 +35,9 @@ const VERSION_AT: usize = 8;
 const HASH_AT: usize = 12;
 const ENCODINGS_AT: usize = 16;
 const DIGEST_AT: usize = ENCODINGS_AT + encoding::ENCODINGS_FIELD;
+// The header holds the widest digest, SHA-512's (RULES.md D26), before the
+// first block.
+const _: () = assert!(DIGEST_AT + crate::hash::MAX_DIGEST_BYTES <= HEADER_BYTES);
 /// Bytes of a block's length field, before and after its payload.
 pub(super) const LEN_BYTES: usize = 4;
 

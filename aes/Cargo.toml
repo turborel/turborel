@@ -3,7 +3,7 @@ name = "turborel-aes"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Cryptography for turborel (RULES.md D26, D30, D48): AES-256-GCM and ChaCha20-Poly1305 encryption as encodings, for files through STORAGE.ENCODINGS and a table's rows and log records through its option ENCODINGS, keys from a pluggable keyring; SHA-256 and HMAC-SHA-256 checksums through STORAGE.CHECKSUM."
+description = "Cryptography for turborel (RULES.md D26, D30, D48): AES-256-GCM and ChaCha20-Poly1305 encryption as encodings, for files through STORAGE.ENCODINGS and a table's rows and log records through its option ENCODINGS, keys from a pluggable keyring; SHA-256, SHA-512 and HMAC-SHA-256 checksums through STORAGE.CHECKSUM."
 license = "BSD-2-Clause"
 repository = "https://github.com/turborel/turborel"
 readme = "../README.md"
@@ -13,7 +13,7 @@ autotests = false
 
 [dependencies]
 turborel = { version = "0.0.0", path = ".." }
-# AES-256-GCM, ChaCha20-Poly1305, SHA-256, HMAC-SHA-256, HKDF-SHA256 and
+# AES-256-GCM, ChaCha20-Poly1305, SHA-256, SHA-512, HMAC-SHA-256, HKDF-SHA256 and
 # randomness (RULES.md D26): the same aws-lc-rs as the server's TLS and
 # passwords.
 aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }

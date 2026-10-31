@@ -31,7 +31,7 @@ use std::sync::Arc;
 use super::super::encoding::{self, EncodingId, Pipeline};
 use super::{Extent, PageId};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::{HashFunction, HashId};
+use crate::hash::{HashFunction, HashId, MAX_DIGEST_BYTES};
 
 /// Identifies a pager file.
 const MAGIC: [u8; 8] = *b"TBPAGES\0";
@@ -48,6 +48,11 @@ const DIGEST_AT: usize = ENCODINGS_AT + encoding::ENCODINGS_FIELD;
 pub(super) const META_AT: [usize; 2] = [1024, 2048];
 /// Bytes of a meta slot's fields, before its digest.
 const META_FIELDS: usize = 24;
+// The header and each meta slot hold the widest digest, SHA-512's
+// (RULES.md D26), each before the next; the last within the header slot
+// of the smallest page, as a unit test checks.
+const _: () = assert!(DIGEST_AT + MAX_DIGEST_BYTES <= META_AT[0]);
+const _: () = assert!(META_AT[0] + META_FIELDS + MAX_DIGEST_BYTES <= META_AT[1]);
 /// Bytes of the page number in a page's trailer.
 pub(super) const PAGE_NUMBER_BYTES: usize = 8;
 /// No page.
@@ -244,4 +249,21 @@ pub(super) fn list_body(kind: u8, entries: &[Extent], next: u64) -> Vec<u8> {
 pub(super) fn list_entries(body: &[u8]) -> Option<(Vec<Extent>, u64)> {
     let count = usize::try_from(field(body, ENTRIES_AT).map(u32::from_le_bytes)?).ok()?;
     Some((entries_at(body, LIST_HEADER, count)?, le_u64(body, NEXT_AT)?))
+}
+
+// Unit tests: the header slot has room for the widest digests (RULES.md
+// R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::disk::pager::MIN_PAGE_SIZE;
+
+    /// Verifies: [DESIGN] RULES.md D26, D30: the second meta slot, its
+    /// digest of `MAX_DIGEST_BYTES` (SHA-512's 64 bytes) included, ends
+    /// within the header slot of the smallest page.
+    #[test]
+    fn the_header_slot_holds_the_widest_digests() {
+        let [_, second] = META_AT;
+        assert!(second + META_FIELDS + MAX_DIGEST_BYTES <= usize::try_from(MIN_PAGE_SIZE).unwrap());
+    }
 }

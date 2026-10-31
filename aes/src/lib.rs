@@ -7,8 +7,8 @@
 //!   every file, or by a table's option ENCODINGS for its rows and their
 //!   log records (`sealer.rs`, `ciphers.rs`);
 //! - cryptographic hash functions, as `HashFunction`s
-//!   (`Database::register_hash_function`): SHA-256 (`Sha256`) and
-//!   HMAC-SHA-256 keyed by a key (`HmacSha256`), selected by
+//!   (`Database::register_hash_function`): SHA-256 (`Sha256`), SHA-512
+//!   (`Sha512`) and HMAC-SHA-256 keyed by a key (`HmacSha256`), selected by
 //!   STORAGE.CHECKSUM (`checksums.rs`).
 //!
 //! Keys come from a `Keyring` its host gives it, never from the database's
@@ -19,7 +19,7 @@ mod ciphers;
 mod keyring;
 mod sealer;
 
-pub use checksums::{HMAC_SHA256_ID, HMAC_SHA256_NAME, HmacSha256, SHA256_ID, SHA256_NAME, Sha256};
+pub use checksums::{HMAC_SHA256_ID, HMAC_SHA256_NAME, HmacSha256, SHA256_ID, SHA256_NAME, SHA512_ID, SHA512_NAME, Sha256, Sha512};
 pub use ciphers::{AES_ID, AES_NAME, Aes256Gcm, CHACHA_ID, CHACHA_NAME, ChaCha, Cipher, NonceBytes};
 pub use keyring::{KEY_BYTES, KeyDirectory, Keyring, MAX_KEY_NAME, valid_key_name};
 pub use sealer::{SUBKEY_USES, Sealer};
