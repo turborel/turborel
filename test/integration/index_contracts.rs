@@ -11,7 +11,7 @@ use turborel::disk::pager::Pager;
 use turborel::error::Result;
 use turborel::index::{BTreeMethod, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::storage::RowId;
-use turborel::value::{CompOp, DataType, Spelled, compare};
+use turborel::value::{CompOp, DataType, Spelled, Value, compare};
 
 use crate::common::{Scratch, crc32c, number};
 
@@ -78,6 +78,9 @@ fn index_contract(method: &dyn IndexMethod) {
     let rows = |k: i128| {
         let mut r = index.rows(&key(k)).unwrap();
         r.sort_unstable();
+        let mut taken: Vec<RowId> = Arc::clone(&index).key_rows(&key(k)).collect::<Result<_>>().unwrap();
+        taken.sort_unstable();
+        assert_eq!(taken, r, "{}: a key's rows as read are its rows", method.name());
         r
     };
     assert_eq!(rows(2), [11, 12], "{}", method.name());
@@ -92,6 +95,9 @@ fn index_contract(method: &dyn IndexMethod) {
     assert_eq!((rows(2), rows(5)), (vec![12], vec![14]), "{}", method.name());
     index.remove(&key(5), 14).unwrap();
     assert_eq!(rows(5), Vec::<RowId>::new(), "{}", method.name());
+    // A key it cannot encode: an error given as a row is, and no more.
+    let wrong: Vec<Result<RowId>> = Arc::clone(&index).key_rows(&Key(vec![Value::Char("x".to_owned())])).collect();
+    assert!(matches!(wrong.as_slice(), [Err(_)]), "{}: {wrong:?}", method.name());
 }
 
 /// Checks the `Probe::Prefix` contract on `method`, with an index on two
@@ -160,7 +166,8 @@ fn range_contract(method: &dyn IndexMethod) {
 /// exactly the matching entries, with their keys, in the key order asked,
 /// ascending or descending, if the method is ordered; an estimate known
 /// cheaply is exact; entries are counted, a pair inserted twice staying
-/// until removed twice.
+/// until removed twice; a key's rows read as taken (`Index::key_rows`)
+/// are those `Index::rows` gives, each once.
 #[test]
 fn built_in_index_methods_keep_the_index_contract() {
     let scratch = Scratch::new("contract-btree");

@@ -70,6 +70,10 @@ impl Eq for Key {}
 /// are taken (`Index::search`).
 pub type Entries = Box<dyn Iterator<Item = Result<(Key, RowId)>> + Send>;
 
+/// \[DESIGN\] The rows with an entry under one key, read as they are taken
+/// (`Index::key_rows`).
+pub type RowIds = Box<dyn Iterator<Item = Result<RowId>> + Send>;
+
 /// \[DESIGN\] The order an ordered method's search gives its entries in
 /// (`IndexMethod::ordered`); a method that is not ordered gives them in
 /// its own, whichever is asked.
@@ -284,7 +288,10 @@ pub trait IndexMethod: Send + Sync {
 ///   throughout is given once. An error of its storage is given as an
 ///   entry is; callers read no further.
 /// * `rows(key)` returns the ids of the pairs with a key equal to `key`,
-///   each once.
+///   each once; `key_rows(key)` gives the same ids, as they are read,
+///   holding no more of them than `search` does, so a key of more rows
+///   than memory holds is read whole (RULES.md D34, D38); an error of its
+///   storage is given as an id is.
 /// * `remove` takes back one insert of that (key, id) pair; removing a pair
 ///   with none left changes nothing.
 /// * `load` is called only on an index that is empty, and nothing else
@@ -352,6 +359,16 @@ pub trait Index: Send + Sync {
     ///
     /// Its storage fails.
     fn rows(&self, key: &Key) -> Result<Vec<RowId>>;
+    /// \[DESIGN\] The rows with an entry under this key, each once, read as
+    /// they are taken: a referential search's (`db/integrity/references.rs`),
+    /// which may stop at the first. It holds the index, as `search` does.
+    /// Default: those `rows` gives, gathered first.
+    fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
+        match self.rows(key) {
+            Ok(found) => Box::new(found.into_iter().map(Ok)),
+            Err(e) => Box::new(std::iter::once(Err(e))),
+        }
+    }
     /// How many rows the probe would return, if known cheaply: the
     /// planner's statistics.
     fn estimate(&self, probe: &Probe) -> Option<usize>;

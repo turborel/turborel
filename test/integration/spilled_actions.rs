@@ -4,10 +4,15 @@
 //! actions keep spills past MEMORY.WORK_BYTES, every outcome as it is in
 //! memory [GR4-GR7].
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 
 use turborel::db::{Database, Session};
-use turborel::error::Code;
+use turborel::error::{self, Code};
+use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
+use turborel::storage::RowId;
+use turborel::value::{CompOp, DataType};
 
 use crate::common::{Counted, arm, gated, rows, sorted};
 use crate::spilling::{SMALL, bytes};
@@ -67,6 +72,102 @@ fn a_match_stops_at_the_first_row() {
     s.run("INSERT INTO N VALUES (1, NULL)").unwrap();
     assert!(!read_past_first(&heard), "Q read past the first row that matched");
     assert_eq!(s.run("INSERT INTO N VALUES (2, NULL)").map_err(|e| e.code).err(), Some(Code::Constraint), "no match");
+}
+
+/// The built-in ordered index method, as "keyed", counting the rows its
+/// indexes gave of a key: gathered (`Index::rows`), and taken as read
+/// (`Index::key_rows`).
+struct Keyed {
+    inner: BTreeMethod,
+    gathered: Arc<AtomicUsize>,
+    taken: Arc<AtomicUsize>,
+}
+
+/// An index of `Keyed`.
+struct KeyedIndex {
+    inner: Arc<dyn Index>,
+    gathered: Arc<AtomicUsize>,
+    taken: Arc<AtomicUsize>,
+}
+
+impl IndexMethod for Keyed {
+    fn name(&self) -> &'static str {
+        "keyed"
+    }
+    fn supports(&self, op: CompOp) -> bool {
+        self.inner.supports(op)
+    }
+    fn create(&self, columns: &[DataType]) -> error::Result<Box<dyn Index>> {
+        let (gathered, taken) = (Arc::clone(&self.gathered), Arc::clone(&self.taken));
+        Ok(Box::new(KeyedIndex { inner: Arc::from(self.inner.create(columns)?), gathered, taken }))
+    }
+}
+
+impl Index for KeyedIndex {
+    fn insert(&self, key: Key, row: RowId) -> error::Result<()> {
+        self.inner.insert(key, row)
+    }
+    fn remove(&self, key: &Key, row: RowId) -> error::Result<()> {
+        self.inner.remove(key, row)
+    }
+    fn rows(&self, key: &Key) -> error::Result<Vec<RowId>> {
+        let found = self.inner.rows(key)?;
+        self.gathered.fetch_add(found.len(), Ordering::Relaxed);
+        Ok(found)
+    }
+    fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
+        let taken = Arc::clone(&self.taken);
+        Box::new(Arc::clone(&self.inner).key_rows(key).inspect(move |_| {
+            taken.fetch_add(1, Ordering::Relaxed);
+        }))
+    }
+    fn estimate(&self, probe: &Probe) -> Option<usize> {
+        self.inner.estimate(probe)
+    }
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        Arc::clone(&self.inner).search(probe, order)
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.8 GR2, GR3a, GR5a ii];
+/// [DESIGN] RULES.md D34, D38. Regression test (R-TEST-7): a search
+/// through an index of the columns searched gathered every row of the key
+/// at once. A row of P that `CHILDREN` rows of G reference, through an
+/// index of G (K) of the "keyed" method, deleted, is refused (SQLCODE
+/// -201), the index giving one row of the key as read and gathering none;
+/// the rows of H matching a row deleted with SET NULL are all found so.
+#[test]
+fn an_index_search_takes_the_rows_of_a_key_as_read() {
+    let (gathered, taken) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let db = Database::new();
+    let method = Keyed { inner: BTreeMethod::in_memory(), gathered: Arc::clone(&gathered), taken: Arc::clone(&taken) };
+    db.register_index_method(Box::new(method)).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION X
+           CREATE TABLE P (K INTEGER PRIMARY KEY)
+           CREATE TABLE G (K INTEGER REFERENCES P)
+           CREATE TABLE H (K INTEGER REFERENCES P ON DELETE SET NULL)",
+    )
+    .unwrap();
+    let s = db.session("X");
+    s.run("INSERT INTO P VALUES (1), (2)").unwrap();
+    let ones: Vec<String> = (0..CHILDREN).map(|_| "(1)".to_owned()).collect();
+    let twos: Vec<String> = (0..CHILDREN).map(|_| "(2)".to_owned()).collect();
+    s.run(&format!("INSERT INTO G VALUES {}", ones.join(", "))).unwrap();
+    s.run(&format!("INSERT INTO H VALUES {}", twos.join(", "))).unwrap();
+    s.commit().unwrap();
+    db.create_index("G_K", "X.G", &["K"], "keyed").unwrap();
+    db.create_index("H_K", "X.H", &["K"], "keyed").unwrap();
+    let counts = || (gathered.swap(0, Ordering::Relaxed), taken.swap(0, Ordering::Relaxed));
+    counts();
+    assert_eq!(s.run("DELETE FROM P WHERE K = 1").map_err(|e| e.code).err(), Some(Code::Constraint));
+    assert_eq!(counts(), (0, 1), "one row of G's key taken, none gathered");
+    s.run("DELETE FROM P WHERE K = 2").unwrap();
+    // Found for SET NULL, then read again as the constraint is checked:
+    // none matches now, the entries of the rows as they were still there.
+    assert_eq!(counts(), (0, 2 * usize::try_from(CHILDREN).unwrap()), "each row of H's key, as read");
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM H WHERE K IS NULL"), Ok(vec![CHILDREN.to_string()]));
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM G"), Ok(vec![CHILDREN.to_string()]));
 }
 
 /// Rows of Q, each with a long string: their bytes past the smallest work

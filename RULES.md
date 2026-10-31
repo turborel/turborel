@@ -1719,6 +1719,10 @@ compares them); a row fetched by key reads a page per column.
   merge due meanwhile is left to later writers). So a whole-index read
   (as an ORDER BY in its order) holds a leaf or bucket, not the index,
   and the statement checks for a cancel at each entry (D44).
+- **A key's rows.** `Index::key_rows` gives the rows of one key as read,
+  for referential searches, which may stop at the first: the B-link
+  tree a leaf at a time; by default, and for the hash table, those
+  `Index::rows` gathers, its key's bucket.
 - **Other types.** A probe value not of the column's type is placed by
   its anchor and each entry found checked, so an index finds exactly
   what SQL compares.
@@ -2129,13 +2133,18 @@ catalog to keep in step.
     changed, all found before any is acted on; for MATCH PARTIAL, the
     referenced table as it was before the statement, made once per
     table, and the rows each row matched then.
+  - for MATCH PARTIAL, lookups of that table by the columns a row's
+    referencing values are not null in, each made by one pass over it
+    when first needed, in a map that spills: a row's matches are not
+    found by reading the table again (`db/integrity/before.rs`).
 - **Kept maps.** What referential actions keep by key, the values a
   statement gave [ISO/IEC 9075:1992 §11.8 GR7] and the MATCH PARTIAL
   associations dropped [GR4], is a map that spills (`spill/map.rs`): in
   memory up to MEMORY.WORK_BYTES, then all in a spill-area table.
 - **Referential checks** read a row at a time and stop at the first row
   they need: whether a row has a match, and NO ACTION's rows left
-  without one.
+  without one. Through an index, a key's rows are taken as read
+  (`Index::key_rows`, D34), never gathered first.
 - **Reordered scans.** A scan planned in an order its table no longer
   gives is sorted as ORDER BY.
 - **Spill files.** In `tmp/` of a database's directory, cleared when it

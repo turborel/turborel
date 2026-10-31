@@ -146,15 +146,11 @@ fn row_of(value: &[u8]) -> Result<RowId> {
     <[u8; ROW_ID]>::try_from(value).map(RowId::from_be_bytes).map_err(|_| corrupt())
 }
 
-/// `rows`, each once, in the order first found.
+/// `rows`, each once, in the order first found: those seen kept in a set,
+/// so a key of many rows costs no more than sorting them.
 fn once_each(rows: Vec<RowId>) -> Vec<RowId> {
-    let mut seen = Vec::with_capacity(rows.len());
-    for r in rows {
-        if !seen.contains(&r) {
-            seen.push(r);
-        }
-    }
-    seen
+    let mut seen = BTreeSet::new();
+    rows.into_iter().filter(|&r| seen.insert(r)).collect()
 }
 
 /// An index of the method: its table, its key's types, and whether it was
@@ -300,6 +296,8 @@ impl Index for HashIndex {
         }
     }
 
+    /// The key's entries, in its bucket's chain, read whole: as
+    /// `key_rows` gives them too, by default.
     fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
         let found = self.table.get(&self.encoded(key)?)?;
         Ok(once_each(found.iter().map(|v| row_of(v)).collect::<Result<_>>()?))

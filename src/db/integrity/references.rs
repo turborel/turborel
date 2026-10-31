@@ -4,9 +4,9 @@
 //! referential actions are `integrity/actions.rs`'s. Split from
 //! db/integrity.rs (RULES.md R-SIZE-2).
 //!
-//! Each search reads a row at a time: a check stops at the first row it
-//! needs, and the rows an action is for are held as a list that spills
-//! (RULES.md D38).
+//! Each search reads a row at a time, through an index a key's rows as
+//! they are taken: a check stops at the first row it needs, and the rows
+//! an action is for are held as a list that spills (RULES.md D34, D38).
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -57,8 +57,9 @@ impl State {
 
     /// Calls `each` with the rows of `table`, with their ids, whose
     /// `columns` equal `values` [§8.2], none null, until it breaks: through
-    /// an index of exactly those columns if there is one, else read in
-    /// full, a row at a time.
+    /// an index of exactly those columns if there is one, its rows of the
+    /// key read as taken (`Index::key_rows`), else read in full, a row at
+    /// a time.
     fn each_row_with(&self, tx: &Txn, table: &QualifiedName, (columns, values): (&[usize], &[Value]), each: Visit<'_>) -> Result<()> {
         let equal = |row: &Row| columns.iter().zip(values).all(|(&c, v)| row.get(c).is_some_and(|x| equals(x, v)));
         let index = self
@@ -72,7 +73,10 @@ impl State {
         let key: Option<Vec<Value>> =
             ix.columns.iter().map(|c| columns.iter().position(|x| x == c).and_then(|at| values.get(at)).cloned()).collect();
         let key = Key(key.ok_or_else(|| api("[DESIGN] an index key is not the values looked up"))?);
-        for id in self.index_of(&ix.name)?.rows(&key)? {
+        // The key's rows read as they are taken, so a search that stops
+        // at the first never holds the rest.
+        for found in Arc::clone(self.index_of(&ix.name)?).key_rows(&key) {
+            let id = found?;
             if let Some(row) = storage.get(tx.id, id)?.filter(|r| equal(r))
                 && each(id, row)?.is_break()
             {

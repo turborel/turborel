@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::stats::KeyCounts;
-use super::{BTREE_METHOD, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
+use super::{BTREE_METHOD, Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
@@ -402,6 +402,18 @@ impl Index for BLinkIndex {
         let prefix = self.prefix(key)?;
         let end = past(&prefix);
         self.tree.scan(Bound::Included(&prefix), Bound::Excluded(&end), Direction::Forward).map(|entry| Ok(split(&entry?.0)?.1)).collect()
+    }
+
+    /// The key's entries, adjacent in the tree, read a leaf at a time as
+    /// they are taken, as a search's are.
+    fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
+        let prefix = match self.prefix(key) {
+            Ok(prefix) => prefix,
+            Err(e) => return Box::new(std::iter::once(Err(e))),
+        };
+        let end = past(&prefix);
+        let scan = scan_of(Held(Arc::clone(&self)), Bound::Included(&prefix), Bound::Excluded(&end), Direction::Forward);
+        Box::new(scan.map(|entry| Ok(split(&entry?.0)?.1)))
     }
 
     fn estimate(&self, probe: &Probe) -> Option<usize> {

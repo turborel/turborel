@@ -15,14 +15,14 @@
 //! What they keep is bounded as the statement's effects are (RULES.md
 //! D38): the rows matching each row acted for, gathered before any is
 //! acted on; for MATCH PARTIAL, the referenced table as it was before the
-//! statement, made once for each table, and the referenced rows each row
-//! matched then: lists that spill. The values the statement gave [GR7],
-//! and the associations dropped [GR4], are maps that spill
-//! (`spill/map.rs`).
+//! statement, made once for each table, its rows found by their values
+//! through lookups made once of it (`integrity/before.rs`), and the
+//! referenced rows each row matched then: lists that spill. The values the
+//! statement gave [GR7], and the associations dropped [GR4], are maps that
+//! spill (`spill/map.rs`).
 
-use std::ops::ControlFlow;
-
-use super::references::{partially, same_value};
+use super::before::Before;
+use super::references::same_value;
 use super::{Effect, Effects};
 use crate::bytes::{Put, Reader};
 use crate::catalog::{ForeignKey, MatchType, QualifiedName, ReferentialAction, TableDesc};
@@ -48,7 +48,7 @@ struct Acting {
     space: ListSpace,
     given: SpillMap,
     dropped: SpillMap,
-    before: Vec<(QualifiedName, HeldRows<(RowId, Row)>)>,
+    before: Vec<Before>,
 }
 
 /// Row `row` of a referenced table, `parent`, deleted, or (with its values
@@ -187,38 +187,6 @@ impl State {
         effects.updated(child, row_id, row, &columns)
     }
 
-    /// [§11.8 GR4] The rows of `table` as they were before the statement
-    /// that did `effects`, held as a list that spills: as they are, but for
-    /// the rows it changed, each as it was first, none of one it inserted.
-    /// The ids of the rows it changed are kept in a map that spills.
-    fn before_statement(&self, tx: &Txn, table: &QualifiedName, effects: &mut Effects<'_>) -> Result<HeldRows<(RowId, Row)>> {
-        let mut changed = SpillMap::new(effects.space.clone());
-        effects.done.visit(&mut |effect| {
-            let (t, id, _) = effect_row(effect);
-            if t == table { changed.insert(&id.to_le_bytes(), &[]) } else { Ok(()) }
-        })?;
-        let mut rows = HeldRows::new(effects.space.clone());
-        self.each_row_where(tx, table, &|_| true, &mut |id, row| {
-            if !changed.contains(&id.to_le_bytes())? {
-                rows.push((id, row))?;
-            }
-            Ok(ControlFlow::Continue(()))
-        })?;
-        effects.done.visit(&mut |effect| {
-            let (t, id, was) = effect_row(effect);
-            if t != table {
-                return Ok(());
-            }
-            // Its first effect, taken from those to come: what it was.
-            let first = changed.remove(&id.to_le_bytes())?;
-            match (first, was) {
-                (true, Some(old)) => rows.push((id, old.clone())),
-                (true, None) | (false, _) => Ok(()),
-            }
-        })?;
-        Ok(rows)
-    }
-
     /// [§11.8 GR6b i] A CASCADE of MATCH PARTIAL gives a row the new value
     /// V of a referenced column only if every row of `parent` updated in
     /// the statement that the row matched before it, its `associated`, now
@@ -268,7 +236,7 @@ impl Acting {
     /// [§11.8 GR3b, GR4] The rows of the table `done` acts for a change
     /// to that a row whose referencing values are `values` matched before
     /// the statement that did `effects`: of that table as it was then,
-    /// made the first time.
+    /// made the first time, through its lookups (`integrity/before.rs`).
     fn associated(
         &mut self,
         db: &State,
@@ -277,16 +245,12 @@ impl Acting {
         effects: &mut Effects<'_>,
     ) -> Result<HeldRows<RowId>> {
         let parent = done.change.parent;
-        if !self.before.iter().any(|(t, _)| t == parent) {
-            let rows = db.before_statement(tx, parent, effects)?;
-            self.before.push((parent.clone(), rows));
+        if !self.before.iter().any(|b| b.table == *parent) {
+            let made = db.before_statement(tx, parent, &mut effects.done, &effects.space)?;
+            self.before.push(made);
         }
-        let mut out = HeldRows::new(self.space.clone());
-        let Some((_, before)) = self.before.iter_mut().find(|(t, _)| t == parent) else { return Ok(out) };
-        before.visit(&mut |(id, row)| {
-            if project(row, &done.fk.referenced).is_some_and(|k| partially(values, &k)) { out.push(*id) } else { Ok(()) }
-        })?;
-        Ok(out)
+        let Some(before) = self.before.iter_mut().find(|b| b.table == *parent) else { return Ok(HeldRows::new(self.space.clone())) };
+        before.matched(&done.fk.referenced, values)
     }
 
     /// [§11.8 GR3b ii, GR4] Whether row `row` of a foreign key (`name`),
@@ -335,15 +299,6 @@ impl Acting {
             self.given.insert(&at, &value_record(given))?;
         }
         Ok(())
-    }
-}
-
-/// The table, row and old values of what `effect` did: none of a row
-/// inserted.
-fn effect_row(effect: &Effect) -> (&QualifiedName, RowId, Option<&Row>) {
-    match effect {
-        Effect::Inserted { table, id } => (table, *id, None),
-        Effect::Updated { table, id, old, .. } | Effect::Deleted { table, id, old } => (table, *id, Some(old)),
     }
 }
 
