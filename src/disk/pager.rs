@@ -19,6 +19,7 @@
 //! this catches torn and corrupted pages and writes that landed in the
 //! wrong place. The format is in `format.rs`.
 
+mod ahead;
 mod format;
 mod free;
 mod known;

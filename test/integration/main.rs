@@ -99,6 +99,7 @@ mod probes;
 mod queries;
 mod query_expressions;
 mod random_queries;
+mod read_ahead;
 mod recovery;
 mod refusals;
 mod reopen;

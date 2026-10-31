@@ -17,10 +17,13 @@
 //! fails need only put the frame back as it was.
 
 use std::mem;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
+mod ahead;
 mod claim;
+
+pub use ahead::READ_AHEAD_PAGES;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
@@ -97,6 +100,7 @@ impl BufferPool {
             eviction,
             counters: Counters::default(),
             hints: super::hits::Hints::new(frames),
+            read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             _reservation: None,
         })
     }
@@ -177,6 +181,7 @@ impl BufferPool {
             waits: sum(|s| &s.waits),
             evictions: get(&c.evictions),
             write_backs: get(&c.write_backs),
+            read_ahead: get(&c.read_ahead),
         }
     }
 
@@ -416,19 +421,7 @@ impl BufferPool {
     /// and the error returned.
     fn fill(&self, key: Key, claim: Claim, fill: Fill) -> Result<&Frame> {
         let frame = self.frame(claim.frame)?;
-        let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
-        if let Some(old) = claim.write_back {
-            if let Err(e) = self.write_back(old, &old_content) {
-                self.restore(claim.frame, key, old, old_content);
-                return Err(e);
-            }
-            // Written back: a thread wanting it now reads it from the file.
-            if let Ok(mut map) = self.map(old)
-                && map.get(&old) == Some(&claim.frame)
-            {
-                map.remove(&old);
-            }
-        }
+        self.emptied(key, claim)?;
         let mut content = Vec::new();
         if fill == Fill::Read {
             count(&self.counters.misses);
@@ -442,6 +435,27 @@ impl BufferPool {
         frame.ready();
         self.eviction.accessed(claim.frame);
         Ok(frame)
+    }
+
+    /// Empties `claim`'s frame, claimed for `key`, writing back what it
+    /// held if it must. If that fails, the frame is put back as it was and
+    /// the error returned.
+    fn emptied(&self, key: Key, claim: Claim) -> Result<()> {
+        let frame = self.frame(claim.frame)?;
+        let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
+        if let Some(old) = claim.write_back {
+            if let Err(e) = self.write_back(old, &old_content) {
+                self.restore(claim.frame, key, old, old_content);
+                return Err(e);
+            }
+            // Written back: a thread wanting it now reads it from the file.
+            if let Ok(mut map) = self.map(old)
+                && map.get(&old) == Some(&claim.frame)
+            {
+                map.remove(&old);
+            }
+        }
+        Ok(())
     }
 
     /// Reads `key` from its file into `content`.

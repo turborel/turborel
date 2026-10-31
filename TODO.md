@@ -215,11 +215,17 @@ The registry, scopes and SET statements exist (D36). Still to do:
   the values a statement gave each row of a table an action may change
   [ISO/IEC 9075:1992 §11.8 GR7]: they should spill as the statement's
   effects do.
-- **Buffer pool:** a benchmark of the B-link tree in a small pool, and
-  read-ahead, to make misses cheaper. Hits with one shared write measured
-  87.6M/s to 151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27):
-  four still read less than one, on the frame's latch; a reader-biased
-  latch (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
+- **Buffer pool:** hits with one shared write measured 87.6M/s to
+  151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27): four
+  still read less than one, on the frame's latch; a reader-biased latch
+  (BRAVO) needs a reviewed exception to R-SAFE-1, a decision to make.
+  Read-ahead (2026-10-31) is synchronous: a forward scan of a B-link tree
+  in a pool of a tenth of it went from 12.7M to 14.9M-17.1M entries/s on
+  one thread, 44.6M to 58.0M-66.5M on four (`bench/tree.rs`, three runs);
+  reading ahead on a job of the thread manager (D55) would overlap the
+  reads with the scan, and its pages a setting (D36) rather than
+  `BufferPool::set_read_ahead`; the column store's scans of frozen
+  groups read none ahead.
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups then made
   a trait. For the column store:
   - a sorted group's rows read backwards, to answer an ORDER BY of its

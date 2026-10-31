@@ -6,7 +6,10 @@
 //! * **Forward**, it follows right links. Keys only ever move right, so
 //!   every key past the last one returned is in the leaf linked to, or
 //!   further right (Lehman and Yao 1981, §4). Each leaf's entries are taken
-//!   past the last key returned, so none is returned twice.
+//!   past the last key returned, so none is returned twice. A leaf linked
+//!   to from the page before it in the file, as a tree filled in key order
+//!   lays its leaves, is read with the pages after it, ahead of the scan
+//!   (`BufferPool::read_ahead`).
 //! * **Backward**, it goes down from the root again for each leaf: to the
 //!   leaf holding the bound, then to the one holding the key below that
 //!   leaf's range, found on the way down (a parent's key, or a left
@@ -63,6 +66,9 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
     /// Entries copied from the last leaf, the next to return last.
     ready: Vec<Entry>,
     next: Next,
+    /// The leaf it read last, forward: a leaf after it in the file, linked
+    /// to, is read ahead.
+    last: Option<PageId>,
     /// Its epoch, counted while it lives: it holds a leaf's page number
     /// between reads (`reclaim.rs`).
     entered: Entered,
@@ -92,6 +98,7 @@ pub fn scan_of<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<&[u8]>, upper
         direction,
         ready: Vec::new(),
         next: Next::Descend,
+        last: None,
         entered,
     }
 }
@@ -160,6 +167,10 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
         let (mut taken, low) = match self.next {
             Next::Done => return Ok(()),
             Next::Leaf(id) => {
+                if self.last.and_then(|last| last.0.checked_add(1)) == Some(id.0) {
+                    tree.pool.read_ahead(tree.file, id.0);
+                }
+                self.last = Some(id);
                 let page = tree.pool.read(tree.file, id.0)?;
                 (take(&Node::parse(&page)?, &self.lower, &self.upper)?, None)
             }
@@ -174,7 +185,8 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                     (Bound::Unbounded, Direction::Backward) => Target::Last,
                 };
                 let mut path = Path { track_low: true, ..Path::default() };
-                let (_, taken) = tree.descend(target, 0, &mut path, |leaf| take(leaf, &self.lower, &self.upper))?;
+                let (leaf, taken) = tree.descend(target, 0, &mut path, |leaf| take(leaf, &self.lower, &self.upper))?;
+                self.last = Some(leaf);
                 (taken, path.low)
             }
         };

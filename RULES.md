@@ -1065,7 +1065,16 @@ nothing, waits a bounded while for its latch, longer for its pins, then
 is refused (SQLCODE -910) naming the page, as the hold may be its own
 thread's, which the pool does not track. Hot pages contend
 on that latch still; a reader-biased latch (BRAVO) would
-need a reviewed exception to R-SAFE-1. File formats are the same
+need a reviewed exception to R-SAFE-1. A forward scan of a B-link tree
+reading a leaf that follows the last one in the file reads ahead
+(`BufferPool::read_ahead`): on a miss, the pages after it, 32 unless the
+pool is told otherwise, in one read of the file, into frames of their
+own, never more than an eighth of the pool's frames; pages in the pool,
+frames that cannot be had at once, and pages that cannot be taken whole
+from what was read (overflowing, freed, torn) are left to the reads that
+want them, so it never fails one; none during an undo. Synchronous, it
+saves reads of the file, not their waits: reading ahead on a thread of
+its own would be a job of the thread manager (D55). File formats are the same
 on every platform. Each component counts its own
 work for the heuristics above it.
 *Why:* each layer can be tested, fault-injected and benchmarked alone, and

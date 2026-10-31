@@ -16,7 +16,9 @@
 //! latch itself keeps the frame, as an eviction takes it exclusively. A
 //! hint wrong, or a frame busy, sends the read the locked way: the page
 //! table's shard, and a pin. Which frame is evicted is
-//! an extension point (`Eviction`); CLOCK is built in.
+//! an extension point (`Eviction`); CLOCK is built in. A sequential scan
+//! reads ahead (`pool/ahead.rs`): on a miss, the pages after the one it
+//! wants, in one read of the file, a bounded share of the frames.
 //!
 //! No lock is held during I/O, nor during a call into the eviction policy
 //! (RULES.md R-ERR-4): a frame being filled or emptied is marked loading,
@@ -32,6 +34,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLoc
 use std::time::{Duration, Instant};
 
 pub use eviction::{Clock, Eviction};
+pub use pool::READ_AHEAD_PAGES;
 
 use super::block::BlockFile;
 use super::pager::Pager;
@@ -73,6 +76,8 @@ pub struct PoolCounts {
     pub evictions: u64,
     /// Dirty pages written back.
     pub write_backs: u64,
+    /// Pages read ahead of a sequential scan (`BufferPool::read_ahead`).
+    pub read_ahead: u64,
 }
 
 /// The counters of the rarer events; hits are counted by thread
@@ -82,6 +87,7 @@ struct Counters {
     misses: AtomicU64,
     evictions: AtomicU64,
     write_backs: AtomicU64,
+    read_ahead: AtomicU64,
 }
 
 /// \[DESIGN\] Shards of the page table: threads hitting different pages
@@ -214,6 +220,8 @@ pub struct BufferPool {
     /// Where each page's frame was last found, by the page's hash
     /// (`hits.rs`): read without a lock.
     hints: hits::Hints,
+    /// The pages it reads ahead at once (`pool/ahead.rs`).
+    read_ahead_pages: AtomicUsize,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
     _reservation: Option<Reservation>,
