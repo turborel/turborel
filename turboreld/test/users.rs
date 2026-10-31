@@ -6,7 +6,7 @@ use std::path::Path;
 
 #[cfg(any(unix, windows))]
 use turborel_client::connection::{self, Password, Trust};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use turborel_client::scram::Scram;
 use turborel_test_support::Scratch;
 #[cfg(any(unix, windows))]

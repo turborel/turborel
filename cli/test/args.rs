@@ -135,7 +135,7 @@ fn a_wrong_command_line_is_refused() {
 fn the_platforms_authorities_are_trusted_when_asked() {
     let tls = |line: &[&str]| match parsed(line, &[("USER", "u")]).unwrap().server {
         Server::Tcp { tls, .. } => tls,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         Server::Socket(_) => panic!("TCP"),
     };
     let alone = Tls { roots: None, system: true, name: Some("db".into()), identity: None };

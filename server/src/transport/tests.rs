@@ -2,6 +2,7 @@
 //! keepalive on, at the times its database's settings say, read back from
 //! the socket (RULES.md R-TEST-1).
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::time::Duration;
 
 use socket2::SockRef;
