@@ -166,11 +166,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Query processing
 
-- **Index nested-loop joins, further** (D35): RIGHT outer joins, the
-  right operand preserved, probing the left's table; a right operand that
-  reads its table through a projection, as a view's does; and the
-  planner's estimate of a join's left operand when it is itself a join,
-  now its product's rows by the default selectivity of each equality.
 - **Batch execution, further** (RULES.md D31): RIGHT and FULL outer
   joins, and LEFT ones with a condition beyond their keys; products and
   a join's right operand built from batches; a sort, a DISTINCT of

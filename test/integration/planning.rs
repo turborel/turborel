@@ -462,7 +462,11 @@ fn conditions_move_into_outer_joins_7_5() {
         (format!("{lj} WHERE T.ID = 1 OR U.CODE = 'B'"), &["1,A  ", "1,B  "], "LeftOuterJoin"),
         (format!("{lj} AND U.CODE = 'A'"), &["1,A  ", "2,NULL", "3,NULL"], "LeftOuterJoin"),
         (format!("{lj} AND T.ID = 2"), &["1,NULL", "2,NULL", "3,NULL"], "LeftOuterJoin"),
-        ("SELECT T.ID, CODE FROM U RIGHT JOIN T ON T.ID = U.ID WHERE T.ID < 2".into(), &["1,A  ", "1,B  "], "RightOuterJoin"),
+        (
+            "SELECT T.ID, CODE FROM U RIGHT JOIN T ON T.ID = U.ID WHERE T.ID < 2".into(),
+            &["1,A  ", "1,B  "],
+            "LeftOuterIndexNestedLoop APP.U",
+        ),
         ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE U.CODE = 'A'".into(), &["2,A  "], "RightOuterJoin"),
         ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE U.CODE = 'A' AND T.ID = 2".into(), &["2,A  "], "NestedLoop"),
         ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE T.ID = 2".into(), &["2,A  ", "2,B  "], "LeftOuterJoin"),

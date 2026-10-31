@@ -332,6 +332,86 @@ fn few_rows_probe_indexes_of_every_kind_they_can() {
     }
 }
 
+/// Verifies: [X3.135-1986 §5.20 GR2b]; [ISO/IEC 9075:1992 §7.5]; [DESIGN]
+/// RULES.md D35: of a RIGHT outer join, a few rows of the preserved right
+/// operand each probe an index of the left's table, its columns first
+/// still, the rest of the condition judged of the pairs found, a row that
+/// finds none kept after nulls; and a view of a table's columns, filtered
+/// or not, in another order, or of another such view, is probed as its
+/// table, as the right operand of an inner, LEFT or RIGHT join. A view of
+/// an expression is not. The rows are those of the same query of S, not
+/// indexed, read by batches and row by row.
+#[test]
+fn right_joins_and_views_probe_an_index() {
+    let db = with_few();
+    let s = db.session("P");
+    for (name, table) in [("I", "I"), ("S", "S")] {
+        s.run(&format!("CREATE VIEW V{name} (K, N) AS SELECT K, N FROM {table}")).unwrap();
+        s.run(&format!("CREATE VIEW F{name} (N, K) AS SELECT N, K FROM {table} WHERE K < 100")).unwrap();
+        s.run(&format!("CREATE VIEW W{name} (K) AS SELECT K FROM F{name}")).unwrap();
+        s.run(&format!("CREATE VIEW X{name} (K, L) AS SELECT K, K + 1 FROM {table}")).unwrap();
+    }
+    s.commit().unwrap();
+    let plan = joined(&s, "SELECT E.K, I.N FROM I RIGHT JOIN E ON I.K = E.K", 5);
+    assert!(plan.contains("LeftOuterIndexNestedLoop P.I using I_K") && !plan.contains("OuterJoin"), "{plan}");
+    let plan = joined(&s, "SELECT I.N, E.C FROM I RIGHT JOIN E ON E.K = I.K AND I.C <> 'c8' AND E.C = I.C", 5);
+    assert!(plan.contains("LeftOuterIndexNestedLoop P.I using I_K") && plan.contains("I.C <> 'c8'"), "{plan}");
+    let kept = rows(&s, "SELECT E.K, I.N FROM I RIGHT JOIN E ON I.K = E.K ORDER BY 1").unwrap();
+    assert!(kept.contains(&"1000,NULL".to_string()) && kept.contains(&"NULL,NULL".to_string()), "{kept:?}");
+    for (query, least, probed) in [
+        ("SELECT E.K, VI.N FROM E, VI WHERE E.K = VI.K", 3, true),
+        ("SELECT E.K, FI.N FROM E LEFT JOIN FI ON E.K = FI.K", 5, true),
+        ("SELECT E.K, VI.N FROM VI RIGHT JOIN E ON VI.K = E.K AND VI.N <> 'n4'", 5, true),
+        ("SELECT E.K, WI.K FROM E JOIN WI ON WI.K = E.K", 3, true),
+        ("SELECT E.K, XI.L FROM E JOIN XI ON XI.K = E.K", 3, false),
+    ] {
+        let unindexed = query.replace("VI", "VS").replace("FI", "FS").replace("WI", "WS").replace("XI", "XS");
+        let (batched, by_rows) = both_ways(&s, query);
+        assert_eq!((&batched, &by_rows), (&sorted(&s, &unindexed), &sorted(&s, &unindexed)), "{query}");
+        assert!(batched.len() >= least, "{query}: {batched:?}");
+        let plan = s.explain(query, &Params::new()).unwrap();
+        assert_eq!(plan.contains("IndexNestedLoop P.I using I_K"), probed, "{query}: {plan}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D35: the rows of a join's left operand that
+/// is itself a join, of a LEFT join here, so join ordering leaves it, are
+/// estimated by the distinct values of the columns
+/// its equality compares, not by a default share of its product: G of two
+/// values in each of L and M, their join's rows are half their product,
+/// too many to probe T's index each, so T is hash joined; joined on K, a
+/// key of each, they are as few as either's rows, and probe it.
+#[test]
+fn a_joined_left_operand_is_estimated_by_distinct_values() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION P CREATE TABLE L (K INTEGER NOT NULL, G INTEGER) CREATE TABLE M (K INTEGER NOT NULL, G INTEGER) \
+         CREATE TABLE T (K INTEGER NOT NULL, N INTEGER)",
+    )
+    .unwrap();
+    let s = db.session("P");
+    let values = |n: i32, of: &dyn Fn(i32) -> String| (0..n).map(of).collect::<Vec<_>>().join(", ");
+    for table in ["L", "M"] {
+        s.run(&format!("INSERT INTO {table} VALUES {}", values(100_i32, &|k| format!("({k}, {})", k % 2_i32)))).unwrap();
+    }
+    for from in (0_i32..20_000_i32).step_by(1000) {
+        s.run(&format!("INSERT INTO T VALUES {}", values(1000_i32, &|k| format!("({}, {k})", from + k)))).unwrap();
+    }
+    s.commit().unwrap();
+    db.create_index("T_K", "P.T", &["K"], "btree").unwrap();
+    let grouped = "SELECT COUNT(*) FROM (L JOIN M ON L.G = M.G) LEFT JOIN T ON M.K = T.K";
+    let keyed = "SELECT COUNT(*) FROM (L JOIN M ON L.K = M.K) LEFT JOIN T ON M.K = T.K";
+    // Statistics asked for, then gathered (D31).
+    s.explain(grouped, &Params::new()).unwrap();
+    db.maintain().unwrap();
+    let plan = s.explain(grouped, &Params::new()).unwrap();
+    assert!(!plan.contains("IndexNestedLoop"), "{plan}");
+    assert_eq!(rows(&s, grouped), Ok(vec!["5000".to_owned()]));
+    let plan = s.explain(keyed, &Params::new()).unwrap();
+    assert!(plan.contains("LeftOuterIndexNestedLoop P.T using T_K"), "{plan}");
+    assert_eq!(rows(&s, keyed), Ok(vec!["100".to_owned()]));
+}
+
 /// Verifies: [X3.135-1986 §5.13 GR2, §5.18 GR2, §5.11 GR2, GR4, GR5];
 /// [DESIGN] RULES.md D31: a long IN list of constants a filter judges is
 /// judged by their set, row by row and over vectors alike: of numbers of

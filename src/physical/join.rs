@@ -14,11 +14,12 @@
 //! filter's. An outer join is planned the same way, on the equalities of
 //! its `<join condition>`, a conjunct that can raise and reads one
 //! operand's columns alone evaluated on every row of that operand when the
-//! other has a row, before it is matched. Of an inner or a LEFT outer join, few left rows
-//! each probe an index of the right operand's table instead, if that is
+//! other has a row, before it is matched. Of an inner or a LEFT outer
+//! join, few left rows each probe an index of the right operand's table
+//! instead, and of a RIGHT one few right rows the left's, if that is
 //! estimated cheaper than reading it whole (`physical/indexed.rs`).
 
-use super::indexed::{Equijoin, index_join};
+use super::indexed::{Equijoin, index_join, right_index_join};
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
     Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, cond_columns, judged_by_sets, map_cond_columns, render_cond,
@@ -159,10 +160,23 @@ impl PhysicalPlanner<'_> {
         let want_left = if kind.keeps_right() { &[] } else { of_left(want, width) };
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
         let ordered = !want_left.is_empty() && l.ordered;
-        // Of a LEFT join, a few left rows each probing an index of the right's table.
-        let may_probe = kind == OuterJoin::Left && !keys.is_empty() && own.0.is_empty() && own.1.is_empty();
-        let probed = may_probe.then(|| self.probed_instead((left, right), &keys, &r.plan)).flatten();
-        if let Some((probing, rows)) = probed {
+        // Of a LEFT join, a few left rows each probing an index of the
+        // right's table; of a RIGHT join, a few right rows the left's.
+        let may_probe = !keys.is_empty() && own.0.is_empty() && own.1.is_empty();
+        let swapped: Vec<(usize, usize)> = keys.iter().map(|&(a, b)| (b, a)).collect();
+        let probed = if !may_probe {
+            None
+        } else if kind == OuterJoin::Left {
+            self.probed_instead((left, right), &keys, &r.plan).map(|p| (p, false))
+        } else if kind == OuterJoin::Right {
+            self.probed_instead((right, left), &swapped, &l.plan).map(|p| (p, true))
+        } else {
+            None
+        };
+        if let Some(((probing, rows), true)) = probed {
+            return Built::unordered(right_index_join(probing, (&swapped, rest), (r.plan, rows), (width, &names)));
+        }
+        if let Some(((probing, rows), false)) = probed {
             let join = Equijoin { width, keys: &keys, rest, outer: true };
             return Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered };
         }

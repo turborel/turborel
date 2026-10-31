@@ -1592,14 +1592,24 @@ gathers its statistics (D31). A filter over a scan that skips the zones
 or chunks its conditions cannot match (`TableStorage::scan_share`, D31)
 is estimated to keep no more rows than the scan reads.
 An inner or LEFT outer join on equalities whose right operand reads a
-table, filtered by a condition that cannot raise an error or not, is an
-index nested-loop join (`Plan::IndexJoin`, `physical/indexed.rs`) when
+table, filtered by a condition that cannot raise an error or not, or
+through a projection of its columns, as a view of them does (or a view
+of such a view), is an index nested-loop join (`Plan::IndexJoin`,
+`physical/indexed.rs`) when
 an index of the table has first columns the equalities give values of,
 of the indexed column's kind (so the index places them among its keys),
 its later columns NOT NULL (an index holds no key with a null), and the
 left operand's estimated rows times a probe's cost (its pages, a level
 of a descent each, and the rows it finds, a fetch each) is less than the
-cost of the read the hash join's right operand would be. Each left row
+cost of the read the hash join's right operand would be; so is a RIGHT
+outer join whose left operand reads a table so, the right's rows probing
+it, under a projection that puts the left's columns first. A projection
+of another expression is not probed: its value of a row given nulls
+would not be null, and it would be evaluated of fewer rows. The rows of
+a left operand that is itself a join are estimated by the distinct
+values of the columns each of its equalities compares, one pair in as
+many as the more distinct has values (a table's rows, as if a key, when
+its statistics do not count them), as join ordering takes them. Each left row
 probes the index for its values as it is pulled, a null finding nothing,
 nothing held; the engine is told each probe's rows are read
 (`TableStorage::read_by_condition`); the rest of the condition, the

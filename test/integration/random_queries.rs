@@ -31,8 +31,9 @@ const COUNT_VAR: &str = "TURBOREL_QUERY_COUNT";
 
 /// The tables, each of the columns `NUMBERS` and `STRINGS`: A of the row
 /// store with a B-link and a hash index, B of the column store, C of the
-/// row store with no index and few rows, so plans of every kind are made.
-const TABLES: [&str; 3] = ["A", "B", "C"];
+/// row store with no index and few rows, and W, a view of A's columns in
+/// another order, so plans of every kind are made.
+const TABLES: [&str; 4] = ["A", "B", "C", "W"];
 const NUMBERS: [&str; 4] = ["K", "G", "N", "V"];
 const STRINGS: [&str; 1] = ["S"];
 const COMPARISONS: [&str; 6] = ["=", "<>", "<", "<=", ">", ">="];
@@ -40,7 +41,8 @@ const PATTERNS: [&str; 7] = ["'A%'", "'%B%'", "'_B%'", "'A_  '", "'%'", "'B%A%'"
 const STRING_VALUES: [&str; 5] = ["'A'", "'AB'", "'BA'", "'B'", "'ABC'"];
 
 /// Database with schema Q: tables A, B and C of `TABLES`, K a key, G a
-/// few groups, N signed, S short strings, V decimals; nulls in all but K.
+/// few groups, N signed, S short strings, V decimals; nulls in all but K;
+/// and the view W of A.
 fn schema() -> Database {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
@@ -48,7 +50,8 @@ fn schema() -> Database {
         "CREATE SCHEMA AUTHORIZATION Q
            CREATE TABLE A (K INTEGER NOT NULL PRIMARY KEY, G INTEGER, N INTEGER, S CHAR(4), V DECIMAL(5,1))
            CREATE TABLE B (K INTEGER NOT NULL PRIMARY KEY, G INTEGER, N INTEGER, S CHAR(4), V DECIMAL(5,1)) USING columnstore
-           CREATE TABLE C (K INTEGER NOT NULL, G INTEGER, N INTEGER, S CHAR(4), V DECIMAL(5,1))",
+           CREATE TABLE C (K INTEGER NOT NULL, G INTEGER, N INTEGER, S CHAR(4), V DECIMAL(5,1))
+           CREATE VIEW W (V, S, N, G, K) AS SELECT V, S, N, G, K FROM A",
     )
     .unwrap();
     db.create_index("A_G", "Q.A", &["G"], "btree").unwrap();
