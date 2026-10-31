@@ -13,7 +13,9 @@ use crate::common::{Kept, Scramble, Scratch, arm, gated, locked, os};
 /// directory tells its sink it was created, of each checkpoint taken, of a
 /// setting changed and a plug-in registered, that it closed, and, opened
 /// again, that it was reopened; a statement's own failure, a syntax error
-/// or a broken constraint, is no event.
+/// or a broken constraint, is no event, though the insert it undoes leaves
+/// a zone of the table to narrow, which starts the maintenance thread
+/// (RULES.md D31, D55).
 #[test]
 fn a_database_tells_its_sink_of_its_life() {
     let scratch = Scratch::new("diagnostics");
@@ -44,9 +46,11 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "btree"),
             registered(Extension::IndexMethod, "hash"),
             info("Opened(Created)"),
+            info("Thread { label: \"turborel-maintenance\", change: Started }"),
             info("CheckpointTaken(1)"),
             info("SettingChanged { name: \"LOCK_WAIT\", value: Some(Char(\"WAIT\")) }"),
             registered(Extension::IndexMethod, "btree"),
+            info("Thread { label: \"turborel-maintenance\", change: Stopped }"),
             info("Closed"),
         ]
     );

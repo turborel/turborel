@@ -4,9 +4,10 @@
 
 use crate::engine::columns::cache::HeaderCache;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::UndoStore;
+use super::zones::Zones;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::shadow::ShadowFileSystem;
 use crate::log::Log;
@@ -36,6 +37,9 @@ pub struct TableFiles {
     /// The headers of its tables' frozen row groups held in memory
     /// (`columns/cache.rs`): its store's.
     pub(super) headers: Arc<HeaderCache>,
+    /// The zone maps of its tables open, saved at each checkpoint
+    /// (`rows/zones/saved.rs`).
+    pub(super) zones: Arc<Mutex<Vec<Weak<Zones>>>>,
 }
 
 impl TableFiles {
@@ -58,6 +62,7 @@ impl TableFiles {
             work: Arc::default(),
             freezes: Arc::default(),
             headers: Arc::default(),
+            zones: Arc::default(),
         }
     }
 

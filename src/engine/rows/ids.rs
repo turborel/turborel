@@ -21,6 +21,7 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use std::thread::{self, ThreadId};
 
+use super::meta::Meta;
 use super::{KEY, RESERVE, RowTable, corrupt, meta_content};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::{MurmurBuildHasher, MurmurMap};
@@ -122,7 +123,7 @@ impl RowTable {
             return Ok(());
         }
         let reserved = id.saturating_add(RESERVE);
-        *self.pool.write(self.file, self.meta)? = meta_content(self.tree.meta(), reserved, self.frozen.stored());
+        *self.pool.write(self.file, self.meta)? = meta_content(self.meta_with(reserved));
         self.reserved.store(reserved, Ordering::Release);
         Ok(())
     }
@@ -130,8 +131,12 @@ impl RowTable {
     /// Writes the meta page as the table is now.
     pub(super) fn write_meta(&self) -> Result<()> {
         let _reserving = lock(&self.reserving)?;
-        *self.pool.write(self.file, self.meta)? =
-            meta_content(self.tree.meta(), self.reserved.load(Ordering::Acquire), self.frozen.stored());
+        *self.pool.write(self.file, self.meta)? = meta_content(self.meta_with(self.reserved.load(Ordering::Acquire)));
         Ok(())
+    }
+
+    /// What its meta page names, the row ids below `reserved` reserved.
+    fn meta_with(&self, reserved: u64) -> Meta {
+        Meta { tree: self.tree.meta(), reserved, directory: self.frozen.stored(), zones: self.zones.directory() }
     }
 }

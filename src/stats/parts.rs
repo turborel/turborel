@@ -9,7 +9,10 @@
 //! * `Reservoir`: a uniform sample of a column's values (Vitter's Algorithm
 //!   R: "Random sampling with a reservoir", ACM TOMS 11(1), 1985), its
 //!   random choices from a fixed seed, so the same values always give the
-//!   same sample.
+//!   same sample. A character string is kept as its first
+//!   `SAMPLED_CHARACTERS` characters, a bit string its first `SAMPLED_BITS`
+//!   bits, so a column of long values takes no more memory to sample than
+//!   one of short ones; a histogram of them places a value by its prefix.
 //! * `Histogram`: an equi-depth histogram of a sample.
 //!
 //! Values are hashed by their normalized form (`Value::norm`), so values SQL
@@ -30,6 +33,13 @@ const MAX_RANK: u32 = u64::BITS - REGISTER_BITS + 1;
 pub const SAMPLE_VALUES: usize = 10_000;
 /// \[DESIGN\] Buckets of a histogram, by default.
 pub const BUCKETS: usize = 100;
+/// \[DESIGN\] The most characters of a character string a sample keeps:
+/// enough to tell apart the values of most columns, few enough that a
+/// sample of long strings takes at most a few megabytes.
+pub const SAMPLED_CHARACTERS: usize = 64;
+/// \[DESIGN\] The most bits of a bit string a sample keeps, as many
+/// bytes as `SAMPLED_CHARACTERS`.
+pub const SAMPLED_BITS: u32 = 512;
 
 /// How a column's values are sampled: the most a sample keeps, and the
 /// buckets of the histogram drawn from it.
@@ -180,12 +190,12 @@ impl Reservoir {
         }
         self.seen = self.seen.saturating_add(1);
         if self.values.len() < self.most {
-            self.values.push(value.clone());
+            self.values.push(sampled(value));
             return;
         }
         let pick = self.next_random().checked_rem(self.seen).unwrap_or_default();
         if let Some(kept) = usize::try_from(pick).ok().and_then(|i| self.values.get_mut(i)) {
-            *kept = value.clone();
+            *kept = sampled(value);
         }
     }
 
@@ -194,6 +204,26 @@ impl Reservoir {
         let mut values = self.values;
         values.sort_by(|a, b| compare(a, b).unwrap_or(Ordering::Equal));
         values
+    }
+}
+
+/// `value` as a sample keeps it: a character string its first
+/// `SAMPLED_CHARACTERS` characters, a bit string its first `SAMPLED_BITS`
+/// bits, which compare no greater than it, any other whole.
+pub fn sampled(value: &Value) -> Value {
+    match value {
+        Value::Char(s) => match s.char_indices().nth(SAMPLED_CHARACTERS) {
+            Some((end, _)) => Value::Char(s.get(..end).unwrap_or_default().to_owned()),
+            None => value.clone(),
+        },
+        Value::Bits(b) => {
+            if b.len() > SAMPLED_BITS {
+                Value::Bits(b.substring(1, SAMPLED_BITS))
+            } else {
+                value.clone()
+            }
+        }
+        Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => value.clone(),
     }
 }
 

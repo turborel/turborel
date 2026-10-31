@@ -1,13 +1,14 @@
 //! Unit tests of the row store: a long value's page checked against its
 //! row and column, a meta page against its format, an undone change's
 //! older version kept for open readers, deleted rows not written, the
-//! versions and the garbage read as of a time, and a dropped table's
-//! pages freed (RULES.md R-TEST-1, R-TEST-2, R-TEST-7). Split from rows.rs
+//! versions and the garbage read as of a time, a dropped table's pages
+//! freed, and a fetch priced by the pool its file shares (RULES.md
+//! R-TEST-1, R-TEST-2, R-TEST-7). Split from rows.rs
 //! (RULES.md R-SIZE-2).
 
 use turborel_test_support::Scratch;
 
-use super::meta::parse_meta;
+use super::meta::{Meta, parse_meta};
 use super::mvcc::Reader;
 use super::*;
 use crate::disk::buffer::Clock;
@@ -39,9 +40,10 @@ fn stale_references_are_refused() {
     assert_eq!(table.get_value(8, reference).err().map(|e| e.code), Some(Code::Corrupt), "another row");
     let other_column = Reference { column: 1, ..reference };
     assert_eq!(table.get_value(7, other_column).err().map(|e| e.code), Some(Code::Corrupt), "another column");
-    assert_eq!(parse_meta(&meta_content(PageId(3), 9, 11)), Some((PageId(3), 9, 11)));
+    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13 };
+    assert_eq!(parse_meta(&meta_content(meta)), Some(meta));
     assert_eq!(parse_meta(&[TABLE_FORMAT; 3]), None);
-    let mut other_format = meta_content(PageId(3), 9, 11);
+    let mut other_format = meta_content(meta);
     other_format[0] = 3;
     assert_eq!(parse_meta(&other_format), None);
 }
@@ -218,4 +220,34 @@ fn garbage_is_read_as_of_a_commit() {
     assert_eq!(read(10), Vec::<String>::new());
     assert_eq!(read(25), ["first"]);
     assert_eq!(read(30), ["first", "secnd"]);
+}
+
+/// Verifies: [DESIGN] RULES.md D35, a fetch's cost (`TableStorage::fetch_cost`):
+/// a small table whose pages the buffer pool holds costs 4.4 a fetch
+/// while the file's pages fit the pool; once another table of the same
+/// file takes many times the pool's pages, they share it, and the small
+/// table's fetch costs more, towards 14.6, as of a table the pool holds
+/// little of.
+#[test]
+fn a_fetch_is_priced_by_the_pool_its_file_shares() {
+    let fs = crate::disk::memory::MemoryFileSystem::new();
+    let pager =
+        Pager::create(&fs, std::path::Path::new("/rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let types = [DataType::Character { length: 200 }];
+    let text = |n: u32| vec![crate::value::Value::Char(format!("{n:>200}"))];
+    let small = RowTable::create(&files, &types, TableOptions::default()).unwrap();
+    for n in 0..10_u32 {
+        small.insert(crate::txn::NO_TRANSACTION, text(n)).unwrap();
+    }
+    let alone = small.fetch_cost();
+    assert!((alone - 4.4_f64).abs() < 1e-9_f64, "{alone}");
+    let large = RowTable::create(&files, &types, TableOptions::default()).unwrap();
+    for n in 0..2000_u32 {
+        large.insert(crate::txn::NO_TRANSACTION, text(n)).unwrap();
+    }
+    let shared = small.fetch_cost();
+    assert!(shared > 12.0_f64 && shared <= 14.6_f64, "{shared}");
 }

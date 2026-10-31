@@ -3,7 +3,7 @@
 //! sample, and the parts built a column at a time (RULES.md R-TEST-1,
 //! R-TEST-2). Split from stats.rs (RULES.md R-SIZE-4).
 
-use super::parts::{Histogram, HyperLogLog, Reservoir, SAMPLE_VALUES};
+use super::parts::{Histogram, HyperLogLog, Reservoir, SAMPLE_VALUES, SAMPLED_BITS, SAMPLED_CHARACTERS};
 use super::*;
 use crate::value::Decimal;
 
@@ -132,6 +132,43 @@ fn statistics_are_deterministic() {
     assert_eq!((empty.rows, empty.width, empty.columns[0].min.is_none()), (0, 0.0_f64, true));
     assert_eq!(empty.columns[0].selectivity(CompOp::Eq, &number(1)), 0.0_f64);
     assert_eq!(Histogram::default().below(&number(1)), None);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, samples of long values: a character
+/// string is sampled as its first `SAMPLED_CHARACTERS` characters, counted
+/// as characters, not bytes, and a bit string as its first `SAMPLED_BITS`
+/// bits, short ones whole; so a sample of strings of 10,000 characters
+/// takes no more than one of short ones, and its histogram still places a
+/// value by its beginning, the least and greatest kept whole.
+#[test]
+fn long_values_are_sampled_by_their_prefixes() {
+    let long = |i: u32| Value::Char(format!("{i:05}{}", "\u{e9}".repeat(10_000)));
+    let mut builder = StatsBuilder::new(1);
+    let mut sample = Reservoir::keeping(100);
+    for i in 0..1_000_u32 {
+        builder.add(&vec![long(i)], 20_005);
+        sample.add(&long(i));
+    }
+    let kept = sample.into_sorted();
+    let lengths: Vec<usize> = kept.iter().map(|v| v.to_string().chars().count()).collect();
+    assert_eq!(lengths, vec![SAMPLED_CHARACTERS; 100], "prefixes kept");
+    let stats = builder.finish();
+    let column = &stats.columns[0];
+    assert!(near(column.selectivity(CompOp::Lt, &long(500)), 0.5, 0.05), "{}", column.selectivity(CompOp::Lt, &long(500)));
+    assert_eq!(format!("{:?}", column.max), format!("{:?}", Some(long(999))), "the greatest whole");
+    let short = Value::Char("short".into());
+    let bits = |n: u32| Value::Bits(crate::value::Bits::of_bits(&"10".repeat(usize::try_from(n >> 1_u32).unwrap())).unwrap());
+    for (value, length) in [(short, 5_u32), (bits(8), 8), (bits(SAMPLED_BITS), SAMPLED_BITS), (bits(5_000), SAMPLED_BITS)] {
+        let mut one = Reservoir::keeping(1);
+        one.add(&value);
+        let got = one.into_sorted();
+        let sampled_length = match got.first() {
+            Some(Value::Char(s)) => u32::try_from(s.chars().count()).unwrap(),
+            Some(Value::Bits(b)) => b.len(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(sampled_length, length);
+    }
 }
 
 /// Rows of two columns: 700 values repeated, and a third NULL.

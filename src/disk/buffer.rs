@@ -231,3 +231,16 @@ impl DerefMut for PageMut<'_> {
         &mut self.content
     }
 }
+
+impl BufferPool {
+    /// The pages of pager file `file` in use, not free: what its tables
+    /// and indexes take, which share the pool.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file.
+    pub fn pages_in_use(&self, file: FileId) -> crate::error::Result<u64> {
+        let pager = self.pager(file)?;
+        Ok(pager.page_count().saturating_sub(pager.free_pages()))
+    }
+}

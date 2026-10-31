@@ -44,7 +44,7 @@ Each in a sentence:
 - **STATISTICS.BUCKETS**: The buckets of each column's histogram.
 - **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.
 - **STATISTICS.REFRESH_ROWS**: The changes past STATISTICS.REFRESH_FRACTION of the rows after which the statistics are gathered again.
-- **STATISTICS.SAMPLE**: The most values of each column the statistics sample.
+- **STATISTICS.SAMPLE**: The most values of each column the statistics sample, a character string by its first 64 characters, a bit string its first 512 bits.
 - **TRANSACTIONS.HELD_BYTES**: The bytes of a transaction's changes to the table held in memory, to undo them and check others' reads by; past them, changes are written to a spill area, and a committed one's rows kept as each column's least and greatest value.
 - **TRANSACTIONS.TRACKED_ROWS**: The rows of a transaction's reads, or writes, of the table tracked one by one to check its commit; past them, every row is counted, which may refuse a commit that need not be.
 

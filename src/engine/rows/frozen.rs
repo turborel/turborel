@@ -423,14 +423,17 @@ impl RowTable {
 
     /// The share of the table's rows the buffer pool may hold: its bytes,
     /// of the rows' as their statistics' width says, else as a page each
-    /// holds a hundred, all if it has no row.
+    /// holds a hundred, all if it has no row; or, as the pool is shared by
+    /// every table and index of its file, of the bytes of the file's pages
+    /// in use, if more, as if each held a like share of the pool.
     fn held_share(&self) -> f64 {
         let count = |n: usize| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
         let page = count(self.pool.capacity(self.file).unwrap_or(4096));
         let pool = count(self.pool.frames()) * page;
         let width = self.gathered.get().map_or(page / 100.0_f64, |s| s.width.max(1.0_f64));
         let table = count(self.live.load(Ordering::Acquire)) * (width + ENTRY_BYTES);
-        if table > 0.0_f64 { (pool / table).min(1.0_f64) } else { 1.0_f64 }
+        let file = crate::stats::parts::count(self.pool.pages_in_use(self.file).unwrap_or(0)) * page;
+        if table > 0.0_f64 { (pool / table.max(file)).min(1.0_f64) } else { 1.0_f64 }
     }
 
     /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`).

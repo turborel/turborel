@@ -459,14 +459,16 @@ impl RowTable {
                 (None, Some(at)) => Some(self.undo.read(at)?),
                 (None, None) => None,
             };
-            let replaced = match &before {
-                Some(before) => {
-                    let replaced = self.tree.replace(&k, before)?;
-                    // Widened once put back (`rows/zones.rs`).
-                    self.widen_to(change.id, before)?;
-                    replaced
-                }
-                None => self.tree.delete(&k)?,
+            let replaced = if let Some(before) = &before {
+                let replaced = self.tree.replace(&k, before)?;
+                // Widened once put back (`rows/zones.rs`).
+                self.widen_to(change.id, before)?;
+                replaced
+            } else {
+                let deleted = self.tree.delete(&k)?;
+                // Its zone narrowed by the maintenance thread (`rows/zones.rs`).
+                self.zones.undone(change.id);
+                deleted
             };
             if let Some(appended) = change.appended {
                 self.add_garbage(self.past_open(), vec![Dead::Undone(appended)]);

@@ -104,6 +104,36 @@ fn a_tables_rows_pass_through_its_encodings() {
     again.close().unwrap();
 }
 
+/// Verifies: [EXTENSION] RULES.md D31, D48: the zone maps a checkpoint
+/// saves of an encrypted table, its short columns' least and greatest
+/// values, are sealed as its rows are, so the data file holds none of
+/// them; reopened, the table reads its zones back through its encodings,
+/// and opened without them, it still opens, its zones not known.
+#[test]
+fn an_encrypted_tables_zone_maps_are_sealed() {
+    let scratch = Scratch::new("table-encodings-zones");
+    let dir = scratch.path("db");
+    let db = open(&dir, true);
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE Z (K INTEGER, C CHARACTER(20)) WITH (ENCODINGS = 'test scramble')").unwrap();
+    let s = db.session("S");
+    for k in 0..40_u32 {
+        exec(&s, &format!("INSERT INTO Z VALUES ({k}, 'hidden bound {k:02}')")).unwrap();
+    }
+    exec(&s, "COMMIT WORK").unwrap();
+    drop(s);
+    db.checkpoint().unwrap();
+    assert!(!holds(&bytes_of(&dir, "data"), "hidden bound"), "no bound of Z is stored as it is");
+    db.close().unwrap();
+    let wanted = "SELECT K FROM Z WHERE C = 'hidden bound 39'";
+    let again = open(&dir, true);
+    assert_eq!(rows(&again.session("S"), wanted), Ok(vec!["39".to_owned()]));
+    again.close().unwrap();
+    let without = open(&dir, false);
+    assert_eq!(rows(&without.session("S"), wanted), Err(Code::Api), "its rows refused, the table opened");
+    without.close().unwrap();
+    assert_eq!(rows(&open(&dir, true).session("S"), wanted), Ok(vec!["39".to_owned()]));
+}
+
 /// Verifies: [EXTENSION] RULES.md D30, D41: ALTER TABLE SET (ENCODINGS
 /// = ...) changes in place: rows written after pass through the new
 /// encodings, those before are read through their own, and updates and

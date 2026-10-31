@@ -140,7 +140,7 @@ impl BufferPool {
     }
 
     /// The pager file registered as `file`.
-    fn pager(&self, file: FileId) -> Result<Arc<Pager>> {
+    pub(super) fn pager(&self, file: FileId) -> Result<Arc<Pager>> {
         match self.source(file)? {
             Source::Pages(pager) => Ok(pager),
             Source::Blocks(_) => {

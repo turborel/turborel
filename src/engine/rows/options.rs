@@ -207,7 +207,7 @@ pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
         TableOption::new(
             (SAMPLE, Kind::Integer { min: 1, max: 1_000_000 }, whole(stats.sampling.values)),
             Rebuild::No,
-            "The most values of each column the statistics sample.",
+            "The most values of each column the statistics sample, a character string by its first 64 characters, a bit string its first 512 bits.",
         ),
         TableOption::new(
             (BUCKETS, Kind::Integer { min: 1, max: 10_000 }, whole(stats.sampling.buckets)),

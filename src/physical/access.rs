@@ -67,15 +67,19 @@ impl PhysicalPlanner<'_> {
             let plan =
                 Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows: 0, cost: 0.0_f64, order: Vec::new() };
             let cost = self.db.cost();
-            let with = Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64 };
+            let with =
+                Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64, most: 0.0_f64 };
             return filtered(plan, conds, &with);
         };
         let rows = storage.row_count();
         let best = self.best_path(read, &conds, want);
-        let (plan, found) = match best.index {
+        // A scan's filter keeps its share of the table's rows, but no more
+        // than the scan reads: the rows its zones or chunks may match.
+        let (plan, (found, most)) = match best.index {
             None => {
                 let order = best.order;
-                (Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost, order }, cost_of(rows))
+                let plan = Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost, order };
+                (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {
                 // `used` indexes `conds`, which `best_path` enumerated; a
@@ -89,12 +93,12 @@ impl PhysicalPlanner<'_> {
                     }
                 }
                 answered.reverse();
-                (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), best.est)
+                (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), (best.est, best.est))
             }
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
-        filtered(plan, conds, &Filtered { names: read.names, known, ordered: best.ordered, read: found })
+        filtered(plan, conds, &Filtered { names: read.names, known, ordered: best.ordered, read: found, most })
     }
 
     /// The cheapest way to read the table: a sequential scan, index probes
@@ -350,17 +354,24 @@ struct Filtered<'a> {
     known: Known<'a>,
     /// Whether the access yields rows in the order asked for.
     ordered: bool,
-    /// The rows the access is estimated to read.
+    /// The rows the filter's selectivity is a fraction of: the table's,
+    /// for a scan, or those its index probes find.
     read: f64,
+    /// The most rows the filter may keep: those the access reads, a scan
+    /// only those of the zones or chunks its conditions may match
+    /// (`TableStorage::scan_share`).
+    most: f64,
 }
 
 /// A table access `plan` under a filter for the conjuncts `conds` it does not
-/// answer itself, estimated to keep the fraction of the rows read that the
-/// table's statistics give.
+/// answer itself, estimated to keep the fraction of the rows that the
+/// table's statistics give, no more than the access reads: a scan that
+/// skips the rows its conditions cannot match keeps the same rows of the
+/// fewer it reads, not a fraction of them again.
 fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
     let plan = match and_all(conds) {
         Some(c) => {
-            let est = Some(with.read * estimate::selectivity(&c, with.known));
+            let est = Some((with.read * estimate::selectivity(&c, with.known)).min(with.most));
             Plan::Filter { detail: render_cond(&c, with.names), cond: c, est, input: Box::new(plan) }
         }
         None => plan,

@@ -401,3 +401,27 @@ fn an_index_has_its_keys_counted_by_maintenance() {
     db.run_due().unwrap();
     assert_eq!(passes.load(Ordering::SeqCst), 1, "not due again");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, D35, a filter over a scan that skips
+/// zones (`TableStorage::scan_share`): the rows it keeps are estimated as
+/// its share of the table's, no more than the scan reads; a LIKE of a
+/// prefix of a column in the rows' order, which the estimate guesses as a
+/// range, a third of the table, keeps no more than the rows of the zones
+/// it may match, a zone of the twenty; and the rows found are those the
+/// condition matches.
+#[test]
+fn a_filters_estimate_is_no_more_than_its_scan_reads() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE L (K INTEGER NOT NULL, C CHARACTER(8))").unwrap();
+    let s = db.session("S");
+    for from in (0..20_000_u32).step_by(500) {
+        let values: Vec<String> = (from..from + 500).map(|k| format!("({k}, '{k:08}')")).collect();
+        s.run(&format!("INSERT INTO L VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    let sql = "SELECT K FROM L WHERE C LIKE '0001234%'";
+    let est = kept(&s, sql).unwrap();
+    assert!(est <= 2048.0_f64, "at most the rows of the zones read: {est}");
+    let found = rows(&s, sql).unwrap();
+    assert_eq!(found.len(), 10, "{found:?}");
+}

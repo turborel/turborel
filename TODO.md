@@ -188,14 +188,10 @@ The registry, scopes and SET statements exist (D36). Still to do:
   would spare most of it.
 - **Index-only scans** need what is visible kept beside the index (as
   PostgreSQL's visibility map): a design of its own (D34).
-- **Statistics:** a fetch's cost of pages read from a disk, not the
-  system's cache, and of a pool shared by many tables, not one; wide
-  columns left out of histograms. A scan's share
-  (D31) is taken whole, the filter's estimate of the rows kept not told
-  how the rows read lie.
-- **Zone maps, further** (D31): a zone a rolled-back insert widened is
-  never narrowed; zones are summed up from scratch after a table is
-  opened, a pass of the whole table, rather than kept with its pages.
+- **Statistics:** a fetch's cost does not tell a page the buffer pool
+  misses but the system's cache holds from one read from a disk: each is
+  priced as read from the disk. The pool's share of its file is taken as
+  even among the file's tables and indexes, not as each is read.
 
 ---
 

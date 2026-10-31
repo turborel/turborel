@@ -28,13 +28,18 @@ fn row(n: i128) -> Row {
 
 /// The tables' files, in memory.
 fn files() -> TableFiles {
+    paged().1
+}
+
+/// The tables' files, in memory, and their pager.
+fn paged() -> (Arc<Pager>, TableFiles) {
     let fs = MemoryFileSystem::new();
     let pager = Arc::new(
         Pager::create(&fs, std::path::Path::new("/rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap(),
     );
     let pool = Arc::new(BufferPool::new(512, Box::new(Clock::new(512))).unwrap());
-    let file = pool.add_pager(pager);
-    TableFiles::new(pool, file, Arc::new(MemoryLog::new()))
+    let file = pool.add_pager(Arc::clone(&pager));
+    (pager, TableFiles::new(pool, file, Arc::new(MemoryLog::new())))
 }
 
 /// `column = value`.
@@ -108,9 +113,10 @@ fn zones_skip_what_no_reader_can_match() {
     assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 99_999)), ["99999"]);
 }
 
-/// Verifies: [DESIGN] RULES.md D31, zone maps of a table opened: none is
-/// known, so a scan reads every zone, until the maintenance thread has
-/// summed each up; then it skips as before.
+/// Verifies: [DESIGN] RULES.md D31, zone maps of a table opened whose
+/// zones no checkpoint saved: none is known, so a scan reads every zone,
+/// until the maintenance thread has summed each up; then it skips as
+/// before.
 #[test]
 fn an_opened_tables_zones_are_known_once_summed() {
     let files = files();
@@ -207,4 +213,125 @@ fn a_version_put_back_is_held_by_its_zone() {
     assert!(found(&table, tx, &equal(0, 77)).is_empty(), "deleted");
     table.rollback_to(tx, before).unwrap();
     assert_eq!(found(&table, tx, &equal(0, 77)), vec!["77"], "put back, and held by its zone");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, zone maps of an insert undone: the row
+/// taken out, its zone is stale, and once summed up no longer holds the
+/// row's value, so a scan told it skips the zone again; as a savepoint's
+/// insert is undone too.
+///
+/// Regression test (R-TEST-7): an insert undone left its zone widened to
+/// hold the row taken out, never marked stale, so the maintenance thread
+/// never narrowed it, and every scan told the value read the zone.
+#[test]
+fn an_undone_inserts_zone_is_narrowed() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let first = table.insert(NO_TRANSACTION, row(0)).unwrap();
+    let tx = 10_u64;
+    table.begin(tx, 1).unwrap();
+    let saved = table.savepoint(tx);
+    let kept = table.insert(tx, row(500)).unwrap();
+    table.rollback_to(tx, saved).unwrap();
+    let undone = table.insert(tx, row(1_000_000)).unwrap();
+    assert!(reads(&table, &equal(0, 1_000_000), undone), "widened by the insert");
+    table.rollback(tx).unwrap();
+    assert!(table.maintenance_due(), "stale once undone");
+    summed(&table, u64::MAX);
+    assert!(!table.maintenance_due());
+    for (value, id) in [(1_000_000, undone), (500, kept)] {
+        assert!(!reads(&table, &equal(0, value), id), "{value} no longer held");
+    }
+    assert!(reads(&table, &equal(0, 0), first), "the row kept still held");
+    assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 1_000_000)), Vec::<String>::new());
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D25, zone maps kept with the table's
+/// pages: saved, as a checkpoint saves them, a table opened knows its
+/// zones with no sum up due, so a scan skips at once; a zone stale when
+/// saved is stale once opened, and narrowed once summed up; a row
+/// recovery writes widens its zone (`apply`); a second save writes the
+/// changed zones again. Zones of row ids past those saved, reserved but
+/// not saved, are not known, so read, until summed up.
+#[test]
+fn a_tables_zones_saved_are_known_once_opened() {
+    let files = files();
+    let (ids, meta) = {
+        let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+        let ids: Vec<RowId> = (0..3000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+        table.update(NO_TRANSACTION, ids[0], row(500)).unwrap();
+        files.save_zones().unwrap();
+        (ids, table.meta())
+    };
+    let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
+    assert!(!reads(&table, &equal(0, 10), ids[2999]), "known as saved: skipped, no sum up made");
+    assert!(reads(&table, &equal(0, 0), ids[0]), "stale as saved");
+    assert!(table.maintenance_due(), "the stale zone");
+    summed(&table, u64::MAX);
+    assert!(!reads(&table, &equal(0, 0), ids[0]) && reads(&table, &equal(0, 500), ids[0]), "narrowed once summed up");
+    let recovered = ids[2999].checked_add(1).unwrap();
+    table.apply(recovered, Some(row(7_000_000))).unwrap();
+    assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 7_000_000)), ["7000000"], "widened by recovery");
+    files.save_zones().unwrap();
+    drop(table);
+    let again = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
+    assert!(!reads(&again, &equal(0, 0), ids[0]) && !reads(&again, &equal(0, 10), ids[2999]), "narrow as saved");
+    assert_eq!(found(&again, NO_TRANSACTION, &equal(0, 7_000_000)), ["7000000"]);
+    // Rows of ids past the zones saved, of no save.
+    let past: Vec<RowId> = (0..3000).map(|n| again.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    drop(again);
+    let opened = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
+    assert!(opened.maintenance_due() && reads(&opened, &equal(0, -1), past[2999]), "not known: read");
+    summed(&opened, u64::MAX);
+    assert!(!opened.maintenance_due() && !reads(&opened, &equal(0, -1), past[2999]), "known once summed up");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.18 GR2], RULES.md D31,
+/// D33: a dropped table frees the pages its zone maps were saved in with
+/// the rest, so every page it took is free once it goes.
+#[test]
+fn a_dropped_tables_saved_zones_are_freed() {
+    let (pager, files) = paged();
+    let in_use = || pager.page_count() - pager.free_pages();
+    let before = in_use();
+    let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+    for n in 0..5000 {
+        table.insert(NO_TRANSACTION, row(n)).unwrap();
+    }
+    files.save_zones().unwrap();
+    assert!(in_use() > before);
+    table.discard();
+    drop(table);
+    assert_eq!(in_use(), before, "every page freed, the zones' among them");
+    files.save_zones().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D48, zone maps saved of a table whose
+/// encodings cannot seal them, not registered: each segment is saved
+/// empty, so the table opened knows none of its zones and sums them up;
+/// a segment malformed, of other columns than the table keeps or sealed
+/// as no encoding reads, is refused as the table opens (SQLCODE -916).
+#[test]
+fn zones_unsealable_or_malformed_are_not_known() {
+    let files = files();
+    let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+    for n in 0..2000 {
+        table.insert(NO_TRANSACTION, row(n)).unwrap();
+    }
+    let meta = table.meta();
+    table.zones.seal_with(&Arc::new(crate::engine::rows::sealing::Sealing::named(Arc::default(), "nothing registered")));
+    files.save_zones().unwrap();
+    let segment = table.zones.place.lock().unwrap().as_ref().map(|p| p.segments[0]).unwrap();
+    drop(table);
+    let opened = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
+    assert!(opened.maintenance_due() && reads(&opened, &equal(0, -1), 0), "not known");
+    summed(&opened, u64::MAX);
+    assert!(!reads(&opened, &equal(0, -1), 0), "summed up");
+    drop(opened);
+    // A segment sealed by no encoding, of 5 columns kept; then one naming
+    // more encodings than any pipeline holds.
+    for stored in [vec![0_u8, 5, 0, 0, 0, 0, 0, 0, 0], vec![255_u8]] {
+        *files.pool.write(files.file, segment).unwrap() = stored;
+        let refused = RowTable::open(&files, meta, &TYPES, TableOptions::default()).err().map(|e| e.code);
+        assert_eq!(refused, Some(crate::error::Code::Corrupt));
+    }
 }

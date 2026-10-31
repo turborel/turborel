@@ -15,18 +15,26 @@
 //! change of the zone, and its sum is then thrown away. A zone is never
 //! narrower than its rows, at most wider.
 //!
-//! Kept in memory: a table opened knows none of its zones, reading every
-//! block, until the maintenance thread has summed each up. Kept are
-//! numbers, datetimes, intervals, and character strings of at most
-//! `SHORT` characters, so a zone takes a few bytes of each row.
+//! A change undone widens nothing: a version put back widens its zone as
+//! a write does, and a row an insert added, taken out as the insert is
+//! undone, leaves its zone stale, to be narrowed by the maintenance
+//! thread as a deletion's is.
+//!
+//! Kept in memory, and with the table's pages at each checkpoint
+//! (`zones/saved.rs`), so a table opened knows the zones its last
+//! checkpoint saved, those it did not save read whole until the
+//! maintenance thread has summed each up. Kept are numbers, datetimes,
+//! intervals, and character strings of at most `SHORT` characters, so a
+//! zone takes a few bytes of each row.
 
 use std::cmp::Ordering;
 use std::ops::Bound;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Mutex, RwLock};
 
 use super::RowTable;
 use super::version::{Maker, Version};
+use crate::engine::record::RecordFormat;
 use crate::engine::rows::{key, row_id};
 use crate::engine::tree::Direction;
 use crate::error::Result;
@@ -69,6 +77,27 @@ struct Map {
     zones: Vec<Mutex<Zone>>,
     /// Zones made for row ids below this are not known until summed up.
     unknown_below: RowId,
+    /// Of each `SEGMENT_ZONES` zones, whether one changed since they were
+    /// last saved (`zones/saved.rs`).
+    dirty: Vec<AtomicBool>,
+}
+
+impl Map {
+    /// Notes zone `at` changed since its segment was saved.
+    fn changed(&self, at: usize) {
+        if let Some(flag) = self.dirty.get(at.checked_div(SEGMENT_ZONES).unwrap_or(0)) {
+            flag.store(true, AtomicOrdering::Release);
+        }
+    }
+
+    /// Adds the zone `zone`, its segment noted changed.
+    fn push(&mut self, zone: Zone) {
+        self.zones.push(Mutex::new(zone));
+        while self.dirty.len().saturating_mul(SEGMENT_ZONES) < self.zones.len() {
+            self.dirty.push(AtomicBool::new(true));
+        }
+        self.changed(self.zones.len().saturating_sub(1));
+    }
 }
 
 /// \[DESIGN\] A table's zone maps.
@@ -82,6 +111,21 @@ pub(super) struct Zones {
     /// The zone a sum up looks from, so zones a reader keeps stale do not
     /// keep the others waiting.
     next_sum: AtomicUsize,
+    /// The records of a zone's least and greatest values, of the columns
+    /// kept, as they are saved.
+    format: RecordFormat,
+    /// Where they are saved, if they are: not for a table that keeps none,
+    /// nor once it is dropped (`zones/saved.rs`).
+    place: Mutex<Option<Place>>,
+    /// The page listing the pages they are saved in, 0 for none: its meta
+    /// page names it.
+    directory: u64,
+}
+
+/// Whether a table of columns of `types` keeps zones of any, unless it
+/// keeps none at all.
+pub(super) fn keeps_any(types: &[DataType]) -> bool {
+    types.iter().any(kept)
 }
 
 /// Whether a column of type `t` is kept.
@@ -133,24 +177,27 @@ impl Zone {
 
 impl Zones {
     /// The zone maps of a table of columns of `types`, of no row yet; none
-    /// kept unless `keeping`.
-    pub(super) fn new(types: &[DataType], keeping: bool) -> Zones {
-        let kept_columns = if keeping { types.iter().enumerate().filter(|(_, t)| kept(t)).map(|(c, _)| c).collect() } else { Vec::new() };
-        Zones { kept: kept_columns, map: RwLock::new(Map::default()), stale: AtomicUsize::new(0), next_sum: AtomicUsize::new(0) }
+    /// kept unless `keeping`; saved at `place`, if given, its directory
+    /// page.
+    pub(super) fn new(types: &[DataType], keeping: bool, place: Option<Place>) -> Zones {
+        let kept_columns: Vec<usize> =
+            if keeping { types.iter().enumerate().filter(|(_, t)| kept(t)).map(|(c, _)| c).collect() } else { Vec::new() };
+        let kept_types: Vec<DataType> = kept_columns.iter().filter_map(|&c| types.get(c).copied()).collect();
+        let place = place.filter(|_| !kept_columns.is_empty());
+        Zones {
+            kept: kept_columns,
+            map: RwLock::new(Map::default()),
+            stale: AtomicUsize::new(0),
+            next_sum: AtomicUsize::new(0),
+            format: RecordFormat::new(&kept_types),
+            directory: place.as_ref().map_or(0, |p| p.directory.0),
+            place: Mutex::new(place),
+        }
     }
 
-    /// Of a table opened, whose rows' ids are below `below`: their zones
-    /// not known until summed up.
-    pub(super) fn opened(&self, below: RowId) {
-        if self.kept.is_empty() {
-            return;
-        }
-        let Ok(mut map) = write(&self.map) else { return };
-        map.unknown_below = below;
-        let count = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX);
-        let columns = self.kept.len();
-        map.zones = (0..count).map(|_| Mutex::new(Zone::empty(columns, false))).collect();
-        self.stale.store(count, AtomicOrdering::Release);
+    /// The page listing the pages they are saved in, 0 for none.
+    pub(super) fn directory(&self) -> u64 {
+        self.directory
     }
 
     /// Widens the zone of row `id` to hold `row`, once it is written;
@@ -165,6 +212,7 @@ impl Zones {
             && let Some(zone) = map.zones.get(at)
         {
             self.change(&mut lock_builtin(zone), row, replaces);
+            map.changed(at);
             return;
         }
         let Ok(mut map) = write(&self.map) else { return };
@@ -174,12 +222,18 @@ impl Zones {
             if !known {
                 self.stale.fetch_add(1, AtomicOrdering::AcqRel);
             }
-            let columns = self.kept.len();
-            map.zones.push(Mutex::new(Zone::empty(columns, known)));
+            map.push(Zone::empty(self.kept.len(), known));
         }
         if let Some(zone) = map.zones.get(at) {
             self.change(&mut lock_builtin(zone), row, replaces);
         }
+        map.changed(at);
+    }
+
+    /// Marks the zone of row `id` stale, an insert of it undone: the row
+    /// taken out, the zone may be wider than its rows.
+    pub(super) fn undone(&self, id: RowId) {
+        self.widen(id, None, true);
     }
 
     /// `widen`'s change of `zone`.
@@ -345,6 +399,7 @@ impl RowTable {
             }
             let still = summed.stale;
             *zone = Zone { changes, ..summed };
+            map.changed(at);
             if !still {
                 self.zones.stale.fetch_sub(1, AtomicOrdering::AcqRel);
                 done = true;
@@ -402,9 +457,15 @@ impl RowTable {
     }
 }
 
+mod saved;
+
+pub(super) use saved::Place;
+use saved::SEGMENT_ZONES;
+
 // Unit tests: zones skip blocks, keep old versions for open readers, are
-// known only once summed up after a table is opened, hold every row
-// written while they are summed up, and hold a version put back (RULES.md
+// known only once summed up after a table is opened or as a checkpoint
+// saved them, hold every row written while they are summed up, hold a
+// version put back, and are narrowed after an insert is undone (RULES.md
 // R-TEST-1).
 #[cfg(test)]
 mod tests;

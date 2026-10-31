@@ -169,7 +169,8 @@ impl StorageEngine for RowStore {
         Ok(Some(Box::new(RowTable::open_with(&files, (meta, &types), options, self.sealing(desc))?)))
     }
 
-    /// Writes back every page and the pager's free list; a file shadowed
+    /// Saves its tables' zone maps (`rows/zones/saved.rs`); writes back
+    /// every page and the pager's free list; a file shadowed
     /// (`TableFiles::shadowed`) holds them in memory and seals that batch,
     /// its commit left to `checkpoint_finish`; one not shadowed is synced
     /// now.
@@ -183,13 +184,15 @@ impl StorageEngine for RowStore {
         if let Some(shadows) = &files.shadows {
             // What is written now is kept in memory: no I/O with writers held.
             shadows.hold()?;
-            if let Err(e) = files.pool.sync(files.file, Durability::Full).and_then(|()| shadows.seal()) {
+            let captured = files.save_zones().and_then(|()| files.pool.sync(files.file, Durability::Full));
+            if let Err(e) = captured.and_then(|()| shadows.seal()) {
                 let _ = shadows.release();
                 return Err(e);
             }
             files.sealed.store(at.0, Ordering::Release);
             return Ok(());
         }
+        files.save_zones()?;
         files.pool.sync(files.file, Durability::Full)?;
         files.durable.fetch_max(at.0, Ordering::AcqRel);
         Ok(())
@@ -236,14 +239,15 @@ pub struct RowTable {
     /// Set when the table is dropped: its pages are freed when it goes
     /// (`rows/discard.rs`).
     discarded: AtomicBool,
-    /// How its rows are sealed (`rows/sealing.rs`).
-    sealing: Sealing,
+    /// How its rows are sealed (`rows/sealing.rs`), its zone maps too.
+    sealing: Arc<Sealing>,
     /// Its frozen row groups, of the column store (`rows/frozen.rs`).
     frozen: Frozen,
     /// Held shared while it freezes rows (`TableFiles::freezes`).
     freezes: Arc<RwLock<()>>,
-    /// Its zone maps, of the row store (`rows/zones.rs`).
-    zones: Zones,
+    /// Its zone maps, of the row store (`rows/zones.rs`), saved at each
+    /// checkpoint.
+    zones: Arc<Zones>,
     /// Its store's headers of frozen row groups held (`TableFiles::headers`).
     headers: Arc<crate::engine::columns::cache::HeaderCache>,
 }
@@ -368,8 +372,9 @@ impl TableStorage for RowTable {
         if self.frozen.columns().is_some() { self.frozen_read_share(conditions) } else { self.zones.share(conditions) }
     }
 
-    /// 4.4 of a table the buffer pool holds, more as it holds less of it, to
-    /// 14.6; more by the share of the rows frozen, each a page a column
+    /// 4.4 of a table the buffer pool holds, more as it holds less of it,
+    /// shared with the other tables and indexes of its file, to 14.6; more
+    /// by the share of the rows frozen, each a page a column
     /// (`rows/frozen.rs`).
     fn fetch_cost(&self) -> f64 {
         self.frozen_fetch_cost()

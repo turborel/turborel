@@ -922,11 +922,18 @@ the format of frozen groups becomes a trait when it is.
   from each version of its rows a reader at or after the horizon may
   read, an open transaction's too, and keeps it stale while such a
   version is not its row's newest; a write meanwhile throws its sum away.
-  So a zone is never narrower than what a snapshot may read. Kept in
-  memory, each zone locked alone; a table opened knows none until each is
-  summed up. A range or IN list of a column in the rows' order, or IS
-  NULL of nulls kept together, reads only a few blocks; a scan nothing
-  skips, and an insert, pay a little for keeping the zones.
+  An insert undone, its row taken out, leaves its zone stale alike. So a
+  zone is never narrower than what a snapshot may read. Kept in memory,
+  each zone locked alone, and with the table's pages: each checkpoint,
+  writers held, saves the zones changed since the last, by segments of
+  64, each a page sealed as the table's rows are (`zones/saved.rs`), its
+  meta page naming their directory; a table opened reads them, with no
+  pass over its rows, and recovery widens them as it writes. A segment
+  its encodings cannot seal or open, as they are not registered, and the
+  zones of row ids none holds, are not known until summed up. A range or
+  IN list of a column in the rows' order, or IS NULL of nulls kept
+  together, reads only a few blocks; a scan nothing skips, and an insert,
+  pay a little for keeping the zones.
 - The planner prices a scan by the share of the rows the conditions it
   will be told may match (`TableStorage::scan_share`, `logical::pushed_conjuncts`,
   the executor's same): the row store's zones' rows they may match, of
@@ -934,9 +941,14 @@ the format of frozen groups becomes a trait when it is.
   grows; the column store's frozen chunks and every row of its tree. A
   range of a column in the rows' order then runs by a scan that skips
   what it cannot match, faster than by the index; a range of a column of
-  scattered values keeps its index.
+  scattered values keeps its index. The filter over such a scan keeps,
+  as estimated, its conditions' share of the table's rows, but never more
+  than the scan reads.
 - The planner asks for statistics through a trait, every answer optional:
-  rows, widths, distinct values, nulls, selectivity. The row store
+  rows, widths, distinct values, nulls, selectivity, of a sample of each
+  column's values, a character string sampled by its first 64
+  characters and a bit string its first 512 bits, so long values take no
+  more memory than short ones. The row store
   gathers them again, once a table has changed enough, as the database's
   maintenance (below), not in the commit that made it due, as a pass in
   the commit made the commits that fell due for one far slower. A table
@@ -1064,7 +1076,9 @@ the format of frozen groups becomes a trait when it is.
   columns are read, a frozen row 0.25 and 0.75 more; and a fetch by id
   4.4 of a table the buffer pool holds, more as it holds less of it, to
   14.6 of one it holds none of (its bytes of the table's, by its rows and
-  their width), 10% more as all the rows are frozen. The weights follow
+  their width, or of its file's pages in use, if more: the tables and
+  indexes of one file share its pool), 10% more as all the rows are
+  frozen. The weights follow
   the costs `bench/analytics.rs` compares: a row costs a scan little
   more for each column read; a fetch through an index costs several
   times a row scanned, and far more once the pool no longer holds the
@@ -1274,7 +1288,9 @@ a table's statistics are gathered (D31): no plan waits for a pass. Else
 from the table's statistics, if its engine has them; else by the
 defaults PLANNER.EQUAL_SELECTIVITY, RANGE_SELECTIVITY and NULL_FRACTION
 give, as a table of a database just opened is planned until maintenance
-gathers its statistics (D31).
+gathers its statistics (D31). A filter over a scan that skips the zones
+or chunks its conditions cannot match (`TableStorage::scan_share`, D31)
+is estimated to keep no more rows than the scan reads.
 *Why:* the General Rules define results, not plans; any plan that gives
 the same results and errors is the optimizer's to choose.
 

@@ -302,7 +302,8 @@ pub trait TableStorage: Send + Sync {
     /// \[DESIGN\] The share of its rows a scan told `conditions`
     /// (`scan_where`) reads, from what the engine keeps of them, such as
     /// the least and greatest values of blocks of rows (RULES.md D31); the
-    /// planner scales `scan_cost` by it. Default: 1, every row.
+    /// planner scales `scan_cost` by it, and estimates the scan's filter to
+    /// keep no more rows than it reads. Default: 1, every row.
     fn scan_share(&self, _conditions: &Conjunction) -> f64 {
         1.0_f64
     }
