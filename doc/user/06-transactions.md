@@ -10,7 +10,8 @@ at all. The first statement that reads or changes data begins one;
 and seen by all, and [ROLLBACK](../sql/statements/rollback.md) ends it,
 its changes undone. A statement that fails is undone alone; the
 transaction goes on. A COMMIT once done survives a crash, unless the
-session set LOG.COMMIT_SYNC OFF, so as not to wait for the log
+session set LOG.COMMIT_SYNC OFF, so as not to wait for the log: then
+only once the log is next synced, within LOG.SYNC_AFTER_MS
 ([Settings](../operator/04-settings.md#a-sessions-own)).
 
 Definitions, as CREATE SCHEMA and CREATE TABLE, run within the

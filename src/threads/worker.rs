@@ -1,12 +1,13 @@
 //! \[DESIGN\] A job's thread (RULES.md D55): it waits until its job is
-//! asked for, or until the time the job's work last gave passes; does it;
+//! asked for, at once or at a time asked, or until the time the job's
+//! work last gave passes; does it;
 //! and ends when told, or when the database is gone. It holds the database
 //! weakly, so never keeps it open between rounds. Split from threads.rs
 //! (RULES.md R-SIZE-2).
 
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::Job;
 use crate::db::WeakDatabase;
@@ -27,10 +28,11 @@ struct Signal {
     wake: Condvar,
 }
 
-/// Why the thread wakes: its work asked for, or to end.
+/// Why the thread wakes: its work asked for, now or at a time, or to end.
 #[derive(Default)]
 struct Wake {
     due: bool,
+    at: Option<Instant>,
     stop: bool,
 }
 
@@ -41,22 +43,21 @@ impl Signal {
         self.wake.notify_one();
     }
 
-    /// Waits until the work is asked for, or `every` passes if given:
-    /// whether to do it, not to end.
+    /// Waits until the work is asked for, the time it was asked for at
+    /// comes, or `every` passes if given: whether to do it, not to end.
     fn wait(&self, every: Option<Duration>) -> bool {
+        let until = every.and_then(|e| Instant::now().checked_add(e));
         let mut wake = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         while !wake.due && !wake.stop {
-            let Some(every) = every else {
+            let Some(next) = until.into_iter().chain(wake.at).min() else {
                 wake = self.wake.wait(wake).unwrap_or_else(PoisonError::into_inner);
                 continue;
             };
-            let (woken, waited) = self.wake.wait_timeout(wake, every).unwrap_or_else(PoisonError::into_inner);
-            wake = woken;
-            if waited.timed_out() {
-                break;
-            }
+            let Some(left) = next.checked_duration_since(Instant::now()).filter(|l| !l.is_zero()) else { break };
+            wake = self.wake.wait_timeout(wake, left).unwrap_or_else(PoisonError::into_inner).0;
         }
         wake.due = false;
+        wake.at = None;
         !wake.stop
     }
 }
@@ -83,9 +84,16 @@ impl Worker {
         Ok(true)
     }
 
-    /// Asks the thread for its work.
-    pub(super) fn request(&self) {
-        self.signal.set(|w| w.due = true);
+    /// Asks the thread for its work, `after` from now: at once if zero; a
+    /// time asked before kept if sooner. A time past what an instant holds
+    /// asks for none.
+    pub(super) fn request(&self, after: Duration) {
+        if after.is_zero() {
+            self.signal.set(|w| w.due = true);
+            return;
+        }
+        let Some(at) = Instant::now().checked_add(after) else { return };
+        self.signal.set(|w| w.at = Some(w.at.map_or(at, |was| was.min(at))));
     }
 
     /// Whether its thread runs.

@@ -2,8 +2,9 @@
 //! runs, and its background work, started, run and stopped in one place,
 //! each labelled, with a state an operator sees (`Database::threads`).
 //!
-//! Background work is a job: a function of the database, its checkpoints
-//! or its maintenance, that a session asks for as it comes due. As the
+//! Background work is a job: a function of the database, its checkpoints,
+//! its maintenance or its log's syncs, that a session asks for as it comes
+//! due, at once or after a time. As the
 //! database's JOBS.POLICY says, a job asked for is done on a thread of
 //! its own, started the first time and told as an event (AUTOMATIC); only
 //! when the program asks (`Database::run_due`, MANUAL); or not until the
@@ -180,16 +181,23 @@ impl Jobs {
 
     /// Asks for job `id` of `db`, which runs it as `policy` says.
     pub(crate) fn request(&self, id: JobId, db: &Database, policy: JobPolicy) {
+        self.request_after(id, db, policy, Duration::ZERO);
+    }
+
+    /// Asks for job `id` of `db`, which runs it as `policy` says: its
+    /// thread, under AUTOMATIC, `after` from now, or sooner if asked
+    /// again; the program, under MANUAL, when it runs what is due.
+    pub(crate) fn request_after(&self, id: JobId, db: &Database, policy: JobPolicy, after: Duration) {
         let Some(job) = self.job(id) else { return };
         lock_builtin(&job.record).due = true;
         if policy == JobPolicy::Automatic {
-            self.threaded(&job, db);
+            self.threaded(&job, db, after);
         }
     }
 
-    /// Wakes `job`'s thread, started if it has none, unless `db` is
-    /// closing.
-    fn threaded(&self, job: &Arc<Job>, db: &Database) {
+    /// Wakes `job`'s thread, started if it has none, `after` from now,
+    /// unless `db` is closing.
+    fn threaded(&self, job: &Arc<Job>, db: &Database, after: Duration) {
         if self.closing.load(Ordering::Acquire) {
             return;
         }
@@ -198,7 +206,7 @@ impl Jobs {
             Ok(false) => {}
             Err(e) => db.emit(&Event::Thread { label: job.label, change: ThreadChange::Failed(e) }),
         }
-        job.worker.request();
+        job.worker.request(after);
     }
 
     /// Does every job of `db` due, here, until none is.
@@ -226,7 +234,7 @@ impl Jobs {
             match policy {
                 JobPolicy::Automatic => {
                     if lock_builtin(&job.record).due {
-                        self.threaded(&job, db);
+                        self.threaded(&job, db, Duration::ZERO);
                     }
                 }
                 JobPolicy::Manual | JobPolicy::Paused => job.stop(db),

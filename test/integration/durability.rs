@@ -4,67 +4,20 @@
 //! logged too; what a failing log does to each; and the engines'
 //! persistence: whose changes are logged, and what `Strict` refuses.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use turborel::value::types::TypeRegistry;
 
 use turborel::catalog::TableDesc;
 use turborel::db::Database;
-use turborel::error::{Code, Result, SqlError};
+use turborel::error::{Code, Result};
 use turborel::log::record::{Change, Record};
-use turborel::log::{Log, LogCapabilities, Lsn, MemoryLog, Records};
+use turborel::log::{Log, Lsn};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{Persistence, Policy, TxCapabilities, TxId};
 use turborel::value::Value;
 
-use crate::common::{MemoryTable, count, crc32c, os, setup};
-
-/// A memory log that records which positions were synced, and fails its
-/// appends or syncs while told to.
-#[derive(Default)]
-struct Watched {
-    inner: MemoryLog,
-    synced: Mutex<Vec<Lsn>>,
-    fail_appends: AtomicBool,
-    fail_syncs: AtomicBool,
-    /// Whether it says it is durable: by default, not.
-    durable: bool,
-    /// Appends that still succeed before the rest fail, if set.
-    appends_left: Mutex<Option<usize>>,
-}
-
-impl Log for Watched {
-    fn capabilities(&self) -> LogCapabilities {
-        LogCapabilities { durable: self.durable }
-    }
-    fn append(&self, record: &[u8]) -> Result<Lsn> {
-        let mut left = self.appends_left.lock().unwrap();
-        if self.fail_appends.load(Ordering::SeqCst) || *left == Some(0) {
-            return Err(SqlError::new(Code::Io, "injected: the log cannot append"));
-        }
-        if let Some(n) = left.as_mut() {
-            *n -= 1;
-        }
-        drop(left);
-        self.inner.append(record)
-    }
-    fn sync(&self, through: Lsn) -> Result<()> {
-        if self.fail_syncs.load(Ordering::SeqCst) {
-            return Err(SqlError::new(Code::Io, "injected: the log cannot sync"));
-        }
-        self.synced.lock().unwrap().push(through);
-        self.inner.sync(through)
-    }
-    fn read_from(&self, from: Lsn) -> Records<'_> {
-        self.inner.read_from(from)
-    }
-    fn truncate_before(&self, before: Lsn) -> Result<()> {
-        self.inner.truncate_before(before)
-    }
-    fn end(&self) -> Lsn {
-        self.inner.end()
-    }
-}
+use crate::common::{MemoryTable, Watched, count, crc32c, os, setup};
 
 /// The database of `setup`, logging to a fresh watched log.
 fn logged() -> (Database, Arc<Watched>) {
@@ -116,10 +69,14 @@ fn a_commit_is_its_record_made_durable() {
 /// is OFF commits once its commit record is written, unsynced, its rows
 /// seen by others at once; the next commit of a session of ON syncs
 /// through its own record, and so the first's; the database's value is
-/// every session's that sets none; a value not ON or OFF is refused.
+/// every session's that sets none; a value not ON or OFF is refused. The
+/// log's own sync job (LOG.SYNC_AFTER_MS) is left to the program here.
 #[test]
 fn a_commit_need_not_wait_for_the_log() {
-    let (db, log) = logged();
+    let db = setup();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    let log = Arc::new(Watched::default());
+    db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
     let (quick, careful) = (db.session("APP"), db.session("APP"));
     let off = Value::Char("OFF".to_owned());
     quick.set_setting("LOG.COMMIT_SYNC", &off).unwrap();

@@ -1,11 +1,11 @@
 //! \[DESIGN\] The server's runtime (RULES.md D42, D55): the one place its
 //! threads are made. Its threads are named `turborel-server-<n>`, so an
 //! operator's tools tell them from the database's own
-//! (`turborel-checkpoint`, `turborel-maintenance`). Its I/O threads are
-//! tokio's default, one for each processor; its blocking pool, where
-//! statements run, may grow to MAX_WORKERS, MOST_LOGINS for the checks of
-//! logins, and a few spare, but is made only as they need it, and no more
-//! than SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once
+//! (`turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`).
+//! Its I/O threads are tokio's default, one for each processor; its
+//! blocking pool, where statements run, may grow to MAX_WORKERS,
+//! MOST_LOGINS for the checks of logins, and a few spare, but is made only
+//! as they need it, and no more than SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once
 //! (`server.rs`, `logins.rs`). `turboreld` and the tests' servers are made
 //! by it alike. The thread writing the diagnostics' lines (`log.rs`) is
 //! made here too, `turborel-server-log`, so a sink set before the runtime

@@ -25,7 +25,7 @@ Each has its `time`, in UTC to the millisecond, its `level`, `info`,
 | `closed` | info | | the database is closed cleanly |
 | `checkpoint_taken` | info | `taken`, the checkpoints taken since it opened | a checkpoint is taken |
 | `checkpoint_overdue` | warning | `changes`, `cause`; of `refused`, `sqlcode` and `message`; of `transaction`, `seconds`; of `not_taken`, `policy` | the log keeps `changes` row changes, or the data file's side file its bytes, CHECKPOINT.OVERDUE_FACTOR times what makes a checkpoint due, for want of one; `cause` says why: `refused`, each checkpoint failing (a damaged table, a failed sync of the log, an I/O error); `transaction`, checkpoints taken but an open transaction keeping the log from its first change, made `seconds` ago; or `not_taken`, under the JOBS.POLICY `policy` named, MANUAL or PAUSED, or AUTOMATIC with its thread behind; told at most once a minute ([Checkpoints](03-databases.md#checkpoints)) |
-| `thread` | info; warning if failed; error if restarted | `label`, `change`: `started`, `stopped`, `failed` (with `sqlcode` and `message`) or `restarted` | a thread of background work, `turborel-checkpoint` or `turborel-maintenance`, has changed |
+| `thread` | info; warning if failed; error if restarted | `label`, `change`: `started`, `stopped`, `failed` (with `sqlcode` and `message`) or `restarted` | a thread of background work, `turborel-checkpoint`, `turborel-maintenance` or `turborel-log-sync`, has changed |
 | `setting_changed` | info | `name`, `value`, `null` when set back to its default | the database's value of a setting is changed |
 | `user_changed` | info | `name`, `dropped`, `true` or `false` | a user is made, given a password or dropped |
 | `owner_changed` | info | `name` | the database is given an owner |

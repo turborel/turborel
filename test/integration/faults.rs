@@ -2,8 +2,11 @@
 //! with operations that fail, writes that are torn, or writes that are
 //! slow, when a rule says so.
 //! For the tests of the storage foundation's failure paths: what each
-//! component does when an open, read, write, sync or removal fails.
+//! component does when an open, read, write, sync or removal fails; and,
+//! as it notes the size of each file at its last sync, for those of what
+//! a failure of the system loses: the writes no sync covered.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -107,6 +110,8 @@ impl Rule {
 pub struct Faults {
     rules: Mutex<Vec<Rule>>,
     injected: AtomicUsize,
+    /// The size of each file synced, as its last sync left it.
+    synced: Mutex<HashMap<PathBuf, u64>>,
 }
 
 impl Faults {
@@ -127,6 +132,14 @@ impl Faults {
     /// Faults injected so far.
     pub fn injected(&self) -> usize {
         self.injected.load(Ordering::SeqCst)
+    }
+
+    /// Cuts the file at `path` to the size its last sync left it, 0 if
+    /// none did, as a failure of the system leaves a file appended to:
+    /// what no sync covered lost.
+    pub fn cut_to_synced(&self, path: &Path) {
+        let size = self.synced.lock().unwrap().get(path).copied().unwrap_or(0);
+        std::fs::OpenOptions::new().write(true).open(path).unwrap().set_len(size).unwrap();
     }
 
     /// The effect for `op` on `path` at `offset`, if a rule fires: the rule
@@ -256,6 +269,9 @@ impl DiskFile for FaultyFile {
     }
     fn sync(&self, durability: Durability) -> Result<()> {
         self.check(Op::Sync)?;
-        self.inner.sync(durability)
+        self.inner.sync(durability)?;
+        let size = self.inner.size()?;
+        self.faults.synced.lock().unwrap().insert(self.path.clone(), size);
+        Ok(())
     }
 }

@@ -84,6 +84,7 @@ mod image;
 mod index_statements;
 mod indexes;
 mod integrity;
+mod log_sync;
 mod long_texts;
 mod maintenance;
 mod padding;
@@ -131,6 +132,7 @@ pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BY
 pub use formats::FileFormats;
 pub use image::IMAGE_FORMAT;
 use integrity::Deferral;
+pub use log_sync::SYNC_AFTER_MS;
 pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
@@ -431,10 +433,11 @@ impl Session {
             self.db.hold_in_doubt(tx);
         }
         self.temporaries_ended(st, id);
-        // The transaction has ended: a checkpoint, or maintenance, may
-        // come due.
+        // The transaction has ended: a checkpoint, maintenance, or a sync
+        // of the log its commit did not wait for, may come due.
         self.db.checkpoint_if_due();
         self.db.maintain_if_due();
+        self.db.sync_log_if_due();
         ended
     }
 

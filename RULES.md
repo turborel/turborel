@@ -423,10 +423,18 @@ filling it commit together or not at all.
   record is written, not synced:
   - the transaction is visible at once;
   - it becomes durable at the log's next sync (a commit that waits, a
-    definition, a checkpoint, a filled segment, or close), each sync
-    covering every record before it;
+    definition, a checkpoint, a filled segment, close, or the log sync
+    job), each sync covering every record before it;
   - a crash before then loses it and every commit after it, so recovery
     still finds a prefix of the commits.
+- **Log sync job.** The first commit left unsynced asks for the job
+  `turborel-log-sync` (D55) LOG.SYNC_AFTER_MS later (default 1000, 0 for
+  none), so a database at rest loses at most that much time of them:
+  - it syncs through the last commit left unsynced, unless another sync
+    has, through `Log::sync`, so for every log, plug-ins too;
+  - its failed sync stops the database taking changes, as any failed
+    sync of the log;
+  - close stops it, then syncs the log itself.
 - **Plug-ins.** The `Log` is a plug-in: built in, a memory log and a
   segmented file log with group commit. A database in a directory opens
   its log, as its catalog, through a plug-in `LogStorage`
@@ -911,10 +919,10 @@ the standard's meaning holds and programs and drivers need only SQL.
 - **Per thread.** Label `turborel-<kind>[-<n>]`, kind, database, state
   (starting, idle, running, stopping, stopped, failed), start time, last
   run, run count, last error, restarts.
-- **Jobs.** Background work (checkpoints, maintenance) runs as jobs
-  under a per-database policy: automatic (own thread, as now); manual,
-  only on `Database::run_due` (tests, operators choosing the time); or
-  paused. Errors become events (D40); a panic is caught, reported, and
+- **Jobs.** Background work (checkpoints, maintenance, the log's syncs,
+  D25) runs as jobs under a per-database policy: automatic (own thread,
+  at once or at the time asked); manual, only on `Database::run_due`
+  (tests, operators choosing the time); or paused. Errors become events (D40); a panic is caught, reported, and
   the job restarted per policy.
 - **Lifecycle.** A job starts, reported, when its database opens or it
   is first due; none starts once the database is closing. A failed
@@ -1709,8 +1717,9 @@ same results and errors is the optimizer's to choose.
   (D35).
 - **Scopes:** built-in default, database value, session value.
 - **Tunables.** A number an operator tunes a subsystem by (a memory or
-  pool size, a threshold, a background pace, a timeout, a durability) is
-  a setting; the constant it was named by is its default.
+  pool size, a threshold, a background pace such as LOG.SYNC_AFTER_MS, a
+  timeout, a durability) is a setting; the constant it was named by is
+  its default.
 - **Constants.** These stay constants:
   - formats on disk; the standard's implementation-defined values
     (CONFORMANCE.md);

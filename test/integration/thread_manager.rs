@@ -113,7 +113,11 @@ fn threads_are_shown_to_the_owner() {
     let shown = "SELECT TRIM(LABEL), TRIM(STATE), TRIM(THREADED), RUNS, RESTARTS, LAST_ERROR FROM INFORMATION_SCHEMA.JOBS ORDER BY 1";
     let owner = db.session("OWNER");
     let expected = |state: &str, runs: u32| {
-        Ok(vec!["turborel-checkpoint,IDLE,NO,0,0,NULL".to_owned(), format!("turborel-maintenance,{state},NO,{runs},0,NULL")])
+        Ok(vec![
+            "turborel-checkpoint,IDLE,NO,0,0,NULL".to_owned(),
+            "turborel-log-sync,IDLE,NO,0,0,NULL".to_owned(),
+            format!("turborel-maintenance,{state},NO,{runs},0,NULL"),
+        ])
     };
     assert_eq!(crate::common::rows(&owner, shown), expected("DUE", 0));
     db.run_due().unwrap();

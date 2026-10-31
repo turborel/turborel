@@ -1,8 +1,9 @@
 //! \[DESIGN\] The built-in settings (RULES.md D36), each at its key's place,
 //! in groups: transactions and definitions, planning, the catalog's name,
 //! memory, the planner's guesses, spilling, durability, storage, limits,
-//! the executor, and the threads of background work (RULES.md D55). A default its subsystem names by a constant is that
-//! constant.
+//! the executor, the threads of background work (RULES.md D55), and the
+//! log's own pace of syncs. A default its subsystem names by a constant is
+//! that constant.
 //! Split from settings.rs (RULES.md R-SIZE-2).
 
 use super::{Definition, Effect, Key, Kind};
@@ -86,6 +87,8 @@ pub const COMMIT_SYNC: Key = Key(36);
 pub const FUNCTION_CALLS: Key = Key(37);
 /// See [`TABLES_ENGINE`].
 pub const CHECKPOINT_OVERDUE_FACTOR: Key = Key(38);
+/// See [`TABLES_ENGINE`].
+pub const LOG_SYNC_AFTER_MS: Key = Key(39);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -155,7 +158,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(defined(
         ("JOBS.POLICY", Kind::Choice(&crate::threads::JobPolicy::WORDS), text("AUTOMATIC")),
         DATABASE,
-        "How the database's background work, its checkpoints and maintenance, runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
+        "How the database's background work, its checkpoints, maintenance and syncs of the log (LOG.SYNC_AFTER_MS), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
     ));
     all.push(defined(
         ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
@@ -178,6 +181,11 @@ pub(super) fn builtin() -> Vec<Definition> {
         DATABASE,
         "How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.",
     ));
+    all.push(defined(
+        ("LOG.SYNC_AFTER_MS", at_least(0), count(crate::db::SYNC_AFTER_MS)),
+        DATABASE,
+        "The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.",
+    ));
     all
 }
 
@@ -189,7 +197,7 @@ fn switches() -> [Definition; 2] {
         defined(
             ("LOG.COMMIT_SYNC", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
-            "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint or the database closing.",
+            "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.",
         ),
         defined(
             ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(OFF)),

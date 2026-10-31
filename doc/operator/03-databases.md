@@ -159,12 +159,14 @@ SELECT KIND, CLASS, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND, CLASS;
 
 ## Background work
 
-The database does some of its work in the background: its checkpoints,
-and its maintenance, which gathers tables' statistics (a table's, after
+The database does some of its work in the background: its checkpoints;
+its maintenance, which gathers tables' statistics (a table's, after
 the database opens, once a query first plans with it, which plans
 without them meanwhile), counts the distinct keys of an index that has
 not kept them (the same way: once a query first plans with it), and
-freezes the rows of the column store. JOBS.POLICY says how: AUTOMATIC, the
+freezes the rows of the column store; and the syncs of its log that
+commits of LOG.COMMIT_SYNC OFF leave for LOG.SYNC_AFTER_MS
+([Settings](04-settings.md#a-sessions-own)). JOBS.POLICY says how: AUTOMATIC, the
 default, on threads of the database's own as the work comes due;
 PAUSED, not at all until it changes, the work due kept; MANUAL, only
 when the program embedding the database asks. It takes effect at once:
@@ -174,4 +176,5 @@ SET DATABASE JOBS.POLICY = 'PAUSED'
 ```
 
 Each thread started or stopped is told to the diagnostics, `thread`, as
-is each failure of its work.
+is each failure of its work. The threads are named for their work:
+`turborel-checkpoint`, `turborel-maintenance` and `turborel-log-sync`.

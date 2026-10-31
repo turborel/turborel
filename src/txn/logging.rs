@@ -18,10 +18,16 @@
 //! database again recovers it from what its log holds, committing it if
 //! its commit record is there.
 //!
+//! \[DESIGN\] A commit that does not wait for the log (LOG.COMMIT_SYNC OFF)
+//! is noted unsynced, with its log and position, until a sync of that log
+//! through it: the log's sync job (`db/log_sync.rs`) syncs it within
+//! LOG.SYNC_AFTER_MS, unless another sync does first (RULES.md D25).
+//!
 //! The in-memory undo log stays: it undoes statements and transactions, and
 //! the index entries the log does not hold. The log's before-images are for
 //! recovery's undo (RULES.md D25).
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::{NO_TRANSACTION, Persistence, Policy, Timestamp, Transactions, Txn};
@@ -64,7 +70,44 @@ impl Transactions {
         log.sync(lsn).inspect_err(|e| {
             lock_builtin(&self.stopped).get_or_insert_with(|| e.clone());
             self.stopping.store(true, Ordering::Release);
-        })
+        })?;
+        self.synced(log, lsn);
+        Ok(())
+    }
+
+    /// Notes the commit record at `lsn` of `log` written, not synced: the
+    /// unsynced commits noted are then through it. A commit record follows
+    /// a change of its transaction, so its position is never 0. A log set
+    /// in place of the one noted (`Database::set_log`) takes its place:
+    /// the other is synced only as its host syncs it.
+    fn note_unsynced(&self, log: &Arc<dyn Log>, lsn: Lsn) {
+        let mut unsynced = lock_builtin(&self.unsynced);
+        if let Some(noted) = unsynced.as_mut().filter(|u| same_log(&u.log, &**log)) {
+            noted.through = noted.through.max(lsn);
+        } else {
+            *unsynced = Some(Unsynced { log: Arc::clone(log), through: lsn, asked: false });
+        }
+    }
+
+    /// Forgets the unsynced commits a sync of `log` through `lsn` made
+    /// durable: all, or none.
+    fn synced(&self, log: &dyn Log, lsn: Lsn) {
+        let mut unsynced = lock_builtin(&self.unsynced);
+        if unsynced.as_ref().is_some_and(|u| same_log(&u.log, log) && u.through <= lsn) {
+            *unsynced = None;
+        }
+    }
+
+    /// Whether the log's sync job is to be asked for: commits wait
+    /// unsynced, and it was not asked for them yet; it is then noted asked.
+    pub(crate) fn ask_sync(&self) -> bool {
+        lock_builtin(&self.unsynced).as_mut().is_some_and(|u| !std::mem::replace(&mut u.asked, true))
+    }
+
+    /// The log of the unsynced commits, and the last one's position, no
+    /// longer noted: to be synced. A commit written after is noted anew.
+    pub(crate) fn take_unsynced(&self) -> Option<(Arc<dyn Log>, Lsn)> {
+        lock_builtin(&self.unsynced).take().map(|u| (u.log, u.through))
     }
 
     /// The highest timestamp below which every commit has ended.
@@ -76,6 +119,19 @@ impl Transactions {
     pub(crate) fn stopped_by(&self) -> Option<SqlError> {
         lock_builtin(&self.stopped).clone()
     }
+}
+
+/// \[DESIGN\] Commits written to a log and not yet synced: the log, the
+/// last one's position, and whether the log's sync job was asked for them.
+pub(crate) struct Unsynced {
+    log: Arc<dyn Log>,
+    through: Lsn,
+    asked: bool,
+}
+
+/// Whether `a` and `b` are one log.
+fn same_log(a: &Arc<dyn Log>, b: &dyn Log) -> bool {
+    std::ptr::addr_eq(Arc::as_ptr(a), std::ptr::from_ref(b))
 }
 
 impl Txn {
@@ -130,9 +186,10 @@ impl Txn {
 
     /// Writes the commit record, at commit timestamp `at`, and syncs it, if
     /// the transaction logged a change, unless its session's LOG.COMMIT_SYNC
-    /// is OFF (`set_sync_commit`): then the record is synced by the log's
-    /// next sync, of a later commit, a definition or a checkpoint, each of
-    /// which syncs every record before its own; until then a failure of
+    /// is OFF (`set_sync_commit`): then the record is noted unsynced, and
+    /// synced by the log's next sync, of a later commit, a definition, a
+    /// checkpoint or the log's sync job, each of which syncs every record
+    /// before its own; until then a failure of
     /// the system loses it, and recovery undoes the transaction, as every
     /// one committed after it whose record is lost with it. The commit
     /// record's position is the order of commits (RULES.md D25).
@@ -152,6 +209,7 @@ impl Txn {
         let record = Record { tx: self.id, change: Change::Commit { at } }.encode();
         let lsn = log.append(&record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
         if !self.sync_commit.load(Ordering::Relaxed) {
+            self.shared.note_unsynced(log, lsn);
             return Ok(Ok(()));
         }
         Ok(self.shared.sync(&**log, lsn).map_err(|e| {

@@ -177,3 +177,10 @@ written, before the log is synced: its changes are seen by others at
 once, and a crash before the log is next synced, by a commit that
 waits, a definition, a checkpoint or the database closing, loses it, as
 it loses every commit after it. The database stays whole either way.
+So that such a commit is not left unsynced while the database is at
+rest, a job of the database's own, `turborel-log-sync`, syncs the log
+within LOG.SYNC_AFTER_MS of it, a second by default, if nothing else has;
+0 leaves it to those other syncs alone. The job runs as JOBS.POLICY says
+([Background work](03-databases.md#background-work)); a sync of it that
+fails stops the database taking changes, as any failed sync of the log
+does.

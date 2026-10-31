@@ -202,13 +202,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
 
 ## Storage and durability
 
-- **Commits not waiting for the log** (LOG.COMMIT_SYNC OFF, D25) are
-  made durable only by the log's next sync: of a commit that waits, a
-  definition, a checkpoint (due after CHECKPOINT.AFTER_CHANGES or
-  AFTER_BYTES), a segment filled (LOG.SEGMENT_BYTES), or the close. That
-  bounds what a crash of the system loses by volume, not by time: a sync
-  of the log at a pace of its own, a setting (D36) run as a job of the
-  thread manager (D55), would bound it by time.
 - **A rollback's garbage kept in tmp/:** a ROLLBACK of changes to
   committed rows leaves garbage of each (`Dead::Undone`), keyed past the
   rolled-back transaction's snapshot, which spills to an area of its own

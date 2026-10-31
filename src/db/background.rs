@@ -1,6 +1,6 @@
 //! \[DESIGN\] A database's background work (RULES.md D55): its jobs, its
-//! checkpoints (`db/checkpoint.rs`) and its maintenance
-//! (`db/maintenance.rs`), run by the thread manager (`threads.rs`) as
+//! checkpoints (`db/checkpoint.rs`), its maintenance
+//! (`db/maintenance.rs`) and its log's syncs (`db/log_sync.rs`), run by the thread manager (`threads.rs`) as
 //! JOBS.POLICY says; and how a program runs them, sees them, and sets
 //! the policy.
 
@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::Database;
 use super::checkpoint::checkpointed;
+use super::log_sync::log_synced;
 use super::maintenance::maintained;
 use crate::error::Result;
 use crate::settings::JOBS_POLICY;
@@ -19,6 +20,9 @@ use crate::value::Value;
 const CHECKPOINT: &str = "turborel-checkpoint";
 /// The label of a database's maintenance job and thread.
 const MAINTENANCE: &str = "turborel-maintenance";
+/// The label of a database's job and thread syncing its log at a pace of
+/// its own (LOG.SYNC_AFTER_MS).
+const LOG_SYNC: &str = "turborel-log-sync";
 /// \[DESIGN\] How long after a failure, or a round that did no work while
 /// some is still due, maintenance looks again unasked: a second, as a
 /// freeze may be waiting out COLUMNSTORE.FREEZE_DELAY.
@@ -30,22 +34,24 @@ pub(super) struct Background {
     jobs: Arc<Jobs>,
     checkpoint: JobId,
     maintenance: JobId,
+    log_sync: JobId,
     pub(super) maintenance_turn: Turn,
 }
 
 impl Background {
     /// The background work of a database whose snapshots share `jobs`:
-    /// its checkpoint and maintenance jobs added.
+    /// its checkpoint, maintenance and log sync jobs added.
     pub(super) fn over(jobs: Arc<Jobs>) -> Background {
         let checkpoint = jobs.add(CHECKPOINT, checkpointed, None);
         let maintenance = jobs.add(MAINTENANCE, maintained, Some(AGAIN));
-        Background { jobs, checkpoint, maintenance, maintenance_turn: Turn::default() }
+        let log_sync = jobs.add(LOG_SYNC, log_synced, None);
+        Background { jobs, checkpoint, maintenance, log_sync, maintenance_turn: Turn::default() }
     }
 }
 
 impl Database {
-    /// \[DESIGN\] Does now the background work due, its checkpoints and
-    /// maintenance, as JOBS.POLICY MANUAL leaves it to the program to
+    /// \[DESIGN\] Does now the background work due, its checkpoints,
+    /// maintenance and syncs of the log, as JOBS.POLICY MANUAL leaves it to the program to
     /// do: each job until it is due no more. Under the other policies too,
     /// taking turns with their threads.
     ///
@@ -95,6 +101,11 @@ impl Database {
     /// Asks for the maintenance job.
     pub(super) fn request_maintenance(&self) {
         self.background().jobs.request(self.background().maintenance, self, self.job_policy());
+    }
+
+    /// Asks for the log sync job, `after` from now.
+    pub(super) fn request_log_sync(&self, after: Duration) {
+        self.background().jobs.request_after(self.background().log_sync, self, self.job_policy(), after);
     }
 
     /// Stops and joins every job's thread, the database closing: none

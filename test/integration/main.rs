@@ -88,6 +88,7 @@ mod joins;
 mod kept_plans;
 mod language;
 mod log;
+mod log_sync;
 mod memory;
 mod mvcc;
 mod named_schemas;

@@ -38,6 +38,7 @@ STARTED_VALUE, and IS_PENDING YES while the value set differs from it
 | LOCKS.WAIT | OFF | ONE OF ON, OFF | from the next transaction | *session* |
 | LOG.COMMIT_SYNC | ON | ONE OF ON, OFF | at once | *session* |
 | LOG.SEGMENT_BYTES | 67108864 | INTEGER FROM 4096 TO 1099511627775 | when the database is made |  |
+| LOG.SYNC_AFTER_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | MEMORY.BUDGET_BYTES | 268435456 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
 | MEMORY.WORK_BYTES | 4194304 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
@@ -87,11 +88,12 @@ Each in a sentence:
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
-- **JOBS.POLICY**: How the database's background work, its checkpoints and maintenance, runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
+- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance and syncs of the log (LOG.SYNC_AFTER_MS), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock another transaction holds; OFF refuses the statement at once.
-- **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint or the database closing.
+- **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.
 - **LOG.SEGMENT_BYTES**: The bytes after which a segment of the log is ended and the next begun.
+- **LOG.SYNC_AFTER_MS**: The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.
 - **MEMORY.BUDGET_BYTES**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.
 - **MEMORY.WORK_BYTES**: The bytes a sort, hash join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY.BUDGET_BYTES; so too the rows a cursor reads ahead of its fetches or keeps to scroll among, and those an INSERT, UPDATE or DELETE chooses before it changes any, and what it did, kept for the checks of its constraints, a deferred one's until made.
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.

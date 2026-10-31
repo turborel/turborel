@@ -2,6 +2,7 @@
 
 mod dynamic;
 mod encodings;
+mod logs;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -22,6 +23,7 @@ use turborel::value::{Decimal, Value};
 
 pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 pub use encodings::{RunLength, Scramble};
+pub use logs::Watched;
 
 /// Schema `APP` with tables `T` (hash index on NAME, btree on AMT) and `U`;
 /// `T` holds rows 1-3 and `U` two rows.

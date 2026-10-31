@@ -234,6 +234,9 @@ pub(crate) struct Transactions {
     /// one did (`txn/logging.rs`), and whether one did.
     stopped: Mutex<Option<SqlError>>,
     stopping: AtomicBool,
+    /// The commits written to the log but not yet synced, under
+    /// LOG.COMMIT_SYNC OFF, if any (`txn/logging.rs`).
+    unsynced: Mutex<Option<logging::Unsynced>>,
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,
@@ -289,6 +292,7 @@ impl Default for Transactions {
             built: Condvar::new(),
             stopped: Mutex::new(None),
             stopping: AtomicBool::new(false),
+            unsynced: Mutex::new(None),
             uncollected: Mutex::new(BTreeSet::new()),
             maintenance: Mutex::new(BTreeSet::new()),
             stops: Mutex::new(HashMap::new()),
