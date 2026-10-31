@@ -161,8 +161,10 @@ fn limit(name: &str, (min, max): (i128, i128), default: usize, doc: &str) -> Def
     setting(name, Kind::Integer { min, max }, whole(default), Effect::Statement, doc)
 }
 
-/// The server's settings, as declared.
-fn definitions() -> Vec<Definition> {
+/// The server's settings, as `declare` declares them: so a program knows
+/// their names before it makes a server, as `turboreld` checks a
+/// configuration file's.
+pub fn definitions() -> Vec<Definition> {
     let mut all = Vec::from(started());
     all.extend(limits());
     all.extend(waits());

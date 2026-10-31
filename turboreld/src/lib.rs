@@ -6,7 +6,9 @@
 //!
 //! Where the server listens and its limits are the database's settings
 //! (RULES.md D36), as all its configuration is: `--set NAME=VALUE` sets
-//! one as the program starts, kept with the database as any setting is.
+//! one as the program starts, kept with the database as any setting is;
+//! `--config FILE` sets those a file gives, in a subset of TOML, before
+//! (`config_file.rs`).
 //!
 //! Signals (Unix): SIGTERM, as Ctrl-C everywhere, stops the server, and a
 //! second hurries it (`Server::serve_until`); SIGHUP opens the `--log`
@@ -46,7 +48,7 @@ use turborel_server::tls::Tls;
 
 /// The usage text.
 pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
-       turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
+       turboreld --dir PATH [--config FILE] [--set NAME=VALUE]... user COMMAND
        turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 
   --dir PATH             serve the database kept in PATH, created if there is none
@@ -55,6 +57,8 @@ pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
                          server starts, the password typed or read from standard input
   --set NAME=VALUE       set the database's setting NAME as the server starts, kept
                          with the database; more than once for more
+  --config FILE          set the database's settings FILE gives, in a subset of TOML, as
+                         --set does; a setting --set gives too is set as --set gives it
   --log FILE             append the diagnostics, a line of JSON each, to FILE
                          (default: standard error)
   --keys DIR             the encryption keys: a file in DIR each, named as the key,
@@ -174,6 +178,9 @@ pub struct Config {
     pub store: Store,
     /// Settings to set as the server starts: names and values.
     pub settings: Vec<(String, Value)>,
+    /// The configuration file of more settings to set, if any
+    /// (`config_file.rs`).
+    pub file: Option<PathBuf>,
     /// The file the diagnostics are appended to; none for standard error.
     pub log: Option<PathBuf>,
     /// The directory of the encryption keys, if any.
@@ -193,6 +200,7 @@ pub struct Config {
 pub fn parse(args: &[String]) -> Result<Command, String> {
     let (mut store, mut settings, mut user) = (None, Vec::new(), None);
     let (mut log, mut keys, mut owner, mut checksum_key, mut reseal) = (None, None, None, None, None);
+    let mut file: Option<PathBuf> = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let mut value = || rest.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -202,6 +210,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--dir" => store = once(store.is_some(), Store::Dir(PathBuf::from(value()?)))?,
             "--memory" => store = once(store.is_some(), Store::Memory)?,
             "--set" => settings.push(setting(value()?)?),
+            "--config" => file = one_file(file.is_some(), value()?)?,
             "--log" => log = Some(PathBuf::from(value()?)),
             "--keys" => keys = Some(PathBuf::from(value()?)),
             "--owner" => owner = Some(Owner { name: value()?.clone(), password: None }),
@@ -223,7 +232,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--owner makes the owner of a database kept nowhere, served with --memory: in a directory, user add NAME --owner".into()
         );
     }
-    let config = Config { store, settings, log, keys, owner, checksum_key };
+    let config = Config { store, settings, file, log, keys, owner, checksum_key };
     Ok(match (user, reseal) {
         (Some(command), _) => Command::User(config, command),
         (None, Some(table)) => Command::Reseal(config, table),
@@ -237,6 +246,14 @@ fn once(named: bool, store: Store) -> Result<Option<Store>, String> {
         return Err("name one of --dir and --memory, once".into());
     }
     Ok(Some(store))
+}
+
+/// The configuration file at `path`, unless one was `named` already.
+fn one_file(named: bool, path: &str) -> Result<Option<PathBuf>, String> {
+    if named {
+        return Err("name one --config file, once".into());
+    }
+    Ok(Some(PathBuf::from(path)))
 }
 
 /// The setting `NAME=VALUE` names, and its value: a whole number, any
@@ -301,6 +318,8 @@ type Retaken = Arc<Mutex<Option<Arc<Tls>>>>;
 /// What failed, for the operator: opening or closing the database, setting
 /// a setting, or `work`.
 fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnOnce(Server) -> Result<(), String>) -> Result<(), String> {
+    // Read first, so a file that is wrong touches nothing.
+    let entries = config_file::entries(config)?;
     let db = Database::new();
     // Before the database opens, so its opening is told too.
     let sink = match &config.log {
@@ -314,13 +333,17 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
     }
     db.set_diagnostics(Box::new(sink));
     register(&db, config)?;
+    let given = config_file::given(&db, config, entries)?;
     // Those read as the database is created or opened are set before it is.
-    let (early, late): (Vec<_>, Vec<_>) = config.settings.iter().partition(|(name, _)| read_as_opened(&db, name));
-    let set = |(name, value): &&(String, Value)| db.set_setting(name, value).map_err(|e| format!("cannot set {name}: {e}"));
+    let (early, late): (Vec<_>, Vec<_>) = given.iter().partition(|g| read_as_opened(&db, &g.name));
+    let set = |g: &&config_file::Given| g.set(&db);
     // A database kept in memory is created in no directory (RULES.md D36).
-    let fixed = early.iter().find(|(name, _)| effect_of(&db, name) == Some(Effect::Creation)).filter(|_| config.store == Store::Memory);
-    if let Some((name, _)) = fixed {
-        return Err(format!("cannot set {name}: it is fixed when a database is created in its directory, and --memory keeps it in memory"));
+    let fixed = early.iter().find(|g| effect_of(&db, &g.name) == Some(Effect::Creation)).filter(|_| config.store == Store::Memory);
+    if let Some(g) = fixed {
+        return Err(format!(
+            "cannot set {}: it is fixed when a database is created in its directory, and --memory keeps it in memory",
+            g.name
+        ));
     }
     early.iter().try_for_each(set)?;
     if let Store::Dir(dir) = &config.store {
@@ -503,6 +526,7 @@ pub async fn signalled() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+pub mod config_file;
 mod reseal;
 mod users;
 

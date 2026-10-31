@@ -6,7 +6,7 @@
 
 ```
 turboreld (--dir PATH | --memory) [options]
-turboreld --dir PATH [--set NAME=VALUE]... user COMMAND
+turboreld --dir PATH [--config FILE] [--set NAME=VALUE]... user COMMAND
 turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 ```
 
@@ -16,6 +16,7 @@ turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 | `--memory` | serve a database kept nowhere, lost when the server stops |
 | `--owner NAME` | with `--memory`: make NAME the database's first user and owner as the server starts, its password typed or read from standard input ([Users](05-users.md#the-owner-of-a-database-kept-nowhere)) |
 | `--set NAME=VALUE` | set the database's setting NAME as the server starts, kept with the database; more than once for more |
+| `--config FILE` | set the database's settings FILE gives, as `--set` does; a setting `--set` gives too is set as `--set` gives it ([Configuration files](#configuration-files)) |
 | `--log FILE` | append the diagnostics, a line of JSON each, to FILE; standard error by default |
 | `--keys DIR` | the encryption keys, a file in DIR each ([Encryption](07-encryption.md)) |
 | `--checksum-key NAME` | the key of `--keys` that HMAC-SHA-256 checksums are keyed by ([Encryption](07-encryption.md#checksums)) |
@@ -25,7 +26,8 @@ turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 `user COMMAND` manages the users of a database no server holds
 ([Users](05-users.md)); `reseal AUTH.TABLE` seals a table's rows again
 through the encodings it names now, so a key it named before may be
-retired ([Encryption](07-encryption.md#retiring-a-key)). The settings `--set` sets are those of
+retired ([Encryption](07-encryption.md#retiring-a-key)). The settings `--set` sets, and
+those of a `--config` file ([Configuration files](#configuration-files)), are those of
 [Settings](../appendix/c-settings.md), each set before the database is
 opened if it is read as the database opens, after if not, and kept with
 the database. A setting fixed when the database is made (TAKES_EFFECT
@@ -48,6 +50,109 @@ when it is made is refused, and the server does not start:
 $ turboreld --memory --set STORAGE.PAGE_BYTES=4096
 turboreld: cannot set STORAGE.PAGE_BYTES: it is fixed when a database is created in its directory, and --memory keeps it in memory
 ```
+
+## Configuration files
+
+`--config FILE` names a file of settings, each set as the server starts
+as `--set` sets it: those read as the database opens before it opens,
+the others after, each kept with the database. It is a source of the
+database's settings, not a configuration of its own: each key names a
+setting of [Settings](../appendix/c-settings.md), each value is the
+setting's. A setting given by the file and by `--set` too is set as
+`--set` gives it: the command line wins. The options of the command
+line (`--dir`, `--log`, `--keys` and the rest) say where the database,
+its diagnostics and its keys are, not how the database behaves; they
+are not in the file.
+
+```toml
+# The settings of the main database's server, set as it starts.
+[SERVER]
+HOST = ["127.0.0.1"]
+PORT = 7422
+WORKERS = 2
+SHUTDOWN_TIMEOUT_MS = 5_000
+SCRAM_WITHOUT_TLS = false
+
+[STORAGE]
+PAGE_BYTES = 16_384        # fixed as the database is made
+POOL_BYTES = 67_108_864
+```
+
+```
+$ turboreld --dir /var/lib/turborel/main --config /etc/turborel/main.toml
+turboreld: listening at 127.0.0.1:7422
+```
+
+The file is in a subset of TOML 1.0: what it reads means what TOML
+means. A setting's name is the key of the last table header and the
+pair's own key, joined by periods: `PORT = 7422` under `[SERVER]` sets
+SERVER.PORT, as `SERVER.PORT = 7422` does before the first header. A
+name is in any case, as setting names are. A value is
+
+| Written | Is |
+|---|---|
+| `"text"`, `'text'` | a character string |
+| `7422`, `-1`, `16_384` | a whole number, of 64 bits |
+| `0.5`, `1e3`, `-2.5E-2` | an approximate number, finite |
+| `true`, `false` | ON, OFF |
+| `["a", 'b']` | the strings joined by commas, `a,b`, for a setting that takes a list, as SERVER.HOST and STORAGE.ENCODINGS do; `[]` for none |
+
+In the notation of SQL's standard, the subset is:
+
+```
+<configuration file> ::= [ <line> [ { <newline> <line> }... ] ]
+<line> ::= [ <blank> ] [ <table header> | <key value pair> ] [ <blank> ] [ <comment> ]
+<table header> ::= <left bracket> [ <blank> ] <key> [ <blank> ] <right bracket>
+<key value pair> ::= <key> [ <blank> ] <equals operator> [ <blank> ] <value>
+<key> ::= <simple key> [ { [ <blank> ] <period> [ <blank> ] <simple key> }... ]
+<simple key> ::= <bare key> | <basic string> | <literal string>
+<bare key> ::= { <ASCII letter> | <digit> | <underscore> | <minus sign> }...
+<value> ::= <basic string> | <literal string> | <integer> | <float> | <boolean> | <array>
+<basic string> ::= <double quote> [ { <basic character> | <escape> }... ] <double quote>
+<escape> ::= <reverse solidus>
+      { b | t | n | f | r | <double quote> | <reverse solidus>
+      | u <hex digit>4 | U <hex digit>8 }
+<literal string> ::= <quote> [ <literal character>... ] <quote>
+<integer> ::= [ <sign> ] <whole digits>
+<whole digits> ::= 0 | <nonzero digit> [ { [ <underscore> ] <digit> }... ]
+<float> ::= <integer> { <fraction> [ <exponent> ] | <exponent> }
+<fraction> ::= <period> <digits>
+<exponent> ::= { e | E } [ <sign> ] <digits>
+<digits> ::= <digit> [ { [ <underscore> ] <digit> }... ]
+<boolean> ::= true | false
+<array> ::= <left bracket> <array blank>
+      [ <string> [ { <array blank> <comma> <array blank> <string> }... ]
+      <array blank> [ <comma> <array blank> ] ] <right bracket>
+<string> ::= <basic string> | <literal string>
+<array blank> ::= [ { <space> | <tab> | <newline> | <comment> }... ]
+<blank> ::= { <space> | <tab> }...
+<comment> ::= <number sign> [ <comment character>... ]
+<newline> ::= <line feed> | <carriage return> <line feed>
+```
+
+A `<basic character>` is any character but a double quote, a reverse
+solidus, and a control character other than tab; a `<literal
+character>` any but a quote and such a control character; a `<comment
+character>` any but such a control character and a newline. A string is
+on one line; a string of an array holds no comma. A `<hex digit>4` is
+four hexadecimal digits, of a Unicode scalar value. A leading byte order
+mark is passed over.
+
+Refused, with the rest of TOML: multi-line strings, integers other than
+decimal, infinite and not-a-number floats, dates and times, arrays of
+anything but strings, inline tables, and arrays of tables. A setting
+given twice, or a table header, is refused too. The file is read, and
+each of its keys checked to name a setting, before any setting is set;
+what is wrong is told with the file's path, line and column, and the
+server does not start:
+
+```
+$ turboreld --dir /var/lib/turborel/main --config /etc/turborel/main.toml
+turboreld: /etc/turborel/main.toml:3:1: no setting is named STORAGE.NO_SUCH
+```
+
+A value its setting does not take is told the same way, as `--set`'s
+is: `/etc/turborel/main.toml:1:1: cannot set SERVER.WORKERS: ...`.
 
 ## Starting and stopping
 

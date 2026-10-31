@@ -44,6 +44,20 @@ fn a_wrong_command_line_says_what_is_wrong() {
     assert!(wrong("--memory --set SERVER.WORKERS").contains("NAME=VALUE"));
 }
 
+/// Verifies: [DESIGN] RULES.md D36, D42: `--config FILE` names the file of
+/// settings, not read yet, for a server or a user command; refused, saying
+/// why, given twice or without its file.
+#[test]
+fn a_configuration_file_is_named_once() {
+    assert_eq!(config("--memory --config /etc/t.toml").file, Some(PathBuf::from("/etc/t.toml")));
+    assert_eq!(config("--memory").file, None);
+    let Command::User(named, _) = parse(&args("--dir /db --config c.toml user list")).unwrap() else { panic!("a user command") };
+    assert_eq!(named.file, Some(PathBuf::from("c.toml")));
+    let wrong = |line: &str| parse(&args(line)).unwrap_err();
+    assert!(wrong("--memory --config a --config b").contains("one --config file, once"));
+    assert!(wrong("--memory --config").contains("--config needs a value"));
+}
+
 /// Verifies: [DESIGN] RULES.md D43: `--owner NAME` names the owner of a
 /// database kept nowhere, its password not read yet; refused, saying why,
 /// for a database kept in a directory, with a user command, or without

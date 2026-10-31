@@ -1727,6 +1727,12 @@ the same results and errors is the optimizer's to choose.
   session [§16.1–§16.5] set no setting (`parser/session.rs` gives their
   BNF). INFORMATION_SCHEMA.SETTINGS lists every setting with its value and
   where the value comes from.
+- A configuration file is a source of the database's values as a server
+  starts, as `turboreld --set` is (D42), never a configuration of its
+  own: each key names a setting, each value is the setting's, set as
+  `--set` sets it. It is in a subset of TOML 1.0, read by turboreld's own
+  parser, no dependency (D3); `turboreld/src/config_file.rs` gives its
+  grammar.
 *Why:* a server's behaviour must be visible and changeable without
 rebuilding it, by the people entitled to change it.
 
@@ -2129,7 +2135,12 @@ make.
   SERVER.WORKERS, SERVER.MAX_CONNECTIONS,
   SERVER.MAX_MESSAGE_BYTES, SERVER.BATCH_BYTES and the timeouts as
   statements and connections begin, so a change needs no restart.
-  `turboreld --set NAME=VALUE` sets one as it starts.
+  `turboreld --set NAME=VALUE` sets one as it starts; `turboreld
+  --config FILE` sets those a configuration file gives (D36), each
+  checked to name a setting before any is set, what is wrong told with
+  the file's line and column; one `--set` gives too is set as `--set`
+  gives it. The program's other options stay on its command line: they
+  say where the database, its log and its keys are, not how it behaves.
 - Diagnostics (D40): `log::Lines`, a sink writing each event as a line of
   JSON stamped with the time in UTC, to standard error or appended to a
   file; `turboreld --log FILE` names the file, the sink set before the

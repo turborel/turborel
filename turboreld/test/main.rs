@@ -29,6 +29,7 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod config_file;
 mod keys;
 mod program;
 mod users;

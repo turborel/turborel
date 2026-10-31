@@ -67,8 +67,6 @@ design settles.
   bounded by its timeouts, as a socket's are. Both need the system's API
   (overlapped I/O, `SECURITY_ATTRIBUTES`), which std does not offer and
   `unsafe` would reach (R-SAFE-1).
-- **Configuration files** in a subset of TOML, read by our own parser, the
-  source of the database's settings at startup.
 - **Other systems' wire protocols**, each a `server::Protocol` plug-in in
   a crate of its own (RULES.md D39), served by a listener a setting
   names, so their clients and drivers connect: PostgreSQL's

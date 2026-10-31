@@ -13,7 +13,7 @@ use turborel_test_support::Scratch;
 use turborel_test_support::client::state;
 use turborel_test_support::client::{done, rows};
 
-fn config(line: &[String]) -> Config {
+pub(crate) fn config(line: &[String]) -> Config {
     match turboreld::parse(line).unwrap() {
         Command::Serve(config) => config,
         Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) => panic!("not a server"),
@@ -22,10 +22,10 @@ fn config(line: &[String]) -> Config {
 
 /// A server running on a thread: where it listens, what stops it once
 /// used or dropped, and its outcome once it stops.
-type Running = (Vec<String>, tokio::sync::oneshot::Sender<()>, std::thread::JoinHandle<Result<(), String>>);
+pub(crate) type Running = (Vec<String>, tokio::sync::oneshot::Sender<()>, std::thread::JoinHandle<Result<(), String>>);
 
 /// Runs `config` on a thread until the returned sender is used or dropped.
-fn running(config: Config) -> Running {
+pub(crate) fn running(config: Config) -> Running {
     running_then(config, |_| {})
 }
 

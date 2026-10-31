@@ -13,8 +13,9 @@ change takes effect.
 
 ## SET DATABASE
 
-The database's value is set as the server starts, by `--set NAME=VALUE`,
-or on a running server by its owner, in SQL:
+The database's value is set as the server starts, by `--set NAME=VALUE`
+or a [configuration file](02-turboreld.md#configuration-files), or on a
+running server by its owner, in SQL:
 
 ```sql
 SET DATABASE LOCKS.WAIT = 'ON';

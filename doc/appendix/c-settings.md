@@ -6,7 +6,8 @@ Each setting, as INFORMATION_SCHEMA.SETTINGS lists it. A setting marked
 *session* may be set by a session for itself, by [SET](../sql/statements/set-setting.md);
 every setting is the database's to set, by
 [SET DATABASE](../sql/statements/set-database.md), by its owner, or as
-`turboreld` starts, `--set NAME=VALUE`; one that takes effect only when
+`turboreld` starts, `--set NAME=VALUE` or a
+[configuration file](../operator/02-turboreld.md#configuration-files); one that takes effect only when
 the database is made is set only then, and never of a database kept in
 memory. *Takes effect* says when a change does: at once, for the
 statements that begin after it; from the next transaction; from the
