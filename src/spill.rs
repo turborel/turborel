@@ -24,7 +24,7 @@
 //! exactly when the operator would find them equal.
 
 mod list;
-mod paged;
+pub(crate) mod paged;
 mod sort;
 #[cfg(test)]
 pub(crate) mod testing;

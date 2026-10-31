@@ -5,9 +5,8 @@
 ## Global and created local temporary tables
 
 A temporary table is defined as any table is, but each session has rows
-of its own of it: no other session sees them, they are kept in memory,
-of the database's MEMORY.BUDGET_BYTES, and they are gone when the session
-ends. CREATE GLOBAL TEMPORARY TABLE
+of its own of it: no other session sees them, and they are gone when the
+session ends. CREATE GLOBAL TEMPORARY TABLE
 or CREATE LOCAL TEMPORARY TABLE defines one, in a schema, for every
 session ([CREATE TABLE](../sql/statements/create-table.md)).
 
@@ -74,3 +73,19 @@ CREATE INDEX on a temporary table gives each session an index of its own
 rows, made as its next statement begins; a session whose transaction
 had its rows open uses it once that transaction ends
 ([CREATE INDEX](../sql/statements/create-index.md)).
+
+## Where the rows are kept
+
+A session's rows of a temporary table, with its indexes' entries, are
+read and written through a buffer pool of the session's
+MEMORY.WORK_BYTES, reserved of the database's MEMORY.BUDGET_BYTES as a
+transaction of the session first reads or writes the table. What the
+pool does not hold is written to a spill file in the database's `tmp/`
+directory, so a session's rows may be many times the budget. The file
+is encrypted while the database encrypts anything, as other spill files
+are. It is removed as ON COMMIT DELETE ROWS empties the rows and when
+the session ends; one a crash leaves is removed as the database opens.
+No change to the rows is logged, and none is recovered. The committed
+rows a transaction updates or deletes keep their earlier versions in
+memory, outside the budget, until it ends. A database kept in memory keeps the file in memory too,
+of its budget.

@@ -7,10 +7,12 @@
 //! at its end [§4.9]. So the definitions a session's statements see
 //! (`Session::with_temporaries`) give each temporary table the session's
 //! own instance: its rows, its indexes and its lock, in place of those of
-//! the definition, which stay empty. An instance's rows are made in
-//! memory, of the database's budget, when a transaction of the session
-//! first reads or writes it, its entries of each index when its session
-//! first sees the index (`Rows_::entries`), and no change to it is logged:
+//! the definition, which stay empty. An instance's rows are made when a
+//! transaction of the session first reads or writes it, its entries of
+//! each index when its session first sees the index (`Rows_::entries`),
+//! both in its pages: a buffer pool of the session's MEMORY.WORK_BYTES,
+//! of the database's budget, over a scratch file among the database's
+//! temporary files (`db/temporary/pages.rs`). No change to it is logged:
 //! none is recovered [§4.9]. A table of ON COMMIT DELETE ROWS is emptied
 //! as each transaction ends [§14.3 GR3]: committed, it is as the DELETE
 //! GR3 runs leaves it; rolled back, as it was before the transaction,
@@ -18,6 +20,7 @@
 //! session (`Instance::collect`). ALTER TABLE of one changes each
 //! session's instance (`db/temporary/uses.rs`, `db/temporary/reshape.rs`).
 
+mod pages;
 mod reshape;
 mod storage;
 mod uses;
@@ -31,10 +34,11 @@ use super::{Session, State, rule};
 use crate::catalog::{IndexDesc, QualifiedName, TableDesc, TemporaryKind};
 use crate::error::Result;
 use crate::index::Index;
-use crate::memory::MemoryBudget;
+use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
 use crate::storage::TableStorage;
 use crate::sync::lock_builtin;
 use crate::txn::{TableLock, Timestamp, TxId, remove_entries};
+use pages::Place;
 use storage::Rows_;
 
 /// A session's instances of the temporary tables, each by its table and
@@ -63,7 +67,9 @@ impl Session {
     /// this session's own instance: one made for it the first time it is
     /// seen, with its entries of each index of the table (`Rows_::entries`);
     /// forgotten once its definition is gone or of an earlier generation,
-    /// unless a transaction is altering it, which may roll back.
+    /// unless a transaction is altering it, which may roll back. Pages an
+    /// instance makes from then on take the session's MEMORY.WORK_BYTES as
+    /// it is now (`Session::instance_place`).
     pub(super) fn with_temporaries(&self, published: Arc<State>) -> Arc<State> {
         let st = self.with_declared(published);
         let temporary: Vec<TableDesc> = st.catalog.tables().into_iter().filter(|t| t.temporary.is_some()).cloned().collect();
@@ -73,6 +79,7 @@ impl Session {
         }
         st.temporaries.enlist(&self.temporaries.made);
         let altering = st.temporaries.altering();
+        let place = self.instance_place(&st);
         let instances: Vec<(TableDesc, Instance)> = {
             let mut made = lock_builtin(&self.temporaries.made);
             made.retain(|(name, generation), _| {
@@ -81,13 +88,14 @@ impl Session {
             let mut instances = Vec::new();
             for desc in temporary {
                 let key = (desc.name.clone(), desc.generation);
-                let instance = made.entry(key).or_insert_with(|| Instance::of(&desc, (&st.memory, &st.temporaries))).clone();
+                let instance = made.entry(key).or_insert_with(|| Instance::of(&desc, (&place, &st.temporaries))).clone();
                 instances.push((desc, instance));
             }
             instances
         };
         let mut copy = State::clone(&st);
         for (desc, instance) in instances {
+            instance.rows.resize_pages(place.bytes);
             let indexes: Vec<IndexDesc> = st.catalog.indexes(&desc.name).into_iter().cloned().collect();
             for (name, entries) in instance.rows.entries(&indexes) {
                 let entries: Arc<dyn Index> = entries;
@@ -116,6 +124,15 @@ impl Session {
                 instance.collect();
             }
         }
+    }
+
+    /// \[DESIGN\] Where an instance it makes of `st`'s tables keeps its
+    /// pages (RULES.md D49): a pool of its MEMORY.WORK_BYTES, its own
+    /// setting if it has one, of `st`'s budget, over a file of `st`'s
+    /// temporary files.
+    pub(super) fn instance_place(&self, st: &State) -> Place {
+        let bytes = work_bytes(st.settings.effective(MEMORY_WORK_BYTES, &self.own.borrow()).0);
+        Place { budget: Arc::clone(&st.memory), work: Arc::clone(&st.work), bytes }
     }
 
     /// [ISO/IEC 9075:1992 §11.10] Its instance of temporary table `name`,
@@ -196,9 +213,9 @@ impl Instance {
     }
 
     /// An instance of `desc`, its rows and entries made as they are first
-    /// used, of `budget`, written as `uses` lets.
-    fn of(desc: &TableDesc, (budget, uses): (&Arc<MemoryBudget>, &Arc<Uses>)) -> Instance {
-        Instance { rows: Arc::new(Rows_::new(desc, budget, uses)), lock: Arc::default() }
+    /// used, in pages at `place`, written as `uses` lets.
+    fn of(desc: &TableDesc, (place, uses): (&Place, &Arc<Uses>)) -> Instance {
+        Instance { rows: Arc::new(Rows_::new(desc, place, uses)), lock: Arc::default() }
     }
 
     /// `st`, with this instance as table `name`'s: its rows and lock, and,

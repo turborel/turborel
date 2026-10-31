@@ -21,8 +21,9 @@ The `<table element>`s are those of [CREATE TABLE](create-table.md).
 
 DECLARE LOCAL TEMPORARY TABLE declares a table that is the session's
 alone: no other session sees it, nor its rows. It is named MODULE.T,
-and in no schema; its rows are kept in memory, never logged, never
-recovered. It is in no view of the Information Schema. The session's
+and in no schema; its rows are kept as any temporary table's are
+([Temporary Tables](../../user/09-temporary-tables.md)), never logged,
+never recovered. It is in no view of the Information Schema. The session's
 user holds every privilege on it.
 
 ON COMMIT DELETE ROWS, the default, empties it as each transaction

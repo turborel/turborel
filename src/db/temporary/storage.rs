@@ -1,20 +1,21 @@
 //! \[DESIGN\] What an instance of a temporary table stores (RULES.md D49):
-//! its rows, in a row store in memory made when a transaction first reads
-//! or writes them, and its entries of each index its session's definitions
-//! give the table, each made complete or not at all. Split from
+//! its rows, in a row store made when a transaction first reads or writes
+//! them, and its entries of each index its session's definitions give the
+//! table, each made complete or not at all; all in the instance's pages
+//! (`db/temporary/pages.rs`), which spill to a scratch file. Split from
 //! db/temporary.rs (RULES.md R-SIZE-2).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::Uses;
+use super::pages::{Pages, Place};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::api;
-use crate::engine::rows::{RowStore, TableOptions};
+use crate::engine::rows::{RowStore, TableFiles, TableOptions};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, Probe};
-use crate::log::Lsn;
-use crate::memory::MemoryBudget;
+use crate::log::{Lsn, MemoryLog};
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage, project};
@@ -27,30 +28,37 @@ const SCRATCH: TxCapabilities =
     TxCapabilities { undo: Undo::Native, concurrency: Concurrency::Engine { serializable: true }, persistence: Persistence::None };
 
 /// \[DESIGN\] An instance's rows: none until a transaction first reads or
-/// writes them (`TableStorage::begin`), then a table of a row store in
-/// memory of its own; the transactions that began on them and have not
-/// ended; and its entries of each index, by name.
+/// writes them (`TableStorage::begin`), then a table of a row store in its
+/// pages; the transactions that began on them and have not ended; and its
+/// entries of each index, by name, in its pages too.
 pub(super) struct Rows_ {
     pub(super) desc: TableDesc,
-    budget: Arc<MemoryBudget>,
     /// Which transaction may write it (`Uses::may_write`).
     uses: Arc<Uses>,
     made: Mutex<Option<Arc<dyn TableStorage>>>,
     pub(super) open: Mutex<Vec<TxId>>,
     indexes: Mutex<HashMap<String, Arc<Entries>>>,
+    /// Last, so dropped after the rows and entries made in them.
+    pages: Arc<Pages>,
 }
 
 impl Rows_ {
-    /// None yet of `desc`, made of `budget`, written as `uses` lets.
-    pub(super) fn new(desc: &TableDesc, budget: &Arc<MemoryBudget>, uses: &Arc<Uses>) -> Rows_ {
+    /// None yet of `desc`, its pages made at `place`, written as `uses`
+    /// lets.
+    pub(super) fn new(desc: &TableDesc, place: &Place, uses: &Arc<Uses>) -> Rows_ {
         Rows_ {
             desc: desc.clone(),
-            budget: Arc::clone(budget),
             uses: Arc::clone(uses),
             made: Mutex::default(),
             open: Mutex::default(),
             indexes: Mutex::default(),
+            pages: Arc::new(Pages::new(place, &desc.name.to_string())),
         }
+    }
+
+    /// Its pages' pool made of `bytes`, if made after (`Pages::resize`).
+    pub(super) fn resize_pages(&self, bytes: usize) {
+        self.pages.resize(bytes);
     }
 
     pub(super) fn made(&self) -> Option<Arc<dyn TableStorage>> {
@@ -71,8 +79,11 @@ impl Rows_ {
         if let Some(rows) = made.as_ref() {
             return Ok(Arc::clone(rows));
         }
-        let engine = RowStore::in_memory(TableOptions::default());
-        engine.use_budget(Arc::clone(&self.budget));
+        let (pool, file) = self.pages.file()?;
+        // Older versions stay in memory: a transaction's own, as collection
+        // follows its end (RULES.md D49).
+        let engine = RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default());
+        engine.use_work(Arc::clone(&self.pages.place.work));
         let rows: Arc<dyn TableStorage> = Arc::from(engine.create_table(&self.desc)?);
         *made = Some(Arc::clone(&rows));
         Ok(rows)
@@ -83,10 +94,11 @@ impl Rows_ {
         lock_builtin(&self.open).retain(|&t| t != tx);
     }
 
-    /// Empty again, each index's entries too.
+    /// Empty again, each index's entries too, its pages' file removed.
     pub(super) fn emptied(&self) {
         *lock_builtin(&self.made) = None;
         lock_builtin(&self.indexes).values().for_each(|e| e.emptied());
+        self.pages.emptied();
     }
 
     /// Its entries of each index of `indexes`, by name, its entries of any
@@ -97,14 +109,23 @@ impl Rows_ {
     /// through entries that miss a row (RULES.md D49).
     pub(super) fn entries(&self, indexes: &[IndexDesc]) -> Vec<(String, Arc<Entries>)> {
         let mut kept = lock_builtin(&self.indexes);
-        kept.retain(|name, _| indexes.iter().any(|ix| ix.name == *name));
+        kept.retain(|name, entries| {
+            let still = indexes.iter().any(|ix| ix.name == *name);
+            if !still {
+                entries.discard();
+            }
+            still
+        });
         let mut out = Vec::new();
         for ix in indexes {
             let same = kept.get(&ix.name).filter(|e| same_index(&e.index, ix)).cloned();
+            if same.is_none() {
+                kept.get(&ix.name).inspect(|e| e.discard());
+            }
             let entries = if let Some(entries) = same {
                 entries
             } else {
-                let made = Arc::new(Entries::new(&self.desc, ix, &self.budget));
+                let made = Arc::new(Entries::new(&self.desc, ix, &self.pages));
                 if self.complete(&made).is_ok() {
                     kept.insert(ix.name.clone(), Arc::clone(&made));
                     made
@@ -123,7 +144,7 @@ impl Rows_ {
     pub(super) fn add_empty(&self, indexes: &[IndexDesc]) {
         let mut kept = lock_builtin(&self.indexes);
         for ix in indexes {
-            kept.entry(ix.name.clone()).or_insert_with(|| Arc::new(Entries::new(&self.desc, ix, &self.budget)));
+            kept.entry(ix.name.clone()).or_insert_with(|| Arc::new(Entries::new(&self.desc, ix, &self.pages)));
         }
     }
 
@@ -244,24 +265,24 @@ impl TableStorage for Rows_ {
 }
 
 /// \[DESIGN\] An instance's entries of one of its table's indexes: none
-/// until first written, then an index of its method, built in, in memory
-/// of its own; or, if `refusing`, entries that could not be made complete,
-/// which refuse every use.
+/// until first written, then an index of its method, built in, in its
+/// instance's pages; or, if `refusing`, entries that could not be made
+/// complete, which refuse every use.
 pub(super) struct Entries {
     desc: TableDesc,
     pub(super) index: IndexDesc,
-    budget: Option<Arc<MemoryBudget>>,
+    pages: Option<Arc<Pages>>,
     made: Mutex<Option<Arc<dyn Index>>>,
 }
 
 impl Entries {
-    pub(super) fn new(desc: &TableDesc, index: &IndexDesc, budget: &Arc<MemoryBudget>) -> Entries {
-        Entries { desc: desc.clone(), index: index.clone(), budget: Some(Arc::clone(budget)), made: Mutex::default() }
+    pub(super) fn new(desc: &TableDesc, index: &IndexDesc, pages: &Arc<Pages>) -> Entries {
+        Entries { desc: desc.clone(), index: index.clone(), pages: Some(Arc::clone(pages)), made: Mutex::default() }
     }
 
     /// Entries that refuse every use.
     pub(super) fn refusing(desc: &TableDesc, index: &IndexDesc) -> Entries {
-        Entries { desc: desc.clone(), index: index.clone(), budget: None, made: Mutex::default() }
+        Entries { desc: desc.clone(), index: index.clone(), pages: None, made: Mutex::default() }
     }
 
     fn made(&self) -> Option<Arc<dyn Index>> {
@@ -279,14 +300,15 @@ impl Entries {
         )
     }
 
-    /// The entries made, if they are not: of a hash index if its index is
-    /// one, else of a B-link tree.
+    /// The entries made, if they are not, in the instance's pages: of a
+    /// hash index if its index is one, else of a B-link tree.
     ///
     /// # Errors
     ///
-    /// SQLCODE -911 if they refuse every use; the method's, making them.
+    /// SQLCODE -911 if they refuse every use; the pages', and the
+    /// method's, making them.
     fn make(&self) -> Result<Arc<dyn Index>> {
-        let Some(budget) = &self.budget else { return Err(self.refused()) };
+        let Some(pages) = &self.pages else { return Err(self.refused()) };
         let mut made = lock_builtin(&self.made);
         if let Some(entries) = made.as_ref() {
             return Ok(Arc::clone(entries));
@@ -294,14 +316,11 @@ impl Entries {
         let types =
             self.desc.types(&self.index.columns).ok_or_else(|| api(format!("[DESIGN] index {} names no column", self.index.name)))?;
         let on = (&self.desc, &self.index);
+        let (pool, file) = pages.file()?;
         let entries: Arc<dyn Index> = if self.index.method == HASH_METHOD {
-            let method = HashMethod::in_memory();
-            method.use_budget(Arc::clone(budget));
-            Arc::from(method.create_on(&types, on)?)
+            Arc::from(HashMethod::new(pool, file).create_on(&types, on)?)
         } else {
-            let method = BTreeMethod::in_memory();
-            method.use_budget(Arc::clone(budget));
-            Arc::from(method.create_on(&types, on)?)
+            Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };
         *made = Some(Arc::clone(&entries));
         Ok(entries)
@@ -309,7 +328,7 @@ impl Entries {
 
     /// The entries, if made; for refusing entries, the refusal.
     fn read(&self) -> Result<Option<Arc<dyn Index>>> {
-        match &self.budget {
+        match &self.pages {
             Some(_) => Ok(self.made()),
             None => Err(self.refused()),
         }
@@ -318,6 +337,14 @@ impl Entries {
     /// Empty again.
     fn emptied(&self) {
         *lock_builtin(&self.made) = None;
+    }
+
+    /// Forgotten, as its index is dropped or replaced: its pages freed in
+    /// the instance's file once no statement reads them.
+    fn discard(&self) {
+        if let Some(entries) = lock_builtin(&self.made).take() {
+            entries.discard();
+        }
     }
 }
 

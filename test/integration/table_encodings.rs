@@ -11,29 +11,7 @@ use std::path::Path;
 use turborel::db::{Database, OpenOptions};
 use turborel::error::Code;
 
-use crate::common::{RunLength, Scramble, Scratch, exec, os, rows};
-
-/// The bytes of the files in `dir`, and below it, whose names begin with
-/// `prefix`: `data` for the row store's file and its shadows, `log` for
-/// the log's segments.
-fn bytes_of(dir: &Path, prefix: &str) -> Vec<u8> {
-    let mut all = Vec::new();
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        let named = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix));
-        if path.is_dir() {
-            all.extend(bytes_of(&path, if named { "" } else { prefix }));
-        } else if named {
-            all.extend(std::fs::read(&path).unwrap());
-        }
-    }
-    all
-}
-
-/// Whether `bytes` hold `text`.
-fn holds(bytes: &[u8], text: &str) -> bool {
-    bytes.windows(text.len()).any(|w| w == text.as_bytes())
-}
+use crate::common::{RunLength, Scramble, Scratch, bytes_of, exec, holds, os, rows};
 
 /// A database opened from `dir`, the test encodings registered if
 /// `registered`.

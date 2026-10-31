@@ -32,11 +32,39 @@ pub struct PagedSpill;
 
 impl Spill for PagedSpill {
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> Result<Box<dyn SpillArea>> {
+        let file = ScratchFile::create(memory, temp, area.bytes, "a spill area")?;
+        Ok(Box::new(PagedArea(area.batch, Arc::new(file))))
+    }
+}
+
+/// \[DESIGN\] A temporary pager file of `TempFiles` in a buffer pool of its
+/// own, reserved of the memory budget, so its pages are written to the
+/// file as the pool evicts them, through the encodings its temporary files
+/// are given (`TempFiles::pipeline`); its creation is not made durable
+/// (`Pager::create_scratch`). It is removed when dropped. An area's is
+/// shared by the area and what is made in it; a temporary table's
+/// instance has one too (RULES.md D49).
+pub(crate) struct ScratchFile {
+    pool: Option<Arc<BufferPool>>,
+    id: FileId,
+    path: PathBuf,
+    temp: Arc<TempFiles>,
+}
+
+impl ScratchFile {
+    /// A new file of `temp`, its pool of `bytes` reserved of `memory`, held
+    /// by `what`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -918 if the budget cannot grant the pool; SQLCODE -915 if the
+    /// file cannot be made.
+    pub(crate) fn create(memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, bytes: usize, what: &str) -> Result<ScratchFile> {
         let path = temp.path()?;
         let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
         let pager = Pager::create_scratch(&**temp.fs(), &path, hash, temp.pipeline(), DEFAULT_PAGE_SIZE)?;
         let page_size = pager.page_size();
-        let made = BufferPool::in_budget(memory, (area.bytes, page_size), "a spill area").map(Arc::new);
+        let made = BufferPool::in_budget(memory, (bytes, page_size), what).map(Arc::new);
         let pool = match made {
             Ok(pool) => pool,
             Err(e) => {
@@ -47,27 +75,26 @@ impl Spill for PagedSpill {
                 return Err(e);
             }
         };
-        let file = pool.add_pager(Arc::new(pager));
-        Ok(Box::new(PagedArea(area.batch, Arc::new(File { pool: Some(pool), id: file, path, temp: Arc::clone(temp) }))))
+        let id = pool.add_pager(Arc::new(pager));
+        Ok(ScratchFile { pool: Some(pool), id, path, temp: Arc::clone(temp) })
+    }
+
+    /// Its pool.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 once it is gone, as it is only while the file is dropped.
+    pub(crate) fn pool(&self) -> Result<&Arc<BufferPool>> {
+        self.pool.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a scratch file's pool is gone"))
+    }
+
+    /// Its pager file in its pool.
+    pub(crate) fn id(&self) -> FileId {
+        self.id
     }
 }
 
-/// An area's file, shared by the area and what is made in it, removed when
-/// the last of them goes.
-struct File {
-    pool: Option<Arc<BufferPool>>,
-    id: FileId,
-    path: PathBuf,
-    temp: Arc<TempFiles>,
-}
-
-impl File {
-    fn pool(&self) -> Result<&Arc<BufferPool>> {
-        self.pool.as_ref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a spill area's pool is gone"))
-    }
-}
-
-impl Drop for File {
+impl Drop for ScratchFile {
     fn drop(&mut self) {
         // The pool, and with it the pager's file, closed first.
         drop(self.pool.take());
@@ -79,7 +106,7 @@ impl Drop for File {
 }
 
 /// An area: the batch of its runs, and its file.
-struct PagedArea(usize, Arc<File>);
+struct PagedArea(usize, Arc<ScratchFile>);
 
 impl SpillArea for PagedArea {
     fn table(&self) -> Result<Box<dyn SpillTable>> {
@@ -95,7 +122,7 @@ impl SpillArea for PagedArea {
 /// A table of an area: shared with the reads of a key's values
 /// (`SpillTable::values`).
 struct PagedTable {
-    file: Arc<File>,
+    file: Arc<ScratchFile>,
     table: Arc<HashTable>,
 }
 
@@ -117,7 +144,7 @@ impl PagedTable {
 }
 
 /// The value an entry of a table of `file` holds.
-fn value_of(file: &File, entry: &[u8]) -> Result<Vec<u8>> {
+fn value_of(file: &ScratchFile, entry: &[u8]) -> Result<Vec<u8>> {
     match entry.split_first() {
         Some((&INLINE, value)) => Ok(value.to_vec()),
         Some((&PAGED, id)) => {
@@ -166,7 +193,7 @@ impl SpillTable for PagedTable {
 /// A run of an area: its pages, each a batch of records, and the batch
 /// being gathered.
 struct PagedRun {
-    file: Arc<File>,
+    file: Arc<ScratchFile>,
     pages: Vec<PageId>,
     batch: Vec<u8>,
     /// The bytes it gathers before it writes them as a page.
@@ -222,7 +249,7 @@ impl SpillRun for PagedRun {
 /// freed once read if `free`, then of the `batch` it gathered, read where
 /// it is, not written first: so reading a run never needs a page of the
 /// budget, as a commit's check or an undo reads it (RULES.md D38).
-fn read(file: Arc<File>, pages: Vec<PageId>, free: bool, batch: &[u8]) -> Result<Records> {
+fn read(file: Arc<ScratchFile>, pages: Vec<PageId>, free: bool, batch: &[u8]) -> Result<Records> {
     let gathered = split(batch)?;
     let pages = pages.into_iter().map(move |id| {
         let pool = file.pool()?;

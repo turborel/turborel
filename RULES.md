@@ -665,9 +665,19 @@ live outside the database, or encrypting it would hide nothing.
 - **Instance.** The definitions a session sees give each temporary table
   the session's own instance: rows, indexes and lock
   (`db/temporary.rs`), so binding, constraints and indexes need nothing
-  special. It is made in memory, from the database's budget, when a
-  session's transaction first touches it, and dies with the session. Its
-  changes are not logged: never recovered [§4.9].
+  special. It is made when a session's transaction first touches it, and
+  dies with the session. Its changes are not logged: never recovered
+  [§4.9].
+- **Pages.** Rows and index entries of an instance share one spill file
+  of the database's temporary files (D38), through a buffer pool of the
+  session's MEMORY.WORK_BYTES reserved of the budget
+  (`db/temporary/pages.rs`). What the pool does not hold is written to
+  the file, so an instance may outgrow the budget.
+  - The file takes the spill files' encodings (D48), fixed when made.
+  - It is removed as DELETE ROWS empties the instance, or the instance
+    goes; a crash leaves it to be cleared at the next open (D56).
+  - Older versions a transaction keeps stay in memory, unbudgeted.
+  - A database in memory keeps the file in memory of its budget (D56).
 - **ON COMMIT.** DELETE ROWS empties an instance as its transaction ends,
   committed or rolled back: as GR3 of §14.3 leaves it, or as it was. A
   PRESERVE ROWS instance is then collected by its session (versions
@@ -695,10 +705,11 @@ live outside the database, or encrypting it would hide nothing.
     reads another table.
   - Any other action needs every instance empty.
 - **CREATE INDEX** defines it, built-in methods only. An instance builds
-  its entries in memory when its session first sees the index: empty if
-  no rows; from every version if no transaction has them open; else the
-  session can use the index only after its transaction ends (SQLSTATE
-  TB911 meanwhile). Instances forget a dropped index alike.
+  its entries in its pages when its session first sees the index: empty
+  if no rows; from every version if no transaction has them open; else
+  the session can use the index only after its transaction ends
+  (SQLSTATE TB911 meanwhile). Instances forget a dropped index alike,
+  its pages freed in the file.
 *Why:* the standard gives each session's rows a schema of its own
 [§4.9]; giving the session's view of the definitions its own storage
 does so without changing how a table is found, bound or checked.

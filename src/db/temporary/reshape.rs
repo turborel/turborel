@@ -74,7 +74,7 @@ impl Session {
                     ),
                 ));
             }
-            let successor = Instance::of(&desc, (&st.memory, &st.temporaries));
+            let successor = Instance::of(&desc, (&self.instance_place(st), &st.temporaries));
             successor.rows.add_empty(&indexes);
             self.copy_instance((&source.on(st, name, false), &successor.on(next, name, true)), tx, (name, action, reshape), mine)?;
             made.push((session, successor, mine));

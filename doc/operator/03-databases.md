@@ -42,7 +42,9 @@ takes what it needs to undo, even past the budget, until it gives back
 what the undone changes held.
 
 The data file's pages are read through a buffer pool of
-STORAGE.POOL_BYTES, and what a query spills through one of MEMORY.WORK_BYTES.
+STORAGE.POOL_BYTES, and what a query spills through one of MEMORY.WORK_BYTES,
+as is a session's instance of a temporary table, over a spill file of
+its own ([Temporary Tables](../user/09-temporary-tables.md)).
 A page wanted while every page of its pool is held at once, as by a
 pool set too small for the work, is refused with SQLCODE -918 too, at
 once, never waited for, but by an undo, which waits for a page to be let
@@ -147,7 +149,8 @@ is open, and its reads, writes and syncs. The class says what a crash
 leaves of the file: DURABLE, the data file, the catalog, the log and a
 plug-in's own files, kept; DURABLE AT COMMIT, the data file's side files,
 whose writes reach it at a checkpoint; UNSYNCED, the log of older row
-versions, begun anew as the database opens; SCRATCH, spill files,
+versions, begun anew as the database opens; SCRATCH, spill files, a
+session's temporary tables' among them,
 removed. The server's own files are there too, of KIND SERVER and no class,
 though not under the limit: the `--log` file and the socket while they
 are open, the TLS certificate chain and key, read as the server starts,

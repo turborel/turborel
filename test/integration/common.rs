@@ -299,6 +299,28 @@ pub fn after_crash() -> Arc<dyn FileSystem> {
     Arc::new(AfterCrash)
 }
 
+/// The bytes of the files in `dir`, and below it, whose names begin with
+/// `prefix`: `data` for the row store's file and its shadows, `log` for
+/// the log's segments.
+pub fn bytes_of(dir: &std::path::Path, prefix: &str) -> Vec<u8> {
+    let mut all = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let named = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix));
+        if path.is_dir() {
+            all.extend(bytes_of(&path, if named { "" } else { prefix }));
+        } else if named {
+            all.extend(std::fs::read(&path).unwrap());
+        }
+    }
+    all
+}
+
+/// Whether `bytes` hold `text`.
+pub fn holds(bytes: &[u8], text: &str) -> bool {
+    bytes.windows(text.len()).any(|w| w == text.as_bytes())
+}
+
 /// An exact number of scale 0.
 pub fn number(n: impl Into<i128>) -> Value {
     Value::Exact(Decimal::new(n.into(), 0))

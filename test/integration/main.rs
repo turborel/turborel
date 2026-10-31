@@ -129,6 +129,7 @@ mod system_tables;
 mod table_encodings;
 mod table_settings;
 mod temporary_changes;
+mod temporary_spills;
 mod temporary_tables;
 mod thread_manager;
 mod threads;
