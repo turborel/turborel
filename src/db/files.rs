@@ -105,11 +105,13 @@ pub struct OpenOptions {
 }
 
 /// \[DESIGN\] The default `OpenOptions::undo_batch`: 32 KiB, a few pages of
-/// versions to a write.
+/// versions to a write. Not a setting: `OpenOptions` keeps the log of
+/// older row versions, which a database's files do not fix (RULES.md D36).
 pub const UNDO_BATCH: usize = 32 << 10;
 
 /// \[DESIGN\] The default segment size of the log of older row versions:
 /// 16 MiB, so its space comes back soon after the readers needing it end.
+/// Not a setting: `OpenOptions::undo` keeps it (RULES.md D36).
 pub const UNDO_SEGMENT_SIZE: u64 = 16 << 20;
 
 impl Default for OpenOptions {

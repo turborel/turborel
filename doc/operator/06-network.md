@@ -121,8 +121,8 @@ TLS, if any, is begun:
 turborel: SQLCODE -919 (SQLSTATE 08004): the server has as many connections as it takes
 ```
 
-At most 16 such refusals are made at once; a connection past them too
-is closed at once, told nothing, so clients that flood the server hold
+At most SERVER.MAX_REFUSALS (16) such refusals are made at once; a
+connection past them too is closed at once, told nothing, so clients that flood the server hold
 no more of it than that. Either way the diagnostics are told, as
 `connections_refused`, at most once a minute
 ([Diagnostics](08-diagnostics.md)).

@@ -84,6 +84,8 @@ pub const SPILL_ENCODINGS: Key = Key(35);
 pub const COMMIT_SYNC: Key = Key(36);
 /// See [`TABLES_ENGINE`].
 pub const FUNCTION_CALLS: Key = Key(37);
+/// See [`TABLES_ENGINE`].
+pub const CHECKPOINT_OVERDUE_FACTOR: Key = Key(38);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -171,6 +173,11 @@ pub(super) fn builtin() -> Vec<Definition> {
         "The encodings, as compression, the files of work areas made from now on pass through, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.",
     ));
     all.extend(switches());
+    all.push(defined(
+        ("CHECKPOINT.OVERDUE_FACTOR", Kind::Integer { min: 1, max: 1_000_000 }, count(crate::db::OVERDUE)),
+        DATABASE,
+        "How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.",
+    ));
     all
 }
 

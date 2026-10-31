@@ -45,9 +45,11 @@ use crate::shown::Present;
 use crate::told;
 use crate::transport::Transport;
 
-/// \[DESIGN\] Batches of replies in flight between a worker and its
-/// connection: the replies a worker sends before it waits for the
-/// connection to take them.
+/// \[DESIGN\] The batches of replies in flight on a connection, from the
+/// worker running its statement to the connection sending them: those a
+/// worker makes before it waits for the connection to take one. Fixed,
+/// not a setting (RULES.md D36): the shape of the channel made for each
+/// statement; what they hold is SERVER.BATCH_BYTES each, the setting.
 const IN_FLIGHT: usize = 4;
 
 /// \[DESIGN\] How often a statement of a connection its operator ended is

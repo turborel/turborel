@@ -25,6 +25,7 @@ STARTED_VALUE, and IS_PENDING YES while the value set differs from it
 | CATALOG.NAME | TURBOREL | AN IDENTIFIER | at once |  |
 | CHECKPOINT.AFTER_BYTES | 67108864 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | CHECKPOINT.AFTER_CHANGES | 100000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
+| CHECKPOINT.OVERDUE_FACTOR | 4 | INTEGER FROM 1 TO 1000000 | at once |  |
 | COLUMNSTORE.HEADER_CACHE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
@@ -78,6 +79,7 @@ Each in a sentence:
 - **CATALOG.NAME**: The name of the catalog the schemata are in, as the Information Schema gives it [ISO/IEC 9075:1992 §21.2.2].
 - **CHECKPOINT.AFTER_BYTES**: The bytes written to the data file since the last checkpoint after which the end of a transaction takes one.
 - **CHECKPOINT.AFTER_CHANGES**: The row changes logged after which the end of a transaction takes a checkpoint.
+- **CHECKPOINT.OVERDUE_FACTOR**: How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.
 - **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.
 - **DIAGNOSTICS.LEVEL**: The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
@@ -141,6 +143,7 @@ Each in a sentence:
 | SERVER.MAX_CONNECTIONS | 256 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.MAX_LOGINS | 4 | INTEGER FROM 1 TO 64 | at once |  |
 | SERVER.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 1024 TO 4294967295 | from the next connection |  |
+| SERVER.MAX_REFUSALS | 16 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.MAX_STATEMENTS | 1024 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.PASSWORD_ITERATIONS | 600000 | INTEGER FROM 10000 TO 4294967295 | at the next start |  |
 | SERVER.PORT | 7422 | INTEGER FROM 0 TO 65535 | at the next start |  |
@@ -168,6 +171,7 @@ Each in a sentence:
 - **SERVER.MAX_CONNECTIONS**: Connections the server takes at once, at most.
 - **SERVER.MAX_LOGINS**: Authentications the server checks at once, at most, apart from its statements' workers.
 - **SERVER.MAX_MESSAGE_BYTES**: The longest message, in bytes, the server takes from a client, read as the client's connection is taken.
+- **SERVER.MAX_REFUSALS**: Connections past SERVER.MAX_CONNECTIONS the server refuses at once, each told why (SQLSTATE 08004) once its TLS, if any, is begun; one past these is closed at once, told nothing.
 - **SERVER.MAX_STATEMENTS**: Prepared statements a connection holds at once, at most.
 - **SERVER.PASSWORD_ITERATIONS**: The PBKDF2 iterations of a password's verifier made from the start on.
 - **SERVER.PORT**: The TCP port connections are taken at.

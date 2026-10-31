@@ -20,7 +20,8 @@ use crate::settings::{MAX_WORKERS, MOST_LOGINS};
 
 /// \[DESIGN\] The blocking threads past MAX_WORKERS and MOST_LOGINS: for
 /// the steps of a session that are neither statements nor a login's
-/// checks, as its end, while every worker is busy.
+/// checks, as its end, while every worker is busy. Fixed, not a setting
+/// (RULES.md D36): a shape of the runtime, fixed as it is made.
 const BLOCKING_SPARE: usize = 4;
 
 /// The prefix of the names of the server's threads.

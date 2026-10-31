@@ -39,7 +39,9 @@ use crate::auth::{Authenticator, Peer};
 use crate::limit::{Held, Limit};
 use crate::logins::Logins;
 use crate::password::Pbkdf2;
-use crate::settings::{IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, SHUTDOWN_TIMEOUT_MS, WORKERS};
+use crate::settings::{
+    IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_REFUSALS, SHUTDOWN_TIMEOUT_MS, WORKERS,
+};
 use crate::settings::{count, declare, millis};
 use crate::shown::{self, Operator, Present, Shown};
 use crate::tls::{Secured, Tls};
@@ -48,15 +50,9 @@ use crate::transport::{Listener, Transport};
 
 /// \[DESIGN\] How long a listener waits after failing to accept, so a
 /// failure that lasts, such as running out of file descriptors, does not
-/// keep a thread busy.
+/// keep a thread busy. Fixed, not a setting (RULES.md D36): it answers a
+/// failure of the system's, which no work of the server's tunes.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
-
-/// \[DESIGN\] The connections past SERVER.MAX_CONNECTIONS refused at once,
-/// each told why (SQLSTATE 08004) once its TLS, if any, is begun: a
-/// refusal over TLS lasts as long as its handshake. One past these is
-/// closed at once, telling it nothing, so clients that flood the server
-/// hold no more of it than this (RULES.md D55).
-const REFUSALS_IN_FLIGHT: usize = 16;
 
 /// \[DESIGN\] How often a server hurrying cancels its sessions' statements
 /// again, so one begun as it hurried is cancelled too.
@@ -82,9 +78,10 @@ enum Place {
 }
 
 /// The place of a connection taken: under `most` of `connections`, else
-/// among the refusals in flight; none past these.
-fn place(connections: &Arc<Limit>, refusals: &Arc<Limit>, most: usize) -> Option<Place> {
-    connections.try_take(most).map(Place::Served).or_else(|| refusals.try_take(REFUSALS_IN_FLIGHT).map(Place::Refused))
+/// among `refusing` refusals in flight (SERVER.MAX_REFUSALS); none past
+/// these.
+fn place(connections: &Arc<Limit>, refusals: &Arc<Limit>, (most, refusing): (usize, usize)) -> Option<Place> {
+    connections.try_take(most).map(Place::Served).or_else(|| refusals.try_take(refusing).map(Place::Refused))
 }
 
 /// What a `Protocol` returns.
@@ -463,7 +460,8 @@ async fn listen(endpoint: Endpoint, services: Services, (connections, refusals):
             Some(_) = open.join_next(), if !open.is_empty() => {}
             accepted = endpoint.listener.accept() => match accepted {
                 Ok((transport, peer)) => {
-                    if let Some(place) = place(&connections, &refusals, count(services.database(), MAX_CONNECTIONS)) {
+                    let limits = (count(services.database(), MAX_CONNECTIONS), count(services.database(), MAX_REFUSALS));
+                    if let Some(place) = place(&connections, &refusals, limits) {
                         let arrival = Arrival { protocol: Arc::clone(&endpoint.protocol), tls: endpoint.tls.clone(), services: services.clone() };
                         open.spawn(arrival.welcome(transport, peer, place));
                     } else {
@@ -557,19 +555,21 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D42, D55: a connection taken is served
     /// while fewer than the most are; past them, refused while fewer than
-    /// `REFUSALS_IN_FLIGHT` refusals are in flight; past these, given no
+    /// SERVER.MAX_REFUSALS refusals are in flight; past these, given no
     /// place, to be closed at once. A place given back makes room again.
     #[test]
     fn connections_past_the_limit_are_refused_then_closed() {
         let (connections, refusals) = (Arc::new(Limit::default()), Arc::new(Limit::default()));
-        let served = place(&connections, &refusals, 1);
+        let limits = (1, crate::settings::DEFAULT_MAX_REFUSALS);
+        let served = place(&connections, &refusals, limits);
         assert!(matches!(served, Some(Place::Served(_))));
-        let refused: Vec<Option<Place>> = (0..REFUSALS_IN_FLIGHT).map(|_| place(&connections, &refusals, 1)).collect();
+        let refused: Vec<Option<Place>> = (0..limits.1).map(|_| place(&connections, &refusals, limits)).collect();
         assert!(refused.iter().all(|p| matches!(p, Some(Place::Refused(_)))));
-        assert!(place(&connections, &refusals, 1).is_none(), "closed at once");
+        assert!(place(&connections, &refusals, limits).is_none(), "closed at once");
+        assert!(place(&connections, &refusals, (1, 0)).is_none(), "none refused, told why, past 0");
         drop(refused);
-        assert!(matches!(place(&connections, &refusals, 1), Some(Place::Refused(_))), "room again");
+        assert!(matches!(place(&connections, &refusals, limits), Some(Place::Refused(_))), "room again");
         drop(served);
-        assert!(matches!(place(&connections, &refusals, 1), Some(Place::Served(_))));
+        assert!(matches!(place(&connections, &refusals, limits), Some(Place::Served(_))));
     }
 }

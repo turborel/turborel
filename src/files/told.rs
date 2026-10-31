@@ -13,7 +13,9 @@ use crate::diagnostics::{Diagnostics, Event, NoDiagnostics};
 use crate::error::SqlError;
 
 /// \[DESIGN\] The span reopens are counted over, and the least between two
-/// warnings.
+/// warnings. Fixed, not a setting (RULES.md D36): how often the
+/// diagnostics hear of one trouble, not a pace of work; FILES.MAX_OPEN is
+/// what an operator tunes.
 const WINDOW: Duration = Duration::from_secs(60);
 
 /// Where the registry tells, and its count of reopens.

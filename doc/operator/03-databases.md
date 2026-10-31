@@ -117,9 +117,10 @@ The log is kept from the last checkpoint, or from the first change of
 the oldest transaction still open, whichever is earlier. While
 checkpoints are refused (a table damaged, a failed sync of the log),
 not taken, or taken while one transaction stays open, the log only
-grows. Once it keeps four times CHECKPOINT.AFTER_CHANGES, or the side
-file four times CHECKPOINT.AFTER_BYTES, a `checkpoint_overdue` warning
-says so and why, at most once a minute
+grows. Once it keeps CHECKPOINT.OVERDUE_FACTOR (four) times
+CHECKPOINT.AFTER_CHANGES, or the side file as many times
+CHECKPOINT.AFTER_BYTES, a `checkpoint_overdue` warning says so and why,
+at most once a minute
 ([Diagnostics](08-diagnostics.md)):
 
 ```

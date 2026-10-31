@@ -58,7 +58,8 @@ pub type RowId = u64;
 pub type Rows = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 
 /// \[DESIGN\] The default cost of one fetch by row id: a random read costs
-/// about three sequential ones.
+/// about three sequential ones. Fixed, not a setting (RULES.md D36): an
+/// engine states its own costs (`TableStorage::fetch_cost`).
 pub const DEFAULT_FETCH_COST: f64 = 3.0;
 
 /// A count of rows as a cost. Exact up to 2^32 rows; costs are estimates, so

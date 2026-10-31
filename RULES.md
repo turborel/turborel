@@ -420,8 +420,9 @@ fill it commit together, or not at all.
   logged since the last taken, a failed one leaving them counted. The
   log is kept from the last checkpoint or the first record of the oldest
   open transaction: while checkpoints are refused, not taken, or one
-  transaction stays open, it grows, and past four times what makes one
-  due (`db::OVERDUE`) an event says so and why, at most once a minute
+  transaction stays open, it grows, and past CHECKPOINT.OVERDUE_FACTOR
+  (four) times what makes one due an event says so and why, at most once
+  a minute
   (`Event::CheckpointOverdue`, D40).
 - A database is open in one place at a time: opening it takes an exclusive
   lock on its directory's `lock` file (`FileSystem::lock`, the system's
@@ -1664,8 +1665,14 @@ the same results and errors is the optimizer's to choose.
   setting, the constant it was named by its default. These stay
   constants: formats on disk, the standard's implementation-defined
   values (CONFORMANCE.md), the shapes of structures fixed when they are
-  made (stripes, shards, vectors), and the planner's weights an engine
-  states of its own costs, measured by its benchmark.
+  made (stripes, shards, vectors, a sketch, the server's runtime and the
+  bounds it sets SERVER.WORKERS and SERVER.MAX_LOGINS), the planner's
+  weights an engine states of its own costs, measured by its benchmark,
+  and what it spends on its estimates; limits that guard the reading of a
+  format (a block's longest payload); how often the diagnostics are told
+  of one trouble (a minute); and the answer to a failure of the system's
+  (the pause after an accept fails). What `OpenOptions` keeps (the log of
+  older row versions) is the host program's to give.
 - Names: each setting is of a group, `GROUP.NAME`, a plug-in's under its
   own name; a quantity names its unit (`_BYTES`, `_MS`); a word means one
   thing throughout; choices take one vocabulary (`ON`, `OFF`, and words of

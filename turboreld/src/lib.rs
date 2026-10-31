@@ -107,6 +107,8 @@ The server's settings, beside the database's:
   SERVER.KEEPALIVE_PROBES  probes unanswered before the connection is closed
                          (default 0, the system's own)
   SERVER.MAX_CONNECTIONS connections taken at once (default 256)
+  SERVER.MAX_REFUSALS    connections past those refused at once, told why; past these,
+                         closed untold (default 16)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)
   SERVER.BATCH_BYTES     about how many bytes of rows go in a batch (default 64 KiB)

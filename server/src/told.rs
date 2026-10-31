@@ -17,7 +17,9 @@ use turborel::error::SqlError;
 use crate::auth::{Authenticator, Exchange, Peer, Step};
 
 /// \[DESIGN\] How long after telling of a flood the next is told, as the
-/// database's own `FilesReopened` and `CheckpointOverdue` are.
+/// database's own `FilesReopened` and `CheckpointOverdue` are. Fixed, not
+/// a setting (RULES.md D36): how often the diagnostics hear of one
+/// trouble, not a pace of work.
 pub(crate) const QUIET: Duration = Duration::from_secs(60);
 
 /// \[DESIGN\] Occurrences counted, told at most once in `QUIET`: the first

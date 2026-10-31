@@ -24,7 +24,9 @@ use std::hash::BuildHasher;
 use crate::hash::murmur::MurmurBuildHasher;
 use crate::value::{Value, compare};
 
-/// Bits of a hash choosing a sketch's register: 4,096 registers.
+/// \[DESIGN\] Bits of a hash choosing a sketch's register: 4,096
+/// registers. Fixed, not a setting (RULES.md D36): the shape of a sketch,
+/// kept as it is made and merged with others of the same.
 const REGISTER_BITS: u32 = 12;
 /// The most a register's rank can be: the hash's bits past the register's,
 /// plus one.

@@ -62,7 +62,9 @@ pub enum TailPolicy {
     Refuse,
 }
 
-/// \[DESIGN\] Default limit on a block's payload, in bytes.
+/// \[DESIGN\] Default limit on a block's payload, in bytes. Fixed, not a
+/// setting (RULES.md D36): it guards the reading of a format, refusing a
+/// length no block was written with; `BlockOptions` gives another.
 pub const DEFAULT_MAX_BLOCK: u32 = 64 * 1024 * 1024;
 
 /// How a block file behaves.

@@ -52,6 +52,12 @@ const MIN_PASSWORD_ITERATIONS: i128 = 10_000;
 pub const WORKERS: &str = "SERVER.WORKERS";
 /// Connections open at once, at most.
 pub const MAX_CONNECTIONS: &str = "SERVER.MAX_CONNECTIONS";
+/// Connections past `MAX_CONNECTIONS` refused at once, each told why.
+pub const MAX_REFUSALS: &str = "SERVER.MAX_REFUSALS";
+/// \[DESIGN\] The default of `MAX_REFUSALS`: a few, so clients that flood
+/// the server hold no more of it than the handshakes of these (RULES.md
+/// D55).
+pub const DEFAULT_MAX_REFUSALS: usize = 16;
 /// The longest message taken from a client, in bytes, read as its
 /// connection is taken.
 pub const MAX_MESSAGE_BYTES: &str = "SERVER.MAX_MESSAGE_BYTES";
@@ -87,7 +93,9 @@ pub const IDLE_IN_TRANSACTION_TIMEOUT_MS: &str = "SERVER.IDLE_IN_TRANSACTION_TIM
 /// clients logging in never hold the workers statements need.
 pub const MAX_LOGINS: &str = "SERVER.MAX_LOGINS";
 /// \[DESIGN\] The most `MAX_LOGINS`: the blocking threads a server's
-/// runtime allows them, beside `MAX_WORKERS`.
+/// runtime allows them, beside `MAX_WORKERS`. Fixed, not a setting
+/// (RULES.md D36): the runtime's shape, fixed as it is made, bounding
+/// SERVER.MAX_LOGINS, which is the setting.
 pub const MOST_LOGINS: usize = 64;
 /// \[DESIGN\] The default of `MAX_LOGINS`: a few, so a flood of logins
 /// takes no more than a few processors' time, and each is checked in the
@@ -117,7 +125,8 @@ const MOST_KEEPALIVE_MS: i128 = 32_767_000;
 const MOST_KEEPALIVE_PROBES: i128 = 127;
 
 /// \[DESIGN\] The most workers: the blocking threads a server's runtime
-/// should allow.
+/// should allow. Fixed, not a setting (RULES.md D36): the runtime's shape,
+/// fixed as it is made, bounding SERVER.WORKERS, which is the setting.
 pub const MAX_WORKERS: usize = 1024;
 /// \[DESIGN\] The default host: this machine only, so a server is reached
 /// from others only once its operator says so.
@@ -269,7 +278,7 @@ fn started() -> [Definition; 6] {
 }
 
 /// The limits, read as statements and connections begin.
-fn limits() -> [Definition; 6] {
+fn limits() -> [Definition; 7] {
     let processors = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let most = i128::from(u32::MAX);
     [
@@ -280,6 +289,12 @@ fn limits() -> [Definition; 6] {
             "Statements the server runs at once, at most.",
         ),
         limit(MAX_CONNECTIONS, (1, most), DEFAULT_MAX_CONNECTIONS, "Connections the server takes at once, at most."),
+        limit(
+            MAX_REFUSALS,
+            (0, most),
+            DEFAULT_MAX_REFUSALS,
+            "Connections past SERVER.MAX_CONNECTIONS the server refuses at once, each told why (SQLSTATE 08004) once its TLS, if any, is begun; one past these is closed at once, told nothing.",
+        ),
         limit(MAX_STATEMENTS, (1, most), DEFAULT_MAX_STATEMENTS, "Prepared statements a connection holds at once, at most."),
         setting(
             MAX_MESSAGE_BYTES,

@@ -18,7 +18,7 @@
 //! keys it should. A search reads a leaf at a time as its entries are
 //! taken (`engine/tree/scan.rs`), forward, or backward for descending keys.
 //! An estimate counts the entries a probe selects up to
-//! `COUNTED`: past that, it is not cheap, and the planner estimates from
+//! `MOST_COUNTED`: past that, it is not cheap, and the planner estimates from
 //! the table's statistics instead.
 
 use std::ops::{Bound, Deref};
@@ -42,8 +42,10 @@ use crate::value::{CompOp, DataType, Value};
 
 /// Bytes of a row id at the end of an entry's key.
 const ROW_ID: usize = 8;
-/// The most entries an estimate counts.
-const COUNTED: usize = 1_000;
+/// \[DESIGN\] The most entries an estimate counts. Fixed, not a setting
+/// (RULES.md D36): what an index method spends on its own estimate, as
+/// it states its costs.
+const MOST_COUNTED: usize = 1_000;
 
 /// \[DESIGN\] The built-in ordered index method: B-link trees in one pager
 /// file.
@@ -407,7 +409,7 @@ impl Index for BLinkIndex {
         for entry in self.entries(&self.tree, probe, (false, Direction::Forward)) {
             entry.ok()?;
             counted = counted.saturating_add(1);
-            if counted > COUNTED {
+            if counted > MOST_COUNTED {
                 return None;
             }
         }

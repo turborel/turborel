@@ -279,6 +279,26 @@ fn checkpoints_not_taken_are_told_overdue() {
     assert_eq!(overdue(&kept), vec![], "once a minute");
 }
 
+/// Verifies: [DESIGN] RULES.md D25, D36, D40: how many times what makes a
+/// checkpoint due the log grows to before it is told overdue is the
+/// setting CHECKPOINT.OVERDUE_FACTOR, by default `OVERDUE`: set to 2, it
+/// is told after two changes, not one.
+#[test]
+fn the_overdue_factor_is_a_setting() {
+    let scratch = Scratch::new("diagnostics-overdue-factor");
+    let (db, kept) = overdue_after_one(&scratch, &os());
+    assert_eq!(db.setting("CHECKPOINT.OVERDUE_FACTOR").unwrap().to_string(), turborel::db::OVERDUE.to_string());
+    db.set_setting("CHECKPOINT.OVERDUE_FACTOR", &Value::Exact(Decimal::new(2, 0))).unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (1)").unwrap();
+    a.commit().unwrap();
+    assert_eq!(overdue(&kept), vec![], "not yet");
+    a.run("INSERT INTO T VALUES (2)").unwrap();
+    a.commit().unwrap();
+    let told = overdue(&kept);
+    assert!(told.len() == 1 && told[0].1.contains("changes: 2"), "{told:?}");
+}
+
 /// Verifies: [DESIGN] RULES.md D25, D40: checkpoints refused, each failing,
 /// are told overdue with the failure that refuses them.
 #[test]

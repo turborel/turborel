@@ -166,7 +166,7 @@ pub enum Event {
         limit: u64,
     },
     /// \[DESIGN\] The log, or the tables file's side file, has grown past
-    /// `db::OVERDUE` times what makes a checkpoint due
+    /// CHECKPOINT.OVERDUE_FACTOR times what makes a checkpoint due
     /// (CHECKPOINT.AFTER_CHANGES, CHECKPOINT.AFTER_BYTES) with no
     /// checkpoint letting it be given up (RULES.md D25). Told at most once
     /// a minute.
