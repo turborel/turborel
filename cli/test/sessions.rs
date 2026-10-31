@@ -148,15 +148,16 @@ fn a_run_ends_when_it_cannot_go_on() {
 
 /// A server of `pki`, its TLS offered, its clients' certificates of
 /// `pki`'s authority taken, where ANN's password is "ann's", proved by
-/// SCRAM-SHA-256 or a certificate beside trust; on Unix, at a socket too.
+/// SCRAM-SHA-256 or a certificate beside trust; at a Unix socket or named
+/// pipe too.
 pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
     let db = Database::new();
     secured(&db, pki, "ON");
     db.set_setting(TLS_CLIENT_CA, &Value::Char(pki.authority.display().to_string())).unwrap();
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
-    #[cfg(unix)]
-    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
+    #[cfg(any(unix, windows))]
+    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string())).unwrap();
     let scram = Arc::new(Scram::new(db.clone(), &made).unwrap());
     let server = start_with(&db, &[], vec![scram, Arc::new(Certificate::new(db.clone()))]);
     (db, server)
@@ -164,11 +165,11 @@ pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
 
 /// Verifies: [DESIGN] RULES.md D26, D43, D46: a user proves who they are by
 /// a password, typed or from the environment, by SCRAM-SHA-256, over TLS,
-/// the server's certificate checked against its name, or on Unix over a
-/// socket; a wrong one is refused, saying why; over plain TCP nothing is
-/// sent, the client refusing (SQLSTATE 28000), saying to use TLS or a Unix
-/// socket. Without a password, a certificate presented proves the user its
-/// common name names.
+/// the server's certificate checked against its name, or over a Unix
+/// socket or named pipe; a wrong one is refused, saying why; over plain
+/// TCP nothing is sent, the client refusing (SQLSTATE 28000), saying to
+/// use TLS or a Unix socket. Without a password, a certificate presented
+/// proves the user its common name names.
 #[test]
 fn a_password_is_sent_securely() {
     let pki = pki("cli-passwords");
@@ -191,12 +192,12 @@ fn a_password_is_sent_securely() {
     given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: None };
     let clear = turborel_cli::connect(&given, || panic!("not typed")).err().unwrap();
     assert!(clear.contains("SQLSTATE 28000") && clear.contains("TLS or a Unix socket, never over plain TCP"), "{clear}");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        given.server = Server::Socket(pki.scratch.path("s"));
+        given.server = Server::Socket(pki.scratch.socket("s"));
         let local = turborel_cli::connect(&given, || panic!("not typed")).unwrap();
         assert_eq!(local.authorization(), "ANN");
-        assert!(turborel_cli::banner(&given, &local).contains(&format!("at the socket {}, as ANN.", pki.scratch.path("s").display())));
+        assert!(turborel_cli::banner(&given, &local).contains(&format!("at the socket {}, as ANN.", pki.scratch.socket("s").display())));
     }
     let tls = Tls { roots: pki.authority.clone(), name: None, identity: None };
     given.server = Server::Tcp { host: "localhost".into(), port: server.address.port(), tls: Some(tls) };

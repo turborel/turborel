@@ -1,5 +1,6 @@
 //! Integration tests of `turboreld`: its command line, and the program run
-//! as a process, its clients connecting over loopback TCP or a Unix socket.
+//! as a process, its clients connecting over loopback TCP or a Unix socket
+//! (on Windows, a named pipe).
 //! One test binary (RULES.md D5), one module per area.
 //! Every test traces to its requirements with a `/// Verifies:` line.
 //!

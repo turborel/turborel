@@ -33,9 +33,10 @@ database refuses them.
 
 The `<SQL-server name>` is the server's address: `'host:port'`,
 `'host'` for the default port 7422, an IPv6 address in brackets, or, on
-Unix, the path of a socket beginning `/`. A TCP connection is secured by
-TLS as the client's first is. DEFAULT is the server the client's
-command line names.
+Unix, the path of a socket beginning `/`, or, on Windows, the name of
+a named pipe beginning `\\`, as `'\\.\pipe\turborel'`. A TCP
+connection is secured by TLS as the client's first is. DEFAULT is the
+server the client's command line names.
 
 The `<connection name>` names the connection, for SET CONNECTION and
 DISCONNECT, an identifier; without AS, the connection is named as its

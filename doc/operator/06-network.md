@@ -10,16 +10,40 @@ SERVER.HOST, by commas, 127.0.0.1 by default, on SERVER.PORT, 7422; port
 SERVER.HOST empty takes no TCP connection. Over TCP, a password is proved
 only once TLS secures the connection ([Passwords](05-users.md#passwords)).
 
-## Unix sockets
+## Unix sockets and named pipes
 
 SERVER.SOCKET names a Unix socket the server takes connections at too,
-on Linux and macOS. A connection over it is secured by the system, so a
-password may be proved over it.
+on Linux and macOS; on Windows, a named pipe. Only this machine reaches
+either, so a connection over one needs no TLS, and a password may be
+proved over it.
 
 ```
 $ turboreld --dir db --set SERVER.SOCKET=/run/turborel/socket
 $ turborel --socket /run/turborel/socket -U ann -W
 ```
+
+On Windows, a pipe's name begins `\\.\pipe\`:
+
+```
+> turboreld --dir db --set SERVER.SOCKET=\\.\pipe\turborel
+> turborel --socket \\.\pipe\turborel -U ann -W
+```
+
+The server makes the pipe as the first of its name, so it does not
+start if another process holds the name (`cannot listen at
+\\.\pipe\turborel`), and while it listens no other process can take
+the name. It refuses clients of other machines. Who of this machine may
+connect is as Windows secures a pipe by default: the server's own user,
+the administrators and the system fully; any other user may open the
+pipe to read only, so can send nothing, and is closed once
+SERVER.LOGIN_TIMEOUT runs out. Each such client holds a connection
+until then, under SERVER.MAX_CONNECTIONS; where other users of the
+machine are not trusted, keep SERVER.TRUST OFF, as it is by default,
+so every client proves who it is.
+
+A client waits for a pipe busy as long as its connect timeout; once the
+pipe is open, its reads and writes are not bounded: `--read-timeout`
+does not apply to a named pipe.
 
 ## TLS
 
@@ -118,8 +142,8 @@ checked: 100 ms, doubled with each failure after, up to
 SERVER.LOGIN_DELAY_MS. Logins of one address waiting take turns, one a
 delay, so connections in parallel guess no faster. A login accepted
 forgets the address's failures, and so do ten minutes without one. An
-IPv6 address counts by its /64; the clients of a Unix socket count as
-one address. A user is never locked out: that would let anyone lock out
+IPv6 address counts by its /64; the clients of a Unix socket or named
+pipe count as one address. A user is never locked out: that would let anyone lock out
 anyone.
 
 ## Clients gone

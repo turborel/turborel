@@ -1,6 +1,7 @@
 //! \[DESIGN\] Where a server is, and how a client reaches it (RULES.md
-//! D42): over TCP, a Unix socket, or TLS. A connection made to a target
-//! remembers it, so it can be reached again to cancel a statement.
+//! D42): over TCP, a Unix socket (on Windows, a named pipe), or TLS. A
+//! connection made to a target remembers it, so it can be reached again to
+//! cancel a statement.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -19,8 +20,9 @@ impl<T: Read + Write + Send> Duplex for T {}
 pub enum Target {
     /// Over TCP, at this address.
     Tcp(SocketAddr),
-    /// Over the Unix socket at this path.
-    #[cfg(unix)]
+    /// Over the Unix socket at this path; on Windows, the named pipe of
+    /// this name, as `\\.\pipe\turborel`.
+    #[cfg(any(unix, windows))]
     Local(std::path::PathBuf),
     /// Over TLS, at this address, the server of this name, trusted as this
     /// configuration says.
@@ -32,7 +34,7 @@ impl std::fmt::Debug for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Target::Tcp(address) => write!(f, "Tcp({address})"),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Target::Local(path) => write!(f, "Local({})", path.display()),
             #[cfg(feature = "tls")]
             Target::Tls(address, name, _) => write!(f, "Tls({address}, {name})"),
@@ -84,6 +86,8 @@ impl Target {
                 socket.limit(limit)?;
                 Ok((Box::new(stream), socket))
             }
+            #[cfg(windows)]
+            Target::Local(path) => Ok((Box::new(crate::pipe::open(path, limit)?), Socket::Pipe)),
             #[cfg(feature = "tls")]
             Target::Tls(address, name, config) => {
                 let tcp = connected(address, limit)?;

@@ -19,7 +19,8 @@ use turborel_protocol::{DEFAULT_PORT, MAX_BODY};
 pub const HOST: &str = "SERVER.HOST";
 /// The TCP port connections are taken at; 0 for one the system chooses.
 pub const PORT: &str = "SERVER.PORT";
-/// The Unix socket connections are taken at, if not empty (Unix only).
+/// The Unix socket connections are taken at, on Windows the named pipe,
+/// if not empty.
 pub const SOCKET: &str = "SERVER.SOCKET";
 /// Whether TCP connections may, or must, use TLS: OFF, ON or REQUIRED.
 pub const TLS: &str = "SERVER.TLS";
@@ -196,7 +197,7 @@ fn started() -> [Definition; 6] {
             Effect::Start,
             "The TCP port connections are taken at.",
         ),
-        setting(SOCKET, text, Value::Char(String::new()), Effect::Start, "The Unix socket connections are taken at, unless empty."),
+        setting(SOCKET, text, Value::Char(String::new()), Effect::Start, "The Unix socket or named pipe taken at, unless empty."),
         setting(
             TLS,
             Kind::Choice(TLS_MODES),

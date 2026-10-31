@@ -1875,13 +1875,14 @@ make.
   each reply after, no limit by default; for Terminate's close, the
   read limit, else 60 seconds, reading no more than a reply. Its replies
   are of at most `MAX_BODY` unless the program says fewer; its memory,
-  too, taken as their bytes arrive.
+  too, taken as their bytes arrive. Over a named pipe only the connect
+  is bounded (below).
 - Extension points (R-SAFE-3): `auth::Authenticator`, a mechanism of
   authentication as an exchange of as many steps as it needs, built in
   `password`, `scram-sha-256` and `certificate` (D43) and `trust`, which
   takes only clients of the server's own machine, and only while
   SERVER.TRUST is LOCAL;
-  `transport::Listener`, built in TCP and Unix sockets; and
+  `transport::Listener`, built in TCP, Unix sockets and named pipes; and
   `server::Protocol`, built in the native protocol.
 - TLS (D26) secures an endpoint's TCP connections, as SERVER.TLS says:
   OFF, ON (offered) or REQUIRED, with the certificate chain and key in the
@@ -1889,13 +1890,13 @@ make.
   TLS or not on the same port: the first byte tells (a TLS handshake
   begins with 22, RFC 8446 §5.1). Required, a client in the clear is
   refused (SQLSTATE 08004). The handshake runs in the connection's own
-  task. A Unix socket needs none. An authenticator knows whether its peer
-  is secure (`Peer::secure`), so one taking a secret refuses it in the
-  clear. With SERVER.TLS_CLIENT_CA, the PEM file of authorities, each TLS
-  client is asked for a certificate of theirs, verified by rustls; one
-  presenting none is served, one presenting another's fails its
-  handshake; the common name of a verified one's subject is known to the
-  authenticators (`Peer::certificate`).
+  task. A Unix socket or a named pipe needs none. An authenticator knows
+  whether its peer is secure (`Peer::secure`), so one taking a secret
+  refuses it in the clear. With SERVER.TLS_CLIENT_CA, the PEM file of
+  authorities, each TLS client is asked for a certificate of theirs,
+  verified by rustls; one presenting none is served, one presenting
+  another's fails its handshake; the common name of a verified one's
+  subject is known to the authenticators (`Peer::certificate`).
 - TLS's files are taken again without a restart (`Tls::reload`): as the
   next connection begins TLS once SERVER.TLS_CERTIFICATE, SERVER.TLS_KEY
   or SERVER.TLS_CLIENT_CA has changed, and on SIGHUP (Unix) from the same
@@ -1935,8 +1936,24 @@ make.
 - The server's own errors are SQLCODE -919, a connection exception: SQLSTATE
   08004 for a connection refused, 08006 for one failed, 28000 for
   credentials refused [ISO/IEC 9075:1992 §22.1, Table 23].
-- Portable: TCP everywhere; Unix sockets on Unix, a setting of one refused
-  elsewhere; Ctrl-C everywhere, SIGTERM and SIGHUP on Unix.
+- Portable: TCP everywhere; SERVER.SOCKET a Unix socket on Unix, a named
+  pipe on Windows, refused elsewhere; Ctrl-C everywhere, SIGTERM and
+  SIGHUP on Unix.
+- Named pipes, on Windows (tokio's `named_pipe`, of the feature net): a
+  server makes its pipe as the first instance of the name, so it does not
+  start where another process holds the name, nor can another take it
+  while it listens, an instance always waiting, the next made before a
+  connected one is handed over; clients of other machines are refused, so
+  a client is local (`Peer::local`), secure as a Unix socket's. Who of the
+  machine may connect is the system's default security for a pipe: its
+  creator, the administrators and the system fully, any other user to
+  read only, so able to send nothing, closed at SERVER.LOGIN_TIMEOUT. A
+  narrower descriptor needs the system's API through `unsafe`, which is
+  not written here (R-SAFE-1). The client opens the pipe as a file, of
+  std alone, letting the server identify but never impersonate it, and
+  tries it again while it is busy, within its connect timeout; std sets no
+  limit of time on a file's reads and writes, so once open a pipe's are
+  not bounded.
 - Told to stop, the server takes no connection, lets each finish its
   statement, rolls its session back and closes it; then the database is
   closed. Past SERVER.SHUTDOWN_TIMEOUT (30 s by default, 0 for no
@@ -1967,12 +1984,12 @@ is configured, seen and changed like the database's.
   would let whoever read it log in by SCRAM; one verifier serves both
   mechanisms of a password.
 - The authenticator `password` takes a password only over a secure
-  connection (`Peer::secure`: TLS, or a Unix socket), as the password
-  travels whole. The client's side refuses it first: a connection to a
-  server over plain TCP sends no Hello of a mechanism that says it is
-  secret (`Mechanism::secret`), as `password` does. A user not there is
-  refused as a wrong password is, after as long, the check made against
-  a decoy verifier.
+  connection (`Peer::secure`: TLS, a Unix socket or a named pipe), as the
+  password travels whole. The client's side refuses it first: a
+  connection to a server over plain TCP sends no Hello of a mechanism
+  that says it is secret (`Mechanism::secret`), as `password` does. A
+  user not there is refused as a wrong password is, after as long, the
+  check made against a decoy verifier.
 - The authenticator `scram-sha-256` (RFC 5802, RFC 7677) proves the
   password without its travelling, and proves the server to the client:
   client-first in Hello; server-first, client-final and server-final
@@ -2002,7 +2019,8 @@ is configured, seen and changed like the database's.
   after, up to SERVER.LOGIN_DELAY_MS (ten seconds by default), its
   logins waiting taking turns a delay apart; one accepted, or ten minutes
   without a failure, forgets them. An IPv6 address counts by its /64, a
-  Unix socket's clients as one; at most 10,000 addresses are kept.
+  Unix socket's or named pipe's clients as one; at most 10,000 addresses
+  are kept.
 - A session lasts while its user does: a user dropped, each session that
   logged in as it ends at its next request, refused (SQLSTATE 28000),
   rolled back and closed. A new password ends none: the session proved
@@ -2171,18 +2189,18 @@ cannot have.
   a server that is sent one refuses it (SQLCODE -900). A `Connector` makes
   its connections; the command-line client's (`cli/src/dial.rs`) takes an
   `<SQL-server name>` as an address: 'host:port', or on Unix a socket's
-  path beginning '/'; DEFAULT is the server the command line names, the
-  connection made as the program starts. A connection is proved as the
-  command line says: a password typed is asked for again; one from
-  TURBOREL_PASSWORD is proved again. No transaction spans servers, so
-  CONNECT and SET CONNECTION are refused in an active one (0A001)
-  [§15.1 GR1, §15.2 GR1], and DISCONNECT of a connection whose
-  transaction is active (25000) [§15.3 GR6].
+  path beginning '/', on Windows a named pipe's name beginning '\\';
+  DEFAULT is the server the command line names, the connection made as
+  the program starts. A connection is proved as the command line says: a
+  password typed is asked for again; one from TURBOREL_PASSWORD is proved
+  again. No transaction spans servers, so CONNECT and SET CONNECTION are
+  refused in an active one (0A001) [§15.1 GR1, §15.2 GR1], and DISCONNECT
+  of a connection whose transaction is active (25000) [§15.3 GR6].
 - Where: `--host`/`--port` (127.0.0.1, 7422), `--tls FILE` trusting that
   PEM file's certificates with `--server-name`, presenting `--certificate`
-  FILE and `--key` FILE if named, or `--socket` on Unix,
-  refused clearly elsewhere. Every address of a host is tried until one
-  answers; a refusal is not retried.
+  FILE and `--key` FILE if named, or `--socket`: a Unix socket on Unix, a
+  named pipe on Windows, refused clearly elsewhere. Every address of a
+  host is tried until one answers; a refusal is not retried.
 - Who: `--user`, else the environment's USER or USERNAME. A password is
   typed without its echo (`-W`), or taken from TURBOREL_PASSWORD; never
   from the command line, where other users of the machine may see it.

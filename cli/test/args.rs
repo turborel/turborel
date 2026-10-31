@@ -122,19 +122,21 @@ fn a_wrong_command_line_is_refused() {
     for other in [["--host", "h"], ["--port", "1"], ["--tls", "ca.pem"]] {
         let line = [&["--socket", "s"][..], &other[..]].concat();
         let said = wrong(&line);
-        assert!(said == elsewhere || said.ends_with("Unix only"), "{said}");
+        assert!(said == elsewhere || said.ends_with("Windows only"), "{said}");
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D46: `--socket` reaches the server at a
-/// Unix socket, on Unix; elsewhere it is refused, saying why.
+/// Verifies: [DESIGN] RULES.md D42, D46: `--socket` reaches the server at a
+/// Unix socket, on Unix, and at a named pipe, on Windows; elsewhere it is
+/// refused, saying why.
 #[test]
-fn a_socket_is_reached_on_unix() {
-    let reached = parsed(&["--socket", "/run/turborel.sock"], &[("USER", "u")]);
-    #[cfg(unix)]
-    assert_eq!(reached.unwrap().server, Server::Socket(PathBuf::from("/run/turborel.sock")));
-    #[cfg(not(unix))]
-    assert_eq!(reached.unwrap_err(), "--socket: a Unix socket is reached on Unix only");
+fn a_socket_is_reached_on_unix_and_a_pipe_on_windows() {
+    let local = if cfg!(windows) { r"\\.\pipe\turborel" } else { "/run/turborel.sock" };
+    let reached = parsed(&["--socket", local], &[("USER", "u")]);
+    #[cfg(any(unix, windows))]
+    assert_eq!(reached.unwrap().server, Server::Socket(PathBuf::from(local)));
+    #[cfg(not(any(unix, windows)))]
+    assert_eq!(reached.unwrap_err(), "--socket: a Unix socket is reached on Unix only, a named pipe on Windows only");
 }
 
 /// Verifies: [DESIGN] RULES.md D59: `--import` names a file whose rows are

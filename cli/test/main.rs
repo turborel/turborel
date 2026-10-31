@@ -1,6 +1,6 @@
 //! Integration tests of `turborel`, the command-line client: its command
 //! line, its sessions with a server over loopback TCP, TLS or a Unix
-//! socket, and the program run as a process.
+//! socket (on Windows, a named pipe), and the program run as a process.
 //! One test binary (RULES.md D5), one module per area.
 //! Every test traces to its requirements with a `/// Verifies:` line.
 //!

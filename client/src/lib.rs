@@ -8,6 +8,8 @@ pub mod agent;
 mod cancel;
 pub mod connection;
 pub mod import;
+#[cfg(any(windows, test))]
+mod pipe;
 pub mod statements;
 pub mod target;
 pub mod timeouts;

@@ -13,7 +13,8 @@ use std::net::SocketAddr;
 pub enum Origin {
     /// A TCP client at this address.
     Tcp(SocketAddr),
-    /// A client of a Unix socket: on this machine.
+    /// A client of a Unix socket, or a named pipe on Windows: on this
+    /// machine.
     Local,
 }
 
@@ -24,8 +25,8 @@ pub enum Origin {
 pub struct Peer {
     /// Where from.
     pub origin: Origin,
-    /// Whether the connection is secure: over TLS, or a Unix socket, which
-    /// only this machine reaches.
+    /// Whether the connection is secure: over TLS, or a Unix socket or a
+    /// named pipe, which only this machine reaches.
     pub secure: bool,
     /// The common name of the subject of the certificate the client
     /// presented over TLS, once TLS verified it against SERVER.TLS_CLIENT_CA
@@ -40,7 +41,7 @@ impl Peer {
         Peer { origin: Origin::Tcp(address), secure: false, certificate: None }
     }
 
-    /// A client of a Unix socket: secure.
+    /// A client of a Unix socket or a named pipe: secure.
     pub fn local() -> Peer {
         Peer { origin: Origin::Local, secure: true, certificate: None }
     }

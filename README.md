@@ -32,8 +32,8 @@ ones.
   control, a write-ahead log, checkpoints and recovery.
 - **Indexes** as B-link trees and linear hash tables, chosen by a
   cost-based planner.
-- **A server** over TCP or Unix sockets, with TLS, users and passwords,
-  prepared statements and cancellation.
+- **A server** over TCP, Unix sockets or Windows named pipes, with TLS,
+  users and passwords, prepared statements and cancellation.
 - **Bounded memory:** one budget over every cache, with sorts, joins and
   grouping that spill to disk.
 

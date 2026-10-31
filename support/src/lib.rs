@@ -36,6 +36,20 @@ impl Scratch {
     pub fn path(&self, name: &str) -> PathBuf {
         self.dir.join(name)
     }
+
+    /// Where a server of the test takes local connections, as
+    /// SERVER.SOCKET names it (RULES.md D42): the Unix socket `name` in the
+    /// directory; on Windows, the named pipe of the directory's name and
+    /// `name`, so of this test and process alone.
+    pub fn socket(&self, name: &str) -> PathBuf {
+        #[cfg(windows)]
+        {
+            let own = self.dir.file_name().unwrap().to_string_lossy();
+            PathBuf::from(format!(r"\\.\pipe\{own}-{name}"))
+        }
+        #[cfg(not(windows))]
+        self.path(name)
+    }
 }
 
 impl Drop for Scratch {

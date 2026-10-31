@@ -4,12 +4,12 @@
 use std::io::Cursor;
 use std::path::Path;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use turborel_client::connection::{self, Password, Trust};
 #[cfg(unix)]
 use turborel_client::scram::Scram;
 use turborel_test_support::Scratch;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use turborel_test_support::client::state;
 use turboreld::{Command, Config, UserCommand, parse};
 
@@ -65,12 +65,12 @@ fn an_operator_manages_users() {
 /// users SQL creates, take the iterations SERVER.PASSWORD_ITERATIONS is
 /// set to on its command line, over what the database keeps, as an
 /// operator's do.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn a_verifier_takes_the_iterations_set_as_it_starts() {
     let scratch = Scratch::new("turboreld-iterations");
     let dir = scratch.path("db");
-    let socket = scratch.path("s");
+    let socket = scratch.socket("s");
     user(&dir, &UserCommand::Add { name: "ann".into(), owner: true }, "ann's").unwrap();
     let line = format!(
         "--dir {} --set SERVER.HOST= --set SERVER.SOCKET={} --set SERVER.PASSWORD_ITERATIONS=20000",
@@ -107,11 +107,11 @@ fn a_verifier_takes_the_iterations_set_as_it_starts() {
 /// Without the password read, the server does not start.
 /// Regression test (R-TEST-7): a database kept nowhere had no owner, and
 /// could have none, so no one could configure it in SQL.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn a_database_kept_nowhere_is_given_its_owner() {
     let scratch = Scratch::new("turboreld-owner");
-    let socket = scratch.path("s");
+    let socket = scratch.socket("s");
     let line =
         format!("--memory --owner ann --set SERVER.HOST= --set SERVER.SOCKET={} --set SERVER.PASSWORD_ITERATIONS=10000", socket.display());
     let unread = config(&line);
@@ -140,15 +140,15 @@ fn a_database_kept_nowhere_is_given_its_owner() {
 
 /// Verifies: [DESIGN] RULES.md D43: a database whose users an operator
 /// added is served: with SERVER.TRUST OFF, its default, a client proves
-/// itself by its password over a Unix socket, and trust is not served
+/// itself by its password over a Unix socket or named pipe, and trust is not served
 /// (SQLSTATE 28000).
 /// User commands are refused on a database a server holds.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn users_an_operator_added_connect_by_password() {
     let scratch = Scratch::new("turboreld-served");
     let dir = scratch.path("db");
-    let socket = scratch.path("s");
+    let socket = scratch.socket("s");
     user(&dir, &UserCommand::Add { name: "ann".into(), owner: true }, "ann's").unwrap();
     // SERVER.TRUST is OFF by default.
     let line = format!("--dir {} --set SERVER.HOST= --set SERVER.SOCKET={}", dir.display(), socket.display());

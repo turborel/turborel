@@ -36,23 +36,23 @@ fn tls_offered_serves_clients_with_it_or_without() {
 
 /// Verifies: [DESIGN] RULES.md D42: with SERVER.TLS REQUIRED, a TCP client
 /// in the clear is refused, and told why (SQLSTATE 08004); one over TLS is
-/// served. A Unix socket, which only this machine reaches, is served in
-/// the clear.
+/// served. A Unix socket, or on Windows a named pipe, which only this
+/// machine reaches, is served in the clear.
 #[test]
 fn tls_required_refuses_clients_in_the_clear() {
     let pki = pki("tls-required");
     let db = Database::new();
     secured(&db, &pki, "REQUIRED");
-    #[cfg(unix)]
-    let socket = pki.scratch.path("s");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
+    let socket = pki.scratch.socket("s");
+    #[cfg(any(unix, windows))]
     db.set_setting(settings::SOCKET, &Value::Char(socket.display().to_string())).unwrap();
     let server = start(&db, &[]);
     let refused = connection::connect(server.address, "X", &mut Trust).err().unwrap();
     assert_eq!(state(&refused), ("08004", -919));
     assert!(refused.message.contains("TLS"), "{refused}");
     over_tls(&server, &pki, "localhost").unwrap().terminate().unwrap();
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         assert!(server.names.contains(&socket.display().to_string()), "{:?}", server.names);
         connection::connect_local(&socket, "X", &mut Trust).unwrap().terminate().unwrap();

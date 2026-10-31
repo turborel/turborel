@@ -8,7 +8,9 @@
 //!
 //! The limits are the socket's own, set through a second handle on it, so
 //! they reach a stream TLS wraps too. A connection made over a stream
-//! given to `Connection::open` is bounded as its maker bounds it.
+//! given to `Connection::open` is bounded as its maker bounds it. A named
+//! pipe, on Windows, is bounded only as it is opened (`pipe.rs`): the
+//! standard library sets no limit on a pipe's reads and writes.
 
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -52,6 +54,10 @@ pub(crate) enum Socket {
     /// A Unix socket's.
     #[cfg(unix)]
     Local(std::os::unix::net::UnixStream),
+    /// A named pipe's, on Windows: no handle, as the standard library sets
+    /// no limit of time on a pipe's reads and writes.
+    #[cfg(windows)]
+    Pipe,
 }
 
 impl Socket {
@@ -67,12 +73,15 @@ impl Socket {
     }
 
     /// Bounds each read and write of the socket by `within`; none, no
-    /// limit.
+    /// limit. A named pipe's are not bounded: once it is open, it waits on
+    /// its server as long as it must.
     pub(crate) fn limit(&self, within: Option<Duration>) -> Result<()> {
         let set = match self {
             Socket::Tcp(s) => s.set_read_timeout(within).and_then(|()| s.set_write_timeout(within)),
             #[cfg(unix)]
             Socket::Local(s) => s.set_read_timeout(within).and_then(|()| s.set_write_timeout(within)),
+            #[cfg(windows)]
+            Socket::Pipe => Ok(()),
         };
         set.map_err(|e| set_up(&e))
     }

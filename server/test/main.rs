@@ -1,6 +1,7 @@
 //! Integration tests of the server: clients connect to a server over
-//! loopback TCP or a Unix socket, through the public APIs of the server and
-//! client crates only. One test binary (RULES.md D5), one module per area.
+//! loopback TCP or a Unix socket (on Windows, a named pipe), through the
+//! public APIs of the server and client crates only. One test binary
+//! (RULES.md D5), one module per area.
 //! Every test traces to its requirements with a `/// Verifies:` line.
 //!
 //! A panic is how a test reports failure, so test code may unwrap, index and

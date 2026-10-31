@@ -11,7 +11,8 @@ database uses the crate `turborel` instead, and its `Database` and
 
 ## Connecting
 
-`connect` connects over TCP, `connect_local` over a Unix socket, and
+`connect` connects over TCP, `connect_local` over a Unix socket (on
+Windows, a named pipe, as `\\.\pipe\turborel`), and
 `target::connect_to` to a `Target`, which may be either, over TLS or
 not. Each takes the user to connect as and a `Mechanism` that proves it:
 
@@ -19,10 +20,11 @@ not. Each takes the user to connect as and a `Mechanism` that proves it:
   `scram`: what a password should be proved by. The password never
   travels; the connection is refused (SQLSTATE 08006) unless the server
   proves it knows the user's verifier. Its exchange overheard lets the
-  password be guessed at leisure, so it is used only over TLS or a Unix
-  socket, unless `Scram::in_the_clear` says otherwise, for a server whose
-  SERVER.SCRAM_WITHOUT_TLS is ON.
-- `Password`, of a password, sent whole, only over TLS or a Unix socket.
+  password be guessed at leisure, so it is used only over TLS, a Unix
+  socket or a named pipe, unless `Scram::in_the_clear` says otherwise,
+  for a server whose SERVER.SCRAM_WITHOUT_TLS is ON.
+- `Password`, of a password, sent whole, only over TLS, a Unix socket or
+  a named pipe.
 - `Certificate`, which proves the user by the certificate presented
   over TLS: `tls::presenting` makes a TLS that trusts the PEM file of
   authorities given and presents the certificate chain and key of two
@@ -72,6 +74,9 @@ as long as it must. `connect`, `connect_local`, `tls::connect` and
 read timeout. A wait that runs out loses the connection (SQLSTATE
 08006), saying the server did not answer in time. A connection over a
 stream given to `Connection::open` waits as its maker set the stream to.
+A named pipe, on Windows, is bounded only as it is opened, while it is
+busy: its reads and writes, of the login too, wait as long as they must,
+as the standard library sets no limit on them.
 
 ```rust
 use std::time::Duration;

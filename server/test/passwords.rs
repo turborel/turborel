@@ -31,8 +31,9 @@ fn served(pki: &Pki) -> (Database, Running) {
     }
     db.set_owner("ANN").unwrap();
     let password = Arc::new(pbkdf2::Password::new(db.clone(), &made).unwrap());
-    #[cfg(unix)]
-    db.set_setting(turborel_server::settings::SOCKET, &turborel::value::Value::Char(pki.scratch.path("s").display().to_string())).unwrap();
+    #[cfg(any(unix, windows))]
+    db.set_setting(turborel_server::settings::SOCKET, &turborel::value::Value::Char(pki.scratch.socket("s").display().to_string()))
+        .unwrap();
     let server = start_with(&db, &[], vec![password]);
     (db, server)
 }
@@ -45,7 +46,7 @@ fn as_user(server: &Running, pki: &Pki, (user, password): (&str, &str)) -> conne
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4]; [DESIGN] RULES.md D26,
 /// D43: a user proves itself by its password, its name an identifier, so
-/// `ann` is ANN; over TLS, or on Unix over a socket. A wrong password, and
+/// `ann` is ANN; over TLS, or over a Unix socket or named pipe. A wrong password, and
 /// a user not there, are refused alike (SQLSTATE 28000); so is a password
 /// sent in the clear, saying why; and a name not an identifier.
 #[test]
@@ -63,9 +64,9 @@ fn a_user_proves_itself_by_its_password() {
     let mut raw = server.raw();
     raw.send(&Request::Hello { version: 1, user: "ann bob".into(), mechanism: "password".into(), initial: vec![], capabilities: vec![] });
     assert_eq!(state(&raw.refusal()).0, "28000", "not an identifier");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        let local = connection::connect_local(&pki.scratch.path("s"), "bob", &mut Password("bob's".into())).unwrap();
+        let local = connection::connect_local(&pki.scratch.socket("s"), "bob", &mut Password("bob's".into())).unwrap();
         assert_eq!(local.authorization(), "BOB");
     }
 }
@@ -93,9 +94,9 @@ fn a_password_never_leaves_over_plain_tcp() {
     let config = tls::trusting(&pki.authority).unwrap();
     let secured = Target::Tls(server.address, "localhost".into(), config);
     assert_eq!(connect_to(&secured, "ann", &mut Password("ann's".into())).unwrap().authorization(), "ANN", "over TLS");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        let local = Target::Local(pki.scratch.path("s"));
+        let local = Target::Local(pki.scratch.socket("s"));
         assert_eq!(connect_to(&local, "bob", &mut Password("bob's".into())).unwrap().authorization(), "BOB", "over a socket");
     }
 }

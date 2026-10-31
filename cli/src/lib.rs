@@ -39,7 +39,8 @@ pub const USAGE: &str = "usage: turborel [options]
 
   -h, --host HOST        the server's host (default 127.0.0.1)
   -p, --port PORT        its port (default 7422)
-      --socket PATH      the server's Unix socket, instead (Unix only)
+      --socket PATH      the server's Unix socket, instead; on Windows, its named
+                         pipe, as \\\\.\\pipe\\turborel
       --tls FILE         over TLS, trusting the certificates of the PEM file FILE
       --server-name NAME the name the server's certificate is checked against
                          (default the host)
@@ -75,11 +76,11 @@ Without -c or -f, statements are read from standard input: typed at a terminal,
 each is run once a semicolon ends it, and the end of input (Ctrl-D; Ctrl-Z then
 Enter on Windows) quits. The last statement of a file needs no semicolon.
 A password may be given in the environment variable TURBOREL_PASSWORD instead;
-it is proved by SCRAM-SHA-256, never sent, and only over TLS or a Unix socket:
-over plain TCP the client refuses to begin. Without a password, a certificate
-presented proves the user its common name names; without either, the server is
-asked to trust the user, as one with SERVER.TRUST LOCAL does a client of its own
-machine.
+it is proved by SCRAM-SHA-256, never sent, and only over TLS, a Unix socket or a
+named pipe: over plain TCP the client refuses to begin. Without a password, a
+certificate presented proves the user its common name names; without either,
+the server is asked to trust the user, as one with SERVER.TRUST LOCAL does a
+client of its own machine.
 An import begins with no transaction active; a row that fails stops it, its
 batch rolled back, and says the record and line. Ctrl-C cancels the statement
 running. The program exits with 1 if any statement or row failed.";
@@ -98,7 +99,7 @@ pub fn banner(options: &Options, connection: &Connected) -> String {
     let at = match &options.server {
         Server::Tcp { host, port, tls: Some(_) } => format!("at {host}:{port} over TLS"),
         Server::Tcp { host, port, tls: None } => format!("at {host}:{port}"),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         Server::Socket(path) => format!("at the socket {}", path.display()),
     };
     format!(
@@ -172,7 +173,7 @@ fn reach(server: &Server, (user, mechanism): (&str, &mut dyn Mechanism), timeout
 fn address_of(target: &Target) -> String {
     match target {
         Target::Tcp(address) => address.to_string(),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         Target::Local(path) => path.display().to_string(),
         Target::Tls(address, ..) => address.to_string(),
     }
@@ -192,7 +193,7 @@ fn targets(server: &Server) -> Result<Vec<Target>, String> {
             let name = secured.name.clone().unwrap_or_else(|| host.clone());
             Ok(addresses.map(|address| Target::Tls(address, name.clone(), config.clone())).collect())
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         Server::Socket(path) => Ok(vec![Target::Local(path.clone())]),
     }
 }

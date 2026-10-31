@@ -1,9 +1,10 @@
 //! \[DESIGN\] The connections CONNECT makes (RULES.md D46): a `<SQL-server
 //! name>` [ISO/IEC 9075:1992 §15.1] is an address, 'host', 'host:port' or,
-//! on Unix, a socket's path beginning '/'; DEFAULT is the server the command
-//! line names. A connection is proved as the command line says: a password
-//! typed is asked for again, for each. Split from lib.rs (RULES.md
-//! R-SIZE-4).
+//! on Unix, a socket's path beginning '/', on Windows a named pipe's name
+//! beginning '\\' (as '\\.\pipe\turborel'); DEFAULT is the server the
+//! command line names. A connection is proved as the command line says: a
+//! password typed is asked for again, for each. Split from lib.rs
+//! (RULES.md R-SIZE-4).
 
 use std::path::PathBuf;
 
@@ -16,6 +17,15 @@ use crate::{Unreached, mechanism, reach};
 
 /// What reads a password typed.
 pub type Ask = Box<dyn FnMut() -> std::io::Result<String>>;
+
+/// \[DESIGN\] What begins the name of a server of this machine: a Unix
+/// socket's absolute path; on Windows, a named pipe's name.
+#[cfg(not(windows))]
+const LOCAL_PREFIX: &str = "/";
+/// \[DESIGN\] What begins the name of a server of this machine: a Unix
+/// socket's absolute path; on Windows, a named pipe's name.
+#[cfg(windows)]
+const LOCAL_PREFIX: &str = r"\\";
 
 /// The command line's connector: to the servers CONNECT names.
 pub struct Dialer {
@@ -32,12 +42,12 @@ impl Dialer {
     /// The server `address` names: secured by TLS as the default server
     /// is, its certificate checked against the host named.
     fn server(&self, address: &str) -> Result<Server, String> {
-        if address.starts_with('/') {
+        if address.starts_with(LOCAL_PREFIX) {
             return socket_server(PathBuf::from(address));
         }
         let tls = match &self.options.server {
             Server::Tcp { tls, .. } => tls.as_ref().map(|t| Tls { roots: t.roots.clone(), name: None, identity: t.identity.clone() }),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Server::Socket(_) => None,
         };
         let (host, port) = host_port(address)?;

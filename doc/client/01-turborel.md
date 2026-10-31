@@ -18,7 +18,7 @@ as a table as they come, and each statement's outcome.
 |---|---|
 | `-h`, `--host HOST` | the server's host; 127.0.0.1 by default |
 | `-p`, `--port PORT` | its port; 7422 by default |
-| `--socket PATH` | the server's Unix socket instead (Unix only) |
+| `--socket PATH` | the server's Unix socket instead; on Windows its named pipe, as `\\.\pipe\turborel` |
 | `--tls FILE` | connect over TLS, trusting the certificates of the PEM file FILE |
 | `--server-name NAME` | the name the server's certificate is checked against; the host by default |
 | `--certificate FILE` | over TLS, present the certificate chain of the PEM file FILE |
@@ -45,8 +45,10 @@ A password may be given in the environment variable TURBOREL_PASSWORD
 instead of typed. The client proves it by SCRAM-SHA-256, never sending
 it, and takes the server only once the server has proved it knows the
 user's verifier ([Passwords](../operator/05-users.md#passwords)). It
-does so only over TLS or a Unix socket: over plain TCP the client
-refuses to begin, and connects to nothing (SQLSTATE 28000).
+does so only over TLS, a Unix socket or a named pipe: over plain TCP the
+client refuses to begin, and connects to nothing (SQLSTATE 28000). Over
+a named pipe, `--read-timeout` does not apply: once the pipe is open,
+the client waits on it as long as it must.
 
 Without a password, a certificate presented, `--certificate` and
 `--key`, both, with `--tls`, proves the user its common name names, to a

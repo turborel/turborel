@@ -273,3 +273,40 @@ fn a_unix_socket_serves_this_machine() {
     assert!(runtime.block_on(Local::bind(&path)).is_err(), "not a socket");
     assert!(connection::connect_local(&scratch.path("none"), "X", &mut Trust).is_err());
 }
+
+/// Verifies: [DESIGN] RULES.md D42: on Windows, a named pipe's client is
+/// local, so trusted; two are served at once, an instance waiting while
+/// another serves; a second listener at a name one holds is refused as in
+/// use; once the listener is dropped, the name may be listened at again;
+/// a pipe no server holds cannot be connected to.
+#[cfg(windows)]
+#[test]
+fn a_named_pipe_serves_this_machine() {
+    use std::sync::Arc;
+
+    use turborel_server::transport::{Listener, Pipe};
+    let scratch = crate::common::Scratch::new("named-pipe");
+    let path = scratch.socket("s");
+    let name = path.display().to_string();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let pipe = runtime.block_on(async { Pipe::bind(&name) }).unwrap();
+    assert_eq!(pipe.address(), name);
+    let again = runtime.block_on(async { Pipe::bind(&name) });
+    assert_eq!(again.err().map(|e| e.kind()), Some(std::io::ErrorKind::AddrInUse), "listened at");
+    let mut server = turborel_server::server::Server::new(Database::new()).unwrap();
+    server.add_authenticator(Arc::new(turborel_server::auth::Trust)).unwrap();
+    let listener: Box<dyn Listener> = Box::new(pipe);
+    let endpoint = turborel_server::server::Endpoint { listener, protocol: Arc::new(turborel_server::native::Native), tls: None };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let serving = runtime.spawn(server.serve(vec![endpoint], async { drop(stopped.await) }));
+    let mut first = connection::connect_local(&path, "X", &mut Trust).unwrap();
+    let second = connection::connect_local(&path, "Y", &mut Trust).unwrap();
+    assert_eq!(state(&first.query("SELECT 1").unwrap_err()).1, -102_i32, "a statement runs, and fails as it should");
+    assert_eq!(second.authorization(), "Y");
+    first.terminate().unwrap();
+    second.terminate().unwrap();
+    stop.send(()).unwrap();
+    runtime.block_on(serving).unwrap();
+    drop(runtime.block_on(async { Pipe::bind(&name) }).unwrap());
+    assert!(connection::connect_local(&scratch.socket("none"), "X", &mut Trust).is_err());
+}

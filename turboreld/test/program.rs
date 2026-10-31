@@ -47,8 +47,8 @@ fn running_then(config: Config, then: impl FnOnce(&[String]) + Send + 'static) -
 
 /// Verifies: [DESIGN] RULES.md D25, D36, D42: the program serves the
 /// database kept in its directory where its settings say, set from the
-/// command line: over TCP at the port the system chose, and on Unix over a
-/// socket too; told to stop, it closes the database cleanly; run again
+/// command line: over TCP at the port the system chose, and over a Unix
+/// socket too, on Windows a named pipe; told to stop, it closes the database cleanly; run again
 /// with no setting given, it listens where the settings kept say, and
 /// serves what was committed, its files as the settings fixed at its
 /// creation say: through LZ4 and AES-256-GCM, which it registers, the key
@@ -70,20 +70,20 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     line.extend(["--keys".into(), keys.clone()]);
     let log = scratch.path("log");
     line.extend(["--log".into(), log.display().to_string()]);
-    if cfg!(unix) {
-        line.extend(["--set".into(), format!("SERVER.SOCKET={}", scratch.path("s").display())]);
+    if cfg!(any(unix, windows)) {
+        line.extend(["--set".into(), format!("SERVER.SOCKET={}", scratch.socket("s").display())]);
     }
     let (at, stop, thread) = running(config(&line));
-    assert_eq!(at.len(), if cfg!(unix) { 2 } else { 1 }, "{at:?}");
+    assert_eq!(at.len(), if cfg!(any(unix, windows)) { 2 } else { 1 }, "{at:?}");
     let address: SocketAddr = at[0].parse().unwrap();
     let mut c = connection::connect(address, "X", &mut Trust).unwrap();
     let made = c.query("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER UNIQUE) WITH (ENCODINGS = 'LZ4,AES-256-GCM:MASTER')");
     assert_eq!(done(&made.unwrap()), 0, "indexed: the files are encrypted too");
     assert_eq!(done(&c.query("INSERT INTO T VALUES (7)").unwrap()), 0);
     c.terminate().unwrap();
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        let mut local = connection::connect_local(&scratch.path("s"), "X", &mut Trust).unwrap();
+        let mut local = connection::connect_local(&scratch.socket("s"), "X", &mut Trust).unwrap();
         assert_eq!(rows(&local.query("SELECT K FROM T").unwrap()), ["7"]);
         local.terminate().unwrap();
     }
@@ -104,7 +104,7 @@ fn the_program_serves_a_kept_database_until_told_to_stop() {
     drop(stop);
     thread.join().unwrap().unwrap();
     let (at, stop, thread) = running(config(&["--dir".into(), dir, "--keys".into(), keys]));
-    assert_eq!(at.len(), if cfg!(unix) { 2 } else { 1 }, "kept: {at:?}");
+    assert_eq!(at.len(), if cfg!(any(unix, windows)) { 2 } else { 1 }, "kept: {at:?}");
     let mut c = connection::connect(at[0].parse::<SocketAddr>().unwrap(), "X", &mut Trust).unwrap();
     assert_eq!(rows(&c.query("SELECT K FROM T").unwrap()), ["7"]);
     let page = "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.PAGE_SIZE'";
@@ -240,7 +240,7 @@ fn the_program_says_why_it_cannot_serve() {
     assert!(failed.contains("nowhere"), "{failed}");
     let socket = format!("SERVER.SOCKET={}", file.display());
     let failed = turboreld::run(&config(&line(&["--memory", "--set", &socket])), ready, (async {}, std::future::pending())).unwrap_err();
-    assert!(failed.contains(if cfg!(unix) { "cannot listen" } else { "not on this platform" }), "{failed}");
+    assert!(failed.contains(if cfg!(any(unix, windows)) { "cannot listen" } else { "not on this platform" }), "{failed}");
     let nowhere = scratch.path("no/such/dir/log").display().to_string();
     let failed = turboreld::run(&config(&line(&["--memory", "--log", &nowhere])), ready, (async {}, std::future::pending())).unwrap_err();
     assert!(failed.contains("cannot open the log"), "{failed}");

@@ -36,7 +36,7 @@ fn a_server_shows_its_connections_to_the_owner() {
 /// the database's owner in INFORMATION_SCHEMA.FILES, of KIND SERVER and
 /// no CLASS, not being the database's: its
 /// TLS certificate chain and key, read once as it took TLS and closed;
-/// on Unix its socket, open while it listens. Another user sees none.
+/// its Unix socket or, on Windows, named pipe, open while it listens. Another user sees none.
 #[test]
 fn a_server_shows_its_files_to_the_owner() {
     let pki = pki("shown-files");
@@ -45,8 +45,8 @@ fn a_server_shows_its_files_to_the_owner() {
     db.set_owner("OWNER").unwrap();
     secured(&db, &pki, "ON");
     let mut expected = vec![format!("{},NO,1", pki.chain.display()), format!("{},NO,1", pki.key.display())];
-    if cfg!(unix) {
-        let socket = pki.scratch.path("s");
+    if cfg!(any(unix, windows)) {
+        let socket = pki.scratch.socket("s");
         db.set_setting(SOCKET, &Value::Char(socket.display().to_string())).unwrap();
         expected.push(format!("{},YES,0", socket.display()));
     }

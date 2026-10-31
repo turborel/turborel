@@ -1,8 +1,8 @@
 //! \[DESIGN\] A blocking connection to a server (RULES.md D42): one
 //! statement at a time, its rows read whole, or given to a `Sink` a batch
 //! at a time (`query_into`). It speaks the protocol over any stream that
-//! reads and writes, so TCP, Unix sockets and TLS (`tls`, with the feature
-//! `tls`) all carry it.
+//! reads and writes, so TCP, Unix sockets, named pipes on Windows and TLS
+//! (`tls`, with the feature `tls`) all carry it.
 //!
 //! Every failure is a `Failure`, as the server would report it: the
 //! server's own, or one of the connection (SQLCODE -919, SQLSTATE class
@@ -85,8 +85,9 @@ impl Mechanism for Trust {
 }
 
 /// \[DESIGN\] The client's side of `password`: the password, sent whole,
-/// so only over TLS or a Unix socket. A connection over plain TCP refuses
-/// it before it sends anything, as the server would after.
+/// so only over TLS, a Unix socket or a named pipe. A connection over
+/// plain TCP refuses it before it sends anything, as the server would
+/// after.
 #[derive(Clone)]
 pub struct Password(pub String);
 
@@ -252,6 +253,23 @@ pub fn connect_local(
     let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
     let socket = Socket::local(&stream)?;
     let opened = Connection::open_timed(stream, socket, (user, mechanism), Timeouts::default())?;
+    Ok(opened.reached_by(Target::Local(path.to_path_buf())))
+}
+
+/// Connects to the server at the named pipe `path`, as `\\.\pipe\turborel`,
+/// on Windows, as `user`, authenticated by `mechanism`, waiting as
+/// `Timeouts::default` says to open it while it is busy; its reads and
+/// writes, the login's too, are not bounded (`timeouts.rs`).
+///
+/// # Errors
+///
+/// As `Connection::open`; a connection failure if none can be made, in
+/// time.
+#[cfg(windows)]
+pub fn connect_local(path: &std::path::Path, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<std::fs::File>> {
+    let timeouts = Timeouts::default();
+    let pipe = crate::pipe::open(path, timeouts.connect)?;
+    let opened = Connection::open_timed(pipe, Socket::Pipe, (user, mechanism), timeouts)?;
     Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
 

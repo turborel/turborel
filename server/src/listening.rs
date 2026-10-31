@@ -1,7 +1,7 @@
 //! \[DESIGN\] Where a server listens (RULES.md D42), as its database's
 //! settings say when it starts: SERVER.HOST and SERVER.PORT for TCP, with
-//! TLS as SERVER.TLS says; and SERVER.SOCKET for a Unix socket, which
-//! needs no TLS: only this machine reaches it.
+//! TLS as SERVER.TLS says; and SERVER.SOCKET for a Unix socket, on Windows
+//! a named pipe, which needs no TLS: only this machine reaches it.
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
@@ -99,11 +99,20 @@ async fn local(db: &Database, path: &str) -> Result<Box<dyn Listener>> {
     Ok(Box::new(bound.noting(db.note_file(Path::new(path), true)?)))
 }
 
-/// No Unix socket, off Unix.
-#[cfg(not(unix))]
+/// A listener at the named pipe `name`, on Windows, shown among `db`'s
+/// files while it listens (RULES.md D56).
+#[cfg(windows)]
+#[expect(clippy::unused_async, reason = "awaited as on Unix; the pipe is made within the runtime, as it must be")]
+async fn local(db: &Database, name: &str) -> Result<Box<dyn Listener>> {
+    let bound = crate::transport::Pipe::bind(name).map_err(|e| unable(format!("[DESIGN] cannot listen at {name}: {e}")))?;
+    Ok(Box::new(bound.noting(db.note_file(Path::new(name), true)?)))
+}
+
+/// No local transport elsewhere than Unix and Windows.
+#[cfg(not(any(unix, windows)))]
 #[expect(clippy::unused_async, reason = "awaited as on Unix, where it listens")]
 async fn local(_: &Database, _: &str) -> Result<Box<dyn Listener>> {
-    Err(unable("[DESIGN] SERVER.SOCKET: Unix sockets are not on this platform".into()))
+    Err(unable("[DESIGN] SERVER.SOCKET: neither Unix sockets nor named pipes are on this platform".into()))
 }
 
 #[cfg(test)]

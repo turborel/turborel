@@ -35,9 +35,10 @@ Each item becomes a decision in RULES.md when done:
 ## Server
 
 The server (RULES.md D42) serves sessions over its native protocol, over
-TCP with TLS or a Unix socket, its clients authenticated by password,
-SCRAM-SHA-256 or certificate (D43), or trusted on its own machine. Each
-item becomes a decision in RULES.md when its design settles.
+TCP with TLS or a Unix socket (a named pipe on Windows), its clients
+authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
+on its own machine. Each item becomes a decision in RULES.md when its
+design settles.
 
 - **The client trusting the platform's authorities,** beside the files
   it is given: it needs rustls-native-certs or webpki-roots, neither in
@@ -78,8 +79,12 @@ item becomes a decision in RULES.md when its design settles.
   the last is answered, as the protocol allows (D45), so a row costs no
   round trip; a row that fails is then known after more are sent, which
   the batch's rollback undoes.
-- **Named pipes** as the local transport on Windows, where Unix sockets
-  are not served.
+- **Named pipes, further** (D42): a security descriptor of the server's
+  own, so only its user and the administrators may open the pipe at all,
+  not others to read only; and a client's reads and writes of a pipe
+  bounded by its timeouts, as a socket's are. Both need the system's API
+  (overlapped I/O, `SECURITY_ATTRIBUTES`), which std does not offer and
+  `unsafe` would reach (R-SAFE-1).
 - **Configuration files** in a subset of TOML, read by our own parser, the
   source of the database's settings at startup.
 - **Other systems' wire protocols**, each a `server::Protocol` plug-in in

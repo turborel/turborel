@@ -189,7 +189,7 @@ fn cancelled<S: std::io::Read + std::io::Write + Send + 'static>(
 
 /// Verifies: [DESIGN] RULES.md D44, D45: a statement is cancelled over the
 /// way its connection was made: over TLS, with the same trust in the
-/// server, and on Unix over its socket. A connection over a stream given
+/// server, and over its Unix socket or, on Windows, named pipe. A connection over a stream given
 /// to it cannot reach its server again, so has no canceller; a canceller
 /// never shows its key, and fails to cancel once the server is gone.
 #[test]
@@ -197,9 +197,9 @@ fn a_statement_is_cancelled_over_tls_and_a_socket() {
     let pki = crate::common::pki("cancel-tls");
     let db = database(300);
     crate::common::secured(&db, &pki, "ON");
-    #[cfg(unix)]
-    let socket = pki.scratch.path("s");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
+    let socket = pki.scratch.socket("s");
+    #[cfg(any(unix, windows))]
     db.set_setting(turborel_server::settings::SOCKET, &Value::Char(socket.display().to_string())).unwrap();
     let server = start(&db, &[]);
     let secure = crate::common::over_tls(&server, &pki, "localhost").unwrap();
@@ -207,7 +207,7 @@ fn a_statement_is_cancelled_over_tls_and_a_socket() {
     assert_eq!(format!("{canceller:?}"), "Canceller(..)");
     let (_, code) = cancelled(secure, &canceller);
     assert_eq!(code, -920, "over TLS");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let local = turborel_client::connection::connect_local(&socket, "X", &mut turborel_client::connection::Trust).unwrap();
         let local_canceller = local.canceller().unwrap();

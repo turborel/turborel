@@ -111,7 +111,7 @@ fn connection_statements_are_refused_saying_why() {
 /// RULES.md D43, D46: a connection CONNECT makes is secured as the
 /// command line's is, over TLS trusting its certificates, the server's
 /// checked against the host named; on Unix a path beginning '/' is a
-/// socket's. A password typed is asked for again for each: a wrong one is
+/// socket's, on Windows one beginning '\\' a named pipe's. A password typed is asked for again for each: a wrong one is
 /// refused (08004), and one that cannot be read leaves the server
 /// unreached (08001).
 #[test]
@@ -130,12 +130,12 @@ fn a_connection_made_is_proved_and_secured_as_the_first() {
     let port = server.address.port();
     agent.query(&format!("CONNECT TO 'localhost:{port}' AS 'TLS'")).unwrap();
     assert_eq!(agent.current().unwrap().authorization(), "ANN");
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        agent.query(&format!("CONNECT TO '{}' AS 'SOCK'", pki.scratch.path("s").display())).unwrap();
+        agent.query(&format!("CONNECT TO '{}' AS 'SOCK'", pki.scratch.socket("s").display())).unwrap();
         assert_eq!(agent.current_name(), Some("SOCK"));
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     agent.query(&format!("CONNECT TO 'localhost:{port}' AS 'SOCK'")).unwrap();
     assert_eq!(agent.query(&format!("CONNECT TO 'localhost:{port}' AS 'WRONG'")).unwrap_err().sqlstate, "08004");
     assert_eq!(agent.query(&format!("CONNECT TO 'localhost:{port}' AS 'UNREAD'")).unwrap_err().sqlstate, "08001");

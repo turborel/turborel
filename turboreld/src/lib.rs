@@ -78,7 +78,8 @@ The server's settings, beside the database's:
   SERVER.HOST            hosts or addresses, by commas, to take TCP connections at
                          (default 127.0.0.1; empty for none)
   SERVER.PORT            their port (default 7422; 0 for one the system chooses)
-  SERVER.SOCKET          a Unix socket to take connections at (Unix only; default none)
+  SERVER.SOCKET          a Unix socket, on Windows a named pipe, to take connections at
+                         (default none)
   SERVER.TLS             OFF, ON (TLS offered on the TCP port) or REQUIRED (default OFF)
   SERVER.TLS_CERTIFICATE the PEM file of the server's certificate chain
   SERVER.TLS_KEY         the PEM file of the server's private key

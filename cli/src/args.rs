@@ -28,8 +28,8 @@ pub enum Server {
         /// TLS, if the connection is secured.
         tls: Option<Tls>,
     },
-    /// At a Unix socket.
-    #[cfg(unix)]
+    /// At a Unix socket; on Windows, a named pipe.
+    #[cfg(any(unix, windows))]
     Socket(PathBuf),
 }
 
@@ -268,8 +268,8 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
     Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts, import })
 }
 
-/// Where the server is: at the Unix socket `socket`, if one is named, and
-/// nothing else of where; else at `host`'s `port`, over `tls` if given.
+/// Where the server is: at the Unix socket or named pipe `socket`, if one
+/// is named, and nothing else of where; else at `host`'s `port`, over `tls` if given.
 fn server(socket: Option<PathBuf>, host: Option<String>, port: Option<u16>, tls: Option<Tls>) -> Result<Server, String> {
     let Some(path) = socket else {
         return Ok(Server::Tcp { host: host.unwrap_or_else(|| DEFAULT_HOST.to_owned()), port: port.unwrap_or(DEFAULT_PORT), tls });
@@ -280,15 +280,17 @@ fn server(socket: Option<PathBuf>, host: Option<String>, port: Option<u16>, tls:
     socket_server(path)
 }
 
-/// The server at the Unix socket `path`, on Unix.
-#[cfg(unix)]
-#[expect(clippy::unnecessary_wraps, reason = "elsewhere than Unix, it fails")]
+/// The server at the Unix socket `path`, on Unix; at the named pipe
+/// `path`, on Windows.
+#[cfg(any(unix, windows))]
+#[expect(clippy::unnecessary_wraps, reason = "elsewhere than Unix and Windows, it fails")]
 pub(crate) fn socket_server(path: PathBuf) -> Result<Server, String> {
     Ok(Server::Socket(path))
 }
 
-/// None off Unix: a Unix socket is reached on Unix only.
-#[cfg(not(unix))]
+/// None elsewhere than Unix and Windows: neither Unix sockets nor named
+/// pipes are there.
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn socket_server(_: PathBuf) -> Result<Server, String> {
-    Err("--socket: a Unix socket is reached on Unix only".into())
+    Err("--socket: a Unix socket is reached on Unix only, a named pipe on Windows only".into())
 }

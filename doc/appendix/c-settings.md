@@ -131,7 +131,7 @@ Each in a sentence:
 - **SERVER.PORT**: The TCP port connections are taken at.
 - **SERVER.SCRAM_WITHOUT_TLS**: Whether SCRAM-SHA-256 is taken over plain TCP (ON), where an eavesdropper may guess the password from the exchange, or only over TLS or a Unix socket (OFF).
 - **SERVER.SHUTDOWN_TIMEOUT**: The milliseconds a server told to stop lets each connection finish its statement, before it cancels the statements and closes the connections, their transactions rolled back; 0 for no limit.
-- **SERVER.SOCKET**: The Unix socket connections are taken at, unless empty.
+- **SERVER.SOCKET**: The Unix socket or named pipe taken at, unless empty.
 - **SERVER.TLS**: Whether TCP connections may use TLS (ON), or must (REQUIRED).
 - **SERVER.TLS_CERTIFICATE**: The PEM file of the server's certificate chain, taken again for the connections after a change.
 - **SERVER.TLS_CLIENT_CA**: The PEM file of the authorities whose certificates a TLS client may present to log in by; none asked for if empty.
