@@ -45,7 +45,7 @@ fn all(list: SpillList<N>, newest: bool) -> Vec<u64> {
 }
 
 /// Verifies: [DESIGN] RULES.md D38, `SpillList`: past its bytes, its items
-/// are written, a segment to a run; read back oldest or newest segment
+/// are written, the segments held to a run; read back oldest or newest segment
 /// first, each in order, they are as pushed; visited, the list is kept.
 #[test]
 fn items_are_read_back_as_pushed() {
@@ -121,4 +121,34 @@ fn items_are_located_and_taken_oldest_first() {
     let mut unread = numbers(10, true);
     assert_eq!(unread.take_oldest(&decode).and_then(Result::err).map(|e| e.code), Some(Code::Io));
     assert_eq!(unread.len(), 7, "the segment taken");
+}
+
+/// Verifies: [DESIGN] RULES.md D38, `SpillList::push`: segments held one
+/// after another, a mark's of an item each, are written together as one
+/// run, not a run, and a page, each; an item among them is found in it,
+/// and a place among them is taken by reading it back. Regression test
+/// (R-TEST-7): a transaction of many single-row statements wrote each
+/// statement's changes to a run of its own, a page each as it was read, so
+/// it used up the memory budget of a database in memory. A list whose area
+/// is refused (SQLCODE -918) keeps every item held, in order.
+#[test]
+fn small_segments_are_written_together() {
+    let space = |areas| ListSpace { limit: 16, batch: 4096, areas: Some(areas), types: TypeRegistry::default() };
+    let mut list = SpillList::new(space(areas(Some(Arc::new(Held { broken: false })), usize::MAX)));
+    let mut refused = SpillList::new(space(areas(None, 0)));
+    let mut codes = Vec::new();
+    for i in 0..5_u64 {
+        list.mark();
+        list.push(N(i), &mut encode).unwrap();
+        refused.mark();
+        codes.push(refused.push(N(i), &mut encode).err().map(|e| e.code));
+    }
+    assert_eq!(list.segments(), 3, "items 0 to 2 in one run, 3 and 4 held apart");
+    assert!(matches!(list.locate(2), Some(Located::Spilled { segment: 0, at: 2 })));
+    let tail = list.take_from(1, &decode).unwrap();
+    assert_eq!(all(tail, false), [1, 2, 3, 4]);
+    assert_eq!(all(list, false), [0]);
+    assert_eq!(codes, [None, None, Some(Code::Resources), Some(Code::Resources), Some(Code::Resources)]);
+    assert_eq!((refused.len(), refused.held()), (5, 40));
+    assert_eq!(all(refused, false), [0, 1, 2, 3, 4]);
 }

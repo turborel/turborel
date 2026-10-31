@@ -218,12 +218,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   the values a statement gave each row of a table an action may change
   [ISO/IEC 9075:1992 §11.8 GR7]: they should spill as the statement's
   effects do.
-- **A long transaction in memory:** a database in memory, of the default
-  MEMORY_BUDGET, fails an INSERT once its budget is all reserved, its
-  rollback failing too and its table reported damaged, within 100,000
-  single-row INSERTs into two tables in one transaction (as
-  `bench/spilling.rs` set up its tables before it committed in parts):
-  what holds the budget is to be found.
 - **Buffer pool:** a benchmark of the B-link tree in a small pool, and
   read-ahead, to make misses cheaper. Hits with one shared write measured
   87.6M/s to 151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27):

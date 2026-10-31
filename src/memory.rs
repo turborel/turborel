@@ -14,7 +14,9 @@
 //! one for the database, shared by every snapshot of its definitions, and
 //! told the setting's value whenever a change of it is published.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -84,12 +86,13 @@ impl MemoryBudget {
         Ok(Reservation { budget: Arc::clone(self), bytes, id })
     }
 
-    /// Counts `bytes` more reserved, for `what`, if they fit its limit.
+    /// Counts `bytes` more reserved, for `what`, if they fit its limit, or
+    /// past it while this thread undoes work (`Undoing`).
     fn take(&self, bytes: usize, what: &str) -> Result<()> {
-        let limit = self.limit();
+        let (limit, undoing) = (self.limit(), Undoing::active());
         let mut reserved = self.reserved.load(Ordering::Acquire);
         loop {
-            let Some(after) = reserved.checked_add(bytes).filter(|&n| n <= limit) else {
+            let Some(after) = reserved.checked_add(bytes).filter(|&n| n <= limit || undoing) else {
                 return Err(SqlError::new(
                     Code::Resources,
                     format!("[DESIGN] {what} needs {bytes} bytes, but {reserved} of the memory budget's {limit} are reserved"),
@@ -100,6 +103,43 @@ impl MemoryBudget {
                 Err(now) => reserved = now,
             }
         }
+    }
+}
+
+std::thread_local! {
+    /// How many undos this thread is in (`Undoing`).
+    static UNDOING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// \[DESIGN\] RULES.md D38: while it is held, its thread undoes work, a
+/// failed statement's changes or a transaction's at ROLLBACK, and what that
+/// thread reserves of a budget is never refused, though it pass the limit
+/// until the undo gives back what it held, as pages written back are
+/// (`Reservation::resize_anyway`): undoing is always possible, where a
+/// refusal would damage a table (D19). A buffer pool whose every frame is
+/// held makes it wait for one rather than refuse it (`disk/buffer.rs`).
+/// It stays with its thread, and undos may nest.
+pub(crate) struct Undoing {
+    /// Neither sent nor shared: it marks its own thread.
+    _thread: PhantomData<*const ()>,
+}
+
+impl Undoing {
+    /// Marks this thread undoing until it is dropped.
+    pub(crate) fn begin() -> Undoing {
+        UNDOING.with(|n| n.set(n.get().saturating_add(1)));
+        Undoing { _thread: PhantomData }
+    }
+
+    /// Whether this thread is undoing.
+    pub(crate) fn active() -> bool {
+        UNDOING.with(|n| n.get() > 0)
+    }
+}
+
+impl Drop for Undoing {
+    fn drop(&mut self) {
+        UNDOING.with(|n| n.set(n.get().saturating_sub(1)));
     }
 }
 
@@ -241,6 +281,30 @@ mod tests {
         assert!(budget.reserve(1, "b").is_err());
         a.resize_anyway(20);
         drop(a);
+        assert_eq!(budget.reserved(), 0);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D19, D38: while its thread undoes work,
+    /// a reservation, or a reservation's growth, past the limit is granted,
+    /// counted past it and given back as it goes; undos nest; once the
+    /// undo ends, and on another thread meanwhile, the limit holds.
+    #[test]
+    fn what_undoes_is_never_refused() {
+        let budget = MemoryBudget::new(100);
+        let mut a = budget.reserve(90, "a").unwrap();
+        let undoing = Undoing::begin();
+        let nested = Undoing::begin();
+        drop(nested);
+        let b = budget.reserve(50, "b").unwrap();
+        a.resize(120).unwrap();
+        assert_eq!(budget.reserved(), 170, "past the limit");
+        let other = Arc::clone(&budget);
+        let elsewhere = std::thread::spawn(move || other.reserve(1, "c").map(drop).err().map(|e| e.code)).join().unwrap();
+        assert_eq!(elsewhere, Some(Code::Resources), "another thread is refused");
+        drop(undoing);
+        assert!(!Undoing::active());
+        assert_eq!(budget.reserve(1, "c").err().map(|e| e.code), Some(Code::Resources));
+        drop((a, b));
         assert_eq!(budget.reserved(), 0);
     }
 }

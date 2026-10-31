@@ -1,10 +1,10 @@
 //! \[DESIGN\] A list that spills (RULES.md D38): items appended, held in
-//! memory until they pass a number of bytes, then written, each segment of
-//! them as a run of a spill area made when first needed; read back a
-//! segment at a time, newest or oldest first, or the segment of an item's
-//! place. A mark begins a segment, so
-//! the items from it on are taken apart from those before without reading
-//! a run back. Items that cannot be written stay held: a list never loses
+//! memory until they pass a number of bytes, then written, the segments
+//! held together as a run of a spill area made when first needed; read
+//! back a segment at a time, newest or oldest first, or the segment of an
+//! item's place. A mark begins a segment, so the items from it on are
+//! taken apart from those before without reading a run back, unless they
+//! were written in one run with them. Items that cannot be written stay held: a list never loses
 //! one. What its items are in bytes is its owner's, given as it writes and
 //! reads them: the transaction coordinator's undo entries, a row store's
 //! changes and garbage, the row changes recovery reads from the log, the
@@ -142,29 +142,50 @@ impl<T: ListItem> SpillList<T> {
         if self.held > self.space.limit && self.space.areas.is_some() { self.spill(encode) } else { Ok(()) }
     }
 
-    /// Writes each segment held to a run of its own; one that cannot be
-    /// written stays held.
+    /// Writes the segments held to runs, those one after another together
+    /// in one run, so segments of a few items each, a statement's, take a
+    /// run, and its pages, between them rather than one each; a place
+    /// among them is then parted by reading the run back (`take_from`).
+    /// Once a run cannot be written, the rest stay held.
     fn spill(&mut self, encode: Encode<'_, T>) -> Result<()> {
-        for at in 0..self.segments.len() {
-            let Some(Segment::Held(held, bytes)) = self.segments.get_mut(at) else { continue };
-            let (items, bytes) = (std::mem::take(held), *bytes);
-            if items.is_empty() {
-                continue;
-            }
-            let written = self.written(&items, encode);
-            let Some(segment) = self.segments.get_mut(at) else { continue };
-            match written {
-                Ok(run) => {
-                    *segment = Segment::Spilled(run, items.len());
-                    self.held = self.held.saturating_sub(bytes);
+        let (mut segments, mut failed) = (Vec::with_capacity(self.segments.len()), None);
+        let mut gathered: (Vec<T>, usize) = (Vec::new(), 0);
+        for segment in std::mem::take(&mut self.segments) {
+            match segment {
+                Segment::Held(items, bytes) => {
+                    gathered.0.extend(items);
+                    gathered.1 = gathered.1.saturating_add(bytes);
                 }
-                Err(e) => {
-                    *segment = Segment::Held(items, bytes);
-                    return Err(e);
+                spilled @ Segment::Spilled(..) => {
+                    segments.extend(self.gathered(std::mem::take(&mut gathered), encode, &mut failed));
+                    segments.push(spilled);
                 }
             }
         }
-        Ok(())
+        segments.extend(self.gathered(gathered, encode, &mut failed));
+        self.segments = segments;
+        failed.map_or(Ok(()), Err)
+    }
+
+    /// The segment of `items`, of `bytes`: written to a run unless one
+    /// has `failed`, else held, the error kept in `failed`; none if empty.
+    fn gathered(&mut self, (items, bytes): (Vec<T>, usize), encode: Encode<'_, T>, failed: &mut Option<SqlError>) -> Option<Segment<T>> {
+        if items.is_empty() {
+            return None;
+        }
+        if failed.is_some() {
+            return Some(Segment::Held(items, bytes));
+        }
+        match self.written(&items, encode) {
+            Ok(run) => {
+                self.held = self.held.saturating_sub(bytes);
+                Some(Segment::Spilled(run, items.len()))
+            }
+            Err(e) => {
+                *failed = Some(e);
+                Some(Segment::Held(items, bytes))
+            }
+        }
     }
 
     /// `items` in a new run of its area.

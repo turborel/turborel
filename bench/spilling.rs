@@ -87,8 +87,7 @@ fn database() -> Database {
         let other = ROWS - 1 - k;
         s.run(&format!("INSERT INTO T VALUES ({k}, {}, 's {}')", k % 5_000, (k * 7) % 20_000)).unwrap();
         s.run(&format!("INSERT INTO U VALUES ({other}, {}, 's {}')", other % 5_000, other % 20_000 + 10_000)).unwrap();
-        // Committed in parts: one transaction of every row fails in a
-        // database in memory, once its memory budget is all reserved.
+        // Committed in parts, so the setup holds no large transaction.
         if k % PER_COMMIT == PER_COMMIT - 1 {
             s.commit().unwrap();
         }

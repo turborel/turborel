@@ -207,3 +207,68 @@ fn garbage_is_read_and_collected_a_segment_at_a_time() {
         assert!(by_index || by_zones, "{plan}");
     }
 }
+
+/// `db`, in memory of a budget of 3 MiB, its pool of 1 MiB, with `T (K,
+/// S)`, K unique and S indexed, of a hundred rows committed, its changes
+/// and undo entries spilled past 4 KiB and 64 KiB; then, in one
+/// transaction, rows inserted one a statement until the budget refuses one
+/// (SQLCODE -918), that statement undone. Its session, and the rows then
+/// in `T`.
+fn past_the_budget(db: &Database) -> (Session, usize) {
+    const MIB: i128 = 1 << 20;
+    db.set_setting("MEMORY_BUDGET", &Value::Exact(Decimal::new(3 * MIB, 0))).unwrap();
+    db.set_setting("STORAGE.POOL_BYTES", &Value::Exact(Decimal::new(MIB, 0))).unwrap();
+    db.set_setting("WORK_MEMORY", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, S CHARACTER(500)) WITH (TRANSACTIONS.HELD_BYTES = 4096)",
+    )
+    .unwrap();
+    db.create_index("T_S", "S.T", &["S"], "btree").unwrap();
+    let s = db.session("S");
+    let values: Vec<String> = (0..100).map(|k| format!("({k}, 's{k}')")).collect();
+    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    s.commit().unwrap();
+    let refused = (100_i32..100_000_i32).find_map(|k| s.run(&format!("INSERT INTO T VALUES ({k}, 's{k}')")).err().map(|e| (k, e)));
+    let (k, error) = refused.expect("refused past the budget");
+    assert_eq!(error.code, Code::Resources, "{}", error.msg);
+    let k = usize::try_from(k).unwrap();
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec![k.to_string()]), "the refused statement undone");
+    (s, k)
+}
+
+/// Verifies: [X3.135-1986 §7.3 GR3b i, §8.9 GR1]; [DESIGN] RULES.md D19,
+/// D38: undoing is never refused by the memory budget. Regression test
+/// (R-TEST-7): a transaction of a database in memory that inserts a row a
+/// statement until MEMORY_BUDGET refuses one (SQLCODE -918) has that
+/// statement undone, the rows before kept; ROLLBACK then undoes the rest,
+/// rows and index entries, damaging no table, where reading its changes
+/// back to undo them was refused for want of memory and damaged it.
+#[test]
+fn a_transaction_past_the_budget_rolls_back() {
+    let db = Database::new();
+    let (s, _) = past_the_budget(&db);
+    s.rollback().unwrap();
+    assert_eq!(db.damaged_tables().unwrap(), vec![]);
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec!["100".into()]));
+    assert_eq!(rows(&s, "SELECT K FROM T WHERE S = 's99'"), Ok(vec!["99".into()]), "the index as it was");
+    assert_eq!(rows(&s, "SELECT K FROM T WHERE S = 's100'"), Ok(vec![]));
+    s.run("INSERT INTO T VALUES (100, 's100')").unwrap();
+    s.commit().unwrap();
+}
+
+/// Verifies: [X3.135-1986 §7.3 GR3b i, §8.9 GR1]; [DESIGN] RULES.md D38:
+/// a statement refused by the memory budget (SQLCODE -918) is undone and
+/// the transaction goes on: its commit, reading its changes back for its
+/// check without a page more of the budget, keeps the rows before it, and
+/// their index entries. Regression test (R-TEST-7): the commit's check was
+/// refused for want of memory, and its rollback damaged the table.
+#[test]
+fn a_transaction_past_the_budget_commits_what_it_did() {
+    let db = Database::new();
+    let (s, k) = past_the_budget(&db);
+    s.commit().unwrap();
+    assert_eq!(db.damaged_tables().unwrap(), vec![]);
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T"), Ok(vec![k.to_string()]));
+    let last = k - 1;
+    assert_eq!(rows(&s, &format!("SELECT K FROM T WHERE S = 's{last}'")), Ok(vec![last.to_string()]));
+}

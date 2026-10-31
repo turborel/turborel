@@ -37,13 +37,16 @@ server stops. Its pages, its temporary tables' rows and what its queries
 spill are all kept in memory, of its MEMORY_BUDGET, never in the
 system's temporary directory: a statement that needs a page past the
 budget is refused with SQLCODE -918, and what was written before it
-stays.
+stays. Undoing is never refused: the refused statement, or a ROLLBACK,
+takes what it needs to undo, even past the budget, until it gives back
+what the undone changes held.
 
 The data file's pages are read through a buffer pool of
 STORAGE.POOL_BYTES, and what a query spills through one of WORK_MEMORY.
 A page wanted while every page of its pool is held at once, as by a
 pool set too small for the work, is refused with SQLCODE -918 too, at
-once, never waited for.
+once, never waited for, but by an undo, which waits for a page to be let
+go.
 
 ## Opening and closing
 

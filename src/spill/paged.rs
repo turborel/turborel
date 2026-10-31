@@ -195,26 +195,8 @@ impl SpillRun for PagedRun {
 
     /// Each page freed once its records are read.
     fn into_records(mut self: Box<Self>) -> Result<Records> {
-        self.flush()?;
-        let (file, mut pages) = (Arc::clone(&self.file), std::mem::take(&mut self.pages).into_iter());
-        let mut pending: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
-        Ok(Box::new(std::iter::from_fn(move || {
-            loop {
-                if let Some(record) = pending.pop_front() {
-                    return Some(Ok(record));
-                }
-                let id = pages.next()?;
-                let read = file.pool().and_then(|pool| {
-                    let page = pool.read(file.id, id.0)?.to_vec();
-                    pool.free(file.id, id)?;
-                    split(&page)
-                });
-                match read {
-                    Ok(records) => pending.extend(records),
-                    Err(e) => return Some(Err(e)),
-                }
-            }
-        })))
+        let batch = std::mem::take(&mut self.batch);
+        read(Arc::clone(&self.file), std::mem::take(&mut self.pages), true, &batch)
     }
 
     /// Each page a batch, copied out of the pool once and then freed, its
@@ -232,24 +214,29 @@ impl SpillRun for PagedRun {
     }
 
     fn records(&mut self) -> Result<Records> {
-        self.flush()?;
-        let (file, pages) = (Arc::clone(&self.file), self.pages.clone());
-        let mut pending: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
-        let mut next_page = 0_usize;
-        Ok(Box::new(std::iter::from_fn(move || {
-            loop {
-                if let Some(record) = pending.pop_front() {
-                    return Some(Ok(record));
-                }
-                let id = *pages.get(next_page)?;
-                next_page = next_page.saturating_add(1);
-                match file.pool().and_then(|pool| Ok(pool.read(file.id, id.0)?.to_vec())).and_then(|page| split(&page)) {
-                    Ok(records) => pending.extend(records),
-                    Err(e) => return Some(Err(e)),
-                }
-            }
-        })))
+        read(Arc::clone(&self.file), self.pages.clone(), false, &self.batch)
     }
+}
+
+/// The records of a run: of its `pages` of `file`, a page at a time, each
+/// freed once read if `free`, then of the `batch` it gathered, read where
+/// it is, not written first: so reading a run never needs a page of the
+/// budget, as a commit's check or an undo reads it (RULES.md D38).
+fn read(file: Arc<File>, pages: Vec<PageId>, free: bool, batch: &[u8]) -> Result<Records> {
+    let gathered = split(batch)?;
+    let pages = pages.into_iter().map(move |id| {
+        let pool = file.pool()?;
+        let page = pool.read(file.id, id.0)?.to_vec();
+        if free {
+            pool.free(file.id, id)?;
+        }
+        split(&page)
+    });
+    let records = pages.flat_map(|page| match page {
+        Ok(records) => records.into_iter().map(Ok).collect(),
+        Err(e) => vec![Err(e)],
+    });
+    Ok(Box::new(records.chain(gathered.into_iter().map(Ok))))
 }
 
 /// The records of a run's page.

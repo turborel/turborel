@@ -20,7 +20,10 @@ use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
-use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
+use super::{
+    BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, UNDO_WAITS,
+    all_held, count,
+};
 use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::io::Durability;
 use crate::disk::pager::{Extent, PageId, Pager};
@@ -401,6 +404,7 @@ impl BufferPool {
     /// proposes, checked again under the shards of both pages. `None` if
     /// another thread mapped `key` meanwhile.
     fn claim(&self, key: Key) -> Result<Option<Claim>> {
+        let mut waited = None;
         loop {
             {
                 let mut map = self.map(key)?;
@@ -416,17 +420,10 @@ impl BufferPool {
                 }
             }
             let evictable = |index: usize| self.frames.get(index).is_some_and(|f| f.pins.load(Ordering::Acquire) == 0 && f.key().is_some());
-            // Refused rather than waited for: the pool knows no statement
-            // to bound a wait by, and threads each holding pages while
-            // waiting for one more would wait for each other (RULES.md D38).
+            // Refused, or waited for by an undo alone (RULES.md D38).
             let Some(index) = self.eviction.victim(&evictable) else {
-                return Err(SqlError::new(
-                    Code::Resources,
-                    format!(
-                        "[DESIGN] RULES.md D38: all {} frames of the buffer pool are held at once: it is too small for the work (STORAGE.POOL_BYTES, or WORK_MEMORY for a spill area)",
-                        self.frames.len()
-                    ),
-                ));
+                all_held(self.frames.len(), &mut waited, UNDO_WAITS)?;
+                continue;
             };
             let frame = self.frame(index)?;
             let Some(old) = frame.key() else { continue };

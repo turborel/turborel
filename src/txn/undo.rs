@@ -17,6 +17,7 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
+use crate::memory::Undoing;
 use crate::spill::{ListItem, ListSpace, SpillList, record_row, row_bytes, row_record};
 use crate::storage::{Row, RowId, TableStorage};
 use crate::value::types::TypeRegistry;
@@ -113,8 +114,10 @@ impl ListItem for UndoEntry {
 /// a list that spills (`spill/list.rs`), each statement's beginning a
 /// segment of it: so a transaction that changes many rows holds a work
 /// area's bytes of them, and a statement's are undone from where its
-/// segment begins, no run read to part them from those before. A spilled
-/// entry names its storage or index by its place among the log's targets.
+/// segment begins, no run read to part them from those before unless they
+/// were written in one run with them, as the segments of small statements
+/// are. A spilled entry names its storage or index by its place among the
+/// log's targets.
 #[derive(Default)]
 pub(crate) struct UndoLog {
     list: SpillList<UndoEntry>,
@@ -249,6 +252,8 @@ impl State {
     /// SQLCODE -914 if a change could not be undone; the error names `failure`,
     /// the error that failed the statement.
     pub(crate) fn fail_statement(&self, tx: &Txn, failure: &SqlError) -> Result<()> {
+        // Never refused by the memory budget (RULES.md D38).
+        let _undoing = Undoing::begin();
         let _gate = self.tx.gate.enter();
         let (entries, savepoints) = {
             let mut st = tx.state()?;

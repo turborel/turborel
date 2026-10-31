@@ -29,13 +29,15 @@ mod pool;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{Duration, Instant};
 
 pub use eviction::{Clock, Eviction};
 
 use super::block::BlockFile;
 use super::pager::Pager;
+use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::MurmurMap;
-use crate::memory::Reservation;
+use crate::memory::{Reservation, Undoing};
 use crate::sync::lock_builtin;
 
 /// A file registered with a pool.
@@ -99,6 +101,36 @@ struct Shard {
 /// Adds 1 to `counter`; it would wrap only after 2^64, which no pool reaches.
 fn count(counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);
+}
+
+/// \[DESIGN\] How long an undo waits for a frame of a pool whose every
+/// frame is held (`all_held`) before it is refused.
+const UNDO_WAITS: Duration = Duration::from_secs(10);
+
+/// \[DESIGN\] RULES.md D38: a page wanted while all `frames` are held. It
+/// is refused at once: the pool knows no statement to bound a wait by, and
+/// threads each holding pages while waiting for one more would wait for
+/// each other. But an undo (`Undoing`) is never refused for want of
+/// memory, so it waits, `Ok` to try again a moment later, from when it
+/// first found every frame held (`waited`) for up to `bound`: the threads
+/// holding them are refused and let go, or end what they do, and an undo
+/// holds a few pages at most.
+///
+/// # Errors
+///
+/// SQLCODE -918, the pool too small for the work; for an undo, once it has
+/// waited `bound`.
+fn all_held(frames: usize, waited: &mut Option<Instant>, bound: Duration) -> Result<()> {
+    if Undoing::active() && waited.get_or_insert_with(Instant::now).elapsed() < bound {
+        std::thread::sleep(Duration::from_millis(1));
+        return Ok(());
+    }
+    Err(SqlError::new(
+        Code::Resources,
+        format!(
+            "[DESIGN] RULES.md D38: all {frames} frames of the buffer pool are held at once: it is too small for the work (STORAGE.POOL_BYTES, or WORK_MEMORY for a spill area)"
+        ),
+    ))
 }
 
 /// One frame: the page it holds, its pins, whether it is dirty, whether it
@@ -239,8 +271,49 @@ impl BufferPool {
     /// # Errors
     ///
     /// SQLCODE -910 if `file` is not a registered pager file.
-    pub fn pages_in_use(&self, file: FileId) -> crate::error::Result<u64> {
+    pub fn pages_in_use(&self, file: FileId) -> Result<u64> {
         let pager = self.pager(file)?;
         Ok(pager.page_count().saturating_sub(pager.free_pages()))
+    }
+}
+
+// Unit tests: an undo waits for a frame (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+    use crate::disk::encoding::Pipeline;
+    use crate::disk::memory::MemoryFileSystem;
+    use crate::hash::HashFunction;
+    use crate::hash::crc::{CRC32_ISCSI, Crc};
+
+    /// Verifies: [DESIGN] RULES.md D19, D38: with every frame of a pool
+    /// held, a page is refused at once (SQLCODE -918), but an undo waits
+    /// for a frame and is given the one let go; it is refused too once it
+    /// has waited its bound.
+    #[test]
+    fn an_undo_waits_for_a_frame() {
+        let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+        let pager = Pager::create(&MemoryFileSystem::new(), Path::new("/p"), hash, Pipeline::none(), 4096).unwrap();
+        let pool = BufferPool::new(1, Box::new(Clock::new(1))).unwrap();
+        let file = pool.add_pager(Arc::new(pager));
+        let a = pool.new_page(file).map(|(id, _)| id).unwrap();
+        // Written, so pinned, as a read that hits by its hint is not.
+        let held = pool.write(file, a).unwrap();
+        assert_eq!(pool.new_page(file).err().map(|e| e.code), Some(Code::Resources), "refused at once");
+        std::thread::scope(|threads| {
+            let undo = threads.spawn(|| {
+                let _undoing = Undoing::begin();
+                pool.new_page(file).map(|(id, _)| id)
+            });
+            std::thread::sleep(Duration::from_millis(20));
+            drop(held);
+            assert!(undo.join().unwrap().is_ok(), "given the frame let go");
+        });
+        let _undoing = Undoing::begin();
+        let mut waited = None;
+        assert!(all_held(1, &mut waited, Duration::from_secs(1)).is_ok(), "to try again");
+        assert_eq!(all_held(1, &mut waited, Duration::ZERO).err().map(|e| e.code), Some(Code::Resources), "past its bound");
     }
 }

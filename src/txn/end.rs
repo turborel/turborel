@@ -12,6 +12,7 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::index::{Index, Key};
+use crate::memory::Undoing;
 use crate::storage::{Row, RowId, TableStorage, project};
 use crate::sync::lock_builtin;
 use crate::value::Value;
@@ -185,6 +186,9 @@ impl State {
     ///
     /// SQLCODE -914 if a change could not be undone. The transaction still ends.
     pub(crate) fn rollback(&self, tx: &Txn) -> Result<()> {
+        // Never refused by the memory budget, nor the collection after,
+        // which gives back what the undo leaves (RULES.md D38).
+        let _undoing = Undoing::begin();
         // Undo first, then release the locks. A damaged table is marked before
         // its locks are released, so no other transaction sees it partly undone.
         let gate = self.tx.gate.enter();

@@ -265,6 +265,7 @@ log still hold what it should be. `Database::repair_table` repairs one
 whose index entries alone could not be undone, building its indexes again
 from its rows; one whose rows could not be is repaired by opening the
 database again, which recovers it, or, kept nowhere, only dropped.
+An undo is never refused by the memory budget (D38).
 *Why:* a silently half-undone table breaks §7.3 GR3b i and §8.9 GR1;
 refusing it keeps a state no transaction produced from being read, and
 the log is what can put it right.
@@ -1398,6 +1399,15 @@ catalog to keep in step.
   statement to bound a wait by, and threads each holding pages while
   waiting for one more would wait for each other; the pool is too small
   for the work.
+- What undoes work is never refused by the budget: a failed statement's
+  undo, and a ROLLBACK's, with the collection after it (`Undoing`),
+  reserve what they need even past the limit, until the undo gives back
+  what it held; a page they want while every frame of its pool is held
+  is waited for, up to ten seconds, as every other holder is refused and
+  lets go and an undo holds a few pages at most. A refusal would damage
+  a table (D19). Nor does reading a spilled list back need the budget: a
+  run's last batch, not yet written, is read where it is held, so a
+  commit's check reads its changes without a page more.
 - Plug-ins are given the budget when they are registered
   (`StorageEngine::attach`, `IndexMethod::attach`), so their caches draw on
   the same limit. Each owner keeps its own pool and eviction policy. A
@@ -1524,7 +1534,9 @@ catalog to keep in step.
   transaction's own, a committed one being in the undo store already. A
   committed transaction's changed rows, which others' reads are checked
   against, are kept up to as many bytes, then as each column's least and
-  greatest value. Each of these lists spills alike (`spill/list.rs`).
+  greatest value. Each of these lists spills alike (`spill/list.rs`),
+  the segments it holds written together in one run, so the changes of
+  many small statements take a run between them, not a page each.
   Collection hands each version it removes to the coordinator as it goes,
   for its index entries to go (`TableStorage::gc`), and an index build
   reads the garbage it needs entries for a segment at a time. Recovery
