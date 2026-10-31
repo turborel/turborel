@@ -6,6 +6,7 @@ One reference page for each statement, in alphabetical order.
 
 - [ALLOCATE CURSOR](allocate-cursor.md): allocate a cursor for a query prepared
 - [ALLOCATE DESCRIPTOR](allocate-descriptor.md): allocate an SQL descriptor area
+- [ALTER DATABASE](alter-database.md): hand the database on to another owner
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER TABLE](alter-table.md): change a base table

@@ -456,9 +456,10 @@ Facilities beyond the standards, marked `[EXTENSION]` in the code:
   plug-ins declare the options (`Database::declare_index_option`).
 - **Users** (RULES.md D43), which neither standard has: `CREATE USER name
   [WITH] PASSWORD 'literal'`, `ALTER USER name [WITH] PASSWORD 'literal'`
-  and `DROP USER name`, by the database's owner, outside a transaction;
-  through Rust, `Database::create_user`, `set_verifier`, `drop_user` and
-  `set_owner`; INFORMATION_SCHEMA.USERS. A `Credentials` plug-in makes a
+  and `DROP USER name`, and `ALTER DATABASE OWNER TO name`, handing the
+  database on, by the database's owner, outside a transaction; through
+  Rust, `Database::create_user`, `set_verifier`, `drop_user` and
+  `set_owner`, and `Session::set_owner`; INFORMATION_SCHEMA.USERS. A `Credentials` plug-in makes a
   verifier of a password; the server's is PBKDF2-HMAC-SHA256, keeping
   SCRAM-SHA-256's StoredKey and ServerKey.
 - **A server's connections** (RULES.md D42), which neither standard has:

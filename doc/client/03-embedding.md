@@ -78,8 +78,9 @@ A session is used by one thread at a time; it may move to another
 between calls. Each thread of a program has its own sessions.
 
 `Database::set_owner` makes a user the database's owner, unchecked, as
-the program holding the database may. `Session::set_owner` does it for
-a session of the owner alone, outside a transaction (SQLCODE -104 for
+the program holding the database may. `Session::set_owner` does it, as
+[ALTER DATABASE](../sql/statements/alter-database.md) does, for a
+session of the owner alone, outside a transaction (SQLCODE -104 for
 another's, -917 in a transaction, -103 for a name not a user's): the
 owner hands the database on, and its sessions go on as the owner no
 more ([Users](../operator/05-users.md)).

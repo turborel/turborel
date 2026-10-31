@@ -2146,13 +2146,15 @@ is configured, seen and changed like the database's.
   otherwise connect as the owner.
 - The database's owner is a user: the first one created, so a database
   never has users and no owner; or another the host program or `turboreld
-  user owner` makes it, or the owner's own session hands it on
-  (`Session::set_owner`), checked and made in one change of the
-  definitions, outside a transaction, its sessions going on as the owner
-  no more; it cannot be dropped until another owns the database. In
-  SQL, the owner alone manages users: `CREATE USER`, `ALTER USER` and
-  `DROP USER` (`parser/users.rs` gives their BNF, in the standard's
-  notation). INFORMATION_SCHEMA.USERS shows the owner every user, any
+  user owner` makes it, or the owner hands it on, in SQL by `ALTER
+  DATABASE OWNER TO name` (`Session::set_owner`): checked and made in one
+  change of the definitions, outside a transaction (SQLCODE -917), by the
+  owner alone (-104), to a user (-103), logged and replayed as a
+  definition and told (`OwnerChanged`); no session is ended, the owner's
+  going on as the owner no more. It cannot be dropped until another owns
+  the database. In SQL, the owner alone manages users: `CREATE USER`,
+  `ALTER USER` and `DROP USER` (`parser/users.rs` gives their BNF and
+  ALTER DATABASE's, in the standard's notation). INFORMATION_SCHEMA.USERS shows the owner every user, any
   other only itself, never a verifier.
 - An operator sets a database up with `turboreld --dir PATH user ...`
   while no server holds it: its directory is locked by the one that does.

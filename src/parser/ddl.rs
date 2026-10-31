@@ -33,8 +33,8 @@ impl Parser {
     /// (`parser/schema.rs`); ALTER TABLE; DROP SCHEMA, TABLE, VIEW, DOMAIN or
     /// ASSERTION; CREATE or DROP of a character set, collation or translation,
     /// read then refused (`parser/charsets.rs`); or, of this implementation,
-    /// CREATE, DROP or ALTER INDEX, and CREATE, ALTER or DROP USER
-    /// (`parser/users.rs`).
+    /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
+    /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
         let defines = [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION].iter().any(|w| self.next_is_kw(w));
         if (self.is_kw(kw::CREATE) && defines) || (self.is_kw(kw::ALTER) && self.next_is_kw(kw::DOMAIN)) {
@@ -55,6 +55,9 @@ impl Parser {
         }
         if self.accept_kw(kw::USER) {
             return self.alter_or_drop_user(alter);
+        }
+        if alter && self.accept_word(super::users::DATABASE) {
+            return self.alter_database();
         }
         if !alter && let Some(refused) = self.drop_character_set()? {
             return Ok(refused);

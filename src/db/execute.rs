@@ -403,6 +403,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::User(UserStatement::Create { .. }) => "CREATE USER",
         SqlStatement::User(UserStatement::Alter { .. }) => "ALTER USER",
         SqlStatement::User(UserStatement::Drop { .. }) => "DROP USER",
+        SqlStatement::User(UserStatement::Owner { .. }) => "ALTER DATABASE",
         SqlStatement::Served(ServedStatement::End { .. }) => "END CONNECTION",
         SqlStatement::Served(ServedStatement::Cancel { .. }) => "CANCEL CONNECTION",
     }

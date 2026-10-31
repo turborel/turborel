@@ -33,6 +33,19 @@ fn the_connection_statements_run_as_printed() {
     drop(bob);
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D43: the examples of ALTER
+/// DATABASE run as printed, by the database's owner, ANN, beside the user
+/// BOB.
+#[test]
+fn the_owners_hand_over_runs_as_printed() {
+    let db = Database::new();
+    db.create_user("ANN", b"x").unwrap();
+    db.create_user("BOB", b"x").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/statements/alter-database.md") > 0, "it shows its examples' output");
+    assert_eq!(db.owner().unwrap().as_deref(), Some("BOB"));
+}
+
 /// The fence that begins a block of SQL.
 const SQL_FENCE: &str = "```sql";
 /// The fence that begins a block of output, and ends any block.

@@ -61,10 +61,6 @@ design settles.
   with one. With them, [ISO/IEC 9075:1992 §12.1 SR5]: exactly one
   procedure of a module opens each cursor it declares, which a session,
   playing the module's part, does not check.
-- **The database's owner given in SQL**, by the owner, so it is handed on
-  without stopping the server: the Rust API under it is
-  `Session::set_owner` (RULES.md D43); its statement's BNF is to be
-  agreed before it is built.
 - **Named pipes, further** (D42): a security descriptor of the server's
   own, so only its user and the administrators may open the pipe at all,
   not others to read only; and a client's reads and writes of a pipe

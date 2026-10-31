@@ -19,6 +19,17 @@ USER](../sql/statements/alter-user.md) and [DROP
 USER](../sql/statements/drop-user.md), and sets the database's settings.
 The owner cannot be dropped until another owns the database.
 
+The owner hands the database on to another user, on a running server,
+by [ALTER DATABASE](../sql/statements/alter-database.md):
+
+```
+ALTER DATABASE OWNER TO bob;
+```
+
+No session is ended; the owner's go on as the owner no more. With no
+server running, `turboreld user owner NAME` does the same
+([Managing users from turboreld](#managing-users-from-turboreld)).
+
 What a user may do is the privileges granted to its name, as of any
 authorization identifier ([GRANT](../sql/statements/grant.md)).
 

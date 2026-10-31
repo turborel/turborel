@@ -194,6 +194,52 @@ fn the_owner_hands_the_database_on() {
     assert_eq!(rows(&ann, "SELECT K FROM T"), Ok(vec!["1".to_owned()]), "going on");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.4]; [DESIGN] RULES.md D25,
+/// D43: ALTER DATABASE OWNER TO hands the database on in SQL, its user an
+/// identifier, a regular one upper case; prepared too; kept, so the owner
+/// it gives is the owner after a crash, replayed from the log. Refused,
+/// nothing changed: by any but the owner (SQLCODE -104); in a transaction
+/// (-917); to one not a user (-103), placed at the identifier; and as a
+/// Format broken (-102) without OWNER, TO or an identifier.
+#[test]
+fn the_owner_hands_the_database_on_in_sql() {
+    let scratch = Scratch::new("owner-in-sql");
+    let dir = scratch.path("db");
+    let open = || {
+        let db = Database::new();
+        db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+        db
+    };
+    let db = open();
+    for user in ["ANN", "BOB", "CAROL"] {
+        db.create_user(user, b"").unwrap();
+    }
+    db.checkpoint().unwrap();
+    let ann = db.session("ANN");
+    assert_eq!(exec(&db.session("BOB"), "ALTER DATABASE OWNER TO bob"), Err(Code::Privilege), "not the owner");
+    assert_eq!(exec(&ann, "ALTER DATABASE OWNER TO dave"), Err(Code::SyntaxRule), "not a user");
+    assert_eq!(ann.run("ALTER DATABASE OWNER TO dave").unwrap_err().pos, Some(24), "at the identifier");
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER)").unwrap();
+    exec(&ann, "INSERT INTO T VALUES (1)").unwrap();
+    assert_eq!(exec(&ann, "ALTER DATABASE OWNER TO bob"), Err(Code::TransactionState), "in a transaction");
+    ann.commit().unwrap();
+    for wrong in ["ALTER DATABASE bob", "ALTER DATABASE OWNER bob", "ALTER DATABASE OWNER TO", "ALTER DATABASE OWNER TO bob x"] {
+        assert_eq!(exec(&ann, wrong), Err(Code::Syntax), "{wrong}");
+    }
+    assert_eq!(db.owner().unwrap().as_deref(), Some("ANN"), "nothing changed");
+    exec(&ann, "ALTER DATABASE OWNER TO bob").unwrap();
+    assert_eq!(db.owner().unwrap().as_deref(), Some("BOB"));
+    let bob = db.session("BOB");
+    let handing = bob.prepare("ALTER DATABASE OWNER TO carol").unwrap();
+    bob.execute_prepared(&handing, &[]).unwrap();
+    assert_eq!(db.owner().unwrap().as_deref(), Some("CAROL"), "prepared");
+    drop((ann, bob));
+    let crashed = db;
+    let recovered = open();
+    drop(crashed);
+    assert_eq!(recovered.owner().unwrap().as_deref(), Some("CAROL"), "replayed");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1]; [DESIGN] RULES.md D43:
 /// INFORMATION_SCHEMA.USERS shows the owner every user and whether it owns
 /// the database; any other user, only itself; an identifier not a user,

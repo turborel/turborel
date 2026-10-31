@@ -287,17 +287,17 @@ impl Session {
         Ok(())
     }
 
-    /// \[EXTENSION\] Runs the user statement `stmt`: by the database's
-    /// owner only, outside a transaction.
+    /// \[EXTENSION\] Runs the user statement `stmt`, or ALTER DATABASE: by
+    /// the database's owner only, outside a transaction.
     ///
     /// # Errors
     ///
     /// SQLCODE -917 in a transaction; -104 if the session's identifier is
     /// not the owner's; -910 if no `Credentials` plug-in is set to make a
     /// verifier; those of `Database::create_user`, `set_verifier`,
-    /// `drop_user`.
+    /// `drop_user`, `Session::set_owner`.
     pub(super) fn user_statement(&self, stmt: &UserStatement) -> Result<Completion> {
-        self.as_owner("a user statement")?;
+        self.as_owner(if matches!(stmt, UserStatement::Owner { .. }) { "ALTER DATABASE" } else { "a user statement" })?;
         let verified = |name: &str, password: &str| {
             let credentials = self.db.credentials().ok_or_else(|| {
                 SqlError::new(Code::Api, "[EXTENSION] no credentials plug-in is set to keep a password (Database::set_credentials)")
@@ -308,6 +308,7 @@ impl Session {
             UserStatement::Create { name: (name, at), password } => self.db.create_user(name, &verified(name, password)?).or_at(*at)?,
             UserStatement::Alter { name: (name, at), password } => self.db.set_verifier(name, &verified(name, password)?).or_at(*at)?,
             UserStatement::Drop { name: (name, at) } => self.db.drop_user(name).or_at(*at)?,
+            UserStatement::Owner { name: (name, at) } => self.set_owner(name).or_at(*at)?,
         }
         Ok(Completion::Success)
     }
