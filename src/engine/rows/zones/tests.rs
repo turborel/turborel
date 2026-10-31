@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use super::ZONE_ROWS;
+use super::saved::SEGMENT_ZONES;
 use crate::disk::buffer::{BufferPool, Clock};
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
@@ -334,4 +335,38 @@ fn zones_unsealable_or_malformed_are_not_known() {
         let refused = RowTable::open(&files, meta, &TYPES, TableOptions::default()).err().map(|e| e.code);
         assert_eq!(refused, Some(crate::error::Code::Corrupt));
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D30, D38, zone maps saved, a failure:
+/// a save, as a checkpoint makes it, whose pool write fails, every frame
+/// held (SQLCODE -918), fails, and marks every segment to be saved again,
+/// that of the table's first rows and that of a row recovery wrote far
+/// past them; the next save writes them all, and the table opened knows
+/// the zones of both as saved, with no sum up.
+#[test]
+fn zones_a_failed_save_left_are_saved_by_the_next() {
+    let fs = MemoryFileSystem::new();
+    let pager =
+        Pager::create(&fs, std::path::Path::new("/rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let frames = 8_usize;
+    let pool = Arc::new(BufferPool::new(frames, Box::new(Clock::new(frames))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let files = TableFiles::new(Arc::clone(&pool), file, Arc::new(MemoryLog::new()));
+    let others: Vec<u64> = (0..frames).map(|_| pool.new_page(file).unwrap().0.0).collect();
+    let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+    let first = table.insert(NO_TRANSACTION, row(1)).unwrap();
+    let segment_rows = u64::try_from(SEGMENT_ZONES).unwrap().checked_mul(ZONE_ROWS).unwrap();
+    let far = first.checked_add(segment_rows).unwrap();
+    table.apply(far, Some(row(2))).unwrap();
+    let meta = table.meta();
+    {
+        let held: Vec<_> = others.iter().map(|&page| pool.read(file, page).unwrap()).collect();
+        assert_eq!(held.len(), frames, "every frame held");
+        assert_eq!(files.save_zones().err().map(|e| e.code), Some(crate::error::Code::Resources));
+    }
+    files.save_zones().unwrap();
+    drop(table);
+    let opened = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
+    assert!(!reads(&opened, &equal(0, -1), first) && !reads(&opened, &equal(0, -1), far), "both segments saved");
+    assert_eq!(found(&opened, NO_TRANSACTION, &equal(0, 2)), ["2"]);
 }

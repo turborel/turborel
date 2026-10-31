@@ -209,9 +209,6 @@ The registry, scopes and SET statements exist (D36). Still to do:
   its rows to count those of its newest versions (`count_newest`), as its
   zones no longer need: the count could be kept with its pages as the
   zones are.
-- **Zones saved, a failure midway:** a checkpoint whose pool write fails
-  while it saves a table's zones fails, and marks every segment to be
-  saved again; no test drives that path.
 - **Plug-ins' files, shadowed** (D56): a plug-in's directory, given
   through `Host`, is kept as the plug-in writes it, which makes its files
   durable itself. A directory it declares shadowed would have its writes
