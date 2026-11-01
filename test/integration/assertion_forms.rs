@@ -307,9 +307,9 @@ fn a_greatest_read_at_each_statement_is_checked_whole_6_5() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34, §11.35 GR1, §14.3
 /// GR4]; [DESIGN] RULES.md D51: the rows a deferred assertion's checks
-/// wait for are checked by the assertion as it is when they are made:
-/// whole, once, if it was made again of another form; not at all if it
-/// was dropped.
+/// wait for are checked by the assertion as it is: by one made again of
+/// its name, whole, as it is made, and not again at commit, its totals
+/// kept counting them once; not at all if it was dropped.
 #[test]
 fn a_deferred_assertion_made_again_is_checked_as_it_is_14_3() {
     let (_db, s) = schema();

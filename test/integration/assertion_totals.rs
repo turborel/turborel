@@ -1,7 +1,7 @@
 //! Assertions judged of the totals they keep [ISO/IEC 9075:1992 §6.5,
-//! §11.34 GR2] (RULES.md D51): SUM and AVG of exact numbers compared with
-//! a constant, and the nulls of a set function's argument that may be
-//! null, immediate and deferred. Each answers as the same assertion
+//! §11.34 GR2] (RULES.md D51): SUM and AVG of exact numbers, and COUNT,
+//! compared with a constant, and the nulls of a set function's argument
+//! that may be null, immediate and deferred. Each answers as the same assertion
 //! checked whole, which `AND 1 = 1` makes it; two transactions conflict
 //! only if they move a value the same way; the totals are made with the
 //! assertion, kept across a restart, dropped with it, and named by no
@@ -52,7 +52,7 @@ fn same(a: &Session, b: &Session, sql: &str, step: usize) -> Result<Completion, 
 }
 
 /// The assertions of the random test: each name, condition and attributes.
-const ASSERTED: [(&str, &str, &str); 9] = [
+const ASSERTED: [(&str, &str, &str); 12] = [
     ("CAPPED", "(SELECT SUM(N) FROM T) <= 400", ""),
     ("FLOORED", "(SELECT SUM(N) FROM T WHERE G = 1) >= 4", ""),
     ("SPREAD", "(SELECT AVG(N) FROM T WHERE K > 2) <= 24", ""),
@@ -62,6 +62,9 @@ const ASSERTED: [(&str, &str, &str); 9] = [
     ("CEILING", "(SELECT MAX(N) FROM T) < 90", ""),
     ("LATESUM", "(SELECT SUM(D) FROM T) < 60", "DEFERRABLE INITIALLY DEFERRED"),
     ("LATEAVG", "(SELECT AVG(N) FROM T WHERE G <> 1) >= 3", "DEFERRABLE INITIALLY DEFERRED"),
+    ("FEW", "(SELECT COUNT(*) FROM T WHERE G = 1) <= 9", ""),
+    ("ENOUGH", "(SELECT COUNT(N) FROM T) >= 6", ""),
+    ("LATEFEW", "(SELECT COUNT(*) FROM T WHERE N > 30) < 5", "DEFERRABLE INITIALLY DEFERRED"),
 ];
 
 /// A random statement changing T, from `rng`.
@@ -164,6 +167,9 @@ fn two_transactions_meet_only_moving_a_value_one_way_4_28() {
         ("(SELECT AVG(N) FROM T) <= 24", [insert(20, 1), insert(21, 2)], true),
         ("(SELECT AVG(N) FROM T) <= 24", [insert(20, 30), insert(21, 40)], false),
         ("(SELECT SUM(N) FROM T) <> 7", [insert(20, 1), insert(21, 2)], false),
+        ("(SELECT COUNT(*) FROM T) <= 400", [insert(20, 1), insert(21, 2)], false),
+        ("(SELECT COUNT(*) FROM T) <= 400", [insert(20, 1), "DELETE FROM T WHERE K = 10".to_owned()], true),
+        ("(SELECT COUNT(*) FROM T) >= 2", [insert(20, 1), insert(21, 2)], true),
     ];
     for (n, (condition, [first, second], both)) in cases.into_iter().enumerate() {
         for level in ["SERIALIZABLE", "READ COMMITTED"] {
@@ -287,19 +293,19 @@ fn totals_are_shown_and_folded_21_1() {
     s.commit().unwrap();
     let shown =
         "SELECT FORM_NUMBER, KIND, VALUE_COUNT, NULL_COUNT, TOTAL, ROWS_KEPT FROM INFORMATION_SCHEMA.ASSERTION_TOTALS ORDER BY FORM_NUMBER";
-    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,10,0,55,1", "2,NULLS,NULL,0,NULL,0"], "made");
+    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,10,0,55,1", "2,COUNT,3,0,NULL,1"], "made");
     for k in 11..=90 {
         let n = if k % 10 == 0 { "NULL".to_owned() } else { "1".to_owned() };
         s.run(&format!("INSERT INTO T VALUES ({k}, 0, {n}, 0)")).unwrap();
         s.commit().unwrap();
     }
-    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,82,8,127,81", "2,NULLS,NULL,8,NULL,8"], "a row of each change");
+    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,82,8,127,81", "2,COUNT,75,8,NULL,81"], "a row of each change");
     let reader = db.session("A");
     reader.run("INSERT INTO T VALUES (100, 1, 1, 0)").unwrap();
     db.run_due().unwrap();
-    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,82,8,127,1", "2,NULLS,NULL,8,NULL,1"], "folded");
+    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,82,8,127,1", "2,COUNT,75,8,NULL,1"], "folded");
     reader.commit().unwrap();
-    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,83,8,128,2", "2,NULLS,NULL,8,NULL,1"], "its change kept");
+    assert_eq!(rows(&s, shown).unwrap(), ["1,SUM,83,8,128,2", "2,COUNT,75,8,NULL,1"], "its change kept");
     assert!(rows(&db.session("B"), shown).unwrap().is_empty(), "not its schema's owner");
 }
 

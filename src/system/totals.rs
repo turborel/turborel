@@ -3,7 +3,7 @@
 //! `db/assertions/kept.rs`), an object "associated with
 //! INFORMATION_SCHEMA" this implementation adds, as committed: of each
 //! form keeping them, its place among the assertion's forms, whether of
-//! SUM, AVG or of nulls alone, the values counted, the nulls, the sum, and
+//! SUM, AVG, COUNT or of nulls alone, the values counted, the nulls, the sum, and
 //! the rows of them kept, which a fold makes one. As ASSERTIONS shows an
 //! assertion [§21.2.17], its schema's owner sees them. Split from
 //! system.rs (RULES.md R-SIZE-2).

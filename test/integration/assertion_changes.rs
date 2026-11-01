@@ -110,13 +110,13 @@ fn a_count_replaced_is_checked_whole_11_34() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.28, §14.1 GR5]; [DESIGN]
-/// RULES.md D29, D51: a count is held from a change only in a transaction
-/// that reads at one snapshot. Read at a snapshot of each statement, a
-/// count others raised meanwhile is seen with the transaction's own rows,
-/// whole; at one snapshot the change is checked alone, and the transaction
-/// fails at commit, what it read for its first check changed.
+/// RULES.md D29, D51: a count is judged of the count kept as the
+/// statement's snapshot sees it. Read at a snapshot of each statement, the
+/// rows others added meanwhile count with the transaction's own; at one
+/// snapshot they do not, and the transaction fails at commit, as both
+/// added toward the bound.
 #[test]
-fn a_count_read_at_each_statement_is_checked_whole_11_34() {
+fn a_count_read_at_each_statement_counts_others_rows_11_34() {
     for level in ["READ COMMITTED", "SERIALIZABLE"] {
         let (db, s) = schema();
         s.run("CREATE ASSERTION FEW CHECK ((SELECT COUNT(*) FROM T) <= 12)").unwrap();

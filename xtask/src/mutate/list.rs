@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 41] = [
+pub const MUTATIONS: [Mutation; 43] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -184,10 +184,10 @@ pub const MUTATIONS: [Mutation; 41] = [
     },
     Mutation {
         name: "assertion-count",
-        breaks: "assertions checked from changes: a count raised past its bound passes",
-        file: "src/db/assertions/changes.rs",
-        original: "Kind::Count(safe) => one_snapshot && moved(*safe, (self.change > 0, self.change < 0)),",
-        replacement: "Kind::Count(safe) => one_snapshot && (*safe == Safe::Fewer || moved(*safe, (self.change > 0, self.change < 0))),",
+        breaks: "assertions of a count kept: a count raised past its bound passes",
+        file: "src/db/assertions/kept.rs",
+        original: "            Kind::Count(op, k) => Some(compared(number(after.counted), *op, k, tx)?),",
+        replacement: "            Kind::Count(op, k) => Some(compared(number(0), *op, k, tx)?),",
         integration: &[
             "assertion_changes::a_count_is_held_to_its_bound_11_34",
             "assertion_changes::assertions_checked_from_changes_answer_as_checked_whole",
@@ -196,14 +196,11 @@ pub const MUTATIONS: [Mutation; 41] = [
     },
     Mutation {
         name: "assertion-snapshot",
-        breaks: "assertions checked from changes: a count or a greatest held from a change below one snapshot",
+        breaks: "assertions checked from changes: a greatest held from a change below one snapshot",
         file: "src/db/assertions/changes.rs",
         original: "let verdict = seen.verdict(&form.kind, tx.one_snapshot());",
         replacement: "let verdict = seen.verdict(&form.kind, true);",
-        integration: &[
-            "assertion_changes::a_count_read_at_each_statement_is_checked_whole_11_34",
-            "assertion_forms::a_greatest_read_at_each_statement_is_checked_whole_6_5",
-        ],
+        integration: &["assertion_forms::a_greatest_read_at_each_statement_is_checked_whole_6_5"],
         unit: &[],
     },
     Mutation {
@@ -360,8 +357,8 @@ pub const MUTATIONS: [Mutation; 41] = [
         name: "totals-unrecorded",
         breaks: "assertions of kept totals: two transactions moving a sum toward its bound both commit",
         file: "src/db/assertions/kept.rs",
-        original: "            (_, _, false) | (Move::Up, CompOp::Lt | CompOp::Le, true) | (Move::Down, CompOp::Gt | CompOp::Ge, true) => Register::Moving(mv),",
-        replacement: "            (_, _, false) | (Move::Up, CompOp::Lt | CompOp::Le, true) | (Move::Down, CompOp::Gt | CompOp::Ge, true) => Register::Nothing,",
+        original: "                Register::Moving(mv)",
+        replacement: "                Register::Nothing",
         integration: &["assertion_totals::two_transactions_meet_only_moving_a_value_one_way_4_28"],
         unit: &[],
     },
@@ -369,8 +366,8 @@ pub const MUTATIONS: [Mutation; 41] = [
         name: "totals-every-way",
         breaks: "assertions of kept totals: transactions moving a value opposite ways conflict",
         file: "src/db/assertions/kept.rs",
-        original: "            (_, _, false) | (Move::Up, CompOp::Lt | CompOp::Le, true) | (Move::Down, CompOp::Gt | CompOp::Ge, true) => Register::Moving(mv),",
-        replacement: "            (_, _, false) | (Move::Up, CompOp::Lt | CompOp::Le, true) | (Move::Down, CompOp::Gt | CompOp::Ge, true) => Register::Form,",
+        original: "                Register::Moving(mv)",
+        replacement: "                Register::Form",
         integration: &["assertion_totals::two_transactions_meet_only_moving_a_value_one_way_4_28"],
         unit: &[],
     },
@@ -417,6 +414,24 @@ pub const MUTATIONS: [Mutation; 41] = [
         original: "            self.append_totals(tx, (&kept, *at), (whole.minus(kept_now)?, form))?;",
         replacement: "            self.append_totals(tx, (&kept, *at), (Totals::default(), form))?;",
         integration: &["assertion_totals::totals_are_put_right_past_the_work_area_14_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-made-again-remembers",
+        breaks: "an assertion made again of its name counts the rows waiting for its checks twice",
+        file: "src/db/definitions.rs",
+        original: "                    self.deferral.borrow_mut().forget(a, next.list_space())?;",
+        replacement: "                    drop(next.list_space());",
+        integration: &["assertion_forms::a_deferred_assertion_made_again_is_checked_as_it_is_14_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "count-unrecorded",
+        breaks: "assertions of a count kept: two transactions adding toward its bound both commit",
+        file: "src/db/assertions/kept.rs",
+        original: "            Kind::Count(op, _) => Register::of(*op, false, moved(form, &delta)),",
+        replacement: "            Kind::Count(op, _) => Register::of(*op, false, Move::Still),",
+        integration: &["assertion_totals::two_transactions_meet_only_moving_a_value_one_way_4_28"],
         unit: &[],
     },
 ];

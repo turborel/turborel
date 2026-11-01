@@ -81,11 +81,12 @@ pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
     TableDesc { name, columns, constraints: Vec::new(), engine: ROW_STORE.into(), options: Vec::new(), generation, temporary: None }
 }
 
-/// Whether `form` keeps totals: SUM or AVG; or, of a table's rows, a set
-/// function's argument that may be null, whose nulls tell whether the
-/// warning of a null eliminated is raised [§6.5 GR1b].
+/// Whether `form` keeps totals: SUM or AVG; or, of a table's rows, COUNT,
+/// or a set function's argument that may be null, whose nulls tell
+/// whether the warning of a null eliminated is raised [§6.5 GR1b].
 pub(super) fn keeps(form: &Form) -> bool {
-    matches!(form.kind, Kind::Total(_)) || (matches!(form.source, Source::Table(_)) && form.nulls.is_some())
+    let of_table = matches!(form.source, Source::Table(_));
+    matches!(form.kind, Kind::Total(_)) || (of_table && (form.nulls.is_some() || matches!(form.kind, Kind::Count(..))))
 }
 
 /// A form's totals, or a change of them: the values counted, the nulls,
@@ -195,14 +196,19 @@ pub(super) enum Register {
 }
 
 impl Register {
-    /// What a transaction whose change moves `t`'s value `mv` records.
-    pub(super) fn of(t: &Totalled, mv: Move) -> Register {
-        match (mv, t.op, t.avg) {
-            (Move::Still, _, _) | (Move::Up, CompOp::Gt | CompOp::Ge, true) | (Move::Down, CompOp::Lt | CompOp::Le, true) => {
+    /// What a transaction whose change moves a value compared by `op`, the
+    /// value first, `mv` records: of a value in range either way, as SUM's
+    /// [§6.5 GR2b iv], if `ranged`; else, as AVG's and COUNT's, toward the
+    /// bound alone.
+    pub(super) fn of(op: CompOp, ranged: bool, mv: Move) -> Register {
+        match (mv, op, ranged) {
+            (Move::Still, _, _) | (Move::Up, CompOp::Gt | CompOp::Ge, false) | (Move::Down, CompOp::Lt | CompOp::Le, false) => {
                 Register::Nothing
             }
             (_, CompOp::Eq | CompOp::Ne, _) => Register::Form,
-            (_, _, false) | (Move::Up, CompOp::Lt | CompOp::Le, true) | (Move::Down, CompOp::Gt | CompOp::Ge, true) => Register::Moving(mv),
+            (_, _, true) | (Move::Up, CompOp::Lt | CompOp::Le, false) | (Move::Down, CompOp::Gt | CompOp::Ge, false) => {
+                Register::Moving(mv)
+            }
         }
     }
 
@@ -240,6 +246,10 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
     {
         out.nulled = 1;
     }
+    if matches!(form.kind, Kind::Count(..)) && passes(&form.steps, row, tx)? {
+        // COUNT's steps keep its argument's nulls out (`forms.rs`).
+        out.counted = 1;
+    }
     if let Kind::Total(t) = &form.kind
         && passes(&form.steps, row, tx)?
     {
@@ -273,16 +283,25 @@ pub(super) fn judged(t: &Totalled, after: &Totals, tx: &Txn) -> Result<Truth> {
     put_value(&mut state, &Value::Exact(after.sum.unwrap_or(Decimal::new(0, 0))));
     let mut accumulator = t.agg.func.0.accumulator(t.agg.result);
     accumulator.merge(&state)?;
-    let value = accumulator.finish()?;
-    eval_cond(&Cond::Compare(Expr::Const(value), t.op, t.k.clone()), &Vec::new(), &Heard(tx.stop.warnings()))
+    compared(accumulator.finish()?, t.op, &t.k, tx)
 }
 
-/// Which way `delta` moves the value of `form`: of SUM or AVG; of nulls
-/// alone, none.
+/// The truth of `value op k` [ISO/IEC 9075:1992 §8.2].
+///
+/// # Errors
+///
+/// The comparison's.
+fn compared(value: Value, op: CompOp, k: &Expr, tx: &Txn) -> Result<Truth> {
+    eval_cond(&Cond::Compare(Expr::Const(value), op, k.clone()), &Vec::new(), &Heard(tx.stop.warnings()))
+}
+
+/// Which way `delta` moves the value of `form`: of SUM, AVG or COUNT; of
+/// nulls alone, none.
 fn moved(form: &Form, delta: &Totals) -> Move {
     match &form.kind {
         Kind::Total(t) => moves(t, delta),
-        Kind::NoRow | Kind::Bound | Kind::Count(_) | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => Move::Still,
+        Kind::Count(..) => Move::of(delta.counted.cmp(&0)),
+        Kind::NoRow | Kind::Bound | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => Move::Still,
     }
 }
 
@@ -344,13 +363,16 @@ impl super::super::State {
         let Source::Table(rows) = &form.source else { return Err(SqlError::new(Code::Api, "[DESIGN] totals kept of no table")) };
         let delta = self.change_totals(tx, (form, rows), changes)?;
         let register = match &form.kind {
-            Kind::Total(t) => Register::of(t, moves(t, &delta)),
-            Kind::NoRow | Kind::Bound | Kind::Count(_) | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => Register::Nothing,
+            Kind::Total(t) => Register::of(t.op, !t.avg, moves(t, &delta)),
+            Kind::Count(op, _) => Register::of(*op, false, moved(form, &delta)),
+            Kind::NoRow | Kind::Bound | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => Register::Nothing,
         };
         let after = self.read_totals(tx, (table, at), register)?.plus(delta)?;
         let truth = match &form.kind {
             Kind::Total(t) => Some(judged(t, &after, tx)?),
-            Kind::NoRow | Kind::Bound | Kind::Count(_) | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => None,
+            // [ISO/IEC 9075:1992 §6.5 GR1a, GR2a] COUNT is a cardinality, of no row 0.
+            Kind::Count(op, k) => Some(compared(number(after.counted), *op, k, tx)?),
+            Kind::NoRow | Kind::Bound | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => None,
         };
         Ok(KeptSeen { truth, null: after.nulled > 0, change: delta })
     }

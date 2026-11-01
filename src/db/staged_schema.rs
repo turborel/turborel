@@ -39,7 +39,13 @@ impl Session {
         let zone = self.now.get().zone;
         let (owner, engines, warned, asserted, made) = next.schema(sql, (Some(&self.auth()), zone), None)?;
         let next = Arc::new(next);
-        if let Err(e) = asserted.iter().try_for_each(|a| next.check_assertion(tx, a).and_then(|()| next.start_totals(tx, a))) {
+        let checked = |a: &QualifiedName| {
+            next.check_assertion(tx, a)?;
+            next.start_totals(tx, a)?;
+            // Checked whole, so not again of rows written before.
+            self.deferral.borrow_mut().forget(a, next.list_space())
+        };
+        if let Err(e) = asserted.iter().try_for_each(checked) {
             made.discard();
             return Err(e);
         }

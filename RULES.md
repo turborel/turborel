@@ -815,13 +815,15 @@ machinery.
   standard one:
   - `NOT EXISTS (SELECT ... FROM T WHERE p)`: from rows inserted or
     updated, as a CHECK;
-  - `(SELECT COUNT(*) FROM T WHERE p) op k`: from rows entering the count
-    less those leaving. It holds without reading T if that cannot move
-    the count toward false and the transaction reads at one snapshot
-    (D29); else whole. COUNT(x) is COUNT(*) of the rows `x IS NOT NULL`;
-  - COUNT(DISTINCT x) `op k`: as COUNT, a row passing before and after
-    with the same value (`norm_row`) moving nothing, any other row
-    passing after adding, before taking;
+  - `(SELECT COUNT(*) FROM T WHERE p) op k`: judged of the count kept
+    (below), with the rows entering the count less those leaving. COUNT(x)
+    is COUNT(*) of the rows `x IS NOT NULL`;
+  - COUNT(DISTINCT x) `op k`: from values entering the count less those
+    leaving, a row passing before and after with the same value
+    (`norm_row`) moving nothing, any other row passing after adding,
+    before taking. It holds without reading T if that cannot move the
+    count toward false and the transaction reads at one snapshot (D29);
+    else whole;
   - MAX(x) `<` or `<=` k, MIN(x) `>` or `>=` k: from rows inserted or
     updated, none past k [§6.5 GR2b iii];
   - MAX(x) `>` or `>=` k, MIN(x) `<` or `<=` k: holds if a row inserted
@@ -885,9 +887,10 @@ machinery.
     reads it (a count, a greatest reached or unequal, a grouping). It
     held then, so a count moves by the rows passing now less those
     passing then, at one snapshot as an immediate count.
-- **Kept totals.** SUM, and AVG of an exact bound, of exact numbers,
-  not DISTINCT, compared with a constant; and a table's form whose `x`
-  may be null, for its nulls (`assertions/kept.rs`, `totals.rs`):
+- **Kept totals.** COUNT, not DISTINCT; SUM, and AVG of an exact bound,
+  of exact numbers, not DISTINCT, compared with a constant; and a table's
+  form whose `x` may be null, for its nulls (`assertions/kept.rs`,
+  `totals.rs`):
   - kept in a row-store table of DEFINITION_SCHEMA of each assertion,
     which no statement names, owns or sees [§21.1]: each statement that
     changes a table read appends a row of each form it changes, its
@@ -898,11 +901,13 @@ machinery.
     uncounted; dropped with it; recovered as any table's rows (D25);
   - judged of the rows the transaction sees, plus the change, by the set
     function's own accumulator, its state merged (D53): out of range,
-    22003 as the whole check; of no value, null;
+    22003 as the whole check; of no value, null; a count as kept, 0 of
+    no row [§6.5 GR1a, GR2a];
   - read unrecorded, but a read recorded (D29) of the rows that move the
     value as the transaction's change does: SUM's either way, its sum in
-    range [§6.5 GR2b iv]; AVG's only toward the bound [GR2b ii]; equal
-    or unequal, every row. Only two moving it one way meet at commit;
+    range [§6.5 GR2b iv]; AVG's and COUNT's only toward the bound [GR2b
+    ii]; equal or unequal, every row. Only two moving it one way meet at
+    commit;
   - a deferred check whose rows outgrow what is held puts them right:
     the table read whole, less what is kept, appended;
   - folded by the job `turborel-assertion-totals` (D55) once a read sees

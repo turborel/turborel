@@ -278,6 +278,22 @@ impl Deferral {
             self.pending.append(more);
         }
     }
+
+    /// Forgets the checks waiting of constraint `name`, made again and
+    /// checked whole as it is made, the rows they wait for among what it
+    /// checked (`db/assertions/kept.rs`); the rest kept, in a list of
+    /// `space`.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's, reading back the checks waiting.
+    pub(super) fn forget(&mut self, name: &QualifiedName, space: ListSpace) -> Result<()> {
+        let mut kept = HeldRows::new(space);
+        self.pending.visit(&mut |c| if c.constraint() == name { Ok(()) } else { kept.push(c.clone()) })?;
+        self.pending = kept;
+        self.wholes.retain(|(_, constraint)| constraint != name);
+        Ok(())
+    }
 }
 
 /// What the checks of a statement, or those made at once, keep as they

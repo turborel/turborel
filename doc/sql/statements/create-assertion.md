@@ -87,11 +87,12 @@ statement inserted or updated; so are `(SELECT MAX(x) FROM T WHERE p)`
 less than a constant, or not greater, and MIN greater, or not less
 ("bounded").
 `(SELECT COUNT(*) FROM T WHERE p)` compared with a constant, and COUNT(x),
-is checked from how many rows the statement brought into the count or
-took out of it, whole only if that moves the count toward breaking the
-comparison, or the transaction reads at a snapshot of each statement.
-COUNT(DISTINCT x) alike: a row keeping its value changes nothing, and a
-row bringing a value in, or taking one out, may move the count.
+is judged of a count the assertion keeps, as SUM's below, with how many
+rows the statement brought into the count or took out of it.
+COUNT(DISTINCT x) is checked from how many values the statement brought
+in or took out, a row keeping its value changing nothing, whole only if
+that may move the count toward breaking the comparison, or the
+transaction reads at a snapshot of each statement.
 MAX greater than a constant, or not less, and MIN less, or not greater,
 holds if a row the statement inserted or updated reaches the constant,
 or if it changed none of the rows; else it is checked whole. MAX equal
@@ -110,10 +111,11 @@ constant, and AVG compared with an exact one, `x` of exact numbers, are
 judged of totals the assertion keeps: the values counted, the nulls and
 their sum, as each transaction sees them, with what the statement
 changed; out of range, the sum raises 22003 as it would checked whole.
+A count kept is judged so too.
 So are the nulls of `x` of the other forms, when it may be null. Two
 transactions conflict at commit (SQLCODE -911) only if both move the
-sum, or the mean, the same way: the sum either way, the mean toward its
-bound; equal or unequal, any two. SUM and AVG of approximate numbers,
+sum, the mean or the count the same way: the sum either way, the mean
+and the count toward their bound; equal or unequal, any two. SUM and AVG of approximate numbers,
 or of DISTINCT, are checked whole.
 INFORMATION_SCHEMA.ASSERTION_TOTALS shows the totals.
 `NOT EXISTS`, and MAX or MIN bounded, may be of inner joins of tables

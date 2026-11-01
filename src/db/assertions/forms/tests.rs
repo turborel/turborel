@@ -105,9 +105,9 @@ fn named(kind: &Kind) -> &'static str {
     match kind {
         Kind::NoRow => "no row",
         Kind::Bound => "bound",
-        Kind::Count(Safe::Fewer) => "fewer",
-        Kind::Count(Safe::More) => "more",
-        Kind::Count(Safe::Same) => "same",
+        Kind::Count(CompOp::Lt | CompOp::Le, _) => "fewer",
+        Kind::Count(CompOp::Gt | CompOp::Ge, _) => "more",
+        Kind::Count(CompOp::Eq | CompOp::Ne, _) => "same",
         Kind::Reach(_) => "reach",
         Kind::Distinct(Safe::Fewer, _) => "distinct fewer",
         Kind::Distinct(Safe::More, _) => "distinct more",

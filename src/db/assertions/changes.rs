@@ -27,21 +27,22 @@
 //!   transaction's rows are checked as it writes them, as a table's CHECK
 //!   is. NOT EXISTS stops at the first row passing, as EXISTS does (RULES.md
 //!   D15); a set function evaluates every row.
-//! - A count compared with a constant: the count after is the count before
-//!   plus the rows of the change that pass now less those that passed
-//!   before. A count no greater satisfies `<` and `<=` if the count before
-//!   did, one no smaller `>` and `>=`, one equal any of them; a change that
-//!   moves the count the other way is checked whole. The count before is
-//!   the one this transaction sees, so this holds only for one that reads
-//!   at one snapshot, its own: one reading at a snapshot of each statement
-//!   checks whole. Whatever others commit meanwhile, a transaction whose
-//!   change cannot move the count the wrong way leaves any state that
-//!   satisfies it satisfying it once it commits; one whose change can reads
-//!   T whole, its reads checked at commit (RULES.md D29).
-//! - A count of distinct values, alike: a row passing before and now with
-//!   the same value, as DISTINCT takes it (`norm_row`), changes nothing; a
-//!   row passing now otherwise may add a value, one passing before may take
-//!   one away, whether others have it only reading T would tell.
+//! - A count compared with a constant: judged of the count kept, with the
+//!   change's, the rows passing now less those that passed before
+//!   (`kept.rs`).
+//! - A count of distinct values compared with one: a row passing before
+//!   and now with the same value, as DISTINCT takes it (`norm_row`),
+//!   changes nothing; a row passing now otherwise may add a value, one
+//!   passing before may take one away, whether others have it only reading
+//!   T would tell. A count no greater satisfies `<` and `<=` if the count
+//!   before did, one no smaller `>` and `>=`, one equal any of them; a
+//!   change that may move it the other way is checked whole. The count
+//!   before is the one this transaction sees, so this holds only for one
+//!   that reads at one snapshot, its own: one reading at a snapshot of each
+//!   statement checks whole. Whatever others commit meanwhile, a
+//!   transaction whose change cannot move the count the wrong way leaves
+//!   any state that satisfies it satisfying it once it commits; one whose
+//!   change can reads T whole, its reads checked at commit (RULES.md D29).
 //! - MAX or MIN reached (`MAX(x) > k`): true after the statement if a row it
 //!   inserted or updated passes with `x op k` true, whatever the others; if
 //!   no row it changed passed before or passes now, the greatest or least is
@@ -119,8 +120,6 @@ enum Verdict {
 pub(super) struct Seen {
     /// A row passes now; a row passed before.
     pub(super) passing: Sides,
-    /// The rows passing now less those passing before.
-    change: i64,
     /// A row passing now has `Kind::Reach`'s condition, or `Kind::Apart`'s
     /// `beyond`, true.
     reached: bool,
@@ -146,13 +145,12 @@ impl Seen {
     fn verdict(&self, kind: &Kind, one_snapshot: bool) -> Verdict {
         let holds = match kind {
             Kind::NoRow | Kind::Bound => return if self.passing.now { Verdict::Broken } else { Verdict::Holds },
-            // The count before is the one of this transaction's snapshot.
-            Kind::Count(safe) => one_snapshot && moved(*safe, (self.change > 0, self.change < 0)),
+            // The count of values before is the one of this transaction's snapshot.
             Kind::Distinct(safe, _) => one_snapshot && moved(*safe, (self.values.now, self.values.before)),
             Kind::Reach(_) => self.reached || (one_snapshot && !self.passing.now && !self.passing.before),
             Kind::Apart { .. } => self.reached || (one_snapshot && !self.passing.before && !self.outside),
             // Judged of the totals kept (`kept.rs`).
-            Kind::Total(_) => false,
+            Kind::Count(..) | Kind::Total(_) => false,
         };
         if holds { Verdict::Holds } else { Verdict::Unknown }
     }
@@ -182,11 +180,10 @@ impl Seen {
                 self.values.now = self.values.now || (is_in && !kept);
                 self.values.before = self.values.before || (was_in && !kept);
             }
-            Kind::NoRow | Kind::Bound | Kind::Count(_) | Kind::Total(_) => {}
+            Kind::NoRow | Kind::Bound | Kind::Count(..) | Kind::Total(_) => {}
         }
         self.passing.now = self.passing.now || is_in;
         self.passing.before = self.passing.before || was_in;
-        self.change = self.change.saturating_add(i64::from(is_in)).saturating_sub(i64::from(was_in));
         Ok(())
     }
 }
@@ -303,7 +300,7 @@ impl State {
         for (at, form) in forms.iter().enumerate() {
             let kept_here = kept.as_ref().filter(|_| keeps(form));
             let (seen, mut form_verdict) = match (kept_here, &form.kind) {
-                (Some(_), Kind::Total(_)) => (Seen::default(), Verdict::Holds),
+                (Some(_), Kind::Total(_) | Kind::Count(..)) => (Seen::default(), Verdict::Holds),
                 (None | Some(_), _) => self.form_verdict(tx, form, changes)?,
             };
             null = null || seen.null;

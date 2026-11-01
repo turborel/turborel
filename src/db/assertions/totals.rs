@@ -164,12 +164,14 @@ impl State {
 
 /// A row of INFORMATION_SCHEMA.ASSERTION_TOTALS, of catalog `catalog`:
 /// form `at` of assertion `name`, its totals as committed, kept in `rows`
-/// rows. Of nulls alone, no count of values nor sum.
+/// rows. Of nulls alone, no count of values; of them and of a count, no
+/// sum.
 fn totals_row((catalog, name): (&str, &QualifiedName), (at, form): (usize, &Form), (totals, rows): (&Totals, i128)) -> Row {
     let number = |n: i128| Value::Exact(Decimal::new(n, 0));
-    let (kind, of_values) = match &form.kind {
-        Kind::Total(t) => (if t.avg { "AVG" } else { "SUM" }, true),
-        Kind::NoRow | Kind::Bound | Kind::Count(_) | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => ("NULLS", false),
+    let (kind, of_values, summed) = match &form.kind {
+        Kind::Total(t) => (if t.avg { "AVG" } else { "SUM" }, true, true),
+        Kind::Count(..) => ("COUNT", true, false),
+        Kind::NoRow | Kind::Bound | Kind::Reach(_) | Kind::Distinct(..) | Kind::Apart { .. } => ("NULLS", false, false),
     };
     let sum = totals.sum.unwrap_or(Decimal::new(0, 0));
     vec![
@@ -180,7 +182,7 @@ fn totals_row((catalog, name): (&str, &QualifiedName), (at, form): (usize, &Form
         text(kind),
         if of_values { number(totals.counted) } else { Value::Null },
         number(totals.nulled),
-        if of_values { text(&sum.to_string()) } else { Value::Null },
+        if summed { text(&sum.to_string()) } else { Value::Null },
         number(rows),
     ]
 }

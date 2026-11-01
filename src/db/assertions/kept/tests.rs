@@ -81,7 +81,8 @@ fn a_move_records_what_may_break_it_with_it() {
         (false, CompOp::Eq, Move::Still, Register::Nothing),
     ];
     for (n, (avg, op, mv, registered)) in cases.into_iter().enumerate() {
-        assert_eq!(Register::of(&totalled(avg, op, k), mv), registered, "case {n}");
+        let t = totalled(avg, op, k);
+        assert_eq!(Register::of(t.op, !t.avg, mv), registered, "case {n}");
     }
     assert!(Register::Nothing.condition(3).is_none() && Register::Moving(Move::Still).condition(3).is_none());
     let row = |form: i128, mv: i128| vec![number(form), number(0), number(0), Value::Char("0".into()), number(0), number(mv)];

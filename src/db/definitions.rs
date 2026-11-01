@@ -78,6 +78,8 @@ impl Session {
                 if let Some(a) = &defined.asserted {
                     next.check_assertion(tx, a)?;
                     next.start_totals(tx, a)?;
+                    // Checked whole, so not again of rows written before.
+                    self.deferral.borrow_mut().forget(a, next.list_space())?;
                 }
                 // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
                 let padding = held.first().and_then(|(named, _)| next.padding_of_statement(statement, named));

@@ -120,9 +120,9 @@ pub(super) enum Kind {
     NoRow,
     /// None does, each evaluated, as a set function reads every row.
     Bound,
-    /// Their count compares so with a constant: a change of `Safe`'s
-    /// direction cannot make it false.
-    Count(Safe),
+    /// Their count compares with a constant, `k` by `op`, the count first:
+    /// judged of the count kept (`kept.rs`).
+    Count(CompOp, Expr),
     /// It is true if the condition is true of one of them.
     Reach(Cond),
     /// The count of the distinct values of the expression compares so
@@ -256,7 +256,7 @@ fn table_aggregate_form(
     let Passing { table, steps, columns } = passing;
     let Some(x) = &agg.arg else {
         // COUNT(*) alone has the form (*).
-        let kind = Kind::Count(safe(op));
+        let kind = Kind::Count(op, k.clone());
         return (function == Standard::Count).then(|| vec![Form { source: Source::Table(table), steps, kind, nulls: None }]);
     };
     let x = Some(x).filter(|x| row_expr(x)).map(|x| columns.as_deref().map_or_else(|| x.clone(), |c| substitute(x.clone(), c)))?;
@@ -271,7 +271,7 @@ fn table_aggregate_form(
     let present = Some(Cond::IsNull(x.clone(), true));
     Some(match (function, op) {
         (Standard::Count, _) => {
-            let kind = if agg.distinct { Kind::Distinct(safe(op), x.clone()) } else { Kind::Count(safe(op)) };
+            let kind = if agg.distinct { Kind::Distinct(safe(op), x.clone()) } else { Kind::Count(op, k.clone()) };
             vec![form(present, kind)]
         }
         (Standard::Max, CompOp::Lt | CompOp::Le) | (Standard::Min, CompOp::Gt | CompOp::Ge) => vec![bound(op)],
