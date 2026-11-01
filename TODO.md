@@ -105,14 +105,8 @@ What came after SQL-92 follows it, written from the standards' own text
   50,000 keys of 8 rows each past 4 MiB, a grouping makes none partly
   (1% more instructions than before), past 64 KiB 14% fewer. Pieces
   written by batch, their states as vectors, would make them pay sooner.
-  A spilled sort is bound by its
-  runs (`ORDER BY C` of 200,000 rows of the column store, 26 ms):
-  profiled, reading its records back a value at a time is about a fifth
-  of it, the merge a fifth, sorting the vectors a seventh, writing the
-  records a sixteenth; runs written as vectors would read them back a
-  vector at a time. A spilled run's pages
-  are freed through the pager's free list, each costing more than the
-  record it held.
+  A spilled run's pages are freed through the pager's free list, each
+  costing more than the record it held.
 - **Typed vectors, further** (D31): a LIKE whose pattern is another
   expression (a CASE) leaves its filter judged whole a row at a time,
   each pattern split once (`S LIKE CASE ...` of 200,000 rows of the

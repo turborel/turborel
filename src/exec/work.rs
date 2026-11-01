@@ -82,6 +82,11 @@ impl Work {
         self.limit
     }
 
+    /// The bytes of records a run gathers before it writes them.
+    pub(super) fn batch(&self) -> usize {
+        self.batch
+    }
+
     /// How many runs it reads or writes at a time, each holding a batch
     /// being written or read and the rows of one: at least two.
     pub(super) fn width(&self) -> usize {

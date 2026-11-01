@@ -9,15 +9,17 @@
 //! or are of kinds not alike; stably, so rows of equal keys keep the
 //! order they came in. While the batches fit the work area, each row is
 //! made of the vectors as it is given; past it, each work area's worth is
-//! written as a run, each record made of the vectors as `merge::record`
-//! makes it of a row, and the runs merged as `sort.rs` merges them.
+//! written as a run of chunks of vectors (`chunk.rs`), each about a spill
+//! batch's bytes, and the runs merged as `sort.rs` merges them. A sort of
+//! rows past its work area writes them so too, each work area's worth a
+//! batch of vectors of their values (`written_rows`).
 
 use std::cmp::Ordering;
 
-use super::merge::put_head;
+use super::chunk::{Pick, put_chunk};
+use super::merge::head;
 use super::prefix::{Kind, joined, prefix_of_cell};
 use super::{Work, merged};
-use crate::bytes::Put;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::batch::Batches;
@@ -26,8 +28,10 @@ use crate::logical::SortKey;
 use crate::spill::{SpillRun, heap_bytes};
 use crate::storage::{Batch, Cell, Column, Row};
 use crate::txn::TxId;
-use crate::value::codec::put_value;
 use crate::value::{Value, sort_cmp};
+
+/// \[DESIGN\] The fewest and the most rows of a chunk of a run.
+const CHUNK_ROWS: (usize, usize) = (16, 1 << 16);
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, a stream's batches each
 /// holding every column of its rows, sorted by `keys`, in a work area of
@@ -132,40 +136,54 @@ impl Held {
     }
 
     /// Its rows, sorted by `keys`, written as a run of `work`'s spill area,
-    /// each record made of the vectors as `merge::record` makes it of a row.
+    /// in chunks of vectors (`chunk.rs`) of about a spill batch's bytes.
     fn written(mut self, keys: &[SortKey], work: &mut Work) -> Result<Box<dyn SpillRun>> {
         self.sort(keys);
+        let each = chunk_rows(self.bytes, self.places.len(), work.batch());
         let (mut run, mut out) = (work.run()?, Vec::new());
-        for p in &self.places {
-            let Some(batch) = self.batches.get(p.batch) else { continue };
-            put_head(keys.first().and_then(|k| prefix_of_cell(batch.cell(k.column, p.row), k.descending)), &mut out);
-            put_cells(batch, p.row, &mut out);
+        for places in self.places.chunks(each) {
+            let rows: Vec<Pick<'_>> = places.iter().filter_map(|p| self.batches.get(p.batch).map(|b| (b, p.row))).collect();
+            let heads: Vec<(u8, u64)> =
+                rows.iter().map(|&(b, r)| head(keys.first().and_then(|k| prefix_of_cell(b.cell(k.column, r), k.descending)))).collect();
+            put_chunk(&heads, &rows, &mut out);
             run.push(&out)?;
         }
         Ok(run)
     }
 }
 
-/// Row `r` of `batch`, made of its values.
-fn row_of(batch: &Batch, r: usize) -> Row {
-    (0..batch.columns.len()).map(|at| batch.cell(at, r).to_value()).collect()
+/// The rows a chunk of a run holds, of rows that hold `bytes` all told, so
+/// it holds about `batch` bytes: within `CHUNK_ROWS`.
+fn chunk_rows(bytes: usize, rows: usize, batch: usize) -> usize {
+    let each = bytes.checked_div(rows).unwrap_or(1).max(1);
+    batch.checked_div(each).unwrap_or(0).clamp(CHUNK_ROWS.0, CHUNK_ROWS.1)
 }
 
-/// Appends row `r` of `batch` to `out`, as `codec::put_row` writes the row
-/// of its values, none made of a vector of values.
-fn put_cells(batch: &Batch, r: usize, out: &mut Vec<u8>) {
-    out.put_u32(u32::try_from(batch.columns.len()).unwrap_or(u32::MAX));
-    for at in 0..batch.columns.len() {
-        match batch.cell(at, r) {
-            Cell::Value(v) => put_value(out, v),
-            made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null) => put_value(out, &made.to_value()),
+/// `rows`, sorted by `keys`, written as a run of `work`'s spill area as
+/// a sort of batches writes them, of a batch of vectors of their values.
+pub(super) fn written_rows(keys: &[SortKey], rows: Vec<Row>, work: &mut Work) -> Result<Box<dyn SpillRun>> {
+    let width = rows.first().map_or(0, Vec::len);
+    let count = rows.len();
+    let mut columns: Vec<Vec<Value>> = (0..width).map(|_| Vec::with_capacity(count)).collect();
+    for row in rows {
+        for (column, v) in columns.iter_mut().zip(row) {
+            column.push(v);
         }
     }
+    let batch = Batch { columns: columns.into_iter().map(Column::Values).collect(), rows: count };
+    let mut held = Held::default();
+    held.add(keys, batch, &(0..count).collect::<Vec<usize>>());
+    held.written(keys, work)
+}
+
+/// Row `r` of `batch`, made of its values.
+pub(super) fn row_of(batch: &Batch, r: usize) -> Row {
+    (0..batch.columns.len()).map(|at| batch.cell(at, r).to_value()).collect()
 }
 
 /// [X3.135-1986 §8.3 GR3b] The order of row `ra` of `a` and row `rb` of
 /// `b` under `keys`, as `compare_rows` orders the rows of their values.
-fn compare_cells(keys: &[SortKey], (a, ra): (&Batch, usize), (b, rb): (&Batch, usize)) -> Ordering {
+pub(super) fn compare_cells(keys: &[SortKey], (a, ra): (&Batch, usize), (b, rb): (&Batch, usize)) -> Ordering {
     keys.iter()
         .map(|k| {
             let o = cell_cmp(a.cell(k.column, ra), b.cell(k.column, rb));

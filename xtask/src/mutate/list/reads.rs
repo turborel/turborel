@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 27] = [
+pub const READS: [Mutation; 29] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -249,5 +249,23 @@ pub const READS: [Mutation; 27] = [
         replacement: "    let first = order.first().and_then(|&r| relations.get(r)).map_or(0.0_f64, |_| 0.0_f64);",
         integration: &["probes::few_rows_probe_indexes_of_every_kind_they_can"],
         unit: &[],
+    },
+    Mutation {
+        name: "sort-chunk-values-only",
+        breaks: "a spilled sort's runs write every vector as values, none read back as integers, numbers or strings",
+        file: "src/exec/sort/chunk.rs",
+        original: "    kind.unwrap_or((VALUES, 0_u32))",
+        replacement: "    kind.map_or((VALUES, 0_u32), |_| (VALUES, 0_u32))",
+        integration: &[],
+        unit: &["exec::sort::chunk::tests::chunks_keep_their_vectors_kinds"],
+    },
+    Mutation {
+        name: "sort-chunk-nulls-lost",
+        breaks: "a spilled sort's chunk writes no row of a vector of integers, numbers or strings null",
+        file: "src/exec/sort/chunk.rs",
+        original: "            out.put_u8(u8::from(cell_kind(cell).is_none()));",
+        replacement: "            out.put_u8(u8::from(cell_kind(cell).is_none() && false));",
+        integration: &["spilling::operators_spill_and_give_the_same_rows"],
+        unit: &["exec::sort::chunk::tests::chunks_keep_their_vectors_kinds"],
     },
 ];

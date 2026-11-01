@@ -69,6 +69,7 @@ fn u_row(k: usize) -> String {
 const QUERIES: &[&str] = &[
     "SELECT G, K FROM T ORDER BY G DESC",
     "SELECT S, G, K FROM T ORDER BY S, G",
+    "SELECT NULLIF(G, 7), NULLIF(S, 'S00007'), K FROM T ORDER BY 2, 1",
     "SELECT G, COUNT(*), SUM(K), MIN(S) FROM T GROUP BY G",
     "SELECT S, COUNT(DISTINCT G) FROM T GROUP BY S",
     "SELECT S, K, COUNT(*), MAX(G) FROM U GROUP BY S, K",
@@ -109,7 +110,7 @@ const QUERIES: &[&str] = &[
 ];
 
 /// Verifies: [DESIGN] RULES.md D38: with MEMORY.WORK_BYTES at its least, a sort,
-/// grouping, DISTINCT, a hash join, a product, LEFT, RIGHT and FULL outer
+/// of keys some of them null too, grouping, DISTINCT, a hash join, a product, LEFT, RIGHT and FULL outer
 /// joins on keys and on no keys [ISO/IEC 9075:1992 §7.5], EXCEPT,
 /// INTERSECT and UNION, the rows of subqueries, kept and decorrelated, for
 /// IN, EXISTS, ALL, UNIQUE and MATCH, and the values of DISTINCT set

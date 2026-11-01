@@ -1,16 +1,17 @@
 //! [X3.135-1986 §8.3 GR3b] ORDER BY: rows sorted by each key in turn, most
 //! significant first. \[DESIGN\] Rows that fit the work area are sorted in
 //! memory; more are sorted externally (RULES.md D38): each work area's
-//! worth sorted and written as a run, each row beside its first key's
-//! prefix, the runs merged by their prefixes, as many at once as the work
-//! area reads, in passes until one is left (`sort/merge.rs`). Sorting is
-//! stable, a tie going to the earlier run, so rows of equal keys keep their
-//! order. Rows are sorted by a prefix of their first key, where it has one
+//! worth sorted and written as a run of chunks of vectors, each row beside
+//! its first key's prefix (`sort/chunk.rs`, `sort/vectors.rs`), the runs
+//! merged by their prefixes, as many at once as the work area reads, in
+//! passes until one is left (`sort/merge.rs`). Sorting is stable, a tie
+//! going to the earlier run, so rows of equal keys keep their order. Rows are sorted by a prefix of their first key, where it has one
 //! (`sort/prefix.rs`). The runs read back look for a cancel of the
 //! statement (RULES.md D44). A stream's batches are sorted as they are,
 //! no row made but to be given or written (`sort/vectors.rs`, RULES.md
 //! D31). Split from exec.rs (RULES.md R-SIZE-2).
 
+mod chunk;
 mod merge;
 mod prefix;
 mod vectors;
@@ -29,7 +30,8 @@ use crate::spill::{SpillRun, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::sort_cmp;
-use merge::{Order, merge, record};
+use merge::{Order, merge};
+use vectors::written_rows;
 
 /// [X3.135-1986 §8.3 GR3b] `input` sorted by `keys`, in a work area of
 /// `db`, for the statement of `tx`. Never inlined into the caller, whose
@@ -53,7 +55,7 @@ fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> 
         bytes = bytes.saturating_add(row_bytes(&row));
         rows.push(row);
         if bytes > work.limit() {
-            runs.push(written(keys, std::mem::take(&mut rows), work)?);
+            runs.push(written_rows(keys, std::mem::take(&mut rows), work)?);
             bytes = 0;
         }
     }
@@ -61,7 +63,7 @@ fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> 
         return Ok(Box::new(prefix::sorted(keys, rows).into_iter().map(Ok)));
     }
     if !rows.is_empty() {
-        runs.push(written(keys, rows, work)?);
+        runs.push(written_rows(keys, rows, work)?);
     }
     merged(keys, runs, work)
 }
@@ -84,17 +86,6 @@ fn merged(keys: &[SortKey], mut runs: Vec<Box<dyn SpillRun>>, work: &mut Work) -
         runs = merged;
     }
     Ok(Box::new(merge(&order, runs)?))
-}
-
-/// `rows`, sorted by `keys`, written as a run of `work`'s spill area, each
-/// beside its prefix (`merge::record`).
-fn written(keys: &[SortKey], rows: Vec<Row>, work: &mut Work) -> Result<Box<dyn SpillRun>> {
-    let (mut run, mut out) = (work.run()?, Vec::new());
-    for row in &prefix::sorted(keys, rows) {
-        record(keys, row, &mut out);
-        run.push(&out)?;
-    }
-    Ok(run)
 }
 
 /// [X3.135-1986 §8.3 GR3b] The order of rows `a` and `b` under `keys`.

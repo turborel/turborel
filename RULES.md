@@ -2442,10 +2442,14 @@ catalog to keep in step.
   Equal prefixes compare whole, or by the other keys only if every
   prefix holds its value whole (`exec/sort/prefix.rs`); faster, as the
   rows, each in memory of its own, are not read per comparison. A run
-  writes each row beside its prefix, which the merge compares, reading
-  runs a batch at a time (`SpillRun::into_batches`), records where they
-  lie, decoding a row only when prefixes tie or a value has none, and
-  when given. A pass rewriting a run copies records as they are
+  is written as chunks of its rows, each about a spill batch's bytes,
+  each a record of their vectors (exact numbers of one scale,
+  approximate numbers, strings, else values) and each row's prefix
+  beside them (`exec/sort/chunk.rs`). The merge compares the prefixes,
+  reading runs a batch at a time (`SpillRun::into_batches`) and each
+  chunk's vectors once, comparing values where they lie only when
+  prefixes tie or a value has none, and making a row only when given. A
+  pass rewriting a run writes the rows merged as chunks again
   (`exec/sort/merge.rs`).
 - **Order.** Grouping and DISTINCT give rows as their first rows came.
 - **Hash join.** Partitioned (Grace), partitions repartitioned while
