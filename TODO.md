@@ -63,11 +63,6 @@ What came after SQL-92 follows it, written from the standards' own text
   number of arguments and store assignment [ISO/IEC 9075:1992 §9.2 SR2]
   to their declared types, the most specific chosen, an ambiguous call
   refused.
-- **Assertions, further** (RULES.md D51): forms still checked whole.
-  - Of a query's rows: COUNT, a greatest or least reached or unequal; an
-    outer join, a set operator, a grouping of a join. Each needs the
-    other tables as they were before the statement, which only what was
-    kept of them would tell.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them

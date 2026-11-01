@@ -916,9 +916,13 @@ machinery.
     committed, in INFORMATION_SCHEMA.ASSERTION_TOTALS to the schema's
     owner.
 - **Whole.** Any other form; SUM and AVG of approximate numbers, of
-  DISTINCT, or AVG of an approximate bound; COUNT, a greatest reached or
-  unequal, of a query's rows; an outer join, a set operator or a
-  grouping of a join, whose rows a row deleted may make appear.
+  DISTINCT, or AVG of an approximate bound.
+  - Whole by design: COUNT, a greatest reached or unequal, of a query's
+    rows; an outer join, a set operator or a grouping of a join, whose
+    rows a row deleted may make appear. Each needs the other tables as
+    they were before the statement: keeping a query's result up to date
+    with every change is a design of its own, for forms rare in
+    assertions, which are right checked whole.
 - **Name.** A constraint name of its schema, for SET CONSTRAINTS and
   every other constraint's [SR2, SR7].
 - **In a `<schema definition>`,** outside any session's transaction, it
