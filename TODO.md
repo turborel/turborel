@@ -126,30 +126,11 @@ What came after SQL-92 follows it, written from the standards' own text
 
 ## Storage and durability
 
-- **Keys of key services** (D48): keyrings of key services (a cloud KMS,
-  Vault) beside the key directory; a host can give one through `Keyring`,
-  but turboreld takes the key directory alone.
 - **A database's files written again under another key** (D48):
   STORAGE.ENCODINGS, STORAGE.CHECKSUM and its HMAC key are fixed at
   creation, a file recording the function's id alone; so a key of either
   cannot be retired, and changing one means encrypting or checksumming
   every file again.
-- **Spills, further:** SPILL.ENCODINGS compresses spill files (LZ4), off
-  by default: on 2026-10-31 it ran from 17% slower to 45% faster, most
-  within 10%, on an SSD the system's cache kept up with. With each spill
-  write delayed 200 us (the faults file system, a temporary bench; reads
-  not delayed; the machine busy, spreads 10% to 180%), LZ4 ran 15% to
-  101% faster at 64 KiB (sort 24K to 43K rows/s, DISTINCT 44K to 88K,
-  hash join 24K to 42K) and 9% to 97% at 1 MiB; at 50 us, from 35%
-  slower (hash join, 64 KiB) to 84% faster. Whether to make it the
-  default, or a setting's choice by the disk, is to decide; a quiet
-  machine and a real slow disk would confirm the figures.
-- **Buffer pool's latch:** hits with one shared write measured 87.6M/s to
-  151M/s on one thread, 49.4M/s to 107.5M/s on four (2026-10-27): four
-  still read less than one, on the frame's latch. A reader-biased latch
-  (BRAVO) needs `unsafe` (R-SAFE-1), and a crate for it breaches R-SAFE-4;
-  safe ways are reader locks striped by thread on hot frames, or copies
-  of a tree's inner nodes checked by a version.
 - **Read-ahead, further:** on the job `turborel-read-ahead` (D30, D55),
   measured on a quiet machine (2026-10-31, load 4 to 6, three runs): a
   row store scan of a table ten times its pool 3.96M to 4.35M rows/s
@@ -160,7 +141,7 @@ What came after SQL-92 follows it, written from the standards' own text
   the one before it, read page by page; scans of groups in their order
   (`frozen/ordered.rs`) ask for none; a scan asks for a group's chunks
   only as it takes the group up, not the next group's.
-- **Layouts** (D31), paused: a hybrid (PAX), the format of frozen groups
+- **Layouts** (D31): a hybrid (PAX), the format of frozen groups
   then made a trait. For the column store:
   - a sorted group's rows read backwards, to answer an ORDER BY of its
     order's columns, all descending, without a sort, as ascending ones
