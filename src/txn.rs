@@ -376,6 +376,12 @@ impl Transactions {
         Committing { shared: self, at: self.clock.take_commit() }
     }
 
+    /// Returns once every commit up to `at`, one ended, has ended too, so
+    /// a snapshot taken after counts it (`Clock::wait_stable`).
+    fn wait_stable(&self, at: Timestamp) {
+        self.clock.wait_stable(at);
+    }
+
     /// The oldest snapshot any open transaction reads at, or, with none
     /// open, the stable timestamp: no transaction reads before it.
     pub(crate) fn horizon(&self) -> Timestamp {

@@ -89,12 +89,16 @@ impl State {
                 for storage in participants {
                     storage.commit(tx.id, committing.at);
                 }
-                let published = publish(committing.at);
+                let at = committing.at;
+                let published = publish(at);
                 // The commit has reached every engine: snapshots may now
                 // count it.
                 drop(committing);
                 drop(gate);
                 tx.release();
+                // [DESIGN] RULES.md D29: not before every commit before it
+                // has ended, so its session's next snapshot counts it.
+                self.tx.wait_stable(at);
                 self.gc(&tables(&joined));
                 published
             }

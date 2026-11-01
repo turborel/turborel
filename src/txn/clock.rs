@@ -151,6 +151,15 @@ impl Clock {
         self.stable.load(Ordering::SeqCst)
     }
 
+    /// Returns once the stable timestamp has reached `at`, a commit ended:
+    /// every commit before it has ended too, each already past its
+    /// commit record, so the wait is short.
+    pub(super) fn wait_stable(&self, at: Timestamp) {
+        while self.stable.load(Ordering::SeqCst) < at {
+            thread::yield_now();
+        }
+    }
+
     /// The oldest snapshot of an open transaction, or with none open, the
     /// stable timestamp: no transaction reads before it.
     pub(super) fn horizon(&self) -> Timestamp {
@@ -213,5 +222,25 @@ mod tests {
         clock.advance_past(10 * RING);
         assert_eq!((clock.stable(), clock.take_commit()), (10 * RING, 10 * RING + 1));
         assert!(clock.next_id() > 10 * RING);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D29: a commit ended waits for the stable
+    /// timestamp to reach it until every commit before it has ended, so its
+    /// session's next snapshot counts it.
+    #[test]
+    fn a_commit_waits_for_those_before_it() {
+        let clock = std::sync::Arc::new(Clock::new(1));
+        let (a, b) = (clock.take_commit(), clock.take_commit());
+        clock.end_commit(b);
+        let waiting = std::sync::Arc::clone(&clock);
+        let waiter = thread::spawn(move || {
+            waiting.wait_stable(b);
+            waiting.stable()
+        });
+        thread::sleep(std::time::Duration::from_millis(20));
+        assert!(!waiter.is_finished(), "1 has not ended");
+        clock.end_commit(a);
+        assert_eq!(waiter.join().unwrap(), 2);
+        clock.wait_stable(2);
     }
 }

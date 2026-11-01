@@ -1384,7 +1384,10 @@ program driving several sessions from one thread must not.
   waits only for the other transactions then open in its table.
 - **Commit.** Atomic across engines: each validates at the commit
   timestamp, then each commits at it. A transaction that wrote nothing
-  commits at its snapshot, unchecked.
+  commits at its snapshot, unchecked. A commit returns only once every
+  commit before it has ended, so its session's next snapshot counts it:
+  a snapshot is the timestamp below which every commit has ended, and a
+  commit finishing early would otherwise not be seen by its own session.
 - **Indexes.** Entries are counted per version; a row found through an
   index is kept only if its visible version has that key.
 - **Table locks.** The coordinator's table locks (D28) remain for
