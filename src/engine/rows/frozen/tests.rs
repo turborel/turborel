@@ -531,3 +531,23 @@ fn runs_are_read_a_vector_at_a_time_either_way() {
     assert_eq!(parts(false), [(0, 2_048), (2_048, 4_096), (4_096, 5_000), (6_000, 6_100)]);
     assert_eq!(parts(true), [(6_000, 6_100), (2_952, 5_000), (904, 2_952), (0, 904)]);
 }
+
+/// Verifies: [DESIGN] RULES.md D31, a row read of some columns: of a
+/// frozen row and of one of the tree, the columns asked for are those the
+/// whole row holds, the others null; of no column, every one null; of a
+/// row not there, none.
+#[test]
+fn rows_are_read_of_the_columns_asked() {
+    let (_, files) = files();
+    let (table, ids) = table(&files, 0, 3000);
+    ended(&table, 1);
+    let late = table.insert(NO_TRANSACTION, row(9000)).unwrap();
+    for id in [ids[5], ids[2999], late] {
+        let whole = table.get(NO_TRANSACTION, id).unwrap().unwrap();
+        let second = table.get_columns(NO_TRANSACTION, id, &[1]).unwrap().unwrap();
+        assert!(second[0].is_null() && second[1].to_string() == whole[1].to_string(), "{id}: {second:?}");
+        let none = table.get_columns(NO_TRANSACTION, id, &[]).unwrap().unwrap();
+        assert!(none.iter().all(Value::is_null), "{id}");
+    }
+    assert!(table.get_columns(NO_TRANSACTION, late + 1000, &[0]).unwrap().is_none());
+}

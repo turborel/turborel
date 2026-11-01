@@ -333,13 +333,12 @@ impl TableStorage for RowTable {
     }
 
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
-        let reader = self.reader(tx)?;
-        self.note_read(tx, Read::Row(id))?;
-        match self.tree.get(&key(id))? {
-            Some(newest) => self.visible_from(newest, reader)?.map(|record| self.decode(id, &record, None)).transpose(),
-            // Frozen, so committed before every snapshot (`rows/frozen.rs`).
-            None => self.frozen_row(id, None),
-        }
+        self.get_of(tx, id, None)
+    }
+
+    /// Only `columns` decoded; of a frozen row, only their chunks read.
+    fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
+        self.get_of(tx, id, Some(columns))
     }
 
     /// Only `columns` are decoded, and only their values out of line read.

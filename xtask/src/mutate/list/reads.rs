@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 16] = [
+pub const READS: [Mutation; 18] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -149,6 +149,24 @@ pub const READS: [Mutation; 16] = [
         original: "    ints.runs()?;",
         replacement: "    ints.run_lengths()?;",
         integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        unit: &[],
+    },
+    Mutation {
+        name: "frozen-columns",
+        breaks: "a frozen row read of some columns gives every column",
+        file: "src/engine/rows/scan.rs",
+        original: "            None => self.frozen_row(id, columns),",
+        replacement: "            None => self.frozen_row(id, None),",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::rows_are_read_of_the_columns_asked"],
+    },
+    Mutation {
+        name: "fetch-needed",
+        breaks: "a row an index finds is read of the index's columns alone, not the statement's",
+        file: "src/exec.rs",
+        original: "let mut read: Vec<usize> = needed.iter().chain(columns).copied().collect();",
+        replacement: "let mut read: Vec<usize> = columns.iter().chain(columns).copied().collect();",
+        integration: &["probes::an_in_list_and_an_or_of_ranges_are_probed"],
         unit: &[],
     },
 ];

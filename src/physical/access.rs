@@ -245,7 +245,19 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
         .map(|probe| {
             let detail = whole.clone().unwrap_or_else(|| render_probe(&probe, &columns, read.names));
             let (index, method, table) = (index.clone(), method.clone(), read.table.clone());
-            Plan::IndexScan { table, index, method, probe, reverse, detail, est: est / share, cost: cost / share, covering }
+            let needed = read.needed.to_vec();
+            Plan::IndexScan {
+                table,
+                index,
+                method,
+                probe,
+                reverse,
+                columns: needed,
+                detail,
+                est: est / share,
+                cost: cost / share,
+                covering,
+            }
         })
         .collect();
     // Appended in pairs, a level at a time, so they are about log2(n) deep

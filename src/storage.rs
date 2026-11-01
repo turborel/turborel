@@ -24,10 +24,12 @@ mod batch;
 mod condition;
 mod newest;
 mod options;
+mod rows;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, Floats, Ints, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
 pub use newest::Newest;
+pub use rows::{Row, RowId, Rows, project};
 
 use std::sync::Arc;
 
@@ -38,26 +40,8 @@ use crate::memory::Host;
 use crate::settings::Configurable;
 use crate::stats::Statistics;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
-use crate::value::Value;
 
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
-
-/// A row: one value per column, in column order.
-pub type Row = Vec<Value>;
-
-/// The values of `row` at the positions `columns`, in that order; `None` if a
-/// position is past the end of the row.
-pub fn project(row: &[Value], columns: &[usize]) -> Option<Row> {
-    columns.iter().map(|&c| row.get(c).cloned()).collect()
-}
-
-/// Identifies a row within its table, for as long as the table exists.
-pub type RowId = u64;
-
-/// \[DESIGN\] Rows a table gives, with their ids, read as they are pulled.
-/// The iterator owns what it reads, so it can be kept between calls, and
-/// moved to another thread with the cursor reading it.
-pub type Rows = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 
 /// \[DESIGN\] The default cost of one fetch by row id: a random read costs
 /// about three sequential ones. Fixed, not a setting (RULES.md D36): an
@@ -230,6 +214,19 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot read the row.
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>>;
+    /// \[DESIGN\] As `get`, of a statement that reads only `columns` of the
+    /// row: a row of the table's degree, those columns' values in their
+    /// places, the others' whatever the engine has at hand, nulls if it
+    /// read none. An engine that keeps columns apart reads only theirs.
+    /// Default: `get`.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
+        let _ = columns;
+        self.get(tx, id)
+    }
     /// Every live row, once each, with its id. The rows have every column
     /// at its position, but only those in `columns` need hold their value:
     /// the others may hold anything (a column layout leaves them NULL), and

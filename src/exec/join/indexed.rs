@@ -26,7 +26,7 @@ use crate::value::{CompOp, Value};
 /// R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexJoin { outer, left, table, index, keys, cond, width, .. } = plan else {
+    let Plan::IndexJoin { outer, left, table, index, keys, cond, width, columns: needed, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
     let opened = db.storage_of(&table).map(Arc::clone).and_then(|storage| {
@@ -36,7 +36,7 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
     match opened {
         Ok((storage, found, columns)) => Box::new(IndexJoin {
             left: execute(*left, db, tx),
-            table: Probed { storage, index: found, columns, tx, stop: db.tx.stop_of(tx) },
+            table: Probed { storage, index: found, columns, needed, tx, stop: db.tx.stop_of(tx) },
             keys,
             cond,
             nulls: outer.then(|| vec![Value::Null; width]),
@@ -48,11 +48,13 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
 }
 
 /// The table an index join probes: its storage, the index, its columns,
-/// read as `tx` sees them, the statement's stop looked at.
+/// the table's columns the query uses, read as `tx` sees them, the
+/// statement's stop looked at.
 struct Probed {
     storage: Arc<dyn TableStorage>,
     index: Arc<dyn Index>,
     columns: Vec<usize>,
+    needed: Vec<usize>,
     tx: TxId,
     stop: Option<Arc<Stop>>,
 }
@@ -83,7 +85,7 @@ impl Probed {
     /// The row of the entry `(key, id)`, if the version `tx` sees has it.
     fn row(&self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        Ok(fetch(&*self.storage, &self.columns, self.tx, &key, id)?.map(|(_, row)| row))
+        Ok(fetch(&*self.storage, (&self.columns, Some(&self.needed)), self.tx, &key, id)?.map(|(_, row)| row))
     }
 }
 
@@ -173,6 +175,7 @@ mod tests {
             keys: Vec::new(),
             cond: None,
             width: 0,
+            columns: Vec::new(),
             detail: String::new(),
             est: 0.0_f64,
             cost: 0.0_f64,

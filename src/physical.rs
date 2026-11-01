@@ -69,6 +69,9 @@ pub enum Plan {
         probe: Probe,
         /// Read the index backwards (for ORDER BY ... DESC).
         reverse: bool,
+        /// The table's columns the query uses, the only ones a row found
+        /// is read of (`TableStorage::get_columns`).
+        columns: Vec<usize>,
         /// The condition the probe answers, as text.
         detail: String,
         /// The estimate of the rows found: the index's, or else from the
@@ -138,6 +141,9 @@ pub enum Plan {
         cond: Option<Cond>,
         /// The table's degree, the width of its nulls.
         width: usize,
+        /// The table's columns the query uses, the only ones a row found
+        /// is read of (`TableStorage::get_columns`).
+        columns: Vec<usize>,
         /// The condition, as text.
         detail: String,
         /// The rows each probe is estimated to find.

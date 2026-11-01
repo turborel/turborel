@@ -38,7 +38,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
             let Found { storage, columns, entries } = probe_index(db, &table, &index, &probe, reverse)?;
             storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe })?;
             let rows = checked(entries, db.tx.stop_of(tx))
-                .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, &columns, tx, &key, id)).transpose());
+                .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, (&columns, None), tx, &key, id)).transpose());
             Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
         }
         Plan::Filter { cond, input, .. } => {

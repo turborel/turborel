@@ -210,15 +210,16 @@ fn system_rows(read: &SystemRead, db: &Arc<State>) -> RowIter {
 /// stack (RULES.md R-CF-6), as are the helpers below.
 #[inline(never)]
 fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexScan { table, index, probe, reverse, covering, .. } = plan else {
+    let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, .. } = plan else {
         return failed(broken("an index scan is not one"));
     };
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
         Ok(Found { storage, columns, entries }) => match storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe }) {
             Ok(()) => {
-                let rows = checked(entries, db.tx.stop_of(tx))
-                    .filter_map(move |entry| entry.and_then(|(key, id)| entry_row(&*storage, (&columns, width), tx, key, id)).transpose());
+                let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+                    entry.and_then(|(key, id)| entry_row(&*storage, (&columns, &needed, width), tx, key, id)).transpose()
+                });
                 Box::new(checked(rows, db.tx.stop_of(tx)))
             }
             Err(e) => failed(e),
@@ -302,9 +303,25 @@ struct Found {
 
 /// Row `id` of `storage`, as `tx` sees it, if that version has `key` in the
 /// index's `columns`: an index holds the entries of versions `tx` may not
-/// see (`Index`).
-fn fetch(storage: &dyn TableStorage, columns: &[usize], tx: TxId, key: &Key, id: RowId) -> Result<Option<(RowId, Row)>> {
-    let Some(row) = storage.get(tx, id)? else { return Ok(None) };
+/// see (`Index`). Of a statement that reads only `needed`, only those and
+/// the index's columns are read (`TableStorage::get_columns`); else all.
+fn fetch(
+    storage: &dyn TableStorage,
+    (columns, needed): (&[usize], Option<&[usize]>),
+    tx: TxId,
+    key: &Key,
+    id: RowId,
+) -> Result<Option<(RowId, Row)>> {
+    let read = match needed {
+        Some(needed) => {
+            let mut read: Vec<usize> = needed.iter().chain(columns).copied().collect();
+            read.sort_unstable();
+            read.dedup();
+            storage.get_columns(tx, id, &read)?
+        }
+        None => storage.get(tx, id)?,
+    };
+    let Some(row) = read else { return Ok(None) };
     let seen = project(&row, columns).map(Key);
     Ok(seen.filter(|seen| seen == key).map(|_| (id, row)))
 }
@@ -313,10 +330,11 @@ fn fetch(storage: &dyn TableStorage, columns: &[usize], tx: TxId, key: &Key, id:
 /// in an index on `columns`, as `tx` sees it, if it does: of a scan
 /// covering the columns read, the row `width` columns wide, made of the
 /// key at `columns` and nulls elsewhere, if every reader sees the row's
-/// one version (`TableStorage::visible_to_all`); else read (`fetch`).
+/// one version (`TableStorage::visible_to_all`); else read (`fetch`), of
+/// the columns `needed` the statement uses.
 fn entry_row(
     storage: &dyn TableStorage,
-    (columns, width): (&[usize], Option<usize>),
+    (columns, needed, width): (&[usize], &[usize], Option<usize>),
     tx: TxId,
     key: Key,
     id: RowId,
@@ -332,7 +350,7 @@ fn entry_row(
         }
         return Ok(Some(row));
     }
-    Ok(fetch(storage, columns, tx, &key, id)?.map(|(_, row)| row))
+    Ok(fetch(storage, (columns, Some(needed)), tx, &key, id)?.map(|(_, row)| row))
 }
 
 /// What `index` finds for `probe`, in index order, or reversed, read as
@@ -431,6 +449,7 @@ mod tests {
             method: BTREE_METHOD.into(),
             probe: Probe::All,
             reverse: false,
+            columns: Vec::new(),
             detail: String::new(),
             est: 0.0_f64,
             cost: 0.0_f64,

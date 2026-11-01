@@ -13,7 +13,7 @@ use super::mvcc::Read;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batches, Conjunction, RowId, Rows, batches_of};
+use crate::storage::{BATCH_ROWS, Batches, Conjunction, Row, RowId, Rows, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -49,6 +49,17 @@ impl Iterator for Ranged {
 }
 
 impl RowTable {
+    /// Row `id` as `tx` sees it, `columns` decoded, or all.
+    pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>) -> Result<Option<Row>> {
+        let reader = self.reader(tx)?;
+        self.note_read(tx, Read::Row(id))?;
+        match self.tree.get(&key(id))? {
+            Some(newest) => self.visible_from(newest, reader)?.map(|record| self.decode(id, &record, columns)).transpose(),
+            // Frozen, so committed before every snapshot (`rows/frozen.rs`).
+            None => self.frozen_row(id, columns),
+        }
+    }
+
     /// Every entry of the table's tree, in row id order, read through
     /// `table`, which the scan holds.
     pub(super) fn entries(table: &Arc<Self>) -> Scan<TreeOf> {

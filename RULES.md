@@ -1611,6 +1611,11 @@ write-ahead logging.
 *Column store*
 
 - **Delta.** The tree is the table's delta, written as a row store.
+- **Fetches.** A row an index scan or an index join finds is read of the
+  columns the statement uses and the index's alone
+  (`TableStorage::get_columns`): of a frozen row, only their chunks, a
+  page each; of the tree's, only they decoded. A whole row still reads
+  a chunk of each column, which a hybrid layout would read in one page.
 - **Freezing** (`engine/columns`). Once COLUMNSTORE.FREEZE_ROWS rows past
   the last group are committed before every snapshot (and
   COLUMNSTORE.FREEZE_DELAY seconds ago), the maintenance thread freezes
