@@ -76,7 +76,7 @@ impl Judged {
             Some(Column::Ints(column)) => ints::kept(self, column, over),
             Some(Column::Floats(column)) => floats::kept(self, column, over),
             Some(Column::Texts(column)) => texts::kept(self, column, over),
-            Some(Column::Values(_)) | None => None,
+            Some(Column::Values(_) | Column::Nulls(_)) | None => None,
         };
         if typed.is_some() {
             return typed;

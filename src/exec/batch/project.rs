@@ -191,7 +191,13 @@ fn by_vectors(batch: &Batch, rows: Option<&[usize]>, (places, runner): (&[Place]
                 None => batch.columns.get(*at).cloned().unwrap_or_default(),
                 Some(_) => gathered(*at),
             },
-            Place::Const(v) => Column::Values(vec![v.clone(); given.len()]),
+            Place::Const(v) => {
+                if v.is_null() {
+                    Column::nulls(given.len())
+                } else {
+                    Column::Values(vec![v.clone(); given.len()])
+                }
+            }
             Place::Expr(e, inputs) => expr_vector((e, inputs), (batch, rows, &given), runner)?,
         });
     }

@@ -1952,7 +1952,9 @@ write-ahead logging.
   row of only its values; a batch is read ahead of the cursor. A column
   its scan does not read is null, as a row's scan gives it: so the
   projection restoring a reordered join's columns, which names them all,
-  keeps the join by batch. Over
+  keeps the join by batch. Such a column, or a null constant, is a
+  vector of nulls that holds none (`Column::Nulls`), its values made
+  only if asked for as values. Over
   other tables it reads a row at a time, as reading ahead gains nothing.
 - **Groups held** (`batch/groups.rs`). In the work area, in order of
   first rows. Each row's key is built in a kept buffer (`batch::put_key`).

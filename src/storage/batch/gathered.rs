@@ -26,13 +26,14 @@ impl Column {
                 Column::Floats(Floats::new(numbers, nulls(picks, |r| floats.is_null(r))))
             }
             Column::Texts(texts) => Column::Texts(texts_gathered(texts, picks)),
+            Column::Nulls(_) => Column::nulls(picks.len()),
         }
     }
 
     /// A vector of `rows` nulls.
     #[must_use]
     pub fn nulls(rows: usize) -> Column {
-        Column::Values(vec![Value::Null; rows])
+        Column::Nulls(super::Nulls::new(rows))
     }
 }
 

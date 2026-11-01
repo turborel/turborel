@@ -139,7 +139,9 @@ pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut V
         for &(_, r, _) in rows {
             match column {
                 Column::Values(values) => put_value(out, values.get(r).unwrap_or(&Value::Null)),
-                Column::Ints(_) | Column::Floats(_) | Column::Texts(_) => put_value(out, &batch.cell(at, r).to_value()),
+                Column::Ints(_) | Column::Floats(_) | Column::Texts(_) | Column::Nulls(_) => {
+                    put_value(out, &batch.cell(at, r).to_value());
+                }
             }
         }
     }

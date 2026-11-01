@@ -154,7 +154,8 @@ fn fed_group(
                 Some(Column::Floats(floats)) => state.update_floats(floats, Some(read_rows))?,
                 Some(Column::Values(values)) => state.update_many(values, Some(read_rows))?,
                 Some(Column::Texts(texts)) => state.update_texts(texts, Some(read_rows))?,
-                None => {}
+                // Every value null, none taken.
+                Some(Column::Nulls(_)) | None => {}
             },
             (Taken::Expr(..), Some(Fed::Ints(ints))) => state.update_ints(ints, Some(given))?,
             (Taken::Expr(..), Some(Fed::Values(Lane::Made(values)))) => state.update_many(values, Some(given))?,
@@ -222,6 +223,7 @@ fn column_nulled(column: &Column, rows: Option<&[usize]>) -> bool {
         Column::Ints(Ints { nulls, .. }) | Column::Floats(Floats { nulls, .. }) | Column::Texts(Texts { nulls, .. }) => {
             marked(nulls.as_deref(), rows)
         }
+        Column::Nulls(nulls) => rows.map_or(nulls.rows > 0, |r| !r.is_empty()),
     }
 }
 
@@ -279,6 +281,8 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[usize
                     Some(Column::Floats(floats)) => state.update_floats(floats, rows)?,
                     Some(Column::Values(values)) => state.update_many(values, rows)?,
                     Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
+                    // Every value null, none taken.
+                    Some(Column::Nulls(_)) => {}
                     None => state.update_many(&[], rows)?,
                 }
             }

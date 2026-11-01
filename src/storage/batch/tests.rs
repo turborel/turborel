@@ -84,7 +84,8 @@ fn columns_of_approximate_numbers() {
 /// pairs a batch's rows: each kind gathered as one of its kind, a row taken
 /// again as often as picked, in the order picked, a null where none is
 /// picked or the row's is null; texts of a store's dictionaries keep their
-/// entries; a vector of nulls is of values.
+/// entries; a vector of nulls holds none, its cells null, its values
+/// made once asked for, gathered as nulls.
 #[test]
 fn columns_gathered_by_row_keep_their_kind() {
     let picks = [Some(2_usize), None, Some(0_usize), Some(2_usize)];
@@ -107,8 +108,15 @@ fn columns_gathered_by_row_keep_their_kind() {
     assert_eq!(shown(recoded.values()), ["y", "NULL", "y", "y"]);
     let values = Column::from(vec![Value::Char("v".into()), Value::Null, exact(5_i128, 0_u32)]);
     assert_eq!(shown(values.gathered(&picks).values()), ["5", "NULL", "v", "5"]);
-    let Column::Values(nulls) = Column::nulls(2_usize) else { panic!("values") };
-    assert!(nulls.len() == 2_usize && nulls.iter().all(Value::is_null));
+    let nulls = Column::nulls(2_usize);
+    let Column::Nulls(held) = &nulls else { panic!("nulls") };
+    assert_eq!(held.rows, 2_usize, "none held");
+    assert!(nulls.values().len() == 2_usize && nulls.values().iter().all(Value::is_null), "made as values once asked for");
+    let null_picks = nulls.gathered(&picks);
+    assert_eq!(shown(null_picks.values()), ["NULL"; 4]);
+    let batch = Batch { columns: vec![null_picks], rows: 4 };
+    assert!(batch.cell(0, 1).is_null() && batch.cell(0, 9).is_null());
+    assert_eq!(nulls.into_values().len(), 2_usize);
 }
 
 /// Verifies: [DESIGN] RULES.md D31, integers known as runs: kept only

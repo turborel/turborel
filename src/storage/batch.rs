@@ -67,6 +67,30 @@ pub enum Column {
     Floats(Floats),
     /// Character strings, as their text.
     Texts(Texts),
+    /// Nulls, as many as it says, none held: as of a column a projection
+    /// names that its input does not read.
+    Nulls(Nulls),
+}
+
+/// \[DESIGN\] A vector of nulls, none held: its values made only if they
+/// are asked for as values.
+#[derive(Debug, Clone, Default)]
+pub struct Nulls {
+    /// How many.
+    pub rows: usize,
+    made: OnceLock<Vec<Value>>,
+}
+
+impl Nulls {
+    /// `rows` nulls.
+    pub fn new(rows: usize) -> Nulls {
+        Nulls { rows, made: OnceLock::new() }
+    }
+
+    /// Its values, made the first time they are asked for.
+    pub fn values(&self) -> &[Value] {
+        self.made.get_or_init(|| vec![Value::Null; self.rows])
+    }
 }
 
 /// \[DESIGN\] Character strings as read, of a VARCHAR column as written, of
@@ -302,6 +326,7 @@ impl Column {
             Column::Ints(ints) => ints.values(),
             Column::Floats(floats) => floats.values(),
             Column::Texts(texts) => texts.values(),
+            Column::Nulls(nulls) => nulls.values(),
         }
     }
 
@@ -325,6 +350,10 @@ impl Column {
                 *self = Column::Values(made);
                 self.values_mut()
             }
+            Column::Nulls(nulls) => {
+                *self = Column::Values(vec![Value::Null; nulls.rows]);
+                self.values_mut()
+            }
         }
     }
 
@@ -335,6 +364,7 @@ impl Column {
             Column::Ints(ints) => ints.into_values(),
             Column::Floats(floats) => floats.into_values(),
             Column::Texts(texts) => texts.into_values(),
+            Column::Nulls(nulls) => vec![Value::Null; nulls.rows],
         }
     }
 }
@@ -439,7 +469,7 @@ impl Batch {
             Some(Column::Ints(ints)) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
             Some(Column::Floats(floats)) => floats.get(r).map_or(Cell::Null, Cell::Approx),
             Some(Column::Texts(texts)) => texts.get(r).map_or(Cell::Null, Cell::Text),
-            None => Cell::Null,
+            Some(Column::Nulls(_)) | None => Cell::Null,
         }
     }
 }

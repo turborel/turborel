@@ -206,6 +206,8 @@ fn column_bytes(column: &Column) -> usize {
         }
         Column::Ints(ints) => ints.units.len().saturating_mul(size_of::<i64>()).saturating_add(nulls(&ints.nulls)),
         Column::Floats(floats) => floats.numbers.len().saturating_mul(size_of::<f64>()).saturating_add(nulls(&floats.nulls)),
+        // None held, but as values once they are asked for.
+        Column::Nulls(held) => held.rows.saturating_mul(size_of::<Value>()),
         Column::Texts(texts) => {
             let coded = texts.coded.as_ref().map_or(0, |c| {
                 let entries = c.entries.text.len().saturating_add(c.entries.ends.len().saturating_mul(size_of::<usize>()));

@@ -26,7 +26,7 @@ mod newest;
 mod options;
 mod rows;
 
-pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Ramp, Texts, batches_of};
+pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
 pub use newest::Newest;
 pub use rows::{Row, RowId, Rows, project};
