@@ -246,7 +246,8 @@ impl RowTable {
     pub(super) fn group_pages(&self) -> Result<Pages<'_, Sealing>> {
         let capacity = self.pool.capacity(self.file)?.saturating_sub(self.sealing.overhead()).saturating_sub(LINK);
         let compress = self.frozen.columns().is_none_or(|c| c.compress);
-        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress })
+        let pax = self.frozen.columns().is_some_and(|c| c.pax);
+        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax })
     }
 
     /// The group of `entry`: its header as held, else read and held.

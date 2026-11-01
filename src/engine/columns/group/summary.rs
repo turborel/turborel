@@ -28,6 +28,8 @@ pub struct Summary {
     pub order: Vec<usize>,
     /// The places of the columns it keeps Bloom filters of.
     pub blooms: Vec<usize>,
+    /// Whether it is of the hybrid layout (`Group::pax`).
+    pub pax: bool,
     /// Of each column, its nulls and its least and greatest values.
     pub columns: Vec<Overall>,
 }
@@ -62,6 +64,7 @@ impl Summary {
             rows: group.rows,
             order: group.order.clone(),
             blooms: group.blooms(),
+            pax: group.pax,
             columns,
         }
     }

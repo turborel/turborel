@@ -44,8 +44,11 @@ const REWRITE_FRACTION: &str = "COLUMNSTORE.REWRITE_FRACTION";
 const COMPRESSION: &str = "COLUMNSTORE.COMPRESSION";
 const ORDER: &str = "COLUMNSTORE.ORDER";
 const BLOOM: &str = "COLUMNSTORE.BLOOM";
+const LAYOUT: &str = "COLUMNSTORE.LAYOUT";
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
+/// What COLUMNSTORE.LAYOUT takes.
+const LAYOUTS: &[&str] = &["COLUMNS", "PAX"];
 /// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
 /// rows changed, deleted or added to before it is written again, as
 /// Vertica's mergeout purges and SQL Server's guidance has it.
@@ -107,6 +110,9 @@ pub struct Columns {
     /// The columns each group keeps Bloom filters of, in the order of
     /// their places.
     pub bloom: Places,
+    /// Whether groups are written in the hybrid layout, a page a range of
+    /// rows holding a chunk of each column (`engine/columns/group/pax.rs`).
+    pub pax: bool,
 }
 
 /// \[DESIGN\] Columns of a table by their places in the row, at most
@@ -145,6 +151,7 @@ impl Default for Columns {
             compress: true,
             order: Places::default(),
             bloom: Places::default(),
+            pax: false,
         }
     }
 }
@@ -282,6 +289,11 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
             Rebuild::No,
             "The columns, by commas, of which a table of the column store keeps a Bloom filter of each 1024 rows of each group it freezes, so an equality or IN on one skips the rows that cannot hold its values, groups frozen before written again so in the background; none if empty.",
         ),
+        TableOption::new(
+            (LAYOUT, Kind::Choice(LAYOUTS), Value::Char(if cols.pax { "PAX" } else { "COLUMNS" }.into())),
+            Rebuild::No,
+            "How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.",
+        ),
     ]
 }
 
@@ -353,6 +365,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         compress: set(COMPRESSION).map_or(c.compress, |v| v.to_string().trim_end() != "NONE"),
         order: set(ORDER).map_or(c.order, |v| order_of(desc, v)),
         bloom: set(BLOOM).map_or(c.bloom, |v| bloom_of(desc, v)),
+        pax: set(LAYOUT).map_or(c.pax, |v| v.to_string().trim_end() == "PAX"),
     });
     out
 }

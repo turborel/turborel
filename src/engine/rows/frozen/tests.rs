@@ -54,6 +54,7 @@ fn rewriting(delay: u32, fraction: f64) -> TableOptions {
             compress: true,
             order: Places::default(),
             bloom: Places::default(),
+            pax: false,
         }),
         ..TableOptions::default()
     }
@@ -298,6 +299,7 @@ fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool
             compress,
             order: Places::default(),
             bloom: Places::default(),
+            pax: false,
         }),
         ..TableOptions::default()
     };
@@ -550,4 +552,40 @@ fn rows_are_read_of_the_columns_asked() {
         assert!(none.iter().all(Value::is_null), "{id}");
     }
     assert!(table.get_columns(NO_TRANSACTION, late + 1000, &[0]).unwrap().is_none());
+}
+
+/// Verifies: [DESIGN] RULES.md D31, COLUMNSTORE.LAYOUT: once a table's
+/// layout is the hybrid, the maintenance thread writes each group again
+/// so, until every one records it, its pages holding a chunk of each
+/// column; every row is found by its id, and a scan gives each, as before;
+/// once its layout is the column one again, they are written so.
+#[test]
+fn groups_are_written_again_when_their_layout_changes() {
+    let (_, files) = files();
+    let table = Arc::new(RowTable::create(&files, &TYPES, options(0)).unwrap());
+    let ids: Vec<RowId> = (0..7000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    ended(&table, 1);
+    let layouts = |t: &RowTable| -> Vec<bool> { t.frozen.directory().unwrap().groups.iter().map(|e| e.summary.pax).collect() };
+    assert_eq!(layouts(&table), [false; 3], "frozen in the column layout");
+    let mut hybrid = options(0).columns.unwrap();
+    hybrid.pax = true;
+    table.frozen.reconfigure(Some(hybrid));
+    assert!(table.maintenance_due(), "groups to write again");
+    // A few calls, two groups each: bounded, so a layout never reached
+    // fails here rather than calling for ever.
+    for _ in 0_u32..4 {
+        table.maintain(1).unwrap();
+    }
+    assert_eq!(layouts(&table), [true; 3], "every group of the hybrid layout");
+    assert!(!table.maintenance_due(), "none left to write again");
+    let directory = table.frozen.directory().unwrap();
+    let group = table.group_of(&directory.groups[0]).unwrap();
+    assert!(group.columns[1].iter().zip(&group.columns[0]).all(|(text, key)| text.run.page == key.run.page && text.run.len > 0));
+    assert_eq!(table.get(NO_TRANSACTION, ids[4321]).unwrap().map(|r| r[1].to_string()), Some("v4321".to_owned()));
+    let in_order: Vec<String> = (0_i32..7_000_i32).map(|n| n.to_string()).collect();
+    assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
+    table.frozen.reconfigure(options(0).columns);
+    ended(&table, 1);
+    assert_eq!(layouts(&table), [false; 3], "the column layout again");
+    assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
 }

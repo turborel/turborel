@@ -1,7 +1,8 @@
 //! \[DESIGN\] Reading ahead of a scan of frozen row groups (RULES.md D30,
 //! D31): as a scan takes up a group, the pages of the chunks it will read,
 //! of the columns it reads holding rows of the runs it reads, in the order
-//! it reads them, a vector of each column at a time; then, as it reads
+//! it reads them, a vector of each column at a time, a page of the hybrid
+//! layout once; then, as it reads
 //! each vector, as many of them as the pool's window has room for, asked
 //! of the pool (`BufferPool::ahead_pages`), so the database's read-ahead
 //! job reads them while the scan decodes those before.
@@ -31,6 +32,9 @@ impl GroupAhead {
         }
         chunks.sort_unstable();
         self.pages = chunks.into_iter().map(|(_, _, page)| page).collect();
+        // A page of the hybrid layout holds a chunk of each column, of the
+        // same rows: asked for once.
+        self.pages.dedup();
         self.asked = 0;
     }
 
@@ -59,7 +63,7 @@ mod tests {
     use crate::engine::columns::group::{Run, Zone};
 
     fn zone(first: u32, rows: u32, page: u64) -> Zone {
-        Zone { run: Run { first, rows, page: PageId(page) }, nulls: 0, bounds: None, parts: Vec::new() }
+        Zone { run: Run::whole(first, rows, PageId(page)), nulls: 0, bounds: None, parts: Vec::new() }
     }
 
     /// Verifies: [DESIGN] RULES.md D30, D31: a group's scan asks for the
@@ -80,6 +84,7 @@ mod tests {
                 vec![zone(0, 300, 30)],
             ],
             order: Vec::new(),
+            pax: false,
             header: Vec::new(),
         };
         let mut ahead = GroupAhead::default();

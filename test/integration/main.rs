@@ -88,6 +88,7 @@ mod file_manager;
 mod following;
 mod functions;
 mod get_diagnostics;
+mod hybrid_layout;
 mod index_contracts;
 mod index_only;
 mod index_settings;

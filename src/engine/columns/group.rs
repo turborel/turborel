@@ -1,7 +1,9 @@
 //! \[DESIGN\] A frozen row group of the column layout (RULES.md D31): rows
 //! committed before every snapshot, in row id order or sorted by columns
 //! (COLUMNSTORE.ORDER), each column's values
-//! in chunks (`columns.rs`) on pages of their own; for each chunk, the rows
+//! in chunks (`columns.rs`) on pages of their own, or, of the hybrid layout
+//! (COLUMNSTORE.LAYOUT = 'PAX'), a page a range of rows holding a chunk of
+//! each column (`group/pax.rs`); for each chunk, the rows
 //! it holds, its least and greatest values and its nulls, so a scan reads
 //! only the chunks a condition may match (zone maps), and of the columns
 //! COLUMNSTORE.BLOOM names a Bloom filter of each part of it (`bloom.rs`),
@@ -17,14 +19,15 @@
 //! ```text
 //! page:    next page u64 (0 for none) | the header's bytes
 //! header:  GROUP_FORMAT u8 | first id u64 | last id u64 | rows u32 |
-//!          order u32 | each: column u32 |
+//!          order u32 | each: column u32 | layout u8 (1 of the hybrid) |
 //!          id runs u32 | each: run | by id runs u32 | each: run |
 //!          columns u32 | each: runs u32 | each:
 //!          run | nulls u32 | bounds u8 (1 if any) | least | greatest |
 //!          parts u32 | each, of PART_ROWS rows: nulls u32 | bounds u8 |
 //!          least | greatest | filter u8 (1 if any) | page u64 | at u32 |
 //!          bytes u32
-//! run:     first row u32 | rows u32 | page u64
+//! run:     first row u32 | rows u32 | page u64 | at u32 | len u32 (0
+//!          for the whole page)
 //! bound:   length u32 | the value as its type writes it in a record
 //! ```
 //!
@@ -32,12 +35,15 @@
 //! encodings, its page number their context.
 
 mod header;
+mod ids;
+mod pax;
 mod summary;
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
 pub use header::{put_summary, read, read_summaries};
+use ids::{write_by_id, write_ids};
 pub use summary::{Overall, Summary};
 
 use super::{Chunk, Fields, bloom};
@@ -95,6 +101,8 @@ pub struct Pages<'a, S> {
     pub sealing: &'a S,
     /// Whether chunks written are compressed (`columns/encoded.rs`).
     pub compress: bool,
+    /// Whether groups are written in the hybrid layout (`Group::pax`).
+    pub pax: bool,
 }
 
 impl<S: Seal> Pages<'_, S> {
@@ -126,6 +134,19 @@ impl<S: Seal> Pages<'_, S> {
         read(&self.sealing.open(page.0, &stored)?)
     }
 
+    /// What `read` makes of the bytes of `run` (`Run::at`), as `with`.
+    ///
+    /// # Errors
+    ///
+    /// As `with`; SQLCODE -916 if the run is past its page's end.
+    pub fn with_run<T>(&self, run: &Run, read: impl FnOnce(&[u8]) -> Result<T>) -> Result<T> {
+        if run.len == 0 {
+            return self.with(run.page, read);
+        }
+        let (at, len) = (usize::try_from(run.at).unwrap_or(usize::MAX), usize::try_from(run.len).unwrap_or(usize::MAX));
+        self.with(run.page, |bytes| read(bytes.get(at..at.saturating_add(len)).ok_or_else(|| corrupt("a chunk is past its page's end"))?))
+    }
+
     /// Frees `pages`; one that cannot be is left.
     pub fn free(&self, pages: &[PageId]) {
         for &page in pages {
@@ -143,6 +164,19 @@ pub struct Run {
     pub rows: u32,
     /// The page they are on.
     pub page: PageId,
+    /// Where on it they are, `len` bytes from `at`: of no bytes, the
+    /// whole page, a chunk of a column on a page of its own; of the hybrid
+    /// layout, a page holds a chunk of each column (`pax.rs`).
+    pub at: u32,
+    /// Their bytes from `at`; none, the whole page.
+    pub len: u32,
+}
+
+impl Run {
+    /// A run on page `page` whole.
+    pub(super) fn whole(first: u32, rows: u32, page: PageId) -> Run {
+        Run { first, rows, page, at: 0, len: 0 }
+    }
 }
 
 /// A chunk of a column, and what a scan may skip it by.
@@ -206,6 +240,10 @@ pub struct Group {
     /// The places of the columns its rows are sorted by, ascending, as
     /// COLUMNSTORE.ORDER said as it was written; none, in row id order.
     pub order: Vec<usize>,
+    /// Whether it was written in the hybrid layout, as COLUMNSTORE.LAYOUT
+    /// said as it was written: a page a range of its rows, a chunk of each
+    /// column on it (`write_pax`).
+    pub pax: bool,
     /// The pages of its header.
     pub header: Vec<PageId>,
 }
@@ -250,16 +288,7 @@ fn write_column<S: Seal>(
     while from < fields.len() {
         let count = fields.fitting(t, from, (pages.capacity, pages.compress));
         let page = pages.put(&fields.chunk(t, from, (count, pages.compress))?, written)?;
-        let held = values.get(from..from.saturating_add(count)).unwrap_or_default();
-        let (bounds, nulls) = bounds_of(held);
-        let parts = held
-            .chunks(usize::try_from(PART_ROWS).unwrap_or(usize::MAX))
-            .map(|part| {
-                let (part_bounds, part_nulls) = bounds_of(part);
-                Part { nulls: part_nulls, bounds: part_bounds, filter: None }
-            })
-            .collect();
-        zones.push(Zone { run: Run { first: count32(from)?, rows: count32(count)?, page }, nulls, bounds, parts });
+        zones.push(zone_of(&values, Run::whole(count32(from)?, count32(count)?, page)));
         from = from.saturating_add(count);
     }
     if bloom {
@@ -268,9 +297,29 @@ fn write_column<S: Seal>(
     Ok(zones)
 }
 
+/// The zone of the chunk of `run`, of the values of its column `values`:
+/// its nulls and bounds, and those of each part of it.
+pub(super) fn zone_of(values: &[Value], run: Run) -> Zone {
+    let first = usize::try_from(run.first).unwrap_or(usize::MAX);
+    let held = values.get(first..first.saturating_add(usize::try_from(run.rows).unwrap_or(0))).unwrap_or_default();
+    let (bounds, nulls) = bounds_of(held);
+    let parts = held
+        .chunks(usize::try_from(PART_ROWS).unwrap_or(usize::MAX))
+        .map(|part| {
+            let (part_bounds, part_nulls) = bounds_of(part);
+            Part { nulls: part_nulls, bounds: part_bounds, filter: None }
+        })
+        .collect();
+    Zone { run, nulls, bounds, parts }
+}
+
 /// Writes a Bloom filter of each part of `zones`, of `values`, and puts
 /// where each is in its part.
-fn put_filters<S: Seal>(pages: &Pages<'_, S>, (values, zones): (&[Value], &mut [Zone]), written: &mut Vec<PageId>) -> Result<()> {
+pub(super) fn put_filters<S: Seal>(
+    pages: &Pages<'_, S>,
+    (values, zones): (&[Value], &mut [Zone]),
+    written: &mut Vec<PageId>,
+) -> Result<()> {
     let (part, bytes) = (usize::try_from(PART_ROWS).unwrap_or(usize::MAX), bloom::filter_bytes(pages.capacity));
     let mut filters = Vec::new();
     for zone in zones.iter() {
@@ -283,46 +332,6 @@ fn put_filters<S: Seal>(pages: &Pages<'_, S>, (values, zones): (&[Value], &mut [
         p.filter = Some(place);
     }
     Ok(())
-}
-
-/// Writes `ids`, if they are not every id from their first to their last,
-/// in order.
-fn write_ids<S: Seal>(pages: &Pages<'_, S>, ids: &[RowId], written: &mut Vec<PageId>) -> Result<Vec<Run>> {
-    let (Some(&first), Some(&last)) = (ids.first(), ids.last()) else { return Ok(Vec::new()) };
-    if increasing(ids) && last.checked_sub(first).and_then(|span| span.checked_add(1)) == u64::try_from(ids.len()).ok() {
-        return Ok(Vec::new());
-    }
-    let per_page = pages.capacity.checked_div(ID).unwrap_or(1).max(1);
-    let mut runs = Vec::new();
-    for (n, chunk) in ids.chunks(per_page).enumerate() {
-        let bytes: Vec<u8> = chunk.iter().flat_map(|id| id.to_le_bytes()).collect();
-        let page = pages.put(&bytes, written)?;
-        runs.push(Run { first: count32(n.saturating_mul(per_page))?, rows: count32(chunk.len())?, page });
-    }
-    Ok(runs)
-}
-
-/// Whether `ids` are in increasing order.
-fn increasing(ids: &[RowId]) -> bool {
-    ids.windows(2).all(|w| w.first() < w.get(1))
-}
-
-/// Writes the positions of `ids` by id, if they are not in increasing
-/// order.
-fn write_by_id<S: Seal>(pages: &Pages<'_, S>, ids: &[RowId], written: &mut Vec<PageId>) -> Result<Vec<Run>> {
-    if increasing(ids) {
-        return Ok(Vec::new());
-    }
-    let mut by_id: Vec<(RowId, u32)> = ids.iter().enumerate().map(|(at, &id)| Ok((id, count32(at)?))).collect::<Result<_>>()?;
-    by_id.sort_unstable();
-    let per_page = pages.capacity.checked_div(BY_ID).unwrap_or(1).max(1);
-    let mut runs = Vec::new();
-    for (n, chunk) in by_id.chunks(per_page).enumerate() {
-        let bytes: Vec<u8> = chunk.iter().flat_map(|(id, at)| id.to_le_bytes().into_iter().chain(at.to_le_bytes())).collect();
-        let page = pages.put(&bytes, written)?;
-        runs.push(Run { first: count32(n.saturating_mul(per_page))?, rows: count32(chunk.len())?, page });
-    }
-    Ok(runs)
 }
 
 impl Group {
@@ -361,25 +370,40 @@ impl Group {
         };
         let id_runs = write_ids(pages, ids, written)?;
         let by_id = write_by_id(pages, ids, written)?;
-        let columns = types
-            .iter()
-            .enumerate()
-            .map(|(c, t)| write_column(pages, t, (rows, c, bloom.contains(&c)), written))
-            .collect::<Result<Vec<_>>>()?;
-        let mut group =
-            Group { first, last, rows: count32(rows.len())?, ids: id_runs, by_id, columns, order: order.to_vec(), header: Vec::new() };
+        let columns = if pages.pax {
+            pax::write_pax(pages, types, (rows, bloom), written)?
+        } else {
+            types
+                .iter()
+                .enumerate()
+                .map(|(c, t)| write_column(pages, t, (rows, c, bloom.contains(&c)), written))
+                .collect::<Result<Vec<_>>>()?
+        };
+        let mut group = Group {
+            first,
+            last,
+            rows: count32(rows.len())?,
+            ids: id_runs,
+            by_id,
+            columns,
+            order: order.to_vec(),
+            pax: pages.pax,
+            header: Vec::new(),
+        };
         group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
         Ok(group)
     }
 
-    /// Every page it is on.
+    /// Every page it is on, each once: chunks of the hybrid layout, and
+    /// filters, share pages.
     pub fn pages(&self) -> Vec<PageId> {
         let chunks = self.columns.iter().flatten().map(|z| z.run.page);
         let ids = self.ids.iter().chain(&self.by_id).map(|r| r.page);
-        let mut filters: Vec<PageId> =
-            self.columns.iter().flatten().flat_map(|z| &z.parts).filter_map(|p| p.filter.map(|f| f.page)).collect();
-        filters.dedup();
-        ids.chain(chunks).chain(filters).chain(self.header.iter().copied()).collect()
+        let filters = self.columns.iter().flatten().flat_map(|z| &z.parts).filter_map(|p| p.filter.map(|f| f.page));
+        let mut all: Vec<PageId> = ids.chain(chunks).chain(filters).chain(self.header.iter().copied()).collect();
+        all.sort_unstable_by_key(|p| p.0);
+        all.dedup();
+        all
     }
 
     /// The places of the columns it has Bloom filters of, in order.
@@ -470,7 +494,7 @@ impl Group {
             .find(|z| position >= z.run.first && position < z.run.first.saturating_add(z.run.rows))
             .ok_or_else(|| corrupt("a row is in no chunk"))?;
         let at = usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        pages.with(zone.run.page, |bytes| Chunk::parse(bytes)?.value(at, t))
+        pages.with_run(&zone.run, |bytes| Chunk::parse(bytes)?.value(at, t))
     }
 }
 

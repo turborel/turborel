@@ -19,6 +19,8 @@ fn put_run(out: &mut Vec<u8>, run: &Run) {
     put_u32(out, run.first);
     put_u32(out, run.rows);
     put_u64(out, run.page.0);
+    put_u32(out, run.at);
+    put_u32(out, run.len);
 }
 
 fn put_bound(out: &mut Vec<u8>, v: &Value, t: &DataType) -> Result<()> {
@@ -51,6 +53,7 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
     for &place in &group.order {
         put_u32(&mut out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
     }
+    out.push(u8::from(group.pax));
     for runs in [&group.ids, &group.by_id] {
         put_u32(&mut out, count32(runs.len())?);
         for run in runs {
@@ -112,7 +115,16 @@ impl<'a> Reader<'a> {
     }
 
     fn run(&mut self) -> Result<Run> {
-        Ok(Run { first: self.u32()?, rows: self.u32()?, page: PageId(self.u64()?) })
+        Ok(Run { first: self.u32()?, rows: self.u32()?, page: PageId(self.u64()?), at: self.u32()?, len: self.u32()? })
+    }
+
+    /// A group's layout: whether the hybrid.
+    fn layout(&mut self) -> Result<bool> {
+        match self.byte()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(corrupt("its layout is of another format")),
+        }
     }
 
     fn bound(&mut self, t: &DataType) -> Result<Value> {
@@ -165,6 +177,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
     }
     let (first_id, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
     let order = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
+    let pax = r.layout()?;
     let ids = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     let by_id = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     if r.count()? != types.len() {
@@ -178,7 +191,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
-    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, header })
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, header })
 }
 
 /// Appends `summary`, its columns of `types`, as a table's directory holds
@@ -187,6 +200,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
 /// ```text
 /// summary:  header page u64 | first id u64 | last id u64 | rows u32 |
 ///           order u32 | each: column u32 | blooms u32 | each: column u32 |
+///           layout u8 (1 of the hybrid) |
 ///           columns u32 | each: nulls u32 | bounds u8 | least | greatest
 /// ```
 ///
@@ -205,6 +219,7 @@ pub fn put_summary(out: &mut Vec<u8>, summary: &Summary, types: &[DataType]) -> 
             put_u32(out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
         }
     }
+    out.push(u8::from(summary.pax));
     put_u32(out, count32(summary.columns.len())?);
     for (overall, t) in summary.columns.iter().zip(types) {
         put_u32(out, overall.nulls);
@@ -225,11 +240,12 @@ pub fn read_summaries(bytes: &[u8], types: &[DataType]) -> Result<Vec<Summary>> 
         let (header, first, last, rows) = (PageId(r.u64()?), r.u64()?, r.u64()?, r.u32()?);
         let order = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
         let blooms = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
+        let pax = r.layout()?;
         if r.count()? != types.len() {
             return Err(corrupt("its summary's columns are not its table's"));
         }
         let columns = types.iter().map(|t| Ok(Overall { nulls: r.u32()?, bounds: r.bounds(t)? })).collect::<Result<Vec<_>>>()?;
-        out.push(Summary { header, first, last, rows, order, blooms, columns });
+        out.push(Summary { header, first, last, rows, order, blooms, pax, columns });
     }
     Ok(out)
 }

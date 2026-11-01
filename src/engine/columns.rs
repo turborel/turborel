@@ -117,6 +117,29 @@ impl Fields {
         rest.len()
     }
 
+    /// \[DESIGN\] (RULES.md D31) How many rows from `from` on fit one page
+    /// of `capacity` bytes together, a chunk of each of `columns`, each
+    /// fields and their type, compressed if `compress`: none if even the
+    /// first row's chunks do not (the hybrid layout, `group/pax.rs`).
+    pub fn fitting_together(columns: &[(&Fields, &DataType)], from: usize, (capacity, compress): (usize, bool)) -> usize {
+        let mut sizers: Vec<Sizer<'_>> = columns
+            .iter()
+            .map(|&(f, t)| Sizer::new(width_of(&f.0, t), (compress, matches!(t, DataType::Approximate { .. })), f.table(t, compress)))
+            .collect();
+        let end = columns.iter().map(|(f, _)| f.len()).min().unwrap_or(0);
+        for n in from..end {
+            let mut size = 0_usize;
+            for (&(f, _), sizer) in columns.iter().zip(&mut sizers) {
+                sizer.add(f.0.get(n).and_then(Option::as_deref));
+                size = size.saturating_add(sizer.best().1);
+            }
+            if size > capacity {
+                return n.saturating_sub(from);
+            }
+        }
+        end.saturating_sub(from)
+    }
+
     /// The chunk of those from `from`, `count` of them, of type `t`, in the
     /// encoding that takes fewest bytes, compressed if `compress`.
     ///

@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 18] = [
+pub const READS: [Mutation; 21] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -168,5 +168,32 @@ pub const READS: [Mutation; 18] = [
         replacement: "let mut read: Vec<usize> = columns.iter().chain(columns).copied().collect();",
         integration: &["probes::an_in_list_and_an_or_of_ranges_are_probed"],
         unit: &[],
+    },
+    Mutation {
+        name: "pax-chunk-place",
+        breaks: "a chunk of the hybrid layout is read from the start of its page, not where it lies",
+        file: "src/engine/columns/group.rs",
+        original: "        self.with(run.page, |bytes| read(bytes.get(at..at.saturating_add(len))",
+        replacement: "        self.with(run.page, |bytes| read(bytes.get(0..len)",
+        integration: &["hybrid_layout::a_hybrid_table_answers_as_a_row_table"],
+        unit: &["engine::columns::group::tests::pax_groups_read_back_as_columns_do"],
+    },
+    Mutation {
+        name: "pax-stale",
+        breaks: "a group of another layout than COLUMNSTORE.LAYOUT says is not written again",
+        file: "src/engine/rows/frozen/rewrite.rs",
+        original: "|| group.pax != columns.pax",
+        replacement: "|| false",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::groups_are_written_again_when_their_layout_changes"],
+    },
+    Mutation {
+        name: "pax-written",
+        breaks: "a table whose COLUMNSTORE.LAYOUT is PAX freezes groups of the column layout",
+        file: "src/engine/rows/frozen.rs",
+        original: "        let pax = self.frozen.columns().is_some_and(|c| c.pax);",
+        replacement: "        let pax = self.frozen.columns().is_some_and(|c| c.pax && false);",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::groups_are_written_again_when_their_layout_changes"],
     },
 ];

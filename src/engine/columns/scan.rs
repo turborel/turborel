@@ -122,7 +122,7 @@ pub fn rows<S: Seal>(
     for &column in columns {
         let (Some(zones), Some(t)) = (group.columns.get(column), types.get(column)) else { continue };
         for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
-            pages.with(zone.run.page, |bytes| fill(&Chunk::parse(bytes)?, (column, t), (zone.run.first, from, to), &mut out))?;
+            pages.with_run(&zone.run, |bytes| fill(&Chunk::parse(bytes)?, (column, t), (zone.run.first, from, to), &mut out))?;
         }
     }
     Ok(out)
@@ -155,7 +155,7 @@ pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize,
     let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; count]) };
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
-        pages.with(zone.run.page, |bytes| {
+        pages.with_run(&zone.run, |bytes| {
             let chunk = Chunk::parse(bytes)?;
             for position in first..end {
                 out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);
@@ -251,7 +251,7 @@ fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to)
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         let base = units.len();
-        let held = pages.with(zone.run.page, |bytes| {
+        let held = pages.with_run(&zone.run, |bytes| {
             let chunk = Chunk::parse(bytes)?;
             let held = chunk.ints((at(first), at(end)), (&mut units, &mut nulls));
             if let Some(ends) = &mut runs
@@ -300,7 +300,7 @@ fn words_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, positio
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         span.clear();
         span_nulls.clear();
-        let held = pages.with(zone.run.page, |bytes| {
+        let held = pages.with_run(&zone.run, |bytes| {
             Ok(Chunk::parse(bytes)?.ints((at(low), at(high).saturating_add(1)), (&mut span, &mut span_nulls)))
         })?;
         if held.is_none() {
@@ -347,7 +347,7 @@ pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usiz
             continue;
         }
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = pages.with(zone.run.page, |bytes| {
+        let held = pages.with_run(&zone.run, |bytes| {
             let chunk = Chunk::parse(bytes)?;
             Ok(these.iter().try_for_each(|&p| chunk.texts((at(p), at(p).saturating_add(1)), (&mut text, &mut ends, &mut nulls), t)))
         })?;
@@ -379,7 +379,7 @@ fn coded_at<S: Seal>((zones, t): (&[Zone], &DataType), pages: &Pages<'_, S>, pos
         }
         let at: Vec<usize> = these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)).collect();
         let held =
-            pages.with(zone.run.page, |bytes| Ok(Chunk::parse(bytes)?.coded(&at, (&mut text, &mut ends, &mut codes, &mut nulls), t)))?;
+            pages.with_run(&zone.run, |bytes| Ok(Chunk::parse(bytes)?.coded(&at, (&mut text, &mut ends, &mut codes, &mut nulls), t)))?;
         if held.is_none() {
             return Ok(None);
         }
@@ -416,7 +416,7 @@ pub fn texts<S: Seal>(
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         let held = pages
-            .with(zone.run.page, |bytes| Ok(Chunk::parse(bytes)?.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), t)))?;
+            .with_run(&zone.run, |bytes| Ok(Chunk::parse(bytes)?.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), t)))?;
         if held.is_none() {
             return Ok(None);
         }
@@ -446,7 +446,7 @@ pub fn values_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usi
         if these.is_empty() {
             continue;
         }
-        pages.with(zone.run.page, |bytes| {
+        pages.with_run(&zone.run, |bytes| {
             let chunk = Chunk::parse(bytes)?;
             for &position in these {
                 out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);

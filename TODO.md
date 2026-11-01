@@ -139,8 +139,7 @@ What came after SQL-92 follows it, written from the standards' own text
   the one before it, read page by page; scans of groups in their order
   (`frozen/ordered.rs`) ask for none; a scan asks for a group's chunks
   only as it takes the group up, not the next group's.
-- **Layouts** (D31): a hybrid (PAX), the format of frozen groups
-  then made a trait. For the column store:
+- **Layouts** (D31). For the column store:
   - a clause limiting the rows an ordered read gives, from a later
     standard's text;
   - a table option of columns (COLUMNSTORE.ORDER) following a column

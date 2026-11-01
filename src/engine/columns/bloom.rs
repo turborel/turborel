@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn filters_are_packed_on_pages() {
         let (pool, file) = memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 4_i32), "a test").unwrap();
-        let pages = Pages { pool: &pool, file, capacity: 4000, sealing: &Plain, compress: true };
+        let pages = Pages { pool: &pool, file, capacity: 4000, sealing: &Plain, compress: true, pax: false };
         let filters: Vec<Vec<u8>> = (0..7_i128).map(|n| filter_of(&[int(n)], FILTER_BYTES)).collect();
         let mut written = Vec::new();
         let places = write_filters(&pages, &filters, &mut written).unwrap();

@@ -1481,8 +1481,12 @@ write-ahead logging.
     which checkpoints them for both.
 - **Choosing.** A table chooses by USING, else TABLES.ENGINE, and moves
   by ALTER TABLE ... USING.
-- **Next store.** A hybrid (PAX), each page holding a group's rows with
-  their columns apart. The format of frozen groups becomes a trait then.
+- **Layouts.** A column store table's frozen groups are laid out as
+  COLUMNSTORE.LAYOUT says: COLUMNS, each column's chunks on pages of
+  their own; or PAX, a hybrid (Ailamaki et al., VLDB 2001), each page a
+  range of rows holding a chunk of each column of them (below). Both are
+  one group format, a chunk found by its page and where it lies on it,
+  so every reader serves both and no format trait is needed.
 
 *Row store: tree and versions*
 
@@ -1614,8 +1618,9 @@ write-ahead logging.
 - **Fetches.** A row an index scan or an index join finds is read of the
   columns the statement uses and the index's alone
   (`TableStorage::get_columns`): of a frozen row, only their chunks, a
-  page each; of the tree's, only they decoded. A whole row still reads
-  a chunk of each column, which a hybrid layout would read in one page.
+  page each; of the tree's, only they decoded. A whole row reads a chunk
+  of each column, on a page each of the COLUMNS layout, on one page of
+  the hybrid layout (below).
 - **Freezing** (`engine/columns`). Once COLUMNSTORE.FREEZE_ROWS rows past
   the last group are committed before every snapshot (and
   COLUMNSTORE.FREEZE_DELAY seconds ago), the maintenance thread freezes
@@ -1626,6 +1631,15 @@ write-ahead logging.
     is skipped as finely as a plain one.
   - Every page is sealed by the table's ENCODINGS, its number the
     context.
+- **Hybrid layout** (`group/pax.rs`). Each page holds as many rows as
+  fit, found by summing each column's chunk size as rows are added (the
+  encoders' own sizing), the chunks one after another and each run
+  recording where its chunk lies (`Run::at`). A whole row then reads one
+  page, not one a column; a scan of a few columns reads every column's
+  bytes. A row whose chunks fit no page together is laid out as COLUMNS
+  lays it out. A group records its layout in its header and summary; a
+  change of the option has the maintenance thread write groups again, as
+  a change of COLUMNSTORE.ORDER does.
 - **Encodings.** A chunk takes whichever encoding is fewest bytes, and
   holds as many values as fit its page that way:
   - plain, or a constant;

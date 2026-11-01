@@ -19,6 +19,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 | COLUMNSTORE.FREEZE_DELAY | 0 | INTEGER FROM 0 TO 31622400 | in place |
 | COLUMNSTORE.FREEZE_ROWS | 0 | INTEGER FROM 0 TO 9223372036854775807 | in place |
 | COLUMNSTORE.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
+| COLUMNSTORE.LAYOUT | COLUMNS | ONE OF COLUMNS, PAX | in place |
 | COLUMNSTORE.ORDER | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | COLUMNSTORE.REWRITE_FRACTION | 0.2 | NUMBER FROM 0 TO 1 | in place |
 | ENCODINGS | none | ENCODINGS, BY COMMAS | in place |
@@ -37,6 +38,7 @@ Each in a sentence:
 - **COLUMNSTORE.FREEZE_DELAY**: The seconds a row of a table of the column store stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNSTORE.FREEZE_ROWS**: The rows committed past the last group after which a table of the column store freezes them; 0 for COLUMNSTORE.GROUP_ROWS.
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
+- **COLUMNSTORE.LAYOUT**: How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.
 - **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY, ChaCha20-Poly1305:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own, until the table is sealed again (`turboreld ... reseal`). See [Encryption](../operator/07-encryption.md).
@@ -121,6 +123,19 @@ before.
 Once the option is set or changed, groups frozen before are written
 again in the background, as for COLUMNSTORE.ORDER, and it names columns
 as that option does.
+
+COLUMNSTORE.LAYOUT says how a frozen group is laid out on its pages.
+COLUMNS, the default, puts each column's values on pages of their own: a
+query reads only the pages of the columns it names, which suits scans
+of a few columns of many rows. PAX puts on each page a range of the
+group's rows, as many as fit, the values of each column of them apart
+on it: a query that reads a row whole, as by its key, reads one page
+where COLUMNS reads one for each column, at some cost to a scan of a few
+columns, which then reads every column's values. Each column's values
+are kept in the same encodings either way, and a query gives the same
+rows. A row too long for a page with the rest is laid out as COLUMNS
+lays it out. Once the option is changed, groups frozen before are
+written again in the background, as for COLUMNSTORE.ORDER.
 
 Of each frozen group the database keeps in memory only a summary: the
 range of rows it holds, and each column's least and greatest values and

@@ -9,7 +9,8 @@
 //! committed so stays, before the group's values, which hold its row as it
 //! was. A group whose rows are sorted by other columns than COLUMNSTORE.ORDER
 //! names now, or that keeps Bloom filters of other columns than
-//! COLUMNSTORE.BLOOM names, as they were changed, is written again so,
+//! COLUMNSTORE.BLOOM names, or is of another layout than COLUMNSTORE.LAYOUT
+//! says, as they were changed, is written again so,
 //! MOST_REWRITES of them a call, as the maintenance thread calls again
 //! while any is left (`stale`). Split from frozen.rs (RULES.md R-SIZE-2).
 
@@ -34,10 +35,11 @@ use crate::txn::Timestamp;
 const MOST_REWRITES: usize = 2;
 
 /// Whether `group` is sorted by other columns than `columns`'s
-/// COLUMNSTORE.ORDER names, or keeps Bloom filters of others than its
-/// COLUMNSTORE.BLOOM names.
+/// COLUMNSTORE.ORDER names, keeps Bloom filters of others than its
+/// COLUMNSTORE.BLOOM names, or is of another layout than its
+/// COLUMNSTORE.LAYOUT says.
 fn stale_group(group: &Summary, columns: &Columns) -> bool {
-    group.order.as_slice() != columns.order.places() || group.blooms.as_slice() != columns.bloom.places()
+    group.order.as_slice() != columns.order.places() || group.blooms.as_slice() != columns.bloom.places() || group.pax != columns.pax
 }
 
 /// Whether one of `groups` is stale (`stale_group`).

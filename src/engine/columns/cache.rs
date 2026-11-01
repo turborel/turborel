@@ -203,6 +203,7 @@ mod tests {
             by_id: Vec::new(),
             columns: Vec::new(),
             order: Vec::new(),
+            pax: false,
             header: vec![PageId(first)],
         })
     }

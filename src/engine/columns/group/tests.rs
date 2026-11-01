@@ -82,7 +82,7 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
 #[test]
 fn groups_read_back() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false };
     for (first, step) in [(100_u64, 1_u64), (7, 3)] {
         let group = written(&pages, (first, step), 4000);
         assert_eq!(group.ids.is_empty(), step == 1, "ids kept only if not every one");
@@ -106,7 +106,7 @@ fn groups_read_back() {
 #[test]
 fn scans_skip_chunks_a_condition_cannot_match() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true };
+    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true, pax: false };
     let group = written(&pages, (1, 1), 4000);
     let between = Condition {
         columns: vec![2],
@@ -156,7 +156,7 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 #[test]
 fn what_groups_refuse() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false };
     assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), (&[], &[])).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
     assert!(Group::write(&pages, &TYPES, (&[1], &wrong), (&[], &[])).is_err(), "not of its types");
@@ -179,7 +179,7 @@ fn what_groups_refuse() {
 #[test]
 fn groups_of_rows_out_of_order_read_back() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false };
     let count = 4000_u64;
     let ids: Vec<RowId> = (0..count).map(|n| n.checked_mul(7).unwrap().checked_rem(count).unwrap().checked_add(100).unwrap()).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
@@ -211,7 +211,7 @@ fn count_of(runs: &[(u32, u32)]) -> u32 {
 #[test]
 fn groups_skip_parts_by_their_filters() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false };
     let ids: Vec<RowId> = (1..=4000_u64).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[0, 1])).unwrap();
@@ -248,7 +248,7 @@ fn groups_skip_parts_by_their_filters() {
 #[test]
 fn summaries_read_back() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true };
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false };
     let group =
         Group::write(&pages, &TYPES, (&(1..=4000_u64).collect::<Vec<_>>(), &(0..4000).map(row).collect::<Vec<_>>()), (&[1], &[0])).unwrap();
     let summary = Summary::of(&group, group.header[0]);
@@ -265,8 +265,8 @@ fn summaries_read_back() {
     assert_eq!(code(&bytes, &TYPES[..2]), Some(Code::Corrupt), "other columns");
     let one = bytes.len() >> 1_u32;
     // The first column's bounds flag: after header page, ids, rows, order
-    // of one, blooms of one, and the column count and its nulls.
-    let flag = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
+    // of one, blooms of one, the layout, and the column count and its nulls.
+    let flag = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4;
     let mut other = bytes[..one].to_vec();
     other[flag] = 2;
     assert_eq!(code(&other, &TYPES), Some(Code::Corrupt), "bounds of another format");
@@ -276,4 +276,48 @@ fn summaries_read_back() {
     assert!(!summary.may_match(Some(&null)), "K has no null");
     let two = Conjunction::of(Condition { columns: vec![0, 2], probe: Probe::Prefix { equal: vec![int(1)], then: None } });
     assert!(summary.may_match(Some(&two)), "of two columns, not judged");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, the hybrid layout: a group written so
+/// reads back, by position and by row id, as the column layout's; each
+/// page holds a chunk of each column of the same rows, so it is on fewer
+/// pages, each listed once; its rows read by runs, and the runs a
+/// condition may match, are those of the column layout's; its header
+/// says its layout. Rows whose chunks fit no page together are each
+/// written a chunk of each column on a page of its own, read back alike.
+#[test]
+fn pax_groups_read_back_as_columns_do() {
+    let (pool, file) = file();
+    let columns = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false };
+    let pax = Pages { pax: true, ..columns };
+    let (by_columns, hybrid) = (written(&columns, (100, 1), 4000), written(&pax, (100, 1), 4000));
+    assert!(hybrid.pax && !by_columns.pax && read(&pax, hybrid.header[0], &TYPES).unwrap().pax);
+    for (zones, others) in hybrid.columns.iter().zip(hybrid.columns.iter().skip(1)) {
+        let place = |z: &Zone| (z.run.first, z.run.rows, z.run.page);
+        assert_eq!(zones.iter().map(place).collect::<Vec<_>>(), others.iter().map(place).collect::<Vec<_>>(), "a page a range of rows");
+    }
+    let pages = hybrid.pages();
+    assert!(pages.windows(2).all(|w| w[0] != w[1]), "each page once");
+    assert_eq!(pages.len(), hybrid.columns[0].len() + hybrid.header.len());
+    let read_all = |g: &Group, p: &Pages<'_, Plain>| rows(g, p, &TYPES, &[0, 1, 2], (0, 4000)).unwrap();
+    assert_eq!(format!("{:?}", read_all(&hybrid, &pax)), format!("{:?}", read_all(&by_columns, &columns)));
+    let between = Condition {
+        columns: vec![2],
+        probe: Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(10))), high: Box::new((CompOp::Le, int(11))) },
+    };
+    let matched = |g: &Group, p: &Pages<'_, Plain>| -> Vec<Row> {
+        let runs = read_candidates(g, p, Some(&Conjunction::of(between.clone()))).unwrap();
+        runs.iter().flat_map(|&run| rows(g, p, &TYPES, &[0, 2], run).unwrap()).filter(|r| between.matches(r)).collect()
+    };
+    assert_eq!(format!("{:?}", matched(&hybrid, &pax)), format!("{:?}", matched(&by_columns, &columns)));
+    // Texts of 120 characters, not compressed: a row's chunks take more
+    // than a page of 150 bytes together, one of 5 characters with the next
+    // fit.
+    let small = Pages { capacity: 150, compress: false, ..pax };
+    let text = |n: i128| Value::Char("w".repeat(if n % 3 == 0 { 120 } else { 5 }));
+    let long: Vec<Row> = (0..40).map(|n| vec![int(n), text(n), int(n)]).collect();
+    let ids: Vec<RowId> = (1..=40).collect();
+    let group = Group::write(&small, &TYPES, (&ids, &long), (&[], &[])).unwrap();
+    assert!(group.columns[1].iter().any(|z| z.run.len == 0) && group.columns[1].iter().any(|z| z.run.len > 0), "apart and together");
+    assert_eq!(format!("{:?}", rows(&group, &small, &TYPES, &[0, 1, 2], (0, 40)).unwrap()), format!("{long:?}"));
 }

@@ -10,9 +10,10 @@
 //! row store and of the column store, its groups frozen, with its pages
 //! read ahead on its job (`turborel-read-ahead`, RULES.md D30) and with
 //! none read ahead. And, of a table of 16 columns many times its pool, of
-//! each store, how fast a row is fetched by its key, whole and two of its
-//! columns, and two columns and all are scanned: what each layout reads
-//! of a row (RULES.md D31).
+//! the row store, of the column store and of it laid out as PAX, how fast
+//! a row is fetched by its key, whole and two of its columns, and two
+//! columns and all are scanned: what each layout reads of a row (RULES.md
+//! D31).
 
 #![allow(
     clippy::unwrap_used,
@@ -95,8 +96,9 @@ fn main() {
     wide(&bench);
 }
 
-/// Of tables of 16 columns of scattered numbers, WR of the row store and
-/// WC of the column store, its groups frozen, many times the pool: rows
+/// Of tables of 16 columns of scattered numbers, WR of the row store, WC
+/// of the column store and WP of it laid out as PAX (COLUMNSTORE.LAYOUT),
+/// their groups frozen, many times the pool: rows
 /// fetched by key, whole and two columns of each, and two columns and all
 /// scanned.
 fn wide(bench: &Bench) {
@@ -105,12 +107,13 @@ fn wide(bench: &Bench) {
     db.open_files(&(Arc::new(OsFileSystem) as Arc<dyn FileSystem>), &bench.path("wide"), &OpenOptions::default()).unwrap();
     let columns: Vec<String> = (1_u32..16).map(|c| format!("C{c} INTEGER")).collect();
     db.schema(&format!(
-        "CREATE SCHEMA AUTHORIZATION B CREATE TABLE WR (K INTEGER PRIMARY KEY, {0}) CREATE TABLE WC (K INTEGER PRIMARY KEY, {0}) USING columnstore",
+        "CREATE SCHEMA AUTHORIZATION B CREATE TABLE WR (K INTEGER PRIMARY KEY, {0}) CREATE TABLE WC (K INTEGER PRIMARY KEY, {0}) USING columnstore
+           CREATE TABLE WP (K INTEGER PRIMARY KEY, {0}) USING columnstore WITH (COLUMNSTORE.LAYOUT = 'PAX')",
         columns.join(", ")
     ))
     .unwrap();
     let s = db.session("B");
-    for table in ["WR", "WC"] {
+    for table in ["WR", "WC", "WP"] {
         for first in (0..WIDE).step_by(PER_INSERT as usize) {
             let rows: Vec<String> = (first..first + PER_INSERT)
                 .map(|k| format!("({k}, {})", (1..16).map(|c| scatter(k * 16 + c, WIDE * 16).to_string()).collect::<Vec<_>>().join(", ")))
@@ -132,7 +135,7 @@ fn wide(bench: &Bench) {
             rows
         }
     };
-    for (table, store) in [("WR", "row store"), ("WC", "column store")] {
+    for (table, store) in [("WR", "row store"), ("WC", "column store"), ("WP", "column store laid out as PAX")] {
         for (what, list) in [("whole", "*"), ("two of its columns", "C3, C11")] {
             bench.measure(Case::new(format!("fetch a row of 16 columns by key, {what}, {store}"), "queries"), || {
                 for n in 0..FETCHED {
