@@ -182,14 +182,16 @@ fn a_scroll_cursor_holds_rows_encrypted_once_a_table_is() {
         (p.value("K_OUT").to_string(), p.value("S_OUT").to_string().trim_end().to_owned())
     };
     s.execute("OPEN C", &mut Params::new()).unwrap();
-    assert_eq!(fetch("ABSOLUTE 3000").0, "2999");
+    // Rows enough that the spill area's pages are written, not all held
+    // in its pool.
+    assert_eq!(fetch("ABSOLUTE 4500").0, "4499");
     let before = clear_rows(&dir);
     assert!(before.contains("00000"), "held in the clear");
     exec(&db.session("E"), "ALTER TABLE T SET (ENCODINGS = 'test scramble')").unwrap();
     assert_eq!(fetch("LAST"), ("5999".to_owned(), "plain 05999".to_owned()));
     assert_eq!(spill_files(&dir).0, vec![Vec::<u32>::new()], "the same area");
-    let after: Vec<String> = clear_rows(&dir).into_iter().filter(|k| k.as_str() >= "03000").collect();
+    let after: Vec<String> = clear_rows(&dir).into_iter().filter(|k| k.as_str() >= "04500").collect();
     assert!(after.is_empty(), "{} rows held after, in the clear", after.len());
     assert_eq!(fetch("ABSOLUTE 1"), ("0".to_owned(), "plain 00000".to_owned()));
-    assert_eq!(fetch("ABSOLUTE 4500").0, "4499");
+    assert_eq!(fetch("ABSOLUTE 3000").0, "2999");
 }

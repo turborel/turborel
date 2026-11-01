@@ -106,10 +106,10 @@ What came after SQL-92 follows it, written from the standards' own text
   (1% more instructions than before), past 64 KiB 14% fewer. Pieces
   written by batch, their states as vectors, would make them pay sooner.
   A spilled sort is bound by its
-  runs (`ORDER BY C` of 200,000 rows of the column store, 49 ms, 50
-  before it sorted vectors): records made through the value codec (an
-  integer 21 bytes) and pages written one by one; runs of vectors,
-  integers at their width, would be fewer bytes. A spilled run's pages
+  runs (`ORDER BY C` of 200,000 rows of the column store, 26 ms):
+  records made a row at a time through the value codec (an integer 10
+  bytes, a tag and a length a row) and pages written one by one; runs of
+  vectors would be fewer bytes still. A spilled run's pages
   are freed through the pager's free list, each costing more than the
   record it held.
 - **Typed vectors, further** (D31): a LIKE whose pattern is another

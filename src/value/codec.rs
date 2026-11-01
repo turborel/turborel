@@ -6,6 +6,8 @@
 //!
 //! ```text
 //! value: 0 (null) | 1 (character) string | 2 (exact) units i128, scale u32 |
+//!        10 (exact, its units within 64 bits and its scale within 8) units
+//!          i64, scale u8: so most take 10 bytes, not 21 |
 //!        3 (approximate) IEEE-754 bits u64 |
 //!        4 (beyond the standard) its kind's name, then its kind's bytes |
 //!        5 (bit string) its length in bits u32, then its bytes |
@@ -37,10 +39,21 @@ const TIME: u8 = 7;
 const TIMESTAMP: u8 = 8;
 /// An interval: its qualifier, then its units.
 const INTERVAL: u8 = 9;
+/// An exact number whose units fit 64 bits and scale 8: its units, then its
+/// scale.
+const EXACT_WORD: u8 = 10;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
 pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
+    if let Value::Exact(d) = value
+        && let (Ok(units), Ok(scale)) = (i64::try_from(d.units), u8::try_from(d.scale))
+    {
+        out.put_u8(EXACT_WORD);
+        out.put_u64(units.cast_unsigned());
+        out.put_u8(scale);
+        return;
+    }
     let tag = match value {
         Value::Null => NULL,
         Value::Char(_) => CHARACTER,
@@ -71,6 +84,10 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
 pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
     let kind: &dyn SqlType = match reader.u8()? {
         NULL => return Ok(Value::Null),
+        EXACT_WORD => {
+            let units = reader.u64()?.cast_signed();
+            return Ok(Value::Exact(super::Decimal::new(i128::from(units), u32::from(reader.u8()?))));
+        }
         CHARACTER => &types::CHARACTER,
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
@@ -106,4 +123,41 @@ pub(crate) fn row(reader: &mut Reader<'_>) -> Result<Row> {
         row.push(value(reader)?);
     }
     Ok(row)
+}
+
+// Unit tests: values and rows written and read back (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Decimal;
+
+    fn read_back(bytes: &[u8]) -> Value {
+        value(&mut Reader::new(bytes, "a test")).unwrap()
+    }
+
+    /// Verifies: [DESIGN] RULES.md D25, D38, the value codec: an exact
+    /// number of units within 64 bits and a scale within 8 takes 10 bytes,
+    /// one past either the longer form, each read back as written; a value
+    /// of the longer form written before reads back too; a row of them
+    /// reads back.
+    #[test]
+    fn exact_numbers_take_their_width() {
+        for (units, scale, len) in
+            [(1_234_i128, 2_u32, 10_usize), (-1, 0, 10), (i128::from(i64::MAX), 18, 10), (i128::MAX, 0, 21), (5, 300, 21)]
+        {
+            let v = Value::Exact(Decimal::new(units, scale));
+            let mut out = Vec::new();
+            put_value(&mut out, &v);
+            assert_eq!(out.len(), len, "{units} at {scale}");
+            assert_eq!(format!("{:?}", read_back(&out)), format!("{v:?}"));
+        }
+        let mut long = vec![EXACT];
+        long.put_i128(-150);
+        long.put_u32(2);
+        assert_eq!(read_back(&long).to_string(), "-1.50", "the longer form");
+        let row = vec![Value::Exact(Decimal::new(7, 1)), Value::Null, Value::Char("a".into())];
+        let mut out = Vec::new();
+        put_row(&mut out, &row);
+        assert_eq!(format!("{:?}", super::row(&mut Reader::new(&out, "a test")).unwrap()), format!("{row:?}"));
+    }
 }
