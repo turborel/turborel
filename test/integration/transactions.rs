@@ -72,8 +72,10 @@ fn rollback_restores_rows_and_indexes() {
         exec(&s, "DELETE FROM T WHERE ID = 57").unwrap();
         s.run("INSERT INTO T (ID) VALUES (99)").unwrap();
         s.rollback().unwrap();
-        // The btree on ID answers this query; it must agree with the table again.
-        assert!(s.physical_plan("SELECT ID FROM T WHERE ID > 55", &Params::new()).unwrap().contains("IndexScan"));
+        // The btree on ID answers this query, index-only of the row store;
+        // it must agree with the table again.
+        let plan = s.physical_plan("SELECT ID FROM T WHERE ID > 55", &Params::new()).unwrap();
+        assert!(plan.contains("IndexScan") || plan.contains("IndexOnlyScan"), "{plan}");
         assert_eq!(ids(&s), before);
         assert_eq!(count(&s, "SELECT ID FROM T"), 60);
     }

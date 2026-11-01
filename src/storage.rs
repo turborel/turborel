@@ -379,6 +379,30 @@ pub trait TableStorage: Send + Sync {
     fn read_mode(&self, _tx: TxId, _mode: ReadMode) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] (RULES.md D34) Whether every reader sees row `id`'s one
+    /// version, whose index entries are then all there are of it: an
+    /// index-only scan takes the row's indexed values from an entry of it
+    /// without reading the row. True only once nothing a reader may still
+    /// see of the row differs, and false from before a write of it is made,
+    /// and before its index entries are, so a reader that finds an entry of
+    /// a version it may not see finds it false. No read of the row is
+    /// noted: the scan's of its condition (`read_by_condition`), which
+    /// every entry it finds matches, covers it. Default: false, every row
+    /// read.
+    fn visible_to_all(&self, _id: RowId) -> bool {
+        false
+    }
+    /// \[DESIGN\] (RULES.md D34, D35) The share of its rows
+    /// `visible_to_all` would say true of now, near enough: the planner's,
+    /// pricing the reads an index-only scan saves. Default: none, for an
+    /// engine that says it of none.
+    fn visible_share(&self) -> Option<f64> {
+        None
+    }
+    /// \[DESIGN\] (RULES.md D34) An entry of a version of row `id` that
+    /// `gc`'s `removed` could not take back now is (`txn/owed.rs`).
+    /// Default: nothing.
+    fn taken_back(&self, _id: RowId) {}
     /// \[DESIGN\] (RULES.md D29) `tx`'s writes here from now on keep what
     /// every snapshot reads of the table: rows folded into one that holds
     /// what they held together, as a compaction of the totals an assertion
@@ -493,14 +517,16 @@ pub trait TableStorage: Send + Sync {
     /// transaction reading at or after `horizon` can read, and gives each
     /// removed version's row, with its id, to `removed` as it goes, so
     /// their index entries are removed too (one each: `Index`), none held
-    /// all together.
+    /// all together. `removed` says whether every entry was: of a row
+    /// whose entries are not, `visible_to_all` is false until each is
+    /// (`taken_back`).
     /// Called after a transaction that joined the table ends. Default:
     /// nothing, for an engine that keeps no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read or remove them; they stay for a later call.
-    fn gc(&self, _horizon: Timestamp, _removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
+    fn gc(&self, _horizon: Timestamp, _removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
         Ok(())
     }
     /// Whether versions of it await collection (`gc`), so it is collected

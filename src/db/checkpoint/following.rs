@@ -45,6 +45,14 @@ impl Database {
         }
         let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
         st.gc(&tables);
+        if let Some(table) = st.owing() {
+            return Err(SqlError::new(
+                Code::Io,
+                format!(
+                    "[DESIGN] RULES.md D57: index entries of {table} could not be taken back: a following database's checkpoint waits for them"
+                ),
+            ));
+        }
         let as_of = st.tx.stable();
         for table in &tables {
             let storage = st.storage_of(table)?;

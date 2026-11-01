@@ -53,7 +53,10 @@
 //! Closing, with no transaction open, is a checkpoint that also collects
 //! every table's garbage first and checkpoints every index method, logs
 //! and syncs its checkpoint record before step 1, and records the image as
-//! clean; every call after is refused. Then, before its directory's lock
+//! clean, unless index entries collection could not take back are still
+//! owed: they are logged as a checkpoint logs them, and the image is not
+//! clean, so opening the database recovers it (`txn/owed.rs`). Every call
+//! after is refused. Then, before its directory's lock
 //! is given up, its spill files are removed and every file's descriptor
 //! closed, none opened after (RULES.md D56); a file left is told as an
 //! event.
@@ -71,7 +74,7 @@ use super::files::DatabaseFiles;
 use super::image::Image;
 use super::snapshot::Snapshot;
 use super::{Database, State, api};
-use crate::catalog::{IndexDesc, QualifiedName};
+use crate::catalog::{IndexDesc, QualifiedName, TableDesc};
 use crate::diagnostics::Event;
 use crate::error::{Code, Result, SqlError};
 use crate::log::record::{Change, Record};
@@ -220,7 +223,13 @@ impl Database {
             for method in st.methods.values() {
                 method.checkpoint()?;
             }
-            let (image, counted) = st.capture_checkpoint(true)?;
+            // Index entries still owed, the close is not clean: they are
+            // logged, so opening the database recovers it, taking them back.
+            let clean = st.owing().is_none();
+            let (image, counted) = st.capture_checkpoint(clean)?;
+            if !clean {
+                st.log_stale(&st.hold_stale(), image.through)?;
+            }
             st.counted_if(st.complete_checkpoint(&files, image), counted)
         })?;
         self.mark_closed();
@@ -278,6 +287,13 @@ pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
 }
 
 impl State {
+    /// The first table that owes index entries collection could not take
+    /// back, if one does (`txn/owed.rs`).
+    pub(super) fn owing(&self) -> Option<QualifiedName> {
+        let owes = |t: &&TableDesc| self.lock_of(&t.name).is_ok_and(|lock| !lock.owed.is_empty());
+        self.catalog.tables().into_iter().find(owes).map(|t| t.name.clone())
+    }
+
     /// What a checkpoint does with writers held (see the module's
     /// documentation): the position L, every engine's capture through it,
     /// and the image but for the tables' locators; and the row changes
@@ -367,7 +383,8 @@ impl State {
     /// What awaits collection as the pages are captured, under the gate:
     /// each table with indexes, its collection held back until the entries
     /// are logged, and the timestamp of the last commit captured. A close
-    /// collects every version first, and needs none.
+    /// collects every version first, and needs it only for the index
+    /// entries owed (`txn/owed.rs`).
     fn hold_stale(&self) -> Stale {
         let mut tables = Vec::new();
         for table in self.catalog.tables() {
@@ -382,18 +399,23 @@ impl State {
     }
 
     /// Logs the index entries of the versions `stale` holds (its tables'
-    /// `TableStorage::garbage`), each as it is read, in a record naming the
+    /// `TableStorage::garbage`), each as it is read, and those its tables
+    /// owe (`txn/owed.rs`), in a record naming the
     /// checkpoint holding every change before `through`, for recovery from
     /// it to take back (`db/recovery.rs`). They are written after
     /// `through`, so recovery reads them, and before the checkpoint record
     /// whose sync makes them durable before the image is recorded.
     fn log_stale(&self, stale: &Stale, through: Lsn) -> Result<()> {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
-        for (storage, indexes, _) in &stale.tables {
+        for (storage, indexes, lock) in &stale.tables {
             for read in Arc::clone(storage).garbage(stale.as_of) {
                 let (row, values) = read?;
                 log_entries(&*log, (through, indexes), row, &values)?;
             }
+            lock.owed.each(&mut |index, key, row| {
+                let change = Change::Stale { through, index: index.to_owned(), row, key: key.0.clone() };
+                log.append(&Record { tx: NO_TRANSACTION, change }.encode()).map(|_| ())
+            })?;
         }
         Ok(())
     }

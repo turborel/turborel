@@ -118,6 +118,9 @@ impl IndexMethod for BTreeMethod {
     fn ordered(&self) -> bool {
         true
     }
+    fn restores_keys(&self) -> bool {
+        true
+    }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
         let (pool, file) = self.files()?;
         Ok(Box::new(BLinkIndex::with(BLinkTree::create(pool, file)?, columns, KeyCounts::new())))

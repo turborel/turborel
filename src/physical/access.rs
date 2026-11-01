@@ -5,10 +5,17 @@
 use super::estimate::{self, Known};
 use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
+use crate::engine::key::restores;
 use crate::index::{Index, IndexMethod, Probe};
 use crate::logical::{Cond, SortKey, and_all, judged_by_sets, pushed_conjuncts, render_cond};
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType};
+
+/// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
+/// rows of a scan of its table: its zone's visibility looked at and the
+/// row made of the key, an entry at a time as a search gives them, where
+/// a scan reads its rows by batches (RULES.md D34). Measured.
+const ENTRY_SCAN_ROWS: f64 = 2.0;
 
 /// A way to read a table: its cost, with and without the sort it may still
 /// need, the rows it yields, whether in the order asked for (backward if
@@ -26,8 +33,9 @@ struct Path {
 }
 
 /// An index probed: its name, its method's, its columns, its probes, one
-/// for each range of an OR, the conjuncts they answer exactly, and whether
-/// they only bound the rows of others, which a filter still judges.
+/// for each range of an OR, the conjuncts they answer exactly, whether
+/// they only bound the rows of others, which a filter still judges, and
+/// whether its key holds every column read (`covers`).
 struct Probed {
     index: String,
     method: String,
@@ -35,6 +43,7 @@ struct Probed {
     probes: Vec<Probe>,
     used: Vec<usize>,
     loose: bool,
+    covering: bool,
 }
 
 /// Probes an index could answer: its probes, of one range each, the
@@ -109,6 +118,7 @@ impl PhysicalPlanner<'_> {
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
         let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
+        let scan_cost = storage.scan_cost(read.needed);
         let stats = self.db.statistics(read.table);
         let known = Known { stats: stats.as_deref(), cost };
         let all = cost_of(storage.row_count());
@@ -146,13 +156,19 @@ impl PhysicalPlanner<'_> {
                     continue;
                 }
                 let distinct = || self.db.distinct_keys(read.table, &**found);
-                let (est, path_cost) = priced((&**found, &distinct), &c, (all, types.len(), cost.index_descent), &**storage);
+                let (est, probed_cost) = priced((&**found, &distinct), &c, (all, types.len(), cost.index_descent), &**storage);
+                // Of a covering index, the rows its table says every reader
+                // sees are made of their entries, not fetched (RULES.md D34).
+                let visible = covers(&**kind, (&ix.columns, &types), read.needed).then(|| storage.visible_share()).flatten();
+                let entry_cost = ENTRY_SCAN_ROWS * scan_cost / all.max(1.0_f64);
+                let saved = |share: f64| est * share * (storage.fetch_cost() - entry_cost).max(0.0_f64);
+                let path_cost = probed_cost - visible.map_or(0.0_f64, saved);
                 let total = path_cost + sort_penalty(est, order.is_some());
                 if total < best.total {
-                    let (index, method, keys) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
-                    let probed = Some(Probed { index, method, columns: keys, probes: c.probes, used: c.used, loose: c.loose });
+                    let (index, method, keys, covering) = (ix.name.clone(), ix.method.clone(), ix.columns.clone(), visible.is_some());
+                    let chosen = Some(Probed { index, method, columns: keys, probes: c.probes, used: c.used, loose: c.loose, covering });
                     let ordered = (order.is_some(), order.unwrap_or(false));
-                    best = Path { total, cost: path_cost, est, ordered: ordered.0, reverse: ordered.1, index: probed, order: Vec::new() };
+                    best = Path { total, cost: path_cost, est, ordered: ordered.0, reverse: ordered.1, index: chosen, order: Vec::new() };
                 }
             }
         }
@@ -184,6 +200,14 @@ fn priced(
     (est, found + est * storage.fetch_cost())
 }
 
+/// Whether an index of `method` on `columns`, of `types`, holds in its
+/// key every column of `needed`, each a value the key restores, so an
+/// index-only scan may give the rows of its entries (RULES.md D34).
+fn covers(method: &dyn IndexMethod, (columns, types): (&[usize], &[DataType]), needed: &[usize]) -> bool {
+    let restored = |c: &usize| columns.iter().position(|k| k == c).and_then(|at| types.get(at)).is_some_and(restores);
+    method.restores_keys() && needed.iter().all(restored)
+}
+
 /// Whether `probe` holds every column of an index `width` columns wide
 /// equal.
 fn whole_key(probe: &Probe, width: usize) -> bool {
@@ -205,7 +229,7 @@ fn whole_key(probe: &Probe, width: usize) -> bool {
 fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, cost, reverse): (f64, f64, bool)) -> Plan {
     let share = cost_of(probed.probes.len());
     let whole = and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| render_cond(&c, read.names));
-    let Probed { index, method, columns, mut probes, .. } = probed;
+    let Probed { index, method, columns, mut probes, covering, .. } = probed;
     if reverse {
         probes.reverse();
     }
@@ -214,7 +238,7 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
         .map(|probe| {
             let detail = whole.clone().unwrap_or_else(|| render_probe(&probe, &columns, read.names));
             let (index, method, table) = (index.clone(), method.clone(), read.table.clone());
-            Plan::IndexScan { table, index, method, probe, reverse, detail, est: est / share, cost: cost / share }
+            Plan::IndexScan { table, index, method, probe, reverse, detail, est: est / share, cost: cost / share, covering }
         })
         .collect();
     // Appended in pairs, a level at a time, so they are about log2(n) deep

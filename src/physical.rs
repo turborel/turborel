@@ -73,6 +73,11 @@ pub enum Plan {
         est: f64,
         /// The planner's cost estimate.
         cost: f64,
+        /// Whether every column the query reads of the table is of the
+        /// index's key, and restored from it (`engine::key::restores`): a
+        /// row its table says every reader sees alone is then made of its
+        /// entry, not read (`TableStorage::visible_to_all`, RULES.md D34).
+        covering: bool,
     },
     /// The rows of `input` for which `cond` is true [X3.135-1986 §5.21 GR2].
     Filter {
@@ -451,9 +456,10 @@ impl Plan {
                 let ordered = if order.is_empty() { String::new() } else { format!(" in order of {}", order.len()) };
                 writeln!(out, "{pad}SeqScan {table}{ordered}  (rows={rows}, cost={cost:.1})")
             }
-            Plan::IndexScan { table, index, method, detail, est, cost, reverse, .. } => writeln!(
+            Plan::IndexScan { table, index, method, detail, est, cost, reverse, covering, .. } => writeln!(
                 out,
-                "{pad}IndexScan {table} using {index} [{method}]{}: {detail}  (est. rows={est:.0}, cost={cost:.1})",
+                "{pad}{} {table} using {index} [{method}]{}: {detail}  (est. rows={est:.0}, cost={cost:.1})",
+                if *covering { "IndexOnlyScan" } else { "IndexScan" },
                 if *reverse { " backward" } else { "" }
             ),
             Plan::Filter { detail, est: None, .. } => writeln!(out, "{pad}Filter {detail}"),

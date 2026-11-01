@@ -203,18 +203,21 @@ fn system_rows(read: &SystemRead, db: &Arc<State>) -> RowIter {
     }
 }
 
-/// The rows the index scan `plan` finds, in index order or reversed. Never
+/// The rows the index scan `plan` finds, in index order or reversed: of a
+/// covering scan, made of their entries where it may (`entry_row`). Never
 /// inlined into `execute`, whose frame every level of a plan adds to the
 /// stack (RULES.md R-CF-6), as are the helpers below.
 #[inline(never)]
 fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexScan { table, index, probe, reverse, .. } = plan else { return failed(broken("an index scan is not one")) };
+    let Plan::IndexScan { table, index, probe, reverse, covering, .. } = plan else {
+        return failed(broken("an index scan is not one"));
+    };
+    let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
         Ok(Found { storage, columns, entries }) => match storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe }) {
             Ok(()) => {
-                let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
-                    entry.and_then(|(key, id)| fetch(&*storage, &columns, tx, &key, id)).transpose().map(|r| r.map(|(_, row)| row))
-                });
+                let rows = checked(entries, db.tx.stop_of(tx))
+                    .filter_map(move |entry| entry.and_then(|(key, id)| entry_row(&*storage, (&columns, width), tx, key, id)).transpose());
                 Box::new(checked(rows, db.tx.stop_of(tx)))
             }
             Err(e) => failed(e),
@@ -303,6 +306,32 @@ fn fetch(storage: &dyn TableStorage, columns: &[usize], tx: TxId, key: &Key, id:
     let Some(row) = storage.get(tx, id)? else { return Ok(None) };
     let seen = project(&row, columns).map(Key);
     Ok(seen.filter(|seen| seen == key).map(|_| (id, row)))
+}
+
+/// \[DESIGN\] (RULES.md D34) The row of an entry of row `id` under `key`
+/// in an index on `columns`, as `tx` sees it, if it does: of a scan
+/// covering the columns read, the row `width` columns wide, made of the
+/// key at `columns` and nulls elsewhere, if every reader sees the row's
+/// one version (`TableStorage::visible_to_all`); else read (`fetch`).
+fn entry_row(
+    storage: &dyn TableStorage,
+    (columns, width): (&[usize], Option<usize>),
+    tx: TxId,
+    key: Key,
+    id: RowId,
+) -> Result<Option<Row>> {
+    if let Some(width) = width
+        && storage.visible_to_all(id)
+    {
+        let mut row = vec![Value::Null; width];
+        for (&column, value) in columns.iter().zip(key.0) {
+            if let Some(slot) = row.get_mut(column) {
+                *slot = value;
+            }
+        }
+        return Ok(Some(row));
+    }
+    Ok(fetch(storage, columns, tx, &key, id)?.map(|(_, row)| row))
 }
 
 /// What `index` finds for `probe`, in index order, or reversed, read as
@@ -404,6 +433,7 @@ mod tests {
             detail: String::new(),
             est: 0.0_f64,
             cost: 0.0_f64,
+            covering: false,
         };
         assert_eq!(code(execute(seq(), &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(code(execute(index(), &st, NO_TRANSACTION)), Some(Code::Api));

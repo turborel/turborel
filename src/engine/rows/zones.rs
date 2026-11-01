@@ -22,6 +22,22 @@
 //! undone, leaves its zone stale, to be narrowed by the maintenance
 //! thread as a deletion's is.
 //!
+//! Each zone also knows whether every row of it is visible to every
+//! reader (`Map::visible`), as an index-only scan asks
+//! (`TableStorage::visible_to_all`, RULES.md D34): every row's newest
+//! version committed at or before the horizon, none a deletion, and no
+//! version it superseded left to collect, whose index entries would
+//! still be there (`Map::pending`). A write makes it not, before it is
+//! written and before its index entries are, so a reader that finds a
+//! new entry finds its zone not visible; and leaves it unsettled, for the
+//! maintenance thread to settle as it sums it up: visible, or not, or,
+//! of a commit too recent for the horizon, again later. Collection
+//! leaving none of a zone's versions to collect, or taking out a
+//! deletion, unsettles it again; a version whose index entries it could
+//! not take back is left to collect until they are
+//! (`TableStorage::taken_back`). Kept in memory alone: a table opened
+//! has every zone unsettled, of tables that keep no column too.
+//!
 //! Kept in memory, and with the table's pages at each checkpoint
 //! (`zones/saved.rs`), so a table opened knows the zones its last
 //! checkpoint saved, those it did not save read whole until the
@@ -31,7 +47,7 @@
 
 use std::cmp::Ordering;
 use std::ops::Bound;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Mutex, RwLock};
 
 use super::RowTable;
@@ -48,6 +64,11 @@ use crate::value::{DataType, Value, compare};
 /// \[DESIGN\] The row ids of a zone: a thread's block of them is four
 /// (`rows/ids.rs`).
 pub(super) const ZONE_ROWS: u64 = 1024;
+
+/// The place of the zone of row `id`.
+fn zone_at(id: RowId) -> usize {
+    usize::try_from(id.checked_div(ZONE_ROWS).unwrap_or(0)).unwrap_or(usize::MAX)
+}
 /// \[DESIGN\] The longest character string a zone keeps the bounds of.
 const SHORT: u32 = 32;
 /// \[DESIGN\] The most zones the planner looks at for a scan's share.
@@ -69,6 +90,10 @@ struct Zone {
     /// Whether it may be wider than its rows, or is not known at all.
     stale: bool,
     known: bool,
+    /// Whether its rows' visibility is to be settled (`Map::visible`).
+    unsettled: bool,
+    /// Of a zone summed up, what its rows showed of their visibility.
+    seen: Seen,
 }
 
 /// The zones of a table, by the first row id of each over `ZONE_ROWS`,
@@ -82,6 +107,12 @@ struct Map {
     /// Of each `SEGMENT_ZONES` zones, whether one changed since they were
     /// last saved (`zones/saved.rs`).
     dirty: Vec<AtomicBool>,
+    /// Of each zone, whether every row of it is visible to every reader,
+    /// read without its lock.
+    visible: Vec<AtomicBool>,
+    /// Of each zone, the versions its rows' commits superseded not yet
+    /// collected, with their index entries.
+    pending: Vec<AtomicU64>,
 }
 
 impl Map {
@@ -92,9 +123,12 @@ impl Map {
         }
     }
 
-    /// Adds the zone `zone`, its segment noted changed.
+    /// Adds the zone `zone`, its segment noted changed: visible if
+    /// settled, as one of no row is.
     fn push(&mut self, zone: Zone) {
+        self.visible.push(AtomicBool::new(!zone.unsettled));
         self.zones.push(Mutex::new(zone));
+        self.pending.push(AtomicU64::new(0));
         while self.dirty.len().saturating_mul(SEGMENT_ZONES) < self.zones.len() {
             self.dirty.push(AtomicBool::new(true));
         }
@@ -110,6 +144,8 @@ pub(super) struct Zones {
     map: RwLock<Map>,
     /// The zones stale or not known.
     stale: AtomicUsize,
+    /// The zones unsettled.
+    unsettled: AtomicUsize,
     /// The zone a sum up looks from, so zones a reader keeps stale do not
     /// keep the others waiting.
     next_sum: AtomicUsize,
@@ -160,9 +196,19 @@ fn widened(bounds: &mut Option<(Value, Value)>, v: &Value) {
 }
 
 impl Zone {
-    /// A zone of no row, known or not, of `columns` kept.
+    /// A zone of no row, known or not, of `columns` kept: settled, of no
+    /// row, if known; else to be summed up and settled.
     fn empty(columns: usize, known: bool) -> Zone {
-        Zone { bounds: vec![None; columns], nulls: vec![false; columns], rows: 0, changes: 0, stale: !known, known }
+        Zone {
+            bounds: vec![None; columns],
+            nulls: vec![false; columns],
+            rows: 0,
+            changes: 0,
+            stale: !known,
+            known,
+            unsettled: !known,
+            seen: Seen::Visible,
+        }
     }
 
     /// Widens it to hold `values`, those of the columns kept.
@@ -190,6 +236,7 @@ impl Zones {
             kept: kept_columns,
             map: RwLock::new(Map::default()),
             stale: AtomicUsize::new(0),
+            unsettled: AtomicUsize::new(0),
             next_sum: AtomicUsize::new(0),
             format: RecordFormat::new(&kept_types),
             directory: place.as_ref().map_or(0, |p| p.directory.0),
@@ -206,14 +253,11 @@ impl Zones {
     /// marked stale if the row replaces another, which it may then be
     /// wider than.
     pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaces: bool) {
-        if self.kept.is_empty() {
-            return;
-        }
-        let at = usize::try_from(id.checked_div(ZONE_ROWS).unwrap_or(0)).unwrap_or(usize::MAX);
+        let at = zone_at(id);
         if let Ok(map) = read(&self.map)
             && let Some(zone) = map.zones.get(at)
         {
-            self.change(&mut lock_builtin(zone), row, replaces);
+            self.change((&map, at), &mut lock_builtin(zone), (row, replaces));
             map.changed(at);
             return;
         }
@@ -223,11 +267,12 @@ impl Zones {
             let known = first >= map.unknown_below;
             if !known {
                 self.stale.fetch_add(1, AtomicOrdering::AcqRel);
+                self.unsettled.fetch_add(1, AtomicOrdering::AcqRel);
             }
             map.push(Zone::empty(self.kept.len(), known));
         }
         if let Some(zone) = map.zones.get(at) {
-            self.change(&mut lock_builtin(zone), row, replaces);
+            self.change((&map, at), &mut lock_builtin(zone), (row, replaces));
         }
         map.changed(at);
     }
@@ -238,9 +283,19 @@ impl Zones {
         self.widen(id, None, true);
     }
 
-    /// `widen`'s change of `zone`.
-    fn change(&self, zone: &mut Zone, row: Option<&Row>, replaces: bool) {
+    /// `widen`'s change of `zone`, zone `at` of `map`, under its lock: not
+    /// visible from now, before the row's index entries are written, and
+    /// unsettled; under the lock a sum up settles it under, so none settles
+    /// it visible over the change.
+    fn change(&self, (map, at): (&Map, usize), zone: &mut Zone, (row, replaces): (Option<&Row>, bool)) {
         zone.changes = zone.changes.saturating_add(1);
+        if let Some(flag) = map.visible.get(at) {
+            flag.store(false, AtomicOrdering::Release);
+        }
+        if !zone.unsettled {
+            zone.unsettled = true;
+            self.unsettled.fetch_add(1, AtomicOrdering::AcqRel);
+        }
         if !replaces {
             zone.rows = zone.rows.saturating_add(1);
         }
@@ -305,9 +360,9 @@ impl Zones {
         if all > 0.0_f64 { read_rows / all } else { 1.0_f64 }
     }
 
-    /// Whether a zone is stale or not known.
+    /// Whether a zone is stale or not known, or unsettled.
     pub(super) fn due(&self) -> bool {
-        self.stale.load(AtomicOrdering::Acquire) > 0
+        self.stale.load(AtomicOrdering::Acquire) > 0 || self.unsettled.load(AtomicOrdering::Acquire) > 0
     }
 }
 
@@ -373,11 +428,12 @@ impl RowTable {
         Ok(())
     }
 
-    /// Sums up again some of the zones stale or not known, of the versions
-    /// of their rows a reader at or after `horizon` may read, from where
-    /// the last left off: whether one is now up to date. One whose rows
-    /// have versions a reader may still read besides their newest stays
-    /// stale, to be summed up again once none does.
+    /// Sums up again some of the zones stale or not known, or unsettled,
+    /// of the versions of their rows a reader at or after `horizon` may
+    /// read, from where the last left off: whether one is now up to date,
+    /// or settled. One whose rows have versions a reader may still read
+    /// besides their newest stays stale, to be summed up again once none
+    /// does; one of a commit too recent stays unsettled.
     pub(super) fn sum_zones(&self, horizon: Timestamp) -> Result<bool> {
         let due: Vec<(usize, u64)> = {
             let map = read(&self.zones.map)?;
@@ -385,7 +441,7 @@ impl RowTable {
             let order = (from..map.zones.len()).chain(0..from);
             let stale = order.filter_map(|at| {
                 let zone = lock_builtin(map.zones.get(at)?);
-                zone.stale.then_some((at, zone.changes))
+                (zone.stale || zone.unsettled).then_some((at, zone.changes))
             });
             stale.take(MOST_SUMMED).collect()
         };
@@ -399,11 +455,14 @@ impl RowTable {
             if zone.changes != changes {
                 continue;
             }
-            let still = summed.stale;
-            *zone = Zone { changes, ..summed };
+            let (was_stale, unsettled) = (zone.stale, zone.unsettled);
+            *zone = Zone { changes, unsettled, ..summed };
             map.changed(at);
-            if !still {
+            if was_stale && !summed.stale {
                 self.zones.stale.fetch_sub(1, AtomicOrdering::AcqRel);
+                done = true;
+            }
+            if unsettled && self.settle((&map, at), &mut zone, summed.seen) {
                 done = true;
             }
         }
@@ -417,6 +476,7 @@ impl RowTable {
     /// reader at or after `horizon` may read: stale still if any is not
     /// its row's newest committed, as a reader of it may end. A row read
     /// again (`RowTable::unpinned`) may leave it wider, never narrower.
+    /// What its rows' newest versions show of their visibility, too.
     fn zone_of(&self, at: usize, horizon: Timestamp) -> Result<Zone> {
         let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
         let (low, high) = (key(first), key(first.saturating_add(ZONE_ROWS)));
@@ -426,6 +486,7 @@ impl RowTable {
         for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Excluded(&high[..]), Direction::Forward) {
             let (k, newest) = entry?;
             let id = row_id(&k)?;
+            zone.seen = zone.seen.and(self.seen_of(&newest, horizon)?);
             let mut held = |bytes: Vec<u8>, reading_at: Timestamp| {
                 let live = !Version::parse(&bytes)?.deleted;
                 self.hold_versions(&mut zone, id, bytes, reading_at)?;
@@ -466,9 +527,11 @@ impl RowTable {
 }
 
 mod saved;
+mod visible;
 
 pub(super) use saved::Place;
 use saved::SEGMENT_ZONES;
+use visible::Seen;
 
 // Unit tests: zones skip blocks, keep old versions for open readers, are
 // known only once summed up after a table is opened or as a checkpoint

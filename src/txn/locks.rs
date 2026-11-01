@@ -17,6 +17,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
+use super::owed::OwedRemovals;
 use super::{LockMode, LockWait, Timestamp, Transactions, TxId, Txn};
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -167,6 +168,9 @@ pub(crate) struct TableLock {
     /// commit timestamp it was published at (`db/ddl.rs`).
     generation: AtomicU64,
     replaced_at: AtomicU64,
+    /// The index entries collection could not take back, tried again by
+    /// its next (`txn/owed.rs`).
+    pub(crate) owed: OwedRemovals,
 }
 
 impl TableLock {

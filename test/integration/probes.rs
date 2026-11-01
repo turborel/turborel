@@ -95,12 +95,12 @@ fn an_in_list_and_an_or_of_ranges_are_probed() {
     let db = twins();
     let s = db.session("P");
     let plan = planned(&s, "SELECT K FROM I WHERE K IN (3, 7, 7.0, 299, 1000)", 3);
-    assert_eq!(plan.matches("IndexScan P.I using I_K").count(), 4, "{plan}");
+    assert_eq!(plan.matches("IndexOnlyScan P.I using I_K").count(), 4, "{plan}");
     assert!(plan.contains("Append") && plan.contains("I.K = 7"), "{plan}");
     assert!(!plan.contains("Filter"), "an IN of constants is answered exactly: {plan}");
     let plan = planned(&s, "SELECT K FROM I WHERE K < 3 OR K > 297 OR K = 150 OR K BETWEEN 1 AND 4", 7);
     assert!(plan.contains("I.K < 3") || plan.contains("I.K <= 4"), "{plan}");
-    assert_eq!(plan.matches("IndexScan").count(), 3, "{plan}");
+    assert_eq!(plan.matches("IndexOnlyScan").count(), 3, "{plan}");
     let plan = planned(&s, "SELECT K FROM I WHERE K < 30 OR K > 20", 300);
     assert!(plan.contains("SeqScan"), "every row: {plan}");
     planned(&s, "SELECT K FROM I WHERE N IN ('n5', 'n50  ') OR N = 'n7'", 3);
@@ -185,7 +185,7 @@ fn a_raising_conjunct_of_one_operand_keeps_the_hash_join() {
     // On the equality: S's few rows each probing I's index, or a hash join
     // of I's rows its index finds.
     let probed = plan.contains("IndexNestedLoop P.I using I_K [btree]: S.K = I.K AND I.K < 50");
-    assert!(probed || plan.contains("HashJoin") && plan.contains("IndexScan P.I using I_K [btree]: I.K < 50"), "{plan}");
+    assert!(probed || plan.contains("HashJoin") && plan.contains("IndexOnlyScan P.I using I_K [btree]: I.K < 50"), "{plan}");
     let joined = rows(&s, query);
     assert_eq!(joined, Ok(vec!["7,n7".to_string()]));
     // The error of a row the join leaves out, and none over no rows.

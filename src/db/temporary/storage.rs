@@ -332,7 +332,7 @@ impl TableStorage for Rows_ {
     fn durable_through(&self) -> Lsn {
         Lsn(u64::MAX)
     }
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
+    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
         self.made().map_or(Ok(()), |rows| rows.gc(horizon, removed))
     }
     fn uncollected(&self) -> bool {

@@ -81,6 +81,16 @@ pub(super) fn maintained(db: &Database) -> Result<Option<Duration>> {
 }
 
 impl State {
+    /// Notes each table with maintenance due, it or an index of it.
+    pub(super) fn note_due_maintenance(&self) {
+        for table in self.catalog.tables() {
+            let Ok(storage) = self.storage_of(&table.name) else { continue };
+            if storage.maintenance_due() || self.indexes_of(&table.name).any(|ix| ix.maintenance_due()) {
+                self.tx.note_maintenance(&table.name);
+            }
+        }
+    }
+
     /// Has each of `tables` do some of its maintenance, noting again
     /// those still due: whether any did some.
     fn maintain_round(&self, tables: &[QualifiedName]) -> Result<bool> {

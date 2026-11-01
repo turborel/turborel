@@ -200,7 +200,9 @@ impl Instance {
                 (index, entries.index.columns.as_slice())
             })
             .collect();
-        let _ = rows.gc(Timestamp::MAX, &mut |id, row| remove_entries(&indexes, id, &row));
+        // An entry not taken back is left: an instance is read by no
+        // index-only scan, so its readers check the rows of its entries.
+        let _ = rows.gc(Timestamp::MAX, &mut |id, row| remove_entries(&indexes, id, &row).is_empty());
     }
 
     /// An instance of `desc`, its rows and entries made as they are first

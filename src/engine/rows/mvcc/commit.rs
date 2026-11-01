@@ -114,9 +114,17 @@ impl RowTable {
                     Ok(false) => {}
                     Err(_) => late.push(change.id),
                 }
+                // A version superseded leaves its zone not visible until it
+                // is collected, with its index entries (`rows/zones.rs`).
                 match (change.before, change.appended) {
-                    (Some(own), _) => dead.push(Dead::Own(change.id, own)),
-                    (None, Some(appended)) => dead.push(Dead::Older(change.id, appended)),
+                    (Some(own), _) => {
+                        self.zones.superseded(change.id, true);
+                        dead.push(Dead::Own(change.id, own));
+                    }
+                    (None, Some(appended)) => {
+                        self.zones.superseded(change.id, true);
+                        dead.push(Dead::Older(change.id, appended));
+                    }
                     (None, None) => {}
                 }
             }

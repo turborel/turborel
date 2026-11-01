@@ -203,6 +203,14 @@ pub trait IndexMethod: Send + Sync {
     fn ordered(&self) -> bool {
         false
     }
+    /// \[DESIGN\] (RULES.md D34) Are the keys `search` gives decoded by
+    /// `engine::key::decode_key` from those `encode_key` made of the rows'
+    /// values? If so, an index-only scan may give a column's value from
+    /// them, of a type the codec restores (`engine::key::restores`).
+    /// Default: no.
+    fn restores_keys(&self) -> bool {
+        false
+    }
     /// A new, empty index on columns of `columns`, the types of its key's
     /// values in order.
     ///

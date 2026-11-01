@@ -252,7 +252,7 @@ fn a_column_table_is_scanned_where_a_row_table_is_probed() {
     db.maintain().unwrap();
     let physical = |sql: &str| physical(&a, sql);
     let some = "SELECT COUNT(*) FROM {t} WHERE G = 3";
-    assert!(physical(&some.replace("{t}", "R")).contains("IndexScan"), "rows: the index");
+    assert!(physical(&some.replace("{t}", "R")).contains("IndexOnlyScan"), "rows: the index");
     assert!(!physical(&some.replace("{t}", "C")).contains("IndexScan"), "columns: a scan");
     // S is 's' and K modulo 97.
     let few = "SELECT COUNT(*) FROM {t} WHERE S = 's5'";

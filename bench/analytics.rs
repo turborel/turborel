@@ -2,7 +2,8 @@
 //! (RULES.md D31), the same rows in each: a table of 16 columns and 200,000
 //! rows counted, summed by one column and by twelve, filtered to 1% by a column
 //! in the order the rows were written and by one scattered, to 10% by an
-//! indexed column, to 3 of its 10 groups by IN, by two columns compared,
+//! indexed column, to 0.1% by it, summed of its index alone (RULES.md
+//! D34) and of another column, to 3 of its 10 groups by IN, by two columns compared,
 //! by LIKE of its CHARACTER column, a constant pattern and patterns not
 //! constant, grouped, and
 //! two of its columns read whole; joined with D, a table of a row or two
@@ -73,7 +74,7 @@ fn measure(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)
         scan("SELECT COUNT(*) FROM {t} WHERE B BETWEEN 100000 AND 101999"),
     );
     bench.measure(case("COUNT of 1% by a scattered column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE C < 2000"));
-    bench.measure(case("COUNT of 10% by an indexed column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE H BETWEEN 0 AND 6666"));
+    by_index(bench, s, (table, label));
     bench.measure(case("COUNT of 3 groups of 10 by IN", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE G IN (1, 4, 7) AND S IS NOT NULL"));
     bench.measure(case("COUNT by two columns compared", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE A > D AND -B > -C"));
     bench.measure(case("COUNT by LIKE of a CHARACTER column", "rows"), scan("SELECT COUNT(*) FROM {t} WHERE S LIKE 's 1%'"));
@@ -103,6 +104,24 @@ fn measure(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)
         }
         LOOKUPS
     });
+}
+
+/// Measures the filters by an indexed column of table `table`: to 10%,
+/// counted, and to 0.1%, summed of the column, which its index alone
+/// holds (RULES.md D34), and of another, their cases' names ending in
+/// `label`.
+fn by_index(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
+    for (name, sql) in [
+        ("COUNT of 10% by an indexed column", "SELECT COUNT(*) FROM {t} WHERE H BETWEEN 0 AND 6666"),
+        ("SUM of 0.1% of an indexed column", "SELECT SUM(H) FROM {t} WHERE H BETWEEN 0 AND 66"),
+        ("SUM of another column of 0.1% by an indexed one", "SELECT SUM(A) FROM {t} WHERE H BETWEEN 0 AND 66"),
+    ] {
+        let sql = sql.replace("{t}", table);
+        bench.measure(Case::new(format!("{name}{label}"), "rows"), || {
+            fetched(s, &sql);
+            ROWS
+        });
+    }
 }
 
 /// Measures the operators that hold rows: a sort, EXCEPT and INTERSECT of

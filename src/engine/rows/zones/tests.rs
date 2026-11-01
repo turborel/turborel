@@ -407,7 +407,7 @@ fn a_zone_summed_up_as_a_rollback_truncates_reads_the_older_version() {
     // collection after it, which truncates at once, the pass still reading.
     *lock_builtin(&log.on_read) = Some(Box::new(move || {
         meddler.rollback(tx).unwrap();
-        meddler.gc(1, &mut |_, _| {}).unwrap();
+        meddler.gc(1, &mut |_, _| true).unwrap();
         assert_eq!(kept.records(), 0, "taken back as the pass reads");
     }));
     assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(false), "read again; its sum thrown away, a change meanwhile");
@@ -438,7 +438,7 @@ fn a_zone_summed_up_at_a_horizon_before_a_collection_reads_at_the_collection() {
     table.validate(tx, 2).unwrap();
     table.commit(tx, 2);
     // The horizon was read as 1; the collection at 2 comes first.
-    table.gc(2, &mut |_, _| {}).unwrap();
+    table.gc(2, &mut |_, _| true).unwrap();
     assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(true), "summed up, up to date");
     assert!(!reads(&table, &equal(0, 1), id), "narrowed to the commit's version");
     assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 2)), ["2"]);
@@ -463,7 +463,7 @@ fn a_zone_summed_up_as_versions_go_leaves_out_rows_gone_and_fails_on_a_loss() {
     *lock_builtin(&log.on_read) = Some(Box::new(move || {
         meddler.rollback(10).unwrap();
         meddler.delete(NO_TRANSACTION, id).unwrap();
-        meddler.gc(1, &mut |_, _| {}).unwrap();
+        meddler.gc(1, &mut |_, _| true).unwrap();
     }));
     assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(false), "the row left out");
     assert!(lock_builtin(&log.on_read).is_none());

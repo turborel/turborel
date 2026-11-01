@@ -141,6 +141,9 @@ impl IndexMethod for HashMethod {
     fn supports(&self, op: CompOp) -> bool {
         op == CompOp::Eq
     }
+    fn restores_keys(&self) -> bool {
+        true
+    }
     /// The whole key's equality only.
     fn supports_prefix(&self, columns: usize, equal: usize, then: Option<CompOp>) -> bool {
         equal == columns && then.is_none()

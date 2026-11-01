@@ -24,7 +24,7 @@
 //!
 //! Integers are little-endian.
 
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::{Map, ZONE_ROWS, Zone, Zones};
@@ -189,24 +189,23 @@ impl Zones {
             let greatest = self.format.decode(reader.bytes()?)?;
             let bounds = least.into_iter().zip(greatest).map(|(l, g)| (!l.is_null()).then_some((l, g))).collect();
             let known = flags & KNOWN != 0;
-            zones.push(Zone { bounds, nulls, rows, changes: 0, stale: flags & STALE != 0 || !known, known });
+            zones.push(Zone { bounds, nulls, rows, changes: 0, stale: flags & STALE != 0 || !known, known, ..Zone::default() });
         }
         reader.finish()?;
         Ok(zones)
     }
 
     /// Reads the zones saved, of a table opened whose rows' ids are below
-    /// `below`: those of ids no segment holds not known until summed up.
+    /// `below`: those of ids no segment holds not known until summed up;
+    /// of a table that keeps no column, a zone of each block of them. Each
+    /// unsettled, its visibility kept in memory alone.
     ///
     /// # Errors
     ///
     /// The buffer pool's; SQLCODE -916 if a segment is malformed.
     pub(in crate::engine::rows) fn load(&self, below: RowId) -> Result<()> {
-        if self.kept.is_empty() {
-            return Ok(());
-        }
         let mut loaded = Vec::new();
-        if let Some(place) = lock(&self.place)?.as_mut() {
+        if let Some(place) = lock(&self.place)?.as_mut().filter(|_| !self.kept.is_empty()) {
             place.segments = segments_of(&place.pool.read(place.file, place.directory.0)?)?;
             for (segment, page) in place.segments.iter().enumerate() {
                 let zones = self.segment(place, *page)?;
@@ -217,6 +216,9 @@ impl Zones {
         }
         let count = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX).max(loaded.len());
         loaded.resize_with(count, || Zone::empty(self.kept.len(), false));
+        for zone in &mut loaded {
+            zone.unsettled = true;
+        }
         let stale = loaded.iter().filter(|z| z.stale).count();
         let mut map = write(&self.map)?;
         let segments = count.div_ceil(SEGMENT_ZONES);
@@ -224,8 +226,11 @@ impl Zones {
             zones: loaded.into_iter().map(Mutex::new).collect(),
             unknown_below: below,
             dirty: (0..segments).map(|_| AtomicBool::new(false)).collect(),
+            visible: (0..count).map(|_| AtomicBool::new(false)).collect(),
+            pending: (0..count).map(|_| AtomicU64::new(0)).collect(),
         };
         self.stale.store(stale, AtomicOrdering::Release);
+        self.unsettled.store(count, AtomicOrdering::Release);
         Ok(())
     }
 

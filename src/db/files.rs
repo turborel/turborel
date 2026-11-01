@@ -293,9 +293,12 @@ impl Database {
     }
 
     /// `open_files`' work, through `fs`, the database's file manager, told
-    /// as an event.
+    /// as an event; then the maintenance its tables have due asked for, as
+    /// of zones to settle (`rows/zones.rs`).
     pub(super) fn open_managed(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         let opened = self.noted(self.open_from(fs, dir, options, mode))?;
+        self.snapshot()?.note_due_maintenance();
+        self.maintain_if_due();
         self.emit(&Event::Opened(opened));
         Ok(opened)
     }

@@ -170,16 +170,27 @@ impl RowTable {
         for item in segments.flatten().flatten() {
             // Each a `Dead::Undone`, which only releases its position, of no
             // timestamp.
-            let _ = self.remove_dead(&item, 0, &mut |_, _| {});
+            let _ = self.remove_dead(&item, 0, &mut |_, _| true);
         }
     }
 
     fn remove_dead(&self, dead: &Dead, at: Timestamp, removed: Removed<'_>) -> Result<()> {
         match dead {
-            Dead::Own(id, bytes) => self.remove_version(*id, bytes, removed),
+            // Its index entries gone with it (`removed`), its zone's count
+            // of versions superseded is one less; else once they are
+            // (`TableStorage::taken_back`).
+            Dead::Own(id, bytes) => {
+                if self.remove_version(*id, bytes, removed)? {
+                    self.zones.superseded(*id, false);
+                }
+                Ok(())
+            }
             Dead::Older(id, appended) => {
-                self.remove_version(*id, &self.undo.read(*appended)?, removed)?;
+                let gone = self.remove_version(*id, &self.undo.read(*appended)?, removed)?;
                 self.undo.release(*appended);
+                if gone {
+                    self.zones.superseded(*id, false);
+                }
                 Ok(())
             }
             Dead::Undone(appended) => {
@@ -194,6 +205,8 @@ impl RowTable {
                 // seen again (`rows/frozen.rs`).
                 if version.deleted && self.maker(&version) == Maker::Committed(at) && !self.frozen_holds(*id) {
                     self.tree.delete_if(&k, &newest)?;
+                    // Its zone may be visible now (`rows/zones.rs`).
+                    self.zones.unsettle(*id);
                 }
                 Ok(())
             }
@@ -216,14 +229,16 @@ impl RowTable {
     }
 
     /// Frees what version `bytes` of row `id` holds out of line, and
-    /// records its row.
-    fn remove_version(&self, id: RowId, bytes: &[u8], removed: Removed<'_>) -> Result<()> {
+    /// records its row: whether its index entries are gone (`removed`'s
+    /// answer; a deletion has none).
+    fn remove_version(&self, id: RowId, bytes: &[u8], removed: Removed<'_>) -> Result<bool> {
         let version = Version::parse(bytes)?;
-        if !version.deleted {
-            removed(id, self.decode(id, version.record, None)?);
-            self.free_values(id, version.record);
+        if version.deleted {
+            return Ok(true);
         }
-        Ok(())
+        let gone = removed(id, self.decode(id, version.record, None)?);
+        self.free_values(id, version.record);
+        Ok(gone)
     }
 
     /// Stamps what commits could not, and forgets each transaction once all
@@ -256,4 +271,4 @@ impl RowTable {
 }
 
 /// Where a collection gives each version it removes: its row id and row.
-pub(in crate::engine::rows) type Removed<'a> = &'a mut dyn FnMut(RowId, Row);
+pub(in crate::engine::rows) type Removed<'a> = &'a mut dyn FnMut(RowId, Row) -> bool;

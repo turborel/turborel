@@ -37,6 +37,27 @@ use crate::error::{Code, Result, SqlError};
 use crate::value::types::{malformed, take};
 use crate::value::{DataType, Value};
 
+/// \[DESIGN\] Whether a value of type `t` is the same value decoded from
+/// its key (`decode_key`), so an index-only scan may give it for the
+/// column's (RULES.md D34): an exact number at its column's scale; a
+/// character string padded to its column's length; a bit string; a date,
+/// a time or a timestamp of no time zone; an interval. Not a varying
+/// string, whose key leaves out its trailing spaces; an approximate
+/// number, -0.0's key 0.0's; a time or timestamp of a time zone, its key
+/// the instant in UTC alone; nor a value of a plug-in's type.
+pub fn restores(t: &DataType) -> bool {
+    match t {
+        DataType::Character { .. }
+        | DataType::Exact { .. }
+        | DataType::Bit { .. }
+        | DataType::BitVarying { .. }
+        | DataType::Date
+        | DataType::Interval(_) => true,
+        DataType::Time { zoned, .. } | DataType::Timestamp { zoned, .. } => !zoned,
+        DataType::Varying { .. } | DataType::Approximate { .. } | DataType::Extension(_) => false,
+    }
+}
+
 /// The tags before a column's value.
 const NULL: u8 = 0;
 const PRESENT: u8 = 1;
@@ -122,7 +143,9 @@ mod tests {
 
     use super::*;
     use crate::value::Spelled;
-    use crate::value::{Decimal, compare};
+    use crate::value::datetime::{Field, Moment};
+    use crate::value::interval::{Interval, Qualifier};
+    use crate::value::{Bits, Datetime, Decimal, compare};
 
     fn key(values: &[Value], types: &[DataType]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -229,6 +252,40 @@ mod tests {
         // A word cut short, a byte too many, an unknown tag, a string not UTF-8.
         for (bad, columns) in [(cut, &types[..]), (longer, &types[..]), (vec![2], &types[..1]), (vec![1, 0xFF, 0xFE, 0x20], &types[..1])] {
             assert_eq!(decode_key(&bad, columns).err().map(|e| e.code), Some(Code::Corrupt), "{bad:?}");
+        }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D34, index-only scans: a value of each
+    /// type `restores` says is restored, as a row holds it, decodes from its
+    /// key to the same value; of each type it says is not, some value does
+    /// not: a varying string's trailing spaces, -0.0, a time zone.
+    #[test]
+    fn restored_types_decode_to_their_values() {
+        let day = |micros: i64, moment, zoned| Value::Datetime(Datetime { moment, utc: micros, zone: 0, zoned, precision: 2 });
+        let qualifier = Qualifier::new(Field::Day, Field::Second, 2, 2);
+        let restored = [
+            (DataType::Character { length: 3 }, Value::Char("ab ".into())),
+            (DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, exact(-12_345, 2)),
+            (DataType::Bit { length: 4 }, Value::Bits(Bits::new(vec![0xA0], 4).unwrap())),
+            (DataType::BitVarying { length: 16 }, Value::Bits(Bits::new(vec![0xFF, 0x80], 9).unwrap())),
+            (DataType::Date, Value::Datetime(Datetime { moment: Moment::Date, utc: 86_400_000_000, zone: 0, zoned: false, precision: 0 })),
+            (DataType::Time { precision: 2, zoned: false }, day(3_600_000_000, Moment::Time, false)),
+            (DataType::Timestamp { precision: 2, zoned: false }, day(-1, Moment::Timestamp, false)),
+            (DataType::Interval(qualifier), Value::Interval(Interval { units: -90_061_000_000, qualifier })),
+        ];
+        for (t, value) in restored {
+            assert!(restores(&t), "{t:?}");
+            assert_eq!(format!("{:?}", decode_key(&key(std::slice::from_ref(&value), &[t]), &[t]).unwrap()), format!("{:?}", [value]));
+        }
+        let zoned = Value::Datetime(Datetime { moment: Moment::Time, utc: 0, zone: 60, zoned: true, precision: 2 });
+        let lost = [
+            (DataType::Varying { length: 4 }, Value::Char("ab ".into())),
+            (DataType::Approximate { precision: 53, spelled: Spelled::Float }, Value::Approx(-0.0)),
+            (DataType::Time { precision: 2, zoned: true }, zoned),
+        ];
+        for (t, value) in lost {
+            assert!(!restores(&t), "{t:?}");
+            assert_ne!(format!("{:?}", decode_key(&key(std::slice::from_ref(&value), &[t]), &[t]).unwrap()), format!("{:?}", [value]));
         }
     }
 

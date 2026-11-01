@@ -89,6 +89,7 @@ mod end;
 mod followed;
 mod locks;
 mod logging;
+mod owed;
 mod reading;
 mod stop;
 mod undo;

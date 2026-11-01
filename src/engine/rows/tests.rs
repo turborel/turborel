@@ -78,11 +78,11 @@ fn an_undone_change_keeps_its_older_version_for_open_readers() {
     table.update(writer, id, vec![crate::value::Value::Char("new  ".into())]).unwrap();
     let seen = table.tree.get(&key(id)).unwrap().unwrap();
     table.rollback(writer).unwrap();
-    table.gc(9, &mut |_, _| {}).unwrap();
+    table.gc(9, &mut |_, _| true).unwrap();
     let found = table.visible_from(seen, Reader::At { tx: reader, snapshot: 9 }).unwrap().unwrap();
     assert_eq!(table.decode(id, &found, None).unwrap()[0].to_string(), "old  ");
     table.commit(reader, 9);
-    table.gc(12, &mut |_, _| {}).unwrap();
+    table.gc(12, &mut |_, _| true).unwrap();
     assert_eq!(files.undo().pinned(), 0, "released once the reader ended");
 }
 
@@ -184,7 +184,7 @@ fn versions_are_those_committed_by_a_time() {
     assert_eq!(versions(9, 11), ["a"], "b is committed after 11, c not at all");
     assert_eq!(versions(9, 12), ["a", "b"]);
     assert_eq!(versions(13, 12), ["a", "b"], "a, no longer read, is collection's to take back");
-    table.gc(13, &mut |_, _| {}).unwrap();
+    table.gc(13, &mut |_, _| true).unwrap();
     assert_eq!(versions(13, 12), ["b"], "taken back");
 }
 

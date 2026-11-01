@@ -71,7 +71,7 @@ fn table(files: &TableFiles, delay: u32, rows: i128) -> (Arc<RowTable>, Vec<RowI
 /// `horizon`, then its maintenance, as the database's maintenance thread
 /// does it (`TableStorage::maintain`).
 fn ended(table: &RowTable, horizon: u64) {
-    table.gc(horizon, &mut |_, _| {}).unwrap();
+    table.gc(horizon, &mut |_, _| true).unwrap();
     while table.maintain(horizon).unwrap() {}
 }
 

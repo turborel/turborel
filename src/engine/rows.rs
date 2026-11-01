@@ -480,6 +480,21 @@ impl TableStorage for RowTable {
         self.preserving_of(tx)
     }
 
+    /// Of its zone, as the maintenance thread settles it (`rows/zones.rs`).
+    fn visible_to_all(&self, id: RowId) -> bool {
+        self.zones.visible(id)
+    }
+
+    /// Its zones' (`rows/zones.rs`).
+    fn visible_share(&self) -> Option<f64> {
+        Some(self.zones.visible_share())
+    }
+
+    /// Its zone's count of versions superseded one less.
+    fn taken_back(&self, id: RowId) {
+        self.zones.superseded(id, false);
+    }
+
     fn savepoint(&self, tx: TxId) -> u64 {
         u64::try_from(self.changes(tx)).unwrap_or(u64::MAX)
     }
@@ -514,7 +529,7 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row)) -> Result<()> {
+    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
         self.collect(horizon, removed)
     }
 
@@ -525,14 +540,16 @@ impl TableStorage for RowTable {
     }
 
     /// Statistics gathered as one call's work, zones summed up as the
-    /// next's, freezing as the next's.
+    /// next's, freezing as the next's: freezing as this one's too if no
+    /// zone could be summed up, as one of a commit too recent waits for
+    /// the horizon (`rows/zones.rs`).
     fn maintain(&self, horizon: Timestamp) -> Result<bool> {
         if self.gather_wanted() {
             self.gather_if_due();
             return Ok(true);
         }
-        if self.zones.due() {
-            return self.sum_zones(horizon);
+        if self.zones.due() && self.sum_zones(horizon)? {
+            return Ok(true);
         }
         self.freeze_due(horizon)
     }

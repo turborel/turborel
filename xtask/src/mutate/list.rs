@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 45] = [
+pub const MUTATIONS: [Mutation; 50] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -454,5 +454,50 @@ pub const MUTATIONS: [Mutation; 45] = [
             "engine::hash::tests::it_holds_what_a_model_holds",
             "engine::hash::tests::a_hot_keys_bucket_splits_and_merges_a_page_at_a_time",
         ],
+    },
+    Mutation {
+        name: "zone-write-visible",
+        breaks: "index-only scans: a write leaves its zone marked visible to every reader",
+        file: "src/engine/rows/zones.rs",
+        original: "            flag.store(false, AtomicOrdering::Release);",
+        replacement: "            let _ = flag;",
+        integration: &["index_only::rows_written_are_read_until_settled_again"],
+        unit: &[],
+    },
+    Mutation {
+        name: "zone-recent-settled",
+        breaks: "index-only scans: a zone of a commit past the horizon is settled not visible, and never looked at again",
+        file: "src/engine/rows/zones/visible.rs",
+        original: "        if seen == Seen::Recent {",
+        replacement: "        if seen == Seen::Recent && false {",
+        integration: &["index_only::a_zone_inserted_into_settles_once_no_older_reader_is_open"],
+        unit: &[],
+    },
+    Mutation {
+        name: "zone-pending-uncollected",
+        breaks: "index-only scans: a zone is settled visible with superseded versions, and their entries, uncollected",
+        file: "src/engine/rows/zones/visible.rs",
+        original: "flag.store(seen == Seen::Visible && collected, AtomicOrdering::Release);",
+        replacement: "flag.store(seen == Seen::Visible || collected, AtomicOrdering::Release);",
+        integration: &["index_only::entries_not_taken_back_keep_their_zone_read"],
+        unit: &[],
+    },
+    Mutation {
+        name: "owed-removals",
+        breaks: "collection says an index entry it failed to take back is gone",
+        file: "src/txn/end.rs",
+        original: "let gone = entries.is_empty();",
+        replacement: "let gone = true;",
+        integration: &["index_only::entries_not_taken_back_keep_their_zone_read"],
+        unit: &[],
+    },
+    Mutation {
+        name: "owed-taken-back",
+        breaks: "an owed index entry taken back leaves its row's zone unsettled for good",
+        file: "src/txn/owed.rs",
+        original: "                version.storage.taken_back(row);",
+        replacement: "                let _ = row;",
+        integration: &["index_only::entries_not_taken_back_keep_their_zone_read"],
+        unit: &[],
     },
 ];

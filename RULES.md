@@ -1266,7 +1266,8 @@ opaque bytes.**
   - it says through where it then holds the log.
 - **Following checkpoints.** A following database's checkpoint logs
   nothing: taking turns with its replay, it collects every version
-  first (refused, SQLCODE -911, while a reader holds one), captures
+  first (refused, SQLCODE -911, while a reader holds one; -915 while an
+  index entry is owed, D34), captures
   through the position after its last record replayed, and has
   recovery read from the first record it holds; refused (-910) until
   it has replayed again what it was opened from.
@@ -1389,7 +1390,9 @@ program driving several sessions from one thread must not.
   a snapshot is the timestamp below which every commit has ended, and a
   commit finishing early would otherwise not be seen by its own session.
 - **Indexes.** Entries are counted per version; a row found through an
-  index is kept only if its visible version has that key.
+  index is kept only if its visible version has that key, or, by an
+  index-only scan, made of the entry where every reader sees the row's
+  one version (D34).
 - **Table locks.** The coordinator's table locks (D28) remain for
   engines leaving concurrency to it; the built-in row store isolates
   transactions itself.
@@ -1553,6 +1556,16 @@ write-ahead logging.
     open transaction's too, keeping it stale while such a version is not
     its row's newest; a write meanwhile discards the sum.
   - So a zone is never narrower than what a snapshot may read.
+  - Each zone also says whether every reader sees its rows alone, for
+    index-only scans (D34). A write clears it under the zone's lock,
+    before the row or its index entries are written, and leaves the zone
+    unsettled. Summing up settles it: visible if every newest version is
+    committed at or before the horizon, none is a deletion, and no
+    version it superseded awaits collection; a commit past the horizon
+    leaves it to be looked at again. Collecting its last such version,
+    or taking a deletion out, unsettles it. Kept in memory alone: an
+    opened table's zones are all unsettled, and opening asks for the
+    maintenance that settles them.
 - **Zones saved.** Kept in memory, each locked alone, and with the
   table's pages: each checkpoint, writers held, saves zones changed
   since the last, in segments of 64, each a page sealed as the table's
@@ -2027,8 +2040,32 @@ compares them); a row fetched by key reads a page per column.
   locks) is loaded whole (`Index::load`): `btree` sorts its entries in a
   work area of MEMORY.WORK_BYTES, spilling past it, and loads its tree
   from them; other methods insert them one by one.
-- **No index-only scans:** a versioned engine has an entry per version;
-  a reader must read the version it sees.
+- **Index-only scans.** A scan of an index is index-only when every
+  column the query reads is in its key, of a type the key codec gives
+  back exactly (`engine::key::restores`: CHAR, exact numbers, bit
+  strings, dates, times and timestamps without a zone, intervals; not
+  VARCHAR, whose key drops trailing spaces, approximate numbers, zoned
+  datetimes, or plug-in types), of a method that says its searches give
+  those keys (`IndexMethod::restores_keys`). EXPLAIN shows it as
+  IndexOnlyScan. Not used by UPDATE, DELETE or cursors, which read rows.
+  - A versioned engine keeps an entry per version, so an entry's row is
+    made of the entry only where the table says every reader sees that
+    row's one version (`TableStorage::visible_to_all`: the row store's
+    zones, D31); otherwise the row is read and the entry checked against
+    it. The scan's read of its probe's condition, which every entry it
+    finds matches, covers the rows made so for validation (D29).
+  - The planner prices a row made of its entry as two rows of a scan of
+    its table, as measured, not as a fetch, for the share of the table
+    its engine says is visible (`TableStorage::visible_share`): a scan
+    reads by batches, a search an entry at a time.
+  - An entry collection fails to take back is owed (`txn/owed.rs`): kept
+    on the table's lock and tried again by each later collection. Its
+    row's zone is not visible until the entry is gone. A checkpoint logs
+    owed entries as it logs those of uncollected versions, and a close
+    owing any is not clean, so opening recovers and takes them back. A
+    following database's checkpoint waits until none is owed (D57). A
+    blind retry would not do: `Index::remove` takes back one of several
+    equal entries, and the newest version may hold the same key.
 - **Settings.** A method declares and reads its own as every plug-in
   does (`IndexMethod::configurable`, D36); its indexes' options are D41.
 - **SQL.** An extension, by the owner of the table's schema:
@@ -2478,7 +2515,8 @@ catalog to keep in step.
   newest first, redoing oldest first, and mends the indexes in two
   passes over it.
 - **Checkpoint.** Logs the index entries of versions awaiting collection
-  as it reads them, after its gate opens, for the commits it captured.
+  as it reads them, and those collection owes (D34), after its gate
+  opens, for the commits it captured.
   Meanwhile, or while an index is built, the table's collection is held
   back; what awaits it is read a segment at a time, its lock taken for
   each, so commits adding to it wait for one segment at most.

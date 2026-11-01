@@ -102,7 +102,7 @@ fn engine_cost_model_changes_the_plan() {
     // 3 matching rows: cheap to fetch by id from the row store, but at the
     // costly engine's price, scanning all 100 rows is cheaper.
     let sql = "SELECT A FROM T WHERE A >= 97";
-    assert!(db.session("R").explain(sql, &Params::new()).unwrap().contains("IndexScan"));
+    assert!(db.session("R").explain(sql, &Params::new()).unwrap().contains("IndexOnlyScan"));
     assert!(db.session("C").explain(sql, &Params::new()).unwrap().contains("SeqScan"));
     let expected: Vec<String> = (97..100).map(|i: i32| i.to_string()).collect();
     for auth in ["R", "C"] {

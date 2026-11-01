@@ -6,7 +6,9 @@
 
 use std::collections::BTreeSet;
 use std::mem;
+use std::sync::Arc;
 
+use super::owed::{Entry, Owed};
 use super::{Committing, Joined, Timestamp, Transactions, TxId, Txn, UndoFailure};
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -177,16 +179,31 @@ impl State {
             return Some(true);
         }
         {
-            let indexes: Vec<(&dyn Index, &[usize])> = self
+            let found: Vec<(&str, &Arc<dyn Index>, &[usize])> = self
                 .catalog
                 .indexes(table)
                 .into_iter()
-                .filter_map(|ix| Some((&**self.index_of(&ix.name).ok()?, ix.columns.as_slice())))
+                .filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix.columns.as_slice())))
                 .collect();
-            // Each version's entries go as it is removed. A failure leaves
-            // the rest for a later call; an entry left behind only costs
-            // readers a row they check and skip.
-            let _ = storage.gc(horizon, &mut |id, row| remove_entries(&indexes, id, &row));
+            let indexes: Vec<(&dyn Index, &[usize])> = found.iter().map(|&(_, index, columns)| (&**index, columns)).collect();
+            // The entries owed first; then each version's go as it is
+            // removed, an entry not taken back owed (`txn/owed.rs`). A
+            // failure leaves the rest of the garbage for a later call.
+            lock.owed.retry(&|name, index| self.index_of(name).is_ok_and(|now| Arc::ptr_eq(now, index)));
+            let _ = storage.gc(horizon, &mut |id, row| {
+                let failed = remove_entries(&indexes, id, &row);
+                let entries: Vec<Entry> = failed
+                    .into_iter()
+                    .filter_map(|(at, key)| {
+                        found.get(at).map(|&(name, index, _)| Entry { name: name.to_owned(), index: Arc::clone(index), key })
+                    })
+                    .collect();
+                let gone = entries.is_empty();
+                if !gone {
+                    lock.owed.add(Owed { row: id, storage: Arc::clone(storage), entries });
+                }
+                gone
+            });
         }
         if storage.maintenance_due() {
             self.tx.note_maintenance(table);
@@ -232,13 +249,18 @@ impl State {
 
 /// Removes the entries of row `id`, a version collected, of `row`, from
 /// `indexes`, each with its columns. Keys with a null were never inserted
-/// (`Index::insert`); one that cannot be removed is left.
-pub(crate) fn remove_entries(indexes: &[(&dyn Index, &[usize])], id: RowId, row: &Row) {
-    for (index, columns) in indexes {
-        if let Some(key) = project(row, columns).map(Key).filter(|k| !k.0.iter().any(Value::is_null)) {
-            let _ = index.remove(&key, id);
+/// (`Index::insert`). Those that cannot be are left: their places among
+/// `indexes`, and their keys.
+pub(crate) fn remove_entries(indexes: &[(&dyn Index, &[usize])], id: RowId, row: &Row) -> Vec<(usize, Key)> {
+    let mut failed = Vec::new();
+    for (at, (index, columns)) in indexes.iter().enumerate() {
+        if let Some(key) = project(row, columns).map(Key).filter(|k| !k.0.iter().any(Value::is_null))
+            && index.remove(&key, id).is_err()
+        {
+            failed.push((at, key));
         }
     }
+    failed
 }
 
 /// The tables of `joined`, for garbage collection.

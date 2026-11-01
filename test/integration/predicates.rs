@@ -27,7 +27,7 @@ fn between_is_a_range_5_12() {
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID BETWEEN 1 2"), Code::Syntax);
     let big = big();
     let plan = big.session("APP").physical_plan("SELECT ID FROM T WHERE ID BETWEEN 58 AND 60", &Params::new()).unwrap();
-    assert!(plan.contains("IndexScan"), "a selective bound probes an index: {plan}");
+    assert!(plan.contains("IndexOnlyScan"), "a selective bound probes an index, of every column read: {plan}");
     assert_eq!(rows(&big.session("APP"), "SELECT ID FROM T WHERE ID BETWEEN 58 AND 60 ORDER BY ID").unwrap().len(), 3);
 }
 
