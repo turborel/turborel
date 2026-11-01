@@ -49,11 +49,14 @@ fn plain(e: &Expr) -> bool {
 }
 
 /// What `e`, of a scan of `columns`, gives of a batch, if it reads only
-/// columns the scan reads.
+/// columns the scan reads. A column alone the scan does not read is null,
+/// as a row's scan gives it (`TableStorage::scan` decodes only the columns
+/// asked for): a projection restoring the order of a join's columns names
+/// every column, those the query does not read too.
 pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
     let at = |c: &usize| columns.iter().position(|x| x == c);
     match e {
-        Expr::Column(c) => at(c).map(Place::Column),
+        Expr::Column(c) => Some(at(c).map_or(Place::Const(Value::Null), Place::Column)),
         Expr::Const(v) => Some(Place::Const(v.clone())),
         Expr::Neg(_)
         | Expr::Arith(..)

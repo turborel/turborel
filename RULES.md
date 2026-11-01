@@ -1949,7 +1949,10 @@ write-ahead logging.
   all read by batch (`reads_by_batch`, the built-in engines' all), a
   projection of only its columns, no subquery, makes each row from the
   vectors: a column or constant as is, another expression on a reused
-  row of only its values; a batch is read ahead of the cursor. Over
+  row of only its values; a batch is read ahead of the cursor. A column
+  its scan does not read is null, as a row's scan gives it: so the
+  projection restoring a reordered join's columns, which names them all,
+  keeps the join by batch. Over
   other tables it reads a row at a time, as reading ahead gains nothing.
 - **Groups held** (`batch/groups.rs`). In the work area, in order of
   first rows. Each row's key is built in a kept buffer (`batch::put_key`).
