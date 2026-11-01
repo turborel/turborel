@@ -1,10 +1,11 @@
 //! \[DESIGN\] The product of two streams [X3.135-1986 §5.20 GR2b] by
-//! batches (RULES.md D31): its right operand read first and held as the row
-//! path holds it (`exec/join/rescan.rs`), in memory while it fits the work
-//! area, else in a run of the spill area; each of the left operand's
-//! batches paired with it, its rows joined with every right row, a batch of
-//! the pairs made at a time. Held in memory, each left row is paired with
-//! the right's rows in turn, as the row path pairs them. In a run, the run
+//! batches (RULES.md D31): its right operand read first and held as vectors
+//! while it fits the work area (`held.rs`), else as the row path holds it,
+//! in a run of the spill area (`exec/join/rescan.rs`); each of the left
+//! operand's batches paired with it, its rows joined with every right row,
+//! a batch of the pairs made at a time. Held in memory, each left row is
+//! paired with the right's rows in turn, as the row path pairs them, the
+//! right's columns gathered of its vectors. In a run, the run
 //! is read once for each left batch, each right row paired with every row
 //! of the batch, where no order of the left's is asked for (`in_order`);
 //! else once for each left row.
@@ -12,8 +13,9 @@
 use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
+use super::held::{self, Read};
 use super::pairs::{Out, kept_rows};
-use super::{in_order, left_batches, operand_rows};
+use super::{in_order, left_batches};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::join::Pass;
@@ -46,16 +48,30 @@ pub(super) fn multiplied((left, right): (Plan, Plan), db: &Arc<State>, tx: TxId)
 fn product_of((left, width, ordered): (Batches, usize, bool), right: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let mut work = Work::of(db, tx);
-    let (right, _) = Rescanned::of(operand_rows(right, db, tx), &mut work)?;
-    let by_batch = matches!(right, Rescanned::Spilled(..)) && !ordered;
+    let rows = match held::read(right, &[], work.limit(), (db, tx))? {
+        Read::Held(held) => {
+            let (out, vectors) = (Out::over(width, Arc::clone(&held.batch)), Right::Vectors(held.batch.rows));
+            return Ok(Box::new(Product { left, right: vectors, by_batch: false, current: None, out, ended: false, _work: work }));
+        }
+        Read::Rows(rows) => rows,
+    };
+    let (rescanned, _) = Rescanned::of(rows, &mut work)?;
+    let by_batch = matches!(rescanned, Rescanned::Spilled(..)) && !ordered;
     let out = Out::new(width, right_columns);
-    Ok(Box::new(Product { left, right, by_batch, current: None, out, ended: false, _work: work }))
+    Ok(Box::new(Product { left, right: Right::Rows(rescanned), by_batch, current: None, out, ended: false, _work: work }))
+}
+
+/// A product's right operand: held as vectors, of so many rows, or as the
+/// row path holds it.
+enum Right {
+    Vectors(usize),
+    Rows(Rescanned),
 }
 
 /// A product's batches, as they are pulled.
 struct Product {
     left: Batches,
-    right: Rescanned,
+    right: Right,
     /// Whether a right operand in a run is read once for each left batch.
     by_batch: bool,
     current: Option<Current>,
@@ -78,6 +94,7 @@ struct Current {
 /// Where in the right operand a left batch's pairing is: the rows held in
 /// memory and the next of them, or the pass of a run.
 enum Place {
+    Vectors(usize),
     Held(Arc<Vec<Row>>, usize),
     Pass(Pass),
 }
@@ -86,8 +103,9 @@ impl Product {
     /// Begins pairing `batch`, of kept rows `rows`.
     fn begin(&mut self, batch: Batch, rows: Vec<usize>) -> Result<()> {
         let place = match &mut self.right {
-            Rescanned::Held(held) => Place::Held(Arc::clone(held), 0),
-            Rescanned::Spilled(..) => Place::Pass(self.right.pass()?),
+            Right::Vectors(_) => Place::Vectors(0),
+            Right::Rows(Rescanned::Held(held)) => Place::Held(Arc::clone(held), 0),
+            Right::Rows(right @ Rescanned::Spilled(..)) => Place::Pass(right.pass()?),
         };
         self.current = Some(Current { batch, rows, at: 0, place });
         Ok(())
@@ -113,9 +131,11 @@ impl Product {
     fn fill(&mut self) -> Result<()> {
         let Some(current) = &mut self.current else { return Ok(()) };
         let left = (&current.batch, current.rows.as_slice(), &mut current.at);
-        let done = match &mut current.place {
-            Place::Held(rows, next) => held(left, next, rows, &mut self.out),
-            Place::Pass(pass) => passed(left, (pass, &mut self.right), self.by_batch, &mut self.out)?,
+        let done = match (&mut current.place, &mut self.right) {
+            (Place::Vectors(next), Right::Vectors(count)) => vectors(left, next, *count, &mut self.out),
+            (Place::Held(rows, next), _) => held(left, next, rows, &mut self.out),
+            (Place::Pass(pass), Right::Rows(right)) => passed(left, (pass, right), self.by_batch, &mut self.out)?,
+            (Place::Vectors(_) | Place::Pass(_), _) => return Err(crate::exec::broken("a product's place is not of its right operand")),
         };
         if done {
             self.out.flush(Some(&current.batch));
@@ -128,6 +148,23 @@ impl Product {
 /// A left batch being paired: the batch, its rows kept, and the place
 /// among them of the one being paired.
 type Left<'c> = (&'c Batch, &'c [usize], &'c mut usize);
+
+/// Pairs the rows of a left batch, from the one being paired, with the
+/// right's `count` rows held as vectors, from the one at `next`, until a
+/// batch is made; whether all are.
+fn vectors((batch, rows, at): Left<'_>, next: &mut usize, count: usize, out: &mut Out) -> bool {
+    while !out.ready() {
+        let Some(&l) = rows.get(*at) else { return true };
+        if *next < count {
+            out.push_held(Some(batch), Some(l), Some(*next));
+            *next = next.saturating_add(1);
+        } else {
+            *at = at.saturating_add(1);
+            *next = 0;
+        }
+    }
+    false
+}
 
 /// Pairs the rows of a left batch, from the one being paired, with the
 /// right's held `rows`, from the one at `next`, until a batch is made;

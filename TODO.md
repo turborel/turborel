@@ -87,15 +87,12 @@ What came after SQL-92 follows it, written from the standards' own text
   values' own while it costs no more (the planner and executor taking
   `Expr::Dynamic`), is the way if a benchmark on a quiet machine shows
   planning worth saving.
-- **Joins by batches** (RULES.md D31): a join's right operand is held as
-  rows, so its columns leave the join as values (`Column::Values`), as do
-  a partitioned join's left columns, read back from runs; only the batch
-  probing keeps its typed vectors. Copying the right's values out was
-  about 15% of COUNT(*), SUM of the analytics benchmark's join of a
-  12-row table and 200,000 rows (16.5 M rows/s, column store). An outer
-  join past the work area joins its partitions row by row, its rows
-  gathered into batches after (1.56 M rows/s spilled at 1 MiB, the inner
-  join 3.0 M).
+- **Joins by batches** (RULES.md D31): a join whose right operand
+  outgrows the work area joins its partitions row by row, both operands'
+  columns read back from runs as values (`Column::Values`), its rows
+  gathered into batches after (COUNT(*), SUM of the analytics
+  benchmark's self join at 1 MiB, 0.56 M rows/s; an outer join spilled at
+  1 MiB, 1.6 M).
 - **Operators over vectors, further** (D31, D38): a grouping of a set
   function that writes no state (a plug-in's, SUM or AVG of approximate
   numbers) still writes every row of a group not held. Groups are made

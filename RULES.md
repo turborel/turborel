@@ -1879,11 +1879,20 @@ write-ahead logging.
     the error (D15);
   - each batch is made only while the statement is not cancelled (D44),
     as a join of operands held in memory reads no table as it pairs.
+- **The right operand held.** A join of streams reads its right
+  operand first. While its vectors fit the work area, it is held as one
+  batch of them, each of its batches' kind (`Batch::joined`), with the
+  places of each key's rows (`joined/held.rs`); the right's columns of
+  the joined rows are gathered of its vectors, as the left's are of the
+  batch probing. Past the work area, its rows go to the row path, as
+  below.
 - **Hash join.** An inner hash join, and a LEFT one whose condition
-  cannot raise and whose operands have no condition of their own (D15),
-  build as the row path does. Held in the work area, each left batch
-  probes it. The condition is judged for each pair of equal keys, on a
-  row of the pair's values; an unmatched LEFT row is joined with nulls.
+  cannot raise and whose operands have no condition of their own (D15):
+  each left batch probes the right held, keys equal compared where they
+  lie (integers of one scale by their units). The condition is judged
+  for each pair of equal keys, on a row of the pair's values; an
+  unmatched LEFT row is joined with nulls. Past the work area the right
+  is built as the row path builds it:
   - Partitioned: each pair of partitions in turn, its right built, its
     left rows probing it, their rows put in batches as made, not merged
     into the left's order (`joined/parted.rs`);
@@ -1891,9 +1900,10 @@ write-ahead logging.
     spill-area table, which every left row probes in order.
 - **Outer joins.** Any other (FULL, a RIGHT one not planned as a LEFT
   one (D35), a LEFT one whose condition can raise or whose operand has
-  its own condition) holds its right as the row path does: on keys
-  hashed, on none each row a candidate; a flag per row, whether it
-  matched (`joined/outer.rs`).
+  its own condition) holds its right: on keys, as vectors (above); on
+  none, as the row path does, each row a candidate; a flag per row,
+  whether it matched (`joined/outer.rs`). A right row is made of its
+  vectors only where a condition is judged of it.
   - Each left batch probes it, operands' own conditions and the
     condition judged as the row path judges them.
   - Once the left is read, a preserved right's unmatched rows, null keys
@@ -1901,7 +1911,7 @@ write-ahead logging.
   - A right past the work area: joined as the row path joins it,
     partitioned or from a run, its rows gathered into batches.
 - **Products** (`joined/nested.rs`). Each left batch is paired with the
-  right: held in memory, each left row with every right row in turn; in
+  right: held as vectors, each left row with every right row in turn; in
   a run, read once a batch, each right row with every row of the batch.
 - **Order.** A left operand the planner asks for in an order (a scan in
   its table's) is read so and gathered into batches, and its joins keep

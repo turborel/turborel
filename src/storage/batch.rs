@@ -10,6 +10,7 @@
 //! asks. Split from storage.rs (RULES.md R-SIZE-2).
 
 mod gathered;
+mod held;
 
 use std::sync::OnceLock;
 

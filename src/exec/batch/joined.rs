@@ -4,13 +4,14 @@
 //! the join reads of their rows to match them among those their batches
 //! hold.
 //!
-//! Each reads its right operand first, as the row path does, of its
-//! batches' rows if its tables read by batch, and holds it as the row path
-//! holds it; each of its left operand's batches then probes it, or is
-//! paired with it, a batch of the joined rows made at a time
-//! (`joined/pairs.rs`): their columns the left's, gathered from the batch
-//! probing as vectors of their kind, then the right's. An inner hash join
-//! and a LEFT one of no raising condition probe a built right
+//! Each reads its right operand first, as the row path does, and holds it
+//! as vectors while they fit the work area (`joined/held.rs`), else its
+//! rows as the row path holds them; each of its left operand's batches
+//! then probes it, or is paired with it, a batch of the joined rows made
+//! at a time (`joined/pairs.rs`): their columns the left's, gathered from
+//! the batch probing as vectors of their kind, then the right's, gathered
+//! so of the right held as vectors, else made of its rows. An inner hash
+//! join and a LEFT one of no raising condition probe a built right
 //! (`joined/probe.rs`), an inner one's partitions past the work area each
 //! in turn (`joined/parted.rs`); any other outer join probes a right held
 //! with a flag of each row, whether it matched (`joined/outer.rs`); a
@@ -22,6 +23,7 @@
 //! in it, its rows gathered into batches, and every join of it gives its
 //! rows in it.
 
+mod held;
 mod nested;
 mod outer;
 mod pairs;
@@ -180,7 +182,7 @@ fn operand_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of `batches`, those a filter kept of each, each of `width`
 /// columns, the values of a batch's vectors at `columns`, the others null.
-fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
+pub(super) fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
     Box::new(batches.flat_map(move |kept| match kept {
         Ok((batch, rows)) => {
             let made: Vec<Result<Row>> = rows

@@ -153,3 +153,96 @@ fn batches_grow_to_their_most() {
     assert_eq!(sizes, [16, 32, 64, 128, 256, 512, 1024, 2048, 2048, 2048]);
     assert_eq!(sizes.first(), Some(&FIRST_BATCH_ROWS));
 }
+
+/// Verifies: [DESIGN] RULES.md D38: a batch is counted as holding its
+/// vectors' bytes: integers' and numbers' 8 bytes each and their nulls,
+/// values as rows count them, texts their bytes and ends, a store's
+/// dictionary its codes and entries.
+#[test]
+fn batches_count_the_bytes_their_vectors_hold() {
+    let ints = Column::Ints(Ints::new(vec![1_i64, 2_i64], 0_u32, Some(vec![false, true])));
+    assert_eq!(Column::bytes(&ints), 18_usize);
+    assert_eq!(Column::bytes(&Column::Floats(Floats::new(vec![1.0_f64], None))), 8_usize);
+    let values = Column::Values(vec![Value::Char("abc".to_owned())]);
+    assert_eq!(Column::bytes(&values), size_of::<Value>() + 3_usize);
+    let texts = Texts::new("abcd".to_owned(), vec![2_usize, 4_usize], None);
+    assert_eq!(Column::bytes(&Column::Texts(texts.clone())), 4_usize + 2_usize * size_of::<usize>());
+    let coded = Texts::coded(Coded { codes: vec![0_u32, 1_u32, 1_u32], entries: texts }, None);
+    assert_eq!(Column::bytes(&Column::Texts(coded)), 3_usize * 4_usize + 4_usize + 2_usize * size_of::<usize>());
+    let batch = Batch { columns: vec![ints, values], rows: 2 };
+    assert_eq!(batch.bytes(), 18_usize + size_of::<Value>() + 3_usize);
+}
+
+/// Two batches of a column of each kind: integers of one scale and of
+/// two, numbers, texts (a store's dictionary's and plain), and nulls the
+/// second lacks.
+fn two_batches() -> Vec<(Batch, Vec<usize>)> {
+    let ints = |units: Vec<i64>, scale: u32| Column::Ints(Ints::new(units, scale, None));
+    let entries = Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None);
+    let coded = Column::Texts(Texts::coded(Coded { codes: vec![1_u32, 0_u32], entries }, None));
+    let first = Batch {
+        columns: vec![
+            ints(vec![1, 2], 0),
+            ints(vec![5, 6], 1),
+            Column::Floats(Floats::new(vec![1.5_f64, 2.5_f64], Some(vec![false, true]))),
+            coded,
+            Column::nulls(2),
+        ],
+        rows: 2,
+    };
+    let second = Batch {
+        columns: vec![
+            Column::Ints(Ints::new(vec![7, 0], 0, Some(vec![false, true]))),
+            ints(vec![8, 9], 2),
+            Column::Floats(Floats::new(vec![-1.0_f64, 0.0_f64], None)),
+            Column::Texts(Texts::new("ab".to_owned(), vec![1_usize, 2_usize], None)),
+        ],
+        rows: 2,
+    };
+    vec![(first, vec![1_usize, 0_usize]), (second, vec![0_usize, 1_usize])]
+}
+
+/// The kind of each vector of `batch`, and its values as written.
+fn kinds_and_values(batch: &Batch) -> Vec<(&'static str, Vec<String>)> {
+    let kind = |c: &Column| match c {
+        Column::Ints(_) => "ints",
+        Column::Floats(_) => "floats",
+        Column::Texts(t) => {
+            if t.coded.is_some() {
+                "coded"
+            } else {
+                "texts"
+            }
+        }
+        Column::Values(_) => "values",
+        Column::Nulls(_) => "nulls",
+    };
+    batch.columns.iter().map(|c| (kind(c), shown(c.values()))).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D38: batches' rows joined into one
+/// batch, each at the places beside its batch, in order: integers of one
+/// scale stay integers, of two become values; numbers and texts (a store's
+/// dictionary's too) stay of their kind, their nulls kept; a column one
+/// part lacks is null there; one part of all its rows is that batch, its
+/// texts' dictionary kept; none is a batch of no rows.
+#[test]
+fn batches_joined_keep_their_kinds() {
+    let joined = Batch::joined(two_batches());
+    assert_eq!(joined.rows, 4_usize);
+    let to = |kind: &'static str, values: [&str; 4]| (kind, values.map(String::from).to_vec());
+    assert_eq!(
+        kinds_and_values(&joined),
+        [
+            to("ints", ["2", "1", "7", "NULL"]),
+            to("values", ["0.6", "0.5", "0.08", "0.09"]),
+            to("floats", ["NULL", "1.5E0", "-1E0", "0E0"]),
+            to("texts", ["x", "y", "a", "b"]),
+            to("values", ["NULL"; 4]),
+        ]
+    );
+    let whole = two_batches().into_iter().next().map(|(batch, _)| batch).unwrap();
+    let same = Batch::joined(vec![(whole, vec![0_usize, 1_usize])]);
+    assert_eq!(kinds_and_values(&same)[3].0, "coded", "as it is");
+    assert_eq!(Batch::joined(Vec::new()).rows, 0_usize);
+}

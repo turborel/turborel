@@ -1,20 +1,22 @@
 //! \[DESIGN\] An inner hash join of streams, and a LEFT outer join on keys
 //! whose condition beyond them cannot raise an error and whose operands
 //! have no condition of their own (RULES.md D31): the right operand read
-//! first and built as the row path builds it (`exec/join.rs`), of its
-//! batches' rows if its tables read by batch; held in the work area, each
-//! of the left operand's batches probes it, the condition judged of each
-//! pair of equal keys, of a row of the pair's values. Of a LEFT join, a
-//! left row no right row matches is joined with nulls [ISO/IEC 9075:1992
-//! §7.5 GR4, GR5b]; its right operand, outgrowing the work area, moves to a
-//! table of the spill area, so every left row probes it in the left's
-//! order. An inner join's right operand outgrowing it is partitioned
-//! (`parted.rs`). Split from exec/batch/joined.rs (RULES.md R-SIZE-2).
+//! first and held as vectors within the work area (`held.rs`); each of the
+//! left operand's batches probes it, the condition judged of each pair of
+//! equal keys, of a row of the pair's values, and the right's columns of
+//! the pairs gathered of its vectors. Of a LEFT join, a left row no right
+//! row matches is joined with nulls [ISO/IEC 9075:1992 §7.5 GR4, GR5b].
+//! Past the work area the right operand is built as the row path builds
+//! it (`exec/join.rs`): of a LEFT join, it moves to a table of the spill
+//! area, so every left row probes it in the left's order; of an inner one,
+//! it is partitioned (`parted.rs`). Split from exec/batch/joined.rs
+//! (RULES.md R-SIZE-2).
 
 use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
+use super::held::{self, HeldRight, Read};
 use super::pairs::{Out, kept_rows};
 use super::{gathered, in_order, left_batches, operand_rows, parted};
 use crate::db::State;
@@ -51,20 +53,30 @@ pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kin
         Kind::Inner => Full::Partition,
         Kind::Left(..) => Full::Table,
     };
-    // The right operand first, as the row path reads it.
-    match Built::of(operand_rows(right, db, tx), keys, (&mut work, full))? {
-        Right::Held(built) => {
-            let places: Option<Vec<(usize, usize)>> =
-                built.keys().iter().map(|&(l, r)| left_columns.iter().position(|&c| c == l).map(|at| (at, r))).collect();
-            let places = places.ok_or_else(|| crate::exec::broken("a join key the left operand's batch lacks"))?;
-            let scratch = match &kind {
-                Kind::Left(Some(_), (l, r)) => vec![Value::Null; l.saturating_add(*r)],
-                Kind::Inner | Kind::Left(None, _) => Vec::new(),
-            };
-            let out = Out::new(left_columns.len(), right_columns);
-            let joined = Joined { left_columns, kind, scratch, runner: Runner::new(db, tx) };
+    let places: Option<Vec<(usize, usize)>> =
+        keys.iter().map(|&(l, r)| left_columns.iter().position(|&c| c == l).map(|at| (at, r))).collect();
+    let places = places.ok_or_else(|| crate::exec::broken("a join key the left operand's batch lacks"))?;
+    let scratch = match &kind {
+        Kind::Left(Some(_), (l, r)) => vec![Value::Null; l.saturating_add(*r)],
+        Kind::Inner | Kind::Left(None, _) => Vec::new(),
+    };
+    // The right operand first, held as vectors if it fits the work area.
+    let right_keys: Vec<usize> = keys.iter().map(|k| k.1).collect();
+    let rows = match held::read(right, &right_keys, work.limit(), (db, tx))? {
+        Read::Held(held) => {
+            let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
+            let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
             let left = left_batches(left, db, tx)?;
-            Ok(Box::new(Probe { left, joined, built, places, out, _work: work }))
+            return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(held), places, out, _work: work }));
+        }
+        Read::Rows(rows) => rows,
+    };
+    match Built::of(rows, keys, (&mut work, full))? {
+        Right::Held(built) => {
+            let out = Out::new(left_columns.len(), right_columns.clone());
+            let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
+            let left = left_batches(left, db, tx)?;
+            Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }))
         }
         Right::Partitioned(parts) => {
             let mut columns = left_columns;
@@ -84,6 +96,8 @@ pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kin
 /// subqueries.
 struct Joined {
     left_columns: Vec<usize>,
+    /// The columns of the right operand's rows its batches hold.
+    right_columns: Vec<usize>,
     kind: Kind,
     scratch: Row,
     runner: Runner,
@@ -97,6 +111,29 @@ impl Joined {
         let Kind::Left(Some(cond), (width, _)) = &self.kind else { return Ok(equal) };
         Ok(equal && judged(cond, (&mut self.scratch, *width), (batch, r), (right, &self.left_columns), &self.runner)?)
     }
+
+    /// Whether left row `r` of `batch` and row `p` of `right`, held as
+    /// vectors, are a pair the join keeps, as `keeps` says.
+    fn keeps_held(&mut self, (batch, r): (&Batch, usize), (right, p): (&Batch, usize), equal: bool) -> Result<bool> {
+        let Joined { left_columns, right_columns, kind, scratch, runner } = self;
+        let Kind::Left(Some(cond), (width, _)) = kind else { return Ok(equal) };
+        if !equal {
+            return Ok(false);
+        }
+        for (at, &c) in right_columns.iter().enumerate() {
+            if let Some(slot) = scratch.get_mut(width.saturating_add(c)) {
+                *slot = right.cell(at, p).to_value();
+            }
+        }
+        judged_of(cond, scratch, (batch, r), left_columns, runner)
+    }
+}
+
+/// A hash join's right operand: held as vectors, or built as the row path
+/// builds it.
+enum Holding {
+    Vectors(HeldRight),
+    Built(Built),
 }
 
 /// Whether `cond` is true of the pair of left row `r` of `batch`, whose
@@ -109,23 +146,30 @@ fn judged(
     (right, left_columns): (&Row, &[usize]),
     runner: &Runner,
 ) -> Result<bool> {
+    for (slot, v) in scratch.iter_mut().skip(width).zip(right) {
+        slot.clone_from(v);
+    }
+    judged_of(cond, scratch, (batch, r), left_columns, runner)
+}
+
+/// Whether `cond` is true of the row in `scratch`, the right row's values
+/// in it, once left row `r` of `batch`, whose vectors hold `left_columns`,
+/// is put in it too.
+fn judged_of(cond: &Cond, scratch: &mut Row, (batch, r): (&Batch, usize), left_columns: &[usize], runner: &Runner) -> Result<bool> {
     for (at, &c) in left_columns.iter().enumerate() {
         if let Some(slot) = scratch.get_mut(c) {
             *slot = batch.cell(at, r).to_value();
         }
     }
-    for (slot, v) in scratch.iter_mut().skip(width).zip(right) {
-        slot.clone_from(v);
-    }
     Ok(eval_cond(cond, scratch, runner)? == Truth::True)
 }
 
 /// A hash join's batches: each of its left operand's probing its right,
-/// built.
+/// held.
 struct Probe {
     left: Batches,
     joined: Joined,
-    built: Built,
+    right: Holding,
     /// The place in a left batch of each key's left column, with its
     /// right column.
     places: Vec<(usize, usize)>,
@@ -145,25 +189,64 @@ impl Probe {
             key.clear();
             // A null equals nothing [X3.135-1986 §5.11 GR2].
             let keyed = values.iter().all(|v| bucket(v).map(|b| key.push(b)).is_some());
-            let mut found = false;
-            let candidates = if keyed { Some(self.built.bucket_rows(&key)?) } else { None };
-            for right in candidates.into_iter().flatten() {
-                let right = right?;
-                let equal =
-                    self.places.iter().zip(&values).all(|(&(_, rc), v)| right.get(rc).and_then(|w| compare(v, w)) == Some(Ordering::Equal));
-                if self.joined.keeps((batch, r), &right, equal)? {
-                    found = true;
-                    self.out.push(Some(batch), Some(r), Some(&right));
+            let found = match &self.right {
+                Holding::Vectors(held) => {
+                    let pairs = (&mut self.joined, &mut self.out);
+                    keyed && probe_held(held, pairs, (batch, r), (&values, &key))?
                 }
-            }
+                Holding::Built(built) => {
+                    let pairs = (&mut self.joined, &mut self.out, self.places.as_slice());
+                    keyed && probe_built(built, pairs, (batch, r), (&values, &key))?
+                }
+            };
             // [ISO/IEC 9075:1992 §7.5 GR4, GR5b] A LEFT join's left row
             // no right row matches, with nulls.
             if !found && matches!(self.joined.kind, Kind::Left(..)) {
-                self.out.push(Some(batch), Some(r), None);
+                self.out.push_held(Some(batch), Some(r), None);
             }
         }
         Ok(())
     }
+}
+
+/// Adds to `out` the pairs `joined` keeps of left row `r` of `batch`, of
+/// key `values`, bucketed as `key`, and the rows of that key of `built`,
+/// their keys' right columns those `places` gives: whether it kept any.
+fn probe_built(
+    built: &Built,
+    (joined, out, places): (&mut Joined, &mut Out, &[(usize, usize)]),
+    (batch, r): (&Batch, usize),
+    (values, key): (&[Value], &[Bucket]),
+) -> Result<bool> {
+    let mut found = false;
+    for right in built.bucket_rows(key)? {
+        let right = right?;
+        let equal = places.iter().zip(values).all(|(&(_, rc), v)| right.get(rc).and_then(|w| compare(v, w)) == Some(Ordering::Equal));
+        if joined.keeps((batch, r), &right, equal)? {
+            found = true;
+            out.push(Some(batch), Some(r), Some(&right));
+        }
+    }
+    Ok(found)
+}
+
+/// Adds to `out` the pairs `joined` keeps of left row `r` of `batch`, of
+/// key `values`, bucketed as `key`, and the rows of that key of `held`:
+/// whether it kept any.
+fn probe_held(
+    held: &HeldRight,
+    (joined, out): (&mut Joined, &mut Out),
+    (batch, r): (&Batch, usize),
+    (values, key): (&[Value], &[Bucket]),
+) -> Result<bool> {
+    let mut found = false;
+    for &p in held.rows_of(key) {
+        if joined.keeps_held((batch, r), (&held.batch, p), held.keys_equal(p, values))? {
+            found = true;
+            out.push_held(Some(batch), Some(r), Some(p));
+        }
+    }
+    Ok(found)
 }
 
 impl Iterator for Probe {

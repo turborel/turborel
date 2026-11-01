@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 29] = [
+pub const READS: [Mutation; 32] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -267,5 +267,32 @@ pub const READS: [Mutation; 29] = [
         replacement: "            out.put_u8(u8::from(cell_kind(cell).is_none() && false));",
         integration: &["spilling::operators_spill_and_give_the_same_rows"],
         unit: &["exec::sort::chunk::tests::chunks_keep_their_vectors_kinds"],
+    },
+    Mutation {
+        name: "join-held-keys-unequal",
+        breaks: "a join's right operand held as vectors matches integers of one scale whose units differ",
+        file: "src/exec/batch/joined/held.rs",
+        original: "        return d.units == i128::from(units);",
+        replacement: "        return d.units != i128::from(units);",
+        integration: &["batch_joins::joins_by_batch_answer_as_row_by_row", "batch_joins::outer_joins_by_batch_answer_as_row_by_row"],
+        unit: &[],
+    },
+    Mutation {
+        name: "join-held-right-unmatched-dropped",
+        breaks: "an outer join's right operand held as vectors gives none of its rows that matched no left row",
+        file: "src/exec/batch/joined/outer.rs",
+        original: "                self.push_right(None, n);",
+        replacement: "                let _ = n;",
+        integration: &["batch_joins::outer_joins_by_batch_answer_as_row_by_row"],
+        unit: &[],
+    },
+    Mutation {
+        name: "batches-joined-as-values",
+        breaks: "batches joined into one keep no vector of integers, the right operand's columns leaving a join as values",
+        file: "src/storage/batch/held.rs",
+        original: "        return Column::Ints(Ints::new(units, scale, nulls()));",
+        replacement: "        return Column::Values(Column::Ints(Ints::new(units, scale, nulls())).into_values());",
+        integration: &[],
+        unit: &["storage::batch::tests::batches_joined_keep_their_kinds"],
     },
 ];

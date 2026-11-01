@@ -21,7 +21,7 @@ const HALF: usize = 32 << 10;
 pub(crate) const ROWS: usize = 3000;
 /// Rows of `V`, half of them of one key: more than the smallest work area
 /// holds.
-const SKEWED: usize = 1200;
+const SKEWED: usize = 2500;
 
 pub(crate) fn bytes(n: usize) -> Value {
     Value::Exact(Decimal::new(i128::try_from(n).unwrap(), 0))
@@ -76,17 +76,17 @@ const QUERIES: &[&str] = &[
     "SELECT DISTINCT S FROM U",
     "SELECT DISTINCT G, S FROM T",
     "SELECT T.K, U.K FROM T, U WHERE T.G = U.G",
-    "SELECT T.K, V.K FROM T, V WHERE T.K = V.C",
-    "SELECT W.K, T.K FROM W, T",
+    "SELECT T.K, V.K, V.S FROM T, V WHERE T.K = V.C",
+    "SELECT W.K, T.K, T.S FROM W, T",
     "SELECT T.K, U.K FROM T LEFT OUTER JOIN U ON T.G = U.G",
-    "SELECT T.K, U.K FROM T RIGHT OUTER JOIN U ON T.G = U.G AND T.K < 2000",
+    "SELECT T.K, T.S, U.K FROM T RIGHT OUTER JOIN U ON T.G = U.G AND T.K < 2000",
     "SELECT T.K, U.K FROM T FULL OUTER JOIN U ON T.G = U.G AND U.K > 100",
-    "SELECT T.K, V.K FROM T FULL OUTER JOIN V ON T.K = V.C",
+    "SELECT T.K, V.K, V.S FROM T FULL OUTER JOIN V ON T.K = V.C",
     "SELECT U.K, T.K FROM U LEFT OUTER JOIN T ON U.G = T.G",
     "SELECT W.K, T.K FROM W LEFT OUTER JOIN T ON W.K + 2990 < T.K",
     "SELECT W.K, T.K FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
     "SELECT E.K, T.K FROM E FULL OUTER JOIN T ON E.K < T.K",
-    "SELECT T.K, V.K FROM T LEFT OUTER JOIN V ON T.K = V.C",
+    "SELECT T.K, V.K, V.S FROM T LEFT OUTER JOIN V ON T.K = V.C",
     "SELECT T.K, U.K FROM T LEFT OUTER JOIN U ON T.G = U.G AND 10 / (T.K + 1) < 1",
     "SELECT T.K, U.K FROM T RIGHT OUTER JOIN U ON T.G = U.G AND 10 / (U.K + 1) < 1",
     "SELECT T.K, U.K FROM T FULL OUTER JOIN U ON T.G = U.G AND 10 / (T.K + 1) < 1 AND 10 / (U.K + 1) < 1",
@@ -274,12 +274,12 @@ fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
         "SELECT S, G FROM U EXCEPT ALL SELECT S, G FROM T",
         "SELECT S FROM T INTERSECT SELECT S FROM U",
         "SELECT T.K, U.K FROM T, U WHERE T.G = U.G",
-        "SELECT T.K, V.K FROM T FULL OUTER JOIN V ON T.K = V.C",
-        "SELECT W.K, T.K FROM W, T",
+        "SELECT T.K, V.K, V.S FROM T FULL OUTER JOIN V ON T.K = V.C",
+        "SELECT W.K, T.K, T.S FROM W, T",
         "SELECT W.K, T.K FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
         "SELECT COUNT(*), SUM(U.K) FROM T, U WHERE T.G = U.G",
-        "SELECT COUNT(*), COUNT(V.K) FROM T FULL OUTER JOIN V ON T.K = V.C",
-        "SELECT COUNT(*), MAX(T.K) FROM W, T",
+        "SELECT COUNT(*), COUNT(V.K), MAX(V.S) FROM T FULL OUTER JOIN V ON T.K = V.C",
+        "SELECT COUNT(*), MAX(T.K), MAX(T.S) FROM W, T",
         "SELECT COUNT(*), COUNT(W.K) FROM W FULL OUTER JOIN T ON W.K + 2995 < T.K",
     ];
     let db = Database::new();
@@ -397,8 +397,8 @@ fn distinct_and_set_operations_share_their_work_area_with_their_bags() {
 #[test]
 fn a_probe_reads_its_keys_rows_as_it_joins() {
     const PROBED: &[&str] = &[
-        "SELECT T.K, V.K FROM T, V WHERE T.K = V.C",
-        "SELECT T.K, V.K FROM T LEFT OUTER JOIN V ON T.K = V.C",
+        "SELECT T.K, V.K, V.S FROM T, V WHERE T.K = V.C",
+        "SELECT T.K, V.K, V.S FROM T LEFT OUTER JOIN V ON T.K = V.C",
         "SELECT K FROM T WHERE EXISTS (SELECT * FROM V WHERE V.C = T.K AND V.K > 10)",
     ];
     let db = Database::new();

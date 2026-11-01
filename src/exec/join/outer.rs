@@ -166,7 +166,7 @@ fn outer_of(joining: Joining, right: RowIter, left: impl FnOnce() -> RowIter, (d
 /// # Errors
 ///
 /// An operand's own condition of a join on no keys (SQLCODE -910).
-fn spec_of(joining: Joining, (db, tx): (&Arc<State>, TxId)) -> Result<Spec> {
+pub(in crate::exec) fn spec_of(joining: Joining, (db, tx): (&Arc<State>, TxId)) -> Result<Spec> {
     let Joining { kind, keys, cond, own, widths } = joining;
     // An operand's own conditions are judged before its rows are matched
     // by keys; with none, every pair is judged, all of its condition.
@@ -232,16 +232,14 @@ impl Rowwise {
     }
 }
 
-/// The right operand's rows `right` of the outer join `joining` says,
-/// read: held in memory if they fit the work area, of a join on keys with
-/// the places of each bucket's rows, as `outer_of` holds them.
+/// The right operand's rows `right` of the outer join `spec` says, read
+/// in `work`: held in memory if they fit the work area, of a join on keys
+/// with the places of each bucket's rows, as `outer_of` holds them.
 ///
 /// # Errors
 ///
-/// The right operand's; the spill area's; as `spec_of`.
-pub(in crate::exec) fn prepared(joining: Joining, right: RowIter, (db, tx): (&Arc<State>, TxId)) -> Result<Prepared> {
-    let spec = spec_of(joining, (db, tx))?;
-    let mut work = Work::of(db, tx);
+/// The right operand's; the spill area's.
+pub(in crate::exec) fn prepared(spec: Spec, right: RowIter, mut work: Work) -> Result<Prepared> {
     if spec.keys.is_empty() {
         let (scanned, count) = Rescanned::of(right, &mut work)?;
         return Ok(match scanned {

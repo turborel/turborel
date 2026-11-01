@@ -16,7 +16,7 @@ mod rescan;
 
 pub(super) use indexed::indexed;
 pub(super) use outer::outer;
-pub(in crate::exec) use outer::{Holding, Joining, Prepared, prepared};
+pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
@@ -163,11 +163,6 @@ impl Built {
     /// The rows of bucket `b`, read as they are taken.
     pub(in crate::exec) fn bucket_rows(&self, b: &[Bucket]) -> Result<BucketRows<'_>> {
         Ok(BucketRows { built: self, probe: self.probe(b)? })
-    }
-
-    /// The pairs of a left column and a right column it is joined on.
-    pub(in crate::exec) fn keys(&self) -> &[(usize, usize)] {
-        &self.keys
     }
 
     /// The rows of bucket `b`, to be read with `next_of`.

@@ -9,7 +9,7 @@
 //! two of its columns read whole; joined with D, a table of a row or two
 //! for each group, by an inner join, the table its right operand, by
 //! LEFT, RIGHT and FULL outer joins, and as a product; joined with
-//! itself, its right operand past the work area; DISTINCT of an
+//! itself, its right operand past a work area of 1 MiB; DISTINCT of an
 //! expression; sorted by a scattered column, and by the column in the
 //! rows' order, ascending and descending, which FC's groups are sorted
 //! by and read in, forward and backward; EXCEPT and INTERSECT of
@@ -119,10 +119,7 @@ fn measure(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)
     bench.measure(case("COUNT, SUM of a RIGHT join", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM D RIGHT JOIN {t} ON D.G = {t}.G"));
     bench.measure(case("COUNT, SUM of a FULL join", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM {t} FULL JOIN D ON {t}.G = D.G"));
     bench.measure(case("COUNT, SUM of a product of 10% by D", "rows"), scan("SELECT COUNT(*), SUM({t}.A) FROM {t}, D WHERE {t}.C < 20000"));
-    bench.measure(
-        case("COUNT, SUM of a join past the work area, partitioned", "rows"),
-        scan("SELECT COUNT(*), SUM(T1.A) FROM {t} AS T1, {t} AS T2 WHERE T1.B = T2.B"),
-    );
+    partitioned(bench, s, (table, label));
     bench.measure(case("DISTINCT of an expression, 10 groups", "rows"), scan("SELECT DISTINCT G * 2 FROM {t}"));
     holding(bench, s, (table, keyed, label));
     bench.measure(case("fetch one row of 16 columns by its key", "queries"), || {
@@ -149,6 +146,19 @@ fn by_index(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
             ROWS
         });
     }
+}
+
+/// Measures a join of table `table` with itself, its right operand, a
+/// column of every row, past a work area of 1 MiB, so partitioned; its
+/// case's name ending in `label`.
+fn partitioned(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
+    s.run("SET MEMORY.WORK_BYTES = 1048576").unwrap();
+    let sql = format!("SELECT COUNT(*), SUM(T1.A) FROM {table} AS T1, {table} AS T2 WHERE T1.B = T2.B");
+    bench.measure(Case::new(format!("COUNT, SUM of a join past the work area, partitioned{label}"), "rows"), || {
+        fetched(s, &sql);
+        ROWS
+    });
+    s.run("SET MEMORY.WORK_BYTES = 4194304").unwrap();
 }
 
 /// Measures the operators that hold rows: sorts, EXCEPT and INTERSECT of

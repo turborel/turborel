@@ -25,7 +25,7 @@ use crate::error::Result;
 use crate::exec::batch::Batches;
 use crate::exec::{RowIter, broken, failed};
 use crate::logical::SortKey;
-use crate::spill::{SpillRun, heap_bytes};
+use crate::spill::SpillRun;
 use crate::storage::{Batch, Cell, Column, Row};
 use crate::txn::TxId;
 use crate::value::{Value, sort_cmp};
@@ -107,7 +107,7 @@ impl Held {
             self.places.push(Place { batch: at, row, prefix: prefix.map_or(0, |p| p.bits) });
         }
         let places = rows.len().saturating_mul(size_of::<Place>());
-        self.bytes = self.bytes.saturating_add(batch_bytes(&batch)).saturating_add(places);
+        self.bytes = self.bytes.saturating_add(batch.bytes()).saturating_add(places);
         self.batches.push(batch);
     }
 
@@ -210,41 +210,14 @@ fn cell_cmp(x: Cell<'_>, y: Cell<'_>) -> Ordering {
     }
 }
 
-/// The bytes `batch`'s vectors hold, near enough to bound a work area by.
-fn batch_bytes(batch: &Batch) -> usize {
-    batch.columns.iter().fold(0_usize, |sum, column| sum.saturating_add(column_bytes(column)))
-}
-
-/// The bytes the vector `column` holds.
-fn column_bytes(column: &Column) -> usize {
-    let nulls = |nulls: &Option<Vec<bool>>| nulls.as_ref().map_or(0, Vec::len);
-    match column {
-        Column::Values(values) => {
-            values.iter().fold(values.len().saturating_mul(size_of::<Value>()), |sum, v| sum.saturating_add(heap_bytes(v)))
-        }
-        Column::Ints(ints) => ints.units.len().saturating_mul(size_of::<i64>()).saturating_add(nulls(&ints.nulls)),
-        Column::Floats(floats) => floats.numbers.len().saturating_mul(size_of::<f64>()).saturating_add(nulls(&floats.nulls)),
-        // None held, but as values once they are asked for.
-        Column::Nulls(held) => held.rows.saturating_mul(size_of::<Value>()),
-        Column::Texts(texts) => {
-            let coded = texts.coded.as_ref().map_or(0, |c| {
-                let entries = c.entries.text.len().saturating_add(c.entries.ends.len().saturating_mul(size_of::<usize>()));
-                c.codes.len().saturating_mul(size_of::<u32>()).saturating_add(entries)
-            });
-            let ends = texts.ends.len().saturating_mul(size_of::<usize>());
-            texts.text.len().saturating_add(ends).saturating_add(nulls(&texts.nulls)).saturating_add(coded)
-        }
-    }
-}
-
 // Unit tests: sorts of batches whose rows the integration tests do not
-// make, and what a batch is counted as holding (RULES.md R-TEST-1).
+// make (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::catalog::MemoryCatalog;
     use crate::error::Code;
-    use crate::storage::{Coded, Floats, Ints, Texts};
+    use crate::storage::Ints;
     use crate::txn::NO_TRANSACTION;
     use crate::value::Decimal;
 
@@ -295,24 +268,5 @@ mod tests {
         }
         let (a, b) = (Value::Char("b".to_owned()), Value::Char("a".to_owned()));
         assert_eq!(cell_cmp(Cell::Value(&a), Cell::Value(&b)), Ordering::Greater);
-    }
-
-    /// Verifies: [DESIGN] RULES.md D38: a batch is counted as holding its
-    /// vectors' bytes: integers' and numbers' 8 bytes each and their nulls,
-    /// values as rows count them, texts their bytes and ends, a store's
-    /// dictionary its codes and entries.
-    #[test]
-    fn batches_count_the_bytes_their_vectors_hold() {
-        let ints = Column::Ints(Ints::new(vec![1_i64, 2_i64], 0_u32, Some(vec![false, true])));
-        assert_eq!(column_bytes(&ints), 18_usize);
-        assert_eq!(column_bytes(&Column::Floats(Floats::new(vec![1.0_f64], None))), 8_usize);
-        let values = Column::Values(vec![Value::Char("abc".to_owned())]);
-        assert_eq!(column_bytes(&values), size_of::<Value>() + 3_usize);
-        let texts = Texts::new("abcd".to_owned(), vec![2_usize, 4_usize], None);
-        assert_eq!(column_bytes(&Column::Texts(texts.clone())), 4_usize + 2_usize * size_of::<usize>());
-        let coded = Texts::coded(Coded { codes: vec![0_u32, 1_u32, 1_u32], entries: texts }, None);
-        assert_eq!(column_bytes(&Column::Texts(coded)), 3_usize * 4_usize + 4_usize + 2_usize * size_of::<usize>());
-        let batch = Batch { columns: vec![ints, values], rows: 2 };
-        assert_eq!(batch_bytes(&batch), 18_usize + size_of::<Value>() + 3_usize);
     }
 }

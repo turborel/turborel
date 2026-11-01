@@ -4,12 +4,15 @@
 //! is made of them once it holds `BATCH_ROWS`, or the batch probing is
 //! done: each left vector gathered as one of its kind (`Column::gathered`),
 //! so a column passing through the join unchanged keeps its integers,
-//! numbers or texts; each right vector of values. A batch whose probe
+//! numbers or texts; each right vector of values, or, of a right operand
+//! held as vectors (`held.rs`), gathered of its vector so too. A batch
+//! whose probe
 //! raises an error gives the rows joined before it first, then the error,
 //! as a join read row by row would (RULES.md D15). Split from
 //! exec/batch/joined.rs (RULES.md R-SIZE-2).
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use super::super::stream::Kept;
 use crate::error::{Result, SqlError};
@@ -28,6 +31,9 @@ pub(super) struct Out {
     left_width: usize,
     /// The column of the right operand's rows each right vector holds.
     right_columns: Vec<usize>,
+    /// The right operand held as vectors, if it is, and of each joined row
+    /// not yet in a batch, its right row's place there.
+    held: Option<(Arc<Batch>, Vec<Option<usize>>)>,
     ready: VecDeque<Batch>,
     failed: Option<SqlError>,
 }
@@ -37,7 +43,25 @@ impl Out {
     /// the right's of `right_columns`.
     pub(super) fn new(left_width: usize, right_columns: Vec<usize>) -> Out {
         let right = right_columns.iter().map(|_| Vec::with_capacity(BATCH_ROWS)).collect();
-        Out { left: Vec::with_capacity(BATCH_ROWS), right, left_width, right_columns, ready: VecDeque::new(), failed: None }
+        Out { left: Vec::with_capacity(BATCH_ROWS), right, left_width, right_columns, held: None, ready: VecDeque::new(), failed: None }
+    }
+
+    /// No joined rows yet, of batches of `left_width` left vectors, then
+    /// each vector of `right`, a right operand held as vectors.
+    pub(super) fn over(left_width: usize, right: Arc<Batch>) -> Out {
+        let mut out = Out::new(left_width, Vec::new());
+        out.held = Some((right, Vec::with_capacity(BATCH_ROWS)));
+        out
+    }
+
+    /// Adds a joined row: row `l` of `batch`, or nulls; then row `r` of the
+    /// right operand held as vectors, or nulls. A batch is made of the rows
+    /// once they are `BATCH_ROWS`.
+    pub(super) fn push_held(&mut self, batch: Option<&Batch>, l: Option<usize>, r: Option<usize>) {
+        if let Some((_, picks)) = &mut self.held {
+            picks.push(r);
+        }
+        self.push(batch, l, None);
     }
 
     /// Adds a joined row: row `l` of `batch`, or nulls; then `right`, or
@@ -63,6 +87,10 @@ impl Out {
             .map(|at| batch.and_then(|b| b.columns.get(at)).map_or_else(|| Column::nulls(rows), |c| c.gathered(&self.left)))
             .collect();
         columns.extend(self.right.iter_mut().map(|v| Column::Values(std::mem::replace(v, Vec::with_capacity(BATCH_ROWS)))));
+        if let Some((right, picks)) = &mut self.held {
+            columns.extend(right.columns.iter().map(|c| c.gathered(picks)));
+            picks.clear();
+        }
         self.left.clear();
         self.ready.push_back(Batch { columns, rows });
     }
