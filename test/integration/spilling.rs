@@ -11,7 +11,7 @@ use turborel::spill::{Area, PagedSpill, Records, Spill, SpillArea, SpillRun, Spi
 use turborel::txn::Stop;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Counted, Scratch, exec, os, rows};
+use crate::common::{Counted, Scratch, exec, os, rows, sorted};
 
 /// The smallest MEMORY.WORK_BYTES, 64 KiB.
 pub(crate) const SMALL: usize = 64 << 10;
@@ -128,7 +128,9 @@ fn operators_spill_and_give_the_same_rows() {
     let counted = Counted::default();
     db.set_spill(Box::new(counted.clone())).unwrap();
     let s = db.session("S");
-    let in_memory: Vec<Vec<String>> = QUERIES.iter().map(|q| rows(&s, q).unwrap()).collect();
+    // Sorted: a join spilled gives its rows in no order but its partitions'
+    // where none is asked for (`exec/batch/joined/parted.rs`).
+    let in_memory: Vec<Vec<String>> = QUERIES.iter().map(|q| sorted(&s, q)).collect();
     assert_eq!(counted.taken(), 0, "the default MEMORY.WORK_BYTES holds them all");
     let reserved = db.memory().unwrap().1;
 
@@ -141,7 +143,7 @@ fn operators_spill_and_give_the_same_rows() {
         db.set_setting("SPILL.PARTITIONS", &bytes(partitions)).unwrap();
         db.set_setting("SPILL.PARTITION_DEPTH", &bytes(depth)).unwrap();
         for (q, expected) in QUERIES.iter().zip(&in_memory) {
-            assert_eq!(&rows(&s, q).unwrap(), expected, "{q}, batch {batch}");
+            assert_eq!(&sorted(&s, q), expected, "{q}, batch {batch}");
             assert!(counted.taken() > 0, "{q} spilled");
             assert_eq!(db.memory().unwrap().1, reserved, "{q}: its areas given back");
         }
@@ -282,7 +284,7 @@ fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
     let db = Database::new();
     filled(&db);
     let s = db.session("S");
-    let in_memory: Vec<Vec<String>> = CANCELLED.iter().map(|q| rows(&s, q).unwrap()).collect();
+    let in_memory: Vec<Vec<String>> = CANCELLED.iter().map(|q| sorted(&s, q)).collect();
     let cancelling = Cancelling::default();
     db.set_spill(Box::new(cancelling.clone())).unwrap();
     db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
@@ -292,7 +294,7 @@ fn a_cancel_stops_a_spilled_operator_as_it_reads_back() {
             cancelling.arm(&s);
             assert_eq!(rows(&s, q).err(), Some(Code::Cancelled), "{q}, batches {batches}");
             assert!(cancelling.fired(), "{q}");
-            assert_eq!(&rows(&s, q).unwrap(), expected, "{q}: the next statement runs");
+            assert_eq!(&sorted(&s, q), expected, "{q}: the next statement runs");
         }
     }
 }
@@ -401,11 +403,11 @@ fn a_probe_reads_its_keys_rows_as_it_joins() {
     let db = Database::new();
     filled(&db);
     let s = db.session("S");
-    let in_memory: Vec<Vec<String>> = PROBED.iter().map(|q| rows(&s, q).unwrap()).collect();
+    let in_memory: Vec<Vec<String>> = PROBED.iter().map(|q| sorted(&s, q)).collect();
     db.set_spill(Box::new(Streamed)).unwrap();
     db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     for (q, expected) in PROBED.iter().zip(&in_memory) {
-        assert_eq!(&rows(&s, q).unwrap(), expected, "{q}");
+        assert_eq!(&sorted(&s, q), expected, "{q}");
     }
 }
 

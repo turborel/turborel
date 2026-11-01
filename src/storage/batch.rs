@@ -20,6 +20,32 @@ use crate::value::{Decimal, Value};
 /// \[DESIGN\] The most rows of a batch: a vector, 2048.
 pub const BATCH_ROWS: usize = 2048;
 
+/// \[DESIGN\] The rows of the first batch of a scan whose rows are made
+/// one by one, each next batch twice the last's up to `BATCH_ROWS`
+/// (`Ramp`): a cursor that fetches a row or two reads few more, a scan
+/// read whole full batches soon.
+pub const FIRST_BATCH_ROWS: usize = 16;
+
+/// \[DESIGN\] How many rows each batch of a scan holds, from
+/// `FIRST_BATCH_ROWS`, twice as many each batch, up to `BATCH_ROWS`.
+#[derive(Debug, Clone, Copy)]
+pub struct Ramp(usize);
+
+impl Default for Ramp {
+    fn default() -> Ramp {
+        Ramp(FIRST_BATCH_ROWS)
+    }
+}
+
+impl Ramp {
+    /// The rows of the next batch.
+    pub fn next_rows(&mut self) -> usize {
+        let rows = self.0;
+        self.0 = self.0.saturating_mul(2).min(BATCH_ROWS);
+        rows
+    }
+}
+
 /// \[DESIGN\] Rows of a scan, by column: the values of each column asked
 /// for, in the order asked, a vector of `rows` of them.
 #[derive(Debug, Default)]

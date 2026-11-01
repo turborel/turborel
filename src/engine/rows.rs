@@ -360,9 +360,11 @@ impl TableStorage for RowTable {
         self.scan_batches_of(tx, columns, condition.cloned())
     }
 
-    /// A table of the column store does.
+    /// Every table does: of the column store, its frozen rows straight
+    /// from their chunks; of either, its tree's records decoded straight
+    /// into the vectors (`rows/gathered.rs`), no row made.
     fn reads_by_batch(&self) -> bool {
-        self.frozen.columns().is_some()
+        true
     }
 
     /// Of the column store, the columns COLUMNSTORE.ORDER names.

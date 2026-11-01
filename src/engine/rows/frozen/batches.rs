@@ -34,7 +34,7 @@ use crate::engine::rows::sealing::Sealing;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, Ramp, RowId};
 use crate::value::DataType;
 use crate::value::Value;
 
@@ -62,6 +62,8 @@ pub(in crate::engine::rows) struct Batched {
     read: Vec<(RowId, RowId)>,
     /// The pages of the group being read it asks to be read ahead.
     ahead: GroupAhead,
+    /// How many of the tree's rows each batch of them holds.
+    ramp: Ramp,
 }
 
 impl Batched {
@@ -86,6 +88,7 @@ impl Batched {
             delta: None,
             read: Vec::new(),
             ahead: GroupAhead::default(),
+            ramp: Ramp::default(),
         }
     }
 
@@ -225,7 +228,8 @@ impl Batched {
         let mut delta = self.delta.take().unwrap_or_else(|| RowTable::entries(&self.table));
         let mut gathering = Gathering::new(self.table.format.types(), &self.columns);
         let mut failed = None;
-        while gathering.rows() < BATCH_ROWS {
+        let rows = self.ramp.next_rows();
+        while gathering.rows() < rows {
             let Some(entry) = delta.next() else { break };
             let found = entry.and_then(|(k, newest)| {
                 let id = row_id(&k)?;

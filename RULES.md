@@ -1780,8 +1780,12 @@ write-ahead logging.
     store's not yet frozen, are decoded from each record straight into
     vectors (`rows/gathered.rs`): exact numbers as integers, character
     strings as text (CHARACTER padded), others as values; no row made.
-  - A row store table still reads a row at a time for a cursor
-    (`reads_by_batch` false): its rows are read as they are fetched.
+  - Every table of the built-in engines reads by batch for a cursor
+    too (`reads_by_batch`), a batch read ahead of what is fetched.
+  - The batch executor makes each kind of plan in a function of its own,
+    so its dispatching frames, the ones each level of a plan adds, hold
+    no locals of the others; a product makes its left operand before its
+    own state (R-CF-6).
 - **Integers** (`storage::Column`, `Ints`). An exact number a store
   keeps as an integer is a vector of integers, nulls beside; values are
   made only when first asked for.
@@ -1942,7 +1946,7 @@ write-ahead logging.
     can raise is judged over vectors only if all of it can be, each
     conjunct of every row given; else whole, a row at a time.
 - **Projection** (`exec/batch/project.rs`). Over a stream whose tables
-  all read by batch (`reads_by_batch`, a column store table's), a
+  all read by batch (`reads_by_batch`, the built-in engines' all), a
   projection of only its columns, no subquery, makes each row from the
   vectors: a column or constant as is, another expression on a reused
   row of only its values; a batch is read ahead of the cursor. Over

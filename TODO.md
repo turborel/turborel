@@ -112,8 +112,7 @@ What came after SQL-92 follows it, written from the standards' own text
 - **Typed vectors, further** (D31): a LIKE whose pattern is another
   expression (a CASE) leaves its filter judged whole a row at a time,
   each pattern split once (`S LIKE CASE ...` of 200,000 rows of the
-  column store, 28.6 ms); a row store table's cursor still reads a row
-  at a time (`reads_by_batch`), though its batches no longer make rows.
+  column store, 28.6 ms).
 - **Statistics, further** (D35): an index's probe is priced by its pages,
   PLANNER.INDEX_DESCENT_COST each, whether the pool holds them or not;
   only a table's fetches are priced by what its lookups missed (`Tally`),

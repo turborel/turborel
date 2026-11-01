@@ -29,13 +29,26 @@ use crate::txn::TxId;
 ///
 /// The right operand's; the spill area's.
 pub(super) fn multiplied((left, right): (Plan, Plan), db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
+    // The left operand made first, in a frame of little more: of a chain of
+    // products, the only one each level adds to the stack (RULES.md
+    // R-CF-6).
+    let (left_width, ordered) = (stream::layout(&left, db).map_or(0, |l| l.0.len()), in_order(&left));
+    let left = left_batches(left, db, tx)?;
+    product_of((left, left_width, ordered), right, db, tx)
+}
+
+/// The product of `left`, batches of `width` columns each, in an order if
+/// `ordered`, and `right`.
+///
+/// # Errors
+///
+/// As `multiplied`.
+fn product_of((left, width, ordered): (Batches, usize, bool), right: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let mut work = Work::of(db, tx);
     let (right, _) = Rescanned::of(operand_rows(right, db, tx), &mut work)?;
-    let by_batch = matches!(right, Rescanned::Spilled(..)) && !in_order(&left);
-    let out = Out::new(left_columns.len(), right_columns);
-    let left = left_batches(left, db, tx)?;
+    let by_batch = matches!(right, Rescanned::Spilled(..)) && !ordered;
+    let out = Out::new(width, right_columns);
     Ok(Box::new(Product { left, right, by_batch, current: None, out, ended: false, _work: work }))
 }
 

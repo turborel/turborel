@@ -131,12 +131,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     match plan {
         Plan::Product { left, right } => nested::multiplied((*left, *right), db, tx),
         Plan::HashJoin { left, right, keys, .. } => probe::probed((*left, *right, keys), Kind::Inner, db, tx),
-        Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } => {
-            if kind == OuterJoin::Left && own.is_none() && cond.as_ref().is_none_or(|c| !c.can_raise()) {
-                return probe::probed((*left, *right, keys), Kind::Left(cond, widths), db, tx);
-            }
-            outer::joined(Joining { kind, keys, cond, own, widths }, (*left, *right), db, tx)
-        }
+        outer @ Plan::OuterJoin { .. } => outer_batches(outer, db, tx),
         Plan::SeqScan { .. }
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
@@ -150,6 +145,22 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Sort { .. }
         | Plan::Distinct { .. } => Err(crate::exec::broken("a join of streams is not one")),
     }
+}
+
+/// The batches of `plan`, an outer join of streams: a LEFT one probing, if
+/// it can, else joined as outer joins are.
+///
+/// # Errors
+///
+/// As `batches`.
+fn outer_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } = plan else {
+        return Err(crate::exec::broken("an outer join is not one"));
+    };
+    if kind == OuterJoin::Left && own.is_none() && cond.as_ref().is_none_or(|c| !c.can_raise()) {
+        return probe::probed((*left, *right, keys), Kind::Left(cond, widths), db, tx);
+    }
+    outer::joined(Joining { kind, keys, cond, own, widths }, (*left, *right), db, tx)
 }
 
 /// The rows of `plan`, a subtree that gives batches: made of them, each of

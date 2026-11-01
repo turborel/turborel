@@ -13,7 +13,7 @@ use super::mvcc::Read;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batches, Conjunction, Row, RowId, Rows, batches_of};
+use crate::storage::{Batches, Conjunction, Ramp, Row, RowId, Rows, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -198,8 +198,10 @@ impl RowTable {
         };
         let mut entries = Self::ranged(&self, self.zones.ranges(condition));
         let mut gathering = Gathering::new(self.format.types(), columns);
+        let mut ramp = Ramp::default();
         Box::new(iter::from_fn(move || {
-            while gathering.rows() < BATCH_ROWS {
+            let rows = ramp.next_rows();
+            while gathering.rows() < rows {
                 let Some(entry) = entries.next() else { break };
                 let gathered = entry.and_then(|(key, newest)| match self.visible_from(newest, reader)? {
                     Some(record) => self.gather_record((row_id(&key)?, &record), &mut gathering),

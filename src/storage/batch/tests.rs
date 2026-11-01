@@ -134,3 +134,14 @@ fn integers_known_as_runs() {
     assert!(refused(Ints::new(units.clone(), 0, None).with_runs(vec![3, 3, 6])), "an end not past the last");
     assert!(refused(Ints::new(units, 0, None)), "not known");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, the rows of a scan's batches: the
+/// first holds `FIRST_BATCH_ROWS`, each next twice the last's, up to
+/// `BATCH_ROWS`, and then each that many.
+#[test]
+fn batches_grow_to_their_most() {
+    let mut ramp = Ramp::default();
+    let sizes: Vec<usize> = (0_u32..10).map(|_| ramp.next_rows()).collect();
+    assert_eq!(sizes, [16, 32, 64, 128, 256, 512, 1024, 2048, 2048, 2048]);
+    assert_eq!(sizes.first(), Some(&FIRST_BATCH_ROWS));
+}
