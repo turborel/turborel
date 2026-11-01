@@ -33,7 +33,10 @@
 //!   entry reads a bucket at a time, the shape not changing while it
 //!   lives (`hash/scan.rs`).
 //! * **Writers** of a bucket hold its stripe's lock, so writers of
-//!   different stripes go on together; a split or merge holds the locks of
+//!   different stripes go on together. An insert appends to its chain's
+//!   last page, which the table keeps in memory once found, so a key of
+//!   many entries costs no walk of its chain; only a split or merge, which
+//!   rewrites the chains, forgets it. A split or merge holds the locks of
 //!   the buckets it changes, and one change of shape is made at a time,
 //!   none waited for: a writer that finds one under way leaves the next
 //!   to the writer after it. The entry and byte counts are kept by stripe.
@@ -45,6 +48,7 @@
 
 mod bucket;
 mod directory;
+mod rewrite;
 mod scan;
 mod shape;
 #[cfg(test)]
@@ -55,6 +59,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use bucket::{Entry, fragment};
+use rewrite::Rewriter;
 use shape::Shape;
 
 use crate::disk::buffer::{BufferPool, FileId};
@@ -123,6 +128,10 @@ pub struct HashTable {
     /// Scans of every bucket under way (`hash/scan.rs`): while any is, the
     /// shape does not change.
     scans: AtomicU64,
+    /// The last page of each bucket's chain an insert found, 0 if none,
+    /// in segments as `heads`: set and read under the bucket's writers'
+    /// lock, forgotten by a split or merge of it.
+    tails: Box<[OnceLock<Box<[AtomicU64]>>]>,
 }
 
 /// Entries, each with its key's hash.
@@ -216,10 +225,11 @@ impl HashTable {
         let capacity = pool.capacity(file)?;
         let per_page = capacity.checked_div(8).unwrap_or(0);
         let max_buckets = capacity.saturating_sub(META_HEADER).checked_div(8).unwrap_or(0).saturating_mul(per_page);
-        let heads = (0..max_buckets.div_ceil(SEGMENT).max(1)).map(|_| OnceLock::new()).collect();
+        let heads: Box<[OnceLock<Box<[AtomicU64]>>]> = (0..max_buckets.div_ceil(SEGMENT).max(1)).map(|_| OnceLock::new()).collect();
         let stripes = (0..STRIPES).map(|_| Stripe::default()).collect();
         let (shape, version, directory) = (AtomicU64::new(shape.packed()), AtomicU64::new(0), Mutex::new(directory));
-        Ok(HashTable { pool, file, meta, capacity, shape, version, heads, directory, stripes, scans: AtomicU64::new(0) })
+        let tails = (0..heads.len()).map(|_| OnceLock::new()).collect();
+        Ok(HashTable { pool, file, meta, capacity, shape, version, heads, directory, stripes, scans: AtomicU64::new(0), tails })
     }
 
     fn new_page(pool: &BufferPool, file: FileId, content: Vec<u8>) -> Result<PageId> {
@@ -290,6 +300,25 @@ impl HashTable {
         }
     }
 
+    /// The slot of bucket `b`'s last page kept (`tails`).
+    fn tail_slot(&self, b: u64) -> Option<&AtomicU64> {
+        let at = usize::try_from(b).ok()?;
+        let segment = self.tails.get(at.checked_div(SEGMENT)?)?;
+        segment.get_or_init(|| (0..SEGMENT).map(|_| AtomicU64::new(0)).collect()).get(at.checked_rem(SEGMENT)?)
+    }
+
+    /// The last page of bucket `b`'s chain, if kept.
+    fn tail(&self, b: u64) -> Option<PageId> {
+        self.tail_slot(b).map(|slot| slot.load(Ordering::Acquire)).filter(|&p| p != 0).map(PageId)
+    }
+
+    /// Keeps `page` as the last of bucket `b`'s chain; 0 forgets it.
+    fn set_tail(&self, b: u64, page: u64) {
+        if let Some(slot) = self.tail_slot(b) {
+            slot.store(page, Ordering::Release);
+        }
+    }
+
     fn stripe(&self, b: u64) -> Option<&Stripe> {
         self.stripes.get(usize::try_from(b.checked_rem(STRIPES)?).ok()?)
     }
@@ -306,14 +335,14 @@ impl HashTable {
     /// `h`, under its stripe's lock, the bucket found again if a split
     /// moved the key while it waited; and adds to its stripe's counts what
     /// `write` says.
-    fn in_bucket<T>(&self, h: u64, write: impl Fn(PageId) -> Result<Written<T>>) -> Result<T> {
+    fn in_bucket<T>(&self, h: u64, write: impl Fn(u64, PageId) -> Result<Written<T>>) -> Result<T> {
         loop {
             let b = self.current().bucket(h);
             let _locked = self.lock(&[b]);
             if self.current().bucket(h) != b {
                 continue;
             }
-            let (done, entries, bytes) = write(self.head(b)?)?;
+            let (done, entries, bytes) = write(b, self.head(b)?)?;
             if let Some(s) = self.stripe(b) {
                 add(&s.entries, entries);
                 add(&s.bytes, bytes);
@@ -334,25 +363,28 @@ impl HashTable {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] a hash table entry of {n} bytes is larger than a page holds")));
         }
         let (h, size) = (hash(key), i64::try_from(bucket::size(key, value)).unwrap_or(i64::MAX));
-        let grew = self.in_bucket(h, |head| Ok((self.append(head, (key, value), fragment(h))?, 1, size)))?;
+        let grew = self.in_bucket(h, |b, head| Ok((self.append((b, head), (key, value), fragment(h))?, 1, size)))?;
         if grew { self.grow() } else { Ok(()) }
     }
 
-    /// Appends the entry to the chain that begins at `head`: to its last
-    /// page, or to a new page after it; whether one was added.
-    fn append(&self, head: PageId, entry: (&[u8], &[u8]), f: u32) -> Result<bool> {
-        let mut at = head;
+    /// Appends the entry to the chain of bucket `b`, which begins at
+    /// `head`: to its last page, or to a new page after it; whether one was
+    /// added. Its writers' lock held, the last page found is kept.
+    fn append(&self, (b, head): (u64, PageId), entry: (&[u8], &[u8]), f: u32) -> Result<bool> {
+        let mut at = self.tail(b).unwrap_or(head);
         while let Some(n) = bucket::next(&self.pool.read(self.file, at.0)?)? {
             at = n;
         }
         let mut page = self.pool.write(self.file, at)?;
         if bucket::append(&mut page, entry, (f, self.capacity))? {
+            self.set_tail(b, at.0);
             return Ok(false);
         }
         let mut fresh = bucket::empty();
         bucket::append(&mut fresh, entry, (f, self.capacity))?;
         let added = Self::new_page(&self.pool, self.file, fresh)?;
         bucket::set_next(&mut page, Some(added))?;
+        self.set_tail(b, added.0);
         Ok(true)
     }
 
@@ -399,7 +431,7 @@ impl HashTable {
     /// As `get`.
     pub fn remove(&self, key: &[u8], value: &[u8]) -> Result<bool> {
         let (h, size) = (hash(key), i64::try_from(bucket::size(key, value)).unwrap_or(i64::MAX));
-        let (removed, emptied) = self.in_bucket(h, |head| {
+        let (removed, emptied) = self.in_bucket(h, |_, head| {
             let mut at = Some(head);
             while let Some(p) = at.take() {
                 let mut page = self.pool.write(self.file, p)?;
@@ -433,34 +465,6 @@ impl HashTable {
         Ok((pages, entries))
     }
 
-    /// Writes `entries`, in order, over the chain whose pages are `pages`,
-    /// its first page staying first, pages added as needed; the pages left
-    /// over, to be freed.
-    fn rewrite(&self, pages: &[PageId], entries: &[(u64, Entry)]) -> Result<Vec<PageId>> {
-        let mut contents: Vec<Vec<(u32, &Entry)>> = vec![Vec::new()];
-        let mut used = bucket::HEADER;
-        for (h, entry) in entries {
-            let size = bucket::size(&entry.0, &entry.1);
-            if used.saturating_add(size) > self.capacity || contents.last().is_some_and(|c| c.len() == usize::from(u16::MAX)) {
-                contents.push(Vec::new());
-                used = bucket::HEADER;
-            }
-            used = used.saturating_add(size);
-            if let Some(last) = contents.last_mut() {
-                last.push((fragment(*h), entry));
-            }
-        }
-        let mut ids: Vec<PageId> = pages.iter().copied().take(contents.len()).collect();
-        while ids.len() < contents.len() {
-            ids.push(Self::new_page(&self.pool, self.file, bucket::empty())?);
-        }
-        for (n, content) in contents.iter().enumerate() {
-            let id = ids.get(n).copied().ok_or_else(|| corrupt("a chain lost a page"))?;
-            *self.pool.write(self.file, id)? = bucket::build(content, ids.get(n.saturating_add(1)).copied())?;
-        }
-        Ok(pages.iter().skip(ids.len()).copied().collect())
-    }
-
     /// Whether the entries take more than three quarters of a page a
     /// bucket, or less than a quarter.
     fn fill(&self, buckets: u64) -> (bool, bool) {
@@ -488,23 +492,39 @@ impl HashTable {
         Ok(())
     }
 
-    /// Splits bucket s.
+    /// Splits bucket s: its entries for the new bucket written to a chain
+    /// of its own, then, the shape changed, those that stay written over
+    /// its chain, a page at a time (`hash/rewrite.rs`).
     fn split(&self, directory: &mut Vec<PageId>) -> Result<()> {
         let shape = self.current();
         let (from, image, grown) = (shape.split, shape.buckets(), shape.grown());
         let _locked = self.lock(&[from, image]);
-        let (pages, entries) = self.chain(self.head(from)?)?;
+        self.forget_tails(&[from, image]);
+        let (pages, entries_read) = self.held_chain(self.head(from)?)?;
         let wide = shape.round().saturating_mul(2).saturating_sub(1);
-        let (moved, stay): (Hashed, Hashed) = entries.into_iter().partition(|(h, _)| h & wide == image);
+        let (moving, staying): (Option<Hashed>, Option<Hashed>) =
+            entries_read.map(|e| e.into_iter().partition(|(h, _)| h & wide == image)).unzip();
         let head = Self::new_page(&self.pool, self.file, bucket::empty())?;
-        self.rewrite(&[head], &moved)?;
+        let mut moved = Rewriter::over(self, vec![head]);
+        self.each_entry((&pages, moving), &mut |h, e| if h & wide == image { moved.push(h, e) } else { Ok(()) })?;
+        moved.finish()?;
         self.set_head(image, head);
         self.changing(|| {
             self.shape.store(grown.packed(), Ordering::Release);
-            self.rewrite(&pages, &stay)?.iter().try_for_each(|p| self.pool.free_when_released(self.file, *p))
+            let mut stay = Rewriter::over(self, pages.clone());
+            self.each_entry((&pages, staying), &mut |h, e| if h & wide == image { Ok(()) } else { stay.push(h, e) })?;
+            stay.finish()?.iter().try_for_each(|p| self.pool.free_when_released(self.file, *p))
         })?;
         self.write_directory(directory, grown)?;
         self.write_meta(directory, grown)
+    }
+
+    /// Forgets the last pages kept of `buckets`, whose chains a split or
+    /// merge rewrites, their locks held.
+    fn forget_tails(&self, buckets: &[u64]) {
+        for &b in buckets {
+            self.set_tail(b, 0);
+        }
     }
 
     /// Merges buckets back while the entries fill too few pages, unless
@@ -517,17 +537,22 @@ impl HashTable {
         Ok(())
     }
 
-    /// Merges the last bucket into the one it split from.
+    /// Merges the last bucket into the one it split from: its entries,
+    /// then the last's, written over its chain, a page at a time
+    /// (`hash/rewrite.rs`).
     fn merge(&self, directory: &mut Vec<PageId>) -> Result<()> {
         let shape = self.current();
         let after = shape.shrunk();
         let (into, last) = (after.split, shape.buckets().saturating_sub(1));
         let _locked = self.lock(&[into, last]);
-        let (gone, moved) = self.chain(self.head(last)?)?;
-        let (pages, mut entries) = self.chain(self.head(into)?)?;
-        entries.extend(moved);
+        self.forget_tails(&[into, last]);
+        let (gone, gone_held) = self.held_chain(self.head(last)?)?;
+        let (pages, entries_read) = self.held_chain(self.head(into)?)?;
         self.changing(|| {
-            let freed = self.rewrite(&pages, &entries)?;
+            let mut merged = Rewriter::over(self, pages.clone());
+            self.each_entry((&pages, entries_read), &mut |h, e| merged.push(h, e))?;
+            self.each_entry((&gone, gone_held), &mut |h, e| merged.push(h, e))?;
+            let freed = merged.finish()?;
             self.shape.store(after.packed(), Ordering::Release);
             freed.iter().chain(&gone).try_for_each(|p| self.pool.free_when_released(self.file, *p))
         })?;

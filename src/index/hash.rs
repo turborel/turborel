@@ -13,13 +13,23 @@
 //! longer than the column) by its anchor, each entry found checked; one of
 //! another kind is checked against every entry, a bucket at a time as the
 //! entries are taken (`engine/hash/scan.rs`).
+//!
+//! A key's entries are read as they are taken, a page of its chain at a
+//! time, the table's shape held meanwhile (`HashTable::values`), so a key
+//! of more rows than memory holds is read whole: for a probe, a
+//! referential search, and a UNIQUE check alike. Its pairs inserted twice
+//! are given once: the rows given are kept in a set that spills past
+//! `ONCE_BYTES` to a work area of the database's (`SpillMap`, RULES.md
+//! D38). A planner's estimate counts a key's entries up to
+//! `COUNTED_ENTRIES`; past that it is not known cheaply, and the planner
+//! takes its own, of the keys counted (`index/stats.rs`).
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::stats::KeyCounts;
-use super::{Entries, HASH_METHOD, Index, IndexMethod, Key, KeyOrder, Probe};
+use super::{Entries, HASH_METHOD, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
@@ -28,12 +38,27 @@ use crate::engine::key::{anchor, decode_key, encode_key};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
+use crate::spill::map::SpillMap;
+use crate::spill::{DEFAULT_SPILL_BATCH, DEFAULT_WORK_MEMORY, ListSpace, WorkAreas};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType, Value};
 
 /// Bytes of a row id, an entry's value.
 const ROW_ID: usize = 8;
+
+/// \[DESIGN\] The bytes of the rows of a key given, held to give each once,
+/// before they spill to a work area: an operator's own, by default
+/// (`spill::DEFAULT_WORK_MEMORY`).
+const ONCE_BYTES: usize = DEFAULT_WORK_MEMORY;
+
+/// \[DESIGN\] How many of a key's entries a planner's estimate counts
+/// before it leaves the estimate to the planner's statistics.
+const COUNTED_ENTRIES: usize = 4_096;
+
+/// The database's work areas, once the method is attached to it: where the
+/// rows of a key given spill.
+type Work = Arc<Mutex<Option<Arc<WorkAreas>>>>;
 
 /// \[DESIGN\] The built-in hash index method: hash tables in one pager
 /// file of a buffer pool.
@@ -47,12 +72,20 @@ pub struct HashMethod {
     /// Its indexes not yet dropped, whose counts a close writes to their
     /// meta pages.
     tables: Mutex<Vec<Weak<HashTable>>>,
+    /// The work areas of the database it is attached to, shared with its
+    /// indexes.
+    work: Work,
 }
 
 impl HashMethod {
     /// A method keeping its indexes in pager file `file` of `pool`.
     pub fn new(pool: Arc<BufferPool>, file: FileId) -> HashMethod {
-        HashMethod { files: Mutex::new(Some((pool, file))), memory: MemoryPages::new(0), tables: Mutex::new(Vec::new()) }
+        HashMethod {
+            files: Mutex::new(Some((pool, file))),
+            memory: MemoryPages::new(0),
+            tables: Mutex::new(Vec::new()),
+            work: Work::default(),
+        }
     }
 
     /// \[DESIGN\] A method keeping its indexes in memory, in a file system of
@@ -66,7 +99,7 @@ impl HashMethod {
 
     /// A method keeping its indexes in `memory`, which others may share.
     pub(crate) fn sharing(memory: Arc<MemoryPages>) -> HashMethod {
-        HashMethod { files: Mutex::new(None), memory, tables: Mutex::new(Vec::new()) }
+        HashMethod { files: Mutex::new(None), memory, tables: Mutex::new(Vec::new()), work: Work::default() }
     }
 
     /// Makes `budget` the one its pool in memory draws on, if made after.
@@ -92,7 +125,7 @@ impl HashMethod {
         let mut tables = lock_builtin(&self.tables);
         tables.retain(|t| t.strong_count() > 0);
         tables.push(Arc::downgrade(&table));
-        Box::new(HashIndex { table, types: types.to_vec(), discarded: AtomicBool::new(false), keys })
+        Box::new(HashIndex { table, types: types.to_vec(), discarded: AtomicBool::new(false), keys, work: Arc::clone(&self.work) })
     }
 }
 
@@ -102,6 +135,7 @@ impl IndexMethod for HashMethod {
     }
     fn attach(&self, host: &Host) -> Result<()> {
         self.use_budget(Arc::clone(&host.memory));
+        *lock_builtin(&self.work) = Some(Arc::clone(&host.work));
         Ok(())
     }
     fn supports(&self, op: CompOp) -> bool {
@@ -146,11 +180,20 @@ fn row_of(value: &[u8]) -> Result<RowId> {
     <[u8; ROW_ID]>::try_from(value).map(RowId::from_be_bytes).map_err(|_| corrupt())
 }
 
-/// `rows`, each once, in the order first found: those seen kept in a set,
-/// so a key of many rows costs no more than sorting them.
-fn once_each(rows: Vec<RowId>) -> Vec<RowId> {
-    let mut seen = BTreeSet::new();
-    rows.into_iter().filter(|&r| seen.insert(r)).collect()
+/// The rows of `values`, a key's entries' values, each once, as they are
+/// taken: those given kept in a set that spills in `space`.
+fn once_each(values: impl Iterator<Item = Result<Vec<u8>>> + Send + 'static, space: ListSpace) -> RowIds {
+    let mut given = SpillMap::new(space);
+    Box::new(values.filter_map(move |value| {
+        let first = value.and_then(|v| {
+            if given.contains(&v)? {
+                return Ok(None);
+            }
+            given.insert(&v, &[])?;
+            row_of(&v).map(Some)
+        });
+        first.transpose()
+    }))
 }
 
 /// An index of the method: its table, its key's types, and whether it was
@@ -162,6 +205,8 @@ struct HashIndex {
     /// Its distinct keys, counted as written, or by maintenance once asked
     /// for (`index/stats.rs`).
     keys: KeyCounts,
+    /// Where the rows of a key given spill (`ONCE_BYTES`).
+    work: Work,
 }
 
 /// A dropped index's pages are freed when the last reference to it goes,
@@ -223,18 +268,38 @@ impl HashIndex {
         Lookup::Key { key, checked }
     }
 
-    /// The (key, row) pairs under `key`, each once, its key decoded: none
-    /// if `checked` and the key does not answer `probe`.
-    fn keyed(&self, key: &[u8], checked: bool, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-        let rows = once_each(self.table.get(key)?.iter().map(|v| row_of(v)).collect::<Result<_>>()?);
-        if rows.is_empty() {
-            return Ok(Vec::new());
-        }
+    /// The rows of the entries under `key`, encoded, each once, as they
+    /// are read (`once_each`).
+    fn rows_of(&self, key: &[u8]) -> RowIds {
+        let areas = lock_builtin(&self.work).clone();
+        let space = ListSpace { limit: ONCE_BYTES, batch: DEFAULT_SPILL_BATCH, areas, types: crate::value::types::TypeRegistry::default() };
+        once_each(self.table.values(key), space)
+    }
+
+    /// Whether `key`, encoded, answers `probe`, if `checked`: its values
+    /// placed by their anchors, not exactly of their columns' types.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if the key does not decode.
+    fn answers(&self, key: &[u8], checked: bool, probe: &Probe) -> Result<Option<Key>> {
         let decoded = Key(decode_key(key, &self.types)?);
-        if checked && !probe.answers(&decoded.0) {
-            return Ok(Vec::new());
+        Ok((!checked || probe.answers(&decoded.0)).then_some(decoded))
+    }
+
+    /// How many entries `key`, encoded, has, counted to `COUNTED_ENTRIES`;
+    /// past that, not known cheaply, so the planner takes its own estimate
+    /// of a key's rows, its table's over the keys counted (RULES.md D35).
+    fn counted(&self, key: &[u8]) -> Option<usize> {
+        let mut counted = 0_usize;
+        for value in self.table.values(key) {
+            value.ok()?;
+            counted = counted.saturating_add(1);
+            if counted > COUNTED_ENTRIES {
+                return None;
+            }
         }
-        Ok(rows.into_iter().map(|r| (decoded.clone(), r)).collect())
+        Some(counted)
     }
 }
 
@@ -296,36 +361,45 @@ impl Index for HashIndex {
         }
     }
 
-    /// The key's entries, in its bucket's chain, read whole: as
-    /// `key_rows` gives them too, by default.
+    /// The key's entries, in its bucket's chain, each row once: as
+    /// `key_rows` gives them, gathered.
     fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
-        let found = self.table.get(&self.encoded(key)?)?;
-        Ok(once_each(found.iter().map(|v| row_of(v)).collect::<Result<_>>()?))
+        self.rows_of(&self.encoded(key)?).collect()
     }
 
-    /// Exact for one key, a lookup; every entry's count for every row,
-    /// pairs inserted twice counted twice; not known for a probe that
-    /// checks every entry.
+    /// The key's entries, a page of its chain at a time, each row once.
+    fn key_rows(self: Arc<Self>, key: &Key) -> RowIds {
+        match self.encoded(key) {
+            Ok(encoded) => self.rows_of(&encoded),
+            Err(e) => Box::new(std::iter::once(Err(e))),
+        }
+    }
+
+    /// For one key, a lookup, its entries counted (`counted`), pairs
+    /// inserted twice counted twice, not known past a bound; every entry's
+    /// count for every row; not known for a probe that checks every entry.
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         match self.lookup(probe) {
             Lookup::Nothing => Some(0),
-            Lookup::Key { key, checked: false } => {
-                self.table.get(&key).ok().map(|v| once_each(v.iter().filter_map(|v| row_of(v).ok()).collect()).len())
-            }
-            Lookup::Key { key, checked: true } => self.keyed(&key, true, probe).ok().map(|p| p.len()),
+            Lookup::Key { key, checked } => match self.answers(&key, checked, probe).ok()? {
+                Some(_) => self.counted(&key),
+                None => Some(0),
+            },
             // Only `Probe::All` is answered by every entry unchecked.
             Lookup::Every => matches!(probe, Probe::All).then(|| usize::try_from(self.table.len()).ok()).flatten(),
         }
     }
 
-    /// One key's entries, a lookup; or every entry, a bucket at a time,
+    /// One key's entries, a lookup, a page at a time; or every entry, a
+    /// bucket at a time,
     /// the table's shape held meanwhile (`engine/hash/scan.rs`). In no
     /// order: `order` is not asked of a method not ordered.
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
         match self.lookup(probe) {
             Lookup::Nothing => Box::new(std::iter::empty()),
-            Lookup::Key { key, checked } => match self.keyed(&key, checked, probe) {
-                Ok(found) => Box::new(found.into_iter().map(Ok)),
+            Lookup::Key { key, checked } => match self.answers(&key, checked, probe) {
+                Ok(Some(decoded)) => Box::new(self.rows_of(&key).map(move |row| row.map(|r| (decoded.clone(), r)))),
+                Ok(None) => Box::new(std::iter::empty()),
                 Err(e) => Box::new(std::iter::once(Err(e))),
             },
             Lookup::Every => {

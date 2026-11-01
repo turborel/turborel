@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::sync::lock_builtin;
 
 /// A scan under way: the shape is not changed until it is dropped.
-struct Scanning(Arc<HashTable>);
+pub(super) struct Scanning(pub(super) Arc<HashTable>);
 
 impl Drop for Scanning {
     fn drop(&mut self) {
@@ -42,14 +42,20 @@ impl HashTable {
         Ok(self.chain(self.head(b)?)?.1.into_iter().map(|(_, e)| e).collect())
     }
 
+    /// Its shape held, not changed until what this gives is dropped: once a
+    /// change of shape under way has ended.
+    pub(super) fn held(self: Arc<Self>) -> Scanning {
+        self.scans.fetch_add(1, Ordering::SeqCst);
+        // A change of shape begun before holds the directory to its end.
+        drop(lock_builtin(&self.directory));
+        Scanning(self)
+    }
+
     /// Every entry, a bucket at a time, each bucket's in the order added;
     /// the shape not changing until what it gives is dropped. Entries
     /// added or removed meanwhile may or may not be given.
     pub fn scan(self: Arc<Self>) -> impl Iterator<Item = Result<Vec<(Vec<u8>, Vec<u8>)>>> + Send {
-        self.scans.fetch_add(1, Ordering::SeqCst);
-        // A change of shape begun before holds the directory to its end.
-        drop(lock_builtin(&self.directory));
-        let scanning = Scanning(self);
+        let scanning = self.held();
         let mut b = 0_u64;
         std::iter::from_fn(move || {
             let table = &scanning.0;

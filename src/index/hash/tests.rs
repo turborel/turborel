@@ -1,7 +1,7 @@
 //! Unit tests of the hash index: equality probes with values of the
 //! column's type and not, a comparison with NULL, estimates, counted pairs,
-//! entries too long, reopening by locator, and a dropped index's pages
-//! freed (RULES.md R-TEST-1, R-TEST-2). Split from hash.rs (RULES.md
+//! entries too long, reopening by locator, a dropped index's pages freed,
+//! and a key of many rows read a page at a time (RULES.md R-TEST-1, R-TEST-2). Split from hash.rs (RULES.md
 //! R-SIZE-4).
 
 use super::*;
@@ -161,4 +161,37 @@ fn an_index_opened_without_counts_counts_its_keys_in_maintenance() {
     assert!(!again.maintenance_due());
     assert!(again.distinct_keys().is_some_and(|d| (d - 3.0_f64).abs() < 0.5_f64), "{:?}", again.distinct_keys());
     assert_eq!(again.maintain().ok(), Some(false), "once");
+}
+
+/// Verifies: [DESIGN] RULES.md D34, D38, the `Index` contract: a key of
+/// more rows than the set keeping them once holds in memory is read a page
+/// at a time, by `key_rows`, `search` and `rows` alike, each row once
+/// though inserted twice, the set spilling to a work area of the
+/// database's meanwhile; a planner's estimate of it is left to the
+/// planner, past the entries it counts, and exact of a key of few.
+#[test]
+fn a_key_of_many_rows_is_read_a_page_at_a_time() {
+    let method = HashMethod::in_memory();
+    let budget = MemoryBudget::new(256 << 20);
+    *lock_builtin(&method.work) = Some(Arc::new(WorkAreas::new(Arc::clone(&budget))));
+    let index = Arc::<dyn Index>::from(method.create(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }]).unwrap());
+    let key = |n: i128| Key(vec![exact(n, 0)]);
+    let rows = 100_000_u64;
+    for row in 0..rows {
+        index.insert(key(7), row).unwrap();
+        // A second version of the row, under the same key.
+        index.insert(key(7), row).unwrap();
+    }
+    index.insert(key(8), 1).unwrap();
+    let mut streamed = Arc::clone(&index).key_rows(&key(7));
+    let mut seen: Vec<RowId> = streamed.by_ref().take(90_000).collect::<Result<_>>().unwrap();
+    assert!(budget.reserved() > 0, "the set has spilled to a work area");
+    seen.extend(streamed.collect::<Result<Vec<_>>>().unwrap());
+    seen.sort_unstable();
+    assert_eq!(seen, (0..rows).collect::<Vec<_>>(), "each once");
+    assert_eq!(found(&index, &eq(exact(7, 0))).len(), 100_000_usize, "search alike");
+    assert_eq!(index.rows(&key(7)).unwrap().len(), 100_000_usize, "rows alike");
+    assert_eq!(index.estimate(&eq(exact(7, 0))), None, "left to the planner");
+    assert_eq!(index.estimate(&eq(exact(8, 0))), Some(1));
+    assert_eq!(budget.reserved(), 0, "the spill given back");
 }

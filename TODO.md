@@ -134,12 +134,6 @@ What came after SQL-92 follows it, written from the standards' own text
   creation, a file recording the function's id alone; so a key of either
   cannot be retired, and changing one means encrypting or checksumming
   every file again.
-- **Hash index, a key's rows:** a lookup of one key gathers its
-  bucket's entries for that key (`Index::rows`, and `Index::key_rows` by
-  default), in memory and not of the budget: a key of millions of rows
-  holds them all. Reading its chain a page at a time
-  (`HashTable::values`) fails if the table's shape changes meanwhile,
-  as writers may make it; and a pair inserted twice must be given once.
 - **Spills, further:** SPILL.ENCODINGS compresses spill files (LZ4), off
   by default: on 2026-10-31 it ran from 17% slower to 45% faster, most
   within 10%, on an SSD the system's cache kept up with. With each spill

@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 43] = [
+pub const MUTATIONS: [Mutation; 45] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -433,5 +433,26 @@ pub const MUTATIONS: [Mutation; 43] = [
         replacement: "            Kind::Count(op, _) => Register::of(*op, false, Move::Still),",
         integration: &["assertion_totals::two_transactions_meet_only_moving_a_value_one_way_4_28"],
         unit: &[],
+    },
+    Mutation {
+        name: "hash-key-twice",
+        breaks: "a hash index gives a row of a key inserted twice twice",
+        file: "src/index/hash.rs",
+        original: "            if given.contains(&v)? {",
+        replacement: "            if given.contains(&v)? && v.is_empty() {",
+        integration: &[],
+        unit: &["index::hash::tests::a_key_of_many_rows_is_read_a_page_at_a_time"],
+    },
+    Mutation {
+        name: "hash-tail-kept",
+        breaks: "a hash table appends to a page a split or merge rewrote",
+        file: "src/engine/hash.rs",
+        original: "            self.set_tail(b, 0);",
+        replacement: "            drop(b);",
+        integration: &[],
+        unit: &[
+            "engine::hash::tests::it_holds_what_a_model_holds",
+            "engine::hash::tests::a_hot_keys_bucket_splits_and_merges_a_page_at_a_time",
+        ],
     },
 ];

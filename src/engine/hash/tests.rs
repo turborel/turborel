@@ -257,9 +257,9 @@ fn a_scan_holds_the_shape_while_writers_go_on() {
 /// Verifies: [DESIGN] RULES.md D38, `HashTable::values`: a key's values,
 /// across a chain of many more pages than the pool has frames, come back in
 /// the order added, as `get` gives them, a page at a time; a key with none
-/// gives none; a table whose shape changes as they are read fails the read
-/// (SQLCODE -910) rather than give values moved or missed, and the read
-/// ends there.
+/// gives none; the table's shape is held while they are read, so writers
+/// meanwhile move none of them and every one is given once, and the table
+/// grows again once the read is done.
 #[test]
 fn a_keys_values_are_read_a_page_at_a_time() {
     let (pool, file) = pool(4);
@@ -275,10 +275,43 @@ fn a_keys_values_are_read_a_page_at_a_time() {
     assert_eq!(table.values(b"none").count(), 0);
     let mut hot = table.values(b"hot");
     assert!(hot.next().unwrap().is_ok());
+    let held = table.buckets();
     for n in 0..5_000_u64 {
         table.insert(&key(n), b"filler").unwrap();
     }
-    let rest: Vec<Result<Vec<u8>>> = hot.collect();
-    assert_eq!(rest.last().and_then(|r| r.as_ref().err()).map(|e| e.code), Some(Code::Api), "the shape changed");
-    assert_eq!(rest.iter().filter(|r| r.is_err()).count(), 1, "and the read ends there");
+    assert_eq!(table.buckets(), held, "no split while it reads");
+    let rest: Vec<Vec<u8>> = hot.collect::<Result<_>>().unwrap();
+    assert_eq!(rest, values[1..], "each once, none moved");
+    for n in 5_000..5_100_u64 {
+        table.insert(&key(n), b"filler").unwrap();
+    }
+    assert!(table.buckets() > held, "grown once it is done");
+}
+
+/// Verifies: [DESIGN] RULES.md D38, `hash/rewrite.rs`: the bucket of a key
+/// of many more entries than the pool has frames splits and merges a page
+/// at a time, as the table grows and shrinks around it, its entries kept
+/// whole and in the order added, and those moved to the new bucket found
+/// there.
+#[test]
+fn a_hot_keys_bucket_splits_and_merges_a_page_at_a_time() {
+    let (pool, file) = pool(4);
+    let table = Arc::new(HashTable::create(pool, file).unwrap());
+    let values: Vec<Vec<u8>> = (0..2_000_u64).map(|n| n.to_le_bytes().to_vec()).collect();
+    for v in &values {
+        table.insert(b"hot", v).unwrap();
+    }
+    let small = table.buckets();
+    for n in 0..24_000_u64 {
+        table.insert(&key(n), b"filler").unwrap();
+    }
+    let peak = table.buckets();
+    assert!(peak > small, "split");
+    assert_eq!(table.get(b"hot").unwrap(), values, "whole, in order, through splits");
+    assert!((0..24_000_u64).all(|n| table.get(&key(n)).unwrap() == [b"filler".to_vec()]), "moved, found");
+    for n in 0..24_000_u64 {
+        table.remove(&key(n), b"filler").unwrap();
+    }
+    assert!(table.buckets() < peak, "merged back");
+    assert_eq!(table.get(b"hot").unwrap(), values, "whole, in order, through merges");
 }

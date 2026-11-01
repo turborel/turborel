@@ -1981,20 +1981,26 @@ compares them); a row fetched by key reads a page per column.
     (`bench/cursors.rs` compares them). A method declares range support
     by `IndexMethod::supports_range`.
   - `hash`: a linear hash table (Litwin, 1980) keyed by encoded key;
-    equality only; grows and shrinks a bucket at a time; readers lock
-    nothing.
+    equality only; grows and shrinks a bucket at a time, a split or merge
+    rewriting a bucket's chain a page at a time; an insert appends to its
+    chain's last page, kept in memory once found; readers lock nothing.
 - **Search.** Entries are yielded as read (`Index::search`, an iterator
   holding its index, so a cursor may outlive the call): the B-link tree
   a leaf at a time, backward for descending keys; the hash table one
-  key's entries, or, probing every entry, a bucket at a time, its shape
-  held while the search lives so each entry is found once (a split or
-  merge due meanwhile is left to later writers). So a whole-index read
+  key's entries a page of its chain at a time, or, probing every entry,
+  a bucket at a time, its shape held while the search lives so each
+  entry is found once (a split or merge due meanwhile is left to later
+  writers). So a whole-index read
   (as an ORDER BY in its order) holds a leaf or bucket, not the index,
   and the statement checks for a cancel at each entry (D44).
 - **A key's rows.** `Index::key_rows` gives the rows of one key as read,
   for referential searches, which may stop at the first: the B-link
-  tree a leaf at a time; by default, and for the hash table, those
-  `Index::rows` gathers, its key's bucket.
+  tree a leaf at a time; the hash table a page of the key's chain at a
+  time, a pair inserted twice given once by a set of the rows given that
+  spills past 4 MiB to a work area (D38); by default, those
+  `Index::rows` gathers. A planner's estimate of a hash table's key
+  counts its entries to 4,096, past that leaving it to the planner's
+  statistics (D35).
 - **Other types.** A probe value not of the column's type is placed by
   its anchor and each entry found checked, so an index finds exactly
   what SQL compares.
