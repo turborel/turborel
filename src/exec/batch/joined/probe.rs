@@ -16,9 +16,9 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
-use super::held::{self, HeldRight, Read};
+use super::held::{self, HeldRight, Read, Rest};
 use super::pairs::{Out, kept_rows};
-use super::{gathered, in_order, left_batches, operand_rows, parted};
+use super::{gathered, in_order, left_batches, narrow_rows, parted};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
@@ -46,7 +46,7 @@ pub(super) enum Kind {
 ///
 /// The right operand's; the spill area's; a key the left's batches lack.
 pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kind: Kind, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    let (left_columns, left_width) = stream::layout(&left, db).unwrap_or_default();
+    let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let mut work = Work::of(db, tx);
     let full = match kind {
@@ -62,30 +62,64 @@ pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<(usize, usize)>), kin
     };
     // The right operand first, held as vectors if it fits the work area.
     let right_keys: Vec<usize> = keys.iter().map(|k| k.1).collect();
-    let rows = match held::read(right, &right_keys, work.limit(), (db, tx))? {
+    let rest = match held::read(right, &right_keys, work.limit(), (db, tx))? {
         Read::Held(held) => {
             let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
             let left = left_batches(left, db, tx)?;
             return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(held), places, out, _work: work }));
         }
-        Read::Rows(rows) => rows,
+        Read::Rest(rest) => rest,
     };
-    match Built::of(rows, keys, (&mut work, full))? {
+    // An inner join's rows, which no condition reads whole, are built and
+    // partitioned of the columns their batches hold alone.
+    let Kind::Inner = kind else {
+        let built = match Built::of(rest.rows(), keys, (&mut work, full))? {
+            Right::Held(built) => built,
+            Right::Partitioned(_) => return Err(crate::exec::broken("a LEFT join's right operand was partitioned")),
+        };
+        let out = Out::new(left_columns.len(), right_columns.clone());
+        let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
+        let left = left_batches(left, db, tx)?;
+        return Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }));
+    };
+    narrowed((left, rest, keys), (Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) }, places), work, db, tx)
+}
+
+/// The batches of an inner hash join of `left` and a right operand past
+/// the work area, `rest`, on `keys`, its pairs kept by `joined`, the keys'
+/// columns at `places` of a left batch: both operands' rows of the columns
+/// their batches hold alone, the keys at their places among them, the
+/// right built of them in `work`, or partitioned.
+///
+/// # Errors
+///
+/// As `probed`.
+fn narrowed(
+    (left, rest, keys): (Plan, Rest, Vec<(usize, usize)>),
+    (joined, places): (Joined, Vec<(usize, usize)>),
+    mut work: Work,
+    db: &Arc<State>,
+    tx: TxId,
+) -> Result<Batches> {
+    let place = |c: usize, of: &[usize]| of.iter().position(|&h| h == c).ok_or_else(|| crate::exec::broken("a join key its batch lacks"));
+    let (left_columns, right_columns) = (&joined.left_columns, &joined.right_columns);
+    let narrow = keys.iter().map(|&(l, r)| Ok((place(l, left_columns)?, place(r, right_columns)?))).collect::<Result<Vec<_>>>()?;
+    let places = places.iter().zip(&narrow).map(|(&(at, _), &(_, r))| (at, r)).collect();
+    let (left_width, right_width) = (left_columns.len(), right_columns.len());
+    let (lefts, rights): (Vec<usize>, Vec<usize>) = ((0..left_width).collect(), (0..right_width).collect());
+    match Built::of(rest.narrow(), narrow, (&mut work, Full::Partition))? {
         Right::Held(built) => {
-            let out = Out::new(left_columns.len(), right_columns.clone());
-            let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
-            let left = left_batches(left, db, tx)?;
+            let (out, left) = (Out::new(left_width, rights), left_batches(left, db, tx)?);
             Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }))
         }
         Right::Partitioned(parts) => {
-            let mut columns = left_columns;
             // In no order but the partitions', where none is asked for.
             if !in_order(&left) {
-                return parted::joined(operand_rows(left, db, tx), parts, work, (columns, right_columns));
+                return parted::joined(narrow_rows(left, db, tx), parts, work, (lefts, rights));
             }
-            columns.extend(right_columns.iter().map(|&c| c.saturating_add(left_width)));
-            Ok(gathered(partitioned_joined(operand_rows(left, db, tx), parts, work), &columns))
+            let columns: Vec<usize> = (0..left_width.saturating_add(right_width)).collect();
+            Ok(gathered(partitioned_joined(narrow_rows(left, db, tx), parts, work), &columns))
         }
     }
 }

@@ -53,7 +53,7 @@ fn product_of((left, width, ordered): (Batches, usize, bool), right: Plan, db: &
             let (out, vectors) = (Out::over(width, Arc::clone(&held.batch)), Right::Vectors(held.batch.rows));
             return Ok(Box::new(Product { left, right: vectors, by_batch: false, current: None, out, ended: false, _work: work }));
         }
-        Read::Rows(rows) => rows,
+        Read::Rest(rest) => rest.rows(),
     };
     let (rescanned, _) = Rescanned::of(rows, &mut work)?;
     let by_batch = matches!(rescanned, Rescanned::Spilled(..)) && !ordered;

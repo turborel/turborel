@@ -6,8 +6,9 @@
 //! batch, in order, a row of a null key in none, as none matches
 //! [X3.135-1986 §5.11 GR2]. So the right's columns are gathered into the
 //! joined rows as the left's are, no value made. Past the work area, the
-//! rows read and the rest of the operand are given as rows, for the row
-//! path to build (`exec/join.rs`). Split from exec/batch/joined.rs
+//! batches read and the rest of the operand are given back, made into rows
+//! for the row path to build (`exec/join.rs`): of the operand's width, or
+//! of the columns its batches hold alone. Split from exec/batch/joined.rs
 //! (RULES.md R-SIZE-2).
 
 use std::cmp::Ordering;
@@ -33,10 +34,33 @@ pub(super) struct HeldRight {
     buckets: HashMap<Vec<Bucket>, Arc<[usize]>>,
 }
 
-/// A right operand read: held as vectors, or past the work area, its rows.
+/// A right operand read: held as vectors, or past the work area, its
+/// batches.
 pub(super) enum Read {
     Held(HeldRight),
-    Rows(RowIter),
+    Rest(Rest),
+}
+
+/// The batches of a right operand past the work area: those read, then
+/// the rest; the columns of its rows they hold, and its width.
+pub(super) struct Rest {
+    batches: Batches,
+    columns: Vec<usize>,
+    width: usize,
+}
+
+impl Rest {
+    /// Its rows, each of the operand's width, its columns the batches do
+    /// not hold null.
+    pub(super) fn rows(self) -> RowIter {
+        rows_of(self.batches, self.columns, self.width)
+    }
+
+    /// Its rows of the columns its batches hold alone, in their order.
+    pub(super) fn narrow(self) -> RowIter {
+        let width = self.columns.len();
+        rows_of(self.batches, (0..width).collect(), width)
+    }
 }
 
 impl HeldRight {
@@ -80,7 +104,7 @@ pub(super) fn read(right: Plan, keys: &[usize], limit: usize, (db, tx): (&Arc<St
         parts.push((batch, rows));
         if bytes > limit {
             let read: Vec<Result<Kept>> = parts.into_iter().map(|(part, chosen)| Ok((part, Some(chosen)))).collect();
-            return Ok(Read::Rows(rows_of(Box::new(read.into_iter().chain(batches)), columns, width)));
+            return Ok(Read::Rest(Rest { batches: Box::new(read.into_iter().chain(batches)), columns, width }));
         }
     }
     let batch = Batch::joined(parts);

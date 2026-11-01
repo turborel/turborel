@@ -180,6 +180,22 @@ fn operand_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
 }
 
+/// The rows of `plan`, a subtree that gives batches, of the columns its
+/// batches hold alone, in their order (`stream::layout`): made of its
+/// batches if every table it reads reads by batch, else of its rows.
+fn narrow_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+    let (columns, _) = stream::layout(&plan, db).unwrap_or_default();
+    if !stream::reads_by_batch(&plan, db) {
+        let rows = execute(plan, db, tx);
+        return Box::new(rows.map(move |r| r.map(|row| columns.iter().map(|&c| row.get(c).cloned().unwrap_or(Value::Null)).collect())));
+    }
+    let width = columns.len();
+    match stream::batches(plan, db, tx) {
+        Ok(batches) => rows_of(batches, (0..width).collect(), width),
+        Err(e) => failed(e),
+    }
+}
+
 /// The rows of `batches`, those a filter kept of each, each of `width`
 /// columns, the values of a batch's vectors at `columns`, the others null.
 pub(super) fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {

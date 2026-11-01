@@ -62,7 +62,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
                 let vectors = Right::Vectors(Vectors { held, columns: right_columns, spec, _work: work });
                 return Ok(Box::new(Probe::new((left_batches(left, db, tx)?, vectors), read, out)));
             }
-            HeldRead::Rows(rows) => rows,
+            HeldRead::Rest(rest) => rest.rows(),
         }
     };
     match prepared(spec, rows, work)? {

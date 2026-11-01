@@ -1895,7 +1895,9 @@ write-ahead logging.
   is built as the row path builds it:
   - Partitioned: each pair of partitions in turn, its right built, its
     left rows probing it, their rows put in batches as made, not merged
-    into the left's order (`joined/parted.rs`);
+    into the left's order (`joined/parted.rs`); both operands' rows of
+    the columns their batches hold alone, the keys at their places, so
+    no column the join does not read is written to a run;
   - a LEFT join's right operand outgrowing the work area moves to a
     spill-area table, which every left row probes in order.
 - **Outer joins.** Any other (FULL, a RIGHT one not planned as a LEFT
