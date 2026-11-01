@@ -31,34 +31,6 @@ authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
 on its own machine. Each item becomes a decision in RULES.md when its
 design settles.
 
-- **Argon2id beside PBKDF2** (D26), once a crate meets D26's bar (an
-  audit, or a claim of readiness of its own): a verifier names its
-  scheme, so it comes beside the one there is, with a setting choosing
-  the scheme new verifiers are made with, and `password` checking by the
-  scheme a verifier names (today any other is refused). SCRAM-SHA-256
-  still needs PBKDF2's keys, so a user of Argon2id proves its password by
-  `password` alone.
-- **Named pipes, further** (D42): a security descriptor of the server's
-  own, so only its user and the administrators may open the pipe at all,
-  not others to read only; and a client's reads and writes of a pipe
-  bounded by its timeouts, as a socket's are. Both need the system's API
-  (overlapped I/O, `SECURITY_ATTRIBUTES`), which std does not offer: it
-  takes `unsafe` (R-SAFE-1) or, for the client, an async runtime it does
-  not take (D42). Parked while R-SAFE-1 stands.
-- **Other systems' wire protocols**, each a `server::Protocol` plug-in in
-  a crate of its own (RULES.md D39), so their clients and drivers
-  connect. The library already serves endpoints of several protocols
-  (`Endpoint`); turboreld serves the native one alone, so a setting
-  naming a listener for each protocol is missing, and the protocols:
-  PostgreSQL's frontend/backend protocol, version 3, first (startup and
-  SSLRequest; SCRAM-SHA-256 as its clients do it, with SASLprep of a
-  password, RFC 4013, and -PLUS; simple and extended queries; cancel by
-  key; type OIDs and text formats of the standard types; the server
-  parameters drivers read); then MySQL's client/server protocol. A client
-  still speaks turborel's SQL: what it sends in its own system's dialect
-  is refused, saying why; how far its tools' catalog queries
-  (`pg_catalog`, `SHOW`) are answered is a decision to make. A protocol
-  crate's dependencies are a decision of R-SAFE-4.
 - **Replication between nodes** (D57): the driver's events to its database's
   diagnostics (D40; its watch tells nothing now), and its job asked for as
   frames arrive, which the transport does; a following database's crash in
@@ -96,10 +68,9 @@ What came after SQL-92 follows it, written from the standards' own text
   - A join or a grouping: from a query of the change against the other
     tables, or of the changed groups alone; no kept state, but a plan run
     over the changed rows and its reads checked as D29's.
-  - SUM and AVG: the sum before is unknown, and `SumAcc` raises on the
-    running sum, so in the order read, where §6.5 GR2b iv judges the sum.
-    A sum kept per assertion and snapshot would serve only once overflow
-    is of the final sum.
+  - SUM and AVG: the sum before is unknown; overflow is judged of the
+    final total [§6.5 GR2b iv], so a sum kept per assertion and snapshot
+    would check them from the change.
   - COUNT, MAX or MIN of a value that may be null, the change having no
     null: whether the warning of a null eliminated is raised needs a
     count of nulls kept per assertion and snapshot.

@@ -45,7 +45,7 @@
 //!
 //! DISTINCT changes no greatest or least [GR2], so MAX and MIN may have it.
 //! SUM and AVG have no form: their value, and whether they overflow [GR2b
-//! iv], depend on every row, the running sum checked as each is added. Nor
+//! iv], depend on every row, overflow judged of the final total. Nor
 //! do a join, a grouping, or a set function a plug-in replaced.
 
 use crate::catalog::{Catalog, ConstraintKind, QualifiedName};

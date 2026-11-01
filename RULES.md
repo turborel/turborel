@@ -859,8 +859,8 @@ machinery.
     or NOT EXISTS and MAX or MIN bounded of steps raising no error and
     `x` never null, so no row's error or warning goes unraised.
 - **Whole.** Any other form; any other deferred assertion; SUM and AVG,
-  whose value and overflow [§6.5 GR2b iv] depend on every row (and on
-  the order read: `SumAcc` checks the running sum); a join; a grouping.
+  whose value and overflow, judged of the final total [§6.5 GR2b iv],
+  depend on every row; a join; a grouping.
 - **Name.** A constraint name of its schema, for SET CONSTRAINTS and
   every other constraint's [SR2, SR7].
 - **In a `<schema definition>`,** outside any session's transaction, it
