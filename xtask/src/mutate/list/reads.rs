@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 21] = [
+pub const READS: [Mutation; 22] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -195,5 +195,14 @@ pub const READS: [Mutation; 21] = [
         replacement: "        let pax = self.frozen.columns().is_some_and(|c| c.pax && false);",
         integration: &[],
         unit: &["engine::rows::frozen::tests::groups_are_written_again_when_their_layout_changes"],
+    },
+    Mutation {
+        name: "outer-streamed-alone",
+        breaks: "a spilled outer join given in no order drops its left rows that matched none",
+        file: "src/exec/join/outer/streamed.rs",
+        original: "                        self.ready.push_back(self.spec.left_alone(&l));",
+        replacement: "                        let _ = &l;",
+        integration: &["spilling::operators_spill_and_give_the_same_rows"],
+        unit: &[],
     },
 ];

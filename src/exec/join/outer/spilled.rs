@@ -71,7 +71,7 @@ fn partitioned(left: RowIter, (held, rest): (Vec<Row>, RowIter), spec: &Spec, wo
 /// nulls if the right is preserved, in a run of `work`; the right's own
 /// condition, `judged` if the left has a row, judged of each, though such
 /// a row matches nothing.
-fn alone_rights(records: Records, (spec, judged): (&Spec, Option<&Cond>), work: &mut Work) -> Result<Records> {
+pub(super) fn alone_rights(records: Records, (spec, judged): (&Spec, Option<&Cond>), work: &mut Work) -> Result<Records> {
     let mut out = work.run()?;
     for record in records {
         let (n, row) = unnumbered(&record?, work.types())?;
@@ -112,13 +112,13 @@ fn pair(
 
 /// How an outer join's rows are partitioned: by a hash of their key
 /// values, into as many partitions as the work area writes at once.
-struct Parts {
+pub(super) struct Parts {
     hasher: RandomState,
     count: usize,
 }
 
 impl Parts {
-    fn new(spec: &Spec, work: &Work) -> Result<Parts> {
+    pub(super) fn new(spec: &Spec, work: &Work) -> Result<Parts> {
         if spec.keys.is_empty() {
             return Err(lost());
         }
@@ -139,7 +139,7 @@ impl Parts {
     /// The right operand `rows`, numbered, in partitions, each with the
     /// bytes its rows take held in memory; and, of a preserved right or
     /// one with a condition of its own, its rows with a null key.
-    fn rights(&self, rows: impl Iterator<Item = Result<Row>>, spec: &Spec, work: &mut Work) -> Result<Partitioned> {
+    pub(super) fn rights(&self, rows: impl Iterator<Item = Result<Row>>, spec: &Spec, work: &mut Work) -> Result<Partitioned> {
         let mut runs = self.runs(work)?;
         let mut lonely = work.run()?;
         for (n, r) in (0_u64..).zip(rows) {
@@ -165,7 +165,7 @@ impl Parts {
     /// is not true of them, with nulls; and whether it had a row. The right
     /// has rows, as it outgrew the work area, so the left's own condition
     /// is judged of each [ISO/IEC 9075:1992 §7.5 GR1c].
-    fn lefts(&self, rows: RowIter, spec: &Spec, work: &mut Work) -> Result<Lefts> {
+    pub(super) fn lefts(&self, rows: RowIter, spec: &Spec, work: &mut Work) -> Result<Lefts> {
         let mut runs = self.runs(work)?;
         let mut lonely = work.run()?;
         let mut any = false;
@@ -188,7 +188,7 @@ impl Parts {
     /// The numbered rows of a partition, `records`, of the right operand
     /// if `right`, else of the left, in partitions again, each with the
     /// bytes its rows take held in memory.
-    fn split(&self, records: Records, (spec, right): (&Spec, bool), work: &mut Work) -> Result<Vec<(Box<dyn SpillRun>, usize)>> {
+    pub(super) fn split(&self, records: Records, (spec, right): (&Spec, bool), work: &mut Work) -> Result<Vec<(Box<dyn SpillRun>, usize)>> {
         let mut runs = self.runs(work)?;
         for record in records {
             let record = record?;

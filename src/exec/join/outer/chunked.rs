@@ -53,7 +53,7 @@ pub(super) fn joined(
                 Some(flag) => flag.first() == Some(&MATCHED),
                 None => false,
             };
-            let found = part.probed((n, &l), spec, &mut *out)? || was;
+            let found = part.probed(&l, spec, &mut |joined| out.push(&numbered(n, &joined)))? || was;
             match &mut flags {
                 Some(flags) => flags.push(&[if found { MATCHED } else { UNMATCHED }])?,
                 None => {
@@ -74,7 +74,7 @@ pub(super) fn joined(
 
 /// A part of a right partition, hashed: its numbered rows, the places of
 /// each bucket's, and each row's flag, whether it matched.
-struct Part {
+pub(super) struct Part {
     rows: Vec<(u64, Row)>,
     buckets: HashMap<Vec<Bucket>, Vec<usize>>,
     matched: Vec<bool>,
@@ -85,7 +85,7 @@ impl Part {
     /// `spec`'s keys, as many as `work` holds, and one at least; if
     /// `judged`, those the right's own condition is not true of held
     /// unhashed, so they match none.
-    fn of(right: &mut Peekable<Records>, (spec, judged): (&Spec, bool), work: &Work) -> Result<Part> {
+    pub(super) fn of(right: &mut Peekable<Records>, (spec, judged): (&Spec, bool), work: &Work) -> Result<Part> {
         let mut part = Part { rows: Vec::new(), buckets: HashMap::new(), matched: Vec::new() };
         let mut bytes = 0_usize;
         while bytes <= work.limit() {
@@ -102,10 +102,9 @@ impl Part {
         Ok(part)
     }
 
-    /// Left row `l`, numbered `n`, joined with each of its rows that
-    /// matches it, those numbered in `out`, the rows marked; whether one
-    /// did.
-    fn probed(&mut self, (n, l): (u64, &Row), spec: &Spec, out: &mut dyn SpillRun) -> Result<bool> {
+    /// Left row `l` joined with each of its rows that matches it, each
+    /// given to `out`, the rows marked; whether one did.
+    pub(super) fn probed(&mut self, l: &Row, spec: &Spec, out: &mut dyn FnMut(Row) -> Result<()>) -> Result<bool> {
         let Some(b) = key(l, spec.keys.iter().map(|k| k.0))? else { return Ok(false) };
         let mut found = false;
         for &at in self.buckets.get(&b).map(Vec::as_slice).unwrap_or_default() {
@@ -115,9 +114,16 @@ impl Part {
             if let Some(m) = self.matched.get_mut(at) {
                 *m = true;
             }
-            out.push(&numbered(n, &joined))?;
+            out(joined)?;
         }
         Ok(found)
+    }
+
+    /// Its rows that matched none, after nulls, in order, it then empty.
+    pub(super) fn take_unmatched(&mut self, spec: &Spec) -> Vec<Row> {
+        let rows = std::mem::take(&mut self.rows);
+        let matched = std::mem::take(&mut self.matched);
+        rows.into_iter().zip(matched).filter(|(_, m)| !m).map(|((_, row), _)| spec.right_alone(&row)).collect()
     }
 
     /// Its rows that matched none, after nulls, each with its number, in a

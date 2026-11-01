@@ -2477,6 +2477,10 @@ catalog to keep in step.
   the left partition reread per part, whether each left row matched kept
   in a run beside it. A right operand in memory has a matched flag per
   row, counted in the work area.
+  - Of a join of streams no order is asked of, each pair's rows are
+    given as the left rows probe its parts, not written to runs and
+    merged back by number (`outer/streamed.rs`): a part's unmatched
+    right rows once probed, the rows of null keys last.
 - **No keys.** A product, and an outer join on no keys, reread their
   right operand per left row, from a spill-area run once it outgrows the
   work area. A right operand in a run has no flags: for a preserved

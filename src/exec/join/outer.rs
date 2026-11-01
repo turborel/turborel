@@ -20,6 +20,7 @@
 
 mod chunked;
 mod spilled;
+mod streamed;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -216,6 +217,16 @@ impl Rowwise {
     pub(in crate::exec) fn joined(self, left: RowIter) -> RowIter {
         match self.right {
             Past::Part(rows, rest) => spilled::joined(left, (rows, rest), &self.spec, self.work),
+            Past::Scanned(scanned, count) => Box::new(OuterRows::new(left, (Side::Scanned(scanned), count), (self.spec, self.work))),
+        }
+    }
+
+    /// As `joined`, its rows in no set order: of a join on keys, each
+    /// pair of partitions' as it is joined, none written again
+    /// (`outer/streamed.rs`).
+    pub(in crate::exec) fn unordered(self, left: RowIter) -> RowIter {
+        match self.right {
+            Past::Part(rows, rest) => streamed::joined(left, (rows, rest), self.spec, self.work),
             Past::Scanned(scanned, count) => Box::new(OuterRows::new(left, (Side::Scanned(scanned), count), (self.spec, self.work))),
         }
     }

@@ -15,14 +15,15 @@
 //! gives its first; the condition of each pair of equal keys, or of every
 //! pair on no keys, of a row of the pair's values. A right operand past the
 //! work area is joined as the row path joins it, partitioned or from a run,
-//! its rows gathered into batches.
+//! its rows gathered into batches: where no order is asked of the join, each
+//! pair of partitions' rows as they are joined (`Rowwise::unordered`).
 
 use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
 use super::pairs::{Out, kept_rows};
-use super::{gathered, left_batches, operand_rows};
+use super::{gathered, in_order, left_batches, operand_rows};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::eval_cond;
@@ -55,7 +56,10 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
         Prepared::Rowwise(rowwise) => {
             let mut columns = left_columns;
             columns.extend(right_columns.iter().map(|&c| c.saturating_add(left_width)));
-            Ok(gathered(rowwise.joined(operand_rows(left, db, tx)), &columns))
+            // In no order but the partitions', where none is asked for.
+            let ordered = in_order(&left);
+            let rows = operand_rows(left, db, tx);
+            Ok(gathered(if ordered { rowwise.joined(rows) } else { rowwise.unordered(rows) }, &columns))
         }
     }
 }
