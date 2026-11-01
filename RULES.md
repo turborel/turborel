@@ -1824,10 +1824,14 @@ write-ahead logging.
   rows. No row is judged in the scan: the filter judges every row given
   over its vectors, which costs less than judging a row twice.
   - A vector of integers kept as runs of one value, or as one value,
-    with no null, knows its runs (`Ints::with_runs`): the filter judges a
-    comparison or IN once a run, keeping or dropping its rows together,
-    and SUM, AVG, MIN and MAX take each run's value once, times its rows
-    kept.
+    knows its runs (`Ints::with_runs`), a null among a run of its value:
+    the filter judges a comparison or IN once a run, keeping or dropping
+    its rows together, nulls never; SUM, AVG, MIN and MAX take each run's
+    value once, times its rows kept not null. Of runs with no null, an
+    expression of them (+, -, *, negation) is computed once a run of its
+    operands and known as runs too; a comparison of two such sides is
+    judged once a run of both; and a grouping by one such column takes
+    each run's rows into the group of its first, no key made.
   - A group none of whose rows the tree has an entry for gives each
     vector whole, no list of its positions made.
 - **Streams** (`exec/batch/stream.rs`). A plan subtree gives rows by

@@ -30,7 +30,7 @@ use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
-use crate::storage::{Batch, Cell, Row};
+use crate::storage::{Batch, Cell, Column, Row};
 use crate::txn::TxId;
 use spilled::{Overflow, Piece};
 use table::{Held, Table};
@@ -98,6 +98,16 @@ pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>,
 /// the places among those given, those in the batch, and where each
 /// group's end.
 fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    // Already gathered, each group's rows after the last's, as of runs.
+    if placed.is_sorted_by_key(|&(slot, ..)| slot) {
+        let mut ends = vec![0_usize; groups];
+        for (at, &(slot, ..)) in placed.iter().enumerate() {
+            if let Some(end) = ends.get_mut(slot) {
+                *end = at.saturating_add(1);
+            }
+        }
+        return (placed.iter().map(|&(_, n, _)| n).collect(), placed.iter().map(|&(.., r)| r).collect(), ends);
+    }
     let mut ends = vec![0_usize; groups];
     for &(slot, ..) in placed {
         if let Some(end) = ends.get_mut(slot) {
@@ -123,6 +133,32 @@ fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec
         *to = to.saturating_add(1);
     }
     (given, read_rows, ends)
+}
+
+/// \[DESIGN\] (RULES.md D31) Of a grouping by `groups`, one column of
+/// `batch` whose integers are known as runs (`Ints::runs`), none null,
+/// where each run of its rows `rows`, or all, ends among them, the rows of
+/// each run alike, so of one group: none of another grouping, nor of a
+/// null among the runs, of the null group.
+fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[usize]>) -> Option<Vec<usize>> {
+    let [at] = groups else { return None };
+    let Some(Column::Ints(ints)) = batch.columns.get(*at) else { return None };
+    ints.runs()?;
+    let lengths: Vec<usize> = match rows {
+        Some(rows) => ints.runs_of(rows)?.map(|(_, these)| these.len()).collect(),
+        None => ints.run_lengths()?.map(|(_, length)| length).collect(),
+    };
+    let mut end = 0_usize;
+    Some(
+        lengths
+            .into_iter()
+            .filter(|&n| n > 0)
+            .map(|n| {
+                end = end.saturating_add(n);
+                end
+            })
+            .collect(),
+    )
 }
 
 /// A group of a grouping: one held, or one partly made, by its place.
@@ -207,8 +243,18 @@ impl Groups {
     fn feed(&mut self, (batch, rows): (&Batch, Option<&[usize]>), numbers: Numbers<'_>, how: Grouping<'_>, work: &mut Work) -> Result<()> {
         let lanes = lanes(&how.read.taken, batch, rows);
         let mut segment: Segment = (Vec::new(), Vec::new());
+        // Of a grouping by one column of runs, a row of the run of the row
+        // before it goes to that row's group, no key made.
+        let mut ends = run_ends(batch, &how.read.groups, rows).into_iter().flatten();
+        let (mut boundary, mut last) = (0_usize, None);
         for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
             let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
+            if n >= boundary {
+                boundary = ends.next().unwrap_or(n.saturating_add(1));
+            } else if let Some(target) = last {
+                self.took(target, (n, r), (how, &mut segment));
+                continue;
+            }
             // The key made in a buffer kept, no value copied unless its
             // group is new, nor made of an integer.
             self.key.clear();
@@ -227,9 +273,24 @@ impl Groups {
                 let slot = self.slot_of(target, &mut segment.0);
                 segment.1.push((slot, n, r));
             }
+            last = if let Placed::Into(target) = placed { Some(target) } else { None };
         }
         self.overflow.write(batch, &mut self.pending, work)?;
         self.fed((batch, &lanes), &mut segment, how)
+    }
+
+    /// Takes the `n`th row given, `r`, into group `target`, the group of
+    /// the row before it, of the same run: counted as taken, and noted in
+    /// `segment` to be fed, if `how` computes set functions.
+    fn took(&mut self, target: Target, (n, r): (usize, usize), (how, segment): (Grouping<'_>, &mut Segment)) {
+        let (table, _) = table_in((&mut self.held, &mut self.partial), target);
+        if let Some(table) = table {
+            table.taken = table.taken.saturating_add(1);
+        }
+        if !how.aggs.is_empty() {
+            let slot = self.slot_of(target, &mut segment.0);
+            segment.1.push((slot, n, r));
+        }
     }
 
     /// Feeds each group of `segment` its rows of `batch`, gathered in

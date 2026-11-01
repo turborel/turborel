@@ -6,7 +6,9 @@
 //! `checked_mul`), a null of a null [GR1]. A quotient is not, nor one whose
 //! result goes past `MAX_EXACT_PRECISION` digits: those are evaluated of
 //! values, which raise of it. A quotient's scale is each value's own
-//! (`Decimal::checked_div`), which integers of one scale cannot hold.
+//! (`Decimal::checked_div`), which integers of one scale cannot hold. Of
+//! operands known as runs (`Ints::with_runs`), a constant one run, each
+//! result is computed once a run of them all, and known as runs too.
 //! Split from vector.rs (RULES.md R-SIZE-2).
 
 use crate::logical::Expr;
@@ -29,6 +31,31 @@ impl Lane<'_> {
             Lane::Column(ints, _) => ints.scale,
             Lane::Const(_, scale) => *scale,
             Lane::Made(ints) => ints.scale,
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D31) Where each run of one unit among the
+    /// `count` rows given ends, if its integers are known as runs, none
+    /// null (`Ints::runs`): a constant, one run.
+    pub(in crate::exec::batch) fn run_ends(&self, count: usize) -> Option<Vec<usize>> {
+        let ends_of = |lengths: &mut dyn Iterator<Item = usize>| {
+            let mut end = 0_usize;
+            lengths
+                .filter(|&n| n > 0)
+                .map(|n| {
+                    end = end.saturating_add(n);
+                    end
+                })
+                .collect()
+        };
+        match self {
+            Lane::Column(ints, Some(rows)) => {
+                ints.runs()?;
+                Some(ends_of(&mut ints.runs_of(rows)?.map(|(_, these)| these.len())))
+            }
+            Lane::Column(ints, None) => ints.runs().map(<[usize]>::to_vec),
+            Lane::Made(ints) => ints.runs().map(<[usize]>::to_vec),
+            Lane::Const(..) => Some(if count == 0 { Vec::new() } else { vec![count] }),
         }
     }
 
@@ -77,8 +104,8 @@ pub(in crate::exec::batch) fn lane(e: &Expr, inputs: &[usize], batch: &Batch, ro
     match lane_of(e, inputs, batch, rows)? {
         Lane::Made(ints) => Some(ints),
         // A column whole is its vector, copied, no row looked at.
-        Lane::Column(ints, None) => Some(Ints::new(ints.units.clone(), ints.scale, ints.nulls.clone())),
-        made @ (Lane::Column(..) | Lane::Const(..)) => each(count, made.scale(), |n| Some(made.unit(n))),
+        Lane::Column(ints, None) => Some(ints.clone()),
+        made @ (Lane::Column(..) | Lane::Const(..)) => each((count, made.run_ends(count)), made.scale(), |n| Some(made.unit(n))),
     }
 }
 
@@ -101,7 +128,7 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
         Expr::Neg(operand) => {
             let x = made(operand, (inputs, batch, rows), deeper)?;
             let count = rows.map_or(batch.rows, <[usize]>::len);
-            Some(Lane::Made(each(count, x.scale(), |n| Some(x.unit(n).map(i64::wrapping_neg)))?))
+            Some(Lane::Made(each((count, x.run_ends(count)), x.scale(), |n| Some(x.unit(n).map(i64::wrapping_neg)))?))
         }
         Expr::Arith(left, op, right) => {
             let operands = (made(left, (inputs, batch, rows), deeper)?, made(right, (inputs, batch, rows), deeper)?);
@@ -122,6 +149,7 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
 /// it, if each result is within the digits of a decimal.
 fn arithmetic(op: ArithOp, (x, y): (&Lane<'_>, &Lane<'_>), count: usize) -> Option<Ints> {
     let bound = pow10(MAX_EXACT_PRECISION)?;
+    let runs = (count, both_runs((x, y), count));
     let fits = |units: i128| units.checked_abs().filter(|held| *held < bound).and_then(|_| i64::try_from(units).ok());
     match op {
         // [X3.135-1986 §5.9 SR4b] at the greater scale.
@@ -129,7 +157,7 @@ fn arithmetic(op: ArithOp, (x, y): (&Lane<'_>, &Lane<'_>), count: usize) -> Opti
             let scale = x.scale().max(y.scale());
             let (fx, fy) = (pow10(scale.checked_sub(x.scale())?)?, pow10(scale.checked_sub(y.scale())?)?);
             let sign = if op == ArithOp::Sub { -1_i128 } else { 1_i128 };
-            each(count, scale, |n| match (x.unit(n), y.unit(n)) {
+            each(runs, scale, |n| match (x.unit(n), y.unit(n)) {
                 (Some(first), Some(second)) => {
                     let sum = i128::from(first).checked_mul(fx)?.checked_add(i128::from(second).checked_mul(fy)?.checked_mul(sign)?)?;
                     Some(Some(fits(sum)?))
@@ -140,7 +168,7 @@ fn arithmetic(op: ArithOp, (x, y): (&Lane<'_>, &Lane<'_>), count: usize) -> Opti
         // [X3.135-1986 §5.9 SR4c] at the sum of the scales.
         ArithOp::Mul => {
             let scale = x.scale().checked_add(y.scale()).filter(|s| *s <= MAX_EXACT_PRECISION)?;
-            each(count, scale, |n| match (x.unit(n), y.unit(n)) {
+            each(runs, scale, |n| match (x.unit(n), y.unit(n)) {
                 (Some(first), Some(second)) => Some(Some(fits(i128::from(first).checked_mul(i128::from(second))?)?)),
                 (None, _) | (_, None) => Some(None),
             })
@@ -149,10 +177,28 @@ fn arithmetic(op: ArithOp, (x, y): (&Lane<'_>, &Lane<'_>), count: usize) -> Opti
     }
 }
 
+/// \[DESIGN\] (RULES.md D31) Where each run of `x` and `y` both, `count`
+/// rows each, ends: every end of either, if both are known as runs.
+pub(in crate::exec::batch) fn both_runs((x, y): (&Lane<'_>, &Lane<'_>), count: usize) -> Option<Vec<usize>> {
+    let (mut first, second) = (x.run_ends(count)?, y.run_ends(count)?);
+    first.extend(second);
+    first.sort_unstable();
+    first.dedup();
+    Some(first)
+}
+
 /// The integers of scale `scale` that `f` gives of each of `count` rows,
 /// each a unit or a null: none if it gives none of one. Whether each is
-/// null is kept only from the first null on, those before it not.
-fn each(count: usize, scale: u32, f: impl Fn(usize) -> Option<Option<i64>>) -> Option<Ints> {
+/// null is kept only from the first null on, those before it not. Of rows
+/// in runs ending at `ends`, of operands each of one unit through each,
+/// `f` is asked of each run's first alone, and the integers are known as
+/// those runs.
+fn each((count, ends): (usize, Option<Vec<usize>>), scale: u32, f: impl Fn(usize) -> Option<Option<i64>>) -> Option<Ints> {
+    if let Some(ends) = ends.filter(|e| e.last() == Some(&count))
+        && let Some(ints) = by_runs(&ends, scale, &f)
+    {
+        return Some(ints);
+    }
     let mut units = Vec::with_capacity(count);
     let mut nulls: Option<Vec<bool>> = None;
     for n in 0..count {
@@ -170,6 +216,20 @@ fn each(count: usize, scale: u32, f: impl Fn(usize) -> Option<Option<i64>>) -> O
         }
     }
     Some(Ints::new(units, scale, nulls))
+}
+
+/// `each`'s integers of rows in runs ending at `ends`, `f` asked of each
+/// run's first row alone: none if one is null, or `f` gives none of one,
+/// which `each` then makes, or finds it gives none of, a row at a time.
+fn by_runs(ends: &[usize], scale: u32, f: &impl Fn(usize) -> Option<Option<i64>>) -> Option<Ints> {
+    let mut units = Vec::with_capacity(ends.last().copied().unwrap_or(0));
+    let mut start = 0_usize;
+    for &end in ends {
+        let unit = f(start)??;
+        units.resize(end, unit);
+        start = end;
+    }
+    Some(Ints::new(units, scale, None).with_runs(ends.to_vec()))
 }
 
 // Unit tests: integers evaluated as their values are (RULES.md R-TEST-1).

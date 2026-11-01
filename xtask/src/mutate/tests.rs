@@ -21,11 +21,11 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn every_mutation_applies_to_the_source() {
     let root = command::workspace_root();
-    let mut names: Vec<&str> = MUTATIONS.iter().map(|m| m.name).collect();
+    let mut names: Vec<&str> = all().iter().map(|m| m.name).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), MUTATIONS.len(), "names are unique");
-    for m in &MUTATIONS {
+    assert_eq!(names.len(), all().len(), "names are unique");
+    for m in &all() {
         let source = fs::read_to_string(root.join(m.file)).unwrap();
         let mutated = apply(&source, m).unwrap_or_else(|e| panic!("{e}"));
         assert_ne!(mutated, source, "{}", m.name);
@@ -71,11 +71,11 @@ fn a_mutation_is_caught_only_when_every_named_test_fails() {
 /// its name; an unknown name, or more than one, is refused.
 #[test]
 fn mutations_are_chosen_by_name() {
-    assert_eq!(chosen(&MUTATIONS, &[]).unwrap().len(), MUTATIONS.len());
-    let first = MUTATIONS.first().unwrap().name;
-    assert_eq!(chosen(&MUTATIONS, &[first]).unwrap().iter().map(|m| m.name).collect::<Vec<_>>(), [first]);
-    assert!(chosen(&MUTATIONS, &["no such mutation"]).is_err());
-    assert!(chosen(&MUTATIONS, &[first, first]).is_err());
+    assert_eq!(chosen(&all(), &[]).unwrap().len(), all().len());
+    let first = all().first().unwrap().name;
+    assert_eq!(chosen(&all(), &[first]).unwrap().iter().map(|m| m.name).collect::<Vec<_>>(), [first]);
+    assert!(chosen(&all(), &["no such mutation"]).is_err());
+    assert!(chosen(&all(), &[first, first]).is_err());
 }
 
 /// Verifies: [TOOL] R-TEST-9 a mutation in place is written back by

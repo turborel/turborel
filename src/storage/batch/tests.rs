@@ -112,9 +112,10 @@ fn columns_gathered_by_row_keep_their_kind() {
 }
 
 /// Verifies: [DESIGN] RULES.md D31, integers known as runs: kept only
-/// with no null and ends that close each run, the last their count; each
-/// run's unit and the rows of a list in increasing order in it, or none
-/// of a list not so; each run's unit and length.
+/// with ends that close each run, the last their count; each run's unit
+/// and the rows of a list in increasing order in it, or none of a list
+/// not so; each run's unit and its rows not null; of nulls among them,
+/// their ends not given as those of runs each row of which is the run's.
 #[test]
 fn integers_known_as_runs() {
     let units = vec![5, 5, 5, 9, 9, -1];
@@ -125,7 +126,10 @@ fn integers_known_as_runs() {
     assert!(runs.runs_of(&[4, 0]).is_none(), "rows not in increasing order");
     assert_eq!(runs.run_lengths().unwrap().collect::<Vec<_>>(), [(5, 3), (9, 2), (-1, 1)]);
     let refused = |ints: Ints| ints.run_lengths().is_none();
-    assert!(refused(Ints::new(units.clone(), 0, Some(vec![false; 6])).with_runs(vec![3, 5, 6])), "nulls kept apart");
+    let with_nulls = Ints::new(units.clone(), 0, Some(vec![false, true, false, false, false, true])).with_runs(vec![3, 5, 6]);
+    assert_eq!(with_nulls.run_lengths().unwrap().collect::<Vec<_>>(), [(5, 2), (9, 2), (-1, 0)], "nulls left out");
+    assert!(with_nulls.runs().is_none() && runs.runs() == Some(&[3, 5, 6][..]), "runs of rows each its run's, only with no null");
+    assert_eq!((with_nulls.held(&rows), runs.held(&rows)), (3, 4));
     assert!(refused(Ints::new(units.clone(), 0, None).with_runs(vec![3, 5])), "not to the end");
     assert!(refused(Ints::new(units.clone(), 0, None).with_runs(vec![3, 3, 6])), "an end not past the last");
     assert!(refused(Ints::new(units, 0, None)), "not known");

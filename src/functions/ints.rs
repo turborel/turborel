@@ -39,22 +39,38 @@ pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[usize]>) -> Opti
             Some((total.checked_add(i128::from(u).checked_mul(n)?)?, any || n > 0))
         });
     }
-    let (mut total, mut any) = (start, false);
-    for u in units(ints, rows) {
-        total = total.checked_add(i128::from(u))?;
-        any = true;
+    // Each case its own loop, no call a value.
+    let add = |total: i128, u: &i64| total.checked_add(i128::from(*u));
+    let held = |n: &usize| (!ints.is_null(*n)).then(|| ints.units.get(*n)).flatten();
+    match (rows, &ints.nulls) {
+        (None, None) => Some((ints.units.iter().try_fold(start, add)?, !ints.units.is_empty())),
+        (Some(rows), None) => {
+            let mut any = false;
+            let total = rows.iter().filter_map(|&n| ints.units.get(n)).inspect(|_| any = true).try_fold(start, add)?;
+            Some((total, any))
+        }
+        (Some(rows), Some(_)) => {
+            let mut any = false;
+            let total = rows.iter().filter_map(held).inspect(|_| any = true).try_fold(start, add)?;
+            Some((total, any))
+        }
+        (None, Some(_)) => {
+            let mut any = false;
+            let total = (0..ints.units.len()).filter_map(|n| held(&n)).inspect(|_| any = true).try_fold(start, add)?;
+            Some((total, any))
+        }
     }
-    Some((total, any))
 }
 
 /// \[DESIGN\] (RULES.md D31) Of `ints` known as runs (`Ints::runs_of`),
-/// each run's unit and how many of the rows `rows`, or all, are in it, so
+/// each run's unit and how many of the rows `rows`, or all, are in it and
+/// not null, so
 /// a run's are added once: of runs of one unit added one by one, each
 /// total between the run's first and last, so 128 bits hold them all if
 /// they hold the last.
 fn run_counts(ints: &Ints, rows: Option<&[usize]>) -> Option<Vec<(i64, usize)>> {
     match rows {
-        Some(rows) => Some(ints.runs_of(rows)?.map(|(u, these)| (u, these.len())).collect()),
+        Some(rows) => Some(ints.runs_of(rows)?.map(|(u, these)| (u, ints.held(these))).collect()),
         None => Some(ints.run_lengths()?.collect()),
     }
 }

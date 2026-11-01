@@ -136,8 +136,8 @@ pub struct Ints {
     pub scale: u32,
     /// Whether each row's is null, if any is.
     pub nulls: Option<Vec<bool>>,
-    /// Where each run of one unit ends, if a store read them as runs and
-    /// none is null (`with_runs`).
+    /// Where each run of one unit ends, if a store read them as runs
+    /// (`with_runs`).
     runs: Option<Vec<usize>>,
     /// The values, made the first time they are asked for.
     made: OnceLock<Vec<Value>>,
@@ -150,21 +150,21 @@ impl Ints {
     }
 
     /// \[DESIGN\] (RULES.md D31) These, known to be runs of one unit ending
-    /// at `ends`, each greater than the last, the last their count: so work
-    /// over them is done once a run (`runs_of`). Kept only if none is null
-    /// and `ends` are so.
+    /// at `ends`, each greater than the last, the last their count, a null
+    /// among a run of its unit too: so work over them is done once a run
+    /// (`runs_of`), the nulls left out. Kept only if `ends` are so.
     #[must_use]
     pub fn with_runs(mut self, ends: Vec<usize>) -> Ints {
         let whole = ends.last() == Some(&self.units.len()) && ends.windows(2).all(|w| w.first() < w.last());
-        if self.nulls.is_none() && whole {
+        if whole {
             self.runs = Some(ends);
         }
         self
     }
 
     /// Of these as runs (`with_runs`), each run's unit and the rows of
-    /// `rows` in it, if `rows` are in increasing order: none if not, or if
-    /// these are not known as runs.
+    /// `rows` in it, nulls among them, if `rows` are in increasing order:
+    /// none if not, or if these are not known as runs.
     pub fn runs_of<'r>(&'r self, rows: &'r [usize]) -> Option<impl Iterator<Item = (i64, &'r [usize])> + 'r> {
         let ends = self.runs.as_deref()?;
         if !rows.is_sorted() {
@@ -179,16 +179,30 @@ impl Ints {
         }))
     }
 
-    /// Of these as runs (`with_runs`), each run's unit and its length; none
-    /// if these are not known as runs.
+    /// Where each of its runs ends (`with_runs`), if it is known as runs
+    /// and none is null: so each row of a run is that run's unit.
+    pub fn runs(&self) -> Option<&[usize]> {
+        self.runs.as_deref().filter(|_| self.nulls.is_none())
+    }
+
+    /// How many of `rows` are not null.
+    pub fn held(&self, rows: &[usize]) -> usize {
+        if self.nulls.is_none() { rows.len() } else { rows.iter().filter(|&&n| !self.is_null(n)).count() }
+    }
+
+    /// Of these as runs (`with_runs`), each run's unit and how many of its
+    /// rows are not null; none if these are not known as runs.
     pub fn run_lengths(&self) -> Option<impl Iterator<Item = (i64, usize)> + '_> {
         let ends = self.runs.as_deref()?;
         let mut start = 0;
         Some(ends.iter().map(move |&end| {
             let unit = self.units.get(start).copied().unwrap_or(0);
-            let length = end.saturating_sub(start);
+            let held = match &self.nulls {
+                Some(nulls) => nulls.get(start..end).map_or(0, |run| run.iter().filter(|&&null| !null).count()),
+                None => end.saturating_sub(start),
+            };
             start = end;
-            (unit, length)
+            (unit, held)
         }))
     }
 

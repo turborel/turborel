@@ -395,12 +395,21 @@ fn likes_of_patterns_not_constant_keep_what_rows_keep() {
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13]:
 /// a conjunct judged over integers known as runs, once a run, keeps the
 /// rows it keeps of the same integers judged one by one, of all rows and
-/// of some.
+/// of some, nulls among the runs or not.
 #[test]
 fn integers_judged_once_a_run_keep_what_each_keeps() {
     let units: Vec<i64> = [3, 3, 3, 7, 7, 10, 10, 10, 10, 12].to_vec();
-    let plain = crate::storage::Ints::new(units.clone(), 0, None);
-    let runs = crate::storage::Ints::new(units, 0, None).with_runs(vec![3, 5, 9, 10]);
+    let some_null = Some(vec![false, true, false, false, false, false, true, true, false, false]);
+    for nulls in [None, some_null] {
+        judged_alike(&units, nulls);
+    }
+}
+
+/// Checks that each conjunct keeps of `units`, null where `nulls` says, in
+/// runs, what it keeps of them one by one.
+fn judged_alike(units: &[i64], nulls: Option<Vec<bool>>) {
+    let plain = crate::storage::Ints::new(units.to_vec(), 0, nulls.clone());
+    let runs = crate::storage::Ints::new(units.to_vec(), 0, nulls).with_runs(vec![3, 5, 9, 10]);
     let all: Vec<usize> = (0..10).collect();
     let some = vec![1, 3, 6, 9];
     let mut judged = Vec::new();

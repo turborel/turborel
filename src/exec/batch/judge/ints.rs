@@ -10,7 +10,7 @@
 use std::cmp::Ordering;
 
 use super::{Judged, Side};
-use crate::exec::batch::vector::ints::lane_of;
+use crate::exec::batch::vector::ints::{both_runs, lane_of};
 use crate::storage::{Batch, Ints};
 use crate::value::{CompOp, Decimal, Value, pow10};
 
@@ -49,13 +49,15 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
 }
 
 /// \[DESIGN\] (RULES.md D31) The rows of `kept` of whose unit `keeps` is
-/// true, judged once a run of one unit, its rows kept or not together, if
-/// `ints` are known as runs (`Ints::runs_of`).
+/// true, judged once a run of one unit, its rows kept or not together, a
+/// null never, if `ints` are known as runs (`Ints::runs_of`).
 fn by_runs(ints: &Ints, kept: &[usize], keeps: impl Fn(i64) -> bool) -> Option<Vec<usize>> {
     let mut out = Vec::with_capacity(kept.len());
     for (unit, rows) in ints.runs_of(kept)? {
-        if keeps(unit) {
-            out.extend_from_slice(rows);
+        match (keeps(unit), &ints.nulls) {
+            (false, _) => {}
+            (true, None) => out.extend_from_slice(rows),
+            (true, Some(_)) => out.extend(rows.iter().filter(|&&n| !ints.is_null(n))),
         }
     }
     Some(out)
@@ -75,6 +77,18 @@ pub(super) fn compared((left, op, right): (&Side, CompOp, &Side), batch: &Batch,
         (Some(one), Some(other)) => holds(op, scaled(one, factors.0).zip(scaled(other, factors.1)).map(|(p, q)| p.cmp(&q))),
         (None, _) | (_, None) => false,
     };
+    // Of sides known as runs, judged once a run of both (RULES.md D31).
+    if let Some(ends) = both_runs((&first, &second), over.len()) {
+        let mut kept = Vec::with_capacity(over.len());
+        let mut start = 0_usize;
+        for end in ends {
+            if truth(start) {
+                kept.extend_from_slice(over.get(start..end).unwrap_or_default());
+            }
+            start = end;
+        }
+        return Some(kept);
+    }
     Some(over.iter().enumerate().filter(|&(n, _)| truth(n)).map(|(_, &r)| r).collect())
 }
 

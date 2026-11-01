@@ -201,7 +201,9 @@ impl<'a> Chunk<'a> {
             return None;
         }
         self.body.ints((from, to), units)?;
-        if self.nulls.iter().all(|&b| b == 0) {
+        // The bytes of the bitmap holding the range's bits, read whole.
+        let bytes = self.nulls.get(bit_of(from).0..bit_of(to.saturating_add(BITS.saturating_sub(1))).0).unwrap_or_default();
+        if bytes.iter().all(|&b| b == 0) {
             nulls.resize(nulls.len().saturating_add(to.saturating_sub(from)), false);
         } else {
             nulls.extend((from..to).map(|n| self.is_null(n)));

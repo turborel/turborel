@@ -57,13 +57,20 @@ fn main() {
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,
-/// of runs of one value, filtered by S and not.
+/// of runs of one value, filtered by S and not, grouped by it, of an
+/// expression of it, and compared with T, another column of runs; and of
+/// U, a column of runs with nulls among them.
 fn of_runs(bench: &Bench, s: &Session) {
     for (name, sql) in [
         ("COUNT(*) of a column of runs", "SELECT COUNT(*) FROM RC"),
         ("COUNT of it by a condition of 9 runs in 10", "SELECT COUNT(*) FROM RC WHERE S >= 10"),
         ("SUM of it", "SELECT SUM(S) FROM RC"),
         ("SUM of it by a condition of 9 runs in 10", "SELECT SUM(S) FROM RC WHERE S >= 10"),
+        ("GROUP BY it, COUNT and SUM", "SELECT S, COUNT(*), SUM(K) FROM RC GROUP BY S"),
+        ("SUM of an expression of it by a condition of one", "SELECT SUM(S * 2) FROM RC WHERE S + 1 > 10"),
+        ("COUNT by it compared with another column of runs", "SELECT COUNT(*) FROM RC WHERE S > T"),
+        ("COUNT by a condition of a column of runs with nulls", "SELECT COUNT(*) FROM RC WHERE U >= 10"),
+        ("SUM of a column of runs with nulls", "SELECT SUM(U) FROM RC"),
     ] {
         bench.measure(Case::new(format!("{name} (columnstore)"), "rows"), || {
             fetched(s, sql);
@@ -177,11 +184,18 @@ fn keyed(s: &Session) {
     }
 }
 
-/// RC, its `ROWS` rows, K every key once and S it over 2,000.
+/// RC, its `ROWS` rows, K every key once, S it over 2,000, T three times
+/// it over 5,000, U as S but null for every 13th.
 fn sorted_runs(s: &Session) {
-    s.run("CREATE TABLE RC (K INTEGER NOT NULL, S INTEGER) USING columnstore WITH (COLUMNSTORE.ORDER = 'S')").unwrap();
+    s.run("CREATE TABLE RC (K INTEGER NOT NULL, S INTEGER, T INTEGER, U INTEGER) USING columnstore WITH (COLUMNSTORE.ORDER = 'S')")
+        .unwrap();
     for first in (0..ROWS).step_by(PER_INSERT as usize) {
-        let rows: Vec<String> = (first..first + PER_INSERT).map(|k| format!("({k}, {})", k / 2_000)).collect();
+        let rows: Vec<String> = (first..first + PER_INSERT)
+            .map(|k| {
+                let u = if k % 13 == 0 { "NULL".to_owned() } else { (k / 2_000).to_string() };
+                format!("({k}, {}, {}, {u})", k / 2_000, k / 5_000 * 3)
+            })
+            .collect();
         s.run(&format!("INSERT INTO RC VALUES {}", rows.join(", "))).unwrap();
     }
 }

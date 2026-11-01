@@ -1,6 +1,6 @@
 //! RULES.md R-TEST-9: `cargo xtask mutate` checks the tests by mutation.
 //!
-//! Each mutation of `MUTATIONS` (`mutate/list.rs`) breaks one mechanism of
+//! Each mutation of `all` (`mutate/list.rs`) breaks one mechanism of
 //! the core: it replaces a snippet of one source file, found there exactly
 //! once, and names the tests that must then fail. The command first runs
 //! the named tests on the code as it is, where each must pass; then, one
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use crate::command::{self, Finished};
 use crate::error::{Error, Result};
 
-pub use list::MUTATIONS;
+pub use list::all;
 
 /// The package the mutations break, whose tests they run.
 const PACKAGE: &str = "turborel";
@@ -47,6 +47,7 @@ const BUILD_LINES: usize = 20;
 /// `replacement`, breaks what `breaks` says, and each test of `integration`
 /// (of the integration binary) and `unit` (of the library's unit tests),
 /// full paths, must fail.
+#[derive(Clone, Copy)]
 pub struct Mutation {
     pub name: &'static str,
     pub breaks: &'static str,
@@ -87,7 +88,8 @@ impl Mutation {
 /// Runs `cargo xtask mutate`: every mutation, or the one named.
 pub fn run(root: &Path, args: &[&str]) -> Result<()> {
     restore_leftover(root)?;
-    let chosen = chosen(&MUTATIONS, args)?;
+    let every = all();
+    let chosen = chosen(&every, args)?;
     for m in &chosen {
         apply(&fs::read_to_string(root.join(m.file)).map_err(|e| Error::new(format!("cannot read {}: {e}", m.file)))?, m)?;
     }

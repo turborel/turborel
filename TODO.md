@@ -145,9 +145,3 @@ What came after SQL-92 follows it, written from the standards' own text
     standard's text;
   - a table option of columns (COLUMNSTORE.ORDER) following a column
     renamed, once ALTER TABLE renames columns;
-  - runs further: a vector of runs (`Ints::with_runs`) is judged and
-    summed once a run, but still filled a value a row, and a grouping by
-    it, a projection of it and a comparison of two columns read it a row
-    at a time; a run with a null among it is read as plain integers. Of
-    200,000 rows of a sorted column, `COUNT(*) WHERE S >= 10` takes
-    0.44 ms where a `COUNT(*)` takes 0.23.
