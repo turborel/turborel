@@ -1,12 +1,19 @@
 //! Unit tests of the B-link index: probes of every operator with values of
 //! the column's type and not, many entries in key order, estimates, counts
-//! changed by threads at once, entries too long, and malformed entries
-//! (RULES.md R-TEST-1, R-TEST-2). Split from blink.rs (RULES.md R-SIZE-4).
+//! changed by threads at once, entries too long, and malformed entries,
+//! and the pages its probes miss (RULES.md R-TEST-1, R-TEST-2). Split from
+//! blink.rs (RULES.md R-SIZE-4).
 
+use std::path::Path;
 use std::thread;
 
 use super::*;
+use crate::disk::buffer::Clock;
+use crate::disk::encoding::Pipeline;
+use crate::disk::memory::MemoryFileSystem;
+use crate::disk::pager::Pager;
 use crate::engine::memory_file;
+use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::index::searched;
 use crate::value::Spelled;
 use crate::value::{Decimal, Value, compare};
@@ -190,19 +197,10 @@ fn the_method_makes_indexes() {
 /// discarded keeps its pages when it goes, as when the database closes.
 #[test]
 fn a_discarded_index_frees_its_pages_when_it_goes() {
-    let fs = crate::disk::memory::MemoryFileSystem::new();
-    let hash: Arc<dyn crate::hash::HashFunction> = Arc::new(crate::hash::crc::Crc::new(crate::hash::crc::CRC32_ISCSI).unwrap());
-    let pager = Arc::new(
-        crate::disk::pager::Pager::create(
-            &fs,
-            std::path::Path::new("/p"),
-            hash,
-            crate::disk::encoding::Pipeline::none(),
-            crate::disk::pager::DEFAULT_PAGE_SIZE,
-        )
-        .unwrap(),
-    );
-    let pool = Arc::new(BufferPool::new(64, Box::new(crate::disk::buffer::Clock::new(64))).unwrap());
+    let fs = MemoryFileSystem::new();
+    let hash: Arc<dyn crate::hash::HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+    let pager = Arc::new(Pager::create(&fs, Path::new("/p"), hash, Pipeline::none(), crate::disk::pager::DEFAULT_PAGE_SIZE).unwrap());
+    let pool = Arc::new(BufferPool::new(64, Box::new(Clock::new(64))).unwrap());
     let file = pool.add_pager(Arc::clone(&pager));
     let insert_rows = |index: &BLinkIndex| {
         for row in 0..3_000 {
@@ -324,4 +322,33 @@ fn an_index_opened_without_counts_counts_its_keys_in_maintenance() {
     assert!(!again.maintenance_due());
     assert!(again.distinct_keys().is_some_and(|d| (d - 3.0_f64).abs() < 0.5_f64), "{:?}", again.distinct_keys());
     assert_eq!(again.maintain().ok(), Some(false), "once");
+}
+
+/// Verifies: [DESIGN] RULES.md D35, `Index::probe_missed`: an index tells
+/// the pages its probes miss: before its tree has counted `LEAST_LOOKUPS`
+/// lookups, its leaf, as the pool has no frames for its file's pages, none
+/// of a pool that holds it and some of one of 16 frames; then as its
+/// searches missed, a scattered key at a time.
+#[test]
+fn an_index_tells_the_pages_its_probes_miss() {
+    let held = index(&[MONEY]);
+    let crc = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+    let pager = Pager::create(&MemoryFileSystem::new(), Path::new("/ix"), crc, Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let small = BLinkIndex::with(BLinkTree::create(pool, file).unwrap(), &[MONEY], KeyCounts::new());
+    for row in 0..20_000_u64 {
+        let key = Key(vec![exact(i128::from(row), 0)]);
+        held.insert(key.clone(), row).unwrap();
+        small.insert(key, row).unwrap();
+    }
+    assert_eq!(held.probe_missed(), Some(0.0_f64), "held: none past the pool");
+    let unheld = small.probe_missed().unwrap();
+    assert!(unheld > 0.5_f64 && unheld < 1.0_f64, "{unheld}");
+    for n in 0..LEAST_LOOKUPS {
+        let units = i128::from(n.wrapping_mul(7919_u64) % 20_000_u64);
+        assert_eq!(small.rows(&Key(vec![exact(units, 0)])).unwrap().len(), 1_usize);
+    }
+    let missed = small.probe_missed().unwrap();
+    assert!(missed > 0.0_f64 && (missed - unheld).abs() > 1e-9_f64, "as its searches missed: {missed}");
 }

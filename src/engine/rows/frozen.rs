@@ -51,6 +51,7 @@ use crate::disk::pager::PageId;
 use crate::engine::columns::cache::HeaderCache;
 use crate::engine::columns::group::{self, Group, Pages, Seal, Summary};
 use crate::engine::columns::scan::candidates;
+pub(super) use crate::engine::tree::LEAST_LOOKUPS;
 use crate::error::Result;
 use crate::storage::{Conjunction, Row, RowId};
 use crate::sync::{lock_builtin, read};
@@ -62,17 +63,18 @@ use crate::value::Value;
 /// (`bench/analytics.rs`).
 const ROW: f64 = 0.8;
 const ROW_COLUMNS: f64 = 0.2;
+/// \[DESIGN\] The share by which a row of the tree scanned costs more if
+/// the buffer pool missed its page, read from the system's cache
+/// (`bench/kept.rs`, its weights).
+pub(super) const ROW_SCAN_MISSED: f64 = 1.1;
 /// \[DESIGN\] The cost of a row fetched by id through an index, a row of
-/// all columns scanned costing 1 (`bench/analytics.rs`): its page held by
-/// the buffer pool; missed by the pool and read from the system's cache;
-/// and read from the disk, that cost more by a page read from the disk
-/// less one from the cache (`bench/pages.rs`), in rows scanned.
-pub(super) const ROW_FETCH_HELD: f64 = 4.4;
-pub(super) const ROW_FETCH_CACHED: f64 = 14.6;
-pub(super) const ROW_FETCH_DISK: f64 = 1188.0;
-/// \[DESIGN\] The lookups by key a table's tree counts before the pages
-/// they missed price its fetches, and not its bytes against the pool's.
-pub(super) const LEAST_LOOKUPS: u64 = 64;
+/// all columns scanned costing 1 (`bench/kept.rs`, its weights): its page
+/// held by the buffer pool; missed by the pool and read from the system's
+/// cache; and read from the disk, that cost more by a page read from the
+/// disk less one from the cache (`bench/pages.rs`), in rows scanned.
+pub(super) const ROW_FETCH_HELD: f64 = 8.6;
+pub(super) const ROW_FETCH_CACHED: f64 = 72.0;
+pub(super) const ROW_FETCH_DISK: f64 = 5900.0;
 /// \[DESIGN\] STORAGE.SYSTEM_CACHE_BYTES by default: the bytes of the
 /// data file the system's cache is taken to hold beyond the pool. A
 /// machine of the default budget (MEMORY.BUDGET_BYTES, 256 MiB) is taken
@@ -404,13 +406,15 @@ impl RowTable {
     }
 
     /// The planner's cost of a scan of `columns` (`TableStorage::scan_cost`):
-    /// each row of the tree as `ROW` and `ROW_COLUMNS` say, each frozen row
-    /// as `FROZEN_ROW` and `FROZEN_COLUMNS`.
+    /// each row of the tree as `ROW` and `ROW_COLUMNS` say, `ROW_SCAN_MISSED`
+    /// more of the share of its pages the pool does not hold
+    /// (`held_share`); each frozen row as `FROZEN_ROW` and `FROZEN_COLUMNS`.
     pub(super) fn frozen_scan_cost(&self, columns: &[usize]) -> f64 {
         let (frozen, all) = self.frozen_share();
         let width = f64::from(u32::try_from(self.format.columns()).unwrap_or(u32::MAX)).max(1.0_f64);
         let read = f64::from(u32::try_from(columns.len()).unwrap_or(u32::MAX)).min(width) / width;
-        (all - frozen).max(0.0_f64) * (ROW + ROW_COLUMNS * read) + frozen * (FROZEN_ROW + FROZEN_COLUMNS * read)
+        let missed = 1.0_f64 + ROW_SCAN_MISSED * (1.0_f64 - self.held_share());
+        (all - frozen).max(0.0_f64) * (ROW + ROW_COLUMNS * read) * missed + frozen * (FROZEN_ROW + FROZEN_COLUMNS * read)
     }
 
     /// The share of the table's rows a scan told `conditions` reads
@@ -469,9 +473,15 @@ impl RowTable {
     pub(super) fn frozen_fetch_cost(&self) -> f64 {
         let (frozen, all) = self.frozen_share();
         let share = if all > 0.0_f64 { (frozen / all).min(1.0_f64) } else { 0.0_f64 };
-        let missed = ROW_FETCH_DISK + (ROW_FETCH_CACHED - ROW_FETCH_DISK) * self.cached_share();
-        let fetch = ROW_FETCH_HELD + (missed - ROW_FETCH_HELD) * (1.0_f64 - self.held_share());
+        let fetch = ROW_FETCH_HELD + self.page_missed_cost() * (1.0_f64 - self.held_share());
         fetch * (1.0_f64 + FROZEN_FETCH * share)
+    }
+
+    /// The cost more of a fetch whose page the pool missed than of one it
+    /// held (`TableStorage::miss_cost`): read from the system's cache by
+    /// the share it holds, else from the disk.
+    pub(super) fn page_missed_cost(&self) -> f64 {
+        ROW_FETCH_DISK + (ROW_FETCH_CACHED - ROW_FETCH_DISK) * self.cached_share() - ROW_FETCH_HELD
     }
 
     /// The rows frozen, and all the table's rows, as costs.

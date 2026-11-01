@@ -189,7 +189,10 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                     (Bound::Unbounded, Direction::Forward) => Target::First,
                     (Bound::Unbounded, Direction::Backward) => Target::Last,
                 };
-                let mut path = Path { track_low: true, ..Path::default() };
+                // A lookup: its first descent, to a key; a backward scan's
+                // next ones go on from where it was.
+                let tallied = self.last.is_none() && matches!(target, Target::Key(_));
+                let mut path = Path { track_low: true, tallied, ..Path::default() };
                 let (leaf, taken) = tree.descend(target, 0, &mut path, |leaf| take(leaf, &self.lower, &self.upper))?;
                 self.last = Some(leaf);
                 (taken, path.low)

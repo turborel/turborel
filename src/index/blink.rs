@@ -31,7 +31,7 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
 use crate::engine::key::{anchor, decode_key, encode_key};
-use crate::engine::tree::{BLinkTree, Direction, Update, scan_of};
+use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Update, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
@@ -453,6 +453,13 @@ impl Index for BLinkIndex {
     /// A descent, its levels the tree's.
     fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
         self.tree.height().ok().map(f64::from)
+    }
+
+    /// As its tree's lookups by key missed, once it has counted
+    /// `LEAST_LOOKUPS`; before, its leaf as the pool has no frames for its
+    /// file's pages.
+    fn probe_missed(&self) -> Option<f64> {
+        Some(self.tree.missed_pages(LEAST_LOOKUPS).unwrap_or_else(|| self.tree.unheld_share()))
     }
 
     fn discard(&self) {

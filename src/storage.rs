@@ -342,6 +342,12 @@ pub trait TableStorage: Send + Sync {
         DEFAULT_FETCH_COST
     }
 
+    /// Cost more of a page the buffer pool missed than of one it holds, of
+    /// each an index's probe misses (`Index::probe_missed`). Default: none.
+    fn miss_cost(&self) -> f64 {
+        0.0_f64
+    }
+
     /// What the engine knows of its rows, for the planner's estimates
     /// (`stats.rs`): each engine answers what its layout tells it. Default:
     /// nothing, and the planner assumes its defaults.

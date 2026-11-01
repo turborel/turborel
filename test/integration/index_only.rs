@@ -17,7 +17,7 @@ use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, P
 use turborel::params::Params;
 use turborel::storage::RowId;
 use turborel::threads::JobPolicy;
-use turborel::value::{CompOp, DataType};
+use turborel::value::{CompOp, DataType, Value};
 
 use crate::common::{Scratch, number, os, rows, sorted};
 
@@ -97,10 +97,13 @@ impl Index for ProbingIndex {
 }
 
 /// A database of JOBS.POLICY MANUAL, the method `Probing` told by
-/// `flags` registered.
+/// `flags` registered; a level of an index's descent priced as a row
+/// scanned, so its index is asked of a table whose settled zones are
+/// scanned for less than its descents cost by default.
 fn database(flags: &Arc<Flags>) -> Database {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("PLANNER.INDEX_DESCENT_COST", &Value::Approx(1.0_f64)).unwrap();
     db.register_index_method(Box::new(Probing { inner: BTreeMethod::in_memory(), flags: Arc::clone(flags) })).unwrap();
     db
 }

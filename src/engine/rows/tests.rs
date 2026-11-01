@@ -314,6 +314,28 @@ fn a_fetch_is_priced_by_what_its_table_reads() {
     assert!(missed > 10.0_f64 && missed <= frozen::ROW_FETCH_CACHED, "{missed}");
 }
 
+/// Verifies: [DESIGN] RULES.md D31, D35: a scan of the tree's rows costs
+/// `ROW_SCAN_MISSED` more of the share of its pages the pool does not
+/// hold: none more of a table the pool holds, more of one of 2,000 wide
+/// rows in 16 frames; a page missed costs more than one held as a fetch's
+/// does, from the system's cache (`TableStorage::miss_cost`).
+#[test]
+fn a_scan_is_priced_by_what_its_pool_holds() {
+    let files = small_pool();
+    let table = RowTable::create(&files, &[DataType::Character { length: 200 }], TableOptions::default()).unwrap();
+    table.insert(crate::txn::NO_TRANSACTION, wide(0_u32)).unwrap();
+    assert!((table.scan_cost(&[0]) - 1.0_f64).abs() < 1e-9_f64, "held: a row, all its columns read");
+    for n in 1..2000_u32 {
+        table.insert(crate::txn::NO_TRANSACTION, wide(n)).unwrap();
+    }
+    let missed = 1.0_f64 - table.held_share();
+    assert!(missed > 0.5_f64, "{missed}");
+    let scanned = 2000.0_f64 * (1.0_f64 + frozen::ROW_SCAN_MISSED * missed);
+    assert!((table.scan_cost(&[0]) - scanned).abs() < 1e-6_f64, "{} {scanned}", table.scan_cost(&[0]));
+    files.system_cache.store(u64::MAX, Ordering::Release);
+    assert!((table.miss_cost() - (frozen::ROW_FETCH_CACHED - frozen::ROW_FETCH_HELD)).abs() < 1e-9_f64, "{}", table.miss_cost());
+}
+
 /// Verifies: [DESIGN] RULES.md D35, D36: a fetch the pool misses is
 /// priced as read from the system's cache by the share of the file past
 /// the pool STORAGE.SYSTEM_CACHE_BYTES holds, the rest as from the disk:

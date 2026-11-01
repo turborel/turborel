@@ -69,6 +69,10 @@ use crate::error::{Code, Result, SqlError};
 /// The format of a tree's meta page: the format, then the root's page.
 pub const TREE_FORMAT: u8 = 1;
 const META_LEN: usize = 9;
+/// \[DESIGN\] The lookups by key a tree counts before the pages they
+/// missed price what reads it, a table's fetches or an index's probes, and
+/// not its bytes against the pool's.
+pub const LEAST_LOOKUPS: u64 = 64;
 
 fn corrupt(why: &str) -> SqlError {
     SqlError::new(Code::Corrupt, format!("[DESIGN] a B-link tree is malformed: {why}"))
@@ -114,8 +118,9 @@ pub struct BLinkTree {
     capacity: usize,
     locks: Locks,
     counters: Counters,
-    /// Its lookups by key and the pages they read that the pool missed
-    /// (`BufferPool::read_tallied`), for the planner's costs.
+    /// Its lookups by key, a `get` or a scan's from a key, and the pages
+    /// they read that the pool missed (`BufferPool::read_tallied`), for the
+    /// planner's costs.
     tally: Tally,
     /// The operations under way by epoch, and the pages taken out
     /// (`reclaim.rs`).
@@ -317,10 +322,25 @@ impl BLinkTree {
         self.epochs.all_retired().into_iter().try_for_each(|p| self.pool.free(self.file, p))
     }
 
-    /// The pages its lookups by key (`get`) read that the pool missed, per
-    /// lookup, at most 1, once at least `least` are counted.
+    /// The pages its lookups by key read that the pool missed, per lookup,
+    /// at most 1, once at least `least` are counted.
     pub fn missed_share(&self, least: u64) -> Option<f64> {
         self.tally.missed_share(least)
+    }
+
+    /// The pages its lookups by key read that the pool missed, per lookup,
+    /// once at least `least` are counted.
+    pub fn missed_pages(&self, least: u64) -> Option<f64> {
+        self.tally.missed_per_lookup(least)
+    }
+
+    /// The share of its file's pages in use the pool has no frames for,
+    /// none if it has for all.
+    pub fn unheld_share(&self) -> f64 {
+        let pages = |n: u64| crate::stats::parts::count(n);
+        let used = pages(self.pool.pages_in_use(self.file).unwrap_or(0));
+        let frames = pages(u64::try_from(self.pool.frames()).unwrap_or(u64::MAX));
+        if used > frames { 1.0_f64 - frames / used } else { 0.0_f64 }
     }
 
     /// The counters now.

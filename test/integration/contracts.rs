@@ -225,7 +225,7 @@ fn cost_weights_are_finite_and_not_negative() {
         assert_eq!(db.with_cost_model(|c| c.index_descent = bad).map_err(|e| e.code), Err(Code::Api), "{bad}");
     }
     let unchanged = db.with_cost_model(|c| (c.index_descent, c.sort_compare)).unwrap();
-    assert_eq!(unchanged, (1.0_f64, 0.1_f64));
+    assert_eq!(unchanged, (turborel::physical::DEFAULT_INDEX_DESCENT, turborel::physical::DEFAULT_SORT_COMPARE));
     db.with_cost_model(|c| c.sort_compare = 0.0_f64).unwrap();
     assert_eq!(db.with_cost_model(|c| c.sort_compare).unwrap(), 0.0_f64);
 }

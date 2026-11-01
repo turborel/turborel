@@ -20,6 +20,7 @@
 //! kind of the indexed column's, which the index places among its keys
 //! (`engine/key.rs` `anchor`), not compared with every key.
 
+use super::cost::HASH_ROW;
 use super::estimate::{self, Known};
 use super::join::Flip;
 use super::{PhysicalPlanner, Plan};
@@ -27,7 +28,9 @@ use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::{IndexMethod, Probe};
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
 use crate::storage::cost_of;
-use crate::value::{CompOp, DataType, Decimal, Value};
+use crate::value::datetime::{Datetime, Moment};
+use crate::value::interval::Interval;
+use crate::value::{Bits, CompOp, DataType, Decimal, Value};
 
 /// An index of the table an operand reads that a join's equalities probe:
 /// the table, its filter, the index, and of each of the index's first
@@ -136,8 +139,9 @@ impl PhysicalPlanner<'_> {
     /// How `right` is probed for the rows of `left` joined on the
     /// equalities `keys`, and `left`'s estimated rows, if it reads a table
     /// one of whose indexes they probe, and those rows' probes are
-    /// estimated to cost less than `read`, the read of its rows the hash
-    /// join's right operand would be (`access_cost`).
+    /// estimated to cost less than the hash join they replace: `read`, the
+    /// read of its rows the hash join's right operand would be
+    /// (`access_cost`), and each row of either operand hashed (`HASH_ROW`).
     pub(super) fn probed_instead(
         &self,
         (left, right): (&LogicalPlan, &LogicalPlan),
@@ -147,7 +151,8 @@ impl PhysicalPlanner<'_> {
         let of_kind = |l: usize, t: &DataType| self.column_type(left, l).is_some_and(|lt| alike(&lt, t));
         let probing = self.probing(right, keys, &of_kind)?;
         let rows = self.rows_of(left)?;
-        (rows * probing.cost < access_cost(read)?).then_some((probing, rows))
+        let hashed = HASH_ROW * (rows + self.rows_of(right).unwrap_or(0.0_f64));
+        (rows * probing.cost < access_cost(read)? + hashed).then_some((probing, rows))
     }
 
     /// The cheapest index of the table `right` reads, filtered by a
@@ -181,7 +186,8 @@ impl PhysicalPlanner<'_> {
             let pages = sample
                 .and_then(|values| found.probe_pages(&Probe::Prefix { equal: values, then: None }))
                 .unwrap_or_else(|| (rows + 1.0_f64).log2());
-            let cost = model.index_descent * pages + each * storage.fetch_cost();
+            let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
+            let cost = model.index_descent * pages + missed + each * storage.fetch_cost();
             if best.as_ref().is_none_or(|b| cost < b.cost) {
                 let (index, method, width) = (ix.name.clone(), ix.method.clone(), desc.columns.len());
                 let through = through.clone();
@@ -390,20 +396,20 @@ fn family(t: &DataType) -> &'static str {
 }
 
 /// A value of type `t`, to ask an index the pages a probe of it reads,
-/// which do not depend on which value: of a number or a string; none of
-/// another type.
+/// which do not depend on which value: of each type built in; none of an
+/// extension's.
 fn sample(t: &DataType) -> Option<Value> {
+    let moment = |moment: Moment, zoned: bool| Value::Datetime(Datetime { moment, utc: 0, zone: 0, zoned, precision: 0 });
     match t {
         DataType::Exact { .. } => Some(Value::Exact(Decimal::new(0, 0))),
         DataType::Approximate { .. } => Some(Value::Approx(0.0_f64)),
         DataType::Character { .. } | DataType::Varying { .. } => Some(Value::Char(String::new())),
-        DataType::Bit { .. }
-        | DataType::BitVarying { .. }
-        | DataType::Date
-        | DataType::Time { .. }
-        | DataType::Timestamp { .. }
-        | DataType::Interval(_)
-        | DataType::Extension(_) => None,
+        DataType::Bit { .. } | DataType::BitVarying { .. } => Bits::new(vec![0], 1).ok().map(Value::Bits),
+        DataType::Date => Some(moment(Moment::Date, false)),
+        DataType::Time { zoned, .. } => Some(moment(Moment::Time, *zoned)),
+        DataType::Timestamp { zoned, .. } => Some(moment(Moment::Timestamp, *zoned)),
+        DataType::Interval(qualifier) => Some(Value::Interval(Interval { units: 0, qualifier: *qualifier })),
+        DataType::Extension(_) => None,
     }
 }
 
@@ -416,9 +422,9 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D35: character strings of either length
     /// are of one kind, as are bit strings, but exact and approximate
-    /// numbers are not; a probe's pages are asked with a value of a number
-    /// or a string, of either kind; and only a table's read has a cost to
-    /// set the probes against.
+    /// numbers are not; a probe's pages are asked with a value of each type
+    /// built in; and only a table's read has a cost to set the probes
+    /// against.
     #[test]
     fn kinds_samples_and_reads() {
         let double = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
@@ -427,7 +433,8 @@ mod tests {
         assert!(alike(&DataType::Bit { length: 1 }, &DataType::BitVarying { length: 8 }));
         assert!(!alike(&integer, &double) && alike(&double, &double));
         assert!(matches!(sample(&double), Some(Value::Approx(_))) && matches!(sample(&integer), Some(Value::Exact(_))));
-        assert!(sample(&DataType::Date).is_none());
+        assert!(matches!(sample(&DataType::Date), Some(Value::Datetime(_))));
+        assert!(matches!(sample(&DataType::Bit { length: 8 }), Some(Value::Bits(_))));
         assert_eq!(access_cost(&Plan::Values { rows: Vec::new(), detail: String::new() }), None);
     }
 

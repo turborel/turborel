@@ -117,11 +117,11 @@ What came after SQL-92 follows it, written from the standards' own text
   expression (a CASE) leaves its filter judged whole a row at a time,
   each pattern split once (`S LIKE CASE ...` of 200,000 rows of the
   column store, 28.6 ms).
-- **Statistics, further** (D35): an index's probe is priced by its pages,
-  PLANNER.INDEX_DESCENT_COST each, whether the pool holds them or not;
-  only a table's fetches are priced by what its lookups missed (`Tally`),
-  as an index's probes, ranges of its tree, are not counted. The system's
-  cache is taken as STORAGE.SYSTEM_CACHE_BYTES says, not as it is.
+- **Statistics, further** (D35): a scan's pages the pool misses are
+  priced as read from the system's cache, never from the disk (no scan
+  of a file larger than memory is measured), and only the tree's rows,
+  not the frozen ones'. The system's cache is taken as
+  STORAGE.SYSTEM_CACHE_BYTES says, not as it is.
 
 ---
 

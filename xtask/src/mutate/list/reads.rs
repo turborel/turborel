@@ -1,12 +1,12 @@
 //! The mutations of the core's reads (RULES.md R-TEST-9): index-only
 //! scans' zones and the index entries collection owes, ordered reads of
-//! the column store, and its columns of runs. Split from list.rs (RULES.md
-//! R-SIZE-2).
+//! the column store, and its columns of runs; and how the planner prices
+//! reads by the pages they miss. Split from list.rs (RULES.md R-SIZE-2).
 
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 22] = [
+pub const READS: [Mutation; 27] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -203,6 +203,51 @@ pub const READS: [Mutation; 22] = [
         original: "                        self.ready.push_back(self.spec.left_alone(&l));",
         replacement: "                        let _ = &l;",
         integration: &["spilling::operators_spill_and_give_the_same_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "scan-from-key-untallied",
+        breaks: "a scan from a key, an index's probe, is not counted on its tree's tally",
+        file: "src/engine/tree/scan.rs",
+        original: "                let tallied = self.last.is_none() && matches!(target, Target::Key(_));",
+        replacement: "                let tallied = self.last.is_none() && matches!(target, Target::First);",
+        integration: &[],
+        unit: &["engine::tree::tests::scans_from_a_key_are_lookups", "index::blink::tests::an_index_tells_the_pages_its_probes_miss"],
+    },
+    Mutation {
+        name: "probe-missed-unpriced",
+        breaks: "an index join's probes are priced as if the pool held every page of its index",
+        file: "src/physical/indexed.rs",
+        original: "            let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();",
+        replacement: "            let missed = found.probe_missed().map_or(0.0_f64, |_| 0.0_f64) * storage.miss_cost();",
+        integration: &["statistics::a_join_s_probes_are_priced_by_what_their_index_misses"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hash-rows-unpriced",
+        breaks: "an index join is set against a hash join's read of its right operand alone, its rows hashed free",
+        file: "src/physical/indexed.rs",
+        original: "        let hashed = HASH_ROW * (rows + self.rows_of(right).unwrap_or(0.0_f64));",
+        replacement: "        let hashed = HASH_ROW * 0.0_f64 * (rows + self.rows_of(right).unwrap_or(0.0_f64));",
+        integration: &["statistics::a_join_s_probes_are_priced_by_what_their_index_misses"],
+        unit: &[],
+    },
+    Mutation {
+        name: "scan-misses-unpriced",
+        breaks: "a scan of the row store is priced as if the pool held every page of its table",
+        file: "src/engine/rows/frozen.rs",
+        original: "        let missed = 1.0_f64 + ROW_SCAN_MISSED * (1.0_f64 - self.held_share());",
+        replacement: "        let missed = 1.0_f64 + ROW_SCAN_MISSED * 0.0_f64 * (1.0_f64 - self.held_share());",
+        integration: &[],
+        unit: &["engine::rows::tests::a_scan_is_priced_by_what_its_pool_holds"],
+    },
+    Mutation {
+        name: "order-first-unread",
+        breaks: "join ordering leaves the first relation's read out of an order's cost, so the largest goes first",
+        file: "src/physical/order.rs",
+        original: "    let first = order.first().and_then(|&r| relations.get(r)).map_or(0.0_f64, |r| r.rows);",
+        replacement: "    let first = order.first().and_then(|&r| relations.get(r)).map_or(0.0_f64, |_| 0.0_f64);",
+        integration: &["probes::few_rows_probe_indexes_of_every_kind_they_can"],
         unit: &[],
     },
 ];

@@ -59,10 +59,12 @@ most an eighth of the pool's pages, are read by the database's job
 of them in one read of the file; what a scan ends before they are read
 is never read. A change holds at once, for a scan under way too.
 
-The planner prices a row fetched through an index by where its page is
-found: in the buffer pool, as the table's own lookups have found its
-pages there; else in the operating system's cache, or on the disk. How
-much of the data file past the pool that cache holds is
+The planner prices a row fetched through an index, and an index's
+probe, by where their pages are found: in the buffer pool, as the
+table's and the index's own lookups have found their pages there; else
+in the operating system's cache, or on the disk. A scan of a table the
+pool holds little of is priced as read from that cache. How much of the
+data file past the pool that cache holds is
 STORAGE.SYSTEM_CACHE_BYTES (1 GiB by default): set it to the memory the
 machine leaves its cache, or to 0 to price every page the pool misses as
 read from the disk, so that a scan is chosen over an index sooner. It

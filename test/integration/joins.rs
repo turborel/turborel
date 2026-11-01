@@ -142,7 +142,7 @@ fn comparisons_carry_across_equalities() {
     let (found, plan) =
         same_rows(&s, "SELECT T.V, U.W FROM T, U WHERE T.K = U.K AND T.K = 7", "SELECT T.V, U.W FROM T, U WHERE T.K + 0 = U.K AND T.K = 7");
     assert_eq!(found, vec!["14,21"]);
-    assert!(plan.contains("IndexScan J.U using U_K"), "{plan}");
+    assert!(plan.contains("J.U using U_K") && plan.contains("U.K = 7"), "{plan}");
     let (found, plan) =
         same_rows(&s, "SELECT U.W FROM T, U WHERE U.K = T.K AND 298 <= T.K", "SELECT U.W FROM T, U WHERE U.K + 0 = T.K AND 298 <= T.K");
     assert_eq!(found, vec!["894", "897"]);

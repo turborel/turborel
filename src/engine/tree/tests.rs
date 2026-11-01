@@ -277,3 +277,24 @@ fn the_longest_entry_is_as_documented() {
         assert_eq!(BLinkTree::create(pool, file).unwrap().max_entry(), most);
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D35, a tree's tally: a scan from a key is
+/// a lookup, as a `get` is, and one from an end of the tree is not; its
+/// pages missed per lookup are known once as many lookups are counted as
+/// asked, none of a pool holding the tree, as none of its file's pages are
+/// past the pool's frames.
+#[test]
+fn scans_from_a_key_are_lookups() {
+    let (tree, _scratch) = tree("scan-lookups");
+    fill(&tree, 500_u64);
+    for direction in [Direction::Forward, Direction::Backward] {
+        assert_eq!(keys(&tree, direction).len(), 500_usize);
+    }
+    assert_eq!(tree.missed_pages(1_u64), None, "from an end: not a lookup");
+    for n in 1..=4_u64 {
+        assert!(tree.scan(Bound::Included(&key(n)), Bound::Unbounded, Direction::Forward).next().is_some());
+    }
+    assert_eq!(tree.missed_pages(4_u64), Some(0.0_f64), "four lookups, their pages held");
+    assert_eq!(tree.missed_pages(5_u64), None, "fewer than asked");
+    assert_eq!(tree.unheld_share(), 0.0_f64);
+}

@@ -413,6 +413,13 @@ pub trait Index: Send + Sync {
     fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
         None
     }
+    /// \[DESIGN\] The pages of a probe's that the buffer pool misses, of
+    /// those `probe_pages` counts, if it knows: the planner prices each as
+    /// a page its table's fetches miss (`TableStorage::miss_cost`).
+    /// Default: not known, and the planner takes them held.
+    fn probe_missed(&self) -> Option<f64> {
+        None
+    }
     /// The entries the probe selects, each (key, row) pair once, read as
     /// they are taken: in `order` if the method is ordered. It holds the
     /// index (`self: Arc<Self>`), so what it gives may outlive the call

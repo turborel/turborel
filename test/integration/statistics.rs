@@ -5,7 +5,7 @@
 //! changed enough, and when told to, and an index counts its keys once
 //! first asked for, both in maintenance; optimizer rules can read them.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use turborel::db::{Database, OpenOptions, Session};
@@ -458,4 +458,128 @@ fn a_fetch_from_the_disk_is_priced_above_one_from_the_cache() {
     db.set_setting("STORAGE.SYSTEM_CACHE_BYTES", &number(1_i64 << 30_i32)).unwrap();
     assert!(indexed(), "in the cache again: the index");
     assert_eq!(rows(&s, sql).unwrap(), scanned);
+}
+
+/// Verifies: [DESIGN] RULES.md D35: an index join's probes are priced by
+/// the pages they miss, their index's and their fetches', against the hash
+/// join they replace, its scan priced by the pages it misses too: forty
+/// keys of a table whose file is many times its pool of 64 KiB probe its
+/// index while the system's cache is taken to hold the file, are joined by
+/// a hash join once it is taken to hold none, and probe it again once set
+/// back; each the same rows.
+#[test]
+fn a_join_s_probes_are_priced_by_the_pages_they_miss() {
+    let scratch = Scratch::new("statistics-probes-missed");
+    let db = Database::new();
+    db.set_setting("STORAGE.POOL_BYTES", &number(65_536_i64)).unwrap();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.open_files(&os(), &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER PRIMARY KEY, V CHARACTER(100)) CREATE TABLE KS (K INTEGER)")
+        .unwrap();
+    let s = db.session("S");
+    for from in (0..4_000_u32).step_by(500) {
+        let values: Vec<String> = (from..from + 500).map(|k| format!("({k}, 'v{k}')")).collect();
+        s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    let keys: Vec<String> = (0..40_u32).map(|n| format!("({})", n.wrapping_mul(97_u32) % 4_000_u32)).collect();
+    s.run(&format!("INSERT INTO KS VALUES {}", keys.join(", "))).unwrap();
+    s.commit().unwrap();
+    db.maintain().unwrap();
+    let sql = "SELECT T.V FROM KS, T WHERE T.K = KS.K";
+    let probed = || s.physical_plan(sql, &Params::new()).unwrap().contains("IndexNestedLoop");
+    assert!(probed(), "the file in the cache: the index");
+    let mut found = rows(&s, sql).unwrap();
+    db.set_setting("STORAGE.SYSTEM_CACHE_BYTES", &number(0_i64)).unwrap();
+    assert!(!probed(), "none of it in the cache: a hash join");
+    let mut hashed = rows(&s, sql).unwrap();
+    db.set_setting("STORAGE.SYSTEM_CACHE_BYTES", &number(1_i64 << 30_i32)).unwrap();
+    assert!(probed(), "in the cache again: the index");
+    found.sort();
+    hashed.sort();
+    assert_eq!((found.len(), &found), (40_usize, &hashed));
+}
+
+/// An index method, "missing", whose indexes are the B-link tree's but
+/// tell the pages their probes miss as its share says, an `f64`'s bits.
+struct Missing(BTreeMethod, Arc<AtomicU64>);
+
+impl IndexMethod for Missing {
+    fn name(&self) -> &'static str {
+        "missing"
+    }
+    fn supports(&self, op: CompOp) -> bool {
+        self.0.supports(op)
+    }
+    fn supports_prefix(&self, columns: usize, equal: usize, then: Option<CompOp>) -> bool {
+        self.0.supports_prefix(columns, equal, then)
+    }
+    fn ordered(&self) -> bool {
+        self.0.ordered()
+    }
+    fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
+        Ok(Box::new(MissingIndex { entries: Arc::from(self.0.create(columns)?), missed: Arc::clone(&self.1) }))
+    }
+}
+
+/// An index of `Missing`.
+struct MissingIndex {
+    entries: Arc<dyn Index>,
+    missed: Arc<AtomicU64>,
+}
+
+impl Index for MissingIndex {
+    fn insert(&self, key: Key, row: RowId) -> Result<()> {
+        self.entries.insert(key, row)
+    }
+    fn remove(&self, key: &Key, row: RowId) -> Result<()> {
+        self.entries.remove(key, row)
+    }
+    fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
+        self.entries.rows(key)
+    }
+    fn estimate(&self, probe: &Probe) -> Option<usize> {
+        self.entries.estimate(probe)
+    }
+    fn probe_pages(&self, probe: &Probe) -> Option<f64> {
+        self.entries.probe_pages(probe)
+    }
+    fn probe_missed(&self) -> Option<f64> {
+        Some(f64::from_bits(self.missed.load(Ordering::SeqCst)))
+    }
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        Arc::clone(&self.entries).search(probe, order)
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D35: an index join's probes are priced by
+/// the pages its index tells they miss (`Index::probe_missed`), each as
+/// its table's fetches' pages missed cost more than held, against the
+/// hash join they replace, its right operand read and each row of either
+/// operand hashed: ten keys of a table of 1,000 rows probe its index of
+/// no pages missed, and of half a page a probe, though their probes then
+/// cost more than the table's read alone; of two, are joined by a hash
+/// join; each the same rows.
+#[test]
+fn a_join_s_probes_are_priced_by_what_their_index_misses() {
+    let missed = Arc::new(AtomicU64::new(0.0_f64.to_bits()));
+    let db = Database::new();
+    db.register_index_method(Box::new(Missing(BTreeMethod::in_memory(), Arc::clone(&missed)))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL, V INTEGER) CREATE TABLE KS (K INTEGER)").unwrap();
+    let s = db.session("S");
+    let values: Vec<String> = (0..1_000_u32).map(|k| format!("({k}, {})", k * 3)).collect();
+    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    s.run("INSERT INTO KS VALUES (1), (10), (100), (200), (300), (400), (500), (600), (700), (999)").unwrap();
+    s.commit().unwrap();
+    db.create_index("T_K", "S.T", &["K"], "missing").unwrap();
+    let sql = "SELECT T.V FROM KS, T WHERE T.K = KS.K";
+    let mut found = Vec::new();
+    for (share, probes) in [(0.0_f64, true), (0.5_f64, true), (2.0_f64, false)] {
+        missed.store(share.to_bits(), Ordering::SeqCst);
+        let plan = s.physical_plan(sql, &Params::new()).unwrap();
+        assert_eq!(plan.contains("IndexNestedLoop S.T using T_K"), probes, "{share}: {plan}");
+        let mut joined = rows(&s, sql).unwrap();
+        joined.sort();
+        found.push(joined);
+    }
+    assert!(found.iter().all(|f| f.len() == 10_usize && *f == found[0]), "{found:?}");
 }

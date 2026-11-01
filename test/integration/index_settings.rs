@@ -186,6 +186,8 @@ fn an_index_of_a_locked_table_is_built_again_under_its_lock() {
         indexes(&db),
         (vec!["T_V,noted,NO,V".to_owned()], vec!["T_V,noted,FILL,90,DEFAULT".to_owned(), "T_V,noted,SHAPE,TALL,INDEX".to_owned()])
     );
+    // Of 40 rows, read for less than the index's descents cost by default.
+    db.set_setting("PLANNER.INDEX_DESCENT_COST", &Value::Approx(1.0_f64)).unwrap();
     let plan = s.explain("SELECT K FROM T WHERE V = 'v1'", &turborel::params::Params::new()).unwrap();
     assert!(plan.contains("T_V"), "{plan}");
     assert_eq!(rows(&s, "SELECT K FROM T WHERE V = 'v1' ORDER BY K"), Ok(["1", "11", "21", "31"].map(String::from).to_vec()));

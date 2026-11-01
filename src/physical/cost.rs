@@ -4,9 +4,13 @@
 
 use crate::error::{Code, Result, fail};
 
-/// \[DESIGN\] The default cost of one level of an index descent: as much as
-/// reading one row in sequence.
-pub const DEFAULT_INDEX_DESCENT: f64 = 1.0;
+/// \[DESIGN\] The default cost of one level of an index descent, its page
+/// held by the buffer pool: as much as reading six rows in sequence, a
+/// descent of a tree and a probe begun (`bench/kept.rs`, its weights).
+pub const DEFAULT_INDEX_DESCENT: f64 = 6.0;
+/// \[DESIGN\] The cost of a row a hash join hashes, built into its table
+/// or probing it, in rows of a scan (`bench/kept.rs`, its weights).
+pub(super) const HASH_ROW: f64 = 0.5;
 /// \[DESIGN\] The default cost of one comparison in a sort: a tenth of reading
 /// one row, since it touches no storage.
 pub const DEFAULT_SORT_COMPARE: f64 = 0.1;

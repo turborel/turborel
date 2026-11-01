@@ -1,9 +1,10 @@
 //! \[DESIGN\] A structure's own count of what it reads through the pool
 //! (RULES.md D30, D35): its lookups, and the pages they read that the pool
-//! missed, so the planner prices a fetch by how much of what each table
-//! reads the pool holds, not by its file's share of the pool. A lookup is
-//! counted on a stripe by thread, each on its own cache lines, as the
-//! pool's hits are (`hits.rs`); a miss reads a file anyway.
+//! missed, so the planner prices a fetch, and an index's probe, by how
+//! much of what each table and index reads the pool holds, not by its
+//! file's share of the pool. A lookup is counted on a stripe by thread,
+//! each on its own cache lines, as the pool's hits are (`hits.rs`); a miss
+//! reads a file anyway.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -59,9 +60,15 @@ impl Tally {
     }
 
     /// The pages missed per lookup, at most 1, once at least `least`
-    /// lookups are counted; none before. Past `WINDOW` lookups the counts
-    /// are halved, a lookup counted meanwhile kept.
+    /// lookups are counted; none before.
     pub fn missed_share(&self, least: u64) -> Option<f64> {
+        self.missed_per_lookup(least).map(|share| share.min(1.0_f64))
+    }
+
+    /// The pages missed per lookup, once at least `least` lookups are
+    /// counted; none before. Past `WINDOW` lookups the counts are halved,
+    /// a lookup counted meanwhile kept.
+    pub fn missed_per_lookup(&self, least: u64) -> Option<f64> {
         let sum =
             |each: fn(&Stripe) -> &AtomicU64| self.stripes.iter().fold(0_u64, |n, s| n.saturating_add(each(s).load(Ordering::Relaxed)));
         let (lookups, misses) = (sum(|s| &s.lookups), sum(|s| &s.misses));
@@ -73,7 +80,7 @@ impl Tally {
             }
         }
         let share = crate::stats::parts::count(misses) / crate::stats::parts::count(lookups).max(1.0_f64);
-        (lookups >= least).then_some(share.min(1.0_f64))
+        (lookups >= least).then_some(share)
     }
 }
 
@@ -98,8 +105,8 @@ mod tests {
     use super::*;
 
     /// Verifies: [DESIGN] RULES.md D35: a tally gives no share before the
-    /// lookups asked for; then its misses per lookup, at most 1; and past
-    /// its window it halves its counts, keeping the share.
+    /// lookups asked for; then its misses per lookup, as a share at most 1;
+    /// and past its window it halves its counts, keeping the share.
     #[test]
     fn a_tally_gives_its_misses_per_lookup() {
         let tally = Tally::default();
@@ -112,6 +119,7 @@ mod tests {
             tally.missed();
         }
         assert_eq!(tally.missed_share(2_u64), Some(1.0_f64), "at most 1");
+        assert_eq!(tally.missed_per_lookup(2_u64), Some(2.5_f64), "each lookup's pages missed");
         let many = Tally::default();
         for n in 0..=WINDOW {
             many.lookup();

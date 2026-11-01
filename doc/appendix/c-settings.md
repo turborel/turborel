@@ -62,7 +62,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | OPTIMIZER.REMOVE_REDUNDANT_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
-| PLANNER.INDEX_DESCENT_COST | 1E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
+| PLANNER.INDEX_DESCENT_COST | 6E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | PLANNER.NULL_FRACTION | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.RANGE_SELECTIVITY | 3.333333333333333E-1 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
@@ -120,7 +120,7 @@ Each in a sentence:
 - **OPTIMIZER.REMOVE_REDUNDANT_DISTINCT**: Whether the optimizer's rule remove_redundant_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.SIMPLIFY_CONDITIONS**: Whether the optimizer's rule simplify_conditions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
-- **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, a row read in sequence costing 1.
+- **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.
 - **PLANNER.NULL_FRACTION**: The fraction of a column's values taken to be null when the statistics do not tell.
 - **PLANNER.RANGE_SELECTIVITY**: The fraction of rows an order comparison, a pattern or a subquery keeps when the statistics do not tell.
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.

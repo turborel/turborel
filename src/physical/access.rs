@@ -189,7 +189,8 @@ impl PhysicalPlanner<'_> {
 /// if cheap; else, for an equality on all its columns, the rows over its
 /// distinct keys, `distinct` asks the index for (`State::distinct_keys`);
 /// else the guess, shared by the probes. Its pages to find the entries, if
-/// it knows, else a tree's levels.
+/// it knows, else a tree's levels; and those the pool misses, as the
+/// table's fetches' pages missed cost.
 fn priced(
     (index, distinct): (&dyn Index, &dyn Fn() -> Option<f64>),
     c: &Candidate,
@@ -197,12 +198,13 @@ fn priced(
     storage: &dyn TableStorage,
 ) -> (f64, f64) {
     let levels = descent * cost_of(storage.row_count().saturating_add(1)).log2();
+    let missed = index.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
     let share = c.guess / cost_of(c.probes.len());
     let (mut est, mut found) = (0.0_f64, 0.0_f64);
     for probe in &c.probes {
         let by_keys = || distinct().filter(|_| whole_key(probe, width)).map(|d| all / d.max(1.0_f64));
         est += index.estimate(probe).map(cost_of).or_else(by_keys).unwrap_or(share);
-        found += index.probe_pages(probe).map_or(levels, |pages| descent * pages);
+        found += index.probe_pages(probe).map_or(levels, |pages| descent * pages) + missed;
     }
     (est, found + est * storage.fetch_cost())
 }

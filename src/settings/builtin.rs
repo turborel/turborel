@@ -346,7 +346,7 @@ fn cost() -> [Definition; 3] {
         defined(
             ("PLANNER.INDEX_DESCENT_COST", weight.clone(), Value::Approx(crate::physical::DEFAULT_INDEX_DESCENT)),
             DATABASE,
-            "The cost of one level of an index descent, a row read in sequence costing 1.",
+            "The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.",
         ),
         defined(
             ("PLANNER.SORT_COMPARE_COST", weight, Value::Approx(crate::physical::DEFAULT_SORT_COMPARE)),

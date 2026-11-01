@@ -1763,7 +1763,9 @@ write-ahead logging.
     database weakly and ends when it is closed or dropped.
 - **Log.** Unchanged, of whole rows; recovery writes them to the tree.
 - **Cost model.** A scan is priced by the columns it reads:
-  - a tree row 0.8, plus up to 0.2 as all its columns are read;
+  - a tree row 0.8, plus up to 0.2 as all its columns are read; 1.1
+    times that more of the share of its pages the pool does not hold
+    (*Fetch costs*, D35), read from the system's cache;
   - a frozen row 0.25, plus up to 0.75;
   - a fetch by id as D35 says (*Fetch costs*); 10% more when all rows
     are frozen.
@@ -2173,17 +2175,25 @@ picks by estimate, so a new method needs no change to the planner.
   maintenance gathers statistics (D31).
 - **Fetch costs** (`rows/frozen.rs`). A row store's fetch by id is
   priced by where its page is found, a row scanned costing 1:
-  - held by the buffer pool 4.4; missed and in the system's cache 14.6;
-    missed and read from the disk 1188;
-  - the pool's share: of the pages the table's own lookups by id read,
-    those it missed (`Tally`, `BLinkTree::missed_share`), once 64 are
-    counted, halved past 65,536; before, the pool's bytes over the
-    table's (rows by width);
+  - held by the buffer pool 8.6; missed and in the system's cache 72;
+    missed and read from the disk 5900;
+  - the pool's share: of the pages the table's own lookups by key read
+    (a fetch, or a scan's from a key), those it missed (`Tally`,
+    `BLinkTree::missed_share`), once 64 are counted, halved past
+    65,536; before, the pool's bytes over the table's (rows by width);
   - the cache's share: STORAGE.SYSTEM_CACHE_BYTES over the data file's
     pages in use past the pool, all if none are, or for a database in
     memory;
-  - the weights from `bench/analytics.rs` and `bench/pages.rs` (pages
-    read beyond the cache, of a file larger than memory).
+  - an index's probe: PLANNER.INDEX_DESCENT_COST, 6 by default, a level
+    of its descent, its pages held; and each page it misses priced as a
+    fetch of its table's that missed costs more than one held
+    (`Index::probe_missed`, `TableStorage::miss_cost`): of a B-link
+    index, the pages its tree's lookups missed per lookup, once 64 are
+    counted; before, its leaf, as the pool has no frames for its file's
+    pages;
+  - the weights from `bench/kept.rs` (its weights: a table of 16
+    columns held by its pool and many times it) and `bench/pages.rs`
+    (pages read beyond the cache, of a file larger than memory).
   - The cache's size is a setting, as reading it from the system takes
     `unsafe` (R-SAFE-1); its default, 1 GiB, a few times the default
     memory budget, prices a file up to that past the pool as in the
@@ -2203,8 +2213,9 @@ picks by estimate, so a new method needs no change to the planner.
     rows (VALUES) carries its columns' types [§7.2 GR2], so it probes
     too;
   - the left's estimated rows times a probe's cost (its pages, a level
-    of descent each, and its rows, a fetch each) is below the cost of
-    reading the hash join's right operand.
+    of descent each, those the pool misses, and its rows, a fetch each)
+    is below the cost of the hash join: reading its right operand, and
+    each row of either operand hashed, 0.5 a row.
   So is a RIGHT outer join whose left operand reads a table so: the
   right's rows probe it, under a projection putting the left's columns
   first. A projection of another expression is not probed: its value for

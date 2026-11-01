@@ -22,6 +22,7 @@
 
 use std::sync::Arc;
 
+use super::cost::HASH_ROW;
 use super::{PhysicalPlanner, estimate};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, cond_columns, map_cond_columns, split_and};
 use crate::optimizer::is_guarded;
@@ -170,18 +171,21 @@ fn best_order(relations: &[Relation<'_>], conjuncts: &[Conjunct], first: Option<
         .min_by(|a, b| cost(a, relations, conjuncts).total_cmp(&cost(b, relations, conjuncts)))
 }
 
-/// The estimated cost of joining in `order`: each join's, and the rows it
-/// yields.
+/// The estimated cost of joining in `order`: the first relation's read,
+/// a row each, then each join's, and the rows it yields.
 fn cost(order: &[usize], relations: &[Relation<'_>], conjuncts: &[Conjunct]) -> f64 {
-    (1..order.len())
-        .map(|n| step(order.get(..n).unwrap_or_default(), order.get(n).copied().unwrap_or_default(), relations, conjuncts))
-        .sum()
+    let first = order.first().and_then(|&r| relations.get(r)).map_or(0.0_f64, |r| r.rows);
+    first
+        + (1..order.len())
+            .map(|n| step(order.get(..n).unwrap_or_default(), order.get(n).copied().unwrap_or_default(), relations, conjuncts))
+            .sum::<f64>()
 }
 
 /// The estimated cost of joining relation `next` to the product of
-/// `placed`, and the rows that yields: a hash join reads each side once, if
-/// a conjunct equates a column of each, or each row of the product probes
-/// an index of `next`'s, if that costs less; a nested loop pairs every row.
+/// `placed`, and the rows that yields: a hash join reads `next` and hashes
+/// each row of either side (`HASH_ROW`), if a conjunct equates a column of
+/// each, or each row of the product probes an index of `next`'s, if that
+/// costs less; a nested loop pairs every row.
 fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[Conjunct]) -> f64 {
     let rows = |order: &[usize]| order.iter().filter_map(|&r| relations.get(r)).map(|r| r.rows).product::<f64>();
     let inner = relations.get(next).map_or(0.0_f64, |r| r.rows);
@@ -198,7 +202,7 @@ fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[
         probe = probe.min(probe_cost(&c.cond, relations.get(next)));
     }
     let yields = outer * inner * fraction;
-    let join = if hashed { (outer + inner).min(outer * probe) } else { outer * inner };
+    let join = if hashed { (inner + HASH_ROW * (outer + inner)).min(outer * probe) } else { outer * inner };
     join + yields
 }
 
