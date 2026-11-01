@@ -95,7 +95,10 @@ background, sorted as it says, a few at a time, until every group is;
 queries read them as before meanwhile, in either order. A query ordered
 by the first columns the option names, each ascending, ORDER BY S or
 ORDER BY S, G of an option naming S and G, reads the rows in that order
-as it scans them, merging the groups', and needs no sort. A column the
+as it scans them, merging the groups', and needs no sort; so does one
+by them each descending, ORDER BY S DESC or ORDER BY S DESC, G DESC,
+reading them in that order backward. One mixing the two, ORDER BY S
+DESC, G, is sorted. A column the
 option names is not dropped until it names it no more; each is named as
 an identifier is, a regular one in any case, a delimited one in double
 quotes.

@@ -141,12 +141,8 @@ What came after SQL-92 follows it, written from the standards' own text
   only as it takes the group up, not the next group's.
 - **Layouts** (D31): a hybrid (PAX), the format of frozen groups
   then made a trait. For the column store:
-  - a sorted group's rows read backwards, to answer an ORDER BY of its
-    order's columns, all descending, without a sort, as ascending ones
-    are (`frozen/ordered.rs`); COLUMNSTORE.ORDER needs no descending
-    columns for it (Vertica keeps ascending only, ClickHouse sorting keys
-    took DESC in 24.12 for the same reads); and a clause limiting the rows
-    an ordered read gives, from a later standard's text;
+  - a clause limiting the rows an ordered read gives, from a later
+    standard's text;
   - a table option of columns (COLUMNSTORE.ORDER) following a column
     renamed, once ALTER TABLE renames columns;
   - conditions judged of runs, a run at a time, as a vector of runs

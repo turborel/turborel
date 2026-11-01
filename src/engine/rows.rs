@@ -228,27 +228,6 @@ impl StorageEngine for RowStore {
     }
 }
 
-impl Configurable for RowStore {
-    /// The column store's, whose tables freeze rows into groups: the
-    /// bytes of their headers it holds (`columns/cache.rs`).
-    fn settings(&self) -> Vec<crate::settings::Definition> {
-        (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
-    }
-    /// The headers it holds; the pages its pool reads ahead, of its data
-    /// file's or in memory (STORAGE.READ_AHEAD_PAGES), which index methods
-    /// on the same pool share; and, over files on a disk, the bytes of
-    /// them the system's cache holds (STORAGE.SYSTEM_CACHE_BYTES).
-    fn configure(&self, settings: &crate::settings::Settings) {
-        if let Some(key) = settings.key(&cache::setting_name(self.name)) {
-            self.headers.set_most(settings.count(key));
-        }
-        self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
-        if let Some(cache) = &self.system_cache {
-            cache.store(u64::try_from(settings.count(crate::settings::SYSTEM_CACHE_BYTES)).unwrap_or(u64::MAX), Ordering::Release);
-        }
-    }
-}
-
 /// \[DESIGN\] A table of the row store.
 pub struct RowTable {
     pool: Arc<BufferPool>,
@@ -393,9 +372,29 @@ impl TableStorage for RowTable {
     }
 
     /// Of the column store, its groups' rows and the tree's merged in the
-    /// order of `keys` (`rows/frozen/ordered.rs`).
-    fn scan_ordered(self: Arc<Self>, tx: TxId, columns: &[usize], keys: &[usize], conditions: Option<&Conjunction>) -> Option<Rows> {
-        (!keys.is_empty() && self.ordered_by().starts_with(keys)).then(|| self.scan_ordered_of(tx, (columns, keys), conditions.cloned()))
+    /// order of `keys`, or backward (`rows/frozen/ordered.rs`).
+    fn scan_ordered(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        (keys, backward): (&[usize], bool),
+        conditions: Option<&Conjunction>,
+    ) -> Option<Rows> {
+        (!keys.is_empty() && self.ordered_by().starts_with(keys))
+            .then(|| self.scan_ordered_of(tx, (columns, (keys, backward)), conditions.cloned()))
+    }
+
+    /// Of the column store, merged by batch, of `columns` alone, no row
+    /// made (`rows/frozen/ordered.rs`).
+    fn scan_ordered_batches(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        (keys, backward): (&[usize], bool),
+        conditions: Option<&Conjunction>,
+    ) -> Option<crate::storage::Batches> {
+        (!keys.is_empty() && self.ordered_by().starts_with(keys))
+            .then(|| self.scan_ordered_batches_of(tx, (columns, (keys, backward)), conditions.cloned()))
     }
 
     fn row_count(&self) -> usize {

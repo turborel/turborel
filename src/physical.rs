@@ -51,8 +51,11 @@ pub enum Plan {
         /// The planner's cost estimate.
         cost: f64,
         /// The columns, by their places, in whose order, ascending, it is read
-        /// (`TableStorage::scan_ordered`); none, in no particular order.
+        /// (`TableStorage::scan_ordered`), or backward; none, in no
+        /// particular order.
         order: Vec<usize>,
+        /// Read in that order backward: each column descending.
+        backward: bool,
     },
     /// The rows of a table an index finds for a probe, in index order.
     IndexScan {
@@ -413,6 +416,16 @@ fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
 /// its right's (`Plan::OuterJoin`), if either has one.
 pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
 
+/// How EXPLAIN shows a scan in the order of the columns `order`, read
+/// `backward` if so: nothing, of none.
+fn scan_order(order: &[usize], backward: bool) -> String {
+    match (order.is_empty(), backward) {
+        (true, _) => String::new(),
+        (false, false) => format!(" in order of {}", order.len()),
+        (false, true) => format!(" in order of {} backward", order.len()),
+    }
+}
+
 impl Plan {
     /// Whether running it can raise an error of a General Rule (an
     /// overflow, a division by zero, a subquery's cardinality): through a
@@ -452,8 +465,8 @@ impl Plan {
         let pad = "  ".repeat(depth);
         // Writing to a String cannot fail.
         let _ = match self {
-            Plan::SeqScan { table, rows, cost, order, .. } => {
-                let ordered = if order.is_empty() { String::new() } else { format!(" in order of {}", order.len()) };
+            Plan::SeqScan { table, rows, cost, order, backward, .. } => {
+                let ordered = scan_order(order, *backward);
                 writeln!(out, "{pad}SeqScan {table}{ordered}  (rows={rows}, cost={cost:.1})")
             }
             Plan::IndexScan { table, index, method, detail, est, cost, reverse, covering, .. } => writeln!(

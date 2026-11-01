@@ -102,21 +102,22 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// The rows of the scan `plan`.
 #[inline(never)]
 fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::SeqScan { table, columns, order, .. } = plan else { return failed(broken("a scan is not one")) };
+    let Plan::SeqScan { table, columns, order, backward, .. } = plan else { return failed(broken("a scan is not one")) };
     if order.is_empty() {
         return scanned(&table, &columns, db, tx);
     }
-    ordered_scan((&table, &columns, &order), None, db, tx)
+    ordered_scan((&table, &columns, (&order, backward)), None, db, tx)
 }
 
 /// The rows of `table`, `columns` read, in the order of the columns
-/// `order`, as ORDER BY sorts them [X3.135-1986 §8.3 GR3b], only those
+/// `order`, each descending if `backward`, as ORDER BY sorts them
+/// [X3.135-1986 §8.3 GR3b], only those
 /// `condition` may match if given: as its storage reads them so
 /// (`TableStorage::scan_ordered`), else read and sorted, if it no longer
 /// can, its option changed since the plan was made; each row read only
 /// while the statement is not cancelled (RULES.md D44).
 fn ordered_scan(
-    (table, columns, order): (&QualifiedName, &[usize], &[usize]),
+    (table, columns, (order, backward)): (&QualifiedName, &[usize], (&[usize], bool)),
     condition: Option<&Conjunction>,
     db: &Arc<State>,
     tx: TxId,
@@ -126,7 +127,7 @@ fn ordered_scan(
         Err(e) => return failed(e),
     };
     let stop = db.tx.stop_of(tx);
-    if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, order, condition) {
+    if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, (order, backward), condition) {
         return Box::new(checked(rows.map(|read| read.map(|(_, row)| row)), stop));
     }
     let read = match condition {
@@ -134,7 +135,7 @@ fn ordered_scan(
         None => storage.scan(tx, columns),
     };
     // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
-    let keys: Vec<SortKey> = order.iter().map(|&column| SortKey { column, descending: false }).collect();
+    let keys: Vec<SortKey> = order.iter().map(|&column| SortKey { column, descending: backward }).collect();
     sort::sort(&keys, Box::new(checked(read.map(|r| r.map(|(_, row)| row)), stop)), db, tx)
 }
 
@@ -274,9 +275,9 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// row read only while the statement is not cancelled (RULES.md D44).
 fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
     match (input, pushed_conjuncts(cond)) {
-        (Plan::SeqScan { table, columns, order, .. }, Some(condition)) => {
+        (Plan::SeqScan { table, columns, order, backward, .. }, Some(condition)) => {
             if !order.is_empty() {
-                return ordered_scan((&table, &columns, &order), Some(&condition), db, tx);
+                return ordered_scan((&table, &columns, (&order, backward)), Some(&condition), db, tx);
             }
             match db.storage_of(&table) {
                 Ok(storage) => {
@@ -423,7 +424,7 @@ mod tests {
     #[test]
     fn missing_storage_and_indexes_are_reported() {
         let st = Arc::new(state());
-        let seq = || Plan::SeqScan { table: missing_table(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![] };
+        let seq = || Plan::SeqScan { table: missing_table(), columns: vec![], rows: 0, cost: 0.0_f64, order: vec![], backward: false };
         let index = || Plan::IndexScan {
             table: missing_table(),
             index: "I".into(),
@@ -467,7 +468,7 @@ mod tests {
                 table.insert(NO_TRANSACTION, vec![Value::Exact(Decimal::new(ROWS - k, 0))]).unwrap();
             }
             st.storage.insert(name.clone(), Arc::from(table));
-            let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0] };
+            let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0], backward: false };
             let read = execute(plan, &Arc::new(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>();
             if broken {
                 assert_eq!(read.err().map(|e| e.code), Some(Code::Io), "spilled");

@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 50] = [
+pub const MUTATIONS: [Mutation; 52] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -498,6 +498,24 @@ pub const MUTATIONS: [Mutation; 50] = [
         original: "                version.storage.taken_back(row);",
         replacement: "                let _ = row;",
         integration: &["index_only::entries_not_taken_back_keep_their_zone_read"],
+        unit: &[],
+    },
+    Mutation {
+        name: "ordered-backward",
+        breaks: "a sorted group read backward gives each vector's rows forward",
+        file: "src/engine/rows/frozen/ordered.rs",
+        original: "                part.keep.reverse();",
+        replacement: "                part.keep.rotate_left(0);",
+        integration: &["column_store::groups_read_in_their_order_answer_alike"],
+        unit: &[],
+    },
+    Mutation {
+        name: "ordered-heap",
+        breaks: "an ordered scan's merge moves a source down past one whose next row comes first",
+        file: "src/engine/rows/frozen/ordered.rs",
+        original: "if self.before(c, first) { c } else { first }",
+        replacement: "if self.before(first, c) { c } else { first }",
+        integration: &["column_store::groups_read_in_their_order_answer_alike"],
         unit: &[],
     },
 ];

@@ -1,9 +1,10 @@
-//! The row store's own methods: made over files, or in memory, and given
-//! the database's budget and work areas. Split from engine/rows.rs
+//! The row store's own methods: made over files, or in memory, given
+//! the database's budget and work areas, and told its settings. Split from engine/rows.rs
 //! (RULES.md R-SIZE-2).
 
-use crate::engine::columns::cache::HeaderCache;
+use crate::engine::columns::cache::{self, HeaderCache};
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::options::encodings_of;
@@ -14,6 +15,7 @@ use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::Result;
 use crate::log::MemoryLog;
 use crate::memory::MemoryBudget;
+use crate::settings::Configurable;
 use crate::spill::WorkAreas;
 use crate::sync::lock_builtin;
 
@@ -132,5 +134,26 @@ impl RowStore {
     /// Sets the options of `table`, for when it is created.
     pub fn configure(&self, table: QualifiedName, options: TableOptions) {
         lock_builtin(&self.tables).insert(table, options);
+    }
+}
+
+impl Configurable for RowStore {
+    /// The column store's, whose tables freeze rows into groups: the
+    /// bytes of their headers it holds (`columns/cache.rs`).
+    fn settings(&self) -> Vec<crate::settings::Definition> {
+        (self.name == COLUMN_STORE).then(|| cache::declared(self.name)).into_iter().collect()
+    }
+    /// The headers it holds; the pages its pool reads ahead, of its data
+    /// file's or in memory (STORAGE.READ_AHEAD_PAGES), which index methods
+    /// on the same pool share; and, over files on a disk, the bytes of
+    /// them the system's cache holds (STORAGE.SYSTEM_CACHE_BYTES).
+    fn configure(&self, settings: &crate::settings::Settings) {
+        if let Some(key) = settings.key(&cache::setting_name(self.name)) {
+            self.headers.set_most(settings.count(key));
+        }
+        self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
+        if let Some(cache) = &self.system_cache {
+            cache.store(u64::try_from(settings.count(crate::settings::SYSTEM_CACHE_BYTES)).unwrap_or(u64::MAX), Ordering::Release);
+        }
     }
 }

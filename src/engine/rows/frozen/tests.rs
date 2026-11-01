@@ -516,3 +516,16 @@ fn a_group_is_read_ahead_of_its_scan() {
     let batched = Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0, 1], None).map(|b| b.unwrap().rows).sum::<usize>();
     assert_eq!(batched, 5000_usize);
 }
+
+/// Verifies: [DESIGN] RULES.md D31, ordered reads: a group's runs are read
+/// a vector at a time, each part within its run: from the first run's
+/// first rows forward, from the last run's last rows backward.
+#[test]
+fn runs_are_read_a_vector_at_a_time_either_way() {
+    let parts = |backward: bool| {
+        let mut runs = std::collections::VecDeque::from([(0, 5_000), (6_000, 6_100)]);
+        std::iter::from_fn(|| super::ordered::next_part(&mut runs, backward)).collect::<Vec<_>>()
+    };
+    assert_eq!(parts(false), [(0, 2_048), (2_048, 4_096), (4_096, 5_000), (6_000, 6_100)]);
+    assert_eq!(parts(true), [(6_000, 6_100), (2_952, 5_000), (904, 2_952), (0, 904)]);
+}

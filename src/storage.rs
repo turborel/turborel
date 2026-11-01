@@ -22,10 +22,12 @@
 
 mod batch;
 mod condition;
+mod newest;
 mod options;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, Floats, Ints, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
+pub use newest::Newest;
 
 use std::sync::Arc;
 
@@ -263,11 +265,29 @@ pub trait TableStorage: Send + Sync {
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
     /// `conditions`, in the order of the columns `keys`, the first of
     /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3
-    /// GR3b], nulls as it puts them, ties in no particular order; none if it
-    /// cannot give them so. Default: none.
-    fn scan_ordered(self: Arc<Self>, tx: TxId, columns: &[usize], keys: &[usize], conditions: Option<&Conjunction>) -> Option<Rows> {
-        let _ = (tx, columns, keys, conditions);
+    /// GR3b], or each descending if `backward`, nulls as it puts them, ties
+    /// in no particular order; none if it cannot give them so. Default:
+    /// none.
+    fn scan_ordered(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        (keys, backward): (&[usize], bool),
+        conditions: Option<&Conjunction>,
+    ) -> Option<Rows> {
+        let _ = (tx, columns, keys, backward, conditions);
         None
+    }
+    /// \[DESIGN\] The rows `scan_ordered` gives, by batch, of `columns`;
+    /// none if it gives none. Default: its rows, gathered.
+    fn scan_ordered_batches(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        (keys, backward): (&[usize], bool),
+        conditions: Option<&Conjunction>,
+    ) -> Option<Batches> {
+        self.scan_ordered(tx, columns, (keys, backward), conditions).map(|rows| batches_of(rows, columns))
     }
     /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
     /// so a statement given rows a few at a time, a cursor's, reads them by
@@ -574,16 +594,4 @@ pub trait TableStorage: Send + Sync {
     fn rollback(&self, _tx: TxId) -> Result<()> {
         Ok(())
     }
-}
-
-/// \[DESIGN\] The newest state of a row, for checking UNIQUE against rows a
-/// transaction may not see (`TableStorage::newest`).
-#[derive(Debug, Clone)]
-pub struct Newest {
-    /// The newest committed version, or the transaction's own change: none
-    /// if the row is absent or deleted.
-    pub row: Option<Row>,
-    /// A change another open transaction made to it: the row it leaves,
-    /// none for a delete. While it is pending the row is in doubt.
-    pub pending: Option<Option<Row>>,
 }

@@ -73,8 +73,14 @@ impl PhysicalPlanner<'_> {
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
-            let plan =
-                Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows: 0, cost: 0.0_f64, order: Vec::new() };
+            let plan = Plan::SeqScan {
+                table: read.table.clone(),
+                columns: read.needed.to_vec(),
+                rows: 0,
+                cost: 0.0_f64,
+                order: Vec::new(),
+                backward: false,
+            };
             let cost = self.db.cost();
             let with =
                 Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64, most: 0.0_f64 };
@@ -87,7 +93,8 @@ impl PhysicalPlanner<'_> {
         let (plan, (found, most)) = match best.index {
             None => {
                 let order = best.order;
-                let plan = Plan::SeqScan { table: read.table.clone(), columns: read.needed.to_vec(), rows, cost: best.cost, order };
+                let (columns, backward) = (read.needed.to_vec(), best.reverse);
+                let plan = Plan::SeqScan { table: read.table.clone(), columns, rows, cost: best.cost, order, backward };
                 (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {
@@ -269,15 +276,16 @@ fn supports(method: &dyn IndexMethod, probe: &Probe, (width, ordering): (usize, 
 }
 
 /// `scan`, a scan of `storage`, read in the order of the columns it keeps
-/// its rows sorted by, if `want` asks for the first of them, all ascending
-/// (`TableStorage::scan_ordered`): no sort, its rows merged as they are
-/// read, so its cost is the scan's.
+/// its rows sorted by, if `want` asks for the first of them, all ascending,
+/// or, read backward, all descending (`TableStorage::scan_ordered`): no
+/// sort, its rows merged as they are read, so its cost is the scan's.
 fn in_order(storage: &dyn TableStorage, want: &[SortKey], scan: Path) -> Path {
     let keys: Vec<usize> = want.iter().map(|k| k.column).collect();
-    if want.is_empty() || want.iter().any(|k| k.descending) || !storage.ordered_by().starts_with(&keys) {
+    let Some(backward) = want.first().map(|k| k.descending) else { return scan };
+    if want.iter().any(|k| k.descending != backward) || !storage.ordered_by().starts_with(&keys) {
         return scan;
     }
-    Path { total: scan.cost, ordered: true, order: keys, ..scan }
+    Path { total: scan.cost, ordered: true, reverse: backward, order: keys, ..scan }
 }
 
 /// The cost of a scan of `storage` reading `needed` under `conds`, and the

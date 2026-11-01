@@ -1661,11 +1661,18 @@ write-ahead logging.
     call, until none is left, after a restart too.
 - **Ordered scans** (`TableStorage::scan_ordered`, `frozen/ordered.rs`).
   An ORDER BY of the option's first columns, each ascending, is answered
-  by a scan in their order, no sort planned. A heap merges, least key
-  (as ORDER BY sorts) first:
-  - each group's rows a vector at a time, only runs a condition may
-    match, less those with a tree entry;
+  by a scan in their order, no sort planned; of them each descending, by
+  the same scan read backward (EXPLAIN shows "backward"), so the option
+  needs no descending columns. A heap of sources merges, least key (as
+  ORDER BY sorts) first, or greatest backward, each source's next row
+  compared where it is, no key copied:
+  - each group's rows a vector at a time, each column decoded into a
+    vector, only runs a condition may match, less those with a tree
+    entry; backward, from its last run, each vector's rows reversed;
   - the tree's visible rows, sorted.
+  - It gives batches of the columns asked for alone
+    (`scan_ordered_batches`), no row made, to a statement read by batch,
+    or rows to one read by row.
   - A group sorted otherwise (option changed), and a scan the plan asked
     for that its table no longer gives in order, are read and sorted.
   - So only the merge's work remains of the sort.
@@ -1817,9 +1824,10 @@ write-ahead logging.
   in their rows' place; then the tree's other rows.
 - **Streams** (`exec/batch/stream.rs`). A plan subtree gives rows by
   batch (a stream) if it is:
-  - a table's scan; one in an order (`scan_ordered`) read so, its rows
-    gathered into batches, as a join or a grouping over it gives that
-    order with no sort;
+  - a table's scan; one in an order (`scan_ordered`) read so, merged by
+    batch (`scan_ordered_batches`), or its rows gathered into batches if
+    its table merges only rows, as a join or a grouping over it gives
+    that order with no sort;
   - a filter of one (told its condition's simple conjuncts) or of
     another stream, each batch with the rows kept;
   - a join of streams (`exec/batch/joined.rs`), the columns its keys and

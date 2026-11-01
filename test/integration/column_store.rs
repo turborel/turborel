@@ -515,21 +515,26 @@ fn approximate_numbers_answer_alike() {
 
 /// Queries in an order, `{t}` the table: of the columns it is sorted by,
 /// a filter among them, and of others or descending, which it sorts.
-const ORDERED: [&str; 6] = [
+const ORDERED: [&str; 10] = [
     "SELECT S, K FROM {t} ORDER BY S",
     "SELECT S, G, N FROM {t} ORDER BY S, G",
     "SELECT S, K FROM {t} WHERE G = 3 AND K > 1000 ORDER BY S",
     "SELECT S, K FROM {t} WHERE S = 's5' ORDER BY S",
     "SELECT S, K FROM {t} ORDER BY S DESC",
+    "SELECT S, G, N FROM {t} ORDER BY S DESC, G DESC",
+    "SELECT S, K FROM {t} WHERE G = 3 AND K > 1000 ORDER BY S DESC",
+    "SELECT S, G, N FROM {t} ORDER BY S DESC, G",
+    "SELECT G, S, N FROM {t} ORDER BY G DESC",
     "SELECT N, K FROM {t} ORDER BY N",
 ];
 
-/// The first column of each row of `sql`, in its order, and all of its
-/// rows sorted: two orders give the same if each sorts the same keys
-/// alike, whatever order their ties take.
+/// The columns of each row of `sql` its ORDER BY names, its first ones,
+/// in its order, and all of its rows sorted: two orders give the same if
+/// each sorts the same keys alike, whatever order their ties take.
 fn in_order(s: &Session, sql: &str) -> (Vec<String>, Vec<String>) {
     let found = rows(s, sql).unwrap();
-    let keys = found.iter().map(|r| r.split(',').next().unwrap_or_default().to_owned()).collect();
+    let named = sql.split("ORDER BY").nth(1).map_or(1, |keys| keys.split(',').count());
+    let keys = found.iter().map(|r| r.split(',').take(named).collect::<Vec<_>>().join(",")).collect();
     let mut all = found;
     all.sort();
     (keys, all)
@@ -540,9 +545,12 @@ fn in_order(s: &Session, sql: &str) -> (Vec<String>, Vec<String>) {
 /// gives an ORDER BY of the first of them, ascending, its rows merged as
 /// they are read, no sort planned: the rows a table of the row store gives
 /// in that order, nulls where ORDER BY puts them, with rows changed,
-/// deleted and not yet frozen among them, of a filter too; one descending,
-/// or of other columns, sorted; groups sorted otherwise, once the option
-/// names others, each sorted as it is read, then written again.
+/// deleted and not yet frozen among them, of a filter too; of them all
+/// descending, read backward, no sort planned either; by batch and a row
+/// at a time alike; of some descending
+/// and some not, or of other columns, sorted; groups sorted otherwise,
+/// once the option names others, each sorted as it is read, then written
+/// again.
 #[test]
 fn groups_read_in_their_order_answer_alike() {
     let db = Database::new();
@@ -559,7 +567,11 @@ fn groups_read_in_their_order_answer_alike() {
     alike("frozen");
     let plan = physical(&a, "SELECT S, K FROM O ORDER BY S");
     assert!(plan.contains("in order of") && !plan.contains("Sort"), "{plan}");
-    assert!(physical(&a, "SELECT S, K FROM O ORDER BY S DESC").contains("Sort"));
+    for descending in ["SELECT S, K FROM O ORDER BY S DESC", "SELECT S, G FROM O ORDER BY S DESC, G DESC"] {
+        let plan = physical(&a, descending);
+        assert!(plan.contains("backward") && !plan.contains("Sort"), "{plan}");
+    }
+    assert!(physical(&a, "SELECT S, G FROM O ORDER BY S DESC, G").contains("Sort"), "directions mixed");
     for table in ["O", "R"] {
         a.run(&format!("UPDATE {table} SET S = 'a changed' WHERE K < 40")).unwrap();
         a.run(&format!("DELETE FROM {table} WHERE K BETWEEN 900 AND 960")).unwrap();
@@ -568,13 +580,19 @@ fn groups_read_in_their_order_answer_alike() {
     alike("changed, not yet frozen");
     a.commit().unwrap();
     alike("committed");
+    exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    alike("read a row at a time");
+    exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
     // Named others, its groups sorted otherwise until written again: each
     // read and sorted.
     a.run("ALTER TABLE O SET (COLUMNSTORE.ORDER = 'G')").unwrap();
     a.commit().unwrap();
-    let by_g = "SELECT G, K FROM {t} ORDER BY G";
-    assert!(physical(&a, &by_g.replace("{t}", "O")).contains("in order of"));
-    assert_eq!(in_order(&a, &by_g.replace("{t}", "O")), in_order(&a, &by_g.replace("{t}", "R")), "groups sorted otherwise");
+    for by_g in ["SELECT G, K FROM {t} ORDER BY G", "SELECT G, K FROM {t} ORDER BY G DESC"] {
+        assert!(physical(&a, &by_g.replace("{t}", "O")).contains("in order of"));
+        assert_eq!(in_order(&a, &by_g.replace("{t}", "O")), in_order(&a, &by_g.replace("{t}", "R")), "groups sorted otherwise: {by_g}");
+    }
     db.maintain().unwrap();
-    assert_eq!(in_order(&a, &by_g.replace("{t}", "O")), in_order(&a, &by_g.replace("{t}", "R")), "groups written again");
+    for by_g in ["SELECT G, K FROM {t} ORDER BY G", "SELECT G, K FROM {t} ORDER BY G DESC"] {
+        assert_eq!(in_order(&a, &by_g.replace("{t}", "O")), in_order(&a, &by_g.replace("{t}", "R")), "groups written again: {by_g}");
+    }
 }

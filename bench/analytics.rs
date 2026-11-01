@@ -10,7 +10,9 @@
 //! for each group, by an inner join, the table its right operand, by
 //! LEFT, RIGHT and FULL outer joins, and as a product; joined with
 //! itself, its right operand past the work area; DISTINCT of an
-//! expression; sorted by a scattered column; EXCEPT and INTERSECT of
+//! expression; sorted by a scattered column, and by the column in the
+//! rows' order, ascending and descending, which FC's groups are sorted
+//! by and read in, forward and backward; EXCEPT and INTERSECT of
 //! half its keys; and one row fetched by its key, the transactional work
 //! beside them. Each is measured on F, a row store
 //! table, then on FC, a column store one; so is a grouping of W, of
@@ -124,7 +126,7 @@ fn by_index(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
     }
 }
 
-/// Measures the operators that hold rows: a sort, EXCEPT and INTERSECT of
+/// Measures the operators that hold rows: sorts, EXCEPT and INTERSECT of
 /// table `table`, and a grouping by key of `keyed` past the work area,
 /// their cases' names ending in `label`.
 fn holding(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)) {
@@ -137,6 +139,8 @@ fn holding(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)
     };
     let of = |sql: &str| sql.replace("{t}", table);
     bench.measure(case("ORDER BY a scattered column, 2 columns"), run(of("SELECT C, A FROM {t} ORDER BY C"), ROWS));
+    bench.measure(case("ORDER BY the column in the rows' order, 2 columns"), run(of("SELECT B, A FROM {t} ORDER BY B"), ROWS));
+    bench.measure(case("ORDER BY it descending, 2 columns"), run(of("SELECT B, A FROM {t} ORDER BY B DESC"), ROWS));
     bench.measure(case("EXCEPT of half the keys"), run(of("SELECT C FROM {t} EXCEPT SELECT B FROM {t} WHERE B < 100000"), ROWS));
     bench.measure(case("INTERSECT of half the keys"), run(of("SELECT C FROM {t} INTERSECT SELECT B FROM {t} WHERE B < 100000"), ROWS));
     bench.measure(
@@ -168,7 +172,8 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 
 /// Schema B with tables F, in the row store, and FC, in the column store,
 /// each of the same `ROWS` rows: K its key; G one of 10 groups; B
-/// in the order the rows are written, C scattered; the others numbers of
+/// in the order the rows are written, FC's groups sorted by it
+/// (COLUMNSTORE.ORDER), C scattered; the others numbers of
 /// a few distributions, E exact with a fraction, and S text; and D, of the
 /// row store, a name for each group, two for group 1, and one of none;
 /// W, in the row store, and WC, in the column store, of `KEYS` rows each,
@@ -182,7 +187,7 @@ fn database() -> Database {
              N INTEGER, O INTEGER, P INTEGER, S CHAR(16))
            CREATE TABLE FC (K INTEGER PRIMARY KEY, G INTEGER NOT NULL, A INTEGER, B INTEGER, C INTEGER,
              D INTEGER, E DECIMAL(9,2), H INTEGER, I INTEGER, J INTEGER, L INTEGER, M INTEGER,
-             N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) USING columnstore
+             N INTEGER, O INTEGER, P INTEGER, S CHAR(16)) USING columnstore WITH (COLUMNSTORE.ORDER = 'B')
            CREATE TABLE D (G INTEGER, NAME VARCHAR(10))
            CREATE TABLE W (K INTEGER NOT NULL, V INTEGER)
            CREATE TABLE WC (K INTEGER NOT NULL, V INTEGER) USING columnstore",

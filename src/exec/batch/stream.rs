@@ -119,8 +119,9 @@ fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
 /// (`TableStorage::reads_by_batch`).
 pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     match plan {
-        // A scan in an order is read a row at a time, its rows merged.
-        Plan::SeqScan { table, order, .. } => order.is_empty() && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
+        // A scan in an order too, merged by batch
+        // (`TableStorage::scan_ordered_batches`).
+        Plan::SeqScan { table, .. } => db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::Product { left, right } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
@@ -135,6 +136,25 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Values { .. }
         | Plan::System { .. } => false,
     }
+}
+
+/// The batches of `plan`, a scan in an order (`TableStorage::scan_ordered`),
+/// read in it: by batch where its table merges so, else its rows merged and
+/// gathered. A grouping or a join over it gives its rows in that order, as
+/// the planner relies on.
+///
+/// # Errors
+///
+/// As `batches`.
+fn ordered_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    if let Plan::SeqScan { table, columns, order, backward, .. } = &plan {
+        let storage = Arc::clone(db.storage_of(table)?);
+        if let Some(batches) = storage.scan_ordered_batches(tx, columns, (order, *backward), None) {
+            return Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))));
+        }
+    }
+    let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
+    Ok(joined::gathered(crate::exec::execute(plan, db, tx), &columns))
 }
 
 /// The batches of `plan`, a subtree that gives them (`layout`), as `tx`
@@ -155,14 +175,10 @@ pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
 ///
 /// As `open`.
 pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    // A scan in an order (`TableStorage::scan_ordered`) is read in it, its
-    // rows merged, and gathered into batches: a grouping or a join over it
-    // gives its rows in that order, as the planner relies on.
-    if let Plan::SeqScan { columns, order, .. } = &plan
+    if let Plan::SeqScan { order, .. } = &plan
         && !order.is_empty()
     {
-        let columns = columns.clone();
-        return Ok(joined::gathered(crate::exec::execute(plan, db, tx), &columns));
+        return ordered_batches(plan, db, tx);
     }
     match plan {
         Plan::SeqScan { table, columns, .. } => scan_of((&table, &columns, None), db, tx),
