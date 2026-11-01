@@ -223,7 +223,8 @@ fn a_failed_rotation_of_the_log_is_told() {
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, S CHARACTER(200))").unwrap();
-    faults.inject(crate::faults::Rule::fail(crate::faults::Op::Open).on(&format!("log{}segment-", std::path::MAIN_SEPARATOR)));
+    // A rule's `/` matches Windows' `\` too (`FaultyFs`).
+    faults.inject(crate::faults::Rule::fail(crate::faults::Op::Open).on("log/segment-"));
     let a = db.session("A");
     for k in 0..100 {
         a.run(&format!("INSERT INTO T VALUES ({k}, 'row {k}')")).unwrap();
