@@ -14,13 +14,18 @@
 
 mod changes;
 mod delta;
+mod fold;
 mod forms;
+mod kept;
 mod queried;
+mod totals;
 
 pub(super) use changes::Asserted;
+pub(super) use fold::folded;
 
 use std::sync::Arc;
 
+use super::alter::Made;
 use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::{State, plan, rule};
@@ -44,6 +49,9 @@ fn broken(name: &QualifiedName) -> SqlError {
 impl State {
     /// [ISO/IEC 9075:1992 §11.34] CREATE ASSERTION `a`, its names in schema
     /// `schema`: to be checked as its statement ends (`Defined::asserted`).
+    /// If it keeps totals, their table is made, of what `made` holds for
+    /// it, if given, and the tables it reads are held exclusive, so none
+    /// changes uncounted before it is published (`assertions/kept.rs`).
     ///
     /// # Errors
     ///
@@ -51,7 +59,7 @@ impl State {
     /// its name [SR2, SR7], a temporary table read [SR5], or a CHECK's
     /// rules [SR4, SR6, SR8]; -104 for REFERENCES its schema's owner lacks
     /// [AR2].
-    pub(super) fn create_assertion(&mut self, schema: &str, a: &AssertionDefinition) -> Result<Defined> {
+    pub(super) fn create_assertion(&mut self, schema: &str, a: &AssertionDefinition, made: Option<&Made>) -> Result<Defined> {
         let name = qualify(&a.name, schema);
         if !self.catalog.schema_exists(&name.auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.34 SR2] there is no schema {}", name.auth);
@@ -64,7 +72,8 @@ impl State {
         let kind =
             ConstraintKind::Check { text: a.check.text.clone(), names: schema.to_owned(), reads: Vec::new(), horizon: Horizon::default() };
         let mut desc = ConstraintDesc { name: name.clone(), kind, attributes: a.attributes, domain: None };
-        let reads = self.assertion_plan(&desc).or_at(a.name.at)?.tables();
+        let plan = self.assertion_plan(&desc).or_at(a.name.at)?;
+        let reads = plan.tables();
         // The columns it sees of each: those of now, as a CHECK's.
         let seen = Horizon::of(&*self.catalog, &reads);
         // [SR5] no temporary table.
@@ -77,27 +86,34 @@ impl State {
         }
         let mut catalog = self.catalog.duplicate();
         catalog.put_assertion(desc);
+        let built = self.make_kept(&mut *catalog, (&name, &plan), made)?;
         self.catalog = Arc::from(catalog);
-        let locks = reads.into_iter().map(|t| (t, LockMode::Shared)).collect();
-        Ok(Defined { locks, asserted: Some(name), ..Defined::default() })
+        let held = if built.is_some() { LockMode::Exclusive } else { LockMode::Shared };
+        let locks = reads.into_iter().map(|t| (t, held)).collect();
+        Ok(Defined { locks, asserted: Some(name), made: built, ..Defined::default() })
     }
 
     /// The assertions of `<schema>` `s`, made once its tables and views
-    /// are: their names.
+    /// are, each of what `made` holds for its kept totals' table, if given,
+    /// what they make added to `built`: their names.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if one is named in another schema [§11.34 SR1], or as
     /// `create_assertion` says.
-    pub(super) fn schema_assertions(&mut self, s: &Schema) -> Result<Vec<QualifiedName>> {
+    pub(super) fn schema_assertions(&mut self, s: &Schema, (made, built): (Option<&Made>, &mut Made)) -> Result<Vec<QualifiedName>> {
         let mut names = Vec::new();
         for a in &s.assertions {
             if let Some(other) = a.name.auth.as_ref().filter(|o| **o != s.name) {
                 let msg = format!("[ISO/IEC 9075:1992 §11.34 SR1] assertion {} is in schema {other}, not {}", a.name.ident, s.name);
                 return Err(rule(msg).or_at(a.name.at));
             }
-            self.create_assertion(&s.name, a)?;
-            names.push(qualify(&a.name, &s.name));
+            let name = qualify(&a.name, &s.name);
+            let kept = kept::kept_name(&name);
+            if let Some(table) = self.create_assertion(&s.name, a, made.and_then(|m| m.of_table(&kept)))?.made {
+                built.tables.push((kept, table));
+            }
+            names.push(name);
         }
         Ok(names)
     }
@@ -180,18 +196,23 @@ impl State {
     /// [ISO/IEC 9075:1992 §11.1, §11.34 GR2] That the assertions `names`
     /// of a `<schema definition>` just made are not false: outside any
     /// session's transaction, in one of their own that reads the newest
-    /// committed rows.
+    /// committed rows, which writes the totals they keep (`kept.rs`): it,
+    /// to be committed once the schema is logged, so recovery makes their
+    /// tables before it reads their rows.
     ///
     /// # Errors
     ///
-    /// SQLCODE -201, SQLSTATE 23000, about the first that is.
-    pub(super) fn check_new_assertions(&self, names: &[QualifiedName]) -> Result<()> {
+    /// SQLCODE -201, SQLSTATE 23000, about the first that is; the totals'
+    /// reads' and writes'.
+    pub(super) fn check_new_assertions(&self, names: &[QualifiedName]) -> Result<Option<(Arc<State>, Txn)>> {
         if names.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let probe = Arc::new(self.clone());
         let tx = probe.begin();
-        names.iter().try_for_each(|n| probe.check_assertion(&tx, n))
+        let checked = names.iter().try_for_each(|n| probe.check_assertion(&tx, n).and_then(|()| probe.start_totals(&tx, n)));
+        checked.or_else(|e| probe.rollback(&tx).and(Err(e)))?;
+        Ok(Some((probe, tx)))
     }
 
     /// [ISO/IEC 9075:1992 §11.35] Drops assertion `qn` [GR1].
@@ -205,18 +226,21 @@ impl State {
         }
         let mut catalog = self.catalog.duplicate();
         catalog.remove_assertion(qn);
+        let mut dropped = Dropped { names: vec![qn.clone()], ..Dropped::default() };
+        self.drop_kept(&mut *catalog, qn, &mut dropped);
         self.catalog = Arc::from(catalog);
-        Ok(Dropped { names: vec![qn.clone()], ..Dropped::default() })
+        Ok(dropped)
     }
 
     /// The assertions that read any of `gone`, dropped with them if
-    /// `cascade` [§11.37 GR5]: their names.
+    /// `cascade` [§11.37 GR5], with the tables of their kept totals: what
+    /// was taken away.
     ///
     /// # Errors
     ///
     /// SQLCODE -103, not `cascade`, if one does, as the Syntax Rule `cited`
     /// says [§11.18 SR4, §11.20 SR3].
-    pub(super) fn drop_asserting(&mut self, gone: &[&QualifiedName], (cascade, cited): (bool, &str)) -> Result<Vec<QualifiedName>> {
+    pub(super) fn drop_asserting(&mut self, gone: &[&QualifiedName], (cascade, cited): (bool, &str)) -> Result<Dropped> {
         let reading = |a: &ConstraintDesc| {
             let ConstraintKind::Check { reads, .. } = &a.kind else { return false };
             reads.iter().any(|r| gone.contains(&r))
@@ -225,23 +249,26 @@ impl State {
         if let (Some(a), false) = (asserting.first(), cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 {cited}] assertion {a} reads it, so it is dropped only with CASCADE")));
         }
-        let mut catalog = self.catalog.duplicate();
+        let (mut catalog, mut dropped) = (self.catalog.duplicate(), Dropped::default());
         for a in &asserting {
             catalog.remove_assertion(a);
+            self.drop_kept(&mut *catalog, a, &mut dropped);
         }
         self.catalog = Arc::from(catalog);
-        Ok(asserting)
+        dropped.names.extend(asserting);
+        Ok(dropped)
     }
 
     /// [ISO/IEC 9075:1992 §11.15 SR4] The assertions that refer to the
     /// column `at` of `desc`, a column dropped: those that bind no more
-    /// without it, dropped if `cascade` [§11.37 GR5], their names; the
-    /// others that read the table seeing one column fewer of it.
+    /// without it, dropped if `cascade` [§11.37 GR5], with the tables of
+    /// their kept totals, what was taken away; the others that read the
+    /// table seeing one column fewer of it.
     ///
     /// # Errors
     ///
     /// SQLCODE -103, not `cascade`, if one refers to it.
-    pub(super) fn drop_column_asserting(&mut self, desc: &TableDesc, at: usize, cascade: bool) -> Result<Vec<QualifiedName>> {
+    pub(super) fn drop_column_asserting(&mut self, desc: &TableDesc, at: usize, cascade: bool) -> Result<Dropped> {
         let mut next = desc.clone();
         next.columns.remove(at);
         let without = self.without_column(&next);
@@ -266,14 +293,16 @@ impl State {
                 )));
             }
         }
-        let mut catalog = self.catalog.duplicate();
+        let (mut catalog, mut dropped) = (self.catalog.duplicate(), Dropped::default());
         for a in &broken {
             catalog.remove_assertion(a);
+            self.drop_kept(&mut *catalog, a, &mut dropped);
         }
         for a in kept {
             catalog.put_assertion(a);
         }
         self.catalog = Arc::from(catalog);
-        Ok(broken)
+        dropped.names.extend(broken);
+        Ok(dropped)
     }
 }

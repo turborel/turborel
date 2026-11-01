@@ -80,7 +80,9 @@ a table it reads ([CREATE ASSERTION](../sql/statements/create-assertion.md)).
 That no row has a condition, or that a count of rows, or their greatest
 or least value, stays within a bound, is checked from the rows the
 statement changed, not the tables whole, as CREATE ASSERTION tells; so
-is that no rows of a join, or no group of a table's rows, have one.
+is that no rows of a join, or no group of a table's rows, have one; and
+a SUM or an average of exact numbers within a bound, from totals the
+assertion keeps.
 
 ## Deferred checking
 

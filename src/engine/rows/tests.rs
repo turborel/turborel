@@ -3,8 +3,8 @@
 //! older version kept for open readers, deleted rows not written, the
 //! versions and the garbage read as of a time, a dropped table's pages
 //! freed, a fetch priced by what its table reads and by the system's
-//! cache, and the pages its
-//! pool reads ahead as the settings say (RULES.md
+//! cache, the pages its pool reads ahead as the settings say, and writes
+//! that keep what every snapshot reads failing no reader (RULES.md
 //! R-TEST-1, R-TEST-2, R-TEST-7). Split from rows.rs
 //! (RULES.md R-SIZE-2).
 
@@ -114,6 +114,45 @@ fn deleted_rows_cannot_be_written() {
     table.begin(12, 2).unwrap();
     assert_eq!(code(table.update(12, b, row())), Some(Code::Api), "a deletion it sees");
     assert_eq!(code(table.update(10, b, row())), Some(Code::Conflict), "a deletion after its snapshot");
+}
+
+/// Verifies: [DESIGN] RULES.md D29, `TableStorage::preserving`: a
+/// transaction whose writes keep what every snapshot reads fails no reader
+/// of the rows it rewrites, and none fails it; the same writes of another
+/// transaction fail the reader at its commit.
+#[test]
+fn preserving_writes_fail_no_reader() {
+    let scratch = Scratch::new("unit-preserving");
+    for preserving in [true, false] {
+        let pager = Pager::create(
+            &OsFileSystem,
+            &scratch.path(&format!("rows-{preserving}")),
+            Arc::new(Crc::new(CRC32_ISCSI).unwrap()),
+            Pipeline::none(),
+            4096,
+        )
+        .unwrap();
+        let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+        let file = pool.add_pager(Arc::new(pager));
+        let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+        let table = RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap();
+        let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
+        let a = table.insert(crate::txn::NO_TRANSACTION, row("a")).unwrap();
+        table.begin(20, 1).unwrap();
+        assert!(table.get(20, a).unwrap().is_some(), "read by the reader");
+        table.insert(20, row("r")).unwrap();
+        table.begin(21, 1).unwrap();
+        if preserving {
+            table.preserving(21).unwrap();
+        }
+        assert!(table.get(21, a).unwrap().is_some());
+        table.delete(21, a).unwrap();
+        table.insert(21, row("a")).unwrap();
+        table.validate(21, 2).unwrap();
+        table.commit(21, 2);
+        let reader = table.validate(20, 3).err().map(|e| e.code);
+        assert_eq!(reader, if preserving { None } else { Some(Code::Conflict) }, "preserving {preserving}");
+    }
 }
 
 /// Verifies: [DESIGN] `TableStorage::versions`, what an index build counts:

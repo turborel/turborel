@@ -19,11 +19,16 @@ use crate::txn::{Timestamp, TxId};
 
 impl RowTable {
     /// Two-sided validation of `tx` at `at` (see the module's
-    /// documentation).
+    /// documentation); none of one whose writes keep what every snapshot
+    /// reads (`TableStorage::preserving`), which no other is checked
+    /// against either.
     pub(in crate::engine::rows) fn validate_open(&self, tx: TxId, at: Timestamp) -> Result<()> {
         let mut me = {
             let open = self.open_of(tx)?;
             let mut open = lock_builtin(&open);
+            if open.preserving {
+                return Ok(());
+            }
             let wrote_many = open.changes.len() > self.versions.tracked();
             let mut writes = MurmurSet::default();
             if !wrote_many {

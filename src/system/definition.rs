@@ -179,7 +179,13 @@ pub(super) struct Object {
 /// A view of the Information Schema does not bind: a defect.
 pub(super) fn objects(seen: &Seen<'_>) -> Result<Vec<Object>> {
     let st = seen.state;
-    let tables = st.catalog.tables().into_iter().map(|t| Object { name: t.name.clone(), view: false, columns: t.columns.clone() });
+    // Not the database's own tables of DEFINITION_SCHEMA, of an assertion's
+    // kept totals, as none of its system tables is.
+    let tables = st.catalog.tables().into_iter().filter(|t| t.name.auth != DEFINITION_SCHEMA).map(|t| Object {
+        name: t.name.clone(),
+        view: false,
+        columns: t.columns.clone(),
+    });
     let views = st.catalog.views().into_iter().map(|v| Object { name: v.name.clone(), view: true, columns: v.columns.clone() });
     let mut system: Vec<Object> = st
         .system

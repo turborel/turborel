@@ -476,6 +476,10 @@ impl TableStorage for RowTable {
         self.read_mode_of(tx, mode)
     }
 
+    fn preserving(&self, tx: TxId) -> Result<()> {
+        self.preserving_of(tx)
+    }
+
     fn savepoint(&self, tx: TxId) -> u64 {
         u64::try_from(self.changes(tx)).unwrap_or(u64::MAX)
     }

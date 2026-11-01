@@ -313,8 +313,10 @@ impl State {
         }
         // [GR5] DROP ASSERTION.
         for a in &abandoned.assertions {
-            self.drop_assertion(a)?;
-            locks.push((a.clone(), LockMode::Exclusive));
+            // With the table of its kept totals, if any.
+            let taken = self.drop_assertion(a)?;
+            dropped.storage.extend(taken.storage);
+            locks.extend(taken.names.into_iter().map(|name| (name, LockMode::Exclusive)));
         }
         Ok((dropped, locks))
     }

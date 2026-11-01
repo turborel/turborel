@@ -77,6 +77,7 @@ impl Session {
                 }
                 if let Some(a) = &defined.asserted {
                     next.check_assertion(tx, a)?;
+                    next.start_totals(tx, a)?;
                 }
                 // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
                 let padding = held.first().and_then(|(named, _)| next.padding_of_statement(statement, named));
@@ -137,9 +138,11 @@ impl Session {
 impl Session {
     /// Whether the session's authorization identifier owns the schema
     /// `schema` [ISO/IEC 9075:1992 §11.1 GR2] (`owner_of`): the Access Rule
-    /// of every statement that defines or changes what is in it.
+    /// of every statement that defines or changes what is in it. None owns
+    /// DEFINITION_SCHEMA, the database's own, whose tables of kept totals
+    /// (`db/assertions/kept.rs`) no statement names [§21.1].
     pub(super) fn owns_schema(&self, st: &State, schema: &str) -> bool {
-        owner_of(&*st.catalog, schema) == *self.auth()
+        schema != crate::system::DEFINITION_SCHEMA && owner_of(&*st.catalog, schema) == *self.auth()
     }
 }
 
@@ -159,7 +162,7 @@ impl State {
             SchemaStatement::Grant(p) => self.grant(auth, schema, p),
             SchemaStatement::Revoke(r) => self.revoke((auth, schema), r),
             SchemaStatement::Domain(d) => self.create_domain((schema, zone), d),
-            SchemaStatement::Assertion(a) => self.create_assertion(schema, a),
+            SchemaStatement::Assertion(a) => self.create_assertion(schema, a, made),
             SchemaStatement::AlterDomain(a) => self.alter_domain((schema, zone), a),
         }
     }

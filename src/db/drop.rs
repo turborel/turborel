@@ -225,7 +225,7 @@ impl State {
             catalog.revoke_all(view);
         }
         self.catalog = Arc::from(catalog);
-        dropped.names.extend(self.drop_asserting(&gone, (cascade, cited))?);
+        dropped.absorb(self.drop_asserting(&gone, (cascade, cited))?);
         dropped.names.extend(views);
         Ok(dropped)
     }

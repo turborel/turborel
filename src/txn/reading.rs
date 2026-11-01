@@ -45,7 +45,7 @@ impl Txn {
     }
 
     /// How it reads now, as its participants are told.
-    pub(super) fn read_mode(&self) -> ReadMode {
+    pub(crate) fn read_mode(&self) -> ReadMode {
         ReadMode { snapshot: self.snapshot(), checked: self.reading == Reading::Serializable || self.checking.load(Ordering::SeqCst) }
     }
 

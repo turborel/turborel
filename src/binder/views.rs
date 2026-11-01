@@ -107,6 +107,11 @@ pub(super) fn named(db: &State, name: &QualifiedName, reader: Reader<'_>) -> Res
         let desc = TableDesc { columns: described(&bound.columns), ..unconstrained(name) };
         return Ok(Named { desc, source: Source::Derived(bound.plan) });
     }
+    // [§21.1] The database's own tables there, of kept totals, as the
+    // Definition Schema's, no statement names.
+    if name.auth == DEFINITION_SCHEMA {
+        return Err(rule(format!("[ISO/IEC 9075:1992 §21.1] the Definition Schema cannot be accessed in an SQL-statement: {name}")));
+    }
     if let Some(desc) = db.catalog.table(name) {
         return Ok(Named { desc: desc.clone(), source: Source::Table });
     }

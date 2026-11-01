@@ -105,7 +105,17 @@ one table's row, through the filters and columns of views of it. Where
 KEY, not DEFERRABLE, nor one `p` is not true of when null), the warning
 of a null eliminated depends on every row: the assertion is checked from
 the change only if a row of it has `x` null, or a warning was raised
-already, else whole. SUM and AVG are checked whole.
+already, else whole. `(SELECT SUM(x) FROM T WHERE p)` compared with a
+constant, and AVG compared with an exact one, `x` of exact numbers, are
+judged of totals the assertion keeps: the values counted, the nulls and
+their sum, as each transaction sees them, with what the statement
+changed; out of range, the sum raises 22003 as it would checked whole.
+So are the nulls of `x` of the other forms, when it may be null. Two
+transactions conflict at commit (SQLCODE -911) only if both move the
+sum, or the mean, the same way: the sum either way, the mean toward its
+bound; equal or unequal, any two. SUM and AVG of approximate numbers,
+or of DISTINCT, are checked whole.
+INFORMATION_SCHEMA.ASSERTION_TOTALS shows the totals.
 `NOT EXISTS`, and MAX or MIN bounded, may be of inner joins of tables
 too, a table joined to itself among them: the rows the statement
 inserted or updated of each table are joined to the others as they are

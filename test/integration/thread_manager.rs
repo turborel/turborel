@@ -116,6 +116,7 @@ fn threads_are_shown_to_the_owner() {
     let owner = db.session("OWNER");
     let expected = |state: &str, runs: u32| {
         Ok(vec![
+            "turborel-assertion-totals,IDLE,NO,0,0,NULL".to_owned(),
             "turborel-checkpoint,IDLE,NO,0,0,NULL".to_owned(),
             "turborel-log-sync,IDLE,NO,0,0,NULL".to_owned(),
             format!("turborel-maintenance,{state},NO,{runs},0,NULL"),

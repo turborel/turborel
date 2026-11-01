@@ -220,8 +220,8 @@ impl State {
         let with_views = mem::replace(&mut self.catalog, saved);
         let (granted, warned): (Vec<_>, Vec<_>) = defined?.into_iter().unzip();
         self.check_new_objects(&descs)?;
-        let built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
-        let asserted = self.schema_assertions(&s)?;
+        let mut built = self.apply_schema(&*with_views, &descs, granted.concat(), made)?;
+        let asserted = self.schema_assertions(&s, (made, &mut built))?;
         Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned.contains(&true), asserted, built))
     }
 

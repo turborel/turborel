@@ -207,6 +207,10 @@ pub(crate) struct TxState {
     /// one as it was last inserted (`Index::insert_alone`): no other row
     /// to look for at a statement's end (`db/assignment.rs`).
     alone: HashSet<(String, crate::storage::RowId)>,
+    /// Of each table of an assertion's kept totals and form, the row it
+    /// wrote of its change, each statement's added to it
+    /// (`db/assertions/kept.rs`).
+    kept_rows: HashMap<(QualifiedName, usize), crate::storage::RowId>,
 }
 
 /// \[DESIGN\] What every snapshot of a database shares about transactions:
@@ -258,6 +262,9 @@ pub(crate) struct Transactions {
     uncollected: Mutex<BTreeSet<QualifiedName>>,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
+    /// The tables of assertions' kept totals with rows to fold
+    /// (`db/assertions/fold.rs`).
+    folds: Mutex<BTreeSet<QualifiedName>>,
     /// What cancels the statements of each open transaction, for a plan's
     /// scans to look at (`txn/stop.rs`).
     stops: Mutex<HashMap<TxId, Arc<Stop>>>,
@@ -316,6 +323,7 @@ impl Default for Transactions {
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
             maintenance: Mutex::new(BTreeSet::new()),
+            folds: Mutex::new(BTreeSet::new()),
             stops: Mutex::new(HashMap::new()),
             names: Mutex::new(HashMap::new()),
         }

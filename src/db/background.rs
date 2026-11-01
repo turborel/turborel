@@ -1,7 +1,8 @@
 //! \[DESIGN\] A database's background work (RULES.md D55): its jobs, its
 //! checkpoints (`db/checkpoint.rs`), its maintenance
-//! (`db/maintenance.rs`), its log's syncs (`db/log_sync.rs`) and its
-//! scans' read-ahead (`disk/buffer/ahead.rs`), run by the thread manager (`threads.rs`) as
+//! (`db/maintenance.rs`), its log's syncs (`db/log_sync.rs`), its
+//! scans' read-ahead (`disk/buffer/ahead.rs`) and the folding of its
+//! assertions' kept totals (`db/assertions/fold.rs`), run by the thread manager (`threads.rs`) as
 //! JOBS.POLICY says; and how a program runs them, sees them, and sets
 //! the policy.
 
@@ -9,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::Database;
+use super::assertions::folded;
 use super::checkpoint::checkpointed;
 use super::log_sync::log_synced;
 use super::maintenance::maintained;
@@ -31,6 +33,9 @@ const LOG_SYNC: &str = "turborel-log-sync";
 /// The label of a database's job and thread reading ahead of its scans
 /// (RULES.md D30).
 const READ_AHEAD: &str = "turborel-read-ahead";
+/// The label of a database's job and thread folding the rows of its
+/// assertions' kept totals (RULES.md D51).
+const ASSERTION_TOTALS: &str = "turborel-assertion-totals";
 /// \[DESIGN\] How long after a failure, or a round that did no work while
 /// some is still due, maintenance looks again unasked: a second, as a
 /// freeze may be waiting out COLUMNSTORE.FREEZE_DELAY.
@@ -44,18 +49,21 @@ pub(super) struct Background {
     maintenance: JobId,
     log_sync: JobId,
     read_ahead: JobId,
+    folds: JobId,
     pub(super) maintenance_turn: Turn,
 }
 
 impl Background {
     /// The background work of a database whose snapshots share `jobs`:
-    /// its checkpoint, maintenance, log sync and read-ahead jobs added.
+    /// its checkpoint, maintenance, log sync, read-ahead and folding jobs
+    /// added.
     pub(super) fn over(jobs: Arc<Jobs>) -> Background {
         let checkpoint = jobs.add(CHECKPOINT, Work::Own(checkpointed), None);
         let maintenance = jobs.add(MAINTENANCE, Work::Own(maintained), Some(AGAIN));
         let log_sync = jobs.add(LOG_SYNC, Work::Own(log_synced), None);
         let read_ahead = jobs.add(READ_AHEAD, Work::Own(read_queued), None);
-        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, maintenance_turn: Turn::default() }
+        let folds = jobs.add(ASSERTION_TOTALS, Work::Own(folded), None);
+        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, folds, maintenance_turn: Turn::default() }
     }
 }
 
@@ -154,6 +162,14 @@ impl Database {
     /// Asks for the maintenance job.
     pub(super) fn request_maintenance(&self) {
         self.background().jobs.request(self.background().maintenance, self, self.job_policy());
+    }
+
+    /// Asks for the job folding kept totals, if a table of them has rows to
+    /// fold (`db/assertions/fold.rs`).
+    pub(super) fn fold_if_due(&self) {
+        if self.snapshot().is_ok_and(|st| st.tx.folds_due()) {
+            self.background().jobs.request(self.background().folds, self, self.job_policy());
+        }
     }
 
     /// Asks for the log sync job, `after` from now.

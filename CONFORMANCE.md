@@ -383,11 +383,13 @@ restriction is lifted.
   schema definition too, checked as it is made and at the end of each
   statement that changes a table it reads, from the rows it changed where
   the assertion's form allows, of one table, an inner join or a grouping,
-  or at commit if deferred, and set by SET
+  a SUM or AVG of exact numbers judged of totals it keeps, or at commit
+  if deferred, and set by SET
   CONSTRAINTS; DROP ASSERTION; a table or column it reads
   dropped only with CASCADE, which takes it, as DROP SCHEMA does. In the
   Information Schema: ASSERTIONS, CHECK_CONSTRAINTS and the constraint
-  usage views.
+  usage views; and \[EXTENSION\] ASSERTION_TOTALS, the totals kept, in
+  tables of DEFINITION_SCHEMA that no statement names [§21.1].
 - **Cursors** [§13.1, §13.3]: SCROLL, with FETCH's every orientation
   (NEXT, PRIOR, FIRST, LAST, ABSOLUTE, RELATIVE) and FROM; INSENSITIVE;
   the `<updatability clause>`, FOR READ ONLY or FOR UPDATE [OF columns],

@@ -44,9 +44,12 @@
 //!   MIN alike, the sides turned.
 //!
 //! DISTINCT changes no greatest or least [GR2], so MAX and MIN may have it.
-//! SUM and AVG have no form: their value, and whether they overflow [GR2b
-//! iv], depend on every row, overflow judged of the final total. Nor does
-//! a set function a plug-in replaced.
+//! - `SUM(x) op k`, `AVG(x) op k`, `x` exact numbers, not DISTINCT, and of
+//!   AVG `k` exact: their value, and whether SUM's overflows [GR2b iv],
+//!   depend on every row, so they are judged of totals kept of them
+//!   (`Kind::Total`, `kept.rs`). Of approximate numbers, whose sum
+//!   depends on the order added, there is no form; nor of a set function
+//!   a plug-in replaced.
 //!
 //! The rows of no row passing, and of MAX or MIN bounded, may be those of a
 //! query too, not of one table: inner joins, or a grouping of one table's
@@ -128,6 +131,28 @@ pub(super) enum Kind {
     /// The greatest or least is not equal to a constant: true if `beyond`
     /// is true of one of them, and kept by rows added of `within` true.
     Apart { beyond: Cond, within: Cond },
+    /// SUM or AVG of exact numbers compares so with a constant: judged of
+    /// the totals kept of it, with the change's (`kept.rs`).
+    Total(Totalled),
+}
+
+/// A SUM or AVG of exact numbers compared with a constant: the set
+/// function, called as the query calls it, of its argument `x`, compared
+/// with `k` by `op`, the set function first.
+#[derive(Clone)]
+pub(super) struct Totalled {
+    pub(super) agg: AggCall,
+    pub(super) x: Expr,
+    pub(super) avg: bool,
+    pub(super) op: CompOp,
+    pub(super) k: Expr,
+}
+
+impl std::fmt::Debug for Totalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = if self.avg { "AVG" } else { "SUM" };
+        write!(f, "{name}({:?}) {:?} {:?}", self.x, self.op, self.k)
+    }
 }
 
 /// The changes of a count that cannot make its comparison false.
@@ -255,7 +280,17 @@ fn table_aggregate_form(
         (Standard::Min, CompOp::Eq) => vec![bound(CompOp::Ge), form(None, Kind::Reach(compared(CompOp::Le)))],
         (Standard::Max, CompOp::Ne) => vec![form(None, Kind::Apart { beyond: compared(CompOp::Gt), within: compared(CompOp::Lt) })],
         (Standard::Min, CompOp::Ne) => vec![form(None, Kind::Apart { beyond: compared(CompOp::Lt), within: compared(CompOp::Gt) })],
-        (Standard::Sum | Standard::Avg, _) => return None,
+        (Standard::Sum | Standard::Avg, _) => {
+            // Of exact numbers, each value once: approximate ones depend on
+            // the order added, DISTINCT on every value's others. AVG's
+            // bound exact, so which side of it a change moves the mean to
+            // is exact too (`kept::moves`).
+            let exact_bound = matches!(k, Expr::Const(crate::value::Value::Exact(_)));
+            let exact =
+                matches!(agg.result, crate::value::DataType::Exact { .. }) && !agg.distinct && (function == Standard::Sum || exact_bound);
+            let totalled = Totalled { agg: agg.clone(), x: x.clone(), avg: function == Standard::Avg, op, k: k.clone() };
+            return exact.then(|| vec![form(None, Kind::Total(totalled))]);
+        }
     })
 }
 

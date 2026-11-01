@@ -441,10 +441,12 @@ impl Session {
             self.db.hold_in_doubt(tx);
         }
         self.temporaries_ended(st, id);
-        // The transaction has ended: a checkpoint, maintenance, or a sync
-        // of the log its commit did not wait for, may come due.
+        // The transaction has ended: a checkpoint, maintenance, a fold of
+        // kept totals, or a sync of the log its commit did not wait for,
+        // may come due.
         self.db.checkpoint_if_due();
         self.db.maintain_if_due();
+        self.db.fold_if_due();
         self.db.sync_log_if_due();
         ended
     }

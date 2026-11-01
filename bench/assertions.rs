@@ -1,9 +1,9 @@
 //! How fast statements run that change a table an assertion reads: an
 //! INSERT, an UPDATE and a DELETE of one row of a table of many, under an
 //! assertion that no row breaks a rule, and under one that bounds the
-//! table's rows; the same INSERT under an assertion of another form,
-//! checked over the whole table; and under an assertion of a join, and of
-//! a grouping, each beside the same assertion checked whole. Run with
+//! table's rows; and the same INSERT under an assertion of a SUM, judged
+//! of the totals it keeps, of a join, and of a grouping, each beside the
+//! same assertion checked whole. Run with
 //! `cargo xtask bench`, on the harness (RULES.md R-BENCH-1).
 
 #![allow(
@@ -69,21 +69,22 @@ fn main() {
 
 /// The tables each INSERT is of, the assertion it is under, and how many
 /// make a run: fewer of a check reading its tables whole.
-const INSERTED: [(&str, &str, u64); 7] = [
+const INSERTED: [(&str, &str, u64); 8] = [
     ("R", "a row rule", STATEMENTS),
     ("C", "a bound on its rows", STATEMENTS),
-    ("W", "a whole check", STATEMENTS),
+    ("W", "a sum kept", STATEMENTS),
+    ("WW", "a sum checked whole", STATEMENTS / 10),
     ("P", "a join", STATEMENTS),
     ("PW", "a join checked whole", STATEMENTS / 10),
     ("H", "a grouping", STATEMENTS),
     ("HW", "a grouping checked whole", STATEMENTS / 10),
 ];
 
-/// Schema B's tables, each filled, and the assertions on them: of a join
-/// of P and Q, and of a grouping of H, each beside the same checked whole,
-/// of PW and QW, and of HW.
+/// Schema B's tables, each filled, and the assertions on them: of a SUM
+/// of W, a join of P and Q, and a grouping of H, each beside the same
+/// checked whole, of WW, PW and QW, and HW.
 fn asserted(db: &Database, s: &Session) {
-    let tables = ["R", "C", "W", "P", "Q", "PW", "QW", "H", "HW"];
+    let tables = ["R", "C", "W", "WW", "P", "Q", "PW", "QW", "H", "HW"];
     let made: Vec<String> = tables.iter().map(|t| format!("CREATE TABLE {t} (K INTEGER NOT NULL, N INTEGER)")).collect();
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION B {}", made.join(" "))).unwrap();
     for table in tables {
@@ -92,6 +93,7 @@ fn asserted(db: &Database, s: &Session) {
     s.run("CREATE ASSERTION NO_NEGATIVE CHECK (NOT EXISTS (SELECT * FROM R WHERE N < 0 OR N > K + 100000))").unwrap();
     s.run("CREATE ASSERTION BOUNDED CHECK ((SELECT COUNT(*) FROM C) <= 1000000)").unwrap();
     s.run("CREATE ASSERTION SUMMED CHECK ((SELECT SUM(N) FROM W) >= 0)").unwrap();
+    s.run("CREATE ASSERTION SUMMEDW CHECK ((SELECT SUM(N) FROM WW) >= 0 AND 1 = 1)").unwrap();
     for (name, whole) in [("", ""), ("W", " AND 1 = 1")] {
         let joined = format!("NOT EXISTS (SELECT * FROM P{name}, Q{name} WHERE P{name}.K = Q{name}.K AND P{name}.N > Q{name}.N){whole}");
         s.run(&format!("CREATE ASSERTION JOINED{name} CHECK ({joined})")).unwrap();

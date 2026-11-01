@@ -136,6 +136,10 @@ struct Open {
     checked: bool,
     /// The snapshot it read at when it first recorded a read.
     reads_since: Option<Timestamp>,
+    /// Whether its writes keep what every snapshot reads
+    /// (`TableStorage::preserving`): then no commit is checked against it,
+    /// nor it against any.
+    preserving: bool,
 }
 
 /// A transaction validated in the table: kept while one could still be
@@ -286,7 +290,7 @@ impl RowTable {
     pub(super) fn begin_open(&self, tx: TxId, snapshot: Timestamp) {
         let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let changes = SpillList::new(self.versions.space());
-        let made = || Open { snapshot, changes, reads: Reads::default(), checked: true, reads_since: None };
+        let made = || Open { snapshot, changes, reads: Reads::default(), checked: true, reads_since: None, preserving: false };
         open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
     }
 
@@ -295,7 +299,18 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let mut open = lock_builtin(&open);
         open.snapshot = open.snapshot.max(mode.snapshot);
-        open.checked = mode.checked;
+        open.checked = mode.checked && !open.preserving;
+        Ok(())
+    }
+
+    /// Marks `tx`'s writes as keeping what every snapshot reads, and its
+    /// reads unchecked (`TableStorage::preserving`).
+    pub(super) fn preserving_of(&self, tx: TxId) -> Result<()> {
+        let open = self.open_of(tx)?;
+        let mut open = lock_builtin(&open);
+        open.preserving = true;
+        open.checked = false;
+        open.reads = Reads::default();
         Ok(())
     }
 

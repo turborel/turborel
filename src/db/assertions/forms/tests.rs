@@ -113,6 +113,7 @@ fn named(kind: &Kind) -> &'static str {
         Kind::Distinct(Safe::More, _) => "distinct more",
         Kind::Distinct(Safe::Same, _) => "distinct same",
         Kind::Apart { .. } => "apart",
+        Kind::Total(_) => "total",
     }
 }
 
@@ -246,21 +247,20 @@ fn a_set_functions_argument_is_never_null() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, GR2b iii, iv,
 /// §11.34 GR2]; [DESIGN] RULES.md D51: no form is found of a function, a
 /// CAST, a subquery in a filter, an outer reference, a select list that can
-/// raise, a count of a grouping's rows, MAX of no argument, SUM or AVG, a
-/// COUNT a plug-in replaced, an OR of conjuncts, nor of a query not an
-/// assertion's. Joins and groupings of no row passing are queries'
+/// raise, a count of a grouping's rows, MAX of no argument, a COUNT a
+/// plug-in replaced, an OR of conjuncts, nor of a query not an assertion's.
+/// SUM and AVG of exact numbers keep totals (`sums_of_exact_numbers_keep_totals_6_5`). Joins and groupings of no row passing are queries'
 /// (`queried/tests.rs`).
 #[test]
 fn other_shapes_have_no_form() {
     let functions = Registry::with_set_functions();
-    let [count, max, sum, avg] = ["COUNT", "MAX", "SUM", "AVG"].map(|f| functions.aggregate(f).unwrap());
+    let [count, max] = ["COUNT", "MAX"].map(|f| functions.aggregate(f).unwrap());
     let length = functions.scalar("CHAR_LENGTH").unwrap();
     let cast = Expr::Cast(Box::new(Expr::Column(0)), COUNTED);
     let call = Expr::Call(length, vec![Expr::Column(1)]);
     let inner = Cond::Exists(subquery(scan()));
     let raising = Expr::Arith(Box::new(Expr::Column(0)), ArithOp::Div, Box::new(number(0)));
     let grouped = LogicalPlan::Aggregate { groups: vec![0], aggs: Vec::new(), input: Box::new(scan()) };
-    let k = || Some(Expr::Column(0));
     let cases = [
         none_of(vec![number(1)], filtered(compare(call, CompOp::Eq, number(1)))),
         none_of(vec![number(1)], filtered(Cond::IsNull(cast.clone(), false))),
@@ -271,8 +271,6 @@ fn other_shapes_have_no_form() {
         counted(count.clone(), None, grouped, CompOp::Le),
         counted(max.clone(), None, scan(), CompOp::Lt),
         counted(max, Some(cast), scan(), CompOp::Lt),
-        counted(sum, k(), scan(), CompOp::Le),
-        counted(avg, k(), scan(), CompOp::Le),
         Cond::Or(Box::new(counted(count.clone(), None, scan(), CompOp::Le)), Box::new(counted(count.clone(), None, scan(), CompOp::Ge))),
     ];
     for (n, condition) in cases.into_iter().enumerate() {
@@ -365,4 +363,28 @@ fn equal_unequal_distinct_and_nullable_have_forms() {
     );
     let mut reached = forms(counted(max, Some(Expr::Column(1)), rows, CompOp::Gt), &functions).unwrap();
     assert_eq!(reached.pop().unwrap().nulls.map(|(at, _)| at), Some(1_usize), "no step of its own");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR2b ii, iv, §11.34
+/// GR2]; [DESIGN] RULES.md D51: SUM of exact numbers compared with a
+/// constant, and AVG with an exact one, are judged of totals kept; not of
+/// DISTINCT, of approximate numbers, whose sum depends on the order added,
+/// nor AVG of an approximate bound.
+#[test]
+fn sums_of_exact_numbers_keep_totals_6_5() {
+    let functions = Registry::with_set_functions();
+    let [sum, avg] = ["SUM", "AVG"].map(|f| functions.aggregate(f).unwrap());
+    let k = || Some(Expr::Column(1));
+    assert_eq!(kinds(counted(sum.clone(), k(), scan(), CompOp::Le), &functions), Some(vec!["total"]));
+    assert_eq!(kinds(counted(avg.clone(), k(), scan(), CompOp::Gt), &functions), Some(vec!["total"]));
+    assert!(kinds(aggregated(sum.clone(), (k(), true), scan(), CompOp::Le), &functions).is_none(), "DISTINCT");
+    let real = DataType::Approximate { precision: 24, spelled: Spelled::Float };
+    let of = |f: AggregateRef, result: DataType, bound: Expr| {
+        let agg = AggCall { func: f, arg: k(), distinct: false, result, label: "F".into() };
+        let aggregate = LogicalPlan::Aggregate { groups: Vec::new(), aggs: vec![agg], input: Box::new(scan()) };
+        let s = subquery(LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) });
+        Cond::Compare(Expr::Subquery(s, 0), CompOp::Le, bound)
+    };
+    assert!(kinds(of(sum, real, number(10)), &functions).is_none(), "approximate numbers");
+    assert!(kinds(of(avg, COUNTED, Expr::Const(Value::Approx(2.5_f64))), &functions).is_none(), "an approximate bound");
 }

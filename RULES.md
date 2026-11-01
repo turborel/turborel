@@ -844,7 +844,8 @@ machinery.
     `MergeFilters` keeps.
 - **Nulls.** Whether a null is eliminated, warning 01003 [§6.5 GR1b],
   depends on every row. So where `x` may be null, the change decides
-  only if a row of it passing has `x` null: 01003 is then raised, as the
+  only if a row of it passing has `x` null, or the nulls kept of a
+  table's form (below) are more than none: 01003 is then raised, as the
   whole check would; or if a warning is raised already, which the
   statement completes with, as only the first is kept; else whole.
   - Never null: a column of a NOT NULL or PRIMARY KEY constraint not
@@ -884,11 +885,35 @@ machinery.
     reads it (a count, a greatest reached or unequal, a grouping). It
     held then, so a count moves by the rows passing now less those
     passing then, at one snapshot as an immediate count.
-- **Whole.** Any other form; SUM and AVG,
-  whose value and overflow, judged of the final total [§6.5 GR2b iv],
-  depend on every row; COUNT, a greatest reached or unequal, of a
-  query's rows; an outer join, a set operator or a grouping of a join,
-  whose rows a row deleted may make appear.
+- **Kept totals.** SUM, and AVG of an exact bound, of exact numbers,
+  not DISTINCT, compared with a constant; and a table's form whose `x`
+  may be null, for its nulls (`assertions/kept.rs`, `totals.rs`):
+  - kept in a row-store table of DEFINITION_SCHEMA of each assertion,
+    which no statement names, owns or sees [§21.1]: each statement that
+    changes a table read appends a row of each form it changes, its
+    change of the values counted, the nulls and the exact sum, and which
+    way it moves the value; writers never meet on a row;
+  - made with the assertion, of the tables it holds exclusive and marks
+    changed (D27), so no change made before it is published goes
+    uncounted; dropped with it; recovered as any table's rows (D25);
+  - judged of the rows the transaction sees, plus the change, by the set
+    function's own accumulator, its state merged (D53): out of range,
+    22003 as the whole check; of no value, null;
+  - read unrecorded, but a read recorded (D29) of the rows that move the
+    value as the transaction's change does: SUM's either way, its sum in
+    range [§6.5 GR2b iv]; AVG's only toward the bound [GR2b ii]; equal
+    or unequal, every row. Only two moving it one way meet at commit;
+  - a deferred check whose rows outgrow what is held puts them right:
+    the table read whole, less what is kept, appended;
+  - folded by the job `turborel-assertion-totals` (D55) once a read sees
+    more than 64 rows: one row of each form, in a transaction whose
+    writes keep every total (D29), so it fails no other; shown, as
+    committed, in INFORMATION_SCHEMA.ASSERTION_TOTALS to the schema's
+    owner.
+- **Whole.** Any other form; SUM and AVG of approximate numbers, of
+  DISTINCT, or AVG of an approximate bound; COUNT, a greatest reached or
+  unequal, of a query's rows; an outer join, a set operator or a
+  grouping of a join, whose rows a row deleted may make appear.
 - **Name.** A constraint name of its schema, for SET CONSTRAINTS and
   every other constraint's [SR2, SR7].
 - **In a `<schema definition>`,** outside any session's transaction, it
@@ -1081,7 +1106,8 @@ the standard's meaning holds and programs and drivers need only SQL.
   (starting, idle, running, stopping, stopped, failed), start time, last
   run, run count, last error, restarts.
 - **Jobs.** Background work (checkpoints, maintenance, the log's syncs,
-  D25; read-ahead, D30) runs as jobs under a per-database policy:
+  D25; read-ahead, D30; folds of assertions' kept totals, D51) runs as
+  jobs under a per-database policy:
   automatic (own thread, at once or at the time asked); manual, only on `Database::run_due`
   (tests, operators choosing the time); or paused. Errors become events (D40); a panic is caught, reported, and
   the job restarted per policy.
@@ -1367,6 +1393,11 @@ program driving several sessions from one thread must not.
   `TableStorage::read_mode`; one ignoring it, or leaving concurrency to
   the coordinator, reads as SERIALIZABLE, showing no phenomenon any
   level forbids.
+- **Writes keeping every read.** A transaction of the database's own
+  whose writes leave what every snapshot reads the same, as a fold of an
+  assertion's kept totals (D51), says so (`TableStorage::preserving`):
+  it is checked against no other at commit, nor any against it, so its
+  work fails no transaction.
 *Why:* only the engine knows its versions and rows. Readers and writers
 never block each other; writers meet only on the same row.
 

@@ -258,4 +258,20 @@ impl Transactions {
     pub(crate) fn take_maintenance(&self) -> BTreeSet<QualifiedName> {
         mem::take(&mut *lock_builtin(&self.maintenance))
     }
+
+    /// Notes that `table`, of an assertion's kept totals, has rows to fold,
+    /// for the database's job folding them (`db/assertions/fold.rs`).
+    pub(crate) fn note_fold(&self, table: &QualifiedName) {
+        lock_builtin(&self.folds).insert(table.clone());
+    }
+
+    /// Whether a table of kept totals has rows to fold.
+    pub(crate) fn folds_due(&self) -> bool {
+        !lock_builtin(&self.folds).is_empty()
+    }
+
+    /// The tables noted with rows to fold, forgotten.
+    pub(crate) fn take_folds(&self) -> BTreeSet<QualifiedName> {
+        mem::take(&mut *lock_builtin(&self.folds))
+    }
 }

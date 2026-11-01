@@ -379,6 +379,20 @@ pub trait TableStorage: Send + Sync {
     fn read_mode(&self, _tx: TxId, _mode: ReadMode) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] (RULES.md D29) `tx`'s writes here from now on keep what
+    /// every snapshot reads of the table: rows folded into one that holds
+    /// what they held together, as a compaction of the totals an assertion
+    /// keeps (`db/assertions/kept.rs`). No other transaction's commit is
+    /// refused for reading what they rewrite, and what `tx` reads is not
+    /// checked. Only the database's own work asks this, of tables no
+    /// statement writes. Default: nothing, its writes checked as any.
+    ///
+    /// # Errors
+    ///
+    /// `tx` has not begun here.
+    fn preserving(&self, _tx: TxId) -> Result<()> {
+        Ok(())
+    }
     /// Mark a point that `rollback_to` can return to (statement atomicity).
     fn savepoint(&self, _tx: TxId) -> u64 {
         0

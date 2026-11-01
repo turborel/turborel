@@ -62,7 +62,10 @@
 //!
 //! Forms of no row passing, and MAX or MIN bounded, may be of a query's
 //! rows, inner joins or a grouping, checked by the query run over the rows
-//! changed (`queried.rs`, `delta.rs`).
+//! changed (`queried.rs`, `delta.rs`). SUM and AVG of exact numbers are
+//! judged of the totals the assertion keeps, and so are the nulls of a
+//! table's form whose argument may be null (`kept.rs`): those of a change
+//! are then known whatever rows it changed.
 //!
 //! A deferred assertion whose forms are each of no row passing is checked,
 //! when it is, from each row the transaction wrote while it was deferred
@@ -88,6 +91,7 @@ use super::super::State;
 use super::super::integrity::{Check, Effects};
 use super::delta::{Changes, Held};
 use super::forms::{Form, Kind, Known, Safe, Source, Step, forms_of};
+use super::kept::{keeps, kept_name};
 use super::queried::Shape;
 use crate::catalog::{ConstraintKind, QualifiedName};
 use crate::error::Result;
@@ -147,6 +151,8 @@ impl Seen {
             Kind::Distinct(safe, _) => one_snapshot && moved(*safe, (self.values.now, self.values.before)),
             Kind::Reach(_) => self.reached || (one_snapshot && !self.passing.now && !self.passing.before),
             Kind::Apart { .. } => self.reached || (one_snapshot && !self.passing.before && !self.outside),
+            // Judged of the totals kept (`kept.rs`).
+            Kind::Total(_) => false,
         };
         if holds { Verdict::Holds } else { Verdict::Unknown }
     }
@@ -176,7 +182,7 @@ impl Seen {
                 self.values.now = self.values.now || (is_in && !kept);
                 self.values.before = self.values.before || (was_in && !kept);
             }
-            Kind::NoRow | Kind::Bound | Kind::Count(_) => {}
+            Kind::NoRow | Kind::Bound | Kind::Count(_) | Kind::Total(_) => {}
         }
         self.passing.now = self.passing.now || is_in;
         self.passing.before = self.passing.before || was_in;
@@ -268,7 +274,7 @@ impl State {
         }
         let plan = self.assertion_plan(a)?;
         let verdict = match forms_of(&plan, &self.known()) {
-            Some(forms) => self.verdict(tx, &forms, effects)?,
+            Some(forms) => self.verdict(tx, (name, &forms), effects)?,
             None => Verdict::Unknown,
         };
         match verdict {
@@ -279,43 +285,63 @@ impl State {
     }
 
     /// What finding an assertion's forms takes of this state.
-    fn known(&self) -> Known<'_> {
+    pub(super) fn known(&self) -> Known<'_> {
         Known { functions: &self.functions, catalog: &*self.catalog }
     }
 
-    /// What the change `changes` shows of an assertion whose condition is
-    /// the conjunction of `forms`: each evaluated. Where an argument may be
-    /// null, it holds only if a row of the change shows the warning raised
-    /// of a null eliminated, which it raises then, as the whole check
-    /// would; or if a warning is raised already, which the statement
-    /// completes with, as only the first is kept (`Warnings`).
-    fn verdict(self: &Arc<Self>, tx: &Txn, forms: &[Form], changes: &mut dyn Changes) -> Result<Verdict> {
-        let (mut verdict, mut null) = (Verdict::Holds, false);
-        for form in forms {
-            let (seen, form_verdict) = self.form_verdict(tx, form, changes)?;
+    /// What the change `changes` shows of assertion `name`, whose condition
+    /// is the conjunction of `forms`: each evaluated, those keeping totals
+    /// judged of them (`kept.rs`), whose changes are then appended unless
+    /// it is false. Where an argument may be null, it holds only if a row
+    /// of the change, or the nulls kept, show the warning raised of a null
+    /// eliminated, which it raises then, as the whole check would; or if a
+    /// warning is raised already, which the statement completes with, as
+    /// only the first is kept (`Warnings`).
+    fn verdict(self: &Arc<Self>, tx: &Txn, (name, forms): (&QualifiedName, &[Form]), changes: &mut dyn Changes) -> Result<Verdict> {
+        let kept = Some(kept_name(name)).filter(|t| self.catalog.table(t).is_some());
+        let (mut verdict, mut null, mut unsure, mut appended) = (Verdict::Holds, false, false, Vec::new());
+        for (at, form) in forms.iter().enumerate() {
+            let kept_here = kept.as_ref().filter(|_| keeps(form));
+            let (seen, mut form_verdict) = match (kept_here, &form.kind) {
+                (Some(_), Kind::Total(_)) => (Seen::default(), Verdict::Holds),
+                (None | Some(_), _) => self.form_verdict(tx, form, changes)?,
+            };
             null = null || seen.null;
+            if let Some(table) = kept_here {
+                let totals = self.kept_seen(tx, (table, at, form), changes)?;
+                form_verdict = totals.truth.map_or(form_verdict, of_truth);
+                null = null || totals.null;
+                appended.push((table, at, form, totals.change));
+            } else {
+                unsure = unsure || form.nulls.is_some();
+            }
             verdict = match (verdict, form_verdict) {
                 (Verdict::Broken, _) | (_, Verdict::Broken) => Verdict::Broken,
                 (Verdict::Unknown, _) | (_, Verdict::Unknown) => Verdict::Unknown,
                 (Verdict::Holds, Verdict::Holds) => Verdict::Holds,
             };
         }
-        let nullable = forms.iter().any(|f| f.nulls.is_some());
-        Ok(match (verdict, nullable, null) {
-            (Verdict::Holds, true, false) => {
+        let verdict = match (verdict, null, unsure) {
+            (Verdict::Holds, true, _) => {
+                // [ISO/IEC 9075:1992 §6.5 GR1b]
+                tx.stop.warnings().raise(SqlState::NULL_VALUE_ELIMINATED);
+                Verdict::Holds
+            }
+            (Verdict::Holds, false, true) => {
                 if tx.stop.warnings().raised() {
                     Verdict::Holds
                 } else {
                     Verdict::Unknown
                 }
             }
-            (Verdict::Holds, _, true) => {
-                // [ISO/IEC 9075:1992 §6.5 GR1b]
-                tx.stop.warnings().raise(SqlState::NULL_VALUE_ELIMINATED);
-                Verdict::Holds
-            }
             (Verdict::Holds, false, false) | (Verdict::Broken | Verdict::Unknown, _, _) => verdict,
-        })
+        };
+        if verdict != Verdict::Broken {
+            for (table, at, form, change) in appended {
+                self.append_totals(tx, (table, at), (change, form))?;
+            }
+        }
+        Ok(verdict)
     }
 
     /// What the change `changes` shows of `form`, and what it saw.
@@ -486,7 +512,13 @@ impl State {
             .collect();
         written.sort_by_key(|(name, ..)| name.to_string());
         for (name, forms, mut rows) in written {
-            let verdict = if rows.held.over { Verdict::Unknown } else { self.verdict(tx, &forms, &mut rows)? };
+            let verdict = if rows.held.over {
+                // Its rows past what is held: its totals put right whole.
+                self.rebuild_totals(tx, &name)?;
+                Verdict::Unknown
+            } else {
+                self.verdict(tx, (&name, &forms), &mut rows)?
+            };
             match (verdict, self.catalog.assertion(&name)) {
                 (Verdict::Broken, _) => return Err(super::broken(&name)),
                 (Verdict::Unknown, Some(a)) => self.assertion_holds(tx, &name, self.assertion_plan(a)?)?,
@@ -499,9 +531,12 @@ impl State {
 
 /// Whether `form` reads the rows of `table` as they were before they were
 /// changed: of a count, a greatest or least reached or unequal, which
-/// compare them with the rows now; of a grouping of `table`, whose groups
-/// they were in.
+/// compare them with the rows now; of totals kept, whose change they are;
+/// of a grouping of `table`, whose groups they were in.
 fn keeps_before(form: &Form, table: &QualifiedName) -> bool {
+    if keeps(form) {
+        return true;
+    }
     match &form.source {
         Source::Table(_) => !matches!(form.kind, Kind::NoRow | Kind::Bound),
         Source::Query(query) => match &query.shape {
@@ -509,6 +544,12 @@ fn keeps_before(form: &Form, table: &QualifiedName) -> bool {
             Shape::Joined => false,
         },
     }
+}
+
+/// What a form's truth after a change shows: false, broken; true or
+/// unknown, it holds [ISO/IEC 9075:1992 §11.34 GR2].
+fn of_truth(truth: Truth) -> Verdict {
+    if truth == Truth::False { Verdict::Broken } else { Verdict::Holds }
 }
 
 /// Whether `row` passes every one of `steps`, in order.

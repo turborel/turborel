@@ -39,7 +39,7 @@ impl Session {
         let zone = self.now.get().zone;
         let (owner, engines, warned, asserted, made) = next.schema(sql, (Some(&self.auth()), zone), None)?;
         let next = Arc::new(next);
-        if let Err(e) = asserted.iter().try_for_each(|a| next.check_assertion(tx, a)) {
+        if let Err(e) = asserted.iter().try_for_each(|a| next.check_assertion(tx, a).and_then(|()| next.start_totals(tx, a))) {
             made.discard();
             return Err(e);
         }
@@ -69,9 +69,14 @@ impl Database {
         self.noted(self.change(|st| {
             let zone = zone.unwrap_or_else(|| st.now(&crate::settings::NONE).zone);
             let (owner, engines, warned, asserted, _) = st.schema(sql, (implicit, zone), None)?;
-            st.check_new_assertions(&asserted)?;
-            // Logged before it is published (RULES.md D25).
-            st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone })?;
+            let checked = st.check_new_assertions(&asserted)?;
+            // Logged before it is published (RULES.md D25), and before the
+            // totals its assertions keep, whose tables it makes.
+            let logged = st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone });
+            if let Some((probe, tx)) = checked {
+                if logged.is_ok() { probe.commit(&tx)? } else { probe.rollback(&tx)? }
+            }
+            logged?;
             let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
             let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(long_texts::of_schema);
             Ok(long_texts::warned(done, sql, schema).warned(padding_of(st, sql)))

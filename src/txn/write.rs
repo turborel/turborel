@@ -145,6 +145,27 @@ impl State {
 }
 
 impl Txn {
+    /// The row it wrote of form `form`'s change to the kept totals of
+    /// `table`, if it wrote one; a statement undone may have taken it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the transaction's state is poisoned.
+    pub(crate) fn kept_row(&self, table: &QualifiedName, form: usize) -> Result<Option<RowId>> {
+        Ok(self.state()?.kept_rows.get(&(table.clone(), form)).copied())
+    }
+
+    /// Notes `row` as the one it writes of form `form`'s change to the kept
+    /// totals of `table`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the transaction's state is poisoned.
+    pub(crate) fn note_kept_row(&self, table: &QualifiedName, form: usize, row: RowId) -> Result<()> {
+        self.state()?.kept_rows.insert((table.clone(), form), row);
+        Ok(())
+    }
+
     /// Notes whether row `row`'s entry in the unique index `index`, as it
     /// was inserted, was its key's only one.
     ///

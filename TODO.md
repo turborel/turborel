@@ -64,16 +64,6 @@ What came after SQL-92 follows it, written from the standards' own text
   to their declared types, the most specific chosen, an ambiguous call
   refused.
 - **Assertions, further** (RULES.md D51): forms still checked whole.
-  - SUM and AVG of exact numbers, and whether a null is eliminated, from
-    totals kept per assertion (design settled): each statement appends
-    its change of each form's count, nulls and sum as a row of a hidden
-    row-store table, so writers never meet on a row; a check sums the
-    rows it sees, its reads checked as a constraint's; a change away
-    from the bound reads none where the column's type cannot overflow
-    the sum. A job of the thread manager folds rows committed before the
-    horizon, its writes marked as keeping every total, so no commit's
-    validation counts them. A read-only Information Schema view shows
-    the totals.
   - Of a query's rows: COUNT, a greatest or least reached or unequal; an
     outer join, a set operator, a grouping of a join. Each needs the
     other tables as they were before the statement, which only what was

@@ -46,6 +46,7 @@ mod logs;
 mod assertion_changes;
 mod assertion_forms;
 mod assertion_queries;
+mod assertion_totals;
 mod assertions;
 mod batch_joins;
 mod batches;

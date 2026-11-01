@@ -172,10 +172,10 @@ impl State {
         let asserting = if let (AlterAction::DropColumn { behavior, .. }, Reshape::Remove(at)) = (action, reshape) {
             self.drop_column_asserting(&desc, at, *behavior == DropBehavior::Cascade)?
         } else {
-            Vec::new()
+            Dropped::default()
         };
         let (mut dropped, built) = self.regenerate(qn, (&desc, next), (reshape, others), (made, action))?;
-        dropped.names.extend(asserting);
+        dropped.absorb(asserting);
         Ok((dropped, built, reshape))
     }
 
