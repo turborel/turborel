@@ -71,12 +71,15 @@
 //! independent. These checks stop at the first row breaking it, so this is
 //! for one NOT EXISTS, which stops so too, or for forms, MAX or MIN bounded
 //! among them, of steps that raise no error and arguments never null:
-//! whichever row comes first, none raises an error or a warning. Any
-//! other of such forms, of a query's rows among them, is checked once
-//! every row written is read, from them all together, each form evaluated,
-//! as an immediate one is from a statement's: of a grouping, each row with
-//! what it was before, kept. Any other deferred assertion is checked
-//! whole.
+//! whichever row comes first, none raises an error or a warning. One of
+//! any other forms, of a query's rows among them, is checked once every
+//! row written is read, from them all together, each form evaluated, as an
+//! immediate one is from a statement's: each row once, with what it was
+//! before its first change while deferred, kept where a form reads it (a
+//! count, a greatest reached or unequal, a grouping). As it held then, a
+//! count's change is the rows passing now less those passing then, so at
+//! one snapshot, as an immediate count is. Any other deferred assertion is
+//! checked whole.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -215,19 +218,21 @@ struct Written {
 }
 
 /// Of a table's rows written, the ids taken in, and each row's id and the
-/// row before it, if kept.
+/// row before its first change while deferred, if kept.
 type OfTable = (HashSet<RowId>, Vec<(RowId, Option<Row>)>);
 
 impl Written {
-    /// Takes in row `id` of `table`, as it was `before` if kept: none once
-    /// more are written than are held.
+    /// Takes in row `id` of `table`, as it was `before` if kept: once, as it
+    /// was before its first change while deferred, so a row changed again
+    /// counts once, from what it was to what it is; none once more are
+    /// written than are held.
     fn push(&mut self, st: &State, (table, id): (&QualifiedName, RowId), before: Option<&Row>) {
         if self.held.over {
             return;
         }
         let (ids, rows) = self.rows.entry(table.clone()).or_default();
         let more = size_of::<(RowId, RowId, Option<Row>)>().saturating_add(before.map_or(0, row_bytes));
-        if (ids.insert(id) || before.is_some()) && self.held.take(st, more) {
+        if ids.insert(id) && self.held.take(st, more) {
             rows.push((id, before.cloned()));
         }
     }
@@ -351,10 +356,10 @@ impl State {
     }
 
     /// Of assertion `name`, deferred, at the end of the statement that did
-    /// `effects`: if its condition is of forms of no row passing, as
-    /// `deferred_forms` finds, the check of each row the statement changed
-    /// in each form's tables, added to `out`, of a grouping's table with
-    /// the row before; whether it was.
+    /// `effects`: if its condition is of forms, as `deferred_forms` finds,
+    /// the check of each row the statement changed in each form's tables,
+    /// added to `out`, with the row before where a form reads it (a count,
+    /// a greatest reached or unequal, a grouping); whether it was.
     ///
     /// # Errors
     ///
@@ -369,9 +374,8 @@ impl State {
         // Each table, and whether the rows before are kept.
         let mut tables: Vec<(QualifiedName, bool)> = Vec::new();
         for form in &forms {
-            let grouped = grouped_table(form);
             for table in form.source.tables() {
-                let keep = grouped == Some(&table);
+                let keep = keeps_before(form, &table);
                 match tables.iter_mut().find(|(t, _)| *t == table) {
                     Some((_, kept)) => *kept = *kept || keep,
                     None => tables.push((table, keep)),
@@ -387,13 +391,15 @@ impl State {
         Ok(true)
     }
 
-    /// The forms of assertion `name`'s condition if each is of no row
-    /// passing, MAX or MIN bounded too, and whether they are checked of
-    /// each row alone: each of a table's rows, one NOT EXISTS, which stops
-    /// at its first row as EXISTS does, or forms of steps that raise no
-    /// error and arguments never null, so whichever row is evaluated
+    /// The forms of assertion `name`'s condition, if each has one, and
+    /// whether they are checked of each row alone: each of no row passing,
+    /// MAX or MIN bounded too, of a table's rows, one NOT EXISTS, which
+    /// stops at its first row as EXISTS does, or forms of steps that raise
+    /// no error and arguments never null, so whichever row is evaluated
     /// first, none raises an error or a warning. Else of the rows written
-    /// together, each form evaluated (`Made::Written`).
+    /// together, each form evaluated (`Made::Written`): a count, or a
+    /// greatest reached or unequal, from each row as it was before its
+    /// first change while deferred, as it held then.
     fn deferred_forms(&self, name: &QualifiedName) -> Result<Option<(Vec<Form>, bool)>> {
         let Some(a) = self.catalog.assertion(name) else { return Ok(None) };
         let forms = forms_of(&self.assertion_plan(a)?, &self.known()).unwrap_or_default();
@@ -406,9 +412,9 @@ impl State {
             f.nulls.is_none() && !raising
         };
         let one = matches!(forms.as_slice(), [Form { kind: Kind::NoRow, .. }]);
-        let none_passing = !forms.is_empty() && forms.iter().all(|f| matches!(f.kind, Kind::NoRow | Kind::Bound));
-        let by_rows = forms.iter().all(of_table) && (one || forms.iter().all(quiet));
-        Ok(none_passing.then_some((forms, by_rows)))
+        let none_passing = forms.iter().all(|f| matches!(f.kind, Kind::NoRow | Kind::Bound));
+        let by_rows = none_passing && forms.iter().all(of_table) && (one || forms.iter().all(quiet));
+        Ok((!forms.is_empty()).then_some((forms, by_rows)))
     }
 
     /// [ISO/IEC 9075:1992 §4.10.1, §11.34 GR2] That row `id` of `table`, as
@@ -491,12 +497,18 @@ impl State {
     }
 }
 
-/// The table of `form`'s grouping, if its rows are of one: whose rows'
-/// groups before they were changed it checks too.
-fn grouped_table(form: &Form) -> Option<&QualifiedName> {
-    let Source::Query(query) = &form.source else { return None };
-    let Shape::Grouped { table, .. } = &query.shape else { return None };
-    Some(table)
+/// Whether `form` reads the rows of `table` as they were before they were
+/// changed: of a count, a greatest or least reached or unequal, which
+/// compare them with the rows now; of a grouping of `table`, whose groups
+/// they were in.
+fn keeps_before(form: &Form, table: &QualifiedName) -> bool {
+    match &form.source {
+        Source::Table(_) => !matches!(form.kind, Kind::NoRow | Kind::Bound),
+        Source::Query(query) => match &query.shape {
+            Shape::Grouped { table: grouped, .. } => grouped == table,
+            Shape::Joined => false,
+        },
+    }
 }
 
 /// Whether `row` passes every one of `steps`, in order.

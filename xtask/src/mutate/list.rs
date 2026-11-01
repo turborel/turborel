@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 32] = [
+pub const MUTATIONS: [Mutation; 33] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -339,6 +339,15 @@ pub const MUTATIONS: [Mutation; 32] = [
         original: "Ok((!nullable || tx.stop.warnings().raised()).then_some(seen))",
         replacement: "Ok(Some(seen))",
         integration: &["assertion_queries::a_grouping_warns_as_checked_whole_6_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-deferred-first-image",
+        breaks: "deferred assertions of a count: a row changed twice counted from each image, not from its first",
+        file: "src/db/assertions/changes.rs",
+        original: "        if ids.insert(id) && self.held.take(st, more) {",
+        replacement: "        if (ids.insert(id) || before.is_some()) && self.held.take(st, more) {",
+        integration: &["assertion_queries::a_deferred_count_takes_each_row_once_14_3"],
         unit: &[],
     },
 ];

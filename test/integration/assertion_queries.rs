@@ -3,7 +3,7 @@
 //! and MAX bounded of inner joins, of a table joined to itself, raising
 //! errors; NOT EXISTS and MAX bounded of a grouping, of null keys, rows
 //! leaving a group, and set functions that eliminate nulls; immediate and
-//! deferred. Each answers as the same assertion checked whole, which `AND
+//! deferred, and deferred counts, greatest reached and unequal. Each answers as the same assertion checked whole, which `AND
 //! 1 = 1` makes it: the same statements and commits fail, with the same
 //! SQLCODE, and the same warnings are raised.
 
@@ -63,7 +63,7 @@ fn same(a: &Session, b: &Session, sql: &str, step: usize) -> Result<Completion, 
 }
 
 /// The assertions of the random test: each name, condition and attributes.
-const ASSERTED: [(&str, &str, &str); 13] = [
+const ASSERTED: [(&str, &str, &str); 16] = [
     ("PAIRED", "NOT EXISTS (SELECT * FROM T, U WHERE T.G = U.G AND T.N + U.N > 150)", ""),
     ("SELFED", "NOT EXISTS (SELECT * FROM T A1, T A2 WHERE A1.G = A2.G AND A1.K < A2.K AND A1.N = A2.N AND A1.N > 40)", ""),
     ("JOINED", "NOT EXISTS (SELECT T.K FROM T JOIN U ON T.K = U.K WHERE T.N > U.N + 60)", ""),
@@ -77,6 +77,9 @@ const ASSERTED: [(&str, &str, &str); 13] = [
     ("AVERAGED", "NOT EXISTS (SELECT G FROM T GROUP BY G HAVING AVG(N) > 70 AND COUNT(*) > 1)", ""),
     ("LATEJOIN", "NOT EXISTS (SELECT * FROM T, U WHERE T.K = U.G AND T.N < U.N - 80)", "DEFERRABLE INITIALLY DEFERRED"),
     ("LATEGROUP", "NOT EXISTS (SELECT G FROM U WHERE G >= 3 GROUP BY G HAVING SUM(N) > 300)", "DEFERRABLE INITIALLY DEFERRED"),
+    ("LATECOUNT", "(SELECT COUNT(*) FROM T WHERE N > 50) <= 6", "DEFERRABLE INITIALLY DEFERRED"),
+    ("LATEREACH", "(SELECT MAX(N) FROM U WHERE G < 5) >= 10", "DEFERRABLE INITIALLY DEFERRED"),
+    ("LATEAPART", "(SELECT MIN(N) FROM T WHERE G = 1) <> 30", "DEFERRABLE INITIALLY DEFERRED"),
 ];
 
 /// A random statement changing T or U, from `rng`.
@@ -305,4 +308,28 @@ fn a_derived_tables_columns_need_no_references_11_9() {
     s.commit().unwrap();
     b.run(derived).unwrap();
     b.commit().unwrap();
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.10.1, §14.3 GR4];
+/// [DESIGN] RULES.md D51: a deferred count is checked at commit from each
+/// row as it was before its first change while deferred: a row brought
+/// into the count by one statement and out by another moves it not at
+/// all, so a row inserted past the bound breaks it.
+#[test]
+fn a_deferred_count_takes_each_row_once_14_3() {
+    let (_db, s) = schema();
+    s.run("CREATE ASSERTION LATECOUNT CHECK ((SELECT COUNT(*) FROM T WHERE N > 30) <= 2) DEFERRABLE INITIALLY DEFERRED").unwrap();
+    s.commit().unwrap();
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE N > 30").unwrap(), ["2"], "at the bound");
+    s.run("UPDATE T SET N = 40 WHERE K = 1").unwrap();
+    s.run("UPDATE T SET N = 3 WHERE K = 1").unwrap();
+    s.run("INSERT INTO T VALUES (20, 0, 50)").unwrap();
+    assert_eq!(s.commit().err().map(|e| e.code), Some(Code::CommitFailed), "three past 30");
+    s.run("UPDATE T SET N = 40 WHERE K = 1").unwrap();
+    s.run("UPDATE T SET N = 3 WHERE K = 1").unwrap();
+    s.commit().unwrap();
+    s.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap();
+    s.run("DELETE FROM T WHERE K = 12").unwrap();
+    s.run("INSERT INTO T VALUES (21, 0, 50)").unwrap();
+    s.commit().unwrap();
 }

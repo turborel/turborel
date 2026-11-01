@@ -80,11 +80,11 @@ fn a_count_is_held_to_its_bound_11_34() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §10.6 GR3, §14.3 GR4];
-/// [DESIGN] RULES.md D51: a deferred assertion of a count is checked whole
-/// when it is made immediate, or at commit: a statement that breaks it may
-/// be mended by another before.
+/// [DESIGN] RULES.md D51: a deferred assertion of a count is checked when
+/// it is made immediate, or at commit, from the rows written while it was
+/// deferred: a statement that breaks it may be mended by another before.
 #[test]
-fn a_deferred_assertion_is_checked_whole_14_3() {
+fn a_deferred_count_is_checked_when_made_immediate_14_3() {
     let (_db, s) = schema();
     s.run("CREATE ASSERTION FEW CHECK ((SELECT COUNT(*) FROM T) <= 10) DEFERRABLE INITIALLY DEFERRED").unwrap();
     s.commit().unwrap();

@@ -120,10 +120,12 @@ checked whole; so is a change of more rows than MEMORY.WORK_BYTES holds.
 A deferred assertion of one `NOT EXISTS`, or of conjuncts each
 `NOT EXISTS` or MAX or MIN bounded whose conditions raise no error and
 whose `x` is never null, is checked from each row the transaction wrote
-while it was deferred; one of other such conjuncts, of joins and
-groupings too, from all those rows together once it is checked; any
-other, whole, once, however many statements of the transaction changed
-a table it reads. Whichever way, a statement fails
+while it was deferred; one of any other of these conjuncts, of joins
+and groupings too, from all those rows together once it is checked,
+each as it is and as it was before the transaction first changed it
+while the assertion was deferred, a count at one snapshot as an
+immediate one; any other, whole, once, however many statements of the
+transaction changed a table it reads. Whichever way, a statement fails
 exactly when the condition is false after it, with the same error and
 warning. SQL-86 has no assertions.
 

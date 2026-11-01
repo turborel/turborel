@@ -877,11 +877,14 @@ machinery.
   - These checks stop at the first row breaking it: so one NOT EXISTS,
     or NOT EXISTS and MAX or MIN bounded of steps raising no error and
     `x` never null, so no row's error or warning goes unraised.
-  - Any other of forms of no row passing, of a query's rows among them,
-    is checked once every row written is read, from them all together,
-    each form evaluated, as an immediate one is from a statement's; of
-    a grouping's table, each row with the row before it, kept.
-- **Whole.** Any other form; any other deferred assertion; SUM and AVG,
+  - One of any other forms, of a query's rows among them, is checked
+    once every row written is read, from them all together, each form
+    evaluated, as an immediate one is from a statement's: each row once,
+    with the row before its first change while deferred where a form
+    reads it (a count, a greatest reached or unequal, a grouping). It
+    held then, so a count moves by the rows passing now less those
+    passing then, at one snapshot as an immediate count.
+- **Whole.** Any other form; SUM and AVG,
   whose value and overflow, judged of the final total [§6.5 GR2b iv],
   depend on every row; COUNT, a greatest reached or unequal, of a
   query's rows; an outer join, a set operator or a grouping of a join,

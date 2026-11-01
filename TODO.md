@@ -63,20 +63,21 @@ What came after SQL-92 follows it, written from the standards' own text
   number of arguments and store assignment [ISO/IEC 9075:1992 §9.2 SR2]
   to their declared types, the most specific chosen, an ambiguous call
   refused.
-- **Assertions, further** (RULES.md D51): forms still checked whole,
-  each needing a design the owner settles first:
+- **Assertions, further** (RULES.md D51): forms still checked whole.
+  - SUM and AVG of exact numbers, and whether a null is eliminated, from
+    totals kept per assertion (design settled): each statement appends
+    its change of each form's count, nulls and sum as a row of a hidden
+    row-store table, so writers never meet on a row; a check sums the
+    rows it sees, its reads checked as a constraint's; a change away
+    from the bound reads none where the column's type cannot overflow
+    the sum. A job of the thread manager folds rows committed before the
+    horizon, its writes marked as keeping every total, so no commit's
+    validation counts them. A read-only Information Schema view shows
+    the totals.
   - Of a query's rows: COUNT, a greatest or least reached or unequal; an
     outer join, a set operator, a grouping of a join. Each needs the
     other tables as they were before the statement, which only what was
     kept of them would tell.
-  - SUM and AVG: the sum before is unknown; overflow is judged of the
-    final total [§6.5 GR2b iv], so a sum kept per assertion and snapshot
-    would check them from the change.
-  - COUNT, MAX or MIN of a value that may be null, the change having no
-    null: whether the warning of a null eliminated is raised needs a
-    count of nulls kept per assertion and snapshot.
-  - A deferred count, greatest or least reached, or MAX or MIN unequal:
-    each row's image as it was deferred, kept to commit.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them
