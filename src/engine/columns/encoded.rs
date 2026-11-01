@@ -418,6 +418,20 @@ impl Body<'_> {
 }
 
 impl Body<'_> {
+    /// \[DESIGN\] Where each run of one value among positions `from` to
+    /// `to` ends, past `base`, pushed to `ends`: of runs, theirs; of a
+    /// constant, one; none of another encoding.
+    pub(super) fn run_ends(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
+        match self {
+            Body::Runs(runs) => runs.ends_in((from, to), base, ends),
+            Body::Constant { .. } => {
+                ends.push(base.checked_add(to.checked_sub(from)?)?);
+                Some(())
+            }
+            Body::Frame { .. } | Body::Alp(_) | Body::Dictionary { .. } | Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
+        }
+    }
+
     /// \[DESIGN\] The text of each value at positions `from` to `to`, a
     /// character string written as it is, pushed to `text`, and where each
     /// ends to `ends`, of those `null` says are not nulls (`Texts`), each

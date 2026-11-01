@@ -170,6 +170,10 @@ pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize,
 /// each is null: none if one of them is not so.
 type Words = Option<(Vec<i64>, Vec<bool>)>;
 
+/// 8-byte fields, whether each is null, and where each run of one value
+/// among them ends, if known.
+type RunWords = ((Vec<i64>, Vec<bool>), Option<Vec<usize>>);
+
 /// Of nulls, none if none is null.
 fn nulls_of(nulls: Vec<bool>) -> Option<Vec<bool>> {
     nulls.contains(&true).then_some(nulls)
@@ -191,7 +195,13 @@ fn float_of(word: i64) -> f64 {
 /// As `rows`.
 pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words(group, pages, column, (from, to))?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
+    Ok(words(group, pages, column, (from, to))?.map(|((units, nulls), runs)| {
+        let ints = Ints::new(units, *scale, nulls_of(nulls));
+        match runs {
+            Some(ends) => ints.with_runs(ends),
+            None => ints,
+        }
+    }))
 }
 
 /// \[DESIGN\] As `ints`, as approximate numbers (`storage::Floats`), if `t`
@@ -209,7 +219,7 @@ pub fn floats<S: Seal>(
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
     Ok(words(group, pages, column, (from, to))?
-        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
+        .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
 }
 
 /// \[DESIGN\] As `ints_at`, as approximate numbers, as `floats` gives
@@ -230,15 +240,27 @@ pub fn floats_at<S: Seal>(
 }
 
 /// The 8-byte fields of column `column` of the rows at positions `from` to
-/// `to`, each chunk's read at once.
-fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to): (u32, u32)) -> Result<Words> {
+/// `to`, each chunk's read at once, and where each run of one value among
+/// them ends, if every chunk keeps its values as runs (`Chunk::run_ends`).
+fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to): (u32, u32)) -> Result<Option<RunWords>> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
+    let mut runs = Some(Vec::new());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = pages.with(zone.run.page, |bytes| Ok(Chunk::parse(bytes)?.ints((at(first), at(end)), (&mut units, &mut nulls))))?;
+        let base = units.len();
+        let held = pages.with(zone.run.page, |bytes| {
+            let chunk = Chunk::parse(bytes)?;
+            let held = chunk.ints((at(first), at(end)), (&mut units, &mut nulls));
+            if let Some(ends) = &mut runs
+                && chunk.run_ends((at(first), at(end)), base, ends).is_none()
+            {
+                runs = None;
+            }
+            Ok(held)
+        })?;
         if held.is_none() {
             return Ok(None);
         }
@@ -246,7 +268,7 @@ fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to)
     if units.len() != count {
         return Ok(None);
     }
-    Ok(Some((units, nulls)))
+    Ok(Some(((units, nulls), runs)))
 }
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at

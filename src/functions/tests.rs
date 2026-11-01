@@ -191,3 +191,29 @@ fn set_functions_merge_their_states_as_their_values() {
         assert_eq!(refused, Some(Code::Corrupt), "{}", function.name());
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, GR4]: SUM, AVG,
+/// MAX and MIN fed integers known as runs, a run's value taken once times
+/// its rows, give what they give of the same integers one by one, of all
+/// rows and of some; a sum of runs at the extremes of 64 bits alike.
+#[test]
+fn set_functions_fed_runs_total_as_each() {
+    let numbers = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
+    let units: Vec<i64> = [-4, -4, 2, 2, 2, 9].to_vec();
+    let plain = Ints::new(units.clone(), 2, None);
+    let runs = Ints::new(units, 2, None).with_runs(vec![2, 5, 6]);
+    let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
+    let fed = |function: &dyn AggregateFunction, ints: &Ints, rows: Option<&[usize]>| {
+        let mut accumulator = function.accumulator(numbers);
+        format!("{:?}", accumulator.update_ints(ints, rows).and_then(|()| accumulator.finish()))
+    };
+    for function in functions {
+        for rows in [None, Some(&[0_usize, 3, 5][..]), Some(&[2_usize, 4][..]), Some(&[][..])] {
+            assert_eq!(fed(function, &runs, rows), fed(function, &plain, rows), "{} at {rows:?}", function.name());
+        }
+    }
+    let big = vec![i64::MAX; 4];
+    let huge = |ints: Ints| fed(&Sum, &ints, None);
+    let (by_runs, each) = (huge(Ints::new(big.clone(), 0, None).with_runs(vec![4])), huge(Ints::new(big, 0, None)));
+    assert_eq!(by_runs, each, "within 128 bits alike");
+}

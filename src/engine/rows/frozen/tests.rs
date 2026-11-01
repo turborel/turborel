@@ -456,7 +456,8 @@ fn groups_are_sorted_again_when_their_order_changes() {
 /// Verifies: [DESIGN] RULES.md D31, headers read as they are needed: a
 /// table opened again holds only its groups' summaries, no header read; a
 /// scan whose condition no group's summary may match, by rows or by
-/// batches, reads no header and gives no frozen row; one that reads a
+/// batches, reads no header and gives no frozen row, by batches every
+/// row of the tree, for the filter to judge; one that reads a
 /// group holds its header, and gives what the table holds.
 #[test]
 fn headers_are_read_as_they_are_needed() {
@@ -474,7 +475,8 @@ fn headers_are_read_as_they_are_needed() {
     };
     let rows = |c: &Conjunction| Arc::clone(&opened).scan_where(NO_TRANSACTION, &[0], c).count();
     let batched = |c: &Conjunction| Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0], Some(c)).map(|b| b.unwrap().rows).sum::<usize>();
-    assert_eq!((rows(&over(4500)), batched(&over(4500))), (499, 499), "the tree's rows only");
+    // By batch, every row of the tree, for the filter to judge.
+    assert_eq!((rows(&over(4500)), batched(&over(4500))), (499, 904), "the tree's rows only");
     assert_eq!(cold.headers.held(), (0, 0), "no group may match: no header read");
     // Batches give the rows of the parts that may match, for the filter
     // to judge.

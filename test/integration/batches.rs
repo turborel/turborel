@@ -482,3 +482,63 @@ fn projections_of_expressions_stream_as_row_by_row() {
     let stops = "SELECT COUNT(*) FROM R WHERE K < 3 AND EXISTS (SELECT * FROM (SELECT 10 / (X.K - 5) FROM C X UNION ALL SELECT Y.K FROM C Y) AS V (Q))";
     assert_eq!(both_ways(&a, stops), (vec!["5".to_owned()], vec!["5".to_owned()]));
 }
+
+/// Queries of a table `{t}` of runs: V of runs with no null, W of runs
+/// with nulls among them.
+const OF_RUNS: [&str; 10] = [
+    "SELECT COUNT(*), SUM(V), AVG(V), MIN(V), MAX(V) FROM {t}",
+    "SELECT COUNT(*), SUM(V), MIN(V), MAX(V) FROM {t} WHERE V >= 7",
+    "SELECT COUNT(V), SUM(V) FROM {t} WHERE V < 3 OR V = 15",
+    "SELECT COUNT(*), SUM(V) FROM {t} WHERE V IN (2, 4, 19)",
+    "SELECT COUNT(*), SUM(V) FROM {t} WHERE V NOT IN (2, 4, 19)",
+    "SELECT COUNT(*), MAX(V) FROM {t} WHERE V BETWEEN 5 AND 9 AND K > 100",
+    "SELECT COUNT(W), SUM(W), MIN(W), MAX(W) FROM {t} WHERE W > 40",
+    "SELECT COUNT(*), SUM(W) FROM {t} WHERE W IS NULL OR V = 1",
+    "SELECT SUM(V) FROM {t} WHERE V > 100",
+    "SELECT COUNT(*) FROM {t} WHERE V <> 3",
+];
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.8 GR1, §5.11, §5.13]:
+/// a column of the column store kept as runs of one value, its groups
+/// sorted by it, judged and summed once a run, gives by batch what the
+/// same rows of the row store give row by row: of a column of runs with
+/// no null and of one with nulls, under comparisons, IN, NOT IN and
+/// BETWEEN, none matched, frozen and with rows changed, deleted and added.
+#[test]
+fn columns_of_runs_answer_as_row_by_row() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE R (K INTEGER NOT NULL, V INTEGER NOT NULL, W INTEGER)
+           CREATE TABLE C (K INTEGER NOT NULL, V INTEGER NOT NULL, W INTEGER)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, COLUMNSTORE.ORDER = 'V')",
+    )
+    .unwrap();
+    let a = db.session("A");
+    for table in ["R", "C"] {
+        let values: Vec<String> = (0..ROWS)
+            .map(|k| {
+                let w = if k % 13 == 0 { "NULL".to_owned() } else { k.checked_div(50).unwrap().to_string() };
+                format!("({k}, {}, {w})", k.checked_div(300).unwrap())
+            })
+            .collect();
+        a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let alike = |when: &str| {
+        for q in OF_RUNS {
+            assert_eq!(rows(&a, &q.replace("{t}", "C")), rows(&a, &q.replace("{t}", "R")), "{when}: {q}");
+        }
+        off_alike(&a, &OF_RUNS);
+    };
+    alike("frozen");
+    for table in ["R", "C"] {
+        a.run(&format!("UPDATE {table} SET V = 3 WHERE K BETWEEN 2100 AND 2200")).unwrap();
+        a.run(&format!("DELETE FROM {table} WHERE K BETWEEN 4000 AND 4100")).unwrap();
+        a.run(&format!("INSERT INTO {table} VALUES (90001, 7, NULL), (90002, 25, 1)")).unwrap();
+    }
+    a.commit().unwrap();
+    alike("changed");
+}

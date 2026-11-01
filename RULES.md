@@ -1817,11 +1817,19 @@ write-ahead logging.
   other, as its normalized units and scale. One width, so keys are
   short and groups, DISTINCT and EXCEPT and INTERSECT hold more in a
   work area.
-- **Column store batches.** Each frozen vector straight from chunks, a
-  condition's columns first and the rest only for rows it keeps; tree
-  entries in the group's row id range, read once as the group is taken
-  up, their records unsealed and judged by the scan's condition then,
-  in their rows' place; then the tree's other rows.
+- **Column store batches.** Each frozen vector straight from chunks,
+  only those of chunks a condition may match; tree entries in the
+  group's row id range, read once as the group is taken up, their
+  records unsealed then, in their rows' place; then the tree's other
+  rows. No row is judged in the scan: the filter judges every row given
+  over its vectors, which costs less than judging a row twice.
+  - A vector of integers kept as runs of one value, or as one value,
+    with no null, knows its runs (`Ints::with_runs`): the filter judges a
+    comparison or IN once a run, keeping or dropping its rows together,
+    and SUM, AVG, MIN and MAX take each run's value once, times its rows
+    kept.
+  - A group none of whose rows the tree has an entry for gives each
+    vector whole, no list of its positions made.
 - **Streams** (`exec/batch/stream.rs`). A plan subtree gives rows by
   batch (a stream) if it is:
   - a table's scan; one in an order (`scan_ordered`) read so, merged by

@@ -24,7 +24,7 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
         Judged::Compare(_, op, constant) => {
             let (factor, c) = scaled(ints.scale, constant)?;
             let truth = |u: i64| holds(*op, i128::from(u).checked_mul(factor).map(|x| x.cmp(&c)));
-            Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(truth)).collect())
+            Some(by_runs(ints, kept, truth).unwrap_or_else(|| kept.iter().copied().filter(|&n| unit(n).is_some_and(truth)).collect()))
         }
         // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities; NOT of it:
         // a long list's by its set, each integer made the number it is.
@@ -32,7 +32,9 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
             if set.hashed() {
                 let want = super::wanted(*not);
                 let keeps = |u: i64| set.truth(&Value::Exact(Decimal::new(i128::from(u), ints.scale))) == want;
-                return Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect());
+                return Some(
+                    by_runs(ints, kept, keeps).unwrap_or_else(|| kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect()),
+                );
             }
             let list = set.values();
             let scaled_list: Vec<(i128, i128)> =
@@ -40,10 +42,23 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, kept: &[usize]) -> Option<Vec<u
             let has_null = list.iter().any(Value::is_null);
             let equal = |u: i64| scaled_list.iter().any(|&(f, c)| i128::from(u).checked_mul(f) == Some(c));
             let keeps = |u: i64| if *not { !has_null && !equal(u) } else { equal(u) };
-            Some(kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect())
+            Some(by_runs(ints, kept, keeps).unwrap_or_else(|| kept.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect()))
         }
         Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) => None,
     }
+}
+
+/// \[DESIGN\] (RULES.md D31) The rows of `kept` of whose unit `keeps` is
+/// true, judged once a run of one unit, its rows kept or not together, if
+/// `ints` are known as runs (`Ints::runs_of`).
+fn by_runs(ints: &Ints, kept: &[usize], keeps: impl Fn(i64) -> bool) -> Option<Vec<usize>> {
+    let mut out = Vec::with_capacity(kept.len());
+    for (unit, rows) in ints.runs_of(kept)? {
+        if keeps(unit) {
+            out.extend_from_slice(rows);
+        }
+    }
+    Some(out)
 }
 
 /// The rows of `over`, rows of `batch`, of which `a` `op` `b` is true, each

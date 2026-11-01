@@ -33,6 +33,12 @@ pub(super) fn count(ints: &Ints, rows: Option<&[usize]>) -> usize {
 /// No sum so far is judged against `MAX_EXACT_PRECISION`: the total
 /// alone is [ISO/IEC 9075:1992 §6.5 GR2b iv].
 pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[usize]>) -> Option<(i128, bool)> {
+    if let Some(runs) = run_counts(ints, rows) {
+        return runs.into_iter().try_fold((start, false), |(total, any), (u, n)| {
+            let n = i128::try_from(n).ok()?;
+            Some((total.checked_add(i128::from(u).checked_mul(n)?)?, any || n > 0))
+        });
+    }
     let (mut total, mut any) = (start, false);
     for u in units(ints, rows) {
         total = total.checked_add(i128::from(u))?;
@@ -41,9 +47,28 @@ pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[usize]>) -> Opti
     Some((total, any))
 }
 
+/// \[DESIGN\] (RULES.md D31) Of `ints` known as runs (`Ints::runs_of`),
+/// each run's unit and how many of the rows `rows`, or all, are in it, so
+/// a run's are added once: of runs of one unit added one by one, each
+/// total between the run's first and last, so 128 bits hold them all if
+/// they hold the last.
+fn run_counts(ints: &Ints, rows: Option<&[usize]>) -> Option<Vec<(i64, usize)>> {
+    match rows {
+        Some(rows) => Some(ints.runs_of(rows)?.map(|(u, these)| (u, these.len())).collect()),
+        None => Some(ints.run_lengths()?.collect()),
+    }
+}
+
 /// The greatest, if `max`, or least of the rows `rows` of `ints`, or all,
 /// not null, as an exact number of their scale: none if every one is null.
 pub(super) fn extreme(ints: &Ints, rows: Option<&[usize]>, max: bool) -> Option<Value> {
-    let best = if max { units(ints, rows).max() } else { units(ints, rows).min() };
+    let best = match run_counts(ints, rows) {
+        Some(runs) => {
+            let held = runs.into_iter().filter(|&(_, n)| n > 0).map(|(u, _)| u);
+            if max { held.max() } else { held.min() }
+        }
+        None if max => units(ints, rows).max(),
+        None => units(ints, rows).min(),
+    };
     best.map(|u| Value::Exact(Decimal::new(i128::from(u), ints.scale)))
 }

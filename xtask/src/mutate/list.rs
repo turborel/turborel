@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 52] = [
+pub const MUTATIONS: [Mutation; 55] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -517,5 +517,32 @@ pub const MUTATIONS: [Mutation; 52] = [
         replacement: "if self.before(first, c) { c } else { first }",
         integration: &["column_store::groups_read_in_their_order_answer_alike"],
         unit: &[],
+    },
+    Mutation {
+        name: "runs-judged",
+        breaks: "a filter judging integers once a run keeps the runs it should drop",
+        file: "src/exec/batch/judge/ints.rs",
+        original: "        if keeps(unit) {",
+        replacement: "        if !keeps(unit) {",
+        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        unit: &["exec::batch::judge::tests::integers_judged_once_a_run_keep_what_each_keeps"],
+    },
+    Mutation {
+        name: "runs-summed",
+        breaks: "a sum of integers known as runs adds each run's value once, not once a row",
+        file: "src/functions/ints.rs",
+        original: "Some((total.checked_add(i128::from(u).checked_mul(n)?)?, any || n > 0))",
+        replacement: "Some((total.checked_add(i128::from(u))?, any || n > 0))",
+        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        unit: &["functions::tests::set_functions_fed_runs_total_as_each"],
+    },
+    Mutation {
+        name: "runs-ends",
+        breaks: "a chunk of runs says a run ends a row early",
+        file: "src/engine/columns/runs.rs",
+        original: "            ends.push(base.checked_add(end.checked_sub(from)?)?);",
+        replacement: "            ends.push(base.checked_add(end.checked_sub(from)?)?.saturating_sub(usize::from(end < to)));",
+        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        unit: &["engine::columns::tests::chunks_of_runs_say_where_each_ends"],
     },
 ];

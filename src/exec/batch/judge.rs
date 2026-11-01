@@ -135,11 +135,13 @@ impl Judging {
     /// filter before kept, or of all: those its conjuncts judged over
     /// vectors keep, then of those, those the rest keeps.
     pub(super) fn kept_of(&self, batch: &Batch, rows: Option<&[usize]>, runner: &Runner) -> Result<Vec<usize>> {
-        let given: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
-        let mut kept = given.clone();
+        let all = || rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
+        // The rows given kept apart only by a filter that can raise, which
+        // judges each conjunct of every one; made again where needed.
+        let given: Option<Vec<usize>> = self.raising.then(all);
+        let mut kept = all();
         for judged in &self.judged {
-            // Of a filter that can raise, each conjunct of every row given.
-            let over = if self.raising { &given } else { &kept };
+            let over = given.as_ref().unwrap_or(&kept);
             let Some(true_of) = judged.kept(batch, over, runner) else {
                 // Integers not made: of a filter that cannot raise, the
                 // conjunct judged a row at a time of the rows kept; of one
@@ -148,7 +150,7 @@ impl Judging {
                     kept = self.by_rows(conjunct, batch, &kept, runner)?;
                     continue;
                 }
-                return self.by_rows(&self.whole, batch, &given, runner);
+                return self.by_rows(&self.whole, batch, &given.unwrap_or_else(all), runner);
             };
             kept = if self.raising { both(&kept, &true_of) } else { true_of };
         }

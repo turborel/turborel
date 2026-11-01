@@ -391,3 +391,31 @@ fn likes_of_patterns_not_constant_keep_what_rows_keep() {
         assert_eq!(numbered.kept(batch, &[3], &NoSubqueries), Some(vec![]), "a null first: unknown");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13]:
+/// a conjunct judged over integers known as runs, once a run, keeps the
+/// rows it keeps of the same integers judged one by one, of all rows and
+/// of some.
+#[test]
+fn integers_judged_once_a_run_keep_what_each_keeps() {
+    let units: Vec<i64> = [3, 3, 3, 7, 7, 10, 10, 10, 10, 12].to_vec();
+    let plain = crate::storage::Ints::new(units.clone(), 0, None);
+    let runs = crate::storage::Ints::new(units, 0, None).with_runs(vec![3, 5, 9, 10]);
+    let all: Vec<usize> = (0..10).collect();
+    let some = vec![1, 3, 6, 9];
+    let mut judged = Vec::new();
+    for c in [number(3), number(7), number(8), number(12)] {
+        for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {
+            judged.push(Judged::Compare(0, op, c.clone()));
+        }
+    }
+    for not in [false, true] {
+        judged.push(Judged::In(0, set(vec![number(3), number(10)]), not));
+        judged.push(Judged::In(0, set(long(vec![number(7)], number)), not));
+    }
+    for j in &judged {
+        for rows in [&all, &some] {
+            assert_eq!(ints::kept(j, &runs, rows), ints::kept(j, &plain, rows), "{j:?} of {rows:?}");
+        }
+    }
+}

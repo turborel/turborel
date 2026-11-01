@@ -9,7 +9,7 @@ use super::{KEY, OWNER, RowTable, corrupt};
 use crate::disk::pager::PageId;
 use crate::engine::record::{Reference, Spill};
 use crate::error::{Code, Result, SqlError};
-use crate::storage::{Conjunction, Row, RowId};
+use crate::storage::{Row, RowId};
 
 impl RowTable {
     /// The record of row `id`, holding `row`, and the pages of its values
@@ -99,21 +99,8 @@ impl RowTable {
         into.push((&self.format, plain), &mut fetch)
     }
 
-    /// The record `record` holds, row `id`'s, unsealed, if `condition`, if
-    /// given, matches its row, only the condition's columns decoded.
-    pub(in crate::engine::rows) fn plain_matching(
-        &self,
-        (id, record): (RowId, &[u8]),
-        condition: Option<&Conjunction>,
-    ) -> Result<Option<Vec<u8>>> {
-        let plain = self.sealing.plain_record(id, record)?;
-        if let Some(condition) = condition {
-            let mut fetch = |reference: Reference| self.get_value(id, reference);
-            let row = self.format.decode_columns_with(&plain, &condition.columns(), &mut fetch)?;
-            if !condition.matches(&row) {
-                return Ok(None);
-            }
-        }
-        Ok(Some(plain.into_owned()))
+    /// The record `record` holds, row `id`'s, unsealed.
+    pub(in crate::engine::rows) fn plain(&self, id: RowId, record: &[u8]) -> Result<Vec<u8>> {
+        Ok(self.sealing.plain_record(id, record)?.into_owned())
     }
 }

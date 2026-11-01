@@ -382,3 +382,38 @@ fn texts_are_compressed_by_their_parts() {
     let broken = Chunk::parse(&bad_codes).unwrap();
     assert_eq!(broken.value(299, &TEXT).err().map(|e| e.code), Some(Code::Corrupt), "an escape at the end");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, runs of a chunk: of any range of a
+/// chunk of runs, where each run ends, past a base, each greater than the
+/// last, the last at the range's end, the values in each alike, nulls
+/// continuing a run; of a constant, one run; of another encoding, none.
+#[test]
+fn chunks_of_runs_say_where_each_ends() {
+    let sorted: Vec<Value> = (0..2000_i128).map(|n| if n % 97 == 5 { Value::Null } else { int(n.checked_div(250).unwrap()) }).collect();
+    let chunk_of = |values: &[Value]| {
+        let fields = Fields::of(&INTEGER, values.iter().cloned()).unwrap();
+        fields.chunk(&INTEGER, 0, (fields.len(), true)).unwrap()
+    };
+    let bytes = chunk_of(&sorted);
+    let chunk = Chunk::parse(&bytes).unwrap();
+    for (from, to) in [(0, 2000), (0, 1), (249, 252), (1700, 2000), (7, 7)] {
+        let (mut ends, mut units, mut nulls) = (Vec::new(), Vec::new(), Vec::new());
+        chunk.run_ends((from, to), 10, &mut ends).unwrap();
+        chunk.ints((from, to), (&mut units, &mut nulls)).unwrap();
+        assert!(ends.windows(2).all(|w| w[0] < w[1]), "{ends:?}");
+        assert_eq!(ends.last().copied().unwrap_or(10), 10 + to - from, "{from}..{to}");
+        let mut start = 10;
+        for &end in &ends {
+            let run = &units[start - 10..end - 10];
+            assert!(run.iter().all(|u| *u == run[0]), "{from}..{to}: one value a run");
+            start = end;
+        }
+    }
+    let constant = chunk_of(&vec![int(7); 300]);
+    let mut ends = Vec::new();
+    assert_eq!(Chunk::parse(&constant).unwrap().run_ends((5, 300), 0, &mut ends), Some(()));
+    assert_eq!(ends, [295], "a constant, one run");
+    let framed = chunk_of(&(0..300_i128).map(int).collect::<Vec<_>>());
+    assert_eq!(Chunk::parse(&framed).unwrap().run_ends((0, 300), 0, &mut Vec::new()), None, "a frame of reference");
+    assert_eq!(chunk.run_ends((0, 2001), 0, &mut Vec::new()), None, "past the end");
+}

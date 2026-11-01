@@ -17,7 +17,8 @@
 //! beside them. Each is measured on F, a row store
 //! table, then on FC, a column store one; so is a grouping of W, of
 //! 400,000 rows, by its key, far more groups than the work area holds,
-//! then of WC. Rates are of the tables' rows read, but the key's, of
+//! then of WC; and set functions of a column of runs of one value, RC's
+//! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
 //! queries. Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
@@ -52,6 +53,23 @@ fn main() {
     let s = db.session("B");
     measure(&bench, &s, ("F", "W", ""));
     measure(&bench, &s, ("FC", "WC", " (columnstore)"));
+    of_runs(&bench, &s);
+}
+
+/// Measures set functions of RC, a column store table whose S is sorted,
+/// of runs of one value, filtered by S and not.
+fn of_runs(bench: &Bench, s: &Session) {
+    for (name, sql) in [
+        ("COUNT(*) of a column of runs", "SELECT COUNT(*) FROM RC"),
+        ("COUNT of it by a condition of 9 runs in 10", "SELECT COUNT(*) FROM RC WHERE S >= 10"),
+        ("SUM of it", "SELECT SUM(S) FROM RC"),
+        ("SUM of it by a condition of 9 runs in 10", "SELECT SUM(S) FROM RC WHERE S >= 10"),
+    ] {
+        bench.measure(Case::new(format!("{name} (columnstore)"), "rows"), || {
+            fetched(s, sql);
+            ROWS
+        });
+    }
 }
 
 /// Measures each workload on table `table`, and the grouping by key on
@@ -159,6 +177,15 @@ fn keyed(s: &Session) {
     }
 }
 
+/// RC, its `ROWS` rows, K every key once and S it over 2,000.
+fn sorted_runs(s: &Session) {
+    s.run("CREATE TABLE RC (K INTEGER NOT NULL, S INTEGER) USING columnstore WITH (COLUMNSTORE.ORDER = 'S')").unwrap();
+    for first in (0..ROWS).step_by(PER_INSERT as usize) {
+        let rows: Vec<String> = (first..first + PER_INSERT).map(|k| format!("({k}, {})", k / 2_000)).collect();
+        s.run(&format!("INSERT INTO RC VALUES {}", rows.join(", "))).unwrap();
+    }
+}
+
 /// The rows of `sql`, each fetched, counted.
 fn fetched(s: &Session, sql: &str) -> u64 {
     let mut cursor = s.open_cursor(sql).unwrap();
@@ -177,7 +204,9 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 /// a few distributions, E exact with a fraction, and S text; and D, of the
 /// row store, a name for each group, two for group 1, and one of none;
 /// W, in the row store, and WC, in the column store, of `KEYS` rows each,
-/// K every key once and V one of 1,000.
+/// K every key once and V one of 1,000; and RC, in the column store, of
+/// `ROWS` rows, S its key over 2,000, its groups sorted by S, so each
+/// chunk of S holds a few runs of one value.
 fn database() -> Database {
     let db = Database::new();
     db.schema(
@@ -222,6 +251,7 @@ fn database() -> Database {
         }
     }
     keyed(&s);
+    sorted_runs(&s);
     s.run("INSERT INTO D VALUES (0, 'zero'), (1, 'one'), (1, 'uno'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five'), (6, 'six'), (7, 'seven'), (8, 'eight'), (9, 'nine'), (NULL, 'none')").unwrap();
     s.commit().unwrap();
     // FC's rows frozen, as the maintenance thread would have them.

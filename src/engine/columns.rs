@@ -201,8 +201,23 @@ impl<'a> Chunk<'a> {
             return None;
         }
         self.body.ints((from, to), units)?;
-        nulls.extend((from..to).map(|n| self.is_null(n)));
+        if self.nulls.iter().all(|&b| b == 0) {
+            nulls.resize(nulls.len().saturating_add(to.saturating_sub(from)), false);
+        } else {
+            nulls.extend((from..to).map(|n| self.is_null(n)));
+        }
         Some(())
+    }
+
+    /// \[DESIGN\] Where each run of one value among its positions `from`
+    /// to `to` ends, past `base`, pushed to `ends`, as `ints` gives them:
+    /// none if its encoding does not keep its values as runs
+    /// (`encoded::Body::run_ends`).
+    pub fn run_ends(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
+        if to > self.count {
+            return None;
+        }
+        self.body.run_ends((from, to), base, ends)
     }
 
     /// \[DESIGN\] Its values at positions `from` to `to`, character strings

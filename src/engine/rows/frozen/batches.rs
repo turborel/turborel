@@ -2,8 +2,10 @@
 //! RULES.md D31), in no particular order: first its frozen rows, a vector
 //! at a time, each column's values straight from its chunks, no row made;
 //! then the tree's rows, as the reader sees them. The chunks the scan's
-//! conditions cannot match are skipped; the rows of the rest are given
-//! for the filter to judge, as it judges every row given.
+//! conditions cannot match are skipped; the rows of the rest, and the
+//! tree's, are given for the filter to judge, as it judges every row
+//! given. A vector of integers kept as runs says so (`Ints::with_runs`),
+//! so the filter and the set functions work once a run.
 //!
 //! As a group is taken up, the pages of the chunks its runs are read from
 //! are asked to be read ahead, a window at a time (`columns/ahead.rs`).
@@ -41,6 +43,7 @@ pub(in crate::engine::rows) struct Batched {
     table: Arc<RowTable>,
     reader: Reader,
     columns: Vec<usize>,
+    /// The condition, which skips chunks; the filter judges every row given.
     condition: Option<Conjunction>,
     /// Its groups, taken before its tree is read, held to the end.
     directory: Arc<Directory>,
@@ -123,10 +126,12 @@ impl Batched {
     }
 
     /// The record, unsealed, of the tree's entry of `id`, `newest`, as the
-    /// reader sees it, if the condition matches its row.
+    /// reader sees it, if it sees the row. Not judged here: the filter
+    /// judges every row given over its vectors, and judging a row here too
+    /// cost more than it saved, as of a frozen row (`run_batch`).
     fn delta_record(&self, (id, newest): (RowId, Vec<u8>)) -> Result<Option<Vec<u8>>> {
         let Some(record) = self.table.visible_from(newest, self.reader)? else { return Ok(None) };
-        self.table.plain_matching((id, &record), self.condition.as_ref())
+        self.table.plain(id, &record).map(Some)
     }
 
     /// The ids of the tree's entries in `group`'s range of row ids, in
@@ -148,11 +153,15 @@ impl Batched {
     }
 
     /// The positions from `from` to `to` of the group being read whose rows
-    /// the tree has no entry for.
-    fn unshadowed(&self, (from, to): (u32, u32)) -> Vec<u32> {
-        let Some((_, ids, shadowed)) = &self.group else { return Vec::new() };
+    /// the tree has no entry for: none if it has an entry for none of the
+    /// group's, every position then given, no list made of them.
+    fn unshadowed(&self, (from, to): (u32, u32)) -> Option<Vec<u32>> {
+        let Some((_, ids, shadowed)) = &self.group else { return Some(Vec::new()) };
+        if shadowed.is_empty() {
+            return None;
+        }
         let at = |p: u32| usize::try_from(p).ok().and_then(|p| ids.get(p)).copied();
-        (from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect()
+        Some((from..to).filter(|&p| at(p).is_some_and(|id| shadowed.binary_search(&id).is_err())).collect())
     }
 
     /// A batch of the rows of the tree's entries left to give, if any, each
@@ -180,11 +189,13 @@ impl Batched {
         // skipped the chunks they cannot match (`candidates`), and judging
         // a row here too cost more than it saved.
         let positions = self.unshadowed((from, to));
-        if positions.is_empty() {
+        let rows = positions.as_ref().map_or_else(|| usize::try_from(to.saturating_sub(from)).unwrap_or(0), Vec::len);
+        if rows == 0 {
             return Ok(None);
         }
-        let whole = u32::try_from(positions.len()).ok() == Some(to.saturating_sub(from));
-        let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows: positions.len() };
+        let whole = positions.as_ref().is_none_or(|p| u32::try_from(p.len()).ok() == Some(to.saturating_sub(from)));
+        let positions = positions.unwrap_or_default();
+        let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows };
         for &c in &self.columns {
             let column = match types.get(c) {
                 // A run whole is read a chunk at a time, each value once, as
@@ -196,7 +207,7 @@ impl Batched {
                         positions_column(group, &pages, (c, t), &positions)?
                     }
                 }
-                None => Column::from(vec![Value::Null; positions.len()]),
+                None => Column::from(vec![Value::Null; rows]),
             };
             batch.columns.push(column);
         }

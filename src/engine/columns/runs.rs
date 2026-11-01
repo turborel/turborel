@@ -128,6 +128,23 @@ impl<'a> Runs<'a> {
         Some(self.value(self.run_of(n)?)?.to_le_bytes())
     }
 
+    /// Where each run among positions `from` to `to` ends, past `base`,
+    /// pushed to `ends`, the last at `to`.
+    pub(super) fn ends_in(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
+        if to > self.count || from >= to {
+            return (from == to && to <= self.count).then_some(());
+        }
+        let mut r = self.run_of(from)?;
+        loop {
+            let end = self.end(r)?.min(to);
+            ends.push(base.checked_add(end.checked_sub(from)?)?);
+            if end >= to {
+                return Some(());
+            }
+            r = r.saturating_add(1);
+        }
+    }
+
     /// The values at positions `from` to `to`, pushed to `out`, each run's
     /// value repeated for its rows among them.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
