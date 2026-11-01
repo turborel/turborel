@@ -257,7 +257,8 @@ impl PhysicalPlanner<'_> {
                 let Some(Expr::Column(c)) = exprs.get(column) else { return None };
                 self.column_type(input, *c)
             }
-            LogicalPlan::Aggregate { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::Values { .. } | LogicalPlan::System { .. } => None,
+            LogicalPlan::Values { types, .. } => types.get(column).copied(),
+            LogicalPlan::Aggregate { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::System { .. } => None,
         }
     }
 }

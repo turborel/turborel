@@ -88,7 +88,7 @@ fn counted(f: AggregateRef, arg: Option<Expr>, rows: LogicalPlan, op: CompOp) ->
 
 /// The bound query of an assertion of `condition`.
 fn asserting(condition: Cond) -> LogicalPlan {
-    let values = LogicalPlan::Values { rows: vec![vec![number(1)]], width: 1 };
+    let values = LogicalPlan::Values { rows: vec![vec![number(1)]], types: vec![COUNTED] };
     let filter = LogicalPlan::Filter { cond: Cond::Not(Box::new(condition)), input: Box::new(values) };
     LogicalPlan::Project { exprs: vec![number(1)], input: Box::new(filter) }
 }
@@ -246,8 +246,10 @@ fn a_set_functions_argument_is_never_null() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR1b, GR2b iii, iv,
 /// §11.34 GR2]; [DESIGN] RULES.md D51: no form is found of a function, a
 /// CAST, a subquery in a filter, an outer reference, a select list that can
-/// raise, a join, a grouping, MAX of no argument, SUM or AVG, a COUNT a
-/// plug-in replaced, an OR of conjuncts, nor of a query not an assertion's.
+/// raise, a count of a grouping's rows, MAX of no argument, SUM or AVG, a
+/// COUNT a plug-in replaced, an OR of conjuncts, nor of a query not an
+/// assertion's. Joins and groupings of no row passing are queries'
+/// (`queried/tests.rs`).
 #[test]
 fn other_shapes_have_no_form() {
     let functions = Registry::with_set_functions();
@@ -257,7 +259,6 @@ fn other_shapes_have_no_form() {
     let call = Expr::Call(length, vec![Expr::Column(1)]);
     let inner = Cond::Exists(subquery(scan()));
     let raising = Expr::Arith(Box::new(Expr::Column(0)), ArithOp::Div, Box::new(number(0)));
-    let joined = LogicalPlan::Product { left: Box::new(scan()), right: Box::new(scan()) };
     let grouped = LogicalPlan::Aggregate { groups: vec![0], aggs: Vec::new(), input: Box::new(scan()) };
     let k = || Some(Expr::Column(0));
     let cases = [
@@ -265,8 +266,6 @@ fn other_shapes_have_no_form() {
         none_of(vec![number(1)], filtered(Cond::IsNull(cast.clone(), false))),
         none_of(vec![number(1)], filtered(inner)),
         none_of(vec![raising], scan()),
-        none_of(vec![number(1)], joined),
-        none_of(vec![number(1)], LogicalPlan::Distinct { input: Box::new(scan()) }),
         Cond::Not(Box::new(Cond::Exists(Arc::new(Subquery { plan: scan(), outer: vec![Expr::Column(0)] })))),
         Cond::Not(Box::new(Cond::Const(Truth::True))),
         counted(count.clone(), None, grouped, CompOp::Le),

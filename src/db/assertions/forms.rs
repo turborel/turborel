@@ -45,24 +45,49 @@
 //!
 //! DISTINCT changes no greatest or least [GR2], so MAX and MIN may have it.
 //! SUM and AVG have no form: their value, and whether they overflow [GR2b
-//! iv], depend on every row, overflow judged of the final total. Nor
-//! do a join, a grouping, or a set function a plug-in replaced.
+//! iv], depend on every row, overflow judged of the final total. Nor does
+//! a set function a plug-in replaced.
+//!
+//! The rows of no row passing, and of MAX or MIN bounded, may be those of a
+//! query too, not of one table: inner joins, or a grouping of one table's
+//! rows (`queried.rs`).
 
 use crate::catalog::{Catalog, ConstraintKind, QualifiedName};
 use crate::functions::{Registry, Standard};
-use crate::logical::{Cond, Expr, LogicalPlan, Subquery, Truth, map_cond_exprs, split_and};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Subquery, Truth, map_cond_exprs, split_and};
 use crate::optimizer::substitute;
 use crate::value::CompOp;
 
+use super::queried::{Query, never_null_in, query_of};
+
 /// A conjunct of an assertion's condition that a statement's change
-/// checks, of the rows of `table` that pass every one of `steps`.
+/// checks, of the rows of `source` that pass every one of `steps`.
 pub(super) struct Form {
-    pub(super) table: QualifiedName,
+    pub(super) source: Source,
     pub(super) steps: Vec<Step>,
     pub(super) kind: Kind,
     /// A set function's argument that may be null, and how many of the
     /// steps are of the rows it is evaluated on, before its own.
     pub(super) nulls: Option<(usize, Expr)>,
+}
+
+/// Where a form's rows come from.
+pub(super) enum Source {
+    /// The rows of a table, each passing the form's steps as it is changed.
+    Table(QualifiedName),
+    /// The rows of a query, of no row passing or MAX or MIN bounded, each
+    /// it gives passing the form's steps: run over the rows changed.
+    Query(Box<Query>),
+}
+
+impl Source {
+    /// The tables its rows are of.
+    pub(super) fn tables(&self) -> Vec<QualifiedName> {
+        match self {
+            Source::Table(table) => vec![table.clone()],
+            Source::Query(query) => query.plan.tables(),
+        }
+    }
 }
 
 /// What a row of the table passes, in order, to be one of a form's.
@@ -143,7 +168,7 @@ fn form_of(c: &Cond, known: &Known<'_>) -> Option<Vec<Form>> {
     match c {
         Cond::Not(inner) => {
             let Cond::Exists(s) = &**inner else { return None };
-            exists_form(s).map(|f| vec![f])
+            exists_form(s, known).map(|f| vec![f])
         }
         Cond::Compare(Expr::Subquery(s, 0), op, k @ Expr::Const(_)) => aggregate_form(s, (*op, k), known),
         Cond::Compare(k @ Expr::Const(_), op, Expr::Subquery(s, 0)) => aggregate_form(s, (op.flip(), k), known),
@@ -162,37 +187,59 @@ fn form_of(c: &Cond, known: &Known<'_>) -> Option<Vec<Form>> {
     }
 }
 
-/// `NOT EXISTS (SELECT ... FROM T WHERE p)`: of `s`, the subquery.
-fn exists_form(s: &Subquery) -> Option<Form> {
+/// `NOT EXISTS (SELECT ... FROM T WHERE p)`, or of a query's rows: of
+/// `s`, the subquery.
+fn exists_form(s: &Subquery, known: &Known<'_>) -> Option<Form> {
     let rows = if let LogicalPlan::Project { exprs, input } = &s.plan {
         // The select list of EXISTS, which raises nothing.
         exprs.iter().all(|e| matches!(e, Expr::Column(_) | Expr::Const(_))).then_some(&**input)?
     } else {
         &s.plan
     };
-    let passing = passing(rows).filter(|_| s.outer.is_empty())?;
-    Some(Form { table: passing.table, steps: passing.steps, kind: Kind::NoRow, nulls: None })
+    if !s.outer.is_empty() {
+        return None;
+    }
+    if let Some(passing) = passing(rows) {
+        return Some(Form { source: Source::Table(passing.table), steps: passing.steps, kind: Kind::NoRow, nulls: None });
+    }
+    let query = query_of(rows, known)?;
+    Some(Form { source: Source::Query(Box::new(query)), steps: Vec::new(), kind: Kind::NoRow, nulls: None })
 }
 
 /// `(SELECT f(x) FROM T WHERE p) op k`, `f` the standard COUNT, MAX or
-/// MIN: of `s`, the subquery, `op`, the comparison with it first, and `k`.
+/// MIN, or MAX or MIN bounded of a query's rows: of `s`, the subquery,
+/// `op`, the comparison with it first, and `k`.
 fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> Option<Vec<Form>> {
     let LogicalPlan::Project { exprs, input } = &s.plan else { return None };
     let LogicalPlan::Aggregate { groups, aggs, input: rows } = &**input else { return None };
     let ([Expr::Column(0)], [agg]) = (exprs.as_slice(), aggs.as_slice()) else { return None };
     let function = known.functions.standard(&agg.func).filter(|_| groups.is_empty() && s.outer.is_empty())?;
-    let Passing { table, steps, columns } = passing(rows)?;
+    match passing(rows) {
+        Some(passing) => table_aggregate_form(passing, (function, agg), (op, k), known),
+        None => query_bound_form(rows, (function, agg), (op, k), known).map(|f| vec![f]),
+    }
+}
+
+/// `(SELECT f(x) FROM T WHERE p) op k` of the rows `passing` finds: of
+/// `function`, called as `agg`, `op` and `k`, as `aggregate_form` says.
+fn table_aggregate_form(
+    passing: Passing,
+    (function, agg): (Standard, &AggCall),
+    (op, k): (CompOp, &Expr),
+    known: &Known<'_>,
+) -> Option<Vec<Form>> {
+    let Passing { table, steps, columns } = passing;
     let Some(x) = &agg.arg else {
         // COUNT(*) alone has the form (*).
         let kind = Kind::Count(safe(op));
-        return (function == Standard::Count).then(|| vec![Form { table, steps, kind, nulls: None }]);
+        return (function == Standard::Count).then(|| vec![Form { source: Source::Table(table), steps, kind, nulls: None }]);
     };
     let x = Some(x).filter(|x| row_expr(x)).map(|x| columns.as_deref().map_or_else(|| x.clone(), |c| substitute(x.clone(), c)))?;
     let nulls = (!never_null(&x, (&table, &steps), known.catalog)).then(|| (steps.len(), x.clone()));
     let form = |step: Option<Cond>, kind: Kind| {
         let mut steps = steps.clone();
         steps.extend(step.map(Step::Keep));
-        Form { table: table.clone(), steps, kind, nulls: nulls.clone() }
+        Form { source: Source::Table(table.clone()), steps, kind, nulls: nulls.clone() }
     };
     let compared = |by: CompOp| Cond::Compare(x.clone(), by, k.clone());
     let bound = |by: CompOp| form(Some(Cond::Not(Box::new(compared(by)))), Kind::Bound);
@@ -208,7 +255,25 @@ fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> 
         (Standard::Min, CompOp::Eq) => vec![bound(CompOp::Ge), form(None, Kind::Reach(compared(CompOp::Le)))],
         (Standard::Max, CompOp::Ne) => vec![form(None, Kind::Apart { beyond: compared(CompOp::Gt), within: compared(CompOp::Lt) })],
         (Standard::Min, CompOp::Ne) => vec![form(None, Kind::Apart { beyond: compared(CompOp::Lt), within: compared(CompOp::Gt) })],
+        (Standard::Sum | Standard::Avg, _) => return None,
     })
+}
+
+/// `MAX(x) < k` or `<= k`, `MIN(x) > k` or `>= k`, of the rows of a query,
+/// `rows`: `NOT (x op k)` a step of each row it gives, as of a table's
+/// (`Kind::Bound`). Of `function`, called as `agg`, `op` and `k`.
+fn query_bound_form(
+    rows: &LogicalPlan,
+    (function, agg): (Standard, &AggCall),
+    (op, k): (CompOp, &Expr),
+    known: &Known<'_>,
+) -> Option<Form> {
+    let bounded = matches!((function, op), (Standard::Max, CompOp::Lt | CompOp::Le) | (Standard::Min, CompOp::Gt | CompOp::Ge));
+    let x = agg.arg.as_ref().filter(|x| bounded && row_expr(x))?;
+    let query = query_of(rows, known)?;
+    let nulls = (!never_null_in(rows, x, known)).then(|| (0, x.clone()));
+    let step = Step::Keep(Cond::Not(Box::new(Cond::Compare(x.clone(), op, k.clone()))));
+    Some(Form { source: Source::Query(Box::new(query)), steps: vec![step], kind: Kind::Bound, nulls })
 }
 
 /// The changes of a count compared by `op`, the count first, that cannot
@@ -224,15 +289,15 @@ fn safe(op: CompOp) -> Safe {
 /// The rows of a plan, as `passing` finds them: the table, the steps a row
 /// of it passes, and, below a projection, each column of the plan as an
 /// expression over the table's row.
-struct Passing {
-    table: QualifiedName,
-    steps: Vec<Step>,
-    columns: Option<Vec<Expr>>,
+pub(super) struct Passing {
+    pub(super) table: QualifiedName,
+    pub(super) steps: Vec<Step>,
+    pub(super) columns: Option<Vec<Expr>>,
 }
 
 /// The rows of `plan`, if it is filters of conditions and projections of
 /// expressions of the row alone over a scan.
-fn passing(plan: &LogicalPlan) -> Option<Passing> {
+pub(super) fn passing(plan: &LogicalPlan) -> Option<Passing> {
     // Taken from the top, each over the row of the node below, so turned.
     let (mut steps, mut columns) = (Vec::new(), None::<Vec<Expr>>);
     let mut node = plan;
@@ -272,7 +337,7 @@ fn passing(plan: &LogicalPlan) -> Option<Passing> {
 
 /// Whether `x`, an expression of the row alone over `table`'s rows that
 /// pass `steps`, is never null, as the module says.
-fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), catalog: &dyn Catalog) -> bool {
+pub(super) fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), catalog: &dyn Catalog) -> bool {
     match x {
         Expr::Column(at) => rejected(*at, steps) || declared(table, *at, catalog),
         Expr::Const(v) => !v.is_null(),
@@ -287,7 +352,7 @@ fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), catalog: &dyn
 /// Whether column `at` of `table` holds no null at a statement's end: a
 /// NOT NULL or PRIMARY KEY constraint not deferrable is on it [ISO/IEC
 /// 9075:1992 §4.10.1, §11.7 SR3a].
-fn declared(table: &QualifiedName, at: usize, catalog: &dyn Catalog) -> bool {
+pub(super) fn declared(table: &QualifiedName, at: usize, catalog: &dyn Catalog) -> bool {
     catalog.table(table).is_some_and(|desc| {
         desc.constraints.iter().any(|c| {
             let on = match &c.kind {
@@ -316,7 +381,7 @@ fn rejected(at: usize, steps: &[Step]) -> bool {
 /// Whether `c` is not true of a row whose column `at` is null: it is
 /// unknown, or IS NOT NULL false [ISO/IEC 9075:1992 §8.2 GR1a, §8.4 SR4,
 /// §8.5 GR1, GR2, §8.6 GR3].
-fn rejects(c: &Cond, at: usize) -> bool {
+pub(super) fn rejects(c: &Cond, at: usize) -> bool {
     match c {
         Cond::IsNull(e, true) | Cond::Like(e, ..) | Cond::In(e, _) => strict(e, at),
         Cond::Compare(a, _, b) => strict(a, at) || strict(b, at),
@@ -353,7 +418,7 @@ fn strict(e: &Expr, at: usize) -> bool {
 }
 
 /// Whether `c` is a condition of the row alone, as changes.rs says.
-fn row_cond(c: &Cond) -> bool {
+pub(super) fn row_cond(c: &Cond) -> bool {
     match c {
         Cond::Const(_) => true,
         Cond::Or(a, b) | Cond::And(a, b) => row_cond(a) && row_cond(b),
@@ -366,7 +431,7 @@ fn row_cond(c: &Cond) -> bool {
 }
 
 /// Whether `e` is an expression of the row alone, as changes.rs says.
-fn row_expr(e: &Expr) -> bool {
+pub(super) fn row_expr(e: &Expr) -> bool {
     match e {
         Expr::Column(_) | Expr::Const(_) => true,
         Expr::Neg(x) => row_expr(x),

@@ -247,9 +247,9 @@ impl fmt::Debug for AggregateRef {
 pub struct Registry {
     scalars: HashMap<String, ScalarRef>,
     aggregates: HashMap<String, AggregateRef>,
-    /// The standard COUNT, MAX and MIN, in `Standard`'s order, which a
-    /// plug-in of its name may replace.
-    standard: [AggregateRef; 3],
+    /// The standard COUNT, MAX, MIN, SUM and AVG, in `Standard`'s order,
+    /// which a plug-in of its name may replace.
+    standard: [AggregateRef; 5],
 }
 
 /// A set function a `Registry` holds as the standard defines it, no
@@ -262,18 +262,25 @@ pub(crate) enum Standard {
     Max,
     /// MIN.
     Min,
+    /// SUM.
+    Sum,
+    /// AVG.
+    Avg,
 }
 
 impl Registry {
     /// A registry holding the five SQL-86 set functions, and the string
     /// functions of SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
     pub fn with_set_functions() -> Registry {
-        let standard =
-            [AggregateRef(Arc::new(Count)), AggregateRef(Arc::new(Extreme { max: true })), AggregateRef(Arc::new(Extreme { max: false }))];
+        let standard = [
+            AggregateRef(Arc::new(Count)),
+            AggregateRef(Arc::new(Extreme { max: true })),
+            AggregateRef(Arc::new(Extreme { max: false })),
+            AggregateRef(Arc::new(Sum)),
+            AggregateRef(Arc::new(Avg)),
+        ];
         let scalars = strings::functions().into_iter().map(|f| (f.name().to_string(), ScalarRef(f))).collect();
-        let (sum, avg): (Arc<dyn AggregateFunction>, Arc<dyn AggregateFunction>) = (Arc::new(Sum), Arc::new(Avg));
-        let set_functions = standard.iter().map(|f| Arc::clone(&f.0)).chain([sum, avg]);
-        let aggregates = set_functions.map(|f| (f.name().to_string(), AggregateRef(f))).collect();
+        let aggregates = standard.iter().map(|f| (f.0.name().to_string(), f.clone())).collect();
         Registry { scalars, aggregates, standard }
     }
 
@@ -325,11 +332,14 @@ impl Registry {
         self.aggregates.get(name).cloned()
     }
 
-    /// Which of the standard COUNT, MAX and MIN [X3.135-1986 §5.8] `f` is,
-    /// if it is one, no plug-in of its name.
+    /// Which of the standard COUNT, MAX, MIN, SUM and AVG [X3.135-1986
+    /// §5.8] `f` is, if it is one, no plug-in of its name.
     pub(crate) fn standard(&self, f: &AggregateRef) -> Option<Standard> {
         let held = |at: usize| self.standard.get(at).is_some_and(|s| std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&s.0)));
-        [Standard::Count, Standard::Max, Standard::Min].into_iter().enumerate().find_map(|(at, s)| held(at).then_some(s))
+        [Standard::Count, Standard::Max, Standard::Min, Standard::Sum, Standard::Avg]
+            .into_iter()
+            .enumerate()
+            .find_map(|(at, s)| held(at).then_some(s))
     }
 }
 

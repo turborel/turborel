@@ -108,8 +108,10 @@ impl Session {
         })?;
         let mut checking = Checking::default();
         // [ISO/IEC 9075:1992 §4.28] serializable at every level.
-        let checked =
-            tx.check_reads(true).and_then(|()| now.visit(&mut |check| st.check(tx, check, &mut checking))).and_then(|()| checking.finish());
+        let checked = tx
+            .check_reads(true)
+            .and_then(|()| now.visit(&mut |check| st.check(tx, check, &mut checking)))
+            .and_then(|()| st.end_checking(tx, &mut checking));
         let checked = checked.and(tx.check_reads(false));
         if checked.is_err() {
             later.append(now);

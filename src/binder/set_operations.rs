@@ -114,7 +114,8 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
         columns.push(OutColumn { name: None, data_type, not_null: false, origin: None });
     }
     let exprs = bound.into_iter().map(|r| r.into_iter().zip(&columns).map(|((e, t), c)| conformed(e, t, c.data_type)).collect()).collect();
-    Ok(Bound { plan: LogicalPlan::Values { rows: exprs, width: degree }, columns })
+    let types = columns.iter().map(|c| c.data_type).collect();
+    Ok(Bound { plan: LogicalPlan::Values { rows: exprs, types }, columns })
 }
 
 /// `e`, of type `t` if it has one, cast to `to` if that is another.

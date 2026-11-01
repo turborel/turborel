@@ -13,7 +13,9 @@
 //! statement changed where its form allows (`assertions/changes.rs`).
 
 mod changes;
+mod delta;
 mod forms;
+mod queried;
 
 pub(super) use changes::Asserted;
 

@@ -37,6 +37,12 @@ impl Warnings {
         self.raised.store(true, Ordering::Release);
     }
 
+    /// Whether one was raised since they were last taken: so the statement
+    /// completes with it, or one raised before it.
+    pub(crate) fn raised(&self) -> bool {
+        self.raised.load(Ordering::Acquire)
+    }
+
     /// The first warning raised since they were last taken, if any: none
     /// raised from now on.
     pub(crate) fn take(&self) -> Option<SqlState> {
@@ -58,9 +64,12 @@ mod tests {
     fn the_first_warning_is_kept_until_taken() {
         let warnings = Warnings::default();
         assert_eq!(warnings.take(), None);
+        assert!(!warnings.raised());
         warnings.raise(SqlState::STRING_TRUNCATED);
+        assert!(warnings.raised());
         warnings.raise(SqlState::ZERO_BIT_PADDING);
         assert_eq!(warnings.take(), Some(SqlState::STRING_TRUNCATED));
+        assert!(!warnings.raised(), "none raised once taken");
         assert_eq!(warnings.take(), None);
         warnings.raise(SqlState::NULL_VALUE_ELIMINATED);
         assert_eq!(warnings.take(), Some(SqlState::NULL_VALUE_ELIMINATED));

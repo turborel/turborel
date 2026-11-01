@@ -845,22 +845,47 @@ machinery.
 - **Nulls.** Whether a null is eliminated, warning 01003 [§6.5 GR1b],
   depends on every row. So where `x` may be null, the change decides
   only if a row of it passing has `x` null: 01003 is then raised, as the
-  whole check would; else whole.
+  whole check would; or if a warning is raised already, which the
+  statement completes with, as only the first is kept; else whole.
   - Never null: a column of a NOT NULL or PRIMARY KEY constraint not
     deferrable, one a filter's conjunct is not true of when null, a
     constant, or arithmetic of those.
 - **Errors.** Every form is evaluated on the change, as AND evaluates
   both operands, so an error any raises is raised (D15); NOT EXISTS
   stops at its first row passing, as EXISTS does.
+- **Queries.** NOT EXISTS, and MAX or MIN bounded, may be of a query's
+  rows (`assertions/queried.rs`, `delta.rs`), its conditions and
+  expressions of the row alone, its set functions the standard ones:
+  - inner joins (filters, projections, DISTINCT, products of scans and
+    constant rows): each scan in turn is made of its table's rows
+    inserted or updated, as constant rows, the others read whole. A row
+    the query gives that it did not before is of a row changed;
+  - a grouping of one table's rows, HAVING of the group: the groups of
+    the rows changed, now and before, are made of the table's rows not
+    distinct from their keys [§3.1.3h, §7.7 GR1], and only they. Not of
+    SUM or AVG of approximate numbers, which depend on the order added.
+    Where a set function's argument may be null, unless a warning is
+    raised once they are made, whole;
+  - reads checked as a constraint's (D29): a probe or a scan reads its
+    table whole, so rows of two transactions that make a row together
+    fail the second to commit;
+  - the rows changed, or the keys, held to MEMORY.WORK_BYTES, reserved
+    of the budget; more, whole.
 - **Deferred rows.** A deferred assertion of forms of no row passing
   waits as a check of each row written (`Check::AssertedRow`), evaluated
   when it is made: it held as it was deferred, and rows are independent.
   - These checks stop at the first row breaking it: so one NOT EXISTS,
     or NOT EXISTS and MAX or MIN bounded of steps raising no error and
     `x` never null, so no row's error or warning goes unraised.
+  - Any other of forms of no row passing, of a query's rows among them,
+    is checked once every row written is read, from them all together,
+    each form evaluated, as an immediate one is from a statement's; of
+    a grouping's table, each row with the row before it, kept.
 - **Whole.** Any other form; any other deferred assertion; SUM and AVG,
   whose value and overflow, judged of the final total [§6.5 GR2b iv],
-  depend on every row; a join; a grouping.
+  depend on every row; COUNT, a greatest reached or unequal, of a
+  query's rows; an outer join, a set operator or a grouping of a join,
+  whose rows a row deleted may make appear.
 - **Name.** A constraint name of its schema, for SET CONSTRAINTS and
   every other constraint's [SR2, SR7].
 - **In a `<schema definition>`,** outside any session's transaction, it
@@ -2037,7 +2062,9 @@ picks by estimate, so a new method needs no change to the planner.
     as its table);
   - an index of the table has first columns the equalities give values
     for, of the indexed column's kind (so the index places them), and
-    later columns NOT NULL (an index holds no key with a null);
+    later columns NOT NULL (an index holds no key with a null). A list of
+    rows (VALUES) carries its columns' types [§7.2 GR2], so it probes
+    too;
   - the left's estimated rows times a probe's cost (its pages, a level
     of descent each, and its rows, a fetch each) is below the cost of
     reading the hash join's right operand.

@@ -92,7 +92,7 @@ pub(super) fn guarded(at: usize, conds: Vec<Cond>, operands: &[&LogicalPlan]) ->
     let Some(cond) = and_all(conds) else { return Some(operand) };
     let others = operands.iter().enumerate().filter(|(n, _)| *n != at);
     let exists = others.map(|(_, o)| Cond::Exists(Arc::new(Subquery { plan: (*o).clone(), outer: Vec::new() }))).collect();
-    let row = LogicalPlan::Values { rows: vec![Vec::new()], width: 0 };
+    let row = LogicalPlan::Values { rows: vec![Vec::new()], types: Vec::new() };
     let guard = wrap(row, exists);
     Some(LogicalPlan::Filter { cond, input: Box::new(LogicalPlan::Product { left: Box::new(operand), right: Box::new(guard) }) })
 }
@@ -125,11 +125,12 @@ mod tests {
     use crate::catalog::MemoryCatalog;
     use crate::db::State;
     use crate::logical::Expr;
-    use crate::value::{ArithOp, CompOp, Decimal, Value};
+    use crate::value::{ArithOp, CompOp, DataType, Decimal, Spelled, Value};
 
     /// An operand of one row of `width` columns.
     fn operand(width: usize) -> LogicalPlan {
-        LogicalPlan::Values { rows: vec![vec![Expr::Const(Value::Exact(Decimal::new(1, 0))); width]], width }
+        let one = DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric };
+        LogicalPlan::Values { rows: vec![vec![Expr::Const(Value::Exact(Decimal::new(1, 0))); width]], types: vec![one; width] }
     }
 
     fn product(left: LogicalPlan, right: LogicalPlan) -> LogicalPlan {

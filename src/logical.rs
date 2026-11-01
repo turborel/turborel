@@ -143,8 +143,8 @@ pub enum LogicalPlan {
     Values {
         /// The rows' expressions.
         rows: Vec<Vec<Expr>>,
-        /// The degree of each.
-        width: usize,
+        /// The type of each column [§7.2 GR2], as many as each row's degree.
+        types: Vec<DataType>,
     },
     /// [X3.135-1986 §8.3 GR3b] ORDER BY.
     Sort {
@@ -312,7 +312,7 @@ impl LogicalPlan {
                 exprs.iter().map(|e| render_expr(e, &inner)).collect()
             }
             LogicalPlan::SetOp { left, .. } => left.names(),
-            LogicalPlan::Values { width, .. } => (0..*width).map(|i| column_name(&[], i)).collect(),
+            LogicalPlan::Values { types, .. } => (0..types.len()).map(|i| column_name(&[], i)).collect(),
             LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => input.names(),
         }
     }

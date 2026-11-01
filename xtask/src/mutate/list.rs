@@ -7,7 +7,7 @@
 use super::Mutation;
 
 /// The mutations, in the order they run.
-pub const MUTATIONS: [Mutation; 29] = [
+pub const MUTATIONS: [Mutation; 32] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -258,8 +258,8 @@ pub const MUTATIONS: [Mutation; 29] = [
         name: "assertion-conjuncts",
         breaks: "assertions checked from changes: the conjuncts after a false one are not evaluated",
         file: "src/db/assertions/changes.rs",
-        original: "            let (seen, form_verdict) = self.form_verdict(tx, form, effects)?;",
-        replacement: "            if verdict == Verdict::Broken { break; } let (seen, form_verdict) = self.form_verdict(tx, form, effects)?;",
+        original: "            let (seen, form_verdict) = self.form_verdict(tx, form, changes)?;",
+        replacement: "            if verdict == Verdict::Broken { break; } let (seen, form_verdict) = self.form_verdict(tx, form, changes)?;",
         integration: &["assertion_changes::every_conjunct_is_evaluated_on_the_change_11_34"],
         unit: &[],
     },
@@ -297,8 +297,8 @@ pub const MUTATIONS: [Mutation; 29] = [
         name: "assertion-null-unseen",
         breaks: "assertions checked from changes: a set function of a value that may be null held from a change of no null, its warning lost",
         file: "src/db/assertions/changes.rs",
-        original: "(Verdict::Holds, true, false) => Verdict::Unknown,",
-        replacement: "(Verdict::Holds, true, false) => Verdict::Holds,",
+        original: "                if tx.stop.warnings().raised() {",
+        replacement: "                if true {",
         integration: &[
             "assertion_forms::a_count_of_distinct_values_answers_as_checked_whole_6_5",
             "assertion_forms::forms_checked_from_changes_answer_as_checked_whole",
@@ -309,9 +309,36 @@ pub const MUTATIONS: [Mutation; 29] = [
         name: "assertion-deferred-quiet",
         breaks: "deferred assertions checked from their rows: steps that raise, or an argument that may be null, stopped at a broken row",
         file: "src/db/assertions/changes.rs",
-        original: "            matches!(f.kind, Kind::NoRow | Kind::Bound) && f.nulls.is_none() && !raising",
-        replacement: "            matches!(f.kind, Kind::NoRow | Kind::Bound)",
+        original: "            f.nulls.is_none() && !raising",
+        replacement: "            true",
         integration: &["assertion_forms::a_deferred_assertion_of_several_forms_is_checked_from_its_rows_14_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-join-one-scan",
+        breaks: "assertions of a join checked from changes: a row changed of a table but the first scanned joins nothing",
+        file: "src/db/assertions/delta.rs",
+        original: "        for (at, table) in scanned.iter().enumerate() {",
+        replacement: "        for (at, table) in scanned.iter().enumerate().take(1) {",
+        integration: &["assertion_queries::a_join_is_broken_by_a_row_of_either_table_7_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-group-left",
+        breaks: "assertions of a grouping checked from changes: the group a row leaves is not made again",
+        file: "src/db/assertions/delta.rs",
+        original: "            for row in [now.as_ref(), before].into_iter().flatten() {",
+        replacement: "            for row in [now.as_ref(), None].into_iter().flatten() {",
+        integration: &["assertion_queries::a_grouping_is_broken_by_a_group_changed_7_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "assertion-group-null",
+        breaks: "assertions of a grouping checked from changes: a null eliminated in a group not changed, its warning lost",
+        file: "src/db/assertions/delta.rs",
+        original: "Ok((!nullable || tx.stop.warnings().raised()).then_some(seen))",
+        replacement: "Ok(Some(seen))",
+        integration: &["assertion_queries::a_grouping_warns_as_checked_whole_6_5"],
         unit: &[],
     },
 ];

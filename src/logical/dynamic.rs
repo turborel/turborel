@@ -140,7 +140,7 @@ impl Filling<'_> {
                 LogicalPlan::Aggregate { groups, aggs, input }
             }
             LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: self.cond(cond), left, right },
-            LogicalPlan::Values { rows, width } => LogicalPlan::Values { rows: rows.into_iter().map(|r| self.exprs(r)).collect(), width },
+            LogicalPlan::Values { rows, types } => LogicalPlan::Values { rows: rows.into_iter().map(|r| self.exprs(r)).collect(), types },
             other @ (LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Product { .. }
@@ -207,7 +207,7 @@ mod tests {
         let joined = LogicalPlan::OuterJoin {
             kind: OuterJoin::Left,
             cond: compare(slot(1)),
-            left: Box::new(LogicalPlan::Values { rows: vec![vec![slot(0)]], width: 1 }),
+            left: Box::new(LogicalPlan::Values { rows: vec![vec![slot(0)]], types: vec![DataType::Character { length: 4 }] }),
             right: Box::new(scan()),
         };
         let plan = LogicalPlan::Project { exprs: vec![case], input: Box::new(LogicalPlan::Filter { cond, input: Box::new(joined) }) };

@@ -61,7 +61,8 @@ fn checks_are_read_back() {
         Check::Referenced { child: named("U"), constraint: named("F"), old: old(), id: Some(3) },
         Check::Referenced { child: named("U"), constraint: named("F"), old: old(), id: None },
         Check::Assertion { constraint: named("A") },
-        Check::AssertedRow { table: named("T"), constraint: named("A"), id: 4 },
+        Check::AssertedRow { table: named("T"), constraint: named("A"), id: 4, before: None },
+        Check::AssertedRow { table: named("T"), constraint: named("A"), id: 5, before: Some(old()) },
     ];
     for check in &checks {
         let (read, record) = again(check);
@@ -75,10 +76,20 @@ fn checks_are_read_back() {
     }
     assert!(matches!(again(&checks[1]).0, Check::Unique { id: 2, .. }));
     assert!(matches!(again(&checks[0]).0, Check::Row { id: 1, .. }));
-    let (Check::AssertedRow { table, id, .. }, _) = again(&checks[6]) else { panic!("not an asserted row") };
-    assert_eq!((table, id), (named("T"), 4_u64));
-    assert!(checks[6].bytes() > checks[5].bytes(), "its table's name counted");
+    asserted_rows_are_read_back(&checks[5..]);
     let mut unknown = checks[2].record();
     unknown[0] = 9_u8;
     assert_eq!(Check::read(&unknown, &TypeRegistry::default()).err().map(|e| e.code), Some(Code::Corrupt));
+}
+
+/// Of an assertion's check, and of its rows', `checks`: each row's read
+/// back with its table and id, and the row before it, if kept, each name
+/// and row counted among its bytes.
+fn asserted_rows_are_read_back(checks: &[Check]) {
+    let (Check::AssertedRow { table, id, before, .. }, _) = again(&checks[1]) else { panic!("not an asserted row") };
+    assert_eq!((table, id, before.is_none()), (named("T"), 4_u64, true));
+    assert!(checks[1].bytes() > checks[0].bytes(), "its table's name counted");
+    let (Check::AssertedRow { id: kept, before: was, .. }, _) = again(&checks[2]) else { panic!("not an asserted row") };
+    assert_eq!((kept, format!("{was:?}")), (5_u64, format!("{:?}", Some(old()))));
+    assert!(checks[2].bytes() > checks[1].bytes(), "the row before counted");
 }

@@ -382,7 +382,8 @@ restriction is lifted.
 - **Assertions** [§11.34, §11.35] (RULES.md D51): CREATE ASSERTION, in a
   schema definition too, checked as it is made and at the end of each
   statement that changes a table it reads, from the rows it changed where
-  the assertion's form allows, or at commit if deferred, and set by SET
+  the assertion's form allows, of one table, an inner join or a grouping,
+  or at commit if deferred, and set by SET
   CONSTRAINTS; DROP ASSERTION; a table or column it reads
   dropped only with CASCADE, which takes it, as DROP SCHEMA does. In the
   Information Schema: ASSERTIONS, CHECK_CONSTRAINTS and the constraint

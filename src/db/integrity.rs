@@ -189,8 +189,8 @@ pub(super) enum Check {
     /// An assertion, of a table it reads written [ISO/IEC 9075:1992 §11.34].
     Assertion { constraint: QualifiedName },
     /// A deferred assertion of no row passing, of row `id` of `table`
-    /// written (`db/assertions/changes.rs`).
-    AssertedRow { table: QualifiedName, constraint: QualifiedName, id: RowId },
+    /// written, and the row before it, if kept (`db/assertions/changes.rs`).
+    AssertedRow { table: QualifiedName, constraint: QualifiedName, id: RowId, before: Option<Row> },
 }
 
 impl Check {
@@ -302,6 +302,20 @@ impl Checking<'_> {
     }
 }
 
+impl State {
+    /// The end of the checks `checking` made, in transaction `tx`: of the
+    /// UNIQUE constraint being checked, and of the deferred assertions of
+    /// the rows written, checked of them all together.
+    ///
+    /// # Errors
+    ///
+    /// As `Checking::finish` and `State::end_asserted`.
+    pub(super) fn end_checking(self: &Arc<Self>, tx: &Txn, checking: &mut Checking<'_>) -> Result<()> {
+        checking.finish()?;
+        self.end_asserted(tx, &mut checking.asserted)
+    }
+}
+
 /// The name SET CONSTRAINTS gives constraint `c` by: of a domain's
 /// constraint on a column, the domain constraint's [§11.21 GR5].
 pub(super) fn mode_name(c: &ConstraintDesc) -> &QualifiedName {
@@ -387,7 +401,7 @@ impl State {
                     self.check(tx, &check, &mut checking)?;
                 }
             }
-            checking.finish()?;
+            self.end_checking(tx, &mut checking)?;
         }
         effects.deferral.borrow_mut().defer(deferred, wholes);
         Ok(())
@@ -412,8 +426,8 @@ impl State {
         if !matches!(check, Check::Unique { .. }) {
             checking.finish()?;
         }
-        if let Check::AssertedRow { table, constraint, id } = check {
-            return self.check_asserted_row(tx, (table, constraint, *id), &mut checking.asserted);
+        if let Check::AssertedRow { table, constraint, id, before } = check {
+            return self.check_asserted_row(tx, (table, constraint, *id, before.as_ref()), &mut checking.asserted);
         }
         let Some(table) = check.table() else { return self.check_assertion(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
@@ -452,7 +466,9 @@ impl State {
                 self.check_referenced(tx, (desc, &c.name, fk), old, *id)
             }
             Check::Assertion { constraint } => self.check_assertion(tx, constraint),
-            Check::AssertedRow { table, constraint, id } => self.check_asserted_row(tx, (table, constraint, *id), &mut checking.asserted),
+            Check::AssertedRow { table, constraint, id, before } => {
+                self.check_asserted_row(tx, (table, constraint, *id, before.as_ref()), &mut checking.asserted)
+            }
         }
     }
 

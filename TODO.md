@@ -65,9 +65,10 @@ What came after SQL-92 follows it, written from the standards' own text
   refused.
 - **Assertions, further** (RULES.md D51): forms still checked whole,
   each needing a design the owner settles first:
-  - A join or a grouping: from a query of the change against the other
-    tables, or of the changed groups alone; no kept state, but a plan run
-    over the changed rows and its reads checked as D29's.
+  - Of a query's rows: COUNT, a greatest or least reached or unequal; an
+    outer join, a set operator, a grouping of a join. Each needs the
+    other tables as they were before the statement, which only what was
+    kept of them would tell.
   - SUM and AVG: the sum before is unknown; overflow is judged of the
     final total [§6.5 GR2b iv], so a sum kept per assertion and snapshot
     would check them from the change.
@@ -75,9 +76,7 @@ What came after SQL-92 follows it, written from the standards' own text
     null: whether the warning of a null eliminated is raised needs a
     count of nulls kept per assertion and snapshot.
   - A deferred count, greatest or least reached, or MAX or MIN unequal:
-    each row's image as it was deferred, kept to commit. And deferred
-    forms whose steps may raise, or `x` null: a failure held back to the
-    last row, as `KeyCheck` does.
+    each row's image as it was deferred, kept to commit.
 - **Triggers** (ISO/IEC 9075:1999), then **stored procedures** (SQL/PSM):
   CREATE PROCEDURE and FUNCTION, CALL, and the control statements, running
   as their module's authorization identifier, as SQL:2023 defines them

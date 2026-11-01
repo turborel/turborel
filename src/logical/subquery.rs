@@ -51,8 +51,8 @@ fn bound_plan(plan: LogicalPlan, values: &[Value]) -> LogicalPlan {
         LogicalPlan::OuterJoin { kind, cond, left, right } => {
             LogicalPlan::OuterJoin { kind, cond: map_cond_exprs(cond, &bound), left, right }
         }
-        LogicalPlan::Values { rows, width } => {
-            LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(bound).collect()).collect(), width }
+        LogicalPlan::Values { rows, types } => {
+            LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(bound).collect()).collect(), types }
         }
         other @ (LogicalPlan::Scan { .. }
         | LogicalPlan::System { .. }

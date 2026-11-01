@@ -126,7 +126,14 @@ impl ListItem for Check {
     fn bytes(&self) -> usize {
         let table = if let Check::AssertedRow { table, .. } = self { Some(table) } else { self.table() };
         let names = name_bytes(self.constraint()).saturating_add(table.map_or(0, name_bytes));
-        let old = if let Check::Referenced { old, .. } = self { row_bytes(old) } else { 0 };
+        let old = match self {
+            Check::Referenced { old, .. } | Check::AssertedRow { before: Some(old), .. } => row_bytes(old),
+            Check::Row { .. }
+            | Check::Unique { .. }
+            | Check::Table { .. }
+            | Check::Assertion { .. }
+            | Check::AssertedRow { before: None, .. } => 0,
+        };
         size_of::<Check>().saturating_add(names).saturating_add(old)
     }
 }
@@ -158,11 +165,15 @@ impl Holdable for Check {
                 out.put_u8(ASSERTION);
                 put_name(&mut out, constraint);
             }
-            Check::AssertedRow { table, constraint, id } => {
+            Check::AssertedRow { table, constraint, id, before } => {
                 out.put_u8(ASSERTED_ROW);
                 put_name(&mut out, table);
                 put_name(&mut out, constraint);
                 out.put_u64(*id);
+                out.put_u8(u8::from(before.is_some()));
+                if let Some(before) = before {
+                    put_row(&mut out, before);
+                }
             }
         }
         out
@@ -184,7 +195,11 @@ fn of_table(kind: u8, r: &mut Reader<'_>) -> Result<Check> {
     Ok(match kind {
         ROW => Check::Row { table, constraint, id: r.u64()? },
         UNIQUE => Check::Unique { table, constraint, id: r.u64()? },
-        ASSERTED_ROW => Check::AssertedRow { table, constraint, id: r.u64()? },
+        ASSERTED_ROW => {
+            let id = r.u64()?;
+            let before = if r.u8()? == 1 { Some(row(r)?) } else { None };
+            Check::AssertedRow { table, constraint, id, before }
+        }
         TABLE => Check::Table { table, constraint },
         REFERENCED => {
             let old = row(r)?;

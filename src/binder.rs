@@ -488,13 +488,17 @@ impl Binder<'_> {
     }
 
     /// The position in the FROM row of column `i` of `item`, which the
-    /// query uses: in a constraint, one it holds REFERENCES on [ISO/IEC
-    /// 9075:1992 §11.9 AR1a]. Noted among its uses, if it is of a named
-    /// table or view, under the name it has there.
+    /// query uses: in a constraint, of a named table or view, one it holds
+    /// REFERENCES on [ISO/IEC 9075:1992 §11.9 AR1a], a derived table's
+    /// columns being of no `<table name>`, and its query's checked as they
+    /// are bound. Noted among its uses, if it is of a named table or view,
+    /// under the name it has there.
     fn note(&self, item: &FromItem, i: usize) -> Result<usize> {
         if self.purpose == Purpose::Constraint {
-            let needed = Actions { references: std::iter::once(i).collect(), ..Actions::default() };
-            require(self.db, self.auth, &item.desc, &needed, "§11.9 AR1a")?;
+            if !item.table.auth.is_empty() {
+                let needed = Actions { references: std::iter::once(i).collect(), ..Actions::default() };
+                require(self.db, self.auth, &item.desc, &needed, "§11.9 AR1a")?;
+            }
             if let Some(r) = self.referencing {
                 r.column_named(&item.table);
             }

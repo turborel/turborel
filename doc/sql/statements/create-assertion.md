@@ -104,12 +104,26 @@ one table's row, through the filters and columns of views of it. Where
 `x` may be null there (it is not a column NOT NULL or of the PRIMARY
 KEY, not DEFERRABLE, nor one `p` is not true of when null), the warning
 of a null eliminated depends on every row: the assertion is checked from
-the change only if a row of it has `x` null, else whole. SUM and AVG
-are checked whole. A deferred assertion of one `NOT EXISTS`, or of
-conjuncts each `NOT EXISTS` or MAX or MIN bounded whose conditions raise
-no error and whose `x` is never null, is checked from each row the
-transaction wrote while it was deferred; any other, whole, once, however
-many statements of the transaction changed a table it reads. Whichever way, a statement fails
+the change only if a row of it has `x` null, or a warning was raised
+already, else whole. SUM and AVG are checked whole.
+`NOT EXISTS`, and MAX or MIN bounded, may be of inner joins of tables
+too, a table joined to itself among them: the rows the statement
+inserted or updated of each table are joined to the others as they are
+now, through an index where there is one. Or of a grouping of one
+table's rows, `HAVING` of the group: only the groups of the rows the
+statement changed, as they are and as they were, are made again, of
+their whole rows. Not of SUM or AVG of approximate numbers there; where
+a set function's argument may be null, it is checked whole unless a
+warning is raised. An outer join, UNION, EXCEPT or INTERSECT, a
+grouping of a join, and COUNT or a greatest reached of a join, are
+checked whole; so is a change of more rows than MEMORY.WORK_BYTES holds.
+A deferred assertion of one `NOT EXISTS`, or of conjuncts each
+`NOT EXISTS` or MAX or MIN bounded whose conditions raise no error and
+whose `x` is never null, is checked from each row the transaction wrote
+while it was deferred; one of other such conjuncts, of joins and
+groupings too, from all those rows together once it is checked; any
+other, whole, once, however many statements of the transaction changed
+a table it reads. Whichever way, a statement fails
 exactly when the condition is false after it, with the same error and
 warning. SQL-86 has no assertions.
 
