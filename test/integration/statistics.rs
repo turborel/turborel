@@ -555,10 +555,10 @@ impl Index for MissingIndex {
 /// the pages its index tells they miss (`Index::probe_missed`), each as
 /// its table's fetches' pages missed cost more than held, against the
 /// hash join they replace, its right operand read and each row of either
-/// operand hashed: ten keys of a table of 1,000 rows probe its index of
-/// no pages missed, and of half a page a probe, though their probes then
-/// cost more than the table's read alone; of two, are joined by a hash
-/// join; each the same rows.
+/// operand hashed: ten keys of a table of 1,000 rows, its index's keys
+/// counted, probe its index of no pages missed, and of a page and a half
+/// a probe, though their probes then cost more than the table's read
+/// alone; of four, are joined by a hash join; each the same rows.
 #[test]
 fn a_join_s_probes_are_priced_by_what_their_index_misses() {
     let missed = Arc::new(AtomicU64::new(0.0_f64.to_bits()));
@@ -572,8 +572,12 @@ fn a_join_s_probes_are_priced_by_what_their_index_misses() {
     s.commit().unwrap();
     db.create_index("T_K", "S.T", &["K"], "missing").unwrap();
     let sql = "SELECT T.V FROM KS, T WHERE T.K = KS.K";
+    // Planned once, the index's keys are asked for, and maintenance counts
+    // them: each probe is then priced at one row, not the default's ten.
+    s.physical_plan(sql, &Params::new()).unwrap();
+    db.maintain().unwrap();
     let mut found = Vec::new();
-    for (share, probes) in [(0.0_f64, true), (0.5_f64, true), (2.0_f64, false)] {
+    for (share, probes) in [(0.0_f64, true), (1.5_f64, true), (4.0_f64, false)] {
         missed.store(share.to_bits(), Ordering::SeqCst);
         let plan = s.physical_plan(sql, &Params::new()).unwrap();
         assert_eq!(plan.contains("IndexNestedLoop S.T using T_K"), probes, "{share}: {plan}");
