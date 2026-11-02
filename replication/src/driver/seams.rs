@@ -136,10 +136,14 @@ pub trait Watch: Send + Sync {
     fn serving(&self, view: u64);
     /// The database stopped serving, deposed and opened again.
     fn stopped(&self);
-    /// Whether the log kept `record`, appended at `at` in a service ended.
-    fn outcome(&self, at: Lsn, record: &[u8], kept: bool);
+    /// Whether the log kept `record`, appended at `at` in a service ended;
+    /// unknown if a state transfer installed let the position go first.
+    fn outcome(&self, at: Lsn, record: &[u8], kept: Option<bool>);
     /// The consensus reported `event`.
     fn event(&self, event: &ReplicaEvent);
+    /// \[EXTENSION\] The database installed a state transfer, holding the
+    /// log through `at` (RULES.md D57). Default: nothing.
+    fn installed(&self, _at: Lsn) {}
 }
 
 /// \[EXTENSION\] A watch that tells nothing.
@@ -149,6 +153,6 @@ impl Watch for Unwatched {
     fn committed(&self, _window: (Lsn, Lsn), _log: &[Vec<u8>]) {}
     fn serving(&self, _view: u64) {}
     fn stopped(&self) {}
-    fn outcome(&self, _at: Lsn, _record: &[u8], _kept: bool) {}
+    fn outcome(&self, _at: Lsn, _record: &[u8], _kept: Option<bool>) {}
     fn event(&self, _event: &ReplicaEvent) {}
 }

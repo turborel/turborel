@@ -18,7 +18,7 @@ use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLog, FileLogOptions, Log, LogCapabilities, Records};
 
 use super::{Driver, Inbox, Parts, Ticker, Wait, Watch, misuse, position};
-use crate::{Consensus, Input, LogJournal, Lsn, Recovered, ReplicaId, Transport};
+use crate::{Consensus, Input, LogJournal, Lsn, Recovered, ReplicaId, StateTransfer, Transport};
 
 /// \[EXTENSION\] A replica's log, over its driver: see the module's
 /// documentation.
@@ -133,6 +133,8 @@ pub struct Joined {
     pub wait: Arc<dyn Wait>,
     /// What it tells of what it does.
     pub watch: Arc<dyn Watch>,
+    /// How a state transfer crosses.
+    pub transfer: Arc<dyn StateTransfer>,
 }
 
 /// \[EXTENSION\] The log storage of a replica's database: its log is its
@@ -218,6 +220,7 @@ impl GroupLogs {
             ticker: Arc::clone(&joined.ticker),
             wait: Arc::clone(&joined.wait),
             watch: Arc::clone(&joined.watch),
+            transfer: Arc::clone(&joined.transfer),
         };
         let driver = Driver::new(parts);
         *kept = Some(Arc::clone(&driver));

@@ -76,6 +76,10 @@ pub enum FileKind {
     Undo,
     /// A spill file.
     Spill,
+    /// \[EXTENSION\] A file of a state transfer being fetched by a
+    /// replica, staged in `transfer/` until it is installed (RULES.md
+    /// D57).
+    Transfer,
     /// A plug-in's own file.
     Plugin,
     /// A server's own file, noted.
@@ -108,6 +112,8 @@ impl FileKind {
             FileKind::Log
         } else if dir == "undo" {
             FileKind::Undo
+        } else if dir == TRANSFER {
+            FileKind::Transfer
         } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("spill")) {
             FileKind::Spill
         } else {
@@ -124,6 +130,7 @@ impl FileKind {
             FileKind::Log => "LOG",
             FileKind::Undo => "UNDO",
             FileKind::Spill => "SPILL",
+            FileKind::Transfer => "TRANSFER",
             FileKind::Plugin => "PLUGIN",
             FileKind::Server => "SERVER",
             FileKind::Other => "OTHER",
@@ -137,7 +144,7 @@ impl FileKind {
             FileKind::Data | FileKind::Catalog | FileKind::Log | FileKind::Plugin => Some(FileClass::Durable),
             FileKind::Shadow => Some(FileClass::DurableAtCommit),
             FileKind::Undo => Some(FileClass::Unsynced),
-            FileKind::Spill => Some(FileClass::Scratch),
+            FileKind::Spill | FileKind::Transfer => Some(FileClass::Scratch),
             FileKind::Server | FileKind::Other => None,
         }
     }
@@ -146,7 +153,7 @@ impl FileKind {
     /// plug-in its directory is named for.
     pub fn owner(self, path: &Path) -> FileOwner {
         match self {
-            FileKind::Data | FileKind::Catalog | FileKind::Undo => FileOwner::Database,
+            FileKind::Data | FileKind::Catalog | FileKind::Undo | FileKind::Transfer => FileOwner::Database,
             FileKind::Shadow => plugin_of(path).map_or(FileOwner::Database, FileOwner::Plugin),
             FileKind::Log => FileOwner::Log,
             FileKind::Spill => FileOwner::Spill,
@@ -156,6 +163,10 @@ impl FileKind {
         }
     }
 }
+
+/// \[EXTENSION\] The directory, in a database's, where a replica stages a
+/// state transfer it fetches (RULES.md D57); cleared as the database opens.
+pub const TRANSFER: &str = "transfer";
 
 /// The plug-in whose directory, in `plugins/`, holds `path`.
 fn plugin_of(path: &Path) -> Option<String> {
@@ -187,6 +198,7 @@ mod tests {
             ("db/log/segment-0000000001.log", FileKind::Log, durable, FileOwner::Log),
             ("db/undo/segment-0000000001.log", FileKind::Undo, Some(FileClass::Unsynced), FileOwner::Database),
             ("db/tmp/turborel-1-2-3.spill", FileKind::Spill, Some(FileClass::Scratch), FileOwner::Spill),
+            ("db/transfer/3", FileKind::Transfer, Some(FileClass::Scratch), FileOwner::Database),
             ("db/lock", FileKind::Other, None, FileOwner::Unknown),
             ("db/plugins/mine/data", FileKind::Plugin, durable, mine()),
             ("db/plugins/mine/parts/0", FileKind::Plugin, durable, mine()),

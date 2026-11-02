@@ -18,6 +18,7 @@ use turborel::threads::JobPolicy;
 use turborel_replication::driver::{Blocking, Inbox, JOB_LABEL, Ticker, Ticks, Unwatched, Wait, Watch};
 use turborel_replication::{
     Consensus, Driver, DriverJob, GroupLogs, Input, Journal, LogJournal, Output, Parts, ReplicaEvent, ReplicaId, Role, Transport, Vr,
+    WholeFiles,
 };
 use turborel_test_support::database::rows;
 
@@ -67,8 +68,8 @@ impl Watch for Told {
     fn stopped(&self) {
         self.0.lock().unwrap().push("stopped".to_owned());
     }
-    fn outcome(&self, at: Lsn, _record: &[u8], kept: bool) {
-        self.0.lock().unwrap().push(format!("outcome {} {kept}", at.0));
+    fn outcome(&self, at: Lsn, _record: &[u8], kept: Option<bool>) {
+        self.0.lock().unwrap().push(format!("outcome {} {kept:?}", at.0));
     }
     fn event(&self, event: &ReplicaEvent) {
         self.0.lock().unwrap().push(format!("{event:?}"));
@@ -95,6 +96,7 @@ fn parts(consensus: Box<dyn Consensus>, wait: Arc<dyn Wait>, watch: Arc<dyn Watc
         ticker: Arc::new(EveryTurn),
         wait,
         watch,
+        transfer: Arc::new(WholeFiles::new(Arc::new(MemoryFileSystem::new()), std::path::PathBuf::from("/transfer"))),
     }
 }
 
@@ -227,6 +229,12 @@ impl Standby for Counted {
     fn depose(&self) -> Result<()> {
         Ok(())
     }
+    fn export(&self) -> Result<Box<dyn turborel::db::StateSource>> {
+        Err(SqlError::new(Code::Api, "[TOOL] nothing to export"))
+    }
+    fn import(&self, _: Box<dyn turborel::db::StateSource>) -> Result<Lsn> {
+        Err(SqlError::new(Code::Api, "[TOOL] nothing to import"))
+    }
     fn reopen(&self) -> Result<Lsn> {
         self.0.fetch_add(1_u64, Ordering::SeqCst);
         Ok(Lsn(0_u64))
@@ -259,7 +267,7 @@ fn a_driver_carries_out_its_consensus() {
     assert_eq!(told.0.lock().unwrap().len(), 3_usize, "serving, stopped, and the event");
 
     let failing = [
-        Output::Outcome { at: Lsn(1_u64), kept: true },
+        Output::Outcome { at: Lsn(1_u64), kept: Some(true) },
         Output::FetchState { from: ReplicaId(1_u32) },
         Output::Send { to: ReplicaId(2_u32), frame: Vec::new() },
     ];
@@ -302,7 +310,7 @@ fn the_built_in_seams() {
     unwatched.committed((Lsn(0_u64), Lsn(1_u64)), &[]);
     unwatched.serving(0_u64);
     unwatched.stopped();
-    unwatched.outcome(Lsn(1_u64), b"r", true);
+    unwatched.outcome(Lsn(1_u64), b"r", Some(true));
     unwatched.event(&ReplicaEvent::AppendRefused);
     let driver =
         Driver::new(parts(Box::new(Scripted(Vec::new())), Arc::new(Blocking { most: Duration::from_millis(1_u64) }), Arc::new(Unwatched)));

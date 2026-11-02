@@ -29,7 +29,7 @@ fn failed_over() -> turborel_test_support::replication::Group {
 }
 
 /// The `Outcome`s among `outputs`.
-fn outcomes(outputs: &[Output]) -> Vec<(u64, bool)> {
+fn outcomes(outputs: &[Output]) -> Vec<(u64, Option<bool>)> {
     outputs.iter().filter_map(|o| if let Output::Outcome { at, kept } = o { Some((at.0, *kept)) } else { None }).collect()
 }
 
@@ -69,7 +69,7 @@ fn a_replaced_record_is_resolved_as_not_kept() {
     run(&mut group, &[TWO], 2, &[]);
     let one = group.node(ONE);
     assert!(one.outputs.contains(&Output::Role(Role::Backup)));
-    assert_eq!(outcomes(&one.outputs), vec![(2, false)]);
+    assert_eq!(outcomes(&one.outputs), vec![(2, Some(false))]);
     assert_eq!(one.journal.records(), &[record("a"), record("y")]);
     assert_eq!(one.applied, vec![record("a"), record("y")]);
 }
@@ -92,7 +92,7 @@ fn a_record_the_quorum_held_is_kept() {
     run(&mut group, &[TWO, THREE], TIMEOUT, &[ONE]);
     assert_eq!(group.node(TWO).applied, vec![record("a"), record("b")]);
     run(&mut group, &[TWO], 2, &[]);
-    assert_eq!(outcomes(&group.node(ONE).outputs), vec![(2, true)]);
+    assert_eq!(outcomes(&group.node(ONE).outputs), vec![(2, Some(true))]);
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §5.2] a replica whose STARTVIEW was

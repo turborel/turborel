@@ -94,11 +94,21 @@ REPLICATION.RETAIN_BYTES of them, so a backup down for a while catches
 up from the log of the others as it comes back. The log's segments in
 `log/` are dropped as records go.
 
+A node so far behind that the primary's log no longer reaches back to
+what it holds fetches the primary's database instead: its files as the
+primary's last checkpoint left them, in pieces, over the same link, into
+`transfer/` in its directory; then it installs them in place of its own,
+told as a `state_installed` event, and follows the log from there. The
+primary serves the transfer out of its files, which no checkpoint
+changes meanwhile; a checkpoint due waits until the transfer is done.
+Nothing stops on either node: the primary serves clients, and the node
+fetching serves reads of what it held until the install. Started again
+with a database far behind, a node fetches the state the same way.
+
 ## What is not yet done
 
-A node that falls so far behind that the others' logs no longer reach
-back to what it holds cannot yet be brought up to date by the group:
-its replica stops, saying so; stop the server, copy the primary's
-directory to it with the primary stopped, and start it again. The
-members are fixed by their settings: to add or remove a member, stop
-the group and start it with new settings.
+A node that lost its `log/` directory, or starts with an empty one over
+a database kept, cannot yet rejoin safely: restore the directory from
+the node's last backup before starting it. The members are fixed by
+their settings: to add or remove a member, stop the group and start it
+with new settings.

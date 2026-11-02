@@ -13,6 +13,17 @@
 //! thread manager runs the turns (`DriverJob`, `turborel-replica`); the
 //! simulator of `turborel-test-support` calls the same turn.
 //!
+//! \[EXTENSION\] A state transfer (RULES.md D57, `transfer.rs`) crosses in
+//! frames the driver tells from the consensus's by their first byte: a
+//! request from a replica fetching is answered out of this database's
+//! export, taken as the first request comes and let go once none comes
+//! for a while, the database is deposed, or a transfer is installed; the
+//! answers to this replica's own fetch, begun as the consensus asks
+//! (`Output::FetchState`), are taken until the export is whole, which
+//! the database then installs (`Standby::import`), the position it holds
+//! the log through told to the consensus (`Input::Installed`); see
+//! `driver/transfer.rs`.
+//!
 //! The database's own calls come through its log: an append steps the
 //! consensus, and a sync waits (`Wait`) until the consensus commits the
 //! position, or the service it was appended in ends, the commit then in
@@ -24,6 +35,7 @@
 mod job;
 mod log;
 mod seams;
+mod transfer;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -36,7 +48,9 @@ use turborel::error::{Code, Result, SqlError};
 pub use self::job::{DriverJob, JOB_LABEL};
 pub use self::log::{GroupLog, GroupLogs, Joined, Make, Retention};
 pub use self::seams::{Blocking, Inbox, Ticker, Ticks, Unwatched, Wait, Watch};
-use crate::{Consensus, Input, Journal, Lsn, Output, Role, Transport};
+use self::transfer::Served;
+use crate::transfer::{ANSWER, Fetching, REQUEST, StateTransfer};
+use crate::{Consensus, Input, Journal, Lsn, Output, ReplicaId, Role, Transport};
 
 /// \[EXTENSION\] What a driver is made of.
 pub struct Parts {
@@ -64,10 +78,12 @@ pub struct Parts {
     pub wait: Arc<dyn Wait>,
     /// What it tells of what it does.
     pub watch: Arc<dyn Watch>,
+    /// \[EXTENSION\] How a state transfer crosses to it, or from it.
+    pub transfer: Arc<dyn StateTransfer>,
 }
 
 /// What the database is to do, as the consensus asked, in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Effect {
     /// Replay the records committed through this position it lacks.
     Deliver(Lsn),
@@ -75,6 +91,11 @@ enum Effect {
     Serve(u64),
     /// Stop serving: deposed, and opened again.
     Stop,
+    /// \[EXTENSION\] Answer a state transfer's request, a frame from a
+    /// replica, out of the database's export (RULES.md D57).
+    Answer(ReplicaId, Vec<u8>),
+    /// \[EXTENSION\] Install the state transfer fetched.
+    Install,
 }
 
 /// \[EXTENSION\] A replica's driver: see the module's documentation.
@@ -121,6 +142,15 @@ struct Core {
     holds: Lsn,
     /// The position the last append was given, if one was.
     assigned: Option<Lsn>,
+    /// \[EXTENSION\] How a state transfer crosses (RULES.md D57).
+    transfer: Arc<dyn StateTransfer>,
+    /// The state transfer being fetched, from which replica.
+    fetching: Option<(ReplicaId, Box<dyn Fetching>)>,
+    /// The exports served to replicas fetching the state, each numbered,
+    /// with the ticks since it was last asked of.
+    sources: BTreeMap<ReplicaId, Served>,
+    /// The exports taken to serve, counted.
+    exports: u64,
     /// Its failure, after which it takes nothing: the consensus counted on
     /// what failed.
     failed: Option<SqlError>,
@@ -152,6 +182,10 @@ impl Driver {
             pending: VecDeque::new(),
             holds: Lsn(0),
             assigned: None,
+            transfer: parts.transfer,
+            fetching: None,
+            sources: BTreeMap::new(),
+            exports: 0,
             failed: None,
         };
         let applying = Mutex::new(None);
@@ -218,10 +252,15 @@ impl Driver {
     pub fn step_inputs(&self) -> Result<()> {
         let mut core = self.core()?;
         for (from, frame) in self.inbox.take() {
-            core.step(Input::Received { from, frame })?;
+            match frame.first() {
+                Some(&REQUEST) => core.pending.push_back(Effect::Answer(from, frame)),
+                Some(&ANSWER) => core.took_answer(from, &frame)?,
+                Some(_) | None => core.step(Input::Received { from, frame })?,
+            }
         }
         for _ in 0..self.ticker.take() {
             core.step(Input::Tick)?;
+            core.tick_transfer()?;
         }
         core.answer()?;
         drop(core);
@@ -237,6 +276,8 @@ impl Driver {
                 Effect::Deliver(through) => self.deliver(db, through)?,
                 Effect::Serve(view) => self.serve(db, view)?,
                 Effect::Stop => self.stop(db)?,
+                Effect::Answer(from, frame) => self.answer(db, from, &frame)?,
+                Effect::Install => self.install(db)?,
             }
             self.changed.notify_all();
         }
@@ -295,8 +336,12 @@ impl Driver {
     }
 
     /// The database deposed and opened again in place, the position it then
-    /// holds the log through told to the consensus.
+    /// holds the log through told to the consensus. The exports served are
+    /// let go first: the database opened again is not the one they are
+    /// of, and a checkpoint waits on none of them; their fetchers begin
+    /// again.
     fn stop(&self, db: &dyn Standby) -> Result<()> {
+        self.core()?.sources.clear();
         db.depose()?;
         let holds = db.reopen()?;
         let mut core = self.core()?;
@@ -331,6 +376,12 @@ impl Driver {
     /// \[EXTENSION\] Through where its database holds the log.
     pub fn holds(&self) -> Lsn {
         self.core.lock().unwrap_or_else(PoisonError::into_inner).holds
+    }
+
+    /// \[EXTENSION\] Through where the consensus has told it the log is
+    /// committed, serving: the syncs of its database's answered.
+    pub fn committed(&self) -> Lsn {
+        self.core.lock().unwrap_or_else(PoisonError::into_inner).committed
     }
 
     /// \[EXTENSION\] The log its database writes to, through this driver.
@@ -412,12 +463,7 @@ impl Core {
                 self.watch.outcome(at, &record, kept);
             }
             Output::Role(role) => self.role(role),
-            Output::FetchState { from } => {
-                return Err(misuse(&format!(
-                    "the replica is behind what replica {} retains of the log, so it needs a state transfer, which is replication's next stage: start it again from a copy of the primary's directory",
-                    from.0
-                )));
-            }
+            Output::FetchState { from } => self.fetch_from(from)?,
             Output::Event(event) => self.watch.event(&event),
         }
         Ok(())

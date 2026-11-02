@@ -510,7 +510,7 @@ mod noted;
 pub mod plugins;
 mod told;
 
-pub use classes::{FileClass, FileKind, FileOwner};
+pub use classes::{FileClass, FileKind, FileOwner, TRANSFER};
 pub use noted::Noted;
 
 // Unit tests: the limit kept by closing the file used least recently,

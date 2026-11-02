@@ -70,9 +70,8 @@ impl Vr {
             self.later_view(view, out);
             return false;
         }
-        if self.status == Status::Normal {
-            self.timers.heard = 0;
-        }
+        // Heard from the primary, normal or fetching its state.
+        self.timers.heard = 0;
         self.status == Status::Normal
     }
 
@@ -154,7 +153,7 @@ impl Vr {
             }
             let (at, record) = entry.remove_entry();
             let kept = self.record(at) == Some(&record);
-            out.push(Output::Outcome { at: Lsn(at), kept });
+            out.push(Output::Outcome { at: Lsn(at), kept: Some(kept) });
         }
         self.deliver(out);
     }

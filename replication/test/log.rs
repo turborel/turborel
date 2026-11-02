@@ -289,7 +289,7 @@ fn the_replicated_log_carries_out_what_its_consensus_says() {
         vec![
             Output::Send { to: ReplicaId(2), frame: record.clone() },
             Output::Deliver { through: Lsn(1) },
-            Output::Outcome { at: Lsn(1), kept: true },
+            Output::Outcome { at: Lsn(1), kept: Some(true) },
             Output::FetchState { from: ReplicaId(2) },
             Output::Event(ReplicaEvent::ViewChanged { view: 1, primary: ALONE }),
             Output::Event(ReplicaEvent::FrameRefused { from: ReplicaId(2), why: String::new() }),

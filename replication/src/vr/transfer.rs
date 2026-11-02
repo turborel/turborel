@@ -58,17 +58,22 @@ impl Vr {
         // \[DESIGN\] Behind what is retained here: the asker's database must
         // take this one's state first (RULES.md D57).
         if m.op < self.log.first() {
-            return Vr::send(m.replica, &Message::NeedState(NeedState { view: self.view }), out);
+            return Vr::send(m.replica, &Message::NeedState(NeedState { view: self.view, op: m.op }), out);
         }
         let log = self.log.after(m.op);
         let new = Message::NewState(NewState { view: self.view, after: m.op, log, op: self.op(), commit: self.commit });
         Vr::send(m.replica, &new, out);
     }
 
-    /// \[EXTENSION\] A NEEDSTATE from the primary of the view: the driver
-    /// is to fetch a state transfer from it.
+    /// \[EXTENSION\] A NEEDSTATE from the primary of the view, answering
+    /// the GETSTATE still waited on: the driver is to fetch a state
+    /// transfer from it. One answering an older GETSTATE, or one a
+    /// heartbeat has passed since, tells nothing: this replica may have
+    /// moved on, and asks again if it must; so the transfer fetched is
+    /// always past this log, which cannot begin again before where it
+    /// does.
     pub(super) fn on_need_state(&mut self, m: NeedState, out: &mut Vec<Output>) {
-        if m.view != self.view || self.status == Status::ViewChange {
+        if m.view != self.view || self.status == Status::ViewChange || self.asked != Some(m.op) {
             return;
         }
         self.fetch_state(out);
@@ -88,25 +93,39 @@ impl Vr {
     }
 
     /// \[EXTENSION\] `Input::Installed`: the database took a state transfer
-    /// taken at `at`, so it holds the log through it: the journal begins
-    /// after it, and the log after it is fetched.
+    /// taken at `at`, so it holds the log through it in place of what it
+    /// held: the journal begins after it, a record in doubt through it has
+    /// an outcome no log can tell, and what is committed after it is given
+    /// the database again. Fetching still, the log after `at` is fetched
+    /// next; moved on meanwhile, to a view change or a view, the log after
+    /// `at` is kept, as it may be acknowledged.
     pub(super) fn installed(&mut self, at: u64, out: &mut Vec<Output>) {
-        if self.status != Status::Transfer || at < self.log.first() {
-            return;
-        }
-        if self.op() > at {
+        let fetching = self.status == Status::Transfer;
+        if fetching && self.op() > at {
             out.push(Output::Truncate { after: Lsn(at) });
             self.log.truncate_to(at);
         }
         self.log.retain_after(at);
         out.push(Output::Retain { through: Lsn(at) });
-        self.commit = at;
-        self.durable = at;
+        // A record in doubt at a position let go: whether the log kept it
+        // no log can tell now.
+        while let Some(entry) = self.in_doubt.first_entry() {
+            if *entry.key() > at {
+                break;
+            }
+            out.push(Output::Outcome { at: Lsn(entry.remove_entry().0), kept: None });
+        }
+        self.commit = self.commit.max(at);
+        self.durable = self.durable.max(at).min(self.op());
         self.delivered = at;
         self.applied = at;
         self.persist_state(out);
-        self.asked = None;
-        self.get_state(at, out);
+        if fetching {
+            self.asked = None;
+            self.get_state(at, out);
+        } else {
+            self.deliver(out);
+        }
     }
 
     /// [VRR §5.2]: "When replica i receives the NEWSTATE message, it

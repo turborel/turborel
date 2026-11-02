@@ -27,14 +27,14 @@ const SEEDS: Range<u64> = 0..40;
 fn plan() -> Plan {
     let weather = Weather { drop: 50, duplicate: 20, delay: 10, late: 10, late_delay: 300 };
     let faults = Faults { weather, partition: 3, partition_moments: 400, crash: 4, down_moments: 60, disk_error: 2, write_moments: 6 };
-    Plan { replicas: 3, faulty: 2000, calm: 2000, append: 200, tick_moments: 5, faults }
+    Plan { replicas: 3, faulty: 2000, calm: 2000, append: 200, tick_moments: 5, retain_bytes: u64::MAX, faults }
 }
 
 /// A run with no fault at all, long enough never to end in a test.
 fn calm_plan() -> Plan {
     let weather = Weather { drop: 0, duplicate: 0, delay: 3, late: 0, late_delay: 1 };
     let faults = Faults { weather, partition: 0, partition_moments: 1, crash: 0, down_moments: 20, disk_error: 0, write_moments: 2 };
-    Plan { replicas: 3, faulty: 0, calm: 1_u64 << 40, append: 0, tick_moments: 5, faults }
+    Plan { replicas: 3, faulty: 0, calm: 1_u64 << 40, append: 0, tick_moments: 5, retain_bytes: u64::MAX, faults }
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.1] [VRR §4.2] in groups of three

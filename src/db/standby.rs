@@ -41,9 +41,16 @@
 //! synced to its new log before it serves, so each replica following that
 //! log ends it too.
 //!
-//! The export and import of a database, by which state transfer brings up
-//! a replica the log alone no longer can, are not yet part of the seam.
+//! **Export and import.** A replica the log alone no longer brings up to
+//! date, behind what the others retain of it, takes the primary's state:
+//! its export (`Standby::export`, `db/export.rs`: its last checkpoint's
+//! image and its durable files), which replication moves without decoding
+//! it, and which the replica installs (`Standby::import`,
+//! `standby/import.rs`): its files replaced, the image recorded as its
+//! catalog's, and the database opened again in place from it, following
+//! from the position the image holds the log through.
 
+mod import;
 mod merge;
 mod reopen;
 
@@ -52,6 +59,7 @@ use std::sync::Arc;
 
 use self::merge::{Merged, Stream};
 pub(in crate::db) use self::reopen::Opening;
+use super::export::StateSource;
 use super::recovery::Definitions;
 use super::{Database, State, api};
 use crate::diagnostics::Event;
@@ -108,6 +116,28 @@ pub trait Standby: Send + Sync {
     /// SQLCODE -910 if it was not opened from its files, or serves; as
     /// `Database::open_following`.
     fn reopen(&self) -> Result<Lsn>;
+    /// \[EXTENSION\] An export of it, as it is now: its last checkpoint's
+    /// image and its durable files, for a replica behind to install
+    /// (`Database::export`). While the export lives, it takes no
+    /// checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it was not opened from its files, or recorded no
+    /// checkpoint; -915 if a file cannot be read.
+    fn export(&self) -> Result<Box<dyn StateSource>>;
+    /// \[EXTENSION\] Installs `source`, an export of the primary's
+    /// database, in place of its own state, deposed or following: its
+    /// durable files replaced by the export's, the export's image recorded
+    /// as its catalog's, and itself opened again from it, following.
+    /// Through where it then holds the log: the position the image holds
+    /// every record before.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it was not opened from its files, or serves; -915
+    /// if a file cannot be written; as `Database::open_following`.
+    fn import(&self, source: Box<dyn StateSource>) -> Result<Lsn>;
 }
 
 /// How following a log treats a record, as recovery's replay does: at
@@ -216,6 +246,14 @@ impl Standby for Database {
 
     fn reopen(&self) -> Result<Lsn> {
         self.reopen_in_place()
+    }
+
+    fn export(&self) -> Result<Box<dyn StateSource>> {
+        Database::export(self)
+    }
+
+    fn import(&self, source: Box<dyn StateSource>) -> Result<Lsn> {
+        self.import_state(source)
     }
 }
 

@@ -88,12 +88,13 @@ pub(crate) struct StartView {
     pub(crate) commit: u64,
 }
 
-/// \[EXTENSION\] ⟨NEEDSTATE v⟩: the answer to a GETSTATE for a position
-/// before what the answerer retains, so the asker fetches a state transfer
-/// of its database first (RULES.md D57).
+/// \[EXTENSION\] ⟨NEEDSTATE v, n′⟩: the answer to a GETSTATE for the
+/// position n′, before what the answerer retains, so the asker fetches a
+/// state transfer of its database first (RULES.md D57).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NeedState {
     pub(crate) view: u64,
+    pub(crate) op: u64,
 }
 
 /// ⟨GETSTATE v, n′, i⟩ [VRR §5.2]: `op` is n′.
@@ -173,7 +174,7 @@ impl Message {
                 put_u64s(&mut out, NEW_STATE, &[m.view, m.after, m.op, m.commit]);
                 put_log(&mut out, &m.log);
             }
-            Message::NeedState(m) => put_u64s(&mut out, NEED_STATE, &[m.view]),
+            Message::NeedState(m) => put_u64s(&mut out, NEED_STATE, &[m.view, m.op]),
         }
         out
     }
@@ -202,7 +203,7 @@ impl Message {
                 let (view, after, op, commit) = (r.u64()?, r.u64()?, r.u64()?, r.u64()?);
                 Message::NewState(NewState { view, after, op, commit, log: log_through(&mut r, after, op)? })
             }
-            NEED_STATE => Message::NeedState(NeedState { view: r.u64()? }),
+            NEED_STATE => Message::NeedState(NeedState { view: r.u64()?, op: r.u64()? }),
             other => return Err(r.corrupt(&format!("{other} is the tag of no message"))),
         };
         r.finish()?;

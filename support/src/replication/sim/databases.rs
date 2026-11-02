@@ -22,7 +22,7 @@ use turborel::disk::memory::MemoryFileSystem;
 use turborel::error::Code;
 use turborel::log::Lsn;
 use turborel::value::Value;
-use turborel_replication::{Driver, GroupLogs};
+use turborel_replication::{Driver, GroupLogs, StateTransfer, WholeFiles, staging_dir};
 
 use super::super::group::Make;
 use super::{Host, Plan, Report, Rng, Runner, Violation};
@@ -160,6 +160,16 @@ impl Host for Files {
         if kept.open[index].take().is_some() {
             kept.interrupted += 1;
         }
+    }
+
+    fn transfer(&mut self, index: usize) -> Arc<dyn StateTransfer> {
+        let mut kept = self.kept();
+        while kept.systems.len() <= index {
+            kept.systems.push(Arc::new(MemoryFileSystem::new()));
+            kept.databases.push(None);
+            kept.open.push(None);
+        }
+        Arc::new(WholeFiles::new(Arc::clone(&kept.systems[index]), staging_dir(Path::new(DIR))))
     }
 }
 

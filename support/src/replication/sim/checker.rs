@@ -12,13 +12,13 @@ use turborel_replication::ReplicaId;
 pub type Violation = String;
 
 /// The record a replica appended at a position, and the outcome it was
-/// told, if it was.
+/// told: kept or not, or unknown to it.
 #[derive(Debug, Clone)]
 struct Outcome {
     replica: ReplicaId,
     at: u64,
     record: Vec<u8>,
-    kept: bool,
+    kept: Option<bool>,
 }
 
 /// What a run has shown so far.
@@ -84,19 +84,21 @@ impl Checker {
         Ok(())
     }
 
-    /// `replica` was told whether its record at `at` was kept.
-    pub fn outcome(&mut self, replica: ReplicaId, at: u64, record: Vec<u8>, kept: bool) {
+    /// `replica` was told whether its record at `at` was kept, or that it
+    /// cannot tell.
+    pub fn outcome(&mut self, replica: ReplicaId, at: u64, record: Vec<u8>, kept: Option<bool>) {
         self.outcomes.push(Outcome { replica, at, record, kept });
     }
 
-    /// At the end of a run, every outcome as the committed log has it.
+    /// At the end of a run, every outcome as the committed log has it,
+    /// but one unknown, which says nothing.
     pub fn check_outcomes(&self) -> Result<(), Violation> {
         for o in &self.outcomes {
             let Some(committed) = self.committed.get(usize::try_from(o.at - 1).unwrap()) else {
                 return Err(format!("replica {} was told of its record at {}, past the committed log", o.replica.0, o.at));
             };
-            if (committed == &o.record) != o.kept {
-                return Err(format!("replica {} was told its record at {} was kept: {}, wrongly", o.replica.0, o.at, o.kept));
+            if o.kept.is_some_and(|kept| (committed == &o.record) != kept) {
+                return Err(format!("replica {} was told its record at {} was kept: {:?}, wrongly", o.replica.0, o.at, o.kept));
             }
         }
         Ok(())

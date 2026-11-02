@@ -51,7 +51,7 @@ pub use driver::{Driver, DriverJob, GroupLog, GroupLogs, Joined, Make, Parts};
 pub use journal::{Journal, LogJournal};
 pub use log::{MakeAlone, ReplicatedLog, TICKS_ALONE};
 pub use storage::{ALONE, ReplicatedLogs, STORAGE_NAME, vr_alone};
-pub use transfer::StateTransfer;
+pub use transfer::{ANSWER, Fetching, REQUEST, StateTransfer, WholeFiles, staging_dir};
 pub use transport::Transport;
 pub use turborel::log::Lsn;
 pub use vr::{Vr, VrOptions};

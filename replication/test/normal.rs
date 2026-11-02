@@ -168,18 +168,25 @@ fn bad_configurations_are_refused() {
 }
 
 /// Verifies: [DESIGN] RULES.md D57 the database's applied position is kept
-/// for the operator; an installed state, which VR never asks for while it
-/// keeps its whole log, changes nothing.
+/// for the operator; a state installed while the replica is normal in
+/// its view, past its log, moves it there: the log let go through the
+/// position, its state written, and it stands at the position, committed,
+/// delivered and applied, in the view still.
 #[test]
-fn applied_positions_are_kept_and_installs_ignored() {
+fn applied_positions_are_kept_and_an_install_moves_the_replica() {
     let mut vr = Vr::new(&ids(3), BACKUP, options()).unwrap();
     let mut out = Vec::new();
     vr.step(Input::Applied(Lsn(4)), &mut out);
     vr.step(Input::Applied(Lsn(2)), &mut out);
-    vr.step(Input::Installed(Lsn(9)), &mut out);
     assert_eq!(out, Vec::new());
     assert_eq!(vr.standing().applied, Lsn(4));
-    assert_eq!(vr.standing().primary, PRIMARY);
+    vr.step(Input::Installed(Lsn(9)), &mut out);
+    assert_eq!(out.len(), 2_usize, "{out:?}");
+    assert_eq!(out[0], Output::Retain { through: Lsn(9) });
+    assert!(matches!(out[1], Output::PersistState(_)), "{out:?}");
+    let standing = vr.standing();
+    assert_eq!((standing.first, standing.op, standing.commit, standing.applied), (Lsn(9), Lsn(9), Lsn(9), Lsn(9)));
+    assert_eq!((standing.status, standing.primary), (Status::Normal, PRIMARY));
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4, Figure 2] a replica's standing

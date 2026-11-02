@@ -108,9 +108,10 @@ impl Vr {
         }
         let commit = self.change.candidates.values().map(|c| c.commit).max().unwrap_or(0);
         let chosen = self.change.candidates.values().max_by_key(|c| (c.normal_view, c.op)).cloned().unwrap_or_default();
-        // \[DESIGN\] A primary whose log does not reach the chosen window
-        // cannot take the view: it gives it up to the next, whose primary
-        // may; itself it fetches a state transfer later, as a backup.
+        // \[DESIGN\] A primary whose log does not reach the chosen window,
+        // or knows less committed than the window lets go, cannot take the
+        // view: it gives it up to the next, whose primary may; itself it
+        // fetches a state transfer later, as a backup.
         if !self.install(chosen.after, chosen.log, out) {
             return self.start_view_change(self.view.saturating_add(1), out);
         }
@@ -139,8 +140,9 @@ impl Vr {
         }
         self.depose(out);
         self.view = m.view;
-        // \[DESIGN\] A backup whose log does not reach the primary's window
-        // fetches a state transfer first (`transfer.rs`).
+        // \[DESIGN\] A backup whose log does not reach the primary's window,
+        // or knows less committed than it lets go, fetches a state transfer
+        // first (`transfer.rs`).
         if !self.install(m.after, m.log, out) {
             return self.fetch_state(out);
         }
@@ -156,11 +158,18 @@ impl Vr {
     /// replica: the journal's records after the two agree removed, and the
     /// rest of `log` written. A `PersistState` follows, so the journal
     /// changes at once. False, nothing changed, if this log does not reach
-    /// `after`: the records between are let go here, and in no window.
+    /// `after`, or `after` is past what this replica knows committed: the
+    /// records through `after` are committed, let go by the window, and
+    /// those held here between the commit-number and `after` may be
+    /// another view's, which no log can tell; only a state transfer
+    /// brings this replica past them. What `log` holds through this
+    /// window's first position is skipped: let go here, it was committed,
+    /// so the same in every log.
     pub(super) fn install(&mut self, after: u64, log: Vec<Vec<u8>>, out: &mut Vec<Output>) -> bool {
-        if self.op() < after {
+        if self.op() < after || self.commit < after {
             return false;
         }
+        let (after, log) = self.within_window(after, log);
         let agree = self.log.agreeing(after, &log);
         let kept = after.saturating_add(u64::try_from(agree).unwrap_or(u64::MAX));
         if self.op() > kept {
@@ -175,6 +184,17 @@ impl Vr {
             self.persist(at, record, out);
         }
         true
+    }
+
+    /// `log`, after `after`, from this window's first position on: the
+    /// records through it, if `after` is before it, skipped.
+    fn within_window(&self, after: u64, log: Vec<Vec<u8>>) -> (u64, Vec<Vec<u8>>) {
+        let first = self.log.first();
+        if after >= first {
+            return (after, log);
+        }
+        let skip = usize::try_from(first.saturating_sub(after)).unwrap_or(usize::MAX);
+        (first, log.into_iter().skip(skip).collect())
     }
 
     /// The replica becomes normal in its view, its view-number and v′ and

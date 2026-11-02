@@ -25,7 +25,7 @@ const SEEDS_OF_STORMS: Range<u64> = 1000..1100;
 fn plan(replicas: u32) -> Plan {
     let weather = Weather { drop: 50, duplicate: 20, delay: 10, late: 10, late_delay: 300 };
     let faults = Faults { weather, partition: 3, partition_moments: 400, crash: 4, down_moments: 60, disk_error: 2, write_moments: 6 };
-    Plan { replicas, faulty: 3000, calm: 2000, append: 100, tick_moments: 5, faults }
+    Plan { replicas, faulty: 3000, calm: 2000, append: 100, tick_moments: 5, retain_bytes: u64::MAX, faults }
 }
 
 /// Runs `seeds` of `plan`, and fails naming every seed that failed.

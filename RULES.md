@@ -1301,7 +1301,7 @@ opaque bytes.**
   - `reopen`: deposed, it is opened again in place, the same handle,
     its jobs, settings and sinks kept; sessions begun before are
     refused (SQLCODE -910);
-  - export and import come with state transfer.
+  - `export` and `import`: see state transfer below.
 - **Following from files.** A replica's database opened from its files
   (`Database::open_following`, `reopen`) recovers from its last
   checkpoint alone ([VRR §5.1]: "we need to know exactly what log prefix
@@ -1363,13 +1363,43 @@ opaque bytes.**
   record kept, and opened again begins where its first record does.
   DOVIEWCHANGE, STARTVIEW and NEWSTATE carry windows ([VRR §5.3]'s
   suffix); a new primary keeps its own records before the chosen window
-  and installs it after them, or, its log not reaching the window,
-  gives the view up to the next; a backup whose log does not reach the
-  primary's window, or asking for the log before what the answerer
-  retains (NEEDSTATE), fetches a state transfer (`Output::FetchState`),
+  and installs it after them, or, its log not reaching the window or
+  its commit-number before it, gives the view up to the next; a backup
+  whose log does not reach the primary's window, or whose commit-number
+  is before it, or asking for the log before what the answerer retains
+  (NEEDSTATE), fetches a state transfer (`Output::FetchState`),
   installed at a position (`Input::Installed`), after which the journal
   begins and the log is fetched. A replica made again from a window
-  stands at it, every record through it committed.
+  stands at it, every record through it committed. Why the
+  commit-number bounds an install: the records held between it and the
+  window's first position may be another view's, which no log can tell
+  (`vr/view_change.rs`). NEEDSTATE names the position asked, and moves
+  only the replica still waiting on that GETSTATE, so a transfer always
+  lands past the asker's window.
+- **State transfer.** `Database::export` (`db/export.rs`): the last
+  checkpoint's image and the manifest of the durable files the file
+  manager knows (`files/classes.rs`), but the log's and the catalog's,
+  each with its length and owner; the export holds the checkpoints'
+  turn shared for its life (`threads/turn.rs`), so several replicas
+  fetch at once and a checkpoint waits for the last. `Standby::import`
+  (`db/standby/import.rs`): deposed or following, the database's
+  service ends, its data, side, plug-in and catalog files are replaced
+  by the export's, the image recorded in a new catalog, and it is
+  opened again to follow from the image. `StateTransfer` moves an
+  export without decoding it, over the group's transport, a request
+  and one answer at a time, told from VR's frames by their first byte;
+  the built-in `WholeFiles` (`replication/src/transfer.rs`) fetches the
+  manifest, then each file in pieces, staged in the database's
+  `transfer/` (a scratch kind, cleared as the database opens). The
+  driver serves each fetcher an export numbered of its own, let go once
+  no request comes for a while, when its database is deposed, and
+  before it installs a transfer; an answer of another export restarts
+  the fetch; the driver keeps a fetch under way when VR asks again from
+  the same replica, and lets a fetch go when the database serves
+  meanwhile. Installed, VR stands at the export's position in any
+  status, its log after it kept unless it was fetching; a record in
+  doubt at a position the install let go has an outcome no log can
+  tell (`Watch::outcome`, unknown).
 - **The node.** The server's part (`server/src/replication.rs`):
   - settings of the node's own, never logged: REPLICATION.REPLICA (its
     number; 0, not replicated), REPLICATION.MEMBERS (each member's

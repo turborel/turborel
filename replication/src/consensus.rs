@@ -136,8 +136,9 @@ pub enum Output {
     Outcome {
         /// Its position.
         at: Lsn,
-        /// Whether the log kept it.
-        kept: bool,
+        /// Whether the log kept it; unknown if the position was let go,
+        /// by a state transfer installed, before this replica could tell.
+        kept: Option<bool>,
     },
     /// Serve as primary, or stop.
     Role(Role),

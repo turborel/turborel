@@ -73,9 +73,10 @@ fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runti
     // Ticks slow enough that a backup under the test suite's load does not
     // give its primary up for want of a heartbeat.
     db.set_setting(TICK_MS, &number(50)).unwrap();
-    let prepared = replication::prepare(&db).unwrap().unwrap();
+    let dir = scratch.path(&format!("node{me}"));
+    let prepared = replication::prepare(&db, &dir).unwrap().unwrap();
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
-    let holds = db.open_following(&fs, &scratch.path(&format!("node{me}")), &OpenOptions::default()).unwrap();
+    let holds = db.open_following(&fs, &dir, &OpenOptions::default()).unwrap();
     let node = prepared.start(&db, runtime.handle(), holds).unwrap();
     Node { db, replica: node, kept }
 }

@@ -316,6 +316,13 @@ pub enum ReplicaChange {
         /// Why.
         why: String,
     },
+    /// The database installed a state transfer of the primary's, behind
+    /// what the others retain of the log, and holds the log through
+    /// `position`.
+    StateInstalled {
+        /// The position.
+        position: u64,
+    },
 }
 
 /// \[DESIGN\] Why checkpoints let the log grow (`Event::CheckpointOverdue`).
@@ -350,7 +357,8 @@ impl Event {
                 ReplicaChange::ViewChanged { .. }
                 | ReplicaChange::Serving { .. }
                 | ReplicaChange::Stopped
-                | ReplicaChange::Connected { .. } => Level::Info,
+                | ReplicaChange::Connected { .. }
+                | ReplicaChange::StateInstalled { .. } => Level::Info,
                 ReplicaChange::FrameRefused { .. }
                 | ReplicaChange::AppendRefused
                 | ReplicaChange::Disconnected { .. }

@@ -175,6 +175,10 @@ fn replica(json: &mut Json, change: &ReplicaChange) {
             json.text("why", why);
         }
         ReplicaChange::ConnectionRefused { peer, why } => json.texts(&[("change", "connection_refused"), ("peer", peer), ("why", why)]),
+        ReplicaChange::StateInstalled { position } => {
+            json.text("change", "state_installed");
+            json.number("position", *position);
+        }
     }
 }
 
@@ -440,6 +444,10 @@ mod tests {
             (
                 ReplicaChange::ConnectionRefused { peer: "10.0.0.9:4000".into(), why: "no hello".into() },
                 r#""level":"warning","event":"replica","change":"connection_refused","peer":"10.0.0.9:4000","why":"no hello"}"#,
+            ),
+            (
+                ReplicaChange::StateInstalled { position: 40 },
+                r#""level":"info","event":"replica","change":"state_installed","position":40}"#,
             ),
         ];
         for (change, rest) in cases {

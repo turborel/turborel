@@ -23,6 +23,7 @@ mod shown;
 #[cfg(test)]
 mod tests;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,12 +31,13 @@ use tokio::runtime::Handle;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use turborel::db::{Database, LogStorage, OpenedLog, Standby, StorePlace};
 use turborel::diagnostics::{Event, ReplicaChange};
+use turborel::disk::io::OsFileSystem;
 use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
 use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
-use turborel_replication::{Driver, DriverJob, GroupLogs, Joined, Make, ReplicaEvent, ReplicaId, Vr, VrOptions};
+use turborel_replication::{Driver, DriverJob, GroupLogs, Joined, Make, ReplicaEvent, ReplicaId, Vr, VrOptions, WholeFiles, staging_dir};
 
 use self::net::Security;
 pub use self::net::{TcpTransport, members_of};
@@ -101,7 +103,11 @@ impl Watch for Telling {
         self.db.tell(&Event::Replica { change: ReplicaChange::Stopped });
     }
 
-    fn outcome(&self, _at: Lsn, _record: &[u8], _kept: bool) {}
+    fn outcome(&self, _at: Lsn, _record: &[u8], _kept: Option<bool>) {}
+
+    fn installed(&self, at: Lsn) {
+        self.db.tell(&Event::Replica { change: ReplicaChange::StateInstalled { position: at.0 } });
+    }
 
     fn event(&self, event: &ReplicaEvent) {
         let change = match event {
@@ -152,15 +158,16 @@ fn security(db: &Database) -> Result<Option<Security>> {
 }
 
 /// \[EXTENSION\] Prepares `db` as the replica its settings name
-/// (`replicated`), before it is opened from its files: its log storage
-/// the group's. None if it is not replicated.
+/// (`replicated`), before it is opened from its files in `dir`: its log
+/// storage the group's, a state transfer staged in `dir`'s `transfer/`.
+/// None if it is not replicated.
 ///
 /// # Errors
 ///
 /// SQLCODE -910 if the settings are wrong: the node no member, a member
 /// malformed, TLS's files not named; -915 if TLS's files cannot be
 /// taken; `Database::set_log_storage`'s.
-pub fn prepare(db: &Database) -> Result<Option<Prepared>> {
+pub fn prepare(db: &Database, dir: &Path) -> Result<Option<Prepared>> {
     if !replicated(db) {
         return Ok(None);
     }
@@ -187,6 +194,7 @@ pub fn prepare(db: &Database) -> Result<Option<Prepared>> {
         ticker: Arc::new(Ticks::every(tick)),
         wait: Arc::new(Blocking { most: tick }),
         watch: Arc::new(Telling { db: db.clone(), links: Arc::clone(&links) }),
+        transfer: Arc::new(WholeFiles::new(Arc::new(OsFileSystem), staging_dir(dir))),
     };
     let ids: Vec<ReplicaId> = members.keys().copied().collect();
     let retention = Retention { bytes: u64::try_from(settings::count(db, RETAIN_BYTES)).unwrap_or(u64::MAX) };

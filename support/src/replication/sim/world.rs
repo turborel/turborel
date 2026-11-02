@@ -127,7 +127,7 @@ impl Watch for SimWatch {
 
     fn stopped(&self) {}
 
-    fn outcome(&self, at: Lsn, record: &[u8], kept: bool) {
+    fn outcome(&self, at: Lsn, record: &[u8], kept: Option<bool>) {
         self.world.lock().unwrap().checker.outcome(self.id, at.0, record.to_vec(), kept);
     }
 
@@ -138,6 +138,9 @@ impl Watch for SimWatch {
             ReplicaEvent::AppendRefused => Err(format!("replica {} refused an append while serving", self.id.0)),
         };
         self.noted(found);
+    }
+    fn installed(&self, _at: Lsn) {
+        self.world.lock().unwrap().report.transfers += 1;
     }
 }
 
@@ -200,6 +203,11 @@ pub struct World {
 }
 
 impl World {
+    /// The run's plan.
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
     /// The world of `plan` from `seed`, every replica down until made.
     pub fn new(seed: u64, plan: Plan) -> World {
         let members: Vec<ReplicaId> = (1..=plan.replicas).map(ReplicaId).collect();

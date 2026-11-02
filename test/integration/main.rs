@@ -141,6 +141,7 @@ mod spilled_checks;
 mod spilled_rows;
 mod spilled_sorts;
 mod spilling;
+mod standby;
 mod statements;
 mod statistics;
 mod stores;

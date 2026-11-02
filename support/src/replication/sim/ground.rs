@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use turborel::db::Standby;
 use turborel::error::{Code, Result, SqlError};
 use turborel_replication::driver::Wait;
-use turborel_replication::{Driver, Lsn, Parts};
+use turborel_replication::{Driver, Lsn, Parts, StateTransfer};
 
 use super::super::group::Make;
 use super::world::{Started, journal, locked, watch};
@@ -40,6 +40,9 @@ pub trait Host: Send {
     fn open(&mut self, index: usize, driver: &Arc<Driver>) -> std::result::Result<(Arc<dyn Standby>, Lsn), Violation>;
     /// Replica `index` crashed: its database is lost, but what it kept.
     fn crashed(&mut self, index: usize);
+    /// How a state transfer crosses to replica `index`, staged where its
+    /// database is kept.
+    fn transfer(&mut self, index: usize) -> Arc<dyn StateTransfer>;
 }
 
 /// The world, each replica's driver and database while it is up, and what
@@ -127,18 +130,19 @@ impl Ground {
         let consensus = (self.make)(&members, id, if first { None } else { Some(recovered) });
         let wait: Arc<dyn Wait> = Arc::new(SimWait(Weak::clone(&self.me)));
         let watch = Arc::new(watch(&self.world, id));
-        // The log kept whole: a state transfer is the simulator's next stage.
+        let (retain_bytes, transfer) = (self.world().plan().retain_bytes, self.host.lock().unwrap().transfer(index));
         let parts = Parts {
             consensus,
             journal: Box::new(journal(disk)),
             first: begins,
             records,
-            retain_bytes: u64::MAX,
+            retain_bytes,
             transport: link,
             inbox,
             ticker: ticks,
             wait,
             watch,
+            transfer,
         };
         let driver = Driver::new(parts);
         self.drivers.lock().unwrap()[index] = Some(Arc::clone(&driver));

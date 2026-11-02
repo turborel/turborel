@@ -182,8 +182,8 @@ plug-in's own files, kept; DURABLE AT COMMIT, the side files of the data
 file and of a plug-in's shadowed directory, whose writes reach their files
 at a checkpoint; UNSYNCED, the log of older row
 versions, begun anew as the database opens; SCRATCH, spill files, a
-session's temporary tables' among them,
-removed. The server's own files are there too, of KIND SERVER and no class,
+session's temporary tables' among them, and a state transfer a replica
+is fetching ([Replication](09-replication.md)), removed. The server's own files are there too, of KIND SERVER and no class,
 though not under the limit: the `--log` file and the socket while they
 are open, the TLS certificate chain and key, read as the server starts,
 and the `--keys` directory, a read for each key taken from it:

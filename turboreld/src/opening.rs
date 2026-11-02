@@ -75,7 +75,7 @@ pub(crate) fn opened(db: &Database, dir: &Path, runtime: Option<&Runtime>) -> Re
         db.open_files(&fs, dir, &OpenOptions::default()).map_err(failed)?;
         return Ok(None);
     };
-    let Some(prepared) = replication::prepare(db).map_err(failed)? else {
+    let Some(prepared) = replication::prepare(db, dir).map_err(failed)? else {
         db.open_files(&fs, dir, &OpenOptions::default()).map_err(failed)?;
         return Ok(None);
     };

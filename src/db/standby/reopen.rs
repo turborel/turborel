@@ -68,7 +68,7 @@ impl Database {
     }
 
     /// Through where it holds the log it follows.
-    fn holds_through(&self) -> Result<Lsn> {
+    pub(in crate::db) fn holds_through(&self) -> Result<Lsn> {
         Ok(lock_builtin(&self.snapshot()?.tx.following).replayed)
     }
 
