@@ -5,6 +5,8 @@
 //! reserved whole as its header declares it: a client that declares a
 //! long body and sends little of it holds little.
 
+use std::time::Duration;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf};
 use turborel::error::{Result, SqlError};
 use turborel::value::types::TypeRegistry;
@@ -81,6 +83,17 @@ impl Wire {
     /// Tells the client of `why`, if it still listens, and closes.
     pub(super) async fn close_with(&mut self, why: &SqlError) {
         let _ = self.send_now(&Reply::Error(Failure::from(why))).await;
+        self.close().await;
+    }
+
+    /// Tells the client of `why`, takes its first message, if one comes
+    /// within `within`, and closes: a connection closed with a message
+    /// unread is reset, and a reset loses what was sent before it on
+    /// Windows, the refusal with it; taken, the close is clean, and the
+    /// client reads why.
+    pub(super) async fn close_refusing(&mut self, why: &SqlError, within: Duration) {
+        let _ = self.send_now(&Reply::Error(Failure::from(why))).await;
+        let _ = tokio::time::timeout(within, self.receive()).await;
         self.close().await;
     }
 }

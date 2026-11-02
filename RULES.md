@@ -2835,8 +2835,10 @@ make.
     SERVER.SCRAM_WITHOUT_TLS;
   - as statements and connections begin: SERVER.WORKERS,
     SERVER.MAX_CONNECTIONS, SERVER.MAX_REFUSALS (connections past it
-    refused at once, each told why, SQLSTATE 08004; any more closed
-    unanswered), SERVER.MAX_MESSAGE_BYTES, SERVER.BATCH_BYTES,
+    refused at once, each told why, SQLSTATE 08004, its first message
+    taken before the close, so the close resets nothing and the client
+    reads why on every platform; any more closed unanswered),
+    SERVER.MAX_MESSAGE_BYTES, SERVER.BATCH_BYTES,
     SERVER.MAX_STATEMENTS (prepared statements per connection),
     SERVER.MAX_LOGINS, SERVER.LOGIN_DELAY_MS and the timeouts, so a
     change needs no restart.

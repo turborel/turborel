@@ -56,6 +56,11 @@ const IN_FLIGHT: usize = 4;
 /// cancelled again until it stops: a cancel made before it began does
 /// nothing (RULES.md D44). As often as a wait for a lock looks.
 const CANCEL_AGAIN: std::time::Duration = std::time::Duration::from_millis(20);
+/// \[DESIGN\] How long a refused connection's first message is awaited
+/// before it is closed (`Wire::close_refusing`): a client sends its Hello
+/// as it connects, so it is at hand; one that sends nothing holds a
+/// refusal's place (SERVER.MAX_REFUSALS) this long.
+const REFUSED_WITHIN: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// \[DESIGN\] The longest message taken from a client before it is
 /// authenticated, or SERVER.MAX_MESSAGE_BYTES if that is less: room for
@@ -78,8 +83,8 @@ impl Protocol for Native {
 
     fn refuse(&self, transport: Box<dyn Transport>, why: SqlError) -> Serving {
         Box::pin(async move {
-            let mut wire = Wire::new(transport, 0, TypeRegistry::default());
-            wire.close_with(&why).await;
+            let mut wire = Wire::new(transport, LOGIN_MESSAGE_BYTES, TypeRegistry::default());
+            wire.close_refusing(&why, REFUSED_WITHIN).await;
         })
     }
 }
