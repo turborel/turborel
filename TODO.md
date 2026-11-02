@@ -70,39 +70,17 @@ What came after SQL-92 follows it, written from the standards' own text
 - **Roles**, after SQL-92, which has none (ROLE is only a potential
   reserved word [ISO/IEC 9075:1992 §5.2]), from a later standard's text.
   Users are D43's.
+- **After SQL-92, for the column store** (RULES.md D31): a clause
+  limiting the rows an ordered read gives, from a later standard's text;
+  and a table option of columns (COLUMNSTORE.ORDER) following a column
+  renamed, once ALTER TABLE renames columns.
 
 ---
 
 ## Query processing
 
-- **Plans kept, further** (RULES.md D45): the access paths kept too, for
-  values that would choose the same ones. Each execution rewrites and
-  plans the kept bound plan anew: of a prepared key lookup's 5.4 µs,
-  planning takes about 2.6 µs (the scan's zone share about 1.4, the
-  index's estimate 0.9) and rewriting 0.35. The choice reads the values
-  through rewrites (folding, transitivity), probes (`coerce`, ranges
-  merged, a LIKE's prefix) and plug-ins' answers for them (`scan_share`,
-  `Index::estimate`), so no test short of planning tells it is the same.
-  Left as is for now: a generic plan planned with slots, kept beside the
-  values' own while it costs no more (the planner and executor taking
-  `Expr::Dynamic`), is the way if a benchmark on a quiet machine shows
-  planning worth saving.
-- **Operators over vectors, further** (D31, D38): a grouping of a set
-  function that writes no state (a plug-in's, SUM or AVG of approximate
-  numbers) still writes every row of a group not held. Groups are made
-  partly only of a partition that outgrows the work area again, as a
-  piece costs more than a row written by batch. A spilled run's pages
-  are freed through the pager's free list, each costing more than the
-  record it held.
-- **Typed vectors, further** (D31): a LIKE whose pattern is another
-  expression (a CASE) leaves its filter judged whole a row at a time,
-  each pattern split once (`S LIKE CASE ...` of 200,000 rows of the
-  column store, 28.6 ms).
-- **Statistics, further** (D35): a scan's pages the pool misses are
-  priced as read from the system's cache, never from the disk (no scan
-  of a file larger than memory is measured), and only the tree's rows,
-  not the frozen ones'. The system's cache is taken as
-  STORAGE.SYSTEM_CACHE_BYTES says, not as it is.
+- Nothing is open: what is left as is, and why, is in RULES.md (D31,
+  D35, D38, D45).
 
 ---
 
@@ -113,18 +91,3 @@ What came after SQL-92 follows it, written from the standards' own text
   creation, a file recording the function's id alone; so a key of either
   cannot be retired, and changing one means encrypting or checksumming
   every file again.
-- **Read-ahead, further:** on the job `turborel-read-ahead` (D30, D55),
-  measured on a quiet machine (2026-10-31, load 4 to 6, three runs): a
-  row store scan of a table ten times its pool 3.96M to 4.35M rows/s
-  (+10%), a column store one 5.73M to 6.15M (+7%); a tree in a small
-  pool scanned forward, read ahead by a reader on a thread of its own,
-  19.8M to 29.6M entries/s on one thread (+49%), 97M to 106M on four
-  (+9%). Left: a frozen group's header, a chain of pages each linking
-  the one before it, read page by page; scans of groups in their order
-  (`frozen/ordered.rs`) ask for none; a scan asks for a group's chunks
-  only as it takes the group up, not the next group's.
-- **Layouts** (D31). For the column store:
-  - a clause limiting the rows an ordered read gives, from a later
-    standard's text;
-  - a table option of columns (COLUMNSTORE.ORDER) following a column
-    renamed, once ALTER TABLE renames columns;
