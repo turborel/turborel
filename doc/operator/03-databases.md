@@ -135,6 +135,10 @@ change of the setting, made under NONE, among them.
 SET DATABASE LOG.DURABILITY = 'FULL'
 ```
 
+A replicated database's log is its node's, synced before the node
+acknowledges a record to the group, whatever LOG.DURABILITY says
+([Replication](09-replication.md)).
+
 ## Checkpoints
 
 A checkpoint writes the changes since the last to the data file, so a

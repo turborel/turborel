@@ -11,33 +11,13 @@ use std::sync::Arc;
 
 use turborel_test_support::database::rows;
 use turborel_test_support::replication::Make;
+use turborel_test_support::replication::sim::plans;
 use turborel_test_support::replication::sim::{DatabaseReport, Faults, Plan, Replicas, Weather, simulate_databases};
 
 use crate::common::make_vr;
 
 /// Seeds run: bounded, as each replica's database is a real one.
 const SEEDS: Range<u64> = 0..40;
-
-/// A run of three replicas: 2000 moments of faults, 2000 calm; the
-/// primary's database acting at one moment in five; a replica ticking
-/// every 5. Of the frames, 5 % are lost, 2 % delivered twice, 1 % held up
-/// to 300 moments, the rest taking up to 10; a partition begins at 3
-/// moments in a thousand, a replica crashes at 4 in a thousand and stays
-/// down up to 60, a disk fails on 2 writes in a thousand.
-fn plan() -> Plan {
-    let weather = Weather { drop: 50, duplicate: 20, delay: 10, late: 10, late_delay: 300 };
-    let faults = Faults {
-        weather,
-        partition: 3,
-        partition_moments: 400,
-        crash: 4,
-        down_moments: 60,
-        disk_error: 2,
-        lose_journal: 0,
-        write_moments: 6,
-    };
-    Plan { replicas: 3, faulty: 2000, calm: 2000, append: 200, tick_moments: 5, retain_bytes: u64::MAX, faults }
-}
 
 /// A run with no fault at all, long enough never to end in a test.
 fn calm_plan() -> Plan {
@@ -64,14 +44,16 @@ fn calm_plan() -> Plan {
 /// primary holds, the same rows, index entries and Information Schema;
 /// and the faults were met: commits in doubt, transactions left open by a
 /// primary stopped, backups promoted, checkpoints of following databases,
-/// and databases opened again from their files after a crash.
+/// databases opened again from their files after a crash, which lost the
+/// writes not synced, journals lost and recovered, state transfers, and
+/// reads served by backups, each holding its snapshot a while.
 #[test]
 fn backups_hold_what_the_primary_holds() {
     let make: Make = Arc::new(make_vr);
     let mut reports: Vec<DatabaseReport> = Vec::new();
     let mut failures = Vec::new();
     for seed in SEEDS {
-        match simulate_databases(seed, &plan(), &make) {
+        match simulate_databases(seed, &plans::databases(), &make) {
             Ok(report) => reports.push(report),
             Err(why) => failures.push(why),
         }
@@ -83,6 +65,9 @@ fn backups_hold_what_the_primary_holds() {
     assert!(doubted > 0 && interrupted > 0 && promoted > 0, "faults hardly met: {doubted} {interrupted} {promoted}");
     let (checkpointed, reopened) = (met(|r| r.following_checkpoints > 0), met(|r| r.reopened > 0));
     assert!(checkpointed > 0 && reopened > 0, "recovery hardly met: {checkpointed} {reopened}");
+    let (lost, transferred, read) =
+        (met(|r| r.replication.journals_lost > 0), met(|r| r.replication.transfers > 0), met(|r| r.backup_reads > 0));
+    assert!(lost > 0 && transferred > 0 && read > 0, "journals lost, transfers and backup reads hardly met: {lost} {transferred} {read}");
 }
 
 /// Verifies: [DESIGN] RULES.md D57, R-TEST-5 a run of real databases is
@@ -90,8 +75,8 @@ fn backups_hold_what_the_primary_holds() {
 #[test]
 fn a_seed_makes_its_run_of_databases_again() {
     let make: Make = Arc::new(make_vr);
-    let first = simulate_databases(3, &plan(), &make).unwrap();
-    assert_eq!(simulate_databases(3, &plan(), &make).unwrap(), first);
+    let first = simulate_databases(3, &plans::databases(), &make).unwrap();
+    assert_eq!(simulate_databases(3, &plans::databases(), &make).unwrap(), first);
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.2] a view change promoting a

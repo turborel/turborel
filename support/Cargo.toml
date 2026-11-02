@@ -23,6 +23,11 @@ rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs
 # with the feature `database`.
 turborel-replication = { path = "../replication", optional = true }
 
+# The simulator's sweeps, `cargo xtask simulate`.
+[[bin]]
+name = "simulate"
+required-features = ["replication"]
+
 [features]
 client = ["dep:turborel-client"]
 server = ["client", "dep:turborel", "dep:turborel-protocol", "dep:turborel-server", "dep:tokio"]

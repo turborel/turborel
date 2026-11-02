@@ -1,17 +1,20 @@
 //! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9): each
-//! breaks one mechanism of the core, and names tests, by their full paths,
-//! that each fail when it is broken. A mechanism a change adds gets one
+//! breaks one mechanism of the core, or of replication (`vr.rs`), and
+//! names tests, by their full paths, that each fail when it is broken. A mechanism a change adds gets one
 //! here; a change to a quoted snippet brings its mutation up to date
 //! (`verify` refuses one that no longer applies).
 
 mod reads;
+mod vr;
 
-use super::Mutation;
+use super::{Mutation, Package};
 pub use reads::READS;
+pub use vr::VR;
 
-/// Every mutation, in the order they run: the core's, then its reads'.
+/// Every mutation, in the order they run: the core's, then its reads',
+/// then replication's.
 pub fn all() -> Vec<Mutation> {
-    MUTATIONS.iter().chain(&READS).copied().collect()
+    MUTATIONS.iter().chain(&READS).chain(&VR).copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints,
@@ -19,6 +22,7 @@ pub fn all() -> Vec<Mutation> {
 pub const MUTATIONS: [Mutation; 53] = [
     Mutation {
         name: "mvcc-snapshot",
+        package: Package::Core,
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
         file: "src/engine/rows/mvcc.rs",
         original: "(Reader::At { snapshot, .. }, Maker::Committed(at)) => at <= snapshot,",
@@ -32,6 +36,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "mvcc-uncommitted",
+        package: Package::Core,
         breaks: "MVCC visibility: a reader sees other transactions' uncommitted versions",
         file: "src/engine/rows/mvcc.rs",
         original: "(Reader::At { tx, .. }, Maker::Open(by)) => by == tx,",
@@ -45,6 +50,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "page-checksum",
+        package: Package::Core,
         breaks: "the page checksum: a page read is not checked against its digest",
         file: "src/disk/pager/sealed.rs",
         original: "        if stored == Some(id) && verified {",
@@ -57,6 +63,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "block-checksum",
+        package: Package::Core,
         breaks: "the block checksum: a torn or corrupt block of the log is read as valid",
         file: "src/disk/block.rs",
         original: "if !format::verify(&*self.hash, len, digest, out.get(prefix_len..).unwrap_or_default()) {",
@@ -70,6 +77,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "commit-sync",
+        package: Package::Core,
         breaks: "the log's sync at commit: COMMIT returns before its record is durable",
         file: "src/txn/logging.rs",
         original: "Ok(self.shared.sync(&**log, lsn).map_err(|e| {",
@@ -79,6 +87,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "file-log-sync",
+        package: Package::Core,
         breaks: "the file log's sync: its blocks are counted durable without a sync",
         file: "src/log/file/segments.rs",
         original: "let synced = segment.blocks.sync(durability).map_err(|e| self.failed(e, &format!(\"segment {}\", segment.number)));",
@@ -91,6 +100,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "not-null",
+        package: Package::Core,
         breaks: "NOT NULL: a null is let into a NOT NULL column",
         file: "src/db/integrity.rs",
         original: "if row.get(*at).is_some_and(Value::is_null) {",
@@ -100,6 +110,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "check-unknown",
+        package: Package::Core,
         breaks: "CHECK: a row is refused when its condition is unknown, kept when false",
         file: "src/db/integrity.rs",
         original: "if eval_cond(&cond, &row, &Heard(tx.stop.warnings()))? == Truth::False {",
@@ -109,6 +120,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "foreign-key",
+        package: Package::Core,
         breaks: "FOREIGN KEY: a row referencing no row is let in",
         file: "src/db/integrity.rs",
         original: "if !self.matches(tx, fk, &values)? {",
@@ -118,6 +130,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "unique",
+        package: Package::Core,
         breaks: "UNIQUE: two rows of one key are let in",
         file: "src/db/integrity/keys.rs",
         original: "if holders > 1 {",
@@ -131,6 +144,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "lock-wait",
+        package: Package::Core,
         breaks: "the lock wait: a transaction set to wait takes a table locked against it",
         file: "src/txn/locks.rs",
         original: "if conflicting.is_empty() {",
@@ -140,6 +154,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "not-unknown",
+        package: Package::Core,
         breaks: "three-valued logic: NOT of unknown is true",
         file: "src/exec/eval.rs",
         original: "Unknown => Unknown,",
@@ -153,6 +168,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "sort-merge-whole",
+        package: Package::Core,
         breaks: "a spilled sort's merge: rows of equal prefixes are compared by the later keys alone, their prefixes held whole or not",
         file: "src/exec/sort/merge.rs",
         original: "let whole = by_prefix && self.tag & other.tag & WHOLE != 0;",
@@ -162,6 +178,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "kept-plan-definitions",
+        package: Package::Core,
         breaks: "kept plans: a prepared statement's plan kept across a change of the catalog",
         file: "src/db/prepared/plans.rs",
         original: " && Weak::ptr_eq(&self.catalog, &other.catalog);",
@@ -171,6 +188,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "kept-plan-instant",
+        package: Package::Core,
         breaks: "kept plans: a plan holding the statement's instant kept for the next execution",
         file: "src/value/datetime.rs",
         original: "            read.set(true);",
@@ -180,6 +198,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-row",
+        package: Package::Core,
         breaks: "assertions checked from changes: a row changed to break NOT EXISTS passes",
         file: "src/db/assertions/changes.rs",
         original: "        self.passing.now = self.passing.now || is_in;",
@@ -193,6 +212,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-count",
+        package: Package::Core,
         breaks: "assertions of a count kept: a count raised past its bound passes",
         file: "src/db/assertions/kept.rs",
         original: "            Kind::Count(op, k) => Some(compared(number(after.counted), *op, k, tx)?),",
@@ -205,6 +225,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-snapshot",
+        package: Package::Core,
         breaks: "assertions checked from changes: a greatest held from a change below one snapshot",
         file: "src/db/assertions/changes.rs",
         original: "let verdict = seen.verdict(&form.kind, tx.one_snapshot());",
@@ -214,6 +235,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-count-replaced",
+        package: Package::Core,
         breaks: "assertions checked from changes: a COUNT a plug-in replaced held as the standard one",
         file: "src/functions.rs",
         original: "is_some_and(|s| std::ptr::addr_eq(Arc::as_ptr(&f.0), Arc::as_ptr(&s.0)));",
@@ -223,6 +245,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-never-null",
+        package: Package::Core,
         breaks: "assertions checked from changes: a set function of a value that may be null held from a change, its warning lost",
         file: "src/db/assertions/forms.rs",
         original: "    let nulls = (!never_null(&x, (&table, &steps), known.catalog)).then(|| (steps.len(), x.clone()));",
@@ -232,6 +255,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-reach",
+        package: Package::Core,
         breaks: "assertions checked from changes: a greatest moved below its bound passes",
         file: "src/db/assertions/changes.rs",
         original: "Kind::Reach(_) => self.reached || (one_snapshot && !self.passing.now && !self.passing.before),",
@@ -244,6 +268,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-compute",
+        package: Package::Core,
         breaks: "assertions checked from changes: a view's column that raises is not evaluated",
         file: "src/db/assertions/forms.rs",
         original: "                if !raising.is_empty() {",
@@ -253,6 +278,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-steps-order",
+        package: Package::Core,
         breaks: "assertions checked from changes: a query's filter judges rows its view's filter left out",
         file: "src/db/assertions/forms.rs",
         original: "                steps.reverse();",
@@ -262,6 +288,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-conjuncts",
+        package: Package::Core,
         breaks: "assertions checked from changes: the conjuncts after a false one are not evaluated",
         file: "src/db/assertions/changes.rs",
         original: "            let kept_here = kept.as_ref().filter(|_| keeps(form));",
@@ -271,6 +298,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-deferred-row",
+        package: Package::Core,
         breaks: "deferred assertions checked from their rows: a row written to break NOT EXISTS passes",
         file: "src/db/assertions/changes.rs",
         original: "            if passes(&form.steps, &now, tx)? {",
@@ -280,6 +308,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-apart",
+        package: Package::Core,
         breaks: "assertions checked from changes: a greatest moved onto the bound it must not equal passes",
         file: "src/db/assertions/changes.rs",
         original: "Kind::Apart { .. } => self.reached || (one_snapshot && !self.passing.before && !self.outside),",
@@ -292,6 +321,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-distinct-value",
+        package: Package::Core,
         breaks: "assertions checked from changes: a row whose distinct value changed counted as keeping it",
         file: "src/db/assertions/changes.rs",
         original: "let kept = is_in && was_in && value(now)? == value(before)?;",
@@ -301,6 +331,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-null-unseen",
+        package: Package::Core,
         breaks: "assertions checked from changes: a set function of a value that may be null, of a query's rows, held from a change of no null, its warning lost",
         file: "src/db/assertions/changes.rs",
         original: "                if tx.stop.warnings().raised() {",
@@ -310,6 +341,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-deferred-quiet",
+        package: Package::Core,
         breaks: "deferred assertions checked from their rows: steps that raise, or an argument that may be null, stopped at a broken row",
         file: "src/db/assertions/changes.rs",
         original: "            f.nulls.is_none() && !raising",
@@ -319,6 +351,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-join-one-scan",
+        package: Package::Core,
         breaks: "assertions of a join checked from changes: a row changed of a table but the first scanned joins nothing",
         file: "src/db/assertions/delta.rs",
         original: "        for (at, table) in scanned.iter().enumerate() {",
@@ -328,6 +361,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-group-left",
+        package: Package::Core,
         breaks: "assertions of a grouping checked from changes: the group a row leaves is not made again",
         file: "src/db/assertions/delta.rs",
         original: "            for row in [now.as_ref(), before].into_iter().flatten() {",
@@ -337,6 +371,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-group-null",
+        package: Package::Core,
         breaks: "assertions of a grouping checked from changes: a null eliminated in a group not changed, its warning lost",
         file: "src/db/assertions/delta.rs",
         original: "Ok((!nullable || tx.stop.warnings().raised()).then_some(seen))",
@@ -346,6 +381,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-deferred-first-image",
+        package: Package::Core,
         breaks: "deferred assertions of a count: a row changed twice counted from each image, not from its first",
         file: "src/db/assertions/changes.rs",
         original: "        if ids.insert(id) && self.held.take(st, more) {",
@@ -355,6 +391,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "preserving-checked",
+        package: Package::Core,
         breaks: "a fold of kept totals fails a transaction that read the rows it rewrote",
         file: "src/engine/rows/mvcc/commit.rs",
         original: "            if open.preserving {",
@@ -364,6 +401,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-unrecorded",
+        package: Package::Core,
         breaks: "assertions of kept totals: two transactions moving a sum toward its bound both commit",
         file: "src/db/assertions/kept.rs",
         original: "                Register::Moving(mv)",
@@ -373,6 +411,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-every-way",
+        package: Package::Core,
         breaks: "assertions of kept totals: transactions moving a value opposite ways conflict",
         file: "src/db/assertions/kept.rs",
         original: "                Register::Moving(mv)",
@@ -382,6 +421,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-of-no-value",
+        package: Package::Core,
         breaks: "assertions of kept totals: a SUM of no value judged as zero, not null",
         file: "src/db/assertions/kept.rs",
         original: "    if after.counted == 0 {",
@@ -391,6 +431,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-before-lost",
+        package: Package::Core,
         breaks: "assertions of kept totals: a row updated or deleted is not taken from the totals",
         file: "src/db/assertions/kept.rs",
         original: "                delta = delta.minus(row_totals(form, before, tx)?)?;",
@@ -400,6 +441,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-made-shared",
+        package: Package::Core,
         breaks: "assertions of kept totals: made while another transaction holds a change of what they count",
         file: "src/db/assertions.rs",
         original: "        let held = if built.is_some() { LockMode::Exclusive } else { LockMode::Shared };",
@@ -409,6 +451,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-folded-lost",
+        package: Package::Core,
         breaks: "a fold of kept totals loses what the rows it folds held",
         file: "src/db/assertions/fold.rs",
         original: "                self.insert_row(tx, table, &kept_row(form, &sum, Move::Still))?;",
@@ -418,6 +461,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "totals-not-put-right",
+        package: Package::Core,
         breaks: "a deferred assertion of kept totals whose rows outgrew the work area leaves them wrong",
         file: "src/db/assertions/totals.rs",
         original: "            self.append_totals(tx, (&kept, *at), (whole.minus(kept_now)?, form))?;",
@@ -427,6 +471,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "assertion-made-again-remembers",
+        package: Package::Core,
         breaks: "an assertion made again of its name counts the rows waiting for its checks twice",
         file: "src/db/definitions.rs",
         original: "                    self.deferral.borrow_mut().forget(a, next.list_space())?;",
@@ -436,6 +481,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "count-unrecorded",
+        package: Package::Core,
         breaks: "assertions of a count kept: two transactions adding toward its bound both commit",
         file: "src/db/assertions/kept.rs",
         original: "            Kind::Count(op, _) => Register::of(*op, false, moved(form, &delta)),",
@@ -445,6 +491,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "hash-key-twice",
+        package: Package::Core,
         breaks: "a hash index gives a row of a key inserted twice twice",
         file: "src/index/hash.rs",
         original: "            if given.contains(&v)? {",
@@ -454,6 +501,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "hash-tail-kept",
+        package: Package::Core,
         breaks: "a hash table appends to a page a split or merge rewrote",
         file: "src/engine/hash.rs",
         original: "            self.set_tail(b, 0);",
@@ -466,6 +514,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-untold",
+        package: Package::Core,
         breaks: "a change of STORAGE.ENCODINGS or STORAGE.CHECKSUM_KEY reaches no file",
         file: "src/db/settings.rs",
         original: "        self.tell_formats()?;",
@@ -475,6 +524,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-log-segment",
+        package: Package::Core,
         breaks: "the log goes on in its segment, in the old formats, after they change",
         file: "src/log/file.rs",
         original: "        if self.rotate_asked.load(Ordering::Acquire) {\n            self.rotate_for_formats();",
@@ -484,6 +534,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-catalog-switch",
+        package: Package::Core,
         breaks: "the catalog appends to its file, in the old formats, after they change",
         file: "src/db/catalog_file.rs",
         original: "        if active.records < compact_after && !active.broken && !self.switch.swap(false, Ordering::AcqRel) {",
@@ -493,6 +544,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-pages-key",
+        package: Package::Core,
         breaks: "the data file's pages keep the old key once STORAGE.CHECKSUM_KEY changes",
         file: "src/disk/buffer.rs",
         original: "        if hash.keyed() {\n            pager.set_hash(hash)?;",
@@ -502,6 +554,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-behind-blind",
+        package: Package::Core,
         breaks: "the sweep finds no page in other formats, so none is written again",
         file: "src/disk/pager/formats.rs",
         original: "        key.is_some_and(|key| ids != current.encodings || key != current.key)",
@@ -511,6 +564,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-meta-stale",
+        package: Package::Core,
         breaks: "the meta slot stays keyed by the old key once the header is settled, so the file cannot open without it",
         file: "src/disk/pager/sync.rs",
         original: "            if !free.changed() && !self.resettled.swap(false, Ordering::AcqRel) {",
@@ -520,6 +574,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-walk-stale",
+        package: Package::Core,
         breaks: "the sweep goes on from where it was once the formats change under it, leaving the pages before in the old ones",
         file: "src/db/rekey.rs",
         original: "        if walk.target.as_ref() != Some(current) {",
@@ -529,6 +584,7 @@ pub const MUTATIONS: [Mutation; 53] = [
     },
     Mutation {
         name: "rekey-settled-untold",
+        package: Package::Core,
         breaks: "the files settled are never told",
         file: "src/db/checkpoint.rs",
         original: "            self.tell_if_settled();",

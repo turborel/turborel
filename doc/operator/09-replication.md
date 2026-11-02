@@ -59,9 +59,10 @@ hand.
 
 Clients connect to any node. The primary takes changes; a backup
 serves reads of what it holds, and refuses a change (SQLCODE -917,
-SQLSTATE 25000: the transaction's state). A client whose statement is
-refused so connects to the primary, which INFORMATION_SCHEMA.REPLICAS
-names:
+SQLSTATE 25000: the transaction's state). A read left open on a backup
+holds its snapshot, and the backup's checkpoints wait for it. A client
+whose statement is refused so connects to the primary, which
+INFORMATION_SCHEMA.REPLICAS names:
 
 ```sql
 SELECT MEMBER, ADDRESS, IS_SELF, ROLE, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS
@@ -100,7 +101,9 @@ Each node keeps the group's log only as far back as its own database
 needs it: a checkpoint lets the records it holds go, but for
 REPLICATION.RETAIN_BYTES of them, so a backup down for a while catches
 up from the log of the others as it comes back. The log's segments in
-`log/` are dropped as records go.
+`log/` are dropped as records go. Each node syncs a record to `log/`
+before it acknowledges it to the group, whatever LOG.DURABILITY says:
+the setting bears on a database alone.
 
 A node so far behind that the primary's log no longer reaches back to
 what it holds fetches the primary's database instead: its files as the

@@ -3,12 +3,13 @@
 //! the column store, and its columns of runs; and how the planner prices
 //! reads by the pages they miss. Split from list.rs (RULES.md R-SIZE-2).
 
-use super::Mutation;
+use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
 pub const READS: [Mutation; 35] = [
     Mutation {
         name: "zone-write-visible",
+        package: Package::Core,
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
         file: "src/engine/rows/zones.rs",
         original: "            flag.store(false, AtomicOrdering::Release);",
@@ -18,6 +19,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "zone-recent-settled",
+        package: Package::Core,
         breaks: "index-only scans: a zone of a commit past the horizon is settled not visible, and never looked at again",
         file: "src/engine/rows/zones/visible.rs",
         original: "        if seen == Seen::Recent {",
@@ -27,6 +29,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "zone-pending-uncollected",
+        package: Package::Core,
         breaks: "index-only scans: a zone is settled visible with superseded versions, and their entries, uncollected",
         file: "src/engine/rows/zones/visible.rs",
         original: "flag.store(seen == Seen::Visible && collected, AtomicOrdering::Release);",
@@ -36,6 +39,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "owed-removals",
+        package: Package::Core,
         breaks: "collection says an index entry it failed to take back is gone",
         file: "src/txn/end.rs",
         original: "let gone = entries.is_empty();",
@@ -45,6 +49,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "owed-taken-back",
+        package: Package::Core,
         breaks: "an owed index entry taken back leaves its row's zone unsettled for good",
         file: "src/txn/owed.rs",
         original: "                version.storage.taken_back(row);",
@@ -54,6 +59,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "ordered-backward",
+        package: Package::Core,
         breaks: "a sorted group read backward gives each vector's rows forward",
         file: "src/engine/rows/frozen/ordered.rs",
         original: "                part.keep.reverse();",
@@ -63,6 +69,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "ordered-heap",
+        package: Package::Core,
         breaks: "an ordered scan's merge moves a source down past one whose next row comes first",
         file: "src/engine/rows/frozen/ordered.rs",
         original: "if self.before(c, first) { c } else { first }",
@@ -72,6 +79,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-judged",
+        package: Package::Core,
         breaks: "a filter judging integers once a run keeps the runs it should drop",
         file: "src/exec/batch/judge/ints.rs",
         original: "        match (keeps(unit), &ints.nulls) {",
@@ -81,6 +89,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-summed",
+        package: Package::Core,
         breaks: "a sum of integers known as runs adds each run's value once, not once a row",
         file: "src/functions/ints.rs",
         original: "Some((total.checked_add(i128::from(u).checked_mul(n)?)?, any || n > 0))",
@@ -90,6 +99,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-ends",
+        package: Package::Core,
         breaks: "a chunk of runs says a run ends a row early",
         file: "src/engine/columns/runs.rs",
         original: "            ends.push(base.checked_add(end.checked_sub(from)?)?);",
@@ -99,6 +109,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-grouped",
+        package: Package::Core,
         breaks: "a grouping by a column of runs feeds a run's rows past its first to no group",
         file: "src/exec/batch/groups.rs",
         original: "        if !how.aggs.is_empty() {",
@@ -108,6 +119,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "groups-gathered-in-order",
+        package: Package::Core,
         breaks: "a batch's rows already gathered by group end each group a row early",
         file: "src/exec/batch/groups.rs",
         original: "                *end = at.saturating_add(1);",
@@ -117,6 +129,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-computed",
+        package: Package::Core,
         breaks: "an expression of integers known as runs gives each run's value to its first row alone",
         file: "src/exec/batch/vector/ints.rs",
         original: "        units.resize(end, unit);",
@@ -126,6 +139,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-compared",
+        package: Package::Core,
         breaks: "a comparison of two sides known as runs keeps the runs it should drop",
         file: "src/exec/batch/judge/ints.rs",
         original: "            if truth(start) {",
@@ -135,6 +149,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-lane-nulls",
+        package: Package::Core,
         breaks: "an expression of integers in runs with nulls among them gives a null row its run's value",
         file: "src/exec/batch/vector/ints.rs",
         original: "                ints.runs()?;",
@@ -144,6 +159,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "runs-group-nulls",
+        package: Package::Core,
         breaks: "a grouping by integers in runs with nulls among them puts a null row in its run's group",
         file: "src/exec/batch/groups.rs",
         original: "    ints.runs()?;",
@@ -153,6 +169,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "frozen-columns",
+        package: Package::Core,
         breaks: "a frozen row read of some columns gives every column",
         file: "src/engine/rows/scan.rs",
         original: "            None => self.frozen_row(id, columns),",
@@ -162,6 +179,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "fetch-needed",
+        package: Package::Core,
         breaks: "a row an index finds is read of the index's columns alone, not the statement's",
         file: "src/exec.rs",
         original: "let mut read: Vec<usize> = needed.iter().chain(columns).copied().collect();",
@@ -171,6 +189,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "pax-chunk-place",
+        package: Package::Core,
         breaks: "a chunk of the hybrid layout is read from the start of its page, not where it lies",
         file: "src/engine/columns/group.rs",
         original: "        self.with(run.page, |bytes| read(bytes.get(at..at.saturating_add(len))",
@@ -180,6 +199,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "pax-stale",
+        package: Package::Core,
         breaks: "a group of another layout than COLUMNSTORE.LAYOUT says is not written again",
         file: "src/engine/rows/frozen/rewrite.rs",
         original: "|| group.pax != columns.pax",
@@ -189,6 +209,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "pax-written",
+        package: Package::Core,
         breaks: "a table whose COLUMNSTORE.LAYOUT is PAX freezes groups of the column layout",
         file: "src/engine/rows/frozen.rs",
         original: "        let pax = self.frozen.columns().is_some_and(|c| c.pax);",
@@ -198,6 +219,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "outer-streamed-alone",
+        package: Package::Core,
         breaks: "a spilled outer join given in no order drops its left rows that matched none",
         file: "src/exec/join/outer/streamed.rs",
         original: "                        self.ready.push_back(self.spec.left_alone(&l));",
@@ -207,6 +229,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "scan-from-key-untallied",
+        package: Package::Core,
         breaks: "a scan from a key, an index's probe, is not counted on its tree's tally",
         file: "src/engine/tree/scan.rs",
         original: "                let tallied = self.last.is_none() && matches!(target, Target::Key(_));",
@@ -216,6 +239,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "probe-missed-unpriced",
+        package: Package::Core,
         breaks: "an index join's probes are priced as if the pool held every page of its index",
         file: "src/physical/indexed.rs",
         original: "            let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();",
@@ -225,6 +249,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "hash-rows-unpriced",
+        package: Package::Core,
         breaks: "an index join is set against a hash join's read of its right operand alone, its rows hashed free",
         file: "src/physical/indexed.rs",
         original: "        let hashed = HASH_ROW * (rows + self.rows_of(right).unwrap_or(0.0_f64));",
@@ -234,6 +259,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "scan-misses-unpriced",
+        package: Package::Core,
         breaks: "a scan of the row store is priced as if the pool held every page of its table",
         file: "src/engine/rows/frozen.rs",
         original: "        let missed = 1.0_f64 + ROW_SCAN_MISSED * (1.0_f64 - self.held_share());",
@@ -243,6 +269,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "order-first-unread",
+        package: Package::Core,
         breaks: "join ordering leaves the first relation's read out of an order's cost, so the largest goes first",
         file: "src/physical/order.rs",
         original: "    let first = order.first().and_then(|&r| relations.get(r)).map_or(0.0_f64, |r| r.rows);",
@@ -252,6 +279,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "sort-chunk-values-only",
+        package: Package::Core,
         breaks: "a spilled sort's runs write every vector as values, none read back as integers, numbers or strings",
         file: "src/exec/sort/chunk.rs",
         original: "    kind.unwrap_or((VALUES, 0_u32))",
@@ -261,6 +289,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "sort-chunk-nulls-lost",
+        package: Package::Core,
         breaks: "a spilled sort's chunk writes no row of a vector of integers, numbers or strings null",
         file: "src/exec/sort/chunk.rs",
         original: "            out.put_u8(u8::from(cell_kind(cell).is_none()));",
@@ -270,6 +299,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "join-held-keys-unequal",
+        package: Package::Core,
         breaks: "a join's right operand held as vectors matches integers of one scale whose units differ",
         file: "src/exec/batch/joined/held.rs",
         original: "        return d.units == i128::from(units);",
@@ -279,6 +309,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "join-held-right-unmatched-dropped",
+        package: Package::Core,
         breaks: "an outer join's right operand held as vectors gives none of its rows that matched no left row",
         file: "src/exec/batch/joined/outer.rs",
         original: "                self.push_right(None, n);",
@@ -288,6 +319,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "batches-joined-as-values",
+        package: Package::Core,
         breaks: "batches joined into one keep no vector of integers, the right operand's columns leaving a join as values",
         file: "src/storage/batch/held.rs",
         original: "        return Column::Ints(Ints::new(units, scale, nulls()));",
@@ -297,6 +329,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "group-pieces-left-queued",
+        package: Package::Core,
         breaks: "a grouping finishes with pieces still queued, never written, their groups' rows lost",
         file: "src/exec/batch/groups.rs",
         original: "        self.overflow.write_queued(&mut self.queued, work)?;",
@@ -306,6 +339,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "page-ids-unnamed",
+        package: Package::Core,
         breaks: "a page names no encoding whatever it was written through, so it is read as plain once the file's pipeline changes",
         file: "src/disk/pager/named.rs",
         original: "        Ok((current.ids(), current.encode(context, input)?))",
@@ -315,6 +349,7 @@ pub const READS: [Mutation; 35] = [
     },
     Mutation {
         name: "page-key-unnamed",
+        package: Package::Core,
         breaks: "a page's trailer names no key, so its checksum is verified with none once the file's key changes",
         file: "src/disk/pager/sealed.rs",
         original: "            out.extend_from_slice(&key_field(hash.key_name()));",

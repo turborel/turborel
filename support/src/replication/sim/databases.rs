@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 
 use turborel::db::{Database, OpenOptions, Session, Standby};
 use turborel::disk::io::FileSystem;
-use turborel::disk::memory::MemoryFileSystem;
 use turborel::error::Code;
 use turborel::log::Lsn;
 use turborel::value::Value;
@@ -27,6 +26,7 @@ use turborel_replication::{Driver, GroupLogs, StateTransfer, WholeFiles, staging
 use super::super::group::Make;
 use super::{Host, Plan, Report, Rng, Runner, Violation};
 use crate::database::{contents, number, rows};
+use crate::volatile::VolatileFileSystem;
 
 /// The users whose sessions a database's contents are read through.
 const READERS: [&str; 1] = ["APP"];
@@ -36,6 +36,11 @@ const DIR: &str = "/db";
 const SCHEMA: &str = "CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER)";
 /// Per mille, at each moment, that a database up takes a checkpoint.
 const CHECKPOINTS: u32 = 10;
+/// Per mille, at each moment, that a reader begins on a backup's
+/// database, holding its snapshot a while.
+const READS: u32 = 20;
+/// The most moments a reader on a backup holds its snapshot.
+const READ_MOMENTS: u64 = 60;
 /// The kinds of action the primary's database takes, by weight: insert,
 /// update, delete, a statement undone, commit, rollback, a table defined
 /// in a transaction, an index, a setting.
@@ -82,6 +87,8 @@ pub struct DatabaseReport {
     pub following_checkpoints: u64,
     /// Databases opened again from their files after a crash.
     pub reopened: u64,
+    /// Reads served by backups, each holding its snapshot a while.
+    pub backup_reads: u64,
     /// Backups compared with the primary at the end.
     pub compared: usize,
 }
@@ -95,9 +102,14 @@ pub struct Files(Arc<Mutex<Kept>>);
 /// What `Files` keeps.
 #[derive(Default)]
 struct Kept {
-    systems: Vec<Arc<dyn FileSystem>>,
+    /// Each replica's file system, which loses what was not synced when
+    /// the replica crashes.
+    systems: Vec<Arc<VolatileFileSystem>>,
     databases: Vec<Option<Database>>,
     open: Vec<Option<(Session, u64)>>,
+    /// A reader on each backup's database, holding its snapshot until a
+    /// moment.
+    readers: Vec<Option<(Session, u64)>>,
     /// Databases opened again after a crash.
     opened: u64,
     /// Transactions open as their database stopped serving or crashed.
@@ -132,15 +144,12 @@ impl Files {
 
 impl Host for Files {
     fn open(&mut self, index: usize, driver: &Arc<Driver>) -> Result<(Arc<dyn Standby>, Lsn), Violation> {
-        let fs = {
+        let fs: Arc<dyn FileSystem> = {
             let mut kept = self.kept();
             kept.opened += u64::from(kept.systems.len() > index);
-            while kept.systems.len() <= index {
-                kept.systems.push(Arc::new(MemoryFileSystem::new()));
-                kept.databases.push(None);
-                kept.open.push(None);
-            }
-            Arc::clone(&kept.systems[index])
+            kept.grown(index);
+            let system: Arc<VolatileFileSystem> = Arc::clone(&kept.systems[index]);
+            system
         };
         let db = Database::new();
         let opened = (|| {
@@ -154,22 +163,34 @@ impl Host for Files {
         Ok((Arc::new(db), holds))
     }
 
+    /// Its database and sessions lost, its files as the syncs left them.
     fn crashed(&mut self, index: usize) {
         let mut kept = self.kept();
         kept.databases[index] = None;
+        kept.readers[index] = None;
         if kept.open[index].take().is_some() {
             kept.interrupted += 1;
         }
+        kept.systems[index].crash().unwrap();
     }
 
     fn transfer(&mut self, index: usize) -> Arc<dyn StateTransfer> {
         let mut kept = self.kept();
-        while kept.systems.len() <= index {
-            kept.systems.push(Arc::new(MemoryFileSystem::new()));
-            kept.databases.push(None);
-            kept.open.push(None);
+        kept.grown(index);
+        let system: Arc<VolatileFileSystem> = Arc::clone(&kept.systems[index]);
+        Arc::new(WholeFiles::new(system, staging_dir(Path::new(DIR))))
+    }
+}
+
+impl Kept {
+    /// Grown to hold replica `index`.
+    fn grown(&mut self, index: usize) {
+        while self.systems.len() <= index {
+            self.systems.push(Arc::new(VolatileFileSystem::new()));
+            self.databases.push(None);
+            self.open.push(None);
+            self.readers.push(None);
         }
-        Arc::new(WholeFiles::new(Arc::clone(&kept.systems[index]), staging_dir(Path::new(DIR))))
     }
 }
 
@@ -195,7 +216,8 @@ impl Replicas {
     }
 
     /// Runs the plan's moments: at each, the group moves on, the primary's
-    /// database perhaps acts, and a database perhaps takes a checkpoint.
+    /// database perhaps acts, a database perhaps takes a checkpoint, and a
+    /// reader perhaps begins on a backup's, those whose time came ended.
     ///
     /// # Errors
     ///
@@ -210,8 +232,53 @@ impl Replicas {
             if self.runner.plan.appending(now) && self.rng.chance(CHECKPOINTS) {
                 self.checkpoint();
             }
+            self.end_reads(now);
+            if self.runner.plan.appending(now) && self.rng.chance(READS) {
+                self.read()?;
+            }
         }
         Ok(())
+    }
+
+    /// A reader begins on a backup's database, at random, if none is on
+    /// it: its read must be served, and its snapshot is held a while,
+    /// during which the database's following checkpoints wait.
+    fn read(&mut self) -> Result<(), Violation> {
+        let index = self.rng.index(self.replicas());
+        let (Some(db), Some(driver)) = (self.database(index), self.runner.driver(index)) else { return Ok(()) };
+        if driver.serving().is_some() || self.runner.host.kept().readers[index].is_some() {
+            return Ok(());
+        }
+        let session = db.session("APP");
+        match rows(&session, "SELECT COUNT(*) FROM T") {
+            Ok(_) => {
+                self.report.backup_reads += 1;
+                let until = self.runner.world().now() + self.rng.between(1, READ_MOMENTS);
+                let mut kept = self.runner.host.kept();
+                if kept.databases[index].is_some() {
+                    kept.readers[index] = Some((session, until));
+                }
+                Ok(())
+            }
+            // A backup takes no change (SQLCODE -917), but serves reads.
+            Err(Code::TransactionState) => Err(self.runner.world().fail(&format!("replica {}: a backup refused a read", index + 1))),
+            // Before the primary's schema reached it, there is nothing to
+            // read; opened again meanwhile, its sessions begun before are
+            // refused.
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// The readers whose time came end their transactions.
+    fn end_reads(&mut self, now: u64) {
+        let mut kept = self.runner.host.kept();
+        for reader in &mut kept.readers {
+            if reader.as_ref().is_some_and(|(_, until)| *until <= now)
+                && let Some((session, _)) = reader.take()
+            {
+                let _ = session.commit();
+            }
+        }
     }
 
     /// Moves the group on `count` moments.
@@ -356,6 +423,7 @@ impl Replicas {
         if let Some((session, _)) = self.runner.host.take_open(primary) {
             let _ = session.rollback();
         }
+        self.end_reads(u64::MAX);
         let expected = contents(&self.database(primary).unwrap(), &READERS);
         let committed = u64::try_from(self.runner.world().committed_log().len()).unwrap();
         for index in (0..self.replicas()).filter(|&i| i != primary) {

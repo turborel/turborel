@@ -6,7 +6,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use turborel_test_support::replication::Make;
-use turborel_test_support::replication::sim::{Faults, Plan, Report, Weather, simulate};
+use turborel_test_support::replication::sim::plans;
+use turborel_test_support::replication::sim::{Plan, Report, simulate};
 
 use crate::common::make_vr;
 
@@ -15,27 +16,6 @@ use crate::common::make_vr;
 const SEEDS_OF_THREE: Range<u64> = 0..300;
 const SEEDS_OF_FIVE: Range<u64> = 0..100;
 const SEEDS_OF_STORMS: Range<u64> = 1000..1100;
-
-/// A run of `replicas` replicas: 3000 moments of faults, 2000 calm; a
-/// record appended at one moment in ten; a replica ticking every 5. Of the
-/// frames, 5 % are lost, 2 % delivered twice, 1 % held up to 300 moments,
-/// the rest taking up to 10; a partition begins at 3 moments in a
-/// thousand, a replica crashes at 4 in a thousand and stays down up to 60,
-/// a disk fails on 2 writes in a thousand.
-fn plan(replicas: u32) -> Plan {
-    let weather = Weather { drop: 50, duplicate: 20, delay: 10, late: 10, late_delay: 300 };
-    let faults = Faults {
-        weather,
-        partition: 3,
-        partition_moments: 400,
-        crash: 4,
-        down_moments: 60,
-        disk_error: 2,
-        lose_journal: 0,
-        write_moments: 6,
-    };
-    Plan { replicas, faulty: 3000, calm: 2000, append: 100, tick_moments: 5, retain_bytes: u64::MAX, faults }
-}
 
 /// Runs `seeds` of `plan`, and fails naming every seed that failed.
 fn sweep(plan: &Plan, seeds: Range<u64>) -> Vec<Report> {
@@ -61,7 +41,7 @@ fn sweep(plan: &Plan, seeds: Range<u64>) -> Vec<Report> {
 /// replica's database converges on the committed log.
 #[test]
 fn groups_of_three_stay_safe_and_converge() {
-    let reports = sweep(&plan(3), SEEDS_OF_THREE);
+    let reports = sweep(&plans::three(), SEEDS_OF_THREE);
     let changed = reports.iter().filter(|r| r.view > 0).count();
     let crashed = reports.iter().filter(|r| r.crashes > 0).count();
     let doubted = reports.iter().filter(|r| r.outcomes > 0).count();
@@ -73,7 +53,7 @@ fn groups_of_three_stay_safe_and_converge() {
 /// whose quorums are three.
 #[test]
 fn groups_of_five_stay_safe_and_converge() {
-    sweep(&plan(5), SEEDS_OF_FIVE);
+    sweep(&plans::five(), SEEDS_OF_FIVE);
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §8.1] the same through storms: a
@@ -81,18 +61,7 @@ fn groups_of_five_stay_safe_and_converge() {
 /// times as often, a disk failing on one write in a hundred.
 #[test]
 fn groups_stay_safe_through_storms() {
-    let mut storm = plan(3);
-    storm.faults = Faults {
-        weather: Weather { drop: 250, duplicate: 100, delay: 30, late: 30, late_delay: 500 },
-        partition: 10,
-        partition_moments: 300,
-        crash: 8,
-        down_moments: 100,
-        disk_error: 10,
-        lose_journal: 0,
-        write_moments: 20,
-    };
-    sweep(&storm, SEEDS_OF_STORMS);
+    sweep(&plans::storm(), SEEDS_OF_STORMS);
 }
 
 /// Verifies: [DESIGN] RULES.md D57, R-TEST-5 a run is made again exactly
@@ -100,7 +69,7 @@ fn groups_stay_safe_through_storms() {
 #[test]
 fn a_seed_makes_its_run_again() {
     let make: Make = Arc::new(make_vr);
-    let first = simulate(7, &plan(3), &make).unwrap();
-    assert_eq!(simulate(7, &plan(3), &make).unwrap(), first);
-    assert_ne!(simulate(8, &plan(3), &make).unwrap(), first);
+    let first = simulate(7, &plans::three(), &make).unwrap();
+    assert_eq!(simulate(7, &plans::three(), &make).unwrap(), first);
+    assert_ne!(simulate(8, &plans::three(), &make).unwrap(), first);
 }

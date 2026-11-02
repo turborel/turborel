@@ -37,11 +37,20 @@ const WRITE: &str = "--write";
 const INSTALL_HOOKS: &str = "install-hooks";
 const BENCH: &str = "bench";
 const MUTATE: &str = "mutate";
+const SIMULATE: &str = "simulate";
+/// The support crate's simulator sweep, built optimized, which `simulate`
+/// runs with the arguments given (RULES.md D57, R-TEST-5).
+const SIMULATE_ARGS: [&str; 9] =
+    ["run", "--quiet", "--release", "--package", "turborel-test-support", "--features", "replication", "--bin", "simulate"];
 /// The tracked directory of git hooks.
 const HOOKS_DIR: &str = ".githooks";
 /// Builds and runs every test target. Not `--all-targets`, which would run
 /// the benchmarks too, unoptimized: they measure, they do not test (D6).
-const TEST_ARGS: [&str; 6] = ["test", "--workspace", "--lib", "--bins", "--tests", "--quiet"];
+const TEST_ARGS: [&str; 8] = ["test", "--workspace", "--features", SIMULATOR, "--lib", "--bins", "--tests", "--quiet"];
+/// The support crate's simulator, a feature of its own so the core's own
+/// tests may use the crate without it: built and linted with the
+/// workspace, its `simulate` binary among them (RULES.md D57).
+const SIMULATOR: &str = "turborel-test-support/replication";
 /// Makes warnings errors, for clippy and for rustdoc (R-DOC-3).
 const DENY: &str = "-D";
 const WARNINGS: &str = "warnings";
@@ -63,7 +72,9 @@ commands:
   {INSTALL_HOOKS}        run `verify` before every commit (R-PROC-1)
   {BENCH} [NAME] [--save LABEL] [--compare LABEL]
                        the benchmarks in bench/, built optimized; keep or compare results (R-BENCH-1)
-  {MUTATE} [NAME]        break each mechanism the list names, or one, and expect its tests to fail (R-TEST-9)"
+  {MUTATE} [NAME]        break each mechanism the list names, or one, and expect its tests to fail (R-TEST-9)
+  {SIMULATE} [--seeds N] [--from S] [--plan NAME] [--databases]
+                       sweeps of the replication simulator longer than `verify` runs (D57, R-TEST-5)"
     )
 }
 
@@ -94,6 +105,7 @@ fn run(args: &[String]) -> Result<()> {
         [INSTALL_HOOKS] => install_hooks(&root),
         [BENCH, rest @ ..] => bench::run(&root, rest),
         [MUTATE, rest @ ..] => mutate::run(&root, rest),
+        [SIMULATE, rest @ ..] => simulate(&root, rest),
         _ => Err(Error::new(usage())),
     }
 }
@@ -103,7 +115,7 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     step("format (R-STYLE-1)");
     command::cargo(root, &["fmt", "--all", "--check"], NO_ENV)?;
     step("lints (R-ERR, R-NUM, R-CF, R-STYLE, R-DOC)");
-    command::cargo(root, &["clippy", "--workspace", "--all-targets", "--quiet", "--", DENY, WARNINGS], NO_ENV)?;
+    command::cargo(root, &["clippy", "--workspace", "--features", SIMULATOR, "--all-targets", "--quiet", "--", DENY, WARNINGS], NO_ENV)?;
     step("lint baseline counts (R-DEV-2)");
     lint_audit::check(root)?;
     step("docs (R-DOC-3)");
@@ -130,6 +142,15 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     }
     println!("\nverify: all checks passed");
     Ok(())
+}
+
+/// Runs the simulator's sweep with `rest` as its arguments (RULES.md D57,
+/// R-TEST-5), built optimized.
+fn simulate(root: &Path, rest: &[&str]) -> Result<()> {
+    let mut args = SIMULATE_ARGS.to_vec();
+    args.push("--");
+    args.extend(rest);
+    command::cargo(root, &args, NO_ENV)
 }
 
 /// Points git at the tracked hooks in `HOOKS_DIR`, so `verify` runs before

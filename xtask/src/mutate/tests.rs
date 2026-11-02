@@ -3,7 +3,16 @@ use super::*;
 /// A mutation of `file` from `original` to `replacement`, named "M", that
 /// two integration tests and a unit test must catch.
 fn mutation(file: &'static str, original: &'static str, replacement: &'static str) -> Mutation {
-    Mutation { name: "M", breaks: "nothing", file, original, replacement, integration: &["a::x", "a::y"], unit: &["b::tests::z"] }
+    Mutation {
+        name: "M",
+        package: Package::Core,
+        breaks: "nothing",
+        file,
+        original,
+        replacement,
+        integration: &["a::x", "a::y"],
+        unit: &["b::tests::z"],
+    }
 }
 
 /// A directory of its own under the workspace's `target`, empty.

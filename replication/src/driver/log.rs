@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use turborel::db::{LogStorage, OpenedLog, StorePlace};
+use turborel::disk::io::Durability;
 use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLog, FileLogOptions, Log, LogCapabilities, Records};
 
@@ -72,6 +73,13 @@ impl Log for GroupLog {
     fn capabilities(&self) -> LogCapabilities {
         LogCapabilities { durable: self.driver.durable }
     }
+
+    /// \[DESIGN\] Nothing: the replica's journal syncs as its own options
+    /// say, whatever LOG.DURABILITY says (RULES.md D57, D25). A record
+    /// durable before a backup acknowledges it is what VR's safety rests
+    /// on, so no setting of the database may make the journal's syncs no
+    /// syncs.
+    fn set_durability(&self, _durability: Durability) {}
 
     fn append(&self, record: &[u8]) -> Result<Lsn> {
         self.driver.append(record)

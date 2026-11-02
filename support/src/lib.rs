@@ -71,6 +71,8 @@ pub mod server;
 pub mod tls;
 #[cfg(feature = "server")]
 pub mod types;
+#[cfg(feature = "database")]
+pub mod volatile;
 
 /// Helpers for what a server's client receives.
 #[cfg(feature = "client")]

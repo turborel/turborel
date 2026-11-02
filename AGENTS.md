@@ -35,6 +35,8 @@ cargo xtask file-length          # the R-SIZE-2 check alone
 cargo xtask lint-audit [--write] # lint baseline counts (R-DEV-2)
 cargo xtask bench [NAME] [--save LABEL] [--compare LABEL]
 cargo xtask mutate [NAME]        # break each listed mechanism, expect its tests to fail (R-TEST-9)
+cargo xtask simulate [--seeds N] [--from S] [--plan NAME] [--databases]
+                                 # replication simulator sweeps longer than verify runs (D57)
 ```
 
 - **Every change must pass `cargo xtask verify --coverage`** before it is

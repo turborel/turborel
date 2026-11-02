@@ -13,7 +13,8 @@ use turborel::error::Code;
 use turborel_replication::{ANSWER, Fetching, REQUEST, ReplicaId, StateTransfer, WholeFiles};
 use turborel_test_support::database::rows;
 use turborel_test_support::replication::Make;
-use turborel_test_support::replication::sim::{Faults, Plan, Weather, simulate, simulate_databases};
+use turborel_test_support::replication::sim::plans;
+use turborel_test_support::replication::sim::{simulate, simulate_databases};
 
 use crate::common::make_vr;
 
@@ -107,24 +108,6 @@ fn whole_files_cross_a_request_at_a_time() {
     assert_eq!(rows(&follower.session("APP"), "SELECT S FROM T WHERE K = 29999"), Ok(vec![format!("{:200}", "row 29999")]));
 }
 
-/// A plan of three replicas whose logs keep little: a replica down a
-/// while is behind what the others retain, and fetches the state.
-fn retaining_little(seed_crashes: bool) -> Plan {
-    let weather = Weather { drop: 20, duplicate: 10, delay: 5, late: 5, late_delay: 100 };
-    let crash = if seed_crashes { 6 } else { 0 };
-    let faults = Faults {
-        weather,
-        partition: 2,
-        partition_moments: 300,
-        crash,
-        down_moments: 400,
-        disk_error: 0,
-        lose_journal: 0,
-        write_moments: 3,
-    };
-    Plan { replicas: 3, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes: 200, faults }
-}
-
 /// Verifies: [EXTENSION] RULES.md D57: replicas keeping little of the
 /// log, through crashes keeping each down a while, fetch state transfers
 /// of the others and converge all the same, holding what the primary
@@ -135,7 +118,7 @@ fn replicas_behind_the_log_fetch_state_and_converge() {
     let mut transfers = 0_u64;
     let mut failures = Vec::new();
     for seed in 0..20_u64 {
-        match simulate(seed, &retaining_little(true), &make) {
+        match simulate(seed, &plans::retaining(), &make) {
             Ok(report) => transfers += report.transfers,
             Err(why) => failures.push(why),
         }
@@ -144,7 +127,7 @@ fn replicas_behind_the_log_fetch_state_and_converge() {
     assert!(transfers > 0_u64, "no state transfer in 20 seeds");
     let mut with_files = 0_u64;
     for seed in 0..4_u64 {
-        let report = simulate_databases(seed, &retaining_little(true), &make).unwrap();
+        let report = simulate_databases(seed, &plans::retaining(), &make).unwrap();
         with_files += report.replication.transfers;
         assert_eq!(report.compared, 2_usize);
     }

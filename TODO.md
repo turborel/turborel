@@ -33,16 +33,7 @@ design settles.
 
 - **Replication between nodes** (D57): a state transfer by page
   differences ([VRR §5.1]'s Merkle trees) where whole files cost too
-  much; a following database's
-  crash in the simulator losing
-  the writes its files had not synced (their file systems keep them now);
-  reads on backups (a following checkpoint is refused while a reader holds
-  versions); `cargo xtask simulate --seeds N`, for sweeps longer than
-  `verify` runs, and mutations of VR for `cargo xtask mutate`, which
-  mutates the core's package only; a replicated log's journal keeps the
-  durability of its `FileLogOptions`, not LOG.DURABILITY (D25): changing
-  it while a replica runs bears on VR's safety and needs a decision;
-  reconfiguration (VRR §7), last.
+  much; reconfiguration (VRR §7), last.
 
 ---
 

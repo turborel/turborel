@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use turborel_replication::vr::Status;
 use turborel_replication::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId, Role, Vr};
-use turborel_test_support::replication::sim::{Faults, Plan, Weather, simulate, simulate_databases};
+use turborel_test_support::replication::sim::plans;
+use turborel_test_support::replication::sim::{Plan, simulate, simulate_databases};
 use turborel_test_support::replication::{Group, Make};
 
 use crate::common::{committed, ids, make_vr, nonce, options, record, served, serving, settle_without};
@@ -72,6 +73,15 @@ fn a_replica_losing_its_journal_recovers_from_the_primary() {
     other.extend_from_slice(&2_u32.to_le_bytes());
     other.extend_from_slice(&[0, 0]);
     assert_eq!(group.step(THIRD, Input::Received { from: BACKUP, frame: other }), [], "another nonce");
+    let mut with_log = vec![RECOVERY_RESPONSE];
+    with_log.extend_from_slice(&0_u64.to_le_bytes());
+    with_log.extend_from_slice(&stale[1..9]);
+    with_log.extend_from_slice(&1_u32.to_le_bytes());
+    with_log.extend_from_slice(&[0, 1]);
+    for number in [3_u64, 3_u64, 3_u64, 0_u64] {
+        with_log.extend_from_slice(&number.to_le_bytes());
+    }
+    assert_eq!(group.step(THIRD, Input::Received { from: PRIMARY, frame: with_log }), [], "another nonce, the primary's log");
     group.step(PRIMARY, Input::Append(record("r6")));
     let ignored = group.frames.iter().find(|f| f.to == THIRD && f.bytes[0] == 1_u8).unwrap().clone();
     assert_eq!(group.step(THIRD, Input::Received { from: PRIMARY, frame: ignored.bytes }), [], "a PREPARE while recovering");
@@ -164,21 +174,9 @@ fn a_new_group_bootstraps_by_recovery() {
     assert_eq!((alone.standing().status, alone.standing().first, alone.standing().commit), (Status::Normal, Lsn(7), Lsn(7)));
 }
 
-/// A plan of three replicas, crashing often, half of the crashes losing
-/// the journal.
+/// The plan losing journals, keeping `retain_bytes` of the log.
 fn losing_journals(retain_bytes: u64) -> Plan {
-    let weather = Weather { drop: 20, duplicate: 10, delay: 5, late: 5, late_delay: 100 };
-    let faults = Faults {
-        weather,
-        partition: 2,
-        partition_moments: 200,
-        crash: 6,
-        down_moments: 100,
-        disk_error: 0,
-        lose_journal: 500,
-        write_moments: 3,
-    };
-    Plan { replicas: 3, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes, faults }
+    Plan { retain_bytes, ..plans::losing() }
 }
 
 /// Verifies: [EXTENSION] RULES.md D57 [VRR §4.3]: replicas crashing and

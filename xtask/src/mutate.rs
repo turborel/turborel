@@ -1,8 +1,9 @@
 //! RULES.md R-TEST-9: `cargo xtask mutate` checks the tests by mutation.
 //!
 //! Each mutation of `all` (`mutate/list.rs`) breaks one mechanism of
-//! the core: it replaces a snippet of one source file, found there exactly
-//! once, and names the tests that must then fail. The command first runs
+//! the core, or of replication (`mutate/list/vr.rs`): it replaces a
+//! snippet of one source file, found there exactly once, and names the
+//! tests of its package that must then fail. The command first runs
 //! the named tests on the code as it is, where each must pass; then, one
 //! mutation at a time, it writes the mutation, builds, runs its tests, and
 //! writes the file back. It reports a mutation no test caught, a named test
@@ -25,10 +26,32 @@ use crate::error::{Error, Result};
 
 pub use list::all;
 
-/// The package the mutations break, whose tests they run.
-const PACKAGE: &str = "turborel";
-/// The integration test binary of `PACKAGE`.
-const INTEGRATION: &str = "integration";
+/// A package a mutation breaks, whose tests it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Package {
+    /// The core, `turborel`.
+    Core,
+    /// Replication, `turborel-replication`.
+    Replication,
+}
+
+impl Package {
+    /// Its name, as cargo knows it.
+    fn name(self) -> &'static str {
+        match self {
+            Package::Core => "turborel",
+            Package::Replication => "turborel-replication",
+        }
+    }
+
+    /// Its integration test binary.
+    fn integration(self) -> &'static str {
+        match self {
+            Package::Core => "integration",
+            Package::Replication => "replication",
+        }
+    }
+}
 /// Where the original of the file a mutation changed is kept while the
 /// mutation is in place, relative to the workspace root.
 const BACKUP_DIR: &str = "target/mutate";
@@ -43,13 +66,14 @@ const FAILED: &str = " ... FAILED";
 /// The lines of a failed build shown.
 const BUILD_LINES: usize = 20;
 
-/// One mutation: `original`, found once in `file`, replaced by
-/// `replacement`, breaks what `breaks` says, and each test of `integration`
-/// (of the integration binary) and `unit` (of the library's unit tests),
-/// full paths, must fail.
+/// One mutation: `original`, found once in `file` of `package`, replaced
+/// by `replacement`, breaks what `breaks` says, and each test of
+/// `integration` (of the package's integration binary) and `unit` (of its
+/// library's unit tests), full paths, must fail.
 #[derive(Clone, Copy)]
 pub struct Mutation {
     pub name: &'static str,
+    pub package: Package,
     pub breaks: &'static str,
     pub file: &'static str,
     pub original: &'static str,
@@ -58,7 +82,7 @@ pub struct Mutation {
     pub unit: &'static [&'static str],
 }
 
-/// The test binaries of `PACKAGE` a mutation names tests of.
+/// The test binaries of a package a mutation names tests of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Target {
     Integration,
@@ -66,11 +90,11 @@ enum Target {
 }
 
 impl Target {
-    /// The arguments of `cargo test` that choose the binary.
-    fn args(self) -> &'static [&'static str] {
+    /// The arguments of `cargo test` that choose the binary, of `package`.
+    fn args(self, package: Package) -> Vec<&'static str> {
         match self {
-            Target::Integration => &["--test", INTEGRATION],
-            Target::Unit => &["--lib"],
+            Target::Integration => vec!["--test", package.integration()],
+            Target::Unit => vec!["--lib"],
         }
     }
 }
@@ -138,17 +162,19 @@ fn apply(source: &str, m: &Mutation) -> Result<String> {
 /// is not there.
 fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> {
     let mut problems = Vec::new();
-    for target in [Target::Integration, Target::Unit] {
-        let mut names: Vec<&str> = chosen.iter().flat_map(|m| m.tests(target)).copied().collect();
-        names.sort_unstable();
-        names.dedup();
-        if names.is_empty() {
-            continue;
+    for package in [Package::Core, Package::Replication] {
+        for target in [Target::Integration, Target::Unit] {
+            let mut names: Vec<&str> = chosen.iter().filter(|m| m.package == package).flat_map(|m| m.tests(target)).copied().collect();
+            names.sort_unstable();
+            names.dedup();
+            if names.is_empty() {
+                continue;
+            }
+            let seen = outcomes(&run_tests(root, package, target, &names)?.stdout);
+            problems.extend(
+                names.iter().filter(|n| seen.get(**n) != Some(&true)).map(|n| format!("{n} does not pass, or is not a test, unmutated")),
+            );
         }
-        let seen = outcomes(&run_tests(root, target, &names)?.stdout);
-        problems.extend(
-            names.iter().filter(|n| seen.get(**n) != Some(&true)).map(|n| format!("{n} does not pass, or is not a test, unmutated")),
-        );
     }
     Ok(problems)
 }
@@ -158,13 +184,13 @@ fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> 
 fn check(root: &Path, m: &Mutation) -> Result<Option<String>> {
     let applied = Applied::new(root, m)?;
     let targets: Vec<Target> = [Target::Integration, Target::Unit].into_iter().filter(|t| !m.tests(*t).is_empty()).collect();
-    let mut build_args = vec!["test", "--package", PACKAGE, "--no-run"];
-    build_args.extend(targets.iter().flat_map(|t| t.args()));
+    let mut build_args = vec!["test", "--package", m.package.name(), "--no-run"];
+    build_args.extend(targets.iter().flat_map(|t| t.args(m.package)));
     let built = command::cargo_finished(root, &build_args)?;
     let mut seen = HashMap::new();
     if built.success {
         for target in &targets {
-            seen.extend(outcomes(&run_tests(root, *target, m.tests(*target))?.stdout));
+            seen.extend(outcomes(&run_tests(root, m.package, *target, m.tests(*target))?.stdout));
         }
     }
     applied.restore()?;
@@ -174,10 +200,10 @@ fn check(root: &Path, m: &Mutation) -> Result<Option<String>> {
     Ok(verdict(m, &seen))
 }
 
-/// Runs the tests `names` of `target`, exactly those.
-fn run_tests(root: &Path, target: Target, names: &[&str]) -> Result<Finished> {
-    let mut args = vec!["test", "--package", PACKAGE];
-    args.extend(target.args());
+/// Runs the tests `names` of `target` of `package`, exactly those.
+fn run_tests(root: &Path, package: Package, target: Target, names: &[&str]) -> Result<Finished> {
+    let mut args = vec!["test", "--package", package.name()];
+    args.extend(target.args(package));
     args.extend(["--", "--exact"]);
     args.extend(names);
     command::cargo_finished(root, &args)

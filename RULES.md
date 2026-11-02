@@ -469,7 +469,11 @@ filling it commit together or not at all.
     NONE first syncs the segments sealed unsynced and their directory:
     every record before it is then durable, as `Log::sync` promises;
   - a log opens with the value its last image records, and is told the
-    one replayed once the database is open.
+    one replayed once the database is open;
+  - a replicated database's log, its replica's journal, is not told it
+    (`GroupLog::set_durability`, D57): the journal syncs as its own
+    options say, as VR's safety needs a record durable before it is
+    acknowledged.
 - **Plug-ins.** The `Log` is a plug-in: built in, a memory log and a
   segmented file log with group commit. A database in a directory opens
   its log, as its catalog, through a plug-in `LogStorage`
@@ -1455,6 +1459,11 @@ opaque bytes.**
   - a record durable before a backup acknowledges it;
   - a sync in doubt never stamped (D25); when replicated, resolved by
     consensus or the node deposed;
+  - LOG.DURABILITY never reaching a replica's journal, which syncs as
+    `FileLogOptions` has it (D25);
+  - a following database's checkpoint refused while a reader holds
+    versions awaiting collection (SQLCODE -911), the next taking them:
+    backups serve reads, a long one delaying their checkpoints;
   - a `node` property for settings never logged (D36);
   - reads on the primary confirming its view;
   - no at-most-once for SQL clients in alpha;
@@ -1481,14 +1490,23 @@ records, objects and files; none may need a replication change.
   replicated;
 - VR runs hundreds of seeds of a deterministic simulator
   (`turborel-test-support`: frames delayed, lost, duplicated, reordered;
-  partitions, crashes, failing disks), checking that committed records
-  survive view changes in order, at most one primary serves a view (the
-  one it names), and the group converges once faults stop;
+  partitions, crashes, failing disks, journals lost, logs kept short),
+  checking that committed records survive view changes in order, at
+  most one primary serves a view (the one it names), and the group
+  converges once faults stop; its plans are named (`sim::plans`), the
+  tests running a bounded number of seeds of each and `cargo xtask
+  simulate [--seeds N] [--from S] [--plan NAME] [--databases]` as many
+  as asked;
 - the simulator runs every replica through the real `Driver`, its
-  database modelled or a real one kept in files, the primary's taking
-  SQL, each taking checkpoints, opened again in place once deposed and
-  from its files once crashed: after each run every backup holds what
-  the primary holds, rows and catalog.
+  database modelled or a real one kept in files that lose what was not
+  synced when the replica crashes (`support/src/volatile.rs`), the
+  primary's taking SQL, backups serving reads held across moments, each
+  taking checkpoints, opened again in place once deposed and from its
+  files once crashed, fetching state and recovering a journal lost:
+  after each run every backup holds what the primary holds, rows and
+  catalog;
+- the mechanisms of VR, windows, state transfer and recovery are
+  mutation-checked (`xtask/src/mutate/list/vr.rs`, R-TEST-9).
 
 *See:* D25, D36, D55, D56; `db/recovery.rs`, `db/export.rs`,
 `db/standby.rs`, `db/standby/reopen.rs`, `db/checkpoint/following.rs`,
@@ -2444,7 +2462,7 @@ same results and errors is the optimizer's to choose.
     SERVER.PASSWORD_ITERATIONS (D43).
 - **Logs.** The database's log is told LOG.DURABILITY
   (`Log::set_durability`) when given and after each change, the same
-  way, from a snapshot (D25).
+  way, from a snapshot (D25); a replicated log leaves it (D57).
 - **Sessions** set for themselves, over the database's value: whether
   commits wait for the log (LOG.COMMIT_SYNC, D25); whether the function
   call syntax is accepted (SQL.FUNCTION_CALLS); each optimizer rule
@@ -3551,7 +3569,7 @@ xtask/                  project tools: verify, coverage, trace, bench,
 | R-TEST-5 | Tests **shall** be deterministic and independent: no clock, randomness, network beyond loopback (the server's tests, D42) or order dependence; each builds its own `Database`. Case generators use a fixed seed, so every run makes the same cases (`test/integration/random_queries.rs`). | review |
 | R-TEST-7 | Every fixed defect **shall** get a regression test, failing without the fix, its doc comment saying so. | review |
 | R-TEST-8 | New decisions of two or more conditions **shall** have tests showing MC/DC, naming the condition pairs in doc comments. | review |
-| R-TEST-9 | Tests **should** be mutation-checked periodically. `cargo xtask mutate [NAME]` applies each mutation in `xtask/src/mutate/list.rs` (file, snippet occurring once, replacement, tests that must fail) in turn, runs its tests, restores the file, and reports uncaught mutations and named tests that passed. Run it when changing a mechanism the list breaks; a new mechanism adds a mutation. | `cargo xtask mutate`, periodic; `verify` checks each mutation still applies |
+| R-TEST-9 | Tests **should** be mutation-checked periodically. `cargo xtask mutate [NAME]` applies each mutation in `xtask/src/mutate/list.rs` and its submodules (package, file, snippet occurring once, replacement, tests that must fail) in turn, runs its tests, restores the file, and reports uncaught mutations and named tests that passed. Run it when changing a mechanism the list breaks; a new mechanism adds a mutation. | `cargo xtask mutate`, periodic; `verify` checks each mutation still applies |
 | R-TEST-10 | A fixture or helper shared by modules **shall** be written once: in the test binary's `common.rs`, or, if shared by crates, in `turborel-test-support` (`support/`). Tests use `#[test]`, no other framework. | review |
 
 R-TEST-6 was withdrawn with the golden-file tests (D6).

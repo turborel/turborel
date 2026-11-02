@@ -243,3 +243,25 @@ fn messages_of_earlier_views_are_dropped() {
     assert_eq!(group.node(THREE).journal.records(), &[record("a")]);
     let _ = vr.name();
 }
+
+/// Verifies: [DESIGN] RULES.md D57 [VRR §4.2 step 3]: the new primary
+/// takes the log of the DOVIEWCHANGE with the latest normal view, and
+/// among those the longest: a record the old primary and one backup
+/// held, the other backup not, survives the view change in the log the
+/// backup holding it takes over as primary, and reaches the other.
+#[test]
+fn a_new_primary_takes_the_latest_longest_log() {
+    let mut group = serving(3);
+    group.step(ONE, Input::Append(record("a")));
+    group.settle();
+    group.step(ONE, Input::Append(record("b")));
+    settle_without(&mut group, &[THREE]);
+    assert_eq!(committed(&group.node(ONE).outputs), vec![1, 2], "the primary and one backup hold b");
+    assert_eq!(group.node(THREE).journal.records().len(), 1_usize);
+    group.crash(ONE, usize::MAX);
+    run(&mut group, &[TWO, THREE], TIMEOUT, &[ONE]);
+    assert_eq!(served(&group.node(TWO).outputs), vec![1]);
+    assert_eq!(group.node(TWO).journal.records(), [record("a"), record("b")]);
+    assert_eq!(group.node(THREE).journal.records(), [record("a"), record("b")]);
+    assert_eq!(group.node(THREE).applied, [record("a"), record("b")]);
+}
