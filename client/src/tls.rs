@@ -17,10 +17,20 @@ use turborel_protocol::scram::{EXPORTER_BYTES, EXPORTER_LABEL};
 use crate::Failure;
 use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed};
 use crate::target::Target;
-use crate::timeouts::{Socket, Timeouts, tcp_to};
+use crate::timeouts::{Bound, Timeouts, limit, tcp_to};
 
 /// A connection's stream, secured.
 pub type TlsStream = StreamOwned<ClientConnection, TcpStream>;
+
+/// Bounded as the TCP connection it secures is.
+impl Bound for TlsStream {
+    fn bound(&self, within: Option<std::time::Duration>) -> std::io::Result<()> {
+        self.get_ref().bound(within)
+    }
+    fn gone(&self) -> bool {
+        self.get_ref().gone()
+    }
+}
 
 /// A client's TLS that trusts the certificates in the PEM file `roots`,
 /// and only them.
@@ -166,12 +176,11 @@ pub fn connect(
     let tcp = tcp_to(address, timeouts.connect)?;
     // Where it reached, for a connection made again to cancel (`Target`).
     let server = tcp.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
-    let socket = Socket::tcp(&tcp)?;
-    socket.limit(timeouts.connect)?;
+    limit(&tcp, timeouts.connect)?;
     let stream = secured(tcp, (name, config))?;
     mechanism.bind(&channel(&stream));
     let reach = Target::Tls(server, name.to_owned(), Arc::clone(config));
-    Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(reach))
+    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(reach))
 }
 
 /// What the handshake of `stream` gives a mechanism to bind its channel

@@ -6,11 +6,12 @@
 //! `TERMINATE_WITHIN`. A server gone without closing, or one that hangs,
 //! so never holds a client's thread longer than it says.
 //!
-//! The limits are the socket's own, set through a second handle on it, so
-//! they reach a stream TLS wraps too. A connection made over a stream
-//! given to `Connection::open` is bounded as its maker bounds it. A named
-//! pipe, on Windows, is bounded only as it is opened (`pipe.rs`): the
-//! standard library sets no limit on a pipe's reads and writes.
+//! The limits are the stream's own (`Bound`), set on the stream itself, a
+//! stream TLS wraps through it, never through a second handle on its
+//! socket. A connection made over a stream given to `Connection::open` is
+//! bounded as its maker bounds it. A named pipe, on Windows, is bounded
+//! only as it is opened (`pipe.rs`): the standard library sets no limit on
+//! a pipe's reads and writes.
 
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -45,74 +46,80 @@ impl Default for Timeouts {
     }
 }
 
-/// A second handle on a connection's socket: to bound how long its reads
-/// and writes wait.
-#[derive(Debug)]
-pub(crate) enum Socket {
-    /// A TCP connection's, TLS's among them.
-    Tcp(TcpStream),
-    /// A Unix socket's.
-    #[cfg(unix)]
-    Local(std::os::unix::net::UnixStream),
-    /// A named pipe's, on Windows: no handle, as the standard library sets
-    /// no limit of time on a pipe's reads and writes.
-    #[cfg(windows)]
-    Pipe,
-}
-
-impl Socket {
-    /// A handle on `stream`'s socket.
-    pub(crate) fn tcp(stream: &TcpStream) -> Result<Socket> {
-        stream.try_clone().map(Socket::Tcp).map_err(|e| set_up(&e))
-    }
-
-    /// A handle on the Unix socket `stream`'s.
-    #[cfg(unix)]
-    pub(crate) fn local(stream: &std::os::unix::net::UnixStream) -> Result<Socket> {
-        stream.try_clone().map(Socket::Local).map_err(|e| set_up(&e))
-    }
-
-    /// Bounds each read and write of the socket by `within`; none, no
-    /// limit. A named pipe's are not bounded: once it is open, it waits on
-    /// its server as long as it must. A socket its server has closed needs
-    /// no bound, and is left as it is (`closed`).
+/// \[DESIGN\] A stream that bounds its own waits: each read and write by
+/// a limit of time, set on the stream itself, never through a second
+/// handle on its socket: on Windows a socket's limits are the handle's,
+/// so one set through a duplicate bounds no read through the original.
+pub trait Bound {
+    /// Bounds each read and write by `within`; none, no limit.
     ///
     /// # Errors
     ///
-    /// A connection failure if the system cannot bound it.
-    pub(crate) fn limit(&self, within: Option<Duration>) -> Result<()> {
-        let set = match self {
-            Socket::Tcp(s) => s.set_read_timeout(within).and_then(|()| s.set_write_timeout(within)),
-            #[cfg(unix)]
-            Socket::Local(s) => s.set_read_timeout(within).and_then(|()| s.set_write_timeout(within)),
-            #[cfg(windows)]
-            Socket::Pipe => Ok(()),
-        };
-        set.or_else(|e| if self.closed(&e) { Ok(()) } else { Err(e) })
-            .map_err(|e| failed(&format!("[DESIGN] cannot bound how long the connection waits: {e}")))
-    }
+    /// The system's, if it cannot.
+    fn bound(&self, within: Option<Duration>) -> io::Result<()>;
+    /// Whether the system says it has no peer any more.
+    fn gone(&self) -> bool;
+}
 
-    /// Whether `e`, of bounding the socket's waits, is the system refusing
-    /// to bound a socket that has no peer any more: as macOS refuses
-    /// (EINVAL) once a Unix socket's server has closed it, as it may as
-    /// soon as it has the client's Terminate, or a TCP connection is reset.
-    /// Nothing waits on such a socket: a read takes what the server sent,
-    /// then its end or the reset; a write fails at once.
-    fn closed(&self, e: &io::Error) -> bool {
-        let gone = match self {
-            Socket::Tcp(s) => s.peer_addr().is_err(),
-            #[cfg(unix)]
-            Socket::Local(s) => s.peer_addr().is_err(),
-            #[cfg(windows)]
-            Socket::Pipe => false,
-        };
-        e.kind() == io::ErrorKind::InvalidInput && gone
+impl Bound for TcpStream {
+    fn bound(&self, within: Option<Duration>) -> io::Result<()> {
+        self.set_read_timeout(within).and_then(|()| self.set_write_timeout(within))
+    }
+    fn gone(&self) -> bool {
+        self.peer_addr().is_err()
     }
 }
 
-/// A connection that cannot be set up, for `e`.
-fn set_up(e: &io::Error) -> crate::Failure {
-    failed(&format!("[DESIGN] cannot set the connection up: {e}"))
+#[cfg(unix)]
+impl Bound for std::os::unix::net::UnixStream {
+    fn bound(&self, within: Option<Duration>) -> io::Result<()> {
+        self.set_read_timeout(within).and_then(|()| self.set_write_timeout(within))
+    }
+    fn gone(&self) -> bool {
+        self.peer_addr().is_err()
+    }
+}
+
+/// A named pipe, on Windows: not bounded. Once it is open, it waits on its
+/// server as long as it must, as the standard library sets no limit of
+/// time on a pipe's reads and writes.
+#[cfg(windows)]
+impl Bound for std::fs::File {
+    fn bound(&self, _within: Option<Duration>) -> io::Result<()> {
+        Ok(())
+    }
+    fn gone(&self) -> bool {
+        false
+    }
+}
+
+/// How a connection bounds its stream's waits: `limit`, of the stream's
+/// type; none of a stream given to `Connection::open`, bounded by its
+/// maker.
+pub(crate) type Limit<S> = fn(&S, Option<Duration>) -> Result<()>;
+
+/// Bounds each read and write of `stream` by `within`; none, no limit. A
+/// stream its server has closed needs no bound, and is left as it is
+/// (`closed`).
+///
+/// # Errors
+///
+/// A connection failure if the system cannot bound it.
+pub(crate) fn limit<S: Bound + ?Sized>(stream: &S, within: Option<Duration>) -> Result<()> {
+    stream
+        .bound(within)
+        .or_else(|e| if closed(stream, &e) { Ok(()) } else { Err(e) })
+        .map_err(|e| failed(&format!("[DESIGN] cannot bound how long the connection waits: {e}")))
+}
+
+/// Whether `e`, of bounding `stream`'s waits, is the system refusing to
+/// bound a socket that has no peer any more: as macOS refuses (EINVAL)
+/// once a Unix socket's server has closed it, as it may as soon as it has
+/// the client's Terminate, or a TCP connection is reset. Nothing waits on
+/// such a socket: a read takes what the server sent, then its end or the
+/// reset; a write fails at once.
+fn closed<S: Bound + ?Sized>(stream: &S, e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::InvalidInput && stream.gone()
 }
 
 /// A connection failure of what the client could not do, `what`, for `e`:
@@ -180,14 +187,13 @@ mod tests {
         let (mut client, mut server) = std::os::unix::net::UnixStream::pair().unwrap();
         server.write_all(b"bye").unwrap();
         drop(server);
-        let socket = Socket::local(&client).unwrap();
-        socket.limit(Some(Duration::from_secs(1_u64))).unwrap();
-        socket.limit(None).unwrap();
+        limit(&client, Some(Duration::from_secs(1_u64))).unwrap();
+        limit(&client, None).unwrap();
         let mut told = Vec::new();
         client.read_to_end(&mut told).unwrap();
         assert_eq!(told, b"bye");
         let mut reset = reset();
-        Socket::tcp(&reset).unwrap().limit(Some(Duration::from_secs(1_u64))).unwrap();
+        limit(&reset, Some(Duration::from_secs(1_u64))).unwrap();
         assert_eq!(reset.read(&mut [0_u8; 1]).unwrap(), 0_usize, "its end, after the reset");
     }
 

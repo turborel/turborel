@@ -48,48 +48,20 @@ fn stalling(answered: usize) -> SocketAddr {
 /// connection lost; and Terminate unanswered, nor closed, gives up within
 /// `read`. A read timeout changed on a connection takes effect at once.
 #[test]
-#[allow(clippy::print_stderr, reason = "temporary: says where the test stops on Windows, under --nocapture")]
 fn a_client_waits_as_its_timeouts_say() {
-    let began = std::time::Instant::now();
-    let step = |what: &str| eprintln!("timeouts: {what} at {:?}", began.elapsed());
-    // Temporary: the bare calls, each printed as it returns, so the step
-    // Windows waits on is named.
-    let bare = |how: &str, stream: std::net::TcpStream, reader: &std::net::TcpStream| {
-        stream.set_read_timeout(Some(SHORT)).unwrap();
-        let began = std::time::Instant::now();
-        let read = (&mut &*reader).read(&mut [0_u8; 1]).map_err(|e| e.kind());
-        eprintln!("timeouts: {how}: read gave {read:?} after {:?}", began.elapsed());
-    };
-    let plain = std::net::TcpStream::connect(stalling(0)).unwrap();
-    bare("connect, read timeout set on the stream", plain.try_clone().unwrap(), &plain);
-    let timed = std::net::TcpStream::connect_timeout(&stalling(0), SHORT).unwrap();
-    bare("connect_timeout, read timeout set on the stream", timed.try_clone().unwrap(), &timed);
-    let original = std::net::TcpStream::connect_timeout(&stalling(0), SHORT).unwrap();
-    let clone = original.try_clone().unwrap();
-    bare("connect_timeout, read timeout set on a clone, read on the original", clone, &original);
     let quick = Timeouts { connect: Some(SHORT), read: Some(SHORT) };
-    step("connecting to a server that never answers Hello");
     let refused = connect_to_within(&Target::Tcp(stalling(0)), "X", &mut Trust, quick).err().unwrap();
-    step("refused");
     assert_eq!(state(&refused), ("08006", -919));
     assert!(refused.message.contains("did not answer in time"), "{}", refused.message);
-    step("connecting to a server that never answers a statement");
     let mut c = connect_to_within(&Target::Tcp(stalling(1)), "X", &mut Trust, quick).unwrap();
-    step("connected; querying");
     let late = c.query("VALUES 1").unwrap_err();
-    step("the query failed");
     assert!(late.message.contains("did not answer in time"), "{}", late.message);
     assert!(c.is_lost());
-    step("connecting to terminate unanswered");
     let c = connect_to_within(&Target::Tcp(stalling(1)), "X", &mut Trust, quick).unwrap();
-    step("connected; terminating");
     assert!(c.terminate().unwrap_err().message.contains("did not answer in time"));
-    step("terminate gave up; connecting without limits");
     let mut c = connection::connect(stalling(1), "X", &mut Trust).unwrap();
-    step("connected; setting the read timeout and querying");
     c.set_read_timeout(Some(SHORT)).unwrap();
     assert!(c.query("VALUES 1").unwrap_err().message.contains("did not answer in time"));
-    step("done");
 }
 
 /// Verifies: [DESIGN] RULES.md D42: a connection made over a stream its

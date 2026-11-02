@@ -20,7 +20,7 @@ use turborel_protocol::{CancelKey, Column, Completed, Failure, HEADER, MAX_BODY,
 
 use crate::cancel::Canceller;
 use crate::target::Target;
-use crate::timeouts::{Socket, TERMINATE_WITHIN, Timeouts, io_failed, tcp_to};
+use crate::timeouts::{Bound, Limit, TERMINATE_WITHIN, Timeouts, io_failed, limit, tcp_to};
 
 /// \[DESIGN\] The most of a reply's body reserved before its bytes
 /// arrive; past it, the buffer grows as they do.
@@ -217,8 +217,9 @@ pub struct Connection<S: Read + Write> {
     server: String,
     /// The longest body read: `MAX_BODY` unless `set_max_body` says.
     max_body: u32,
-    /// A handle on its socket, to bound its waits, if it was made here.
-    socket: Option<Socket>,
+    /// How its stream's waits are bounded, if it was made here; none of a
+    /// stream given to `open`, bounded by its maker.
+    bounded: Option<Limit<S>>,
     /// How long it waits on its server, as it was made.
     timeouts: Timeouts,
     /// Set once the connection is lost: it takes no more.
@@ -252,8 +253,7 @@ pub fn connect(address: impl ToSocketAddrs, user: &str, mechanism: &mut dyn Mech
     let stream = tcp_to(address, timeouts.connect)?;
     stream.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
     let server = stream.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
-    let socket = Socket::tcp(&stream)?;
-    Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(Target::Tcp(server)))
+    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(Target::Tcp(server)))
 }
 
 /// Connects to the server at the Unix socket `path` as `user`,
@@ -269,8 +269,7 @@ pub fn connect_local(
     mechanism: &mut dyn Mechanism,
 ) -> Result<Connection<std::os::unix::net::UnixStream>> {
     let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
-    let socket = Socket::local(&stream)?;
-    let opened = Connection::open_timed(stream, socket, (user, mechanism), Timeouts::default())?;
+    let opened = Connection::open_timed(stream, (user, mechanism), Timeouts::default())?;
     Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
 
@@ -287,7 +286,7 @@ pub fn connect_local(
 pub fn connect_local(path: &std::path::Path, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<std::fs::File>> {
     let timeouts = Timeouts::default();
     let pipe = crate::pipe::open(path, timeouts.connect)?;
-    let opened = Connection::open_timed(pipe, Socket::Pipe, (user, mechanism), timeouts)?;
+    let opened = Connection::open_timed(pipe, (user, mechanism), timeouts)?;
     Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
 
@@ -308,7 +307,7 @@ impl<S: Read + Write> Connection<S> {
             authorization: String::new(),
             server: String::new(),
             max_body: MAX_BODY,
-            socket: None,
+            bounded: None,
             timeouts: Timeouts { connect: None, read: None },
             lost: None,
             key: None,
@@ -346,23 +345,21 @@ impl<S: Read + Write> Connection<S> {
         }
     }
 
-    /// Opens a connection over `stream`, as `open`, its waits bounded
-    /// through `socket`, a handle on its socket, as `timeouts` say: each
-    /// step of the login by `connect`, each after by `read`.
+    /// Opens a connection over `stream`, as `open`, its waits bounded on
+    /// the stream itself as `timeouts` say: each step of the login by
+    /// `connect`, each after by `read`.
     ///
     /// # Errors
     ///
     /// As `open`'s; a connection failure if a wait runs out.
-    pub(crate) fn open_timed(
-        stream: S,
-        socket: Socket,
-        (user, mechanism): (&str, &mut dyn Mechanism),
-        timeouts: Timeouts,
-    ) -> Result<Connection<S>> {
-        socket.limit(timeouts.connect)?;
+    pub(crate) fn open_timed(stream: S, (user, mechanism): (&str, &mut dyn Mechanism), timeouts: Timeouts) -> Result<Connection<S>>
+    where
+        S: Bound,
+    {
+        limit(&stream, timeouts.connect)?;
         let mut connection = Connection::open(stream, user, mechanism)?;
-        socket.limit(timeouts.read)?;
-        connection.socket = Some(socket);
+        limit(connection.stream.get_ref(), timeouts.read)?;
+        connection.bounded = Some(limit::<S>);
         connection.timeouts = timeouts;
         Ok(connection)
     }
@@ -375,8 +372,8 @@ impl<S: Read + Write> Connection<S> {
     /// A connection failure if the system cannot set it, or the connection
     /// was made over a stream given to `open`, whose maker bounds it.
     pub fn set_read_timeout(&mut self, within: Option<Duration>) -> Result<()> {
-        let Some(socket) = &self.socket else { return Err(failed("[DESIGN] a stream given to open is bounded by its maker")) };
-        socket.limit(within)?;
+        let Some(bounded) = self.bounded else { return Err(failed("[DESIGN] a stream given to open is bounded by its maker")) };
+        bounded(self.stream.get_ref(), within)?;
         self.timeouts.read = within;
         Ok(())
     }
@@ -511,8 +508,8 @@ impl<S: Read + Write> Connection<S> {
     /// constraint not satisfied).
     pub fn terminate(mut self) -> Result<()> {
         self.send(&Request::Terminate)?;
-        if let Some(socket) = &self.socket {
-            socket.limit(Some(self.timeouts.read.unwrap_or(TERMINATE_WITHIN)))?;
+        if let Some(bounded) = self.bounded {
+            bounded(self.stream.get_ref(), Some(self.timeouts.read.unwrap_or(TERMINATE_WITHIN)))?;
         }
         let most = u64::from(self.max_body).saturating_add(u64::try_from(HEADER).unwrap_or(u64::MAX));
         let mut rest = Vec::new();

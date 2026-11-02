@@ -8,16 +8,27 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed, in_the_clear};
-use crate::timeouts::{Socket, Timeouts, io_failed};
+#[cfg(unix)]
+use crate::timeouts::limit;
+use crate::timeouts::{Bound, Timeouts, io_failed};
 
 /// A stream that reads and writes, of any transport.
-pub trait Duplex: Read + Write + Send {}
+pub trait Duplex: Read + Write + Send + Bound {}
 
-impl<T: Read + Write + Send> Duplex for T {}
+impl<T: Read + Write + Send + Bound> Duplex for T {}
 
-/// A stream to a server, a handle on its socket, and over TLS what its
-/// handshake gives a mechanism to bind to.
-pub(crate) type Opened = (Box<dyn Duplex>, Socket, Option<TlsChannel>);
+impl Bound for Box<dyn Duplex> {
+    fn bound(&self, within: Option<Duration>) -> std::io::Result<()> {
+        (**self).bound(within)
+    }
+    fn gone(&self) -> bool {
+        (**self).gone()
+    }
+}
+
+/// A stream to a server, and over TLS what its handshake gives a
+/// mechanism to bind to.
+pub(crate) type Opened = (Box<dyn Duplex>, Option<TlsChannel>);
 
 /// Where a server is, and how it is reached.
 #[derive(Clone)]
@@ -65,41 +76,37 @@ impl Target {
     /// As `stream`'s; a connection failure if it is not made within
     /// `limit`.
     pub fn stream_within(&self, limit: Option<Duration>) -> Result<Box<dyn Duplex>> {
-        self.opened(limit).map(|(stream, _, _)| stream)
+        self.opened(limit).map(|(stream, _)| stream)
     }
 
-    /// A stream to the server, as `stream_within`, a handle on its socket,
-    /// to bound its waits later, and over TLS what its handshake gives a
-    /// mechanism to bind to (`Mechanism::bind`).
+    /// A stream to the server, as `stream_within`, and over TLS what its
+    /// handshake gives a mechanism to bind to (`Mechanism::bind`).
     ///
     /// # Errors
     ///
     /// As `stream_within`'s.
-    pub(crate) fn opened(&self, limit: Option<Duration>) -> Result<Opened> {
+    pub(crate) fn opened(&self, within: Option<Duration>) -> Result<Opened> {
         let set_up = |e: std::io::Error| failed(&format!("[DESIGN] cannot set the connection up: {e}"));
         match self {
             Target::Tcp(address) => {
-                let stream = connected(address, limit)?;
+                let stream = connected(address, within)?;
                 stream.set_nodelay(true).map_err(set_up)?;
-                let socket = Socket::tcp(&stream)?;
-                Ok((Box::new(stream), socket, None))
+                Ok((Box::new(stream), None))
             }
             #[cfg(unix)]
             Target::Local(path) => {
                 let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
-                let socket = Socket::local(&stream)?;
-                socket.limit(limit)?;
-                Ok((Box::new(stream), socket, None))
+                limit(&stream, within)?;
+                Ok((Box::new(stream), None))
             }
             #[cfg(windows)]
-            Target::Local(path) => Ok((Box::new(crate::pipe::open(path, limit)?), Socket::Pipe, None)),
+            Target::Local(path) => Ok((Box::new(crate::pipe::open(path, within)?), None)),
             #[cfg(feature = "tls")]
             Target::Tls(address, name, config) => {
-                let tcp = connected(address, limit)?;
-                let socket = Socket::tcp(&tcp)?;
+                let tcp = connected(address, within)?;
                 let stream = crate::tls::secured(tcp, (name, config))?;
                 let channel = crate::tls::channel(&stream);
-                Ok((Box::new(stream), socket, Some(channel)))
+                Ok((Box::new(stream), Some(channel)))
             }
         }
     }
@@ -154,9 +161,9 @@ pub fn connect_to_within(
     if matches!(target, Target::Tcp(_)) {
         in_the_clear(mechanism)?;
     }
-    let (stream, socket, channel) = target.opened(timeouts.connect)?;
+    let (stream, channel) = target.opened(timeouts.connect)?;
     if let Some(secured) = channel {
         mechanism.bind(&secured);
     }
-    Ok(Connection::open_timed(stream, socket, (user, mechanism), timeouts)?.reached_by(target.clone()))
+    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(target.clone()))
 }
