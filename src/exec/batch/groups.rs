@@ -32,7 +32,7 @@ use crate::functions::Accumulator;
 use crate::logical::AggCall;
 use crate::storage::{Batch, Cell, Column, Row};
 use crate::txn::TxId;
-use spilled::{Overflow, Piece};
+use spilled::{Overflow, Piece, Queued};
 use table::{Held, Table};
 
 /// The rows or pieces groups partly made take each, on average, for a
@@ -205,6 +205,8 @@ struct Groups {
     /// The rows of the batch being grouped to be written there: each one's
     /// partition, place in the batch and number.
     pending: Vec<(usize, usize, u64)>,
+    /// The pieces to be written there, queued to be written many at once.
+    queued: Queued,
     /// Whether a group has been past it: every group not yet held is then,
     /// so no group is both held and written.
     spilled: bool,
@@ -229,6 +231,7 @@ impl Groups {
             key,
             overflow,
             pending,
+            queued: Queued::default(),
             spilled: false,
             pieced: false,
             scratch,
@@ -275,7 +278,7 @@ impl Groups {
             }
             last = if let Placed::Into(target) = placed { Some(target) } else { None };
         }
-        self.overflow.write(batch, &mut self.pending, work)?;
+        self.overflow.write(batch, (&mut self.pending, &mut self.queued), work)?;
         self.fed((batch, &lanes), &mut segment, how)
     }
 
@@ -404,7 +407,7 @@ impl Groups {
         }
         // Groups not made partly: a piece of one not held goes on.
         if placed == Placed::Passed {
-            return self.overflow.write_piece(&self.key, piece, work);
+            return self.overflow.write_piece(&self.key, piece, &mut self.queued, work);
         }
         let Placed::Into(target) = placed else { return Err(spilled::lost()) };
         let (table, at) = table_in((&mut self.held, &mut self.partial), target);
@@ -431,9 +434,8 @@ impl Groups {
         if self.held.taken < self.held.groups.len().saturating_mul(PARTIAL_GAIN) {
             return Ok(());
         }
-        let mut out = Vec::new();
         for (key, group) in self.held.split_off(self.held.groups.len().div_ceil(2)) {
-            self.overflow.write_group((&key, &group), &mut out, work)?;
+            self.overflow.write_group((&key, &group), &mut self.queued, work)?;
         }
         self.partial = Some(Table::new(self.limit.saturating_sub(self.held.bytes())));
         Ok(())
@@ -446,9 +448,8 @@ impl Groups {
     fn flush(&mut self, work: &mut Work) -> Result<()> {
         let Some(partial) = &mut self.partial else { return Ok(()) };
         let gained = partial.taken >= partial.groups.len().saturating_mul(PARTIAL_GAIN);
-        let mut out = Vec::new();
         for (key, group) in partial.drained() {
-            self.overflow.write_group((&key, &group), &mut out, work)?;
+            self.overflow.write_group((&key, &group), &mut self.queued, work)?;
         }
         if !gained {
             self.partial = None;
@@ -462,6 +463,7 @@ impl Groups {
     /// partly, as what it wrote is grouped so.
     fn finished(mut self, work: &mut Work) -> Result<(Finished, Overflow, bool)> {
         self.flush(work)?;
+        self.overflow.write_queued(&mut self.queued, work)?;
         // Groups made of pieces are made in the order pieces come, not of
         // their first rows: put in that order, as the merge reads them.
         let mut groups = self.held.into_groups();

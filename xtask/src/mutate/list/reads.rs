@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 32] = [
+pub const READS: [Mutation; 33] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -294,5 +294,14 @@ pub const READS: [Mutation; 32] = [
         replacement: "        return Column::Values(Column::Ints(Ints::new(units, scale, nulls())).into_values());",
         integration: &[],
         unit: &["storage::batch::tests::batches_joined_keep_their_kinds"],
+    },
+    Mutation {
+        name: "group-pieces-left-queued",
+        breaks: "a grouping finishes with pieces still queued, never written, their groups' rows lost",
+        file: "src/exec/batch/groups.rs",
+        original: "        self.overflow.write_queued(&mut self.queued, work)?;",
+        replacement: "        let _ = &self.queued;",
+        integration: &["partial_groups::groups_made_partly_answer_as_their_rows"],
+        unit: &[],
     },
 ];

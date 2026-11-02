@@ -1,9 +1,11 @@
 //! \[DESIGN\] RULES.md D31, D38: what a grouping by batch writes of the
 //! groups it has no room for, and how it reads them back. Groups partly
-//! made are written as pieces, each to the partition of its key; else the
-//! rows of each batch of each partition, by a hash of their keys
-//! (`partition.rs`), are one record (at most `RECORD_ROWS` rows), integers
-//! as integers (`records.rs`). A partition is read back record by record,
+//! made are written as pieces, each to the partition of its key, those of
+//! a partition queued and written many to a record (at most `RECORD_ROWS`),
+//! before any rows written to it after them, so each partition's come in
+//! the order made; else the rows of each batch of each partition, by a hash
+//! of their keys (`partition.rs`), are one record (at most `RECORD_ROWS`
+//! rows), integers as integers (`records.rs`). A partition is read back record by record,
 //! rows grouped again by batch, pieces merged into their groups in the
 //! order written (`groups.rs`); one that outgrows the work area is
 //! partitioned again, as many times as SPILL.PARTITION_DEPTH says, then
@@ -24,11 +26,18 @@ use crate::exec::work::Work;
 use crate::spill::{Records, SpillRun};
 use crate::storage::Batch;
 pub(super) use records::Piece;
-use records::{Record, put_batch, put_group, put_piece, record_of};
+use records::{Record, put_batch, put_group, put_piece, put_pieces, record_of};
 
 /// The most rows a record holds, so a batch's rows of one partition, or of
 /// a pass, are a few records of a run's batch of bytes, not one far larger.
 const RECORD_ROWS: usize = 256;
+
+/// Pieces queued to be written, of each partition, by its place: how many,
+/// and they as `put_group` and `put_piece` append them.
+#[derive(Default)]
+pub(super) struct Queued {
+    parts: std::collections::BTreeMap<usize, (u32, Vec<u8>)>,
+}
 
 /// Where a grouping writes the rows of groups it has no room for: to
 /// partitions, or to one run, for the next pass; each made when first
@@ -65,17 +74,58 @@ impl Overflow {
     /// # Errors
     ///
     /// The spill area's.
-    pub(super) fn write(&mut self, batch: &Batch, pending: &mut Vec<(usize, usize, u64)>, work: &mut Work) -> Result<()> {
+    pub(super) fn write(
+        &mut self,
+        batch: &Batch,
+        (pending, queued): (&mut Vec<(usize, usize, u64)>, &mut Queued),
+        work: &mut Work,
+    ) -> Result<()> {
         // Stable: each partition's rows keep their order.
         pending.sort_by_key(|&(part, ..)| part);
         let mut out = Vec::new();
         for rows in pending.chunk_by(|a, b| a.0 == b.0).flat_map(|part| part.chunks(RECORD_ROWS)) {
             let Some(&(part, ..)) = rows.first() else { continue };
+            // The pieces queued of its partition before its rows.
+            self.written(part, queued, work)?;
             put_batch(batch, rows, &mut out);
             self.push(part, &out, work)?;
         }
         pending.clear();
         Ok(())
+    }
+
+    /// Writes the pieces `queued` of the partition at `part`, if any, as a
+    /// record, and unqueues them.
+    fn written(&mut self, part: usize, queued: &mut Queued, work: &mut Work) -> Result<()> {
+        let Some((count, pieces)) = queued.parts.remove(&part) else { return Ok(()) };
+        let mut out = Vec::with_capacity(pieces.len().saturating_add(5));
+        put_pieces(count, &pieces, &mut out);
+        self.push(part, &out, work)
+    }
+
+    /// Writes every piece `queued`, a record of each partition's.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    pub(super) fn write_queued(&mut self, queued: &mut Queued, work: &mut Work) -> Result<()> {
+        let parts: Vec<usize> = queued.parts.keys().copied().collect();
+        parts.into_iter().try_for_each(|part| self.written(part, queued, work))
+    }
+
+    /// Queues a piece of key `key`, `put` appends, to the partition of its
+    /// key, writing that partition's queued once they are `RECORD_ROWS`.
+    fn queue(&mut self, key: &[u8], put: impl FnOnce(&mut Vec<u8>) -> bool, (queued, work): (&mut Queued, &mut Work)) -> Result<bool> {
+        let part = self.part_of(key, work)?;
+        let (count, pieces) = queued.parts.entry(part).or_default();
+        if !put(pieces) {
+            return Ok(false);
+        }
+        *count = count.saturating_add(1);
+        if usize::try_from(*count).unwrap_or(usize::MAX) >= RECORD_ROWS {
+            self.written(part, queued, work)?;
+        }
+        Ok(true)
     }
 
     /// Writes `group`, of key `key`, partly made, as a piece to the
@@ -85,12 +135,11 @@ impl Overflow {
     ///
     /// The spill area's; SQLCODE -910 if a set function of it writes no
     /// state, as a grouping makes groups partly only if each does.
-    pub(super) fn write_group(&mut self, (key, group): (&[u8], &Held), out: &mut Vec<u8>, work: &mut Work) -> Result<()> {
-        if !put_group(group, out) {
+    pub(super) fn write_group(&mut self, (key, group): (&[u8], &Held), queued: &mut Queued, work: &mut Work) -> Result<()> {
+        if !self.queue(key, |out| put_group(group, out), (queued, work))? {
             return Err(SqlError::new(Code::Api, "[DESIGN] a group partly made of a set function of no state"));
         }
-        let part = self.part_of(key, work)?;
-        self.push(part, out, work)
+        Ok(())
     }
 
     /// Writes `made`, a piece of key `key`, to the partition of its key,
@@ -99,11 +148,16 @@ impl Overflow {
     /// # Errors
     ///
     /// The spill area's.
-    pub(super) fn write_piece(&mut self, key: &[u8], made: &Piece, work: &mut Work) -> Result<()> {
-        let mut out = Vec::new();
-        put_piece(made, &mut out);
-        let part = self.part_of(key, work)?;
-        self.push(part, &out, work)
+    pub(super) fn write_piece(&mut self, key: &[u8], made: &Piece, queued: &mut Queued, work: &mut Work) -> Result<()> {
+        self.queue(
+            key,
+            |out| {
+                put_piece(made, out);
+                true
+            },
+            (queued, work),
+        )
+        .map(|_| ())
     }
 
     /// Writes `record` to the partition at `part`, or to the run, made in
@@ -151,7 +205,7 @@ fn regrouped(partition: Records, (depth, sources): (usize, &mut Vec<Records>), h
         for record in records {
             match record_of(&record?, &types)? {
                 Record::Rows(batch, numbers) => groups.feed((&batch, None), Numbers::Given(&numbers), going, work)?,
-                Record::Piece(piece) => groups.absorb(&piece, going, work)?,
+                Record::Pieces(pieces) => pieces.iter().try_for_each(|piece| groups.absorb(piece, going, work))?,
             }
         }
         let (held, written_to, partial) = groups.finished(work)?;

@@ -17,7 +17,8 @@
 //! beside them. Each is measured on F, a row store
 //! table, then on FC, a column store one; so is a grouping of W, of
 //! 400,000 rows, by its key, far more groups than the work area holds,
-//! then of WC; and set functions of a column of runs of one value, RC's
+//! and by 50,000 keys of 8 rows past 64 KiB, made partly as pieces, then
+//! of WC; and set functions of a column of runs of one value, RC's
 //! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
 //! queries. Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
@@ -161,6 +162,22 @@ fn partitioned(bench: &Bench, s: &Session, (table, label): (&str, &str)) {
     s.run("SET MEMORY.WORK_BYTES = 4194304").unwrap();
 }
 
+/// Measures groupings of `keyed` of 50,000 keys of 8 rows each, the keys'
+/// rows together and 50,000 rows apart, past a work area of 64 KiB, so its
+/// partitions outgrow it again and groups are made partly, as pieces;
+/// their cases' names ending in `label`.
+fn pieced(bench: &Bench, s: &Session, (keyed, label): (&str, &str)) {
+    s.run("SET MEMORY.WORK_BYTES = 65536").unwrap();
+    for (what, key) in [("together", "CAST(K / 8 AS INTEGER)"), ("apart", "K - CAST(K / 50000 AS INTEGER) * 50000")] {
+        let sql = format!("SELECT G, COUNT(*), SUM(V) FROM (SELECT {key}, V FROM {keyed}) AS D (G, V) GROUP BY G");
+        bench.measure(Case::new(format!("GROUP BY 50,000 keys of 8 rows {what}, past 64 KiB{label}"), "rows"), || {
+            fetched(s, &sql);
+            KEYS
+        });
+    }
+    s.run("SET MEMORY.WORK_BYTES = 4194304").unwrap();
+}
+
 /// Measures the operators that hold rows: sorts, EXCEPT and INTERSECT of
 /// table `table`, and a grouping by key of `keyed` past the work area,
 /// their cases' names ending in `label`.
@@ -182,6 +199,7 @@ fn holding(bench: &Bench, s: &Session, (table, keyed, label): (&str, &str, &str)
         case("GROUP BY K of 400,000 keys past the work area"),
         run(format!("SELECT K, COUNT(*), SUM(V) FROM {keyed} GROUP BY K"), KEYS),
     );
+    pieced(bench, s, (keyed, label));
 }
 
 /// W's and WC's `KEYS` rows, K every key once and V one of 1,000.

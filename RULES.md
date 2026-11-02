@@ -1987,10 +1987,12 @@ write-ahead logging.
     `spilled/records.rs`), and their room holds groups partly made of
     the rows past those held (`groups/table.rs`); else rows are written;
   - once groups partly made fill their room, each is written as a piece,
-    and the room emptied; once they took fewer than 4 rows or pieces
-    each, the grouping makes none partly from then on, its partitions'
-    too, and writes rows: a piece costs more to write and read back than
-    a row written by batch;
+    and the room emptied; a partition's pieces are queued and written
+    many to a record, before any rows written to it after them, so each
+    partition's come in the order made; once they took fewer than 4
+    rows or pieces each, the grouping makes none partly from then on,
+    its partitions' too, and writes rows: a piece costs more to write
+    and read back than a row written by batch;
   - a partition read back merges its pieces into their groups in the
     order written (`Accumulator::merge`), held, partly made, or new.
   - So each set function takes its values in the order it would without
