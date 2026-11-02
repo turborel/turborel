@@ -71,7 +71,9 @@ fn block<'a>(lines: &mut impl Iterator<Item = &'a str>) -> String {
 /// The text of `page`, a path under `doc/`.
 fn text_of(page: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("doc").join(page);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    // A checkout that ends lines as Windows does reads as the page is.
+    text.replace("\r\n", "\n")
 }
 
 /// The examples of `page`, a path under `doc/`.

@@ -1,0 +1,3 @@
+# Text files are checked out ending lines with LF on every platform, as
+# the tests read the manual and fixtures by their lines.
+* text=auto eol=lf
