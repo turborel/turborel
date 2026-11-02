@@ -109,21 +109,14 @@ const QUERIES: &[&str] = &[
     "SELECT COUNT(DISTINCT S), COUNT(DISTINCT G), COUNT(*) FROM T",
 ];
 
-/// Verifies: [DESIGN] RULES.md D38: with MEMORY.WORK_BYTES at its least, a sort,
-/// of keys some of them null too, grouping, DISTINCT, a hash join, a product, LEFT, RIGHT and FULL outer
-/// joins on keys and on no keys [ISO/IEC 9075:1992 §7.5], EXCEPT,
-/// INTERSECT and UNION, the rows of subqueries, kept and decorrelated, for
-/// IN, EXISTS, ALL, UNIQUE and MATCH, and the values of DISTINCT set
-/// functions spill to
-/// areas of MEMORY.WORK_BYTES's bytes, of the provider given (`set_spill`), and
-/// give the rows, in the order, they give in memory, whatever SPILL.BATCH_BYTES,
-/// SPILL.PARTITIONS and SPILL.PARTITION_DEPTH;
-/// the areas' memory goes back to the budget once the query is read. A
-/// hash join's and an outer join's partitions are partitioned again while
-/// they outgrow the work area, as SPILL.PARTITION_DEPTH allows, and one
-/// that does not shrink, as of a key most rows have, is joined so too.
-#[test]
-fn operators_spill_and_give_the_same_rows() {
+/// Runs `QUERIES` with MEMORY.WORK_BYTES at its least, spilling to areas
+/// of the provider given (`set_spill`) in batches of `batch` bytes
+/// (SPILL.BATCH_BYTES), into `partitions` (SPILL.PARTITIONS) partitioned
+/// again `depth` times at most (SPILL.PARTITION_DEPTH): each gives the
+/// rows, in the order, it gives in memory, and its areas' memory goes
+/// back to the budget once it is read. One test a setting, so they run
+/// at once.
+fn spilled_as((batch, partitions, depth): (usize, usize, usize)) {
     let db = Database::new();
     filled(&db);
     let counted = Counted::default();
@@ -134,24 +127,59 @@ fn operators_spill_and_give_the_same_rows() {
     let in_memory: Vec<Vec<String>> = QUERIES.iter().map(|q| sorted(&s, q)).collect();
     assert_eq!(counted.taken(), 0, "the default MEMORY.WORK_BYTES holds them all");
     let reserved = db.memory().unwrap().1;
-
     db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
-    // The default batch, then the least, with which a join partitions most;
-    // then two partitions, partitioned again while they outgrow the work
-    // area, and never, built in tables or joined in parts.
-    for (batch, partitions, depth) in [(16 << 10, 64, 8), (4 << 10, 64, 8), (16 << 10, 2, 8), (16 << 10, 2, 0)] {
-        db.set_setting("SPILL.BATCH_BYTES", &bytes(batch)).unwrap();
-        db.set_setting("SPILL.PARTITIONS", &bytes(partitions)).unwrap();
-        db.set_setting("SPILL.PARTITION_DEPTH", &bytes(depth)).unwrap();
-        for (q, expected) in QUERIES.iter().zip(&in_memory) {
-            assert_eq!(&sorted(&s, q), expected, "{q}, batch {batch}");
-            assert!(counted.taken() > 0, "{q} spilled");
-            assert_eq!(db.memory().unwrap().1, reserved, "{q}: its areas given back");
-        }
+    db.set_setting("SPILL.BATCH_BYTES", &bytes(batch)).unwrap();
+    db.set_setting("SPILL.PARTITIONS", &bytes(partitions)).unwrap();
+    db.set_setting("SPILL.PARTITION_DEPTH", &bytes(depth)).unwrap();
+    for (q, expected) in QUERIES.iter().zip(&in_memory) {
+        assert_eq!(&sorted(&s, q), expected, "{q}, batch {batch}");
+        assert!(counted.taken() > 0, "{q} spilled");
+        assert_eq!(db.memory().unwrap().1, reserved, "{q}: its areas given back");
     }
     // A grouping of DISTINCT set functions splits its work area in two.
     assert!(counted.0.lock().unwrap().iter().all(|&b| b == SMALL || b == HALF));
     assert_eq!(db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL - 1)).err().map(|e| e.code), Some(Code::Api), "below its least");
+}
+
+/// Verifies: [DESIGN] RULES.md D38: with MEMORY.WORK_BYTES at its least, a sort,
+/// of keys some of them null too, grouping, DISTINCT, a hash join, a
+/// product, LEFT, RIGHT and FULL outer joins on keys and on no keys
+/// [ISO/IEC 9075:1992 §7.5], EXCEPT, INTERSECT and UNION, the rows of
+/// subqueries, kept and decorrelated, for IN, EXISTS, ALL, UNIQUE and
+/// MATCH, and the values of DISTINCT set functions spill to areas of
+/// MEMORY.WORK_BYTES's bytes, of the provider given (`set_spill`), in the
+/// default batch, and give the rows, in the order, they give in memory;
+/// the areas' memory goes back to the budget once the query is read; a
+/// work area below the least is refused.
+#[test]
+fn operators_spill_and_give_the_same_rows() {
+    spilled_as((16 << 10, 64, 8));
+}
+
+/// Verifies: [DESIGN] RULES.md D38: as `operators_spill_and_give_the_same_rows`,
+/// in the least batch (SPILL.BATCH_BYTES), with which a join partitions
+/// most.
+#[test]
+fn operators_spill_in_the_least_batches() {
+    spilled_as((4 << 10, 64, 8));
+}
+
+/// Verifies: [DESIGN] RULES.md D38: as `operators_spill_and_give_the_same_rows`,
+/// into two partitions (SPILL.PARTITIONS), partitioned again while they
+/// outgrow the work area, as SPILL.PARTITION_DEPTH allows: a hash join's
+/// and an outer join's, and one that does not shrink, as of a key most
+/// rows have, joined so too.
+#[test]
+fn operators_spill_into_two_partitions_partitioned_again() {
+    spilled_as((16 << 10, 2, 8));
+}
+
+/// Verifies: [DESIGN] RULES.md D38: as `operators_spill_and_give_the_same_rows`,
+/// into two partitions never partitioned again (SPILL.PARTITION_DEPTH 0),
+/// each built in a table or joined in parts.
+#[test]
+fn operators_spill_into_two_partitions_never_partitioned_again() {
+    spilled_as((16 << 10, 2, 0));
 }
 
 /// Verifies: [DESIGN] [ISO/IEC 9075:1992 §7.5 GR1c]; RULES.md D15, D38:
