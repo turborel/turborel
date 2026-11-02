@@ -124,10 +124,12 @@ pub struct JobInfo {
 
 /// \[DESIGN\] How a part of a database below it, which knows no database,
 /// asks for one of its jobs, as the buffer pool asks for the read-ahead
-/// job (`disk/buffer/ahead.rs`): it holds the database weakly, so never
-/// keeps it open, and asks for nothing once it is gone.
+/// job (`disk/buffer/ahead.rs`), and as a plug-in's threads ask for its
+/// job (`Database::job_asker`, RULES.md D57: a transport, as frames
+/// arrive): it holds the database weakly, so never keeps it open, and
+/// asks for nothing once it is gone.
 #[derive(Clone)]
-pub(crate) struct JobAsker {
+pub struct JobAsker {
     db: WeakDatabase,
     job: JobHandle,
 }
@@ -139,7 +141,7 @@ impl JobAsker {
     }
 
     /// Asks for the job, which runs as JOBS.POLICY says.
-    pub(crate) fn ask(&self) {
+    pub fn ask(&self) {
         if let Some(db) = self.db.upgrade() {
             db.request_job(self.job, Duration::ZERO);
         }

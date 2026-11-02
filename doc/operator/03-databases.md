@@ -219,5 +219,6 @@ is each failure of its work. The threads are named for their work:
 `turborel-read-ahead`, `turborel-assertion-totals`, which folds the
 totals assertions keep, `turborel-rekey`, which writes the files again
 in the formats their settings name ([The files' formats](07-encryption.md#the-files-formats)),
-and those of the work a plug-in adds (`Database::add_job`), each
-`turborel-<kind>`.
+`turborel-replica`, which runs the database's replica
+([Replication](09-replication.md)), and those of the work a plug-in
+adds (`Database::add_job`), each `turborel-<kind>`.

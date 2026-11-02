@@ -13,7 +13,7 @@ use std::num::NonZeroUsize;
 
 use turborel::db::Database;
 use turborel::error::Result;
-use turborel::settings::{Definition, Effect, Kind, OFF, SWITCHES};
+use turborel::settings::{Definition, Effect, Kind, OFF, ON, SWITCHES};
 use turborel::value::{Decimal, Value};
 use turborel_protocol::{DEFAULT_PORT, MAX_BODY};
 
@@ -124,6 +124,28 @@ const MOST_KEEPALIVE_MS: i128 = 32_767_000;
 /// (`MAX_TCP_KEEPCNT` in its `include/net/tcp.h`); Windows takes 255.
 const MOST_KEEPALIVE_PROBES: i128 = 127;
 
+/// \[EXTENSION\] This node's number among the members of its database's
+/// replica group (RULES.md D57); 0, the database is not replicated.
+pub const REPLICA: &str = "REPLICATION.REPLICA";
+/// \[EXTENSION\] The members of the group: each its number, `=`, and the
+/// host and port its replica takes frames at, by commas.
+pub const MEMBERS: &str = "REPLICATION.MEMBERS";
+/// \[EXTENSION\] The address this node takes the other members' frames
+/// at; empty, its own member's host and port.
+pub const LISTEN: &str = "REPLICATION.LISTEN";
+/// \[EXTENSION\] The PEM file of the authorities the members' certificates
+/// are verified against.
+pub const REPLICATION_CA: &str = "REPLICATION.CA";
+/// \[EXTENSION\] Whether the members secure their frames by mutual TLS:
+/// ON, or OFF for a group on one machine, as in tests.
+pub const REPLICATION_TLS: &str = "REPLICATION.TLS";
+/// \[EXTENSION\] The milliseconds between the ticks of the replica's
+/// consensus: its heartbeats and timeouts count in them.
+pub const TICK_MS: &str = "REPLICATION.TICK_MS";
+/// \[DESIGN\] The default of `TICK_MS`: a tenth of a second, so a
+/// heartbeat goes each second and a view change comes within seconds.
+pub const DEFAULT_TICK_MS: usize = 100;
+
 /// \[DESIGN\] The most workers: the blocking threads a server's runtime
 /// should allow. Fixed, not a setting (RULES.md D36): the runtime's shape,
 /// fixed as it is made, bounding SERVER.WORKERS, which is the setting.
@@ -150,6 +172,12 @@ fn setting(name: &str, kind: Kind, default: Value, effect: Effect, doc: &str) ->
     Definition { name: name.into(), kind, default, per_session: false, node: false, effect, doc: doc.into() }
 }
 
+/// A setting of the node's (RULES.md D36, D57): never logged, given as it
+/// starts.
+fn node(name: &str, kind: Kind, default: Value, doc: &str) -> Definition {
+    Definition { name: name.into(), kind, default, per_session: false, node: true, effect: Effect::Start, doc: doc.into() }
+}
+
 /// A whole-number setting from `min` to `max`, read as each connection is
 /// taken.
 fn connected(name: &str, (min, max): (i128, i128), default: usize, doc: &str) -> Definition {
@@ -170,7 +198,70 @@ pub fn definitions() -> Vec<Definition> {
     all.extend(waits());
     all.extend(proofs());
     all.extend(kept_alive());
+    all.extend(replication());
     all
+}
+
+/// \[EXTENSION\] The replica's settings (RULES.md D57), the node's own,
+/// read as it starts, before its database is opened: its number, the
+/// group's members, where it listens, how the members' frames are
+/// secured, and the pace of its ticks.
+pub fn replication() -> [Definition; 6] {
+    let text = Kind::Text { max: MAX_TEXT };
+    [
+        node(
+            REPLICA,
+            Kind::Integer { min: 0, max: i128::from(u32::MAX) },
+            whole(0),
+            "This node's number among the members of its database's replica group; 0, the database is not replicated.",
+        ),
+        node(
+            MEMBERS,
+            text.clone(),
+            Value::Char(String::new()),
+            "The members of the replica group: each its number, =, and the host and port its replica takes frames at, by commas, as 1=db1.example.com:7423,2=db2.example.com:7423.",
+        ),
+        node(
+            LISTEN,
+            text.clone(),
+            Value::Char(String::new()),
+            "The host and port this node takes the other members' frames at; empty, those its own member names in REPLICATION.MEMBERS.",
+        ),
+        node(
+            REPLICATION_CA,
+            text,
+            Value::Char(String::new()),
+            "The PEM file of the authorities the members' certificates are verified against, each member presenting SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY to the others.",
+        ),
+        node(
+            REPLICATION_TLS,
+            Kind::Choice(SWITCHES),
+            Value::Char(ON.into()),
+            "Whether the members secure their frames to each other by mutual TLS, ON; OFF only for a group on one machine, as in tests.",
+        ),
+        node(
+            TICK_MS,
+            Kind::Integer { min: 10, max: 60_000 },
+            whole(DEFAULT_TICK_MS),
+            "The milliseconds between the ticks of the replica's consensus, in which its heartbeats and the timeouts of its view changes count.",
+        ),
+    ]
+}
+
+/// \[EXTENSION\] Declares the replica's settings on `db`, unless they
+/// are: before its database is opened, as they are read then
+/// (`replication::prepare`).
+///
+/// # Errors
+///
+/// `Database::declare_setting`'s.
+pub fn declare_replication(db: &Database) -> Result<()> {
+    for definition in replication() {
+        if db.setting(&definition.name).is_err() {
+            db.declare_setting(definition)?;
+        }
+    }
+    Ok(())
 }
 
 /// TCP keepalive's times, read as each connection is taken

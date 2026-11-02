@@ -41,6 +41,7 @@ mod imports;
 mod logins;
 mod passwords;
 mod prepared;
+mod replication;
 mod scram;
 mod settings;
 mod shown;

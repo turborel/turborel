@@ -17,6 +17,7 @@ pub mod log;
 pub mod logins;
 pub mod native;
 pub mod password;
+pub mod replication;
 pub mod runtime;
 pub mod scram;
 pub mod server;

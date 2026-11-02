@@ -189,6 +189,13 @@ pub enum Event {
         /// function not keyed.
         checksum_key: String,
     },
+    /// \[EXTENSION\] The database's replica, of a group keeping its log
+    /// (RULES.md D57), changed: what its consensus reports, and what its
+    /// transport does.
+    Replica {
+        /// What changed.
+        change: ReplicaChange,
+    },
     /// \[DESIGN\] A server began to take connections (RULES.md D42).
     Listening {
         /// Where: each address, Unix socket's path or named pipe's name.
@@ -260,6 +267,57 @@ pub enum Event {
     },
 }
 
+/// \[EXTENSION\] What a replica of a group reports (`Event::Replica`,
+/// RULES.md D57): its consensus's view changes and refusals, its database
+/// serving or stopped, and its transport's links to the other members.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicaChange {
+    /// The replica entered `view`, in which `primary` orders records.
+    ViewChanged {
+        /// The view.
+        view: u64,
+        /// The member that is its primary.
+        primary: u32,
+    },
+    /// The database serves as primary of `view`.
+    Serving {
+        /// The view.
+        view: u64,
+    },
+    /// The database stopped serving: deposed, and opened again in place.
+    Stopped,
+    /// A frame was refused, unread: malformed, or from no member.
+    FrameRefused {
+        /// The member the transport says sent it.
+        from: u32,
+        /// Why.
+        why: String,
+    },
+    /// A record was appended while the replica serves as no primary.
+    AppendRefused,
+    /// The transport's link to a member is up: frames reach it.
+    Connected {
+        /// The member.
+        member: u32,
+    },
+    /// The transport's link to a member went down, or could not be made;
+    /// tried again.
+    Disconnected {
+        /// The member.
+        member: u32,
+        /// Why.
+        why: String,
+    },
+    /// A connection to the transport's listener was not taken: its TLS
+    /// failed, it began with no hello, or named no other member.
+    ConnectionRefused {
+        /// Where it came from.
+        peer: String,
+        /// Why.
+        why: String,
+    },
+}
+
 /// \[DESIGN\] Why checkpoints let the log grow (`Event::CheckpointOverdue`).
 #[derive(Debug, Clone)]
 pub enum Overdue {
@@ -288,6 +346,16 @@ impl Event {
             | Event::LoginFailed { .. }
             | Event::ConnectionsRefused { .. } => Level::Warning,
             Event::AcceptFailed { .. } => Level::Error,
+            Event::Replica { change } => match change {
+                ReplicaChange::ViewChanged { .. }
+                | ReplicaChange::Serving { .. }
+                | ReplicaChange::Stopped
+                | ReplicaChange::Connected { .. } => Level::Info,
+                ReplicaChange::FrameRefused { .. }
+                | ReplicaChange::AppendRefused
+                | ReplicaChange::Disconnected { .. }
+                | ReplicaChange::ConnectionRefused { .. } => Level::Warning,
+            },
             Event::Failed(e) => worth(e.code).unwrap_or(Level::Warning),
             Event::Thread { change, .. } => match change {
                 ThreadChange::Started | ThreadChange::Stopped => Level::Info,

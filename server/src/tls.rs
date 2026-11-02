@@ -45,7 +45,7 @@ use std::task::{Context, Poll};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
-use rustls::{RootCertStore, ServerConfig};
+use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsAcceptor;
 
@@ -185,6 +185,67 @@ pub fn server_config(
         }
     };
     Ok(Arc::new(config.with_single_cert(chain, key)?))
+}
+
+/// \[EXTENSION\] The configuration of a replica's listener (RULES.md D57):
+/// presenting `chain` and `key`, and taking only a peer presenting a
+/// certificate `authorities` verify, so every frame comes from a member.
+///
+/// # Errors
+///
+/// rustls's, as `server_config`'s.
+pub fn mutual_config(
+    chain: Vec<CertificateDer<'static>>,
+    key: PrivateKeyDer<'static>,
+    authorities: RootCertStore,
+) -> Result<Arc<ServerConfig>, rustls::Error> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let versions = ServerConfig::builder_with_provider(Arc::clone(&provider)).with_safe_default_protocol_versions()?;
+    let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(authorities), provider).build();
+    let config = versions.with_client_cert_verifier(verifier.map_err(|e| rustls::Error::General(e.to_string()))?);
+    Ok(Arc::new(config.with_single_cert(chain, key)?))
+}
+
+/// \[EXTENSION\] The configuration a replica connects to another with
+/// (RULES.md D57): trusting `authorities`, and presenting `chain` and
+/// `key`, so the other takes it as a member.
+///
+/// # Errors
+///
+/// rustls's, if the key does not fit the certificate or its kind is not
+/// one aws-lc-rs signs with.
+pub fn presenting_config(
+    authorities: RootCertStore,
+    chain: Vec<CertificateDer<'static>>,
+    key: PrivateKeyDer<'static>,
+) -> Result<Arc<ClientConfig>, rustls::Error> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let versions = ClientConfig::builder_with_provider(provider).with_safe_default_protocol_versions()?;
+    Ok(Arc::new(versions.with_root_certificates(authorities).with_client_auth_cert(chain, key)?))
+}
+
+/// \[EXTENSION\] The certificate chain of the PEM file `chain` and the
+/// private key of the PEM file `key`: a replica's identity (RULES.md D57).
+///
+/// # Errors
+///
+/// `InvalidData` if a file cannot be read, or holds no certificate or
+/// key.
+pub fn identity(chain: &str, key: &str) -> io::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    let chain = certificates(chain)?;
+    let private = PrivateKeyDer::from_pem_file(Path::new(key)).map_err(|e| invalid(key, e))?;
+    Ok((chain, private))
+}
+
+/// \[EXTENSION\] The authorities of the PEM file `path`, named: one
+/// certificate at least.
+///
+/// # Errors
+///
+/// `InvalidData` if it is not named, cannot be read, or holds no
+/// certificate.
+pub fn roots(path: &str) -> io::Result<RootCertStore> {
+    authorities(path)?.ok_or_else(|| invalid("TLS", "no authorities are named"))
 }
 
 fn invalid(what: &str, e: impl std::fmt::Display) -> io::Error {

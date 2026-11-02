@@ -32,4 +32,5 @@
 mod config_file;
 mod keys;
 mod program;
+mod replication;
 mod users;

@@ -210,18 +210,23 @@ impl ServedConnections for Operator {
 }
 
 /// A count, as a column holds it.
-fn count(n: u64) -> Value {
+pub(crate) fn count(n: u64) -> Value {
     Value::Exact(Decimal::new(i128::from(n), 0))
 }
 
 /// A column of counts, named `name`.
-fn counted(name: &str) -> ColumnDesc {
+pub(crate) fn counted(name: &str) -> ColumnDesc {
     let data_type = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
     ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None }
 }
 
+/// A column of counts, named `name`, which may be null.
+pub(crate) fn counted_or_null(name: &str) -> ColumnDesc {
+    ColumnDesc { not_null: false, ..counted(name) }
+}
+
 /// A column of text of at most `length` characters, named `name`.
-fn text(name: &str, length: u32, not_null: bool) -> ColumnDesc {
+pub(crate) fn text(name: &str, length: u32, not_null: bool) -> ColumnDesc {
     ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None }
 }
 

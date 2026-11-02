@@ -47,7 +47,7 @@ mod transport;
 pub mod vr;
 
 pub use consensus::{Consensus, Input, Output, Recovered};
-pub use driver::{Driver, DriverJob, GroupLog, GroupLogs, Parts};
+pub use driver::{Driver, DriverJob, GroupLog, GroupLogs, Joined, Make, Parts};
 pub use journal::{Journal, LogJournal};
 pub use log::{MakeAlone, ReplicatedLog, TICKS_ALONE};
 pub use storage::{ALONE, ReplicatedLogs, STORAGE_NAME, vr_alone};

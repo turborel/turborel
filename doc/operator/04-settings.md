@@ -44,7 +44,7 @@ says the same in words:
 | STATEMENT | at once | for each statement that begins after the change | most |
 | TRANSACTION | from the next transaction | for each transaction that begins after the change | LOCKS.WAIT, TRANSACTION.STRICT |
 | CONNECTION | from the next connection | for each connection the server takes after the change | SERVER.MAX_MESSAGE_BYTES, SERVER.TLS_CERTIFICATE, SERVER.TLS_KEY, SERVER.TLS_CLIENT_CA, SERVER.SCRAM_WITHOUT_TLS, SERVER.KEEPALIVE_* |
-| START | at the next start | as the server next starts, or the database is next opened | SERVER.HOST, SERVER.PORT, SERVER.SOCKET, SERVER.TLS, SERVER.TRUST_LOCAL, SERVER.PASSWORD_ITERATIONS, STORAGE.POOL_BYTES |
+| START | at the next start | as the server next starts, or the database is next opened | SERVER.HOST, SERVER.PORT, SERVER.SOCKET, SERVER.TLS, SERVER.TRUST_LOCAL, SERVER.PASSWORD_ITERATIONS, STORAGE.POOL_BYTES, REPLICATION.* ([Replication](09-replication.md)) |
 | CREATION | only when the database is made | as the database is made in its directory; fixed after | STORAGE.PAGE_BYTES, STORAGE.CHECKSUM, LOG.SEGMENT_BYTES |
 
 ```sql
@@ -66,6 +66,12 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  LOG.SEGMENT_BYTES                                            | CREATION
  STORAGE.CHECKSUM                                             | CREATION
  STORAGE.PAGE_BYTES                                           | CREATION
+ REPLICATION.CA                                               | START
+ REPLICATION.LISTEN                                           | START
+ REPLICATION.MEMBERS                                          | START
+ REPLICATION.REPLICA                                          | START
+ REPLICATION.TICK_MS                                          | START
+ REPLICATION.TLS                                              | START
  SERVER.HOST                                                  | START
  SERVER.PASSWORD_ITERATIONS                                   | START
  SERVER.PORT                                                  | START
@@ -75,7 +81,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  STORAGE.POOL_BYTES                                           | START
  LOCKS.WAIT                                                   | TRANSACTION
  TRANSACTION.STRICT                                           | TRANSACTION
-(20 rows)
+(26 rows)
 ```
 
 A setting fixed when the database is made is refused after:

@@ -105,8 +105,14 @@ fn appendix_section(listed: &[&turborel::settings::Listed]) -> String {
         if default.is_empty() {
             "(empty)".clone_into(&mut default);
         }
-        let session = if d.per_session { "*session*" } else { "" };
-        writeln!(table, "| {} | {default} | {} | {} | {session} |", d.name, d.kind.described(), effect_words(d.effect)).unwrap();
+        let scope = if d.per_session {
+            "*session*"
+        } else if d.node {
+            "*node*"
+        } else {
+            ""
+        };
+        writeln!(table, "| {} | {default} | {} | {} | {scope} |", d.name, d.kind.described(), effect_words(d.effect)).unwrap();
         writeln!(sentences, "- **{}**: {}", d.name, d.doc).unwrap();
     }
     format!("{table}\nEach in a sentence:\n\n{sentences}")
@@ -124,7 +130,8 @@ fn appendix_c_lists_every_setting_as_declared() {
     turborel_server::settings::declare(&db).unwrap();
     let mut listed = db.settings().unwrap();
     listed.sort_by(|a, b| a.definition.name.cmp(&b.definition.name));
-    let (server, own): (Vec<_>, Vec<_>) = listed.iter().partition(|l| l.definition.name.starts_with("SERVER."));
+    let (server, own): (Vec<_>, Vec<_>) =
+        listed.iter().partition(|l| l.definition.name.starts_with("SERVER.") || l.definition.name.starts_with("REPLICATION."));
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../doc/appendix/c-settings.md");
     let page = std::fs::read_to_string(path).unwrap();
     for (heading, section) in

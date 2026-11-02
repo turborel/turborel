@@ -34,7 +34,7 @@ use turborel::db::Standby;
 use turborel::error::{Code, Result, SqlError};
 
 pub use self::job::{DriverJob, JOB_LABEL};
-pub use self::log::{GroupLog, GroupLogs};
+pub use self::log::{GroupLog, GroupLogs, Joined, Make};
 pub use self::seams::{Blocking, Inbox, Ticker, Ticks, Unwatched, Wait, Watch};
 use crate::{Consensus, Input, Journal, Lsn, Output, Role, Transport};
 

@@ -790,6 +790,7 @@ dependencies = [
  "turborel",
  "turborel-client",
  "turborel-protocol",
+ "turborel-replication",
  "turborel-test-support",
 ]
 

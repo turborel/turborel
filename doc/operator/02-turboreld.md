@@ -15,7 +15,7 @@ turboreld --dir PATH [--keys DIR] rekey
 |---|---|
 | `--dir PATH` | serve the database kept in the directory PATH, made if there is none |
 | `--memory` | serve a database kept nowhere, lost when the server stops |
-| `--owner NAME` | with `--memory`: make NAME the database's first user and owner as the server starts, its password typed or read from standard input ([Users](05-users.md#the-owner-of-a-database-kept-nowhere)) |
+| `--owner NAME` | with `--memory`, or a replicated database made as its group starts ([Replication](09-replication.md)): make NAME the database's first user and owner, its password typed or read from standard input ([Users](05-users.md#the-owner-of-a-database-kept-nowhere)) |
 | `--set NAME=VALUE` | set the database's setting NAME as the server starts, kept with the database; more than once for more |
 | `--config FILE` | set the database's settings FILE gives, as `--set` does; a setting `--set` gives too is set as `--set` gives it ([Configuration files](#configuration-files)) |
 | `--log FILE` | append the diagnostics, a line of JSON each, to FILE; standard error by default |

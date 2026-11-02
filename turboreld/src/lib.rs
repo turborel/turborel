@@ -27,8 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 
-use turborel::db::{Database, OpenOptions};
-use turborel::disk::io::{FileSystem, OsFileSystem};
+use turborel::db::Database;
 use turborel::files::Noted;
 use turborel::settings::Effect;
 use turborel::value::{Decimal, Value};
@@ -42,6 +41,7 @@ use turborel_server::listening;
 use turborel_server::log::{Lines, Reopener};
 use turborel_server::native::Native;
 use turborel_server::password::{Password, Pbkdf2};
+use turborel_server::replication;
 use turborel_server::scram::Scram;
 use turborel_server::server::{Protocol, Server};
 use turborel_server::settings::{self, TRUST_LOCAL};
@@ -55,8 +55,9 @@ pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
 
   --dir PATH             serve the database kept in PATH, created if there is none
   --memory               serve a database kept nowhere, lost when the server stops
-  --owner NAME           with --memory: make NAME its first user and owner as the
-                         server starts, the password typed or read from standard input
+  --owner NAME           with --memory, or a replicated database made as the group
+                         starts: make NAME its first user and owner, the password
+                         typed or read from standard input
   --set NAME=VALUE       set the database's setting NAME as the server starts, kept
                          with the database; more than once for more
   --config FILE          set the database's settings FILE gives, in a subset of TOML, as
@@ -247,9 +248,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         }
     }
     let store = store.ok_or_else(|| format!("name --dir or --memory\n\n{USAGE}"))?;
-    if owner.is_some() && (store != Store::Memory || user.is_some() || reseal.is_some() || rekey) {
+    if owner.is_some() && (user.is_some() || reseal.is_some() || rekey) {
         return Err(
-            "--owner makes the owner of a database kept nowhere, served with --memory: in a directory, user add NAME --owner".into()
+            "--owner makes the owner of a database served, kept nowhere or replicated: in a directory, user add NAME --owner".into()
         );
     }
     let config = Config { store, settings, file, log, keys, owner, checksum_key };
@@ -356,9 +357,16 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
     }
     db.set_diagnostics(Box::new(sink)).map_err(|e| e.to_string())?;
     register(&db, config)?;
+    // The server's settings declared before any is given: a replica's are
+    // read before the database is opened (RULES.md D57).
+    settings::declare(&db).map_err(|e| e.to_string())?;
     let given = config_file::given(&db, config, entries)?;
-    // Those read as the database is created or opened are set before it is.
+    // Those read as the database is created or opened are set before it is;
+    // so are the files a replica presents (RULES.md D57), set again after
+    // with the others of their kind, over any value recorded.
     let (early, late): (Vec<_>, Vec<_>) = given.iter().partition(|g| read_as_opened(&db, &g.name));
+    let presented: Vec<&config_file::Given> =
+        given.iter().filter(|g| replication::read_before_open(&g.name) && !read_as_opened(&db, &g.name)).collect();
     let set = |g: &&config_file::Given| g.set(&db);
     // A database kept in memory is created in no directory (RULES.md D36).
     let fixed = early.iter().find(|g| effect_of(&db, &g.name) == Some(Effect::Creation)).filter(|_| config.store == Store::Memory);
@@ -369,23 +377,23 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
         ));
     }
     early.iter().try_for_each(set)?;
-    if let Store::Dir(dir) = &config.store {
-        let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
-        db.open_files(&fs, dir, &OpenOptions::default()).map_err(|e| format!("cannot open {}: {e}", dir.display()))?;
+    if replication::replicated(&db) {
+        presented.iter().try_for_each(set)?;
     }
+    let node = match &config.store {
+        Store::Dir(dir) => opened(&db, dir, hearing.map(|(runtime, _)| runtime))?,
+        Store::Memory => None,
+    };
     let outcome = Server::new(db.clone()).map_err(|e| e.to_string()).and_then(|server| {
-        // The server's own, declared by `Server::new`, are set once it is
-        // made; its verifiers are told SERVER.PASSWORD_ITERATIONS as given
-        // here, as every plug-in is told its settings (RULES.md D36).
-        late.iter().try_for_each(set)?;
-        config.owner.as_ref().map_or(Ok(()), |owner| users::make_owner(&db, owner))?;
+        settled(config, &db, (node.as_ref(), hearing.map(|(runtime, _)| runtime)), &late)?;
         work(server)
     });
+    let stopped = node.as_ref().map_or(Ok(()), |node| node.stop(&db).map_err(|e| format!("cannot stop the replica: {e}")));
     let closed = match &config.store {
         Store::Dir(dir) => db.close().map_err(|e| format!("cannot close {}: {e}", dir.display())),
         Store::Memory => Ok(()),
     };
-    outcome.and(closed)
+    outcome.and(stopped).and(closed)
 }
 
 /// Registers with `db` the plug-ins the program ships (RULES.md D26, D48):
@@ -553,10 +561,12 @@ pub async fn signalled() {
 }
 
 pub mod config_file;
+mod opening;
 mod rekey;
 mod reseal;
 mod users;
 
+use opening::{opened, settled};
 pub use rekey::run_rekey;
 pub use reseal::{parse_reseal, run_reseal};
 pub use users::{Owner, UserCommand, parse_user, read_owner_password, run_user};

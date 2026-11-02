@@ -61,17 +61,18 @@ fn a_configuration_file_is_named_once() {
     assert!(wrong("--memory --config").contains("--config needs a value"));
 }
 
-/// Verifies: [DESIGN] RULES.md D43: `--owner NAME` names the owner of a
-/// database kept nowhere, its password not read yet; refused, saying why,
-/// for a database kept in a directory, with a user command, or without
-/// its name.
+/// Verifies: [DESIGN] RULES.md D43, D57: `--owner NAME` names the owner of
+/// a database served, kept nowhere or, replicated, in a directory, its
+/// password not read yet; refused, saying why, with a command on the
+/// directory, or without its name.
 #[test]
-fn an_owner_is_named_for_a_database_kept_nowhere() {
+fn an_owner_is_named_for_a_database_served() {
     let named = config("--memory --owner ann");
     assert_eq!(named.owner, Some(Owner { name: "ann".into(), password: None }));
+    assert_eq!(config("--dir /db --owner ann").owner, Some(Owner { name: "ann".into(), password: None }));
     assert_eq!(config("--memory").owner, None);
     let wrong = |line: &str| parse(&args(line)).unwrap_err();
-    for line in ["--dir /db --owner ann", "--memory --owner ann user list"] {
+    for line in ["--dir /db --owner ann user list", "--dir /db --owner ann rekey", "--memory --owner ann user list"] {
         assert!(wrong(line).contains("user add NAME --owner"), "{line}");
     }
     assert!(wrong("--memory --owner").contains("--owner needs a value"));

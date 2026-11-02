@@ -48,6 +48,18 @@ impl State {
     }
 
     pub(super) fn define_setting(&mut self, name: &str, value: Option<&Value>) -> Result<()> {
+        self.define_as(name, value, true)
+    }
+
+    /// \[DESIGN\] As `define_setting`, the value not logged: of a database
+    /// opened to follow, the settings given before it opened, which its
+    /// replica keeps, its log the group's (RULES.md D57).
+    pub(super) fn define_unlogged(&mut self, name: &str, value: Option<&Value>) -> Result<()> {
+        self.define_as(name, value, false)
+    }
+
+    /// `define_setting`'s work, the value logged if `logged`.
+    fn define_as(&mut self, name: &str, value: Option<&Value>, logged: bool) -> Result<()> {
         let key = self.settings.known(name)?;
         let definition = self.settings.definition(key).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a setting lost its definition"))?;
         let (canonical, definition_is_node) = (definition.name.clone(), definition.node);
@@ -93,7 +105,7 @@ impl State {
         }
         self.settings.set(&canonical, value.as_ref())?;
         // A node's value is the node's alone: never logged (RULES.md D57).
-        if definition_is_node {
+        if definition_is_node || !logged {
             return Ok(());
         }
         self.log_definition(None, Change::Setting { name: canonical, value })

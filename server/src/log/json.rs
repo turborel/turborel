@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use turborel::db::Opened;
-use turborel::diagnostics::{Event, Level, Overdue};
+use turborel::diagnostics::{Event, Level, Overdue, ReplicaChange};
 use turborel::error::SqlError;
 use turborel::threads::ThreadChange;
 
@@ -78,6 +78,7 @@ fn fields(json: &mut Json, event: &Event) {
         Event::FormatsSettled { encodings, checksum_key } => {
             json.texts(&[("event", "formats_settled"), ("encodings", encodings), ("checksum_key", checksum_key)]);
         }
+        Event::Replica { change } => replica(json, change),
         Event::Listening { addresses } => listening(json, addresses),
         Event::Stopping { connections } => counts(json, "stopping", &[("connections", *connections)]),
         Event::StopHurried { sessions } => counts(json, "stop_hurried", &[("sessions", *sessions)]),
@@ -141,6 +142,39 @@ fn thread(json: &mut Json, label: &str, change: &ThreadChange) {
             json.raw("sqlcode", &e.sqlcode().to_string());
             json.text("message", &e.to_string());
         }
+    }
+}
+
+/// A replica's event (RULES.md D57): what changed, written to `json`.
+fn replica(json: &mut Json, change: &ReplicaChange) {
+    json.text("event", "replica");
+    match change {
+        ReplicaChange::ViewChanged { view, primary } => {
+            json.text("change", "view_changed");
+            json.number("view", *view);
+            json.number("primary", u64::from(*primary));
+        }
+        ReplicaChange::Serving { view } => {
+            json.text("change", "serving");
+            json.number("view", *view);
+        }
+        ReplicaChange::Stopped => json.text("change", "stopped"),
+        ReplicaChange::FrameRefused { from, why } => {
+            json.text("change", "frame_refused");
+            json.number("from", u64::from(*from));
+            json.text("why", why);
+        }
+        ReplicaChange::AppendRefused => json.text("change", "append_refused"),
+        ReplicaChange::Connected { member } => {
+            json.text("change", "connected");
+            json.number("member", u64::from(*member));
+        }
+        ReplicaChange::Disconnected { member, why } => {
+            json.text("change", "disconnected");
+            json.number("member", u64::from(*member));
+            json.text("why", why);
+        }
+        ReplicaChange::ConnectionRefused { peer, why } => json.texts(&[("change", "connection_refused"), ("peer", peer), ("why", why)]),
     }
 }
 
@@ -376,6 +410,41 @@ mod tests {
             "{failed}"
         );
         assert!(failed.ends_with(r#"the disk is full\t"}"#), "{failed}");
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D40, D57: a replica's events are
+    /// lines of JSON, each naming what changed and its fields: the view
+    /// and its primary, the view served, the member of a link, the sender
+    /// and reason of a frame refused.
+    #[test]
+    fn a_replicas_events_are_lines_of_json() {
+        let shown = |change: ReplicaChange| line(at(0, 0), &Event::Replica { change });
+        let head = r#"{"time":"1970-01-01T00:00:00.000Z","#;
+        let cases = [
+            (
+                ReplicaChange::ViewChanged { view: 3, primary: 2 },
+                r#""level":"info","event":"replica","change":"view_changed","view":3,"primary":2}"#,
+            ),
+            (ReplicaChange::Serving { view: 3 }, r#""level":"info","event":"replica","change":"serving","view":3}"#),
+            (ReplicaChange::Stopped, r#""level":"info","event":"replica","change":"stopped"}"#),
+            (
+                ReplicaChange::FrameRefused { from: 9, why: "no member".into() },
+                r#""level":"warning","event":"replica","change":"frame_refused","from":9,"why":"no member"}"#,
+            ),
+            (ReplicaChange::AppendRefused, r#""level":"warning","event":"replica","change":"append_refused"}"#),
+            (ReplicaChange::Connected { member: 2 }, r#""level":"info","event":"replica","change":"connected","member":2}"#),
+            (
+                ReplicaChange::Disconnected { member: 2, why: "refused".into() },
+                r#""level":"warning","event":"replica","change":"disconnected","member":2,"why":"refused"}"#,
+            ),
+            (
+                ReplicaChange::ConnectionRefused { peer: "10.0.0.9:4000".into(), why: "no hello".into() },
+                r#""level":"warning","event":"replica","change":"connection_refused","peer":"10.0.0.9:4000","why":"no hello"}"#,
+            ),
+        ];
+        for (change, rest) in cases {
+            assert_eq!(shown(change), format!("{head}{rest}"));
+        }
     }
 
     /// Verifies: [DESIGN] RULES.md D40, D48: the files settled in their

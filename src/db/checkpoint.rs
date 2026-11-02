@@ -179,6 +179,9 @@ impl Database {
     /// database not closed is recovered from its last checkpoint when
     /// opened.
     ///
+    /// A replica's database, following, takes a following checkpoint
+    /// instead, logging nothing; deposed, none (RULES.md D57, `close_held`).
+    ///
     /// # Errors
     ///
     /// SQLCODE -910 if it was not opened from files, or a transaction is
@@ -209,6 +212,9 @@ impl Database {
         let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files is closed"))?;
         let _turn = files.checkpointer.taking.take("a checkpoint")?;
         let current = self.snapshot()?;
+        if matches!(current.tx.held(), Some(crate::txn::Held::Following | crate::txn::Held::Deposed)) {
+            return self.close_held(&files, &current);
+        }
         // Shut before the turn: a definition holds the gate while it waits
         // for the turn.
         let _shut = current.tx.gate.shut();
@@ -236,6 +242,30 @@ impl Database {
         self.mark_closed();
         self.close_every_file(&current);
         // Another may open it now.
+        lock(&files.held)?.take();
+        Ok(())
+    }
+
+    /// \[DESIGN\] A replica's database closed (RULES.md D57), its changes
+    /// held, so it logs no checkpoint record of a clean close. Following,
+    /// every record it holds is committed: a following checkpoint is taken,
+    /// which logs nothing, unless it replayed nothing since it was opened
+    /// from its last. Deposed, it holds records it wrote as primary that
+    /// the group may not have committed: no checkpoint is taken, and its
+    /// last stands. Then its files are closed. Opened again, it recovers
+    /// from its last checkpoint alone, and follows.
+    fn close_held(&self, files: &DatabaseFiles, current: &State) -> Result<()> {
+        let _shut = current.tx.gate.shut();
+        if current.tx.active() > 0 {
+            return Err(api("[DESIGN] a database is closed with no transaction open"));
+        }
+        let following = *lock_builtin(&current.tx.following);
+        let replayed_since = Lsn(following.replayed.0.saturating_add(1)) >= following.image;
+        if current.tx.held() == Some(crate::txn::Held::Following) && replayed_since {
+            self.take_following_checkpoint(files)?;
+        }
+        self.mark_closed();
+        self.close_every_file(current);
         lock(&files.held)?.take();
         Ok(())
     }

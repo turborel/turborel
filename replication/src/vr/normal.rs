@@ -289,10 +289,14 @@ impl Vr {
     /// has a recovering replica's application state tell the log prefix
     /// "captured on disk", "so that we obtain all the requests after that
     /// point, and so that we avoid rerunning operations that ran before the
-    /// node failed"; its journal intact, it tells only itself.
+    /// node failed"; its journal intact, it tells only itself. The view it
+    /// is in is reported, for the operator, who learns of a view entered
+    /// by a change as it happens and of the first, or the one a restart
+    /// resumes, here.
     pub(super) fn opened(&mut self, at: u64, out: &mut Vec<Output>) {
         self.delivered = at;
         self.applied = at;
+        out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.primary_of(self.view) }));
         self.deliver(out);
     }
 }

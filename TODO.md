@@ -31,23 +31,20 @@ authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
 on its own machine. Each item becomes a decision in RULES.md when its
 design settles.
 
-- **Replication between nodes** (D57): the driver's events to its database's
-  diagnostics (D40; its watch tells nothing now), and its job asked for as
-  frames arrive, which the transport does; a following database's crash in
-  the simulator losing the writes its files had not synced (their file
-  systems keep them now); reads on backups (a following checkpoint is
-  refused while a reader holds versions); state transfer (`Standby`'s export
+- **Replication between nodes** (D57): state transfer (`Standby`'s export
   and import, whole files, the first `StateTransfer`, and its contract
   tests), log retention (the replicated log and its journal keep every
   record), VR's RECOVERY protocol for a journal lost, and DOVIEWCHANGE and
   STARTVIEW carrying a suffix of the log (VRR §5.3) rather than all of it,
-  as they do today; the transport (mTLS, settings, events,
-  INFORMATION_SCHEMA.REPLICAS, commands); reconfiguration. Also `cargo xtask
-  simulate --seeds N`, for sweeps longer than `verify` runs, and mutations
-  of VR for `cargo xtask mutate`, which mutates the core's package only. A
-  replicated log's journal keeps the durability of its `FileLogOptions`, not
-  LOG.DURABILITY (D25): changing it while a replica runs bears on VR's
-  safety and needs a decision.
+  as they do today; a following database's crash in the simulator losing
+  the writes its files had not synced (their file systems keep them now);
+  reads on backups (a following checkpoint is refused while a reader holds
+  versions); `cargo xtask simulate --seeds N`, for sweeps longer than
+  `verify` runs, and mutations of VR for `cargo xtask mutate`, which
+  mutates the core's package only; a replicated log's journal keeps the
+  durability of its `FileLogOptions`, not LOG.DURABILITY (D25): changing
+  it while a replica runs bears on VR's safety and needs a decision;
+  reconfiguration (VRR §7), last.
 
 ---
 

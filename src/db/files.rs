@@ -362,7 +362,7 @@ impl Database {
         catalog.record(&Image { clean: false, ..image }.encode(), self.snapshot()?.compact_after())?;
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
-        self.opened(&started)?;
+        self.opened(&started, mode)?;
         self.follow_if(mode, (image.through, image.start))?;
         Ok(opened)
     }
@@ -412,16 +412,20 @@ impl Database {
 
     /// Once it is opened: its settings fixed at creation fixed, those given
     /// before it opened, of those it reads as it does, set again over the
-    /// ones its definitions held, STORAGE.POOL_BYTES marked as started, and
-    /// its budget as its settings say. Its checkpoints are taken as they
-    /// come due (`db/background.rs`).
-    fn opened(&self, given: &[(String, Value)]) -> Result<()> {
+    /// ones its definitions held (not logged if it is opened to follow:
+    /// its log is the group's, RULES.md D57), STORAGE.POOL_BYTES marked as
+    /// started, and its budget as its settings say. Its checkpoints are
+    /// taken as they come due (`db/background.rs`).
+    fn opened(&self, given: &[(String, Value)], mode: Mode) -> Result<()> {
         self.change(|st| {
             st.created = true;
             Ok(())
         })?;
         for (name, value) in given {
-            self.set_setting(name, value)?;
+            match mode {
+                Mode::Serve => self.set_setting(name, value)?,
+                Mode::Follow => self.change(|st| st.define_unlogged(name, Some(value)))?,
+            }
         }
         // Its pool made of it: a change from now on waits for it to open
         // again.
@@ -485,7 +489,7 @@ impl Database {
         let first = mode.end(&*log);
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
-        self.opened(given)?;
+        self.opened(given, mode)?;
         self.follow_if(mode, (first, first))?;
         Ok(Opened::Created)
     }

@@ -132,6 +132,13 @@ impl Database {
         self.background().jobs.request_after(job.0, self, self.job_policy(), after);
     }
 
+    /// \[DESIGN\] What asks for the plug-in's job `job` from a thread of
+    /// the plug-in's own, holding the database weakly (RULES.md D55, D57):
+    /// as `request_job` at once, and nothing once the database is gone.
+    pub fn job_asker(&self, job: JobHandle) -> JobAsker {
+        JobAsker::new(self.downgrade(), job)
+    }
+
     /// \[DESIGN\] Sets JOBS.POLICY to `policy`, as `set_setting` does:
     /// taken at once, threads started or stopped as it says.
     ///

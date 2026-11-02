@@ -1352,6 +1352,37 @@ opaque bytes.**
   - told where its database holds the log as it is opened
     (`Input::Opened`), it delivers only what follows, the position its
     own: no RECOVERY message, its journal intact.
+- **The node.** The server's part (`server/src/replication.rs`):
+  - settings of the node's own, never logged: REPLICATION.REPLICA (its
+    number; 0, not replicated), REPLICATION.MEMBERS (each member's
+    number and host:port), REPLICATION.LISTEN, REPLICATION.CA,
+    REPLICATION.TLS, REPLICATION.TICK_MS; read before the database is
+    opened (`prepare`), which gives it the group's log storage
+    (`GroupLogs::in_files`: the journal a file log in `log/`, the
+    driver made from it as the database opens); opened to follow
+    (`Database::open_following`), the driver is joined to it and runs
+    as its job `turborel-replica`, the transport serves, REPLICAS is
+    registered (`Prepared::start`); a replicated database's settings
+    given before it opens are set unlogged;
+  - the transport (`replication/net.rs`): TCP, a connection from each
+    member to each other member, made again a few ticks after a
+    failure, beginning with a hello naming the sender, then frames,
+    each its length and bytes; mutual TLS, each node presenting
+    SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY, taking only a peer whose
+    certificate REPLICATION.CA's authorities verify, and verifying the
+    other's as the host REPLICATION.MEMBERS names; REPLICATION.TLS OFF
+    only on one machine; a frame that cannot be sent is dropped; a
+    frame arrived goes to the driver's inbox and asks for its job
+    (`Database::job_asker`);
+  - told as `Event::Replica` (`ReplicaChange`): the view entered and
+    its primary (reported too as the database opens), serving,
+    stopped, frames and appends refused, links up and down,
+    connections refused; shown in INFORMATION_SCHEMA.REPLICAS (member,
+    address, self, role, view number, link up, last heard), the owner's;
+  - `turboreld`: a replicated database is opened to follow, its node
+    started with the server and stopped before the database closes;
+    `--owner` makes the owner once the node serves; the commands on a
+    directory (`user`, `reseal`, `rekey`) refuse a replicated database.
 - **Approved with it.**
   - a `Log` for commit beside a content-blind driver of the traits, and
     the core's `Standby` seam (replay, promote, depose, export, import);

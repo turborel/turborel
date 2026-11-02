@@ -14,10 +14,17 @@
 //! set its settings in SQL.
 
 use std::io::{BufRead, Write};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::runtime::Runtime;
 
 use turborel::db::Database;
+use turborel::diagnostics::Event;
+use turborel::error::{Code, SqlError};
 use turborel::lexer::authorization_identifier;
 use turborel_server::password::Pbkdf2;
+use turborel_server::replication::Replication;
 
 use crate::{Config, Store, within};
 
@@ -60,12 +67,55 @@ pub fn read_owner_password(config: &mut Config, input: &mut dyn BufRead) -> Resu
 /// What failed, for the operator: the password not read, the name not an
 /// authorization identifier, a verifier not made.
 pub(crate) fn make_owner(db: &Database, owner: &Owner) -> Result<(), String> {
-    let failed = |e: turborel::error::SqlError| e.to_string();
+    let failed = |e: SqlError| e.to_string();
     let typed = owner.password.as_deref().ok_or_else(|| "--owner: the owner's password is read before the server starts".to_owned())?;
     let name = user(&owner.name)?;
     let verifier = Pbkdf2::of(db).make(typed).map_err(failed)?;
     db.create_user(&name, verifier.as_bytes()).map_err(failed)?;
     db.set_owner(&name).map_err(failed)
+}
+
+/// \[EXTENSION\] Does `work` on the database once `node`, its replica,
+/// serves as primary (RULES.md D57), on `runtime`: looked for at each
+/// tick until it does, or the replica fails; a failure of the work is
+/// told as an event, named `what`. What a node starting cannot do
+/// itself, as it is logged and the group commits it: the settings given
+/// as it starts, and the owner `--owner` names.
+pub(crate) fn once_serving(
+    db: &Database,
+    node: &Replication,
+    runtime: &Runtime,
+    (what, work): (&'static str, impl FnOnce(&Database) -> Result<(), String> + Send + 'static),
+) {
+    let (db, driver) = (db.clone(), Arc::clone(node.driver()));
+    runtime.spawn(async move {
+        while driver.serving().is_none() && driver.failed().is_none() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if driver.serving().is_none() {
+            return;
+        }
+        let telling = db.clone();
+        let done = tokio::task::spawn_blocking(move || work(&db)).await;
+        if let Ok(Err(why)) = done {
+            telling.tell(&Event::Failed(SqlError::new(Code::Api, format!("[EXTENSION] RULES.md D57: {what}: {why}"))));
+        }
+    });
+}
+
+/// \[EXTENSION\] Makes `owner` the database's first user and owner, unless
+/// it has one already, made on another node and replicated (RULES.md
+/// D57).
+///
+/// # Errors
+///
+/// As `make_owner`'s.
+pub(crate) fn make_owner_unless_owned(db: &Database, owner: &Owner) -> Result<(), String> {
+    match db.owner() {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => make_owner(db, owner),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// What a user command does.
@@ -137,7 +187,7 @@ fn user(name: &str) -> Result<String, String> {
 /// Does `command` to `db`, a password read from `input`; what it did
 /// written to `out`.
 fn act(db: &Database, command: &UserCommand, (input, out): (&mut dyn BufRead, &mut dyn Write)) -> Result<(), String> {
-    let failed = |e: turborel::error::SqlError| e.to_string();
+    let failed = |e: SqlError| e.to_string();
     let said = match command {
         UserCommand::Add { name, owner } => {
             let name = user(name)?;
