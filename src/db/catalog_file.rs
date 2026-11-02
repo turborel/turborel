@@ -20,6 +20,7 @@
 
 use std::mem;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::formats::FileFormats;
@@ -99,9 +100,10 @@ struct CatalogFile {
     fs: Arc<dyn FileSystem>,
     dir: PathBuf,
     /// What its next file is checksummed with, and encoded through: as the
-    /// one before it was.
-    hash: Arc<dyn HashFunction>,
-    pipeline: Pipeline,
+    /// one before it was, or as `set_formats` said.
+    formats: Mutex<(Arc<dyn HashFunction>, Pipeline)>,
+    /// Whether the next record goes to a new file, as the formats changed.
+    switch: AtomicBool,
     /// The file it writes to; taken out while a record is written, so no
     /// lock is held over the file system's calls (RULES.md R-ERR-4).
     active: Mutex<Option<Active>>,
@@ -132,7 +134,8 @@ impl CatalogFile {
     fn create(fs: Arc<dyn FileSystem>, dir: PathBuf, (hash, pipeline): (Arc<dyn HashFunction>, Pipeline)) -> Result<CatalogFile> {
         let blocks = BlockFile::create(&*fs, &dir.join(name(0)), Arc::clone(&hash), pipeline.clone(), BlockOptions::default())?;
         let active = Active { blocks, which: 0, records: 0, broken: false };
-        Ok(CatalogFile { fs, dir, hash, pipeline, active: Mutex::new(Some(active)), last: Mutex::new(None) })
+        let formats = Mutex::new((hash, pipeline));
+        Ok(CatalogFile { fs, dir, formats, switch: AtomicBool::new(false), active: Mutex::new(Some(active)), last: Mutex::new(None) })
     }
 
     /// Opens the catalog in `dir`: of its two files, the one whose last
@@ -161,12 +164,21 @@ impl CatalogFile {
             drop(other.blocks);
             fs.remove(&dir.join(name(other.which)))?;
         }
-        let (hash, pipeline) = (Arc::clone(active.blocks.hash()), active.blocks.pipeline().clone());
-        Ok(CatalogFile { fs, dir, hash, pipeline, active: Mutex::new(Some(active)), last: Mutex::new(last) })
+        let own = Mutex::new((Arc::clone(active.blocks.hash()), active.blocks.pipeline().clone()));
+        Ok(CatalogFile { fs, dir, formats: own, switch: AtomicBool::new(false), active: Mutex::new(Some(active)), last: Mutex::new(last) })
     }
 }
 
 impl CatalogStore for CatalogFile {
+    /// The next record goes to a new file in them.
+    fn set_formats(&self, hash: Arc<dyn HashFunction>, pipeline: Pipeline) {
+        let mut formats = lock_builtin(&self.formats);
+        if formats.0.key_name() != hash.key_name() || formats.1.ids() != pipeline.ids() {
+            self.switch.store(true, Ordering::Release);
+        }
+        *formats = (hash, pipeline);
+    }
+
     fn last(&self) -> Option<Vec<u8>> {
         lock_builtin(&self.last).as_ref().map(|(_, record)| record.clone())
     }
@@ -200,7 +212,7 @@ impl CatalogFile {
     /// holds `compact_after` records or an append to it failed, alone to
     /// the other file, made anew, which `active` then is.
     fn write(&self, active: &mut Active, bytes: &[u8], compact_after: usize) -> Result<()> {
-        if active.records < compact_after && !active.broken {
+        if active.records < compact_after && !active.broken && !self.switch.swap(false, Ordering::AcqRel) {
             let appended = active.blocks.append(bytes).and_then(|_| active.blocks.sync(Durability::Full));
             if let Err(e) = appended {
                 active.broken = true;
@@ -213,7 +225,8 @@ impl CatalogFile {
             if self.fs.exists(&path)? {
                 self.fs.remove(&path)?;
             }
-            let blocks = BlockFile::create(&*self.fs, &path, Arc::clone(&self.hash), self.pipeline.clone(), BlockOptions::default())?;
+            let (hash, pipeline) = lock_builtin(&self.formats).clone();
+            let blocks = BlockFile::create(&*self.fs, &path, hash, pipeline, BlockOptions::default())?;
             blocks.append(bytes)?;
             blocks.sync(Durability::Full)?;
             self.fs.sync_dir(&self.dir)?;

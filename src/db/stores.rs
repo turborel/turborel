@@ -38,9 +38,11 @@ use super::Database;
 use super::catalog_file::CatalogFiles;
 use super::formats::FileFormats;
 use crate::diagnostics::{Diagnostics, Event, Extension};
+use crate::disk::encoding::Pipeline;
 use crate::disk::io::FileSystem;
 use crate::error::Result;
 use crate::error::{Code, SqlError};
+use crate::hash::HashFunction;
 use crate::log::{FileLog, FileLogOptions, Log, Lsn};
 
 /// \[EXTENSION\] Where a database kept in a directory is, for a plug-in
@@ -217,6 +219,12 @@ pub trait CatalogStore: Send + Sync {
     fn record(&self, record: &[u8], compact_after: usize) -> Result<()>;
     /// The last record, if one was recorded.
     fn last(&self) -> Option<Vec<u8>>;
+    /// \[DESIGN\] Records from now on checksummed with `hash` and encoded
+    /// through `pipeline`, as STORAGE.CHECKSUM_KEY and STORAGE.ENCODINGS
+    /// say (RULES.md D48): the built-in store writes its next record to a
+    /// new file so. What it recorded before is read as it was. Default:
+    /// nothing changes, a store that keeps no file.
+    fn set_formats(&self, _hash: Arc<dyn HashFunction>, _pipeline: Pipeline) {}
 }
 
 /// Where a database keeps its catalog and its log, once it is kept in a

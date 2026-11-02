@@ -87,7 +87,10 @@ What came after SQL-92 follows it, written from the standards' own text
 ## Storage and durability
 
 - **A database's files written again under another key** (D48):
-  STORAGE.ENCODINGS, STORAGE.CHECKSUM and its HMAC key are fixed at
-  creation, a file recording the function's id alone; so a key of either
-  cannot be retired, and changing one means encrypting or checksumming
-  every file again.
+  STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY change at once, every file
+  writing in the new formats from then on and reading what it wrote
+  before as it was; what is missing is the sweep that writes the data
+  file's pages still under old formats again, paced, on the thread
+  manager (`turborel-rekey`), resumable across opens, and the word
+  (a diagnostics event, and INFORMATION_SCHEMA) that none is left, so
+  the old key may be retired; `turboreld rekey` as a convenience.

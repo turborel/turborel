@@ -12,10 +12,10 @@ $ mkdir keys && openssl rand -hex 32 > keys/MASTER
 $ turboreld --dir db --keys keys --set STORAGE.ENCODINGS=LZ4,AES-256-GCM:MASTER
 ```
 
-STORAGE.ENCODINGS, set as a database is made, passes every file through
-its encodings in order: here LZ4 compression, then AES-256-GCM
-encryption by the key MASTER. The database's data, log and catalog hold
-no plaintext. A database encrypted is opened only with its keys:
+STORAGE.ENCODINGS passes every file through its encodings in order:
+here LZ4 compression, then AES-256-GCM encryption by the key MASTER.
+Set as the database is made, as here, its data, log and catalog hold no
+plaintext. A database encrypted is opened only with its keys:
 
 ```
 turboreld: cannot open db: SQLCODE -910 (SQLSTATE TB910): the keyring (none: give turboreld --keys DIR) has no key MASTER
@@ -91,8 +91,23 @@ and makes its indexes anew ([ALTER TABLE](../sql/statements/alter-table.md));
 Committed, the rows need the old key no more once a checkpoint follows
 (CHECKPOINT.AFTER_CHANGES, CHECKPOINT.AFTER_BYTES, or the database
 closed). Once each table that named the old key is sealed again, and
-checkpointed, its file may leave the key directory. A key STORAGE.ENCODINGS names
-encrypts every file, and is kept for the database's life.
+checkpointed, its file may leave the key directory.
+
+## The files' key
+
+STORAGE.ENCODINGS is changed on a running server, by the database's
+owner, or as it starts:
+
+```sql
+SET DATABASE STORAGE.ENCODINGS = 'LZ4,AES-256-GCM:SPARE';
+```
+
+From then on the log writes a new segment, the catalog a new file, and
+the data file each page it writes again, through the new encodings;
+what was written before is read through its own, every file naming
+them, so the old key stays in the key directory meanwhile. The database
+writes the pages still under the old encodings again in its own time,
+and says when none is left; until then the old key is needed.
 
 ## Checksums
 
@@ -112,9 +127,19 @@ $ turboreld --dir db --keys keys --checksum-key MASTER --set STORAGE.CHECKSUM=HM
 ```
 
 A database checksummed with HMAC-SHA-256 is opened only with
-`--checksum-key` naming the same key. Without one, it is refused, its
-hash function not given (SQLCODE -910, `checksummed with hash function
-12 (HMAC-SHA-256), which is not given`); with another key, its files fail their
-checksums, and it is refused as damaged (SQLCODE -916). An encryption
-authenticates what it encrypts already: the checksum matters most to
-files not encrypted.
+`--checksum-key` naming a key of the key directory. Without one, it is
+refused, its hash function not given (SQLCODE -910, `checksummed with
+hash function 12 (HMAC-SHA-256), which is not given`). Each file names
+the key its checksums were made with, which the key directory must
+hold: a key missing from it refuses the file (SQLCODE -910), and one
+whose bytes changed fails the checksums, so the database is refused as
+damaged (SQLCODE -916). The key checksums are made with from now on is
+changed as the encodings are:
+
+```sql
+SET DATABASE STORAGE.CHECKSUM_KEY = 'SPARE';
+```
+
+and the old key is needed until every page checksummed with it is
+written again. An encryption authenticates what it encrypts already:
+the checksum matters most to files not encrypted.

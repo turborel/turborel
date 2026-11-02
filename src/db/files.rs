@@ -46,7 +46,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::checkpoint::Checkpointer;
 use super::formats::{FileFormats, FileLayout};
@@ -58,7 +58,7 @@ use super::stores::{CatalogStore, OpenedLog, StorePlace};
 use super::{Database, RecoveryReport, State, api};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::diagnostics::{Diagnostics, Event};
-use crate::disk::buffer::BufferPool;
+use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::{Durability, FileLock, FileSystem, OsFileSystem};
 use crate::disk::pager::Pager;
@@ -162,6 +162,8 @@ pub enum Opened {
 /// What a database opened from a directory keeps to checkpoint and close.
 pub(super) struct DatabaseFiles {
     pub(super) catalog: Box<dyn CatalogStore>,
+    /// The buffer pool of the data file, and the file in it.
+    pub(super) data: Option<(Arc<BufferPool>, FileId)>,
     /// The shadowing file system the tables file is in.
     pub(super) shadows: Arc<ShadowFileSystem>,
     /// The thread taking checkpoints that come due.
@@ -199,6 +201,8 @@ struct Place<'a> {
     dir: &'a Path,
     layout: FileLayout,
     shadows: Arc<ShadowFileSystem>,
+    /// The buffer pool of the data file, and the file in it, once attached.
+    data: OnceLock<(Arc<BufferPool>, FileId)>,
     options: &'a OpenOptions,
     /// The lock of its directory, held while it is open.
     held: Arc<FileLock>,
@@ -212,7 +216,7 @@ impl<'a> Place<'a> {
     fn new(fs: &'a Arc<dyn FileSystem>, dir: &'a Path, layout: FileLayout, opened: Opening<'a>) -> Place<'a> {
         let shadows = Arc::new(ShadowFileSystem::new(Arc::clone(fs), Arc::clone(&layout.formats.hash)));
         let (options, held, events) = opened;
-        Place { fs, dir, layout, shadows, options, held, events }
+        Place { fs, dir, layout, shadows, data: OnceLock::new(), options, held, events }
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -240,7 +244,26 @@ impl<'a> Place<'a> {
     fn files(&self, catalog: Box<dyn CatalogStore>) -> DatabaseFiles {
         let held = Mutex::new(Some(Arc::clone(&self.held)));
         let dir = (Arc::clone(self.fs), self.dir.to_path_buf());
-        DatabaseFiles { catalog, shadows: Arc::clone(&self.shadows), checkpointer: Checkpointer::default(), held, dir }
+        let data = self.data.get().cloned();
+        DatabaseFiles { catalog, data, shadows: Arc::clone(&self.shadows), checkpointer: Checkpointer::default(), held, dir }
+    }
+}
+
+impl DatabaseFiles {
+    /// Gives its files the formats to write in from now on (RULES.md D48):
+    /// the data file's pages, the catalog's next file and the shadows' next
+    /// side files; a checksum's key only of a keyed function.
+    ///
+    /// # Errors
+    ///
+    /// The data file's (SQLCODE -910 if the key is not its function's).
+    pub(super) fn set_formats(&self, formats: &FileFormats) -> Result<()> {
+        if let Some((pool, file)) = &self.data {
+            pool.set_formats(*file, formats.pipeline.clone(), Arc::clone(&formats.hash))?;
+        }
+        self.catalog.set_formats(Arc::clone(&formats.hash), formats.pipeline.clone());
+        self.shadows.set_hash(Arc::clone(&formats.hash));
+        Ok(())
     }
 }
 
@@ -501,6 +524,7 @@ impl Database {
             Arc::new(BufferPool::in_budget(&st.memory, (place.layout.pool_bytes, pager.page_size()), "the buffer pool of the data file")?);
         st.ahead.serve(&pool);
         let file = pool.add_pager(Arc::new(pager));
+        let _ = place.data.set((Arc::clone(&pool), file));
         let undo = UndoStore::batched(undo_log(place)?, place.options.undo_batch);
         let files = TableFiles::over(Arc::clone(&pool), file, undo).shadowed(Arc::clone(&place.shadows));
         // The column store's tables in the row store's files, which its

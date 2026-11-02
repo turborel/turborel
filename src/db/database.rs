@@ -185,7 +185,8 @@ impl Database {
     /// Keeps `files` as those it was opened from.
     pub(super) fn attach_files(&self, files: DatabaseFiles) -> Result<()> {
         *lock(&self.0.files)? = Some(Arc::new(files));
-        Ok(())
+        // Written in the formats its settings say, restored or given.
+        self.tell_formats()
     }
 
     /// Its background work.

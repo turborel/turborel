@@ -17,14 +17,16 @@ pub mod record;
 pub mod sealed;
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub use file::{
     DEFAULT_DURABILITY, DEFAULT_SEGMENT_SIZE, FileLog, FileLogOptions, LogCounts, LogRecovery, MAX_SEGMENT_SIZE, MIN_SEGMENT_SIZE,
 };
 
+use crate::disk::encoding::Pipeline;
 use crate::disk::io::Durability;
 use crate::error::{Code, Result, SqlError};
+use crate::hash::HashFunction;
 use crate::sync::lock_builtin;
 
 /// \[DESIGN\] The name of a log that gives none of its own (`Log::name`):
@@ -89,6 +91,13 @@ pub trait Log: Send + Sync {
     /// it then promises, `capabilities` tells. Default: nothing changes, a
     /// log that keeps one durability keeping it.
     fn set_durability(&self, _durability: Durability) {}
+    /// \[DESIGN\] Writes what it keeps in files from now on checksummed with
+    /// `hash` and encoded through `pipeline`, as STORAGE.CHECKSUM_KEY and
+    /// STORAGE.ENCODINGS say, told as the database is given the log and
+    /// after each change (RULES.md D48): a file log begins a segment so at
+    /// its next append. What it wrote before is read as it was. Default:
+    /// nothing changes, a log that keeps none.
+    fn set_formats(&self, _hash: Arc<dyn HashFunction>, _pipeline: Pipeline) {}
     /// Appends `record`; its position.
     ///
     /// # Errors

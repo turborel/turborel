@@ -605,8 +605,9 @@ log allows replicated or remote ones.
   meta slots and page trailers each their own (D48), so each is verified
   with the key it names, which the keyring must hold (`keyed_by`), else
   the file is refused (SQLCODE -910). `turboreld` keys it by
-  `--checksum-key`. None stops a block or page the database once wrote
-  being put back in place.
+  `--checksum-key`, and STORAGE.CHECKSUM_KEY names the key of digests
+  made from then on (D48). None stops a block or page the database once
+  wrote being put back in place.
 - **Digests.** At most 512 bits (`hash::MAX_DIGEST_BYTES`), with room in
   every format storing one: block file headers, pager file headers and
   meta slots. A block's trailer is the function's size; a page's holds
@@ -653,14 +654,33 @@ per table.**
   and no subkey nears that. Salt, nonce and key name are kept in what is
   encrypted; storage place and key name are authenticated, so data
   changed, moved or of another key is refused (SQLCODE -916).
-- **Rotation.** Name another key; older rows are read with their own
-  until `ALTER TABLE ... RESEAL` [EXTENSION], RESEAL a
+- **Rotation of a table's key.** Name another key; older rows are read
+  with their own until `ALTER TABLE ... RESEAL` [EXTENSION], RESEAL a
   `<non-reserved word>` (also `Session::reseal_table`,
   `turboreld ... reseal`), gives the table a new storage generation, as
   an engine change does, copying its rows through its current encodings
   by its transaction's own writes, logged as any ALTER TABLE. Once
   committed and checkpointed, nothing reads the old key, which may be
-  retired. A STORAGE.ENCODINGS key serves the database's life.
+  retired.
+- **Rotation of the files' key.** STORAGE.ENCODINGS and
+  STORAGE.CHECKSUM_KEY, the key a keyed checksum (D30) makes digests
+  with, change at once (D36): `Database::tell_formats` gives the files
+  the formats the settings say, as the database is opened and after
+  each change, and each writes in them from then on: the data file's
+  pages as each is written (`BufferPool::set_formats`, every page
+  naming its own encodings and key), the log's next segment, begun at
+  its next append (`Log::set_formats`), the catalog's next record, to a
+  new file (`CatalogStore::set_formats`), and the shadows' next side
+  files. What was written before is read as it was, the registered
+  encodings and the keyring serving every key named, so a key is
+  retired once nothing names it: a sweep of the database writes the
+  pages still under old formats again in its own time and says when
+  none is left; log segments go as checkpoints truncate them. The
+  checksum function itself (STORAGE.CHECKSUM) stays as the database was
+  made. Not covered: a plug-in's own files under `plugins/`, a
+  replica's journal. Given before a database opens, the two hold over
+  the recorded values (`settings::read_as_opened`), so `turboreld
+  --set` changes them as it starts.
 - **Per table,** the engine seals what it stores: data through a
   pipeline, headed by its ids (`Pipeline::seal`, `Encodings::unseal`),
   with the registry from `Host::encodings`. An engine that does not
@@ -2372,11 +2392,11 @@ same results and errors is the optimizer's to choose.
   - no built-in setting is one: making one so is a decision of its own.
 - **At creation.** Fixed when a database is created in its directory:
   page size, checksum (STORAGE.CHECKSUM, a registered hash function),
-  encodings (STORAGE.ENCODINGS), log segment size. Given before
-  creation, recorded in its first image, refused after; given again at
-  open, they must match. So a database opens with no options. Those read
-  at open (STORAGE.POOL_BYTES), given before it opens, hold from then
-  on.
+  log segment size. Given before creation, recorded in its first image,
+  refused after; given again at open, they must match. So a database
+  opens with no options. Those read at open (STORAGE.POOL_BYTES, and
+  the files' formats STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY, D48),
+  given before it opens, hold from then on.
 - **`OpenOptions`** keeps only what the files do not fix, for the host
   program to give: the log of older row versions. The log's durability
   is a setting, LOG.DURABILITY (D25), kept with the others.

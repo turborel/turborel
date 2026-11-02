@@ -3,11 +3,15 @@
 //! passes through, both pluggable, and the page and log segment sizes.
 //!
 //! A file names in its header the hash function and encodings it was
-//! written with, and is read with them: any registered. The formats new
-//! files are written in are the database's settings fixed at its creation
-//! (`settings::Effect::Creation`), given before it is created and recorded
-//! in its first image; so a database is opened with no options, and a
-//! file it adds is written as the others were.
+//! written with, and is read with them: any registered. The hash function,
+//! the page size and the log segment size are the database's settings
+//! fixed at its creation (`settings::Effect::Creation`), given before it is
+//! created and recorded in its first image; so a database is opened with
+//! no options. The encodings, STORAGE.ENCODINGS, and the key a keyed
+//! function makes checksums with, STORAGE.CHECKSUM_KEY, change at once
+//! (RULES.md D48): new files, and new pages of the data file, take them
+//! (`Database::tell_formats`), those written before being read as they
+//! were.
 
 use std::sync::Arc;
 
@@ -17,7 +21,7 @@ use crate::disk::encoding::{Encoding, Pipeline};
 use crate::disk::io::Durability;
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
-use crate::settings::{self, CHECKSUM, ENCODINGS, Effect, LOG_SEGMENT_BYTES, PAGE_BYTES, POOL_BYTES, Settings};
+use crate::settings::{self, CHECKSUM, CHECKSUM_KEY, ENCODINGS, Effect, LOG_SEGMENT_BYTES, PAGE_BYTES, POOL_BYTES, Settings};
 use crate::value::Value;
 
 /// \[EXTENSION\] How a database's files are written and read: new files
@@ -67,13 +71,7 @@ impl State {
     /// registered, or a size is out of range.
     pub(super) fn layout(&self, values: &Settings) -> Result<FileLayout> {
         let named = |key| if let Value::Char(s) = values.get(key) { s.clone() } else { String::new() };
-        let checksum = named(CHECKSUM);
-        let hash = self
-            .hashes
-            .iter()
-            .find(|h| h.name().eq_ignore_ascii_case(&checksum))
-            .cloned()
-            .ok_or_else(|| unregistered("hash function", &checksum))?;
+        let hash = self.checksum_hash(values)?;
         let pipeline = self.encodings.named(&named(ENCODINGS))?;
         let size = |key, what: &str| u64::try_from(values.integer(key)).map_err(|_| api(format!("[DESIGN] {what} is out of range")));
         let encodings = self.encodings.for_files(&pipeline)?;
@@ -88,9 +86,37 @@ impl State {
         })
     }
 
+    /// The hash function new files are checksummed with, as `values` say:
+    /// the one STORAGE.CHECKSUM names, keyed by the key STORAGE.CHECKSUM_KEY
+    /// names if it names one.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the function is not registered, or a key is named
+    /// and the function is not keyed, or cannot take it.
+    pub(super) fn checksum_hash(&self, values: &Settings) -> Result<Arc<dyn HashFunction>> {
+        let named = |key| if let Value::Char(s) = values.get(key) { s.clone() } else { String::new() };
+        let checksum = named(CHECKSUM);
+        let hash = self
+            .hashes
+            .iter()
+            .find(|h| h.name().eq_ignore_ascii_case(&checksum))
+            .cloned()
+            .ok_or_else(|| unregistered("hash function", &checksum))?;
+        let key = named(CHECKSUM_KEY);
+        if key.is_empty() {
+            return Ok(hash);
+        }
+        if !hash.keyed() {
+            return Err(api(format!("[DESIGN] STORAGE.CHECKSUM_KEY names a key, {key}, and {} is not keyed", hash.name())));
+        }
+        hash.keyed_by(&key)
+    }
+
     /// The settings of `recorded`, an image's values, over this state's:
-    /// those fixed at creation, and those read as the database opens. A
-    /// value given before it opened is kept over one read as it opens.
+    /// those fixed at creation, and those read as the database opens
+    /// (`settings::read_as_opened`). A value given before it opened is
+    /// kept over one read as it opens.
     ///
     /// # Errors
     ///
@@ -113,12 +139,16 @@ impl State {
                 (Effect::Creation | Effect::Start, settings::Source::Default | settings::Source::Session | settings::Source::Node) => {
                     values.set(&d.name, Some(&kept))?;
                 }
-                // Given before it opened, or not read as it does.
-                (Effect::Start, settings::Source::Database)
-                | (
+                (
                     Effect::Statement | Effect::Transaction | Effect::Connection,
-                    settings::Source::Default | settings::Source::Database | settings::Source::Session | settings::Source::Node,
-                ) => {}
+                    settings::Source::Default | settings::Source::Session | settings::Source::Node,
+                ) => {
+                    if settings::read_as_opened(d) {
+                        values.set(&d.name, Some(&kept))?;
+                    }
+                }
+                // Given before it opened, or not read as it does.
+                (Effect::Start | Effect::Statement | Effect::Transaction | Effect::Connection, settings::Source::Database) => {}
             }
         }
         Ok(values)

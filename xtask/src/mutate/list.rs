@@ -16,7 +16,7 @@ pub fn all() -> Vec<Mutation> {
 
 /// The core's mutations: transactions, durability, constraints,
 /// assertions, the hash index.
-pub const MUTATIONS: [Mutation; 45] = [
+pub const MUTATIONS: [Mutation; 49] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -463,5 +463,41 @@ pub const MUTATIONS: [Mutation; 45] = [
             "engine::hash::tests::it_holds_what_a_model_holds",
             "engine::hash::tests::a_hot_keys_bucket_splits_and_merges_a_page_at_a_time",
         ],
+    },
+    Mutation {
+        name: "rekey-untold",
+        breaks: "a change of STORAGE.ENCODINGS or STORAGE.CHECKSUM_KEY reaches no file",
+        file: "src/db/settings.rs",
+        original: "        self.tell_formats()?;",
+        replacement: "        self.tell_durability()?;",
+        integration: &["rekeying::files_follow_the_formats_set_at_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rekey-log-segment",
+        breaks: "the log goes on in its segment, in the old formats, after they change",
+        file: "src/log/file.rs",
+        original: "        if self.rotate_asked.load(Ordering::Acquire) {\n            self.rotate_for_formats();",
+        replacement: "        if self.rotate_asked.load(Ordering::Acquire) {\n            drop(());",
+        integration: &["rekeying::files_follow_the_formats_set_at_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rekey-catalog-switch",
+        breaks: "the catalog appends to its file, in the old formats, after they change",
+        file: "src/db/catalog_file.rs",
+        original: "        if active.records < compact_after && !active.broken && !self.switch.swap(false, Ordering::AcqRel) {",
+        replacement: "        if active.records < compact_after && !active.broken {",
+        integration: &["rekeying::files_follow_the_formats_set_at_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rekey-pages-key",
+        breaks: "the data file's pages keep the old key once STORAGE.CHECKSUM_KEY changes",
+        file: "src/disk/buffer.rs",
+        original: "        if hash.keyed() {\n            pager.set_hash(hash)?;",
+        replacement: "        if hash.keyed() {\n            drop(hash);",
+        integration: &["rekeying::files_follow_the_formats_set_at_once"],
+        unit: &[],
     },
 ];

@@ -40,6 +40,12 @@
 //! after a change from `None` syncs the segments sealed unsynced, and the
 //! directory their entries are in, before the one it is asked for: every
 //! record before it is then durable, as `Log::sync` promises.
+//!
+//! Its formats (RULES.md D48: STORAGE.CHECKSUM_KEY, STORAGE.ENCODINGS)
+//! change while it is open too (`Log::set_formats`): a segment in them is
+//! begun before the next record appended, so no record after the change
+//! is in a segment of the formats before; the segments there are read as
+//! they were written, each naming its own.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -162,7 +168,12 @@ fn add(counter: &AtomicU64, n: u64) {
 pub struct FileLog {
     fs: Arc<dyn FileSystem>,
     dir: PathBuf,
-    hash: Arc<dyn HashFunction>,
+    /// What the next segment is checksummed with and encoded through
+    /// (`Log::set_formats`).
+    formats: Mutex<(Arc<dyn HashFunction>, Pipeline)>,
+    /// Whether a segment is begun before the next record appended, as the
+    /// formats changed (`rotate_for_formats`).
+    rotate_asked: AtomicBool,
     options: FileLogOptions,
     /// How durable its syncs make records now (`durability_code`).
     durability: AtomicU8,
@@ -283,7 +294,8 @@ impl FileLog {
         if fs.read_dir(dir)?.iter().any(|p| segment_number(p).is_some()) {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} already holds a log", dir.display())));
         }
-        let first = segment_file(&*fs, &dir.join(segment_name(0)), Arc::clone(&hash), (&options, options.durability))?;
+        let first =
+            segment_file(&*fs, &dir.join(segment_name(0)), (Arc::clone(&hash), options.pipeline.clone()), (&options, options.durability))?;
         FileLog::over(fs, dir, hash, options, vec![Segment::new(0, first)])
     }
 
@@ -319,7 +331,8 @@ impl FileLog {
         Ok(FileLog {
             fs,
             dir: dir.to_path_buf(),
-            hash,
+            formats: Mutex::new((hash, options.pipeline.clone())),
+            rotate_asked: AtomicBool::new(false),
             durability: AtomicU8::new(durability_code(options.durability)),
             entries_unsynced: AtomicBool::new(unsynced),
             options,
@@ -380,12 +393,12 @@ impl FileLog {
 fn segment_file(
     fs: &dyn FileSystem,
     path: &Path,
-    hash: Arc<dyn HashFunction>,
+    (hash, pipeline): (Arc<dyn HashFunction>, Pipeline),
     (options, durability): (&FileLogOptions, Durability),
 ) -> Result<BlockFile> {
     match durability {
-        Durability::None => BlockFile::create_unsynced(fs, path, hash, options.pipeline.clone(), options.blocks),
-        Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, options.pipeline.clone(), options.blocks),
+        Durability::None => BlockFile::create_unsynced(fs, path, hash, pipeline, options.blocks),
+        Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, pipeline, options.blocks),
     }
 }
 
@@ -406,7 +419,23 @@ impl Log for FileLog {
         self.durability.store(durability_code(durability), Ordering::Release);
     }
 
+    /// A segment in them is begun before the next record appended.
+    fn set_formats(&self, hash: Arc<dyn HashFunction>, pipeline: Pipeline) {
+        let changed = {
+            let mut formats = lock_builtin(&self.formats);
+            let changed = formats.0.key_name() != hash.key_name() || formats.1.ids() != pipeline.ids();
+            *formats = (hash, pipeline);
+            changed
+        };
+        if changed {
+            self.rotate_asked.store(true, Ordering::Release);
+        }
+    }
+
     fn append(&self, record: &[u8]) -> Result<Lsn> {
+        if self.rotate_asked.load(Ordering::Acquire) {
+            self.rotate_for_formats();
+        }
         let segment = self.take_active();
         let appended = segment.blocks.append(record);
         segment.finished();

@@ -43,8 +43,10 @@ pub use pool::READ_AHEAD_PAGES;
 pub use tally::Tally;
 
 use super::block::BlockFile;
+use super::encoding::Pipeline;
 use super::pager::Pager;
 use crate::error::{Code, Result, SqlError};
+use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
 use crate::memory::{Reservation, Undoing};
 use crate::sync::lock_builtin;
@@ -285,6 +287,23 @@ impl DerefMut for PageMut<'_> {
 }
 
 impl BufferPool {
+    /// \[DESIGN\] Pages of pager file `file` are written through `pipeline`
+    /// from now on, their checksums made with `hash` if it is keyed
+    /// (RULES.md D48): `Pager::set_pipeline` and `Pager::set_hash`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file, or the
+    /// pager refuses.
+    pub fn set_formats(&self, file: FileId, pipeline: Pipeline, hash: Arc<dyn HashFunction>) -> Result<()> {
+        let pager = self.pager(file)?;
+        pager.set_pipeline(pipeline)?;
+        if hash.keyed() {
+            pager.set_hash(hash)?;
+        }
+        Ok(())
+    }
+
     /// The pages of pager file `file` in use, not free: what its tables
     /// and indexes take, which share the pool.
     ///

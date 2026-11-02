@@ -76,7 +76,8 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | SQL.FUNCTION_CALLS | OFF | ONE OF ON, OFF | at once | *session* |
 | STATEMENT.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | STORAGE.CHECKSUM | CRC-32/ISCSI | A HASH FUNCTION | when the database is made |  |
-| STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | when the database is made |  |
+| STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
+| STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |
 | STORAGE.POOL_BYTES | 33554432 | INTEGER FROM 65536 TO 9223372036854775807 | at the next start |  |
 | STORAGE.READ_AHEAD_PAGES | 32 | INTEGER FROM 0 TO 4294967295 | at once |  |
@@ -134,7 +135,8 @@ Each in a sentence:
 - **SQL.FUNCTION_CALLS**: Whether a statement may call a function by the syntax NAME(arguments), which the standards do not have: ON; or refuses it, as SQL does, OFF.
 - **STATEMENT.TIMEOUT_MS**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
-- **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty.
+- **STORAGE.CHECKSUM_KEY**: The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.
+- **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the database's sweep.
 - **STORAGE.PAGE_BYTES**: The bytes of a page of the data file, a power of two.
 - **STORAGE.POOL_BYTES**: The bytes of the buffer pool of the data file, reserved of MEMORY.BUDGET_BYTES as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.
 - **STORAGE.READ_AHEAD_PAGES**: The pages a scan of a table of the built-in stores, or of a B-tree index, has read ahead of it at once, at most an eighth of the buffer pool's pages: read by the database's job turborel-read-ahead while the scan goes on, each run of them in one read of the file; 0 for none. A change holds at once, a scan under way included.

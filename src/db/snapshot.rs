@@ -25,6 +25,7 @@ use crate::catalog::codec::{
 };
 use crate::catalog::{ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, TableDesc, ViewDesc};
 use crate::error::Result;
+use crate::settings;
 use crate::value::Value;
 use crate::value::codec::{put_value, value};
 
@@ -166,7 +167,15 @@ impl State {
             catalog.add_index(ix.clone());
         }
         for (name, v) in &snapshot.settings {
-            self.settings.set(name, Some(v))?;
+            // One read as the database opened, given before it did, is kept
+            // over the one recorded (`settings::read_as_opened`).
+            let given = self.settings.key(name).and_then(|key| {
+                let d = self.settings.definition(key)?;
+                Some(settings::read_as_opened(d) && self.settings.effective(key, &settings::Own::default()).1 == settings::Source::Database)
+            });
+            if given != Some(true) {
+                self.settings.set(name, Some(v))?;
+            }
         }
         for (name, verifier) in &snapshot.users {
             self.users.replay_user(name, Some(verifier.clone()));

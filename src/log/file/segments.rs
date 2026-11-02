@@ -16,22 +16,33 @@ impl FileLog {
     /// Begins the segment after `full`, if `full` is still the current one
     /// and no other thread is beginning one; then seals `full`. A segment
     /// that cannot be begun is told, once until one is; a seal that fails
-    /// is kept, and told, by `failed`.
-    pub(super) fn rotate(&self, full: &Arc<Segment>) {
+    /// is kept, and told, by `failed`. Whether a segment was begun.
+    pub(super) fn rotate(&self, full: &Arc<Segment>) -> bool {
         if self.rotating.swap(true, Ordering::AcqRel) {
-            return;
+            return false;
         }
         let current = Arc::ptr_eq(&self.active.read().unwrap_or_else(PoisonError::into_inner), full);
         let begun = if current { self.begin_after(full) } else { Ok(()) };
         self.rotating.store(false, Ordering::Release);
         if let Err(e) = begun {
             self.tell_unbegun(&e, full);
-            return;
+            return false;
         }
         self.told.store(false, Ordering::Release);
         if current {
             // Its failure fails every later sync; nothing more to do here.
             drop(self.seal(full));
+        }
+        current
+    }
+
+    /// Begins a segment in the formats set (`Log::set_formats`), before
+    /// the record appended next: asked again at the next append while none
+    /// is begun, as another thread was beginning one, or none could be.
+    pub(super) fn rotate_for_formats(&self) {
+        let current = Arc::clone(&self.active.read().unwrap_or_else(PoisonError::into_inner));
+        if self.rotate(&current) {
+            self.rotate_asked.store(false, Ordering::Release);
         }
     }
 
@@ -93,7 +104,8 @@ impl FileLog {
             self.fs.remove(&path)?;
         }
         let durability = self.durability();
-        let blocks = segment_file(&*self.fs, &path, Arc::clone(&self.hash), (&self.options, durability))?;
+        let formats = lock_builtin(&self.formats).clone();
+        let blocks = segment_file(&*self.fs, &path, formats, (&self.options, durability))?;
         // Its entry made, not synced: the first sync that syncs syncs it.
         if durability == Durability::None {
             self.entries_unsynced.store(true, Ordering::Release);

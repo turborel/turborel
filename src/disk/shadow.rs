@@ -78,7 +78,8 @@ pub const GRANULE: usize = 1 << side::GRANULE_BITS;
 /// documentation).
 pub struct ShadowFileSystem {
     inner: Arc<dyn FileSystem>,
-    hash: Arc<dyn HashFunction>,
+    /// What a side file made from now on is checksummed with.
+    hash: Mutex<Arc<dyn HashFunction>>,
     /// The files known, by path: opened, and not yet left with nothing to
     /// commit and no handle.
     files: Mutex<HashMap<PathBuf, Arc<Shadow>>>,
@@ -89,12 +90,18 @@ pub struct ShadowFileSystem {
 impl ShadowFileSystem {
     /// Shadows the files of `inner`, side files checksummed with `hash`.
     pub fn new(inner: Arc<dyn FileSystem>, hash: Arc<dyn HashFunction>) -> ShadowFileSystem {
-        ShadowFileSystem { inner, hash, files: Mutex::new(HashMap::new()), holding: AtomicBool::new(false) }
+        ShadowFileSystem { inner, hash: Mutex::new(hash), files: Mutex::new(HashMap::new()), holding: AtomicBool::new(false) }
+    }
+
+    /// Side files made from now on are checksummed with `hash` (RULES.md
+    /// D48); those there are read as they were.
+    pub fn set_hash(&self, hash: Arc<dyn HashFunction>) {
+        *lock_builtin(&self.hash) = hash;
     }
 
     /// Where the file at `path` is.
     fn at(&self, path: &Path) -> At {
-        At { fs: Arc::clone(&self.inner), path: path.to_path_buf(), hash: Arc::clone(&self.hash) }
+        At { fs: Arc::clone(&self.inner), path: path.to_path_buf(), hash: Arc::clone(&lock_builtin(&self.hash)) }
     }
 
     /// The file at `path` opened as `mode` says, known from now on.

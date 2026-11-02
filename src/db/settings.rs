@@ -29,6 +29,21 @@ impl State {
     /// database is created, the value is not of its kind, or it names an
     /// engine, index method, hash function or encodings not registered;
     /// the log's errors.
+    /// Refuses `value` of the setting `key` if it is STORAGE.CHECKSUM_KEY
+    /// and names a key the checksum function cannot take (RULES.md D48).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910, as `State::checksum_hash` says.
+    fn key_taken(&self, key: settings::Key, value: &Value) -> Result<()> {
+        if key != settings::CHECKSUM_KEY {
+            return Ok(());
+        }
+        let mut values = self.settings.clone();
+        values.set("STORAGE.CHECKSUM_KEY", Some(value))?;
+        self.checksum_hash(&values).map(drop)
+    }
+
     pub(super) fn define_setting(&mut self, name: &str, value: Option<&Value>) -> Result<()> {
         let key = self.settings.known(name)?;
         let definition = self.settings.definition(key).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a setting lost its definition"))?;
@@ -39,6 +54,7 @@ impl State {
         let mut value = value.cloned();
         if let Some(v) = &value {
             let given = settings::accepted(&canonical, &definition.kind, v)?;
+            self.key_taken(key, &given)?;
             let missing = match (&definition.kind, &given) {
                 (Kind::Engine, Value::Char(engine)) => !self.engines.contains_key(engine),
                 (Kind::IndexMethod, Value::Char(method)) => !self.methods.contains_key(method),
@@ -149,6 +165,7 @@ impl Database {
         st.memory.set_limit(settings::budget_bytes(st.settings.get(settings::MEMORY_BUDGET_BYTES)));
         st.files.set_limit(usize::try_from(st.settings.integer(settings::FILES_MAX_OPEN)).unwrap_or(usize::MAX));
         self.tell_durability()?;
+        self.tell_formats()?;
         // A database in memory makes its pool so, if it has not yet.
         st.pages.resize(settings::pool_bytes(st.settings.get(settings::POOL_BYTES)));
         if let Some(made) = st.pages.made_bytes() {
@@ -170,6 +187,27 @@ impl Database {
         let st = self.snapshot()?;
         if let Some(log) = &st.log {
             log.set_durability(settings::log_durability(&st.settings));
+        }
+        Ok(())
+    }
+
+    /// \[DESIGN\] Tells its files, if it is kept in a directory, the formats
+    /// its settings say now (RULES.md D48): the pipeline STORAGE.ENCODINGS
+    /// names and the checksum's key STORAGE.CHECKSUM_KEY names, which the
+    /// data file's pages, the log's next segment, the catalog's next file
+    /// and the shadows' next side files take from then on.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed, or the settings name an
+    /// encoding or a key the files cannot take.
+    pub(super) fn tell_formats(&self) -> Result<()> {
+        let st = self.snapshot()?;
+        let Some(files) = self.files()? else { return Ok(()) };
+        let formats = st.layout(&st.settings)?.formats;
+        files.set_formats(&formats)?;
+        if let Some(log) = &st.log {
+            log.set_formats(Arc::clone(&formats.hash), formats.pipeline.clone());
         }
         Ok(())
     }

@@ -123,6 +123,7 @@ mod random_queries;
 mod read_ahead;
 mod recovery;
 mod refusals;
+mod rekeying;
 mod reopen;
 mod replicated_state;
 mod revoke;

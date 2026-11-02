@@ -125,11 +125,15 @@ The database's files, fixed when it is created: --set them as it is:
   STORAGE.PAGE_BYTES     the bytes of a page of its data file, a power of two (default 8192)
   STORAGE.CHECKSUM       the hash function its files are checksummed with (default CRC-32/ISCSI;
                          SHA-256, or HMAC-SHA-256 keyed by --checksum-key)
-  STORAGE.ENCODINGS      the encodings its files pass through, by commas: LZ4, and
-                         AES-256-GCM:KEY or ChaCha20-Poly1305:KEY with a key of --keys
-                         (default none)
   LOG.SEGMENT_BYTES      the bytes of a segment of its log (default 64 MiB)
   STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
+Its files' formats from now on, changed at any time, SET DATABASE or --set:
+  STORAGE.ENCODINGS      the encodings its files pass through, by commas: LZ4, and
+                         AES-256-GCM:KEY or ChaCha20-Poly1305:KEY with a key of --keys
+                         (default none); what was written through others before is
+                         read through them while --keys holds their keys
+  STORAGE.CHECKSUM_KEY   the key of --keys HMAC-SHA-256 keys its checksums by from now
+                         on (default --checksum-key)
 
 Clients prove who they are by a user's password, sent or proved by SCRAM-SHA-256, over
 TLS, a Unix socket or a named pipe only, or by a certificate of SERVER.TLS_CLIENT_CA's authorities
@@ -438,7 +442,11 @@ fn effect_of(db: &Database, name: &str) -> Option<Effect> {
 /// Whether the setting `name` of `db` is read as a database is created or
 /// opened: so set before it is.
 fn read_as_opened(db: &Database, name: &str) -> bool {
-    matches!(effect_of(db, name), Some(Effect::Creation | Effect::Start))
+    let settings = db.settings().unwrap_or_default();
+    settings
+        .iter()
+        .find(|l| l.definition.name.eq_ignore_ascii_case(name.trim()))
+        .is_some_and(|l| turborel::settings::read_as_opened(&l.definition))
 }
 
 /// Serves `server` where its settings say, until `stop`, hurried at

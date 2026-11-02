@@ -97,6 +97,9 @@ pub const LOG_DURABILITY: Key = Key(41);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the storage settings.
 pub const SYSTEM_CACHE_BYTES: Key = Key(42);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the storage settings.
+pub const CHECKSUM_KEY: Key = Key(43);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -193,6 +196,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.push(system_cache());
+    all.push(checksum_key());
     all
 }
 
@@ -214,8 +218,10 @@ fn switches() -> [Definition; 2] {
     ]
 }
 
-/// \[DESIGN\] A database's files: their formats, fixed when it is created,
-/// and its buffer pool, made as it is opened.
+/// \[DESIGN\] A database's files: their formats, the page size, checksum
+/// function and log segment size fixed when it is created, the encodings
+/// and the checksum's key changed at once (RULES.md D48); and its buffer
+/// pool, made as it is opened.
 fn storage() -> [Definition; 5] {
     use crate::disk::pager::{DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE};
     use crate::log::{DEFAULT_SEGMENT_SIZE, MAX_SEGMENT_SIZE, MIN_SEGMENT_SIZE};
@@ -233,8 +239,8 @@ fn storage() -> [Definition; 5] {
         ),
         defined(
             ("STORAGE.ENCODINGS", Kind::Encodings, text("")),
-            created,
-            "The encodings, as compression or encryption, every file passes through, by commas, in order; none if empty.",
+            DATABASE,
+            "The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the database's sweep.",
         ),
         defined(
             (
@@ -272,6 +278,17 @@ fn system_cache() -> Definition {
         ("STORAGE.SYSTEM_CACHE_BYTES", at_least(0), count(crate::engine::rows::SYSTEM_CACHE_BYTES)),
         DATABASE,
         "The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.",
+    )
+}
+
+/// \[DESIGN\] The key a keyed checksum makes digests with from now on
+/// (RULES.md D48): at its key's place, after the others, though of the
+/// storage settings.
+fn checksum_key() -> Definition {
+    defined(
+        ("STORAGE.CHECKSUM_KEY", Kind::Text { max: crate::hash::MAX_KEY_NAME }, text("")),
+        DATABASE,
+        "The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.",
     )
 }
 
