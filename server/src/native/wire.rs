@@ -86,14 +86,24 @@ impl Wire {
         self.close().await;
     }
 
-    /// Tells the client of `why`, takes its first message, if one comes
-    /// within `within`, and closes: a connection closed with a message
-    /// unread is reset, and a reset loses what was sent before it on
-    /// Windows, the refusal with it; taken, the close is clean, and the
-    /// client reads why.
+    /// Tells the client of `why`, closes its side, and takes what the
+    /// client sends until it closes too, or `within` runs out: a connection
+    /// closed with a message unread is reset, and a reset loses what was
+    /// sent before it on Windows, the refusal with it; taken, the close is
+    /// clean, and the client reads why. A client that has read its
+    /// refusal closes at once, so this waits on none but one that neither
+    /// sends nor closes.
     pub(super) async fn close_refusing(&mut self, why: &SqlError, within: Duration) {
         let _ = self.send_now(&Reply::Error(Failure::from(why))).await;
-        let _ = tokio::time::timeout(within, self.receive()).await;
         self.close().await;
+        let mut sink = [0_u8; 1024];
+        let drained = async {
+            while let Ok(n) = self.reader.read(&mut sink).await {
+                if n == 0 {
+                    break;
+                }
+            }
+        };
+        let _ = tokio::time::timeout(within, drained).await;
     }
 }

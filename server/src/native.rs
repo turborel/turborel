@@ -56,9 +56,9 @@ const IN_FLIGHT: usize = 4;
 /// cancelled again until it stops: a cancel made before it began does
 /// nothing (RULES.md D44). As often as a wait for a lock looks.
 const CANCEL_AGAIN: std::time::Duration = std::time::Duration::from_millis(20);
-/// \[DESIGN\] How long a refused connection's first message is awaited
-/// before it is closed (`Wire::close_refusing`): a client sends its Hello
-/// as it connects, so it is at hand; one that sends nothing holds a
+/// \[DESIGN\] How long a refused connection is held after its refusal,
+/// for the client to close it (`Wire::close_refusing`): one that has read
+/// its refusal closes at once; one that neither sends nor closes holds a
 /// refusal's place (SERVER.MAX_REFUSALS) this long.
 const REFUSED_WITHIN: std::time::Duration = std::time::Duration::from_millis(500);
 
