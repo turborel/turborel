@@ -24,7 +24,16 @@ const SEEDS_OF_STORMS: Range<u64> = 1000..1100;
 /// a disk fails on 2 writes in a thousand.
 fn plan(replicas: u32) -> Plan {
     let weather = Weather { drop: 50, duplicate: 20, delay: 10, late: 10, late_delay: 300 };
-    let faults = Faults { weather, partition: 3, partition_moments: 400, crash: 4, down_moments: 60, disk_error: 2, write_moments: 6 };
+    let faults = Faults {
+        weather,
+        partition: 3,
+        partition_moments: 400,
+        crash: 4,
+        down_moments: 60,
+        disk_error: 2,
+        lose_journal: 0,
+        write_moments: 6,
+    };
     Plan { replicas, faulty: 3000, calm: 2000, append: 100, tick_moments: 5, retain_bytes: u64::MAX, faults }
 }
 
@@ -80,6 +89,7 @@ fn groups_stay_safe_through_storms() {
         crash: 8,
         down_moments: 100,
         disk_error: 10,
+        lose_journal: 0,
         write_moments: 20,
     };
     sweep(&storm, SEEDS_OF_STORMS);

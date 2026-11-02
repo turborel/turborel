@@ -49,7 +49,7 @@ pub fn vr_alone(options: VrOptions) -> MakeAlone {
     Arc::new(move |recovered| {
         let vr = match recovered {
             None => Vr::new(&[ALONE], ALONE, options)?,
-            Some(recovered) => Vr::restart(&[ALONE], ALONE, options, recovered)?,
+            Some(recovered) => Vr::restart(&[ALONE], ALONE, options, recovered, crate::nonce())?,
         };
         Ok(Box::new(vr))
     })

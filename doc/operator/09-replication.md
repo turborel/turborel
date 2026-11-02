@@ -41,11 +41,19 @@ $ turboreld --dir /var/db --keys keys --set REPLICATION.REPLICA=1 \
 ```
 
 and the same on `db2` and `db3`, each with its own number. A new
-database is made by the group as its nodes first start: give `--owner
-NAME` to each, and the owner is made once a node serves. The settings
-fixed when the database is made, and every other setting, are the
-database's, replicated with it; the REPLICATION settings alone are
-each node's.
+database is made by the group as its nodes first start, once a majority
+of them are up: give `--owner NAME` to each, and the owner is made once
+a node serves. The settings fixed when the database is made, and every
+other setting, are the database's, replicated with it; the REPLICATION
+settings alone are each node's.
+
+A node starting over an empty `log/`, new to the group, or its log lost,
+learns the group's state from the others before it takes part, told as
+a `recovering` event: it joins once a majority of the members answer
+it, the primary among them, and fetches the primary's database if its
+own is behind. A node whose `log/` directory is lost keeps the rows its
+database holds and catches up the same way: nothing need be copied by
+hand.
 
 ## Serving
 
@@ -107,8 +115,5 @@ with a database far behind, a node fetches the state the same way.
 
 ## What is not yet done
 
-A node that lost its `log/` directory, or starts with an empty one over
-a database kept, cannot yet rejoin safely: restore the directory from
-the node's last backup before starting it. The members are fixed by
-their settings: to add or remove a member, stop the group and start it
-with new settings.
+The members are fixed by their settings: to add or remove a member,
+stop the group and start it with new settings.

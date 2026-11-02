@@ -1351,7 +1351,25 @@ opaque bytes.**
     delivered;
   - told where its database holds the log as it is opened
     (`Input::Opened`), it delivers only what follows, the position its
-    own: no RECOVERY message, its journal intact.
+    own: no RECOVERY message, its journal intact; the view-number is
+    written as a new group's replica opens, so a journal holding records
+    holds the state too.
+- **Recovery.** A replica whose journal holds no state, lost or never
+  written, is recovering ([VRR §4.3], `vr/recovery.rs`): opened, it
+  sends RECOVERY with a nonce to every other member, again at each
+  heartbeat, and takes no other message; a member answers while normal,
+  as primary with its window; f + 1 answers echoing the nonce, the
+  latest view's primary's among them, make it normal in that view with
+  the primary's log, its journal written with the window and the state,
+  following from where its database holds the log; a database behind
+  the window fetches a state transfer first. A fresh member, no journal
+  and a database holding nothing, answers too, saying so: hearing from f
+  fresh members, itself the f + 1th, it is normal in view 0, so a new
+  group bootstraps by recovery, two of three sufficing; a group of one
+  recovers at once from its database. Every node is made so, from its
+  journal (`GroupLogs::in_files`, `nonce()`); the replica alone of a
+  `ReplicatedLog` too, told it holds its records. The recovery of a
+  journal lost (`Watch::event`, `Recovering`) is told to the operator.
 - **Log retention.** A replica's log is a window: the records through
   a position let go (`vr/window.rs`, `Journal::retain`), once its
   database holds them in its files. At each checkpoint the database's

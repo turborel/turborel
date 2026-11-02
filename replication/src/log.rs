@@ -13,8 +13,8 @@
 //! crash as its journal does. It drives its consensus itself, on the
 //! threads that call it, under one lock: with no other replica, no frame
 //! is sent, and a record commits once its own journal holds it durably.
-//! The driver that joins replicas, a job of the thread manager (D55), is a
-//! later stage.
+//! The driver that joins replicas over a transport, a job of the thread
+//! manager (D55), is `driver.rs`.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -94,7 +94,9 @@ impl ReplicatedLog {
 
     /// \[EXTENSION\] The log of a replica alone, of `consensus`, made new or
     /// again from what `journal` held, whose records are `records`: its
-    /// consensus stepped until it serves as primary.
+    /// consensus told its database holds the records (it recovers them
+    /// from this log as it opens), then stepped until it serves as
+    /// primary.
     ///
     /// # Errors
     ///
@@ -102,7 +104,10 @@ impl ReplicatedLog {
     /// `TICKS_ALONE` ticks: it is not of a group of one.
     pub fn alone(consensus: Box<dyn Consensus>, journal: Box<dyn Journal>, records: Vec<Vec<u8>>) -> Result<ReplicatedLog> {
         let durable = journal.durable();
+        let held = Lsn(u64::try_from(records.len()).unwrap_or(u64::MAX));
         let mut driven = Driven { consensus, journal, records, committed: Lsn(0), serving: false, failed: None };
+        driven.step(Input::Opened(held))?;
+        driven.answer()?;
         for _ in 0..TICKS_ALONE {
             if driven.serving {
                 break;
@@ -171,13 +176,15 @@ impl Driven {
             // delivered that the database has not: it appended each, or
             // recovered it from the log as it opened.
             // Nor is any let go: alone, the log is kept whole, and no other
-            // replica fetches it.
+            // replica fetches it; a journal lost is recovered from the
+            // database alone, at once.
             Output::Send { .. }
             | Output::Deliver { .. }
             | Output::Outcome { .. }
             | Output::FetchState { .. }
             | Output::Retain { .. }
             | Output::Event(ReplicaEvent::ViewChanged { .. })
+            | Output::Event(ReplicaEvent::Recovering)
             | Output::Event(ReplicaEvent::FrameRefused { .. }) => {}
         }
         Ok(())
@@ -262,8 +269,8 @@ impl Log for ReplicatedLog {
         Ok(at.0.checked_sub(1).and_then(|i| usize::try_from(i).ok()).and_then(|i| driven.records.get(i)).cloned())
     }
 
-    /// Removes nothing: the consensus keeps its whole log, which a view
-    /// change may send (log retention is a later stage).
+    /// Removes nothing: alone, the log is kept whole, no other replica
+    /// ever asking for it (log retention is the driver's, `driver.rs`).
     fn truncate_before(&self, _before: Lsn) -> Result<()> {
         Ok(())
     }

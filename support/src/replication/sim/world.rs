@@ -133,7 +133,11 @@ impl Watch for SimWatch {
 
     fn event(&self, event: &ReplicaEvent) {
         let found = match event {
-            ReplicaEvent::ViewChanged { .. } => Ok(()),
+            ReplicaEvent::ViewChanged { .. } => {
+                self.world.lock().unwrap().recovered(self.id);
+                Ok(())
+            }
+            ReplicaEvent::Recovering => Ok(()),
             ReplicaEvent::FrameRefused { from, why } => Err(format!("replica {} refused a frame from {}: {why}", self.id.0, from.0)),
             ReplicaEvent::AppendRefused => Err(format!("replica {} refused an append while serving", self.id.0)),
         };
@@ -157,6 +161,9 @@ pub struct Node {
     up_at: u64,
     /// How many times it crashed.
     lives: u64,
+    /// Whether its journal was lost in its last crash, and it has not yet
+    /// entered a view since: no other loses its journal meanwhile.
+    journal_lost: bool,
     /// When in each round of moments it ticks.
     phase: u64,
 }
@@ -228,6 +235,7 @@ impl World {
                     up: false,
                     up_at: 0,
                     lives: 0,
+                    journal_lost: false,
                     phase: rng.below(plan.tick_moments),
                 }
             })
@@ -285,6 +293,13 @@ impl World {
     /// The committed log as far as any replica has shown it.
     pub fn committed_log(&self) -> &[Vec<u8>] {
         self.checker.committed()
+    }
+
+    /// Replica `id` entered a view: its journal, if lost, is recovered.
+    fn recovered(&mut self, id: ReplicaId) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) {
+            node.journal_lost = false;
+        }
     }
 
     /// How many times replica `index` crashed.
@@ -402,12 +417,18 @@ impl World {
     pub fn crash(&mut self, index: usize) {
         let down = self.rng.between(1, self.plan.faults.down_moments);
         let calm = self.calm();
+        let lose = self.rng.chance(self.plan.faults.lose_journal) && !self.nodes.iter().any(|n| n.journal_lost);
         let node = &mut self.nodes[index];
         {
             let mut disk = node.disk.lock().unwrap();
             let reached = self.rng.below(u64::try_from(disk.due.len()).unwrap() + 1);
             disk.journal.crash(usize::try_from(reached).unwrap());
             disk.due.clear();
+            if lose {
+                disk.journal = Journal::default();
+                node.journal_lost = true;
+                self.report.journals_lost += 1;
+            }
         }
         node.inbox.clear();
         node.link.take();

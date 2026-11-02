@@ -212,13 +212,13 @@ fn a_damaged_state_is_refused() {
     };
     for bytes in [vec![1], state(2, 1, 1), state(1, 1, 2), [state(1, 1, 1), vec![0]].concat()] {
         let recovered = Recovered { state: Some(bytes.clone()), first: Lsn(0), records: Vec::new() };
-        assert_eq!(Vr::restart(&ids(3), TWO, options(), recovered).unwrap_err().sqlcode(), -916_i32, "{bytes:?}");
+        assert_eq!(Vr::restart(&ids(3), TWO, options(), recovered, 1).unwrap_err().sqlcode(), -916_i32, "{bytes:?}");
     }
     let normal = Recovered { state: Some(state(1, 3, 3)), first: Lsn(0), records: vec![record("a")] };
-    let vr = Vr::restart(&ids(3), TWO, options(), normal).unwrap();
+    let vr = Vr::restart(&ids(3), TWO, options(), normal, 1).unwrap();
     assert_eq!((vr.standing().view, vr.standing().status, vr.standing().durable), (3, Status::Normal, Lsn(1)));
     let changing = Recovered { state: Some(state(1, 5, 4)), first: Lsn(0), records: Vec::new() };
-    assert_eq!(Vr::restart(&ids(3), TWO, options(), changing).unwrap().standing().status, Status::ViewChange);
+    assert_eq!(Vr::restart(&ids(3), TWO, options(), changing, 1).unwrap().standing().status, Status::ViewChange);
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.1] "If the sender is behind, the

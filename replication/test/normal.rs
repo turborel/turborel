@@ -10,14 +10,16 @@ const BACKUP: ReplicaId = ReplicaId(2);
 const OTHER: ReplicaId = ReplicaId(3);
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4] the primary of view 0 is the
-/// first member, which serves once ticked; an append is given the next
-/// position and written to the journal; a group of one commits it once
-/// durable, and never before.
+/// first member, which serves as it opens, its view written first; an
+/// append is given the next position and written to the journal; a group
+/// of one commits it once durable, and never before.
 #[test]
 fn one_replica_commits_once_its_record_is_durable() {
     let mut group = vr_group(1);
     group.instant_disks = false;
-    assert_eq!(group.step(PRIMARY, Input::Tick), vec![Output::Role(Role::Primary { view: 0 })]);
+    let opened = &group.node(PRIMARY).outputs;
+    assert!(matches!(opened[..], [Output::PersistState(_), Output::Event(_), Output::Role(Role::Primary { view: 0 })]), "{opened:?}");
+    assert_eq!(group.step(PRIMARY, Input::Tick), Vec::new());
     let out = group.step(PRIMARY, Input::Append(record("a")));
     assert_eq!(out, vec![Output::Assigned(Lsn(1)), Output::Persist { at: Lsn(1), record: record("a") }]);
     assert_eq!(group.step(PRIMARY, Input::Append(record("b")))[0], Output::Assigned(Lsn(2)));

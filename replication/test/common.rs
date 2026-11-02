@@ -2,6 +2,7 @@
 //! `turborel-test-support`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use turborel_replication::{Consensus, Output, Recovered, ReplicaId, Vr, VrOptions};
 use turborel_test_support::replication::Group;
@@ -22,11 +23,19 @@ pub fn vr_group(count: u32) -> Group {
     Group::new(&ids(count), Arc::new(make_vr))
 }
 
+/// The nonces of the recoveries made here, each once.
+static NONCES: AtomicU64 = AtomicU64::new(1);
+
+/// A nonce no replica made here had.
+pub fn nonce() -> u64 {
+    NONCES.fetch_add(1, Ordering::Relaxed)
+}
+
 /// A VR replica, new or made again from its journal.
 pub fn make_vr(members: &[ReplicaId], me: ReplicaId, recovered: Option<Recovered>) -> Box<dyn Consensus> {
     Box::new(match recovered {
         None => Vr::new(members, me, options()).unwrap(),
-        Some(recovered) => Vr::restart(members, me, options(), recovered).unwrap(),
+        Some(recovered) => Vr::restart(members, me, options(), recovered, nonce()).unwrap(),
     })
 }
 

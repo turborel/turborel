@@ -31,9 +31,9 @@ authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
 on its own machine. Each item becomes a decision in RULES.md when its
 design settles.
 
-- **Replication between nodes** (D57): VR's RECOVERY protocol for a
-  journal lost; a state transfer by page differences ([VRR §5.1]'s
-  Merkle trees) where whole files cost too much; a following database's
+- **Replication between nodes** (D57): a state transfer by page
+  differences ([VRR §5.1]'s Merkle trees) where whole files cost too
+  much; a following database's
   crash in the simulator losing
   the writes its files had not synced (their file systems keep them now);
   reads on backups (a following checkpoint is refused while a reader holds

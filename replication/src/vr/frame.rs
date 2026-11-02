@@ -31,6 +31,8 @@ const NEW_STATE: u8 = 8;
 /// retains of its log, so the asker fetches a state transfer (RULES.md
 /// D57).
 const NEED_STATE: u8 = 9;
+const RECOVERY: u8 = 10;
+const RECOVERY_RESPONSE: u8 = 11;
 
 /// ⟨PREPARE v, m, n, k⟩ [VRR §4.1 step 3]: `record` is m, `op` n.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +118,36 @@ pub(crate) struct NewState {
     pub(crate) commit: u64,
 }
 
+/// ⟨RECOVERY i, x⟩ [VRR §4.3]: `nonce` is x.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Recovery {
+    pub(crate) replica: ReplicaId,
+    pub(crate) nonce: u64,
+}
+
+/// A primary's log as a RECOVERYRESPONSE carries it: l, n and k of
+/// [VRR §4.3]; \[EXTENSION\] `log` its window, after `after`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PrimaryLog {
+    pub(crate) after: u64,
+    pub(crate) log: Vec<Vec<u8>>,
+    pub(crate) op: u64,
+    pub(crate) commit: u64,
+}
+
+/// ⟨RECOVERYRESPONSE v, x, l, n, k, j⟩ [VRR §4.3]: `log` is l, n and k,
+/// which a primary alone gives; \[EXTENSION\] `fresh`, from a member with
+/// no journal and a database holding nothing, recovering itself, whose
+/// view is then 0 (RULES.md D57).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecoveryResponse {
+    pub(crate) view: u64,
+    pub(crate) nonce: u64,
+    pub(crate) replica: ReplicaId,
+    pub(crate) fresh: bool,
+    pub(crate) log: Option<PrimaryLog>,
+}
+
 /// \[EXTENSION\] A message between replicas, as [VRR §4] names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Message {
@@ -137,6 +169,10 @@ pub(crate) enum Message {
     NewState(NewState),
     /// NEEDSTATE.
     NeedState(NeedState),
+    /// RECOVERY.
+    Recovery(Recovery),
+    /// RECOVERYRESPONSE.
+    RecoveryResponse(RecoveryResponse),
 }
 
 impl Message {
@@ -175,6 +211,11 @@ impl Message {
                 put_log(&mut out, &m.log);
             }
             Message::NeedState(m) => put_u64s(&mut out, NEED_STATE, &[m.view, m.op]),
+            Message::Recovery(m) => {
+                put_u64s(&mut out, RECOVERY, &[m.nonce]);
+                out.put_u32(m.replica.0);
+            }
+            Message::RecoveryResponse(m) => put_recovery_response(&mut out, m),
         }
         out
     }
@@ -204,6 +245,8 @@ impl Message {
                 Message::NewState(NewState { view, after, op, commit, log: log_through(&mut r, after, op)? })
             }
             NEED_STATE => Message::NeedState(NeedState { view: r.u64()?, op: r.u64()? }),
+            RECOVERY => Message::Recovery(Recovery { nonce: r.u64()?, replica: ReplicaId(r.u32()?) }),
+            RECOVERY_RESPONSE => recovery_response(&mut r)?,
             other => return Err(r.corrupt(&format!("{other} is the tag of no message"))),
         };
         r.finish()?;
@@ -216,6 +259,42 @@ fn do_view_change(r: &mut Reader<'_>) -> Result<Message> {
     let (view, after, normal_view, op, commit) = (r.u64()?, r.u64()?, r.u64()?, r.u64()?, r.u64()?);
     let replica = ReplicaId(r.u32()?);
     Ok(Message::DoViewChange(DoViewChange { view, after, normal_view, op, commit, replica, log: log_through(r, after, op)? }))
+}
+
+/// A RECOVERYRESPONSE as a frame.
+fn put_recovery_response(out: &mut Vec<u8>, m: &RecoveryResponse) {
+    put_u64s(out, RECOVERY_RESPONSE, &[m.view, m.nonce]);
+    out.put_u32(m.replica.0);
+    out.put_u8(u8::from(m.fresh));
+    out.put_u8(u8::from(m.log.is_some()));
+    if let Some(taken) = &m.log {
+        out.put_u64(taken.after);
+        out.put_u64(taken.op);
+        out.put_u64(taken.commit);
+        put_log(out, &taken.log);
+    }
+}
+
+/// The rest of a RECOVERYRESPONSE, after its tag.
+fn recovery_response(r: &mut Reader<'_>) -> Result<Message> {
+    let (view, nonce, replica) = (r.u64()?, r.u64()?, ReplicaId(r.u32()?));
+    let (fresh, with_log) = (flag(r)?, flag(r)?);
+    let log = if with_log {
+        let (after, op, commit) = (r.u64()?, r.u64()?, r.u64()?);
+        Some(PrimaryLog { after, op, commit, log: log_through(r, after, op)? })
+    } else {
+        None
+    };
+    Ok(Message::RecoveryResponse(RecoveryResponse { view, nonce, replica, fresh, log }))
+}
+
+/// A flag: 0 or 1.
+fn flag(r: &mut Reader<'_>) -> Result<bool> {
+    match r.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(r.corrupt(&format!("{other} is no flag"))),
+    }
 }
 
 /// A tag, then integers.

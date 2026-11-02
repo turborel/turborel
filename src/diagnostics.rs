@@ -295,6 +295,10 @@ pub enum ReplicaChange {
     },
     /// A record was appended while the replica serves as no primary.
     AppendRefused,
+    /// The replica's journal held no state, lost or never written: it
+    /// recovers from the group before it takes part, and tells the view
+    /// it then enters.
+    Recovering,
     /// The transport's link to a member is up: frames reach it.
     Connected {
         /// The member.
@@ -360,6 +364,7 @@ impl Event {
                 | ReplicaChange::Connected { .. }
                 | ReplicaChange::StateInstalled { .. } => Level::Info,
                 ReplicaChange::FrameRefused { .. }
+                | ReplicaChange::Recovering
                 | ReplicaChange::AppendRefused
                 | ReplicaChange::Disconnected { .. }
                 | ReplicaChange::ConnectionRefused { .. } => Level::Warning,

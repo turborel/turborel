@@ -173,10 +173,11 @@ fn the_journal_holds_what_its_writes_left() {
 }
 
 /// Verifies: [DESIGN] RULES.md D57, a replica alone made again from its
-/// journal [VRR §4.3]: it does not serve again in the view it served in,
-/// but takes the next view at once, there being no other replica to wait
-/// for, its records where they were; appends go on after them, committed
-/// as they are synced, and the view is written to its journal.
+/// journal [VRR §4.3]: its view written as it first opened, it does not
+/// serve again in the view it served in, but takes the next view at
+/// once, there being no other replica to wait for, its records where
+/// they were; appends go on after them, committed as they are synced,
+/// and the next view is written to its journal.
 #[test]
 fn a_replica_alone_rejoins_in_the_next_view() {
     let journal: Arc<dyn Log> = Arc::new(MemoryLog::new());
@@ -185,7 +186,7 @@ fn a_replica_alone_rejoins_in_the_next_view() {
     log.sync(first[4]).unwrap();
     drop(log);
     let (_, held) = LogJournal::open(Arc::clone(&journal)).unwrap();
-    assert_eq!((held.state, held.records.len()), (None, 5), "no view written in view 0");
+    assert_eq!((held.state.is_some(), held.records.len()), (true, 5), "the view written as it opened");
     let again = ReplicatedLog::open(Arc::clone(&journal), &make()).unwrap();
     assert_eq!(all(&again, Lsn(0)), first.iter().copied().zip((0..5).map(record)).collect::<Vec<_>>());
     let next = again.append(b"after").unwrap();

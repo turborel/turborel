@@ -115,8 +115,10 @@ impl Log for GroupLog {
 }
 
 /// \[EXTENSION\] What makes a replica's consensus: of the group's
-/// members, the replica among them, and what its journal held, if it is
-/// made again (`Recovered`); none, new.
+/// members, the replica among them, and what its journal held
+/// (`Recovered`), a journal holding nothing making a replica to recover
+/// from the group (RULES.md D57); none only where the host knows the
+/// group is new, as a test harness does.
 pub type Make = Arc<dyn Fn(&[ReplicaId], ReplicaId, Option<Recovered>) -> Result<Box<dyn Consensus>> + Send + Sync>;
 
 /// \[EXTENSION\] What a driver on files is joined to beside its consensus
@@ -206,8 +208,7 @@ impl GroupLogs {
         let files = self.files.as_ref().ok_or_else(|| misuse("the log storage has no driver"))?;
         let (journal, recovered) = LogJournal::open(journal)?;
         let (first, records) = (recovered.first, recovered.records.clone());
-        let again = (recovered != Recovered::default()).then_some(recovered);
-        let consensus = (files.make)(&files.members, files.me, again)?;
+        let consensus = (files.make)(&files.members, files.me, Some(recovered))?;
         let joined = &files.joined;
         let parts = Parts {
             consensus,

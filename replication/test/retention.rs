@@ -68,10 +68,15 @@ fn a_replica_lets_committed_records_go_and_fetches_state_when_behind() {
     assert!(installed.iter().any(|o| matches!(o, Output::Send { to: PRIMARY, .. })), "the log after it asked for: {installed:?}");
     assert_eq!((third.standing().first, third.standing().commit, third.standing().op), (Lsn(4), Lsn(4), Lsn(4)));
 
-    let again = Recovered { state: None, first: Lsn(3), records: vec![record("r4"), record("r5")] };
-    let made = Vr::restart(&ids(3), BACKUP, options(), again).unwrap();
+    let again = Recovered { state: Some(state0()), first: Lsn(3), records: vec![record("r4"), record("r5")] };
+    let made = Vr::restart(&ids(3), BACKUP, options(), again, 1).unwrap();
     let standing = made.standing();
     assert_eq!((standing.first, standing.op, standing.commit, standing.applied), (Lsn(3), Lsn(5), Lsn(3), Lsn(3)));
+}
+
+/// VR's state as written in view 0, normal there.
+fn state0() -> Vec<u8> {
+    vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 /// A COMMIT frame of view 0 through `commit`, as the primary sends it.
@@ -106,8 +111,8 @@ fn a_view_change_carries_windows() {
     assert_eq!(group.node(ReplicaId(3)).journal.record(Lsn(4)), Some(&record("r4")));
     // A replica of a window further back, made again, cannot take the
     // view from the STARTVIEW alone: it asks for the state.
-    let behind = Recovered { state: None, first: Lsn(0), records: vec![record("r1")] };
-    let mut stale = Vr::restart(&ids(3), PRIMARY, options(), behind).unwrap();
+    let behind = Recovered { state: Some(state0()), first: Lsn(0), records: vec![record("r1")] };
+    let mut stale = Vr::restart(&ids(3), PRIMARY, options(), behind, 1).unwrap();
     let start = group.frames.iter().find(|f| f.bytes[0] == 6_u8).map(|f| f.bytes.clone());
     if let Some(frame) = start {
         let mut out = Vec::new();

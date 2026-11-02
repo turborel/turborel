@@ -4,10 +4,11 @@
 //! code at one of the replicas must survive into the new view in the same
 //! order selected for it at the time it was executed."
 //!
-//! \[DESIGN\] Departure: the DOVIEWCHANGE and STARTVIEW messages carry the
-//! whole log, as [VRR §4.2] has them, not a suffix as [VRR §5.3] suggests;
-//! a suffix, and the primary's asking for more, wait for log retention (a
-//! later stage).
+//! \[DESIGN\] Departure: the DOVIEWCHANGE and STARTVIEW messages carry
+//! the sender's window of the log (RULES.md D57, log retention), the
+//! records after the position it let go through, as [VRR §5.3]'s suffix;
+//! a replica the window does not reach fetches a state transfer
+//! (`transfer.rs`).
 
 use super::frame::{DoViewChange, Message, StartView, StartViewChange};
 use super::{Candidate, Change, Lead, Status, Vr};

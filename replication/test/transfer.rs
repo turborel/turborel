@@ -112,7 +112,16 @@ fn whole_files_cross_a_request_at_a_time() {
 fn retaining_little(seed_crashes: bool) -> Plan {
     let weather = Weather { drop: 20, duplicate: 10, delay: 5, late: 5, late_delay: 100 };
     let crash = if seed_crashes { 6 } else { 0 };
-    let faults = Faults { weather, partition: 2, partition_moments: 300, crash, down_moments: 400, disk_error: 0, write_moments: 3 };
+    let faults = Faults {
+        weather,
+        partition: 2,
+        partition_moments: 300,
+        crash,
+        down_moments: 400,
+        disk_error: 0,
+        lose_journal: 0,
+        write_moments: 3,
+    };
     Plan { replicas: 3, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes: 200, faults }
 }
 

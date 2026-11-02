@@ -139,7 +139,7 @@ impl Vr {
         match self.status {
             Status::Normal => self.append_state(m, out),
             Status::Transfer => self.take_state(m, out),
-            Status::ViewChange => {}
+            Status::ViewChange | Status::Recovering => {}
         }
     }
 

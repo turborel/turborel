@@ -145,13 +145,14 @@ fn a_driver_job_serves_its_database() {
     assert!(words.contains(&"serving 0".to_owned()) && words.iter().any(|w| w.starts_with("committed")), "{words:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D55, D57 [VRR §4.2]: a replica alone made
-/// again from a journal holding another primary's log, a transaction of
-/// it left open: its driver job delivers the log to its database, which
-/// follows, then promotes it in the next view; the promotion's abort
-/// record of the transaction left open is synced on the job's own thread,
-/// the built-in wait moving the driver on there; the database holds the
-/// row committed, not the one left open, and serves.
+/// Verifies: [DESIGN] RULES.md D55, D57 [VRR §4.3]: a replica alone made
+/// again from a journal holding another primary's log and no state, a
+/// transaction of it left open: it recovers at once, alone, in view 0;
+/// its driver job delivers the log to its database, which follows, then
+/// promotes it; the promotion's abort record of the transaction left open
+/// is synced on the job's own thread, the built-in wait moving the driver
+/// on there; the database holds the row committed, not the one left
+/// open, and serves.
 #[test]
 fn a_promotion_syncs_on_the_drivers_own_thread() {
     let source = Arc::new(MemoryLog::new());
@@ -170,7 +171,7 @@ fn a_promotion_syncs_on_the_drivers_own_thread() {
     }
     journal.sync().unwrap();
     let recovered = turborel_replication::Recovered { state: None, first: Lsn(0), records: records.clone() };
-    let vr = Box::new(Vr::restart(&[ReplicaId(1_u32)], ReplicaId(1_u32), options(), recovered).unwrap());
+    let vr = Box::new(Vr::restart(&[ReplicaId(1_u32)], ReplicaId(1_u32), options(), recovered, 1_u64).unwrap());
     let wait = Arc::new(Blocking { most: Duration::from_millis(1_u64) });
     let parts = Parts {
         consensus: vr,
@@ -190,7 +191,7 @@ fn a_promotion_syncs_on_the_drivers_own_thread() {
         db.request_job(job, Duration::ZERO);
         db.run_due().unwrap();
     }
-    assert_eq!(driver.serving(), Some(1_u64));
+    assert_eq!(driver.serving(), Some(0_u64));
     assert_eq!(rows(&db.session("APP"), "SELECT K FROM T").unwrap(), ["1"]);
     let log = driver.log();
     let last = log.read_at(Lsn(log.end().0 - 1_u64)).unwrap().unwrap();

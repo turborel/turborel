@@ -95,4 +95,14 @@ pub enum ReplicaEvent {
     /// A record was appended while this replica serves as no primary: the
     /// driver appends only between `Role(Primary)` and `Role(Backup)`.
     AppendRefused,
+    /// \[EXTENSION\] The replica's journal held no state, lost or never
+    /// written: it recovers from the group before it takes part [VRR
+    /// §4.3], and tells the view it then enters.
+    Recovering,
+}
+
+/// \[EXTENSION\] A number no earlier start of a replica had, from the
+/// clock: the nonce of a recovery (`Vr::restart`).
+pub fn nonce() -> u64 {
+    transfer::stamp()
 }

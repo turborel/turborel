@@ -28,12 +28,13 @@
 //!   kept all the same.
 //! * A replica made again from its journal ([`Vr::restart`]) rejoins as
 //!   [VRR §4.3] has one whose disk is intact do: "it is the same as a node
-//!   that has been unable to communicate for some period of time". Its
-//!   RECOVERY protocol is for a journal lost, and is a later stage. One that
-//!   was the primary of its view does not serve in it again: records it
-//!   sent may have been committed by its backups though its own copy did
-//!   not survive, so it waits for the next view change; so too one that was
-//!   in a view change, which it takes no further part in.
+//!   that has been unable to communicate for some period of time". One
+//!   whose journal holds no state, lost or never written, recovers from
+//!   the group first by \[VRR\]'s RECOVERY protocol (`vr/recovery.rs`).
+//!   One that was the primary of its view does not serve in it again:
+//!   records it sent may have been committed by its backups though its
+//!   own copy did not survive, so it waits for the next view change; so
+//!   too one that was in a view change, which it takes no further part in.
 //! * The primary's database learns of commit through `Committed`, and does
 //!   not wait to execute a request: it wrote the record before appending
 //!   it. Backups' databases are delivered committed records to replay. A
@@ -42,11 +43,12 @@
 //!   its own; [VRR §4.2 step 4] has it accept requests at once.
 //!
 //! Normal operation is in `vr/normal.rs`, the view change in
-//! `vr/view_change.rs`, state transfer in `vr/transfer.rs`, the frames in
-//! `vr/frame.rs`.
+//! `vr/view_change.rs`, state transfer in `vr/transfer.rs`, recovery in
+//! `vr/recovery.rs`, the frames in `vr/frame.rs`.
 
 mod frame;
 mod normal;
+mod recovery;
 mod transfer;
 mod view_change;
 mod window;
@@ -56,6 +58,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use turborel::error::{Code, Result, SqlError};
 
 use self::frame::{Message, ViewState};
+use self::recovery::Recovering;
 use self::window::Window;
 use crate::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId};
 
@@ -108,9 +111,11 @@ pub enum Status {
     /// \[EXTENSION\] Fetching the log of a later view it learned of, before
     /// it takes part in it [VRR §5.2]; or a state transfer of its database,
     /// the log alone no longer reaching back to what it holds (RULES.md
-    /// D57). \[VRR\]'s recovering status, for a journal lost, is a later
-    /// stage.
+    /// D57).
     Transfer,
+    /// Recovering: its journal held no state, so it learns the group's
+    /// from the others before it takes part [VRR §4.3] (`vr/recovery.rs`).
+    Recovering,
 }
 
 /// \[EXTENSION\] Where a replica stands, for the operator.
@@ -223,12 +228,19 @@ pub struct Vr {
     in_doubt: BTreeMap<u64, Vec<u8>>,
     /// A GETSTATE asked and not yet answered, by the op-number it named.
     asked: Option<u64>,
+    /// What its recovery has gathered, while recovering.
+    recovering: Recovering,
+    /// Whether its view-number is not yet in its journal: a replica of a
+    /// new group writes it as it is opened, so a journal holding records
+    /// holds the state too.
+    unwritten: bool,
 }
 
 impl Vr {
     /// \[EXTENSION\] A replica `me` of a new group of `members`, in view 0,
-    /// its journal empty: once, when the group is made. A replica that ran
-    /// before is made again by `restart`, even with its journal empty.
+    /// its journal empty, by fiat: where the host knows the group is new,
+    /// as a test harness does. A node's replica is made by `restart`
+    /// from its journal, which, empty, has it recover from the group.
     ///
     /// # Errors
     ///
@@ -263,6 +275,8 @@ impl Vr {
             own: BTreeMap::new(),
             in_doubt: BTreeMap::new(),
             asked: None,
+            recovering: Recovering::default(),
+            unwritten: true,
         })
     }
 
@@ -272,19 +286,16 @@ impl Vr {
     /// primary, else in a view change (see the module's documentation).
     /// Its commit-number is learned again from the group; its driver tells
     /// where its database, opened from its files, holds the log
-    /// (`Input::Opened`), and what is committed after it is delivered.
+    /// (`Input::Opened`), and what is committed after it is delivered. A
+    /// journal holding no state, lost or never written, makes a replica
+    /// recovering (`vr/recovery.rs`), its RECOVERY carrying `nonce`, a
+    /// number no earlier start of it had.
     ///
     /// # Errors
     ///
     /// As `new`; SQLCODE -916 if the state is malformed.
-    pub fn restart(members: &[ReplicaId], me: ReplicaId, options: VrOptions, recovered: Recovered) -> Result<Vr> {
+    pub fn restart(members: &[ReplicaId], me: ReplicaId, options: VrOptions, recovered: Recovered, nonce: u64) -> Result<Vr> {
         let mut vr = Vr::new(members, me, options)?;
-        let state = match recovered.state {
-            Some(bytes) => ViewState::decode(&bytes)?,
-            None => ViewState::default(),
-        };
-        vr.view = state.view;
-        vr.normal_view = state.normal_view;
         vr.log = Window::new(recovered.first.0, recovered.records);
         // Every record let go was committed and applied: its database holds
         // it in its files.
@@ -292,6 +303,15 @@ impl Vr {
         vr.delivered = recovered.first.0;
         vr.applied = recovered.first.0;
         vr.durable = vr.op();
+        let Some(bytes) = recovered.state else {
+            vr.status = Status::Recovering;
+            vr.recovering.nonce = nonce;
+            return Ok(vr);
+        };
+        let state = ViewState::decode(&bytes)?;
+        vr.view = state.view;
+        vr.normal_view = state.normal_view;
+        vr.unwritten = false;
         if state.view != state.normal_view || vr.is_primary() {
             vr.status = Status::ViewChange;
         }
@@ -386,6 +406,7 @@ impl Vr {
         out.push(Output::PersistState(state.encode()));
         self.writes.synced = self.writes.given;
         self.durable = self.op();
+        self.unwritten = false;
     }
 
     /// Takes a frame from `from`, refusing it if `from` is no other member
@@ -402,7 +423,8 @@ impl Vr {
 
     /// Takes a message from `from`. A message naming a replica that did not
     /// send it, or a primary's message from no primary of its view, is
-    /// refused: the transport says who sent each frame.
+    /// refused: the transport says who sent each frame. A replica
+    /// recovering takes only the messages of its recovery.
     fn dispatch(&mut self, from: ReplicaId, message: Message, out: &mut Vec<Output>) {
         let sender = match &message {
             Message::Prepare(m) => self.primary_of(m.view),
@@ -412,10 +434,16 @@ impl Vr {
             Message::StartViewChange(m) => m.replica,
             Message::DoViewChange(m) => m.replica,
             Message::GetState(m) => m.replica,
+            Message::Recovery(m) => m.replica,
+            Message::RecoveryResponse(m) => m.replica,
             Message::NewState(_) | Message::NeedState(_) => from,
         };
         if sender != from {
             return refuse(from, "[EXTENSION] RULES.md D57: a message names a sender other than the replica it came from", out);
+        }
+        let of_recovery = matches!(message, Message::Recovery(_) | Message::RecoveryResponse(_));
+        if self.status == Status::Recovering && !of_recovery {
+            return;
         }
         match message {
             Message::Prepare(m) => self.on_prepare(m, out),
@@ -427,6 +455,8 @@ impl Vr {
             Message::GetState(m) => self.on_get_state(m, out),
             Message::NewState(m) => self.on_new_state(m, out),
             Message::NeedState(m) => self.on_need_state(m, out),
+            Message::Recovery(m) => self.on_recovery(m, out),
+            Message::RecoveryResponse(m) => self.on_recovery_response(m, out),
         }
     }
 }

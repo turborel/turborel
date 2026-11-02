@@ -165,6 +165,7 @@ fn replica(json: &mut Json, change: &ReplicaChange) {
             json.text("why", why);
         }
         ReplicaChange::AppendRefused => json.text("change", "append_refused"),
+        ReplicaChange::Recovering => json.text("change", "recovering"),
         ReplicaChange::Connected { member } => {
             json.text("change", "connected");
             json.number("member", u64::from(*member));
@@ -436,6 +437,7 @@ mod tests {
                 r#""level":"warning","event":"replica","change":"frame_refused","from":9,"why":"no member"}"#,
             ),
             (ReplicaChange::AppendRefused, r#""level":"warning","event":"replica","change":"append_refused"}"#),
+            (ReplicaChange::Recovering, r#""level":"warning","event":"replica","change":"recovering"}"#),
             (ReplicaChange::Connected { member: 2 }, r#""level":"info","event":"replica","change":"connected","member":2}"#),
             (
                 ReplicaChange::Disconnected { member: 2, why: "refused".into() },

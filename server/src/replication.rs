@@ -37,7 +37,9 @@ use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
 use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
-use turborel_replication::{Driver, DriverJob, GroupLogs, Joined, Make, ReplicaEvent, ReplicaId, Vr, VrOptions, WholeFiles, staging_dir};
+use turborel_replication::{
+    Driver, DriverJob, GroupLogs, Joined, Make, ReplicaEvent, ReplicaId, Vr, VrOptions, WholeFiles, nonce, staging_dir,
+};
 
 use self::net::Security;
 pub use self::net::{TcpTransport, members_of};
@@ -117,6 +119,7 @@ impl Watch for Telling {
             }
             ReplicaEvent::FrameRefused { from, why } => ReplicaChange::FrameRefused { from: from.0, why: why.clone() },
             ReplicaEvent::AppendRefused => ReplicaChange::AppendRefused,
+            ReplicaEvent::Recovering => ReplicaChange::Recovering,
         };
         self.db.tell(&Event::Replica { change });
     }
@@ -182,10 +185,7 @@ pub fn prepare(db: &Database, dir: &Path) -> Result<Option<Prepared>> {
     let transport =
         Arc::new(TcpTransport::new((me, members.clone()), (listen, tick), security(db)?, (Arc::clone(&inbox), Arc::clone(&links)))?);
     let make: Make = Arc::new(|of, replica, recovered| {
-        Ok(Box::new(match recovered {
-            None => Vr::new(of, replica, VrOptions::default())?,
-            Some(recovered) => Vr::restart(of, replica, VrOptions::default(), recovered)?,
-        }))
+        Ok(Box::new(Vr::restart(of, replica, VrOptions::default(), recovered.unwrap_or_default(), nonce())?))
     });
     let sending: Arc<dyn turborel_replication::Transport> = Arc::<TcpTransport>::clone(&transport);
     let joined = Joined {

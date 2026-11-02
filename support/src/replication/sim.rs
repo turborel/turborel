@@ -60,6 +60,9 @@ pub struct Faults {
     /// Per mille of journal writes on which the disk fails, and its replica
     /// crashes (fail-stop).
     pub disk_error: u32,
+    /// Per mille of crashes in which the replica's journal is lost, one
+    /// replica at a time: made again, it recovers from the group.
+    pub lose_journal: u32,
     /// The most moments a journal write takes to be durable.
     pub write_moments: u64,
 }
@@ -109,6 +112,8 @@ pub struct Report {
     pub outcomes: usize,
     /// State transfers installed.
     pub transfers: u64,
+    /// Journals lost in crashes.
+    pub journals_lost: u64,
 }
 
 /// A database modelled as the records it holds, in order: it follows by

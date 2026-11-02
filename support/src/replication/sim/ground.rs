@@ -121,13 +121,15 @@ impl Ground {
     /// Replica `index` made again, from its journal: its driver, and its
     /// database opened over it.
     fn start(&self, index: usize) -> std::result::Result<(), Violation> {
-        let (members, id, first) = {
+        let (members, id) = {
             let world = self.world();
-            (world.members().to_vec(), world.members()[index], world.lives(index) == 0 && world.now() == 0)
+            (world.members().to_vec(), world.members()[index])
         };
         let Started { recovered, disk, link, inbox, ticks } = self.world().start(index);
         let (begins, records) = (recovered.first, recovered.records.clone());
-        let consensus = (self.make)(&members, id, if first { None } else { Some(recovered) });
+        // Made as a node is, from its journal, empty at first: the group
+        // bootstraps by recovery.
+        let consensus = (self.make)(&members, id, Some(recovered));
         let wait: Arc<dyn Wait> = Arc::new(SimWait(Weak::clone(&self.me)));
         let watch = Arc::new(watch(&self.world, id));
         let (retain_bytes, transfer) = (self.world().plan().retain_bytes, self.host.lock().unwrap().transfer(index));

@@ -203,13 +203,20 @@ impl Vr {
     /// view change to the next view [VRR §4.2]: "A view change may not
     /// succeed, e.g., because the new primary fails. In this case the
     /// replicas will start a further view change". Meanwhile, at each
-    /// heartbeat, it sends again what it is waiting on an answer to.
+    /// heartbeat, it sends again what it is waiting on an answer to; a
+    /// replica recovering its RECOVERY, and nothing else.
     pub(super) fn tick(&mut self, out: &mut Vec<Output>) {
         self.timers.beat = self.timers.beat.saturating_add(1);
         let beat = self.timers.beat >= self.options.heartbeat_ticks;
         if beat {
             self.timers.beat = 0;
             self.asked = None;
+        }
+        if self.status == Status::Recovering {
+            if beat {
+                self.send_recovery(out);
+            }
+            return;
         }
         let leading = self.status == Status::Normal && self.is_primary();
         if leading {
@@ -230,7 +237,7 @@ impl Vr {
     /// What a replica waiting on others sends again at a heartbeat.
     fn send_again(&mut self, out: &mut Vec<Output>) {
         match self.status {
-            Status::Normal => {}
+            Status::Normal | Status::Recovering => {}
             Status::ViewChange => {
                 if self.change.open {
                     self.send_view_change(out);
@@ -297,6 +304,12 @@ impl Vr {
     pub(super) fn opened(&mut self, at: u64, out: &mut Vec<Output>) {
         self.delivered = at;
         self.applied = at;
+        if self.status == Status::Recovering {
+            return self.begin_recovery(at, out);
+        }
+        if self.unwritten {
+            self.persist_state(out);
+        }
         out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.primary_of(self.view) }));
         self.deliver(out);
     }

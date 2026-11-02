@@ -67,7 +67,8 @@ pub struct Group {
 const SETTLE_LIMIT: usize = 100_000;
 
 impl Group {
-    /// A new group of `members`, each made by `make`, with instant disks.
+    /// A new group of `members`, each made by `make` as new and opened
+    /// over an empty database, with instant disks.
     pub fn new(members: &[ReplicaId], make: Make) -> Group {
         let nodes = members
             .iter()
@@ -79,7 +80,11 @@ impl Group {
                 outputs: Vec::new(),
             })
             .collect();
-        Group { members: members.to_vec(), make, nodes, frames: VecDeque::new(), instant_disks: true }
+        let mut group = Group { members: members.to_vec(), make, nodes, frames: VecDeque::new(), instant_disks: true };
+        for id in members {
+            group.step(*id, Input::Opened(Lsn(0)));
+        }
+        group
     }
 
     /// Replica `id`.
@@ -175,5 +180,17 @@ impl Group {
         node.journal.crash(reached);
         node.consensus = (self.make)(&members, id, Some(node.journal.recovered()));
         node.applied.clear();
+    }
+
+    /// Replica `id` crashes and loses its journal, and is made again over
+    /// it, empty: to recover. Its database keeps the first `kept` records
+    /// it applied, as one in files keeps what its checkpoint holds; the
+    /// test opens it (`Input::Opened`).
+    pub fn lose_journal(&mut self, id: ReplicaId, kept: usize) {
+        let members = self.members.clone();
+        let node = self.nodes.iter_mut().find(|n| n.id == id).unwrap();
+        node.journal = Journal::default();
+        node.applied.truncate(kept);
+        node.consensus = (self.make)(&members, id, Some(Recovered::default()));
     }
 }
