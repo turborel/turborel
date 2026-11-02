@@ -606,8 +606,10 @@ log allows replicated or remote ones.
   with the key it names, which the keyring must hold (`keyed_by`), else
   the file is refused (SQLCODE -910). `turboreld` keys it by
   `--checksum-key`, and STORAGE.CHECKSUM_KEY names the key of digests
-  made from then on (D48). None stops a block or page the database once
-  wrote being put back in place.
+  made from then on; a pager file's header is written again naming the
+  key every page is checksummed with once the sweep has written them
+  (D48). None stops a block or page the database once wrote being put
+  back in place.
 - **Digests.** At most 512 bits (`hash::MAX_DIGEST_BYTES`), with room in
   every format storing one: block file headers, pager file headers and
   meta slots. A block's trailer is the function's size; a page's holds
@@ -668,19 +670,40 @@ per table.**
   the formats the settings say, as the database is opened and after
   each change, and each writes in them from then on: the data file's
   pages as each is written (`BufferPool::set_formats`, every page
-  naming its own encodings and key), the log's next segment, begun at
-  its next append (`Log::set_formats`), the catalog's next record, to a
-  new file (`CatalogStore::set_formats`), and the shadows' next side
-  files. What was written before is read as it was, the registered
-  encodings and the keyring serving every key named, so a key is
-  retired once nothing names it: a sweep of the database writes the
-  pages still under old formats again in its own time and says when
-  none is left; log segments go as checkpoints truncate them. The
+  naming its own encodings and key), the log's next segment, begun
+  before its next record (`Log::set_formats`), the catalog's next
+  record, to a new file (`CatalogStore::set_formats`), and the shadows'
+  next side files. What was written before is read as it was, the
+  registered encodings and the keyring serving every key named. The
   checksum function itself (STORAGE.CHECKSUM) stays as the database was
-  made. Not covered: a plug-in's own files under `plugins/`, a
-  replica's journal. Given before a database opens, the two hold over
-  the recorded values (`settings::read_as_opened`), so `turboreld
-  --set` changes them as it starts.
+  made. Given before a database opens, the two hold over the recorded
+  values (`settings::read_as_opened`), so `turboreld --set` changes
+  them as it starts; a key given so is checked as the database opens,
+  the function recorded in it read first.
+- **The sweep** (`db/rekey.rs`). The job `turborel-rekey` (D55) writes
+  the data file's pages still in other formats again, as they are: it
+  reads pages raw in runs, a page naming its formats in the clear in
+  its body's header and trailer (`Pager::behind`), and holds each
+  behind for writing in the buffer pool, so it is written back, with
+  its overflow and directory pages, in the current formats through the
+  shadow mechanism; free pages are zeroed already and trunk pages
+  written at every sync. STORAGE.REKEY_BYTES_PER_SECOND paces it, a
+  tenth of a second's worth a run, a page at least; 0 pauses it. The
+  walk starts again whenever the formats change under it. Done, it
+  settles the file: the header written again naming the formats every
+  page is in (`Pager::settle`), the meta slot keyed anew at the next
+  sync, and a checkpoint taken, which commits both with the pages and
+  truncates the log's old segments (a second if one held the first's
+  position). The file is settled once its header
+  names the formats the settings do: so the sweep is needed again, after
+  a crash or a change, exactly while it does not, resuming across opens
+  with nothing recorded but the header; and the file opens by the key
+  its header names, so the old key is retired once settled. Every file
+  settled, the data file and no log segment or catalog file behind, is
+  told once (`Event::FormatsSettled`, after the checkpoint that made it
+  so) and shown in INFORMATION_SCHEMA.FILE_FORMATS with what is behind.
+  `Database::rekey` does it all now, for `turboreld rekey`. Not swept: a
+  plug-in's own files under `plugins/`, a replica's journal.
 - **Per table,** the engine seals what it stores: data through a
   pipeline, headed by its ids (`Pipeline::seal`, `Encodings::unseal`),
   with the registry from `Host::encodings`. An engine that does not
@@ -1140,7 +1163,8 @@ the standard's meaning holds and programs and drivers need only SQL.
   (starting, idle, running, stopping, stopped, failed), start time, last
   run, run count, last error, restarts.
 - **Jobs.** Background work (checkpoints, maintenance, the log's syncs,
-  D25; read-ahead, D30; folds of assertions' kept totals, D51) runs as
+  D25; read-ahead, D30; folds of assertions' kept totals, D51; the
+  sweep writing the files again in new formats, D48) runs as
   jobs under a per-database policy:
   automatic (own thread, at once or at the time asked); manual, only on `Database::run_due`
   (tests, operators choosing the time); or paused. Errors become events (D40); a panic is caught, reported, and

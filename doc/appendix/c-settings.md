@@ -81,6 +81,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |
 | STORAGE.POOL_BYTES | 33554432 | INTEGER FROM 65536 TO 9223372036854775807 | at the next start |  |
 | STORAGE.READ_AHEAD_PAGES | 32 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| STORAGE.REKEY_BYTES_PER_SECOND | 8388608 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | STORAGE.SYSTEM_CACHE_BYTES | 1073741824 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | TABLES.ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
@@ -99,7 +100,7 @@ Each in a sentence:
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
-- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS) and read-ahead (STORAGE.READ_AHEAD_PAGES), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
+- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock another transaction holds; OFF refuses the statement at once.
 - **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.
@@ -136,10 +137,11 @@ Each in a sentence:
 - **STATEMENT.TIMEOUT_MS**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
 - **STORAGE.CHECKSUM_KEY**: The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.
-- **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the database's sweep.
+- **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the job turborel-rekey.
 - **STORAGE.PAGE_BYTES**: The bytes of a page of the data file, a power of two.
 - **STORAGE.POOL_BYTES**: The bytes of the buffer pool of the data file, reserved of MEMORY.BUDGET_BYTES as the database is opened; of a database kept in memory, the pool its engine and index methods share, made with its first table.
 - **STORAGE.READ_AHEAD_PAGES**: The pages a scan of a table of the built-in stores, or of a B-tree index, has read ahead of it at once, at most an eighth of the buffer pool's pages: read by the database's job turborel-read-ahead while the scan goes on, each run of them in one read of the file; 0 for none. A change holds at once, a scan under way included.
+- **STORAGE.REKEY_BYTES_PER_SECOND**: The bytes of the data file the job turborel-rekey reads a second, writing again the pages still in other formats than STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY name, until every file is in them; 0 pauses it. A change holds at once.
 - **STORAGE.SYSTEM_CACHE_BYTES**: The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.
 - **TABLES.ENGINE**: The storage engine of tables a schema creates.
 - **TABLES.UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.

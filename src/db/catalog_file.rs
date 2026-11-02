@@ -170,6 +170,11 @@ impl CatalogFile {
 }
 
 impl CatalogStore for CatalogFile {
+    /// Its file, until the next record goes to a new one.
+    fn formats_behind(&self) -> u64 {
+        u64::from(self.switch.load(Ordering::Acquire))
+    }
+
     /// The next record goes to a new file in them.
     fn set_formats(&self, hash: Arc<dyn HashFunction>, pipeline: Pipeline) {
         let mut formats = lock_builtin(&self.formats);

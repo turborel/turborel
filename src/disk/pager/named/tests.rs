@@ -14,7 +14,7 @@ use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::hash::{Digest, HashFunction, HashId, MAX_KEY_NAME, key_field, read_key_field, verifier_of};
 
 /// An encoding, near enough: adds `id` to every byte.
-struct Shift(u32);
+pub(in crate::disk::pager) struct Shift(pub(in crate::disk::pager) u32);
 
 impl Encoding for Shift {
     fn id(&self) -> EncodingId {
@@ -37,20 +37,33 @@ impl Encoding for Shift {
 }
 
 /// A pipeline of one `Shift`.
-fn shift(id: u32) -> Pipeline {
+pub(in crate::disk::pager) fn shift(id: u32) -> Pipeline {
     Pipeline::new(vec![Arc::new(Shift(id))]).unwrap()
 }
 
 /// A keyed hash function, near enough: CRC-32 of the key's name and the
-/// bytes; keyed by any name beginning with `k`.
-struct Keyed {
+/// bytes; keyed by any name beginning with `k`, or by those of a keyring
+/// given.
+pub(in crate::disk::pager) struct Keyed {
     name: String,
+    held: Option<Vec<String>>,
     crc: Crc,
 }
 
 impl Keyed {
-    fn by(name: &str) -> Arc<dyn HashFunction> {
-        Arc::new(Keyed { name: name.to_owned(), crc: Crc::new(CRC32_ISCSI).unwrap() })
+    pub(in crate::disk::pager) fn by(name: &str) -> Arc<dyn HashFunction> {
+        Arc::new(Keyed { name: name.to_owned(), held: None, crc: Crc::new(CRC32_ISCSI).unwrap() })
+    }
+
+    /// Keyed by `name`, of a keyring holding the keys `held` alone.
+    pub(in crate::disk::pager) fn holding(name: &str, held: &[&str]) -> Arc<dyn HashFunction> {
+        let held = Some(held.iter().map(|&k| k.to_owned()).collect());
+        Arc::new(Keyed { name: name.to_owned(), held, crc: Crc::new(CRC32_ISCSI).unwrap() })
+    }
+
+    /// Whether the keyring holds `name`.
+    fn holds(&self, name: &str) -> bool {
+        self.held.as_ref().map_or_else(|| name.starts_with('k'), |held| held.iter().any(|k| k == name))
     }
 }
 
@@ -78,7 +91,10 @@ impl HashFunction for Keyed {
         Some(&self.name)
     }
     fn keyed_by(&self, name: &str) -> Result<Arc<dyn HashFunction>> {
-        if name.starts_with('k') { Ok(Keyed::by(name)) } else { Err(SqlError::new(Code::Api, format!("no key {name}"))) }
+        if !self.holds(name) {
+            return Err(SqlError::new(Code::Api, format!("no key {name}")));
+        }
+        Ok(Arc::new(Keyed { name: name.to_owned(), held: self.held.clone(), crc: Crc::new(CRC32_ISCSI)? }))
     }
 }
 

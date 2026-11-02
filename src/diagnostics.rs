@@ -176,6 +176,19 @@ pub enum Event {
         /// Why.
         cause: Overdue,
     },
+    /// \[DESIGN\] Every file of the database is in the formats
+    /// STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY name, the sweep
+    /// `turborel-rekey` done and a checkpoint taken after it (RULES.md
+    /// D48, `db/rekey.rs`): the keys and encodings named before may be
+    /// retired. Told once, until they change again.
+    FormatsSettled {
+        /// STORAGE.ENCODINGS.
+        encodings: String,
+        /// The name of the key checksums are made with: STORAGE.CHECKSUM_KEY,
+        /// or the key the function was registered with; empty of a
+        /// function not keyed.
+        checksum_key: String,
+    },
     /// \[DESIGN\] A server began to take connections (RULES.md D42).
     Listening {
         /// Where: each address, Unix socket's path or named pipe's name.
@@ -284,6 +297,7 @@ impl Event {
             Event::Opened(Opened::Created | Opened::Reopened)
             | Event::Closed
             | Event::CheckpointTaken(_)
+            | Event::FormatsSettled { .. }
             | Event::SettingChanged { .. }
             | Event::UserChanged { .. }
             | Event::OwnerChanged { .. }

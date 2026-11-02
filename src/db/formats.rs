@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use super::files::DatabaseFiles;
 use super::{Database, State, api};
 use crate::diagnostics::Extension;
 use crate::disk::encoding::{Encoding, Pipeline};
@@ -96,13 +97,7 @@ impl State {
     /// and the function is not keyed, or cannot take it.
     pub(super) fn checksum_hash(&self, values: &Settings) -> Result<Arc<dyn HashFunction>> {
         let named = |key| if let Value::Char(s) = values.get(key) { s.clone() } else { String::new() };
-        let checksum = named(CHECKSUM);
-        let hash = self
-            .hashes
-            .iter()
-            .find(|h| h.name().eq_ignore_ascii_case(&checksum))
-            .cloned()
-            .ok_or_else(|| unregistered("hash function", &checksum))?;
+        let hash = self.checksum_function(values)?;
         let key = named(CHECKSUM_KEY);
         if key.is_empty() {
             return Ok(hash);
@@ -111,6 +106,22 @@ impl State {
             return Err(api(format!("[DESIGN] STORAGE.CHECKSUM_KEY names a key, {key}, and {} is not keyed", hash.name())));
         }
         hash.keyed_by(&key)
+    }
+
+    /// The hash function STORAGE.CHECKSUM names, as registered: what reads
+    /// a database's files before its settings are, the key they are
+    /// checksummed by named in each.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it is not registered.
+    pub(super) fn checksum_function(&self, values: &Settings) -> Result<Arc<dyn HashFunction>> {
+        let checksum = if let Value::Char(s) = values.get(CHECKSUM) { s.clone() } else { String::new() };
+        self.hashes
+            .iter()
+            .find(|h| h.name().eq_ignore_ascii_case(&checksum))
+            .cloned()
+            .ok_or_else(|| unregistered("hash function", &checksum))
     }
 
     /// The settings of `recorded`, an image's values, over this state's:
@@ -152,6 +163,24 @@ impl State {
             }
         }
         Ok(values)
+    }
+}
+
+impl DatabaseFiles {
+    /// Gives its files the formats to write in from now on (RULES.md D48):
+    /// the data file's pages, the catalog's next file and the shadows' next
+    /// side files; a checksum's key only of a keyed function.
+    ///
+    /// # Errors
+    ///
+    /// The data file's (SQLCODE -910 if the key is not its function's).
+    pub(super) fn set_formats(&self, formats: &FileFormats) -> Result<()> {
+        if let Some((pool, file)) = &self.data {
+            pool.set_formats(*file, formats.pipeline.clone(), Arc::clone(&formats.hash))?;
+        }
+        self.catalog.set_formats(Arc::clone(&formats.hash), formats.pipeline.clone());
+        self.shadows.set_hash(Arc::clone(&formats.hash));
+        Ok(())
     }
 }
 

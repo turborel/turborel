@@ -20,7 +20,7 @@ fn parsed(line: &str) -> Result<Command, String> {
 /// The configuration of `line`.
 fn config(line: &str) -> Config {
     match parsed(line).unwrap() {
-        Command::Serve(config) | Command::User(config, _) | Command::Reseal(config, _) => config,
+        Command::Serve(config) | Command::User(config, _) | Command::Reseal(config, _) | Command::Rekey(config) => config,
         Command::Help | Command::Version => panic!("help"),
     }
 }
@@ -103,6 +103,37 @@ fn a_key_is_retired_by_resealing_its_table() {
         let said = parsed(&format!("--dir db {wrong}")).unwrap_err();
         assert!(said.contains("reseal takes one table"), "{said}");
     }
+    retired_by_rekeying(&scratch, &keys, (&base, &server));
+}
+
+/// Verifies: [EXTENSION] RULES.md D48: `turboreld rekey` writes the
+/// database's files again in the formats STORAGE.ENCODINGS and
+/// STORAGE.CHECKSUM_KEY name now, and says so: the database of
+/// `a_key_is_retired_by_resealing_its_table`, encrypted and checksummed
+/// under L, its table sealed again under M, is set to M by `--set` as
+/// `rekey` starts, and is then served with L's file gone; rekey refuses
+/// a database kept nowhere.
+fn retired_by_rekeying(scratch: &Scratch, keys: &Path, (base, server): (&str, &str)) {
+    key(keys, "M", "0c");
+    let dir = scratch.path("db");
+    assert_eq!(served(config(server), &["ALTER TABLE T SET (ENCODINGS = 'AES-256-GCM:M')", "COMMIT WORK"]), ["0"]);
+    let Command::Reseal(config_of, table) = parsed(&format!("{base} reseal X.T")).unwrap() else { panic!("reseal") };
+    turboreld::run_reseal(&config_of, &table, &mut Vec::new()).unwrap();
+    let to_m = format!(
+        "--dir {} --keys {} --checksum-key L --set STORAGE.ENCODINGS=chacha20-poly1305:M --set STORAGE.CHECKSUM_KEY=M rekey",
+        dir.display(),
+        keys.display()
+    );
+    let Command::Rekey(config_of) = parsed(&to_m).unwrap() else { panic!("rekey") };
+    let mut out = Vec::new();
+    turboreld::run_rekey(&config_of, &mut out).unwrap();
+    assert_eq!(String::from_utf8(out).unwrap(), "the files are written in the encodings ChaCha20-Poly1305:M, the checksum keyed by M\n");
+    std::fs::remove_file(keys.join("L")).unwrap();
+    let by_m = server.replace("--checksum-key L", "--checksum-key M");
+    assert_eq!(served(config(&by_m), &["SELECT S FROM T"]), ["under K"]);
+    let none = turboreld::run_rekey(&config("--memory"), &mut Vec::new()).unwrap_err();
+    assert!(none.contains("--dir"), "{none}");
+    {}
 }
 
 /// Verifies: [EXTENSION] RULES.md D26, D30: the program registers SHA-512:

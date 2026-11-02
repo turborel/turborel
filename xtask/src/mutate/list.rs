@@ -16,7 +16,7 @@ pub fn all() -> Vec<Mutation> {
 
 /// The core's mutations: transactions, durability, constraints,
 /// assertions, the hash index.
-pub const MUTATIONS: [Mutation; 49] = [
+pub const MUTATIONS: [Mutation; 53] = [
     Mutation {
         name: "mvcc-snapshot",
         breaks: "MVCC visibility: a reader sees every committed version, past its snapshot",
@@ -497,6 +497,42 @@ pub const MUTATIONS: [Mutation; 49] = [
         file: "src/disk/buffer.rs",
         original: "        if hash.keyed() {\n            pager.set_hash(hash)?;",
         replacement: "        if hash.keyed() {\n            drop(hash);",
+        integration: &["rekeying::files_follow_the_formats_set_at_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rekey-behind-blind",
+        breaks: "the sweep finds no page in other formats, so none is written again",
+        file: "src/disk/pager/formats.rs",
+        original: "        key.is_some_and(|key| ids != current.encodings || key != current.key)",
+        replacement: "        key.is_some_and(|key| ids != current.encodings && key != current.key && false)",
+        integration: &["rekeying::files_follow_the_formats_set_at_once"],
+        unit: &["disk::pager::formats::tests::pages_behind_the_formats_are_found_and_the_file_settled"],
+    },
+    Mutation {
+        name: "rekey-meta-stale",
+        breaks: "the meta slot stays keyed by the old key once the header is settled, so the file cannot open without it",
+        file: "src/disk/pager/sync.rs",
+        original: "            if !free.changed() && !self.resettled.swap(false, Ordering::AcqRel) {",
+        replacement: "            if !free.changed() {",
+        integration: &[],
+        unit: &["disk::pager::formats::tests::pages_behind_the_formats_are_found_and_the_file_settled"],
+    },
+    Mutation {
+        name: "rekey-walk-stale",
+        breaks: "the sweep goes on from where it was once the formats change under it, leaving the pages before in the old ones",
+        file: "src/db/rekey.rs",
+        original: "        if walk.target.as_ref() != Some(current) {",
+        replacement: "        if walk.target.is_none() {",
+        integration: &["rekeying::the_sweep_runs_in_its_own_time"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rekey-settled-untold",
+        breaks: "the files settled are never told",
+        file: "src/db/checkpoint.rs",
+        original: "            self.tell_if_settled();",
+        replacement: "            drop(());",
         integration: &["rekeying::files_follow_the_formats_set_at_once"],
         unit: &[],
     },

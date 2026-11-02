@@ -2,7 +2,9 @@
 //! and the free list recorded: on new trunk pages, then in the meta slot that
 //! is not current, so a crash at any point leaves the previous record, and
 //! the trunk pages it names, whole. Free pages at the end of the file are
-//! cut off once the record is durable. Split from pager.rs (RULES.md R-SIZE-2).
+//! cut off once the record is durable. The record is written again, as it
+//! is, after the header is settled in other formats (`formats.rs`), so
+//! the slot names the header's key. Split from pager.rs (RULES.md R-SIZE-2).
 
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
@@ -64,7 +66,9 @@ impl Pager {
         let per_trunk = self.body_size().saturating_sub(format::LIST_HEADER).checked_div(format::ENTRY).unwrap_or(1).max(1);
         let (trailing, pages, trunk, runs) = {
             let mut free = lock_builtin(&self.free);
-            if !free.changed() {
+            // Written again too once the header is settled (`formats.rs`),
+            // so the slot names the key the header does.
+            if !free.changed() && !self.resettled.swap(false, Ordering::AcqRel) {
                 drop(free);
                 self.file.sync(durability)?;
                 return Ok(None);

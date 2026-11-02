@@ -25,7 +25,10 @@
 //!
 //! A data page's content is as the pipeline its ids name left it
 //! (`named.rs`); a scratch file's begins with a byte naming which of the
-//! pipelines it was written through did (`live.rs`). A key name is a keyed
+//! pipelines it was written through did (`live.rs`). The header names
+//! the encodings and key the file was made with, and is written again,
+//! its fields alone, naming those every page is in once the file is
+//! settled in others (`formats.rs`). A key name is a keyed
 //! function's, by which the digest beside it is verified; of one not keyed
 //! it is empty in the header and meta slots and absent from pages. A data
 //! page lists the first `INLINE_EXTENTS` extents of its overflow
@@ -105,17 +108,7 @@ pub(super) fn le_u64(bytes: &[u8], at: usize) -> Option<u64> {
 /// The header of a new file whose content `pipeline` encodes, with an
 /// empty meta slot 0: a header slot of `size` bytes.
 pub(super) fn header(hash: &dyn HashFunction, pipeline: &Pipeline, page_size: u32, size: usize) -> Vec<u8> {
-    let mut h = Vec::with_capacity(size);
-    h.extend_from_slice(&MAGIC);
-    h.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
-    h.extend_from_slice(&[0; 2]);
-    h.extend_from_slice(&hash.id().0.to_le_bytes());
-    h.extend_from_slice(&page_size.to_le_bytes());
-    h.extend_from_slice(&[0; 4]);
-    h.extend_from_slice(&encoding::ids_field(pipeline));
-    h.extend_from_slice(&key_field(hash.key_name()));
-    let digest = hash.hash(&h);
-    h.extend_from_slice(digest.as_bytes());
+    let mut h = header_fields(hash, &pipeline.ids(), page_size);
     h.resize(size, 0);
     let [first, _] = META_AT;
     let meta = encode_meta(hash, Meta { sequence: 0, pages: 0, trunk: NONE });
@@ -125,12 +118,33 @@ pub(super) fn header(hash: &dyn HashFunction, pipeline: &Pipeline, page_size: u3
     h
 }
 
+/// The header's fields, before its meta slots: the file naming the
+/// encodings `ids` and the key `hash` is keyed by, digest included
+/// (`formats.rs`: written again once every page is in them).
+pub(super) fn header_fields(hash: &dyn HashFunction, ids: &[EncodingId], page_size: u32) -> Vec<u8> {
+    let mut h = Vec::with_capacity(DIGEST_AT.saturating_add(MAX_DIGEST_BYTES));
+    h.extend_from_slice(&MAGIC);
+    h.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    h.extend_from_slice(&[0; 2]);
+    h.extend_from_slice(&hash.id().0.to_le_bytes());
+    h.extend_from_slice(&page_size.to_le_bytes());
+    h.extend_from_slice(&[0; 4]);
+    h.extend_from_slice(&encoding::ids_field_of(ids));
+    h.extend_from_slice(&key_field(hash.key_name()));
+    let digest = hash.hash(&h);
+    h.extend_from_slice(digest.as_bytes());
+    h
+}
+
 /// What a header slot records, after checking it.
 pub(super) struct Header {
     /// The file's hash function, as given: keyed by the key given.
     pub(super) hash: Arc<dyn HashFunction>,
     pub(super) page_size: u32,
     pub(super) encodings: Vec<EncodingId>,
+    /// The name of the key the header names, empty of a function not
+    /// keyed.
+    pub(super) key: String,
 }
 
 /// The header a header slot holds, after checking it.
@@ -158,7 +172,8 @@ pub(super) fn read_header(bytes: &[u8], hashes: &[Arc<dyn HashFunction>], path: 
     }
     let encodings = encoding::read_ids_field(bytes.get(ENCODINGS_AT..DIGEST_AT).unwrap_or_default())
         .ok_or_else(|| corrupt("its list of encodings is malformed"))?;
-    Ok(Header { hash: Arc::clone(hash), page_size: field(bytes, PAGE_SIZE_AT).map(u32::from_le_bytes).unwrap_or_default(), encodings })
+    let page_size = field(bytes, PAGE_SIZE_AT).map(u32::from_le_bytes).unwrap_or_default();
+    Ok(Header { hash: Arc::clone(hash), page_size, encodings, key: name.to_owned() })
 }
 
 /// What a meta slot records: the state of the last `sync`.
@@ -198,6 +213,12 @@ pub(super) fn decode_meta(verifier: &dyn Fn(&str) -> Option<Arc<dyn HashFunction
         pages: le_u64(fields, PAGE_NUMBER_BYTES)?,
         trunk: le_u64(fields, META_NUMBERS.checked_sub(8)?)?,
     })
+}
+
+/// The ids of the encodings the content of the data page `body` passed
+/// through, if its field is whole.
+pub(super) fn data_ids(body: &[u8]) -> Option<Vec<EncodingId>> {
+    encoding::read_ids_field(body.get(IDS_AT..IDS_AT.checked_add(encoding::ENCODINGS_FIELD)?)?)
 }
 
 /// The body of a data page holding `inline` of `length` content bytes,

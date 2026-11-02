@@ -10,7 +10,7 @@ fn args(line: &str) -> Vec<String> {
 fn config(line: &str) -> Config {
     match parse(&args(line)).unwrap() {
         Command::Serve(config) => config,
-        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) => panic!("not a server"),
+        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) | Command::Rekey(..) => panic!("not a server"),
     }
 }
 
@@ -27,6 +27,9 @@ fn the_command_line_names_the_database_and_its_settings() {
     let given: Vec<String> = set.settings.iter().map(|(name, value)| format!("{name}={value}")).collect();
     assert_eq!(given, ["SERVER.WORKERS=3", "x=1.5E0", "SESSION.COMMIT_AT_END=off", "SERVER.HOST="]);
     assert!(matches!(parse(&args("--memory --help")), Ok(Command::Help)));
+    assert!(matches!(parse(&args("--dir /var/db --keys k rekey")), Ok(Command::Rekey(_))));
+    assert!(parse(&args("--dir /var/db rekey now")).unwrap_err().contains("rekey takes nothing"));
+    assert!(parse(&args("--memory --owner ann rekey")).unwrap_err().contains("--owner"));
     assert!(matches!(parse(&args("--version")), Ok(Command::Version)));
 }
 

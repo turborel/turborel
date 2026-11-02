@@ -119,6 +119,9 @@ pub struct State {
     /// What reads ahead for its pools on its read-ahead job, shared by
     /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
     pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
+    /// The sweep writing its files again in the formats its settings name
+    /// (`db/rekey.rs`).
+    pub(crate) rekey: Arc<super::rekey::Rekey>,
     /// The files it holds, shared by every snapshot (`files.rs`, RULES.md
     /// D56).
     pub(crate) files: Arc<crate::files::Registry>,
@@ -168,6 +171,7 @@ impl State {
             work: Arc::new(WorkAreas::new(Arc::clone(&memory))),
             jobs: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
+            rekey: Arc::default(),
             files: Arc::default(),
             plugins: Arc::new(crate::files::plugins::PluginFiles::in_memory(Arc::clone(&memory))),
             log: None,

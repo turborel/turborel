@@ -30,13 +30,16 @@ impl State {
     /// engine, index method, hash function or encodings not registered;
     /// the log's errors.
     /// Refuses `value` of the setting `key` if it is STORAGE.CHECKSUM_KEY
-    /// and names a key the checksum function cannot take (RULES.md D48).
+    /// and names a key the checksum function cannot take (RULES.md D48),
+    /// of a database opened from its files: before it opens, the function
+    /// is not yet the one recorded in them, and the opening refuses the key
+    /// instead (`State::layout`).
     ///
     /// # Errors
     ///
     /// SQLCODE -910, as `State::checksum_hash` says.
     fn key_taken(&self, key: settings::Key, value: &Value) -> Result<()> {
-        if key != settings::CHECKSUM_KEY {
+        if key != settings::CHECKSUM_KEY || self.log.is_none() {
             return Ok(());
         }
         let mut values = self.settings.clone();
@@ -195,7 +198,9 @@ impl Database {
     /// its settings say now (RULES.md D48): the pipeline STORAGE.ENCODINGS
     /// names and the checksum's key STORAGE.CHECKSUM_KEY names, which the
     /// data file's pages, the log's next segment, the catalog's next file
-    /// and the shadows' next side files take from then on.
+    /// and the shadows' next side files take from then on; and asks for
+    /// the sweep writing the data file's other pages again (`db/rekey.rs`)
+    /// if it is behind them.
     ///
     /// # Errors
     ///
@@ -209,7 +214,7 @@ impl Database {
         if let Some(log) = &st.log {
             log.set_formats(Arc::clone(&formats.hash), formats.pipeline.clone());
         }
-        Ok(())
+        self.rekey_if_behind()
     }
 
     /// \[DESIGN\] Records the database's values of the settings `names`,

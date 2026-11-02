@@ -225,6 +225,12 @@ pub trait CatalogStore: Send + Sync {
     /// new file so. What it recorded before is read as it was. Default:
     /// nothing changes, a store that keeps no file.
     fn set_formats(&self, _hash: Arc<dyn HashFunction>, _pipeline: Pipeline) {}
+    /// \[DESIGN\] How many of its files are in other formats than
+    /// `set_formats` last gave (RULES.md D48): the built-in store's one, or
+    /// none. Default: none, a store that keeps no file.
+    fn formats_behind(&self) -> u64 {
+        0
+    }
 }
 
 /// Where a database keeps its catalog and its log, once it is kept in a

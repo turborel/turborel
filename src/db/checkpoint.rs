@@ -101,6 +101,7 @@ impl Database {
             self.emit(&Event::CheckpointTaken(self.checkpoints_taken()));
             // Taken, it may still give up no log: a transaction holds it.
             self.tell_if_overdue();
+            self.tell_if_settled();
         }
         taken
     }

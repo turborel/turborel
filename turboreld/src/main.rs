@@ -27,6 +27,7 @@ fn main() -> ExitCode {
             turboreld::run(&config, |at| eprintln!("turboreld: listening at {}", at.join(", ")), signals)
         }
         Command::Reseal(config, table) => turboreld::run_reseal(&config, &table, &mut std::io::stdout()),
+        Command::Rekey(config) => turboreld::run_rekey(&config, &mut std::io::stdout()),
         Command::User(config, user) => {
             let takes_one = matches!(user, UserCommand::Add { .. } | UserCommand::Password { .. });
             let mut input = password_input(takes_one)?;

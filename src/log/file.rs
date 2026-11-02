@@ -419,6 +419,16 @@ impl Log for FileLog {
         self.durability.store(durability_code(durability), Ordering::Release);
     }
 
+    /// The segments in other formats than the next is begun in.
+    fn formats_behind(&self) -> u64 {
+        let (hash, pipeline) = lock_builtin(&self.formats).clone();
+        let behind = lock_builtin(&self.segments)
+            .values()
+            .filter(|s| s.blocks.hash().key_name() != hash.key_name() || s.blocks.pipeline().ids() != pipeline.ids())
+            .count();
+        u64::try_from(behind).unwrap_or(u64::MAX)
+    }
+
     /// A segment in them is begun before the next record appended.
     fn set_formats(&self, hash: Arc<dyn HashFunction>, pipeline: Pipeline) {
         let changed = {

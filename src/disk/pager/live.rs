@@ -56,6 +56,20 @@ impl Encoded {
         (Encoded::Live(Live { source: Arc::clone(source), taken }), Pipeline::clone(&first))
     }
 
+    /// The ids of the pipeline pages are written through now; a scratch
+    /// file's, none, as its pages name no formats a file settles in.
+    pub(super) fn current_ids(&self) -> Vec<EncodingId> {
+        match self {
+            Encoded::Named(named) => named.current().ids(),
+            Encoded::Live(_) => Vec::new(),
+        }
+    }
+
+    /// Whether it is a durable file's, each page naming its own.
+    pub(super) fn is_named(&self) -> bool {
+        matches!(self, Encoded::Named(_))
+    }
+
     /// Whether a page whose body names `ids` holds its content as it is:
     /// of a durable file, one naming no encoding; a scratch file's never,
     /// as each page's content begins with its tag.

@@ -93,7 +93,7 @@ Committed, the rows need the old key no more once a checkpoint follows
 closed). Once each table that named the old key is sealed again, and
 checkpointed, its file may leave the key directory.
 
-## The files' key
+## The files' formats
 
 STORAGE.ENCODINGS is changed on a running server, by the database's
 owner, or as it starts:
@@ -105,9 +105,44 @@ SET DATABASE STORAGE.ENCODINGS = 'LZ4,AES-256-GCM:SPARE';
 From then on the log writes a new segment, the catalog a new file, and
 the data file each page it writes again, through the new encodings;
 what was written before is read through its own, every file naming
-them, so the old key stays in the key directory meanwhile. The database
-writes the pages still under the old encodings again in its own time,
-and says when none is left; until then the old key is needed.
+them, so the old key stays in the key directory meanwhile. The job
+`turborel-rekey` then writes the data file's other pages again, from
+the first to the last, reading STORAGE.REKEY_BYTES_PER_SECOND of the
+file a second (8 MiB by default; 0 pauses it), and takes a checkpoint
+once none is left, which drops the log's old segments. Every file is
+then in the new formats, told once as `formats_settled`
+([Diagnostics](08-diagnostics.md)), and the old key may leave the key
+directory. INFORMATION_SCHEMA.FILE_FORMATS shows the owner what is
+still behind meanwhile:
+
+```sql
+SELECT KIND, IS_SETTLED, BEHIND FROM INFORMATION_SCHEMA.FILE_FORMATS;
+```
+
+```
+ KIND    | IS_SETTLED | BEHIND
+---------+------------+--------
+ DATA    | NO         |  41822
+ LOG     | NO         |      2
+ CATALOG | YES        |      0
+(3 rows)
+```
+
+BEHIND counts the pages of the data file not yet looked at, the log's
+segments in other formats, and the catalog's file if it is. A crash, or
+the database closed, leaves the pages written again as they are; the
+job goes on from the first page as the database opens, looking at the
+pages written again without writing them. On a database no server
+holds, `turboreld rekey` does it all at once:
+
+```
+$ turboreld --dir db --keys keys --set STORAGE.ENCODINGS=LZ4,AES-256-GCM:SPARE rekey
+the files are written in the encodings LZ4,AES-256-GCM:SPARE, the checksum's own key
+```
+
+A table's own encodings (ENCODINGS, above) are the table's: its rows
+are sealed again by `reseal`, not by the sweep. A plug-in's own files,
+under `plugins/`, and a replica's journal are not written again.
 
 ## Checksums
 
@@ -140,6 +175,7 @@ changed as the encodings are:
 SET DATABASE STORAGE.CHECKSUM_KEY = 'SPARE';
 ```
 
-and the old key is needed until every page checksummed with it is
-written again. An encryption authenticates what it encrypts already:
-the checksum matters most to files not encrypted.
+and the old key is needed until `turborel-rekey` has written every page
+checksummed with it again ([The files' formats](#the-files-formats)).
+An encryption authenticates what it encrypts already: the checksum
+matters most to files not encrypted.

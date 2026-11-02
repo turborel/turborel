@@ -18,7 +18,7 @@ use turborel_test_support::server::Raw;
 pub(crate) fn config(line: &[String]) -> Config {
     match turboreld::parse(line).unwrap() {
         Command::Serve(config) => config,
-        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) => panic!("not a server"),
+        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) | Command::Rekey(..) => panic!("not a server"),
     }
 }
 

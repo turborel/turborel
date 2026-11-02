@@ -184,6 +184,7 @@ impl Database {
 
     /// Keeps `files` as those it was opened from.
     pub(super) fn attach_files(&self, files: DatabaseFiles) -> Result<()> {
+        self.snapshot()?.rekey.attach(files.data.clone(), Arc::clone(&files.catalog));
         *lock(&self.0.files)? = Some(Arc::new(files));
         // Written in the formats its settings say, restored or given.
         self.tell_formats()

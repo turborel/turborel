@@ -51,6 +51,7 @@ use turborel_server::tls::Tls;
 pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
        turboreld --dir PATH [--config FILE] [--set NAME=VALUE]... user COMMAND
        turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
+       turboreld --dir PATH [--keys DIR] rekey
 
   --dir PATH             serve the database kept in PATH, created if there is none
   --memory               serve a database kept nowhere, lost when the server stops
@@ -79,6 +80,10 @@ standard input:
 A table's rows sealed again, through the encodings it names now, on a database no
 server holds: then a key it named before may be retired:
   reseal AUTH.TABLE
+The database's files written again, at once, in the formats STORAGE.ENCODINGS and
+STORAGE.CHECKSUM_KEY name now, on a database no server holds (a server does it in its
+own time, at STORAGE.REKEY_BYTES_PER_SECOND): then the keys named before may be retired:
+  rekey
 
 The server's settings, beside the database's:
   SERVER.HOST            hosts or addresses, by commas, to take TCP connections at
@@ -174,6 +179,9 @@ pub enum Command {
     /// A table's rows sealed again, on the database's directory
     /// (`reseal.rs`): the table, as written.
     Reseal(Config, String),
+    /// The database's files written again in the formats its settings
+    /// name now (`rekey.rs`).
+    Rekey(Config),
 }
 
 /// A server's configuration, from the command line.
@@ -205,6 +213,7 @@ pub struct Config {
 pub fn parse(args: &[String]) -> Result<Command, String> {
     let (mut store, mut settings, mut user) = (None, Vec::new(), None);
     let (mut log, mut keys, mut owner, mut checksum_key, mut reseal) = (None, None, None, None, None);
+    let mut rekey = false;
     let mut file: Option<PathBuf> = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -228,20 +237,27 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 reseal = Some(parse_reseal(rest.as_slice())?);
                 break;
             }
+            "rekey" => {
+                if let Some(extra) = rest.next() {
+                    return Err(format!("rekey takes nothing, not {extra}"));
+                }
+                rekey = true;
+            }
             other => return Err(format!("{other} is not an option\n\n{USAGE}")),
         }
     }
     let store = store.ok_or_else(|| format!("name --dir or --memory\n\n{USAGE}"))?;
-    if owner.is_some() && (store != Store::Memory || user.is_some() || reseal.is_some()) {
+    if owner.is_some() && (store != Store::Memory || user.is_some() || reseal.is_some() || rekey) {
         return Err(
             "--owner makes the owner of a database kept nowhere, served with --memory: in a directory, user add NAME --owner".into()
         );
     }
     let config = Config { store, settings, file, log, keys, owner, checksum_key };
-    Ok(match (user, reseal) {
-        (Some(command), _) => Command::User(config, command),
-        (None, Some(table)) => Command::Reseal(config, table),
-        (None, None) => Command::Serve(config),
+    Ok(match (user, reseal, rekey) {
+        (Some(command), _, _) => Command::User(config, command),
+        (None, Some(table), _) => Command::Reseal(config, table),
+        (None, None, true) => Command::Rekey(config),
+        (None, None, false) => Command::Serve(config),
     })
 }
 
@@ -537,9 +553,11 @@ pub async fn signalled() {
 }
 
 pub mod config_file;
+mod rekey;
 mod reseal;
 mod users;
 
+pub use rekey::run_rekey;
 pub use reseal::{parse_reseal, run_reseal};
 pub use users::{Owner, UserCommand, parse_user, read_owner_password, run_user};
 

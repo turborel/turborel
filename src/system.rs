@@ -35,6 +35,7 @@
 
 mod definition;
 mod files;
+mod formats;
 mod information;
 mod jobs;
 mod memory;
@@ -142,6 +143,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(memory::MemoryReservations),
         Arc::new(jobs::Jobs),
         Arc::new(files::Files),
+        Arc::new(formats::FileFormats),
         Arc::new(totals::AssertionTotals),
         Arc::new(information::CatalogName),
     ];

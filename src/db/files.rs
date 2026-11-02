@@ -161,7 +161,7 @@ pub enum Opened {
 
 /// What a database opened from a directory keeps to checkpoint and close.
 pub(super) struct DatabaseFiles {
-    pub(super) catalog: Box<dyn CatalogStore>,
+    pub(super) catalog: Arc<dyn CatalogStore>,
     /// The buffer pool of the data file, and the file in it.
     pub(super) data: Option<(Arc<BufferPool>, FileId)>,
     /// The shadowing file system the tables file is in.
@@ -244,26 +244,8 @@ impl<'a> Place<'a> {
     fn files(&self, catalog: Box<dyn CatalogStore>) -> DatabaseFiles {
         let held = Mutex::new(Some(Arc::clone(&self.held)));
         let dir = (Arc::clone(self.fs), self.dir.to_path_buf());
-        let data = self.data.get().cloned();
+        let (data, catalog) = (self.data.get().cloned(), Arc::from(catalog));
         DatabaseFiles { catalog, data, shadows: Arc::clone(&self.shadows), checkpointer: Checkpointer::default(), held, dir }
-    }
-}
-
-impl DatabaseFiles {
-    /// Gives its files the formats to write in from now on (RULES.md D48):
-    /// the data file's pages, the catalog's next file and the shadows' next
-    /// side files; a checksum's key only of a keyed function.
-    ///
-    /// # Errors
-    ///
-    /// The data file's (SQLCODE -910 if the key is not its function's).
-    pub(super) fn set_formats(&self, formats: &FileFormats) -> Result<()> {
-        if let Some((pool, file)) = &self.data {
-            pool.set_formats(*file, formats.pipeline.clone(), Arc::clone(&formats.hash))?;
-        }
-        self.catalog.set_formats(Arc::clone(&formats.hash), formats.pipeline.clone());
-        self.shadows.set_hash(Arc::clone(&formats.hash));
-        Ok(())
     }
 }
 
@@ -344,7 +326,12 @@ impl Database {
         let started = snapshot.settings.started();
         // Its catalog is read in whatever registered formats it names: its
         // own are recorded in it.
-        let reading = FileFormats { pipeline: Pipeline::none(), ..snapshot.layout(&snapshot.settings)?.formats };
+        let reading = FileFormats {
+            hash: snapshot.checksum_function(&snapshot.settings)?,
+            pipeline: Pipeline::none(),
+            hashes: snapshot.hashes.clone(),
+            encodings: snapshot.encodings.all()?,
+        };
         let Some(found) = self.catalog_at(&StorePlace::new(fs, dir, &reading))? else {
             let place = Place::new(fs, dir, snapshot.layout(&snapshot.settings)?, (options, held, self.events()));
             snapshot.keep_plugins_in(&place)?;

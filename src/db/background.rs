@@ -1,8 +1,10 @@
 //! \[DESIGN\] A database's background work (RULES.md D55): its jobs, its
 //! checkpoints (`db/checkpoint.rs`), its maintenance
 //! (`db/maintenance.rs`), its log's syncs (`db/log_sync.rs`), its
-//! scans' read-ahead (`disk/buffer/ahead.rs`) and the folding of its
-//! assertions' kept totals (`db/assertions/fold.rs`), run by the thread manager (`threads.rs`) as
+//! scans' read-ahead (`disk/buffer/ahead.rs`), the folding of its
+//! assertions' kept totals (`db/assertions/fold.rs`) and the sweep
+//! writing its files again in the formats its settings name
+//! (`db/rekey.rs`), run by the thread manager (`threads.rs`) as
 //! JOBS.POLICY says; and how a program runs them, sees them, and sets
 //! the policy.
 
@@ -14,6 +16,7 @@ use super::assertions::folded;
 use super::checkpoint::checkpointed;
 use super::log_sync::log_synced;
 use super::maintenance::maintained;
+use super::rekey::rekeyed;
 use crate::error::Result;
 use crate::error::{Code, SqlError};
 use crate::settings::JOBS_POLICY;
@@ -36,6 +39,9 @@ const READ_AHEAD: &str = "turborel-read-ahead";
 /// The label of a database's job and thread folding the rows of its
 /// assertions' kept totals (RULES.md D51).
 const ASSERTION_TOTALS: &str = "turborel-assertion-totals";
+/// The label of a database's job and thread writing its files again in
+/// the formats its settings name (RULES.md D48, `db/rekey.rs`).
+const REKEY: &str = "turborel-rekey";
 /// \[DESIGN\] How long after a failure, or a round that did no work while
 /// some is still due, maintenance looks again unasked: a second, as a
 /// freeze may be waiting out COLUMNSTORE.FREEZE_DELAY.
@@ -50,6 +56,7 @@ pub(super) struct Background {
     log_sync: JobId,
     read_ahead: JobId,
     folds: JobId,
+    rekey: JobId,
     pub(super) maintenance_turn: Turn,
 }
 
@@ -63,7 +70,8 @@ impl Background {
         let log_sync = jobs.add(LOG_SYNC, Work::Own(log_synced), None);
         let read_ahead = jobs.add(READ_AHEAD, Work::Own(read_queued), None);
         let folds = jobs.add(ASSERTION_TOTALS, Work::Own(folded), None);
-        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, folds, maintenance_turn: Turn::default() }
+        let rekey = jobs.add(REKEY, Work::Own(rekeyed), Some(AGAIN));
+        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, folds, rekey, maintenance_turn: Turn::default() }
     }
 }
 
@@ -76,7 +84,7 @@ fn read_queued(db: &Database) -> Result<Option<Duration>> {
 
 impl Database {
     /// \[DESIGN\] Does now the background work due, its checkpoints,
-    /// maintenance, syncs of the log and read-ahead, as JOBS.POLICY MANUAL leaves it to the program to
+    /// maintenance, syncs of the log, read-ahead and sweep, as JOBS.POLICY MANUAL leaves it to the program to
     /// do: each job until it is due no more. Under the other policies too,
     /// taking turns with their threads.
     ///
@@ -170,6 +178,12 @@ impl Database {
         if self.snapshot().is_ok_and(|st| st.tx.folds_due()) {
             self.background().jobs.request(self.background().folds, self, self.job_policy());
         }
+    }
+
+    /// Asks for the job writing the files again in the formats the settings
+    /// name (`db/rekey.rs`).
+    pub(super) fn request_rekey(&self) {
+        self.background().jobs.request(self.background().rekey, self, self.job_policy());
     }
 
     /// Asks for the log sync job, `after` from now.

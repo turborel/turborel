@@ -98,6 +98,13 @@ pub trait Log: Send + Sync {
     /// its next append. What it wrote before is read as it was. Default:
     /// nothing changes, a log that keeps none.
     fn set_formats(&self, _hash: Arc<dyn HashFunction>, _pipeline: Pipeline) {}
+    /// \[DESIGN\] How many of the files it keeps are in other formats
+    /// than `set_formats` last gave (RULES.md D48): a file log's segments
+    /// so, which go as checkpoints truncate them. Default: none, a log
+    /// that keeps none.
+    fn formats_behind(&self) -> u64 {
+        0
+    }
     /// Appends `record`; its position.
     ///
     /// # Errors

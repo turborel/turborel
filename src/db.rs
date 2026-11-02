@@ -93,6 +93,7 @@ mod padding;
 mod position;
 mod prepared;
 mod recovery;
+mod rekey;
 mod revoke;
 mod schema;
 mod scroll;
@@ -126,6 +127,11 @@ pub use users::Credentials;
 
 use assignment::{assign_targets, candidate, check_option, check_targets, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
+pub use rekey::FormatsBehind;
+
+/// \[DESIGN\] The default of STORAGE.REKEY_BYTES_PER_SECOND: 8 MiB a second,
+/// a pace a disk bears beside the database's own work (RULES.md D48).
+pub const REKEY_BYTES_PER_SECOND: u64 = 8 << 20;
 pub use checkpoint::OVERDUE;
 pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;

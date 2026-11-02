@@ -5,6 +5,7 @@
 
 mod chacha;
 mod checksums;
+mod rekey;
 mod reseal;
 
 use std::collections::HashMap;

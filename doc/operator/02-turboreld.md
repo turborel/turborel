@@ -8,6 +8,7 @@
 turboreld (--dir PATH | --memory) [options]
 turboreld --dir PATH [--config FILE] [--set NAME=VALUE]... user COMMAND
 turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
+turboreld --dir PATH [--keys DIR] rekey
 ```
 
 | Option | Meaning |
@@ -26,7 +27,9 @@ turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 `user COMMAND` manages the users of a database no server holds
 ([Users](05-users.md)); `reseal AUTH.TABLE` seals a table's rows again
 through the encodings it names now, so a key it named before may be
-retired ([Encryption](07-encryption.md#retiring-a-key)). The settings `--set` sets, and
+retired ([Encryption](07-encryption.md#retiring-a-key)); `rekey` writes
+the database's files again, at once, in the formats STORAGE.ENCODINGS
+and STORAGE.CHECKSUM_KEY name now ([The files' formats](07-encryption.md#the-files-formats)). The settings `--set` sets, and
 those of a `--config` file ([Configuration files](#configuration-files)), are those of
 [Settings](../appendix/c-settings.md), each set before the database is
 opened if it is read as the database opens, after if not, and kept with

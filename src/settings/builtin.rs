@@ -100,6 +100,9 @@ pub const SYSTEM_CACHE_BYTES: Key = Key(42);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the storage settings.
 pub const CHECKSUM_KEY: Key = Key(43);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the storage settings.
+pub const REKEY_BYTES_PER_SECOND: Key = Key(44);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -169,7 +172,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(defined(
         ("JOBS.POLICY", Kind::Choice(&crate::threads::JobPolicy::WORDS), text("AUTOMATIC")),
         DATABASE,
-        "How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS) and read-ahead (STORAGE.READ_AHEAD_PAGES), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
+        "How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
     ));
     all.push(defined(
         ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
@@ -195,8 +198,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(log_sync());
     all.push(read_ahead());
     all.push(log_durability());
-    all.push(system_cache());
-    all.push(checksum_key());
+    all.extend(later());
     all
 }
 
@@ -240,7 +242,7 @@ fn storage() -> [Definition; 5] {
         defined(
             ("STORAGE.ENCODINGS", Kind::Encodings, text("")),
             DATABASE,
-            "The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the database's sweep.",
+            "The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the job turborel-rekey.",
         ),
         defined(
             (
@@ -281,6 +283,13 @@ fn system_cache() -> Definition {
     )
 }
 
+/// \[DESIGN\] The settings declared after the others, each at its key's
+/// place, though of the storage settings: the system's cache, and the
+/// files' key and the sweep's pace (RULES.md D48).
+fn later() -> [Definition; 3] {
+    [system_cache(), checksum_key(), rekey_rate()]
+}
+
 /// \[DESIGN\] The key a keyed checksum makes digests with from now on
 /// (RULES.md D48): at its key's place, after the others, though of the
 /// storage settings.
@@ -289,6 +298,17 @@ fn checksum_key() -> Definition {
         ("STORAGE.CHECKSUM_KEY", Kind::Text { max: crate::hash::MAX_KEY_NAME }, text("")),
         DATABASE,
         "The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.",
+    )
+}
+
+/// \[DESIGN\] The pace of the sweep writing the data file's pages again in
+/// the formats the settings name (RULES.md D48, `db/rekey.rs`): at its
+/// key's place, after the others, though of the storage settings.
+fn rekey_rate() -> Definition {
+    defined(
+        ("STORAGE.REKEY_BYTES_PER_SECOND", at_least(0), count(crate::db::REKEY_BYTES_PER_SECOND)),
+        DATABASE,
+        "The bytes of the data file the job turborel-rekey reads a second, writing again the pages still in other formats than STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY name, until every file is in them; 0 pauses it. A change holds at once.",
     )
 }
 

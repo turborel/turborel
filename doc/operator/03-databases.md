@@ -216,6 +216,8 @@ SET DATABASE JOBS.POLICY = 'PAUSED'
 Each thread started or stopped is told to the diagnostics, `thread`, as
 is each failure of its work. The threads are named for their work:
 `turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,
-`turborel-read-ahead` and `turborel-assertion-totals`, which folds the
-totals assertions keep, and those of the work a plug-in adds
-(`Database::add_job`), each `turborel-<kind>`.
+`turborel-read-ahead`, `turborel-assertion-totals`, which folds the
+totals assertions keep, `turborel-rekey`, which writes the files again
+in the formats their settings name ([The files' formats](07-encryption.md#the-files-formats)),
+and those of the work a plug-in adds (`Database::add_job`), each
+`turborel-<kind>`.

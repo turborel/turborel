@@ -21,6 +21,7 @@
 
 mod ahead;
 mod format;
+mod formats;
 mod free;
 mod known;
 mod live;
@@ -30,11 +31,12 @@ mod sealed;
 mod sync;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 pub use format::FORMAT_VERSION;
 use format::{KIND_DATA, KIND_NEW, KIND_TRUNK, META_AT, Meta, NONE};
+pub use formats::{Behind, Formats};
 use free::FreeList;
 use live::Encoded;
 use named::{Keyed, Named};
@@ -145,6 +147,12 @@ pub struct Pager {
     hash: Keyed,
     /// The encodings each page's content passes through (`live.rs`).
     pipeline: Encoded,
+    /// The formats its header names: those every page is in, or was
+    /// written before (`formats.rs`).
+    settled: Mutex<Formats>,
+    /// Whether the header was settled since the meta slot was last
+    /// written, so the next sync writes the slot again, keyed anew.
+    resettled: AtomicBool,
     page_size: usize,
     free: Mutex<FreeList>,
     /// Pages written to the file: past them a page reads as new.
@@ -209,8 +217,10 @@ impl Pager {
             )
         })?;
         let file = begin_file(fs, path, &format::header(&*hash, &pipeline, page_size, size), durable)?;
+        let settled = Formats { encodings: pipeline.ids(), key: hash.key_name().unwrap_or_default().to_owned() };
         let mut pager = Pager::new(file, path, hash, size);
         pager.pipeline = Encoded::Named(Named::new(pipeline, &[], path));
+        pager.settled = Mutex::new(settled);
         Ok(pager)
     }
 
@@ -235,7 +245,7 @@ impl Pager {
         let corrupt = |why: &str| SqlError::new(Code::Corrupt, format!("[DESIGN] {} is not a pager file: {why}", path.display()));
         let mut header = vec![0; usize::try_from(MIN_PAGE_SIZE).unwrap_or_default()];
         file.read_exact_at(&mut header, 0).map_err(|_| corrupt("it is too short"))?;
-        let format::Header { hash, page_size, encodings: ids } = format::read_header(&header, hashes, path)?;
+        let format::Header { hash, page_size, encodings: ids, key } = format::read_header(&header, hashes, path)?;
         let pipeline = Pipeline::resolve(&ids, encodings, path)?;
         let size = check_page_size(page_size).ok_or_else(|| corrupt(&format!("its page size, {page_size}, is not valid")))?;
         let keyed = Keyed::new(hash);
@@ -255,6 +265,7 @@ impl Pager {
         }
         let mut pager = Pager::new(file, path, keyed.current(), size);
         pager.hash = keyed;
+        pager.settled = Mutex::new(Formats { encodings: ids, key });
         pager.pipeline = Encoded::Named(Named::new(pipeline, encodings, path));
         *lock_builtin(&pager.free) = FreeList::new(meta.pages);
         lock_builtin(&pager.sync_state).sequence = meta.sequence;
@@ -271,6 +282,8 @@ impl Pager {
             path: path.to_path_buf(),
             hash: Keyed::new(hash),
             pipeline: Encoded::Named(Named::new(Pipeline::none(), &[], path)),
+            settled: Mutex::new(Formats::default()),
+            resettled: AtomicBool::new(false),
             page_size,
             free: Mutex::new(FreeList::new(0)),
             on_file: AtomicU64::new(0),

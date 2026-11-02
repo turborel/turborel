@@ -44,7 +44,7 @@ pub use tally::Tally;
 
 use super::block::BlockFile;
 use super::encoding::Pipeline;
-use super::pager::Pager;
+use super::pager::{Formats, PageId, Pager};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
@@ -302,6 +302,65 @@ impl BufferPool {
             pager.set_hash(hash)?;
         }
         Ok(())
+    }
+
+    /// \[DESIGN\] The formats pager file `file`'s pages take now, and
+    /// those its header names, which every page is in once it is settled
+    /// (RULES.md D48: `Pager::current_formats`, `Pager::settled_formats`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file.
+    pub fn formats_of(&self, file: FileId) -> Result<(Formats, Formats)> {
+        let pager = self.pager(file)?;
+        Ok((pager.current_formats(), pager.settled_formats()))
+    }
+
+    /// \[DESIGN\] A step of the sweep writing pager file `file`'s pages
+    /// again in its current formats (RULES.md D48): looks at `count` pages
+    /// from `from` (`Pager::behind`) and holds each still in other formats
+    /// for writing, as it is, so it is written back in the current ones,
+    /// with its overflow pages, as any page held is. Gives the page to
+    /// look at next, the file's page count once every page was looked at,
+    /// and the pages held.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file; the errors
+    /// of reading the pages, or of holding one (SQLCODE -918 if every
+    /// frame is held).
+    pub fn rewrite_behind(&self, file: FileId, from: u64, count: u64) -> Result<(u64, u64)> {
+        let behind = self.pager(file)?.behind(from, count)?;
+        for id in &behind.again {
+            drop(self.write(file, PageId(*id))?);
+        }
+        Ok((behind.next, u64::try_from(behind.again.len()).unwrap_or(u64::MAX)))
+    }
+
+    /// \[DESIGN\] Settles pager file `file` in `target`, the formats the
+    /// sweep found every page in: its header written again naming them
+    /// (`Pager::settle`), whether it was. Its pages held for writing are
+    /// written back first, so the file is wholly in them once synced.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file; the
+    /// pager's.
+    pub fn settle_formats(&self, file: FileId, target: &Formats) -> Result<bool> {
+        let pager = self.pager(file)?;
+        self.flush()?;
+        pager.settle(target)
+    }
+
+    /// Pages in pager file `file`, free ones included, and the bytes of
+    /// each.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file.
+    pub fn page_count(&self, file: FileId) -> Result<(u64, usize)> {
+        let pager = self.pager(file)?;
+        Ok((pager.page_count(), pager.page_size()))
     }
 
     /// The pages of pager file `file` in use, not free: what its tables

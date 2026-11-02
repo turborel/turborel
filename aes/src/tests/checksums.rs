@@ -99,12 +99,15 @@ fn hmac_sha_256_is_keyed_by_a_key_of_the_keyring() {
     assert!(bytes_only.key_name().is_none() && bytes_only.keyed_by("K").is_err(), "keyed by bytes names no key");
 }
 
-/// The database in `dir`, its files checksummed with `hash`.
+/// The database in `dir`, its files checksummed with `hash`, its
+/// background work left to the test (JOBS.POLICY MANUAL), so no sweep
+/// writes its files again under the key `hash` is keyed by.
 fn checksummed(dir: &Path, hash: Box<dyn HashFunction>) -> turborel::error::Result<Database> {
     let db = Database::new();
     let name = hash.name();
     db.register_hash_function(hash)?;
     db.set_setting("STORAGE.CHECKSUM", &Value::Char(name.to_ascii_lowercase()))?;
+    db.set_setting("JOBS.POLICY", &Value::Char("MANUAL".into()))?;
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     db.open_files(&fs, dir, &OpenOptions::default())?;
     Ok(db)
@@ -155,8 +158,10 @@ fn block_file(dir: &Path) -> std::path::PathBuf {
 /// every header, block and page), or HMAC-SHA-256 keyed by K, reopens
 /// with it, its rows read back; opened with HMAC-SHA-256 keyed by another
 /// key of the keyring, it is read with the key its files name, kept; by a
-/// keyring without that key, it is refused (SQLCODE -910), as is one whose
-/// file's header was changed, a reserved byte of it (SQLCODE -916).
+/// keyring without that key, it is refused (SQLCODE -910) until the sweep
+/// writes its files again under the other key (`Database::rekey`), and
+/// read then; one whose file's header was changed, a reserved byte of it,
+/// is refused (SQLCODE -916).
 #[test]
 fn a_database_is_checksummed_with_each_and_reopened() {
     let scratch = turborel_test_support::Scratch::new("crypto-checksums");
@@ -177,6 +182,11 @@ fn a_database_is_checksummed_with_each_and_reopened() {
     let only_l: Arc<dyn Keyring> = Arc::new(super::Held(HashMap::from([("L".to_owned(), [2_u8; KEY_BYTES])])));
     let without_k: Box<dyn HashFunction> = Box::new(HmacSha256::new(only_l, "L").unwrap());
     assert_eq!(checksummed(&hmac, without_k).err().map(|e| e.code), Some(Code::Api), "a keyring without the key");
+    let sweeping = checksummed(&hmac, keyed("L")).unwrap();
+    sweeping.rekey().unwrap();
+    sweeping.close().unwrap();
+    let l_alone: Arc<dyn Keyring> = Arc::new(super::Held(HashMap::from([("L".to_owned(), [2_u8; KEY_BYTES])])));
+    assert_eq!(row(&hmac, Box::new(HmacSha256::new(l_alone, "L").unwrap())), "kept", "written again under L: K retired");
 
     let file = block_file(&hmac);
     let mut changed = std::fs::read(&file).unwrap();

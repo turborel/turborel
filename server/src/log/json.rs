@@ -75,6 +75,9 @@ fn fields(json: &mut Json, event: &Event) {
         Event::SlowStatement { user, millis, statement } => slow(json, user, *millis, statement.as_deref()),
         Event::FilesReopened { reopened, limit } => counts(json, "files_reopened", &[("reopened", *reopened), ("limit", *limit)]),
         Event::CheckpointOverdue { changes, cause } => overdue(json, *changes, cause),
+        Event::FormatsSettled { encodings, checksum_key } => {
+            json.texts(&[("event", "formats_settled"), ("encodings", encodings), ("checksum_key", checksum_key)]);
+        }
         Event::Listening { addresses } => listening(json, addresses),
         Event::Stopping { connections } => counts(json, "stopping", &[("connections", *connections)]),
         Event::StopHurried { sessions } => counts(json, "stop_hurried", &[("sessions", *sessions)]),
@@ -373,6 +376,18 @@ mod tests {
             "{failed}"
         );
         assert!(failed.ends_with(r#"the disk is full\t"}"#), "{failed}");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D40, D48: the files settled in their
+    /// formats are a line of JSON, naming the encodings and the checksum's
+    /// key.
+    #[test]
+    fn the_files_settled_are_a_line_of_json() {
+        let settled = Event::FormatsSettled { encodings: "LZ4,AES-256-GCM:SPARE".into(), checksum_key: "SPARE".into() };
+        assert_eq!(
+            line(at(0, 0), &settled),
+            r#"{"time":"1970-01-01T00:00:00.000Z","level":"info","event":"formats_settled","encodings":"LZ4,AES-256-GCM:SPARE","checksum_key":"SPARE"}"#
+        );
     }
 
     /// Verifies: [DESIGN] RULES.md D25, D40: checkpoints overdue are a

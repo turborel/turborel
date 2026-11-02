@@ -121,6 +121,7 @@ fn threads_are_shown_to_the_owner() {
             "turborel-log-sync,IDLE,NO,0,0,NULL".to_owned(),
             format!("turborel-maintenance,{state},NO,{runs},0,NULL"),
             "turborel-read-ahead,IDLE,NO,0,0,NULL".to_owned(),
+            "turborel-rekey,IDLE,NO,0,0,NULL".to_owned(),
         ])
     };
     assert_eq!(crate::common::rows(&owner, shown), expected("DUE", 0));

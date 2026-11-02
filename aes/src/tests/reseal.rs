@@ -25,7 +25,7 @@ fn open(dir: &Path, keys: &Arc<Held>) -> Database {
 }
 
 /// The keys named, each all of the byte of its name's first letter.
-fn keys(names: &[&str]) -> Arc<Held> {
+pub(super) fn keys(names: &[&str]) -> Arc<Held> {
     Arc::new(Held(names.iter().map(|name| ((*name).to_owned(), [name.as_bytes()[0]; KEY_BYTES])).collect::<HashMap<_, _>>()))
 }
 
