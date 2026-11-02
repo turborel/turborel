@@ -107,8 +107,9 @@ the setting bears on a database alone.
 
 A node so far behind that the primary's log no longer reaches back to
 what it holds fetches the primary's database instead: its files as the
-primary's last checkpoint left them, in pieces, over the same link, into
-`transfer/` in its directory; then it installs them in place of its own,
+primary's last checkpoint left them, over the same link, into
+`transfer/` in its directory, taking only the pages that differ from
+its own files and copying the rest; then it installs them in place of its own,
 told as a `state_installed` event, and follows the log from there. The
 primary serves the transfer out of its files, which no checkpoint
 changes meanwhile; a checkpoint due waits until the transfer is done.

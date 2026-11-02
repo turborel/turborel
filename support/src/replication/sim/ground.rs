@@ -57,6 +57,12 @@ pub struct Ground {
     /// Replicas crashed within a database's call, not made again until it
     /// returns.
     held: Mutex<BTreeSet<usize>>,
+    /// Replicas within a sync's wait: their drivers take no turn until it
+    /// returns, as a turn would call their databases from within their
+    /// own call, but answer state transfers (`Driver::serve_transfers`);
+    /// the others' do, as on a node's other threads, so a replica waiting
+    /// on the group is served by it meanwhile.
+    waiting: Mutex<BTreeSet<usize>>,
 }
 
 impl Ground {
@@ -66,7 +72,8 @@ impl Ground {
     }
 
     /// One moment: faults begun if `top`, replicas due made again, every
-    /// driver taking a turn if `top`, else its inputs alone.
+    /// driver taking a turn but those within a wait, which take their
+    /// inputs alone.
     ///
     /// # Errors
     ///
@@ -85,12 +92,14 @@ impl Ground {
             }
         }
         let count = self.world().replicas();
+        let waiting = self.waiting.lock().unwrap().clone();
         for index in 0..count {
             let Some(driver) = self.driver(index) else { continue };
             let database = self.databases.lock().unwrap()[index].clone();
-            let turned = match (top, database) {
-                (true, Some(database)) => driver.turn(&*database),
-                (true, None) | (false, _) => driver.step_inputs(),
+            let turned = match (waiting.contains(&index), database) {
+                (false, Some(database)) => driver.turn(&*database),
+                (true, Some(database)) => driver.step_inputs().and_then(|()| driver.serve_transfers(&*database)),
+                (false | true, None) => driver.step_inputs(),
             };
             let failed = turned.and_then(|()| driver.failed().map_or(Ok(()), Err));
             if let Err(e) = failed {
@@ -171,13 +180,20 @@ impl Ground {
     }
 }
 
-/// A sync's wait: a moment of the ground's, within the call.
+/// A sync's wait: a moment of the ground's, within the call, the waiting
+/// replica taking no turn in it.
 struct SimWait(Weak<Ground>);
 
 impl Wait for SimWait {
-    fn wait(&self, _driver: &Arc<Driver>) -> Result<()> {
+    fn wait(&self, driver: &Arc<Driver>) -> Result<()> {
         let ground = self.0.upgrade().ok_or_else(|| SqlError::new(Code::Io, "[TOOL] the simulation is over"))?;
-        ground.moment(false).map_err(|why| SqlError::new(Code::Io, why))
+        let index = ground.drivers.lock().unwrap().iter().position(|d| d.as_ref().is_some_and(|d| Arc::ptr_eq(d, driver)));
+        let entered = index.filter(|i| ground.waiting.lock().unwrap().insert(*i));
+        let moved = ground.moment(false);
+        if let Some(left) = entered {
+            ground.waiting.lock().unwrap().remove(&left);
+        }
+        moved.map_err(|why| SqlError::new(Code::Io, why))
     }
 }
 
@@ -208,6 +224,7 @@ impl<H: Host + Clone + 'static> Runner<H> {
             databases: Mutex::new(vec![None; count]),
             host: Mutex::new(Box::new(host.clone())),
             held: Mutex::new(BTreeSet::new()),
+            waiting: Mutex::new(BTreeSet::new()),
         });
         for index in 0..count {
             ground.start(index)?;

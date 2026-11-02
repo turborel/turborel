@@ -1,16 +1,18 @@
 //! State transfer (RULES.md D57): an export crossing in frames, a request
-//! at a time, through the built-in whole-files transfer; the driver
-//! fetching one as its consensus asks and installing it; the simulator's
-//! replicas fetching state once behind what the others retain.
+//! at a time, through the built-in whole-files transfer, and through the
+//! page-difference transfer, which takes only what differs from the
+//! fetcher's own files; the driver fetching one as its consensus asks and
+//! installing it; the simulator's replicas fetching state once behind
+//! what the others retain.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use turborel::db::{Database, OpenOptions, Standby, StateSource};
-use turborel::disk::io::FileSystem;
+use turborel::disk::io::{FileSystem, OpenMode};
 use turborel::disk::memory::MemoryFileSystem;
 use turborel::error::Code;
-use turborel_replication::{ANSWER, Fetching, REQUEST, ReplicaId, StateTransfer, WholeFiles};
+use turborel_replication::{ANSWER, BLOCK, Fetching, PIECE, PageDifferences, REQUEST, ReplicaId, StateTransfer, WholeFiles};
 use turborel_test_support::database::rows;
 use turborel_test_support::replication::Make;
 use turborel_test_support::replication::sim::plans;
@@ -41,7 +43,7 @@ fn filled(fs: &Arc<dyn FileSystem>, dir: &str, rows: i32) -> Database {
 /// `export` numbered 7: the second answer is lost, the third request is
 /// answered once as of export 8 first, and each answer taken is tried as
 /// another fetch's and after a malformed one; how many requests crossed.
-fn crossed(fetch: &mut dyn Fetching, serving: &WholeFiles, export: &mut dyn StateSource) -> u32 {
+fn crossed(fetch: &mut dyn Fetching, serving: &dyn StateTransfer, export: &mut dyn StateSource) -> u32 {
     let (mut requests, mut lost, mut changed, mut done) = (0_u32, false, false, false);
     while !done {
         let Some(request) = fetch.request() else {
@@ -106,6 +108,88 @@ fn whole_files_cross_a_request_at_a_time() {
     Standby::import(&follower, fetched).unwrap();
     assert_eq!(rows(&follower.session("APP"), "SELECT COUNT(*) FROM T"), Ok(vec!["30000".into()]));
     assert_eq!(rows(&follower.session("APP"), "SELECT S FROM T WHERE K = 29999"), Ok(vec![format!("{:200}", "row 29999")]));
+}
+
+/// Every file under `from` of `fs` copied under `to`, directories made.
+fn copy_tree(fs: &Arc<dyn FileSystem>, from: &Path, to: &Path) {
+    fs.create_dir_all(to).unwrap();
+    for path in fs.read_dir(from).unwrap() {
+        let target = to.join(path.strip_prefix(from).unwrap());
+        if fs.open(&path, OpenMode::ReadOnly).is_err() {
+            copy_tree(fs, &path, &target);
+            continue;
+        }
+        let source = fs.open(&path, OpenMode::ReadOnly).unwrap();
+        let mut bytes = vec![0; usize::try_from(source.size().unwrap()).unwrap()];
+        source.read_exact_at(&mut bytes, 0).unwrap();
+        fs.open(&target, OpenMode::CreateNew).unwrap().write_all_at(&bytes, 0).unwrap();
+    }
+}
+
+/// The bytes of file `file` of `source`, whole.
+fn whole(source: &mut dyn StateSource, file: usize) -> Vec<u8> {
+    let length = usize::try_from(source.files()[file].length).unwrap();
+    let (mut bytes, mut at) = (vec![0; length], 0_usize);
+    while at < length {
+        let read = source.read(file, u64::try_from(at).unwrap(), &mut bytes[at..]).unwrap();
+        assert!(read > 0_usize);
+        at += read;
+    }
+    bytes
+}
+
+/// Verifies: [EXTENSION] RULES.md D57: the page-difference transfer: a
+/// database behind the export, a copy of the same database at an earlier
+/// checkpoint, fetches the manifest, then each file's summary of block
+/// hashes, and asks only for the runs of blocks that differ from its
+/// own, far fewer than the file's blocks, the rest copied from its own
+/// file; through the same losses as whole files bear; what is fetched is
+/// the export byte for byte, and the database behind installs it, holding
+/// every row; a database with none of the files fetches them whole.
+#[test]
+fn page_differences_fetch_only_what_differs() {
+    let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+    filled(&fs, "/source", 20000_i32).close().unwrap();
+    copy_tree(&fs, Path::new("/source"), Path::new("/behind"));
+    let source = Database::new();
+    source.open_files(&fs, Path::new("/source"), &OpenOptions::default()).unwrap();
+    let s = source.session("APP");
+    for k in 20000_i32..30000_i32 {
+        s.run(&format!("INSERT INTO T VALUES ({k}, 'row {k}')")).unwrap();
+    }
+    s.commit().unwrap();
+    drop(s);
+    source.checkpoint().unwrap();
+    let mut export = source.export().unwrap();
+    let (serving, fetching) =
+        (PageDifferences::new(Arc::clone(&fs), Path::new("/serving")), PageDifferences::new(Arc::clone(&fs), Path::new("/behind")));
+    assert_eq!(serving.name(), "page differences");
+    let mut fetch = fetching.begin(PRIMARY).unwrap();
+    let requests = crossed(&mut *fetch, &serving, &mut *export);
+    let data = export.files().iter().position(|f| f.within == Path::new("data")).unwrap();
+    let blocks = u32::try_from(export.files()[data].length.div_ceil(u64::try_from(BLOCK).unwrap())).unwrap();
+    assert!(blocks > 8_u32 && requests < blocks, "{requests} requests for {blocks} blocks of the data file");
+    let mut fetched = fetch.fetched().unwrap();
+    assert_eq!(fetched.image(), export.image());
+    for file in 0..export.files().len() {
+        assert_eq!(whole(&mut *fetched, file), whole(&mut *export, file), "file {file}");
+    }
+    drop(export);
+    let behind = Database::new();
+    behind.open_following(&fs, Path::new("/behind"), &OpenOptions::default()).unwrap();
+    assert_eq!(rows(&behind.session("APP"), "SELECT COUNT(*) FROM T"), Ok(vec!["20000".into()]), "behind, before the install");
+    Standby::import(&behind, fetched).unwrap();
+    assert_eq!(rows(&behind.session("APP"), "SELECT COUNT(*) FROM T"), Ok(vec!["30000".into()]));
+    assert_eq!(rows(&behind.session("APP"), "SELECT S FROM T WHERE K = 29999"), Ok(vec![format!("{:200}", "row 29999")]));
+
+    let mut again = source.export().unwrap();
+    let empty = PageDifferences::new(Arc::clone(&fs), Path::new("/nothing"));
+    let mut whole_fetch = empty.begin(PRIMARY).unwrap();
+    let asked = crossed(&mut *whole_fetch, &serving, &mut *again);
+    let pieces = u32::try_from(again.files()[data].length.div_ceil(u64::try_from(PIECE).unwrap())).unwrap();
+    assert!(asked > pieces, "{asked} requests: every block fetched, in runs of a piece, {pieces} of them for the data file");
+    let mut whole_fetched = whole_fetch.fetched().unwrap();
+    assert_eq!(whole(&mut *whole_fetched, data), whole(&mut *again, data));
 }
 
 /// Verifies: [EXTENSION] RULES.md D57: replicas keeping little of the

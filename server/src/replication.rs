@@ -37,9 +37,7 @@ use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
 use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
-use turborel_replication::{
-    Driver, DriverJob, GroupLogs, Joined, Make, ReplicaEvent, ReplicaId, Vr, VrOptions, WholeFiles, nonce, staging_dir,
-};
+use turborel_replication::{Driver, DriverJob, GroupLogs, Joined, Make, PageDifferences, ReplicaEvent, ReplicaId, Vr, VrOptions, nonce};
 
 use self::net::Security;
 pub use self::net::{TcpTransport, members_of};
@@ -194,7 +192,7 @@ pub fn prepare(db: &Database, dir: &Path) -> Result<Option<Prepared>> {
         ticker: Arc::new(Ticks::every(tick)),
         wait: Arc::new(Blocking { most: tick }),
         watch: Arc::new(Telling { db: db.clone(), links: Arc::clone(&links) }),
-        transfer: Arc::new(WholeFiles::new(Arc::new(OsFileSystem), staging_dir(dir))),
+        transfer: Arc::new(PageDifferences::new(Arc::new(OsFileSystem), dir)),
     };
     let ids: Vec<ReplicaId> = members.keys().copied().collect();
     let retention = Retention { bytes: u64::try_from(settings::count(db, RETAIN_BYTES)).unwrap_or(u64::MAX) };

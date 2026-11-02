@@ -1412,7 +1412,14 @@ opaque bytes.**
   and one answer at a time, told from VR's frames by their first byte;
   the built-in `WholeFiles` (`replication/src/transfer.rs`) fetches the
   manifest, then each file in pieces, staged in the database's
-  `transfer/` (a scratch kind, cleared as the database opens). The
+  `transfer/` (a scratch kind, cleared as the database opens);
+  `PageDifferences` (`transfer/pages.rs`), the node's, fetches of each
+  file the export's summary, a hash of each block of 64 KiB, and takes
+  only the blocks that differ from the fetcher's own file of that name,
+  in runs of up to a piece, the rest copied from its own, so a database
+  behind takes what changed since, and one with no files takes them
+  whole; after [VRR §5.1]'s Merkle trees, with the summary in chunks
+  instead of a tree, a block of several pages hashing as fast. The
   driver serves each fetcher an export numbered of its own, let go once
   no request comes for a while, when its database is deposed, and
   before it installs a transfer; an answer of another export restarts
@@ -1504,7 +1511,9 @@ records, objects and files; none may need a replication change.
   taking checkpoints, opened again in place once deposed and from its
   files once crashed, fetching state and recovering a journal lost:
   after each run every backup holds what the primary holds, rows and
-  catalog;
+  catalog; a replica within a sync's wait takes no turn, but answers
+  the state transfers asked of it (`Driver::serve_transfers`), while the
+  others turn, as a node's other threads would;
 - the mechanisms of VR, windows, state transfer and recovery are
   mutation-checked (`xtask/src/mutate/list/vr.rs`, R-TEST-9).
 

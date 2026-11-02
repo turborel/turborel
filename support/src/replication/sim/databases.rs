@@ -21,7 +21,7 @@ use turborel::disk::io::FileSystem;
 use turborel::error::Code;
 use turborel::log::Lsn;
 use turborel::value::Value;
-use turborel_replication::{Driver, GroupLogs, StateTransfer, WholeFiles, staging_dir};
+use turborel_replication::{Driver, GroupLogs, PageDifferences, StateTransfer};
 
 use super::super::group::Make;
 use super::{Host, Plan, Report, Rng, Runner, Violation};
@@ -178,7 +178,7 @@ impl Host for Files {
         let mut kept = self.kept();
         kept.grown(index);
         let system: Arc<VolatileFileSystem> = Arc::clone(&kept.systems[index]);
-        Arc::new(WholeFiles::new(system, staging_dir(Path::new(DIR))))
+        Arc::new(PageDifferences::new(system, Path::new(DIR)))
     }
 }
 

@@ -18,8 +18,11 @@
 //! Built in: [`WholeFiles`], the export's image and files whole, in
 //! pieces of `PIECE` bytes, each file staged by the fetcher in a directory
 //! of its own (the database's `transfer/`, cleared as it opens) until the
-//! whole export is there; then page differences, as [VRR §5.1]'s Merkle
-//! trees, is for later.
+//! whole export is there; and [`PageDifferences`] (`transfer/pages.rs`),
+//! which takes of each file only the blocks that differ from the
+//! fetcher's own, as [VRR §5.1] suggests, the node's transfer.
+
+mod pages;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +36,7 @@ use turborel::disk::io::{DiskFile, Durability, FileSystem, OpenMode};
 use turborel::error::{Code, Result, SqlError};
 use turborel::files::FileOwner;
 
+pub use self::pages::{BLOCK, PageDifferences};
 use crate::ReplicaId;
 
 /// \[EXTENSION\] The first byte of a transfer's request frame.
@@ -106,6 +110,33 @@ const FRAME: &str = "state transfer frame";
 const MANIFEST: u8 = 1;
 const PIECE_OF: u8 = 2;
 
+/// The manifest, as an answer carries it: the image, then each file's
+/// path within the database's directory, length and owner.
+fn put_manifest(out: &mut Vec<u8>, source: &dyn StateSource) {
+    out.put_bytes(source.image());
+    out.put_u32(u32::try_from(source.files().len()).unwrap_or(u32::MAX));
+    for listed in source.files() {
+        out.put_str(&listed.within.to_string_lossy().replace('\\', "/"));
+        out.put_u64(listed.length);
+        out.put_str(&owner_name(&listed.owner));
+    }
+}
+
+/// The manifest read from an answer: the image, and the files, each to be
+/// staged as `0`, `1`, … in `staging`.
+fn manifest_read(r: &mut Reader<'_>, staging: &Path) -> Result<(Vec<u8>, Vec<ExportedFile>)> {
+    let image = r.bytes()?.to_vec();
+    let count = r.u32()?;
+    let mut files = Vec::new();
+    for n in 0..count {
+        let (within, length, owner) = (PathBuf::from(r.str()?), r.u64()?, r.str()?);
+        let owner = if owner.is_empty() { FileOwner::Database } else { FileOwner::Plugin(owner) };
+        files.push(ExportedFile { path: staging.join(n.to_string()), within, length, owner });
+    }
+    r.finish()?;
+    Ok((image, files))
+}
+
 /// \[EXTENSION\] The built-in transfer: whole files, in pieces, staged in
 /// `dir` of `fs` by the fetcher.
 pub struct WholeFiles {
@@ -176,15 +207,7 @@ impl StateTransfer for WholeFiles {
         out.put_u64(export);
         out.put_u8(what);
         match what {
-            MANIFEST => {
-                out.put_bytes(source.image());
-                out.put_u32(u32::try_from(source.files().len()).unwrap_or(u32::MAX));
-                for listed in source.files() {
-                    out.put_str(&listed.within.to_string_lossy().replace('\\', "/"));
-                    out.put_u64(listed.length);
-                    out.put_str(&owner_name(&listed.owner));
-                }
-            }
+            MANIFEST => put_manifest(&mut out, source),
             PIECE_OF => {
                 let index = usize::try_from(file).unwrap_or(usize::MAX);
                 let length = source.files().get(index).map_or(0, |f| f.length);
@@ -255,15 +278,7 @@ impl Fetching for Fetch {
         match r.u8()? {
             MANIFEST if self.image.is_none() => {
                 self.export = Some(export);
-                let image = r.bytes()?.to_vec();
-                let count = r.u32()?;
-                let mut files = Vec::new();
-                for n in 0..count {
-                    let (within, length, owner) = (PathBuf::from(r.str()?), r.u64()?, r.str()?);
-                    let owner = if owner.is_empty() { FileOwner::Database } else { FileOwner::Plugin(owner) };
-                    files.push(ExportedFile { path: self.dir.join(n.to_string()), within, length, owner });
-                }
-                r.finish()?;
+                let (image, files) = manifest_read(&mut r, &self.dir)?;
                 self.image = Some(image);
                 self.files = files;
                 self.open_next(0)?;
@@ -294,8 +309,7 @@ impl Fetching for Fetch {
         if !self.done {
             return Err(SqlError::new(Code::Api, "[EXTENSION] RULES.md D57: the state transfer is not fetched yet"));
         }
-        let image = self.image.unwrap_or_default();
-        Ok(Box::new(Staged { fs: self.fs, image, files: self.files, open: BTreeMap::new() }))
+        Ok(Box::new(Staged::new(self.fs, self.image.unwrap_or_default(), self.files)))
     }
 }
 
@@ -334,6 +348,13 @@ struct Staged {
     image: Vec<u8>,
     files: Vec<ExportedFile>,
     open: BTreeMap<usize, Box<dyn DiskFile>>,
+}
+
+impl Staged {
+    /// The export of `image` whose files `files` lists, staged in `fs`.
+    fn new(fs: Arc<dyn FileSystem>, image: Vec<u8>, files: Vec<ExportedFile>) -> Staged {
+        Staged { fs, image, files, open: BTreeMap::new() }
+    }
 }
 
 impl StateSource for Staged {

@@ -9,6 +9,8 @@
 //! database installs (`Standby::import`). Split from driver.rs (RULES.md
 //! R-SIZE-2).
 
+use std::collections::VecDeque;
+
 use turborel::db::{Standby, StateSource};
 use turborel::error::Result;
 
@@ -30,6 +32,35 @@ pub(super) struct Served {
 const SOURCE_IDLE_TICKS: u64 = 20;
 
 impl Driver {
+    /// \[EXTENSION\] Answers the state transfer requests pending, and
+    /// carries out nothing else: for a host whose database waits on a sync
+    /// on the thread the driver turns on, as the simulator's does, which
+    /// serves the replicas fetching its state meanwhile, as a node's other
+    /// threads would; an export is of the last checkpoint, which no call
+    /// in progress changes.
+    ///
+    /// # Errors
+    ///
+    /// As `turn`'s, of answering.
+    pub fn serve_transfers(&self, db: &dyn Standby) -> Result<()> {
+        let answers = {
+            let mut core = self.core()?;
+            let (mut kept, mut answers) = (VecDeque::new(), Vec::new());
+            while let Some(effect) = core.pending.pop_front() {
+                match effect {
+                    Effect::Answer(from, frame) => answers.push((from, frame)),
+                    other @ (Effect::Deliver(_) | Effect::Serve(_) | Effect::Stop | Effect::Install) => kept.push_back(other),
+                }
+            }
+            core.pending = kept;
+            answers
+        };
+        for (from, frame) in answers {
+            self.answer(db, from, &frame)?;
+        }
+        Ok(())
+    }
+
     /// \[EXTENSION\] Answers `frame`, a state transfer's request from
     /// `from`, out of the database's export, taken as the first request
     /// comes and kept while requests do (RULES.md D57).

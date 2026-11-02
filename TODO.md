@@ -31,9 +31,7 @@ authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
 on its own machine. Each item becomes a decision in RULES.md when its
 design settles.
 
-- **Replication between nodes** (D57): a state transfer by page
-  differences ([VRR §5.1]'s Merkle trees) where whole files cost too
-  much; reconfiguration (VRR §7), last.
+- **Replication between nodes** (D57): reconfiguration (VRR §7).
 
 ---
 
