@@ -82,7 +82,7 @@ impl Pager {
         let written = self.write_trunk(&trunk_pages, &runs, per_trunk).and_then(|()| self.file.sync(durability)).and_then(|()| {
             let meta = Meta { sequence: sequence.saturating_add(1), pages, trunk: trunk_pages.first().copied().unwrap_or(NONE) };
             let slot = META_AT.get(usize::try_from(meta.sequence % 2).unwrap_or_default()).copied().unwrap_or_default();
-            self.file.write_all_at(&format::encode_meta(&*self.hash, meta), u64::try_from(slot).unwrap_or_default())?;
+            self.file.write_all_at(&format::encode_meta(&*self.hash.current(), meta), u64::try_from(slot).unwrap_or_default())?;
             self.file.sync(durability)?;
             Ok(meta)
         });

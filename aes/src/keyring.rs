@@ -12,7 +12,7 @@ use turborel::error::{Code, Result, SqlError};
 /// Bytes of a key: AES-256's.
 pub const KEY_BYTES: usize = 32;
 /// \[DESIGN\] The longest name of a key.
-pub const MAX_KEY_NAME: usize = 64;
+pub use turborel::hash::MAX_KEY_NAME;
 
 /// \[EXTENSION\] A keyring: the keys an encryption may use, by name.
 ///

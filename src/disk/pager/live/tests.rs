@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use super::super::named::Named;
 use super::super::{PageId, Pager};
 use super::{Encoded, MAX_PIPELINES};
 use crate::disk::encoding::{Encoding, EncodingId, LivePipeline, Pipeline};
@@ -111,24 +112,23 @@ fn a_scratch_files_pipelines_are_bounded_and_named() {
     let live = Arc::new(LivePipeline::default());
     live.set(flip(1001, 7));
     let (encoded, first) = Encoded::live(&live);
-    assert_eq!((encoded.overhead(), encoded.is_empty(), first.ids()), (8_usize, false, vec![EncodingId(1001)]));
+    assert_eq!((encoded.overhead(), encoded.plain(&[]), first.ids()), (8_usize, false, vec![EncodingId(1001)]));
     for bad in [&[9_u8, 1, 2][..], &[]] {
-        assert_eq!(encoded.decode(0, bad).err().map(|e| e.code), Some(Code::Corrupt));
+        assert_eq!(encoded.decode(0, &[], bad).err().map(|e| e.code), Some(Code::Corrupt));
     }
     let id = |n: usize| 2000 + u32::try_from(n).unwrap();
     for n in 1..MAX_PIPELINES {
         live.set(flip(id(n), 0));
-        let written = encoded.encode(5, b"x").unwrap().into_owned();
-        assert_eq!(&*encoded.decode(5, &written).unwrap(), b"x");
+        let (ids, written) = encoded.encode(5, b"x").unwrap();
+        assert_eq!(ids, [EncodingId(id(n))]);
+        assert_eq!(&*encoded.decode(5, &ids, &written).unwrap(), b"x");
     }
     live.set(flip(id(MAX_PIPELINES), 0));
     assert_eq!(encoded.encode(5, b"x").err().map(|e| e.code), Some(Code::Api));
     live.set(flip(id(1), 0));
-    assert_eq!(encoded.encode(5, b"x").unwrap()[0], 1_u8, "the tag of the one taken before");
-    let fixed = Encoded::Fixed(flip(3, 2));
-    assert_eq!(
-        (fixed.overhead(), fixed.is_empty(), &*fixed.decode(0, &fixed.encode(0, b"y").unwrap()).unwrap()),
-        (2_usize, false, &b"y"[..])
-    );
-    assert!(Encoded::Fixed(Pipeline::none()).is_empty());
+    assert_eq!(encoded.encode(5, b"x").unwrap().1[0], 1_u8, "the tag of the one taken before");
+    let named = Encoded::Named(Named::new(flip(3, 2), &[], Path::new("/d")));
+    let (ids, written) = named.encode(0, b"y").unwrap();
+    assert_eq!((named.overhead(), named.plain(&ids), &*named.decode(0, &ids, &written).unwrap()), (2_usize, false, &b"y"[..]));
+    assert!(Encoded::Named(Named::new(Pipeline::none(), &[], Path::new("/d"))).plain(&[]), "no encoding: as it is");
 }

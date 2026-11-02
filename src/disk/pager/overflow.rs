@@ -5,6 +5,7 @@
 //! `INLINE_EXTENTS` extents itself, so content allocated in a few runs needs
 //! no other page; directory pages, chained, list the rest.
 
+use super::super::encoding::EncodingId;
 use super::format::{self, DATA_HEADER, ENTRY, INLINE_EXTENTS, KIND_DIRECTORY, KIND_OVERFLOW, LIST_HEADER, NONE, OVERFLOW_HEADER};
 use super::{Extent, Pager, add};
 use crate::error::Result;
@@ -28,10 +29,10 @@ impl Pager {
     /// The body of a data page holding `content`, after writing what does
     /// not fit to new overflow pages; and every page allocated for it, to
     /// release if the data page cannot be written.
-    pub(super) fn store(&self, content: &[u8]) -> Result<(Vec<u8>, Vec<Extent>)> {
+    pub(super) fn store(&self, content: &[u8], ids: &[EncodingId]) -> Result<(Vec<u8>, Vec<Extent>)> {
         let length = u64::try_from(content.len()).unwrap_or(u64::MAX);
         if content.len() <= self.inline_with(0) {
-            return Ok((format::data_body(length, &[], NONE, content), Vec::new()));
+            return Ok((format::data_body(length, (&[], NONE), ids, content), Vec::new()));
         }
         let extents = self.allocate_overflow(content.len());
         let inline = self.inline_with(extents.len()).min(content.len());
@@ -50,7 +51,7 @@ impl Pager {
         }
         let first_directory = directories.first().map_or(NONE, |d| d.start.0);
         let listed = extents.get(..INLINE_EXTENTS.min(extents.len())).unwrap_or_default();
-        Ok((format::data_body(length, listed, first_directory, content.get(..inline).unwrap_or_default()), allocated))
+        Ok((format::data_body(length, (listed, first_directory), ids, content.get(..inline).unwrap_or_default()), allocated))
     }
 
     /// Allocates the overflow pages for `length` content bytes: more are
@@ -102,7 +103,8 @@ impl Pager {
     /// The overflow extents of a data page's `body`, those it lists and
     /// those its directories list, and the directory pages themselves.
     fn extents_of(&self, body: &[u8]) -> Result<(Vec<Extent>, Vec<Extent>)> {
-        let (_, mut extents, mut next, _) = format::data_header(body).ok_or_else(|| self.damaged("a data page is malformed"))?;
+        let format::DataHeader { mut extents, directory: mut next, .. } =
+            format::data_header(body).ok_or_else(|| self.damaged("a data page is malformed"))?;
         let mut directories = Vec::new();
         while next != NONE {
             if u64::try_from(directories.len()).unwrap_or(u64::MAX) >= self.page_count() {
@@ -133,7 +135,8 @@ impl Pager {
     /// Reads the content of a data page's `body` into `content`: what the
     /// page holds, then its overflow pages, one read per extent.
     pub(super) fn load(&self, body: &[u8], content: &mut Vec<u8>) -> Result<()> {
-        let (length, listed, _, start) = format::data_header(body).ok_or_else(|| self.damaged("a data page is malformed"))?;
+        let format::DataHeader { length, extents: listed, start, .. } =
+            format::data_header(body).ok_or_else(|| self.damaged("a data page is malformed"))?;
         let length = usize::try_from(length).map_err(|_| self.damaged("a page's content is longer than memory"))?;
         let inline = body.get(start..).unwrap_or_default();
         content.extend_from_slice(inline.get(..length.min(inline.len())).unwrap_or_default());

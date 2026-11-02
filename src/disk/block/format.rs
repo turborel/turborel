@@ -5,6 +5,7 @@
 //! header (HEADER_LEN bytes):
 //!   magic "TBBLOCKS" | version u16 | reserved u16 (0) | hash id u32 |
 //!   encodings u32 | MAX_ENCODINGS encoding ids u32 (unused ones 0) |
+//!   key name (length u8, MAX_KEY_NAME bytes) |
 //!   digest of the bytes before it | zeros to HEADER_LEN
 //! block, at its id (its byte offset):
 //!   length u32 | digest of length and payload | payload | length u32
@@ -13,19 +14,21 @@
 //! The digest's size is the hash function's. The payload is as the file's
 //! encoding pipeline left it, and the digest covers it so; the length after
 //! the payload lets a reader step back from the end of a block to its start.
+//! The key name is that of the key every digest of the file is made with,
+//! of a keyed function (RULES.md D48); empty of one not keyed.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use super::super::encoding::{self, EncodingId, Pipeline};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::{HashFunction, HashId};
+use crate::hash::{HashFunction, HashId, KEY_FIELD, key_field, read_key_field, verifier_of};
 
 /// Bytes of the file header; the first block starts here. Room for the
-/// fields and a digest of up to `MAX_DIGEST_BYTES`, 512 bits.
-pub const HEADER_LEN: u64 = 128;
+/// fields, a key name and a digest of up to `MAX_DIGEST_BYTES`, 512 bits.
+pub const HEADER_LEN: u64 = 256;
 /// `HEADER_LEN` as a buffer size.
-pub(super) const HEADER_BYTES: usize = 128;
+pub(super) const HEADER_BYTES: usize = 256;
 /// Identifies a block file.
 const MAGIC: [u8; 8] = *b"TBBLOCKS";
 /// The format this code writes and reads.
@@ -34,7 +37,8 @@ pub const FORMAT_VERSION: u16 = 1;
 const VERSION_AT: usize = 8;
 const HASH_AT: usize = 12;
 const ENCODINGS_AT: usize = 16;
-const DIGEST_AT: usize = ENCODINGS_AT + encoding::ENCODINGS_FIELD;
+const KEY_AT: usize = ENCODINGS_AT + encoding::ENCODINGS_FIELD;
+const DIGEST_AT: usize = KEY_AT + KEY_FIELD;
 // The header holds the widest digest, SHA-512's (RULES.md D26), before the
 // first block.
 const _: () = assert!(DIGEST_AT + crate::hash::MAX_DIGEST_BYTES <= HEADER_BYTES);
@@ -60,6 +64,7 @@ pub(super) fn header(hash: &dyn HashFunction, pipeline: &Pipeline) -> Vec<u8> {
     h.extend_from_slice(&[0; 2]);
     h.extend_from_slice(&hash.id().0.to_le_bytes());
     h.extend_from_slice(&encoding::ids_field(pipeline));
+    h.extend_from_slice(&key_field(hash.key_name()));
     let digest = hash.hash(&h);
     h.extend_from_slice(digest.as_bytes());
     h.resize(HEADER_BYTES, 0);
@@ -89,13 +94,15 @@ pub(super) fn read_header(bytes: &[u8], hashes: &[Arc<dyn HashFunction>], path: 
             format!("[DESIGN] {} is checksummed with hash function {}, which is not given", path.display(), crate::hash::described(id)),
         )
     })?;
+    let name = read_key_field(bytes, KEY_AT).ok_or_else(|| corrupt("its key's name is malformed"))?;
+    let hash = verifier_of(hash, name)?;
     let stored = bytes.get(DIGEST_AT..DIGEST_AT.saturating_add(hash.digest_len()));
     if stored != Some(hash.hash(bytes.get(..DIGEST_AT).unwrap_or_default()).as_bytes()) {
         return Err(corrupt("its header fails its checksum"));
     }
-    let ids = encoding::read_ids_field(bytes.get(ENCODINGS_AT..DIGEST_AT).unwrap_or_default())
+    let ids = encoding::read_ids_field(bytes.get(ENCODINGS_AT..KEY_AT).unwrap_or_default())
         .ok_or_else(|| corrupt("its list of encodings is malformed"))?;
-    Ok((Arc::clone(hash), ids))
+    Ok((hash, ids))
 }
 
 /// The bytes of a block holding `payload`, checksummed with `hash`.

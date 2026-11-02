@@ -1,6 +1,7 @@
 //! \[DESIGN\] The encodings a pager file's pages pass through (RULES.md D30,
-//! D48): a durable file's, fixed when it is made and named in its header;
-//! a scratch file's, those a `LivePipeline` holds as each page is written,
+//! D48): a durable file's, the pipeline set as each page is written, which
+//! the page names by its ids (`named.rs`); a scratch file's, those a
+//! `LivePipeline` holds as each page is written,
 //! so a spill area made before a table is encrypted writes its pages
 //! encrypted from then on, those still in its pool among them. A scratch
 //! file's stored content begins with a byte naming which of the pipelines
@@ -12,6 +13,7 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use super::super::encoding::{EncodingId, LivePipeline, Pipeline};
+use super::named::Named;
 use crate::error::{Code, Result, SqlError};
 use crate::sync::lock_builtin;
 
@@ -23,8 +25,8 @@ const MAX_PIPELINES: usize = 256;
 
 /// The encodings of a pager file's pages.
 pub(super) enum Encoded {
-    /// A durable file's, named in its header.
-    Fixed(Pipeline),
+    /// A durable file's, each page naming its own.
+    Named(Named),
     /// A scratch file's.
     Live(Live),
 }
@@ -54,20 +56,35 @@ impl Encoded {
         (Encoded::Live(Live { source: Arc::clone(source), taken }), Pipeline::clone(&first))
     }
 
-    /// Whether it leaves content as it is.
-    pub(super) fn is_empty(&self) -> bool {
+    /// Whether a page whose body names `ids` holds its content as it is:
+    /// of a durable file, one naming no encoding; a scratch file's never,
+    /// as each page's content begins with its tag.
+    pub(super) fn plain(&self, ids: &[EncodingId]) -> bool {
         match self {
-            Encoded::Fixed(pipeline) => pipeline.is_empty(),
+            Encoded::Named(_) => ids.is_empty(),
             Encoded::Live(_) => false,
         }
     }
 
-    /// The most bytes it adds to content: a scratch file's tag and the
-    /// growth of the pipeline its header names; what a later one adds past
-    /// that goes to overflow pages.
+    /// The pipeline a durable file writes through now; a scratch file's
+    /// is its source's.
+    pub(super) fn set(&self, pipeline: Pipeline) -> Result<()> {
+        match self {
+            Encoded::Named(named) => {
+                named.set(pipeline);
+                Ok(())
+            }
+            Encoded::Live(_) => Err(SqlError::new(Code::Api, "[DESIGN] a scratch file's pipeline is the one its source holds")),
+        }
+    }
+
+    /// The most bytes it adds to content: a durable file's current
+    /// pipeline's growth; a scratch file's tag and the growth of the
+    /// pipeline its header names; what a later one adds past that goes to
+    /// overflow pages.
     pub(super) fn overhead(&self) -> usize {
         match self {
-            Encoded::Fixed(pipeline) => pipeline.overhead(),
+            Encoded::Named(named) => named.current().overhead(),
             Encoded::Live(live) => {
                 let first = lock_builtin(&live.taken).used.first().map(|(_, p)| Arc::clone(p));
                 first.map_or(0, |p| p.overhead()).saturating_add(1)
@@ -75,35 +92,37 @@ impl Encoded {
         }
     }
 
-    /// `input`, of the page `context`, encoded.
+    /// `input`, of the page `context`, encoded, and the ids of the
+    /// pipeline it passed through, for the page to name.
     ///
     /// # Errors
     ///
     /// The encodings'; SQLCODE -910 if a scratch file would pass
     /// `MAX_PIPELINES`.
-    pub(super) fn encode<'a>(&self, context: u64, input: &'a [u8]) -> Result<Cow<'a, [u8]>> {
+    pub(super) fn encode<'a>(&self, context: u64, input: &'a [u8]) -> Result<(Vec<EncodingId>, Cow<'a, [u8]>)> {
         match self {
-            Encoded::Fixed(pipeline) => pipeline.encode(context, input),
+            Encoded::Named(named) => named.encode(context, input),
             Encoded::Live(live) => {
                 let (tag, pipeline) = live.now()?;
                 let encoded = pipeline.encode(context, input)?;
                 let mut out = Vec::with_capacity(encoded.len().saturating_add(1));
                 out.push(tag);
                 out.extend_from_slice(&encoded);
-                Ok(Cow::Owned(out))
+                Ok((pipeline.ids(), Cow::Owned(out)))
             }
         }
     }
 
-    /// `input`, of the page `context`, decoded.
+    /// `input`, of the page `context`, whose body names `ids`, decoded.
     ///
     /// # Errors
     ///
-    /// The encodings'; SQLCODE -916 if a scratch file's content names no
-    /// pipeline it was written through.
-    pub(super) fn decode<'a>(&self, context: u64, input: &'a [u8]) -> Result<Cow<'a, [u8]>> {
+    /// The encodings'; SQLCODE -910 if a durable file's page names an
+    /// encoding the file was not opened with; SQLCODE -916 if a scratch
+    /// file's content names no pipeline it was written through.
+    pub(super) fn decode<'a>(&self, context: u64, ids: &[EncodingId], input: &'a [u8]) -> Result<Cow<'a, [u8]>> {
         match self {
-            Encoded::Fixed(pipeline) => pipeline.decode(context, input),
+            Encoded::Named(named) => named.decode(context, ids, input),
             Encoded::Live(live) => {
                 let unnamed = || SqlError::new(Code::Corrupt, "[DESIGN] a scratch file's page names no pipeline it was written through");
                 let (&tag, rest) = input.split_first().ok_or_else(unnamed)?;

@@ -12,6 +12,10 @@
 //! SHA-256, SHA-512 and HMAC-SHA-256, are plug-ins on a vetted crate
 //! (`turborel-aes`, RULES.md D26).
 
+use std::sync::Arc;
+
+use crate::error::{Code, Result, SqlError};
+
 pub mod crc;
 pub mod murmur;
 
@@ -21,6 +25,51 @@ pub mod murmur;
 /// slots (`disk/pager/format.rs`); a block's and a page's trailer take the
 /// function's own `digest_len`, and a page's body is the page less it.
 pub const MAX_DIGEST_BYTES: usize = 64;
+
+/// \[DESIGN\] The most bytes of the name of the key a keyed function is
+/// keyed by (RULES.md D48), as a page's trailer and a file's header record
+/// it: a keyring's key names are bounded so.
+pub const MAX_KEY_NAME: usize = 64;
+
+/// Bytes of a key name's field in a file format: its length, then
+/// `MAX_KEY_NAME` bytes.
+pub const KEY_FIELD: usize = 1 + MAX_KEY_NAME;
+
+/// A key name's field: its length, then its bytes, the rest zero; of no
+/// name, empty.
+#[must_use]
+pub fn key_field(name: Option<&str>) -> [u8; KEY_FIELD] {
+    let mut field = [0_u8; KEY_FIELD];
+    let name = name.unwrap_or_default().as_bytes();
+    let len = name.len().min(MAX_KEY_NAME);
+    field[0] = u8::try_from(len).unwrap_or(u8::MAX);
+    if let Some(slot) = field.get_mut(1..1_usize.saturating_add(len)) {
+        slot.copy_from_slice(name.get(..len).unwrap_or_default());
+    }
+    field
+}
+
+/// The key name a field written by `key_field` at `at` of `bytes` holds:
+/// empty for none; `None` if it is malformed.
+#[must_use]
+pub fn read_key_field(bytes: &[u8], at: usize) -> Option<&str> {
+    let len = usize::from(*bytes.get(at)?);
+    if len > MAX_KEY_NAME {
+        return None;
+    }
+    let from = at.checked_add(1)?;
+    std::str::from_utf8(bytes.get(from..from.checked_add(len)?)?).ok()
+}
+
+/// The function that verifies a digest made by `hash`'s kind with the key
+/// `name`: `hash` itself if it is not keyed, or keyed by that name.
+///
+/// # Errors
+///
+/// SQLCODE -910 if `name` names a key `hash` cannot take.
+pub fn verifier_of(hash: &Arc<dyn HashFunction>, name: &str) -> Result<Arc<dyn HashFunction>> {
+    if !hash.keyed() || hash.key_name() == Some(name) { Ok(Arc::clone(hash)) } else { hash.keyed_by(name) }
+}
 
 /// \[DESIGN\] Identifies a hash function in file formats. An id, once given,
 /// is never changed or reused: a file written with it must always be read
@@ -106,6 +155,27 @@ pub trait HashFunction: Send + Sync {
     /// The digest of `data`.
     fn hash(&self, data: &[u8]) -> Digest {
         self.hash_parts(&[data])
+    }
+    /// \[DESIGN\] Whether its digests are made with a key of a keyring
+    /// (RULES.md D48), as HMAC's are: a keyed function names the key with
+    /// each digest a file keeps, so each is verified with the key it was
+    /// made with (`keyed_by`) while the key changes. Default: not keyed.
+    fn keyed(&self) -> bool {
+        false
+    }
+    /// The name of the key its digests are made with, of a keyed
+    /// function: at most `MAX_KEY_NAME` bytes. Default: none.
+    fn key_name(&self) -> Option<&str> {
+        None
+    }
+    /// Itself keyed by the key `name`, to verify digests made with it.
+    /// Default: refused, as the function is not keyed.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it is not keyed, or `name` names no key it can take.
+    fn keyed_by(&self, name: &str) -> Result<Arc<dyn HashFunction>> {
+        Err(SqlError::new(Code::Api, format!("[DESIGN] {} is not keyed: it has no key {name:?}", self.name())))
     }
 }
 

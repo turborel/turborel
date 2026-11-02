@@ -298,7 +298,11 @@ impl LivePipeline {
 /// The ids of a pipeline as a header field: a count, then `MAX_ENCODINGS`
 /// ids, unused ones zero.
 pub(super) fn ids_field(pipeline: &Pipeline) -> Vec<u8> {
-    let ids = pipeline.ids();
+    ids_field_of(&pipeline.ids())
+}
+
+/// `ids` as a header field, as `ids_field` writes a pipeline's.
+pub(super) fn ids_field_of(ids: &[EncodingId]) -> Vec<u8> {
     let mut field = Vec::with_capacity(ENCODINGS_FIELD);
     field.extend_from_slice(&u32::try_from(ids.len()).unwrap_or(u32::MAX).to_le_bytes());
     for n in 0..MAX_ENCODINGS {

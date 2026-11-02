@@ -13,7 +13,10 @@ use turborel::hash::{HashFunction, MAX_DIGEST_BYTES};
 use turborel::value::Value;
 
 use super::chacha::bytes;
+use std::collections::HashMap;
+
 use super::held;
+use crate::keyring::{KEY_BYTES, Keyring};
 use crate::{HMAC_SHA256_ID, HmacSha256, SHA256_ID, SHA512_ID, Sha256, Sha512};
 
 /// Bytes of a SHA-256 digest.
@@ -80,14 +83,20 @@ fn hmac_sha_256_gives_the_known_answers() {
 /// lacks, or a name that is no key's, is refused (SQLCODE -910).
 #[test]
 fn hmac_sha_256_is_keyed_by_a_key_of_the_keyring() {
-    let keys = held();
-    let (k, l) = (HmacSha256::new(&*keys, "K").unwrap(), HmacSha256::new(&*keys, "L").unwrap());
-    assert_eq!(k.hash(b"page").as_bytes(), HmacSha256::new(&*keys, "K").unwrap().hash(b"page").as_bytes());
+    let keys: Arc<dyn Keyring> = held();
+    let (k, l) = (HmacSha256::new(Arc::clone(&keys), "K").unwrap(), HmacSha256::new(Arc::clone(&keys), "L").unwrap());
+    assert_eq!(k.hash(b"page").as_bytes(), HmacSha256::new(Arc::clone(&keys), "K").unwrap().hash(b"page").as_bytes());
     assert_ne!(k.hash(b"page").as_bytes(), l.hash(b"page").as_bytes());
     assert_ne!(k.hash(b"page").as_bytes(), HmacSha256::of_bytes(&[1_u8; 32]).hash(b"page").as_bytes(), "derived, not the key");
     for name in ["M", "", "../K"] {
-        assert_eq!(HmacSha256::new(&*keys, name).err().map(|e| e.code), Some(Code::Api), "{name:?}");
+        assert_eq!(HmacSha256::new(Arc::clone(&keys), name).err().map(|e| e.code), Some(Code::Api), "{name:?}");
     }
+    assert!(k.keyed() && k.key_name() == Some("K"), "keyed, by K");
+    let by_l = k.keyed_by("L").unwrap();
+    assert_eq!(by_l.hash(b"page").as_bytes(), l.hash(b"page").as_bytes(), "keyed again by L");
+    assert_eq!(k.keyed_by("M").err().map(|e| e.code), Some(Code::Api));
+    let bytes_only = HmacSha256::of_bytes(b"Jefe");
+    assert!(bytes_only.key_name().is_none() && bytes_only.keyed_by("K").is_err(), "keyed by bytes names no key");
 }
 
 /// The database in `dir`, its files checksummed with `hash`.
@@ -145,8 +154,9 @@ fn block_file(dir: &Path) -> std::path::PathBuf {
 /// STORAGE.CHECKSUM naming SHA-256, SHA-512 (its digests of 64 bytes in
 /// every header, block and page), or HMAC-SHA-256 keyed by K, reopens
 /// with it, its rows read back; opened with HMAC-SHA-256 keyed by another
-/// key, it is refused (SQLCODE -916), as is one whose file's header was
-/// changed, a reserved byte of it.
+/// key of the keyring, it is read with the key its files name, kept; by a
+/// keyring without that key, it is refused (SQLCODE -910), as is one whose
+/// file's header was changed, a reserved byte of it (SQLCODE -916).
 #[test]
 fn a_database_is_checksummed_with_each_and_reopened() {
     let scratch = turborel_test_support::Scratch::new("crypto-checksums");
@@ -158,12 +168,15 @@ fn a_database_is_checksummed_with_each_and_reopened() {
     assert_eq!(row(&wide, Box::new(Sha512)), "kept");
     assert_eq!(checksummed(&wide, Box::new(Sha256)).err().map(|e| e.code), Some(Code::Api), "its hash function not given");
 
-    let keys = held();
-    let keyed = |name: &str| -> Box<dyn HashFunction> { Box::new(HmacSha256::new(&*keys, name).unwrap()) };
+    let keys: Arc<dyn Keyring> = held();
+    let keyed = |name: &str| -> Box<dyn HashFunction> { Box::new(HmacSha256::new(Arc::clone(&keys), name).unwrap()) };
     let hmac = scratch.path("hmac");
     made(&hmac, keyed("K"));
     assert_eq!(row(&hmac, keyed("K")), "kept");
-    assert_eq!(checksummed(&hmac, keyed("L")).err().map(|e| e.code), Some(Code::Corrupt), "another key");
+    assert_eq!(row(&hmac, keyed("L")), "kept", "another key of the keyring: read with the key its files name");
+    let only_l: Arc<dyn Keyring> = Arc::new(super::Held(HashMap::from([("L".to_owned(), [2_u8; KEY_BYTES])])));
+    let without_k: Box<dyn HashFunction> = Box::new(HmacSha256::new(only_l, "L").unwrap());
+    assert_eq!(checksummed(&hmac, without_k).err().map(|e| e.code), Some(Code::Api), "a keyring without the key");
 
     let file = block_file(&hmac);
     let mut changed = std::fs::read(&file).unwrap();

@@ -22,10 +22,10 @@ use crate::common::{Scratch, crc32c};
 use crate::faults::{FaultyFs, Rule};
 
 /// The test page size. With CRC-32C a page's body is the page less its
-/// 12-byte trailer: 4084 bytes, of which a data page's header takes 24 and
-/// an overflow page's 8.
+/// 12-byte trailer: 4084 bytes, of which a data page's header takes 44,
+/// the ids of its encodings among them, and an overflow page's 8.
 const PAGE: u32 = 4096;
-const INLINE: usize = 4084 - 24;
+const INLINE: usize = 4084 - 44;
 const OVERFLOW: usize = 4084 - 8;
 
 fn create(path: &Path) -> Pager {

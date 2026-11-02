@@ -599,14 +599,19 @@ log allows replicated or remote ones.
   whoever can rewrite a file can rewrite its checksums; SHA-512 (id 13),
   likewise at 512 bits; HMAC-SHA-256 (id 12), keyed by a keyring's key
   through HKDF-SHA256, which a forger without the key cannot match.
-- **Keyed checksums.** A file records the function's id, never the key;
-  opened with another key, its headers fail their checksums and it is
-  refused (SQLCODE -916). `turboreld` keys it by `--checksum-key`. None
-  stops a block or page the database once wrote being put back in place.
+- **Keyed checksums.** A file records the function's id and the name
+  of the key each of its digests was made with, never the key: a block
+  file's header names one for every block in it, a pager file's header,
+  meta slots and page trailers each their own (D48), so each is verified
+  with the key it names, which the keyring must hold (`keyed_by`), else
+  the file is refused (SQLCODE -910). `turboreld` keys it by
+  `--checksum-key`. None stops a block or page the database once wrote
+  being put back in place.
 - **Digests.** At most 512 bits (`hash::MAX_DIGEST_BYTES`), with room in
   every format storing one: block file headers, pager file headers and
-  meta slots. A block's or page's trailer is the function's size; a
-  page's body is the page less it.
+  meta slots. A block's trailer is the function's size; a page's holds
+  its number, its key's name if the function is keyed, and the digest,
+  and a page's body is the page less it.
 *Why:* cryptography written here would be unreviewed and likely wrong,
 and a server needs it.
 

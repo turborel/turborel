@@ -46,9 +46,9 @@ pub const MUTATIONS: [Mutation; 45] = [
     Mutation {
         name: "page-checksum",
         breaks: "the page checksum: a page read is not checked against its digest",
-        file: "src/disk/pager.rs",
-        original: "if stored == Some(id) && self.hash.hash_parts(&[body, &id.to_le_bytes()]).as_bytes() == digest {",
-        replacement: "if stored == Some(id) {",
+        file: "src/disk/pager/sealed.rs",
+        original: "        if stored == Some(id) && verified {",
+        replacement: "        if stored == Some(id) {",
         integration: &[
             "pages::torn_corrupt_and_misdirected_pages_are_caught",
             "buffer::failed_write_backs_and_loads_leave_the_pool_consistent",

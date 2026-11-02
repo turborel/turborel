@@ -37,17 +37,17 @@ impl Pager {
         self.check_in_use(id).ok()?;
         let body = self.unseal(id.0, page).ok()??;
         self.check_data(id, body).ok()?;
-        let (_, listed, directory, _) = format::data_header(body)?;
-        if !listed.is_empty() || directory != NONE {
+        let header = format::data_header(body)?;
+        if !header.extents.is_empty() || header.directory != NONE {
             return None;
         }
         let mut stored = Vec::new();
         self.load(body, &mut stored).ok()?;
         self.known.set(id.0, &[]);
         add(&self.counters.reads, 1);
-        if self.pipeline.is_empty() {
+        if self.pipeline.plain(&header.ids) {
             return Some(stored);
         }
-        self.pipeline.decode(id.0, &stored).ok().map(std::borrow::Cow::into_owned)
+        self.pipeline.decode(id.0, &header.ids, &stored).ok().map(std::borrow::Cow::into_owned)
     }
 }

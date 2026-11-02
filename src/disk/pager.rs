@@ -24,7 +24,9 @@ mod format;
 mod free;
 mod known;
 mod live;
+mod named;
 mod overflow;
+mod sealed;
 mod sync;
 
 use std::path::{Path, PathBuf};
@@ -32,9 +34,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 pub use format::FORMAT_VERSION;
-use format::{KIND_DATA, KIND_NEW, KIND_TRUNK, META_AT, Meta, NONE, PAGE_NUMBER_BYTES};
+use format::{KIND_DATA, KIND_NEW, KIND_TRUNK, META_AT, Meta, NONE};
 use free::FreeList;
 use live::Encoded;
+use named::{Keyed, Named};
 
 use super::encoding::{Encoding, LivePipeline, Pipeline};
 use super::io::{DiskFile, Durability, FileSystem, OpenMode, begin_file};
@@ -137,8 +140,10 @@ struct SyncState {
 pub struct Pager {
     file: Box<dyn DiskFile>,
     path: PathBuf,
-    hash: Arc<dyn HashFunction>,
-    /// The encodings every page's content passes through (`live.rs`).
+    /// The function its pages are checksummed with, keyed as they name
+    /// (`named.rs`).
+    hash: Keyed,
+    /// The encodings each page's content passes through (`live.rs`).
     pipeline: Encoded,
     page_size: usize,
     free: Mutex<FreeList>,
@@ -205,7 +210,7 @@ impl Pager {
         })?;
         let file = begin_file(fs, path, &format::header(&*hash, &pipeline, page_size, size), durable)?;
         let mut pager = Pager::new(file, path, hash, size);
-        pager.pipeline = Encoded::Fixed(pipeline);
+        pager.pipeline = Encoded::Named(Named::new(pipeline, &[], path));
         Ok(pager)
     }
 
@@ -233,9 +238,10 @@ impl Pager {
         let format::Header { hash, page_size, encodings: ids } = format::read_header(&header, hashes, path)?;
         let pipeline = Pipeline::resolve(&ids, encodings, path)?;
         let size = check_page_size(page_size).ok_or_else(|| corrupt(&format!("its page size, {page_size}, is not valid")))?;
+        let keyed = Keyed::new(hash);
         let meta = META_AT
             .iter()
-            .filter_map(|&at| format::decode_meta(&*hash, &header, at))
+            .filter_map(|&at| format::decode_meta(&|name| keyed.verifier(name).ok(), &header, at))
             .max_by_key(|m| m.sequence)
             .ok_or_else(|| corrupt("neither meta slot is whole"))?;
         let page = u64::try_from(size).unwrap_or(u64::MAX);
@@ -247,8 +253,9 @@ impl Pager {
             file.set_size(whole)?;
             file.sync(Durability::Full)?;
         }
-        let mut pager = Pager::new(file, path, hash, size);
-        pager.pipeline = Encoded::Fixed(pipeline);
+        let mut pager = Pager::new(file, path, keyed.current(), size);
+        pager.hash = keyed;
+        pager.pipeline = Encoded::Named(Named::new(pipeline, encodings, path));
         *lock_builtin(&pager.free) = FreeList::new(meta.pages);
         lock_builtin(&pager.sync_state).sequence = meta.sequence;
         pager.on_file.store(on_file, Ordering::Release);
@@ -262,8 +269,8 @@ impl Pager {
         Pager {
             file,
             path: path.to_path_buf(),
-            hash,
-            pipeline: Encoded::Fixed(Pipeline::none()),
+            hash: Keyed::new(hash),
+            pipeline: Encoded::Named(Named::new(Pipeline::none(), &[], path)),
             page_size,
             free: Mutex::new(FreeList::new(0)),
             on_file: AtomicU64::new(0),
@@ -328,7 +335,30 @@ impl Pager {
 
     /// The id of the hash function that checksums the pages.
     pub fn hash_id(&self) -> HashId {
-        self.hash.id()
+        self.hash.current().id()
+    }
+
+    /// \[DESIGN\] Pages are written through `pipeline` from now on
+    /// (RULES.md D48): each names the one it was written through, and is
+    /// read by it. A scratch file's is its source's, not set here.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 of a scratch file.
+    pub fn set_pipeline(&self, pipeline: Pipeline) -> Result<()> {
+        self.pipeline.set(pipeline)
+    }
+
+    /// \[DESIGN\] Pages are checksummed with `hash` from now on (RULES.md
+    /// D48): the file's function keyed by another key, which each page's
+    /// trailer names; a page written before is verified with the key it
+    /// names (`HashFunction::keyed_by`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `hash` is another function, or is not keyed.
+    pub fn set_hash(&self, hash: Arc<dyn HashFunction>) -> Result<()> {
+        self.hash.set(hash)
     }
 
     /// The counters now.
@@ -451,17 +481,18 @@ impl Pager {
             return Ok(());
         };
         self.check_data(id, &body)?;
+        let header = format::data_header(&body).ok_or_else(|| self.damaged("a data page is malformed"))?;
         // Known without reading anything else: no overflow, or only what it
         // lists itself.
-        if let Some((_, listed, NONE, _)) = format::data_header(&body) {
-            self.known.set(id.0, &listed);
+        if header.directory == NONE {
+            self.known.set(id.0, &header.extents);
         }
-        if self.pipeline.is_empty() {
+        if self.pipeline.plain(&header.ids) {
             return self.load(&body, content);
         }
         let mut stored = Vec::new();
         self.load(&body, &mut stored)?;
-        content.extend_from_slice(&self.pipeline.decode(id.0, &stored)?);
+        content.extend_from_slice(&self.pipeline.decode(id.0, &header.ids, &stored)?);
         Ok(())
     }
 
@@ -489,8 +520,8 @@ impl Pager {
                 Ok(None) | Err(_) => Vec::new(),
             },
         };
-        let stored = self.pipeline.encode(id.0, content)?;
-        let (body, allocated) = self.store(&stored)?;
+        let (ids, stored) = self.pipeline.encode(id.0, content)?;
+        let (body, allocated) = self.store(&stored, &ids)?;
         let mut sealed = Vec::with_capacity(self.page_size);
         self.seal(id.0, &body, &mut sealed);
         if let Err(e) = self.write_run(id.0, &sealed) {
@@ -518,77 +549,6 @@ impl Pager {
                 format!("[DESIGN] page {} of {} is one of the pager's own (kind {kind:?}), not content", id.0, self.path.display()),
             )),
         }
-    }
-}
-
-impl Pager {
-    /// Bytes of a page's body: the page less its trailer.
-    fn body_size(&self) -> usize {
-        self.page_size.saturating_sub(PAGE_NUMBER_BYTES).saturating_sub(self.hash.digest_len())
-    }
-
-    /// The byte offset of page `id`.
-    fn offset(&self, id: u64) -> Result<u64> {
-        let page = u64::try_from(self.page_size).unwrap_or(u64::MAX);
-        id.checked_add(1)
-            .and_then(|slot| slot.checked_mul(page))
-            .ok_or_else(|| SqlError::new(Code::Io, format!("[DESIGN] page {id} of {} would be beyond 2^64 bytes", self.path.display())))
-    }
-
-    /// Appends page `id` holding `body`, padded, with its trailer, to `out`.
-    fn seal(&self, id: u64, body: &[u8], out: &mut Vec<u8>) {
-        let start = out.len();
-        out.extend_from_slice(body);
-        out.resize(start.saturating_add(self.body_size()), 0);
-        let digest = self.hash.hash_parts(&[out.get(start..).unwrap_or_default(), &id.to_le_bytes()]);
-        out.extend_from_slice(&id.to_le_bytes());
-        out.extend_from_slice(digest.as_bytes());
-    }
-
-    /// The body of page `id` within its bytes `page`; `None` if it was never
-    /// written.
-    fn unseal<'a>(&self, id: u64, page: &'a [u8]) -> Result<Option<&'a [u8]>> {
-        if page.iter().all(|&b| b == 0) {
-            return Ok(None);
-        }
-        let (body, trailer) = page.split_at(self.body_size().min(page.len()));
-        let stored = format::le_u64(trailer, 0);
-        let digest = trailer.get(PAGE_NUMBER_BYTES..).unwrap_or_default();
-        if stored == Some(id) && self.hash.hash_parts(&[body, &id.to_le_bytes()]).as_bytes() == digest {
-            return Ok(Some(body));
-        }
-        add(&self.counters.corrupt_reads, 1);
-        let why = match stored.filter(|&other| other != id) {
-            Some(other) => format!("it holds page {other}, written in the wrong place"),
-            None => "it fails its checksum: torn or corrupted".to_owned(),
-        };
-        Err(SqlError::new(Code::Corrupt, format!("[DESIGN] page {id} of {}: {why}", self.path.display())))
-    }
-
-    /// The body of page `id`; `None` if it was never written.
-    fn read_body(&self, id: u64) -> Result<Option<Vec<u8>>> {
-        if id >= self.on_file.load(Ordering::Acquire) {
-            return Ok(None);
-        }
-        let page = self.read_run(id, 1)?;
-        Ok(self.unseal(id, &page)?.map(<[u8]>::to_vec))
-    }
-
-    /// The bytes of `count` pages from `start`, in one read.
-    fn read_run(&self, start: u64, count: u64) -> Result<Vec<u8>> {
-        let len =
-            usize::try_from(count).ok().and_then(|n| n.checked_mul(self.page_size)).ok_or_else(|| self.damaged("an extent is too long"))?;
-        let mut bytes = vec![0; len];
-        self.file.read_exact_at(&mut bytes, self.offset(start)?)?;
-        Ok(bytes)
-    }
-
-    /// Writes `sealed`, whole pages from `start`, in one write.
-    fn write_run(&self, start: u64, sealed: &[u8]) -> Result<()> {
-        self.file.write_all_at(sealed, self.offset(start)?)?;
-        let pages = u64::try_from(sealed.len().checked_div(self.page_size).unwrap_or_default()).unwrap_or(u64::MAX);
-        self.on_file.fetch_max(start.saturating_add(pages), Ordering::AcqRel);
-        Ok(())
     }
 }
 

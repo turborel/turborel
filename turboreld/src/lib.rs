@@ -382,7 +382,7 @@ fn register(db: &Database, config: &Config) -> Result<(), String> {
     db.register_hash_function(Box::new(Sha256)).map_err(refused("SHA-256"))?;
     db.register_hash_function(Box::new(Sha512)).map_err(refused("SHA-512"))?;
     if let Some(name) = &config.checksum_key {
-        let keyed = HmacSha256::new(&*keyring, name).map_err(refused("HMAC-SHA-256"))?;
+        let keyed = HmacSha256::new(Arc::clone(&keyring), name).map_err(refused("HMAC-SHA-256"))?;
         db.register_hash_function(Box::new(keyed)).map_err(refused("HMAC-SHA-256"))?;
     }
     Ok(())

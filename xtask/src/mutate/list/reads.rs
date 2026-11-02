@@ -6,7 +6,7 @@
 use super::Mutation;
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 33] = [
+pub const READS: [Mutation; 35] = [
     Mutation {
         name: "zone-write-visible",
         breaks: "index-only scans: a write leaves its zone marked visible to every reader",
@@ -303,5 +303,23 @@ pub const READS: [Mutation; 33] = [
         replacement: "        let _ = &self.queued;",
         integration: &["partial_groups::groups_made_partly_answer_as_their_rows"],
         unit: &[],
+    },
+    Mutation {
+        name: "page-ids-unnamed",
+        breaks: "a page names no encoding whatever it was written through, so it is read as plain once the file's pipeline changes",
+        file: "src/disk/pager/named.rs",
+        original: "        Ok((current.ids(), current.encode(context, input)?))",
+        replacement: "        Ok((Vec::new(), current.encode(context, input)?))",
+        integration: &[],
+        unit: &["disk::pager::named::tests::pages_name_the_pipeline_they_were_written_through"],
+    },
+    Mutation {
+        name: "page-key-unnamed",
+        breaks: "a page's trailer names no key, so its checksum is verified with none once the file's key changes",
+        file: "src/disk/pager/sealed.rs",
+        original: "            out.extend_from_slice(&key_field(hash.key_name()));",
+        replacement: "            out.extend_from_slice(&key_field(None));",
+        integration: &[],
+        unit: &["disk::pager::named::tests::pages_keep_the_key_their_checksums_were_made_with"],
     },
 ];

@@ -189,11 +189,11 @@ fn malformed_pages_are_refused() {
 }
 
 /// Verifies: [DESIGN] CONFORMANCE.md, Limits: the longest entry a hash
-/// table holds is 8,136 bytes at 8 KiB pages and 65,480 at 64 KiB, with
+/// table holds is 8,116 bytes at 8 KiB pages and 65,460 at 64 KiB, with
 /// CRC-32C page checksums.
 #[test]
 fn the_longest_entry_is_as_documented() {
-    for (page_size, most) in [(8_192_u32, 8_136_usize), (65_536, 65_480)] {
+    for (page_size, most) in [(8_192_u32, 8_116_usize), (65_536, 65_460)] {
         let pager =
             Pager::create(&MemoryFileSystem::new(), Path::new("/t"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), page_size)
                 .unwrap();
@@ -282,8 +282,11 @@ fn a_keys_values_are_read_a_page_at_a_time() {
     assert_eq!(table.buckets(), held, "no split while it reads");
     let rest: Vec<Vec<u8>> = hot.collect::<Result<_>>().unwrap();
     assert_eq!(rest, values[1..], "each once, none moved");
-    for n in 5_000..5_100_u64 {
+    for n in 5_000..20_000_u64 {
         table.insert(&key(n), b"filler").unwrap();
+        if table.buckets() > held {
+            break;
+        }
     }
     assert!(table.buckets() > held, "grown once it is done");
 }

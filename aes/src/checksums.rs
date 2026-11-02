@@ -17,6 +17,8 @@
 //! Neither stops a forger from putting back a page or block the database
 //! once wrote at the same place: their checksums are its own.
 
+use std::sync::Arc;
+
 use aws_lc_rs::digest::{self, Algorithm, SHA256, SHA512};
 use aws_lc_rs::hkdf::{HKDF_SHA256, Salt};
 use aws_lc_rs::hmac::{self, HMAC_SHA256};
@@ -98,6 +100,9 @@ fn digest_of(algorithm: &'static Algorithm, parts: &[&[u8]]) -> Digest {
 /// key of a keyring.
 pub struct HmacSha256 {
     key: hmac::Key,
+    /// The keyring its key came from, and the key's name: to key it by
+    /// another (`HashFunction::keyed_by`); none of one keyed by bytes.
+    keyring: Option<(Arc<dyn Keyring>, String)>,
 }
 
 impl HmacSha256 {
@@ -107,7 +112,7 @@ impl HmacSha256 {
     ///
     /// SQLCODE -910 if `name` names no key the keyring has; the keyring's
     /// errors; SQLCODE -915 if the key cannot be derived.
-    pub fn new(keyring: &dyn Keyring, name: &str) -> Result<HmacSha256> {
+    pub fn new(keyring: Arc<dyn Keyring>, name: &str) -> Result<HmacSha256> {
         let master = valid_key_name(name).then(|| keyring.key(name)).transpose()?.flatten().ok_or_else(|| {
             SqlError::new(
                 Code::Api,
@@ -118,12 +123,12 @@ impl HmacSha256 {
         let info = [INFO];
         let prk = Salt::new(HKDF_SHA256, &[]).extract(&master);
         prk.expand(&info, Length).and_then(|okm| okm.fill(&mut bytes)).map_err(|_| failed(HMAC_SHA256_NAME, "deriving a key"))?;
-        Ok(HmacSha256::of_bytes(&bytes))
+        Ok(HmacSha256 { keyring: Some((keyring, name.to_owned())), ..HmacSha256::of_bytes(&bytes) })
     }
 
     /// HMAC-SHA-256 keyed by `key` itself, for known answers [RFC 4231].
     pub(crate) fn of_bytes(key: &[u8]) -> HmacSha256 {
-        HmacSha256 { key: hmac::Key::new(HMAC_SHA256, key) }
+        HmacSha256 { key: hmac::Key::new(HMAC_SHA256, key), keyring: None }
     }
 }
 
@@ -143,5 +148,17 @@ impl HashFunction for HmacSha256 {
             context.update(part);
         }
         Digest::new(context.sign().as_ref()).unwrap_or_default()
+    }
+    fn keyed(&self) -> bool {
+        true
+    }
+    fn key_name(&self) -> Option<&str> {
+        self.keyring.as_ref().map(|(_, name)| name.as_str())
+    }
+    fn keyed_by(&self, name: &str) -> Result<Arc<dyn HashFunction>> {
+        let Some((keyring, _)) = &self.keyring else {
+            return Err(SqlError::new(Code::Api, format!("[EXTENSION] {HMAC_SHA256_NAME} keyed by bytes takes no key {name:?}")));
+        };
+        Ok(Arc::new(HmacSha256::new(Arc::clone(keyring), name)?))
     }
 }

@@ -258,12 +258,12 @@ fn stale_paths_follow_a_leaf_taken_out() {
 }
 
 /// Verifies: [DESIGN] CONFORMANCE.md, Limits: the longest entry a B-link
-/// tree holds is 996 bytes at 4 KiB pages, 2,020 at 8 KiB and 16,356 at
+/// tree holds is 991 bytes at 4 KiB pages, 2,015 at 8 KiB and 16,351 at
 /// 64 KiB, with CRC-32C page checksums.
 #[test]
 fn the_longest_entry_is_as_documented() {
     use crate::disk::memory::MemoryFileSystem;
-    for (page_size, most) in [(4_096_u32, 996_usize), (8_192, 2_020), (65_536, 16_356)] {
+    for (page_size, most) in [(4_096_u32, 991_usize), (8_192, 2_015), (65_536, 16_351)] {
         let pager = Pager::create(
             &MemoryFileSystem::new(),
             std::path::Path::new("/t"),
