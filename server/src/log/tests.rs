@@ -101,9 +101,9 @@ fn a_blocked_stream_holds_up_no_event() {
 /// Verifies: [DESIGN] RULES.md D40: a sink told to open its file again,
 /// as a rotation does once it has moved the file away, writes the lines
 /// told before to the file moved, and those after to a new one at its
-/// path; one that cannot be opened again, its directory gone, keeps the
-/// file it has and says so in it. A sink to a stream has nothing to open
-/// again.
+/// path; one that cannot be opened again, a directory in its path's
+/// place, keeps the file it has, moved away too, and says so in it. A
+/// sink to a stream has nothing to open again.
 #[test]
 fn a_log_rotated_is_opened_again() {
     let scratch = turborel_test_support::Scratch::new("server-log-reopen");
@@ -115,15 +115,19 @@ fn a_log_rotated_is_opened_again() {
     std::fs::rename(&path, scratch.path("d/log.1")).unwrap();
     reopener.reopen();
     sink.event(&Event::CheckpointTaken(2));
-    // Written by the sink's thread, in its time, before the directory goes.
+    // Written by the sink's thread, in its time, before the file is moved.
     assert!(eventually(|| std::fs::read_to_string(&path).is_ok_and(|text| text.contains(r#""taken":2"#))));
-    std::fs::rename(scratch.path("d"), scratch.path("e")).unwrap();
+    // The file moved while open, as a rotation moves it (which Windows
+    // allows, where a directory holding an open file is not moved), and a
+    // directory put in its place, which cannot be opened for appending.
+    std::fs::rename(&path, scratch.path("d/log.2")).unwrap();
+    std::fs::create_dir(&path).unwrap();
     reopener.reopen();
     sink.event(&Event::CheckpointTaken(3));
     drop(sink);
-    let rotated = std::fs::read_to_string(scratch.path("e/log.1")).unwrap();
+    let rotated = std::fs::read_to_string(scratch.path("d/log.1")).unwrap();
     assert!(rotated.contains(r#""taken":1"#) && !rotated.contains(r#""taken":2"#), "{rotated}");
-    let moved = std::fs::read_to_string(scratch.path("e/log")).unwrap();
+    let moved = std::fs::read_to_string(scratch.path("d/log.2")).unwrap();
     let lines: Vec<&str> = moved.lines().collect();
     assert_eq!(lines.len(), 3, "{moved}");
     assert!(lines[0].contains(r#""taken":2"#), "{moved}");
