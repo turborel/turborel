@@ -58,7 +58,7 @@ impl Wait for Stepping {
 struct Told(Mutex<Vec<String>>);
 
 impl Watch for Told {
-    fn committed(&self, through: Lsn, _log: &[Vec<u8>]) {
+    fn committed(&self, (_, through): (Lsn, Lsn), _log: &[Vec<u8>]) {
         self.0.lock().unwrap().push(format!("committed {}", through.0));
     }
     fn serving(&self, view: u64) {
@@ -87,7 +87,9 @@ fn parts(consensus: Box<dyn Consensus>, wait: Arc<dyn Wait>, watch: Arc<dyn Watc
     Parts {
         consensus,
         journal: Box::new(journal),
+        first: Lsn(0),
         records: Vec::new(),
+        retain_bytes: u64::MAX,
         transport,
         inbox: Arc::default(),
         ticker: Arc::new(EveryTurn),
@@ -165,13 +167,15 @@ fn a_promotion_syncs_on_the_drivers_own_thread() {
         journal.persist(Lsn(u64::try_from(i).unwrap() + 1_u64), record).unwrap();
     }
     journal.sync().unwrap();
-    let recovered = turborel_replication::Recovered { state: None, records: records.clone() };
+    let recovered = turborel_replication::Recovered { state: None, first: Lsn(0), records: records.clone() };
     let vr = Box::new(Vr::restart(&[ReplicaId(1_u32)], ReplicaId(1_u32), options(), recovered).unwrap());
     let wait = Arc::new(Blocking { most: Duration::from_millis(1_u64) });
     let parts = Parts {
         consensus: vr,
         journal: Box::new(journal),
+        first: Lsn(0),
         records,
+        retain_bytes: u64::MAX,
         wait,
         ..parts(Box::new(Scripted(Vec::new())), Arc::new(Stepping), Arc::new(Unwatched))
     };
@@ -295,7 +299,7 @@ fn the_built_in_seams() {
     assert_eq!((ticks.take(), ticks.interval()), (0_u64, Duration::from_secs(3600_u64)));
 
     let unwatched = Unwatched;
-    unwatched.committed(Lsn(1_u64), &[]);
+    unwatched.committed((Lsn(0_u64), Lsn(1_u64)), &[]);
     unwatched.serving(0_u64);
     unwatched.stopped();
     unwatched.outcome(Lsn(1_u64), b"r", true);

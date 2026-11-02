@@ -246,7 +246,9 @@ impl Vr {
     fn heartbeat(&self, out: &mut Vec<Output>) {
         for backup in self.others() {
             let acked = self.lead.acked.get(&backup).copied().unwrap_or(0);
-            if acked >= self.op() {
+            // Behind what is retained, a backup learns the commit-number and
+            // asks for the state (`transfer.rs`).
+            if acked >= self.op() || acked < self.log.first() {
                 Vr::send(backup, &Message::Commit(Commit { view: self.view, commit: self.commit }), out);
                 continue;
             }

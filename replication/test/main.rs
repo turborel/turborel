@@ -23,5 +23,6 @@ mod driver;
 mod frames;
 mod log;
 mod normal;
+mod retention;
 mod simulation;
 mod view_change;

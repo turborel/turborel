@@ -157,6 +157,7 @@ Each in a sentence:
 | REPLICATION.LISTEN | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at the next start | *node* |
 | REPLICATION.MEMBERS | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at the next start | *node* |
 | REPLICATION.REPLICA | 0 | INTEGER FROM 0 TO 4294967295 | at the next start | *node* |
+| REPLICATION.RETAIN_BYTES | 268435456 | INTEGER FROM 0 TO 9223372036854775807 | at the next start | *node* |
 | REPLICATION.TICK_MS | 100 | INTEGER FROM 10 TO 60000 | at the next start | *node* |
 | REPLICATION.TLS | ON | ONE OF ON, OFF | at the next start | *node* |
 | SERVER.BATCH_BYTES | 65536 | INTEGER FROM 1 TO 4294967295 | at once |  |
@@ -191,6 +192,7 @@ Each in a sentence:
 - **REPLICATION.LISTEN**: The host and port this node takes the other members' frames at; empty, those its own member names in REPLICATION.MEMBERS.
 - **REPLICATION.MEMBERS**: The members of the replica group: each its number, =, and the host and port its replica takes frames at, by commas, as 1=db1.example.com:7423,2=db2.example.com:7423.
 - **REPLICATION.REPLICA**: This node's number among the members of its database's replica group; 0, the database is not replicated.
+- **REPLICATION.RETAIN_BYTES**: The bytes of the group's log the replica keeps before its database's last checkpoint at least: a backup behind by less catches up from the log, one behind by more from a state transfer of the primary's files.
 - **REPLICATION.TICK_MS**: The milliseconds between the ticks of the replica's consensus, in which its heartbeats and the timeouts of its view changes count.
 - **REPLICATION.TLS**: Whether the members secure their frames to each other by mutual TLS, ON; OFF only for a group on one machine, as in tests.
 - **SERVER.BATCH_BYTES**: About how many bytes of rows the server sends in one batch.

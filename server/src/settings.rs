@@ -142,6 +142,12 @@ pub const REPLICATION_TLS: &str = "REPLICATION.TLS";
 /// \[EXTENSION\] The milliseconds between the ticks of the replica's
 /// consensus: its heartbeats and timeouts count in them.
 pub const TICK_MS: &str = "REPLICATION.TICK_MS";
+/// \[EXTENSION\] The bytes of the group's log a replica keeps before its
+/// database's last checkpoint at least (log retention).
+pub const RETAIN_BYTES: &str = "REPLICATION.RETAIN_BYTES";
+/// \[DESIGN\] The default of `RETAIN_BYTES`: 256 MiB, a few of the log's
+/// segments, so a backup down for a short while catches up from the log.
+pub const DEFAULT_RETAIN_BYTES: usize = 256 * 1024 * 1024;
 /// \[DESIGN\] The default of `TICK_MS`: a tenth of a second, so a
 /// heartbeat goes each second and a view change comes within seconds.
 pub const DEFAULT_TICK_MS: usize = 100;
@@ -206,7 +212,7 @@ pub fn definitions() -> Vec<Definition> {
 /// read as it starts, before its database is opened: its number, the
 /// group's members, where it listens, how the members' frames are
 /// secured, and the pace of its ticks.
-pub fn replication() -> [Definition; 6] {
+pub fn replication() -> [Definition; 7] {
     let text = Kind::Text { max: MAX_TEXT };
     [
         node(
@@ -244,6 +250,12 @@ pub fn replication() -> [Definition; 6] {
             Kind::Integer { min: 10, max: 60_000 },
             whole(DEFAULT_TICK_MS),
             "The milliseconds between the ticks of the replica's consensus, in which its heartbeats and the timeouts of its view changes count.",
+        ),
+        node(
+            RETAIN_BYTES,
+            Kind::Integer { min: 0, max: i128::from(i64::MAX) },
+            whole(DEFAULT_RETAIN_BYTES),
+            "The bytes of the group's log the replica keeps before its database's last checkpoint at least: a backup behind by less catches up from the log, one behind by more from a state transfer of the primary's files.",
         ),
     ]
 }

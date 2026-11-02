@@ -11,6 +11,7 @@
 //! database's encodings, and cut at a torn end as the database's own log
 //! is (RULES.md D25).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use turborel::bytes::{Put, Reader};
@@ -47,6 +48,14 @@ pub trait Journal: Send {
     ///
     /// As `persist`.
     fn truncate(&mut self, after: Lsn) -> Result<()>;
+    /// \[EXTENSION\] Lets the records through `through` go (RULES.md D57,
+    /// log retention): opened again, the journal's records begin after it
+    /// (`Recovered::first`), whether or not it held every one through it.
+    ///
+    /// # Errors
+    ///
+    /// As `persist`.
+    fn retain(&mut self, through: Lsn) -> Result<()>;
     /// Writes the protocol's state, and makes it and every write before it
     /// durable.
     ///
@@ -70,13 +79,15 @@ const JOURNAL: &str = "replication journal entry";
 const RECORD: u8 = 1;
 const TRUNCATE: u8 = 2;
 const STATE: u8 = 3;
+const RETAIN: u8 = 4;
 
 /// \[EXTENSION\] A journal kept in a core `Log`: each write one record of
 /// it, a tag then its fields (`turborel::bytes`): a record, its position
 /// then its bytes; a truncation, the last position kept; a state, its
-/// bytes. Opening it reads them all, in order, as the writes left the
-/// journal. The log keeps every entry: log retention, by which a replica
-/// forgets what a checkpoint holds, is a later stage.
+/// bytes; a retention, the last position let go. Opening it reads them
+/// all, in order, as the writes left the journal. A retention, once
+/// durable, lets the log's records before the first record kept go
+/// (`Log::truncate_before`): a file log drops its segments before it.
 pub struct LogJournal {
     log: Arc<dyn Log>,
     /// The log's position of the last entry written and not yet synced.
@@ -85,6 +96,8 @@ pub struct LogJournal {
     waiting: Vec<Lsn>,
     /// The records made durable and not yet returned by `sync`.
     owed: Vec<Lsn>,
+    /// Where in the log each record held was written, by its position.
+    written: BTreeMap<u64, Lsn>,
 }
 
 impl LogJournal {
@@ -96,11 +109,12 @@ impl LogJournal {
     /// writes a record past the position after the last.
     pub fn open(log: Arc<dyn Log>) -> Result<(LogJournal, Recovered)> {
         let mut recovered = Recovered::default();
+        let mut written = BTreeMap::new();
         for read in log.read_from(Lsn(0)) {
-            let (_, entry) = read?;
-            apply(&mut recovered, &entry)?;
+            let (at, entry) = read?;
+            apply(&mut recovered, &entry, (at, &mut written))?;
         }
-        Ok((LogJournal { log, unsynced: None, waiting: Vec::new(), owed: Vec::new() }, recovered))
+        Ok((LogJournal { log, unsynced: None, waiting: Vec::new(), owed: Vec::new(), written }, recovered))
     }
 
     /// Writes `entry`.
@@ -130,6 +144,10 @@ impl Journal for LogJournal {
         entry.put_u64(at.0);
         entry.extend_from_slice(record);
         self.write(&entry)?;
+        if let Some(wrote) = self.unsynced {
+            self.written.split_off(&at.0);
+            self.written.insert(at.0, wrote);
+        }
         self.waiting.push(at);
         Ok(())
     }
@@ -137,7 +155,23 @@ impl Journal for LogJournal {
     fn truncate(&mut self, after: Lsn) -> Result<()> {
         let mut entry = vec![TRUNCATE];
         entry.put_u64(after.0);
+        self.written.split_off(&after.0.saturating_add(1));
         self.write(&entry)
+    }
+
+    /// The retention written and made durable first, so the log is never
+    /// cut before a journal that does not say so; then the log before the
+    /// first record kept let go.
+    fn retain(&mut self, through: Lsn) -> Result<()> {
+        let mut entry = vec![RETAIN];
+        entry.put_u64(through.0);
+        self.write(&entry)?;
+        self.flush()?;
+        self.written = self.written.split_off(&through.0.saturating_add(1));
+        if let Some(&kept) = self.written.values().next() {
+            self.log.truncate_before(kept)?;
+        }
+        Ok(())
     }
 
     fn persist_state(&mut self, state: &[u8]) -> Result<()> {
@@ -153,21 +187,41 @@ impl Journal for LogJournal {
     }
 }
 
-/// `recovered` as the entry `entry` leaves it.
-fn apply(recovered: &mut Recovered, entry: &[u8]) -> Result<()> {
+/// `recovered` as the entry `entry`, written at `at` of the log, leaves
+/// it; `written` where each record kept was written.
+fn apply(recovered: &mut Recovered, entry: &[u8], (at, written): (Lsn, &mut BTreeMap<u64, Lsn>)) -> Result<()> {
     let mut r = Reader::new(entry, JOURNAL);
     match r.u8()? {
         RECORD => {
-            let at = r.u64()?;
-            let kept = at.checked_sub(1).and_then(|n| usize::try_from(n).ok()).filter(|&n| n <= recovered.records.len());
-            let kept = kept.ok_or_else(|| r.corrupt("it writes a record past the position after the last"))?;
+            let position = r.u64()?;
+            // The log's first entry, the entries before let go with the
+            // records they wrote: the journal begins before it.
+            if recovered.records.is_empty() && position > recovered.first.0.saturating_add(1) {
+                recovered.first = Lsn(position.saturating_sub(1));
+            }
+            let kept = position.checked_sub(recovered.first.0).and_then(|n| n.checked_sub(1)).and_then(|n| usize::try_from(n).ok());
+            let kept = kept.filter(|&n| n <= recovered.records.len());
+            let kept = kept.ok_or_else(|| r.corrupt("it writes a record past the position after the last, or one let go"))?;
             recovered.records.truncate(kept);
             recovered.records.push(r.rest().to_vec());
+            written.split_off(&position);
+            written.insert(position, at);
         }
         TRUNCATE => {
-            let after = usize::try_from(r.u64()?).unwrap_or(usize::MAX);
+            let after = r.u64()?;
             r.finish()?;
-            recovered.records.truncate(after);
+            recovered.records.truncate(usize::try_from(after.saturating_sub(recovered.first.0)).unwrap_or(usize::MAX));
+            written.split_off(&after.saturating_add(1));
+        }
+        RETAIN => {
+            let through = r.u64()?;
+            r.finish()?;
+            if through > recovered.first.0 {
+                let gone = usize::try_from(through.saturating_sub(recovered.first.0)).unwrap_or(usize::MAX).min(recovered.records.len());
+                recovered.records.drain(..gone);
+                recovered.first = Lsn(through);
+                *written = written.split_off(&through.saturating_add(1));
+            }
         }
         STATE => recovered.state = Some(r.rest().to_vec()),
         _ => return Err(r.corrupt("its tag is of no entry known")),

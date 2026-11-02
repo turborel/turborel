@@ -33,13 +33,14 @@ use turborel::diagnostics::{Event, ReplicaChange};
 use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
+use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
 use turborel_replication::{Driver, DriverJob, GroupLogs, Joined, Make, ReplicaEvent, ReplicaId, Vr, VrOptions};
 
 use self::net::Security;
 pub use self::net::{TcpTransport, members_of};
 pub use self::shown::{Links, Replicas};
-use crate::settings::{self, LISTEN, MEMBERS, REPLICA, REPLICATION_CA, REPLICATION_TLS, TICK_MS, TLS_CERTIFICATE, TLS_KEY};
+use crate::settings::{self, LISTEN, MEMBERS, REPLICA, REPLICATION_CA, REPLICATION_TLS, RETAIN_BYTES, TICK_MS, TLS_CERTIFICATE, TLS_KEY};
 
 /// An error of the node's own (SQLCODE -910).
 fn refused(why: &str) -> SqlError {
@@ -90,7 +91,7 @@ struct Telling {
 }
 
 impl Watch for Telling {
-    fn committed(&self, _through: Lsn, _log: &[Vec<u8>]) {}
+    fn committed(&self, _window: (Lsn, Lsn), _log: &[Vec<u8>]) {}
 
     fn serving(&self, view: u64) {
         self.db.tell(&Event::Replica { change: ReplicaChange::Serving { view } });
@@ -188,7 +189,8 @@ pub fn prepare(db: &Database) -> Result<Option<Prepared>> {
         watch: Arc::new(Telling { db: db.clone(), links: Arc::clone(&links) }),
     };
     let ids: Vec<ReplicaId> = members.keys().copied().collect();
-    let logs = Arc::new(GroupLogs::in_files(FileLogOptions::default(), (&ids, me), make, joined));
+    let retention = Retention { bytes: u64::try_from(settings::count(db, RETAIN_BYTES)).unwrap_or(u64::MAX) };
+    let logs = Arc::new(GroupLogs::in_files(FileLogOptions::default(), (&ids, me), make, (joined, retention)));
     db.set_log_storage(Box::new(Shared(Arc::clone(&logs))))?;
     Ok(Some(Prepared { logs, transport, links, tick }))
 }

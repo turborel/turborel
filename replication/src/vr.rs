@@ -49,12 +49,14 @@ mod frame;
 mod normal;
 mod transfer;
 mod view_change;
+mod window;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use turborel::error::{Code, Result, SqlError};
 
 use self::frame::{Message, ViewState};
+use self::window::Window;
 use crate::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId};
 
 /// Its name, as [`Consensus::name`] gives it.
@@ -104,8 +106,10 @@ pub enum Status {
     /// In a view change.
     ViewChange,
     /// \[EXTENSION\] Fetching the log of a later view it learned of, before
-    /// it takes part in it [VRR §5.2]. \[VRR\]'s recovering status, for a
-    /// journal lost, is a later stage.
+    /// it takes part in it [VRR §5.2]; or a state transfer of its database,
+    /// the log alone no longer reaching back to what it holds (RULES.md
+    /// D57). \[VRR\]'s recovering status, for a journal lost, is a later
+    /// stage.
     Transfer,
 }
 
@@ -118,6 +122,9 @@ pub struct Standing {
     pub status: Status,
     /// The primary of the view.
     pub primary: ReplicaId,
+    /// The position before the first record its log holds: those through
+    /// it let go by retention.
+    pub first: Lsn,
     /// The op-number: the position of its log's last record.
     pub op: Lsn,
     /// The commit-number, as far as it knows.
@@ -162,9 +169,10 @@ struct Lead {
     serving: bool,
 }
 
-/// A DOVIEWCHANGE's log and numbers.
-#[derive(Debug, Clone)]
+/// A DOVIEWCHANGE's log, a window after `after`, and numbers.
+#[derive(Debug, Clone, Default)]
 struct Candidate {
+    after: u64,
     log: Vec<Vec<u8>>,
     normal_view: u64,
     op: u64,
@@ -195,8 +203,9 @@ pub struct Vr {
     /// v′: "the latest view in which its status was normal".
     normal_view: u64,
     status: Status,
-    /// The log: the record at position n is at index n − 1.
-    log: Vec<Vec<u8>>,
+    /// The log: a window, the records through its first position let go by
+    /// retention (`window.rs`).
+    log: Window,
     commit: u64,
     /// Through where the journal holds the log durably.
     durable: u64,
@@ -242,7 +251,7 @@ impl Vr {
             view: 0,
             normal_view: 0,
             status: Status::Normal,
-            log: Vec::new(),
+            log: Window::default(),
             commit: 0,
             durable: 0,
             delivered: 0,
@@ -276,7 +285,12 @@ impl Vr {
         };
         vr.view = state.view;
         vr.normal_view = state.normal_view;
-        vr.log = recovered.records;
+        vr.log = Window::new(recovered.first.0, recovered.records);
+        // Every record let go was committed and applied: its database holds
+        // it in its files.
+        vr.commit = recovered.first.0;
+        vr.delivered = recovered.first.0;
+        vr.applied = recovered.first.0;
         vr.durable = vr.op();
         if state.view != state.normal_view || vr.is_primary() {
             vr.status = Status::ViewChange;
@@ -290,6 +304,7 @@ impl Vr {
             view: self.view,
             status: self.status,
             primary: self.primary_of(self.view),
+            first: Lsn(self.log.first()),
             op: Lsn(self.op()),
             commit: Lsn(self.commit),
             durable: Lsn(self.durable),
@@ -299,13 +314,23 @@ impl Vr {
 
     /// The op-number: its log's last position.
     fn op(&self) -> u64 {
-        u64::try_from(self.log.len()).unwrap_or(u64::MAX)
+        self.log.op()
     }
 
     /// The record at position `n`, if the log holds one.
     fn record(&self, n: u64) -> Option<&Vec<u8>> {
-        let index = usize::try_from(n.checked_sub(1)?).ok()?;
-        self.log.get(index)
+        self.log.record(n)
+    }
+
+    /// \[EXTENSION\] `Input::Retain`: the records through `through` let go,
+    /// as far as they are committed (RULES.md D57); the journal told.
+    fn retain(&mut self, through: u64, out: &mut Vec<Output>) {
+        let through = through.min(self.commit);
+        if through <= self.log.first() {
+            return;
+        }
+        self.log.retain_after(through);
+        out.push(Output::Retain { through: Lsn(through) });
     }
 
     /// "The primary is chosen round-robin, starting with replica 1, as the
@@ -387,7 +412,7 @@ impl Vr {
             Message::StartViewChange(m) => m.replica,
             Message::DoViewChange(m) => m.replica,
             Message::GetState(m) => m.replica,
-            Message::NewState(_) => from,
+            Message::NewState(_) | Message::NeedState(_) => from,
         };
         if sender != from {
             return refuse(from, "[EXTENSION] RULES.md D57: a message names a sender other than the replica it came from", out);
@@ -401,6 +426,7 @@ impl Vr {
             Message::StartView(m) => self.on_start_view(m, out),
             Message::GetState(m) => self.on_get_state(m, out),
             Message::NewState(m) => self.on_new_state(m, out),
+            Message::NeedState(m) => self.on_need_state(m, out),
         }
     }
 }
@@ -418,9 +444,8 @@ impl Consensus for Vr {
             Input::Persisted(at) => self.persisted(at.0, out),
             Input::Applied(at) => self.applied = self.applied.max(at.0),
             Input::Opened(at) => self.opened(at.0, out),
-            // VR keeps its whole log (log retention is a later stage), so it
-            // never asks for a state transfer, and none is installed.
-            Input::Installed(_) => {}
+            Input::Retain(through) => self.retain(through.0, out),
+            Input::Installed(at) => self.installed(at.0, out),
         }
         self.serve(out);
     }

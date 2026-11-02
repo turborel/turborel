@@ -2,12 +2,15 @@
 //! is used by a node that has gotten behind (but hasn't crashed) to bring
 //! itself up-to-date. There are two cases, depending on whether the slow
 //! node has learned that it is missing requests in its current view, or has
-//! heard about a later view." The log is never cut short (log retention is
-//! a later stage), so the log alone always suffices.
+//! heard about a later view." A log is a window (RULES.md D57, log
+//! retention): a replica behind what another retains is answered NEEDSTATE,
+//! and has its driver fetch a state transfer of its database
+//! (`Output::FetchState`), told as `Input::Installed` where it then holds
+//! the log, from where the log is fetched as before.
 
-use super::frame::{GetState, Message, NewState};
+use super::frame::{GetState, Message, NeedState, NewState};
 use super::{Change, Lead, Status, Vr};
-use crate::{Output, ReplicaEvent};
+use crate::{Lsn, Output, ReplicaEvent};
 
 impl Vr {
     /// [VRR §5.2]: "To get the state the replica sends a ⟨GETSTATE v, n′,
@@ -52,10 +55,58 @@ impl Vr {
         if m.view != self.view || self.status != Status::Normal || m.op > self.op() {
             return;
         }
-        let after = usize::try_from(m.op).unwrap_or(usize::MAX);
-        let log = self.log.get(after..).unwrap_or_default().to_vec();
+        // \[DESIGN\] Behind what is retained here: the asker's database must
+        // take this one's state first (RULES.md D57).
+        if m.op < self.log.first() {
+            return Vr::send(m.replica, &Message::NeedState(NeedState { view: self.view }), out);
+        }
+        let log = self.log.after(m.op);
         let new = Message::NewState(NewState { view: self.view, after: m.op, log, op: self.op(), commit: self.commit });
         Vr::send(m.replica, &new, out);
+    }
+
+    /// \[EXTENSION\] A NEEDSTATE from the primary of the view: the driver
+    /// is to fetch a state transfer from it.
+    pub(super) fn on_need_state(&mut self, m: NeedState, out: &mut Vec<Output>) {
+        if m.view != self.view || self.status == Status::ViewChange {
+            return;
+        }
+        self.fetch_state(out);
+    }
+
+    /// \[EXTENSION\] Has the driver fetch a state transfer from the primary
+    /// of the view (RULES.md D57): this replica takes part in nothing until
+    /// it is installed, its log then fetched after it.
+    pub(super) fn fetch_state(&mut self, out: &mut Vec<Output>) {
+        self.depose(out);
+        self.status = Status::Transfer;
+        self.lead = Lead::default();
+        self.change = Change::default();
+        self.timers.heard = 0;
+        self.asked = None;
+        out.push(Output::FetchState { from: self.primary_of(self.view) });
+    }
+
+    /// \[EXTENSION\] `Input::Installed`: the database took a state transfer
+    /// taken at `at`, so it holds the log through it: the journal begins
+    /// after it, and the log after it is fetched.
+    pub(super) fn installed(&mut self, at: u64, out: &mut Vec<Output>) {
+        if self.status != Status::Transfer || at < self.log.first() {
+            return;
+        }
+        if self.op() > at {
+            out.push(Output::Truncate { after: Lsn(at) });
+            self.log.truncate_to(at);
+        }
+        self.log.retain_after(at);
+        out.push(Output::Retain { through: Lsn(at) });
+        self.commit = at;
+        self.durable = at;
+        self.delivered = at;
+        self.applied = at;
+        self.persist_state(out);
+        self.asked = None;
+        self.get_state(at, out);
     }
 
     /// [VRR §5.2]: "When replica i receives the NEWSTATE message, it
@@ -99,9 +150,9 @@ impl Vr {
         if m.after > self.commit {
             return;
         }
-        let mut log = self.log.get(..usize::try_from(m.after).unwrap_or(usize::MAX)).unwrap_or_default().to_vec();
-        log.extend(m.log);
-        self.install(log, out);
+        if !self.install(m.after, m.log, out) {
+            return self.fetch_state(out);
+        }
         self.enter_view(m.commit, out);
         out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.primary_of(self.view) }));
         self.acknowledge(out);

@@ -35,7 +35,7 @@ use crate::{Lsn, ReplicaEvent, ReplicaId, Role};
 ///   replica starts, and again once deposed (`Role(Backup)`); delivery
 ///   then names only records after that position.
 /// * **The journal.** The driver carries out the outputs in order. Each
-///   `Persist` and `Truncate` changes its journal of records; `PersistState`
+///   `Persist`, `Truncate` and `Retain` changes its journal of records; `PersistState`
 ///   writes the protocol's own state, and makes it and every journal output
 ///   before it durable at once, before the next output is carried out.
 ///   Each `Persist`, once durable, is answered by one `Persisted(at)`, in
@@ -71,8 +71,13 @@ pub enum Input {
     Persisted(Lsn),
     /// The core's replay applied the records through this position.
     Applied(Lsn),
-    /// A state transfer installed an export taken at this position.
+    /// A state transfer installed an export taken at this position: the
+    /// log before it is in the database's files.
     Installed(Lsn),
+    /// \[EXTENSION\] The database holds every record through this position
+    /// in its files, and the driver keeps no more of the log before it than
+    /// its retention says (RULES.md D57): the records through it may go.
+    Retain(Lsn),
     /// \[EXTENSION\] The core's database, opened from its files (as the
     /// replica starts, or again once deposed), holds the log through this
     /// position, every record of it committed: delivery resumes after it.
@@ -97,6 +102,13 @@ pub enum Output {
     Truncate {
         /// The last position kept.
         after: Lsn,
+    },
+    /// \[EXTENSION\] Let the journal's records through `through` go
+    /// (RULES.md D57, log retention): the journal then begins after it,
+    /// whether or not it held every record through it.
+    Retain {
+        /// The last position let go.
+        through: Lsn,
     },
     /// \[EXTENSION\] Write the protocol's own state (for VR, its view), and
     /// make it and the journal outputs before it durable, at once, before
@@ -145,6 +157,9 @@ pub enum Output {
 pub struct Recovered {
     /// The last `PersistState` written, if any.
     pub state: Option<Vec<u8>>,
-    /// The records, from position 1 on.
+    /// The position before the first record kept: those through it were
+    /// let go (`Output::Retain`).
+    pub first: Lsn,
+    /// The records, from position `first + 1` on.
     pub records: Vec<Vec<u8>>,
 }

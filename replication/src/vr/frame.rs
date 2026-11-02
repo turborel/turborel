@@ -1,6 +1,7 @@
 //! \[EXTENSION\] VR's messages as frames, and its state as the journal
 //! keeps it: every integer little-endian, a log its length then each
-//! record's length and bytes (`turborel::bytes`). The fields are [VRR
+//! record's length and bytes (`turborel::bytes`), a window after the
+//! position before it (RULES.md D57, log retention). The fields are [VRR
 //! §4]'s, in its order; a frame malformed is refused (SQLCODE -919), and
 //! a state malformed is corruption (-916), never a panic.
 
@@ -26,6 +27,10 @@ const DO_VIEW_CHANGE: u8 = 5;
 const START_VIEW: u8 = 6;
 const GET_STATE: u8 = 7;
 const NEW_STATE: u8 = 8;
+/// \[EXTENSION\] NEEDSTATE: the state asked for is behind what the answerer
+/// retains of its log, so the asker fetches a state transfer (RULES.md
+/// D57).
+const NEED_STATE: u8 = 9;
 
 /// ⟨PREPARE v, m, n, k⟩ [VRR §4.1 step 3]: `record` is m, `op` n.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,10 +64,12 @@ pub(crate) struct StartViewChange {
 }
 
 /// ⟨DOVIEWCHANGE v, l, v′, n, k, i⟩ [VRR §4.2 step 2]: `normal_view` is
-/// v′.
+/// v′; \[EXTENSION\] `log` the sender's window, after `after` (RULES.md
+/// D57, log retention).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DoViewChange {
     pub(crate) view: u64,
+    pub(crate) after: u64,
     pub(crate) log: Vec<Vec<u8>>,
     pub(crate) normal_view: u64,
     pub(crate) op: u64,
@@ -70,13 +77,23 @@ pub(crate) struct DoViewChange {
     pub(crate) replica: ReplicaId,
 }
 
-/// ⟨STARTVIEW v, l, n, k⟩ [VRR §4.2 step 3].
+/// ⟨STARTVIEW v, l, n, k⟩ [VRR §4.2 step 3]; \[EXTENSION\] `log` the
+/// primary's window, after `after`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartView {
     pub(crate) view: u64,
+    pub(crate) after: u64,
     pub(crate) log: Vec<Vec<u8>>,
     pub(crate) op: u64,
     pub(crate) commit: u64,
+}
+
+/// \[EXTENSION\] ⟨NEEDSTATE v⟩: the answer to a GETSTATE for a position
+/// before what the answerer retains, so the asker fetches a state transfer
+/// of its database first (RULES.md D57).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NeedState {
+    pub(crate) view: u64,
 }
 
 /// ⟨GETSTATE v, n′, i⟩ [VRR §5.2]: `op` is n′.
@@ -117,6 +134,8 @@ pub(crate) enum Message {
     GetState(GetState),
     /// NEWSTATE.
     NewState(NewState),
+    /// NEEDSTATE.
+    NeedState(NeedState),
 }
 
 impl Message {
@@ -138,12 +157,12 @@ impl Message {
                 out.put_u32(m.replica.0);
             }
             Message::DoViewChange(m) => {
-                put_u64s(&mut out, DO_VIEW_CHANGE, &[m.view, m.normal_view, m.op, m.commit]);
+                put_u64s(&mut out, DO_VIEW_CHANGE, &[m.view, m.after, m.normal_view, m.op, m.commit]);
                 out.put_u32(m.replica.0);
                 put_log(&mut out, &m.log);
             }
             Message::StartView(m) => {
-                put_u64s(&mut out, START_VIEW, &[m.view, m.op, m.commit]);
+                put_u64s(&mut out, START_VIEW, &[m.view, m.after, m.op, m.commit]);
                 put_log(&mut out, &m.log);
             }
             Message::GetState(m) => {
@@ -154,6 +173,7 @@ impl Message {
                 put_u64s(&mut out, NEW_STATE, &[m.view, m.after, m.op, m.commit]);
                 put_log(&mut out, &m.log);
             }
+            Message::NeedState(m) => put_u64s(&mut out, NEED_STATE, &[m.view]),
         }
         out
     }
@@ -174,14 +194,15 @@ impl Message {
             START_VIEW_CHANGE => Message::StartViewChange(StartViewChange { view: r.u64()?, replica: ReplicaId(r.u32()?) }),
             DO_VIEW_CHANGE => do_view_change(&mut r)?,
             START_VIEW => {
-                let (view, op, commit) = (r.u64()?, r.u64()?, r.u64()?);
-                Message::StartView(StartView { view, op, commit, log: log_through(&mut r, 0, op)? })
+                let (view, after, op, commit) = (r.u64()?, r.u64()?, r.u64()?, r.u64()?);
+                Message::StartView(StartView { view, after, op, commit, log: log_through(&mut r, after, op)? })
             }
             GET_STATE => Message::GetState(GetState { view: r.u64()?, op: r.u64()?, replica: ReplicaId(r.u32()?) }),
             NEW_STATE => {
                 let (view, after, op, commit) = (r.u64()?, r.u64()?, r.u64()?, r.u64()?);
                 Message::NewState(NewState { view, after, op, commit, log: log_through(&mut r, after, op)? })
             }
+            NEED_STATE => Message::NeedState(NeedState { view: r.u64()? }),
             other => return Err(r.corrupt(&format!("{other} is the tag of no message"))),
         };
         r.finish()?;
@@ -191,9 +212,9 @@ impl Message {
 
 /// The rest of a DOVIEWCHANGE, after its tag.
 fn do_view_change(r: &mut Reader<'_>) -> Result<Message> {
-    let (view, normal_view, op, commit) = (r.u64()?, r.u64()?, r.u64()?, r.u64()?);
+    let (view, after, normal_view, op, commit) = (r.u64()?, r.u64()?, r.u64()?, r.u64()?, r.u64()?);
     let replica = ReplicaId(r.u32()?);
-    Ok(Message::DoViewChange(DoViewChange { view, normal_view, op, commit, replica, log: log_through(r, 0, op)? }))
+    Ok(Message::DoViewChange(DoViewChange { view, after, normal_view, op, commit, replica, log: log_through(r, after, op)? }))
 }
 
 /// A tag, then integers.

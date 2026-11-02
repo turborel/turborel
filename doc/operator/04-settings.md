@@ -70,6 +70,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  REPLICATION.LISTEN                                           | START
  REPLICATION.MEMBERS                                          | START
  REPLICATION.REPLICA                                          | START
+ REPLICATION.RETAIN_BYTES                                     | START
  REPLICATION.TICK_MS                                          | START
  REPLICATION.TLS                                              | START
  SERVER.HOST                                                  | START
@@ -81,7 +82,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  STORAGE.POOL_BYTES                                           | START
  LOCKS.WAIT                                                   | TRANSACTION
  TRANSACTION.STRICT                                           | TRANSACTION
-(26 rows)
+(27 rows)
 ```
 
 A setting fixed when the database is made is refused after:

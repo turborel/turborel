@@ -63,6 +63,11 @@ impl turborel_replication::Journal for SimJournal {
         disk.journal.truncate(after);
         disk.write()
     }
+    fn retain(&mut self, through: Lsn) -> Result<()> {
+        let mut disk = self.0.lock().unwrap();
+        disk.journal.retain(through);
+        disk.write()
+    }
 
     fn persist_state(&mut self, state: &[u8]) -> Result<()> {
         let mut disk = self.0.lock().unwrap();
@@ -104,10 +109,10 @@ impl SimWatch {
 }
 
 impl Watch for SimWatch {
-    fn committed(&self, through: Lsn, log: &[Vec<u8>]) {
+    fn committed(&self, (first, through): (Lsn, Lsn), log: &[Vec<u8>]) {
         let mut world = self.world.lock().unwrap();
         world.report.committed = world.report.committed.max(usize::try_from(through.0).unwrap());
-        let found = world.checker.commit(self.id, log);
+        let found = world.checker.commit(self.id, first.0, log);
         drop(world);
         self.noted(found);
     }

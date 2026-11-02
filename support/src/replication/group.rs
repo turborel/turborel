@@ -114,6 +114,7 @@ impl Group {
             match output {
                 Output::Persist { at, record } => node.journal.persist(*at, record.clone()),
                 Output::Truncate { after } => node.journal.truncate(*after),
+                Output::Retain { through } => node.journal.retain(*through),
                 Output::PersistState(state) => node.journal.persist_state(state.clone()),
                 Output::Deliver { through } => node.apply(*through),
                 Output::Assigned(_)

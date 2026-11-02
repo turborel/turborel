@@ -123,11 +123,23 @@ impl Ground {
             (world.members().to_vec(), world.members()[index], world.lives(index) == 0 && world.now() == 0)
         };
         let Started { recovered, disk, link, inbox, ticks } = self.world().start(index);
-        let records = recovered.records.clone();
+        let (begins, records) = (recovered.first, recovered.records.clone());
         let consensus = (self.make)(&members, id, if first { None } else { Some(recovered) });
         let wait: Arc<dyn Wait> = Arc::new(SimWait(Weak::clone(&self.me)));
         let watch = Arc::new(watch(&self.world, id));
-        let parts = Parts { consensus, journal: Box::new(journal(disk)), records, transport: link, inbox, ticker: ticks, wait, watch };
+        // The log kept whole: a state transfer is the simulator's next stage.
+        let parts = Parts {
+            consensus,
+            journal: Box::new(journal(disk)),
+            first: begins,
+            records,
+            retain_bytes: u64::MAX,
+            transport: link,
+            inbox,
+            ticker: ticks,
+            wait,
+            watch,
+        };
         let driver = Driver::new(parts);
         self.drivers.lock().unwrap()[index] = Some(Arc::clone(&driver));
         let opened = self.host.lock().unwrap().open(index, &driver);

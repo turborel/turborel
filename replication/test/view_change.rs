@@ -211,13 +211,13 @@ fn a_damaged_state_is_refused() {
         bytes
     };
     for bytes in [vec![1], state(2, 1, 1), state(1, 1, 2), [state(1, 1, 1), vec![0]].concat()] {
-        let recovered = Recovered { state: Some(bytes.clone()), records: Vec::new() };
+        let recovered = Recovered { state: Some(bytes.clone()), first: Lsn(0), records: Vec::new() };
         assert_eq!(Vr::restart(&ids(3), TWO, options(), recovered).unwrap_err().sqlcode(), -916_i32, "{bytes:?}");
     }
-    let normal = Recovered { state: Some(state(1, 3, 3)), records: vec![record("a")] };
+    let normal = Recovered { state: Some(state(1, 3, 3)), first: Lsn(0), records: vec![record("a")] };
     let vr = Vr::restart(&ids(3), TWO, options(), normal).unwrap();
     assert_eq!((vr.standing().view, vr.standing().status, vr.standing().durable), (3, Status::Normal, Lsn(1)));
-    let changing = Recovered { state: Some(state(1, 5, 4)), records: Vec::new() };
+    let changing = Recovered { state: Some(state(1, 5, 4)), first: Lsn(0), records: Vec::new() };
     assert_eq!(Vr::restart(&ids(3), TWO, options(), changing).unwrap().standing().status, Status::ViewChange);
 }
 

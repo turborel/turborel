@@ -40,16 +40,33 @@ impl Checker {
         &self.committed
     }
 
-    /// `prefix` is shown committed by `replica`: it must agree with what
-    /// was shown before, position by position.
-    pub fn commit(&mut self, replica: ReplicaId, prefix: &[Vec<u8>]) -> Result<(), Violation> {
-        for (index, record) in prefix.iter().enumerate() {
-            let Some(known) = self.committed.get(index) else {
-                self.committed.push(record.clone());
-                continue;
-            };
-            if known != record {
-                return Err(format!("replica {} shows {record:?} committed at {}, where {known:?} was committed", replica.0, index + 1));
+    /// `log`, the records after `first`, is shown committed by `replica`:
+    /// it must agree with what was shown before, position by position; a
+    /// position no replica showed before, past those shown, is taken as
+    /// shown now; one let go everywhere stays as it was shown.
+    pub fn commit(&mut self, replica: ReplicaId, first: u64, log: &[Vec<u8>]) -> Result<(), Violation> {
+        for (offset, record) in log.iter().enumerate() {
+            let index = usize::try_from(first).unwrap() + offset;
+            match self.committed.get(index) {
+                Some(known) if known != record => {
+                    return Err(format!(
+                        "replica {} shows {record:?} committed at {}, where {known:?} was committed",
+                        replica.0,
+                        index + 1
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    if index != self.committed.len() {
+                        return Err(format!(
+                            "replica {} shows a log after position {}, past the {} shown",
+                            replica.0,
+                            first,
+                            self.committed.len()
+                        ));
+                    }
+                    self.committed.push(record.clone());
+                }
             }
         }
         Ok(())

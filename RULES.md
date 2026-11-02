@@ -1352,6 +1352,24 @@ opaque bytes.**
   - told where its database holds the log as it is opened
     (`Input::Opened`), it delivers only what follows, the position its
     own: no RECOVERY message, its journal intact.
+- **Log retention.** A replica's log is a window: the records through
+  a position let go (`vr/window.rs`, `Journal::retain`), once its
+  database holds them in its files. At each checkpoint the database's
+  log (`GroupLog::truncate_before`) has the driver, which holds the
+  records and their sizes, keep REPLICATION.RETAIN_BYTES of them before
+  the checkpoint and let the rest go (`Input::Retain`, bounded by the
+  commit-number; `Output::Retain`); the journal writes the retention,
+  makes it durable, then drops the log's segments before the first
+  record kept, and opened again begins where its first record does.
+  DOVIEWCHANGE, STARTVIEW and NEWSTATE carry windows ([VRR §5.3]'s
+  suffix); a new primary keeps its own records before the chosen window
+  and installs it after them, or, its log not reaching the window,
+  gives the view up to the next; a backup whose log does not reach the
+  primary's window, or asking for the log before what the answerer
+  retains (NEEDSTATE), fetches a state transfer (`Output::FetchState`),
+  installed at a position (`Input::Installed`), after which the journal
+  begins and the log is fetched. A replica made again from a window
+  stands at it, every record through it committed.
 - **The node.** The server's part (`server/src/replication.rs`):
   - settings of the node's own, never logged: REPLICATION.REPLICA (its
     number; 0, not replicated), REPLICATION.MEMBERS (each member's

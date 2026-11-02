@@ -14,6 +14,8 @@ enum Write {
     Record(u64, Vec<u8>),
     /// The records after a position removed.
     Truncate(u64),
+    /// The records through a position let go.
+    Retain(u64),
 }
 
 /// A replica's journal.
@@ -21,8 +23,11 @@ enum Write {
 pub struct Journal {
     /// What survives a crash.
     durable: Recovered,
-    /// The records as written, durable or not: what the driver reads to
-    /// deliver them.
+    /// The position before the first record as written: those through it
+    /// let go.
+    first: u64,
+    /// The records as written, durable or not, after `first`: what the
+    /// driver reads to deliver them.
     records: Vec<Vec<u8>>,
     /// Writes not yet durable, in order.
     waiting: VecDeque<Write>,
@@ -44,8 +49,13 @@ impl Journal {
 
     /// The record at `at`, as written.
     pub fn record(&self, at: Lsn) -> Option<&Vec<u8>> {
-        let index = usize::try_from(at.0.checked_sub(1)?).ok()?;
+        let index = usize::try_from(at.0.checked_sub(self.first)?.checked_sub(1)?).ok()?;
         self.records.get(index)
+    }
+
+    /// The position before the first record as written.
+    pub fn first(&self) -> Lsn {
+        Lsn(self.first)
     }
 
     /// How many writes wait to be made durable.
@@ -56,15 +66,25 @@ impl Journal {
     /// `Persist { at, record }`: the record written at `at`, which is the
     /// position after the last.
     pub fn persist(&mut self, at: Lsn, record: Vec<u8>) {
-        assert_eq!(at.0, u64::try_from(self.records.len()).unwrap() + 1, "a Persist not at the position after the journal's last");
+        assert_eq!(
+            at.0,
+            self.first + u64::try_from(self.records.len()).unwrap() + 1,
+            "a Persist not at the position after the journal's last"
+        );
         self.records.push(record.clone());
         self.waiting.push_back(Write::Record(at.0, record));
     }
 
     /// `Truncate { after }`.
     pub fn truncate(&mut self, after: Lsn) {
-        self.records.truncate(usize::try_from(after.0).unwrap());
+        self.records.truncate(usize::try_from(after.0.saturating_sub(self.first)).unwrap());
         self.waiting.push_back(Write::Truncate(after.0));
+    }
+
+    /// `Retain { through }`.
+    pub fn retain(&mut self, through: Lsn) {
+        retain(&mut self.first, &mut self.records, through.0);
+        self.waiting.push_back(Write::Retain(through.0));
     }
 
     /// `PersistState`: the state written, and it and every write before it
@@ -80,11 +100,16 @@ impl Journal {
         let Some(write) = self.waiting.pop_front() else { return false };
         match write {
             Write::Record(at, record) => {
-                self.durable.records.truncate(usize::try_from(at - 1).unwrap());
+                self.durable.records.truncate(usize::try_from(at - self.durable.first.0 - 1).unwrap());
                 self.durable.records.push(record);
                 self.owed.push_back(Lsn(at));
             }
-            Write::Truncate(after) => self.durable.records.truncate(usize::try_from(after).unwrap()),
+            Write::Truncate(after) => self.durable.records.truncate(usize::try_from(after.saturating_sub(self.durable.first.0)).unwrap()),
+            Write::Retain(through) => {
+                let mut first = self.durable.first.0;
+                retain(&mut first, &mut self.durable.records, through);
+                self.durable.first = Lsn(first);
+            }
         }
         true
     }
@@ -99,10 +124,23 @@ impl Journal {
     /// what is durable.
     pub fn crash(&mut self, reached: usize) {
         for _ in 0..reached {
-            self.make_durable();
+            if !self.make_durable() {
+                break;
+            }
         }
         self.waiting.clear();
         self.owed.clear();
+        self.first = self.durable.first.0;
         self.records.clone_from(&self.durable.records);
     }
+}
+
+/// Lets the records of `records`, after `first`, through `through` go.
+fn retain(first: &mut u64, records: &mut Vec<Vec<u8>>, through: u64) {
+    if through <= *first {
+        return;
+    }
+    let gone = usize::try_from(through - *first).unwrap().min(records.len());
+    records.drain(..gone);
+    *first = through;
 }

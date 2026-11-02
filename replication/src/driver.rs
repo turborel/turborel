@@ -34,7 +34,7 @@ use turborel::db::Standby;
 use turborel::error::{Code, Result, SqlError};
 
 pub use self::job::{DriverJob, JOB_LABEL};
-pub use self::log::{GroupLog, GroupLogs, Joined, Make};
+pub use self::log::{GroupLog, GroupLogs, Joined, Make, Retention};
 pub use self::seams::{Blocking, Inbox, Ticker, Ticks, Unwatched, Wait, Watch};
 use crate::{Consensus, Input, Journal, Lsn, Output, Role, Transport};
 
@@ -44,8 +44,16 @@ pub struct Parts {
     pub consensus: Box<dyn Consensus>,
     /// Its journal.
     pub journal: Box<dyn Journal>,
-    /// The records its journal holds, from position 1 on.
+    /// The position before the first record its journal holds, those
+    /// through it let go by retention (`Recovered::first`).
+    pub first: Lsn,
+    /// The records its journal holds, from the position after `first` on.
     pub records: Vec<Vec<u8>>,
+    /// \[EXTENSION\] How many bytes of records before the database's last
+    /// checkpoint the journal keeps at least (RULES.md D57, log retention):
+    /// a backup behind by less catches up from the log, by more from a
+    /// state transfer.
+    pub retain_bytes: u64,
     /// What sends its frames.
     pub transport: Arc<dyn Transport>,
     /// Where its frames arrive.
@@ -88,8 +96,13 @@ struct Core {
     journal: Box<dyn Journal>,
     transport: Arc<dyn Transport>,
     watch: Arc<dyn Watch>,
-    /// The log: the record at position n at index n − 1.
+    /// The position before the first record of the log held: those through
+    /// it let go by retention.
+    first: Lsn,
+    /// The log: the record at position n at index n − first − 1.
     records: Vec<Vec<u8>>,
+    /// The bytes of records kept before a checkpoint at least.
+    retain_bytes: u64,
     /// Through where the consensus said the log is committed, serving.
     committed: Lsn,
     /// The view the consensus serves as primary of, if it does.
@@ -127,7 +140,9 @@ impl Driver {
             journal: parts.journal,
             transport: parts.transport,
             watch: parts.watch,
+            first: parts.first,
             records: parts.records,
+            retain_bytes: parts.retain_bytes,
             committed: Lsn(0),
             serving: None,
             service_start: Lsn(0),
@@ -232,14 +247,15 @@ impl Driver {
     fn deliver(&self, db: &dyn Standby, through: Lsn) -> Result<()> {
         let records: Vec<(Lsn, Vec<u8>)> = {
             let core = self.core()?;
-            let end = index(through).min(core.records.len());
-            let from = index(core.holds).min(end);
+            let end = core.index(through).map_or(0, |n| n.saturating_add(1)).min(core.records.len());
+            let from = core.index(core.holds.max(core.first)).map_or(0, |n| n.saturating_add(1)).min(end);
+            let first = core.first;
             core.records
                 .get(from..end)
                 .unwrap_or_default()
                 .iter()
                 .enumerate()
-                .map(|(i, r)| (position(from.saturating_add(i)), r.clone()))
+                .map(|(i, r)| (position(first, from.saturating_add(i)), r.clone()))
                 .collect()
         };
         let Some(&(last, _)) = records.last() else { return Ok(()) };
@@ -257,7 +273,7 @@ impl Driver {
             if core.serving != Some(view) {
                 return Ok(());
             }
-            if index(core.holds) != core.records.len() {
+            if core.holds != core.op() {
                 return Err(misuse("a primary serves once its database holds the log it took over"));
             }
         }
@@ -367,18 +383,28 @@ impl Core {
             Output::Assigned(at) => self.assigned = Some(at),
             Output::Persist { at, record } => {
                 self.journal.persist(at, &record)?;
-                self.records.truncate(index(at).saturating_sub(1));
+                let kept = self.index(at).ok_or_else(|| misuse("a record persisted at a position let go"))?;
+                self.records.truncate(kept);
                 self.records.push(record);
             }
             Output::Truncate { after } => {
                 self.journal.truncate(after)?;
-                self.records.truncate(index(after));
+                self.records.truncate(self.index(after).map_or(0, |n| n.saturating_add(1)));
+            }
+            Output::Retain { through } => {
+                self.journal.retain(through)?;
+                if through > self.first {
+                    let gone = self.index(through).map_or(self.records.len(), |n| n.saturating_add(1)).min(self.records.len());
+                    self.records.drain(..gone);
+                    self.first = through;
+                }
             }
             Output::PersistState(state) => self.journal.persist_state(&state)?,
             Output::Send { to, frame } => self.transport.send(to, &frame)?,
             Output::Committed(through) => self.commit(through),
             Output::Deliver { through } => {
-                self.watch.committed(through, self.records.get(..index(through)).unwrap_or_default());
+                let held = self.index(through).map_or(0, |n| n.saturating_add(1)).min(self.records.len());
+                self.watch.committed((self.first, through), self.records.get(..held).unwrap_or_default());
                 self.pending.push_back(Effect::Deliver(through));
             }
             Output::Outcome { at, kept } => {
@@ -386,7 +412,12 @@ impl Core {
                 self.watch.outcome(at, &record, kept);
             }
             Output::Role(role) => self.role(role),
-            Output::FetchState { .. } => return Err(misuse("a state transfer was asked for, which comes with log retention")),
+            Output::FetchState { from } => {
+                return Err(misuse(&format!(
+                    "the replica is behind what replica {} retains of the log, so it needs a state transfer, which is replication's next stage: start it again from a copy of the primary's directory",
+                    from.0
+                )));
+            }
             Output::Event(event) => self.watch.event(&event),
         }
         Ok(())
@@ -396,7 +427,8 @@ impl Core {
     fn commit(&mut self, through: Lsn) {
         self.committed = self.committed.max(through);
         self.own.retain(|&at, _| at > through.0);
-        self.watch.committed(through, self.records.get(..index(through)).unwrap_or_default());
+        let held = self.index(through).map_or(0, |n| n.saturating_add(1)).min(self.records.len());
+        self.watch.committed((self.first, through), self.records.get(..held).unwrap_or_default());
     }
 
     /// `Role`: a service begun, the database to be promoted; or ended, its
@@ -405,7 +437,7 @@ impl Core {
         match role {
             Role::Primary { view } => {
                 self.serving = Some(view);
-                self.service_start = position(self.records.len());
+                self.service_start = position(self.first, self.records.len());
                 self.committed = self.committed.max(Lsn(self.service_start.0.saturating_sub(1)));
                 self.pending.push_back(Effect::Serve(view));
             }
@@ -438,14 +470,48 @@ impl Core {
     }
 }
 
-/// How many records of a log come through `at`: the index after it.
-fn index(at: Lsn) -> usize {
-    usize::try_from(at.0).unwrap_or(usize::MAX)
+impl Core {
+    /// The index among the records held of the record at `at`: none if
+    /// `at` is let go, or is the position after the last, the index after.
+    fn index(&self, at: Lsn) -> Option<usize> {
+        usize::try_from(at.0.checked_sub(self.first.0)?.checked_sub(1)?).ok()
+    }
+
+    /// The op-number: the last position held.
+    fn op(&self) -> Lsn {
+        Lsn(self.first.0.saturating_add(u64::try_from(self.records.len()).unwrap_or(u64::MAX)))
+    }
+
+    /// The position after the last held: a log's end.
+    fn end(&self) -> Lsn {
+        position(self.first, self.records.len())
+    }
+
+    /// \[EXTENSION\] The database holds every record before `before` in its
+    /// files: the log through the position that leaves `retain_bytes` of
+    /// records before `before` may go (RULES.md D57).
+    fn retain_before(&mut self, before: Lsn) -> Result<()> {
+        let mut through = before.0.saturating_sub(1);
+        let mut kept = 0_u64;
+        while through > self.first.0 {
+            let size = self.index(Lsn(through)).and_then(|i| self.records.get(i)).map_or(0, Vec::len);
+            kept = kept.saturating_add(u64::try_from(size).unwrap_or(u64::MAX));
+            if kept > self.retain_bytes {
+                break;
+            }
+            through = through.saturating_sub(1);
+        }
+        if through <= self.first.0 {
+            return Ok(());
+        }
+        self.step(Input::Retain(Lsn(through)))
+    }
 }
 
-/// The position of the record at `index` among a log's records.
-fn position(index: usize) -> Lsn {
-    Lsn(u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1))
+/// The position of the record at `index` among the records held after
+/// `first`.
+fn position(first: Lsn, index: usize) -> Lsn {
+    Lsn(first.0.saturating_add(u64::try_from(index).unwrap_or(u64::MAX)).saturating_add(1))
 }
 
 impl std::fmt::Debug for Driver {

@@ -72,20 +72,21 @@ impl Vr {
             return;
         }
         self.change.done = true;
-        let mine = Candidate { log: self.log.clone(), normal_view: self.normal_view, op: self.op(), commit: self.commit };
+        let (after, log) = (self.log.first(), self.log.after(self.log.first()));
+        let mine = Candidate { after, log, normal_view: self.normal_view, op: self.op(), commit: self.commit };
         let primary = self.primary_of(self.view);
         if primary == self.me {
             return self.take_candidate(self.me, mine, out);
         }
-        let Candidate { log, normal_view, op, commit } = mine;
-        let done = DoViewChange { view: self.view, log, normal_view, op, commit, replica: self.me };
+        let Candidate { after: begins, log: window, normal_view, op, commit } = mine;
+        let done = DoViewChange { view: self.view, after: begins, log: window, normal_view, op, commit, replica: self.me };
         Vr::send(primary, &Message::DoViewChange(done), out);
     }
 
     /// A DOVIEWCHANGE, to the primary of its view.
     pub(super) fn on_do_view_change(&mut self, m: DoViewChange, out: &mut Vec<Output>) {
         if self.notice(m.view, out) && self.is_primary() {
-            let candidate = Candidate { log: m.log, normal_view: m.normal_view, op: m.op, commit: m.commit };
+            let candidate = Candidate { after: m.after, log: m.log, normal_view: m.normal_view, op: m.op, commit: m.commit };
             self.take_candidate(m.replica, candidate, out);
         }
     }
@@ -106,12 +107,18 @@ impl Vr {
             return;
         }
         let commit = self.change.candidates.values().map(|c| c.commit).max().unwrap_or(0);
-        let chosen = self.change.candidates.values().max_by_key(|c| (c.normal_view, c.op)).map(|c| c.log.clone()).unwrap_or_default();
-        self.install(chosen, out);
+        let chosen = self.change.candidates.values().max_by_key(|c| (c.normal_view, c.op)).cloned().unwrap_or_default();
+        // \[DESIGN\] A primary whose log does not reach the chosen window
+        // cannot take the view: it gives it up to the next, whose primary
+        // may; itself it fetches a state transfer later, as a backup.
+        if !self.install(chosen.after, chosen.log, out) {
+            return self.start_view_change(self.view.saturating_add(1), out);
+        }
         self.enter_view(commit, out);
         self.lead.inherited = self.op();
         out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.me }));
-        let start = Message::StartView(StartView { view: self.view, log: self.log.clone(), op: self.op(), commit: self.commit });
+        let (after, log) = (self.log.first(), self.log.after(self.log.first()));
+        let start = Message::StartView(StartView { view: self.view, after, log, op: self.op(), commit: self.commit });
         self.broadcast(&start, out);
         self.after_commit(out);
         self.try_commit(out);
@@ -132,7 +139,11 @@ impl Vr {
         }
         self.depose(out);
         self.view = m.view;
-        self.install(m.log, out);
+        // \[DESIGN\] A backup whose log does not reach the primary's window
+        // fetches a state transfer first (`transfer.rs`).
+        if !self.install(m.after, m.log, out) {
+            return self.fetch_state(out);
+        }
         self.enter_view(m.commit, out);
         out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.primary_of(self.view) }));
         if self.op() > self.commit {
@@ -141,23 +152,29 @@ impl Vr {
         self.after_commit(out);
     }
 
-    /// Replaces the log by `log`: the journal's records after the two agree
-    /// removed, and the rest of `log` written. A `PersistState` follows, so
-    /// the journal changes at once.
-    pub(super) fn install(&mut self, log: Vec<Vec<u8>>, out: &mut Vec<Output>) {
-        let agree = self.log.iter().zip(&log).take_while(|(mine, theirs)| mine == theirs).count();
-        let kept = u64::try_from(agree).unwrap_or(u64::MAX);
-        if self.log.len() > agree {
+    /// Replaces the log after `after` by `log`, the window of another
+    /// replica: the journal's records after the two agree removed, and the
+    /// rest of `log` written. A `PersistState` follows, so the journal
+    /// changes at once. False, nothing changed, if this log does not reach
+    /// `after`: the records between are let go here, and in no window.
+    pub(super) fn install(&mut self, after: u64, log: Vec<Vec<u8>>, out: &mut Vec<Output>) -> bool {
+        if self.op() < after {
+            return false;
+        }
+        let agree = self.log.agreeing(after, &log);
+        let kept = after.saturating_add(u64::try_from(agree).unwrap_or(u64::MAX));
+        if self.op() > kept {
             out.push(Output::Truncate { after: crate::Lsn(kept) });
         }
         self.durable = self.durable.min(kept);
-        self.log.truncate(agree);
+        self.log.truncate_to(kept);
         let mut at = kept;
         for record in log.into_iter().skip(agree) {
             at = at.saturating_add(1);
             self.log.push(record.clone());
             self.persist(at, record, out);
         }
+        true
     }
 
     /// The replica becomes normal in its view, its view-number and v′ and

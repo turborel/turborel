@@ -26,6 +26,7 @@ the node's own, kept with no database:
 | REPLICATION.CA | the PEM file of the authorities the members' certificates are verified against |
 | REPLICATION.TLS | ON: the members secure their frames by mutual TLS; OFF only on one machine |
 | REPLICATION.TICK_MS | the pace of the protocol's clock: heartbeats, and how soon a lost primary is given up |
+| REPLICATION.RETAIN_BYTES | how much of the group's log the node keeps before its last checkpoint, 256 MiB by default: a backup behind by less catches up from the log |
 
 Each node presents SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY to the
 others, and takes only a member whose certificate the authorities of
@@ -85,11 +86,19 @@ TO ([Users](05-users.md)), its files' formats by SET DATABASE
 ([Encryption](07-encryption.md)). The commands on a database's directory,
 `user`, `reseal` and `rekey`, refuse one that is replicated.
 
+## The log kept
+
+Each node keeps the group's log only as far back as its own database
+needs it: a checkpoint lets the records it holds go, but for
+REPLICATION.RETAIN_BYTES of them, so a backup down for a while catches
+up from the log of the others as it comes back. The log's segments in
+`log/` are dropped as records go.
+
 ## What is not yet done
 
-A node that falls so far behind that the group's log no longer reaches
+A node that falls so far behind that the others' logs no longer reach
 back to what it holds cannot yet be brought up to date by the group:
-stop it, copy the primary's directory to it with the server stopped,
-and start it again. The group's log is kept whole meanwhile, and its
+its replica stops, saying so; stop the server, copy the primary's
+directory to it with the primary stopped, and start it again. The
 members are fixed by their settings: to add or remove a member, stop
 the group and start it with new settings.

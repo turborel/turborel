@@ -192,7 +192,15 @@ fn a_replica_stands_where_its_steps_left_it() {
     for input in [Input::Tick, Input::Append(record("a")), Input::Append(record("b")), Input::Persisted(Lsn(1))] {
         vr.step(input, &mut out);
     }
-    let standing =
-        Standing { view: 0, status: Status::Normal, primary: PRIMARY, op: Lsn(2), commit: Lsn(1), durable: Lsn(1), applied: Lsn(0) };
+    let standing = Standing {
+        view: 0,
+        status: Status::Normal,
+        primary: PRIMARY,
+        first: Lsn(0),
+        op: Lsn(2),
+        commit: Lsn(1),
+        durable: Lsn(1),
+        applied: Lsn(0),
+    };
     assert_eq!(vr.standing(), standing);
 }

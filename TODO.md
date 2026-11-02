@@ -33,10 +33,10 @@ design settles.
 
 - **Replication between nodes** (D57): state transfer (`Standby`'s export
   and import, whole files, the first `StateTransfer`, and its contract
-  tests), log retention (the replicated log and its journal keep every
-  record), VR's RECOVERY protocol for a journal lost, and DOVIEWCHANGE and
-  STARTVIEW carrying a suffix of the log (VRR §5.3) rather than all of it,
-  as they do today; a following database's crash in the simulator losing
+  tests; asked for by a replica behind what the others retain, which
+  stops meanwhile), VR's RECOVERY protocol for a journal lost; the
+  simulator keeping its logs whole until state transfer runs in it, and
+  a following database's crash in the simulator losing
   the writes its files had not synced (their file systems keep them now);
   reads on backups (a following checkpoint is refused while a reader holds
   versions); `cargo xtask simulate --seeds N`, for sweeps longer than

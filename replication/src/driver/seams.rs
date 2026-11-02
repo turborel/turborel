@@ -129,8 +129,9 @@ impl Wait for Blocking {
 /// it never calls back into the driver (RULES.md R-ERR-4).
 pub trait Watch: Send + Sync {
     /// The log through `through` is known committed here, as `log` holds
-    /// it: told to a serving primary, or delivered to the database.
-    fn committed(&self, through: Lsn, log: &[Vec<u8>]);
+    /// it after `first`, the records through `first` let go: told to a
+    /// serving primary, or delivered to the database.
+    fn committed(&self, window: (Lsn, Lsn), log: &[Vec<u8>]);
     /// The database serves as primary of `view`.
     fn serving(&self, view: u64);
     /// The database stopped serving, deposed and opened again.
@@ -145,7 +146,7 @@ pub trait Watch: Send + Sync {
 pub struct Unwatched;
 
 impl Watch for Unwatched {
-    fn committed(&self, _through: Lsn, _log: &[Vec<u8>]) {}
+    fn committed(&self, _window: (Lsn, Lsn), _log: &[Vec<u8>]) {}
     fn serving(&self, _view: u64) {}
     fn stopped(&self) {}
     fn outcome(&self, _at: Lsn, _record: &[u8], _kept: bool) {}

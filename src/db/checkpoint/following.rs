@@ -67,8 +67,11 @@ impl Database {
         st.capture_engines(through)?;
         let held = lock_builtin(&st.tx.followed).values().filter_map(FollowedRecords::first).min();
         let image = st.image_of(false, (through, held.map_or(through, |first| first.min(through))));
-        st.record_image(files, image)?;
+        let image = st.record_image(files, image)?;
         st.tx.checkpointed(counted);
-        Ok(())
+        // The group's log before what the image holds may go, as the
+        // replica's retention says (RULES.md D57).
+        let log = st.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
+        log.truncate_before(image.start)
     }
 }

@@ -170,10 +170,13 @@ impl Driven {
             // Alone: no frame is sent, no record is in doubt, and none is
             // delivered that the database has not: it appended each, or
             // recovered it from the log as it opened.
+            // Nor is any let go: alone, the log is kept whole, and no other
+            // replica fetches it.
             Output::Send { .. }
             | Output::Deliver { .. }
             | Output::Outcome { .. }
             | Output::FetchState { .. }
+            | Output::Retain { .. }
             | Output::Event(ReplicaEvent::ViewChanged { .. })
             | Output::Event(ReplicaEvent::FrameRefused { .. }) => {}
         }

@@ -70,7 +70,9 @@ fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runti
     let members: Vec<String> = ports.iter().enumerate().map(|(n, p)| format!("{}=localhost:{p}", n + 1)).collect();
     db.set_setting(REPLICA, &number(me)).unwrap();
     db.set_setting(MEMBERS, &text(&members.join(","))).unwrap();
-    db.set_setting(TICK_MS, &number(20)).unwrap();
+    // Ticks slow enough that a backup under the test suite's load does not
+    // give its primary up for want of a heartbeat.
+    db.set_setting(TICK_MS, &number(50)).unwrap();
     let prepared = replication::prepare(&db).unwrap().unwrap();
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     let holds = db.open_following(&fs, &scratch.path(&format!("node{me}")), &OpenOptions::default()).unwrap();
@@ -112,6 +114,29 @@ fn primary<'a>(nodes: &'a [Node], name: &str) -> &'a Node {
     found.unwrap()
 }
 
+/// Does `work` on the node of `nodes` serving as primary, again on the
+/// one serving if a view change deposed it meanwhile (SQLCODE -917),
+/// until it is done: the node it was done on.
+fn on_primary(nodes: &[Node], work: impl Fn(&Database) -> Result<(), Code>) -> &Node {
+    let mut done = None;
+    assert!(
+        eventually(|| {
+            let Some(node) = nodes.iter().find(|n| n.serves()) else { return false };
+            match work(&node.db) {
+                Ok(()) => {
+                    done = Some(node);
+                    true
+                }
+                Err(Code::TransactionState) => false,
+                Err(e) => panic!("{e:?}"),
+            }
+        }),
+        "no node serves and commits: {:?}",
+        nodes.iter().map(|n| n.kept.all()).collect::<Vec<_>>()
+    );
+    done.unwrap()
+}
+
 /// Verifies: [EXTENSION] RULES.md D57: three nodes over TCP with mutual
 /// TLS: one serves, its view told `serving` and `view_changed`, its
 /// links to the others up, told `connected`; the rows it commits reach
@@ -128,16 +153,18 @@ fn nodes_replicate_over_tcp_with_mutual_tls() {
     let runtime = turborel_server::runtime::runtime(Some(2)).unwrap();
     let ports = ports(3);
     let mut nodes: Vec<Node> = (1..=3).map(|me| start(&scratch, (me, &ports), Some(&pki), &runtime)).collect();
-    let first = primary(&nodes, "X");
+    check_transport(&**primary(&nodes, "X").replica.transport(), ReplicaId(9));
+    let first = on_primary(&nodes, |db| {
+        if db.owner().map_err(|e| e.code)?.is_none() {
+            db.create_user("OWNER", b"x").map_err(|e| e.code)?;
+            db.set_owner("OWNER").map_err(|e| e.code)?;
+        }
+        db.schema("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").map_err(|e| e.code)?;
+        let s = db.session("Y");
+        s.run("INSERT INTO T VALUES (1), (2)").map_err(|e| e.code)?;
+        s.commit().map_err(|e| e.code)
+    });
     let me = usize::try_from(first.replica.transport().me().0).unwrap() - 1;
-    check_transport(&**first.replica.transport(), ReplicaId(9));
-    first.db.create_user("OWNER", b"x").unwrap();
-    first.db.set_owner("OWNER").unwrap();
-    first.db.schema("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").unwrap();
-    let s = first.db.session("Y");
-    s.run("INSERT INTO T VALUES (1), (2)").unwrap();
-    s.commit().unwrap();
-    drop(s);
     for backup in nodes.iter().filter(|n| !n.serves()) {
         assert!(eventually(|| backup.rows("SELECT K FROM T ORDER BY K") == Ok(vec!["1".into(), "2".into()])), "{:?}", backup.kept.all());
         let writer = backup.db.session("Y");

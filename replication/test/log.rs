@@ -137,8 +137,10 @@ fn entry(tag: u8, at: u64, bytes: &[u8]) -> Vec<u8> {
 /// written at the position after the last, truncated, written again, and a
 /// state, are what it holds once opened again; `sync` returns each record
 /// made durable once, in order, those a state made durable too; an entry
-/// of no tag known, cut short, or writing past the position after the
-/// last, is refused (SQLCODE -916).
+/// of no tag known, cut short, at position 0, or writing past the
+/// position after the last while records are held, is refused (SQLCODE
+/// -916); a log whose first entry is a record at a later position begins
+/// its window before it, as a log cut by retention does.
 #[test]
 fn the_journal_holds_what_its_writes_left() {
     let log: Arc<dyn Log> = Arc::new(MemoryLog::new());
@@ -154,12 +156,20 @@ fn the_journal_holds_what_its_writes_left() {
     journal.persist_state(b"view").unwrap();
     assert_eq!(journal.sync().unwrap(), [Lsn(2)], "made durable by the state");
     let (_, reopened) = LogJournal::open(Arc::clone(&log)).unwrap();
-    assert_eq!(reopened, Recovered { state: Some(b"view".to_vec()), records: vec![record(1), b"again".to_vec()] });
-    for bad in [vec![9_u8], vec![1_u8, 1], entry(1, 4, b"past"), entry(1, 0, b"none before 1"), entry(2, 1, b"more")] {
+    assert_eq!(reopened, Recovered { state: Some(b"view".to_vec()), first: Lsn(0), records: vec![record(1), b"again".to_vec()] });
+    for bad in [vec![9_u8], vec![1_u8, 1], entry(1, 0, b"none before 1"), entry(2, 1, b"more")] {
         let damaged: Arc<dyn Log> = Arc::new(MemoryLog::new());
         damaged.append(&bad).unwrap();
         assert_eq!(LogJournal::open(damaged).err().map(|e| e.code), Some(Code::Corrupt), "{bad:?}");
     }
+    let gap: Arc<dyn Log> = Arc::new(MemoryLog::new());
+    gap.append(&entry(1, 1, b"one")).unwrap();
+    gap.append(&entry(1, 4, b"past")).unwrap();
+    assert_eq!(LogJournal::open(gap).err().map(|e| e.code), Some(Code::Corrupt), "a record past the last held");
+    let cut: Arc<dyn Log> = Arc::new(MemoryLog::new());
+    cut.append(&entry(1, 4, b"past")).unwrap();
+    let (_, window) = LogJournal::open(cut).unwrap();
+    assert_eq!(window, Recovered { state: None, first: Lsn(3), records: vec![b"past".to_vec()] }, "a window begun by its first record");
 }
 
 /// Verifies: [DESIGN] RULES.md D57, a replica alone made again from its
@@ -250,7 +260,12 @@ impl Consensus for Scripted {
         match input {
             Input::Tick => out.push(Output::Role(Role::Primary { view: 0 })),
             Input::Append(record) => out.extend((self.answer)(record)),
-            Input::Received { .. } | Input::Persisted(_) | Input::Applied(_) | Input::Installed(_) | Input::Opened(_) => {}
+            Input::Received { .. }
+            | Input::Persisted(_)
+            | Input::Applied(_)
+            | Input::Installed(_)
+            | Input::Opened(_)
+            | Input::Retain(_) => {}
         }
     }
 }

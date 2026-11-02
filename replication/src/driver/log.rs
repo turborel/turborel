@@ -17,7 +17,7 @@ use turborel::db::{LogStorage, OpenedLog, StorePlace};
 use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLog, FileLogOptions, Log, LogCapabilities, Records};
 
-use super::{Driver, Inbox, Parts, Ticker, Wait, Watch, index, misuse, position};
+use super::{Driver, Inbox, Parts, Ticker, Wait, Watch, misuse, position};
 use crate::{Consensus, Input, LogJournal, Lsn, Recovered, ReplicaId, Transport};
 
 /// \[EXTENSION\] A replica's log, over its driver: see the module's
@@ -54,7 +54,7 @@ impl Driver {
             Ok(core) => core,
             Err(e) => return Some(Err(e)),
         };
-        if index(through) > core.records.len() {
+        if through > core.op() {
             return Some(Err(misuse(&format!("the log has no position {} yet", through.0))));
         }
         if core.committed >= through {
@@ -86,26 +86,31 @@ impl Log for GroupLog {
         }
     }
 
+    /// The records from `from`, or from the first held if `from` was let
+    /// go.
     fn read_from(&self, from: Lsn) -> Records<'_> {
         let core = self.driver.core.lock().unwrap_or_else(PoisonError::into_inner);
-        let skip = index(from).saturating_sub(1);
-        let records: Vec<(Lsn, Vec<u8>)> = core.records.iter().enumerate().skip(skip).map(|(i, r)| (position(i), r.clone())).collect();
+        let (first, skip) = (core.first, core.index(from).unwrap_or(0));
+        let records: Vec<(Lsn, Vec<u8>)> =
+            core.records.iter().enumerate().skip(skip).map(|(i, r)| (position(first, i), r.clone())).collect();
         Box::new(records.into_iter().map(Ok))
     }
 
     fn read_at(&self, at: Lsn) -> Result<Option<Vec<u8>>> {
         let core = self.driver.core.lock().unwrap_or_else(PoisonError::into_inner);
-        Ok(index(at).checked_sub(1).and_then(|i| core.records.get(i)).cloned())
+        Ok(core.index(at).and_then(|i| core.records.get(i)).cloned())
     }
 
-    /// Removes nothing: the consensus keeps its whole log, which a view
-    /// change may send (log retention is a later stage).
-    fn truncate_before(&self, _before: Lsn) -> Result<()> {
-        Ok(())
+    /// \[EXTENSION\] The database holds every record before `before` in its
+    /// files: the records before it may go, but the bytes of them the
+    /// retention keeps (RULES.md D57); the consensus lets go what is
+    /// committed of them, and the journal follows.
+    fn truncate_before(&self, before: Lsn) -> Result<()> {
+        self.driver.core()?.retain_before(before)
     }
 
     fn end(&self) -> Lsn {
-        position(self.driver.core.lock().unwrap_or_else(PoisonError::into_inner).records.len())
+        self.driver.core.lock().unwrap_or_else(PoisonError::into_inner).end()
     }
 }
 
@@ -144,6 +149,16 @@ pub struct GroupLogs {
     files: Option<OnFiles>,
 }
 
+/// \[EXTENSION\] How much of the log a driver keeps (RULES.md D57, log
+/// retention).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retention {
+    /// The bytes of records before the database's last checkpoint the
+    /// journal keeps at least: a backup behind by less catches up from the
+    /// log, by more from a state transfer.
+    pub bytes: u64,
+}
+
 /// What makes a driver on files.
 struct OnFiles {
     options: FileLogOptions,
@@ -151,6 +166,7 @@ struct OnFiles {
     me: ReplicaId,
     make: Make,
     joined: Joined,
+    retention: Retention,
 }
 
 impl GroupLogs {
@@ -161,9 +177,15 @@ impl GroupLogs {
 
     /// \[EXTENSION\] The log storage of replica `me` of `members`, whose
     /// journal is a file log of `options` in the directory's `log/`, its
-    /// consensus what `make` makes, its driver joined to `joined`.
-    pub fn in_files(options: FileLogOptions, (members, me): (&[ReplicaId], ReplicaId), make: Make, joined: Joined) -> GroupLogs {
-        let files = OnFiles { options, members: members.to_vec(), me, make, joined };
+    /// consensus what `make` makes, its driver joined to `joined`, keeping
+    /// the log as `retention` says.
+    pub fn in_files(
+        options: FileLogOptions,
+        (members, me): (&[ReplicaId], ReplicaId),
+        make: Make,
+        (joined, retention): (Joined, Retention),
+    ) -> GroupLogs {
+        let files = OnFiles { options, members: members.to_vec(), me, make, joined, retention };
         GroupLogs { driver: Mutex::new(None), files: Some(files) }
     }
 
@@ -181,14 +203,16 @@ impl GroupLogs {
         }
         let files = self.files.as_ref().ok_or_else(|| misuse("the log storage has no driver"))?;
         let (journal, recovered) = LogJournal::open(journal)?;
-        let records = recovered.records.clone();
+        let (first, records) = (recovered.first, recovered.records.clone());
         let again = (recovered != Recovered::default()).then_some(recovered);
         let consensus = (files.make)(&files.members, files.me, again)?;
         let joined = &files.joined;
         let parts = Parts {
             consensus,
             journal: Box::new(journal),
+            first,
             records,
+            retain_bytes: files.retention.bytes,
             transport: Arc::clone(&joined.transport),
             inbox: Arc::clone(&joined.inbox),
             ticker: Arc::clone(&joined.ticker),
