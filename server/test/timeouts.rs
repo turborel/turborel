@@ -52,6 +52,21 @@ fn stalling(answered: usize) -> SocketAddr {
 fn a_client_waits_as_its_timeouts_say() {
     let began = std::time::Instant::now();
     let step = |what: &str| eprintln!("timeouts: {what} at {:?}", began.elapsed());
+    // Temporary: the bare calls, each printed as it returns, so the step
+    // Windows waits on is named.
+    let bare = |how: &str, stream: std::net::TcpStream, reader: &std::net::TcpStream| {
+        stream.set_read_timeout(Some(SHORT)).unwrap();
+        let began = std::time::Instant::now();
+        let read = (&mut &*reader).read(&mut [0_u8; 1]).map_err(|e| e.kind());
+        eprintln!("timeouts: {how}: read gave {read:?} after {:?}", began.elapsed());
+    };
+    let plain = std::net::TcpStream::connect(stalling(0)).unwrap();
+    bare("connect, read timeout set on the stream", plain.try_clone().unwrap(), &plain);
+    let timed = std::net::TcpStream::connect_timeout(&stalling(0), SHORT).unwrap();
+    bare("connect_timeout, read timeout set on the stream", timed.try_clone().unwrap(), &timed);
+    let original = std::net::TcpStream::connect_timeout(&stalling(0), SHORT).unwrap();
+    let clone = original.try_clone().unwrap();
+    bare("connect_timeout, read timeout set on a clone, read on the original", clone, &original);
     let quick = Timeouts { connect: Some(SHORT), read: Some(SHORT) };
     step("connecting to a server that never answers Hello");
     let refused = connect_to_within(&Target::Tcp(stalling(0)), "X", &mut Trust, quick).err().unwrap();

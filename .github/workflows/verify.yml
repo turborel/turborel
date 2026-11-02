@@ -23,7 +23,8 @@ jobs:
       # says where it stops. Removed once it is understood.
       - name: Where the timeouts test stops on Windows
         if: runner.os == 'Windows'
-        timeout-minutes: 3
+        # Twenty minutes: the first cargo run of the job compiles the test.
+        timeout-minutes: 20
         continue-on-error: true
         run: cargo test -p turborel-server --test server -- timeouts::a_client_waits_as_its_timeouts_say --nocapture
       - name: Every check
