@@ -49,7 +49,11 @@ fn line(scratch: &Scratch, (me, ports): (usize, &[u16]), pki: &turborel_test_sup
     line.extend(set("REPLICATION.REPLICA", me.to_string()));
     line.extend(set("REPLICATION.MEMBERS", members.join(",")));
     line.extend(set("REPLICATION.CA", pki.authority.display().to_string()));
-    line.extend(set("REPLICATION.TICK_MS", "20".into()));
+    // Ticks slow enough that a backup under a test runner's load, three
+    // programs on one machine, does not give its primary up for want of a
+    // heartbeat: a view change would move the service, and the owner,
+    // off the first node.
+    line.extend(set("REPLICATION.TICK_MS", "50".into()));
     line.extend(["--log".to_owned(), scratch.path(&format!("node{me}.log")).display().to_string()]);
     line
 }
@@ -121,10 +125,13 @@ fn programs_replicate_a_database() {
         drop(c.terminate());
     }
     let shown = "SELECT MEMBER, IS_SELF, ROLE FROM INFORMATION_SCHEMA.REPLICAS ORDER BY MEMBER";
-    assert!(
-        eventually(|| rows_at(&nodes[0], "OWNER", shown) == ["1,YES,PRIMARY", "2,NO,BACKUP", "3,NO,BACKUP"]),
-        "the owner made as it served"
-    );
+    let mut seen = Vec::new();
+    let agreed = eventually(|| {
+        seen = rows_at(&nodes[0], "OWNER", shown);
+        seen == ["1,YES,PRIMARY", "2,NO,BACKUP", "3,NO,BACKUP"]
+    });
+    let told = || std::fs::read_to_string(scratch.path("node1.log")).unwrap_or_default();
+    assert!(agreed, "the owner made as it served; seen {seen:?}; the first node's log:\n{}", told());
 
     let (_, stop, thread) = nodes.remove(0);
     stop.send(()).unwrap();
