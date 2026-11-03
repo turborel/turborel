@@ -59,13 +59,15 @@ pub(crate) fn settled(
 
 /// Opens `db` from `dir`: as the replica its settings name, if they name
 /// one (RULES.md D57), its node started on `runtime`, which a server has
-/// and a command on the directory has not; else as itself.
+/// and a command on the directory has not, the group new if `--owner`
+/// was given (`new_group`) and the database is created in `dir`; else as
+/// itself.
 ///
 /// # Errors
 ///
 /// Why it could not be opened, for the operator: a replicated database
 /// is managed through its primary, not by a command on its directory.
-pub(crate) fn opened(db: &Database, dir: &Path, runtime: Option<&Runtime>) -> Result<Option<Replication>, String> {
+pub(crate) fn opened(db: &Database, dir: &Path, runtime: Option<&Runtime>, new_group: bool) -> Result<Option<Replication>, String> {
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     let failed = |e: turborel::error::SqlError| format!("cannot open {}: {e}", dir.display());
     let Some(runtime) = runtime else {
@@ -75,7 +77,7 @@ pub(crate) fn opened(db: &Database, dir: &Path, runtime: Option<&Runtime>) -> Re
         db.open_files(&fs, dir, &OpenOptions::default()).map_err(failed)?;
         return Ok(None);
     };
-    let Some(prepared) = replication::prepare(db, dir).map_err(failed)? else {
+    let Some(prepared) = replication::prepare(db, dir, new_group).map_err(failed)? else {
         db.open_files(&fs, dir, &OpenOptions::default()).map_err(failed)?;
         return Ok(None);
     };

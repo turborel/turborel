@@ -3,14 +3,17 @@
 use turborel_replication::vr::{Standing, Status};
 use turborel_replication::{Consensus, Input, Lsn, Output, ReplicaEvent, ReplicaId, Role, Vr, VrOptions};
 
-use crate::common::{committed, ids, options, record, serving, vr_group};
+use turborel_test_support::replication::configuration;
+
+use crate::common::{committed, config, ids, options, record, serving, vr_group};
 
 const PRIMARY: ReplicaId = ReplicaId(1);
 const BACKUP: ReplicaId = ReplicaId(2);
 const OTHER: ReplicaId = ReplicaId(3);
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4] the primary of view 0 is the
-/// first member, which serves as it opens, its view written first; an
+/// first member, which serves as it opens, its view written first and its
+/// epoch told; an
 /// append is given the next position and written to the journal; a group
 /// of one commits it once durable, and never before.
 #[test]
@@ -18,7 +21,10 @@ fn one_replica_commits_once_its_record_is_durable() {
     let mut group = vr_group(1);
     group.instant_disks = false;
     let opened = &group.node(PRIMARY).outputs;
-    assert!(matches!(opened[..], [Output::PersistState(_), Output::Event(_), Output::Role(Role::Primary { view: 0 })]), "{opened:?}");
+    assert!(
+        matches!(opened[..], [Output::PersistState(_), Output::Epoch { .. }, Output::Event(_), Output::Role(Role::Primary { view: 0 })]),
+        "{opened:?}"
+    );
     assert_eq!(group.step(PRIMARY, Input::Tick), Vec::new());
     let out = group.step(PRIMARY, Input::Append(record("a")));
     assert_eq!(out, vec![Output::Assigned(Lsn(1)), Output::Persist { at: Lsn(1), record: record("a") }]);
@@ -163,9 +169,9 @@ fn bad_configurations_are_refused() {
         (ids(3), PRIMARY, zero_resend),
     ];
     for (members, me, opts) in cases {
-        assert_eq!(Vr::new(&members, me, opts).unwrap_err().sqlcode(), -910_i32, "{members:?} {me:?} {opts:?}");
+        assert_eq!(Vr::new(&configuration(&members), me, opts).unwrap_err().sqlcode(), -910_i32, "{members:?} {me:?} {opts:?}");
     }
-    let vr = Vr::new(&ids(3), BACKUP, VrOptions::default()).unwrap();
+    let vr = Vr::new(&config(3), BACKUP, VrOptions::default()).unwrap();
     assert_eq!(vr.name(), "vr");
 }
 
@@ -176,13 +182,13 @@ fn bad_configurations_are_refused() {
 /// delivered and applied, in the view still.
 #[test]
 fn applied_positions_are_kept_and_an_install_moves_the_replica() {
-    let mut vr = Vr::new(&ids(3), BACKUP, options()).unwrap();
+    let mut vr = Vr::new(&config(3), BACKUP, options()).unwrap();
     let mut out = Vec::new();
     vr.step(Input::Applied(Lsn(4)), &mut out);
     vr.step(Input::Applied(Lsn(2)), &mut out);
     assert_eq!(out, Vec::new());
     assert_eq!(vr.standing().applied, Lsn(4));
-    vr.step(Input::Installed(Lsn(9)), &mut out);
+    vr.step(Input::Installed { holds: Lsn(9), records: Vec::new() }, &mut out);
     assert_eq!(out.len(), 2_usize, "{out:?}");
     assert_eq!(out[0], Output::Retain { through: Lsn(9) });
     assert!(matches!(out[1], Output::PersistState(_)), "{out:?}");
@@ -196,12 +202,13 @@ fn applied_positions_are_kept_and_an_install_moves_the_replica() {
 /// how far its journal and database reached.
 #[test]
 fn a_replica_stands_where_its_steps_left_it() {
-    let mut vr = Vr::new(&[PRIMARY], PRIMARY, options()).unwrap();
+    let mut vr = Vr::new(&configuration(&[PRIMARY]), PRIMARY, options()).unwrap();
     let mut out = Vec::new();
     for input in [Input::Tick, Input::Append(record("a")), Input::Append(record("b")), Input::Persisted(Lsn(1))] {
         vr.step(input, &mut out);
     }
     let standing = Standing {
+        epoch: 0,
         view: 0,
         status: Status::Normal,
         primary: PRIMARY,

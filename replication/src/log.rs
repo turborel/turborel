@@ -163,6 +163,7 @@ impl Driven {
                 self.records.truncate(usize::try_from(after.0).unwrap_or(usize::MAX));
             }
             Output::PersistState(state) => self.journal.persist_state(&state)?,
+            Output::Mark { at, mark } => self.journal.mark(at, &mark)?,
             Output::Committed(through) => self.committed = self.committed.max(through),
             Output::Role(Role::Primary { .. }) => {
                 // Serving, it has committed every record it holds (the
@@ -178,13 +179,21 @@ impl Driven {
             // Nor is any let go: alone, the log is kept whole, and no other
             // replica fetches it; a journal lost is recovered from the
             // database alone, at once.
+            // Alone, its epoch's one member, it reconfigures to itself at
+            // most, and is never removed.
             Output::Send { .. }
             | Output::Deliver { .. }
             | Output::Outcome { .. }
             | Output::FetchState { .. }
             | Output::Retain { .. }
+            | Output::Epoch { .. }
+            | Output::Reach(_)
+            | Output::Retire
             | Output::Event(ReplicaEvent::ViewChanged { .. })
             | Output::Event(ReplicaEvent::Recovering)
+            | Output::Event(ReplicaEvent::Recovered { .. })
+            | Output::Event(ReplicaEvent::Reconfigured { .. })
+            | Output::Event(ReplicaEvent::Removed)
             | Output::Event(ReplicaEvent::FrameRefused { .. }) => {}
         }
         Ok(())

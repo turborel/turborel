@@ -14,12 +14,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError};
 
-use super::{Completion, Database, Session, State};
+use super::{Completion, Database, Session, State, api};
 use crate::ast::UserStatement;
 use crate::diagnostics::{Event, Extension};
 use crate::error::{At, Code, Result, SqlError, fail};
 use crate::lexer::MAX_IDENTIFIER_LENGTH;
-use crate::log::record::Change;
+use crate::log::record::{Change, Record};
 
 /// \[EXTENSION\] What makes a user's verifier of a password: an extension
 /// point (RULES.md D43).
@@ -222,6 +222,30 @@ impl Database {
         Ok(())
     }
 
+    /// \[EXTENSION\] Reconfigures the group of replicas keeping this
+    /// database to `members`, `number=host:port` by commas (RULES.md D57,
+    /// ALTER DATABASE REPLICATION MEMBERS): the record of it is appended
+    /// as the last of the group's epoch (`Log::reconfigure`) and synced,
+    /// which waits for the group to commit it; the next epoch's primary
+    /// then serves.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if `members` is malformed: a number 0, twice, or an
+    /// address not `host:port`; -910 if the database is kept by no group
+    /// or does not serve as its primary; -917 while it takes no change.
+    pub fn reconfigure(&self, members: &str) -> Result<()> {
+        let parsed = parse_members(members)?;
+        let st = self.snapshot()?;
+        let log = st.log.clone().ok_or_else(|| api("[DESIGN] RULES.md D57: a database with no log is kept by no group"))?;
+        st.tx.taking_changes()?;
+        let record = Record { tx: crate::txn::NO_TRANSACTION, change: Change::Reconfiguration { members: members.to_owned() } }.encode();
+        let lsn = log.reconfigure(&record, &parsed)?;
+        st.tx.sync(&*log, lsn)?;
+        self.emit(&Event::Reconfigured { members: members.to_owned() });
+        Ok(())
+    }
+
     /// \[EXTENSION\] The database's owner, if it has one.
     ///
     /// # Errors
@@ -310,7 +334,11 @@ impl Session {
     /// verifier; those of `Database::create_user`, `set_verifier`,
     /// `drop_user`, `Session::set_owner`.
     pub(super) fn user_statement(&self, stmt: &UserStatement) -> Result<Completion> {
-        self.as_owner(if matches!(stmt, UserStatement::Owner { .. }) { "ALTER DATABASE" } else { "a user statement" })?;
+        self.as_owner(if matches!(stmt, UserStatement::Owner { .. } | UserStatement::Members { .. }) {
+            "ALTER DATABASE"
+        } else {
+            "a user statement"
+        })?;
         let verified = |name: &str, password: &str| {
             let credentials = self.db.credentials().ok_or_else(|| {
                 SqlError::new(Code::Api, "[EXTENSION] no credentials plug-in is set to keep a password (Database::set_credentials)")
@@ -322,7 +350,43 @@ impl Session {
             UserStatement::Alter { name: (name, at), password } => self.db.set_verifier(name, &verified(name, password)?).or_at(*at)?,
             UserStatement::Drop { name: (name, at) } => self.db.drop_user(name).or_at(*at)?,
             UserStatement::Owner { name: (name, at) } => self.set_owner(name).or_at(*at)?,
+            UserStatement::Members { members: (members, at) } => self.reconfigure(members).or_at(*at)?,
         }
         Ok(Completion::Success)
     }
+
+    /// ALTER DATABASE REPLICATION MEMBERS: outside a transaction, the
+    /// group reconfigured (`Database::reconfigure`).
+    fn reconfigure(&self, members: &str) -> Result<()> {
+        if self.inner.borrow().tx.is_some() {
+            return fail(Code::TransactionState, "[EXTENSION] the group is reconfigured outside a transaction: commit or roll back first");
+        }
+        self.db.reconfigure(members)
+    }
+}
+
+/// `members`, as ALTER DATABASE REPLICATION MEMBERS names them: each
+/// `number=host:port`, by commas; a number 0 or twice, or an address not
+/// `host:port`, is refused (SQLCODE -103).
+fn parse_members(members: &str) -> Result<Vec<(u32, String)>> {
+    let mut parsed: Vec<(u32, String)> = Vec::new();
+    for item in members.split(',') {
+        let (number, address) = item.split_once('=').ok_or_else(|| malformed(item, "is not number=host:port"))?;
+        let number: u32 = number.trim().parse().map_err(|_| malformed(item, "has no member number"))?;
+        let address = address.trim();
+        let (_, port) = address.rsplit_once(':').ok_or_else(|| malformed(item, "has no host:port"))?;
+        if number == 0 || port.parse::<u16>().is_err() {
+            return Err(malformed(item, "names member 0, or no port"));
+        }
+        if parsed.iter().any(|(known, _)| *known == number) {
+            return Err(malformed(item, "names a member twice"));
+        }
+        parsed.push((number, address.to_owned()));
+    }
+    Ok(parsed)
+}
+
+/// The error of a members list refused.
+fn malformed(item: &str, why: &str) -> SqlError {
+    SqlError::new(Code::SyntaxRule, format!("[EXTENSION] RULES.md D57: in REPLICATION MEMBERS, '{}' {why}", item.trim()))
 }

@@ -31,8 +31,9 @@ fn calm_plan() -> Plan {
         disk_error: 0,
         lose_journal: 0,
         write_moments: 2,
+        reconfigure: 0,
     };
-    Plan { replicas: 3, faulty: 0, calm: 1_u64 << 40, append: 0, tick_moments: 5, retain_bytes: u64::MAX, faults }
+    Plan { replicas: 3, spares: 0, faulty: 0, calm: 1_u64 << 40, append: 0, tick_moments: 5, retain_bytes: u64::MAX, faults }
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.1] [VRR §4.2] in groups of three

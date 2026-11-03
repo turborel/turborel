@@ -5,13 +5,19 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use turborel_replication::{Consensus, Input, Lsn, Output, Recovered, ReplicaId};
+use turborel_replication::{Consensus, Input, Lsn, Member, Output, Recovered, ReplicaId, Role};
 
 use super::Journal;
 
 /// Makes a replica's consensus: of the group's members, as one of them,
 /// new (`None`) or again after a crash, from what its journal recovered.
-pub type Make = Arc<dyn Fn(&[ReplicaId], ReplicaId, Option<Recovered>) -> Box<dyn Consensus> + Send + Sync>;
+pub type Make = Arc<dyn Fn(&[Member], ReplicaId, Option<Recovered>) -> Box<dyn Consensus> + Send + Sync>;
+
+/// A configuration of `members`, each at no address: the simulator's and
+/// the harness's replicas are linked by number.
+pub fn configuration(members: &[ReplicaId]) -> Vec<Member> {
+    members.iter().map(|&id| Member { id, address: String::new() }).collect()
+}
 
 /// A frame sent and not yet delivered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +80,7 @@ impl Group {
             .iter()
             .map(|&id| Node {
                 id,
-                consensus: make(members, id, None),
+                consensus: make(&configuration(members), id, None),
                 journal: Journal::default(),
                 applied: Vec::new(),
                 outputs: Vec::new(),
@@ -97,11 +103,29 @@ impl Group {
     }
 
     /// Steps replica `id` with `input`, carries out its outputs, and returns
-    /// them (those of the `Persisted` instant disks answer with after them).
+    /// them (those of the `Opened` a database deposed is opened again
+    /// with, at once, holding every record delivered, of the `Persisted`
+    /// instant disks answer with after them, and of the `Applied` a
+    /// delivery is answered with, as the driver answers one once the
+    /// database replayed the records).
     pub fn step(&mut self, id: ReplicaId, input: Input) -> Vec<Output> {
         let mut out = Vec::new();
         self.node_mut(id).consensus.step(input, &mut out);
         self.carry(id, &out);
+        if out.contains(&Output::Role(Role::Backup)) {
+            let holds = Lsn(u64::try_from(self.node(id).applied.len()).unwrap_or(u64::MAX));
+            let mut opened = Vec::new();
+            self.node_mut(id).consensus.step(Input::Opened(holds), &mut opened);
+            self.carry(id, &opened);
+            out.extend(opened);
+        }
+        let delivered = out.iter().filter_map(|o| if let Output::Deliver { through } = o { Some(*through) } else { None }).next_back();
+        if let Some(through) = delivered {
+            let mut applied = Vec::new();
+            self.node_mut(id).consensus.step(Input::Applied(through), &mut applied);
+            self.carry(id, &applied);
+            out.extend(applied);
+        }
         if self.instant_disks {
             out.extend(self.flush(id));
         }
@@ -117,17 +141,21 @@ impl Group {
             let node = self.node_mut(id);
             node.outputs.push(output.clone());
             match output {
-                Output::Persist { at, record } => node.journal.persist(*at, record.clone()),
+                Output::Persist { at, record } => node.journal.persist(*at, record.clone()).unwrap(),
                 Output::Truncate { after } => node.journal.truncate(*after),
                 Output::Retain { through } => node.journal.retain(*through),
                 Output::PersistState(state) => node.journal.persist_state(state.clone()),
                 Output::Deliver { through } => node.apply(*through),
+                Output::Mark { at, mark } => node.journal.mark(*at, mark),
                 Output::Assigned(_)
                 | Output::Send { .. }
                 | Output::Committed(_)
                 | Output::Outcome { .. }
                 | Output::Role(_)
                 | Output::FetchState { .. }
+                | Output::Epoch { .. }
+                | Output::Reach(_)
+                | Output::Retire
                 | Output::Event(_) => {}
             }
         }
@@ -149,21 +177,31 @@ impl Group {
         }
     }
 
-    /// Delivers the oldest frame waiting; false if none waits.
+    /// Delivers the oldest frame waiting, or drops it if it is to no
+    /// replica of the group; false if none waits.
     pub fn deliver(&mut self) -> bool {
         let Some(frame) = self.frames.pop_front() else { return false };
-        self.step(frame.to, Input::Received { from: frame.from, frame: frame.bytes });
+        if self.nodes.iter().any(|n| n.id == frame.to) {
+            self.step(frame.to, Input::Received { from: frame.from, frame: frame.bytes });
+        }
         true
     }
 
     /// Delivers frames until none waits.
     pub fn settle(&mut self) {
+        let mut last: VecDeque<(ReplicaId, ReplicaId, u8)> = VecDeque::new();
         for _ in 0..SETTLE_LIMIT {
+            if let Some(frame) = self.frames.front() {
+                last.push_back((frame.from, frame.to, frame.bytes.first().copied().unwrap_or(0)));
+                if last.len() > 12 {
+                    last.pop_front();
+                }
+            }
             if !self.deliver() {
                 return;
             }
         }
-        panic!("the group did not settle in {SETTLE_LIMIT} frames");
+        panic!("the group did not settle in {SETTLE_LIMIT} frames; the last (from, to, tag): {last:?}");
     }
 
     /// Drops the frames waiting for which `lost` holds.
@@ -178,8 +216,19 @@ impl Group {
         let members = self.members.clone();
         let node = self.nodes.iter_mut().find(|n| n.id == id).unwrap();
         node.journal.crash(reached);
-        node.consensus = (self.make)(&members, id, Some(node.journal.recovered()));
+        node.consensus = (self.make)(&configuration(&members), id, Some(node.journal.recovered()));
         node.applied.clear();
+    }
+
+    /// A new replica `id`, added to the group's configuration, made from an
+    /// empty journal and opened over an empty database: to recover from
+    /// the others, whose epoch names it.
+    pub fn add(&mut self, id: ReplicaId) {
+        self.members.push(id);
+        self.members.sort_unstable();
+        let consensus = (self.make)(&configuration(&self.members), id, Some(Recovered::default()));
+        self.nodes.push(Node { id, consensus, journal: Journal::default(), applied: Vec::new(), outputs: Vec::new() });
+        self.step(id, Input::Opened(Lsn(0)));
     }
 
     /// Replica `id` crashes and loses its journal, and is made again over
@@ -191,6 +240,6 @@ impl Group {
         let node = self.nodes.iter_mut().find(|n| n.id == id).unwrap();
         node.journal = Journal::default();
         node.applied.truncate(kept);
-        node.consensus = (self.make)(&members, id, Some(Recovered::default()));
+        node.consensus = (self.make)(&configuration(&members), id, Some(Recovered::default()));
     }
 }

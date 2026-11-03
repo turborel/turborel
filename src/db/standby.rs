@@ -138,6 +138,14 @@ pub trait Standby: Send + Sync {
     /// SQLCODE -910 if it was not opened from its files, or serves; -915
     /// if a file cannot be written; as `Database::open_following`.
     fn import(&self, source: Box<dyn StateSource>) -> Result<Lsn>;
+    /// \[EXTENSION\] Retires it: its replica was removed from the group
+    /// (RULES.md D57, reconfiguration), so it serves nothing more, reads
+    /// neither (SQLCODE -917), until the operator stops the server.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a lock is poisoned.
+    fn retire(&self) -> Result<()>;
 }
 
 /// How following a log treats a record, as recovery's replay does: at
@@ -175,6 +183,7 @@ fn scope(record: &Record) -> Scope {
         | Change::Setting { .. }
         | Change::User { .. }
         | Change::Owner { .. }
+        | Change::Reconfiguration { .. }
         | Change::Checkpoint
         | Change::Stale { .. } => false,
     };
@@ -255,6 +264,11 @@ impl Standby for Database {
     fn import(&self, source: Box<dyn StateSource>) -> Result<Lsn> {
         self.import_state(source)
     }
+
+    fn retire(&self) -> Result<()> {
+        self.snapshot()?.tx.hold(Some(Held::Retired));
+        Ok(())
+    }
 }
 
 /// What a call to `replay` does with the records it took: replays at
@@ -334,6 +348,7 @@ impl Database {
 fn refuse_deposed(held: Option<Held>, what: &str) -> Result<()> {
     match held {
         Some(Held::Deposed) => Err(api(format!("[DESIGN] RULES.md D57: a deposed database is opened again before it {what}"))),
+        Some(Held::Retired) => Err(api(format!("[DESIGN] RULES.md D57: a retired database, its replica removed, never {what}"))),
         Some(Held::Following) | None => Ok(()),
     }
 }

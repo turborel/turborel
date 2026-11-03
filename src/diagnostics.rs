@@ -125,6 +125,12 @@ pub enum Event {
         /// The owner's authorization identifier.
         name: String,
     },
+    /// \[EXTENSION\] The group of replicas keeping the database was asked
+    /// to reconfigure to `members`, and committed it (RULES.md D57).
+    Reconfigured {
+        /// The members, `number=host:port`, by commas.
+        members: String,
+    },
     /// A plug-in was registered, under its name.
     Registered {
         /// Its kind.
@@ -299,6 +305,26 @@ pub enum ReplicaChange {
     /// recovers from the group before it takes part, and tells the view
     /// it then enters.
     Recovering,
+    /// The replica recovered: normal in `view`, holding the log of its
+    /// primary `from`, or of its own database as the group's one member.
+    Recovered {
+        /// The view.
+        view: u64,
+        /// The member whose log it holds.
+        from: u32,
+    },
+    /// The replica entered `epoch`, whose members are `members`: as it
+    /// opens, and at each reconfiguration committed.
+    EpochEntered {
+        /// The epoch.
+        epoch: u64,
+        /// Its members, `number=host:port`, by commas.
+        members: String,
+    },
+    /// The replica is no member of the epoch entered, and the new members
+    /// hold the state: it takes no further part, its database serving
+    /// nothing until the server is stopped.
+    Removed,
     /// The transport's link to a member is up: frames reach it.
     Connected {
         /// The member.
@@ -362,9 +388,12 @@ impl Event {
                 | ReplicaChange::Serving { .. }
                 | ReplicaChange::Stopped
                 | ReplicaChange::Connected { .. }
+                | ReplicaChange::EpochEntered { .. }
+                | ReplicaChange::Recovered { .. }
                 | ReplicaChange::StateInstalled { .. } => Level::Info,
                 ReplicaChange::FrameRefused { .. }
                 | ReplicaChange::Recovering
+                | ReplicaChange::Removed
                 | ReplicaChange::AppendRefused
                 | ReplicaChange::Disconnected { .. }
                 | ReplicaChange::ConnectionRefused { .. } => Level::Warning,
@@ -382,6 +411,7 @@ impl Event {
             | Event::SettingChanged { .. }
             | Event::UserChanged { .. }
             | Event::OwnerChanged { .. }
+            | Event::Reconfigured { .. }
             | Event::Registered { .. }
             | Event::Listening { .. }
             | Event::Stopping { .. }

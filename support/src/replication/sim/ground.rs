@@ -21,8 +21,9 @@ use turborel::error::{Code, Result, SqlError};
 use turborel_replication::driver::Wait;
 use turborel_replication::{Driver, Lsn, Parts, StateTransfer};
 
-use super::super::group::Make;
-use super::world::{Started, journal, locked, watch};
+use super::super::group::{Make, configuration};
+use super::parts::{journal, watch};
+use super::world::{Started, locked};
 use super::{Plan, Violation, World};
 
 /// Moments past the end of the run's plan within which a sync waiting must
@@ -54,8 +55,8 @@ pub struct Ground {
     drivers: Mutex<Vec<Option<Arc<Driver>>>>,
     databases: Mutex<Vec<Option<Arc<dyn Standby>>>>,
     host: Mutex<Box<dyn Host>>,
-    /// Replicas crashed within a database's call, not made again until it
-    /// returns.
+    /// Replicas crashed within their own database's call, not made again
+    /// until it returns.
     held: Mutex<BTreeSet<usize>>,
     /// Replicas within a sync's wait: their drivers take no turn until it
     /// returns, as a turn would call their databases from within their
@@ -107,17 +108,18 @@ impl Ground {
                     return Err(self.world().fail(&format!("replica {}: {e}", index + 1)));
                 }
                 self.crash(index);
-                // Crashed within a database's call, perhaps its own, it is
-                // made again only once the call has returned.
-                if !top {
+                // Crashed within its own database's call, it is made again
+                // only once the call has returned.
+                if !top && self.waiting.lock().unwrap().contains(&index) {
                     self.held.lock().unwrap().insert(index);
                 }
             }
         }
+        let standings = self.standings();
         let mut world = self.world();
         world.flush_sends();
         if world.over() && world.now() > world.end() + SYNC_GRACE {
-            return Err(world.fail("a sync was never answered"));
+            return Err(world.fail(&format!("a sync was never answered; the replicas: {standings}")));
         }
         world.check()
     }
@@ -127,24 +129,40 @@ impl Ground {
         self.drivers.lock().unwrap()[index].clone()
     }
 
-    /// Replica `index` made again, from its journal: its driver, and its
-    /// database opened over it.
+    /// Every replica's standing, for a violation: what its driver serves,
+    /// holds and committed, and its consensus's own account.
+    fn standings(&self) -> String {
+        let count = self.drivers.lock().unwrap().len();
+        let each: Vec<String> = (0..count)
+            .map(|i| match self.driver(i) {
+                Some(d) => {
+                    format!("{}: serving {:?} holds {} committed {}: {}", i + 1, d.serving(), d.holds().0, d.committed().0, d.describe())
+                }
+                None => format!("{}: down", i + 1),
+            })
+            .collect();
+        each.join("; ")
+    }
+
+    /// Replica `index` made again, from its journal, its node's setting of
+    /// the members its starting point: its driver, and its database
+    /// opened over it.
     fn start(&self, index: usize) -> std::result::Result<(), Violation> {
         let (members, id) = {
             let world = self.world();
-            (world.members().to_vec(), world.members()[index])
+            (world.setting(index), world.id(index))
         };
-        let Started { recovered, disk, link, inbox, ticks } = self.world().start(index);
+        let Started { new_group, recovered, disk, link, inbox, ticks } = self.world().start(index);
         let (begins, records) = (recovered.first, recovered.records.clone());
-        // Made as a node is, from its journal, empty at first: the group
-        // bootstraps by recovery.
-        let consensus = (self.make)(&members, id, Some(recovered));
+        // Made as a node is: a new group's replica as the run begins, else
+        // from its journal, recovering if it holds nothing.
+        let consensus = (self.make)(&configuration(&members), id, (!new_group).then_some(recovered));
         let wait: Arc<dyn Wait> = Arc::new(SimWait(Weak::clone(&self.me)));
         let watch = Arc::new(watch(&self.world, id));
         let (retain_bytes, transfer) = (self.world().plan().retain_bytes, self.host.lock().unwrap().transfer(index));
         let parts = Parts {
             consensus,
-            journal: Box::new(journal(disk)),
+            journal: Box::new(journal(disk, &self.world, id)),
             first: begins,
             records,
             retain_bytes,
@@ -159,6 +177,7 @@ impl Ground {
         self.drivers.lock().unwrap()[index] = Some(Arc::clone(&driver));
         let opened = self.host.lock().unwrap().open(index, &driver);
         let (database, holds) = opened.map_err(|why| self.world().fail(&why))?;
+        self.world().note(id, &format!("its database opened, holding the log through {}", holds.0));
         driver.join(holds).map_err(|e| self.world().fail(&format!("replica {}: {e}", index + 1)))?;
         self.databases.lock().unwrap()[index] = Some(database);
         Ok(())
@@ -208,7 +227,8 @@ pub struct Runner<H: Host + Clone + 'static> {
 
 impl<H: Host + Clone + 'static> Runner<H> {
     /// A run of `plan` from `seed`, each replica's consensus made by
-    /// `make`, its database by `host`, every replica started.
+    /// `make`, its database by `host`, every member started, the spares
+    /// waiting.
     ///
     /// # Errors
     ///
@@ -226,7 +246,7 @@ impl<H: Host + Clone + 'static> Runner<H> {
             held: Mutex::new(BTreeSet::new()),
             waiting: Mutex::new(BTreeSet::new()),
         });
-        for index in 0..count {
+        for index in (0..count).filter(|&i| ground.world().joined(i)) {
             ground.start(index)?;
         }
         Ok(Runner { ground, host, plan })
@@ -240,6 +260,11 @@ impl<H: Host + Clone + 'static> Runner<H> {
     /// Replica `index`'s driver, while it is up.
     pub fn driver(&self, index: usize) -> Option<Arc<Driver>> {
         self.ground.driver(index)
+    }
+
+    /// Every replica's standing, for a violation.
+    pub fn standings(&self) -> String {
+        self.ground.standings()
     }
 
     /// The replica whose database serves as primary, if one does.

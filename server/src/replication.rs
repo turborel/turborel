@@ -37,7 +37,9 @@ use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
 use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
-use turborel_replication::{Driver, DriverJob, GroupLogs, Joined, Make, PageDifferences, ReplicaEvent, ReplicaId, Vr, VrOptions, nonce};
+use turborel_replication::{
+    Configuration, Driver, DriverJob, GroupLogs, Joined, Make, Member, PageDifferences, ReplicaEvent, ReplicaId, Vr, VrOptions, nonce,
+};
 
 use self::net::Security;
 pub use self::net::{TcpTransport, members_of};
@@ -109,6 +111,12 @@ impl Watch for Telling {
         self.db.tell(&Event::Replica { change: ReplicaChange::StateInstalled { position: at.0 } });
     }
 
+    /// The epoch, as the replica opens: the links show it; a
+    /// reconfiguration tells it as an event too.
+    fn epoch(&self, epoch: u64, configuration: &Configuration) {
+        self.links.reconfigured(epoch, configuration);
+    }
+
     fn event(&self, event: &ReplicaEvent) {
         let change = match event {
             ReplicaEvent::ViewChanged { view, primary } => {
@@ -118,6 +126,12 @@ impl Watch for Telling {
             ReplicaEvent::FrameRefused { from, why } => ReplicaChange::FrameRefused { from: from.0, why: why.clone() },
             ReplicaEvent::AppendRefused => ReplicaChange::AppendRefused,
             ReplicaEvent::Recovering => ReplicaChange::Recovering,
+            ReplicaEvent::Recovered { view, from } => ReplicaChange::Recovered { view: *view, from: from.0 },
+            ReplicaEvent::Reconfigured { epoch, configuration } => {
+                self.links.reconfigured(*epoch, configuration);
+                ReplicaChange::EpochEntered { epoch: *epoch, members: members_text(configuration) }
+            }
+            ReplicaEvent::Removed => ReplicaChange::Removed,
         };
         self.db.tell(&Event::Replica { change });
     }
@@ -160,15 +174,17 @@ fn security(db: &Database) -> Result<Option<Security>> {
 
 /// \[EXTENSION\] Prepares `db` as the replica its settings name
 /// (`replicated`), before it is opened from its files in `dir`: its log
-/// storage the group's, a state transfer staged in `dir`'s `transfer/`.
-/// None if it is not replicated.
+/// storage the group's, a state transfer staged in `dir`'s `transfer/`;
+/// of a `new_group`, made normal at once if the database is created in
+/// `dir`, else made from its journal (`GroupLogs::in_files`). None if it
+/// is not replicated.
 ///
 /// # Errors
 ///
 /// SQLCODE -910 if the settings are wrong: the node no member, a member
 /// malformed, TLS's files not named; -915 if TLS's files cannot be
 /// taken; `Database::set_log_storage`'s.
-pub fn prepare(db: &Database, dir: &Path) -> Result<Option<Prepared>> {
+pub fn prepare(db: &Database, dir: &Path, new_group: bool) -> Result<Option<Prepared>> {
     if !replicated(db) {
         return Ok(None);
     }
@@ -182,8 +198,16 @@ pub fn prepare(db: &Database, dir: &Path) -> Result<Option<Prepared>> {
     let links = Arc::new(Links::new(me, &members));
     let transport =
         Arc::new(TcpTransport::new((me, members.clone()), (listen, tick), security(db)?, (Arc::clone(&inbox), Arc::clone(&links)))?);
+    transport.remember();
+    // A new group's replica is made normal in view 0 (`Vr::new`) as its
+    // database is created; any other is made from its journal, recovering
+    // from the group if that holds nothing.
     let make: Make = Arc::new(|of, replica, recovered| {
-        Ok(Box::new(Vr::restart(of, replica, VrOptions::default(), recovered.unwrap_or_default(), nonce())?))
+        let consensus: Box<dyn turborel_replication::Consensus> = match recovered {
+            None => Box::new(Vr::new(of, replica, VrOptions::default())?),
+            Some(held) => Box::new(Vr::restart(of, replica, VrOptions::default(), held, nonce())?),
+        };
+        Ok(consensus)
     });
     let sending: Arc<dyn turborel_replication::Transport> = Arc::<TcpTransport>::clone(&transport);
     let joined = Joined {
@@ -194,9 +218,9 @@ pub fn prepare(db: &Database, dir: &Path) -> Result<Option<Prepared>> {
         watch: Arc::new(Telling { db: db.clone(), links: Arc::clone(&links) }),
         transfer: Arc::new(PageDifferences::new(Arc::new(OsFileSystem), dir)),
     };
-    let ids: Vec<ReplicaId> = members.keys().copied().collect();
     let retention = Retention { bytes: u64::try_from(settings::count(db, RETAIN_BYTES)).unwrap_or(u64::MAX) };
-    let logs = Arc::new(GroupLogs::in_files(FileLogOptions::default(), (&ids, me), make, (joined, retention)));
+    let configuration: Vec<Member> = members.iter().map(|(&id, address)| Member { id, address: address.clone() }).collect();
+    let logs = Arc::new(GroupLogs::in_files(FileLogOptions::default(), (&configuration, me), make, (joined, retention), new_group));
     db.set_log_storage(Box::new(Shared(Arc::clone(&logs))))?;
     Ok(Some(Prepared { logs, transport, links, tick }))
 }
@@ -256,4 +280,10 @@ impl Replication {
         self.driver.halt(refused("the node stopped"));
         db.depose()
     }
+}
+
+/// `configuration` as REPLICATION.MEMBERS names it: `number=host:port`,
+/// by commas.
+fn members_text(configuration: &[Member]) -> String {
+    configuration.iter().map(|m| format!("{}={}", m.id.0, m.address)).collect::<Vec<_>>().join(",")
 }

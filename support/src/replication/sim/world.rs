@@ -1,151 +1,34 @@
 //! The simulator's world: a group's replicas as their drivers meet them,
-//! their disks, links, inboxes and ticks, and the network between them,
-//! moved on moment by moment, with faults at random from the run's seed.
-//! The world never calls a driver or a database: each moment it puts the
-//! frames arrived in the inboxes, makes the journal writes due durable and
-//! counts the ticks due, and the drivers then take them in their turns
-//! (`sim/ground.rs`). What the drivers carry out it checks through their
-//! watches (`SimWatch`).
+//! their disks, links, inboxes and ticks (`sim/parts.rs`), and the
+//! network between them, moved on moment by moment, with faults at random
+//! from the run's seed. The world never calls a driver or a database: each
+//! moment it puts the frames arrived in the inboxes, makes the journal
+//! writes due durable and counts the ticks due, and the drivers then take
+//! them in their turns (`sim/ground.rs`). What the drivers carry out it
+//! checks through their watches (`SimWatch`).
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use turborel::error::{Code, Result, SqlError};
-use turborel_replication::driver::{Inbox, Ticker, Watch};
-use turborel_replication::{Lsn, Recovered, ReplicaEvent, ReplicaId};
+use turborel_replication::Transport;
+use turborel_replication::driver::{Inbox, Ticker};
+use turborel_replication::{Configuration, Recovered, ReplicaId};
 
 use super::super::Journal;
+use super::epochs::Epochs;
+use super::parts::{Disk, SimTicks};
 use super::{Checker, Link, Network, PER_MILLE, Plan, Report, Rng, Violation, Weather};
 
-/// A replica's disk: its journal, the moments its writes waiting become
-/// durable, and its own chance of failing.
-pub struct Disk {
-    journal: Journal,
-    due: VecDeque<u64>,
-    rng: Rng,
-    now: u64,
-    write_moments: u64,
-    error: u32,
-    /// Whether a write failed since the replica last started.
-    failed: bool,
-}
-
-impl Disk {
-    /// A write given: when it is durable, and whether the disk failed.
-    fn write(&mut self) -> Result<()> {
-        let due = self.now + self.rng.between(1, self.write_moments);
-        self.due.push_back(due);
-        if self.rng.chance(self.error) {
-            self.failed = true;
-            return Err(SqlError::new(Code::Io, "[TOOL] the simulated disk failed"));
-        }
-        Ok(())
-    }
-}
-
-/// A replica's journal, as its driver writes it, on its disk.
-pub struct SimJournal(Arc<Mutex<Disk>>);
-
-impl turborel_replication::Journal for SimJournal {
-    fn durable(&self) -> bool {
-        true
-    }
-
-    fn persist(&mut self, at: Lsn, record: &[u8]) -> Result<()> {
-        let mut disk = self.0.lock().unwrap();
-        disk.journal.persist(at, record.to_vec());
-        disk.write()
-    }
-
-    fn truncate(&mut self, after: Lsn) -> Result<()> {
-        let mut disk = self.0.lock().unwrap();
-        disk.journal.truncate(after);
-        disk.write()
-    }
-    fn retain(&mut self, through: Lsn) -> Result<()> {
-        let mut disk = self.0.lock().unwrap();
-        disk.journal.retain(through);
-        disk.write()
-    }
-
-    fn persist_state(&mut self, state: &[u8]) -> Result<()> {
-        let mut disk = self.0.lock().unwrap();
-        disk.journal.persist_state(state.to_vec());
-        disk.due.clear();
-        Ok(())
-    }
-
-    /// The writes the world made durable, as their moments came: a disk
-    /// slower than the driver.
-    fn sync(&mut self) -> Result<Vec<Lsn>> {
-        Ok(self.0.lock().unwrap().journal.take_owed())
-    }
-}
-
-/// The ticks due to a replica's driver, counted by the world.
-#[derive(Default)]
-pub struct SimTicks(AtomicU64);
-
-impl Ticker for SimTicks {
-    fn take(&self) -> u64 {
-        self.0.swap(0, Ordering::AcqRel)
-    }
-}
-
-/// What a replica's driver tells, checked by the world.
-pub struct SimWatch {
-    id: ReplicaId,
-    world: Arc<Mutex<World>>,
-}
-
-impl SimWatch {
-    /// The world, locked, a violation found noted.
-    fn noted(&self, found: std::result::Result<(), Violation>) {
-        if let Err(why) = found {
-            self.world.lock().unwrap().fail(&why);
-        }
-    }
-}
-
-impl Watch for SimWatch {
-    fn committed(&self, (first, through): (Lsn, Lsn), log: &[Vec<u8>]) {
-        let mut world = self.world.lock().unwrap();
-        world.report.committed = world.report.committed.max(usize::try_from(through.0).unwrap());
-        let found = world.checker.commit(self.id, first.0, log);
-        drop(world);
-        self.noted(found);
-    }
-
-    fn serving(&self, view: u64) {
-        let mut world = self.world.lock().unwrap();
-        let members = world.members.clone();
-        let found = world.checker.serves(self.id, view, &members);
-        drop(world);
-        self.noted(found);
-    }
-
-    fn stopped(&self) {}
-
-    fn outcome(&self, at: Lsn, record: &[u8], kept: Option<bool>) {
-        self.world.lock().unwrap().checker.outcome(self.id, at.0, record.to_vec(), kept);
-    }
-
-    fn event(&self, event: &ReplicaEvent) {
-        let found = match event {
-            ReplicaEvent::ViewChanged { .. } => {
-                self.world.lock().unwrap().recovered(self.id);
-                Ok(())
-            }
-            ReplicaEvent::Recovering => Ok(()),
-            ReplicaEvent::FrameRefused { from, why } => Err(format!("replica {} refused a frame from {}: {why}", self.id.0, from.0)),
-            ReplicaEvent::AppendRefused => Err(format!("replica {} refused an append while serving", self.id.0)),
-        };
-        self.noted(found);
-    }
-    fn installed(&self, _at: Lsn) {
-        self.world.lock().unwrap().report.transfers += 1;
-    }
+/// A replica's membership of the group, as it told it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Membership {
+    /// No member yet: a spare, down until an epoch names it.
+    Spare,
+    /// A member, or one that was and is to be removed.
+    Joined,
+    /// One that told it was removed from the group.
+    Removed,
 }
 
 /// One replica of the run, as the world keeps it.
@@ -161,16 +44,30 @@ pub struct Node {
     up_at: u64,
     /// How many times it crashed.
     lives: u64,
-    /// Whether its journal was lost in its last crash, and it has not yet
-    /// entered a view since: no other loses its journal meanwhile.
+    /// Whether it started over a journal holding no state, lost in a
+    /// crash or a new member's, and has not yet entered a view since: no
+    /// other loses its journal meanwhile, and no reconfiguration is
+    /// asked, as a group with two members recovering at once, a new one
+    /// among them or not, could not go on [VRR §4.3] [VRR §7].
     journal_lost: bool,
     /// When in each round of moments it ticks.
     phase: u64,
+    /// Its membership: a spare until an epoch names it, down until then.
+    membership: Membership,
+    /// The epoch it last told it entered.
+    pub(super) epoch: u64,
+    /// Its node's setting of the members: the last configuration it
+    /// entered naming it, the members as it joined for a spare.
+    setting: Vec<ReplicaId>,
 }
 
 /// A replica made again: what its journal holds, and the parts its driver
 /// is made of.
 pub struct Started {
+    /// Whether it is a new group's replica, made as the run begins: the
+    /// others are made from their journals, recovering if those hold
+    /// nothing, as a node started without `--owner`.
+    pub new_group: bool,
     /// What its journal holds.
     pub recovered: Recovered,
     /// Its disk, its journal on it.
@@ -200,14 +97,21 @@ pub struct World {
     weather: Weather,
     rng: Rng,
     now: u64,
-    members: Vec<ReplicaId>,
+    /// The epochs entered, the members now among them.
+    pub epochs: Epochs,
     nodes: Vec<Node>,
     network: Network,
-    checker: Checker,
-    report: Report,
+    pub(super) checker: Checker,
+    pub(super) report: Report,
     /// The first violation found, once one was.
     failed: Option<Violation>,
+    /// The last things the replicas told, and the crashes and starts,
+    /// each at its moment: a violation found names them.
+    trail: VecDeque<String>,
 }
+
+/// How much of the trail a violation names.
+const TRAIL: usize = 400;
 
 impl World {
     /// The run's plan.
@@ -215,17 +119,19 @@ impl World {
         &self.plan
     }
 
-    /// The world of `plan` from `seed`, every replica down until made.
+    /// The world of `plan` from `seed`, every replica down until made, the
+    /// spares, numbered after the members, until an epoch names them.
     pub fn new(seed: u64, plan: Plan) -> World {
         let members: Vec<ReplicaId> = (1..=plan.replicas).map(ReplicaId).collect();
         let mut rng = Rng::new(seed);
-        let nodes = members
-            .iter()
-            .map(|&id| {
+        let nodes = (1..=plan.replicas.saturating_add(plan.spares))
+            .map(ReplicaId)
+            .map(|id| {
                 let disk_rng = Rng::new(seed ^ u64::from(id.0).rotate_left(48));
                 let (write_moments, error) = (plan.faults.write_moments, plan.faults.disk_error);
                 let disk =
                     Disk { journal: Journal::default(), due: VecDeque::new(), rng: disk_rng, now: 0, write_moments, error, failed: false };
+                let joined = members.contains(&id);
                 Node {
                     id,
                     disk: Arc::new(Mutex::new(disk)),
@@ -233,16 +139,21 @@ impl World {
                     inbox: Arc::default(),
                     ticks: Arc::default(),
                     up: false,
-                    up_at: 0,
+                    up_at: if joined { 0 } else { u64::MAX },
                     lives: 0,
                     journal_lost: false,
                     phase: rng.below(plan.tick_moments),
+                    membership: if joined { Membership::Joined } else { Membership::Spare },
+                    epoch: 0,
+                    setting: members.clone(),
                 }
             })
             .collect();
         let weather = plan.faults.weather;
         let (network, checker, report) = (Network::default(), Checker::default(), Report::default());
-        World { seed, plan, weather, rng, now: 0, members, nodes, network, checker, report, failed: None }
+        let mut epochs = Epochs::default();
+        let _ = epochs.entered(ReplicaId(0), 0, &super::super::group::configuration(&members));
+        World { seed, plan, weather, rng, now: 0, epochs, nodes, network, checker, report, failed: None, trail: VecDeque::new() }
     }
 
     /// The run's seed.
@@ -255,9 +166,103 @@ impl World {
         self.now
     }
 
-    /// The members of the group.
+    /// The members of the group, in the latest epoch entered.
     pub fn members(&self) -> &[ReplicaId] {
-        &self.members
+        self.epochs.members()
+    }
+
+    /// Which replica `index` is.
+    pub fn id(&self, index: usize) -> ReplicaId {
+        self.nodes[index].id
+    }
+
+    /// Replica `id`, as the world keeps it.
+    pub(super) fn node(&self, id: ReplicaId) -> &Node {
+        self.nodes.iter().find(|n| n.id == id).unwrap()
+    }
+
+    /// Whether replica `index` is or was a member.
+    pub fn joined(&self, index: usize) -> bool {
+        self.nodes[index].membership != Membership::Spare
+    }
+
+    /// Whether replica `index` was a member and is none now: it must be
+    /// removed, and told so.
+    pub fn left(&self, index: usize) -> bool {
+        self.joined(index) && !self.members().contains(&self.nodes[index].id)
+    }
+
+    /// Whether replica `index` told it was removed from the group.
+    pub fn removed_told(&self, index: usize) -> bool {
+        self.nodes[index].membership == Membership::Removed
+    }
+
+    /// The members replica `index`'s node is set to start with: the
+    /// members now, if it is one of them, as an operator keeps the setting
+    /// current; else the last configuration it entered naming it.
+    pub fn setting(&self, index: usize) -> Vec<ReplicaId> {
+        let id = self.nodes[index].id;
+        if self.members().contains(&id) { self.members().to_vec() } else { self.nodes[index].setting.clone() }
+    }
+
+    /// The first spare no epoch named yet, if one waits.
+    pub fn spare(&self) -> Option<ReplicaId> {
+        self.nodes.iter().find(|n| n.membership == Membership::Spare).map(|n| n.id)
+    }
+
+    /// Replica `id` entered `epoch` of `configuration`: its node's setting
+    /// if it names it; a new epoch is the members now, the spares it names
+    /// joined and made at the next moment, as an operator starts them once
+    /// told the reconfiguration is done.
+    pub(super) fn entered(&mut self, id: ReplicaId, epoch: u64, configuration: &Configuration) -> Result<(), Violation> {
+        let new = self.epochs.entered(id, epoch, configuration)?;
+        let members: Vec<ReplicaId> = configuration.iter().map(|m| m.id).collect();
+        let now = self.now;
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) {
+            node.epoch = epoch;
+            if members.contains(&id) {
+                node.setting.clone_from(&members);
+            }
+        }
+        if new && epoch == self.epochs.latest() {
+            self.report.epochs = epoch;
+            for node in self.nodes.iter_mut().filter(|n| n.membership == Membership::Spare && members.contains(&n.id)) {
+                node.membership = Membership::Joined;
+                node.up_at = now.saturating_add(1);
+                node.setting.clone_from(&members);
+            }
+        }
+        Ok(())
+    }
+
+    /// The first spare no epoch named yet, to name in a reconfiguration,
+    /// if one waits and no replica is recovering: an operator adds a
+    /// node to a group whole, as a group with two members recovering at
+    /// once, a new one and one whose journal was lost, could not go on
+    /// [VRR §4.3] [VRR §7].
+    pub fn spare_to_add(&self) -> Option<ReplicaId> {
+        if self.recovering_any() {
+            return None;
+        }
+        self.spare()
+    }
+
+    /// Whether any replica is recovering, or is to: one that started over
+    /// a journal holding no state and has not entered a view since, or a
+    /// member of the epoch not started yet, a new one.
+    fn recovering_any(&self) -> bool {
+        let members = self.epochs.members();
+        self.nodes.iter().any(|n| n.journal_lost || (members.contains(&n.id) && !n.disk.lock().unwrap().journal.holds_state()))
+    }
+
+    /// Replica `id` told it was removed from the group.
+    pub(super) fn removed(&mut self, id: ReplicaId) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == id)
+            && node.membership != Membership::Removed
+        {
+            node.membership = Membership::Removed;
+            self.report.removed += 1;
+        }
     }
 
     /// Whether the run's moments, faulty and calm, are over.
@@ -296,7 +301,7 @@ impl World {
     }
 
     /// Replica `id` entered a view: its journal, if lost, is recovered.
-    fn recovered(&mut self, id: ReplicaId) {
+    pub(super) fn recovered(&mut self, id: ReplicaId) {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) {
             node.journal_lost = false;
         }
@@ -322,10 +327,19 @@ impl World {
         self.nodes[index].disk.lock().unwrap().journal.records().to_vec()
     }
 
+    /// Notes that replica `id` told or did `what`, in the trail.
+    pub(super) fn note(&mut self, id: ReplicaId, what: &str) {
+        if self.trail.len() >= TRAIL {
+            self.trail.pop_front();
+        }
+        self.trail.push_back(format!("  {}: replica {}: {what}", self.now, id.0));
+    }
+
     /// Notes `violation`, unless one was found before, and returns the
-    /// first found.
+    /// first found, with the trail before it.
     pub fn fail(&mut self, violation: &str) -> Violation {
-        let found = format!("seed {}, moment {}: {violation}", self.seed, self.now);
+        let trail: Vec<&str> = self.trail.iter().map(String::as_str).collect();
+        let found = format!("seed {}, moment {}: {violation}\n{}", self.seed, self.now, trail.join("\n"));
         self.failed.get_or_insert(found).clone()
     }
 
@@ -334,7 +348,7 @@ impl World {
     /// # Errors
     ///
     /// The violation.
-    pub fn check(&self) -> std::result::Result<(), Violation> {
+    pub fn check(&self) -> Result<(), Violation> {
         self.failed.clone().map_or(Ok(()), Err)
     }
 
@@ -347,7 +361,7 @@ impl World {
     /// # Errors
     ///
     /// The first violation found.
-    pub fn moment(&mut self, top: bool) -> std::result::Result<Moved, Violation> {
+    pub fn moment(&mut self, top: bool) -> Result<Moved, Violation> {
         self.check()?;
         let mut moved = Moved::default();
         if self.now < self.plan.faulty && top {
@@ -382,7 +396,7 @@ impl World {
         let faults = self.plan.faults;
         if !self.network.parted() && self.rng.chance(faults.partition) {
             let mut side = Vec::new();
-            for &id in &self.members {
+            for &id in self.epochs.members() {
                 if self.rng.chance(PER_MILLE / 2) {
                     side.push(id);
                 }
@@ -405,7 +419,7 @@ impl World {
     fn end_faults(&mut self) {
         self.network.heal();
         self.weather = Weather { drop: 0, duplicate: 0, late: 0, ..self.weather };
-        for node in &mut self.nodes {
+        for node in self.nodes.iter_mut().filter(|n| n.membership != Membership::Spare) {
             node.up_at = node.up_at.min(self.now + 1);
         }
     }
@@ -413,11 +427,16 @@ impl World {
     /// Replica `index` crashes: of its writes waiting, some reached the
     /// disk; its frames waiting and ticks are lost, and it stays down a
     /// while. Its driver and database are lost with it, which the drivers'
-    /// side lets go.
+    /// side lets go. A member's journal may be lost, while no other
+    /// replica is recovering and no reconfiguration is pending, which
+    /// would make two recovering at once; one that left the group keeps
+    /// its, as nothing would answer its recovery.
     pub fn crash(&mut self, index: usize) {
         let down = self.rng.between(1, self.plan.faults.down_moments);
         let calm = self.calm();
-        let lose = self.rng.chance(self.plan.faults.lose_journal) && !self.nodes.iter().any(|n| n.journal_lost);
+        let member = self.epochs.members().contains(&self.nodes[index].id);
+        let whole = !self.recovering_any() && !self.epochs.pending_any();
+        let lose = self.rng.chance(self.plan.faults.lose_journal) && member && whole;
         let node = &mut self.nodes[index];
         {
             let mut disk = node.disk.lock().unwrap();
@@ -437,25 +456,34 @@ impl World {
         node.lives += 1;
         node.up_at = if calm { self.now + 1 } else { self.now + down };
         self.report.crashes += 1;
+        let id = node.id;
+        self.note(id, if lose { "crashed, its journal lost" } else { "crashed" });
     }
 
     /// Replica `index` made again: what its journal holds, and the parts
-    /// its driver is made of.
+    /// its driver is made of, its link linking its node's setting of the
+    /// members.
     pub fn start(&mut self, index: usize) -> Started {
+        let setting = self.setting(index);
         let node = &mut self.nodes[index];
         node.up = true;
+        let _ = node.link.reconfigure(&super::super::group::configuration(&setting));
         let recovered = {
             let mut disk = node.disk.lock().unwrap();
             disk.failed = false;
             disk.journal.recovered()
         };
-        Started {
-            recovered,
-            disk: Arc::clone(&node.disk),
-            link: Arc::clone(&node.link),
-            inbox: Arc::clone(&node.inbox),
-            ticks: Arc::clone(&node.ticks),
+        let (disk, link, inbox, ticks) = (Arc::clone(&node.disk), Arc::clone(&node.link), Arc::clone(&node.inbox), Arc::clone(&node.ticks));
+        if recovered.state.is_none() {
+            // Recovering, as a new member or over a journal lost, until it
+            // enters a view: no journal is lost meanwhile.
+            node.journal_lost = true;
         }
+        let (id, held) = (node.id, (recovered.state.is_some(), recovered.first.0, recovered.records.len()));
+        let marks: Vec<String> = recovered.marks.iter().map(|(at, m)| format!("{} as epoch {}", at.0, m.epoch)).collect();
+        self.note(id, &format!("started, its journal holding state {}, {} records after {}, marked {marks:?}", held.0, held.2, held.1));
+        let new_group = self.now == 0;
+        Started { new_group, recovered, disk, link, inbox, ticks }
     }
 
     /// The frames the replicas sent, put into the network.
@@ -477,23 +505,13 @@ impl World {
     /// # Errors
     ///
     /// The first violation found.
-    pub fn finish(&mut self) -> std::result::Result<Report, Violation> {
+    pub fn finish(&mut self) -> Result<Report, Violation> {
         self.check()?;
         self.checker.check_outcomes().map_err(|why| self.fail(&why))?;
-        self.report.view = self.checker.last_view();
+        self.report.view = self.checker.last_served().1;
         self.report.outcomes = self.checker.outcomes();
         Ok(self.report)
     }
-}
-
-/// The watch of replica `id` in `world`.
-pub fn watch(world: &Arc<Mutex<World>>, id: ReplicaId) -> SimWatch {
-    SimWatch { id, world: Arc::clone(world) }
-}
-
-/// A journal handle on `disk`.
-pub fn journal(disk: Arc<Mutex<Disk>>) -> SimJournal {
-    SimJournal(disk)
 }
 
 /// `world`, locked.

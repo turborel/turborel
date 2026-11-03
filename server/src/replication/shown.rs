@@ -14,7 +14,7 @@ use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
 use turborel::value::Value;
-use turborel_replication::ReplicaId;
+use turborel_replication::{Member, ReplicaId};
 
 use crate::shown::{count, counted, counted_or_null, text};
 
@@ -30,11 +30,15 @@ struct Link {
     heard: Option<Instant>,
 }
 
-/// What a replica knows of its group: its members and links, and the view.
+/// What a replica knows of its group: its members and links, the epoch
+/// and the view.
 pub struct Links {
     me: ReplicaId,
-    members: Vec<(ReplicaId, String)>,
+    /// The members of the epoch, each at its address.
+    members: Mutex<Vec<(ReplicaId, String)>>,
     known: Mutex<BTreeMap<ReplicaId, Link>>,
+    /// The epoch this node is in.
+    epoch: Mutex<u64>,
     /// The view this node knows, and its primary.
     view: Mutex<Option<(u64, ReplicaId)>>,
 }
@@ -43,7 +47,18 @@ impl Links {
     /// The links of member `me` to `members`, each at its address.
     pub(super) fn new(me: ReplicaId, members: &BTreeMap<ReplicaId, String>) -> Links {
         let members = members.iter().map(|(&id, address)| (id, address.clone())).collect();
-        Links { me, members, known: Mutex::new(BTreeMap::new()), view: Mutex::new(None) }
+        Links { me, members: Mutex::new(members), known: Mutex::new(BTreeMap::new()), epoch: Mutex::new(0), view: Mutex::new(None) }
+    }
+
+    /// This node is in `epoch`, whose members are `configuration`.
+    pub(super) fn reconfigured(&self, epoch: u64, configuration: &[Member]) {
+        *self.members.lock().unwrap_or_else(PoisonError::into_inner) = configuration.iter().map(|m| (m.id, m.address.clone())).collect();
+        *self.epoch.lock().unwrap_or_else(PoisonError::into_inner) = epoch;
+    }
+
+    /// The members of the epoch, each at its address.
+    pub fn members(&self) -> Vec<(ReplicaId, String)> {
+        self.members.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// The link to `member` is up, or down.
@@ -81,6 +96,7 @@ impl SystemTable for Replicas {
             text("ADDRESS", ADDRESS_LENGTH, true),
             text("IS_SELF", 3, true),
             text("ROLE", 7, true),
+            counted("EPOCH"),
             counted_or_null("VIEW_NUMBER"),
             text("IS_CONNECTED", 3, true),
             counted_or_null("LAST_HEARD_MS"),
@@ -95,7 +111,9 @@ impl SystemTable for Replicas {
         let shown = |s: &str| Value::Char(s.to_owned());
         let links = self.0.known.lock().unwrap_or_else(PoisonError::into_inner).clone();
         let view = self.0.view();
-        let rows = self.0.members.iter().map(|(member, address)| {
+        let epoch = *self.0.epoch.lock().unwrap_or_else(PoisonError::into_inner);
+        let members = self.0.members();
+        let rows = members.iter().map(|(member, address)| {
             let link = links.get(member).copied().unwrap_or_default();
             let me = *member == self.0.me;
             let role = match view {
@@ -108,6 +126,7 @@ impl SystemTable for Replicas {
                 shown(address),
                 yes(me),
                 shown(role),
+                count(epoch),
                 view.map_or(Value::Null, |(v, _)| count(v)),
                 yes(me || link.up),
                 link.heard.map_or(Value::Null, |at| count(u64::try_from(at.elapsed().as_millis()).unwrap_or(u64::MAX))),

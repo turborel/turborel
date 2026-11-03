@@ -57,7 +57,7 @@ fn number(value: Option<&String>) -> Result<u64, String> {
 /// seed.
 fn sweep(name: &str, plan: &Plan, asked: &Asked) -> Vec<String> {
     let make = vr_make();
-    let (mut failures, mut committed, mut transfers, mut lost) = (Vec::new(), 0_u64, 0_u64, 0_u64);
+    let (mut failures, mut committed, mut transfers, mut lost, mut epochs) = (Vec::new(), 0_u64, 0_u64, 0_u64, 0_u64);
     for seed in asked.from..asked.from.saturating_add(asked.seeds) {
         let report =
             if asked.databases { simulate_databases(seed, plan, &make).map(|r| r.replication) } else { simulate(seed, plan, &make) };
@@ -66,13 +66,14 @@ fn sweep(name: &str, plan: &Plan, asked: &Asked) -> Vec<String> {
                 committed = committed.saturating_add(u64::try_from(report.committed).unwrap_or(u64::MAX));
                 transfers = transfers.saturating_add(report.transfers);
                 lost = lost.saturating_add(report.journals_lost);
+                epochs = epochs.saturating_add(report.epochs);
             }
             Err(why) => failures.push(why),
         }
     }
     let with = if asked.databases { "real databases" } else { "modelled databases" };
     println!(
-        "{name}: {} seeds from {}, {with}: {committed} records committed, {transfers} state transfers, {lost} journals lost, {} failed",
+        "{name}: {} seeds from {}, {with}: {committed} records committed, {transfers} state transfers, {lost} journals lost, {epochs} reconfigurations, {} failed",
         asked.seeds,
         asked.from,
         failures.len()

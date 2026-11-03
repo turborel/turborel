@@ -186,6 +186,7 @@ impl Analysis {
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }
+            | Change::Reconfiguration { .. }
             | Change::Checkpoint
             | Change::Stale { .. } => {}
         }
@@ -315,7 +316,8 @@ impl Database {
             | Change::AlterIndex { .. }
             | Change::Setting { .. }
             | Change::User { .. }
-            | Change::Owner { .. }) => {
+            | Change::Owner { .. }
+            | Change::Reconfiguration { .. }) => {
                 self.definition_at((lsn, tx), definition, replaying, report)?;
                 None
             }
@@ -410,6 +412,8 @@ impl Database {
                 Change::Setting { name, value } => st.settings.set(name, value.as_ref())?,
                 Change::User { name, verifier } => st.users.replay_user(name, verifier.clone()),
                 Change::Owner { name } => st.users.replay_owner(name),
+                // The group's, not the database's: the replica knows it.
+                Change::Reconfiguration { .. } => {}
                 Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. } => st.apply_change(change, None)?.discard(),
                 Change::Insert { .. }
                 | Change::Update { .. }

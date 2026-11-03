@@ -34,4 +34,11 @@ pub enum UserStatement {
         /// The `<authorization identifier>`, and where it begins.
         name: (String, usize),
     },
+    /// `<alter database statement>` ::= ALTER DATABASE REPLICATION MEMBERS
+    /// `<character string literal>`: the group of replicas reconfigured
+    /// to the members the literal names (RULES.md D57).
+    Members {
+        /// The literal's value, and where it begins.
+        members: (String, usize),
+    },
 }

@@ -318,8 +318,11 @@ impl Fetch {
     /// under it, and its pieces must be of one.
     fn restart(&mut self) -> Result<()> {
         self.open = None;
+        // Those staged so far: a file the fetch had not begun has none.
         for staged in self.files.drain(..) {
-            self.fs.remove(&staged.path)?;
+            if self.fs.exists(&staged.path)? {
+                self.fs.remove(&staged.path)?;
+            }
         }
         self.export = None;
         self.image = None;

@@ -1,7 +1,8 @@
 //! The program as a node of a replica group (RULES.md D57): three
 //! `turboreld`s on one machine, each its database's replica, linked over
-//! TCP with mutual TLS; the first serves, the others hold what it
-//! commits; `--owner` makes the owner once a node serves; stopped, a
+//! TCP with mutual TLS, each told the group is new by `--owner`; the
+//! first serves, the others hold what it commits; `--owner` makes the
+//! owner once a node serves; stopped, a
 //! backup takes over; run again, the first follows; its diagnostics tell
 //! its replica's life; a command on a replicated database's directory is
 //! refused.
@@ -87,8 +88,9 @@ fn rows_at(running: &Running, user: &str, sql: &str) -> Vec<String> {
 }
 
 /// Verifies: [EXTENSION] RULES.md D57: three programs, each a member,
-/// link over mutual TLS; the first serves, and `--owner` makes the owner
-/// once it does; the rows it commits are read at the backups, which
+/// each given `--owner` as the group is new, link over mutual TLS; the
+/// first serves, and `--owner` makes the owner once it does, once only;
+/// the rows it commits are read at the backups, which
 /// refuse writes; the owner sees INFORMATION_SCHEMA.REPLICAS; stopped, a
 /// backup serves the next view; run again, the first holds every row;
 /// the diagnostics log tells the replica's life; `user list` on a
@@ -101,10 +103,13 @@ fn programs_replicate_a_database() {
     let ports: Vec<u16> = held.iter().map(|l| l.local_addr().unwrap().port()).collect();
     drop(held);
     let lines: Vec<Vec<String>> = (1..=3).map(|me| line(&scratch, (me, &ports), &pki)).collect();
-    let mut first = served(&lines[0]);
-    first.owner = Some(turboreld::Owner { name: "OWNER".into(), password: Some("secret".into()) });
-    let mut nodes: Vec<Running> = vec![running(first)];
-    nodes.extend(lines[1..].iter().map(|l| running(served(l))));
+    // A new group: each node is told so by `--owner`.
+    let with_owner = |l: &Vec<String>| {
+        let mut config = served(l);
+        config.owner = Some(turboreld::Owner { name: "OWNER".into(), password: Some("secret".into()) });
+        running(config)
+    };
+    let mut nodes: Vec<Running> = lines.iter().map(with_owner).collect();
     assert!(done_at(&nodes[0], "CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER NOT NULL UNIQUE)"), "the first serves");
     assert!(done_at(&nodes[0], "INSERT INTO T VALUES (1), (2)"));
     assert!(done_at(&nodes[0], "COMMIT WORK"));

@@ -13,7 +13,7 @@ use turborel::db::{Database, OpenOptions};
 use turborel::disk::io::{FileSystem, OsFileSystem};
 use turborel::error::Code;
 use turborel::value::{Decimal, Value};
-use turborel_replication::ReplicaId;
+use turborel_replication::{ReplicaId, Transport};
 use turborel_server::replication::{self, Replication};
 use turborel_server::settings::{self, MEMBERS, REPLICA, REPLICATION_CA, REPLICATION_TLS, TICK_MS};
 use turborel_test_support::database::rows;
@@ -52,8 +52,9 @@ struct Node {
 
 /// Member `me` of the group whose members are at `ports`, its database in
 /// `scratch` under its own name, secured by `pki` (or in the clear if
-/// none), started on `runtime`.
-fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runtime: &tokio::runtime::Runtime) -> Node {
+/// none), started on `runtime`; told the group is new, as `--owner`
+/// tells a node, if `new_group`.
+fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runtime: &tokio::runtime::Runtime, new_group: bool) -> Node {
     let db = Database::new();
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone())).unwrap();
@@ -74,7 +75,7 @@ fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runti
     // give its primary up for want of a heartbeat.
     db.set_setting(TICK_MS, &number(50)).unwrap();
     let dir = scratch.path(&format!("node{me}"));
-    let prepared = replication::prepare(&db, &dir).unwrap().unwrap();
+    let prepared = replication::prepare(&db, &dir, new_group).unwrap().unwrap();
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     let holds = db.open_following(&fs, &dir, &OpenOptions::default()).unwrap();
     let node = prepared.start(&db, runtime.handle(), holds).unwrap();
@@ -153,7 +154,7 @@ fn nodes_replicate_over_tcp_with_mutual_tls() {
     let pki = pki("replication-nodes-pki");
     let runtime = turborel_server::runtime::runtime(Some(2)).unwrap();
     let ports = ports(3);
-    let mut nodes: Vec<Node> = (1..=3).map(|me| start(&scratch, (me, &ports), Some(&pki), &runtime)).collect();
+    let mut nodes: Vec<Node> = (1..=3).map(|me| start(&scratch, (me, &ports), Some(&pki), &runtime, true)).collect();
     check_transport(&**primary(&nodes, "X").replica.transport(), ReplicaId(9));
     let first = on_primary(&nodes, |db| {
         if db.owner().map_err(|e| e.code)?.is_none() {
@@ -191,7 +192,7 @@ fn nodes_replicate_over_tcp_with_mutual_tls() {
         let s = serving.db.session("Y");
         s.run("INSERT INTO T VALUES (3)").is_ok() && s.commit().is_ok()
     }));
-    let again = start(&scratch, (u32::try_from(me).unwrap() + 1, &ports), Some(&pki), &runtime);
+    let again = start(&scratch, (u32::try_from(me).unwrap() + 1, &ports), Some(&pki), &runtime, false);
     let heard = "SELECT MEMBER, ROLE, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS FROM INFORMATION_SCHEMA.REPLICAS ORDER BY MEMBER";
     assert!(
         eventually(|| again.rows("SELECT K FROM T ORDER BY K") == Ok(vec!["1".into(), "2".into(), "3".into()])),
@@ -219,8 +220,8 @@ fn a_member_of_another_authority_is_refused() {
     let (pki, other) = (pki("replication-authority-pki"), pki("replication-authority-other"));
     let runtime = turborel_server::runtime::runtime(Some(2)).unwrap();
     let secured_ports = ports(2);
-    let first = start(&scratch, (1, &secured_ports), Some(&pki), &runtime);
-    let stranger = start(&scratch, (2, &secured_ports), Some(&other), &runtime);
+    let first = start(&scratch, (1, &secured_ports), Some(&pki), &runtime, true);
+    let stranger = start(&scratch, (2, &secured_ports), Some(&other), &runtime, true);
     let told = |node: &Node, change: &str| node.kept.all().iter().any(|e| e.contains(change) && e.contains("TLS"));
     assert!(eventually(|| told(&first, "Disconnected") && told(&first, "ConnectionRefused")), "{:?}", first.kept.all());
     assert!(eventually(|| told(&stranger, "Disconnected") && told(&stranger, "ConnectionRefused")), "{:?}", stranger.kept.all());
@@ -230,12 +231,94 @@ fn a_member_of_another_authority_is_refused() {
 
     let plain = Scratch::new("replication-plain");
     let plain_ports = ports(2);
-    let nodes: Vec<Node> = (1..=2).map(|me| start(&plain, (me, &plain_ports), None, &runtime)).collect();
+    let nodes: Vec<Node> = (1..=2).map(|me| start(&plain, (me, &plain_ports), None, &runtime, true)).collect();
     let serving = primary(&nodes, "X");
     serving.db.create_user("OWNER", b"x").unwrap();
     serving.db.set_owner("OWNER").unwrap();
     let shown = "SELECT MEMBER, IS_CONNECTED FROM INFORMATION_SCHEMA.REPLICAS ORDER BY MEMBER";
     assert!(eventually(|| rows(&serving.db.session("OWNER"), shown) == Ok(vec!["1,YES".into(), "2,YES".into()])));
+    for node in nodes {
+        node.stop();
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D57 [VRR §7]: a group of three nodes in
+/// the clear reconfigured by the owner on the primary, ALTER DATABASE
+/// REPLICATION MEMBERS, to four: the statement returns once the group
+/// commits it, told `epoch_entered`; a fourth node started with settings
+/// naming the four joins by recovery, holds every row, and REPLICAS on
+/// every node shows the four members in epoch 1; reconfigured to three
+/// again without the second node, that node is told `removed`, its
+/// database serving nothing (SQLCODE -917, a read too), REPLICAS shows
+/// epoch 2 and three members, and a row committed after reaches the
+/// fourth node; a member list malformed is refused (-103), and a backup
+/// refuses the statement (-917).
+#[test]
+fn nodes_are_added_and_removed_by_reconfiguration() {
+    let scratch = Scratch::new("replication-reconfigure");
+    let runtime = turborel_server::runtime::runtime(Some(2)).unwrap();
+    let ports = ports(4);
+    let members =
+        |which: &[usize]| -> String { which.iter().map(|&i| format!("{}=localhost:{}", i + 1, ports[i])).collect::<Vec<_>>().join(",") };
+    let mut nodes: Vec<Node> = (1..=3).map(|me| start(&scratch, (me, &ports[..3]), None, &runtime, true)).collect();
+    let first = primary(&nodes, "X");
+    first.db.create_user("OWNER", b"x").unwrap();
+    first.db.set_owner("OWNER").unwrap();
+    first.db.schema("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").unwrap();
+    let s = first.db.session("Y");
+    s.run("INSERT INTO T VALUES (1), (2)").unwrap();
+    s.commit().unwrap();
+    drop(s);
+    let owner = first.db.session("OWNER");
+    assert_eq!(owner.run("ALTER DATABASE REPLICATION MEMBERS '1=localhost'").err().map(|e| e.code), Some(Code::SyntaxRule), "malformed");
+    let backup = nodes.iter().position(|n| !n.serves()).unwrap();
+    let refused = nodes[backup].db.session("OWNER").run(&format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&[0, 1, 2, 3])));
+    assert_eq!(refused.err().map(|e| e.code), Some(Code::TransactionState), "a backup takes no change");
+    owner.run(&format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&[0, 1, 2, 3]))).unwrap();
+    assert!(eventually(|| first.kept.all().iter().any(|e| e.contains("EpochEntered { epoch: 1"))), "{:?}", first.kept.all());
+    drop(owner);
+    let fourth = start(&scratch, (4, &ports), None, &runtime, false);
+    assert!(eventually(|| fourth.rows("SELECT K FROM T ORDER BY K") == Ok(vec!["1".into(), "2".into()])), "{:?}", fourth.kept.all());
+    nodes.push(fourth);
+    let shown = "SELECT MEMBER, EPOCH FROM INFORMATION_SCHEMA.REPLICAS ORDER BY MEMBER";
+    let four: Vec<String> = (1..=4).map(|m| format!("{m},1")).collect();
+    for node in &nodes {
+        let why = || node.db.session("OWNER").open_cursor(shown).err().map(|e| e.to_string());
+        assert!(
+            eventually(|| rows(&node.db.session("OWNER"), shown) == Ok(four.clone())),
+            "{:?} {:?}",
+            rows(&node.db.session("OWNER"), shown),
+            why()
+        );
+    }
+
+    let kept: Vec<usize> = (0..4).filter(|&i| i != 1).collect();
+    let serving = nodes.iter().find(|n| n.serves()).expect("a primary of epoch 1");
+    eprintln!(
+        "SERVING me={:?} members={:?} events={:?}",
+        serving.replica.transport().me(),
+        serving.replica.transport().members(),
+        serving.kept.all()
+    );
+    serving.db.session("OWNER").run(&format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&kept))).unwrap();
+    let second = nodes.iter().find(|n| n.replica.transport().me() == ReplicaId(2)).unwrap();
+    assert!(eventually(|| second.kept.all().iter().any(|e| e.contains("Removed"))), "{:?}", second.kept.all());
+    assert_eq!(second.rows("SELECT K FROM T").err(), Some(Code::TransactionState), "retired: not even a read");
+    let three: Vec<String> = [1, 3, 4].iter().map(|m| format!("{m},2")).collect();
+    for node in nodes.iter().filter(|n| n.replica.transport().me() != ReplicaId(2)) {
+        assert!(eventually(|| rows(&node.db.session("OWNER"), shown) == Ok(three.clone())), "{:?}", rows(&node.db.session("OWNER"), shown));
+    }
+    on_primary(&nodes, |db| {
+        let s = db.session("Y");
+        s.run("INSERT INTO T VALUES (3)").map_err(|e| e.code)?;
+        s.commit().map_err(|e| e.code)
+    });
+    let fourth = nodes.iter().find(|n| n.replica.transport().me() == ReplicaId(4)).unwrap();
+    assert!(
+        eventually(|| fourth.rows("SELECT K FROM T ORDER BY K") == Ok(vec!["1".into(), "2".into(), "3".into()])),
+        "{:?}",
+        fourth.kept.all()
+    );
     for node in nodes {
         node.stop();
     }

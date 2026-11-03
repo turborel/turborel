@@ -30,9 +30,32 @@ const PIECE: usize = 1 << 20;
 
 /// Writes the export `source`'s files into `dir` of `fs`, where its
 /// manifest says, each synced.
+/// Removes the files of `dir` that hold the database's state, the
+/// export's replacing them: the data file and its side files, the
+/// plug-ins' and the catalog's; the log's and the lock stay.
+///
+/// # Errors
+///
+/// SQLCODE -915 if a file cannot be removed.
+pub(in crate::db) fn clear_state_files(fs: &dyn FileSystem, dir: &Path) -> Result<()> {
+    for path in walk(fs, dir)? {
+        let within = path.strip_prefix(dir).unwrap_or(&path);
+        let replaced = matches!(FileKind::of(within), FileKind::Data | FileKind::Shadow | FileKind::Plugin | FileKind::Catalog);
+        if replaced && within != Path::new(LOCK) {
+            fs.remove(&path)?;
+        }
+    }
+    Ok(())
+}
+
 fn write_files(fs: &dyn FileSystem, dir: &Path, source: &mut dyn StateSource) -> Result<()> {
     let mut piece = vec![0; PIECE];
     for (index, file) in source.files().to_vec().iter().enumerate() {
+        // The records the export carries are the log's: the replica's
+        // driver holds them in its log before the export is installed.
+        if FileKind::of(&file.within) == FileKind::Log {
+            continue;
+        }
         let target = dir.join(&file.within);
         if let Some(parent) = target.parent() {
             fs.create_dir_all(parent)?;
@@ -61,6 +84,7 @@ impl Database {
         if current.tx.held().is_none() {
             return Err(api("[DESIGN] RULES.md D57: a database serving is deposed before it takes an export"));
         }
+        let retired = current.tx.held() == Some(crate::txn::Held::Retired);
         {
             // No checkpoint nor maintenance of the service ending meanwhile.
             let _checkpoint = files.checkpointer.taking.take("a checkpoint")?;
@@ -69,19 +93,16 @@ impl Database {
             let fresh = State {
                 generation: current.generation.saturating_add(1),
                 tx: Arc::new(Transactions::default()),
+                // The system tables registered since it was first opened
+                // (a replica's REPLICAS) are the handle's, kept.
+                system: current.system.clone(),
                 ..(*opening.state).clone()
             };
             drop(current);
             self.restart_service(fresh)?;
         }
         let (fs, dir) = (&opening.fs, opening.dir.as_path());
-        for path in walk(&**fs, dir)? {
-            let within = path.strip_prefix(dir).unwrap_or(&path);
-            let replaced = matches!(FileKind::of(within), FileKind::Data | FileKind::Shadow | FileKind::Plugin | FileKind::Catalog);
-            if replaced && within != Path::new(LOCK) {
-                fs.remove(&path)?;
-            }
-        }
+        clear_state_files(&**fs, dir)?;
         write_files(&**fs, dir, &mut *source)?;
         let formats = opening.state.layout(&opening.state.settings)?.formats;
         let catalog = self.catalog_storage().create(&StorePlace::new(fs, dir, &formats))?;
@@ -89,6 +110,7 @@ impl Database {
         drop(catalog);
         fs.sync_dir(dir)?;
         self.open_managed(fs, dir, &opening.options, Mode::Follow)?;
+        self.stay_retired(retired)?;
         self.holds_through()
     }
 }

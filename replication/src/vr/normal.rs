@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 
 use super::frame::{Commit, Message, Prepare, PrepareOk};
 use super::{Status, Vr};
-use crate::{Lsn, Output, ReplicaEvent, Role};
+use crate::{Configuration, Lsn, Mark, Output, ReplicaEvent, Role};
 
 impl Vr {
     /// [VRR §4.1 step 3]: "The primary advances op-number, adds the request
@@ -15,16 +15,33 @@ impl Vr {
     /// to the other replicas". The record is also written to the primary's
     /// journal; it counts toward a quorum once durable.
     pub(super) fn append(&mut self, record: Vec<u8>, out: &mut Vec<Output>) {
-        if !self.lead.serving {
+        if !self.lead.serving || self.reconfiguring() {
             out.push(Output::Event(ReplicaEvent::AppendRefused));
             return;
         }
+        self.append_marked(record, None, out);
+    }
+
+    /// Appends `record`, marked a reconfiguration to `configuration`,
+    /// beginning the next epoch, if one is given (`vr/reconfigure.rs`):
+    /// the PREPARE carries the mark.
+    pub(super) fn append_marked(&mut self, record: Vec<u8>, configuration: Option<Configuration>, out: &mut Vec<Output>) {
         self.log.push(record.clone());
         let op = self.op();
         out.push(Output::Assigned(Lsn(op)));
+        let mark = configuration.map(|configuration| Mark { epoch: self.epoch.saturating_add(1), configuration });
+        // \[DESIGN\] The mark is written before its record: a journal keeps
+        // a prefix of its writes through a crash, and the record is
+        // acknowledged once durable, so a mark written after it could be
+        // lost with the record kept, and the record's reconfiguration
+        // forgotten; a mark kept without its record is void.
+        if let Some(mark) = &mark {
+            self.log.set_mark(op, mark.clone());
+            out.push(Output::Mark { at: Lsn(op), mark: mark.clone() });
+        }
         self.persist(op, record.clone(), out);
         self.own.insert(op, record.clone());
-        let prepare = Message::Prepare(Prepare { view: self.view, record, op, commit: self.commit });
+        let prepare = Message::Prepare(Prepare { view: self.view, record, op, commit: self.commit, mark });
         self.broadcast(&prepare, out);
     }
 
@@ -47,6 +64,10 @@ impl Vr {
             Ordering::Greater => self.get_state(self.op(), out),
             Ordering::Equal => {
                 self.log.push(m.record.clone());
+                if let Some(mark) = m.mark {
+                    self.log.set_mark(m.op, mark.clone());
+                    out.push(Output::Mark { at: Lsn(m.op), mark });
+                }
                 self.persist(m.op, m.record, out);
             }
             Ordering::Less => self.acknowledge(out),
@@ -79,9 +100,12 @@ impl Vr {
     /// that this operation and all earlier ones have prepared locally"
     /// [VRR §4.1 step 4].
     pub(super) fn acknowledge(&self, out: &mut Vec<Output>) {
+        if self.is_primary() {
+            return;
+        }
         let op = self.durable.min(self.op());
         let ok = Message::PrepareOk(PrepareOk { view: self.view, op, replica: self.me });
-        Vr::send(self.primary_of(self.view), &ok, out);
+        self.send(self.primary_of(self.view), &ok, out);
     }
 
     /// [VRR §4.1 step 5]: "The primary waits for f PREPAREOK messages from
@@ -136,6 +160,13 @@ impl Vr {
     pub(super) fn on_commit(&mut self, m: Commit, out: &mut Vec<Output>) {
         if self.in_view(m.view, out) {
             self.learn_commit(m.commit, out);
+            // Holding records durably past the commit-number, the backup
+            // acknowledges them again: the primary of a new view, or one
+            // whose window the backup's acknowledgement is before, waits
+            // on it (`heartbeat`).
+            if self.durable > self.commit && self.status == Status::Normal {
+                self.acknowledge(out);
+            }
         }
     }
 
@@ -156,13 +187,16 @@ impl Vr {
             out.push(Output::Outcome { at: Lsn(at), kept: Some(kept) });
         }
         self.deliver(out);
+        self.check_epoch(out);
     }
 
     /// The records committed and durable here delivered to the database,
     /// but to a serving primary's, which wrote them, and to a new primary's
     /// only through the log it took over.
     pub(super) fn deliver(&mut self, out: &mut Vec<Output>) {
-        if self.lead.serving {
+        // A database behind the window cannot be given the records it
+        // lacks: it takes a state transfer first (`opened`).
+        if self.lead.serving || self.applied < self.log.first() {
             return;
         }
         let mut through = self.commit.min(self.durable);
@@ -218,6 +252,12 @@ impl Vr {
             }
             return;
         }
+        if matches!(self.status, Status::Leaving | Status::Removed) {
+            if beat && self.status == Status::Leaving {
+                self.ask_started(out);
+            }
+            return;
+        }
         let leading = self.status == Status::Normal && self.is_primary();
         if leading {
             if beat {
@@ -227,6 +267,17 @@ impl Vr {
         }
         self.timers.heard = self.timers.heard.saturating_add(1);
         if self.timers.heard >= self.options.view_timeout_ticks {
+            // \[DESIGN\] A replica behind its epoch, its log not reaching the
+            // mark the epoch began at, starts no view change, nor takes
+            // part in one (`view_change.rs`, `notice`): it asks every other
+            // member for the state, as any normal in the view answers [VRR
+            // §5.2], and learns a later view from them.
+            if self.behind_epoch() {
+                self.timers.heard = 0;
+                self.asked = None;
+                self.source = None;
+                return self.get_state_from_all(self.commit, out);
+            }
             return self.start_view_change(self.view.saturating_add(1), out);
         }
         if beat {
@@ -237,7 +288,7 @@ impl Vr {
     /// What a replica waiting on others sends again at a heartbeat.
     fn send_again(&mut self, out: &mut Vec<Output>) {
         match self.status {
-            Status::Normal | Status::Recovering => {}
+            Status::Normal | Status::Recovering | Status::Leaving | Status::Removed => {}
             Status::ViewChange => {
                 if self.change.open {
                     self.send_view_change(out);
@@ -251,29 +302,34 @@ impl Vr {
     /// has them all, ⟨COMMIT v, k⟩ [VRR §4.1 step 6].
     fn heartbeat(&self, out: &mut Vec<Output>) {
         for backup in self.others() {
-            let acked = self.lead.acked.get(&backup).copied().unwrap_or(0);
+            // A backup heard nothing from holds the log the view began
+            // with, as STARTVIEW gave it: the records after are sent
+            // again, as a PREPARE lost is never sent otherwise.
+            let acked = self.lead.acked.get(&backup).copied().unwrap_or(self.lead.inherited);
             // Behind what is retained, a backup learns the commit-number and
             // asks for the state (`transfer.rs`).
             if acked >= self.op() || acked < self.log.first() {
-                Vr::send(backup, &Message::Commit(Commit { view: self.view, commit: self.commit }), out);
+                self.send(backup, &Message::Commit(Commit { view: self.view, commit: self.commit }), out);
                 continue;
             }
             let last = acked.saturating_add(self.options.resend_records).min(self.op());
             for op in acked.saturating_add(1)..=last {
                 if let Some(record) = self.record(op) {
-                    let prepare = Prepare { view: self.view, record: record.clone(), op, commit: self.commit };
-                    Vr::send(backup, &Message::Prepare(prepare), out);
+                    let prepare =
+                        Prepare { view: self.view, record: record.clone(), op, commit: self.commit, mark: self.log.mark(op).cloned() };
+                    self.send(backup, &Message::Prepare(prepare), out);
                 }
             }
         }
     }
 
     /// The primary of a view begins to serve, its database to append, once
-    /// the log it took over is committed and delivered.
+    /// the log it took over is committed and delivered; not again in an
+    /// epoch it reconfigured out of (`vr/reconfigure.rs`).
     pub(super) fn serve(&mut self, out: &mut Vec<Output>) {
         let inherited = self.lead.inherited;
-        let ready = self.commit >= inherited && self.delivered >= inherited;
-        if self.status == Status::Normal && self.is_primary() && !self.lead.serving && ready {
+        let ready = self.commit >= inherited && self.applied >= inherited && !self.reopening;
+        if self.status == Status::Normal && self.is_primary() && !self.lead.serving && ready && !self.reconfiguring() {
             self.lead.serving = true;
             out.push(Output::Role(Role::Primary { view: self.view }));
         }
@@ -286,6 +342,9 @@ impl Vr {
     pub(super) fn depose(&mut self, out: &mut Vec<Output>) {
         if self.lead.serving {
             self.lead.serving = false;
+            // Not served again until the database, opened again, tells
+            // where it holds the log: what it held before is forgotten.
+            self.reopening = true;
             out.push(Output::Role(Role::Backup));
             self.in_doubt.append(&mut self.own);
         }
@@ -304,13 +363,62 @@ impl Vr {
     pub(super) fn opened(&mut self, at: u64, out: &mut Vec<Output>) {
         self.delivered = at;
         self.applied = at;
+        self.reopening = false;
         if self.status == Status::Recovering {
-            return self.begin_recovery(at, out);
+            return self.begin_recovery(out);
         }
+        if at > self.op() {
+            // \[DESIGN\] The database holds more than the log: a state
+            // transfer it took whose journal writes a crash lost. What
+            // it holds is committed, so the log is let go through it, and
+            // the log after it fetched (RULES.md D57).
+            self.log.retain_after(at);
+            out.push(Output::Retain { through: Lsn(at) });
+            self.commit = at;
+            self.durable = at;
+            self.unwritten = true;
+            if self.status == Status::Normal {
+                self.status = Status::Transfer;
+                self.source = None;
+            }
+        }
+        // What the database holds is committed: known so here, as the
+        // journal tells only what was let go.
+        self.commit = self.commit.max(at.min(self.op()));
         if self.unwritten {
             self.persist_state(out);
         }
+        out.push(Output::Epoch { epoch: self.epoch, configuration: self.configuration.clone() });
+        if self.status == Status::Removed {
+            // Removed before, as its state says: its database, opened again,
+            // is retired again.
+            out.push(Output::Retire);
+            out.push(Output::Event(ReplicaEvent::Removed));
+            return;
+        }
         out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.primary_of(self.view) }));
+        if at < self.log.first() {
+            // \[DESIGN\] The database holds less than the window begins at:
+            // the journal was retained past it, by a state transfer whose
+            // import a crash lost, or a checkpoint whose files it lost, so
+            // the records between are gone from here; it fetches the state
+            // of the primary of its view, or of another member if that is
+            // this replica, before it takes part (RULES.md D57).
+            let primary = self.primary_of(self.view);
+            let from = if primary == self.me { self.others().into_iter().next() } else { Some(primary) };
+            if let Some(from) = from {
+                return self.fetch_state_from(from, out);
+            }
+        }
+        if self.status == Status::Transfer {
+            self.get_state(self.commit, out);
+        }
         self.deliver(out);
+        if self.status == Status::ViewChange && self.is_primary() && self.normal_view == self.view {
+            // The primary of its view, made again from its journal: it
+            // waits for the next view, which it starts at once, never
+            // completing its own again (RULES.md D57).
+            self.start_view_change(self.view.saturating_add(1), out);
+        }
     }
 }

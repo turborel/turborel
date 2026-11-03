@@ -123,7 +123,8 @@ impl State {
             | Change::AlterIndex { .. }
             | Change::Setting { .. }
             | Change::User { .. }
-            | Change::Owner { .. } => Err(api(format!("[DESIGN] {change:?} is not a change a transaction makes"))),
+            | Change::Owner { .. }
+            | Change::Reconfiguration { .. } => Err(api(format!("[DESIGN] {change:?} is not a change a transaction makes"))),
         }
     }
 }
@@ -158,7 +159,8 @@ impl State {
                 | Change::Drop { .. }
                 | Change::Setting { .. }
                 | Change::User { .. }
-                | Change::Owner { .. } => Vec::new(),
+                | Change::Owner { .. }
+                | Change::Reconfiguration { .. } => Vec::new(),
             };
             for table in renewed {
                 self.lock_of(&table)?.replaced(self.generation_of(&table), at);

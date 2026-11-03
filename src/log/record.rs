@@ -59,11 +59,11 @@ pub const RECORD_VERSION: u8 = 1;
 
 mod kinds;
 
-pub use kinds::KINDS;
 use kinds::{
-    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, SCHEMA, SETTING,
-    STALE, STATEMENT_UNDONE, UPDATE, USER,
+    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, OWNER, RECONFIGURATION,
+    SCHEMA, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
 };
+pub use kinds::{KINDS, REPLICATED};
 
 /// The tags of the kinds of object a drop record names.
 const DROPPED_TABLE: u8 = 1;
@@ -266,6 +266,14 @@ pub enum Change {
         /// The owner's authorization identifier.
         name: String,
     },
+    /// \[EXTENSION\] The group of replicas keeping the database
+    /// reconfigured to `members`, as ALTER DATABASE REPLICATION MEMBERS
+    /// names them (RULES.md D57): the last record of its epoch, written
+    /// only through a replicated log, replayed as no change.
+    Reconfiguration {
+        /// The members, `number=host:port`, by commas.
+        members: String,
+    },
 }
 
 /// A log record: a change and the transaction that made it.
@@ -312,7 +320,7 @@ impl Record {
                 out.put_str(name);
                 put_options(&mut out, options);
             }
-            Change::DropIndex { name } | Change::Owner { name } => out.put_str(name),
+            Change::DropIndex { name } | Change::Owner { name } | Change::Reconfiguration { members: name } => out.put_str(name),
             Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
             Change::AlterTable { table, action, schema, zone } => {
                 put_table(&mut out, table);
@@ -382,6 +390,7 @@ impl Record {
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },
             USER => user(&mut r)?,
             OWNER => Change::Owner { name: r.str()? },
+            RECONFIGURATION => Change::Reconfiguration { members: r.str()? },
             other => return Err(r.corrupt(&format!("no kind of record has tag {other}"))),
         };
         r.finish()?;

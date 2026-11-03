@@ -381,7 +381,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
         presented.iter().try_for_each(set)?;
     }
     let node = match &config.store {
-        Store::Dir(dir) => opened(&db, dir, hearing.map(|(runtime, _)| runtime))?,
+        Store::Dir(dir) => opened(&db, dir, hearing.map(|(runtime, _)| runtime), config.owner.is_some())?,
         Store::Memory => None,
     };
     let outcome = Server::new(db.clone()).map_err(|e| e.to_string()).and_then(|server| {

@@ -4,7 +4,7 @@
 use turborel_replication::vr::Status;
 use turborel_replication::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId, Role, Vr};
 
-use crate::common::{committed, ids, options, record, run, served, serving, settle_without, vr_group};
+use crate::common::{committed, config, options, record, run, served, serving, settle_without, vr_group};
 
 const ONE: ReplicaId = ReplicaId(1);
 const TWO: ReplicaId = ReplicaId(2);
@@ -204,21 +204,29 @@ fn a_group_of_one_serves_again_after_a_crash() {
 /// (SQLCODE -916); a state well formed restarts in its view.
 #[test]
 fn a_damaged_state_is_refused() {
+    // The state: its format, the epoch, the position it began at, the
+    // view, the normal view, the commit-number, then the configuration,
+    // empty here, then whether the replica was removed.
     let state = |format: u8, view: u64, normal: u64| {
         let mut bytes = vec![format];
-        bytes.extend_from_slice(&view.to_le_bytes());
-        bytes.extend_from_slice(&normal.to_le_bytes());
+        for number in [0_u64, 0_u64, view, normal, 0_u64] {
+            bytes.extend_from_slice(&number.to_le_bytes());
+        }
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.push(0);
         bytes
     };
     for bytes in [vec![1], state(2, 1, 1), state(1, 1, 2), [state(1, 1, 1), vec![0]].concat()] {
-        let recovered = Recovered { state: Some(bytes.clone()), first: Lsn(0), records: Vec::new() };
-        assert_eq!(Vr::restart(&ids(3), TWO, options(), recovered, 1).unwrap_err().sqlcode(), -916_i32, "{bytes:?}");
+        let recovered =
+            Recovered { state: Some(bytes.clone()), first: Lsn(0), records: Vec::new(), marks: std::collections::BTreeMap::new() };
+        assert_eq!(Vr::restart(&config(3), TWO, options(), recovered, 1).unwrap_err().sqlcode(), -916_i32, "{bytes:?}");
     }
-    let normal = Recovered { state: Some(state(1, 3, 3)), first: Lsn(0), records: vec![record("a")] };
-    let vr = Vr::restart(&ids(3), TWO, options(), normal, 1).unwrap();
+    let normal =
+        Recovered { state: Some(state(1, 3, 3)), first: Lsn(0), records: vec![record("a")], marks: std::collections::BTreeMap::new() };
+    let vr = Vr::restart(&config(3), TWO, options(), normal, 1).unwrap();
     assert_eq!((vr.standing().view, vr.standing().status, vr.standing().durable), (3, Status::Normal, Lsn(1)));
-    let changing = Recovered { state: Some(state(1, 5, 4)), first: Lsn(0), records: Vec::new() };
-    assert_eq!(Vr::restart(&ids(3), TWO, options(), changing, 1).unwrap().standing().status, Status::ViewChange);
+    let changing = Recovered { state: Some(state(1, 5, 4)), first: Lsn(0), records: Vec::new(), marks: std::collections::BTreeMap::new() };
+    assert_eq!(Vr::restart(&config(3), TWO, options(), changing, 1).unwrap().standing().status, Status::ViewChange);
 }
 
 /// Verifies: [DESIGN] RULES.md D57 [VRR §4.1] "If the sender is behind, the
@@ -227,7 +235,7 @@ fn a_damaged_state_is_refused() {
 #[test]
 fn messages_of_earlier_views_are_dropped() {
     let mut group = failed_over();
-    let mut vr = Vr::new(&ids(3), ONE, options()).unwrap();
+    let mut vr = Vr::new(&config(3), ONE, options()).unwrap();
     let mut out = Vec::new();
     vr.step(Input::Tick, &mut out);
     vr.step(Input::Append(record("z")), &mut out);
@@ -237,6 +245,7 @@ fn messages_of_earlier_views_are_dropped() {
         assert_eq!(group.step(THREE, Input::Received { from: ONE, frame }), Vec::new());
     }
     let mut start = vec![4];
+    start.extend_from_slice(&0u64.to_le_bytes());
     start.extend_from_slice(&0u64.to_le_bytes());
     start.extend_from_slice(&ONE.0.to_le_bytes());
     assert_eq!(group.step(THREE, Input::Received { from: ONE, frame: start }), Vec::new());

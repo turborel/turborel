@@ -25,7 +25,11 @@
 //!    from it to take back (`Change::Stale`); then gives the holds up;
 //! 4. logs and syncs a checkpoint record, so every record before L is
 //!    durable before the pages holding what they record are, and the
-//!    stale entries before the image naming them;
+//!    stale entries before the image naming them; the checkpoints' turn
+//!    let go for the sync and taken again after: on a replicated log the
+//!    sync waits for the group, which may wait on a backup fetching this
+//!    database's state, an export holding the turn (RULES.md D57), and
+//!    the files are as the last image left them until step 5;
 //! 5. commits the plug-ins' sealed batch, then has every engine make its
 //!    capture durable (`StorageEngine::checkpoint_finish`): the row store
 //!    commits the sealed batch, so after a crash its tables are as they
@@ -39,7 +43,8 @@
 //! A crash after step 5 and before step 6 leaves tables ahead of the last
 //! image: recovery from it redoes and undoes what they already hold, which
 //! changes nothing, as both are idempotent. Readers do not take the gate,
-//! and go on throughout; writers wait for steps 1 and 2 only. Checkpoints take turns. One is taken when asked
+//! and go on throughout; writers wait for steps 1 and 2 only. Checkpoints
+//! take turns, for their whole lives. One is taken when asked
 //! (`Database::checkpoint`), when the database is closed, and when one
 //! comes due: when a transaction ends after CHECKPOINT.AFTER_CHANGES row
 //! changes were logged since the last taken (a failed one leaves them
@@ -82,7 +87,7 @@ use crate::log::{Log, Lsn};
 use crate::settings::{CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES};
 use crate::storage::{Row, RowId, TableStorage, project};
 use crate::sync::{lock, lock_builtin};
-use crate::threads::Turn;
+use crate::threads::{Turn, Turned};
 use crate::txn::{NO_TRANSACTION, Persistence, TableLock, Timestamp};
 use crate::value::Value;
 
@@ -109,7 +114,8 @@ impl Database {
     /// `checkpoint`'s work.
     fn take_checkpoint(&self) -> Result<()> {
         let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files takes checkpoints"))?;
-        let _turn = files.checkpointer.taking.take("a checkpoint")?;
+        let _whole = files.checkpointer.whole.take("a checkpoint")?;
+        let turn = files.checkpointer.taking.take("a checkpoint")?;
         let current = self.snapshot()?;
         if matches!(current.tx.held(), Some(crate::txn::Held::Following)) {
             return self.take_following_checkpoint(&files);
@@ -132,7 +138,14 @@ impl Database {
         // pages were captured, logged before the record that syncs them.
         let logged = st.log_stale(&stale, image.through);
         drop(stale);
-        st.counted_if(logged.and_then(|()| st.complete_checkpoint(&files, image)), counted)?;
+        // The turn let go while the record is synced (step 4), then taken
+        // again to record the image.
+        let synced = logged.and_then(|()| st.sync_checkpoint_record(turn, &image));
+        let recorded = synced.and_then(|()| {
+            let _turn = files.checkpointer.taking.take("a checkpoint")?;
+            st.record_and_truncate(&files, image)
+        });
+        st.counted_if(recorded, counted)?;
         files.checkpointer.taken.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -294,6 +307,9 @@ pub(super) struct Checkpointer {
     /// export takes it too, so no checkpoint changes the files it lists
     /// (`db/export.rs`).
     pub(super) taking: Turn,
+    /// Taken for a checkpoint's whole life, so checkpoints take turns
+    /// while `taking` is let go for the sync.
+    whole: Turn,
     taken: AtomicU64,
     failure: Mutex<Option<SqlError>>,
     /// When checkpoints overdue were last told (`overdue.rs`).
@@ -339,7 +355,14 @@ impl State {
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
         }
-        let through = log.end();
+        // \[DESIGN\] Following, the log's records after those replayed may
+        // not be committed, a view change may yet replace them: the
+        // checkpoint holds every record through the last replayed, and no
+        // more (RULES.md D57).
+        let through = match self.tx.held() {
+            Some(crate::txn::Held::Following) => Lsn(lock_builtin(&self.tx.following).replayed.0.saturating_add(1)),
+            Some(crate::txn::Held::Deposed | crate::txn::Held::Retired) | None => log.end(),
+        };
         self.capture_engines(through)?;
         let counted = self.tx.logged.load(Ordering::Relaxed);
         let image = self.image_of(clean, (through, self.tx.oldest_logged().map_or(through, |first| first.min(through))));
@@ -451,16 +474,34 @@ impl State {
         Ok(())
     }
 
-    /// The rest, writers going on: the log made durable past L, before the
-    /// pages holding what it records are (a checkpoint record logged and
-    /// synced, unless a close did), every engine's capture made durable,
-    /// the image recorded with the tables' locators, the log truncated.
+    /// The rest of a close's checkpoint, writers going on: the log made
+    /// durable past L, before the pages holding what it records are (a
+    /// checkpoint record logged and synced, unless the close did), every
+    /// engine's capture made durable, the image recorded with the tables'
+    /// locators, the log truncated.
     fn complete_checkpoint(&self, files: &DatabaseFiles, image: Image) -> Result<()> {
-        let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         if !image.clean {
+            let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
         }
+        self.record_and_truncate(files, image)
+    }
+
+    /// Step 4: the checkpoint record logged, the checkpoints' `turn` let
+    /// go, and the log synced through the record, so every record before
+    /// L, and the stale entries, are durable before the image is recorded.
+    fn sync_checkpoint_record(&self, turn: Turned<'_>, image: &Image) -> Result<()> {
+        let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
+        let at = if image.clean { None } else { Some(log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?) };
+        drop(turn);
+        at.map_or(Ok(()), |at| self.tx.sync(&*log, at))
+    }
+
+    /// Steps 5 to 7, the turn held: every engine's capture made durable,
+    /// the image recorded with the tables' locators, the log truncated.
+    fn record_and_truncate(&self, files: &DatabaseFiles, image: Image) -> Result<()> {
+        let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         let image = self.record_image(files, image)?;
         let logged = self.storage.values().filter(|s| s.capabilities().persistence == Persistence::Logged);
         let needed = logged.map(|s| s.durable_through()).fold(image.start, Ord::min);

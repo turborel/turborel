@@ -5,21 +5,23 @@
 use std::sync::Mutex;
 
 use turborel::error::{Code, Result, SqlError};
-use turborel_replication::{ReplicaId, Transport};
+use turborel_replication::{Configuration, ReplicaId, Transport};
 
 use super::rng::Rng;
 
 /// A replica's end of the network: what it sends waits in its outbox
-/// until the simulator takes it into the network.
+/// until the simulator takes it into the network. It links the members
+/// of every configuration it was told, each kept once linked, as a
+/// replica that left is told the epoch started, and asks, after.
 pub struct Link {
-    members: Vec<ReplicaId>,
+    members: Mutex<Vec<ReplicaId>>,
     outbox: Mutex<Vec<(ReplicaId, Vec<u8>)>>,
 }
 
 impl Link {
     /// The link of a replica of a group of `members`.
     pub fn new(members: &[ReplicaId]) -> Link {
-        Link { members: members.to_vec(), outbox: Mutex::new(Vec::new()) }
+        Link { members: Mutex::new(members.to_vec()), outbox: Mutex::new(Vec::new()) }
     }
 
     /// The frames sent since last taken, in order.
@@ -30,15 +32,23 @@ impl Link {
 
 impl Transport for Link {
     fn send(&self, to: ReplicaId, frame: &[u8]) -> Result<()> {
-        if !self.members.contains(&to) {
+        if !self.members.lock().unwrap().contains(&to) {
             return Err(SqlError::new(Code::Api, format!("[EXTENSION] RULES.md D57: replica {} is no member of the group", to.0)));
         }
         self.outbox.lock().unwrap().push((to, frame.to_vec()));
         Ok(())
     }
 
-    fn members(&self) -> &[ReplicaId] {
-        &self.members
+    fn members(&self) -> Vec<ReplicaId> {
+        self.members.lock().unwrap().clone()
+    }
+
+    fn reconfigure(&self, configuration: &Configuration) -> Result<()> {
+        let mut members = self.members.lock().unwrap();
+        let new: Vec<ReplicaId> = configuration.iter().map(|m| m.id).filter(|id| !members.contains(id)).collect();
+        members.extend(new);
+        members.sort_unstable();
+        Ok(())
     }
 }
 

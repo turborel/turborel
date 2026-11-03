@@ -52,9 +52,9 @@ fn members_are_named_by_number_and_address() {
 /// it opens; with TLS OFF, it is prepared, its log storage the group's.
 #[test]
 fn a_node_is_refused_before_it_opens_if_its_settings_are_wrong() {
-    assert!(prepare(&configured(&[]), std::path::Path::new("/db")).unwrap().is_none(), "not replicated");
+    assert!(prepare(&configured(&[]), std::path::Path::new("/db"), false).unwrap().is_none(), "not replicated");
     let members = "1=localhost:7431,2=localhost:7432";
-    let refused = |given: &[(&str, &str)]| prepare(&configured(given), std::path::Path::new("/db")).err().map(|e| e.code);
+    let refused = |given: &[(&str, &str)]| prepare(&configured(given), std::path::Path::new("/db"), false).err().map(|e| e.code);
     assert_eq!(refused(&[(REPLICA, "3"), (MEMBERS, members), (REPLICATION_TLS, "OFF")]), Some(Code::Api), "no member");
     assert_eq!(refused(&[(REPLICA, "1"), (MEMBERS, "1=localhost"), (REPLICATION_TLS, "OFF")]), Some(Code::Api), "malformed");
     assert_eq!(refused(&[(REPLICA, "1"), (MEMBERS, members)]), Some(Code::Api), "TLS ON, no files");
@@ -67,7 +67,7 @@ fn a_node_is_refused_before_it_opens_if_its_settings_are_wrong() {
     ];
     assert_eq!(refused(&files), Some(Code::Io), "TLS ON, files missing");
     let db = configured(&[(REPLICA, "2"), (MEMBERS, members), (REPLICATION_TLS, "OFF")]);
-    let prepared = prepare(&db, std::path::Path::new("/db")).unwrap().unwrap();
+    let prepared = prepare(&db, std::path::Path::new("/db"), true).unwrap().unwrap();
     assert_eq!(prepared.transport.listen(), "localhost:7432");
     assert_eq!(Transport::members(&*prepared.transport), [ReplicaId(1), ReplicaId(2)]);
 }

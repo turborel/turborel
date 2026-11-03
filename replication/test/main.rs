@@ -23,6 +23,7 @@ mod driver;
 mod frames;
 mod log;
 mod normal;
+mod reconfigure;
 mod recovery;
 mod retention;
 mod simulation;

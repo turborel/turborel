@@ -60,6 +60,31 @@ pub use vr::{Vr, VrOptions};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ReplicaId(pub u32);
 
+/// \[EXTENSION\] A member of a group's configuration (RULES.md D57,
+/// reconfiguration): its number, and where its node takes frames, as
+/// REPLICATION.MEMBERS names it, `host:port`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Member {
+    /// Its number, never given to another node of the group.
+    pub id: ReplicaId,
+    /// Where its node takes the others' frames.
+    pub address: String,
+}
+
+/// \[EXTENSION\] A group's configuration: its members, by number [VRR §7].
+pub type Configuration = Vec<Member>;
+
+/// \[EXTENSION\] A reconfiguration marked on a record of the log, the
+/// last of its epoch: the epoch it begins, and that epoch's members [VRR
+/// §7].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    /// The epoch the reconfiguration begins.
+    pub epoch: u64,
+    /// Its members.
+    pub configuration: Configuration,
+}
+
 /// \[EXTENSION\] What a replica's database is to do, as consensus decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -99,6 +124,27 @@ pub enum ReplicaEvent {
     /// written: it recovers from the group before it takes part [VRR
     /// §4.3], and tells the view it then enters.
     Recovering,
+    /// \[EXTENSION\] The replica recovered: normal in `view`, with the log
+    /// of `from`, that view's primary, or its own, a new group's.
+    Recovered {
+        /// The view it is normal in.
+        view: u64,
+        /// Whose log it holds.
+        from: ReplicaId,
+    },
+    /// \[EXTENSION\] The replica entered `epoch`, whose members are
+    /// `configuration` [VRR §7]: as it opens, and at each reconfiguration
+    /// committed.
+    Reconfigured {
+        /// The epoch.
+        epoch: u64,
+        /// Its members.
+        configuration: Configuration,
+    },
+    /// \[EXTENSION\] The replica is no member of the epoch entered, and the
+    /// new members hold the state: it takes no further part, its database
+    /// retired [VRR §7].
+    Removed,
 }
 
 /// \[EXTENSION\] A number no earlier start of a replica had, from the

@@ -1,9 +1,11 @@
 //! \[EXTENSION\] The driver's part in a state transfer (RULES.md D57,
-//! `transfer.rs`): the exports it serves, one to each replica fetching,
-//! taken as the first request comes, numbered so the fetcher tells its
+//! `transfer.rs`): the export it serves, one for every replica fetching,
+//! taken as the first request comes, numbered so a fetcher tells its
 //! answers from another export's, and let go once no request comes for
 //! a while, when the database is deposed, and before it installs a
-//! transfer; and the fetch of its own, begun as the consensus asks
+//! transfer; one, as an export holds the database's checkpoints off,
+//! which a second one asked of the same thread would wait on, itself
+//! (RULES.md R-ERR-4); and the fetch of its own, begun as the consensus asks
 //! (`Output::FetchState`), kept while the consensus asks again from the
 //! same replica, its answers taken until the export is whole, which the
 //! database installs (`Standby::import`). Split from driver.rs (RULES.md
@@ -11,19 +13,22 @@
 
 use std::collections::VecDeque;
 
-use turborel::db::{Standby, StateSource};
+use std::path::Path;
+
+use turborel::db::{RECORDS_FILE, Standby, StateSource, decode_records};
 use turborel::error::Result;
+use turborel::log::Lsn;
 
 use super::{Core, Driver, Effect, misuse};
 use crate::transfer::stamp;
 use crate::{Input, ReplicaId};
 
-/// \[EXTENSION\] An export served to a replica fetching it.
+/// \[EXTENSION\] An export served to the replicas fetching it.
 pub(super) struct Served {
     source: Box<dyn StateSource>,
     /// The ticks since a request asked of it.
     idle: u64,
-    /// Its number, by which the fetcher tells its answers from another's.
+    /// Its number, by which a fetcher tells its answers from another's.
     number: u64,
 }
 
@@ -49,7 +54,9 @@ impl Driver {
             while let Some(effect) = core.pending.pop_front() {
                 match effect {
                     Effect::Answer(from, frame) => answers.push((from, frame)),
-                    other @ (Effect::Deliver(_) | Effect::Serve(_) | Effect::Stop | Effect::Install) => kept.push_back(other),
+                    other @ (Effect::Deliver(_) | Effect::Serve(_) | Effect::Stop | Effect::Install | Effect::Retire) => {
+                        kept.push_back(other);
+                    }
                 }
             }
             core.pending = kept;
@@ -65,7 +72,11 @@ impl Driver {
     /// `from`, out of the database's export, taken as the first request
     /// comes and kept while requests do (RULES.md D57).
     pub(super) fn answer(&self, db: &dyn Standby, from: ReplicaId, frame: &[u8]) -> Result<()> {
-        let kept = self.core()?.sources.remove(&from);
+        let kept = {
+            let mut core = self.core()?;
+            core.watch.answering(from);
+            core.source.take()
+        };
         let mut served = kept.map_or_else(|| self.fresh_export(db), Ok)?;
         let answered = {
             let core = self.core()?;
@@ -73,7 +84,7 @@ impl Driver {
         };
         let mut core = self.core()?;
         served.idle = 0;
-        core.sources.insert(from, served);
+        core.source = Some(served);
         if let Some(answer) = answered? {
             core.transport.send(from, &answer)?;
         }
@@ -88,31 +99,75 @@ impl Driver {
         Ok(Served { source, idle: 0, number: stamp().wrapping_add(core.exports) })
     }
 
-    /// \[EXTENSION\] Installs the state transfer fetched: the database
-    /// takes it, and the position it then holds the log through is told to
-    /// the consensus (`Input::Installed`); but a database serving, which
-    /// took the log over meanwhile, takes none: the fetch is let go. The
-    /// exports served are let go first, as the database they are of is
-    /// replaced: their fetchers begin again.
+    /// \[EXTENSION\] Installs the state transfer fetched: the records the
+    /// export carries, with which its checkpoint is recovered, are made
+    /// the log after the position the export's database holds it through
+    /// first (`Input::Installed`), and made durable (`Journal::flush`), so
+    /// the database, which takes the export then, recovers from them
+    /// whatever a crash keeps: a journal behind the files has the replica
+    /// fetch again, files behind the journal never happen; an export
+    /// carrying none, a modelled database's, is taken first, and the
+    /// position it then holds the log through told after. A database
+    /// serving, which took the log over meanwhile, takes none, nor one
+    /// retired, its replica removed meanwhile: the fetch is let go. The
+    /// export served is let go first, as the database it is of is
+    /// replaced: its fetchers begin again.
     pub(super) fn install(&self, db: &dyn Standby) -> Result<()> {
-        let fetched = {
+        let mut fetched = {
             let mut core = self.core()?;
             let Some((_, fetching)) = core.fetching.take() else { return Ok(()) };
-            if core.serving.is_some() {
+            if core.serving.is_some() || core.retired {
                 return Ok(());
             }
-            core.sources.clear();
+            core.source = None;
             fetching.fetched()?
         };
+        let carried = records_of(&mut *fetched)?;
+        if let Some((holds, records)) = carried {
+            {
+                let mut core = self.core()?;
+                core.step(Input::Installed { holds, records })?;
+                let durable = core.journal.flush()?;
+                for at in durable {
+                    core.step(Input::Persisted(at))?;
+                }
+            }
+            let held = db.import(fetched)?;
+            if held != holds {
+                return Err(misuse(&format!(
+                    "a state transfer installed holds the log through {}, its export through {}",
+                    held.0, holds.0
+                )));
+            }
+            let mut core = self.core()?;
+            core.holds = holds;
+            core.watch.installed(holds);
+            return Ok(());
+        }
         let holds = db.import(fetched)?;
         let mut core = self.core()?;
-        if holds < core.first {
-            return Err(misuse("a state transfer installed from before the log's first position"));
-        }
         core.holds = holds;
         core.watch.installed(holds);
-        core.step(Input::Installed(holds))
+        core.step(Input::Installed { holds, records: Vec::new() })
     }
+}
+
+/// The records `source` carries (`RECORDS_FILE`), if it carries any: the
+/// position the export's database holds the log through, and the records
+/// after it.
+fn records_of(source: &mut dyn StateSource) -> Result<Option<(Lsn, Vec<Vec<u8>>)>> {
+    let Some(index) = source.files().iter().position(|f| f.within == Path::new(RECORDS_FILE)) else { return Ok(None) };
+    let length = source.files().get(index).map_or(0, |f| f.length);
+    let mut bytes = Vec::new();
+    let mut piece = vec![0; 1 << 16];
+    while u64::try_from(bytes.len()).unwrap_or(u64::MAX) < length {
+        let read = source.read(index, u64::try_from(bytes.len()).unwrap_or(u64::MAX), &mut piece)?;
+        if read == 0 {
+            return Err(misuse("an export's records end before their length"));
+        }
+        bytes.extend_from_slice(piece.get(..read).unwrap_or_default());
+    }
+    decode_records(&bytes).map(Some)
 }
 
 impl Core {
@@ -140,6 +195,7 @@ impl Core {
             return Ok(());
         }
         self.pending.retain(|effect| !matches!(effect, Effect::Install));
+        self.watch.fetching(from);
         let mut fetching = self.transfer.begin(from)?;
         if let Some(request) = fetching.request() {
             self.transport.send(from, &request)?;
@@ -149,8 +205,8 @@ impl Core {
     }
 
     /// \[EXTENSION\] A tick of a state transfer: a request waited on asked
-    /// again, and an export served that no request asked of for a while
-    /// let go, so checkpoints go on.
+    /// again, and the export served, if no request asked of it for a
+    /// while, let go, so checkpoints go on.
     pub(super) fn tick_transfer(&mut self) -> Result<()> {
         if let Some((from, fetching)) = self.fetching.as_mut() {
             fetching.waited();
@@ -158,10 +214,12 @@ impl Core {
                 self.transport.send(*from, &request)?;
             }
         }
-        for served in self.sources.values_mut() {
+        if let Some(served) = self.source.as_mut() {
             served.idle = served.idle.saturating_add(1);
+            if served.idle >= SOURCE_IDLE_TICKS {
+                self.source = None;
+            }
         }
-        self.sources.retain(|_, served| served.idle < SOURCE_IDLE_TICKS);
         Ok(())
     }
 }

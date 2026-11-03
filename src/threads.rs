@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub(crate) use turn::{Hold, Turn};
+pub(crate) use turn::{Hold, Turn, Turned};
 use worker::Worker;
 
 use crate::db::{Database, WeakDatabase};

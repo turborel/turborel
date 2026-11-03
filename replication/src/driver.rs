@@ -32,6 +32,7 @@
 //! R-ERR-4); a thread carrying it out that waits on a sync, as a
 //! promotion syncing its abort records does, moves the inputs on itself.
 
+mod effects;
 mod job;
 mod log;
 mod seams;
@@ -96,6 +97,9 @@ enum Effect {
     Answer(ReplicaId, Vec<u8>),
     /// \[EXTENSION\] Install the state transfer fetched.
     Install,
+    /// \[EXTENSION\] Retire the database: the replica is removed from the
+    /// group [VRR §7].
+    Retire,
 }
 
 /// \[EXTENSION\] A replica's driver: see the module's documentation.
@@ -146,14 +150,17 @@ struct Core {
     transfer: Arc<dyn StateTransfer>,
     /// The state transfer being fetched, from which replica.
     fetching: Option<(ReplicaId, Box<dyn Fetching>)>,
-    /// The exports served to replicas fetching the state, each numbered,
+    /// The export served to the replicas fetching the state, numbered,
     /// with the ticks since it was last asked of.
-    sources: BTreeMap<ReplicaId, Served>,
+    source: Option<Served>,
     /// The exports taken to serve, counted.
     exports: u64,
     /// Its failure, after which it takes nothing: the consensus counted on
     /// what failed.
     failed: Option<SqlError>,
+    /// \[EXTENSION\] Whether the database is retired, its replica removed:
+    /// a state transfer fetched is not installed in it.
+    retired: bool,
 }
 
 /// An error of the driver's own (SQLCODE -910).
@@ -184,9 +191,10 @@ impl Driver {
             assigned: None,
             transfer: parts.transfer,
             fetching: None,
-            sources: BTreeMap::new(),
+            source: None,
             exports: 0,
             failed: None,
+            retired: false,
         };
         let applying = Mutex::new(None);
         Arc::new(Driver {
@@ -268,89 +276,6 @@ impl Driver {
         Ok(())
     }
 
-    /// Carries out what the database is asked, in order, until nothing is.
-    fn apply(self: &Arc<Self>, db: &dyn Standby) -> Result<()> {
-        loop {
-            let Some(effect) = self.core()?.pending.pop_front() else { return Ok(()) };
-            match effect {
-                Effect::Deliver(through) => self.deliver(db, through)?,
-                Effect::Serve(view) => self.serve(db, view)?,
-                Effect::Stop => self.stop(db)?,
-                Effect::Answer(from, frame) => self.answer(db, from, &frame)?,
-                Effect::Install => self.install(db)?,
-            }
-            self.changed.notify_all();
-        }
-    }
-
-    /// The records committed through `through` the database lacks,
-    /// replayed.
-    fn deliver(&self, db: &dyn Standby, through: Lsn) -> Result<()> {
-        let records: Vec<(Lsn, Vec<u8>)> = {
-            let core = self.core()?;
-            let end = core.index(through).map_or(0, |n| n.saturating_add(1)).min(core.records.len());
-            let from = core.index(core.holds.max(core.first)).map_or(0, |n| n.saturating_add(1)).min(end);
-            let first = core.first;
-            core.records
-                .get(from..end)
-                .unwrap_or_default()
-                .iter()
-                .enumerate()
-                .map(|(i, r)| (position(first, from.saturating_add(i)), r.clone()))
-                .collect()
-        };
-        let Some(&(last, _)) = records.last() else { return Ok(()) };
-        db.replay(&mut records.into_iter().map(Ok))?;
-        let mut core = self.core()?;
-        core.holds = last;
-        core.step(Input::Applied(last))
-    }
-
-    /// The database promoted, serving `view`, once it holds the whole log;
-    /// a promotion that fails as the service ends meanwhile is let go.
-    fn serve(self: &Arc<Self>, db: &dyn Standby, view: u64) -> Result<()> {
-        {
-            let core = self.core()?;
-            if core.serving != Some(view) {
-                return Ok(());
-            }
-            if core.holds != core.op() {
-                return Err(misuse("a primary serves once its database holds the log it took over"));
-            }
-        }
-        match db.promote(self.log()) {
-            Ok(()) => {
-                let core = self.core()?;
-                if core.serving == Some(view) {
-                    core.watch.serving(view);
-                    let mut core = core;
-                    core.promoted = true;
-                }
-                Ok(())
-            }
-            Err(e) => {
-                let core = self.core()?;
-                if core.serving == Some(view) { Err(e) } else { Ok(()) }
-            }
-        }
-    }
-
-    /// The database deposed and opened again in place, the position it then
-    /// holds the log through told to the consensus. The exports served are
-    /// let go first: the database opened again is not the one they are
-    /// of, and a checkpoint waits on none of them; their fetchers begin
-    /// again.
-    fn stop(&self, db: &dyn Standby) -> Result<()> {
-        self.core()?.sources.clear();
-        db.depose()?;
-        let holds = db.reopen()?;
-        let mut core = self.core()?;
-        core.promoted = false;
-        core.watch.stopped();
-        core.holds = holds;
-        core.step(Input::Opened(holds))
-    }
-
     /// \[EXTENSION\] Stops the driver: it takes nothing from now on, failing
     /// with `why`, as its replica stopped.
     pub fn halt(&self, why: SqlError) {
@@ -371,6 +296,12 @@ impl Driver {
     pub fn serving(&self) -> Option<u64> {
         let core = self.core.lock().unwrap_or_else(PoisonError::into_inner);
         core.serving.filter(|_| core.promoted && core.failed.is_none())
+    }
+
+    /// \[EXTENSION\] Where its consensus stands, in words, for diagnostics
+    /// (`Consensus::describe`).
+    pub fn describe(&self) -> String {
+        self.core.lock().unwrap_or_else(PoisonError::into_inner).consensus.describe()
     }
 
     /// \[EXTENSION\] Through where its database holds the log.
@@ -414,6 +345,18 @@ impl Driver {
 }
 
 impl Core {
+    /// \[EXTENSION\] Sends `frame` to `to`; one to a replica the transport
+    /// does not link, refused as no member's (SQLCODE -910), is dropped,
+    /// as one lost: a replica of an epoch before, answered from outside
+    /// the epoch, that no member of it knew (`vr/reconfigure.rs`).
+    fn send(&self, to: ReplicaId, frame: &[u8]) -> Result<()> {
+        match self.transport.send(to, frame) {
+            Ok(()) => Ok(()),
+            Err(e) if e.sqlcode() == -910_i32 => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Steps the consensus with `input`, and carries out what it answers;
     /// a failure kept, after which the core takes nothing.
     fn step(&mut self, input: Input) -> Result<()> {
@@ -448,10 +391,22 @@ impl Core {
                     let gone = self.index(through).map_or(self.records.len(), |n| n.saturating_add(1)).min(self.records.len());
                     self.records.drain(..gone);
                     self.first = through;
+                } else if through < self.first {
+                    // The log begun again before where it was let go: a
+                    // state transfer's records follow.
+                    self.records.clear();
+                    self.first = through;
                 }
             }
             Output::PersistState(state) => self.journal.persist_state(&state)?,
-            Output::Send { to, frame } => self.transport.send(to, &frame)?,
+            Output::Mark { at, mark } => self.journal.mark(at, &mark)?,
+            Output::Reach(configuration) => self.transport.reconfigure(&configuration)?,
+            Output::Epoch { epoch, configuration } => {
+                self.transport.reconfigure(&configuration)?;
+                self.watch.epoch(epoch, &configuration);
+            }
+            Output::Retire => self.pending.push_back(Effect::Retire),
+            Output::Send { to, frame } => self.send(to, &frame)?,
             Output::Committed(through) => self.commit(through),
             Output::Deliver { through } => {
                 let held = self.index(through).map_or(0, |n| n.saturating_add(1)).min(self.records.len());
@@ -531,26 +486,6 @@ impl Core {
     /// The position after the last held: a log's end.
     fn end(&self) -> Lsn {
         position(self.first, self.records.len())
-    }
-
-    /// \[EXTENSION\] The database holds every record before `before` in its
-    /// files: the log through the position that leaves `retain_bytes` of
-    /// records before `before` may go (RULES.md D57).
-    fn retain_before(&mut self, before: Lsn) -> Result<()> {
-        let mut through = before.0.saturating_sub(1);
-        let mut kept = 0_u64;
-        while through > self.first.0 {
-            let size = self.index(Lsn(through)).and_then(|i| self.records.get(i)).map_or(0, Vec::len);
-            kept = kept.saturating_add(u64::try_from(size).unwrap_or(u64::MAX));
-            if kept > self.retain_bytes {
-                break;
-            }
-            through = through.saturating_sub(1);
-        }
-        if through <= self.first.0 {
-            return Ok(());
-        }
-        self.step(Input::Retain(Lsn(through)))
     }
 }
 

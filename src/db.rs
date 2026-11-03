@@ -136,7 +136,7 @@ pub use checkpoint::OVERDUE;
 pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
 pub(crate) use database::WeakDatabase;
-pub use export::{ExportedFile, StateSource};
+pub use export::{ExportedFile, RECORDS_FILE, StateSource, decode_records};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
 pub use formats::FileFormats;
 pub use image::IMAGE_FORMAT;
@@ -345,18 +345,25 @@ impl Session {
         }
     }
 
-    /// Starts a call: marks the session busy and takes the current snapshot.
+    /// Starts a call: marks the session busy and takes the current
+    /// snapshot. A retired database, its replica removed from its group,
+    /// serves no call (RULES.md D57).
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if a call on this session is already running (a plug-in
-    /// called back into it), or a lock is poisoned.
+    /// called back into it), or a lock is poisoned; -917 if the database
+    /// is retired.
     fn enter(&self) -> Result<Call<'_>> {
         let already_busy = self.busy.replace(true);
         if already_busy {
             return fail(Code::Api, "[DESIGN] the session is already running a call: a plug-in called back into it (RULES.md R-ERR-4)");
         }
-        let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot());
+        let retired = |st: Arc<State>| match st.tx.held() {
+            Some(crate::txn::Held::Retired) => Err(crate::txn::Held::Retired.refusal()),
+            Some(crate::txn::Held::Following | crate::txn::Held::Deposed) | None => Ok(st),
+        };
+        let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot()).and_then(retired);
         match published.and_then(|published| self.definitions(published)) {
             Ok(snapshot) => {
                 let snapshot = self.with_own(self.with_temporaries(snapshot));

@@ -1352,7 +1352,8 @@ opaque bytes.**
   - a replica rebuilt from its journal rejoins its view, unless it was
     that view's primary, which waits for the next;
   - a new primary serves once the log it took over is committed and
-    delivered;
+    delivered, and, deposed before, once its database, opened again,
+    told where it holds the log;
   - told where its database holds the log as it is opened
     (`Input::Opened`), it delivers only what follows, the position its
     own: no RECOVERY message, its journal intact; the view-number is
@@ -1363,24 +1364,42 @@ opaque bytes.**
   sends RECOVERY with a nonce to every other member, again at each
   heartbeat, and takes no other message; a member answers while normal,
   as primary with its window; f + 1 answers echoing the nonce, the
-  latest view's primary's among them, make it normal in that view with
+  latest view's primary's among them, of that view (an earlier answer
+  of the same replica, primary of an earlier view, is no log of the
+  latest), make it normal in that view with
   the primary's log, its journal written with the window and the state,
   following from where its database holds the log; a database behind
-  the window fetches a state transfer first. A fresh member, no journal
-  and a database holding nothing, answers too, saying so: hearing from f
-  fresh members, itself the f + 1th, it is normal in view 0, so a new
-  group bootstraps by recovery, two of three sufficing; a group of one
-  recovers at once from its database. Every node is made so, from its
-  journal (`GroupLogs::in_files`, `nonce()`); the replica alone of a
-  `ReplicatedLog` too, told it holds its records. The recovery of a
-  journal lost (`Watch::event`, `Recovering`) is told to the operator.
+  the window fetches a state transfer first, the replica recovering
+  still, taking part in no view change, and recovers again once it is
+  installed. A member in a view change answers too, with the view it
+  was last normal in and, as its primary, its log, so a view change
+  waiting on members recovering goes on; one leaving, with its epoch;
+  only members' answers count, an answerer the node's setting names
+  outside the group telling the epoch alone. A member with no journal
+  and a database holding nothing recovers so too, waiting for a
+  primary: it may be a new member, or one whose journal and database
+  were lost, of a group holding a log elsewhere, which members as empty
+  as it cannot tell from a new group; so a new group is made normal in
+  view 0 from the start (`Vr::new`), each node told the group is new
+  (`--owner`, `prepare`), its journal empty; a group of one recovers at
+  once from its database. Every other node is made from its journal
+  (`GroupLogs::in_files`, `nonce()`); the replica alone of a
+  `ReplicatedLog` too, told it holds its records. The
+  recovery of a journal lost (`Watch::event`, `Recovering`) is told to
+  the operator. A replica's database whose files hold a checkpoint while
+  the replica's journal holds nothing, lost, is made again from nothing
+  (`Database::open_following`): the checkpoint cannot be recovered
+  without the log, so it takes the group's state.
 - **Log retention.** A replica's log is a window: the records through
   a position let go (`vr/window.rs`, `Journal::retain`), once its
   database holds them in its files. At each checkpoint the database's
   log (`GroupLog::truncate_before`) has the driver, which holds the
   records and their sizes, keep REPLICATION.RETAIN_BYTES of them before
   the checkpoint and let the rest go (`Input::Retain`, bounded by the
-  commit-number; `Output::Retain`); the journal writes the retention,
+  commit-number; `Output::Retain`); a journal's `flush` makes every
+  write durable at once, where `sync` may answer as a slow disk does
+  (the simulator's), which a state transfer's install asks before the
+  import; the journal writes the retention,
   makes it durable, then drops the log's segments before the first
   record kept, and opened again begins where its first record does.
   DOVIEWCHANGE, STARTVIEW and NEWSTATE carry windows ([VRR §5.3]'s
@@ -1391,23 +1410,50 @@ opaque bytes.**
   is before it, or asking for the log before what the answerer retains
   (NEEDSTATE), fetches a state transfer (`Output::FetchState`),
   installed at a position (`Input::Installed`), after which the journal
-  begins and the log is fetched. A replica made again from a window
-  stands at it, every record through it committed. Why the
-  commit-number bounds an install: the records held between it and the
-  window's first position may be another view's, which no log can tell
-  (`vr/view_change.rs`). NEEDSTATE names the position asked, and moves
-  only the replica still waiting on that GETSTATE, so a transfer always
-  lands past the asker's window.
+  begins, before or after where it did, and the log is fetched. A
+  replica made again from a window stands at it, every record through
+  it committed; one whose database, opened, holds less than its window
+  begins at, the journal retained past the files by a transfer whose
+  import a crash lost, fetches a state transfer before it takes part.
+  Why the commit-number bounds an install: the records
+  held between it and the window's first position may be another
+  view's, which no log can tell (`vr/view_change.rs`). NEEDSTATE names
+  the position asked, and moves only the replica still waiting on that
+  GETSTATE, so a transfer always lands past the asker's window. A
+  transfer installed cuts no record after its position: a replica made
+  again from its journal knows not which of its records are committed,
+  and a view change may count on them; the export's records, committed,
+  replace what differs from them, the rest staying until a NEWSTATE or
+  a view change replaces it. A backup holding records durably past the
+  commit-number a COMMIT names acknowledges them again, as the primary
+  of a new view, or one whose window the acknowledgement is before,
+  waits on it.
 - **State transfer.** `Database::export` (`db/export.rs`): the last
-  checkpoint's image and the manifest of the durable files the file
+  checkpoint's image, the manifest of the durable files the file
   manager knows (`files/classes.rs`), but the log's and the catalog's,
-  each with its length and owner; the export holds the checkpoints'
-  turn shared for its life (`threads/turn.rs`), so several replicas
-  fetch at once and a checkpoint waits for the last. `Standby::import`
-  (`db/standby/import.rs`): deposed or following, the database's
-  service ends, its data, side, plug-in and catalog files are replaced
-  by the export's, the image recorded in a new catalog, and it is
-  opened again to follow from the image. `StateTransfer` moves an
+  each with its length and owner, and the log's records recovery reads
+  from the checkpoint, from the first of the oldest transaction open at
+  it or the oldest change a logged table's pages lack through its
+  position, as one more file (`RECORDS_FILE`); the export holds the
+  checkpoints' turn shared for its life (`threads/turn.rs`), so several
+  replicas fetch at once and a checkpoint waits for the last; a
+  following database's checkpoint holds every record through the last
+  it replayed, no more, as the log's later records a view change may
+  replace; a serving database's checkpoint lets the checkpoints' turn
+  go while its record is synced through the group, as the group may
+  wait on a backup fetching this database's state, an export holding
+  the turn, the files unchanged until the image is recorded
+  (`db/checkpoint.rs`). `Standby::import` (`db/standby/import.rs`): deposed or
+  following, the database's service ends, its data, side, plug-in and
+  catalog files are replaced by the export's, the image recorded in a
+  new catalog, and it is opened again to follow from the image, which
+  it recovers from with the records, held in the replica's own log
+  first by the driver (`Input::Installed`), and durable there before
+  the import, so a crash between leaves the files behind the journal,
+  never the journal behind the files, so the transactions open at
+  the checkpoint are undone or redone as the exporter would: without
+  them their changes in the pages, and their older versions, which the
+  undo store does not carry, would be beyond reach. `StateTransfer` moves an
   export without decoding it, over the group's transport, a request
   and one answer at a time, told from VR's frames by their first byte;
   the built-in `WholeFiles` (`replication/src/transfer.rs`) fetches the
@@ -1420,15 +1466,17 @@ opaque bytes.**
   behind takes what changed since, and one with no files takes them
   whole; after [VRR §5.1]'s Merkle trees, with the summary in chunks
   instead of a tree, a block of several pages hashing as fast. The
-  driver serves each fetcher an export numbered of its own, let go once
-  no request comes for a while, when its database is deposed, and
-  before it installs a transfer; an answer of another export restarts
-  the fetch; the driver keeps a fetch under way when VR asks again from
-  the same replica, and lets a fetch go when the database serves
-  meanwhile. Installed, VR stands at the export's position in any
-  status, its log after it kept unless it was fetching; a record in
-  doubt at a position the install let go has an outcome no log can
-  tell (`Watch::outcome`, unknown).
+  driver serves one export, numbered, to every replica fetching, let go
+  once no request comes for a while, when its database is deposed, when
+  its log is retained at a checkpoint, and before it installs a
+  transfer: one, as an export holds the checkpoints off, which a second
+  asked of the same thread would wait on, itself; an answer of another
+  export restarts the fetch; the driver keeps a fetch under way when VR
+  asks again from the same replica, and lets a fetch go when the
+  database serves meanwhile. Installed, VR stands at the export's
+  position in any status, its log after it kept; a record in doubt at a
+  position the install let go has an outcome no log can tell
+  (`Watch::outcome`, unknown).
 - **The node.** The server's part (`server/src/replication.rs`):
   - settings of the node's own, never logged: REPLICATION.REPLICA (its
     number; 0, not replicated), REPLICATION.MEMBERS (each member's
@@ -1452,14 +1500,87 @@ opaque bytes.**
     frame arrived goes to the driver's inbox and asks for its job
     (`Database::job_asker`);
   - told as `Event::Replica` (`ReplicaChange`): the view entered and
-    its primary (reported too as the database opens), serving,
-    stopped, frames and appends refused, links up and down,
-    connections refused; shown in INFORMATION_SCHEMA.REPLICAS (member,
-    address, self, role, view number, link up, last heard), the owner's;
+    its primary (reported too as the database opens), the epoch entered
+    and its members, serving, stopped, removed, frames and appends
+    refused, links up and down, connections refused; shown in
+    INFORMATION_SCHEMA.REPLICAS (member, address, self, role, epoch,
+    view number, link up, last heard), the owner's, the members those
+    of the epoch the node is in;
+  - reconfigured by ALTER DATABASE REPLICATION MEMBERS on the primary
+    (`Database::reconfigure`, `Log::reconfigure`), told as
+    `Event::Reconfigured`; the transport links the new members as the
+    epoch is entered (`Transport::reconfigure`) and keeps a member that
+    left linked a while (`LEAVING_GRACE`), as it is told the epoch
+    started and asks; a removed node's database is retired
+    (`Standby::retire`, `Held::Retired`): every call refused (SQLCODE
+    -917), reads too, until the server is stopped, retired still as it
+    is opened again or takes an export; the REPLICAS table registered
+    since the database first opened is kept as it is opened again or
+    takes an export;
   - `turboreld`: a replicated database is opened to follow, its node
     started with the server and stopped before the database closes;
     `--owner` makes the owner once the node serves; the commands on a
     directory (`user`, `reseal`, `rekey`) refuse a replicated database.
+- **Reconfiguration.** [VRR §7], in epochs (`vr/reconfigure.rs`): every
+  frame names its epoch; the primary, asked by its database
+  (`Input::Reconfigure`, the record of ALTER DATABASE REPLICATION
+  MEMBERS), appends the record as the last of the epoch, marked with the
+  epoch the reconfiguration begins and its members (`Mark`, in the
+  PREPARE, the journal's MARK entry, written before the record it marks
+  so a crash keeping the record keeps its mark, the RECORD entry saying
+  whether the mark before is its, so the mark of a record lost is void,
+  and void it stays, a record written at its position after being
+  another's, and the windows DOVIEWCHANGE,
+  STARTVIEW, NEWSTATE and RECOVERYRESPONSE carry), appends nothing after
+  it, and serves until the mark is committed, so its database learns the
+  commit; every replica entering the mark committed enters the epoch:
+  the next epoch's number from the mark, view 0, the members the mark's,
+  the records after the mark let go unless known committed, as the
+  epoch before's primary appended them unknowing, while a log of the
+  epoch taken whole keeps its records past the mark; a member is
+  normal there, the first by number
+  its primary, which serves once the log it took over is delivered; a
+  replica that is no member is leaving: it answers the new members'
+  GETSTATE and RECOVERY and the transfers they fetch, asks them at each
+  heartbeat by a GETSTATE whether they are normal in the epoch, which
+  one normal answers with EPOCHSTARTED, and is removed once a quorum of
+  them has, or once it learns a later epoch, which the epoch after it
+  started for: `Output::Retire`, `Removed`, its state saying so, so
+  made again it stands removed, and a state transfer it was fetching
+  is let go. New members join by recovery, not
+  STARTEPOCH: started with their node's settings naming the new
+  members, they recover from those normal in the epoch, adopting its
+  epoch, members and where it began from the response. A replica behind
+  an epoch, told by a frame of a later one, a nudge of EPOCHSTARTED
+  carrying the epoch's members by which its transport reaches the
+  sender (`Output::Reach`), asks the sender, or the members it knows,
+  for the state, taking the answer of the replica it asked though that
+  left the epoch: a NEWSTATE's log, with the marks, has it enter the
+  epochs committed, the log through the mark the sender's epoch began
+  at known committed, as the sender entered it, whatever commit-number
+  the sender knows made again (`Vr::restart` knows its own so), or
+  adopt the sender's epoch, told in the message
+  with where it began; a NEEDSTATE has it adopt the epoch first, from
+  behind, then fetch the sender's state, taking part in no view change
+  of the epoch, nor answering for its log, while its commit-number is
+  before the mark (`Vr::restart` sees it by the commit-number the state
+  keeps), as a view change of the epoch must not choose a log of the
+  epoch before, and a log disagreeing with a record a replica knows
+  committed is never installed; a replica normal in a view or an epoch
+  fetches the log from its primary, forgetting a replica it once fetched
+  from, which may have left. A member's number is never given again. The
+  node's REPLICATION.MEMBERS setting is its starting point only: the
+  log carries each epoch's members, and a replica made again takes its
+  journal's over its setting. The simulator reconfigures groups too
+  (`Plan::spares`, `Faults::reconfigure`, the `reconfiguring` plan):
+  spares join as members leave, the checker's primaries kept by epoch
+  and view, every epoch told of the same members by all, every member
+  converging and every replica that left removed, its database
+  retired; it loses no journal while a reconfiguration is pending or a
+  replica recovers, and asks none while a replica is recovering, as a
+  group with two recovering at once, a new member among them or not,
+  cannot go on [VRR §4.3] [VRR §7]; a
+  violation names the last things the replicas told (`World::fail`).
 - **Approved with it.**
   - a `Log` for commit beside a content-blind driver of the traits, and
     the core's `Standby` seam (replay, promote, depose, export, import);
@@ -1473,6 +1594,13 @@ opaque bytes.**
     backups serve reads, a long one delaying their checkpoints;
   - a `node` property for settings never logged (D36);
   - reads on the primary confirming its view;
+  - the group's members changed by SQL on the primary, the log carrying
+    each epoch's members, a removed node serving nothing until stopped,
+    and member numbers never reused;
+  - an export carrying the records its checkpoint is recovered with,
+    and a following checkpoint bounded by the last record replayed;
+  - a frame to a replica the transport does not link dropped by the
+    driver, as one lost;
   - no at-most-once for SQL clients in alpha;
   - stale snapshot reads on backups, with a least position;
   - state transfer by the durable files the file manager knows;

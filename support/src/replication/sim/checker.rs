@@ -1,7 +1,7 @@
 //! What the simulator checks of a run, as it runs: [VRR §8.1]'s safety,
 //! "every committed operation survives into all subsequent views in the
-//! same position in the serial order"; at most one primary serving in each
-//! view, the one the view names; commits told only to a serving primary,
+//! same position in the serial order"; at most one replica serving as
+//! primary in each view of each epoch, the one the view names; commits told only to a serving primary,
 //! never going back; outcomes of records in doubt as the log decided them.
 
 use std::collections::BTreeMap;
@@ -26,8 +26,8 @@ struct Outcome {
 pub struct Checker {
     /// The committed log as far as any replica has shown it.
     committed: Vec<Vec<u8>>,
-    /// Who served as primary in each view.
-    primaries: BTreeMap<u64, ReplicaId>,
+    /// Who served as primary in each view of each epoch.
+    primaries: BTreeMap<(u64, u64), ReplicaId>,
     /// The outcomes told.
     outcomes: Vec<Outcome>,
     /// Records acknowledged to a serving primary's database: committed.
@@ -72,14 +72,18 @@ impl Checker {
         Ok(())
     }
 
-    /// `replica` serves as primary of `view`, of a group of `members`.
-    pub fn serves(&mut self, replica: ReplicaId, view: u64, members: &[ReplicaId]) -> Result<(), Violation> {
+    /// `replica` serves as primary of `view` of `epoch`, whose members are
+    /// `members`: the one the view names, and none served it before.
+    pub fn serves(&mut self, replica: ReplicaId, (epoch, view): (u64, u64), members: &[ReplicaId]) -> Result<(), Violation> {
+        if members.is_empty() {
+            return Err(format!("replica {} serves view {view} of epoch {epoch}, which no replica entered", replica.0));
+        }
         let named = members[usize::try_from(view % u64::try_from(members.len()).unwrap()).unwrap()];
         if named != replica {
-            return Err(format!("replica {} serves view {view}, whose primary is {}", replica.0, named.0));
+            return Err(format!("replica {} serves view {view} of epoch {epoch}, whose primary is {}", replica.0, named.0));
         }
-        if let Some(other) = self.primaries.insert(view, replica) {
-            return Err(format!("replicas {} and {} both served as primary of view {view}", other.0, replica.0));
+        if let Some(other) = self.primaries.insert((epoch, view), replica) {
+            return Err(format!("replicas {} and {} both served as primary of view {view} of epoch {epoch}", other.0, replica.0));
         }
         Ok(())
     }
@@ -109,8 +113,8 @@ impl Checker {
         self.outcomes.len()
     }
 
-    /// The highest view a primary served.
-    pub fn last_view(&self) -> u64 {
-        self.primaries.keys().next_back().copied().unwrap_or(0)
+    /// The last epoch and view a primary served.
+    pub fn last_served(&self) -> (u64, u64) {
+        self.primaries.keys().next_back().copied().unwrap_or((0, 0))
     }
 }

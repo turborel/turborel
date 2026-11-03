@@ -10,9 +10,9 @@
 //! a replica the window does not reach fetches a state transfer
 //! (`transfer.rs`).
 
-use super::frame::{DoViewChange, Message, StartView, StartViewChange};
+use super::frame::{DoViewChange, Marks, Message, StartView, StartViewChange};
 use super::{Candidate, Change, Lead, Status, Vr};
-use crate::{Output, ReplicaEvent};
+use crate::{Lsn, Output, ReplicaEvent};
 
 impl Vr {
     /// [VRR §4.2 step 1]: "A replica i that notices the need for a view
@@ -46,6 +46,17 @@ impl Vr {
     /// message for a view with a larger number than its own view-number"
     /// [VRR §4.2 step 1].
     fn notice(&mut self, view: u64, out: &mut Vec<Output>) -> bool {
+        // \[DESIGN\] Behind its epoch, this replica's log does not reach the
+        // mark the epoch began at: what it holds is the epoch before's,
+        // which a view change of this epoch must not choose, so it takes
+        // no part in one; a later view is learned, and the state asked of
+        // its primary (`transfer.rs`) [VRR §7].
+        if self.behind_epoch() {
+            if view > self.view {
+                self.later_view(view, out);
+            }
+            return false;
+        }
         if view > self.view {
             self.start_view_change(view, out);
         }
@@ -73,21 +84,28 @@ impl Vr {
             return;
         }
         self.change.done = true;
-        let (after, log) = (self.log.first(), self.log.after(self.log.first()));
-        let mine = Candidate { after, log, normal_view: self.normal_view, op: self.op(), commit: self.commit };
+        let (after, log, marks) = (self.log.first(), self.log.after(self.log.first()), self.log.marks_after(self.log.first()));
+        let mine = Candidate { after, log, marks, normal_view: self.normal_view, op: self.op(), commit: self.commit };
         let primary = self.primary_of(self.view);
         if primary == self.me {
             return self.take_candidate(self.me, mine, out);
         }
-        let Candidate { after: begins, log: window, normal_view, op, commit } = mine;
-        let done = DoViewChange { view: self.view, after: begins, log: window, normal_view, op, commit, replica: self.me };
-        Vr::send(primary, &Message::DoViewChange(done), out);
+        let Candidate { after: begins, log: window, marks: marked, normal_view, op, commit } = mine;
+        let done = DoViewChange { view: self.view, after: begins, log: window, marks: marked, normal_view, op, commit, replica: self.me };
+        self.send(primary, &Message::DoViewChange(done), out);
     }
 
     /// A DOVIEWCHANGE, to the primary of its view.
     pub(super) fn on_do_view_change(&mut self, m: DoViewChange, out: &mut Vec<Output>) {
+        // The primary of the view already, made again from its journal: it
+        // waits for the next view, never completing its own again
+        // (RULES.md D57), though a backup that missed STARTVIEW asks on.
+        if self.normal_view == m.view && self.is_primary() {
+            return;
+        }
         if self.notice(m.view, out) && self.is_primary() {
-            let candidate = Candidate { after: m.after, log: m.log, normal_view: m.normal_view, op: m.op, commit: m.commit };
+            let candidate =
+                Candidate { after: m.after, log: m.log, marks: m.marks, normal_view: m.normal_view, op: m.op, commit: m.commit };
             self.take_candidate(m.replica, candidate, out);
         }
     }
@@ -113,14 +131,18 @@ impl Vr {
         // or knows less committed than the window lets go, cannot take the
         // view: it gives it up to the next, whose primary may; itself it
         // fetches a state transfer later, as a backup.
-        if !self.install(chosen.after, chosen.log, out) {
+        if !self.install(chosen.after, (chosen.log, chosen.marks), out) {
             return self.start_view_change(self.view.saturating_add(1), out);
         }
         self.enter_view(commit, out);
         self.lead.inherited = self.op();
         out.push(Output::Event(ReplicaEvent::ViewChanged { view: self.view, primary: self.me }));
         let (after, log) = (self.log.first(), self.log.after(self.log.first()));
-        let start = Message::StartView(StartView { view: self.view, after, log, op: self.op(), commit: self.commit });
+        let marks = self.log.marks_after(after);
+        let configuration = self.configuration.clone();
+        let began = self.epoch_began;
+        let start =
+            Message::StartView(StartView { view: self.view, after, log, marks, op: self.op(), commit: self.commit, configuration, began });
         self.broadcast(&start, out);
         self.after_commit(out);
         self.try_commit(out);
@@ -144,7 +166,7 @@ impl Vr {
         // \[DESIGN\] A backup whose log does not reach the primary's window,
         // or knows less committed than it lets go, fetches a state transfer
         // first (`transfer.rs`).
-        if !self.install(m.after, m.log, out) {
+        if !self.install(m.after, (m.log, m.marks), out) {
             return self.fetch_state(out);
         }
         self.enter_view(m.commit, out);
@@ -163,18 +185,24 @@ impl Vr {
     /// records through `after` are committed, let go by the window, and
     /// those held here between the commit-number and `after` may be
     /// another view's, which no log can tell; only a state transfer
-    /// brings this replica past them. What `log` holds through this
+    /// brings this replica past them; or if `log` disagrees with a record
+    /// known committed here. What `log` holds through this
     /// window's first position is skipped: let go here, it was committed,
     /// so the same in every log.
-    pub(super) fn install(&mut self, after: u64, log: Vec<Vec<u8>>, out: &mut Vec<Output>) -> bool {
+    pub(super) fn install(&mut self, after: u64, (log, marks): (Vec<Vec<u8>>, Marks), out: &mut Vec<Output>) -> bool {
         if self.op() < after || self.commit < after {
             return false;
         }
         let (after, log) = self.within_window(after, log);
         let agree = self.log.agreeing(after, &log);
         let kept = after.saturating_add(u64::try_from(agree).unwrap_or(u64::MAX));
+        // A log disagreeing with a record held here and known committed
+        // is no log to take: committed records are the same in every log.
+        if kept < self.commit.min(self.op()) {
+            return false;
+        }
         if self.op() > kept {
-            out.push(Output::Truncate { after: crate::Lsn(kept) });
+            out.push(Output::Truncate { after: Lsn(kept) });
         }
         self.durable = self.durable.min(kept);
         self.log.truncate_to(kept);
@@ -182,6 +210,10 @@ impl Vr {
         for record in log.into_iter().skip(agree) {
             at = at.saturating_add(1);
             self.log.push(record.clone());
+            if let Some(mark) = marks.get(&at) {
+                self.log.set_mark(at, mark.clone());
+                out.push(Output::Mark { at: Lsn(at), mark: mark.clone() });
+            }
             self.persist(at, record, out);
         }
         true
@@ -205,9 +237,12 @@ impl Vr {
         self.status = Status::Normal;
         self.persist_state(out);
         self.commit = self.commit.max(commit).min(self.op());
-        self.lead = Lead::default();
+        self.lead = Lead { inherited: self.op(), ..Lead::default() };
         self.change = Change::default();
         self.timers.heard = 0;
         self.asked = None;
+        // The log is fetched from the primary of the view from now on,
+        // not from a replica once fetched from, which may have left.
+        self.source = None;
     }
 }

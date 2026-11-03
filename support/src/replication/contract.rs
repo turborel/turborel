@@ -7,6 +7,7 @@
 use turborel_replication::{Input, Lsn, Output, ReplicaEvent, ReplicaId, Role, Transport};
 
 use super::group::Make;
+use super::group::configuration;
 use super::sim::Rng;
 
 /// Ticks within which a new group of one serves.
@@ -28,7 +29,7 @@ pub fn check_consensus(make: &Make) {
 /// commits in order.
 fn serves_alone(make: &Make) {
     let me = ReplicaId(1);
-    let mut consensus = make(&[me], me, None);
+    let mut consensus = make(&configuration(&[me]), me, None);
     let mut out = Vec::new();
     for _ in 0..SERVE_WITHIN {
         consensus.step(Input::Tick, &mut out);
@@ -60,7 +61,7 @@ fn serves_alone(make: &Make) {
 /// event each, and nothing else.
 fn refuses_frames(make: &Make) {
     let members = [ReplicaId(1), ReplicaId(2), ReplicaId(3)];
-    let mut consensus = make(&members, ReplicaId(2), None);
+    let mut consensus = make(&configuration(&members), ReplicaId(2), None);
     let cases = [
         (ReplicaId(1), vec![]),
         (ReplicaId(1), vec![0]),
@@ -80,8 +81,8 @@ fn refuses_frames(make: &Make) {
 /// outputs.
 fn is_deterministic(make: &Make) {
     let members = [ReplicaId(1), ReplicaId(2), ReplicaId(3)];
-    let mut first = make(&members, ReplicaId(1), None);
-    let mut second = make(&members, ReplicaId(1), None);
+    let mut first = make(&configuration(&members), ReplicaId(1), None);
+    let mut second = make(&configuration(&members), ReplicaId(1), None);
     let mut rng = Rng::new(0);
     let mut written = 0;
     for _ in 0..INPUTS {
@@ -108,7 +109,7 @@ pub fn check_transport(transport: &dyn Transport, outsider: ReplicaId) {
     let members = transport.members();
     assert_ne!(members.len(), 0, "a group has members");
     assert!(members.windows(2).all(|pair| pair[0] < pair[1]), "members in order, each once: {members:?}");
-    for &to in members {
+    for &to in &members {
         transport.send(to, b"frame").unwrap();
     }
     assert_eq!(transport.send(outsider, b"frame").unwrap_err().sqlcode(), -910_i32);

@@ -1,18 +1,18 @@
 //! Recovery (RULES.md D57, [VRR §4.3]): a replica whose journal holds no
 //! state, lost or never written, learning the group's state from the
-//! others before it takes part; a new group bootstrapping by it; and the
-//! simulator's replicas losing their journals and converging all the
-//! same.
+//! others before it takes part; a new group's members made normal at
+//! once, those with empty journals waiting otherwise; and the simulator's
+//! replicas losing their journals and converging all the same.
 
 use std::sync::Arc;
 
 use turborel_replication::vr::Status;
-use turborel_replication::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId, Role, Vr};
+use turborel_replication::{Consensus, Input, Lsn, Member, Output, Recovered, ReplicaEvent, ReplicaId, Role, Vr};
 use turborel_test_support::replication::sim::plans;
 use turborel_test_support::replication::sim::{Plan, simulate, simulate_databases};
-use turborel_test_support::replication::{Group, Make};
+use turborel_test_support::replication::{Group, Make, configuration};
 
-use crate::common::{committed, ids, make_vr, nonce, options, record, served, serving, settle_without};
+use crate::common::{committed, config, ids, make_vr, nonce, options, record, served, serving, settle_without};
 
 const PRIMARY: ReplicaId = ReplicaId(1);
 const BACKUP: ReplicaId = ReplicaId(2);
@@ -22,7 +22,7 @@ const RECOVERY: u8 = 10;
 const RECOVERY_RESPONSE: u8 = 11;
 
 /// A VR replica made as a node is, from its journal, empty at first.
-fn make_from_journal(members: &[ReplicaId], me: ReplicaId, recovered: Option<Recovered>) -> Box<dyn Consensus> {
+fn make_from_journal(members: &[Member], me: ReplicaId, recovered: Option<Recovered>) -> Box<dyn Consensus> {
     Box::new(Vr::restart(members, me, options(), recovered.unwrap_or_default(), nonce()).unwrap())
 }
 
@@ -65,22 +65,28 @@ fn a_replica_losing_its_journal_recovers_from_the_primary() {
     let opened = group.step(THIRD, Input::Opened(Lsn(3)));
     assert!(opened.contains(&Output::Event(ReplicaEvent::Recovering)), "{opened:?}");
     assert_eq!(sent(&opened), vec![(PRIMARY, RECOVERY), (BACKUP, RECOVERY)]);
+    // A RECOVERY frame: the tag, the epoch, the nonce, the replica; a
+    // RECOVERYRESPONSE: the tag, the epoch, the view, the nonce, where the
+    // epoch began, the replica, the configuration, and the log if any.
     let mut stale = group.frames.front().unwrap().bytes.clone();
-    stale[1] ^= 1;
+    stale[9] ^= 1;
     let mut other = vec![RECOVERY_RESPONSE];
-    other.extend_from_slice(&0_u64.to_le_bytes());
-    other.extend_from_slice(&stale[1..9]);
+    other.extend_from_slice(&[0; 16]);
+    other.extend_from_slice(&stale[9..17]);
+    other.extend_from_slice(&[0; 8]);
     other.extend_from_slice(&2_u32.to_le_bytes());
-    other.extend_from_slice(&[0, 0]);
+    other.extend_from_slice(&[0, 0, 0, 0, 0]);
     assert_eq!(group.step(THIRD, Input::Received { from: BACKUP, frame: other }), [], "another nonce");
     let mut with_log = vec![RECOVERY_RESPONSE];
-    with_log.extend_from_slice(&0_u64.to_le_bytes());
-    with_log.extend_from_slice(&stale[1..9]);
+    with_log.extend_from_slice(&[0; 16]);
+    with_log.extend_from_slice(&stale[9..17]);
+    with_log.extend_from_slice(&[0; 8]);
     with_log.extend_from_slice(&1_u32.to_le_bytes());
-    with_log.extend_from_slice(&[0, 1]);
+    with_log.extend_from_slice(&[0, 0, 0, 0, 1]);
     for number in [3_u64, 3_u64, 3_u64, 0_u64] {
         with_log.extend_from_slice(&number.to_le_bytes());
     }
+    with_log.extend_from_slice(&0_u32.to_le_bytes());
     assert_eq!(group.step(THIRD, Input::Received { from: PRIMARY, frame: with_log }), [], "another nonce, the primary's log");
     group.step(PRIMARY, Input::Append(record("r6")));
     let ignored = group.frames.iter().find(|f| f.to == THIRD && f.bytes[0] == 1_u8).unwrap().clone();
@@ -104,7 +110,8 @@ fn a_replica_losing_its_journal_recovers_from_the_primary() {
 /// whose database holds less than the primary's window begins with
 /// fetches a state transfer of the primary's database first, in the
 /// primary's view, its RECOVERY sent again at each heartbeat until
-/// answered; a member in a view change answers no RECOVERY.
+/// answered; a member in a view change answers a RECOVERY with the view
+/// it was last normal in, and no log, not being that view's primary.
 #[test]
 fn a_replica_recovering_behind_the_primarys_window_fetches_state() {
     let mut group = five_committed();
@@ -123,55 +130,135 @@ fn a_replica_recovering_behind_the_primarys_window_fetches_state() {
     assert!(third.outputs.contains(&Output::FetchState { from: PRIMARY }), "{:?}", third.outputs);
     assert_eq!(views_entered(&third.outputs), entered, "in no view yet");
 
-    let changing = Recovered { state: Some(vec![1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), first: Lsn(0), records: Vec::new() };
-    let mut silent = Vr::restart(&ids(3), BACKUP, options(), changing, 7).unwrap();
-    assert_eq!(silent.standing().status, Status::ViewChange);
+    let mut in_view_1 = vec![1];
+    for number in [0_u64, 0_u64, 1_u64, 0_u64, 0_u64] {
+        in_view_1.extend_from_slice(&number.to_le_bytes());
+    }
+    in_view_1.extend_from_slice(&0_u32.to_le_bytes());
+    in_view_1.push(0);
+    let changing =
+        Recovered { state: Some(in_view_1), first: Lsn(0), records: vec![record("r1")], marks: std::collections::BTreeMap::new() };
+    let mut changing_backup = Vr::restart(&config(3), BACKUP, options(), changing, 7).unwrap();
+    assert_eq!(changing_backup.standing().status, Status::ViewChange);
     let mut recovery = vec![RECOVERY];
+    recovery.extend_from_slice(&0_u64.to_le_bytes());
     recovery.extend_from_slice(&9_u64.to_le_bytes());
     recovery.extend_from_slice(&3_u32.to_le_bytes());
     let mut out = Vec::new();
-    silent.step(Input::Received { from: THIRD, frame: recovery }, &mut out);
-    assert_eq!(out, []);
+    changing_backup.step(Input::Received { from: THIRD, frame: recovery }, &mut out);
+    // The response: the tag, the epoch, view 0, the nonce, where the
+    // epoch began, the replica, the configuration of three at no
+    // address, and no log.
+    let mut response = vec![RECOVERY_RESPONSE];
+    response.extend_from_slice(&[0; 16]);
+    response.extend_from_slice(&9_u64.to_le_bytes());
+    response.extend_from_slice(&[0; 8]);
+    response.extend_from_slice(&2_u32.to_le_bytes());
+    response.extend_from_slice(&3_u32.to_le_bytes());
+    for member in 1_u32..=3_u32 {
+        response.extend_from_slice(&member.to_le_bytes());
+        response.extend_from_slice(&0_u32.to_le_bytes());
+    }
+    response.push(0);
+    assert_eq!(out, [Output::Send { to: THIRD, frame: response }]);
 }
 
-/// Verifies: [EXTENSION] RULES.md D57: a new group's members, each made
-/// from its empty journal and opened over an empty database, recover from
-/// each other: fresh, each answers the others' RECOVERY saying so, and
-/// hearing from f fresh members is normal in view 0; two of three suffice,
-/// the first serving and committing; the third, heard later, recovers
-/// from the primary's answer and holds the log. A group of one recovers
-/// at once, from its database alone, its log beginning where the
-/// database holds it.
-#[test]
-fn a_new_group_bootstraps_by_recovery() {
+/// Members made from empty journals over empty databases, told nothing of
+/// a new group: each sends RECOVERY to the others, none answers, and all
+/// wait through five heartbeats, entering no view and writing no state.
+fn members_from_empty_journals_wait() {
     let make: Make = Arc::new(make_from_journal);
-    let mut group = Group::new(&ids(3), make);
+    let mut waiting = Group::new(&ids(3), make);
+    for id in ids(3) {
+        assert!(waiting.node(id).outputs.contains(&Output::Event(ReplicaEvent::Recovering)), "{id:?}");
+    }
+    for _ in 0_u32..5_u32 {
+        waiting.tick();
+        waiting.settle();
+    }
+    for id in ids(3) {
+        let node = waiting.node(id);
+        assert_eq!(views_entered(&node.outputs), 0_usize, "{id:?}: {:?}", node.outputs);
+        assert!(!node.outputs.iter().any(|o| matches!(o, Output::Send { frame, .. } if frame[0] == RECOVERY_RESPONSE)), "{id:?} answered");
+        assert!(node.journal.recovered().state.is_none(), "{id:?} wrote a state");
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D57: members made from empty journals
+/// over empty databases, told nothing of a new group, recover: each sends
+/// RECOVERY to the others, none answers, recovering itself, and all wait,
+/// through any number of heartbeats, as members as empty as they could
+/// be the new members of a group holding a log elsewhere; a new group's
+/// members are made normal in view 0 instead (`Vr::new`): the first
+/// serves and commits, and a member whose journal is then lost with its
+/// database empty recovers from the primary's answer, and holds the log.
+/// A group of one recovers at once, from its database alone, its log
+/// beginning where the database holds it.
+#[test]
+fn members_made_from_empty_journals_wait_and_a_new_group_is_made_normal() {
+    members_from_empty_journals_wait();
+    let made: Make = Arc::new(make_vr);
+    let mut group = Group::new(&ids(3), made);
     let entered =
         |of: &Group, id: ReplicaId| of.node(id).outputs.contains(&Output::Event(ReplicaEvent::ViewChanged { view: 0, primary: PRIMARY }));
-    for id in ids(3) {
-        assert!(group.node(id).outputs.contains(&Output::Event(ReplicaEvent::Recovering)), "{id:?}");
-        assert!(!entered(&group, id), "{id:?}");
-    }
-    settle_without(&mut group, &[THIRD]);
-    assert!(entered(&group, PRIMARY) && entered(&group, BACKUP) && !entered(&group, THIRD));
+    assert!(entered(&group, PRIMARY) && entered(&group, BACKUP) && entered(&group, THIRD));
+    group.settle();
     assert_eq!(served(&group.node(PRIMARY).outputs), vec![0]);
     group.step(PRIMARY, Input::Append(record("a")));
     settle_without(&mut group, &[THIRD]);
     assert_eq!(committed(&group.node(PRIMARY).outputs), vec![1]);
+    group.lose_journal(THIRD, 0);
+    group.step(THIRD, Input::Opened(Lsn(0)));
     group.tick();
     group.tick();
     group.settle();
-    assert!(entered(&group, THIRD));
     let third = group.node(THIRD);
     assert_eq!(third.journal.records(), [record("a")]);
     assert_eq!(third.applied, [record("a")]);
+    assert!(third.outputs.contains(&Output::Event(ReplicaEvent::Recovered { view: 0, from: PRIMARY })), "{:?}", third.outputs);
 
-    let mut alone = Vr::restart(&[PRIMARY], PRIMARY, options(), Recovered::default(), 3).unwrap();
+    let mut alone = Vr::restart(&configuration(&[PRIMARY]), PRIMARY, options(), Recovered::default(), 3).unwrap();
     let mut out = Vec::new();
     alone.step(Input::Opened(Lsn(7)), &mut out);
     assert!(out.contains(&Output::Retain { through: Lsn(7) }), "{out:?}");
     assert!(out.contains(&Output::Role(Role::Primary { view: 0 })), "{out:?}");
     assert_eq!((alone.standing().status, alone.standing().first, alone.standing().commit), (Status::Normal, Lsn(7), Lsn(7)));
+}
+
+/// Verifies: [EXTENSION] RULES.md D57 [VRR §4.3]: a replica recovering
+/// takes the log of the primary of the latest view the responses name,
+/// from that replica's response of that view: an earlier response of the
+/// same replica, primary of an earlier view, is no log of the latest, so
+/// the recovery waits for the primary's answer to its next RECOVERY.
+#[test]
+fn a_recovery_takes_no_stale_answer_of_the_latest_views_primary() {
+    let mut group = five_committed();
+    group.lose_journal(THIRD, 3);
+    group.step(THIRD, Input::Opened(Lsn(3)));
+    let recovery = group.frames.iter().find(|f| f.from == THIRD && f.to == PRIMARY).expect("the RECOVERY").clone();
+    group.drop_frames(|f| f.from == THIRD);
+    let answer = |of: &mut Group, from: ReplicaId| -> Vec<u8> {
+        let out = of.step(from, Input::Received { from: THIRD, frame: recovery.bytes.clone() });
+        out.iter()
+            .find_map(|o| if let Output::Send { to, frame } = o { (*to == THIRD).then(|| frame.clone()) } else { None })
+            .expect("the answer")
+    };
+    let stale = answer(&mut group, PRIMARY);
+    assert_eq!(stale[9..17], 0_u64.to_le_bytes(), "of view 0");
+    let mut later = answer(&mut group, BACKUP);
+    // The view: after the tag and the epoch.
+    later[9..17].copy_from_slice(&3_u64.to_le_bytes());
+    assert_eq!(group.step(THIRD, Input::Received { from: PRIMARY, frame: stale.clone() }), [], "one answer");
+    let waited = group.step(THIRD, Input::Received { from: BACKUP, frame: later });
+    assert!(
+        !waited.iter().any(|o| matches!(o, Output::Event(ReplicaEvent::Recovered { .. }))),
+        "the primary's answer is of view 0: {waited:?}"
+    );
+    assert!(waited.is_empty(), "{waited:?}");
+    let mut of_view_3 = stale;
+    of_view_3[9..17].copy_from_slice(&3_u64.to_le_bytes());
+    let recovered = group.step(THIRD, Input::Received { from: PRIMARY, frame: of_view_3 });
+    assert!(recovered.contains(&Output::Event(ReplicaEvent::Recovered { view: 3, from: PRIMARY })), "{recovered:?}");
 }
 
 /// The plan losing journals, keeping `retain_bytes` of the log.

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use turborel::error::Result;
 
 use super::Driver;
-use crate::{Lsn, ReplicaEvent, ReplicaId};
+use crate::{Configuration, Lsn, ReplicaEvent, ReplicaId};
 
 /// \[EXTENSION\] Frames arrived for a replica, and not yet taken by its
 /// driver: a transport puts them here, in the order they arrived.
@@ -144,6 +144,15 @@ pub trait Watch: Send + Sync {
     /// \[EXTENSION\] The database installed a state transfer, holding the
     /// log through `at` (RULES.md D57). Default: nothing.
     fn installed(&self, _at: Lsn) {}
+    /// \[EXTENSION\] A state transfer is fetched from `from` (RULES.md
+    /// D57).
+    fn fetching(&self, _from: ReplicaId) {}
+    /// \[EXTENSION\] A state transfer's request from `from` is answered,
+    /// out of the export served (RULES.md D57).
+    fn answering(&self, _from: ReplicaId) {}
+    /// \[EXTENSION\] The replica is in `epoch`, of `configuration` [VRR
+    /// §7]: as it opens, and at each reconfiguration. Default: nothing.
+    fn epoch(&self, _epoch: u64, _configuration: &Configuration) {}
 }
 
 /// \[EXTENSION\] A watch that tells nothing.

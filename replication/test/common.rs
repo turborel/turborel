@@ -4,12 +4,18 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turborel_replication::{Consensus, Output, Recovered, ReplicaId, Vr, VrOptions};
-use turborel_test_support::replication::Group;
+use turborel_replication::{Consensus, Member, Output, Recovered, ReplicaId, Vr, VrOptions};
+use turborel_test_support::replication::{Group, configuration};
 
 /// Replicas 1 to `count`.
 pub fn ids(count: u32) -> Vec<ReplicaId> {
     (1..=count).map(ReplicaId).collect()
+}
+
+/// The configuration of a group of `count` replicas, numbered from 1, at
+/// no address.
+pub fn config(count: u32) -> Vec<Member> {
+    configuration(&ids(count))
 }
 
 /// The options of the tests: a heartbeat every 2 ticks, a view change after
@@ -32,7 +38,7 @@ pub fn nonce() -> u64 {
 }
 
 /// A VR replica, new or made again from its journal.
-pub fn make_vr(members: &[ReplicaId], me: ReplicaId, recovered: Option<Recovered>) -> Box<dyn Consensus> {
+pub fn make_vr(members: &[Member], me: ReplicaId, recovered: Option<Recovered>) -> Box<dyn Consensus> {
     Box::new(match recovered {
         None => Vr::new(members, me, options()).unwrap(),
         Some(recovered) => Vr::restart(members, me, options(), recovered, nonce()).unwrap(),

@@ -69,6 +69,7 @@ fn fields(json: &mut Json, event: &Event) {
             json.raw("dropped", if *dropped { "true" } else { "false" });
         }
         Event::OwnerChanged { name } => json.texts(&[("event", "owner_changed"), ("name", name)]),
+        Event::Reconfigured { members } => json.texts(&[("event", "reconfigured"), ("members", members)]),
         Event::Registered { kind, name } => json.texts(&[("event", "registered"), ("kind", &format!("{kind:?}")), ("name", name)]),
         Event::Failed(e) => failed(json, e),
         Event::Thread { label, change } => thread(json, label, change),
@@ -166,6 +167,17 @@ fn replica(json: &mut Json, change: &ReplicaChange) {
         }
         ReplicaChange::AppendRefused => json.text("change", "append_refused"),
         ReplicaChange::Recovering => json.text("change", "recovering"),
+        ReplicaChange::Recovered { view, from } => {
+            json.text("change", "recovered");
+            json.number("view", *view);
+            json.number("from", u64::from(*from));
+        }
+        ReplicaChange::EpochEntered { epoch, members } => {
+            json.text("change", "epoch_entered");
+            json.number("epoch", *epoch);
+            json.text("members", members);
+        }
+        ReplicaChange::Removed => json.text("change", "removed"),
         ReplicaChange::Connected { member } => {
             json.text("change", "connected");
             json.number("member", u64::from(*member));
@@ -362,10 +374,10 @@ mod tests {
         assert_eq!(timestamp(at(1_793_131_256, 701)), "2026-10-27T20:00:56.701Z");
     }
 
-    /// Verifies: [DESIGN] RULES.md D40: each event is a line of JSON with
-    /// its time, level, kind and fields, its strings escaped.
+    /// Verifies: [DESIGN] RULES.md D40: a slow statement, told or not, and
+    /// the files reopened are lines of JSON, the statement's text escaped.
     #[test]
-    fn events_are_lines_of_json() {
+    fn statements_and_files_are_lines_of_json() {
         let shown = |event: &Event| line(at(0, 0), event);
         let head = r#"{"time":"1970-01-01T00:00:00.000Z","#;
         let slow = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: Some("SELECT 'a\"b'\n\u{1}".into()) };
@@ -380,6 +392,14 @@ mod tests {
         );
         let reopened = Event::FilesReopened { reopened: 3000, limit: 1024 };
         assert_eq!(shown(&reopened), format!(r#"{head}"level":"warning","event":"files_reopened","reopened":3000,"limit":1024}}"#));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D40: each event is a line of JSON with
+    /// its time, level, kind and fields, its strings escaped.
+    #[test]
+    fn events_are_lines_of_json() {
+        let shown = |event: &Event| line(at(0, 0), event);
+        let head = r#"{"time":"1970-01-01T00:00:00.000Z","#;
         let report = RecoveryReport { records: 1, definitions: 2, committed: 3, not_committed: 4, redone: 5, undone: 6, cut: 7 };
         let cases = [
             (Event::Opened(Opened::Created), r#""level":"info","event":"opened","how":"created"}"#.to_owned()),
@@ -401,6 +421,10 @@ mod tests {
             (Event::UserChanged { name: "ANN".into(), dropped: true }, r#""level":"info","event":"user_changed","name":"ANN","dropped":true}"#.to_owned()),
             (Event::UserChanged { name: "ANN".into(), dropped: false }, r#""level":"info","event":"user_changed","name":"ANN","dropped":false}"#.to_owned()),
             (Event::OwnerChanged { name: "ANN".into() }, r#""level":"info","event":"owner_changed","name":"ANN"}"#.to_owned()),
+            (
+                Event::Reconfigured { members: "1=a:1,4=d:4".into() },
+                r#""level":"info","event":"reconfigured","members":"1=a:1,4=d:4"}"#.to_owned(),
+            ),
             (
                 Event::Registered { kind: Extension::Encoding, name: "LZ4".into() },
                 r#""level":"info","event":"registered","kind":"Encoding","name":"LZ4"}"#.to_owned(),
@@ -438,6 +462,12 @@ mod tests {
             ),
             (ReplicaChange::AppendRefused, r#""level":"warning","event":"replica","change":"append_refused"}"#),
             (ReplicaChange::Recovering, r#""level":"warning","event":"replica","change":"recovering"}"#),
+            (ReplicaChange::Recovered { view: 3, from: 2 }, r#""level":"info","event":"replica","change":"recovered","view":3,"from":2}"#),
+            (
+                ReplicaChange::EpochEntered { epoch: 2, members: "1=a:1,4=d:4".into() },
+                r#""level":"info","event":"replica","change":"epoch_entered","epoch":2,"members":"1=a:1,4=d:4"}"#,
+            ),
+            (ReplicaChange::Removed, r#""level":"warning","event":"replica","change":"removed"}"#),
             (ReplicaChange::Connected { member: 2 }, r#""level":"info","event":"replica","change":"connected","member":2}"#),
             (
                 ReplicaChange::Disconnected { member: 2, why: "refused".into() },

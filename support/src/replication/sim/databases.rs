@@ -10,8 +10,11 @@
 //! the records a backup is given end inside transactions, a view change
 //! leaves some open, and a commit waits on the group as the world moves
 //! on; and the databases take checkpoints at random, the backups' as
-//! following databases. At the end every backup must hold what the
-//! primary holds: the same rows and the same catalog.
+//! following databases; and the primary's database is asked
+//! reconfigurations (`Database::reconfigure`), a spare joining as a
+//! member leaves. At the end every backup must hold what the primary
+//! holds: the same rows and the same catalog; and every database whose
+//! replica left the group is retired, serving nothing.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -24,7 +27,7 @@ use turborel::value::Value;
 use turborel_replication::{Driver, GroupLogs, PageDifferences, StateTransfer};
 
 use super::super::group::Make;
-use super::{Host, Plan, Report, Rng, Runner, Violation};
+use super::{Host, Plan, Report, Rng, Runner, Violation, serving_primary};
 use crate::database::{contents, number, rows};
 use crate::volatile::VolatileFileSystem;
 
@@ -89,6 +92,8 @@ pub struct DatabaseReport {
     pub reopened: u64,
     /// Reads served by backups, each holding its snapshot a while.
     pub backup_reads: u64,
+    /// Reconfigurations asked of a primary's database that were done.
+    pub reconfigured: u64,
     /// Backups compared with the primary at the end.
     pub compared: usize,
 }
@@ -236,17 +241,45 @@ impl Replicas {
             if self.runner.plan.appending(now) && self.rng.chance(READS) {
                 self.read()?;
             }
+            if !self.runner.world().calm() && self.rng.chance(self.runner.plan.faults.reconfigure) {
+                self.reconfigure()?;
+            }
         }
         Ok(())
     }
 
+    /// The primary's database is asked a reconfiguration, if one serves,
+    /// asked none in its view, and a spare waits: a spare joins, a member
+    /// leaves; the call waits on the group, moments passing within it.
+    fn reconfigure(&mut self) -> Result<(), Violation> {
+        let Some((index, view)) = serving_primary(&self.runner) else { return Ok(()) };
+        let Some(db) = self.database(index) else { return Ok(()) };
+        let next = {
+            let mut world = self.runner.world();
+            let (id, spare) = (world.id(index), world.spare_to_add());
+            world.epochs.propose(&mut self.rng, (id, view), spare)
+        };
+        let Some(next) = next else { return Ok(()) };
+        let members: Vec<String> = next.iter().map(|id| format!("{}=node{}:1", id.0, id.0)).collect();
+        // Deposed meanwhile, the call fails: the record may be committed
+        // all the same, which the epochs entered tell.
+        if db.reconfigure(&members.join(",")).is_ok() {
+            self.report.reconfigured += 1;
+        }
+        self.runner.world().check()
+    }
+
     /// A reader begins on a backup's database, at random, if none is on
     /// it: its read must be served, and its snapshot is held a while,
-    /// during which the database's following checkpoints wait.
+    /// during which the database's following checkpoints wait. A database
+    /// whose replica left the group serves no read.
     fn read(&mut self) -> Result<(), Violation> {
         let index = self.rng.index(self.replicas());
         let (Some(db), Some(driver)) = (self.database(index), self.runner.driver(index)) else { return Ok(()) };
-        if driver.serving().is_some() || self.runner.host.kept().readers[index].is_some() {
+        if driver.serving().is_some()
+            || self.runner.host.kept().readers.get(index).is_some_and(Option::is_some)
+            || self.runner.world().left(index)
+        {
             return Ok(());
         }
         let session = db.session("APP");
@@ -319,7 +352,7 @@ impl Replicas {
         for index in 0..self.replicas() {
             let view = self.runner.driver(index).and_then(|d| d.serving());
             let mut kept = self.runner.host.kept();
-            if kept.open[index].as_ref().is_some_and(|(_, opened)| view != Some(*opened)) {
+            if kept.open.get(index).is_some_and(|open| open.as_ref().is_some_and(|(_, opened)| view != Some(*opened))) {
                 kept.open[index] = None;
                 kept.interrupted += 1;
             }
@@ -329,6 +362,14 @@ impl Replicas {
     /// How many replicas the group has.
     fn replicas(&self) -> usize {
         self.runner.world().replicas()
+    }
+
+    /// Where each replica's consensus stands, for a violation.
+    fn standings(&self) -> String {
+        (0..self.replicas())
+            .map(|i| self.runner.driver(i).map_or_else(|| format!("{}: down", i + 1), |d| format!("{}: {}", i + 1, d.describe())))
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 
     /// The replica whose database serves as primary, if one does.
@@ -341,19 +382,27 @@ impl Replicas {
         self.runner.host.database(index)
     }
 
-    /// A database up, at random, takes a checkpoint, if it can.
+    /// A database up, at random, takes a checkpoint, if it can: holding
+    /// the checkpoints' turn, it serves no state transfer meanwhile, as
+    /// an export would wait on the turn on a node.
     fn checkpoint(&mut self) {
         let index = self.rng.index(self.replicas());
         let Some(db) = self.database(index) else { return };
         let following = self.runner.driver(index).is_some_and(|d| d.serving().is_none());
-        if db.checkpoint().is_ok() && following {
+        let taken = db.checkpoint();
+        let id = self.runner.world().id(index);
+        self.runner
+            .world()
+            .note(id, &format!("checkpoint {}", taken.as_ref().map_or_else(|e| format!("failed: {e}"), |()| "taken".to_owned())));
+        if taken.is_ok() && following {
             self.report.following_checkpoints += 1;
         }
     }
 
-    /// The primary's database acts once, at random.
+    /// The primary's database acts once, at random, unless it was asked a
+    /// reconfiguration in its view: it takes no change after.
     fn act(&mut self) -> Result<(), Violation> {
-        let Some(index) = self.primary() else { return Ok(()) };
+        let Some((index, _)) = serving_primary(&self.runner) else { return Ok(()) };
         let Some(db) = self.database(index) else { return Ok(()) };
         if rows(&db.session("APP"), "SELECT COUNT(*) FROM T").is_err() {
             let _ = db.schema(SCHEMA);
@@ -410,33 +459,89 @@ impl Replicas {
         }
     }
 
+    /// The primary's database, holding `expected`, held to what a database
+    /// made from the committed log alone holds: a fresh one, following,
+    /// given every record the checker saw committed, in order.
+    ///
+    /// # Errors
+    ///
+    /// The database could not be made or given the records; the primary
+    /// holds other than it.
+    fn checked_against_committed_log(&self, primary: usize, expected: &[String]) -> Result<(), Violation> {
+        let driver = self.runner.driver(primary).ok_or_else(|| "the primary's driver is gone".to_owned())?;
+        let records: Vec<(Lsn, Vec<u8>)> =
+            self.runner.world().committed_log().iter().enumerate().map(|(i, r)| (Lsn(u64::try_from(i).unwrap() + 1), r.clone())).collect();
+        let fs: Arc<dyn FileSystem> = Arc::new(VolatileFileSystem::new());
+        let db = Database::new();
+        let made = (|| {
+            db.set_setting("JOBS.POLICY", &Value::Char("MANUAL".into()))?;
+            db.set_setting("CHECKPOINT.AFTER_CHANGES", &number(i64::MAX))?;
+            db.set_log_storage(Box::new(GroupLogs::of(Arc::clone(&driver))))?;
+            db.open_following(&fs, Path::new(DIR), &OpenOptions::default())?;
+            Standby::replay(&db, &mut records.into_iter().map(Ok))
+        })();
+        made.map_err(|e| format!("a database made from the committed log: {e}"))?;
+        let canonical = contents(&db, &READERS);
+        if expected != canonical {
+            let of_primary: Vec<&String> = expected.iter().filter(|line| !canonical.contains(line)).collect();
+            let of_log: Vec<&String> = canonical.iter().filter(|line| !expected.contains(line)).collect();
+            let why = format!(
+                "the primary {} differs from a database made from the committed log: it alone holds {of_primary:?}, the log alone {of_log:?}",
+                primary + 1
+            );
+            return Err(self.runner.world().fail(&why));
+        }
+        Ok(())
+    }
+
     /// The end: the primary's open transaction rolled back; every backup
     /// holds the committed log and what the primary holds, its rows and its
-    /// catalog; the outcomes told agree with the log.
+    /// catalog, both what a database made from the committed log alone
+    /// holds; every database whose replica left the group is retired,
+    /// refusing a read (SQLCODE -917); the outcomes told agree with the
+    /// log.
     ///
     /// # Errors
     ///
     /// The first violation found.
     pub fn compare(&mut self) -> Result<DatabaseReport, Violation> {
-        let seed = self.runner.world().seed();
-        let primary = self.primary().ok_or_else(|| format!("seed {seed}: no database serves after the calm"))?;
+        let Some(primary) = self.primary() else {
+            let standings = self.standings();
+            return Err(self.runner.world().fail(&format!("no database serves after the calm; the replicas: {standings}")));
+        };
         if let Some((session, _)) = self.runner.host.take_open(primary) {
             let _ = session.rollback();
         }
         self.end_reads(u64::MAX);
         let expected = contents(&self.database(primary).unwrap(), &READERS);
+        self.checked_against_committed_log(primary, &expected)?;
         let committed = u64::try_from(self.runner.world().committed_log().len()).unwrap();
-        for index in (0..self.replicas()).filter(|&i| i != primary) {
+        for index in (0..self.replicas()).filter(|&i| i != primary && self.runner.world().joined(i)) {
+            if self.runner.world().left(index) {
+                let refused = self.database(index).map(|db| rows(&db.session("APP"), "SELECT COUNT(*) FROM T").err());
+                if !self.runner.world().removed_told(index) || refused != Some(Some(Code::TransactionState)) {
+                    let why = format!("replica {} left the group but its database is not retired: {refused:?}", index + 1);
+                    return Err(self.runner.world().fail(&why));
+                }
+                continue;
+            }
             let holds = self.runner.driver(index).map_or(0, |d| d.holds().0);
             if holds != committed {
-                return Err(format!("seed {seed}: replica {} holds {holds} records of {committed}", index + 1));
+                let standing = self.runner.driver(index).map_or_else(|| "down".to_owned(), |d| d.describe());
+                let why = format!("replica {} holds {holds} records of {committed}; its replica: {standing}", index + 1);
+                return Err(self.runner.world().fail(&why));
             }
             let found = contents(&self.database(index).unwrap(), &READERS);
-            if let Some((a, b)) = found.iter().zip(&expected).find(|(a, b)| a != b) {
-                return Err(format!("seed {seed}: replica {} holds {a}, its primary {b}", index + 1));
-            }
-            if found.len() != expected.len() {
-                return Err(format!("seed {seed}: replica {} holds {} lines, its primary {}", index + 1, found.len(), expected.len()));
+            if found != expected {
+                let of_replica: Vec<&String> = found.iter().filter(|line| !expected.contains(line)).collect();
+                let of_primary: Vec<&String> = expected.iter().filter(|line| !found.contains(line)).collect();
+                let standing = self.runner.driver(index).map_or_else(|| "down".to_owned(), |d| d.describe());
+                let why = format!(
+                    "replica {} differs from its primary {}: it alone holds {of_replica:?}, the primary alone {of_primary:?}; its replica: {standing}",
+                    index + 1,
+                    primary + 1
+                );
+                return Err(self.runner.world().fail(&why));
             }
             self.report.compared += 1;
         }

@@ -27,7 +27,7 @@ mod group;
 mod journal;
 pub mod sim;
 
-pub use group::{Frame, Group, Make, Node};
+pub use group::{Frame, Group, Make, Node, configuration};
 pub use journal::Journal;
 
 /// The nonces of the recoveries made here, each once.
@@ -38,10 +38,10 @@ static NONCES: AtomicU64 = AtomicU64::new(1);
 /// recovering from the group if nothing (`Vr::restart`), its recovery's
 /// nonce a count.
 pub fn vr_make() -> Make {
-    Arc::new(|members, me, recovered| {
+    Arc::new(|configuration, me, recovered| {
         Box::new(match recovered {
-            None => Vr::new(members, me, VrOptions::default()).unwrap(),
-            Some(held) => Vr::restart(members, me, VrOptions::default(), held, NONCES.fetch_add(1, Ordering::Relaxed)).unwrap(),
+            None => Vr::new(configuration, me, VrOptions::default()).unwrap(),
+            Some(held) => Vr::restart(configuration, me, VrOptions::default(), held, NONCES.fetch_add(1, Ordering::Relaxed)).unwrap(),
         })
     })
 }

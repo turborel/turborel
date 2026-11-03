@@ -14,7 +14,7 @@ use turborel::db::{Database, OpenOptions, Opened};
 use turborel::error::Code;
 use turborel::files::FileOwner;
 use turborel::index::BTreeMethod;
-use turborel::log::record::{KINDS, Record};
+use turborel::log::record::{KINDS, REPLICATED, Record};
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn};
 use turborel::value::types::TypeRegistry;
 
@@ -148,9 +148,9 @@ fn kinds_logged(dir: &Path) -> Vec<u8> {
 /// and users among them; the statements listed cover every kind.
 #[test]
 fn every_kind_of_record_is_written_and_replayed() {
-    let mut covered: Vec<u8> = WRITERS.iter().map(|w| w.kind).collect();
+    let mut covered: Vec<u8> = WRITERS.iter().map(|w| w.kind).chain(REPLICATED).collect();
     covered.sort_unstable();
-    assert_eq!(covered, KINDS.to_vec(), "a statement for every kind of record, and for none other");
+    assert_eq!(covered, KINDS.to_vec(), "a statement for every kind of record but a replicated log's, and for none other");
     for writer in &WRITERS {
         let scratch = Scratch::new(&format!("replay-kind-{}", writer.kind));
         let dir = scratch.path("db");

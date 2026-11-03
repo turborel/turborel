@@ -22,6 +22,8 @@ use turborel_replication::{
 };
 use turborel_test_support::database::rows;
 
+use turborel_test_support::replication::configuration;
+
 use crate::common::options;
 
 /// A transport of a group of one: it sends nothing.
@@ -31,8 +33,8 @@ impl Transport for Alone {
     fn send(&self, to: ReplicaId, _frame: &[u8]) -> Result<()> {
         Err(SqlError::new(Code::Api, format!("[TOOL] replica {} is no member", to.0)))
     }
-    fn members(&self) -> &[ReplicaId] {
-        &self.0
+    fn members(&self) -> Vec<ReplicaId> {
+        self.0.to_vec()
     }
 }
 
@@ -117,7 +119,7 @@ fn opened(fs: &Arc<dyn FileSystem>, driver: &Arc<Driver>) -> (Database, Lsn) {
 #[test]
 fn a_driver_job_serves_its_database() {
     let told = Arc::new(Told::default());
-    let vr = Box::new(Vr::new(&[ReplicaId(1_u32)], ReplicaId(1_u32), options()).unwrap());
+    let vr = Box::new(Vr::new(&configuration(&[ReplicaId(1_u32)]), ReplicaId(1_u32), options()).unwrap());
     let driver = Driver::new(parts(vr, Arc::new(Stepping), watched(&told)));
     let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
     let (db, holds) = opened(&fs, &driver);
@@ -170,8 +172,9 @@ fn a_promotion_syncs_on_the_drivers_own_thread() {
         journal.persist(Lsn(u64::try_from(i).unwrap() + 1_u64), record).unwrap();
     }
     journal.sync().unwrap();
-    let recovered = turborel_replication::Recovered { state: None, first: Lsn(0), records: records.clone() };
-    let vr = Box::new(Vr::restart(&[ReplicaId(1_u32)], ReplicaId(1_u32), options(), recovered, 1_u64).unwrap());
+    let recovered =
+        turborel_replication::Recovered { state: None, first: Lsn(0), records: records.clone(), marks: std::collections::BTreeMap::new() };
+    let vr = Box::new(Vr::restart(&configuration(&[ReplicaId(1_u32)]), ReplicaId(1_u32), options(), recovered, 1_u64).unwrap());
     let wait = Arc::new(Blocking { most: Duration::from_millis(1_u64) });
     let parts = Parts {
         consensus: vr,
@@ -227,6 +230,10 @@ impl Standby for Counted {
         self.0.fetch_add(1_u64, Ordering::SeqCst);
         Ok(())
     }
+    fn retire(&self) -> Result<()> {
+        self.0.fetch_add(1_u64, Ordering::SeqCst);
+        Ok(())
+    }
     fn depose(&self) -> Result<()> {
         Ok(())
     }
@@ -251,9 +258,10 @@ fn scripted(outputs: Vec<Output>, told: &Arc<Told>) -> Arc<Driver> {
 /// outputs as the crate's contract says: a role begun promotes its
 /// database once it holds the log, and an end of it deposes and opens it
 /// again; events are told; an outcome of a record it did not append, a
-/// state transfer asked for, a primary whose database lacks the log, or a
-/// frame its transport refuses, fails it (SQLCODE -910), after which it
-/// takes nothing; an append while it serves no primary is refused.
+/// state transfer asked for, or a primary whose database lacks the log,
+/// fails it (SQLCODE -910), after which it takes nothing; a frame to a
+/// replica its transport does not link is dropped; an append while it
+/// serves no primary is refused.
 #[test]
 fn a_driver_carries_out_its_consensus() {
     let told = Arc::new(Told::default());
@@ -267,11 +275,10 @@ fn a_driver_carries_out_its_consensus() {
     assert_eq!(standby.0.load(Ordering::SeqCst), 2_u64, "promoted, then opened again");
     assert_eq!(told.0.lock().unwrap().len(), 3_usize, "serving, stopped, and the event");
 
-    let failing = [
-        Output::Outcome { at: Lsn(1_u64), kept: Some(true) },
-        Output::FetchState { from: ReplicaId(1_u32) },
-        Output::Send { to: ReplicaId(2_u32), frame: Vec::new() },
-    ];
+    let dropped = scripted(vec![Output::Send { to: ReplicaId(2_u32), frame: Vec::new() }], &told);
+    dropped.turn(&standby).unwrap();
+    assert!(dropped.failed().is_none(), "a frame to a replica the transport does not link is dropped");
+    let failing = [Output::Outcome { at: Lsn(1_u64), kept: Some(true) }, Output::FetchState { from: ReplicaId(1_u32) }];
     for output in failing {
         let failed = scripted(vec![output.clone()], &told);
         assert_eq!(failed.turn(&standby).err().map(|e| e.code), Some(Code::Api), "{output:?}");

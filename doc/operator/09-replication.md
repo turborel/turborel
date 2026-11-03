@@ -41,19 +41,27 @@ $ turboreld --dir /var/db --keys keys --set REPLICATION.REPLICA=1 \
 ```
 
 and the same on `db2` and `db3`, each with its own number. A new
-database is made by the group as its nodes first start, once a majority
-of them are up: give `--owner NAME` to each, and the owner is made once
-a node serves. The settings fixed when the database is made, and every
-other setting, are the database's, replicated with it; the REPLICATION
-settings alone are each node's.
+database is made by the group as its nodes first start, each over an
+empty directory: give `--owner NAME` to each, which tells the node the
+group is new, and the owner is made once a node serves, as a majority
+of the nodes are up. The settings fixed when the database is made, and
+every other setting, are the database's, replicated with it; the
+REPLICATION settings alone are each node's. Give `--owner` only as the
+group is made: a node started with it later over an empty directory
+would make a database of its own, as a new group of one; a node started
+over its files is made from them, whatever it is given.
 
 A node starting over an empty `log/`, new to the group, or its log lost,
 learns the group's state from the others before it takes part, told as
 a `recovering` event: it joins once a majority of the members answer
 it, the primary among them, and fetches the primary's database if its
-own is behind. A node whose `log/` directory is lost keeps the rows its
-database holds and catches up the same way: nothing need be copied by
-hand.
+own is behind. A node whose `log/` directory is lost while its database's
+files remain starts over from nothing, as the files cannot be recovered
+without the log, and fetches the primary's database: nothing need be
+copied by hand. A node started over an empty directory without
+`--owner` waits so too, as it cannot tell a new group from one that
+holds a log elsewhere: it is a new member, or one whose directory was
+lost, and takes the group's state.
 
 ## Serving
 
@@ -65,16 +73,16 @@ whose statement is refused so connects to the primary, which
 INFORMATION_SCHEMA.REPLICAS names:
 
 ```sql
-SELECT MEMBER, ADDRESS, IS_SELF, ROLE, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS
+SELECT MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS
     FROM INFORMATION_SCHEMA.REPLICAS;
 ```
 
 ```
- MEMBER | ADDRESS              | IS_SELF | ROLE    | VIEW_NUMBER | IS_CONNECTED | LAST_HEARD_MS
---------+----------------------+---------+---------+-------------+--------------+---------------
-      1 | db1.example.com:7423 | YES     | PRIMARY |           0 | YES          |
-      2 | db2.example.com:7423 | NO      | BACKUP  |           0 | YES          |            18
-      3 | db3.example.com:7423 | NO      | BACKUP  |           0 | YES          |            22
+ MEMBER | ADDRESS              | IS_SELF | ROLE    | EPOCH | VIEW_NUMBER | IS_CONNECTED | LAST_HEARD_MS
+--------+----------------------+---------+---------+-------+-------------+--------------+---------------
+      1 | db1.example.com:7423 | YES     | PRIMARY |     0 |           0 | YES          |
+      2 | db2.example.com:7423 | NO      | BACKUP  |     0 |           0 | YES          |            18
+      3 | db3.example.com:7423 | NO      | BACKUP  |     0 |           0 | YES          |            22
 (3 rows)
 ```
 
@@ -83,8 +91,9 @@ majority holds the change: while fewer nodes are up, commits wait.
 
 The replica's life is told to the diagnostics as `replica` events
 ([Diagnostics](08-diagnostics.md)): the view entered and its primary,
-this node serving or stopped, links to the other members up and down,
-and frames or connections refused. The job that runs the replica is
+the epoch entered and its members, this node serving, stopped or
+removed, links to the other members up and down, and frames or
+connections refused. The job that runs the replica is
 `turborel-replica` ([Background work](03-databases.md#background-work)).
 
 ## Commands on a replicated database
@@ -92,8 +101,46 @@ and frames or connections refused. The job that runs the replica is
 A replicated database is managed through its primary, in SQL: users and
 the owner by CREATE USER, ALTER USER, DROP USER and ALTER DATABASE OWNER
 TO ([Users](05-users.md)), its files' formats by SET DATABASE
-([Encryption](07-encryption.md)). The commands on a database's directory,
+([Encryption](07-encryption.md)), the group's members by ALTER DATABASE
+REPLICATION MEMBERS, below. The commands on a database's directory,
 `user`, `reseal` and `rekey`, refuse one that is replicated.
+
+## Changing the members
+
+The group's members are changed while it runs, by the owner, on the
+primary ([ALTER DATABASE](../sql/statements/alter-database.md)):
+
+```sql
+ALTER DATABASE REPLICATION MEMBERS '1=db1.example.com:7423,2=db2.example.com:7423,4=db4.example.com:7423';
+```
+
+The literal names every member from then on, as REPLICATION.MEMBERS
+does; here `db3` leaves and `db4` joins. The statement returns once the
+group has committed the change, which ends the group's *epoch*: the
+next epoch's primary is the first of the new members by number, so a
+change that drops the primary, or adds a lower number, moves the
+primary. The node's REPLICATION.MEMBERS setting is its starting point
+only: the log carries each epoch's members, a node adopts the members
+the log names over its setting, and tells the epoch it is in as an
+`epoch_entered` event. INFORMATION_SCHEMA.REPLICAS shows the members of
+the epoch the node is in, and its EPOCH.
+
+To add a node, start its server, with settings naming the new members
+and its own number among them, once the statement has returned: it
+learns the group's state from the members as a new node does, and
+fetches the primary's database. A member's number names it for the
+life of the group and is never given again: the next node added is the
+next number.
+
+A member that leaves answers the new members' requests for the state
+until a majority of them are in the new epoch, then stops, told as a
+`removed` event: its database serves nothing from then on, neither a
+change nor a read, every statement refused (SQLCODE -917), until its
+server is stopped. Its directory is of no use to the group any more.
+
+Add or remove one member at a time, to a group whose members are all
+up and caught up: a group with a member recovering and another joining
+at once may not go on until one of them has caught up.
 
 ## The log kept
 
@@ -107,17 +154,13 @@ the setting bears on a database alone.
 
 A node so far behind that the primary's log no longer reaches back to
 what it holds fetches the primary's database instead: its files as the
-primary's last checkpoint left them, over the same link, into
-`transfer/` in its directory, taking only the pages that differ from
-its own files and copying the rest; then it installs them in place of its own,
-told as a `state_installed` event, and follows the log from there. The
-primary serves the transfer out of its files, which no checkpoint
-changes meanwhile; a checkpoint due waits until the transfer is done.
-Nothing stops on either node: the primary serves clients, and the node
-fetching serves reads of what it held until the install. Started again
-with a database far behind, a node fetches the state the same way.
-
-## What is not yet done
-
-The members are fixed by their settings: to add or remove a member,
-stop the group and start it with new settings.
+primary's last checkpoint left them, with the log's records that
+checkpoint is recovered with, over the same link, into `transfer/` in
+its directory, taking only the pages that differ from its own files and
+copying the rest; then it installs them in place of its own, told as a
+`state_installed` event, and follows the log from there. The primary
+serves the transfer out of its files, which no checkpoint changes
+meanwhile; a checkpoint due waits until the transfer is done. Nothing
+stops on either node: the primary serves clients, and the node fetching
+serves reads of what it held until the install. Started again with a
+database far behind, a node fetches the state the same way.

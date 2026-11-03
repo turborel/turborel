@@ -28,6 +28,8 @@ pub(super) const DATABASE: &str = "DATABASE";
 
 /// The `<non-reserved word>` of an `<alter database statement>` before TO.
 const OWNER: &str = "OWNER";
+const REPLICATION: &str = "REPLICATION";
+const MEMBERS: &str = "MEMBERS";
 
 impl Parser {
     /// `<user definition>`, after CREATE USER.
@@ -52,8 +54,19 @@ impl Parser {
 
     /// `<alter database statement>`, after ALTER DATABASE.
     pub(super) fn alter_database(&mut self) -> Result<SqlStatement> {
+        if self.accept_word(REPLICATION) {
+            if !self.accept_word(MEMBERS) {
+                return Err(self.syntax("expected MEMBERS"));
+            }
+            let at = self.here();
+            let Tok::CharacterString(members) = self.peek().clone() else {
+                return Err(self.syntax("expected the members, a character string literal"));
+            };
+            self.advance();
+            return Ok(SqlStatement::User(UserStatement::Members { members: (members, at) }));
+        }
         if !self.accept_word(OWNER) {
-            return Err(self.syntax("expected OWNER"));
+            return Err(self.syntax("expected OWNER or REPLICATION"));
         }
         self.expect_kw(kw::TO)?;
         let at = self.here();

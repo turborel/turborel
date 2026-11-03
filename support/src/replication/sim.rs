@@ -2,11 +2,12 @@
 //! after TigerBeetle's VOPR: from a seed, a run of moments in which frames
 //! are delayed, dropped, duplicated and reordered, the group is
 //! partitioned, replicas crash and are made again from their journals,
-//! disks are slow, lose writes not yet durable and fail; and in which the
+//! disks are slow, lose writes not yet durable and fail, the group is
+//! reconfigured, spares joining as members leave; and in which the
 //! primary's database appends records. The [`Checker`] checks every step;
-//! then, faults stopped, the group must converge: every replica's database
-//! holding the committed log. A failure names its seed, so its run can be
-//! made again exactly.
+//! then, faults stopped, the group must converge: every member's database
+//! holding the committed log, every replica that left removed. A failure
+//! names its seed, so its run can be made again exactly.
 //!
 //! The group is the [`World`]; each replica up has the crate's real driver
 //! (`sim/ground.rs`), over its database, which is either modelled, as the
@@ -16,8 +17,10 @@
 
 mod checker;
 mod databases;
+mod epochs;
 mod ground;
 mod network;
+mod parts;
 pub mod plans;
 mod rng;
 mod world;
@@ -34,6 +37,7 @@ use turborel_replication::{Driver, StateTransfer, WholeFiles};
 
 pub use checker::{Checker, Violation};
 pub use databases::{DatabaseReport, Replicas, simulate_databases};
+pub use epochs::Epochs;
 pub use ground::{Host, Runner};
 pub use network::{Link, Network, Weather};
 pub use rng::{PER_MILLE, Rng};
@@ -66,13 +70,19 @@ pub struct Faults {
     pub lose_journal: u32,
     /// The most moments a journal write takes to be durable.
     pub write_moments: u64,
+    /// Per mille, at each moment, that the primary's database is asked a
+    /// reconfiguration, while spares wait: a spare joins, a member leaves.
+    pub reconfigure: u32,
 }
 
 /// What a run is: its group, how long, how busy, its faults.
 #[derive(Debug, Clone, Copy)]
 pub struct Plan {
-    /// Replicas in the group.
+    /// Replicas in the group at first.
     pub replicas: u32,
+    /// Replicas besides, numbered after them, each joining the group by a
+    /// reconfiguration, as a member leaves.
+    pub spares: u32,
     /// Moments with faults.
     pub faulty: u64,
     /// Moments after, with none, in the first half of which records are
@@ -115,6 +125,10 @@ pub struct Report {
     pub transfers: u64,
     /// Journals lost in crashes.
     pub journals_lost: u64,
+    /// The last epoch entered: reconfigurations done.
+    pub epochs: u64,
+    /// Replicas removed from the group, and told so.
+    pub removed: u64,
 }
 
 /// A database modelled as the records it holds, in order: it follows by
@@ -129,6 +143,8 @@ pub struct Model {
     held: Mutex<Vec<Vec<u8>>>,
     /// How many of them it was given to replay: kept when opened again.
     replayed: Mutex<usize>,
+    /// Whether its replica was removed from the group.
+    retired: std::sync::atomic::AtomicBool,
 }
 
 impl Model {
@@ -147,6 +163,11 @@ impl Model {
         let mut replayed = self.replayed.lock().unwrap();
         *replayed = held.max(*replayed);
         Lsn(u64::try_from(*replayed).unwrap())
+    }
+
+    /// Whether its replica was removed from the group.
+    pub fn retired(&self) -> bool {
+        self.retired.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Holds `record`, at `at`, the position after its last.
@@ -207,6 +228,11 @@ impl Standby for Model {
         *self.held.lock().unwrap() = records;
         *self.replayed.lock().unwrap() = count;
         Ok(Lsn(u64::try_from(count).unwrap()))
+    }
+
+    fn retire(&self) -> Result<()> {
+        self.retired.store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
     }
 }
 
@@ -294,8 +320,47 @@ pub fn simulate(seed: u64, plan: &Plan, make: &Make) -> std::result::Result<Repo
         if rng.chance(CHECKPOINTS) {
             checkpoint(&mut runner, &mut rng);
         }
+        if !runner.world().calm() && rng.chance(plan.faults.reconfigure) {
+            reconfigure(&mut runner, &mut rng)?;
+        }
     }
     converged(&mut runner, (before, calm_from.unwrap_or(0)))
+}
+
+/// The replica whose database serves as primary, and the view, if it
+/// serves and asked no reconfiguration in the view: after one, it takes
+/// no record.
+fn serving_primary<H: Host + Clone + 'static>(runner: &Runner<H>) -> Option<(usize, u64)> {
+    let index = runner.primary()?;
+    let view = runner.driver(index)?.serving()?;
+    let world = runner.world();
+    if world.epochs.pending(world.id(index), view) {
+        return None;
+    }
+    Some((index, view))
+}
+
+/// A reconfiguration asked of the primary's database, if one serves and
+/// a spare waits: the spare joins, a member leaves; the record of it
+/// held, as any appended.
+fn reconfigure(runner: &mut Runner<Models>, rng: &mut Rng) -> std::result::Result<(), Violation> {
+    let Some((index, view)) = serving_primary(runner) else { return Ok(()) };
+    let (Some(driver), Some(model)) = (runner.driver(index), runner.host.model(index)) else { return Ok(()) };
+    let next = {
+        let mut world = runner.world();
+        let (id, spare) = (world.id(index), world.spare_to_add());
+        world.epochs.propose(rng, (id, view), spare)
+    };
+    let Some(next) = next else { return Ok(()) };
+    let members: Vec<(u32, String)> = next.iter().map(|id| (id.0, format!("node{}:1", id.0))).collect();
+    let record = format!("{}:{}:members {:?}", runner.world().seed(), index, next).into_bytes();
+    runner.world().report().appended += 1;
+    match driver.log().reconfigure(&record, &members) {
+        Ok(at) => model.hold(at, record).map_err(|e| runner.world().fail(&format!("replica {}: {e}", index + 1))),
+        // Its disk failed as it persisted the record: the next moment
+        // crashes it.
+        Err(_) => Ok(()),
+    }
 }
 
 /// A checkpoint of the database of a replica up, taken at random: its
@@ -309,9 +374,9 @@ fn checkpoint(runner: &mut Runner<Models>, rng: &mut Rng) {
 }
 
 /// A record appended by the database of the replica serving as primary,
-/// if one does.
+/// if one does, and asked no reconfiguration in its view.
 fn append(runner: &mut Runner<Models>, rng: &mut Rng) -> std::result::Result<(), Violation> {
-    let Some(index) = runner.primary() else { return Ok(()) };
+    let Some((index, _)) = serving_primary(runner) else { return Ok(()) };
     let (Some(driver), Some(model)) = (runner.driver(index), runner.host.model(index)) else { return Ok(()) };
     let record = format!("{}:{}:{}", runner.world().seed(), index, rng.bits()).into_bytes();
     runner.world().report().appended += 1;
@@ -323,28 +388,42 @@ fn append(runner: &mut Runner<Models>, rng: &mut Rng) -> std::result::Result<(),
     }
 }
 
-/// The end: every replica's database holds the committed log, which grew
-/// while calm if records were appended; a replica serves as primary; the
-/// outcomes told agree with the log.
+/// The end: every member's database holds the committed log, which grew
+/// while calm if records were appended; every replica that left the group
+/// was told it is removed, its database retired; a replica serves as
+/// primary; the outcomes told agree with the log.
 fn converged(runner: &mut Runner<Models>, (before, calm_from): (usize, u64)) -> std::result::Result<Report, Violation> {
     let committed = runner.world().committed_log().to_vec();
-    let seed = runner.world().seed();
     let replicas = runner.world().replicas();
-    for index in 0..replicas {
-        let held = runner.host.model(index).map(|m| m.records()).unwrap_or_default();
+    for index in (0..replicas).filter(|&i| runner.world().joined(i)) {
+        let model = runner.host.model(index);
+        if runner.world().left(index) {
+            let retired = model.is_some_and(|m| m.retired());
+            if !runner.world().removed_told(index) || !retired {
+                let told = runner.world().removed_told(index);
+                return Err(runner
+                    .world()
+                    .fail(&format!("replica {} left the group but was not removed: told {told}, retired {retired}", index + 1)));
+            }
+            continue;
+        }
+        let held = model.map(|m| m.records()).unwrap_or_default();
         if held != committed {
             let (count, all) = (held.len(), committed.len());
-            return Err(format!(
-                "seed {seed}: replica {} did not converge: its database holds {count} records of {all} committed",
+            let standing = runner.driver(index).map_or_else(|| "down".to_owned(), |d| d.describe());
+            return Err(runner.world().fail(&format!(
+                "replica {} did not converge: its database holds {count} records of {all} committed; its replica: {standing}",
                 index + 1
-            ));
+            )));
         }
     }
     if committed.len() == before && runner.world().report().appended > calm_from {
-        return Err(format!("seed {seed}: nothing was committed while calm"));
+        let standings = runner.standings();
+        return Err(runner.world().fail(&format!("nothing was committed while calm; the replicas: {standings}")));
     }
     if runner.primary().is_none() {
-        return Err(runner.world().fail("no replica serves as primary after the calm"));
+        let standings = runner.standings();
+        return Err(runner.world().fail(&format!("no replica serves as primary after the calm; the replicas: {standings}")));
     }
     runner.world().finish()
 }

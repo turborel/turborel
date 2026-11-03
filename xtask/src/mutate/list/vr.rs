@@ -6,23 +6,21 @@
 
 use super::{Mutation, Package};
 
-/// The simulator's sweep of three replicas keeping little of the log,
-/// which crashes often: what catches a window or a transfer broken.
-const TRANSFER_SWEEP: &str = "transfer::replicas_behind_the_log_fetch_state_and_converge";
 /// The recovery of a replica whose journal was lost, step by step.
 const LOST_JOURNAL: &str = "recovery::a_replica_losing_its_journal_recovers_from_the_primary";
-/// A new group bootstrapping by recovery.
-const BOOTSTRAP: &str = "recovery::a_new_group_bootstraps_by_recovery";
+/// The simulator's sweep of groups reconfigured through faults: what
+/// catches an epoch entered or left wrongly.
+const RECONFIGURATION_SWEEP: &str = "reconfigure::groups_reconfigure_through_faults_and_converge";
 
 /// The mutations of replication, in the order they run.
-pub const VR: [Mutation; 12] = [
+pub const VR: [Mutation; 14] = [
     Mutation {
         name: "vr-ack-before-durable",
         package: Package::Replication,
         breaks: "VR: a backup acknowledges a record before its journal holds it durably",
         file: "replication/src/vr/normal.rs",
-        original: "                self.log.push(m.record.clone());\n                self.persist(m.op, m.record, out);",
-        replacement: "                self.log.push(m.record.clone());\n                self.persist(m.op, m.record, out);\n                let early = Message::PrepareOk(PrepareOk { view: self.view, op: m.op, replica: self.me });\n                Vr::send(self.primary_of(self.view), &early, out);",
+        original: "                self.persist(m.op, m.record, out);\n            }",
+        replacement: "                self.persist(m.op, m.record, out);\n                let early = Message::PrepareOk(PrepareOk { view: self.view, op: m.op, replica: self.me });\n                self.send(self.primary_of(self.view), &early, out);\n            }",
         integration: &["normal::commit_waits_for_a_quorum_holding_the_record_durably"],
         unit: &[],
     },
@@ -66,7 +64,7 @@ pub const VR: [Mutation; 12] = [
         file: "replication/src/vr/view_change.rs",
         original: "        if self.op() < after || self.commit < after {",
         replacement: "        if self.op() < after {",
-        integration: &[TRANSFER_SWEEP],
+        integration: &["retention::a_view_change_carries_windows"],
         unit: &[],
     },
     Mutation {
@@ -76,7 +74,7 @@ pub const VR: [Mutation; 12] = [
         file: "replication/src/vr/view_change.rs",
         original: "        if after >= first {",
         replacement: "        if after >= first || after < first {",
-        integration: &[TRANSFER_SWEEP],
+        integration: &["retention::a_view_change_carries_windows"],
         unit: &[],
     },
     Mutation {
@@ -86,7 +84,7 @@ pub const VR: [Mutation; 12] = [
         file: "replication/src/vr/transfer.rs",
         original: "        if m.view != self.view || self.status == Status::ViewChange || self.asked != Some(m.op) {",
         replacement: "        if m.view != self.view || self.status == Status::ViewChange {",
-        integration: &[TRANSFER_SWEEP],
+        integration: &["retention::a_replica_lets_committed_records_go_and_fetches_state_when_behind"],
         unit: &[],
     },
     Mutation {
@@ -106,7 +104,7 @@ pub const VR: [Mutation; 12] = [
         file: "replication/src/vr.rs",
         original: "        if self.status == Status::Recovering && !of_recovery {",
         replacement: "        if self.status == Status::Recovering && of_recovery {",
-        integration: &[LOST_JOURNAL, BOOTSTRAP],
+        integration: &[LOST_JOURNAL],
         unit: &[],
     },
     Mutation {
@@ -114,19 +112,39 @@ pub const VR: [Mutation; 12] = [
         package: Package::Replication,
         breaks: "VR: a RECOVERYRESPONSE of another nonce counts",
         file: "replication/src/vr/recovery.rs",
-        original: "        if self.status != Status::Recovering || m.nonce != self.recovering.nonce {",
-        replacement: "        if self.status != Status::Recovering {",
+        original: "        if self.status != Status::Recovering || m.nonce != self.recovering.nonce || epoch < self.epoch {",
+        replacement: "        if self.status != Status::Recovering || epoch < self.epoch {",
         integration: &[LOST_JOURNAL],
         unit: &[],
     },
     Mutation {
-        name: "vr-bootstrap-alone",
+        name: "vr-epoch-entered-uncommitted",
         package: Package::Replication,
-        breaks: "VR: a fresh replica bootstraps a group one fresh member short",
-        file: "replication/src/vr/recovery.rs",
-        original: "&& fresh >= f &&",
-        replacement: "&& fresh.saturating_add(1) >= f &&",
-        integration: &[BOOTSTRAP],
+        breaks: "VR: an epoch is entered at a mark not yet committed",
+        file: "replication/src/vr/reconfigure.rs",
+        original: "            if at > self.commit {\n                return;\n            }",
+        replacement: "            if at > self.op() {\n                return;\n            }",
+        integration: &["reconfigure::an_epoch_is_entered_only_as_its_mark_commits", RECONFIGURATION_SWEEP],
+        unit: &[],
+    },
+    Mutation {
+        name: "vr-leaving-removed-short",
+        package: Package::Replication,
+        breaks: "VR: a replica leaving is removed before a quorum of the new members is normal in the epoch",
+        file: "replication/src/vr/reconfigure.rs",
+        original: "        if self.started.len() >= self.quorum() {",
+        replacement: "        if !self.started.is_empty() {",
+        integration: &["reconfigure::a_member_removed_leaves_and_is_retired"],
+        unit: &[],
+    },
+    Mutation {
+        name: "vr-behind-epoch-votes",
+        package: Package::Replication,
+        breaks: "VR: a replica behind its epoch takes part in its view changes, with the epoch before's log",
+        file: "replication/src/vr/view_change.rs",
+        original: "        if self.behind_epoch() {\n            if view > self.view {",
+        replacement: "        if self.behind_epoch() && false {\n            if view > self.view {",
+        integration: &["reconfigure::a_replica_behind_its_epoch_votes_in_no_view_change"],
         unit: &[],
     },
     Mutation {

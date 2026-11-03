@@ -3,7 +3,9 @@
 //! It does no I/O, reads no clock and starts no thread; its driver feeds it
 //! [`Input`]s and carries out the [`Output`]s it answers with.
 
-use crate::{Lsn, ReplicaEvent, ReplicaId, Role};
+use std::collections::BTreeMap;
+
+use crate::{Configuration, Lsn, Mark, ReplicaEvent, ReplicaId, Role};
 
 /// \[EXTENSION\] A consensus protocol, as a state machine.
 ///
@@ -49,6 +51,11 @@ pub trait Consensus: Send {
     /// Takes one input, and adds to `out` what the driver is to do, in
     /// order.
     fn step(&mut self, input: Input, out: &mut Vec<Output>);
+    /// \[EXTENSION\] Where it stands, in words, for diagnostics: a
+    /// simulator's violation names it. Default: nothing.
+    fn describe(&self) -> String {
+        String::new()
+    }
 }
 
 /// \[EXTENSION\] What a driver tells a consensus.
@@ -71,13 +78,31 @@ pub enum Input {
     Persisted(Lsn),
     /// The core's replay applied the records through this position.
     Applied(Lsn),
-    /// A state transfer installed an export taken at this position: the
-    /// log before it is in the database's files.
-    Installed(Lsn),
+    /// A state transfer installed an export whose database holds the log
+    /// through `holds`, and whose checkpoint `records`, the exporter's log
+    /// after `holds`, recover it: the log before `holds` is in the
+    /// database's files, and `records` replace the log after it.
+    Installed {
+        /// The position the export's database holds the log through.
+        holds: Lsn,
+        /// The exporter's records after it, in order, with which its
+        /// checkpoint is recovered.
+        records: Vec<Vec<u8>>,
+    },
     /// \[EXTENSION\] The database holds every record through this position
     /// in its files, and the driver keeps no more of the log before it than
     /// its retention says (RULES.md D57): the records through it may go.
     Retain(Lsn),
+    /// \[EXTENSION\] The database, serving, asks for the group to be
+    /// reconfigured to `configuration` [VRR §7]: `record`, the database's
+    /// own record of it, is appended as the last of the epoch, marked, and
+    /// no record after it until the next epoch's primary serves.
+    Reconfigure {
+        /// The database's record of the reconfiguration.
+        record: Vec<u8>,
+        /// The members of the next epoch.
+        configuration: Configuration,
+    },
     /// \[EXTENSION\] The core's database, opened from its files (as the
     /// replica starts, or again once deposed), holds the log through this
     /// position, every record of it committed: delivery resumes after it.
@@ -148,6 +173,32 @@ pub enum Output {
         /// The replica to fetch it from.
         from: ReplicaId,
     },
+    /// \[EXTENSION\] The record at `at`, persisted before, is a
+    /// reconfiguration, `mark` [VRR §7]: the journal marks it
+    /// (`Journal::mark`), so a replica made again knows it.
+    Mark {
+        /// The record's position.
+        at: Lsn,
+        /// The epoch it begins, and its members.
+        mark: Mark,
+    },
+    /// \[EXTENSION\] The replicas of `Configuration` are to be reachable,
+    /// linked by the transport as members are, though the epoch they are
+    /// of is not entered: told of it by one of them, this replica asks it
+    /// for the state [VRR §7].
+    Reach(Configuration),
+    /// \[EXTENSION\] The replica is in `epoch`, of `configuration`: as it
+    /// opens, and at each reconfiguration committed; the transport links
+    /// the members named (`Transport::reconfigure`).
+    Epoch {
+        /// The epoch.
+        epoch: u64,
+        /// Its members.
+        configuration: Configuration,
+    },
+    /// \[EXTENSION\] The replica is removed: its database is retired, to
+    /// serve nothing more (`Standby::retire`).
+    Retire,
     /// Report to the operator.
     Event(ReplicaEvent),
 }
@@ -163,4 +214,7 @@ pub struct Recovered {
     pub first: Lsn,
     /// The records, from position `first + 1` on.
     pub records: Vec<Vec<u8>>,
+    /// \[EXTENSION\] The reconfigurations among them, by position: each
+    /// the epoch it begins and its members (`Output::Mark`).
+    pub marks: BTreeMap<Lsn, Mark>,
 }

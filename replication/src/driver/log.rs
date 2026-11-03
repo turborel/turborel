@@ -18,8 +18,8 @@ use turborel::disk::io::Durability;
 use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLog, FileLogOptions, Log, LogCapabilities, Records};
 
-use super::{Driver, Inbox, Parts, Ticker, Wait, Watch, misuse, position};
-use crate::{Consensus, Input, LogJournal, Lsn, Recovered, ReplicaId, StateTransfer, Transport};
+use super::{Core, Driver, Inbox, Parts, Ticker, Wait, Watch, misuse, position};
+use crate::{Configuration, Consensus, Input, LogJournal, Lsn, Member, Recovered, ReplicaId, StateTransfer, Transport};
 
 /// \[EXTENSION\] A replica's log, over its driver: see the module's
 /// documentation.
@@ -44,6 +44,21 @@ impl Driver {
         }
         core.step(Input::Append(record.to_vec()))?;
         let at = core.assigned.take().ok_or_else(|| misuse("the log's replica serves as no primary"))?;
+        core.own.insert(at.0, record.to_vec());
+        Ok(at)
+    }
+
+    /// \[EXTENSION\] Appends `record` as a reconfiguration to
+    /// `configuration` [VRR §7]: the position the consensus gives it, the
+    /// last of the epoch.
+    fn reconfigure(&self, record: &[u8], configuration: Configuration) -> Result<Lsn> {
+        let mut core = self.core()?;
+        core.assigned = None;
+        if core.serving.is_none() {
+            return Err(misuse("the log's replica serves as no primary"));
+        }
+        core.step(Input::Reconfigure { record: record.to_vec(), configuration })?;
+        let at = core.assigned.take().ok_or_else(|| misuse("the log's replica serves as no primary, or reconfigures already"))?;
         core.own.insert(at.0, record.to_vec());
         Ok(at)
     }
@@ -117,17 +132,22 @@ impl Log for GroupLog {
         self.driver.core()?.retain_before(before)
     }
 
+    fn reconfigure(&self, record: &[u8], members: &[(u32, String)]) -> Result<Lsn> {
+        let configuration = members.iter().map(|(number, address)| Member { id: ReplicaId(*number), address: address.clone() }).collect();
+        self.driver.reconfigure(record, configuration)
+    }
+
     fn end(&self) -> Lsn {
         self.driver.core.lock().unwrap_or_else(PoisonError::into_inner).end()
     }
 }
 
 /// \[EXTENSION\] What makes a replica's consensus: of the group's
-/// members, the replica among them, and what its journal held
+/// configuration, the replica among its members, and what its journal held
 /// (`Recovered`), a journal holding nothing making a replica to recover
 /// from the group (RULES.md D57); none only where the host knows the
 /// group is new, as a test harness does.
-pub type Make = Arc<dyn Fn(&[ReplicaId], ReplicaId, Option<Recovered>) -> Result<Box<dyn Consensus>> + Send + Sync>;
+pub type Make = Arc<dyn Fn(&[Member], ReplicaId, Option<Recovered>) -> Result<Box<dyn Consensus>> + Send + Sync>;
 
 /// \[EXTENSION\] What a driver on files is joined to beside its consensus
 /// and journal (`Parts`): its transport, where its frames arrive, its
@@ -153,7 +173,8 @@ pub struct Joined {
 /// holds no log of its own; on files (`in_files`), the journal is the
 /// core's file log in the directory's `log/`, of the database's checksum
 /// and encodings, as `ReplicatedLogs` keeps a replica alone's, and the
-/// driver is made as the database opens, from what the journal holds:
+/// driver is made as the database opens, from what the journal holds,
+/// or new, of a new group, as the database is created in its directory:
 /// `driver` gives it, to join to the database once opened
 /// (`Driver::join`) and run as its job (`DriverJob`).
 pub struct GroupLogs {
@@ -174,11 +195,15 @@ pub struct Retention {
 /// What makes a driver on files.
 struct OnFiles {
     options: FileLogOptions,
-    members: Vec<ReplicaId>,
+    members: Configuration,
     me: ReplicaId,
     make: Make,
     joined: Joined,
     retention: Retention,
+    /// Whether the group is new: the consensus of a database created in
+    /// its directory is made new (`make` given `None`), not from the
+    /// journal, empty, which would recover from the group.
+    new_group: bool,
 }
 
 impl GroupLogs {
@@ -190,14 +215,23 @@ impl GroupLogs {
     /// \[EXTENSION\] The log storage of replica `me` of `members`, whose
     /// journal is a file log of `options` in the directory's `log/`, its
     /// consensus what `make` makes, its driver joined to `joined`, keeping
-    /// the log as `retention` says.
+    /// the log as `retention` says. \[DESIGN\] A replica of a `new_group`
+    /// is made new (`make` given `None`) as its database is created in
+    /// its directory, normal in view 0 from the start; one of a group that
+    /// runs is made from its journal, and, holding none, recovers from
+    /// the group, which a replica as empty as a new group's could be a new
+    /// member of, or a member of whose journal and files were lost
+    /// (RULES.md D57). A database opened, not created, is always made
+    /// from its journal: a node started again over its files, its journal
+    /// lost, takes the group's state, whatever it is told.
     pub fn in_files(
         options: FileLogOptions,
-        (members, me): (&[ReplicaId], ReplicaId),
+        (configuration, me): (&[Member], ReplicaId),
         make: Make,
         (joined, retention): (Joined, Retention),
+        new_group: bool,
     ) -> GroupLogs {
-        let files = OnFiles { options, members: members.to_vec(), me, make, joined, retention };
+        let files = OnFiles { options, members: configuration.to_vec(), me, make, joined, retention, new_group };
         GroupLogs { driver: Mutex::new(None), files: Some(files) }
     }
 
@@ -207,8 +241,9 @@ impl GroupLogs {
     }
 
     /// The driver over `journal`, kept in a file log on files, made and
-    /// kept; of a log storage of a driver given, that driver.
-    fn made(&self, journal: Arc<dyn Log>) -> Result<Arc<Driver>> {
+    /// kept, its consensus new if the journal was `created` of a new
+    /// group; of a log storage of a driver given, that driver.
+    fn made(&self, journal: Arc<dyn Log>, created: bool) -> Result<Arc<Driver>> {
         let mut kept = self.driver.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(driver) = &*kept {
             return Ok(Arc::clone(driver));
@@ -216,7 +251,8 @@ impl GroupLogs {
         let files = self.files.as_ref().ok_or_else(|| misuse("the log storage has no driver"))?;
         let (journal, recovered) = LogJournal::open(journal)?;
         let (first, records) = (recovered.first, recovered.records.clone());
-        let consensus = (files.make)(&files.members, files.me, Some(recovered))?;
+        let held = (!(created && files.new_group)).then_some(recovered);
+        let consensus = (files.make)(&files.members, files.me, held)?;
         let joined = &files.joined;
         let parts = Parts {
             consensus,
@@ -271,7 +307,7 @@ impl LogStorage for GroupLogs {
         // journal's: every segment is checked.
         let (journal, recovery) =
             FileLog::open(Arc::clone(place.fs), &dir, &place.formats.hashes, &place.formats.encodings, files.options.clone())?;
-        let driver = self.made(told(journal, place))?;
+        let driver = self.made(told(journal, place), false)?;
         Ok(Some(OpenedLog { log: driver.log(), cut: recovery.cut }))
     }
 
@@ -291,6 +327,32 @@ impl LogStorage for GroupLogs {
         let files = self.files.as_ref().ok_or_else(|| misuse("the log storage has no driver"))?;
         let options = FileLogOptions { pipeline: place.formats.pipeline.clone(), ..files.options.clone() };
         let journal = FileLog::create(Arc::clone(place.fs), &journal_dir(place), Arc::clone(&place.formats.hash), options)?;
-        Ok(self.made(told(journal, place))?.log())
+        Ok(self.made(told(journal, place), true)?.log())
+    }
+}
+
+impl Core {
+    /// \[EXTENSION\] The database holds every record before `before` in its
+    /// files: the log through the position that leaves `retain_bytes` of
+    /// records before `before` may go (RULES.md D57).
+    fn retain_before(&mut self, before: Lsn) -> Result<()> {
+        // The export served is of the checkpoint before this one: let go,
+        // so the next request takes a fresh one, which a fetcher behind
+        // the window can take up the log from.
+        self.source = None;
+        let mut through = before.0.saturating_sub(1);
+        let mut kept = 0_u64;
+        while through > self.first.0 {
+            let size = self.index(Lsn(through)).and_then(|i| self.records.get(i)).map_or(0, Vec::len);
+            kept = kept.saturating_add(u64::try_from(size).unwrap_or(u64::MAX));
+            if kept > self.retain_bytes {
+                break;
+            }
+            through = through.saturating_sub(1);
+        }
+        if through <= self.first.0 {
+            return Ok(());
+        }
+        self.step(Input::Retain(Lsn(through)))
     }
 }

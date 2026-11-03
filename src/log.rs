@@ -140,6 +140,22 @@ pub trait Log: Send + Sync {
     ///
     /// SQLCODE -915 if what is to be removed cannot be.
     fn truncate_before(&self, before: Lsn) -> Result<()>;
+    /// \[EXTENSION\] Appends `record`, the database's record of the group
+    /// of replicas keeping it reconfigured to `members`, each its number
+    /// and `host:port`, as the last record of the group's epoch (RULES.md
+    /// D57): the position it has, synced like any. Default: refused, the
+    /// database being kept by no group.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the log is no group's, or the group's replica serves
+    /// as no primary; as `append`.
+    fn reconfigure(&self, _record: &[u8], _members: &[(u32, String)]) -> Result<Lsn> {
+        Err(SqlError::new(
+            Code::Api,
+            "[EXTENSION] RULES.md D57: the database is kept by no group of replicas, so it has no members to reconfigure",
+        ))
+    }
     /// The position after the last record appended.
     fn end(&self) -> Lsn;
 }

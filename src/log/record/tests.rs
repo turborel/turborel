@@ -71,6 +71,7 @@ fn every_kind() -> Vec<Record> {
         Change::User { name: "ANN".into(), verifier: Some(vec![]) },
         Change::User { name: "ANN".into(), verifier: None },
         Change::Owner { name: "ANN".into() },
+        Change::Reconfiguration { members: "1=db1:7423,2=db2:7423".into() },
     ];
     change.into_iter().enumerate().map(|(n, change)| Record { tx: u64::try_from(n).unwrap().checked_add(1).unwrap(), change }).collect()
 }

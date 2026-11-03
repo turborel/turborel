@@ -9,13 +9,21 @@ const PRIMARY: ReplicaId = ReplicaId(1);
 const BACKUP: ReplicaId = ReplicaId(2);
 const OTHER: ReplicaId = ReplicaId(3);
 
-/// A frame of tag `tag`, then `values` as little-endian integers.
+/// A frame of tag `tag`, of epoch 0, then `values` as little-endian
+/// integers.
 fn frame(tag: u8, values: &[u64]) -> Vec<u8> {
     let mut bytes = vec![tag];
+    bytes.extend_from_slice(&0_u64.to_le_bytes());
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     bytes
+}
+
+/// A log's end, after its records: no mark, and an empty configuration.
+fn no_marks_no_members(bytes: &mut Vec<u8>) {
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
 }
 
 /// A GETSTATE of view 0, op-number `op`, from `replica`.
@@ -43,7 +51,7 @@ fn malformed_frames_are_refused() {
     group.frames.clear();
     let mut longer = prepare.clone();
     longer.push(0);
-    let mut new_state = frame(8, &[0, 0, 2, 0, 1]);
+    let mut new_state = frame(8, &[0, 0, 2, 0, 0, 1]);
     new_state.extend_from_slice(&1u32.to_le_bytes());
     new_state.push(7);
     let cases = [vec![], vec![99], prepare[..prepare.len() - 1].to_vec(), longer, frame(3, &[0]), new_state];
@@ -85,17 +93,20 @@ fn misattributed_frames_are_refused() {
 fn messages_out_of_place_are_dropped() {
     let mut group = serving(3);
     let new_state = {
-        let mut bytes = frame(8, &[0, 3, 4, 0, 1]);
+        let mut bytes = frame(8, &[0, 3, 4, 0, 0, 1]);
         bytes.extend_from_slice(&1u32.to_le_bytes());
         bytes.push(7);
+        no_marks_no_members(&mut bytes);
         bytes
     };
+    let mut to_primary = frame(8, &[0, 0, 0, 0, 0, 0]);
+    no_marks_no_members(&mut to_primary);
     let mut prepare_ok = frame(2, &[0, 1]);
     prepare_ok.extend_from_slice(&OTHER.0.to_le_bytes());
     let mut later_get_state = frame(7, &[1, 0]);
     later_get_state.extend_from_slice(&OTHER.0.to_le_bytes());
     let cases = [
-        (BACKUP, PRIMARY, frame(8, &[0, 0, 0, 0, 0])),
+        (BACKUP, PRIMARY, to_primary),
         (OTHER, BACKUP, prepare_ok),
         (OTHER, PRIMARY, get_state(5, OTHER)),
         (OTHER, PRIMARY, later_get_state),

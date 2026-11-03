@@ -51,15 +51,20 @@ pub(crate) enum Held {
     Following,
     /// It served as primary and was deposed: until it is opened again.
     Deposed,
+    /// \[EXTENSION\] Its replica was removed from the group (RULES.md D57,
+    /// reconfiguration): it serves nothing, reads neither, until the
+    /// operator stops it.
+    Retired,
 }
 
 impl Held {
     /// The error a change is refused with: SQLCODE -917, as a change is in
     /// a READ ONLY transaction [ISO/IEC 9075:1992 §13.6-§13.10 GR1].
-    fn refusal(self) -> SqlError {
+    pub(crate) fn refusal(self) -> SqlError {
         let why = match self {
             Held::Following => "the database follows a log another replica writes, so it takes changes only once it is promoted",
             Held::Deposed => "the database was deposed as primary, so it takes no change until it is opened again",
+            Held::Retired => "the database's replica was removed from its group, so it serves nothing until the server is stopped",
         };
         SqlError::new(Code::TransactionState, format!("[DESIGN] RULES.md D57: {why}"))
     }

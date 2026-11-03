@@ -3,7 +3,7 @@
 
 use turborel::error::Result;
 
-use crate::ReplicaId;
+use crate::{Configuration, ReplicaId};
 
 /// \[EXTENSION\] Moves frames between the replicas of a group. Built in
 /// later: TCP with mutual TLS in the server; in tests, the simulator's
@@ -26,6 +26,17 @@ pub trait Transport: Send + Sync {
     ///
     /// SQLCODE -910 if `to` is no member; -919 if the transport is closed.
     fn send(&self, to: ReplicaId, frame: &[u8]) -> Result<()>;
-    /// The members of the group.
-    fn members(&self) -> &[ReplicaId];
+    /// The members of the group, as the transport links them now.
+    fn members(&self) -> Vec<ReplicaId>;
+    /// \[EXTENSION\] The group reconfigured to `configuration` [VRR §7]:
+    /// the members named are linked, by their addresses, those no longer
+    /// named let go. Default: nothing, for a transport whose members are
+    /// fixed, as a simulator's.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a member's address is malformed.
+    fn reconfigure(&self, _configuration: &Configuration) -> Result<()> {
+        Ok(())
+    }
 }

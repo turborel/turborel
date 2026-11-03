@@ -44,11 +44,14 @@
 //!
 //! Normal operation is in `vr/normal.rs`, the view change in
 //! `vr/view_change.rs`, state transfer in `vr/transfer.rs`, recovery in
-//! `vr/recovery.rs`, the frames in `vr/frame.rs`.
+//! `vr/recovery.rs`, reconfiguration in `vr/reconfigure.rs`, the frames
+//! in `vr/frame.rs`.
 
 mod frame;
 mod normal;
+mod reconfigure;
 mod recovery;
+mod standing;
 mod transfer;
 mod view_change;
 mod window;
@@ -57,10 +60,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use turborel::error::{Code, Result, SqlError};
 
-use self::frame::{Message, ViewState};
+use self::frame::{Marks, Message, ViewState};
 use self::recovery::Recovering;
+pub use self::standing::Standing;
 use self::window::Window;
-use crate::{Consensus, Input, Lsn, Output, Recovered, ReplicaEvent, ReplicaId};
+use crate::{Configuration, Consensus, Input, Lsn, Member, Output, Recovered, ReplicaEvent, ReplicaId};
 
 /// Its name, as [`Consensus::name`] gives it.
 pub const NAME: &str = "vr";
@@ -116,28 +120,12 @@ pub enum Status {
     /// Recovering: its journal held no state, so it learns the group's
     /// from the others before it takes part [VRR §4.3] (`vr/recovery.rs`).
     Recovering,
-}
-
-/// \[EXTENSION\] Where a replica stands, for the operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Standing {
-    /// The view-number.
-    pub view: u64,
-    /// The status.
-    pub status: Status,
-    /// The primary of the view.
-    pub primary: ReplicaId,
-    /// The position before the first record its log holds: those through
-    /// it let go by retention.
-    pub first: Lsn,
-    /// The op-number: the position of its log's last record.
-    pub op: Lsn,
-    /// The commit-number, as far as it knows.
-    pub commit: Lsn,
-    /// Through where its journal holds its log durably.
-    pub durable: Lsn,
-    /// Through where its database said it applied the log.
-    pub applied: Lsn,
+    /// \[EXTENSION\] Leaving: no member of the epoch entered, it answers
+    /// the new members until enough of them are normal in it, then is
+    /// removed [VRR §7] (`vr/reconfigure.rs`).
+    Leaving,
+    /// \[EXTENSION\] Removed: it takes no further part.
+    Removed,
 }
 
 /// Counts of journal writes, by which a `Persisted` is matched to the
@@ -174,11 +162,12 @@ struct Lead {
     serving: bool,
 }
 
-/// A DOVIEWCHANGE's log, a window after `after`, and numbers.
+/// A DOVIEWCHANGE's log, a window after `after`, its marks, and numbers.
 #[derive(Debug, Clone, Default)]
 struct Candidate {
     after: u64,
     log: Vec<Vec<u8>>,
+    marks: Marks,
     normal_view: u64,
     op: u64,
     commit: u64,
@@ -201,6 +190,12 @@ struct Change {
 /// \[EXTENSION\] Viewstamped Replication: one replica's state machine.
 #[derive(Debug)]
 pub struct Vr {
+    /// The epoch [VRR §7].
+    epoch: u64,
+    /// The epoch's members, with their addresses.
+    configuration: Configuration,
+    /// The members' numbers, in order: the primary of view v is the
+    /// (v mod n)th.
     members: Vec<ReplicaId>,
     me: ReplicaId,
     options: VrOptions,
@@ -228,35 +223,47 @@ pub struct Vr {
     in_doubt: BTreeMap<u64, Vec<u8>>,
     /// A GETSTATE asked and not yet answered, by the op-number it named.
     asked: Option<u64>,
+    /// Deposed, its database opening again: it serves no view until the
+    /// database tells where it holds the log (`opened`).
+    reopening: bool,
     /// What its recovery has gathered, while recovering.
     recovering: Recovering,
     /// Whether its view-number is not yet in its journal: a replica of a
     /// new group writes it as it is opened, so a journal holding records
     /// holds the state too.
     unwritten: bool,
+    /// The position of the mark the epoch began at: 0 in the first.
+    epoch_began: u64,
+    /// Leaving, the new epoch's members heard normal in it.
+    started: BTreeSet<ReplicaId>,
+    /// In a transfer, the replica the state and the log are fetched from,
+    /// when it is not the primary of the view: the sender of a message of
+    /// a later epoch, or of a NEEDSTATE (`vr/transfer.rs`).
+    source: Option<ReplicaId>,
 }
 
 impl Vr {
-    /// \[EXTENSION\] A replica `me` of a new group of `members`, in view 0,
-    /// its journal empty, by fiat: where the host knows the group is new,
-    /// as a test harness does. A node's replica is made by `restart`
-    /// from its journal, which, empty, has it recover from the group.
+    /// \[EXTENSION\] A replica `me` of a new group of `configuration`, in
+    /// epoch 0, view 0, its journal empty, by fiat: where the host knows
+    /// the group is new, as a test harness does. A node's replica is made
+    /// by `restart` from its journal, which, empty, has it recover from
+    /// the group.
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if `members` is empty or names a replica twice, `me` is
-    /// not one of them, or an option is 0.
-    pub fn new(members: &[ReplicaId], me: ReplicaId, options: VrOptions) -> Result<Vr> {
-        let mut sorted = members.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-        if sorted.len() != members.len() || !sorted.contains(&me) {
+    /// SQLCODE -910 if `configuration` is empty or names a replica twice,
+    /// `me` is not one of them, or an option is 0.
+    pub fn new(configuration: &[Member], me: ReplicaId, options: VrOptions) -> Result<Vr> {
+        let sorted = members_of(configuration);
+        if sorted.len() != configuration.len() || !sorted.contains(&me) {
             return Err(misuse("the members name each replica once, this one among them"));
         }
         if options.heartbeat_ticks == 0 || options.view_timeout_ticks == 0 || options.resend_records == 0 {
             return Err(misuse("its options count at least one tick, and one record"));
         }
         Ok(Vr {
+            epoch: 0,
+            configuration: configuration.to_vec(),
             members: sorted,
             me,
             options,
@@ -275,8 +282,12 @@ impl Vr {
             own: BTreeMap::new(),
             in_doubt: BTreeMap::new(),
             asked: None,
+            reopening: false,
             recovering: Recovering::default(),
             unwritten: true,
+            epoch_began: 0,
+            started: BTreeSet::new(),
+            source: None,
         })
     }
 
@@ -289,14 +300,17 @@ impl Vr {
     /// (`Input::Opened`), and what is committed after it is delivered. A
     /// journal holding no state, lost or never written, makes a replica
     /// recovering (`vr/recovery.rs`), its RECOVERY carrying `nonce`, a
-    /// number no earlier start of it had.
+    /// number no earlier start of it had. The epoch and configuration
+    /// the state holds are its, over `configuration`, the node's setting,
+    /// which is its starting point only [VRR §7].
     ///
     /// # Errors
     ///
     /// As `new`; SQLCODE -916 if the state is malformed.
-    pub fn restart(members: &[ReplicaId], me: ReplicaId, options: VrOptions, recovered: Recovered, nonce: u64) -> Result<Vr> {
-        let mut vr = Vr::new(members, me, options)?;
-        vr.log = Window::new(recovered.first.0, recovered.records);
+    pub fn restart(configuration: &[Member], me: ReplicaId, options: VrOptions, recovered: Recovered, nonce: u64) -> Result<Vr> {
+        let mut vr = Vr::new(configuration, me, options)?;
+        let marks = recovered.marks.iter().map(|(at, c)| (at.0, c.clone())).collect();
+        vr.log = Window::new(recovered.first.0, recovered.records, marks);
         // Every record let go was committed and applied: its database holds
         // it in its files.
         vr.commit = recovered.first.0;
@@ -309,27 +323,32 @@ impl Vr {
             return Ok(vr);
         };
         let state = ViewState::decode(&bytes)?;
+        vr.epoch = state.epoch;
+        vr.epoch_began = state.began;
+        if !state.configuration.is_empty() {
+            vr.members = members_of(&state.configuration);
+            vr.configuration = state.configuration;
+        }
         vr.view = state.view;
         vr.normal_view = state.normal_view;
+        // What it knew committed as the state was written: the records
+        // through it, written before, are durable with the state, and were
+        // never cut since.
+        vr.commit = vr.commit.max(state.commit.min(vr.op()));
         vr.unwritten = false;
-        if state.view != state.normal_view || vr.is_primary() {
+        if state.removed {
+            vr.status = Status::Removed;
+        } else if !vr.members.contains(&vr.me) {
+            vr.status = Status::Leaving;
+        } else if vr.behind_epoch() {
+            // The epoch adopted from behind, its commit-number before the
+            // mark the epoch began at: it fetches the state first
+            // (`vr/reconfigure.rs`).
+            vr.status = Status::Transfer;
+        } else if state.view != state.normal_view || vr.is_primary() {
             vr.status = Status::ViewChange;
         }
         Ok(vr)
-    }
-
-    /// \[EXTENSION\] Where this replica stands.
-    pub fn standing(&self) -> Standing {
-        Standing {
-            view: self.view,
-            status: self.status,
-            primary: self.primary_of(self.view),
-            first: Lsn(self.log.first()),
-            op: Lsn(self.op()),
-            commit: Lsn(self.commit),
-            durable: Lsn(self.durable),
-            applied: Lsn(self.applied),
-        }
     }
 
     /// The op-number: its log's last position.
@@ -380,14 +399,14 @@ impl Vr {
         self.members.iter().copied().filter(|&r| r != self.me).collect()
     }
 
-    /// Sends `message` to `to`.
-    fn send(to: ReplicaId, message: &Message, out: &mut Vec<Output>) {
-        out.push(Output::Send { to, frame: message.encode() });
+    /// Sends `message` to `to`, in this epoch.
+    fn send(&self, to: ReplicaId, message: &Message, out: &mut Vec<Output>) {
+        out.push(Output::Send { to, frame: message.encode(self.epoch) });
     }
 
     /// Sends `message` to every other member.
     fn broadcast(&self, message: &Message, out: &mut Vec<Output>) {
-        let frame = message.encode();
+        let frame = message.encode(self.epoch);
         for to in self.others() {
             out.push(Output::Send { to, frame: frame.clone() });
         }
@@ -402,30 +421,68 @@ impl Vr {
     /// Writes the view-number and v′, which makes the journal durable
     /// through the log's end.
     fn persist_state(&mut self, out: &mut Vec<Output>) {
-        let state = ViewState { view: self.view, normal_view: self.normal_view };
+        let state = ViewState {
+            epoch: self.epoch,
+            began: self.epoch_began,
+            configuration: self.configuration.clone(),
+            view: self.view,
+            normal_view: self.normal_view,
+            commit: self.commit,
+            removed: self.status == Status::Removed,
+        };
         out.push(Output::PersistState(state.encode()));
         self.writes.synced = self.writes.given;
         self.durable = self.op();
         self.unwritten = false;
     }
 
-    /// Takes a frame from `from`, refusing it if `from` is no other member
-    /// or the frame is malformed.
+    /// Takes a frame from `from`, refusing it if it is malformed or from
+    /// this replica. One from no member of the epoch is taken as
+    /// `taken_outside` says (`vr/reconfigure.rs`); one of an earlier epoch
+    /// from a member behind it is answered EPOCHSTARTED, by which the
+    /// member asks for the state, but a RECOVERY, which a new member
+    /// sends knowing no epoch, and a GETSTATE, answered so the asker
+    /// learns the epoch; one of a later epoch has this replica learn it.
+    /// A removed replica takes nothing.
     fn receive(&mut self, from: ReplicaId, frame: &[u8], out: &mut Vec<Output>) {
-        if from == self.me || !self.members.contains(&from) {
-            return refuse(from, "[EXTENSION] RULES.md D57: a frame from no other member of the group", out);
+        let (epoch, message) = match Message::decode(frame) {
+            Ok(decoded) => decoded,
+            Err(e) => return refuse(from, &e.described(), out),
+        };
+        if from == self.me {
+            let why = format!(
+                "[EXTENSION] RULES.md D57: a {} of epoch {epoch} from this replica itself, {:?} in view {} of epoch {}",
+                message.kind(),
+                self.status,
+                self.view,
+                self.epoch
+            );
+            return refuse(from, &why, out);
         }
-        match Message::decode(frame) {
-            Ok(message) => self.dispatch(from, message, out),
-            Err(e) => refuse(from, &e.described(), out),
+        if !self.members.contains(&from) && self.status != Status::Leaving {
+            return self.taken_outside(from, (epoch, message), out);
         }
+        if self.status == Status::Removed {
+            return;
+        }
+        let of_any_epoch = matches!(message, Message::Recovery(_) | Message::GetState(_) | Message::RecoveryResponse(_));
+        if epoch < self.epoch && !of_any_epoch {
+            // A member behind the epoch: told it started, by which it asks
+            // for the state and learns it.
+            return self.tell_left(from, out);
+        }
+        if epoch > self.epoch && !of_any_epoch {
+            return self.later_epoch(epoch, from, &message, out);
+        }
+        self.dispatch(from, (epoch, message), out);
     }
 
-    /// Takes a message from `from`. A message naming a replica that did not
-    /// send it, or a primary's message from no primary of its view, is
-    /// refused: the transport says who sent each frame. A replica
-    /// recovering takes only the messages of its recovery.
-    fn dispatch(&mut self, from: ReplicaId, message: Message, out: &mut Vec<Output>) {
+    /// Takes a message from `from`, sent in `epoch`. A message naming a
+    /// replica that did not send it, or a primary's message from no
+    /// primary of its view, is refused: the transport says who sent each
+    /// frame. A replica recovering takes only the messages of its
+    /// recovery; one leaving, what the new members ask of it.
+    fn dispatch(&mut self, from: ReplicaId, (epoch, message): (u64, Message), out: &mut Vec<Output>) {
         let sender = match &message {
             Message::Prepare(m) => self.primary_of(m.view),
             Message::Commit(m) => self.primary_of(m.view),
@@ -436,13 +493,29 @@ impl Vr {
             Message::GetState(m) => m.replica,
             Message::Recovery(m) => m.replica,
             Message::RecoveryResponse(m) => m.replica,
+            Message::EpochStarted(m) => m.replica,
             Message::NewState(_) | Message::NeedState(_) => from,
         };
-        if sender != from {
-            return refuse(from, "[EXTENSION] RULES.md D57: a message names a sender other than the replica it came from", out);
-        }
         let of_recovery = matches!(message, Message::Recovery(_) | Message::RecoveryResponse(_));
         if self.status == Status::Recovering && !of_recovery {
+            // Recovering, its members its node's setting only: it judges
+            // no sender by them, and takes nothing but its recovery's.
+            return;
+        }
+        if sender != from {
+            let why = format!(
+                "[EXTENSION] RULES.md D57: a {} of epoch {epoch} naming replica {} came from replica {}, {:?} in view {} of epoch {}",
+                message.kind(),
+                sender.0,
+                from.0,
+                self.status,
+                self.view,
+                self.epoch
+            );
+            return refuse(from, &why, out);
+        }
+        let asked_of_leaving = matches!(message, Message::Recovery(_) | Message::GetState(_) | Message::EpochStarted(_));
+        if self.status == Status::Leaving && !asked_of_leaving {
             return;
         }
         match message {
@@ -452,18 +525,31 @@ impl Vr {
             Message::StartViewChange(m) => self.on_start_view_change(m, out),
             Message::DoViewChange(m) => self.on_do_view_change(m, out),
             Message::StartView(m) => self.on_start_view(m, out),
-            Message::GetState(m) => self.on_get_state(m, out),
+            Message::GetState(m) => self.on_get_state(m, epoch, out),
             Message::NewState(m) => self.on_new_state(m, out),
-            Message::NeedState(m) => self.on_need_state(m, out),
+            Message::NeedState(m) => self.on_need_state(from, &m, out),
             Message::Recovery(m) => self.on_recovery(m, out),
-            Message::RecoveryResponse(m) => self.on_recovery_response(m, out),
+            Message::RecoveryResponse(m) => self.on_recovery_response(m, epoch, out),
+            Message::EpochStarted(m) => self.on_epoch_started(&m, out),
         }
     }
+}
+
+/// The members of `configuration`, by number, each once.
+fn members_of(configuration: &[Member]) -> Vec<ReplicaId> {
+    let mut members: Vec<ReplicaId> = configuration.iter().map(|m| m.id).collect();
+    members.sort_unstable();
+    members.dedup();
+    members
 }
 
 impl Consensus for Vr {
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn describe(&self) -> String {
+        self.described()
     }
 
     fn step(&mut self, input: Input, out: &mut Vec<Output>) {
@@ -475,7 +561,8 @@ impl Consensus for Vr {
             Input::Applied(at) => self.applied = self.applied.max(at.0),
             Input::Opened(at) => self.opened(at.0, out),
             Input::Retain(through) => self.retain(through.0, out),
-            Input::Installed(at) => self.installed(at.0, out),
+            Input::Installed { holds, records } => self.installed(holds.0, records, out),
+            Input::Reconfigure { record, configuration } => self.reconfigure(record, configuration, out),
         }
         self.serve(out);
     }

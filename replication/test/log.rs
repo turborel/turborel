@@ -12,12 +12,14 @@ use turborel::bytes::Put;
 use turborel::error::Code;
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn, MemoryLog};
 use turborel_replication::{
-    ALONE, Consensus, Input, Journal, LogJournal, MakeAlone, Output, Recovered, ReplicaEvent, ReplicaId, ReplicatedLog, ReplicatedLogs,
-    Role, STORAGE_NAME, Vr, vr_alone,
+    ALONE, Consensus, Input, Journal, LogJournal, MakeAlone, Mark, Member, Output, Recovered, ReplicaEvent, ReplicaId, ReplicatedLog,
+    ReplicatedLogs, Role, STORAGE_NAME, Vr, vr_alone,
 };
 use turborel_test_support::Scratch;
 use turborel_test_support::database::{crc32c, os};
 use turborel_test_support::logs::{self, LogKind, Watched, all, contract, record};
+
+use turborel_test_support::replication::configuration;
 
 use crate::common::options;
 
@@ -129,6 +131,10 @@ fn entry(tag: u8, at: u64, bytes: &[u8]) -> Vec<u8> {
     if tag != 3 {
         entry.put_u64(at);
     }
+    if tag == 1 {
+        // Not marked.
+        entry.push(0);
+    }
     entry.extend_from_slice(bytes);
     entry
 }
@@ -156,7 +162,15 @@ fn the_journal_holds_what_its_writes_left() {
     journal.persist_state(b"view").unwrap();
     assert_eq!(journal.sync().unwrap(), [Lsn(2)], "made durable by the state");
     let (_, reopened) = LogJournal::open(Arc::clone(&log)).unwrap();
-    assert_eq!(reopened, Recovered { state: Some(b"view".to_vec()), first: Lsn(0), records: vec![record(1), b"again".to_vec()] });
+    assert_eq!(
+        reopened,
+        Recovered {
+            state: Some(b"view".to_vec()),
+            first: Lsn(0),
+            records: vec![record(1), b"again".to_vec()],
+            marks: std::collections::BTreeMap::new()
+        }
+    );
     for bad in [vec![9_u8], vec![1_u8, 1], entry(1, 0, b"none before 1"), entry(2, 1, b"more")] {
         let damaged: Arc<dyn Log> = Arc::new(MemoryLog::new());
         damaged.append(&bad).unwrap();
@@ -169,7 +183,54 @@ fn the_journal_holds_what_its_writes_left() {
     let cut: Arc<dyn Log> = Arc::new(MemoryLog::new());
     cut.append(&entry(1, 4, b"past")).unwrap();
     let (_, window) = LogJournal::open(cut).unwrap();
-    assert_eq!(window, Recovered { state: None, first: Lsn(3), records: vec![b"past".to_vec()] }, "a window begun by its first record");
+    assert_eq!(
+        window,
+        Recovered { state: None, first: Lsn(3), records: vec![b"past".to_vec()], marks: std::collections::BTreeMap::new() },
+        "a window begun by its first record"
+    );
+}
+
+/// Verifies: [EXTENSION] RULES.md D57, the journal kept in a log: a mark
+/// written before its record, for the position after the last, is the
+/// record's once that is written next, and void if the journal ends after
+/// it, or if any other entry follows it; a record written later at the
+/// position is another's, unmarked; a mark for a record held marks it.
+#[test]
+fn a_mark_before_its_record_is_void_unless_the_record_follows() {
+    let marked = |epoch: u64| Mark { epoch, configuration: vec![Member { id: ReplicaId(1), address: "a:1".into() }] };
+    let log: Arc<dyn Log> = Arc::new(MemoryLog::new());
+    let (mut journal, _) = LogJournal::open(Arc::clone(&log)).unwrap();
+    journal.persist(Lsn(1), b"one").unwrap();
+    journal.mark(Lsn(2), &marked(1)).unwrap();
+    journal.sync().unwrap();
+    let (_, pending) = LogJournal::open(Arc::clone(&log)).unwrap();
+    assert!(pending.marks.is_empty(), "void, the journal ending after it: {:?}", pending.marks);
+    let (mut again, _) = LogJournal::open(Arc::clone(&log)).unwrap();
+    again.persist(Lsn(2), b"another").unwrap();
+    again.sync().unwrap();
+    let (_, unmarked) = LogJournal::open(Arc::clone(&log)).unwrap();
+    assert_eq!(unmarked.records, [b"one".to_vec(), b"another".to_vec()]);
+    assert!(unmarked.marks.is_empty(), "another's record: {:?}", unmarked.marks);
+    let (mut third, _) = LogJournal::open(Arc::clone(&log)).unwrap();
+    third.mark(Lsn(3), &marked(2)).unwrap();
+    third.persist(Lsn(3), b"three").unwrap();
+    third.mark(Lsn(1), &marked(3)).unwrap();
+    third.sync().unwrap();
+    let (_, held) = LogJournal::open(Arc::clone(&log)).unwrap();
+    assert_eq!(held.marks.get(&Lsn(3)), Some(&marked(2)), "the record's, written next");
+    assert_eq!(held.marks.get(&Lsn(1)), Some(&marked(3)), "a record held");
+    let (mut fourth, _) = LogJournal::open(Arc::clone(&log)).unwrap();
+    fourth.mark(Lsn(4), &marked(4)).unwrap();
+    fourth.truncate(Lsn(2)).unwrap();
+    fourth.persist(Lsn(3), b"three again").unwrap();
+    fourth.persist(Lsn(4), b"four").unwrap();
+    fourth.sync().unwrap();
+    let (_, after) = LogJournal::open(log).unwrap();
+    assert_eq!(
+        after.marks.keys().copied().collect::<Vec<_>>(),
+        [Lsn(1)],
+        "the pending mark void after another entry, the one at 3 truncated"
+    );
 }
 
 /// Verifies: [DESIGN] RULES.md D57, a replica alone made again from its
@@ -210,9 +271,9 @@ fn the_replicated_log_refuses_what_it_cannot_be() {
     used.append(&entry(3, 0, b"view")).unwrap();
     assert_eq!(ReplicatedLog::create(used, &make()).err().map(|e| e.code), Some(Code::Api));
     let group = [ALONE, ReplicaId(2), ReplicaId(3)];
-    let backup: MakeAlone = Arc::new(move |_| Ok(Box::new(Vr::new(&group, ReplicaId(2), options())?)));
+    let backup: MakeAlone = Arc::new(move |_| Ok(Box::new(Vr::new(&configuration(&group), ReplicaId(2), options())?)));
     assert_eq!(ReplicatedLog::create(Arc::new(MemoryLog::new()), &backup).err().map(|e| e.code), Some(Code::Api));
-    let primary: MakeAlone = Arc::new(move |_| Ok(Box::new(Vr::new(&group, ALONE, options())?)));
+    let primary: MakeAlone = Arc::new(move |_| Ok(Box::new(Vr::new(&configuration(&group), ALONE, options())?)));
     let log = ReplicatedLog::create(Arc::new(MemoryLog::new()), &primary).unwrap();
     let at = log.append(b"unheard").unwrap();
     assert_eq!(log.sync(at).err().map(|e| e.code), Some(Code::Io));
@@ -264,8 +325,9 @@ impl Consensus for Scripted {
             Input::Received { .. }
             | Input::Persisted(_)
             | Input::Applied(_)
-            | Input::Installed(_)
+            | Input::Installed { .. }
             | Input::Opened(_)
+            | Input::Reconfigure { .. }
             | Input::Retain(_) => {}
         }
     }

@@ -23,18 +23,6 @@ Each item becomes a decision in RULES.md when done:
 
 ---
 
-## Server
-
-The server (RULES.md D42) serves sessions over its native protocol, over
-TCP with TLS or a Unix socket (a named pipe on Windows), its clients
-authenticated by password, SCRAM-SHA-256 or certificate (D43), or trusted
-on its own machine. Each item becomes a decision in RULES.md when its
-design settles.
-
-- **Replication between nodes** (D57): reconfiguration (VRR §7).
-
----
-
 ## SQL
 
 What came after SQL-92 follows it, written from the standards' own text

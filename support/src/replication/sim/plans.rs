@@ -4,7 +4,8 @@
 //! as many as asked. Each is a group through faults at random: frames
 //! delayed, lost, duplicated and reordered, partitions, crashes and
 //! restarts, slow disks losing writes not yet durable and failing,
-//! journals lost; some keep little of the log, so replicas fetch state.
+//! journals lost; some keep little of the log, so replicas fetch state;
+//! one reconfigures the group, spares joining as members leave.
 
 use super::{Faults, Plan, Weather};
 
@@ -12,8 +13,15 @@ use super::{Faults, Plan, Weather};
 pub type Named = (&'static str, fn() -> Plan);
 
 /// A plan by name, as `cargo xtask simulate --plan NAME` picks it.
-pub const PLANS: [Named; 6] =
-    [("three", three), ("five", five), ("storm", storm), ("retaining", retaining), ("losing", losing), ("databases", databases)];
+pub const PLANS: [Named; 7] = [
+    ("three", three),
+    ("five", five),
+    ("storm", storm),
+    ("retaining", retaining),
+    ("losing", losing),
+    ("databases", databases),
+    ("reconfiguring", reconfiguring),
+];
 
 /// The plan named `name`, if one is.
 pub fn named(name: &str) -> Option<Plan> {
@@ -37,8 +45,9 @@ fn of(replicas: u32) -> Plan {
         disk_error: 2,
         lose_journal: 0,
         write_moments: 6,
+        reconfigure: 0,
     };
-    Plan { replicas, faulty: 3000, calm: 2000, append: 100, tick_moments: 5, retain_bytes: u64::MAX, faults }
+    Plan { replicas, spares: 0, faulty: 3000, calm: 2000, append: 100, tick_moments: 5, retain_bytes: u64::MAX, faults }
 }
 
 /// A group of three.
@@ -65,6 +74,7 @@ pub fn storm() -> Plan {
         disk_error: 10,
         lose_journal: 0,
         write_moments: 20,
+        reconfigure: 0,
     };
     storm
 }
@@ -83,8 +93,9 @@ pub fn retaining() -> Plan {
         disk_error: 0,
         lose_journal: 0,
         write_moments: 3,
+        reconfigure: 0,
     };
-    Plan { replicas: 3, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes: 200, faults }
+    Plan { replicas: 3, spares: 0, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes: 200, faults }
 }
 
 /// Three replicas keeping 200 bytes of the log, crashing often, half of
@@ -100,8 +111,9 @@ pub fn losing() -> Plan {
         disk_error: 0,
         lose_journal: 500,
         write_moments: 3,
+        reconfigure: 0,
     };
-    Plan { replicas: 3, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes: 200, faults }
+    Plan { replicas: 3, spares: 0, faulty: 3000, calm: 3000, append: 300, tick_moments: 5, retain_bytes: 200, faults }
 }
 
 /// Three replicas with real databases: 2000 moments of faults, 2000
@@ -119,6 +131,22 @@ pub fn databases() -> Plan {
         disk_error: 2,
         lose_journal: 250,
         write_moments: 6,
+        reconfigure: 0,
     };
-    Plan { replicas: 3, faulty: 2000, calm: 2000, append: 200, tick_moments: 5, retain_bytes: 4096, faults }
+    Plan { replicas: 3, spares: 0, faulty: 2000, calm: 2000, append: 200, tick_moments: 5, retain_bytes: 4096, faults }
+}
+
+/// Three replicas and four spares, through the faults of `three` but
+/// with journals lost at one crash in four, the log keeping 300 bytes;
+/// the primary's database asked a reconfiguration at 3 moments in a
+/// thousand while a spare waits: a spare joins, a member leaves, the
+/// group of three moving over the seven nodes, new members recovering
+/// from the group, fetching the state when behind what it keeps.
+pub fn reconfiguring() -> Plan {
+    let mut plan = of(3);
+    plan.spares = 4;
+    plan.retain_bytes = 300;
+    plan.faults.lose_journal = 250;
+    plan.faults.reconfigure = 3;
+    plan
 }

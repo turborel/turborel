@@ -13,7 +13,7 @@ use turborel::db::{LogStorage, OpenedLog, StorePlace};
 use turborel::error::Result;
 use turborel::log::{FileLog, FileLogOptions, Log};
 
-use crate::{MakeAlone, ReplicaId, ReplicatedLog, Vr, VrOptions};
+use crate::{MakeAlone, Member, ReplicaId, ReplicatedLog, Vr, VrOptions};
 
 /// \[EXTENSION\] The one replica of a group of one: "The primary is chosen
 /// round-robin, starting with replica 1" [VRR §4].
@@ -47,9 +47,10 @@ impl ReplicatedLogs {
 /// \[EXTENSION\] Makes VR of `options` for a replica alone, `ALONE`.
 pub fn vr_alone(options: VrOptions) -> MakeAlone {
     Arc::new(move |recovered| {
+        let alone = [Member { id: ALONE, address: String::new() }];
         let vr = match recovered {
-            None => Vr::new(&[ALONE], ALONE, options)?,
-            Some(recovered) => Vr::restart(&[ALONE], ALONE, options, recovered, crate::nonce())?,
+            None => Vr::new(&alone, ALONE, options)?,
+            Some(recovered) => Vr::restart(&alone, ALONE, options, recovered, crate::nonce())?,
         };
         Ok(Box::new(vr))
     })
