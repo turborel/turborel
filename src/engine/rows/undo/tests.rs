@@ -1,8 +1,7 @@
 //! Unit tests of the undo store's batches: versions read wherever their
 //! batch is, the log truncated by batch, and a batch that cannot be
 //! written; a truncation racing an append; and batches fitted to a page;
-//! on the log of `hooked.rs`. Split from engine/rows/undo.rs (RULES.md
-//! R-SIZE-2).
+//! on the log of `hooked.rs`.
 
 use super::hooked::{Hooked, shared};
 use super::*;

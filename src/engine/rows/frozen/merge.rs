@@ -5,7 +5,6 @@
 //! (`columns/scan.rs`), their chunks' pages read ahead
 //! (`columns/ahead.rs`); those of a group sorted by its columns
 //! (COLUMNSTORE.ORDER) all as it is taken up, then put in row id order.
-//! Split from frozen.rs (RULES.md R-SIZE-2).
 
 use std::collections::VecDeque;
 use std::iter::Peekable;

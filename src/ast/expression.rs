@@ -1,7 +1,6 @@
 //! Abstract syntax of `<search condition>` [X3.135-1986 §5.18; ISO/IEC
 //! 9075:1992 §8.12], its predicates [ISO/IEC 9075:1992 §8], and `<value
-//! expression>` [X3.135-1986 §5.9; ISO/IEC 9075:1992 §6.11]. Split from
-//! ast.rs (RULES.md R-SIZE-2).
+//! expression>` [X3.135-1986 §5.9; ISO/IEC 9075:1992 §6.11].
 //!
 //! Passes over them reach the expressions they are made of through
 //! `ValueExpression::for_each_child` and `SearchCondition::for_each_value`,

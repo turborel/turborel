@@ -1,6 +1,6 @@
 //! Unit tests of the record format: rows read back as written, any column
 //! alone, values out of line, and malformed records refused (RULES.md
-//! R-TEST-1, R-TEST-2). Split from record.rs (RULES.md R-SIZE-2).
+//! R-TEST-1, R-TEST-2).
 
 use super::*;
 use crate::value::Decimal;

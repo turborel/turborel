@@ -24,14 +24,14 @@
 //! * **Order.** All a key's entries are in one bucket, in the order added,
 //!   through splits and merges: `get` gives them so, and `values` too, a
 //!   page at a time (`hash/values.rs`).
-//! * **Readers lock nothing.** They read the shape (level and split
-//!   pointer, one word) and the bucket's first page (the directory, in
+//! * **A search of a key locks nothing.** It reads the shape (level and
+//!   split pointer, one word) and the bucket's first page (the directory, in
 //!   memory), then the chain a page at a time under the pool's latch, and
-//!   check the shape's version is as it was: a split or merge, which moves
+//!   checks the shape's version is as it was: a split or merge, which moves
 //!   entries between pages and frees pages, makes the version odd while it
 //!   does, and a reader that overlapped one reads again. A scan of every
-//!   entry reads a bucket at a time, the shape not changing while it
-//!   lives (`hash/scan.rs`).
+//!   entry reads a bucket at a time, under its stripe's lock, the shape not
+//!   changing while it lives (`hash/scan.rs`).
 //! * **Writers** of a bucket hold its stripe's lock, so writers of
 //!   different stripes go on together. An insert appends to its chain's
 //!   last page, which the table keeps in memory once found, so a key of
@@ -43,7 +43,8 @@
 //!
 //! The directory, bucket number to first page, is kept in directory pages
 //! that the meta page lists, and in memory. It holds as many buckets as
-//! the meta page lists directory pages of page numbers; past that the
+//! the meta page lists directory pages of page numbers, rounded up to a
+//! whole segment; past that the
 //! table stops splitting, its chains growing longer instead.
 
 mod bucket;

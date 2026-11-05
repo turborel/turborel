@@ -1,7 +1,6 @@
 //! [ISO/IEC 9075:1992 §21.3.3, §21.3.20-§21.3.22] The Definition Schema's
 //! tables of users and privileges: USERS, TABLE_PRIVILEGES,
-//! COLUMN_PRIVILEGES and USAGE_PRIVILEGES. Split from definition.rs
-//! (RULES.md R-SIZE-2).
+//! COLUMN_PRIVILEGES and USAGE_PRIVILEGES.
 //!
 //! The privilege descriptors are those of the owners, of the grantor
 //! "_SYSTEM" [§4.26]: every privilege on a base table and on each of its

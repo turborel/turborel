@@ -1,7 +1,7 @@
 //! The parts of a simulated replica its driver is made of, as the world
 //! keeps them (`sim/world.rs`): its disk, its journal on it, its ticks,
 //! and its watch, through which the world checks what the driver carries
-//! out. Split from world.rs (RULES.md R-SIZE-2).
+//! out.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};

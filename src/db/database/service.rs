@@ -1,8 +1,8 @@
 //! \[DESIGN\] A database's services (RULES.md D57): opened from its files,
 //! it keeps how, so a replica's database deposed is opened again in place
-//! (`db/standby/reopen.rs`), the same handle, its jobs, settings and
-//! sinks kept; each time it begins another service, and a session of an
-//! earlier one is refused. Split from database.rs (RULES.md R-SIZE-2).
+//! (`db/standby/reopen.rs`), the same handle, its jobs, settings and sinks
+//! kept; each time it begins another service, and a session of an earlier
+//! one is refused.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

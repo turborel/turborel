@@ -1,5 +1,4 @@
-//! `<get diagnostics statement>` [ISO/IEC 9075:1992 §18.1]. Split from
-//! parser.rs (RULES.md R-SIZE-2).
+//! `<get diagnostics statement>` [ISO/IEC 9075:1992 §18.1].
 
 use super::Parser;
 use crate::ast::{ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};

@@ -33,6 +33,7 @@
 //! defined (18): authorization identifier | default schema | the
 //!              statement's text | placed u8, 1 for a table created, then
 //!              its engine and its storage's generation u32 | zone
+//! reconfiguration (19): members
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128

@@ -1,5 +1,5 @@
 //! \[DESIGN\] "R op ALL S" and "R op SOME S" [X3.135-1986 §5.16 GR2; ISO/IEC
-//! 9075:1992 §8.7], IN among them [X3.135-1986 §5.13 GR3], R a row of one
+//! 9075:1992 §8.7], IN among them [X3.135-1986 §5.13 GR2], R a row of one
 //! value or more, nulls in R or in S's rows or not, answered without
 //! comparing R with every row of S: S's rows are read once, the first time
 //! a comparison asks, and what it needs kept of them. Each row of S gives
@@ -28,7 +28,7 @@
 //!   decide ALL and SOME alone.
 //!
 //! Only a comparison of one row (§5.11 GR1) is made with the row
-//! (`exec/eval.rs`). Split from exec/subquery.rs (RULES.md R-SIZE-2).
+//! (`exec/eval.rs`).
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};

@@ -82,7 +82,7 @@ fn string_functions_6_7() {
     assert_eq!(state("SELECT TRIM('xy' FROM NAME) FROM T WHERE ID = 1"), Err("22027".into()));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.11 SR1, GR1, GR2; §8.2 GR7;
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.11 GR2; §7.11 SR1, GR1; §8.2 GR7;
 /// §8.3; §8.4; §8.7]: a scalar subquery in a select list, null with no
 /// row, refused with more than one (21000) or more than one column; rows
 /// compared pair by pair, = and <> and in order; with a row subquery;

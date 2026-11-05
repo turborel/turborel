@@ -11,10 +11,10 @@
 //!
 //! The outer join's rows come in its order [ISO/IEC 9075:1992 §7.5]: the
 //! left operand's, each row with its matches in the right's order, or with
-//! nulls; then the right's that matched none. The partitions' rows of
-//! each are merged by number. A row with a null key matches nothing
+//! nulls; then the right's that matched none. The partitions' rows of each
+//! are merged by number. A row with a null key matches nothing
 //! [X3.135-1986 §5.11 GR2]: it goes straight to the rows of a preserved
-//! side. Split from exec/join/outer.rs (RULES.md R-SIZE-2).
+//! side.
 
 use std::hash::{BuildHasher, RandomState};
 

@@ -3,10 +3,9 @@
 //! refused, so work that calls back into the database while it holds the
 //! turn, as a plug-in may, fails rather than waits for itself. Work may
 //! also hold the turn shared, several at once, as the exports of a
-//! database hold the checkpoints' turn for their lives (RULES.md D57):
-//! a shared hold waits for the thread taking the turn, and the turn is
-//! taken once every shared hold has left. Split from threads.rs (RULES.md
-//! R-SIZE-2).
+//! database hold the checkpoints' turn for their lives (RULES.md D57): a
+//! shared hold waits for the thread taking the turn, and the turn is taken
+//! once every shared hold has left.
 
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread::{self, ThreadId};

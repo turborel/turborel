@@ -1,7 +1,6 @@
 //! \[DESIGN\] What a database's state keeps of its directory as it is
 //! opened (RULES.md D25, D56): its spill files' and plug-ins' places, and
-//! its tables and indexes reopened by their locators. Split from
-//! db/files.rs (RULES.md R-SIZE-2).
+//! its tables and indexes reopened by their locators.
 
 use std::path::Path;
 use std::sync::Arc;

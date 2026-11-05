@@ -1,8 +1,7 @@
 //! \[EXTENSION\] What the driver asks its database, carried out in a turn
-//! (RULES.md D57): the records committed delivered, the database
-//! promoted to serve a view, or deposed and opened again; a state
-//! transfer fetched imported (`driver/transfer.rs`). Split from driver.rs
-//! (RULES.md R-SIZE-2).
+//! (RULES.md D57): the records committed delivered, the database promoted
+//! to serve a view, or deposed and opened again; a state transfer fetched
+//! imported (`driver/transfer.rs`).
 
 use std::sync::Arc;
 

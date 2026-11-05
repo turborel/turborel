@@ -1,7 +1,7 @@
 //! The query grammar: `<cursor specification>` with ORDER BY [X3.135-1986
 //! §8.3], `<query expression>` [ISO/IEC 9075:1992 §7.10], `<query
 //! specification>` [X3.135-1986 §5.25] and `<table expression>`
-//! [X3.135-1986 §5.19-§5.23]. Split from parser.rs (RULES.md R-SIZE-2).
+//! [X3.135-1986 §5.19-§5.23].
 
 use super::Parser;
 use crate::ast::{

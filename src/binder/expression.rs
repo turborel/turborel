@@ -2,8 +2,7 @@
 //! and typed: its primaries, operators, set functions [§6.5], the string
 //! functions [§6.6, §6.7, §6.13], and the \[EXTENSION\] function call;
 //! CASE, CAST and scalar subqueries in `binder/case.rs`, datetimes and
-//! intervals in `binder/datetime.rs` and `binder/interval.rs`. Split from
-//! binder.rs (RULES.md R-SIZE-2).
+//! intervals in `binder/datetime.rs` and `binder/interval.rs`.
 
 use super::set_functions::column_specifications;
 use super::subquery;

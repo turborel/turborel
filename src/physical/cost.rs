@@ -1,6 +1,6 @@
 //! The weights of the cost model the planner cannot get from a plugin, and
 //! what it guesses when statistics do not tell, each a setting's (RULES.md
-//! D36). Split from physical.rs (RULES.md R-SIZE-2).
+//! D36).
 
 use crate::error::{Code, Result, fail};
 

@@ -1,8 +1,7 @@
 //! [ISO/IEC 9075:1992 §7.10] `<query expression>`, bound: a `<query
 //! specification>` (`binder/query.rs`), a `<table value constructor>`
 //! [§7.2], or a set operation on two, whose operands' columns correspond by
-//! position or by name and are brought to the result's types [§9.3]. Split
-//! from binder.rs (RULES.md R-SIZE-2).
+//! position or by name and are brought to the result's types [§9.3].
 
 use std::collections::BTreeSet;
 

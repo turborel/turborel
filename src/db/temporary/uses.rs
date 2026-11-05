@@ -1,6 +1,5 @@
 //! \[DESIGN\] The database's instances of its temporary tables, of every
-//! session, and what ALTER TABLE of one does to them (RULES.md D49). Split
-//! from db/temporary.rs (RULES.md R-SIZE-2).
+//! session, and what ALTER TABLE of one does to them (RULES.md D49).
 //!
 //! Each session's instances are noted, by session. An ALTER TABLE of a
 //! temporary table marks it altered by its transaction, so no other

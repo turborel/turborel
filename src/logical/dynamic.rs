@@ -1,12 +1,12 @@
-//! \[EXTENSION\] [ISO/IEC 9075:1992 §17.9 GR5] A prepared statement's
-//! kept plan (RULES.md D45) made ready for one execution: each `<dynamic
+//! \[EXTENSION\] [ISO/IEC 9075:1992 §17.9 GR5] A prepared statement's kept
+//! plan (RULES.md D45) made ready for one execution: each `<dynamic
 //! parameter specification>`'s slot (`Expr::Dynamic`) replaced by its
 //! value, cast to the type its context gave it \[GR5f, GR5g\], in every
 //! expression and condition of the plan, those of its subqueries' plans
 //! among them, at any depth. The plan is then the one binding with the
 //! values as constants makes, which the optimizer and the physical planner
 //! see as they would see that: the indexes chosen are those its values
-//! choose. Split from logical.rs (RULES.md R-SIZE-2).
+//! choose.
 
 use std::sync::Arc;
 

@@ -1,9 +1,8 @@
 //! \[EXTENSION\] SQL-schema statements in transactions [ISO/IEC 9075:1992
 //! §4.28]: ALTER TABLE [§11.10] (`db/alter.rs`); DROP SCHEMA, TABLE, VIEW,
 //! DOMAIN and ASSERTION [§11.2, §11.18, §11.20, §11.27, §11.35]
-//! (`db/drop.rs`); a `<schema definition>`
-//! (`db/staged_schema.rs`); and the CREATE, GRANT and REVOKE statements of
-//! `db/definitions.rs`. Split from db.rs (RULES.md R-SIZE-2).
+//! (`db/drop.rs`); a `<schema definition>` (`db/staged_schema.rs`); and
+//! the CREATE, GRANT and REVOKE statements of `db/definitions.rs`.
 //!
 //! A transaction's changes of definitions are its own until it commits
 //! (RULES.md D27): its statements see the published definitions with its

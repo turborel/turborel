@@ -18,8 +18,7 @@
 //! of as many as the work area reads at once. A join of streams whose
 //! left operand's order is not asked for takes the pairs in turn
 //! (`Pending`) and gives each pair's joined rows by batches as they are
-//! made, written to no run (`exec/batch/joined/parted.rs`). Split from
-//! exec/join.rs (RULES.md R-SIZE-2).
+//! made, written to no run (`exec/batch/joined/parted.rs`).
 
 use std::hash::{BuildHasher, RandomState};
 

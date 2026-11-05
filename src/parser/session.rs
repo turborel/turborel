@@ -17,7 +17,7 @@
 //! DATABASE is neither a `<reserved word>` nor a `<non-reserved word>`
 //! [§5.2], so an `<identifier>` to the lexer: SET DATABASE is the second
 //! form when a `<setting name>` follows it, and otherwise the first, of a
-//! setting named DATABASE. Split from parser.rs (RULES.md R-SIZE-2).
+//! setting named DATABASE.
 
 use super::Parser;
 use crate::ast::{AccessMode, IsolationLevel, SqlStatement, TransactionModes, ValueSpecification};

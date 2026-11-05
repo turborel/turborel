@@ -16,7 +16,7 @@
 //!   all ones)
 //! high key
 //! heap:   entries, each key length u16, key, value length u16, value,
-//!         in the order they were added
+//!         in the order they were added, or in key order once rebuilt
 //! slots:  for each entry, in key order, its offset in the heap, u16
 //! ```
 //!
@@ -31,8 +31,10 @@
 //! into halves, §3.1.3(b)). In the middle, by bytes, unless inserts are
 //! running in key order through it: the entry added goes right after the
 //! one inserted last, or past the end of the rightmost node of its level.
-//! Then it splits where the entry goes: the entries before it stay, the
-//! node full, and it starts the right half, where the run goes on. One
+//! Then it splits where the entry goes: the entries before it stay, and
+//! it starts the right half, where the run goes on. In an inner node the
+//! entry just before it goes up instead. A run that reaches the end of a
+//! node leaves it full. One
 //! thread inserting in key order (row ids, within its block,
 //! `rows/ids.rs`) thus leaves full nodes behind it; inserts at random
 //! rarely run, so split in the middle. And a run that begins past the end

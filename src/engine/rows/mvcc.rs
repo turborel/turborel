@@ -1,59 +1,59 @@
 //! \[DESIGN\] Multi-version concurrency control in the row store (RULES.md
-//! D29, D31). The newest version of each row is in the table's tree, older
-//! committed ones in the undo store (`undo.rs`), each version naming the
-//! one before it (`version.rs`).
+//! D29, D31).
 //!
-//! * **Reads.** A transaction sees the versions committed at or before its
-//!   snapshot, and its own: it goes back from the newest version until it
-//!   finds one. Outside any transaction, the newest committed version.
-//! * **Writes.** The first change of a transaction to a row appends the
-//!   committed version to the undo store and puts the transaction's own
-//!   version in the tree, in one compare-and-set, so of two writers only
-//!   one succeeds. A row that another open transaction has changed, or
-//!   that a transaction committed after this one's snapshot, is refused
-//!   (SQLCODE -911): the second writer of a row loses, and no change is
-//!   made over one the writer did not see.
-//! * **Below SERIALIZABLE** (`TableStorage::read_mode`), a transaction
-//!   reads at the snapshot it is told, which moves only forward, and
-//!   records what it reads only while told its reads are checked. Its
-//!   writes are checked against the snapshot it reads at, so no update is
-//!   lost; it is validated as below, from the snapshot of the first read it
-//!   recorded, which may refuse a little more than it must.
-//! * **Bounds** (RULES.md D38): past TRANSACTIONS.TRACKED_ROWS rows, or
-//!   conditions, a transaction's reads count as reading the whole table,
-//!   and its writes, validated, as writing every row, so what it keeps to
-//!   be checked stays bounded; that may refuse a commit it need not. Its
-//!   changes, and a commit's garbage, are lists that spill past
-//!   TRANSACTIONS.HELD_BYTES (`lists.rs`); a change keeps the entry it
-//!   replaced only if it was its own version, a committed one read back
-//!   from the undo store to undo it. A validated transaction's changed
-//!   rows are kept to as many bytes, then as each column's least and
-//!   greatest value (`reads.rs`). A commit whose changes cannot be read
-//!   back stays late: its versions count as committed, never stamped.
-//! * **Validation** is two-sided, under the table's validation lock: a
-//!   transaction committing at *c* is refused (SQLCODE -911) if it read a
-//!   row that a transaction validated at a timestamp between its snapshot
-//!   and *c* wrote, or if it writes a row that a transaction validated
-//!   after *c*, which did not see it, read. A scan, or rows found by a
-//!   condition through an index, count as reading the whole table, so rows
-//!   added meanwhile (phantoms) are caught too. A transaction that wrote
-//!   nothing commits at its snapshot and is never checked (`txn.rs`).
-//! * **Commit** stamps the transaction's versions with its commit
-//!   timestamp. One that cannot be stamped is counted committed all the
-//!   same, by a table of late stamps that reads consult, and stamped later.
-//! * **Rollback** puts back, newest first, the entries its changes
-//!   replaced; a statement's failure does so back to its savepoint. What
-//!   an undone change appended to the undo store is kept until every other
-//!   transaction then open in the table has ended: one may have read the
-//!   undone version and be going back from it. Kept by those transactions,
-//!   not by timestamp, so it is released at the next collection once they
-//!   have, though no commit has moved the horizon (`gc.rs`).
-//! * **Garbage collection.** When a commit is past the horizon, the oldest
-//!   snapshot open, what it superseded is garbage: the older versions it
-//!   appended, the own versions it replaced, and its deletions, which then
-//!   leave the tree. Their values out of line are freed, their rows are
-//!   returned for their index entries to go (`TableStorage::gc`), and the
-//!   undo store is truncated before what is still needed.
+//! The newest version of each row is in the table's tree. Older committed
+//! versions are in the undo store (`undo.rs`), and each version names the
+//! one before it (`version.rs`). A transaction sees the versions committed
+//! at or before its snapshot, and its own. Outside a transaction, a read
+//! sees the newest committed version.
+//!
+//! A transaction's first change to a row appends the committed version to
+//! the undo store and puts its own version in the tree in one
+//! compare-and-set, so only one of two writers succeeds. A write is refused
+//! (SQLCODE -911) if another open transaction has changed the row, or if a
+//! transaction committed a change to it after this one's snapshot.
+//!
+//! Below SERIALIZABLE (`TableStorage::read_mode`), a transaction reads at
+//! the snapshot it is told, which only moves forward, and records its reads
+//! only when told they are checked. Its writes are checked against the
+//! snapshot it reads at, so no update is lost. It validates from the
+//! snapshot of its first recorded read, which may refuse slightly more than
+//! it must.
+//!
+//! Validation runs both ways under the table's validation lock. A
+//! transaction committing at *c* is refused (SQLCODE -911) if it read
+//! something a transaction validated between its snapshot and *c* wrote. It
+//! is also refused if it wrote something read by a transaction validated
+//! after *c* from a snapshot before *c*. A row read by id is matched by id.
+//! A read by condition, through a filtered scan or an index, is matched
+//! against the rows the writer changed, before and after each change, which
+//! catches phantoms. A scan with no condition counts as reading the whole
+//! table. A transaction that wrote nothing commits at its snapshot and is
+//! never checked (`txn.rs`).
+//!
+//! Commit stamps the transaction's versions with its commit timestamp. A
+//! version that can't be stamped still counts as committed, through a table
+//! of late stamps that reads consult, and is stamped later.
+//!
+//! Rollback puts back the entries its changes replaced, newest first. A
+//! failed statement does so back to its savepoint. What an undone change
+//! appended to the undo store is kept until every other transaction then
+//! open in the table has ended, because one may have read the undone
+//! version (`gc.rs`).
+//!
+//! Once a commit is past the horizon, the oldest open snapshot, what it
+//! superseded is garbage. Out-of-line values are freed, rows are returned
+//! so their index entries can go (`TableStorage::gc`), and the undo store
+//! is truncated.
+//!
+//! What a transaction keeps stays bounded (RULES.md D38). Past
+//! TRANSACTIONS.TRACKED_ROWS rows or conditions, its reads count as reading
+//! the whole table and its validated writes as writing every row, which may
+//! refuse a commit it need not. Its changes and a commit's garbage spill
+//! past TRANSACTIONS.HELD_BYTES (`lists.rs`). Changed rows shrink to each
+//! column's least and greatest value past the same limit (`reads.rs`). A
+//! commit whose changes can't be read back counts as committed and is never
+//! stamped.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

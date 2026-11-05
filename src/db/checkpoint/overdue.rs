@@ -3,10 +3,9 @@
 //! the log, and the tables file's side file, only grow. As a transaction
 //! ends, once either has grown past CHECKPOINT.OVERDUE_FACTOR times what
 //! makes a checkpoint due, it is told, at most once a minute, with why: each
-//! checkpoint refused (a damaged table, a failed sync of the log, a
-//! failure of its own), the oldest open transaction and how long ago it
-//! began logging, or none taken as JOBS.POLICY stands. Split from
-//! checkpoint.rs (RULES.md R-SIZE-2).
+//! checkpoint refused (a damaged table, a failed sync of the log, a failure
+//! of its own), the oldest open transaction and how long ago it began
+//! logging, or none taken as JOBS.POLICY stands.
 
 use std::time::{Duration, Instant};
 

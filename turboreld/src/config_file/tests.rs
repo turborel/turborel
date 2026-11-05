@@ -1,8 +1,8 @@
 //! Unit tests of the configuration file's subset of TOML (RULES.md
-//! R-TEST-1, R-TEST-2): what it reads, each value as a setting's, and
-//! what it refuses, where. Setting names are data to the parser, so most
-//! are made up; those checked against the registry are the server's
-//! own, by their constants. Split from config_file.rs (RULES.md R-SIZE-2).
+//! R-TEST-1, R-TEST-2): what it reads, each value as a setting's, and what
+//! it refuses, where. Setting names are data to the parser, so most are
+//! made up; those checked against the registry are the server's own, by
+//! their constants.
 
 use super::*;
 use std::path::PathBuf;

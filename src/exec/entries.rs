@@ -1,7 +1,6 @@
 //! The rows of a table access, with their ids: the object rows of a
 //! searched UPDATE or DELETE [X3.135-1986 §8.12 GR1, §8.5 GR1], and the
-//! rows an updatable cursor may cover. Split from exec.rs (RULES.md
-//! R-SIZE-2).
+//! rows an updatable cursor may cover.
 
 use std::sync::Arc;
 

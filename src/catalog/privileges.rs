@@ -1,7 +1,6 @@
 //! [X3.135-1986 §4.15, §6.6] Privileges: what a `<privilege definition>`
 //! grants, as the catalog keeps it, and the applicable privileges of an
-//! `<authorization identifier>` on a table [X3.135-1986 §6.6 SR3]. Split
-//! from catalog.rs (RULES.md R-SIZE-2).
+//! `<authorization identifier>` on a table [X3.135-1986 §6.6 SR3].
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,8 +1,7 @@
 //! Values of a row-store table's records (RULES.md D31): a row encoded,
 //! its long values kept out of line on pages of their own, each page
 //! checked against its row and column as it is read, and freed with its
-//! row; and a record decoded, all its columns or those asked for. Split
-//! from rows.rs (RULES.md R-SIZE-2).
+//! row; and a record decoded, all its columns or those asked for.
 
 use super::gathered::Gathering;
 use super::{KEY, OWNER, RowTable, corrupt};
@@ -93,7 +92,7 @@ impl RowTable {
         self.gather_plain((id, &self.sealing.plain_record(id, record)?), into)
     }
 
-    /// As `gather_record`, of a record unsealed (`plain_matching`).
+    /// As `gather_record`, of a record already unsealed (`plain_record`).
     pub(in crate::engine::rows) fn gather_plain(&self, (id, plain): (RowId, &[u8]), into: &mut Gathering) -> Result<()> {
         let mut fetch = |reference: Reference| self.get_value(id, reference);
         into.push((&self.format, plain), &mut fetch)

@@ -1,7 +1,7 @@
-//! \[DESIGN\] A frozen row group's row ids written (`group.rs`): kept
-//! only if they are not every id from the first to the last, in order, a
-//! page of them at a time, and their rows' positions by id too if they are
-//! not in increasing order. Split from group.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] A frozen row group's row ids written (`group.rs`): kept only
+//! if they are not every id from the first to the last, in order, a page
+//! of them at a time, and their rows' positions by id too if they are not
+//! in increasing order.
 
 use super::{BY_ID, ID, Pages, Run, Seal, count32};
 use crate::disk::pager::PageId;

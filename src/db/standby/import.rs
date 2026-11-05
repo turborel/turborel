@@ -6,7 +6,7 @@
 //! its manifest says and synced, and the export's image recorded in a new
 //! catalog file; the journal in `log/` is its replica's, kept. Opened
 //! again to follow, it recovers from the image alone, and holds the log
-//! through the position the image does. A crash meanwhile leaves a
+//! through the record before the image's start. A crash meanwhile leaves a
 //! directory no checkpoint holds whole, which the replica's next start
 //! fetches the state again into: nothing of it is read before the catalog
 //! is, and the catalog is the last written.

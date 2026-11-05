@@ -2,8 +2,7 @@
 //! after `first`, those through it let go by log retention, each held by
 //! the replica's database durably, in its files, so the log need not hold
 //! it; the window's last position is the op-number. A record may be
-//! marked a reconfiguration, to the next epoch's members [VRR §7]. Split
-//! from vr.rs (RULES.md R-SIZE-2).
+//! marked a reconfiguration, to the next epoch's members [VRR §7].
 
 use std::collections::BTreeMap;
 

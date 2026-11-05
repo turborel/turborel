@@ -1,6 +1,6 @@
 //! Unit tests of MurmurHash3: SMHasher's verification value, digests of
 //! pieces, and the hasher's spread over keys like a buffer pool's (RULES.md
-//! R-TEST-1, R-TEST-2). Split from murmur.rs (RULES.md R-SIZE-4).
+//! R-TEST-1, R-TEST-2).
 
 use std::collections::HashSet;
 use std::hash::{BuildHasher, Hash};

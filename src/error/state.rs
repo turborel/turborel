@@ -1,7 +1,7 @@
 //! \[EXTENSION\] SQLSTATE values beside SQLCODE values: a class of two
 //! characters and a subclass of three [ISO/IEC 9075:1992 §22.1, Table 23].
 //! X3.135-1986 has only SQLCODE; SQLSTATE is its successor's preferred
-//! status parameter. Split from error.rs (RULES.md R-SIZE-2).
+//! status parameter.
 //!
 //! Statements are invoked directly (README, conformance), so a statement
 //! that breaks a Format, Syntax Rule or Access Rule raises the class of

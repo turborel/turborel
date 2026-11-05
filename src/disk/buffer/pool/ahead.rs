@@ -1,8 +1,7 @@
 //! \[DESIGN\] Read-ahead (RULES.md D30): pages a scan will read next
 //! brought into the pool before it asks for them, several in one read of
 //! the file (`Pager::read_ahead`), so a scan of more pages than the pool
-//! holds makes one read of the file where it would make many. Split from
-//! pool.rs (RULES.md R-SIZE-2).
+//! holds makes one read of the file where it would make many.
 //!
 //! A scan asks for the pages it will read (`ahead_of`, reading pages in
 //! order; `ahead_pages`, pages it knows). In a pool a database serves

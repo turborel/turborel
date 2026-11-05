@@ -1,6 +1,5 @@
 //! Unit tests of the datetime kinds: CAST in a session of a displacement
-//! and a date, and their bytes, literals and descriptors. Split from
-//! datetime.rs (RULES.md R-SIZE-2).
+//! and a date, and their bytes, literals and descriptors.
 
 use super::*;
 use crate::value::Spelled;

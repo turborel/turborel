@@ -1,5 +1,4 @@
-//! How a statement that executed successfully completed. Split from db.rs
-//! (RULES.md R-SIZE-4).
+//! How a statement that executed successfully completed.
 
 use crate::error::SqlState;
 

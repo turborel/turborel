@@ -1,9 +1,9 @@
 //! \[DESIGN\] A bucket's chain rewritten as its entries are read, a page at a
-//! time (`engine/hash.rs`): a split moves some of a bucket's entries to a
-//! new bucket and keeps the rest in place, a merge appends one bucket's
-//! entries after another's, and neither holds more than a page read and a
-//! page to write, so a bucket of a key of more entries than memory holds
-//! splits and merges as any. Split from engine/hash.rs (RULES.md R-SIZE-2).
+//! time (`engine/hash.rs`): a split moves some of a bucket's entries to a new
+//! bucket and keeps the rest in place, a merge appends one bucket's entries
+//! after another's, and neither holds more than a page read and a page to
+//! write, so a bucket of a key of more entries than memory holds splits and
+//! merges as any.
 //!
 //! A chain of no more than `HELD_PAGES` pages, as most are, is read once,
 //! its entries held, and written from them; a longer one is read again

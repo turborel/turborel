@@ -19,9 +19,10 @@
 //! export, taken as the first request comes and let go once none comes
 //! for a while, the database is deposed, or a transfer is installed; the
 //! answers to this replica's own fetch, begun as the consensus asks
-//! (`Output::FetchState`), are taken until the export is whole, which
-//! the database then installs (`Standby::import`), the position it holds
-//! the log through told to the consensus (`Input::Installed`); see
+//! (`Output::FetchState`), are taken until the export is whole. The
+//! consensus is then told the position (`Input::Installed`) and the journal
+//! made durable before the database installs it (`Standby::import`), for
+//! an export carrying its records, as every database's does; see
 //! `driver/transfer.rs`.
 //!
 //! The database's own calls come through its log: an append steps the

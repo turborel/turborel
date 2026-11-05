@@ -1,7 +1,6 @@
 //! \[DESIGN\] The conditions of a filter a scan is told (RULES.md D31,
 //! `TableStorage::scan_where`), as the executor tells them and the planner
-//! prices them (`TableStorage::scan_share`). Split from exec.rs (RULES.md
-//! R-SIZE-2).
+//! prices them (`TableStorage::scan_share`).
 
 use super::{Cond, Expr};
 use crate::index::Probe;

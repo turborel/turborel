@@ -1,6 +1,6 @@
 //! [X3.135-1986 §5.25] `<query specification>`: its FROM, WHERE, GROUP BY,
 //! HAVING and select list, bound and built into a plan in the order the
-//! General Rules give. Split from binder.rs (RULES.md R-SIZE-2).
+//! General Rules give.
 
 use std::cell::RefCell;
 

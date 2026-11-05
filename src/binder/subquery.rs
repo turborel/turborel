@@ -1,11 +1,10 @@
-//! [X3.135-1986 §5.24] `<subquery>`, bound: a query expression of its
-//! own, whose column references are looked up in its own FROM clause first
-//! and then, outward, in those of the queries that contain it, the most
-//! local scope first [X3.135-1986 §5.7 SR3]. A reference found outward is an
+//! [X3.135-1986 §5.24] `<subquery>`, bound: a query expression of its own,
+//! whose column references are looked up in its own FROM clause first and
+//! then, outward, in those of the queries that contain it, the most local
+//! scope first [X3.135-1986 §5.7 SR3]. A reference found outward is an
 //! "outer reference" [X3.135-1986 §5.7 SR4]: it is bound as a slot,
 //! `Expr::Outer`, and the subquery keeps the expression over the enclosing
-//! query's rows (or groups) that fills it (`logical/subquery.rs`). Split
-//! from binder.rs (RULES.md R-SIZE-2).
+//! query's rows (or groups) that fills it (`logical/subquery.rs`).
 
 use std::cell::RefCell;
 use std::sync::Arc;

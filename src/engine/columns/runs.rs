@@ -1,9 +1,9 @@
 //! \[DESIGN\] Runs of one value (RULES.md D31): of a chunk of 8-byte fields,
 //! each a signed integer, each run of values alike, of rows in a row, its
-//! value less the least and where it ends, each bit-packed (`packed.rs`).
-//! A null continues the run before it, a leading one the first, as the
-//! chunk's nulls mark it apart, so nulls break no run. Of a sorted column
-//! a chunk holds a few runs. Split from encoded.rs (RULES.md R-SIZE-2).
+//! value less the least and where it ends, each bit-packed (`packed.rs`). A
+//! null continues the run before it, a leading one the first, as the chunk's
+//! nulls mark it apart, so nulls break no run. Of a sorted column a chunk
+//! holds a few runs.
 //!
 //! ```text
 //! RUNS:  runs u32 | least i64 | bits u8 | each run's value less the

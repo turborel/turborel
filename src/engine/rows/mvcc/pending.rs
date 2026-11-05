@@ -5,8 +5,7 @@
 //! on them taken for each, so commits adding garbage wait for one segment
 //! at most; and each version is read as its row is pulled. The reader's
 //! caller holds collection of the table back meanwhile (`TableLock`), so
-//! no list it reads is removed. Split from engine/rows/mvcc.rs (RULES.md
-//! R-SIZE-2).
+//! no list it reads is removed.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

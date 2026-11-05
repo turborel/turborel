@@ -1,6 +1,5 @@
 //! Helpers of the tests of dynamic SQL in SQL text [ISO/IEC 9075:1992
-//! §17]: a program's parameters, and statements run with them. Split from
-//! common.rs (RULES.md R-SIZE-2).
+//! §17]: a program's parameters, and statements run with them.
 
 use turborel::db::{Completion, Session};
 use turborel::error::Code;

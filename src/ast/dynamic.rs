@@ -1,7 +1,7 @@
 //! Abstract syntax of dynamic SQL [ISO/IEC 9075:1992 §17]: its statements,
-//! the names of prepared statements, cursors and descriptor areas they
-//! use [§5.4], their `<using clause>`s [§17.9] and the `<descriptor item
-//! name>`s [§17.4]. Split from ast.rs (RULES.md R-SIZE-2).
+//! the names of prepared statements, cursors and descriptor areas they use
+//! [§5.4], their `<using clause>`s [§17.9] and the `<descriptor item
+//! name>`s [§17.4].
 
 use super::{FetchOrientation, ParameterSpecification, SetClause, TableName, ValueSpecification};
 

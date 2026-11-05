@@ -1,5 +1,4 @@
-//! \[DESIGN\] The newest state of a row (`TableStorage::newest`). Split from
-//! storage.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] The newest state of a row (`TableStorage::newest`).
 
 use super::Row;
 

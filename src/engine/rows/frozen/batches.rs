@@ -10,13 +10,12 @@
 //! As a group is taken up, the pages of the chunks its runs are read from
 //! are asked to be read ahead, a window at a time (`columns/ahead.rs`).
 //!
-//! A group's rows the tree has entries for are read from them as the
-//! group is taken up, the tree read once over its range of row ids, in
-//! whatever order its rows are (COLUMNSTORE.ORDER), and that range then
-//! left out of the tree's rows read last: a freeze meanwhile may take out
-//! an entry of a row frozen before (`freeze.rs`), whose group's row is the
-//! same, so each row is read once, of the one or the other. Split from
-//! frozen.rs (RULES.md R-SIZE-2).
+//! A group's rows the tree has entries for are read from them as the group
+//! is taken up, the tree read once over its range of row ids, in whatever
+//! order its rows are (COLUMNSTORE.ORDER), and that range then left out of
+//! the tree's rows read last: a freeze meanwhile may take out an entry of
+//! a row frozen before (`freeze.rs`), whose group's row is the same, so
+//! each row is read once, of the one or the other.
 
 use std::collections::VecDeque;
 use std::ops::Bound;

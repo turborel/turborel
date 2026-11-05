@@ -5,7 +5,7 @@
 //! page still in others (`behind`) and the header is written again
 //! (`settle`). A page names its own formats in the clear, in its body's
 //! header and its trailer, so the sweep reads pages raw, in runs, and
-//! decodes none. Split from pager.rs (RULES.md R-SIZE-2).
+//! decodes none.
 
 use std::sync::atomic::Ordering;
 

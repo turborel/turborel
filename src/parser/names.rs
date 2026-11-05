@@ -1,7 +1,6 @@
-//! [X3.135-1986 §5.4, ISO/IEC 9075:1992 §5.4] Names: a `<table name>`,
-//! a `<qualifier>` and a `<column reference>`, each qualified, if written
-//! so, by a schema and the one catalog. Split from parser.rs (RULES.md
-//! R-SIZE-2).
+//! [X3.135-1986 §5.4, ISO/IEC 9075:1992 §5.4] Names: a `<table name>`, a
+//! `<qualifier>` and a `<column reference>`, each qualified, if written
+//! so, by a schema and the one catalog.
 
 use super::{Catalogs, Parser};
 use crate::ast::{ColumnSpecification, TableName};

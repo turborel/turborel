@@ -1,6 +1,6 @@
 //! [ISO/IEC 9075:1992 §6.14, §6.15] Arithmetic of intervals: of two of one
 //! class, of one and a number, of a datetime and one, and the difference
-//! of two datetimes in one. Split from interval.rs (RULES.md R-SIZE-2).
+//! of two datetimes in one.
 
 use super::{Interval, MAX_LEADING_PRECISION, Qualifier, unit};
 use crate::error::{Code, Result, SqlState, fail_with};

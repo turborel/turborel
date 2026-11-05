@@ -1,7 +1,6 @@
 //! The data statements of a procedure [X3.135-1986 §8; ISO/IEC 9075:1992
 //! §13]: OPEN, CLOSE, positioned and searched DELETE and UPDATE, and their
-//! SET clauses. Split from parser.rs (RULES.md R-SIZE-2); the methods extend
-//! the same `Parser`.
+//! SET clauses.
 
 use super::Parser;
 use crate::ast::{DynamicStatement, SetClause, SqlStatement, UpdateSource};

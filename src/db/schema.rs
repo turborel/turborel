@@ -1,7 +1,6 @@
 //! Schema definition: `<schema>` and the domains, tables, columns,
 //! constraints and privileges it defines [X3.135-1986 §6.1-§6.4, §6.6;
-//! ISO/IEC 9075:1992 §11.1], and the \[EXTENSION\] `create_index`. Split
-//! from db.rs (RULES.md R-SIZE-2).
+//! ISO/IEC 9075:1992 §11.1], and the \[EXTENSION\] `create_index`.
 
 use std::mem;
 use std::sync::Arc;

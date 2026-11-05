@@ -1,6 +1,6 @@
-//! \[DESIGN\] The database state: how it is built, from the built-in engines, methods and
-//! rules and any tables a catalog already holds, and the lookups that rely on
-//! the invariant documented on `State`. Split from db.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] The database state: how it is built, from the built-in engines,
+//! methods and rules and any tables a catalog already holds, and the lookups
+//! that rely on the invariant documented on `State`.
 
 use crate::memory::{DEFAULT_BUDGET, MemoryBudget};
 use std::collections::{HashMap, HashSet};

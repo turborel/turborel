@@ -1,6 +1,5 @@
 //! Unit tests of building an index again: what happens when the new one
-//! cannot take the old one's place. Split from db/indexes.rs (RULES.md
-//! R-SIZE-2).
+//! cannot take the old one's place.
 
 use super::*;
 use crate::index::BTREE_METHOD;

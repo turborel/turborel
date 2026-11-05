@@ -1,7 +1,7 @@
 //! \[EXTENSION\] How a transaction reads [ISO/IEC 9075:1992 §4.28, §14.1
 //! GR5] (RULES.md D29): at which snapshot, and whether its reads are
 //! checked at commit, as its participants are told
-//! (`TableStorage::read_mode`). Split from txn.rs (RULES.md R-SIZE-2).
+//! (`TableStorage::read_mode`).
 
 use std::sync::atomic::Ordering;
 

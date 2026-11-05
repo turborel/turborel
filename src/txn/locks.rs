@@ -3,8 +3,7 @@
 //! table locked against it is refused at once (`LockWait::NoWait`) or waits
 //! until the holder ends (`LockWait::Wait`), unless waiting would deadlock or
 //! could never end, which is refused at once. A wait ends refused past
-//! `LOCKS.TIMEOUT_MS`, or when its statement is cancelled. Split from txn.rs
-//! (RULES.md R-SIZE-4).
+//! `LOCKS.TIMEOUT_MS`, or when its statement is cancelled.
 //!
 //! Each table has a lock of its own (RULES.md D29), so transactions on
 //! different tables never touch the same one. Only a transaction about to

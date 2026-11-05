@@ -1,9 +1,9 @@
-//! \[DESIGN\] RULES.md D31: the built-in set functions of approximate
-//! numbers given as `f64`s (`storage::Floats`), a vector at a time, no
-//! value made of each: how many are not null, their sum, and the greatest
-//! or least, each of the rows given or all, nulls left out [X3.135-1986
-//! §5.8 GR1], in the order a row at a time takes them, so each total is
-//! the same; and how a sum is kept (`Wide`). Split from functions.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] RULES.md D31: the built-in set functions of approximate numbers
+//! given as `f64`s (`storage::Floats`), a vector at a time, no value made of
+//! each: how many are not null, their sum, and the greatest or least, each of
+//! the rows given or all, nulls left out [X3.135-1986 §5.8 GR1], in the order
+//! a row at a time takes them, so each total is the same; and how a sum is
+//! kept (`Wide`).
 
 use std::cmp::Ordering;
 

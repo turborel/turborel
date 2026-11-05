@@ -1,18 +1,17 @@
 //! \[DESIGN\] Frozen row groups written again (RULES.md D31): a group whose
 //! range of row ids the tree has entries for, of COLUMNSTORE.REWRITE_FRACTION
-//! of its rows or more (frozen rows changed or deleted, or rows given ids
-//! in its range late), is written again with them: each entry committed
-//! before every snapshot folded in, a deletion dropping its row, an update
-//! taking its values, a row added taking its place; the group is then
-//! replaced in the directory, and the entries folded taken out of the tree
-//! as a freeze takes out its rows' (`freeze.rs`). An entry not yet
-//! committed so stays, before the group's values, which hold its row as it
-//! was. A group whose rows are sorted by other columns than COLUMNSTORE.ORDER
-//! names now, or that keeps Bloom filters of other columns than
-//! COLUMNSTORE.BLOOM names, or is of another layout than COLUMNSTORE.LAYOUT
-//! says, as they were changed, is written again so,
-//! MOST_REWRITES of them a call, as the maintenance thread calls again
-//! while any is left (`stale`). Split from frozen.rs (RULES.md R-SIZE-2).
+//! of its rows or more (frozen rows changed or deleted, or rows given ids in
+//! its range late), is written again with them: each entry committed before
+//! every snapshot folded in, a deletion dropping its row, an update taking
+//! its values, a row added taking its place; the group is then replaced in
+//! the directory, and the entries folded taken out of the tree as a freeze
+//! takes out its rows' (`freeze.rs`). An entry not yet committed so stays,
+//! before the group's values, which hold its row as it was. A group whose
+//! rows are sorted by other columns than COLUMNSTORE.ORDER names now, or that
+//! keeps Bloom filters of other columns than COLUMNSTORE.BLOOM names, or is
+//! of another layout than COLUMNSTORE.LAYOUT says, as they were changed, is
+//! written again so, MOST_REWRITES of them a call, as the maintenance thread
+//! calls again while any is left (`stale`).
 
 use std::collections::BTreeMap;
 use std::ops::Bound;

@@ -9,7 +9,6 @@
 //!          bytes, passed through those encodings in order
 //! ```
 //!
-//! Split from disk/encoding.rs (RULES.md R-SIZE-2).
 
 use std::borrow::Cow;
 use std::sync::{Arc, RwLock};

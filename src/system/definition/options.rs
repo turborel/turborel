@@ -5,7 +5,7 @@
 //! takes, how a change of it is made, and what it does; and of indexes
 //! (RULES.md D34): INDEXES, each index with its method and columns, and
 //! INDEX_OPTIONS, each option of each index's method, as TABLE_OPTIONS
-//! shows a table's. Split from definition.rs (RULES.md R-SIZE-2).
+//! shows a table's.
 
 use std::sync::Arc;
 

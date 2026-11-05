@@ -1,7 +1,7 @@
 //! The mutations of the core's reads (RULES.md R-TEST-9): index-only
 //! scans' zones and the index entries collection owes, ordered reads of
 //! the column store, and its columns of runs; and how the planner prices
-//! reads by the pages they miss. Split from list.rs (RULES.md R-SIZE-2).
+//! reads by the pages they miss.
 
 use super::{Mutation, Package};
 

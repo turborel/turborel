@@ -1,7 +1,6 @@
 //! [ISO/IEC 9075:1992 §15, §16.4] The statements of connections, an
 //! SQL-agent's, which a client runs (`turborel_client`), and SET SESSION
-//! AUTHORIZATION, a session's. Split from parser.rs (RULES.md R-SIZE-2);
-//! the methods extend the same `Parser`.
+//! AUTHORIZATION, a session's.
 
 use super::Parser;
 use crate::ast::{ConnectionStatement, Disconnected, SqlStatement};

@@ -1,5 +1,5 @@
 //! The logical plan as text: expressions, conditions and sort keys, for
-//! EXPLAIN and error messages. Split from logical.rs (RULES.md R-SIZE-2).
+//! EXPLAIN and error messages.
 
 use std::fmt::Write;
 

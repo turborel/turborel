@@ -1,5 +1,5 @@
 //! \[DESIGN\] A frozen row group's header, written and read back as
-//! `group.rs` describes it. Split from group.rs (RULES.md R-SIZE-2).
+//! `group.rs` describes it.
 
 use super::summary::{Overall, Summary};
 use super::{Filter, GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};

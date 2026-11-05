@@ -1,10 +1,7 @@
 /target
 .idea/
 .DS_Store
-# Local reference copy of the standard and its cleanup script (decided 2026-10-23).
-fips.py
-fipspub127.txt
-sql1992.txt
-# A coding agent's local settings and worktrees (AGENTS.md).
+*.py
+*.txt
 .claude/settings.local.json
 .claude/worktrees/

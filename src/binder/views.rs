@@ -9,8 +9,7 @@
 //! from [GR2]: its columns are columns of that table's rows, and the
 //! conditions of the views between are a filter on them. So a cursor over
 //! it, an index on the base table, and INSERT, UPDATE and DELETE through it
-//! work as on the table itself. Any other view is its bound plan. Split
-//! from binder.rs (RULES.md R-SIZE-2).
+//! work as on the table itself. Any other view is its bound plan.
 
 use super::query::Nesting;
 use super::set_operations::bind_query_expression;

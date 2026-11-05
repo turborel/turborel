@@ -9,8 +9,6 @@
 //!   under its stripe's lock, released before the next is read.
 //! * **Keys**, for statistics: the shape may change meanwhile, so a split
 //!   may move an entry past the scan, or before it.
-//!
-//! Split from hash.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

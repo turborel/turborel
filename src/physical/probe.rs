@@ -1,8 +1,7 @@
 //! \[DESIGN\] The probes an index can answer for the conjuncts of a filter
 //! over its table (RULES.md D34): comparisons of a column with constants,
 //! the bounds of a LIKE's prefix, and an OR of these of one column, an IN
-//! list among them, as one probe of each of its ranges. Split from
-//! physical/access.rs (RULES.md R-SIZE-2).
+//! list among them, as one probe of each of its ranges.
 
 use std::cmp::Ordering;
 

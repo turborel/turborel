@@ -1,10 +1,9 @@
 //! \[DESIGN\] The built-in settings (RULES.md D36), each at its key's place,
 //! in groups: transactions and definitions, planning, the catalog's name,
-//! memory, the planner's guesses, spilling, durability, storage, limits,
-//! the executor, the threads of background work (RULES.md D55), and the
-//! log's own pace of syncs and its durability. A default its subsystem names by a constant is
-//! that constant.
-//! Split from settings.rs (RULES.md R-SIZE-2).
+//! memory, the planner's guesses, spilling, durability, storage, limits, the
+//! executor, the threads of background work (RULES.md D55), and the log's own
+//! pace of syncs and its durability. A default its subsystem names by a
+//! constant is that constant.
 
 use super::{Definition, Effect, Key, Kind};
 use crate::value::{Decimal, Value};

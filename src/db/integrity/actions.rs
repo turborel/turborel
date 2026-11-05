@@ -1,7 +1,6 @@
 //! \[EXTENSION\] The referential actions of the rows a statement deleted
 //! and updated, at its end [ISO/IEC 9075:1992 §11.8 GR5, GR6], each adding
-//! what it does to what the statement did. Split from
-//! `integrity/references.rs` (RULES.md R-SIZE-2).
+//! what it does to what the statement did.
 //!
 //! With MATCH PARTIAL a row matches every referenced row its values not
 //! null equal, so an action is done only to the rows it matches no other

@@ -3,8 +3,7 @@
 //! that replay as they come, and those held of each transaction they end,
 //! each already in position order, merged as they are read, so a
 //! transaction's records spilled (`txn/followed.rs`) are read back a
-//! segment at a time, never all at once. Split from db/standby.rs
-//! (RULES.md R-SIZE-2).
+//! segment at a time, never all at once.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;

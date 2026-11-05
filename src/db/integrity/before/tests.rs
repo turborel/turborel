@@ -1,7 +1,6 @@
 //! Unit tests of a table as it was before a statement: its rows found by
 //! their values through lookups made once, as comparing each would find
-//! them, and the rows read for it. Split from db/integrity/before.rs
-//! (RULES.md R-SIZE-2).
+//! them, and the rows read for it.
 
 use super::*;
 use crate::db::Database;

@@ -1,10 +1,9 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §21.1] INFORMATION_SCHEMA.FILE_FORMATS:
-//! each kind of file of a database kept in a directory, and how much of
-//! it is still in other formats than STORAGE.ENCODINGS and
+//! each kind of file of a database kept in a directory, and how much of it
+//! is still in other formats than STORAGE.ENCODINGS and
 //! STORAGE.CHECKSUM_KEY name (RULES.md D48, `db/rekey.rs`), an object
 //! "associated with INFORMATION_SCHEMA" this implementation adds. The
 //! database's owner sees them; any other, none, as MEMORY_RESERVATIONS.
-//! Split from system.rs (RULES.md R-SIZE-2).
 
 use super::{Seen, SystemTable, text, text_column, yes};
 use crate::catalog::ColumnDesc;

@@ -1,7 +1,7 @@
 //! [X3.135-1986 §5.24] A bound `<subquery>`: a logical plan of its own, run
 //! for each row (or group) its predicate is applied to [X3.135-1986 §5.21
 //! GR3, §5.23 GR4], with the values of the outer references it makes
-//! [X3.135-1986 §5.7 SR4]. Split from logical.rs (RULES.md R-SIZE-2).
+//! [X3.135-1986 §5.7 SR4].
 //!
 //! An outer reference is bound as a slot, `Expr::Outer(i)`, and the
 //! subquery keeps the expression, over the enclosing row, that fills it:

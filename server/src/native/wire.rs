@@ -1,5 +1,5 @@
 //! A connection's messages, framed: requests read, replies written and
-//! flushed. Split from native.rs (RULES.md R-SIZE-4).
+//! flushed.
 //!
 //! A request's body is read into memory as its bytes arrive, never
 //! reserved whole as its header declares it: a client that declares a

@@ -31,12 +31,12 @@
 //! columns take only their own bytes.
 //!
 //! A long value is kept out of line, so that rows stay short and several
-//! fit in a page (RULES.md D31): every character column longer than a
-//! threshold, and then the longest others until the record fits the most
+//! fit in a page (RULES.md D31): every value of varying width longer than
+//! a threshold, and then the longest others until the record fits the most
 //! a row may take. Where values out of line are kept is the layout's: it
 //! stores and fetches them through closures given to `encode_spilling` and
-//! the `_with` decoders. The prefix in the reference is for filters that
-//! can decide on a value's first bytes without fetching it.
+//! the `_with` decoders. The reference holds a prefix of the value, which
+//! no reader uses yet.
 
 use std::borrow::Cow;
 

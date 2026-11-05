@@ -1,6 +1,6 @@
 //! The fields messages are made of: values, data types, columns, rows,
 //! parameters and failures, each written and read as the module's format
-//! says. Split from lib.rs (RULES.md R-SIZE-4).
+//! says.
 
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;

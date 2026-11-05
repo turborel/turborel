@@ -1,6 +1,5 @@
 //! Contract tests for `IndexMethod` and `Index` (RULES.md R-SAFE-3), for
 //! every built-in index method; a plug-in's can be checked the same way.
-//! Split from contracts.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 

@@ -4,7 +4,6 @@
 //! label, whether it is idle, due or running, whether a thread of its own
 //! runs it, how often it ran and panicked, and its last error. The
 //! database's owner sees them; any other, none, as MEMORY_RESERVATIONS.
-//! Split from system.rs (RULES.md R-SIZE-2).
 
 use super::{Seen, SystemTable, text, text_column, yes};
 use crate::catalog::ColumnDesc;

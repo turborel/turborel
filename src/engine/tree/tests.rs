@@ -4,7 +4,7 @@
 //! that make them would leave them (RULES.md R-TEST-1, R-TEST-5); so are a
 //! writer, a deleter and a scan that meet a leaf taken out. And where runs
 //! of keys split, bulk loading, the longest entry, and malformed trees
-//! refused (R-TEST-2 robustness). Split from tree.rs (RULES.md R-SIZE-2).
+//! refused (R-TEST-2 robustness).
 
 use std::ops::Bound;
 

@@ -1,8 +1,7 @@
 //! Validation and commit of a transaction in a table (RULES.md D29, D38):
 //! the two-sided check of its reads and writes against those validated
 //! before and after it, and the stamping of its versions, its garbage made
-//! a segment of its changes at a time. Split from engine/rows/mvcc.rs
-//! (RULES.md R-SIZE-2); see its documentation.
+//! a segment of its changes at a time. See `mvcc.rs`.
 
 use std::mem;
 use std::sync::atomic::Ordering;

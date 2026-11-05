@@ -5,7 +5,7 @@
 //! An immediate assertion is checked at the end of each statement that
 //! changes a table it reads [§4.10.1], so it was satisfied as the statement
 //! began: the statement before it was checked, or the assertion was
-//! checked whole as it was made or made immediate, and a statement that
+//! checked as it was made or made immediate, and a statement that
 //! breaks it is undone. The forms of a conjunct of its condition checked
 //! from the change alone (`forms.rs`) are each over the rows of one table
 //! T that pass steps of conditions and expressions of the row alone:

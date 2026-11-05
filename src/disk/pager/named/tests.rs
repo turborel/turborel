@@ -1,6 +1,5 @@
 //! Unit tests of what a durable pager file's pages name: their encodings
 //! and their checksum's key, as both change (RULES.md R-TEST-1, R-TEST-2).
-//! Split from pager/named.rs (RULES.md R-SIZE-2).
 
 use std::path::Path;
 use std::sync::Arc;

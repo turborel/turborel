@@ -2,7 +2,7 @@
 //! 9075:1992 §7.5 GR1c, GR2-GR5]: a WHERE conjunct into the operand it
 //! preserves, an ON conjunct into the operand that supplies nulls; and an
 //! outer join whose null rows the WHERE clause rejects made the join it is
-//! then. Split from optimizer.rs (RULES.md R-SIZE-2).
+//! then.
 
 use super::raising::guarded;
 use super::{Rule, RuleContext, wrap};

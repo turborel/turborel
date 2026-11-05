@@ -1,15 +1,14 @@
 //! \[EXTENSION\] The driver's part in a state transfer (RULES.md D57,
 //! `transfer.rs`): the export it serves, one for every replica fetching,
-//! taken as the first request comes, numbered so a fetcher tells its
-//! answers from another export's, and let go once no request comes for
-//! a while, when the database is deposed, and before it installs a
-//! transfer; one, as an export holds the database's checkpoints off,
-//! which a second one asked of the same thread would wait on, itself
-//! (RULES.md R-ERR-4); and the fetch of its own, begun as the consensus asks
-//! (`Output::FetchState`), kept while the consensus asks again from the
-//! same replica, its answers taken until the export is whole, which the
-//! database installs (`Standby::import`). Split from driver.rs (RULES.md
-//! R-SIZE-2).
+//! taken as the first request comes, numbered so a fetcher tells its answers
+//! from another export's, and let go once no request comes for a while, when
+//! the database is deposed, and before it installs a transfer; one, as an
+//! export holds the database's checkpoints off, which a second one asked of
+//! the same thread would wait on, itself (RULES.md R-ERR-4); and the fetch
+//! of its own, begun as the consensus asks (`Output::FetchState`), kept
+//! while the consensus asks again from the same replica, its answers taken
+//! until the export is whole, which the database installs
+//! (`Standby::import`).
 
 use std::collections::VecDeque;
 

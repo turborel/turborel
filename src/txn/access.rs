@@ -1,7 +1,6 @@
 //! Transactional operations on the database state: every change to stored
 //! rows goes through here, so locking, undo and index maintenance happen in
-//! one place (`txn/write.rs` for the writes). Split from txn.rs (RULES.md
-//! R-SIZE-2).
+//! one place (`txn/write.rs` for the writes).
 
 use std::sync::Arc;
 

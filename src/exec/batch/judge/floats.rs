@@ -3,7 +3,7 @@
 //! its constants as two numbers compare by algebraic value [X3.135-1986
 //! §5.11 GR4], an exact constant as exactly as a row's judgment compares
 //! it (`value::compare`); a null true of no comparison [§5.11 GR2], of IS
-//! NULL only [§5.15]. Split from judge.rs (RULES.md R-SIZE-2).
+//! NULL only [§5.15].
 
 use std::cmp::Ordering;
 

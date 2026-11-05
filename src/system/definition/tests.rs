@@ -1,7 +1,7 @@
 //! Unit tests of the Definition Schema: every table's rows keep the
 //! contract of a system table, and those of the tables no view of the
 //! Information Schema reads are as §21.3 describes them (RULES.md
-//! R-TEST-1). Split from definition.rs (RULES.md R-SIZE-4).
+//! R-TEST-1).
 
 use super::*;
 use crate::db::Database;

@@ -1,6 +1,5 @@
 //! \[EXTENSION\] USAGE on a domain [ISO/IEC 9075:1992 §10.3, §11.36,
-//! §11.37]: granted, and revoked, with what its revoke abandons. Split from
-//! db/domains.rs (RULES.md R-SIZE-2).
+//! §11.37]: granted, and revoked, with what its revoke abandons.
 
 use std::sync::Arc;
 

@@ -2,8 +2,7 @@
 //! concatenation, as `ScalarFunction` plugins registered under their key
 //! words (concatenation under `||`), so an implementation can be replaced,
 //! as a set function can. The parser reads each with its own syntax and
-//! calls it with its operands in order (`parser/expression.rs`). Split from
-//! functions.rs (RULES.md R-SIZE-2).
+//! calls it with its operands in order (`parser/expression.rs`).
 //!
 //! A result is of the type its Syntax Rules give: CHARACTER VARYING of
 //! SUBSTRING and TRIM [§6.7 SR2a, SR6e], the string's type of UPPER and

@@ -68,7 +68,8 @@
 //! lock, the graph of who waits for whom, and a few maps held only for an
 //! insert or a removal as a transaction begins, logs or ends (RULES.md
 //! D29): a transaction's undo log and bookkeeping are its own (`Txn`), so
-//! transactions on different tables never wait for each other.
+//! transactions on different tables take no lock in common. A commit still
+//! waits for every commit before it to end, whatever tables they touch.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem;

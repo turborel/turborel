@@ -2,8 +2,7 @@
 //! opened from its directory as itself, or as the replica its settings
 //! name, its node started with the server; and its settings given at
 //! start set once the server is made, with the owner `--owner` names,
-//! on a replica once it serves as primary. Split from lib.rs (RULES.md
-//! R-SIZE-2).
+//! on a replica once it serves as primary.
 
 use std::path::Path;
 use std::sync::Arc;

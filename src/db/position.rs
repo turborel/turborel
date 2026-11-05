@@ -1,6 +1,5 @@
 //! A cursor's position among its rows [ISO/IEC 9075:1992 §4.21], and where
-//! a FETCH moves it [§13.3 GR2–GR5]. Split from db/cursor.rs (RULES.md
-//! R-SIZE-2).
+//! a FETCH moves it [§13.3 GR2–GR5].
 //!
 //! A cursor's rows are places in its order, `0..`: a read-only cursor's
 //! each a row read, an updatable one's each a row it may cover, which is

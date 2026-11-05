@@ -7,7 +7,7 @@
 //! with nulls. The left is read as it is pulled and nothing is held: its
 //! rows' order is the result's, each row's matches in the index's. The
 //! statement looks for a cancel before each probe and as each entry is
-//! read (RULES.md D44). Split from exec/join.rs (RULES.md R-SIZE-2).
+//! read (RULES.md D44).
 
 use std::sync::Arc;
 

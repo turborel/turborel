@@ -22,9 +22,12 @@
 //! ```
 //!
 //! The authenticated data is the context (where the data is stored, as the
-//! encoding contract says) and the key's name: data moved to another place,
-//! or another key named, fails to decrypt (SQLCODE -916), as does any byte
-//! changed.
+//! encoding contract says) and the key's name. Data moved to another
+//! context, or naming another key the keyring holds, fails to decrypt
+//! (SQLCODE -916), as does any byte changed; a key the keyring lacks is
+//! refused first (SQLCODE -910). Data moved within one context is not
+//! refused here. A block file's context is always 0, and a row's is its
+//! row id, with no table in it.
 //!
 //! **No key named** (`Encoding::encode`, as a spill area's files are
 //! written): the process's ephemeral key, drawn as it is first used and

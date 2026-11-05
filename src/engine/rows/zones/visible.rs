@@ -1,7 +1,6 @@
 //! \[DESIGN\] Of the zones (see the module's documentation), whether every
 //! reader sees a zone's rows alone, for index-only scans (RULES.md D34):
-//! the flags readers look at, and how a sum up settles them. Split from
-//! zones.rs (RULES.md R-SIZE-2).
+//! the flags readers look at, and how a sum up settles them.
 
 use std::sync::atomic::Ordering as AtomicOrdering;
 

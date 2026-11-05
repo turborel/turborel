@@ -1,7 +1,6 @@
-//! The working tables of open cursors [X3.135-1986 §4.12, §8.8 GR3b]:
-//! the rows a cursor gives while its own transaction changes the tables
-//! it reads, and the effect of an error on a cursor. Split from cursors.rs
-//! (RULES.md R-SIZE-2).
+//! The working tables of open cursors [X3.135-1986 §4.12, §8.8 GR3b]: the
+//! rows a cursor gives while its own transaction changes the tables it
+//! reads, and the effect of an error on a cursor.
 
 use turborel::db::Completion;
 use turborel::error::Code;

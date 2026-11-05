@@ -1,8 +1,7 @@
 //! \[DESIGN\] What a storage engine does for transactions, and what the
 //! transaction policy accepts when an engine falls short of [X3.135-1986
 //! §4.16]: how changes are undone, who isolates transactions, and how data
-//! survives a crash (RULES.md D25, D29). Split from txn.rs (RULES.md
-//! R-SIZE-2).
+//! survives a crash (RULES.md D25, D29).
 
 /// How an engine's changes are cancelled on ROLLBACK or statement failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

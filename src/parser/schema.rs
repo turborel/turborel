@@ -1,9 +1,8 @@
 //! The schema grammar: `<schema>` [X3.135-1986 §6.1], its `<table
-//! definition>`s [X3.135-1986 §6.2-§6.4], `<view definition>`s
-//! [X3.135-1986 §6.5] and `<privilege definition>`s [X3.135-1986 §6.6];
-//! temporary tables [ISO/IEC 9075:1992 §11.3, §13.11] and the `<revoke
-//! statement>` [§11.37]. Domains and assertions are in `parser/domains.rs`.
-//! Split from parser.rs (RULES.md R-SIZE-2).
+//! definition>`s [X3.135-1986 §6.2-§6.4], `<view definition>`s [X3.135-1986
+//! §6.5] and `<privilege definition>`s [X3.135-1986 §6.6]; temporary tables
+//! [ISO/IEC 9075:1992 §11.3, §13.11] and the `<revoke statement>` [§11.37].
+//! Domains and assertions are in `parser/domains.rs`.
 
 use super::Parser;
 use crate::ast::{

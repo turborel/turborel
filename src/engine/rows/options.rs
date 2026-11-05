@@ -4,8 +4,7 @@
 //! refreshed, what it keeps of its transactions in memory, and, of the
 //! column store, how its rows are frozen. A table's options are those its
 //! descriptor sets (`TableDesc::options`), else those `RowStore::configure`
-//! gave it, else the store's defaults. Split from engine/rows.rs (RULES.md
-//! R-SIZE-2).
+//! gave it, else the store's defaults.
 
 use crate::catalog::TableDesc;
 use crate::settings::{Kind, column_names};

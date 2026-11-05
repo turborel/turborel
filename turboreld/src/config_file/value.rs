@@ -1,7 +1,6 @@
 //! \[DESIGN\] The values of a configuration file (`config_file.rs` gives
 //! their grammar): strings, integers, floats, booleans and arrays of
-//! strings, each the value of a setting. Split from config_file.rs
-//! (RULES.md R-SIZE-2).
+//! strings, each the value of a setting.
 
 // The words of a switch, which `true` and `false` give (RULES.md D36).
 use turborel::settings::{OFF, ON};

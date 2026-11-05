@@ -4,8 +4,7 @@
 //! its rows, in order, gives its batches as they are, each with the rows a
 //! filter kept; EXCEPT and INTERSECT are given each row's key too, made
 //! straight from the vectors (`put_key`), as grouping makes it, and make a
-//! row of the values only of a row they keep or write. Split from
-//! batch.rs (RULES.md R-SIZE-2).
+//! row of the values only of a row they keep or write.
 
 use std::sync::Arc;
 

@@ -1,6 +1,6 @@
 //! \[DESIGN\] Join ordering (RULES.md D35): the operands of a product are
 //! joined in the order estimated to be cheapest, not necessarily the order
-//! of the FROM clause. Split from physical.rs (RULES.md R-SIZE-2).
+//! of the FROM clause.
 //!
 //! A chain of products and the filters over them is taken apart into its
 //! operands (relations) and the conjuncts of its conditions, then built

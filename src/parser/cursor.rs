@@ -1,7 +1,6 @@
 //! Cursors' statements: `<declare cursor>` [X3.135-1986 §8.3; ISO/IEC
 //! 9075:1992 §13.1], with its `<updatability clause>`, and `<fetch
-//! statement>` [X3.135-1986 §8.6; ISO/IEC 9075:1992 §13.3]. Split from
-//! parser.rs (RULES.md R-SIZE-2).
+//! statement>` [X3.135-1986 §8.6; ISO/IEC 9075:1992 §13.3].
 
 use super::Parser;
 use crate::ast::{DeclareCursor, FetchOrientation, SqlStatement, Updatability};

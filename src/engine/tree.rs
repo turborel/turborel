@@ -5,8 +5,8 @@
 //! index, one keyed by its encoded key then the row id, so its keys are
 //! unique even when the values indexed repeat.
 //!
-//! Every node has a high key, the highest key it may hold, and a link to
-//! its right neighbour (`node.rs`). A split moves keys only right, to a new
+//! Every node but the rightmost of its level has a high key, the highest
+//! key it may hold, and a link to its right neighbour (`node.rs`). A split moves keys only right, to a new
 //! node linked in by the same write that lowers the old node's high key,
 //! so a key is always reachable from where it was: a reader that finds a
 //! key above a node's high key follows the link (§3, §4).
@@ -16,8 +16,8 @@
 //!   `get`, §2), and move right when the key is past it.
 //! * **Writers** go down the same way, remembering the rightmost node they
 //!   read at each level. They lock the leaf (`locks.rs`), move right if it
-//!   has split, and change it in place if the change fits. Otherwise they
-//!   split it: the right half written to a new page first, then the left
+//!   has split, and change it in place if the change fits and starts no
+//!   run (`node.rs`). Otherwise they split it: the right half written to a new page first, then the left
 //!   half over the old one, which together are one change to the tree
 //!   (§6.2, Lemma 2). Then they lock the remembered parent, move right
 //!   from it as far as the separator needs, release the child, and insert
@@ -29,9 +29,11 @@
 //!   one, the leftmost node of its level, under the meta page's lock; or
 //!   the parent is found again from the current root.
 //! * **Deletes** remove an entry from its leaf; a key in an inner node
-//!   stays, as it is only an upper bound (§7). A leaf a delete empties is
-//!   taken out, its range given to its right neighbour, and its page freed
-//!   once no operation that may hold its number is left (`reclaim.rs`).
+//!   stays, as it is only an upper bound (§7), unless the leaf is unlinked.
+//!   A leaf a delete empties is taken out if it has neighbours under the
+//!   same parent, its separator removed, its range given to its right
+//!   neighbour, and its page freed once no operation that may hold its
+//!   number is left. Other empty leaves stay (`reclaim.rs`).
 //!
 //! The paper notes a reader may in principle be overtaken forever by
 //! splits ahead of it (livelock, §6.4); `TreeCounts::right_moves` measures

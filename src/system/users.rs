@@ -1,8 +1,7 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §21.1] INFORMATION_SCHEMA.USERS: the
 //! users (RULES.md D43), an object "associated with INFORMATION_SCHEMA"
 //! this implementation adds. The database's owner sees every user; any
-//! other, only itself. No verifier is shown. Split from system.rs
-//! (RULES.md R-SIZE-2).
+//! other, only itself. No verifier is shown.
 
 use super::{Seen, SystemTable, identifier, text, text_column, yes};
 use crate::catalog::ColumnDesc;

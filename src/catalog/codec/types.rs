@@ -1,7 +1,6 @@
 //! \[DESIGN\] A data type in the catalog's bytes: a tag of its kind, then
 //! its parameters; a number type's tag says the name it was written with
-//! [ISO/IEC 9075:1992 §21.3.5]. Split from catalog/codec.rs (RULES.md
-//! R-SIZE-2).
+//! [ISO/IEC 9075:1992 §21.3.5].
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;

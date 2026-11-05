@@ -7,12 +7,12 @@
 //! vectors once, and orders the runs' next rows by their prefixes,
 //! comparing the rows' values where they lie in their vectors only when
 //! prefixes of kinds alike tie, or either has none; a row is made of its
-//! values only when it is given. A pass that writes a run again writes
-//! the rows merged as chunks of as many rows as its runs' first chunks
-//! held, the most of them. Rows of equal prefixes held whole are compared
-//! by the other keys alone. A tie goes to the earlier run, so the merge is
+//! values only when it is given. A pass that writes a run again writes the
+//! rows merged as chunks of as many rows as its runs' first chunks held,
+//! the most of them. Rows of equal prefixes held whole are compared by the
+//! other keys alone. A tie goes to the earlier run, so the merge is
 //! stable, and its order is the one comparing the rows whole gives
-//! (`compare_rows`). Split from sort.rs (RULES.md R-SIZE-2).
+//! (`compare_rows`).
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;

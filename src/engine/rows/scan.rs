@@ -1,7 +1,6 @@
 //! A row table's scans: the rows a transaction sees, read through the table
 //! they come from, so a scan owns what it reads and outlives the call that
-//! started it (`TableStorage::scan`). Split from rows.rs (RULES.md
-//! R-SIZE-2).
+//! started it (`TableStorage::scan`).
 
 use std::iter;
 use std::ops::{Bound, Deref};

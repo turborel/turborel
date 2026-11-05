@@ -17,7 +17,6 @@
 //! slots: the heap's offsets never move but when an entry is removed. A
 //! page holds as many bytes as its entries take, up to the page's
 //! capacity; one that would not fit goes on the next page of the chain.
-//! Split from hash.rs (RULES.md R-SIZE-2).
 
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};

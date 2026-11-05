@@ -1,13 +1,12 @@
 //! \[DESIGN\] The hybrid layout of a frozen row group (PAX: Ailamaki,
-//! DeWitt, Hill and Skounakis, VLDB 2001; RULES.md D31): each page holds
-//! a range of the group's rows, as many as fit, a chunk of each column of
+//! DeWitt, Hill and Skounakis, VLDB 2001; RULES.md D31): each page holds a
+//! range of the group's rows, as many as fit, a chunk of each column of
 //! them one after another, each chunk encoded as the column layout's are
 //! (`columns/encoded.rs`) and found by where it lies on the page
 //! (`Run::at`). A row read whole reads one page, not a page a column; a
 //! scan of a few columns reads every column's bytes. Rows whose chunks fit
 //! no page together, of values too long, are each written as the column
-//! layout writes them, a chunk of each column on a page of its own. Split
-//! from group.rs (RULES.md R-SIZE-2).
+//! layout writes them, a chunk of each column on a page of its own.
 
 use super::{Pages, Run, Seal, Zone, count32, put_filters, zone_of};
 use crate::disk::pager::PageId;

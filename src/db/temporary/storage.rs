@@ -3,8 +3,7 @@
 //! them, and its entries of each index its session's definitions give the
 //! table, each made complete or not at all; and the older versions its
 //! transactions keep (`db/temporary/undo.rs`); all in the instance's pages
-//! (`db/temporary/pages.rs`), which spill to a scratch file. Split from
-//! db/temporary.rs (RULES.md R-SIZE-2).
+//! (`db/temporary/pages.rs`), which spill to a scratch file.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

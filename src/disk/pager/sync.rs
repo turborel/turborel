@@ -1,10 +1,10 @@
 //! \[DESIGN\] `Pager::sync` (RULES.md D30): the pages written made durable,
 //! and the free list recorded: on new trunk pages, then in the meta slot that
 //! is not current, so a crash at any point leaves the previous record, and
-//! the trunk pages it names, whole. Free pages at the end of the file are
-//! cut off once the record is durable. The record is written again, as it
-//! is, after the header is settled in other formats (`formats.rs`), so
-//! the slot names the header's key. Split from pager.rs (RULES.md R-SIZE-2).
+//! the trunk pages it names, whole. Free pages at the end of the file are cut
+//! off once the record is durable. The record is written again, as it is,
+//! after the header is settled in other formats (`formats.rs`), so the slot
+//! names the header's key.
 
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;

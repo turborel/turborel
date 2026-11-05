@@ -4,7 +4,7 @@
 //! commits when its commit record is durable: `sync` of it returns.
 //! Definitions changed outside the transactions of sessions (settings,
 //! users, schemas, indexes) are logged and synced before they are
-//! published. Split from txn.rs (RULES.md R-SIZE-4).
+//! published.
 //!
 //! \[DESIGN\] A failed sync of the log stops the database's changes (RULES.md
 //! D25): what the log held may be lost, and a later sync may succeed

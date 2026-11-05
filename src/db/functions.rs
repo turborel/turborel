@@ -1,7 +1,6 @@
 //! \[EXTENSION\] Functions registered with the database, as plug-ins
 //! (`functions.rs`): each with its settings declared and their values told
-//! it (`Configurable`, RULES.md D36). Split from database.rs (RULES.md
-//! R-SIZE-2).
+//! it (`Configurable`, RULES.md D36).
 
 use std::sync::Arc;
 

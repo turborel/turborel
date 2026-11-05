@@ -1,6 +1,5 @@
 //! Unit tests of log records: every kind of record read back as written,
-//! and what is not a record refused (RULES.md R-TEST-1, R-TEST-2). Split
-//! from record.rs (RULES.md R-SIZE-2).
+//! and what is not a record refused (RULES.md R-TEST-1, R-TEST-2).
 
 use super::*;
 use crate::value::types::TypeRegistry;

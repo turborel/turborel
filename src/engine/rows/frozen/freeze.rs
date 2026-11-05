@@ -4,8 +4,8 @@
 //! its last group are committed before every snapshot, and
 //! COLUMNSTORE.FREEZE_DELAY seconds ago, a group of up to
 //! COLUMNSTORE.GROUP_ROWS of them is written, published in a new directory,
-//! and their entries taken out of the tree once no reader holds a
-//! directory from before it. Split from frozen.rs (RULES.md R-SIZE-2).
+//! and their entries taken out of the tree once no reader holds a directory
+//! from before it.
 //!
 //! Only a version stamped committed is frozen; its entry is taken out
 //! only if it is still the one frozen, so a row changed meanwhile keeps

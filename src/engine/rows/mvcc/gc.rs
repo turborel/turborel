@@ -1,9 +1,8 @@
 //! \[DESIGN\] Garbage collection of row versions (RULES.md D29, D31): what a
 //! commit superseded, removed once its timestamp is past the horizon; what
 //! an undone change appended, released once the transactions then open in
-//! the table have ended; and the bookkeeping of transactions no other can
-//! be ordered against. Split from mvcc.rs (RULES.md R-SIZE-2); see its
-//! documentation.
+//! the table have ended; and the bookkeeping of transactions no other can be
+//! ordered against. See `mvcc.rs`.
 
 use std::mem;
 use std::sync::atomic::Ordering;

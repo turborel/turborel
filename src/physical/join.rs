@@ -1,8 +1,7 @@
 //! \[DESIGN\] Equality joins: a filter over a product whose condition
 //! equates a column of each operand is planned as a hash join, which reads
 //! one operand once into a hash table and pairs each row of the other with
-//! only the rows whose keys are equal, rather than with every row. Split
-//! from physical.rs (RULES.md R-SIZE-2).
+//! only the rows whose keys are equal, rather than with every row.
 //!
 //! The rows are those the filter keeps: each left row's matches in the
 //! order of the right operand, the right built. The equalities are

@@ -1,7 +1,6 @@
 //! [ISO/IEC 9075:1992 §6.9, §6.10, §7.11, §9.3] CASE, NULLIF and COALESCE,
 //! bound as the searched CASE the standard defines each by; CAST; scalar
-//! subqueries; and the result type of values brought together. Split from
-//! binder/expression.rs (RULES.md R-SIZE-2).
+//! subqueries; and the result type of values brought together.
 
 use std::sync::Arc;
 

@@ -1,9 +1,8 @@
 //! \[DESIGN\] An operator's work area (RULES.md D38): what it may hold in
-//! memory, the setting MEMORY.WORK_BYTES's bytes, and once it holds more, a spill
-//! area of as many bytes, reserved of the memory budget, made when first
-//! needed (`spill.rs`). And the keys an operator counts, kept in memory
-//! until they outgrow it, then in a table of its area. Split from exec.rs
-//! (RULES.md R-SIZE-2).
+//! memory, the setting MEMORY.WORK_BYTES's bytes, and once it holds more, a
+//! spill area of as many bytes, reserved of the memory budget, made when first
+//! needed (`spill.rs`). And the keys an operator counts, kept in memory until
+//! they outgrow it, then in a table of its area.
 //!
 //! The runs of an operator's area, of the statement that runs it, look for
 //! a cancel of it as each record, or each batch of records, is read back

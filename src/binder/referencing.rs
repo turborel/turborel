@@ -3,7 +3,7 @@
 //! column at least of each, but only where it names no column at all
 //! \[AR1b\]. Which case holds is known once the whole condition is bound, so
 //! the tables read without any REFERENCES are noted as it is, and refused
-//! then. Split from binder.rs (RULES.md R-SIZE-2).
+//! then.
 
 use std::cell::{Cell, RefCell};
 

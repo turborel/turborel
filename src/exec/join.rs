@@ -6,8 +6,7 @@
 //! read again for each left row, from a run of the spill area once it
 //! outgrows the work area (`exec/join/rescan.rs`); and an outer join's is
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
-//! each left row probing an index (`exec/join/indexed.rs`). Split from
-//! exec.rs (RULES.md R-SIZE-2).
+//! each left row probing an index (`exec/join/indexed.rs`).
 
 mod indexed;
 mod outer;

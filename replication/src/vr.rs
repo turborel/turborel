@@ -33,8 +33,9 @@
 //!   the group first by \[VRR\]'s RECOVERY protocol (`vr/recovery.rs`).
 //!   One that was the primary of its view does not serve in it again:
 //!   records it sent may have been committed by its backups though its
-//!   own copy did not survive, so it waits for the next view change; so
-//!   too one that was in a view change, which it takes no further part in.
+//!   own copy did not survive, so it starts the next view change as it
+//!   opens. One that was in a view change takes no further part in it, and
+//!   waits for its timer or a later view.
 //! * The primary's database learns of commit through `Committed`, and does
 //!   not wait to execute a request: it wrote the record before appending
 //!   it. Backups' databases are delivered committed records to replay. A
@@ -84,8 +85,7 @@ pub const VIEW_TIMEOUT_TICKS: u64 = 10;
 /// implementation.
 pub const RESEND_RECORDS: u64 = 8;
 
-/// \[EXTENSION\] What VR counts in ticks of its driver's timer (later, the
-/// settings REPLICATION.HEARTBEAT_MS and REPLICATION.VIEW_TIMEOUT_MS).
+/// \[EXTENSION\] What VR counts in ticks of its driver's timer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VrOptions {
     /// Ticks between a primary's heartbeats, and between messages of a view

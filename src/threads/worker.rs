@@ -1,9 +1,8 @@
 //! \[DESIGN\] A job's thread (RULES.md D55): it waits until its job is
-//! asked for, at once or at a time asked, or until the time the job's
-//! work last gave passes; does it;
-//! and ends when told, or when the database is gone. It holds the database
-//! weakly, so never keeps it open between rounds. Split from threads.rs
-//! (RULES.md R-SIZE-2).
+//! asked for, at once or at a time asked, or until the time the job's work
+//! last gave passes; does it; and ends when told, or when the database is
+//! gone. It holds the database weakly, so never keeps it open between
+//! rounds.
 
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};

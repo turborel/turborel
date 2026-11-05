@@ -1,6 +1,6 @@
 //! [ISO/IEC 9075:1992 §11.10, §11.11 GR2, §11.15 GR4, §11.16 GR2] ALTER
 //! TABLE of a temporary table while sessions' instances of it hold rows
-//! (RULES.md D49). Split from db/temporary.rs (RULES.md R-SIZE-2).
+//! (RULES.md D49).
 //!
 //! A column added or dropped gives each instance that holds rows a
 //! successor of the new generation, its rows copied there by the altering

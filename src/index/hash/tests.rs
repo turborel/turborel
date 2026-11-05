@@ -1,8 +1,7 @@
-//! Unit tests of the hash index: equality probes with values of the
-//! column's type and not, a comparison with NULL, estimates, counted pairs,
-//! entries too long, reopening by locator, a dropped index's pages freed,
-//! and a key of many rows read a page at a time (RULES.md R-TEST-1, R-TEST-2). Split from hash.rs (RULES.md
-//! R-SIZE-4).
+//! Unit tests of the hash index: equality probes with values of the column's
+//! type and not, a comparison with NULL, estimates, counted pairs, entries too
+//! long, reopening by locator, a dropped index's pages freed, and a key of
+//! many rows read a page at a time (RULES.md R-TEST-1, R-TEST-2).
 
 use super::*;
 use crate::index::searched;

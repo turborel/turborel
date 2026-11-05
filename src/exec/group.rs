@@ -1,18 +1,17 @@
-//! [X3.135-1986 §5.22, §5.8] Grouping and set functions: rows partitioned
-//! into groups, each set function fed its group's rows. \[DESIGN\] A plug-in's
+//! [X3.135-1986 §5.22, §5.8] Grouping and set functions: rows partitioned into
+//! groups, each set function fed its group's rows. \[DESIGN\] A plug-in's
 //! accumulator is opaque, so it is never written out (RULES.md D38): a pass
-//! holds groups until they fill the work area, and the rows of groups it
-//! has no room for are partitioned by grouping key, numbered by where they
-//! came (`partition.rs`), so each partition's groups are made alone; a
-//! partition that outgrows the work area too is partitioned again, as many
-//! times as SPILL.PARTITION_DEPTH says, then made in passes, each reading
-//! again the rows the last had no room for. Each group is numbered by its
-//! first row, and the groups merged by number, so they are given in the
-//! order their first rows came, as in memory. The values a DISTINCT set
-//! function has taken, of every group of a pass, are kept as keys of one
-//! bag, which spills to a table once they outgrow it (`exec/work.rs`): the
-//! work area split in two, half the groups', half the bag's, so they hold
-//! no more than one. Split from exec.rs (RULES.md R-SIZE-2).
+//! holds groups until they fill the work area, and the rows of groups it has
+//! no room for are partitioned by grouping key, numbered by where they came
+//! (`partition.rs`), so each partition's groups are made alone; a partition
+//! that outgrows the work area too is partitioned again, as many times as
+//! SPILL.PARTITION_DEPTH says, then made in passes, each reading again the
+//! rows the last had no room for. Each group is numbered by its first row, and
+//! the groups merged by number, so they are given in the order their first
+//! rows came, as in memory. The values a DISTINCT set function has taken, of
+//! every group of a pass, are kept as keys of one bag, which spills to a table
+//! once they outgrow it (`exec/work.rs`): the work area split in two, half the
+//! groups', half the bag's, so they hold no more than one.
 
 use std::collections::HashMap;
 use std::sync::Arc;

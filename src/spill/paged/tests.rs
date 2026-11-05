@@ -1,5 +1,5 @@
 //! Unit tests of the built-in spill provider and the spill byte forms
-//! (RULES.md R-TEST-1). Split from spill/paged.rs (RULES.md R-SIZE-2).
+//! (RULES.md R-TEST-1).
 
 use std::path::Path;
 use std::sync::Arc;

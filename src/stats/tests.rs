@@ -1,7 +1,7 @@
 //! Unit tests of the optimizer's statistics: the sketch's accuracy, the
 //! histogram's fractions, the selectivities they give, a deterministic
 //! sample, and the parts built a column at a time (RULES.md R-TEST-1,
-//! R-TEST-2). Split from stats.rs (RULES.md R-SIZE-4).
+//! R-TEST-2).
 
 use super::parts::{Histogram, HyperLogLog, Reservoir, SAMPLE_VALUES, SAMPLED_BITS, SAMPLED_CHARACTERS};
 use super::*;

@@ -1,7 +1,6 @@
 //! \[DESIGN\] The conditions rows were chosen by: through an index
 //! (`TableStorage::read_by_condition`), or those of a filter a scan is
-//! told (`TableStorage::scan_where`). Split from storage.rs (RULES.md
-//! R-SIZE-2).
+//! told (`TableStorage::scan_where`).
 
 use std::cmp::Ordering;
 

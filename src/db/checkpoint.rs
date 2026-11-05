@@ -49,10 +49,10 @@
 //! comes due: when a transaction ends after CHECKPOINT.AFTER_CHANGES row
 //! changes were logged since the last taken (a failed one leaves them
 //! counted), or CHECKPOINT.AFTER_BYTES written to
-//! the tables file's side file, the ending thread asks the database's
-//! checkpoint thread (`Checkpointer`), which takes it, so no transaction
-//! waits for it. The thread holds the database weakly: it ends when the
-//! database is closed or dropped. Checkpoints overdue, the log growing
+//! the tables file's side file, the ending thread asks for the checkpoint
+//! job, which runs as JOBS.POLICY says (`db/background.rs`), so no
+//! transaction waits for it. Its thread holds the database weakly: it ends
+//! when the database is closed or dropped. Checkpoints overdue, the log growing
 //! still, are told (`overdue.rs`).
 //!
 //! Closing, with no transaction open, is a checkpoint that also collects

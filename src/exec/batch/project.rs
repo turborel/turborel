@@ -2,16 +2,15 @@
 //! of a subtree that gives batches (`stream.rs`), every table of which
 //! reads by batch (`TableStorage::reads_by_batch`), whose expressions read
 //! only columns its batches hold, no subquery nor outer reference among
-//! them, each row given made of the batch's
-//! vectors, no row of the table's width made for it, a batch read ahead of
-//! the rows given. A column or a constant is taken as it is; any other
-//! expression is evaluated as a row's is (`exec/eval.rs`), of a row of
-//! only the values it reads. Rows come as the subtree gives batches,
-//! in no particular order but its own; a projection of anything else
-//! is made row by row (`exec.rs`). A projection read by a stream's reader,
-//! as DISTINCT, a grouping, a join or UNION ALL is, is a stream itself, its
-//! batches its expressions' vectors (`computed`). Split from batch.rs
-//! (RULES.md R-SIZE-2).
+//! them, each row given made of the batch's vectors, no row of the table's
+//! width made for it, a batch read ahead of the rows given. A column or a
+//! constant is taken as it is; any other expression is evaluated as a row's
+//! is (`exec/eval.rs`), of a row of only the values it reads. Rows come as
+//! the subtree gives batches, in no particular order but its own; a
+//! projection of anything else is made row by row (`exec.rs`). A projection
+//! read by a stream's reader, as DISTINCT, a grouping, a join or UNION ALL
+//! is, is a stream itself, its batches its expressions' vectors
+//! (`computed`).
 
 use std::sync::Arc;
 

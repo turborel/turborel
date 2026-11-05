@@ -3,7 +3,7 @@
 //! scalar comparisons the standard defines them by [§8.2 GR7, §8.3, §8.4],
 //! so the planner sees, and an index can answer, plain comparisons; those
 //! with a `<table subquery>` as a comparison with its rows
-//! (`Cond::Quantified`). Split from binder.rs (RULES.md R-SIZE-2).
+//! (`Cond::Quantified`).
 
 use std::sync::Arc;
 

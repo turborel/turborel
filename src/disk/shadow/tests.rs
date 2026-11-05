@@ -1,8 +1,7 @@
 //! Unit tests of shadow files: reads see writes, a commit makes them the
 //! file's, a crash before a commit loses them and after one keeps them, a
 //! side file damaged at its end is cut, and files are made and removed at
-//! commits (RULES.md R-TEST-1, R-TEST-2, R-TEST-7). Split from shadow.rs
-//! (RULES.md R-SIZE-4).
+//! commits (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
 
 use super::side::{KIND_SIZE, Op, decode, encode};
 use super::*;

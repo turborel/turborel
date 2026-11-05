@@ -1,8 +1,7 @@
-//! [ISO/IEC 9075:1992 §5.3, §6.14, §6.15, §10.1, §16.5] The
-//! interval grammar: the `<interval qualifier>`, the `<interval type>`
-//! and `<interval literal>`, the difference of two datetimes in an
-//! interval, `<time zone>`, and SET TIME ZONE. Split from parser.rs
-//! (RULES.md R-SIZE-2); the methods extend the same `Parser`.
+//! [ISO/IEC 9075:1992 §5.3, §6.14, §6.15, §10.1, §16.5] The interval
+//! grammar: the `<interval qualifier>`, the `<interval type>` and
+//! `<interval literal>`, the difference of two datetimes in an
+//! interval, `<time zone>`, and SET TIME ZONE.
 
 use super::Parser;
 use crate::ast::{Literal, SqlStatement, TypeName, ValueExpression};

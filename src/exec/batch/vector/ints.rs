@@ -1,15 +1,14 @@
-//! \[DESIGN\] RULES.md D31: an expression of exact numbers held as
-//! integers (`storage::Ints`) evaluated a vector at a time as integers: a
-//! column of them, an exact constant, a negation, a sum, a difference or a
-//! product of them, of the scales and within the digits decimals give
-//! [X3.135-1986 §5.9 SR4b, SR4c, GR6a] (`Decimal::checked_add`,
-//! `checked_mul`), a null of a null [GR1]. A quotient is not, nor one whose
-//! result goes past `MAX_EXACT_PRECISION` digits: those are evaluated of
-//! values, which raise of it. A quotient's scale is each value's own
-//! (`Decimal::checked_div`), which integers of one scale cannot hold. Of
-//! operands known as runs (`Ints::with_runs`), a constant one run, each
-//! result is computed once a run of them all, and known as runs too.
-//! Split from vector.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] RULES.md D31: an expression of exact numbers held as integers
+//! (`storage::Ints`) evaluated a vector at a time as integers: a column of
+//! them, an exact constant, a negation, a sum, a difference or a product of
+//! them, of the scales and within the digits decimals give [X3.135-1986
+//! §5.9 SR4b, SR4c, GR6a] (`Decimal::checked_add`, `checked_mul`), a null
+//! of a null [GR1]. A quotient is not, nor one whose result goes past
+//! `MAX_EXACT_PRECISION` digits: those are evaluated of values, which raise
+//! of it. A quotient's scale is each value's own (`Decimal::checked_div`),
+//! which integers of one scale cannot hold. Of operands known as runs
+//! (`Ints::with_runs`), a constant one run, each result is computed once a
+//! run of them all, and known as runs too.
 
 use crate::logical::Expr;
 use crate::storage::{Batch, Column, Ints};

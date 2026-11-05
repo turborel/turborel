@@ -9,7 +9,7 @@
 //! preserved left row that matched in none is given with nulls. A partition
 //! that fits the work area is one part, so no flag of a left row is
 //! written. Nothing held grows past the work area, however many rows have
-//! one key. Split from exec/join/outer/spilled.rs (RULES.md R-SIZE-2).
+//! one key.
 
 use std::collections::HashMap;
 use std::iter::Peekable;

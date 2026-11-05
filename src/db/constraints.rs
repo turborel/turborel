@@ -4,7 +4,7 @@
 //! keys resolved once every table of the schema is known, so a table may
 //! reference one defined after it, or itself. What they require of the rows
 //! is checked at the end of each statement, or at commit if deferred
-//! (`db/integrity.rs`). Split from db/schema.rs (RULES.md R-SIZE-2).
+//! (`db/integrity.rs`).
 
 use super::State;
 use crate::ast::{

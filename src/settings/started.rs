@@ -1,7 +1,6 @@
 //! \[DESIGN\] RULES.md D36: the values the settings taken as what reads
 //! them starts (`Effect::Start`) had as it started, so a change that waits
-//! for a restart says so where settings are shown. Split from settings.rs
-//! (RULES.md R-SIZE-2).
+//! for a restart says so where settings are shown.
 
 use std::sync::Mutex;
 

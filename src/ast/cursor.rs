@@ -1,6 +1,5 @@
 //! Abstract syntax of a `<declare cursor>` [X3.135-1986 §8.3; ISO/IEC
-//! 9075:1992 §13.1] and of a `<fetch orientation>` [§13.3]. Split from
-//! ast.rs (RULES.md R-SIZE-2).
+//! 9075:1992 §13.1] and of a `<fetch orientation>` [§13.3].
 
 use super::ValueSpecification;
 

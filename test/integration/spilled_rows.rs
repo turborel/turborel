@@ -1,7 +1,7 @@
 //! Spilling of what cursors and data-changing statements hold (RULES.md
-//! D38): rows a cursor reads ahead or keeps to scroll, and the rows a
-//! write chooses before it changes any, held past MEMORY.WORK_BYTES in spill
-//! areas. Split from spilling.rs (RULES.md R-SIZE-2).
+//! D38): rows a cursor reads ahead or keeps to scroll, and the rows a write
+//! chooses before it changes any, held past MEMORY.WORK_BYTES in spill
+//! areas.
 
 use turborel::db::{Completion, Cursor, Database, Session};
 use turborel::error::Code;

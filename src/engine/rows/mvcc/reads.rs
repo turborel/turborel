@@ -1,8 +1,7 @@
-//! What a transaction read of a table, for its commit's check (RULES.md
-//! D29, D38): rows, conditions, or the whole table, which past
+//! What a transaction read of a table, for its commit's check (RULES.md D29,
+//! D38): rows, conditions, or the whole table, which past
 //! TRANSACTIONS.TRACKED_ROWS they become; and what a transaction changed,
-//! which another's reads are checked against. Split from engine/rows/mvcc.rs
-//! (RULES.md R-SIZE-2).
+//! which another's reads are checked against.
 
 use std::cmp::Ordering;
 

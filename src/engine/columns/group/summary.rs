@@ -3,8 +3,7 @@
 //! rows are sorted by and it keeps Bloom filters of, and of each column
 //! its nulls and its least and greatest values, so a scan passes over a
 //! group no condition may match without its header, which is read only as
-//! it is needed (`columns/cache.rs`). Split from group.rs (RULES.md
-//! R-SIZE-2).
+//! it is needed (`columns/cache.rs`).
 
 use std::mem::size_of;
 

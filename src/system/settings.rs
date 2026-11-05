@@ -1,7 +1,6 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §21.1] INFORMATION_SCHEMA.SETTINGS:
 //! the settings (RULES.md D36), an object "associated with
-//! INFORMATION_SCHEMA" this implementation adds. Split from system.rs
-//! (RULES.md R-SIZE-2).
+//! INFORMATION_SCHEMA" this implementation adds.
 
 use super::{Seen, SystemTable, identifier, text, text_column, yes};
 use crate::catalog::ColumnDesc;

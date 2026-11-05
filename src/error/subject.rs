@@ -1,6 +1,6 @@
 //! What a condition is about, as GET DIAGNOSTICS gives it [ISO/IEC
 //! 9075:1992 §18.1 GR3e–GR3i]: the constraint broken, the table or view,
-//! the column, or the cursor. Split from error.rs (RULES.md R-SIZE-2).
+//! the column, or the cursor.
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §18.1 GR3e–GR3i] The objects a
 /// condition names: each by its schema's name and its own, the cursor by

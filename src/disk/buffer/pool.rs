@@ -1,6 +1,6 @@
 //! \[DESIGN\] The buffer pool's operations (RULES.md D30): registering
 //! files, holding pages, filling frames on a miss, evicting, writing back
-//! and syncing. Split from buffer.rs (RULES.md R-SIZE-2).
+//! and syncing.
 //!
 //! The page table is sharded by page. A frame is pinned under the shard of
 //! the page it holds, locked shared, so threads reading one page (a tree's

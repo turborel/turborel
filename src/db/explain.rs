@@ -1,5 +1,5 @@
 //! \[DESIGN\] Showing how a query is planned: its logical plan, the rewrite
-//! rules applied, and the physical plan. Split from db.rs (RULES.md R-SIZE-2).
+//! rules applied, and the physical plan.
 
 use super::Session;
 use crate::error::Result;

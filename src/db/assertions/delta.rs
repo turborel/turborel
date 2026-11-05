@@ -1,6 +1,6 @@
 //! \[EXTENSION\] A form whose rows are a query's (`queried.rs`), checked by
 //! the query run over the rows changed [ISO/IEC 9075:1992 §4.10.1, §11.34
-//! GR2] (RULES.md D51). Split from changes.rs (RULES.md R-SIZE-2).
+//! GR2] (RULES.md D51).
 //!
 //! - **Joins.** Each scan in turn is made of its table's rows changed, as
 //!   they are now, as constant rows; the others read their tables as they

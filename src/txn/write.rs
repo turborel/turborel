@@ -1,7 +1,6 @@
 //! The row writes of the data-changing statements [X3.135-1986 §8.4, §8.5,
 //! §8.7, §8.11, §8.12]: each changes a row and its index entries together, and
 //! logs what undoes it for the coordinator [X3.135-1986 §4.16, §7.3 GR3b i].
-//! Split from txn.rs (RULES.md R-SIZE-4).
 
 use std::sync::Arc;
 

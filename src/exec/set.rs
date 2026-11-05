@@ -6,9 +6,9 @@
 //! for ALL, they keep the rows given already in a bag beside the counts,
 //! their work area split in two, half the counts', half the bag's, so the
 //! two hold no more than one work area. RULES.md D31: an operand that is a
-//! stream holding every column of its rows is read by batch, each row's
-//! key made of its vectors (`batch::keyed`), and a row made only of one
-//! kept or partitioned. Split from exec.rs (RULES.md R-SIZE-2).
+//! stream holding every column of its rows is read by batch, each row's key
+//! made of its vectors (`batch::keyed`), and a row made only of one kept or
+//! partitioned.
 
 use std::collections::HashMap;
 use std::sync::Arc;

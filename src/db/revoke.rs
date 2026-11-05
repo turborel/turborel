@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §11.37] REVOKE, in a transaction
-//! (`db/definitions.rs`). Split from db/definitions.rs (RULES.md R-SIZE-4).
+//! (`db/definitions.rs`).
 //!
 //! The privileges the statement identifies, those its authorization
 //! identifier granted [SR6], are destroyed, or with GRANT OPTION FOR made

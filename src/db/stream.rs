@@ -1,7 +1,6 @@
-//! A read-only cursor's rows: read from its plan as the
-//! cursor is fetched from, rather than all at OPEN, so a cursor over a
-//! large table holds one row at a time. Split from db/cursor.rs (RULES.md
-//! R-SIZE-2).
+//! A read-only cursor's rows: read from its plan as the cursor is fetched
+//! from, rather than all at OPEN, so a cursor over a large table holds
+//! one row at a time.
 //!
 //! OPEN creates the cursor's table [X3.135-1986 §8.8 GR3b]; reading it
 //! later must give the same rows, and fail as OPEN would have. So:

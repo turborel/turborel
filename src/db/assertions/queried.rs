@@ -2,7 +2,7 @@
 //! query's, not one table's [ISO/IEC 9075:1992 §11.34 GR2] (RULES.md D51):
 //! of no row passing, or MAX or MIN bounded, of inner joins, or of a
 //! grouping of one table's rows; `delta.rs` checks them by the query run
-//! over the rows changed. Split from forms.rs (RULES.md R-SIZE-2).
+//! over the rows changed.
 //!
 //! - **Joins.** Filters, projections, DISTINCT and products of scans and
 //!   of constant rows, each condition and expression of the row alone, as

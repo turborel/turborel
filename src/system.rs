@@ -21,7 +21,8 @@
 //!   `system/users.rs`), the memory budget's reservations
 //!   (`MEMORY_RESERVATIONS`, D38, `system/memory.rs`), and the jobs of
 //!   background work (`JOBS`, D55, `system/jobs.rs`), the files it
-//!   holds (`FILES`, D56, `system/files.rs`), and the totals its
+//!   holds (`FILES`, D56, `system/files.rs`), the formats they are in
+//!   (`FILE_FORMATS`, D48, `system/formats.rs`), and the totals its
 //!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add

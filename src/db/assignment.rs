@@ -1,8 +1,8 @@
 //! The rows a statement writes and the values it returns: WITH CHECK
 //! OPTION [X3.135-1986 §6.5 GR3] (`db/integrity.rs` checks the
-//! constraints), the candidate row of an UPDATE
-//! [X3.135-1986 §8.11, §8.12], and assignment to FETCH and SELECT targets
-//! [X3.135-1986 §8.6, §8.10]. Split from db.rs (RULES.md R-SIZE-2).
+//! constraints), the candidate row of an UPDATE [X3.135-1986 §8.11,
+//! §8.12], and assignment to FETCH and SELECT targets [X3.135-1986 §8.6,
+//! §8.10].
 
 use super::{Completion, api, rule};
 use crate::ast::ParameterSpecification;

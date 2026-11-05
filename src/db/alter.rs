@@ -2,8 +2,7 @@
 //! [§11.11] and DROP COLUMN [§11.15]; ALTER COLUMN [§11.12]
 //! (`db/defaults.rs`); ADD and DROP of a table constraint [§11.16, §11.17]
 //! (`db/alter/constraints.rs`); and the table's storage
-//! (`db/alter/storage.rs`); in a transaction (`db/ddl.rs`). Split from
-//! db/ddl.rs (RULES.md R-SIZE-2).
+//! (`db/alter/storage.rs`); in a transaction (`db/ddl.rs`).
 //!
 //! A column added or dropped gives the table a new generation of its storage
 //! (`TableDesc::generation`), and its rows are copied there, each with the

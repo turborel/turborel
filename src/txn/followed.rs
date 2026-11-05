@@ -4,8 +4,7 @@
 //! (`spill/list.rs`), so a long transaction of the primary is held in a
 //! work area's bytes (MEMORY.WORK_BYTES), as its undo entries are on the
 //! primary. Kept sealed, a row of an encrypted table is held, and written
-//! to a spill area, no more plainly than its log holds it. Split from
-//! txn.rs (RULES.md R-SIZE-2).
+//! to a spill area, no more plainly than its log holds it.
 //!
 //! ```text
 //! held record: position u64 | the record's bytes, as its log holds them

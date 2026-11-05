@@ -15,7 +15,7 @@
 //! written as pieces once it is full; none is made partly once those took
 //! too few rows each. Pieces are merged in the order they were written
 //! (`Accumulator::merge`), so each set function takes its values in the
-//! order it would without them. Split from batch.rs (RULES.md R-SIZE-2).
+//! order it would without them.
 
 mod spilled;
 mod table;

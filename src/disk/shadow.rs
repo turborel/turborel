@@ -31,7 +31,7 @@
 //!   its first commit, synced in its directory; one removed reads as gone
 //!   at once, and is removed at the next commit, its batch a removal
 //!   block and a commit block, so a crash before leaves it as the last
-//!   commit did. Directories are made and removed at once.
+//!   commit did. Directories are made at once, and never removed.
 //! * **Opening**: a side file ending in a commit block is copied into the
 //!   file, or removes it; the others are thrown away. Only a sealed side
 //!   file is ever committed, and a batch is committed before the next is

@@ -2,8 +2,7 @@
 //! descriptors in the catalog, each named [§10.6]. SQL-86's NOT NULL and
 //! UNIQUE [X3.135-1986 §6.3, §6.4] are among them. A domain's constraints
 //! [§11.21] and an assertion [§11.34], each a CHECK, are described the
-//! same way. Split from catalog.rs
-//! (RULES.md R-SIZE-2).
+//! same way.
 
 use std::fmt;
 

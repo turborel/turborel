@@ -2,8 +2,7 @@
 //! file read in one read of the file, for the buffer pool's read-ahead
 //! (`disk/buffer/pool/ahead.rs`). A read ahead guesses at the pages that
 //! will be wanted, so a page it cannot take whole, as `read` would give
-//! it, from the bytes read, is left to `read`. Split from pager.rs
-//! (RULES.md R-SIZE-2).
+//! it, from the bytes read, is left to `read`.
 
 use std::sync::atomic::Ordering;
 

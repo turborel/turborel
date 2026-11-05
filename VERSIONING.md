@@ -4,7 +4,7 @@ How turborel's releases are numbered and named, and what each kind of
 release may change. The files a database is kept in and the wire protocol
 have version numbers of their own; this file lists them.
 
-Contents: [Release numbers](#release-numbers) · [Alpha](#alpha) ·
+[Release numbers](#release-numbers) · [Alpha](#alpha) ·
 [Compatibility](#compatibility) · [Codenames](#codenames) ·
 [Format and protocol versions](#format-and-protocol-versions) ·
 [Where the version is](#where-the-version-is) · [Publishing](#publishing)
@@ -23,10 +23,9 @@ server of the same release always work together.
 ## Alpha
 
 turborel is in alpha, version **0.0.0**, until its first release. While
-its version is 0.y.z nothing is promised: SQL's behaviour, the settings
-and their names, the Rust API, the protocol and the files a database is
-kept in may change in any release. A setting renamed is renamed in
-place, its old name no longer known, with no alias. A database made by
+its version is 0.y.z nothing is promised. SQL's behaviour, settings, the
+Rust API, the protocol and the files a database is kept in may change in
+any release. A renamed setting is renamed in place, with no alias. A database made by
 one may not open with another, and is made again from its SQL.
 
 The first stable release is **1.0.0**.
@@ -67,7 +66,7 @@ what the command-line client prints as a typed session begins.
 ## Format and protocol versions
 
 Each format is written with its version where it is kept, and checked when
-read: a version a release does not know is refused, never guessed at.
+read. A version a release doesn't know is refused, never guessed at.
 During alpha a format may change without its version changing. From 1.0.0
 a change that a reader of the version before cannot read takes a new
 version, and comes with a major release (see
@@ -110,9 +109,9 @@ all at its number:
 
 `turborel-test-support` and `xtask` are not published (`publish = false`).
 
-Every crate carries the license's text: the library's is the repository's
-`LICENSE`, and each other crate's folder links to it, a link `cargo
-package` follows. The release's number is set in each crate's
+Every crate carries the license's text. The library's is the repository's
+`LICENSE`, and each other crate's folder links to it, which `cargo package`
+follows. The release's number is set in each crate's
 `Cargo.toml` and in every dependency of one crate on another, which gives
 its version beside its path, as crates.io requires.
 
@@ -126,8 +125,8 @@ cargo publish --workspace --exclude xtask --exclude turborel-test-support
 
 Cargo publishes the crates in the order of their dependencies and waits
 for each to be available before the next that needs it. crates.io limits
-how many new crates an account publishes in a while; stopped by the
-limit, the rest are published once it allows, each with `-p` and the
-crate's name in the order above. A version published can be yanked, so no
-new dependency takes it, but never deleted or published again: a fix is
-a new release.
+how many new crates an account publishes in a while. If the limit stops
+you, publish the rest once it allows, each with `-p` and the crate's name,
+in the order above. A published version can be yanked, so no new dependency
+takes it, but it can't be deleted or published again. A fix is a new
+release.

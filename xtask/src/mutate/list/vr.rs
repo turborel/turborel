@@ -1,8 +1,7 @@
 //! The mutations of replication (RULES.md R-TEST-9, D57): Viewstamped
 //! Replication's commit, acknowledgement, view change, windows, state
 //! transfer and recovery, in the crate `turborel-replication`, whose
-//! tests, the simulator's sweeps among them, must catch each. Split from
-//! list.rs (RULES.md R-SIZE-2).
+//! tests, the simulator's sweeps among them, must catch each.
 
 use super::{Mutation, Package};
 

@@ -1,8 +1,7 @@
 //! [ISO/IEC 9075:1992 §11.19 GR6] What a view's columns are drawn from:
 //! the leaf underlying tables of its query, and of each of its columns the
 //! columns of them that are its underlying columns, which its owner's
-//! REFERENCES on it are found from (`catalog::applicable`). Split from
-//! binder/views.rs (RULES.md R-SIZE-2).
+//! REFERENCES on it are found from (`catalog::applicable`).
 //!
 //! The leaf underlying tables [§4.9] are the tables and views the `<from
 //! clause>`s of the query name, through its joined and derived tables and

@@ -3,7 +3,7 @@
 //! batches' rows joined into one batch, each vector of the kind the
 //! batches' vectors at its place all are, so what a join holds of its
 //! right operand is gathered into its joined rows as a scan's is
-//! (`gathered.rs`). Split from storage/batch.rs (RULES.md R-SIZE-2).
+//! (`gathered.rs`).
 
 use super::{Batch, Column, Floats, Ints, Texts};
 use crate::spill::heap_bytes;

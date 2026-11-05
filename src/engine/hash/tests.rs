@@ -1,8 +1,7 @@
 //! Unit tests of the linear hash table: against a model under a long run of
 //! inserts and removes, in a pool far smaller than the table; growing and
 //! shrinking; the order of a key's values; reopening; writers on many
-//! threads; malformed pages refused (RULES.md R-TEST-1, R-TEST-2). Split
-//! from hash.rs (RULES.md R-SIZE-2).
+//! threads; malformed pages refused (RULES.md R-TEST-1, R-TEST-2).
 
 use std::collections::HashMap;
 use std::path::Path;

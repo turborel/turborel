@@ -1,8 +1,8 @@
 //! \[DESIGN\] The catalog's descriptions in bytes (RULES.md D25): what a
 //! checkpoint's image records of the definitions as they are, so a
 //! database opens from them, not from every definition ever made
-//! (`db/snapshot.rs`). Fields are written through `bytes.rs`, values
-//! and rows as in `value/codec.rs`.
+//! (`db/snapshot.rs`). Fields are written through `bytes.rs`, values as
+//! in `value/codec.rs`.
 //!
 //! ```text
 //! name:       auth (str), ident (str)

@@ -1,6 +1,6 @@
 # turborel
 
-> **ALPHA.** turborel is version 0.0.0, in alpha: anything may change
+> turborel is in alpha, meaning, version 0.0.0. Anything may change
 > from one build to the next, SQL, API, protocol and files alike. See
 > [VERSIONING.md](VERSIONING.md).
 
@@ -21,7 +21,7 @@ behind it, and each can be replaced or added to.
   later standard in turn through SQL:2023, as one language. See
   [CONFORMANCE.md](CONFORMANCE.md).
 - Transactions that are serializable by default, run on many
-  threads at once, and survive a crash: multi-version concurrency
+  threads at once, and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
 - Multiple Indexes such as B-link trees and linear hash tables, chosen by a
   cost-based planner.

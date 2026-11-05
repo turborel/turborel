@@ -1,6 +1,5 @@
 //! Test encodings: a run-length compression and a scrambling that plays
-//! an encryption, for the tests of encodings over files and tables. Split
-//! from common.rs (RULES.md R-SIZE-2).
+//! an encryption, for the tests of encodings over files and tables.
 
 use turborel::disk::encoding::{Encoding, EncodingId};
 use turborel::error::Code;

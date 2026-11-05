@@ -3,7 +3,7 @@
 //! checksum is made with if the file's hash function is keyed, and the
 //! digest of all before it; and unsealed, verified by the function keyed
 //! as its trailer names (`named.rs`), so a page keeps its key while the
-//! file's changes. Split from pager.rs (RULES.md R-SIZE-2).
+//! file's changes.
 
 use std::sync::atomic::Ordering;
 

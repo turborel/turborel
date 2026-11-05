@@ -1,8 +1,8 @@
 //! A session's cursors: declaring their use, opening them [X3.135-1986 §8.8],
-//! FETCH [X3.135-1986 §8.6], CLOSE [X3.135-1986 §8.1], the cursor position used
-//! by positioned UPDATE and DELETE [X3.135-1986 §8.4, §8.11], and single-row
-//! SELECT [X3.135-1986 §8.10]; of a dynamic cursor too [ISO/IEC 9075:1992
-//! §17.12-§17.18] (`db/dynamic.rs`). Split from db.rs (RULES.md R-SIZE-2).
+//! FETCH [X3.135-1986 §8.6], CLOSE [X3.135-1986 §8.1], the cursor position
+//! used by positioned UPDATE and DELETE [X3.135-1986 §8.4, §8.11], and
+//! single-row SELECT [X3.135-1986 §8.10]; of a dynamic cursor too [ISO/IEC
+//! 9075:1992 §17.12-§17.18] (`db/dynamic.rs`).
 
 use std::sync::{Arc, Weak};
 

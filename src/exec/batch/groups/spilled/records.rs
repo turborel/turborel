@@ -4,8 +4,7 @@
 //! units, scale and nulls, of any other its values (`codec::put_value`).
 //! A record of pieces, groups partly made: a tag, their count, then each
 //! piece: its first row's number, its grouping values, then each set
-//! function's state (`Accumulator::write_state`). Split from spilled.rs
-//! (RULES.md R-SIZE-2).
+//! function's state (`Accumulator::write_state`).
 
 use super::super::table::Held;
 use crate::bytes::{Put, Reader};

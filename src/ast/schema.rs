@@ -1,6 +1,5 @@
 //! Abstract syntax of the schema definition language [X3.135-1986 §6;
 //! ISO/IEC 9075:1992 §11].
-//! Split from ast.rs (RULES.md R-SIZE-2).
 
 use super::{DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, TableName, UserFunction};
 use crate::value::DataType;

@@ -3,11 +3,10 @@
 //! length, so work over many rows needs no row made for each. A column's
 //! vector is of values, or, of an exact number a store keeps as an
 //! integer, of those integers, its nulls beside them; or, of an
-//! approximate number, of those numbers; or, of a character
-//! string a store keeps as written, of its bytes, one buffer of them all
-//! and where each ends: work that reads them as integers or as text reads
-//! no value made; any other reads them as values, made the first time it
-//! asks. Split from storage.rs (RULES.md R-SIZE-2).
+//! approximate number, of those numbers; or, of a character string a store
+//! keeps as written, of its bytes, one buffer of them all and where each
+//! ends: work that reads them as integers or as text reads no value made;
+//! any other reads them as values, made the first time it asks.
 
 mod gathered;
 mod held;

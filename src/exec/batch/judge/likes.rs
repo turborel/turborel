@@ -1,12 +1,12 @@
 //! \[DESIGN\] RULES.md D31: a LIKE whose pattern, or escape character, is
-//! not a constant, judged over a batch's vectors: of a column, its
-//! pattern a column or a constant, its escape character too if given, each
-//! row's read in place, as text where the batch holds text, and matched
-//! as a row's LIKE matches [X3.135-1986 §5.14 GR4, GR5] (`eval::
-//! like_escape`, `like_truth`), each pattern split once for the statement
+//! not a constant, judged over a batch's vectors: of a column, its pattern
+//! a column or a constant, its escape character too if given, each row's
+//! read in place, as text where the batch holds text, and matched as a
+//! row's LIKE matches [X3.135-1986 §5.14 GR4, GR5] (`eval:: like_escape`,
+//! `like_truth`), each pattern split once for the statement
 //! (`Subqueries::like`). A row whose judgment raises an error has none
 //! judged so: the batch is then judged a row at a time, in order, so the
-//! error is the row's it would be. Split from judge.rs (RULES.md R-SIZE-2).
+//! error is the row's it would be.
 
 use crate::exec::Subqueries;
 use crate::exec::eval::{Escape, like_escape};

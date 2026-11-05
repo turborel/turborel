@@ -1,7 +1,6 @@
 //! Abstract syntax of queries: `<cursor specification>` [X3.135-1986 §8.3],
 //! `<query expression>` [ISO/IEC 9075:1992 §7.10] and `<query
-//! specification>` [X3.135-1986 §5.25] and their parts. Split from ast.rs
-//! (RULES.md R-SIZE-2).
+//! specification>` [X3.135-1986 §5.25] and their parts.
 
 use super::{ColumnSpecification, SearchCondition, Subquery, TableName, ValueExpression};
 // ---------------------------------------------------------------------------

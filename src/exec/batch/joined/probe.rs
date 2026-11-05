@@ -6,11 +6,10 @@
 //! equal keys, of a row of the pair's values, and the right's columns of
 //! the pairs gathered of its vectors. Of a LEFT join, a left row no right
 //! row matches is joined with nulls [ISO/IEC 9075:1992 §7.5 GR4, GR5b].
-//! Past the work area the right operand is built as the row path builds
-//! it (`exec/join.rs`): of a LEFT join, it moves to a table of the spill
+//! Past the work area the right operand is built as the row path builds it
+//! (`exec/join.rs`): of a LEFT join, it moves to a table of the spill
 //! area, so every left row probes it in the left's order; of an inner one,
-//! it is partitioned (`parted.rs`). Split from exec/batch/joined.rs
-//! (RULES.md R-SIZE-2).
+//! it is partitioned (`parted.rs`).
 
 use std::cmp::Ordering;
 use std::sync::Arc;

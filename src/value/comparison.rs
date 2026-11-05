@@ -1,7 +1,7 @@
 //! Comparison of values [X3.135-1986 §5.11]: character strings with padding,
 //! and numbers by algebraic value, exact and approximate alike; bit strings,
 //! datetimes and intervals as [ISO/IEC 9075:1992 §8.2] says; a value beyond
-//! the standard as its kind says. Split from value.rs (RULES.md R-SIZE-2).
+//! the standard as its kind says.
 
 use std::cmp::Ordering;
 

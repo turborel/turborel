@@ -11,7 +11,7 @@
 //! each `?` its context types as a slot (`Expr::Dynamic`), its value
 //! filled as each execution begins (`logical/dynamic.rs`); a binding that
 //! reads a value otherwise, a `?`'s or the statement's instant, holds it,
-//! and is not kept. Split from params.rs (RULES.md R-SIZE-4).
+//! and is not kept.
 
 use std::cell::{Cell, RefCell};
 

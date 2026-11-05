@@ -1,7 +1,6 @@
 //! Unit tests of the wire protocol: every message read back as written,
 //! byte by byte where the layout is the contract; malformed ones refused as
-//! connection failures (RULES.md R-TEST-1, R-TEST-2). Split from
-//! lib.rs (RULES.md R-SIZE-4).
+//! connection failures (RULES.md R-TEST-1, R-TEST-2).
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;

@@ -1,6 +1,5 @@
 //! Unit tests of the formats a pager file's pages are in, and the file
-//! settled in them (RULES.md R-TEST-1, R-TEST-2). Split from
-//! pager/formats.rs (RULES.md R-SIZE-2).
+//! settled in them (RULES.md R-TEST-1, R-TEST-2).
 
 use std::path::Path;
 use std::sync::Arc;

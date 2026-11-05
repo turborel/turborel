@@ -3,8 +3,7 @@
 //! (`binder/views.rs`), so the query's WHERE clause is a filter over the
 //! view's projection, or its DISTINCT; pushed below them, it reaches the
 //! view's own filters and tables, and a filter on grouping columns goes on
-//! below the grouping (`PushHavingIntoWhere`). Split from optimizer.rs
-//! (RULES.md R-SIZE-2).
+//! below the grouping (`PushHavingIntoWhere`).
 
 use super::{Rule, RuleContext};
 use crate::logical::{Cond, Expr, LogicalPlan, map_cond_exprs};

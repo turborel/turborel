@@ -1,15 +1,14 @@
 //! \[DESIGN\] A checkpoint of a following database (RULES.md D25, D57): its
 //! log is its replica's, which it never writes, so it logs nothing. Taking
-//! turns with its replay, it collects every table's garbage, so no entry
-//! of a version awaiting collection needs logging (`Change::Stale`), and
-//! is refused while a reader still holds one; then every engine captures
-//! what it holds through the position after the last record replayed, and
-//! the image is recorded, recovery to read the log from the first record
-//! of the oldest transaction it holds, whose records it applies only as
-//! the transaction ends (`db/standby.rs`). Opened again, it recovers from
-//! that image, and follows from there (`db/standby/reopen.rs`). Not before
-//! it has replayed again what the checkpoint it was opened from holds.
-//! Split from db/checkpoint.rs (RULES.md R-SIZE-2).
+//! turns with its replay, it collects every table's garbage, so no entry of
+//! a version awaiting collection needs logging (`Change::Stale`), and is
+//! refused while a reader still holds one; then every engine captures what
+//! it holds through the position after the last record replayed, and the
+//! image is recorded, recovery to read the log from the first record of the
+//! oldest transaction it holds, whose records it applies only as the
+//! transaction ends (`db/standby.rs`). Opened again, it recovers from that
+//! image, and follows from there (`db/standby/reopen.rs`). Not before it
+//! has replayed again what the checkpoint it was opened from holds.
 
 use super::super::files::DatabaseFiles;
 use super::super::{Database, api};

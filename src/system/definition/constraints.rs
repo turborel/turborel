@@ -1,9 +1,8 @@
 //! [ISO/IEC 9075:1992 §21.3.13-§21.3.18] The Definition Schema's tables of
 //! table constraints: TABLE_CONSTRAINTS, KEY_COLUMN_USAGE,
 //! REFERENTIAL_CONSTRAINTS, CHECK_CONSTRAINTS, CHECK_TABLE_USAGE and
-//! CHECK_COLUMN_USAGE. A NOT NULL constraint is the CHECK constraint
-//! `C IS NOT NULL` it is equivalent to [§11.4 SR9a]. Split from
-//! definition.rs (RULES.md R-SIZE-2).
+//! CHECK_COLUMN_USAGE. A NOT NULL constraint is the CHECK constraint `C IS
+//! NOT NULL` it is equivalent to [§11.4 SR9a].
 
 use std::sync::Arc;
 

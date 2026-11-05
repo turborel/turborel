@@ -1,7 +1,6 @@
 //! \[EXTENSION\] The table of an assertion's kept totals (`kept.rs`) made
 //! with the assertion, filled as it is checked made, dropped with it, and
 //! put right of a change past what a deferred check holds (RULES.md D51).
-//! Split from kept.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 

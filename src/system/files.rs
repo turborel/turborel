@@ -2,9 +2,8 @@
 //! file the database holds (RULES.md D56), an object "associated with
 //! INFORMATION_SCHEMA" this implementation adds: where it is, its kind,
 //! its class of durability, whether its descriptor is open now, and its
-//! reads, writes and syncs.
-//! The database's owner sees them; any other, none, as
-//! MEMORY_RESERVATIONS. Split from system.rs (RULES.md R-SIZE-2).
+//! reads, writes and syncs. The database's owner sees them; any other,
+//! none, as MEMORY_RESERVATIONS.
 
 use std::path::Path;
 

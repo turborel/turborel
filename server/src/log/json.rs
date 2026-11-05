@@ -1,8 +1,7 @@
 //! \[DESIGN\] An event as a line of JSON (RULES.md D40, D42): its time, in
 //! UTC to the millisecond (RFC 3339), its level and its kind, then its
 //! fields; and the lines the sink writes of itself, of lines it dropped
-//! and of a log it could not open again. Split from log.rs (RULES.md
-//! R-SIZE-2).
+//! and of a log it could not open again.
 
 use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Domains, as the catalog describes them [ISO/IEC 9075:1992
-//! §11.21]. Split from catalog.rs (RULES.md R-SIZE-2).
+//! §11.21].
 
 use super::{ColumnDefault, ConstraintDesc, QualifiedName};
 use crate::value::DataType;

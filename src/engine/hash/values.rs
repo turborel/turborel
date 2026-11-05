@@ -1,8 +1,8 @@
 //! \[DESIGN\] A key's values read as they are taken: a page of its bucket's
 //! chain at a time, so a key of more values than memory holds is read
 //! whole, as a spill area's table is probed by a key most of a hash join's
-//! right rows have (RULES.md D38), and an index's key of many rows is
-//! read (`index/hash.rs`). Split from engine/hash.rs (RULES.md R-SIZE-2).
+//! right rows have (RULES.md D38), and an index's key of many rows is read
+//! (`index/hash.rs`).
 //!
 //! The table's shape is held while they are read, as a scan's is
 //! (`hash/scan.rs`): no split or merge moves entries between pages, or

@@ -1,7 +1,7 @@
 //! Unit tests of the built-in catalog store: records read back as written,
 //! the last whole one stands, the file is compacted into the other and a
 //! crash during the switch leaves one standing (RULES.md R-TEST-1,
-//! R-TEST-2). Split from catalog_file.rs (RULES.md R-SIZE-4).
+//! R-TEST-2).
 
 use std::path::Path;
 

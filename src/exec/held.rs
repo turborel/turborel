@@ -2,12 +2,12 @@
 //! (RULES.md D38): a cursor's rows read at OPEN, or before its transaction
 //! changes a table it reads, and a SCROLL cursor's as it reads them; the
 //! object rows of a searched UPDATE or DELETE and the candidate rows of an
-//! INSERT, each chosen before any is changed; an updatable cursor's rows,
-//! in its order; what a data-changing statement did, and the checks of its
-//! constraints (`db/integrity/held.rs`). Held up to MEMORY.WORK_BYTES, as an operator's are, then written
-//! to runs of a spill area: a list that spills (`spill/list.rs`), read back
-//! in order, a run's pages given back as it is read, or by place, a
-//! segment at a time. Split from exec.rs (RULES.md R-SIZE-2).
+//! INSERT, each chosen before any is changed; an updatable cursor's rows, in
+//! its order; what a data-changing statement did, and the checks of its
+//! constraints (`db/integrity/held.rs`). Held up to MEMORY.WORK_BYTES, as an
+//! operator's are, then written to runs of a spill area: a list that spills
+//! (`spill/list.rs`), read back in order, a run's pages given back as it is
+//! read, or by place, a segment at a time.
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;

@@ -1,7 +1,6 @@
 //! \[DESIGN\] A transaction's changes to a table, and the garbage commits
 //! make, as lists that spill (`spill/list.rs`, RULES.md D38): what each
-//! holds in memory, and its record. Split from engine/rows/mvcc.rs
-//! (RULES.md R-SIZE-2).
+//! holds in memory, and its record.
 //!
 //! ```text
 //! change:  row id u64, then 1 if it has a position appended, and the

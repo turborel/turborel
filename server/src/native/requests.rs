@@ -1,7 +1,6 @@
 //! What a session's worker does with a request (RULES.md D45): its
 //! statements, prepared ones among them [ISO/IEC 9075:1992 §17], and their
-//! cursors, the replies sent through a bounded channel as they come. Split
-//! from native.rs (RULES.md R-SIZE-4).
+//! cursors, the replies sent through a bounded channel as they come.
 
 use std::collections::HashMap;
 use std::mem;

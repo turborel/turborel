@@ -17,7 +17,7 @@
 //! transaction pins for it: a row one of which is released and truncated
 //! as it reads is read again (`RowTable::unpinned`).
 //!
-//! A change undone widens nothing: a version put back widens its zone as
+//! A change undone narrows nothing: a version put back widens its zone as
 //! a write does, and a row an insert added, taken out as the insert is
 //! undone, leaves its zone stale, to be narrowed by the maintenance
 //! thread as a deletion's is.
@@ -27,8 +27,8 @@
 //! (`TableStorage::visible_to_all`, RULES.md D34): every row's newest
 //! version committed at or before the horizon, none a deletion, and no
 //! version it superseded left to collect, whose index entries would
-//! still be there (`Map::pending`). A write makes it not, before it is
-//! written and before its index entries are, so a reader that finds a
+//! still be there (`Map::pending`). A write makes it not, before its index
+//! entries are written, so a reader that finds a
 //! new entry finds its zone not visible; and leaves it unsettled, for the
 //! maintenance thread to settle as it sums it up: visible, or not, or,
 //! of a commit too recent for the horizon, again later. Collection

@@ -1,7 +1,6 @@
 //! Unit tests of the B-link node format: nodes read back as built,
 //! searched in key order, changed in place, split as `split` says, where
 //! runs split, and malformed nodes refused (RULES.md R-TEST-1, R-TEST-2).
-//! Split from node.rs (RULES.md R-SIZE-2).
 
 use super::*;
 

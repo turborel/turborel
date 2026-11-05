@@ -1,5 +1,5 @@
 //! [X3.135-1986 §6.5] `<view definition>`: the rules of a view and what the
-//! catalog keeps of it. Split from db/schema.rs (RULES.md R-SIZE-2).
+//! catalog keeps of it.
 
 use std::sync::Arc;
 

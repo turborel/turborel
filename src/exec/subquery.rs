@@ -1,6 +1,5 @@
 //! [X3.135-1986 §5.11, §5.13, §5.16, §5.17, §5.24] Running subqueries and
-//! applying the predicates over them. Split from exec.rs (RULES.md
-//! R-SIZE-2).
+//! applying the predicates over them.
 //!
 //! A subquery is "effectively executed for each row" (or group) its
 //! predicate is applied to [X3.135-1986 §5.21 GR3, §5.23 GR4]. \[DESIGN\]

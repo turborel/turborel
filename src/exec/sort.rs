@@ -1,15 +1,15 @@
 //! [X3.135-1986 §8.3 GR3b] ORDER BY: rows sorted by each key in turn, most
 //! significant first. \[DESIGN\] Rows that fit the work area are sorted in
-//! memory; more are sorted externally (RULES.md D38): each work area's
-//! worth sorted and written as a run of chunks of vectors, each row beside
-//! its first key's prefix (`sort/chunk.rs`, `sort/vectors.rs`), the runs
-//! merged by their prefixes, as many at once as the work area reads, in
-//! passes until one is left (`sort/merge.rs`). Sorting is stable, a tie
-//! going to the earlier run, so rows of equal keys keep their order. Rows are sorted by a prefix of their first key, where it has one
-//! (`sort/prefix.rs`). The runs read back look for a cancel of the
-//! statement (RULES.md D44). A stream's batches are sorted as they are,
-//! no row made but to be given or written (`sort/vectors.rs`, RULES.md
-//! D31). Split from exec.rs (RULES.md R-SIZE-2).
+//! memory; more are sorted externally (RULES.md D38): each work area's worth
+//! sorted and written as a run of chunks of vectors, each row beside its first
+//! key's prefix (`sort/chunk.rs`, `sort/vectors.rs`), the runs merged by their
+//! prefixes, as many at once as the work area reads, in passes until one is
+//! left (`sort/merge.rs`). Sorting is stable, a tie going to the earlier run,
+//! so rows of equal keys keep their order. Rows are sorted by a prefix of
+//! their first key, where it has one (`sort/prefix.rs`). The runs read back
+//! look for a cancel of the statement (RULES.md D44). A stream's batches are
+//! sorted as they are, no row made but to be given or written
+//! (`sort/vectors.rs`, RULES.md D31).
 
 mod chunk;
 mod merge;

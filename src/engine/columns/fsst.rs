@@ -10,7 +10,7 @@
 //! evenly through them, in `ROUNDS` rounds, as FSST chooses it, and written
 //! in each chunk: each round the texts are encoded with the table so far,
 //! and the symbols and the pairs of symbols next to each other that save
-//! the most bytes kept. Split from encoded.rs (RULES.md R-SIZE-2).
+//! the most bytes kept.
 //!
 //! ```text
 //! FSST:  symbols u8 | each: length u8 | its bytes | (count + 1) × u32,

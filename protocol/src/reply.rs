@@ -1,4 +1,4 @@
-//! What a server sends. Split from lib.rs (RULES.md R-SIZE-4).
+//! What a server sends.
 
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;

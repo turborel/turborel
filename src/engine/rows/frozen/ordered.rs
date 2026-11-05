@@ -7,12 +7,11 @@
 //! out; the tree's rows the reader sees sorted as ORDER BY sorts them; and
 //! all merged, the least next of each, or the greatest backward, by their
 //! keys. The merge gives rows, or batches of the columns asked for alone,
-//! so a statement read by batches makes no row (`scan_ordered_batches`).
-//! A group not sorted by them, one frozen before COLUMNSTORE.ORDER named
-//! them and not yet written again, is read whole and sorted. The
-//! directory is taken before the tree is read, as a merged scan takes it
-//! (`merge.rs`), so a row frozen meanwhile is read once. Split from
-//! frozen.rs (RULES.md R-SIZE-2).
+//! so a statement read by batches makes no row (`scan_ordered_batches`). A
+//! group not sorted by them, one frozen before COLUMNSTORE.ORDER named them
+//! and not yet written again, is read whole and sorted. The directory is
+//! taken before the tree is read, as a merged scan takes it (`merge.rs`),
+//! so a row frozen meanwhile is read once.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;

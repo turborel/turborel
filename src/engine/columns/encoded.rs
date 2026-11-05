@@ -24,8 +24,7 @@
 //! Integers are little-endian. Each value is as its type writes it in a
 //! record, so every type is kept, and reading one encoded is as fast as
 //! reading it plain, a value at a time: frame of reference needs only that
-//! a field be 8 bytes, any 8 bytes being a signed integer. Split from
-//! columns.rs (RULES.md R-SIZE-2).
+//! a field be 8 bytes, any 8 bytes being a signed integer.
 
 use std::collections::HashMap;
 

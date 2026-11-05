@@ -1,8 +1,7 @@
 //! The expression grammar of the parser: `<search condition>` and its
 //! predicates [X3.135-1986 §5.10-§5.18; ISO/IEC 9075:1992 §8], and `<value
 //! expression>` [X3.135-1986 §5.9; ISO/IEC 9075:1992 §6.11] down to its
-//! primaries (`parser/primary.rs`). Split from parser.rs (RULES.md
-//! R-SIZE-2); the methods extend the same `Parser`.
+//! primaries (`parser/primary.rs`).
 
 use super::{Parser, furthest};
 use crate::ast::{Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue, ValueExpression};

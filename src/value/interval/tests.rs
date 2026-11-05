@@ -1,6 +1,6 @@
 //! Unit tests of interval values (RULES.md R-TEST-1, R-TEST-2): strings
 //! read and written in each qualifier, fields, and conversion between
-//! qualifiers. Split from interval.rs (RULES.md R-SIZE-2).
+//! qualifiers.
 
 use super::*;
 

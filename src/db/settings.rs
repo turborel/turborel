@@ -1,7 +1,7 @@
 //! \[DESIGN\] RULES.md D36: the settings (`settings.rs`) as the database and
-//! its sessions set, list and read them. A database setting is a
-//! definition: logged, outside any transaction, and replayed with the
-//! others (`db/recovery.rs`); but a node's, never logged (D57). Split from db.rs (RULES.md R-SIZE-2).
+//! its sessions set, list and read them. A database setting is a definition:
+//! logged, outside any transaction, and replayed with the others
+//! (`db/recovery.rs`); but a node's, never logged (D57).
 
 use std::path::Path;
 use std::sync::Arc;

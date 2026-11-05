@@ -1,6 +1,6 @@
 //! \[DESIGN\] The side files of shadow files (RULES.md D30): the blocks
 //! they hold, and how a file is recovered from them as it is opened (see
-//! `disk/shadow.rs`). Split from shadow.rs (RULES.md R-SIZE-4).
+//! `disk/shadow.rs`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

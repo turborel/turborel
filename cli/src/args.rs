@@ -1,6 +1,6 @@
 //! \[DESIGN\] The command line of `turborel` (RULES.md D46): where the
 //! server is, who connects, the SQL to run, and the files to import
-//! (D59). Split from lib.rs (RULES.md R-SIZE-4).
+//! (D59).
 
 use std::path::PathBuf;
 use std::time::Duration;

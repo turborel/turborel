@@ -6,7 +6,7 @@
 //! bits of `Decimal::units`, not `MAX_EXACT_PRECISION` digits; approximate
 //! ones scaled (`floats::Wide`); intervals in 128 bits of units, not their
 //! leading field's digits. GR2b ii sets no range for AVG's sum, so AVG
-//! judges its mean alone. Split from functions.rs (RULES.md R-SIZE-2).
+//! judges its mean alone.
 
 use super::floats::{self, Wide};
 use super::{Accumulator, ints};

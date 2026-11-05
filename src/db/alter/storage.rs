@@ -4,12 +4,11 @@
 //! change of options that change in place is published with the new
 //! descriptor, the table's storage told (`TableStorage::reconfigure`); a
 //! change of engine, or of an option that needs a rebuild, gives the table
-//! a new generation of its storage, made with them, and its rows are
-//! copied there, as for a change of its columns (`db/alter.rs`). `ALTER
-//! TABLE ... RESEAL`, of no engine and no option, gives the table a new
-//! generation as it is: its rows sealed again through the encodings it
-//! names now (RULES.md D48). Split from
-//! db/alter.rs (RULES.md R-SIZE-2).
+//! a new generation of its storage, made with them, and its rows are copied
+//! there, as for a change of its columns (`db/alter.rs`). `ALTER TABLE ...
+//! RESEAL`, of no engine and no option, gives the table a new generation as
+//! it is: its rows sealed again through the encodings it names now
+//! (RULES.md D48).
 
 use super::{Made, Reshape};
 use crate::ast::{AlterAction, Literal, OptionValue, TableStorage};

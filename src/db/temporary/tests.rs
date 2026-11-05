@@ -1,6 +1,5 @@
 //! Unit tests of temporary tables' instances: their collection as their
-//! session's transactions end (RULES.md D49, R-TEST-1). Split from
-//! temporary.rs (RULES.md R-SIZE-2).
+//! session's transactions end (RULES.md D49, R-TEST-1).
 
 use super::storage::Entries;
 use super::*;

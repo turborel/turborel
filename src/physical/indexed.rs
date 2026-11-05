@@ -1,14 +1,12 @@
-//! \[DESIGN\] Index nested-loop joins (RULES.md D35): of a join on
-//! equalities whose right operand reads a table, its left operand's rows
-//! each probe an index of the table for the values of its first columns
-//! the equalities give, rather than the table being read whole into a hash
-//! table, when the left's rows are estimated few enough that their probes
-//! cost less than that read. An operand reading its table through a
-//! projection of its columns, as a derived table's does, is probed as the table,
-//! the join under a projection giving the operand's columns; and a RIGHT
-//! outer join as the LEFT one of its operands swapped, under a projection
-//! putting the left's columns first. Split from physical/join.rs (RULES.md
-//! R-SIZE-2).
+//! \[DESIGN\] Index nested-loop joins (RULES.md D35): of a join on equalities
+//! whose right operand reads a table, its left operand's rows each probe an
+//! index of the table for the values of its first columns the equalities give,
+//! rather than the table being read whole into a hash table, when the left's
+//! rows are estimated few enough that their probes cost less than that read.
+//! An operand reading its table through a projection of its columns, as a
+//! derived table's does, is probed as the table, the join under a projection
+//! giving the operand's columns; and a RIGHT outer join as the LEFT one of its
+//! operands swapped, under a projection putting the left's columns first.
 //!
 //! A probe reads only the rows its values select, so the rest of the
 //! condition is evaluated only on the pairs it finds, and the table's own

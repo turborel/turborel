@@ -5,8 +5,7 @@
 //! freed, a fetch priced by what its table reads and by the system's
 //! cache, the pages its pool reads ahead as the settings say, and writes
 //! that keep what every snapshot reads failing no reader (RULES.md
-//! R-TEST-1, R-TEST-2, R-TEST-7). Split from rows.rs
-//! (RULES.md R-SIZE-2).
+//! R-TEST-1, R-TEST-2, R-TEST-7).
 
 use turborel_test_support::Scratch;
 

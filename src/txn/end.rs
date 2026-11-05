@@ -1,8 +1,7 @@
 //! The ends of transactions [X3.135-1986 §8.2, §8.9]: commit, two-phase
 //! across the participants at one timestamp, or at the snapshot for a
 //! transaction that wrote nothing; rollback; and the garbage collection of
-//! versions that follows either (RULES.md D25, D29). Split from txn.rs
-//! (RULES.md R-SIZE-2).
+//! versions that follows either (RULES.md D25, D29).
 
 use std::collections::BTreeSet;
 use std::mem;

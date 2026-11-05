@@ -2,8 +2,7 @@
 //! join pairs of a batch, in the order paired, a row taken again as often
 //! as it is paired and a null where it is paired with none. A vector of
 //! integers, numbers or texts is gathered as one of the same kind, so what
-//! reads it after a join reads it as from the scan, no value made. Split
-//! from storage/batch.rs (RULES.md R-SIZE-2).
+//! reads it after a join reads it as from the scan, no value made.
 
 use super::{Coded, Column, Floats, Ints, Texts};
 use crate::value::Value;

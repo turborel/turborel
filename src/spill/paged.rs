@@ -1,13 +1,12 @@
 //! \[DESIGN\] The built-in spill provider (`spill.rs`): an area is a temporary
-//! pager file of its own in a buffer pool of the area's size, reserved of
-//! the memory budget, so its pages are written to the file as the pool
-//! evicts them, through the encodings its temporary files are given as
-//! each is written (`TempFiles::pipeline`). Its tables are linear hash tables (`engine/hash.rs`); a
-//! value too long for one of their entries is kept in a page of its own,
-//! the entry holding its page. Its runs are pages of records, each page a
-//! batch of records written at once. The file is removed when the area and
-//! everything made in it are dropped. Split from spill.rs (RULES.md
-//! R-SIZE-2).
+//! pager file of its own in a buffer pool of the area's size, reserved of the
+//! memory budget, so its pages are written to the file as the pool evicts
+//! them, through the encodings its temporary files are given as each is
+//! written (`TempFiles::pipeline`). Its tables are linear hash tables
+//! (`engine/hash.rs`); a value too long for one of their entries is kept in a
+//! page of its own, the entry holding its page. Its runs are pages of records,
+//! each page a batch of records written at once. The file is removed when the
+//! area and everything made in it are dropped.
 
 use std::path::PathBuf;
 use std::sync::Arc;

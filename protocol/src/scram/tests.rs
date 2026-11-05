@@ -1,7 +1,6 @@
 //! Unit tests of SCRAM-SHA-256: RFC 7677's example exchange, each side's
 //! messages checked against it; and messages malformed, tampered with or
-//! replayed refused (RULES.md R-TEST-1, R-TEST-2). Split from scram.rs
-//! (RULES.md R-SIZE-4).
+//! replayed refused (RULES.md R-TEST-1, R-TEST-2).
 
 use super::*;
 

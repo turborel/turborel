@@ -2,10 +2,9 @@
 //! its participants, and the changes recorded for engines that cannot undo
 //! their own and for indexes. Each holds the storage or index it applies
 //! to, not its name, so it applies there even after the table was dropped
-//! or given a new generation by a change of definitions (`db/ddl.rs`).
-//! A transaction holds its entries in memory up to a work area's bytes,
-//! then writes them to runs of a spill area (`UndoLog`, RULES.md D38).
-//! Split from txn.rs (RULES.md R-SIZE-2).
+//! or given a new generation by a change of definitions (`db/ddl.rs`). A
+//! transaction holds its entries in memory up to a work area's bytes, then
+//! writes them to runs of a spill area (`UndoLog`, RULES.md D38).
 
 use std::sync::Arc;
 

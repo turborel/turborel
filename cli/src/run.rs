@@ -4,8 +4,7 @@
 //! run gone on. A run not typed stops at a cancelled statement, or with
 //! `--stop-on-error` at the first that fails; any run stops once the
 //! connection is lost. A file `--import` names has its rows imported, in
-//! its turn among the statements (RULES.md D59). Split from lib.rs
-//! (RULES.md R-SIZE-4).
+//! its turn among the statements (RULES.md D59).
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};

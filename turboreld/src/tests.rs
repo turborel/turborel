@@ -1,5 +1,4 @@
 //! Unit tests of `turboreld`'s command line (RULES.md R-TEST-1, R-TEST-2).
-//! Split from lib.rs (RULES.md R-SIZE-4).
 
 use super::*;
 

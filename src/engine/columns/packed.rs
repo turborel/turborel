@@ -1,7 +1,7 @@
 //! \[DESIGN\] Integers bit-packed (RULES.md D31): each of `bits` bits, one
 //! after another from the least significant bit of the first byte, so a
 //! frame of reference's differences take the bits their span needs, not
-//! whole bytes. Split from encoded.rs (RULES.md R-SIZE-2).
+//! whole bytes.
 
 /// The bytes a window of one value is read from: a value of 64 bits at
 /// any bit's offset lies in 9 of them.

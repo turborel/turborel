@@ -1,9 +1,8 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §14.1, §16.1, §16.2, §16.4, §4.28,
-//! §4.30] The SET statements of a session: SET TRANSACTION, the access
-//! mode and isolation level of its next transaction; SET SCHEMA, the
-//! default schema of unqualified names; SET CATALOG; SET SESSION
-//! AUTHORIZATION; and the SET of a setting and SET DATABASE (RULES.md D36).
-//! Split from db.rs (RULES.md R-SIZE-2).
+//! §4.30] The SET statements of a session: SET TRANSACTION, the access mode
+//! and isolation level of its next transaction; SET SCHEMA, the default
+//! schema of unqualified names; SET CATALOG; SET SESSION AUTHORIZATION; and
+//! the SET of a setting and SET DATABASE (RULES.md D36).
 
 use std::sync::Arc;
 

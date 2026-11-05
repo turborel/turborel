@@ -5,8 +5,7 @@
 //! referencing values not null are compared with [GR3b i], a lookup of its
 //! rows by their values there, made by one pass over them when first
 //! needed, so the rows each row matched are found without reading the
-//! table again for each. Split from `integrity/actions.rs` (RULES.md
-//! R-SIZE-2).
+//! table again for each.
 //!
 //! The lookups are a map that spills (`spill/map.rs`, RULES.md D38). Its
 //! keys are a lookup's columns' values as an index encodes them

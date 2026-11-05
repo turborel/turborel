@@ -26,15 +26,17 @@
 //! outlives the process, so no reader needs one after. The data file is shadowed, so after a crash its tables and
 //! indexes are exactly as the last checkpoint committed them, together.
 //!
-//! * **Created**: a directory holding no catalog gets new files.
+//! * **Created**: a directory holding no catalog gets new files, unless it
+//!   holds a database's log, which is refused (SQLCODE -910).
 //! * **Reopened**: if the catalog file's last image is of a clean close at
 //!   the log's end, the definitions are made again from its snapshot, each table and
 //!   index reopened in place by its locator (`StorageEngine::open_table`,
 //!   `IndexMethod::open`).
-//! * **Recovered**: otherwise the database stopped without closing. The
-//!   last image's definitions are made again, its tables and indexes
-//!   reopened as the checkpoint left them; the log is read from the image's
-//!   start (`db/recovery.rs`), definitions made since replayed, changes
+//! * **Recovered**: otherwise, as when the database stopped without
+//!   closing, or closed owing index entries. The last image's definitions
+//!   are made again, its tables and indexes reopened as the checkpoint left
+//!   them; the log is read from the image's start, or the oldest logged
+//!   table's durable position if earlier (`db/recovery.rs`), definitions made since replayed, changes
 //!   undone and redone; then the indexes, whose entries the log does not
 //!   hold, are mended for every row recovery touched
 //!   (`State::mend_indexes`), and those defined since the checkpoint built.
@@ -166,7 +168,7 @@ pub(super) struct DatabaseFiles {
     pub(super) data: Option<(Arc<BufferPool>, FileId)>,
     /// The shadowing file system the tables file is in.
     pub(super) shadows: Arc<ShadowFileSystem>,
-    /// The thread taking checkpoints that come due.
+    /// The checkpoints' turns and counters.
     pub(super) checkpointer: Checkpointer,
     /// The lock of its directory, until it is closed.
     pub(super) held: Mutex<Option<Arc<FileLock>>>,

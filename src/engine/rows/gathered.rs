@@ -6,8 +6,7 @@
 //! (`storage::Texts`), a CHARACTER string padded to its length as it is
 //! read [X3.135-1986 §8.7 GR7b]; any other value decoded as a row's is.
 //! So the row store's batches, and the column store's rows not yet
-//! frozen, are of the vectors its frozen rows give. Split from scan.rs
-//! (RULES.md R-SIZE-2).
+//! frozen, are of the vectors its frozen rows give.
 
 use super::corrupt;
 use crate::engine::columns::{padded, padding};

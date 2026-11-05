@@ -1,15 +1,13 @@
 //! \[DESIGN\] What a durable pager file's pages name for themselves (RULES.md
-//! D30, D48), so each is read as it was written while the file goes on
-//! under other settings: the encodings its content passed through, by
-//! their ids in its body, and the key its checksum was made with, by name
-//! in its trailer, if the file's hash function is keyed. The pipeline new
-//! pages are written through, and the key new checksums are made with,
-//! change while the file is open (`Pager::set_pipeline`,
-//! `Pager::set_hash`), as STORAGE.ENCODINGS and the checksum's key do;
-//! pages written before are read by what they name, each pipeline resolved
-//! once among the encodings the file was opened with, each key's function
-//! made once (`HashFunction::keyed_by`). Split from pager.rs (RULES.md
-//! R-SIZE-2).
+//! D30, D48), so each is read as it was written while the file goes on under
+//! other settings: the encodings its content passed through, by their ids in
+//! its body, and the key its checksum was made with, by name in its trailer,
+//! if the file's hash function is keyed. The pipeline new pages are written
+//! through, and the key new checksums are made with, change while the file is
+//! open (`Pager::set_pipeline`, `Pager::set_hash`), as STORAGE.ENCODINGS and
+//! the checksum's key do; pages written before are read by what they name,
+//! each pipeline resolved once among the encodings the file was opened with,
+//! each key's function made once (`HashFunction::keyed_by`).
 
 use std::borrow::Cow;
 use std::collections::HashMap;

@@ -1,15 +1,13 @@
 //! \[DESIGN\] The rows a join of streams makes, gathered into batches
 //! (RULES.md D31): of each joined row, the place of its left row in the
-//! batch probing, or none for nulls, and its right row's values. A batch
-//! is made of them once it holds `BATCH_ROWS`, or the batch probing is
-//! done: each left vector gathered as one of its kind (`Column::gathered`),
-//! so a column passing through the join unchanged keeps its integers,
-//! numbers or texts; each right vector of values, or, of a right operand
-//! held as vectors (`held.rs`), gathered of its vector so too. A batch
-//! whose probe
+//! batch probing, or none for nulls, and its right row's values. A batch is
+//! made of them once it holds `BATCH_ROWS`, or the batch probing is done:
+//! each left vector gathered as one of its kind (`Column::gathered`), so a
+//! column passing through the join unchanged keeps its integers, numbers or
+//! texts; each right vector of values, or, of a right operand held as
+//! vectors (`held.rs`), gathered of its vector so too. A batch whose probe
 //! raises an error gives the rows joined before it first, then the error,
-//! as a join read row by row would (RULES.md D15). Split from
-//! exec/batch/joined.rs (RULES.md R-SIZE-2).
+//! as a join read row by row would (RULES.md D15).
 
 use std::collections::VecDeque;
 use std::sync::Arc;

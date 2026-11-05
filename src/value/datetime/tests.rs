@@ -1,6 +1,6 @@
 //! Unit tests of datetime values (RULES.md R-TEST-1, R-TEST-2): the
 //! calendar, literals read and written, displacements, fields and
-//! precision. Split from datetime.rs (RULES.md R-SIZE-2).
+//! precision.
 
 use super::*;
 

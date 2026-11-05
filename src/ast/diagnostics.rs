@@ -1,5 +1,5 @@
 //! Abstract syntax of `<get diagnostics statement>` [ISO/IEC 9075:1992
-//! §18.1]. Split from ast.rs (RULES.md R-SIZE-2).
+//! §18.1].
 
 use super::{ParameterSpecification, ValueSpecification};
 

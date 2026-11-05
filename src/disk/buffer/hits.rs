@@ -10,7 +10,6 @@
 //!
 //! A hint is only a guess, written as the locked way finds or fills a page:
 //! one stale, or a frame latched exclusively, sends the read the locked way.
-//! Split from pool.rs (RULES.md R-SIZE-4).
 
 use std::sync::TryLockError;
 use std::sync::atomic::{AtomicU64, Ordering};

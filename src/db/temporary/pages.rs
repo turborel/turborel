@@ -8,7 +8,7 @@
 //! encrypted while the database encrypts anything (D48). The file is made
 //! when first needed, and removed once the instance is emptied or gone; a
 //! crash leaves it among the temporary files the database clears as it
-//! opens. Split from db/temporary/storage.rs (RULES.md R-SIZE-2).
+//! opens.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

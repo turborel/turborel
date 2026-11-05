@@ -1,6 +1,6 @@
 //! \[DESIGN\] A shadowed file (RULES.md D30): what it has written since its
 //! last commit, and how a batch of it is sealed and committed (see
-//! `disk/shadow.rs`). Split from shadow.rs (RULES.md R-SIZE-4).
+//! `disk/shadow.rs`).
 
 use std::mem;
 use std::sync::{Arc, RwLock};

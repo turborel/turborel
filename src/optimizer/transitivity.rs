@@ -1,5 +1,4 @@
-//! \[DESIGN\] Predicate transitivity (RULES.md D35). Split from
-//! optimizer.rs (RULES.md R-SIZE-2).
+//! \[DESIGN\] Predicate transitivity (RULES.md D35).
 
 use super::{Rule, RuleContext};
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, split_and};

@@ -2,7 +2,6 @@
 //! given as integers (`storage::Ints`), a vector at a time, no value made
 //! of each: how many are not null, their sum, and the greatest or least,
 //! each of the rows given or all, nulls left out [X3.135-1986 §5.8 GR1].
-//! Split from functions.rs (RULES.md R-SIZE-2).
 
 use crate::storage::Ints;
 use crate::value::{Decimal, Value};

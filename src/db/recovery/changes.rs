@@ -2,7 +2,6 @@
 //! D38), kept in a list that spills (`spill/list.rs`) so recovery holds a
 //! work area's bytes of them however long the log it reads: undone newest
 //! first, redone oldest first, then read twice more to mend the indexes.
-//! Split from db/recovery.rs (RULES.md R-SIZE-2).
 //!
 //! ```text
 //! change: position u64 | transaction u64 | table | generation u32 |

@@ -1,7 +1,7 @@
 //! \[DESIGN\] Claiming a frame for a page not in the pool (RULES.md D30,
 //! D38): an empty one, or one the eviction policy proposes, checked again
 //! under the shards of both pages, still unpinned, and latched exclusively
-//! without waiting. Split from pool.rs (RULES.md R-SIZE-4).
+//! without waiting.
 //!
 //! A frame proposed may be held: pinned, or latched by a read that hit by
 //! its hint (`hits.rs`), which takes the latch and no pin. A pinned frame

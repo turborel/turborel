@@ -1,26 +1,24 @@
 //! \[DESIGN\] A filter over a stream's batches (RULES.md D31): the conjuncts
 //! it can judge over a batch's vectors, by the rules a row's judgment uses
-//! (`exec/eval.rs`), each keeping the rows it is true of; and the rest,
-//! judged of the rows they keep, each made a row. Judged so: a column
-//! compared with a constant; a column IS NULL or IS NOT NULL; a column IN,
-//! or NOT IN, a list of constants; a column LIKE a constant pattern, split
-//! once, or LIKE a column's pattern, or ESCAPE a column's character, each
-//! pattern split once for the statement (`judge/likes.rs`); two expressions of columns and exact constants compared, each
-//! evaluated as integers (`vector/ints.rs`), as `A > B` and `-B > C`, and,
-//! of a filter that can raise an error, `B * 2 > C`. Of a filter that
-//! cannot raise, such a comparison whose integers are not made, as of a
-//! column of values, is judged a row at a time of the rows kept. A filter
-//! that can raise an
-//! error is judged over vectors only if all of it can be, each conjunct of
-//! every row given, so it is judged of every row the filter row by row
-//! would judge it of; one of whose expressions no integers are made, as
-//! of a column of values or a result past 18 digits, has the batch judged
-//! whole a row at a time, so every row it would raise for still does; and
-//! a filter of which some cannot be is judged so of every batch. A batch
-//! whose judgment raises an error is judged again a row at a time, in
-//! order, to give the rows before its failing one first, as a filter read
-//! row by row does, for an EXISTS that stops at one of them (RULES.md
-//! D15). Split from batch.rs (RULES.md R-SIZE-2).
+//! (`exec/eval.rs`), each keeping the rows it is true of; and the rest, judged
+//! of the rows they keep, each made a row. Judged so: a column compared with a
+//! constant; a column IS NULL or IS NOT NULL; a column IN, or NOT IN, a list
+//! of constants; a column LIKE a constant pattern, split once, or LIKE a
+//! column's pattern, or ESCAPE a column's character, each pattern split once
+//! for the statement (`judge/likes.rs`); two expressions of columns and exact
+//! constants compared, each evaluated as integers (`vector/ints.rs`), as `A >
+//! B` and `-B > C`, and, of a filter that can raise an error, `B * 2 > C`. Of
+//! a filter that cannot raise, such a comparison whose integers are not made,
+//! as of a column of values, is judged a row at a time of the rows kept. A
+//! filter that can raise an error is judged over vectors only if all of it can
+//! be, each conjunct of every row given, so it is judged of every row the
+//! filter row by row would judge it of; one of whose expressions no integers
+//! are made, as of a column of values or a result past 18 digits, has the
+//! batch judged whole a row at a time, so every row it would raise for still
+//! does; and a filter of which some cannot be is judged so of every batch. A
+//! batch whose judgment raises an error is judged again a row at a time, in
+//! order, to give the rows before its failing one first, as a filter read row
+//! by row does, for an EXISTS that stops at one of them (RULES.md D15).
 
 use super::project::{Place, place_of};
 use super::vector::ints::evaluable;

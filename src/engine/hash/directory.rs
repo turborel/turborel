@@ -1,7 +1,6 @@
 //! \[DESIGN\] Where a linear hash table (`engine/hash.rs`) keeps its shape
 //! for `HashTable::open`: its directory pages, each bucket's first page in
 //! order, and its meta page, which lists them with the shape and counts.
-//! Split from hash.rs (RULES.md R-SIZE-2).
 
 use super::{FORMAT, HashTable, Shape, corrupt};
 use crate::disk::pager::PageId;

@@ -4,8 +4,6 @@
 //! one character set there is, or a collation or a translation, is refused
 //! as valid but never implemented (SQLCODE -900, RULES.md D32), and SQL
 //! that breaks their Format is a syntax error. Naming SQL_TEXT is taken.
-//! Split from parser.rs (RULES.md R-SIZE-2); the methods extend the same
-//! `Parser`.
 
 use super::Parser;
 use crate::ast::{SqlStatement, ValueExpression};

@@ -8,8 +8,7 @@
 //! into the staged file, the rest are asked for, in runs of up to `PIECE`
 //! bytes; a file the fetcher lacks is fetched whole. Blocks, not the
 //! database's pages: a page's size is the database's to choose, and a
-//! block of several pages hashes as fast. Split from transfer.rs
-//! (RULES.md R-SIZE-2).
+//! block of several pages hashes as fast.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

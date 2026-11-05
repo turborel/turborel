@@ -1,9 +1,8 @@
 //! The `<value specification>` and `<literal>` grammar [X3.135-1986 §5.2,
 //! §5.6]: USER and the other user functions, parameters, character and bit
-//! strings and exact and approximate numbers, with this implementation's limits
-//! on them (RULES.md D18); datetime and interval literals are read in
-//! `parser/datetime.rs` and `parser/interval.rs`. Split from parser.rs (RULES.md
-//! R-SIZE-2).
+//! strings and exact and approximate numbers, with this implementation's
+//! limits on them (RULES.md D18); datetime and interval literals are read in
+//! `parser/datetime.rs` and `parser/interval.rs`.
 
 use super::Parser;
 use crate::ast::{Literal, UserFunction, ValueSpecification};

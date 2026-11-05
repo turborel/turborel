@@ -3,8 +3,7 @@
 //! on Unix, a socket's path beginning '/', on Windows a named pipe's name
 //! beginning '\\' (as '\\.\pipe\turborel'); DEFAULT is the server the
 //! command line names. A connection is proved as the command line says: a
-//! password typed is asked for again, for each. Split from lib.rs
-//! (RULES.md R-SIZE-4).
+//! password typed is asked for again, for each.
 
 use std::path::PathBuf;
 

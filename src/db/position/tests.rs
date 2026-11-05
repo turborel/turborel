@@ -1,6 +1,5 @@
 //! Unit tests of a cursor's position: FETCH's every orientation over rows
-//! some of which are gone (RULES.md R-TEST-1). Split from position.rs
-//! (RULES.md R-SIZE-2).
+//! some of which are gone (RULES.md R-TEST-1).
 
 use super::*;
 use crate::error::{Code, SqlError};

@@ -1,7 +1,7 @@
 //! \[DESIGN\] The words of the built-in two-way choices (RULES.md D36),
 //! ON and OFF, as the transaction coordinator's types: LOCKS.WAIT,
 //! SESSION.COMMIT_AT_END and TRANSACTION.STRICT; and LOG.DURABILITY's, as
-//! the log's. Split from settings.rs (RULES.md R-SIZE-2).
+//! the log's.
 
 use super::builtin::LOG_DURABILITY;
 use super::{OFF, ON, Settings};

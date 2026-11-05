@@ -3,7 +3,6 @@
 //! deferred one becomes immediate [§10.6]: the rows a statement wrote, of
 //! one constraint, checked as they come, one at a time (`KeyCheck`), so
 //! none is held for the check, however many there are (RULES.md D38).
-//! Split from db/integrity.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 

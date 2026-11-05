@@ -1,7 +1,7 @@
 //! \[DESIGN\] Unnamed cursors: a `<cursor specification>` read in one
 //! call, `Session::open_cursor`, as direct SQL's queries are, and a
 //! prepared query's (`Session::open_prepared`), its rows read as they are
-//! fetched (`db/stream.rs`). Split from db/cursor.rs (RULES.md R-SIZE-2).
+//! fetched (`db/stream.rs`).
 
 use std::sync::{Arc, Mutex};
 

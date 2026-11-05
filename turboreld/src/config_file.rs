@@ -19,7 +19,7 @@
 //! <table header> ::= <left bracket> [ <blank> ] <key> [ <blank> ] <right bracket>
 //! <key value pair> ::= <key> [ <blank> ] <equals operator> [ <blank> ] <value>
 //! <key> ::= <simple key> [ { [ <blank> ] <period> [ <blank> ] <simple key> }... ]
-//! <simple key> ::= <bare key> | <basic string> | <literal string>
+//! <simple key> ::= <bare key> | <basic string> | <literal string>, not empty
 //! <bare key> ::= { <ASCII letter> | <digit> | <underscore> | <minus sign> }...
 //! <value> ::= <basic string> | <literal string> | <integer> | <float> | <boolean> | <array>
 //! <basic string> ::= <double quote> [ { <basic character> | <escape> }... ] <double quote>

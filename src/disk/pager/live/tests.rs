@@ -1,6 +1,5 @@
-//! Unit tests of a pager file's encodings: a scratch file's, as they
-//! change (RULES.md R-TEST-1, R-TEST-2). Split from pager/live.rs (RULES.md
-//! R-SIZE-2).
+//! Unit tests of a pager file's encodings: a scratch file's, as they change
+//! (RULES.md R-TEST-1, R-TEST-2).
 
 use std::path::Path;
 use std::sync::Arc;

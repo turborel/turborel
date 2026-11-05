@@ -1,7 +1,6 @@
 //! The rows a data-changing statement works on: the candidate rows of INSERT,
-//! from a query expression [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8], and the object rows of
-//! searched UPDATE and DELETE [X3.135-1986 §8.5, §8.12]. Split from db.rs
-//! (RULES.md R-SIZE-2).
+//! from a query expression [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8], and
+//! the object rows of searched UPDATE and DELETE [X3.135-1986 §8.5, §8.12].
 
 use std::cell::Cell;
 use std::sync::Arc;

@@ -418,8 +418,9 @@ impl State {
 
 impl State {
     /// [ISO/IEC 9075:1992 §11.25] ALTER DOMAIN ADD `c`, its names of
-    /// schema `schema`: added to `domain`, and copied onto each of its
-    /// columns of `tables` [GR2]; the tables whose rows are to be checked.
+    /// schema `schema`: added to `domain` [GR1], and copied onto each of
+    /// its columns of `tables` [§11.21 GR5, GR6]; the tables whose rows are
+    /// to be checked.
     fn add_domain_constraint(
         &self,
         (domain, schema): (&mut DomainDesc, &str),

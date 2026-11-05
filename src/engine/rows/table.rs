@@ -1,5 +1,5 @@
 //! \[DESIGN\] A row-store table made, or opened from its meta page
-//! (RULES.md D31). Split from engine/rows.rs (RULES.md R-SIZE-2).
+//! (RULES.md D31).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

@@ -5,8 +5,8 @@
 //! from its first record each time; either way in the order it came. A
 //! product reads it once for each left row, so what it reads is as many
 //! rows as it gives. A run is read back only while the statement is not
-//! cancelled (`exec/work.rs`), so a pass that gives no row a later
-//! operator keeps still stops. Split from exec/join.rs (RULES.md R-SIZE-2).
+//! cancelled (`exec/work.rs`), so a pass that gives no row a later operator
+//! keeps still stops.
 
 use std::sync::Arc;
 

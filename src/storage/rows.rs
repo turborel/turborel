@@ -1,5 +1,5 @@
 //! \[DESIGN\] Rows as a table gives them: a row, its id, and rows read as
-//! they are pulled. Split from storage.rs (RULES.md R-SIZE-2).
+//! they are pulled.
 
 use crate::error::Result;
 use crate::value::Value;

@@ -1,6 +1,5 @@
 //! [ISO/IEC 9075:1992 §16.5] SET TIME ZONE: a session's time zone
-//! displacement, the setting SESSION.TIME_ZONE (RULES.md D54). Split from
-//! db/session.rs (RULES.md R-SIZE-2).
+//! displacement, the setting SESSION.TIME_ZONE (RULES.md D54).
 
 use super::{Session, State};
 use crate::ast::ValueExpression;

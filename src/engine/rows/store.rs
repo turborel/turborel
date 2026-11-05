@@ -1,6 +1,5 @@
-//! The row store's own methods: made over files, or in memory, given
-//! the database's budget and work areas, and told its settings. Split from engine/rows.rs
-//! (RULES.md R-SIZE-2).
+//! The row store's own methods: made over files, or in memory, given the
+//! database's budget and work areas, and told its settings.
 
 use crate::engine::columns::cache::{self, HeaderCache};
 use std::collections::HashMap;

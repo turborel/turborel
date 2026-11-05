@@ -1,6 +1,6 @@
 //! [ISO/IEC 9075:1992 §6.10] CAST, as the target type's kind casts
 //! (`value::types`), and the literals it reads and writes, which the kinds
-//! share. Split from value.rs (RULES.md R-SIZE-2).
+//! share.
 
 use super::{DataType, Decimal, MAX_EXACT_PRECISION, REAL_PRECISION, Value, pow10, round_to_single};
 use crate::error::{Code, Result, SqlState, fail_with};

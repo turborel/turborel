@@ -1,8 +1,7 @@
 //! \[EXTENSION\] Referential constraints at the end of a statement [ISO/IEC
 //! 9075:1992 §11.8]: whether a row's referencing values match [GR2, §8.10],
 //! the rows that match a referenced row [GR3], and NO ACTION; the
-//! referential actions are `integrity/actions.rs`'s. Split from
-//! db/integrity.rs (RULES.md R-SIZE-2).
+//! referential actions are `integrity/actions.rs`'s.
 //!
 //! Each search reads a row at a time, through an index a key's rows as
 //! they are taken: a check stops at the first row it needs, and the rows

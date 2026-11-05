@@ -1,5 +1,4 @@
-//! What a query is bound for: to be run, or as a constraint. Split from
-//! binder.rs (RULES.md R-SIZE-2).
+//! What a query is bound for: to be run, or as a constraint.
 
 /// What a query is bound for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

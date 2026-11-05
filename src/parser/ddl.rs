@@ -16,7 +16,7 @@
 //! An `<alter table storage>` is an `<alter table action>`. RESEAL is a
 //! `<non-reserved word>`, an identifier elsewhere: the table's storage made
 //! anew as it is, its rows sealed again through the encodings it names
-//! now. Split from parser.rs (RULES.md R-SIZE-2).
+//! now.
 
 use super::Parser;
 use crate::ast::{AlterAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage};

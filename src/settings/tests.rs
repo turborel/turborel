@@ -1,6 +1,5 @@
 //! Unit tests of the settings registry: its kinds and scopes, and the
-//! built-in keys (RULES.md D36, R-TEST-1). Split from settings.rs (RULES.md
-//! R-SIZE-2).
+//! built-in keys (RULES.md D36, R-TEST-1).
 
 use super::builtin::{LOG_DURABILITY, text};
 use super::*;

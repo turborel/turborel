@@ -1,7 +1,6 @@
 //! [ISO/IEC 9075:1992 §5.3, §6.1, §6.6, §6.8] The datetime grammar: the
 //! `<datetime type>`s, the `<datetime literal>`s, the `<datetime value
-//! function>`s and the `<extract expression>`. Split from parser.rs
-//! (RULES.md R-SIZE-2); the methods extend the same `Parser`.
+//! function>`s and the `<extract expression>`.
 
 use super::Parser;
 use crate::ast::{DatetimeFunction, ExtractField, Literal, ValueExpression};

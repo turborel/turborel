@@ -3,8 +3,7 @@
 //! they work, and those that do not keep it open. As the program's last
 //! handle is dropped, every job's thread is stopped and joined, there, so
 //! no job's thread drops the database last: it goes as the program's drop
-//! returns, its files closed and its directory's lock given up then. Split
-//! from database.rs (RULES.md R-SIZE-2).
+//! returns, its files closed and its directory's lock given up then.
 
 use std::sync::{Arc, Weak};
 

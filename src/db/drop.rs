@@ -1,10 +1,8 @@
 //! \[EXTENSION\] DROP SCHEMA [ISO/IEC 9075:1992 §11.2], DROP TABLE [§11.18],
 //! DROP VIEW [§11.20], DROP DOMAIN [§11.27] (`db/domains.rs`) and DROP
-//! ASSERTION [§11.35] (`db/assertions.rs`), in a transaction (RULES.md
-//! D33): each staged as
-//! one change (`Change::Drop`), made again on the definitions published
-//! when it commits, and by recovery. Split from db/ddl.rs (RULES.md
-//! R-SIZE-2).
+//! ASSERTION [§11.35] (`db/assertions.rs`), in a transaction (RULES.md D33):
+//! each staged as one change (`Change::Drop`), made again on the definitions
+//! published when it commits, and by recovery.
 //!
 //! A drop takes the lock of each name it drops, or changes the
 //! definitions of, exclusive: the object's; with CASCADE, those of the

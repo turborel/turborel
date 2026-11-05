@@ -1,5 +1,5 @@
 //! \[EXTENSION\] CREATE INDEX on a table that transactions go on writing
-//! (RULES.md D27). Split from db/database.rs (RULES.md R-SIZE-2).
+//! (RULES.md D27).
 //!
 //! An index holds an entry for every version of a row that has its key,
 //! which garbage collection takes back when it removes the version

@@ -2,8 +2,7 @@
 //! specification>` among them typed as the function says [ISO/IEC
 //! 9075:1992 §17.6 GR5], and \[EXTENSION\] each of a type the function
 //! declares (`ScalarFunction::argument_type`) stored in it by store
-//! assignment [§9.2], as a column's value is. Split from
-//! `binder/expression.rs` (RULES.md R-SIZE-2).
+//! assignment [§9.2], as a column's value is.
 
 use std::sync::Arc;
 

@@ -16,8 +16,9 @@
 //! short ends the log, and the segments after it are removed. A last
 //! segment a crash left half created (shorter than a block file's header)
 //! holds no record and is removed; a missing segment between two others is
-//! refused as corruption, and so is a segment damaged, valid blocks
-//! following invalid ones (`open.rs`), the log then unchanged.
+//! refused as corruption, and so are valid blocks following invalid bytes
+//! that show no interrupted write, in that segment or a later one
+//! (`open.rs`), the log then unchanged.
 //!
 //! A segment that cannot be begun leaves the current one growing past the
 //! segment size, its appends going on; the failure is told to the sink the
@@ -43,8 +44,8 @@
 //!
 //! Its formats (RULES.md D48: STORAGE.CHECKSUM_KEY, STORAGE.ENCODINGS)
 //! change while it is open too (`Log::set_formats`): a segment in them is
-//! begun before the next record appended, so no record after the change
-//! is in a segment of the formats before; the segments there are read as
+//! asked for at each append until one is begun, so a record after the
+//! change may still go to a segment of the formats before; the segments there are read as
 //! they were written, each naming its own.
 
 use std::collections::BTreeMap;

@@ -23,8 +23,7 @@
 //! still counts: the live entries, kept with it, bound the count, and
 //! after many removals it is high. A register is written only when a key
 //! raises it, and the entries are counted in stripes, a thread's own, so
-//! threads writing the index share no counter. Split from index.rs
-//! (RULES.md R-SIZE-2).
+//! threads writing the index share no counter.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
 

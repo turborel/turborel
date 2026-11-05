@@ -6,11 +6,10 @@
 //! each partition's first of each key kept, a partition that outgrows the
 //! work area partitioned again, and those merged back by number
 //! (`partition.rs`), so the rows come in the order they would in memory.
-//! Its work area is then split in two, half for the partitions and the
-//! keys each holds, half for the bag of a partition past
-//! SPILL.PARTITION_DEPTH, so the two hold no more than one work area. The
-//! runs it reads back look for a cancel of its statement (RULES.md D44).
-//! Split from exec.rs (RULES.md R-SIZE-2).
+//! Its work area is then split in two, half for the partitions and the keys
+//! each holds, half for the bag of a partition past SPILL.PARTITION_DEPTH,
+//! so the two hold no more than one work area. The runs it reads back look
+//! for a cancel of its statement (RULES.md D44).
 
 use std::collections::HashSet;
 

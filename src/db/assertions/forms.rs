@@ -1,7 +1,6 @@
 //! \[EXTENSION\] The forms of an assertion's conjuncts that a statement's
 //! change checks [ISO/IEC 9075:1992 §11.34 GR2] (RULES.md D51), found in
-//! its bound query; `changes.rs` checks them. Split from changes.rs
-//! (RULES.md R-SIZE-2).
+//! its bound query; `changes.rs` checks them.
 //!
 //! A form is of the rows of one table T that pass a chain of steps
 //! (`Step`), taken from T up: the filters of the query's WHERE and of a
@@ -18,7 +17,8 @@
 //! in a row passing, the whole check raises a warning, a null eliminated
 //! [§6.5 GR1b]; whether it does depends on every row, so a form whose `x`
 //! may be null keeps it (`Form::nulls`), and changes.rs takes the change as
-//! the whole check only if a row of it shows the warning raised. `x` is
+//! the whole check only where a row of it, the nulls kept, or a warning
+//! already raised settles the warning. `x` is
 //! never null if it is a column of a NOT NULL or PRIMARY KEY constraint not
 //! deferrable, whose checks come before an assertion's at a statement's
 //! end; one a conjunct of a filter is not true of when null (a comparison,

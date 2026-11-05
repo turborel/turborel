@@ -8,8 +8,8 @@
 //! As a replica stands, so does its database:
 //! * **Serving**, as every database does unless told otherwise: it takes
 //!   changes, which it writes to its log.
-//! * **Following** a log another replica writes, from the first records it
-//!   replays until it is promoted: it takes no change (SQLCODE -917).
+//! * **Following** a log another replica writes, from when it opens or
+//!   first replays until it is promoted: it takes no change (SQLCODE -917).
 //! * **Deposed**, once it stops serving as primary: it takes no change
 //!   until it is opened again, in place (`Standby::reopen`), which
 //!   recovers it from its last checkpoint alone, and it follows again
@@ -17,8 +17,9 @@
 //!
 //! The changes it does not take are those it would write to its log, as a
 //! failed sync stops them (RULES.md D25): a row change, the commit of a
-//! transaction that wrote, a definition, a checkpoint; reads and rollbacks
-//! go on.
+//! transaction that wrote, a definition; reads and rollbacks go on. A
+//! deposed database takes no checkpoint either, and a following one takes
+//! its own kind, which logs nothing (`checkpoint/following.rs`).
 //!
 //! **Continuous replay.** A group commits a log record by record, so the
 //! records a following database is given end anywhere: within a
@@ -48,7 +49,8 @@
 //! it, and which the replica installs (`Standby::import`,
 //! `standby/import.rs`): its files replaced, the image recorded as its
 //! catalog's, and the database opened again in place from it, following
-//! from the position the image holds the log through.
+//! from the first record of the oldest transaction open at the checkpoint
+//! (`image.start`).
 
 mod import;
 mod merge;
@@ -130,8 +132,8 @@ pub trait Standby: Send + Sync {
     /// database, in place of its own state, deposed or following: its
     /// durable files replaced by the export's, the export's image recorded
     /// as its catalog's, and itself opened again from it, following.
-    /// Through where it then holds the log: the position the image holds
-    /// every record before.
+    /// Through where it then holds the log: the record before the image's
+    /// start.
     ///
     /// # Errors
     ///

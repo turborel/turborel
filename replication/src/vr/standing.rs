@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Where a replica stands, for the operator and for
-//! diagnostics. Split from vr.rs (RULES.md R-SIZE-2).
+//! diagnostics.
 
 use super::{Status, Vr};
 use crate::{Lsn, ReplicaId};

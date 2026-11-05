@@ -17,16 +17,22 @@
 //! | trait               | built in              | used by                          |
 //! |---------------------|-----------------------|----------------------------------|
 //! | `Catalog`           | `MemoryCatalog`         | binder (names, types, owners)    |
-//! | `StorageEngine`     | rowstore              | planner, executor, transactions  |
+//! | `StorageEngine`     | rowstore, columnstore | planner, executor, transactions  |
 //! | `IndexMethod`       | btree, hash           | planner, UNIQUE \[EXTENSION\]      |
 //! | `AggregateFunction` | COUNT SUM AVG MAX MIN | set functions [X3.135-1986 §5.8] |
-//! | `ScalarFunction`    | SQL-92 string functions | \[EXTENSION\] call syntax       |
-//! | `Rule`              | ten rewrite rules     | optimizer                        |
+//! | `ScalarFunction`    | SQL-92 string functions | standard syntax, \[EXTENSION\] call syntax |
+//! | `Rule`              | eleven rewrite rules  | optimizer                        |
 //! | `Diagnostics`       | none: events dropped  | the database's events (RULES.md D40) |
 //! | `Spill`             | `PagedSpill`          | operators past MEMORY.WORK_BYTES (RULES.md D38) |
 //! | `Credentials`       | none: no password kept | CREATE and ALTER USER (RULES.md D43) |
 //! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
+//! | `Log`               | file log, memory log  | commit and recovery (RULES.md D25) |
+//! | `LogStorage`, `CatalogStorage` | files in the directory | opening a database (RULES.md D25) |
+//! | `SystemTable`       | the Information Schema's | system tables (RULES.md D37)  |
+//! | `Clock`             | the system's          | datetime functions (RULES.md D54) |
+//! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
+//! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a
 //! registry, plug-ins' among them; the database's values, kept with its
@@ -36,7 +42,8 @@
 //! number of threads (RULES.md D27). Each statement runs against a snapshot
 //! of the definitions taken when it starts, holding no lock on them while it
 //! runs; the data is guarded by the storage engines and indexes, and its
-//! isolation by the transaction coordinator's table locks. A `Session` is
+//! isolation by the engine, or by the transaction coordinator's table locks
+//! for an engine that leaves it to them (RULES.md D29). A `Session` is
 //! used by one thread at a time, but may move between threads between calls.
 
 use std::cell::{Cell, RefCell};

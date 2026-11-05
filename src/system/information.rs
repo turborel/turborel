@@ -1,11 +1,11 @@
-//! [ISO/IEC 9075:1992 §21.2] The Information Schema: its views, each
-//! defined as the standard defines it, over the Definition Schema
-//! (`system/definition.rs`), bound as owned by INFORMATION_SCHEMA wherever
-//! a statement names one; and its base table INFORMATION_SCHEMA_CATALOG_NAME
+//! [ISO/IEC 9075:1992 §21.2] The Information Schema: its views, each defined
+//! as the standard defines it, over the Definition Schema
+//! (`system/definition.rs`), bound as owned by INFORMATION_SCHEMA wherever a
+//! statement names one; and its base table INFORMATION_SCHEMA_CATALOG_NAME
 //! [§21.2.2]. The text is the standard's but where it is not SQL, each
-//! correction noted. Its assertion [§21.2.3] holds of the table, which has
-//! one row; its domains [§21.2.27-§21.2.29] are not defined as domains:
-//! its columns are of their types (`system.rs`). Split from system.rs (RULES.md R-SIZE-2).
+//! correction noted. Its assertion [§21.2.3] holds of the table, which has one
+//! row; its domains [§21.2.27-§21.2.29] are not defined as domains: its
+//! columns are of their types (`system.rs`).
 
 use super::{INFORMATION_SCHEMA, Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};

@@ -1,6 +1,5 @@
 //! \[DESIGN\] Bound expressions: `<value expression>` (`Expr`) and
 //! `<search condition>` (`Cond`), over the columns of a node's input row.
-//! Split from logical.rs (RULES.md R-SIZE-2).
 //!
 //! Every pass over them goes through one traversal: `Expr::map_children`
 //! and `Expr::for_each_child` reach each expression an expression is made
@@ -86,9 +85,9 @@ pub enum Expr {
     /// [ISO/IEC 9075:1992 §6.10 GR13] CAST to a domain: the value CAST to
     /// its data type, which none of its constraints may find false.
     Domain(Box<Expr>, Arc<DomainChecks>),
-    /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`, or a column, at
+    /// [ISO/IEC 9075:1992 §7.11 GR1] A `<scalar subquery>`, or a column, at
     /// this position, of a `<row subquery>`: the value there of its one
-    /// row, null if it has none \[GR1, GR2\].
+    /// row, null if it has none [§6.11 GR2].
     Subquery(Arc<Subquery>, usize),
 }
 

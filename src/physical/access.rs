@@ -1,6 +1,6 @@
 //! \[DESIGN\] Access paths: how one table is read, by a sequential scan or
 //! an index's probes (`physical/probe.rs`), one, or one of each range of
-//! an OR, chosen by cost. Split from physical.rs (RULES.md R-SIZE-2).
+//! an OR, chosen by cost.
 
 use super::estimate::{self, Known};
 use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe};

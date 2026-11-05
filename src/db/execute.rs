@@ -1,6 +1,6 @@
 //! A session's statements run [X3.135-1986 §7.3]: each parsed, run in its
 //! transaction, undone if it fails, and its condition placed in the
-//! diagnostics area (`db/area.rs`). Split from db.rs (RULES.md R-SIZE-2).
+//! diagnostics area (`db/area.rs`).
 
 use std::sync::Arc;
 

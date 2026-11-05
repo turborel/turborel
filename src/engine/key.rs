@@ -29,9 +29,8 @@
 //!
 //! A value compared with a column's keys need not be of the column's type:
 //! `1.555` with a column of scale 2, a string longer than the column. Its
-//! anchor (`anchor`) is the key of the greatest value of the column's type
-//! not above it, so every other key compares with the value as with the
-//! anchor, and only the anchor's own key needs comparing with the value.
+//! anchor (`anchor`) is a key beside it, chosen so that every other key
+//! compares with the value as with the anchor, and only the anchor's own key needs comparing with the value.
 
 use crate::error::{Code, Result, SqlError};
 use crate::value::types::{malformed, take};

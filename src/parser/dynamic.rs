@@ -1,9 +1,7 @@
 //! [ISO/IEC 9075:1992 §17] Dynamic SQL in SQL text: the grammar of its
 //! statements, and of the names of the prepared statements, cursors and
 //! descriptor areas they use [§5.4], with the Syntax Rules the text alone
-//! decides. A session runs them (`db/dynamic.rs`, RULES.md D58). Split
-//! from parser.rs (RULES.md R-SIZE-2); the methods extend the same
-//! `Parser`.
+//! decides. A session runs them (`db/dynamic.rs`, RULES.md D58).
 //!
 //! A `<simple value specification>` or `<simple target specification>` of
 //! these statements is a parameter, written as SQL-86 writes one, an

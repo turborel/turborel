@@ -1,11 +1,10 @@
 //! \[EXTENSION\] Table settings (RULES.md D41): the options a storage engine
 //! declares for its tables (`StorageEngine::table_options`), and the values
-//! a table sets of them, written `CREATE TABLE ... USING engine WITH (name
-//! = value, ...)` and changed by ALTER TABLE. A table keeps only the values
-//! it sets (`TableDesc::options`); the rest are their defaults. An option
+//! a table sets of them, written `CREATE TABLE ... USING engine WITH (name =
+//! value, ...)` and changed by ALTER TABLE. A table keeps only the values it
+//! sets (`TableDesc::options`); the rest are their defaults. An option
 //! changes in place, the table's storage told (`TableStorage::reconfigure`),
-//! or by a rebuild, the rows copied to new storage made with it. Split from
-//! storage.rs (RULES.md R-SIZE-2).
+//! or by a rebuild, the rows copied to new storage made with it.
 
 use crate::error::{Code, Result, SqlError};
 use crate::settings::{Kind, accepted};

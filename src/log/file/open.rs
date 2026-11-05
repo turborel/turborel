@@ -1,5 +1,5 @@
 //! \[DESIGN\] A file log opened and recovered (RULES.md D25, D30): see the
-//! parent module. Split from file.rs (RULES.md R-SIZE-2).
+//! parent module.
 //!
 //! The segments are opened in order, nothing cut, until one has bytes to
 //! cut: a torn end. What is changed is decided before anything is: a

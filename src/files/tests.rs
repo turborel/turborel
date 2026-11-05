@@ -2,8 +2,7 @@
 //! files kept by closing the one used least recently, a file opened again
 //! as it is next used, a file waiting while every open one is in use, a
 //! file with writes not yet synced synced before it is closed and a failed
-//! sync kept for its next, and the counts shown. Split from files.rs
-//! (RULES.md R-SIZE-2).
+//! sync kept for its next, and the counts shown.
 
 use std::path::Path;
 use std::sync::Arc;

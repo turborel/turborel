@@ -5,7 +5,7 @@
 //! PostgreSQL's CREATE INDEX CONCURRENTLY does, each made at once; and only
 //! by the owner of the table's schema, as ALTER TABLE [ISO/IEC 9075:1992
 //! §11.10 AR1]. An index takes no UNIQUE: a UNIQUE constraint makes its own
-//! [X3.135-1986 §6.4]. Split from db.rs (RULES.md R-SIZE-2).
+//! [X3.135-1986 §6.4].
 
 use std::sync::Arc;
 

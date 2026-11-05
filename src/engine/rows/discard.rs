@@ -1,7 +1,6 @@
 //! \[EXTENSION\] A dropped table's pages freed (`TableStorage::discard`,
 //! ISO/IEC 9075:1992 §11.18 GR2): when the last reference to it goes, so no
-//! reader of an earlier snapshot reads a page given to another use. Split
-//! from rows.rs (RULES.md R-SIZE-2).
+//! reader of an earlier snapshot reads a page given to another use.
 //!
 //! Freed: the pages of the values each version of each row keeps out of
 //! line, the newest in the tree and the older in the undo store; its

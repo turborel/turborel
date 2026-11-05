@@ -1,5 +1,4 @@
 //! Abstract syntax of the connection statements [ISO/IEC 9075:1992 §15].
-//! Split from ast.rs (RULES.md R-SIZE-2).
 
 use super::ValueSpecification;
 

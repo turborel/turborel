@@ -1,5 +1,4 @@
-//! Abstract syntax of the statements of users (RULES.md D43). Split
-//! from ast.rs (RULES.md R-SIZE-2).
+//! Abstract syntax of the statements of users (RULES.md D43).
 
 /// \[EXTENSION\] A statement of users or of the database's owner (RULES.md D43), run outside a
 /// transaction by the database's owner. ISO/IEC 9075:1992 has none: which

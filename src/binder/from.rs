@@ -1,7 +1,6 @@
 //! [X3.135-1986 §5.20; ISO/IEC 9075:1992 §6.3, §7.4, §7.5] The `<from
 //! clause>`, bound: its table references, each a table or view, a derived
 //! table, or a joined table, laid out one after another in the FROM row.
-//! Split from binder/query.rs (RULES.md R-SIZE-2).
 //!
 //! Each table and derived table is a `FromItem`, at its place in the row; a
 //! joined table is a `Tree` over the items of its operands, its row theirs

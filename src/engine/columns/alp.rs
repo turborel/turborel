@@ -8,7 +8,6 @@
 //! exponent e is the one of the first `SAMPLE` values that leaves fewest
 //! exceptions, then that takes fewest bits, then the least. Dividing by an
 //! exact power of ten rounds correctly, so a value read is the one written.
-//! Split from encoded.rs (RULES.md R-SIZE-2).
 //!
 //! ```text
 //! ALP:  e u8 | exceptions u32 | each: position u32 | its bits u64 |

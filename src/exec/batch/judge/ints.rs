@@ -1,11 +1,10 @@
 //! \[DESIGN\] RULES.md D31: a conjunct judged over a vector of exact
 //! numbers as integers (`storage::Ints`), no value made of each: its
 //! constants and the integers each scaled once to the greater of their
-//! scales, then compared as integers, as `Decimal::cmp_value` compares
-//! them [X3.135-1986 §5.11 GR4]; a null true of no comparison [§5.11
-//! GR2], of IS NULL only [§5.15]. A constant not exact, or one too large
-//! to scale, is judged of the values instead. Split from judge.rs (RULES.md
-//! R-SIZE-2).
+//! scales, then compared as integers, as `Decimal::cmp_value` compares them
+//! [X3.135-1986 §5.11 GR4]; a null true of no comparison [§5.11 GR2], of IS
+//! NULL only [§5.15]. A constant not exact, or one too large to scale, is
+//! judged of the values instead.
 
 use std::cmp::Ordering;
 

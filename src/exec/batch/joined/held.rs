@@ -8,8 +8,7 @@
 //! joined rows as the left's are, no value made. Past the work area, the
 //! batches read and the rest of the operand are given back, made into rows
 //! for the row path to build (`exec/join.rs`): of the operand's width, or
-//! of the columns its batches hold alone. Split from exec/batch/joined.rs
-//! (RULES.md R-SIZE-2).
+//! of the columns its batches hold alone.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;

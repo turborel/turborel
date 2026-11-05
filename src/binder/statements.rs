@@ -1,8 +1,7 @@
 //! Binding of the statements that use a single table: the updatability of a
 //! cursor [X3.135-1986 §8.3 SR4b, §5.25 SR11], single-row SELECT [X3.135-1986
 //! §8.10], and searched and positioned UPDATE and DELETE [X3.135-1986 §8.4,
-//! §8.5, §8.11, §8.12], with the assignment rules they share. Split from
-//! binder.rs (RULES.md R-SIZE-2).
+//! §8.5, §8.11, §8.12], with the assignment rules they share.
 
 use std::collections::BTreeSet;
 

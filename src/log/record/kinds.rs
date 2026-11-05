@@ -2,7 +2,7 @@
 //! written with, and `KINDS`, every one, which whatever must handle each
 //! kind is checked against: recovery's replay, and the tests that a
 //! statement writes each and that replaying it gives what the statement
-//! did. Split from record.rs (RULES.md R-SIZE-2).
+//! did.
 
 use super::Change;
 

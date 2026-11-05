@@ -10,13 +10,12 @@
 //! the work area with it; one in a run has none, and of a preserved right,
 //! the left rows are kept in a run too, so each right row is tried again
 //! with every left row once the left is read. Of a join on keys, an
-//! operand's own condition, its ON conjuncts that can raise an error of
-//! its columns alone, is judged of each of its rows once the other is
-//! known to have one, as on every row of their product [§7.5 GR1c], and a
-//! row it is not true of matches none (RULES.md D15). A join of streams
-//! has its right operand held so, if it fits the work area, and probes it
-//! by batches (`prepared`, `exec/batch/joined/outer.rs`). Split from
-//! exec/join.rs (RULES.md R-SIZE-2).
+//! operand's own condition, its ON conjuncts that can raise an error of its
+//! columns alone, is judged of each of its rows once the other is known to
+//! have one, as on every row of their product [§7.5 GR1c], and a row it is
+//! not true of matches none (RULES.md D15). A join of streams has its right
+//! operand held so, if it fits the work area, and probes it by batches
+//! (`prepared`, `exec/batch/joined/outer.rs`).
 
 mod chunked;
 mod spilled;

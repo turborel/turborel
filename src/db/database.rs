@@ -1,6 +1,6 @@
 //! \[DESIGN\] The `Database` handle: the current snapshot of its definitions,
 //! how definitions change (RULES.md D27), and the extension points and
-//! settings reached through Rust. Split from db.rs (RULES.md R-SIZE-2).
+//! settings reached through Rust.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, Weak};

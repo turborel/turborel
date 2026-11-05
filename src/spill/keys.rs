@@ -1,6 +1,5 @@
 //! The byte keys of spilled rows: the same bytes exactly when the
-//! operator would find the keys equal (`spill.rs`). Split from spill.rs
-//! (RULES.md R-SIZE-2).
+//! operator would find the keys equal (`spill.rs`).
 
 use crate::value::{Bucket, Decimal, NormKey, Value};
 

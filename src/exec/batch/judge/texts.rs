@@ -1,12 +1,10 @@
 //! \[DESIGN\] RULES.md D31: a conjunct judged over a vector of character
-//! strings as their text (`storage::Texts`), no value made of each: LIKE
-//! a constant pattern of each text in place [X3.135-1986 §5.14]; a
+//! strings as their text (`storage::Texts`), no value made of each: LIKE a
+//! constant pattern of each text in place [X3.135-1986 §5.14]; a
 //! comparison with a constant string, IN and NOT IN a list of them, each
 //! padded with spaces as strings compare [§5.11 GR5]; IS NULL [§5.15]; of
 //! a store's dictionaries, each once of each entry, a row then kept by its
-//! entry. A
-//! constant not a string is judged of the values instead. Split from
-//! judge.rs (RULES.md R-SIZE-2).
+//! entry. A constant not a string is judged of the values instead.
 
 use std::cmp::Ordering;
 

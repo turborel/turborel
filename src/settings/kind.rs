@@ -1,5 +1,4 @@
-//! What values a setting takes (`Kind`), and how they are told. Split
-//! from settings.rs (RULES.md R-SIZE-2).
+//! What values a setting takes (`Kind`), and how they are told.
 
 use crate::value::Value;
 

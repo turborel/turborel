@@ -1,10 +1,9 @@
 //! \[DESIGN\] A table of groups being made (RULES.md D31, D38): each group's
-//! first row's number, grouping values and set functions, in the order
-//! they were made, found by grouping key, counted by the bytes they hold
-//! against a limit. A grouping by batch holds its groups in one, and, if
-//! its set functions can write their states, the groups partly made of
-//! rows past it in another (`groups.rs`). Split from groups.rs (RULES.md
-//! R-SIZE-2).
+//! first row's number, grouping values and set functions, in the order they
+//! were made, found by grouping key, counted by the bytes they hold against
+//! a limit. A grouping by batch holds its groups in one, and, if its set
+//! functions can write their states, the groups partly made of rows past it
+//! in another (`groups.rs`).
 
 use std::collections::HashMap;
 

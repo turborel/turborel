@@ -1,7 +1,6 @@
 //! Unit tests of the transaction coordinator: commit and rollback reach the
 //! storage each participant joined; snapshots and the horizon, and reading
-//! at a snapshot for each statement (RULES.md D29). Split from
-//! txn.rs (RULES.md R-SIZE-2).
+//! at a snapshot for each statement (RULES.md D29).
 
 use super::*;
 use crate::catalog::MemoryCatalog;

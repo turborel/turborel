@@ -230,7 +230,7 @@ fn totals_kept_are_recovered() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.35, §11.18 GR4, §21.1];
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.35, §11.18 SR4, §21.1];
 /// [DESIGN] RULES.md D51: the totals of an assertion are of no statement:
 /// not read, written, dropped nor listed in the Information Schema; they
 /// go with the assertion, so one made again of its name keeps its own.

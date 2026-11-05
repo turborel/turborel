@@ -6,10 +6,9 @@
 //! (`value::bucket`), made once as the plan is made: a row's value is
 //! looked for in its bucket, not compared with every value. A row's
 //! judgment is that of the OR [X3.135-1986 §5.13 GR2, §5.18 GR2]: true if
-//! the value equals one, as SQL compares them, a string padded with
-//! spaces [§5.11 GR5], numbers by algebraic value [GR4]; else unknown if
-//! it or one of the list is null [§5.11 GR2]; else false. Split from
-//! logical.rs (RULES.md R-SIZE-2).
+//! the value equals one, as SQL compares them, a string padded with spaces
+//! [§5.11 GR5], numbers by algebraic value [GR4]; else unknown if it or
+//! one of the list is null [§5.11 GR2]; else false.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};

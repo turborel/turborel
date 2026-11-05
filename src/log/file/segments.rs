@@ -1,6 +1,5 @@
 //! \[DESIGN\] A file log's segments begun, sealed and synced, a failed
-//! sync kept (RULES.md D25, D30): see the parent module. Split from
-//! file.rs (RULES.md R-SIZE-2).
+//! sync kept (RULES.md D25, D30): see the parent module.
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};

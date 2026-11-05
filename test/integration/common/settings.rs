@@ -1,6 +1,5 @@
 //! The settings hook of the tests' plug-ins (RULES.md D36): one for every
-//! kind of plug-in, so each declares and reads its settings alike. Split
-//! from common.rs (RULES.md R-SIZE-2).
+//! kind of plug-in, so each declares and reads its settings alike.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};

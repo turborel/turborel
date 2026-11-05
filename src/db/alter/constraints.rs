@@ -1,7 +1,6 @@
 //! \[EXTENSION\] A table constraint added [ISO/IEC 9075:1992 §11.16] or
 //! dropped [§11.17] by ALTER TABLE: its descriptor and, for a unique
 //! constraint, its index; the table's rows and storage stay as they are.
-//! Split from db/alter.rs (RULES.md R-SIZE-2).
 
 use std::sync::Arc;
 

@@ -1,13 +1,12 @@
 //! \[DESIGN\] The encodings a pager file's pages pass through (RULES.md D30,
 //! D48): a durable file's, the pipeline set as each page is written, which
 //! the page names by its ids (`named.rs`); a scratch file's, those a
-//! `LivePipeline` holds as each page is written,
-//! so a spill area made before a table is encrypted writes its pages
-//! encrypted from then on, those still in its pool among them. A scratch
-//! file's stored content begins with a byte naming which of the pipelines
-//! it was written through encoded it, the first the one its header names;
-//! nothing but the file's maker reads it, so they are kept in memory, at
-//! most `MAX_PIPELINES`. Split from pager.rs (RULES.md R-SIZE-2).
+//! `LivePipeline` holds as each page is written, so a spill area made before
+//! a table is encrypted writes its pages encrypted from then on, those still
+//! in its pool among them. A scratch file's stored content begins with a
+//! byte naming which of the pipelines it was written through encoded it, the
+//! first the one its header names; nothing but the file's maker reads it, so
+//! they are kept in memory, at most `MAX_PIPELINES`.
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};

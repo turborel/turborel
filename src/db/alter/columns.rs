@@ -1,6 +1,5 @@
 //! \[EXTENSION\] A table's descriptor with a column added [ISO/IEC
-//! 9075:1992 §11.11] or dropped [§11.15], with its constraints. Split from
-//! db/alter.rs (RULES.md R-SIZE-2).
+//! 9075:1992 §11.11] or dropped [§11.15], with its constraints.
 
 use std::sync::Arc;
 

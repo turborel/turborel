@@ -1,5 +1,5 @@
 //! MAX and MIN, the set functions that keep the best value of a group
-//! [X3.135-1986 §5.8]. Split from functions.rs (RULES.md R-SIZE-2).
+//! [X3.135-1986 §5.8].
 
 use super::{Accumulator, AggregateFunction, floats, ints};
 use crate::bytes::Reader;

@@ -1,28 +1,23 @@
 # Guide for coding agents
 
-How to work on turborel as a coding agent, whatever the tool. It points
-into the project's documents rather than repeating them: when this file
-and [RULES.md](RULES.md) or [CONTRIBUTING.md](CONTRIBUTING.md) differ,
-they win.
+How to work on turborel as a coding agent, with any tool. If this file
+disagrees with [RULES.md](RULES.md) or [CONTRIBUTING.md](CONTRIBUTING.md),
+follow those.
 
-## What turborel is
-
-A relational database system in Rust, queried in SQL: a library to embed,
-a server (`turboreld`), a client, and a command-line client (`turborel`).
-Its language is ANSI X3.135-1986 ("SQL-86") and ISO/IEC 9075:1992
-("SQL-92") read as one language where the newer wins (RULES.md D32),
-extended standard by standard through ISO/IEC 9075:2023 ("SQL:2023"),
-beside turborel's own extensions. See [README.md](README.md).
+turborel is a relational database in Rust, queried in SQL. It ships as a
+library, a server (`turboreld`), a client and a command-line client
+(`turborel`). See [README.md](README.md).
 
 ## Before you change anything
 
-- Read [RULES.md](RULES.md): §3 (code rules), §4 (test rules), §7
-  (process), and the decisions (§1) of the area you will change. Every
-  rule binds every change.
-- Read [CONTRIBUTING.md](CONTRIBUTING.md): how a change is made, commit
-  messages, and the extra checks for changes that touch data.
+Read RULES.md §3 (code), §4 (tests), §7 (process) and the §1 decisions for
+your area. Read CONTRIBUTING.md for how a change is made and the extra
+checks for changes that touch data.
 
 ## Build and check
+
+Every change must pass `cargo xtask verify --coverage` before it is handed
+back.
 
 ```
 cargo xtask verify               # every check a change must pass
@@ -39,217 +34,154 @@ cargo xtask simulate [--seeds N] [--from S] [--plan NAME] [--databases]
                                  # replication simulator sweeps longer than verify runs (D57)
 ```
 
-- **Every change must pass `cargo xtask verify --coverage`** before it is
-  handed back. `verify` stops at the first failure; it runs, in order:
-  `cargo fmt --all --check`; clippy on the workspace, all targets, with
-  `-D warnings`; the lint baseline counts; `cargo doc` with warnings as
-  errors; file length; traceability (`/// Verifies:`); citations (no
-  source cites the work list); unit and integration tests; doc tests.
-  `--coverage` then measures coverage (`xtask/src/coverage.rs`).
-- **Coverage floors** are in `xtask/src/baseline.rs`: regions 94.0 %,
-  lines 96.2 %. They only rise (R-COV-2); the report is at
-  `target/coverage/html/index.html`.
-- **The pre-commit hook** (`.githooks/pre-commit`) runs `cargo xtask
-  verify`; `cargo xtask install-hooks` sets `core.hooksPath` to
-  `.githooks`.
-- **CI** (`.github/workflows/verify.yml`) runs `verify` on Linux, macOS
-  and Windows, and coverage on Linux (D21).
-- **Benchmarks** (R-BENCH) run on `bench/harness.rs`, never in `verify`.
-  A performance claim cites `cargo xtask bench NAME --save before` on the
-  code before, then `--compare before` on the change (R-BENCH-2).
-- The toolchain is pinned in `rust-toolchain.toml` (D8, R-CM-1).
-- Project automation is Rust in `xtask/`, never shell scripts (D7,
-  R-TOOL-1).
+`verify` stops at the first failure. CI runs it on Linux, macOS and
+Windows, and coverage on Linux (D21). Coverage floors are in
+`xtask/src/baseline.rs` and only rise (R-COV-2).
+
+Benchmarks never run in `verify`. A performance claim cites
+`cargo xtask bench NAME --save before` on the old code, then
+`--compare before` on the change (R-BENCH-2).
+
+Project automation is Rust in `xtask/`, never shell scripts (D7, R-TOOL-1).
 
 ## Where things are
 
-Crates (D42, D46, D48, D57):
-
 | Path | Crate | What |
 |---|---|---|
-| `src/` | `turborel` | the core: the database as a library, std only |
-| `protocol/` | `turborel-protocol` | the native wire protocol's messages and codec, no I/O |
+| `src/` | `turborel` | the database as a library, std only |
+| `protocol/` | `turborel-protocol` | the wire protocol's messages and codec, no I/O |
 | `client/` | `turborel-client` | a blocking connection to a server |
 | `server/` | `turborel-server` | the server as a library, on tokio |
-| `turboreld/` | `turboreld` | the server's program: command line, signals |
+| `turboreld/` | `turboreld` | the server program |
 | `cli/` | `turborel-cli` | the command-line client `turborel` |
-| `lz4/` | `turborel-lz4` | LZ4 compression, an encoding plug-in |
-| `aes/` | `turborel-aes` | AES-256-GCM and ChaCha20-Poly1305 encryption, SHA-256, SHA-512 and HMAC-SHA-256 checksums: plug-ins |
-| `replication/` | `turborel-replication` | replication's extension points (`Consensus`, `Transport`, `StateTransfer`, `Journal`), Viewstamped Replication, the replicated `Log` and the `Driver`, std only |
+| `lz4/` | `turborel-lz4` | LZ4 compression plug-in |
+| `aes/` | `turborel-aes` | encryption and checksum plug-ins |
+| `replication/` | `turborel-replication` | Viewstamped Replication and its extension points, std only |
 | `support/` | `turborel-test-support` | fixtures the crates' tests share |
 | `xtask/` | `xtask` | the project's checks and tools |
 
-Tests and benchmarks: `test/integration/` (the core's one integration
-binary, `common.rs` its fixtures), `server/test/`, `turboreld/test/`,
-`cli/test/`, `bench/` (one file per benchmark, on `harness.rs`).
+Tests live in `test/integration/` (the core's one integration binary),
+`server/test/`, `turboreld/test/`, `cli/test/` and `replication/test/`.
+Benchmarks live in `bench/`, one file each, on `harness.rs`.
 
-The core, `src/`, in the order a statement meets it (each `foo.rs` with
-its submodules in `foo/`):
+`src/` modules, in the order a statement meets them. Each `foo.rs` keeps
+its submodules in `foo/`.
 
-- `lexer.rs`: tokens, identifiers and key words.
-- `parser.rs`: recursive descent, one method per BNF production.
-- `ast.rs`: the parsed form of statements.
-- `binder.rs`: the Syntax Rules that need the catalog; AST to logical plan.
-- `params.rs`: parameters of statements.
-- `logical.rs`: the logical plan, relational algebra.
-- `optimizer.rs`: rewrite rules over the logical plan (`Rule`).
-- `physical.rs`: the physical plan: access paths, joins, costs.
-- `stats.rs`: statistics for the planner.
-- `exec.rs`: execution of physical plans.
-- `spill.rs`: where operators past their work area put rows (`Spill`).
-- `db.rs`: the database, its extension points, sessions; `db/` holds
-  statements, definitions, checkpoints and recovery.
-- `txn.rs`: the transaction coordinator: locks, undo, commit.
-- `log.rs`: the write-ahead log (`Log`).
-- `catalog.rs`: schemas, tables, views, columns, indexes, privileges.
-- `system.rs`: system tables and the Information Schema.
-- `storage.rs`: the storage engine traits (`StorageEngine`, `TableStorage`).
-- `engine.rs`: the built-in row store.
-- `index.rs`: index methods (`IndexMethod`, `Index`): B-link tree, hash.
-- `disk.rs`: the storage foundation: file I/O, blocks, pages, buffer pool,
-  encodings.
-- `hash.rs`: hash functions (`HashFunction`).
-- `value.rs`: data types and values, arithmetic and comparison.
-- `functions.rs`: scalar and aggregate functions as plug-ins.
-- `settings.rs`: the settings registry (D36).
-- `memory.rs`: the memory budget (D38).
-- `diagnostics.rs`: typed events to a pluggable sink (D40).
-- `error.rs`: errors as SQLCODE and SQLSTATE.
-- `bytes.rs`: reading and writing the fields of stored formats.
-- `sync.rs`: locks on shared state, poisoning reported.
+| Module | What |
+|---|---|
+| `lexer.rs` | tokens, identifiers and key words |
+| `parser.rs` | recursive descent, one method per BNF production |
+| `ast.rs` | the parsed form of statements |
+| `binder.rs` | syntax rules that need the catalog, AST to logical plan |
+| `params.rs` | statement parameters |
+| `logical.rs` | the logical plan |
+| `optimizer.rs` | rewrite rules (`Rule`) |
+| `physical.rs` | access paths, joins, costs |
+| `stats.rs` | planner statistics |
+| `exec.rs` | execution of physical plans |
+| `spill.rs` | where operators past their work area put rows (`Spill`) |
+| `db.rs` | the database, extension points, sessions |
+| `txn.rs` | the transaction coordinator |
+| `log.rs` | the write-ahead log (`Log`) |
+| `catalog.rs` | schemas, tables, views, columns, indexes, privileges |
+| `system.rs` | system tables and the Information Schema |
+| `storage.rs` | storage engine traits (`StorageEngine`, `TableStorage`) |
+| `engine.rs` | the built-in engines |
+| `index.rs` | index methods (`IndexMethod`, `Index`) |
+| `disk.rs` | file I/O, blocks, pages, buffer pool, encodings |
+| `hash.rs` | hash functions (`HashFunction`) |
+| `value.rs` | data types, values, arithmetic, comparison |
+| `functions.rs` | scalar and aggregate functions |
+| `settings.rs` | the settings registry (D36) |
+| `memory.rs` | the memory budget (D38) |
+| `diagnostics.rs` | typed events to a pluggable sink (D40) |
+| `threads.rs` | the thread manager (D55) |
+| `files.rs` | the file manager (D56) |
+| `clock.rs` | the clock (D54) |
+| `error.rs` | errors as SQLCODE and SQLSTATE |
+| `bytes.rs` | reading and writing stored fields |
+| `sync.rs` | locks on shared state, poisoning reported |
 
-## Code rules that bite most often
+## Rules that are broken most often
 
-Lints are set in `Cargo.toml` and `clippy.toml`; `verify` makes every
-warning an error. The ones most often broken:
+`verify` treats every lint warning as an error. RULES.md §3 and §4 have
+the full list.
 
-- **No `unsafe`** (R-SAFE-1, `unsafe_code = "forbid"`).
-- **No panics in production code** (R-ERR-1): no `unwrap`, `expect`,
-  `panic!`, `unreachable!`, `todo!`, `unimplemented!`, indexing, slicing
-  or `process::exit`. Every failure is a `SqlError` with a SQLCODE, its
-  message beginning with the rule it breaks, or `[DESIGN]`/`[EXTENSION]`
-  (R-ERR-2). Test code may panic (R-TEST-4).
-- **No `as` on numbers** (R-NUM-2): `From`, `TryFrom` or a checked
-  helper. Integer arithmetic is `checked_*`, `wrapping_*`, `saturating_*`
-  or `overflowing_*` (R-NUM-1).
-- **No `_` arm in a `match` on an enum** (R-CF-3,
-  `wildcard_enum_match_arm`): list every variant.
-- **Avoid match guards**, and keep or-patterns at the root of a pattern
-  (R-CF-5): they hide conditions from MC/DC test design. A condition
-  never consumes input inside a match guard (R-DEV-5).
-- **Conditions have no side effects** (R-CF-4), at most 4 conditions to a
-  decision (R-CF-1); cognitive complexity at most 15, nesting at most 5
-  (R-CF-2).
-- **No shadowing of an unrelated binding** (R-STYLE-6, `shadow_unrelated`).
-- **Sizes** (R-SIZE): a function at most 50 lines of code, at most 5
-  parameters and at most 1 `bool` among them; a source file at most 600
-  lines (`cargo xtask file-length`). Split a file along the standard's
-  clauses or the pipeline's stages.
-- **Modules** are `foo.rs` with submodules in `foo/`, never `mod.rs`
-  (R-STYLE-4).
-- **No printing** in production code, no `dbg!` (R-STYLE-7).
-- **No magic numbers or strings** (R-CONST): a literal other than `0` or
-  `1`, or a string matched on, is a named `const` whose doc says where it
-  comes from.
-- **Docs:** every public item has a doc comment, with `# Errors` when it
-  returns `Result` (R-DOC-1); every file starts with a `//!` doc stating
-  its responsibility and clauses (R-DOC-6); comments say why (R-DOC-2);
-  no commented-out code, no `TODO` or `FIXME` comments (R-DOC-5).
-- **Deviations:** `#[expect(lint, reason = "...")]` citing the rule,
-  rather than `#[allow]` (R-DEV-1, R-DEV-4). A lint baseline never rises
-  (R-DEV-2).
-- **Dependencies:** none without a decision in RULES.md (R-SAFE-4, D3).
-- **Locks and borrows** are scoped, never held across a call into a
-  plug-in (R-ERR-4).
+- No `unsafe` (R-SAFE-1).
+- No panics in production code. That covers `unwrap`, `expect`, `panic!`,
+  `unreachable!`, `todo!`, `unimplemented!`, indexing, slicing and
+  `process::exit` (R-ERR-1).
+- Every failure is a `SqlError`, and its message begins with the rule it
+  breaks, `[DESIGN]` or `[EXTENSION]` (R-ERR-2).
+- No `as` on numbers (R-NUM-2). Integer arithmetic is `checked_*`,
+  `wrapping_*`, `saturating_*` or `overflowing_*` (R-NUM-1).
+- No `_` arm in a `match` on an enum (R-CF-3). Avoid match guards (R-CF-5).
+- Conditions have no side effects (R-CF-4) and at most 4 terms (R-CF-1).
+- Keep functions to 50 lines and 5 parameters, and files to 600 lines
+  (R-SIZE).
+- No magic numbers or strings (R-CONST).
+- Modules are `foo.rs` plus `foo/`, never `mod.rs` (R-STYLE-4).
+- No printing or `dbg!` in production code (R-STYLE-7).
+- Public items have doc comments, with `# Errors` when they return
+  `Result` (R-DOC-1). Files start with a `//!` doc (R-DOC-6).
+- Comments say why (R-DOC-2). No `TODO` comments or commented-out code
+  (R-DOC-5).
+- Use `#[expect(lint, reason = "...")]` citing the rule, not `#[allow]`
+  (R-DEV-1, R-DEV-4).
+- No new dependency without a decision in RULES.md (R-SAFE-4).
+- Don't hold a lock or borrow across a call into a plug-in (R-ERR-4).
+- Start threads only through `src/threads.rs` (D55, R-SAFE-5).
+- Weigh choices for many sessions on many threads, not just an embedded
+  program (D27, D42).
 
 ## Tests
 
-- Every test has a doc comment whose `/// Verifies:` paragraph starts
-  with one of the tags `cargo xtask verify` accepts (R-TRACE-1,
-  `xtask/src/trace.rs`): `[X3.135-1986 §…]`, `[EXTENSION]`, `[DESIGN]`
-  or `[TOOL] R-…`. A test of SQL-92 behaviour starts with one of these and
-  cites the clause after it, as the existing tests do:
-  `/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 GR2] ...`.
-- At the lowest level that shows the requirement (R-TEST-1), derived from
-  the requirement, with robustness cases expecting the exact SQLCODE
-  (R-TEST-2); MC/DC pairs named for decisions of two or more conditions
-  (R-TEST-8); a regression test for every defect fixed (R-TEST-7).
-- Deterministic: no clock, randomness or network beyond loopback
-  (R-TEST-5). Shared fixtures are written once, in `common.rs` or
-  `support/` (R-TEST-10); `#[test]` and no other framework.
+Every test has a `/// Verifies:` paragraph starting with a tag `verify`
+accepts (R-TRACE-1). The tags are `[X3.135-1986 §…]`, `[EXTENSION]`,
+`[DESIGN]` and `[TOOL] R-…`. A SQL-92 test starts with one of these and
+then cites its clause, for example
+`/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.34 GR2] ...`.
 
-## Citations of the standards
+Tests are deterministic, with no clock, randomness or network beyond
+loopback (R-TEST-5). Fixtures shared by modules go in `common.rs` or
+`support/` (R-TEST-10). A fixed defect gets a regression test (R-TEST-7).
 
-- Behaviour a standard governs cites it as printed (R-DOC-4):
-  `[X3.135-1986 §8.6 GR2]`, `[ISO/IEC 9075:1992 §11.19 SR13]`.
-- **Check every citation against the standard's text before writing it.
-  Never cite from memory.** The texts are kept locally, untracked
-  (`fipspub127.txt`, `sql1992.txt`, listed in `.gitignore`), and are
-  never committed.
-- Code never cites TODO.md (R-DOC-5); `verify` refuses it. Cite the
-  standards, RULES.md's decisions, or CONFORMANCE.md.
+## Citing the standards
 
-## SQL work
+Check every citation against the standard's text before writing it. Never
+cite from memory. The texts are kept locally (`fipspub127.txt`,
+`sql1992.txt`) and are never committed. Committed documents never say
+whether a standard's text is at hand.
 
-- Read the BNF of the production in the standard before writing code; the
-  parser has one method per production, named after it (R-STYLE-3).
-- A SQL extension the standards do not cover needs its BNF written, in the
-  standard's notation (as `src/parser/users.rs` gives for CREATE USER), and
-  the maintainer's agreement before it is built.
+Code never cites TODO.md, and `verify` refuses it (R-DOC-5).
+
+Read a production's BNF in the standard before writing code. A SQL
+extension the standards don't cover needs its BNF written in the standard's
+notation and the maintainer's agreement before it is built.
 
 ## Documents
 
-- [RULES.md](RULES.md): the decisions (D…) and the rules (R-…).
-- [CONFORMANCE.md](CONFORMANCE.md): what is implemented of the standards,
-  clause by clause, and the implementation-defined choices (R-DOC-7).
-- [TODO.md](TODO.md): open work. Finished work leaves it.
-- A finished feature is recorded in the same change: a decision in
-  RULES.md if it is one (its row in §1's table too), CONFORMANCE.md for a
-  clause implemented or changed (R-TRACE-3), and its item moved or removed
-  in TODO.md.
-- [doc/](doc/README.md): the manual, for users, operators and programs.
-  A change of anything they see (SQL, a message, a setting, an option, an
-  event, an API) updates each page that states it, in the same commit and
-  in the page's own format (R-DOC-8). Search `doc/` for what changed, a
-  statement's name, a message's text, a setting's name; check every claim
-  against the code; run every example as written and paste its output as
-  it now is. A new statement gets a page in `doc/sql/statements/`, of the
-  sections the others have, and a line in its README; a new setting a row
-  in Appendix C; a new SQLSTATE one in Appendix A.
-- Committed documents state what is; they never say whether a standard's
-  text is at hand, missing or to be acquired.
+A finished feature updates these in the same change:
 
-## Design stance
+- RULES.md, if it made a decision, including the row in §1's table
+- CONFORMANCE.md, for a clause implemented or changed (R-TRACE-3)
+- TODO.md, which only holds open work
+- [doc/](doc/README.md), for anything users or operators see (R-DOC-8)
 
-- **A multi-user server is the target.** Weigh every choice for many
-  sessions on many threads (D27, D42), not only for an embedded program.
-- **Pluggable.** Extension points are traits registered on `Database`
-  (`register_engine`, `register_index_method`, `set_log`, `set_spill`,
-  ...), listed at the top of `src/db.rs`; `dyn Trait` only there (R-SAFE-3).
-  A number an operator tunes is a setting (D36), named `GROUP.NAME` with
-  its unit.
-- **No thread but through the thread manager** (D55, R-SAFE-5): background
-  work is a job of `src/threads.rs`; the server's threads come from
-  `server/src/runtime.rs`. `verify` refuses a thread started elsewhere.
-- **Multiplatform.** A portable baseline everywhere; platform extras
-  `cfg`-gated, and refused clearly elsewhere (as Unix sockets are off
-  Unix, D42). Code compiled on one platform only is checked by CI there
-  (Windows, macOS, Linux), so it cannot be verified locally on another:
-  write it with care, and say so when handing it back.
+For the manual, search `doc/` for what changed, check each claim against
+the code, and run every example and paste its real output. A new statement
+gets a page in `doc/sql/statements/`, a new setting gets a row in Appendix
+C, and a new SQLSTATE gets a row in Appendix A.
 
-## Commits and staging
+## Commits
 
-- **Commit only when the maintainer asks.** Never on your own initiative,
-  and never push without the maintainer's approval.
-- A commit follows CONTRIBUTING.md's Linux form (`area: summary` in the
-  imperative, at most 75 characters; a body wrapped at 75 columns saying
-  the problem and why), one logical change, passing `verify` on its own.
-- **No AI or agent attribution** in a commit or a pull request: no
-  `Co-Authored-By` for an agent, no "Generated with", no `Signed-off-by`.
-  Contributors own their code (CONTRIBUTING.md, License).
-- **Stage with an explicit path list**, `git add -A -- <path> ...`, naming
-  every file and directory of the change (with `Cargo.lock` and a new
-  crate's directory when they change). Never `git add -A` or `git add .`
-  of the whole tree.
-- **Never stage `LICENSE`**: it is the maintainer's own. Never commit the
-  standards' texts or scratch files.
+- Commit only when the maintainer asks, and never push without approval.
+- Follow CONTRIBUTING.md's form, with one logical change per commit.
+- Add no AI or agent attribution to a commit or pull request. That means
+  no `Co-Authored-By` for an agent, no "Generated with" and no
+  `Signed-off-by`.
+- Stage with an explicit path list, `git add -A -- <path> ...`. Never use
+  `git add -A` or `git add .` on the whole tree.
+- Never stage `LICENSE`, the standards' texts or scratch files.
+- Code compiled for one platform only can't be verified locally on another.
+  Say so when handing it back.

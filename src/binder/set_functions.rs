@@ -1,7 +1,6 @@
 //! Checks on the syntax tree for the rules about set functions [X3.135-1986
 //! §5.8, §5.25; ISO/IEC 9075:1992 §6.5, §7.9]: which columns an expression
-//! names outside its set functions, and whether it calls one. Split from
-//! binder.rs (RULES.md R-SIZE-2).
+//! names outside its set functions, and whether it calls one.
 
 use super::Binder;
 use crate::ast::{ColumnSpecification, SetArg, ValueExpression};

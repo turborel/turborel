@@ -1,8 +1,7 @@
 //! Unit tests of the B-link index: probes of every operator with values of
 //! the column's type and not, many entries in key order, estimates, counts
 //! changed by threads at once, entries too long, and malformed entries,
-//! and the pages its probes miss (RULES.md R-TEST-1, R-TEST-2). Split from
-//! blink.rs (RULES.md R-SIZE-4).
+//! and the pages its probes miss (RULES.md R-TEST-1, R-TEST-2).
 
 use std::path::Path;
 use std::thread;

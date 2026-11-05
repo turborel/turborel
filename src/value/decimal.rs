@@ -1,6 +1,5 @@
 //! Exact numeric values [X3.135-1986 §4.2.2]: integer significant digits times
-//! 10^-scale, and their arithmetic [X3.135-1986 §5.9]. Split from value.rs
-//! (RULES.md R-SIZE-2).
+//! 10^-scale, and their arithmetic [X3.135-1986 §5.9].
 
 use std::cmp::Ordering;
 use std::fmt;

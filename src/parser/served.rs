@@ -13,8 +13,7 @@
 //!
 //! END and CONNECTION are `<reserved word>`s; CANCEL is not one, and stays
 //! a `<regular identifier>` everywhere else, matched as a word here alone
-//! (as the levels of isolation are, `parser/session.rs`). Split from
-//! parser.rs (RULES.md R-SIZE-2).
+//! (as the levels of isolation are, `parser/session.rs`).
 
 use super::Parser;
 use crate::ast::{ServedStatement, SqlStatement};

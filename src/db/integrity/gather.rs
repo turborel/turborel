@@ -4,7 +4,7 @@
 //! the foreign keys referencing a row deleted or re-keyed [§11.8 GR2], the
 //! rows of each UNIQUE constraint one after another [§11.7 GR2], each CHECK
 //! with a subquery of a table written [§11.6 GR3], and each assertion
-//! reading one [§11.34 GR2]. Split from integrity.rs (RULES.md R-SIZE-2).
+//! reading one [§11.34 GR2].
 
 use super::{Check, Effect, Effects};
 use crate::catalog::{ConstraintKind, QualifiedName, TableDesc};

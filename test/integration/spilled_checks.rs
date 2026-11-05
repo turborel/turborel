@@ -2,7 +2,7 @@
 //! constraints' checks at its end, and of the checks of deferred
 //! constraints, kept until they are made (RULES.md D38): held past
 //! MEMORY.WORK_BYTES in spill areas, every constraint's outcome as it is in
-//! memory. Split from spilling.rs (RULES.md R-SIZE-2).
+//! memory.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;

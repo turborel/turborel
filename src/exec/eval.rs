@@ -1,8 +1,7 @@
 //! Evaluation of bound expressions and conditions against a row: `<value
 //! expression>` [X3.135-1986 §5.9; ISO/IEC 9075:1992 §6.6-§6.11] and
 //! `<search condition>` with three-valued logic [X3.135-1986 §5.18; ISO/IEC
-//! 9075:1992 §8.12], the subqueries among them run by `Subqueries`. Split
-//! from exec.rs (RULES.md R-SIZE-2).
+//! 9075:1992 §8.12], the subqueries among them run by `Subqueries`.
 
 use super::{NoSubqueries, Subqueries, SubqueryRows, broken};
 use crate::catalog::MatchType;

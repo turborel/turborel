@@ -1,6 +1,6 @@
 //! \[DESIGN\] The shape of a linear hash table (`engine/hash.rs`): its
 //! level and split pointer, packed in one word so readers take it in one
-//! load. Split from hash.rs (RULES.md R-SIZE-2).
+//! load.
 
 /// Bits of the packed shape that hold the split pointer.
 const SPLIT_BITS: u32 = 56;

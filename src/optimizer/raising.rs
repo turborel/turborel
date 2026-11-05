@@ -1,7 +1,6 @@
 //! \[DESIGN\] Conditions that can raise an error moved into the operand of a
-//! product whose columns they read, each still evaluated on every row of
-//! the product it was (RULES.md D15). Split from optimizer.rs (RULES.md
-//! R-SIZE-2).
+//! product whose columns they read, each still evaluated on every row of the
+//! product it was (RULES.md D15).
 
 use std::sync::Arc;
 
