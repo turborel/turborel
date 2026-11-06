@@ -60,17 +60,19 @@ pub trait Ticker: Send + Sync {
     fn take(&self) -> u64;
 }
 
-/// \[EXTENSION\] Ticks of a real interval, from when they are made.
+/// \[EXTENSION\] Ticks of a real interval, from when they are first taken:
+/// the time a node takes to open is no silence from its primary, which
+/// could not reach it yet, so none of it counts toward a view timeout.
 pub struct Ticks {
     interval: Duration,
-    began: Instant,
-    taken: Mutex<u64>,
+    /// When they were first taken, and how many have been since.
+    taken: Mutex<Option<(Instant, u64)>>,
 }
 
 impl Ticks {
-    /// A tick every `interval`, from now.
+    /// A tick every `interval`, from when they are first taken.
     pub fn every(interval: Duration) -> Ticks {
-        Ticks { interval, began: Instant::now(), taken: Mutex::new(0) }
+        Ticks { interval, taken: Mutex::new(None) }
     }
 
     /// The interval between ticks.
@@ -81,9 +83,13 @@ impl Ticks {
 
 impl Ticker for Ticks {
     fn take(&self) -> u64 {
+        let mut state = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some((began, taken)) = &mut *state else {
+            *state = Some((Instant::now(), 0));
+            return 0;
+        };
         let nanos = self.interval.as_nanos().max(1);
-        let passed = u64::try_from(self.began.elapsed().as_nanos().checked_div(nanos).unwrap_or(0)).unwrap_or(u64::MAX);
-        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
+        let passed = u64::try_from(began.elapsed().as_nanos().checked_div(nanos).unwrap_or(0)).unwrap_or(u64::MAX);
         let due = passed.saturating_sub(*taken);
         *taken = passed.max(*taken);
         due

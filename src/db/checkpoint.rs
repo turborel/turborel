@@ -44,7 +44,9 @@
 //! image: recovery from it redoes and undoes what they already hold, which
 //! changes nothing, as both are idempotent. Readers do not take the gate,
 //! and go on throughout; writers wait for steps 1 and 2 only. Checkpoints
-//! take turns, for their whole lives. One is taken when asked
+//! take turns, for their whole lives, but for a close, which takes only
+//! the turn step 4 lets go: one in its sync then fails, the files closed
+//! under it. One is taken when asked
 //! (`Database::checkpoint`), when the database is closed, and when one
 //! comes due: when a transaction ends after CHECKPOINT.AFTER_CHANGES row
 //! changes were logged since the last taken (a failed one leaves them

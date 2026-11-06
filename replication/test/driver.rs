@@ -313,6 +313,11 @@ fn the_built_in_seams() {
 
     let ticks = Ticks::every(Duration::from_secs(3600_u64));
     assert_eq!((ticks.take(), ticks.interval()), (0_u64, Duration::from_secs(3600_u64)));
+    let opening = Ticks::every(Duration::from_nanos(1_u64));
+    std::thread::sleep(Duration::from_millis(1_u64));
+    assert_eq!(opening.take(), 0_u64, "the time before the first turn is no ticks");
+    std::thread::sleep(Duration::from_millis(1_u64));
+    assert!(opening.take() > 0_u64, "they count from it");
 
     let unwatched = Unwatched;
     unwatched.committed((Lsn(0_u64), Lsn(1_u64)), &[]);

@@ -12,7 +12,10 @@
 //! waiting, and may be lost: one that cannot be sent, the link down or
 //! its queue full, is dropped, as the contract allows, the consensus
 //! sending again what it needs. A link down is made again every few
-//! ticks (`RETRY_TICKS`), well within a view timeout.
+//! ticks (`RETRY_TICKS`), each attempt given as long, so both stay well
+//! within a view timeout. An attempt must not run longer: Windows sends a
+//! connection to a port nothing listens at again before it fails, about 2
+//! seconds, however soon the port opens.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
@@ -43,12 +46,11 @@ const MAX_FRAME: usize = 256 * 1024 * 1024;
 /// \[DESIGN\] Frames waiting for a link at most: past them, frames are
 /// dropped, as a lost frame is sent again by the consensus.
 const QUEUE: usize = 4096;
-/// \[DESIGN\] The ticks a link down waits before it is made again: well
-/// within a view timeout, so a link made again as the group starts is up
-/// before the backups give the primary up.
+/// \[DESIGN\] The ticks a link down waits before it is made again, and
+/// the ticks one attempt to connect has: together well within a view
+/// timeout, so a link made again as the group starts is up before the
+/// backups give the primary up.
 const RETRY_TICKS: u32 = 3;
-/// \[DESIGN\] How long a connection has to be made.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// \[DESIGN\] How long the link to a member removed by a reconfiguration
 /// is kept: leaving, it is told the epoch started, and asks until it is;
 /// then it serves nothing, and its link is let go.
@@ -366,9 +368,7 @@ impl TcpTransport {
     /// written.
     async fn connect(&self, address: &str) -> std::result::Result<Box<dyn Stream>, String> {
         let (host, port) = host_and_port(address).map_err(|e| e.to_string())?;
-        let connected = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), port))).await;
-        let stream =
-            connected.map_err(|_| format!("{address}: no answer within {CONNECT_TIMEOUT:?}"))?.map_err(|e| format!("{address}: {e}"))?;
+        let stream = within(self.retry, address, TcpStream::connect((host.as_str(), port))).await?;
         let mut stream: Box<dyn Stream> = match &self.security {
             Some(security) => {
                 let name = ServerName::try_from(host.clone()).map_err(|e| format!("{address}: {e}"))?;
@@ -476,4 +476,17 @@ impl Transport for TcpTransport {
         }
         Ok(())
     }
+}
+
+/// What `connecting` makes of a connection to `address`, given `attempt`
+/// to do so.
+pub(super) async fn within<T>(
+    attempt: Duration,
+    address: &str,
+    connecting: impl Future<Output = std::io::Result<T>>,
+) -> std::result::Result<T, String> {
+    tokio::time::timeout(attempt, connecting)
+        .await
+        .map_err(|_| format!("{address}: no answer within {attempt:?}"))?
+        .map_err(|e| format!("{address}: {e}"))
 }

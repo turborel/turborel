@@ -6,7 +6,7 @@ use turborel::error::Code;
 use turborel::value::{Decimal, Value};
 use turborel_replication::{ReplicaId, Transport};
 
-use super::net::{host_and_port, members_of};
+use super::net::{host_and_port, members_of, within};
 use super::prepare;
 use crate::settings::{self, MEMBERS, REPLICA, REPLICATION_CA, REPLICATION_TLS, TLS_CERTIFICATE, TLS_KEY};
 
@@ -70,4 +70,22 @@ fn a_node_is_refused_before_it_opens_if_its_settings_are_wrong() {
     let prepared = prepare(&db, std::path::Path::new("/db"), true).unwrap().unwrap();
     assert_eq!(prepared.transport.listen(), "localhost:7432");
     assert_eq!(Transport::members(&*prepared.transport), [ReplicaId(1), ReplicaId(2)]);
+}
+
+/// Verifies: [EXTENSION] RULES.md D57: an attempt to connect is given up
+/// when its time is out, however long the system would go on, so a link
+/// down is made again within a view timeout; a connection made or refused
+/// in time is told as it is. Without the limit, Windows's retries of a
+/// connection to a port not yet listening outlasted a view timeout, and a
+/// healthy primary was given up.
+#[test]
+fn an_attempt_to_connect_is_given_up_when_its_time_is_out() {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+    let attempt = std::time::Duration::from_millis(1);
+    let never = std::future::pending::<std::io::Result<()>>();
+    let late = runtime.block_on(within(attempt, "a:1", never)).unwrap_err();
+    assert!(late.contains("a:1: no answer within"), "{late}");
+    assert_eq!(runtime.block_on(within(attempt, "a:1", async { Ok(1_u8) })), Ok(1_u8));
+    let refused = std::io::Error::other("refused");
+    assert_eq!(runtime.block_on(within::<u8>(attempt, "a:1", async { Err(refused) })), Err("a:1: refused".to_owned()));
 }

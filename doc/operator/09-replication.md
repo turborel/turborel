@@ -25,7 +25,7 @@ the node's own, kept with no database:
 | REPLICATION.LISTEN | where this node listens for the others; its own member's host and port by default |
 | REPLICATION.CA | the PEM file of the authorities the members' certificates are verified against |
 | REPLICATION.TLS | ON: the members secure their frames by mutual TLS; OFF only on one machine |
-| REPLICATION.TICK_MS | the pace of the protocol's clock: heartbeats, and how soon a lost primary is given up |
+| REPLICATION.TICK_MS | the pace of the protocol's clock: heartbeats, and how soon a lost primary is given up. A node has three ticks to connect to another, so the ticks must outlast the time a connection takes between members |
 | REPLICATION.RETAIN_BYTES | how much of the group's log the node keeps before its last checkpoint, 256 MiB by default: a backup behind by less catches up from the log |
 
 Each node presents SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY to the

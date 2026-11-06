@@ -83,6 +83,17 @@ fn done_at(running: &Running, sql: &str) -> bool {
     })
 }
 
+/// What every node's diagnostics log told of its replica, for a test that
+/// fails to say why a view changed.
+fn told(scratch: &Scratch) -> String {
+    let mut lines = Vec::new();
+    for n in 1..=3 {
+        let log = std::fs::read_to_string(scratch.path(&format!("node{n}.log"))).unwrap_or_default();
+        lines.extend(log.lines().filter(|l| l.contains(r#""event":"replica""#)).map(|l| format!("node{n}: {l}")));
+    }
+    lines.join("\n")
+}
+
 /// The rows of `sql` at `running`, as `user`.
 fn rows_at(running: &Running, user: &str, sql: &str) -> Vec<String> {
     let mut c = connect(running, user);
@@ -120,8 +131,8 @@ fn programs_replicate_a_database() {
     for backup in &nodes[1..] {
         assert!(eventually(|| rows_at(backup, "X", "SELECT K FROM T ORDER BY K") == ["1", "2"]));
         let mut c = connect(backup, "X");
-        let refused = c.query("INSERT INTO T VALUES (9)").unwrap_err();
-        assert_eq!(refused.sqlcode, -917, "{refused}");
+        let refused = c.query("INSERT INTO T VALUES (9)").err().map(|e| e.sqlcode);
+        assert_eq!(refused, Some(-917), "a backup refuses a write; the replicas told:\n{}", told(&scratch));
         drop(c.terminate());
     }
     let shown = "SELECT MEMBER, IS_SELF, ROLE FROM INFORMATION_SCHEMA.REPLICAS ORDER BY MEMBER";
@@ -130,8 +141,7 @@ fn programs_replicate_a_database() {
         seen = rows_at(&nodes[0], "OWNER", shown);
         seen == ["1,YES,PRIMARY", "2,NO,BACKUP", "3,NO,BACKUP"]
     });
-    let told = || std::fs::read_to_string(scratch.path("node1.log")).unwrap_or_default();
-    assert!(agreed, "the owner made as it served; seen {seen:?}; the first node's log:\n{}", told());
+    assert!(agreed, "the owner made as it served; seen {seen:?}; the replicas told:\n{}", told(&scratch));
 
     let (_, stop, thread) = nodes.remove(0);
     stop.send(()).unwrap();
