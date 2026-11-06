@@ -5,7 +5,7 @@
 
 use super::{NoSubqueries, Subqueries, SubqueryRows, broken};
 use crate::catalog::MatchType;
-use crate::error::{Code, Result, SqlState, Warnings, fail, fail_with};
+use crate::error::{Code, Result, SqlError, SqlState, Subject, Warnings, fail, fail_with};
 use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
@@ -97,10 +97,8 @@ fn checked(v: Value, d: &DomainChecks, subqueries: &dyn Subqueries) -> Result<Va
     let row = vec![v];
     for (name, cond) in &d.checks {
         if eval_cond(cond, &row, subqueries)? == Truth::False {
-            return fail(
-                Code::Constraint,
-                format!("[ISO/IEC 9075:1992 §6.10 GR13] CHECK {name} of domain {} is false for a value CAST to it", d.domain),
-            );
+            let msg = format!("[ISO/IEC 9075:1992 §6.10 GR13] CHECK {name} of domain {} is false for a value CAST to it", d.domain);
+            return Err(SqlError::new(Code::Constraint, msg).about(Subject::domain_constraint(name.parts())));
         }
     }
     Ok(row.into_iter().next().unwrap_or(Value::Null))

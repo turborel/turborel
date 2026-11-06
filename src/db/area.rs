@@ -4,8 +4,8 @@
 //! Every statement but GET DIAGNOSTICS empties the area as it begins, and
 //! places its condition there as it ends: the one its SQLCODE and SQLSTATE
 //! report, successful completion too [§4.18], so the area holds one
-//! condition after each statement, none before the session's first. A
-//! statement raises no other: MORE is always N. What the condition is
+//! condition after each statement, none before the session's first.
+//! Another it raised is left out, and MORE says so. What the condition is
 //! about, a constraint, table, column or cursor, is what its error names
 //! (`error::Subject`).
 //!
@@ -18,7 +18,7 @@ use super::assignment::{assign_targets, declared_type};
 use super::{Completion, Session, State, rule};
 use crate::ast::{ConditionItem, GetDiagnostics, ParameterSpecification, StatementItem, ValueSpecification};
 use crate::binder;
-use crate::catalog::{QualifiedName, applicable};
+use crate::catalog::{QualifiedName, applicable, owner_of};
 use crate::error::{Code, Result, SqlState, Subject, fail_with};
 use crate::lexer::kw;
 use crate::params::Params;
@@ -36,6 +36,11 @@ const DECLARED_CATALOG: &str = " ";
 const STANDARD: &str = "ISO 9075";
 /// [ISO/IEC 9075:1992 §22.1, Table 23] The class of a warning.
 const WARNING_CLASS: &str = "01";
+/// [ISO/IEC 9075:1992 §4.30, §12.3 GR6c i, §18.1 GR3n ii] The connection a
+/// session is on, and its server, by the word that stands for them in the
+/// CONNECT TO DEFAULT it effectively ran: only a host program reads this
+/// area, its session in the process, on no named connection.
+const DEFAULT_CONNECTION: &str = kw::DEFAULT;
 
 /// \[DESIGN\] [ISO/IEC 9075:1992 §4.19] What the last statement but GET
 /// DIAGNOSTICS raised.
@@ -51,6 +56,11 @@ pub(super) struct Area {
     row_count: usize,
     /// Its condition, once it ended.
     condition: Option<Condition>,
+    /// The warning taken as it ended, kept to see if its condition is
+    /// another.
+    heard: Option<SqlState>,
+    /// [§18.1 GR1b] Whether it raised a condition not stored.
+    more: bool,
 }
 
 /// A condition placed in the area.
@@ -70,12 +80,15 @@ impl Session {
     pub(super) fn emptied(&self, (command, dynamic): (&'static str, &'static str)) {
         self.inner.borrow_mut().area = Area { command, dynamic, ..Area::default() };
         self.stop.warnings().take();
+        self.stop.warnings().take_left_out();
     }
 
     /// [ISO/IEC 9075:1992 §3.3.4.1] The warning the statement raised as it
     /// ran, if it raised one: the first, taken.
     pub(super) fn raised(&self) -> Option<SqlState> {
-        self.stop.warnings().take()
+        let raised = self.stop.warnings().take();
+        self.inner.borrow_mut().area.heard = raised;
+        raised
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §4.19] The warning the last
@@ -101,7 +114,14 @@ impl Session {
             Ok(done) => Condition { state: state(done), message: String::new(), subject: Subject::default() },
             Err(e) => Condition { state: e.sqlstate(), message: e.described(), subject: e.subject.as_deref().cloned().unwrap_or_default() },
         };
-        self.inner.borrow_mut().area.condition = Some(condition);
+        let warnings = self.stop.warnings();
+        let unheard = warnings.take();
+        let left_out = warnings.take_left_out();
+        let area = &mut self.inner.borrow_mut().area;
+        // [§18.1 GR1b] an exception, or another warning, in its place.
+        let replaced = area.heard.take().or(unheard).is_some_and(|w| w != condition.state);
+        area.more |= left_out || replaced;
+        area.condition = Some(condition);
         outcome
     }
 
@@ -128,7 +148,7 @@ impl Session {
             GetDiagnostics::Statement(items) => {
                 let value = |item: StatementItem| match item {
                     StatementItem::Number => number(count),
-                    StatementItem::More => text("N"),
+                    StatementItem::More => text(if area.more { "Y" } else { "N" }),
                     StatementItem::CommandFunction => text(area.command),
                     StatementItem::DynamicFunction => text(area.dynamic),
                     StatementItem::RowCount => number(area.row_count),
@@ -164,9 +184,15 @@ impl Session {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
             access || !applicable(&*st.catalog, &self.auth(), &name).0.is_empty()
         };
-        let Subject { constraint, table, column, cursor } = &condition.subject;
+        let Subject { constraint, table, column, cursor, assertion } = &condition.subject;
+        let named = table.is_some();
         let table = table.clone().filter(visible);
-        let constraint = constraint.clone().filter(|_| table.is_some());
+        // [GR3j iii] a table constraint goes with its table; [GR3j iv] an
+        // assertion is shown to its schema's owner.
+        let shown_constraint = |(schema, _): &(String, String)| {
+            if *assertion { owner_of(&*st.catalog, schema) == *self.auth() } else { !named || table.is_some() }
+        };
+        let constraint = constraint.clone().filter(shown_constraint);
         Shown { catalog, constraint, column: column.clone().filter(|_| table.is_some()), table, cursor: cursor.clone() }
     }
 }
@@ -183,8 +209,7 @@ struct Shown {
 impl Shown {
     /// [ISO/IEC 9075:1992 §18.1 GR3] The value of `item` for condition
     /// `n`, `condition`: a zero-length string for a name it has not
-    /// \[GR3o\], and for a server's and connection's, there being no SQL
-    /// connections \[GR3n\].
+    /// \[GR3o\].
     fn value(&self, item: ConditionItem, (n, condition): (i128, &Condition)) -> Value {
         // [GR3f ii, GR3g i] <space>s, one, for a declared local temporary
         // table's, in no catalog.
@@ -199,7 +224,7 @@ impl Shown {
             ConditionItem::ConditionNumber => Value::Exact(Decimal::new(n, 0)),
             ConditionItem::ReturnedSqlstate => text(condition.state.as_str()),
             ConditionItem::ClassOrigin | ConditionItem::SubclassOrigin => text(origin),
-            ConditionItem::ServerName | ConditionItem::ConnectionName => text(""),
+            ConditionItem::ServerName | ConditionItem::ConnectionName => text(DEFAULT_CONNECTION),
             ConditionItem::ConstraintCatalog => catalog_of(&self.constraint),
             ConditionItem::ConstraintSchema => schema_of(&self.constraint),
             ConditionItem::ConstraintName => name_of(&self.constraint),

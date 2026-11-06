@@ -119,8 +119,8 @@ impl State {
     /// their grant option alone, gone; with CASCADE, what that abandons
     /// [SR7–SR17] gone too: the grants of those left with no grant option,
     /// and the views, CHECKs, domain constraints and assertions of those
-    /// left with no USAGE that CAST to it. A warning if `auth` granted none
-    /// of them it [GR8, GR9].
+    /// left with no USAGE that CAST to it. A warning if `auth` granted it
+    /// to one it names not [GR8, GR9].
     ///
     /// # Errors
     ///
@@ -130,7 +130,8 @@ impl State {
         usage_alone(r.actions.as_deref())?;
         let (mut domain, owner) = self.domain_named(&qualify(&r.table, schema))?;
         let named = |u: &UsageDesc| u.grantor == auth && r.grantees.contains(&u.grantee);
-        let warned = !domain.usage.iter().any(named);
+        let granted = |grantee: &_| domain.usage.iter().any(|u| u.grantor == auth && u.grantee == *grantee);
+        let warned = !r.grantees.iter().all(granted);
         let before = domain.usage.clone();
         if r.grant_option_for {
             domain.usage.iter_mut().filter(|u| named(u)).for_each(|u| u.grantable = false);

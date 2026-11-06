@@ -42,8 +42,8 @@ use crate::txn::{LockMode, Txn};
 /// [ISO/IEC 9075:1992 §11.34 GR2] Assertion `name` is false (SQLCODE -201,
 /// SQLSTATE 23000), about it.
 fn broken(name: &QualifiedName) -> SqlError {
-    let subject = Subject { constraint: Some(name.parts()), ..Subject::default() };
-    SqlError::new(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.34 GR2] assertion {name} is false")).about(subject)
+    SqlError::new(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.34 GR2] assertion {name} is false"))
+        .about(Subject::assertion(name.parts()))
 }
 
 impl State {

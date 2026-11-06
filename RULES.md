@@ -377,7 +377,7 @@ of each constraint as a table CHECK with VALUE the column [ISO/IEC
 logged, so this needs no new machinery. The Information Schema shows the
 domain's constraint and not the copies. DROP DOMAIN CASCADE leaves the
 copies as table constraints [§11.27 GR1c]. CAST to a domain needs USAGE
-and checks no constraint [§6.10].
+and checks its constraints [§6.10 GR13].
 
 #### D51. An assertion is a query whose rows break it
 
@@ -784,8 +784,10 @@ nothing commits at its snapshot, unchecked.
 Below SERIALIZABLE [ISO/IEC 9075:1992 §4.28, §14.1 GR5], a transaction
 reads at one snapshot (REPEATABLE READ) or a new one per statement (READ
 COMMITTED, and READ UNCOMMITTED, which reads nothing uncommitted). Write
-skew commits, but lost updates are refused, and constraint checks stay
-serializable. An engine that ignores `TableStorage::read_mode` reads as
+skew commits, and constraint checks stay serializable. An update one
+statement bases on what it read is never lost. At the per-statement levels,
+a value read by one statement and written back by a later one can overwrite
+a change committed between them. An engine that ignores `TableStorage::read_mode` reads as
 SERIALIZABLE.
 
 The coordinator's table locks (D28) remain for engines that leave

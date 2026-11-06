@@ -178,10 +178,10 @@ impl State {
         if let Some(rows) = &mut associated
             && done.rule == ReferentialAction::Cascade
         {
-            self.check_cascade(tx, (fk, change.parent), (rows, effects), (&done.key, done.new_key.as_deref()))?;
+            self.check_cascade(tx, (done.name, child, fk, change.parent), (rows, effects), (&done.key, done.new_key.as_deref()))?;
         }
         let (next, columns) = acted((fk, done.rule, &done.defaults), &row, (change.old, done.new_key.as_deref(), updated));
-        acting.give((child, row_id), &next, &columns)?;
+        acting.give((done.name, child, row_id), &next, &columns)?;
         self.update_row(tx, child, row_id, &next)?;
         effects.updated(child, row_id, row, &columns)
     }
@@ -194,7 +194,7 @@ impl State {
     fn check_cascade(
         &self,
         tx: &Txn,
-        (fk, parent): (&ForeignKey, &QualifiedName),
+        (name, child, fk, parent): (&QualifiedName, &QualifiedName, &ForeignKey, &QualifiedName),
         (associated, effects): (&mut HeldRows<RowId>, &mut Effects<'_>),
         (key, new): (&[Value], Option<&[Value]>),
     ) -> Result<()> {
@@ -221,7 +221,7 @@ impl State {
                 format!("[ISO/IEC 9075:1992 §11.8 GR6b i] rows of {parent} a row matched are updated to distinct values"),
             )
             .with_state(SqlState::TRIGGERED_DATA_CHANGE_VIOLATION)
-            .about(Subject::table(parent.parts())))
+            .about(Subject::constraint(name.parts(), child.parts())))
         })
     }
 }
@@ -279,9 +279,9 @@ impl Acting {
     }
 
     /// [§11.8 GR7] Records the values `row` gives `columns` of row `id` of
-    /// `table`: refused if one was given another, distinct, before in the
-    /// statement.
-    fn give(&mut self, (table, id): (&QualifiedName, RowId), row: &Row, columns: &[usize]) -> Result<()> {
+    /// `table`, by its foreign key `name`: refused if one was given another,
+    /// distinct, before in the statement.
+    fn give(&mut self, (name, table, id): (&QualifiedName, &QualifiedName, RowId), row: &Row, columns: &[usize]) -> Result<()> {
         for &c in columns {
             let given = row.get(c).unwrap_or(&Value::Null);
             let at = given_key(table, id, c);
@@ -293,7 +293,7 @@ impl Acting {
                     format!("[ISO/IEC 9075:1992 §11.8 GR7] a column of a row of {table} is given two distinct values in one statement"),
                 )
                 .with_state(SqlState::TRIGGERED_DATA_CHANGE_VIOLATION)
-                .about(Subject::table(table.parts())));
+                .about(Subject::constraint(name.parts(), table.parts())));
             }
             self.given.insert(&at, &value_record(given))?;
         }

@@ -5,14 +5,15 @@
 use std::sync::Arc;
 
 use super::datetime::shown;
+use super::expression::dynamic_of;
 use super::{Binder, Scope, rule};
 use crate::ast::{RowValue, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::{Cond, Expr};
-use crate::value::datetime::{Datetime, Field, MAX_DISPLACEMENT, MIN_DISPLACEMENT};
+use crate::value::datetime::{Datetime, Field, MAX_DISPLACEMENT, MAX_TIME_PRECISION, MIN_DISPLACEMENT};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, difference, minutes};
-use crate::value::{ArithOp, CompOp, DataType, Value};
+use crate::value::{ArithOp, CompOp, DataType, MAX_EXACT_PRECISION, Spelled, Value};
 
 /// The qualifier of `t`, if an interval type.
 fn qualifier(t: &DataType) -> Option<Qualifier> {
@@ -173,27 +174,53 @@ fn overlap((s1, t1): (&Expr, &Expr), (s2, t2): (&Expr, &Expr)) -> Cond {
     or(or(after(s1, s2, t1, t2), after(s2, s1, t2, t1)), same)
 }
 
+/// [ISO/IEC 9075:1992 §17.6 GR5f-h] The type of a `?` operand of `op` beside
+/// one of type `other`, `first` if it stands first. Beside a datetime it
+/// adds to, an interval of the longest fields \[GR5f\]; after an interval it
+/// multiplies or divides, the longest whole number \[GR5g\]; else `other`'s
+/// \[GR5h\].
+pub(super) fn assumed(op: ArithOp, other: DataType, first: bool) -> DataType {
+    let added = op == ArithOp::Add || (op == ArithOp::Sub && !first);
+    if other.is_datetime() && added {
+        let fraction = if other == DataType::Date { 0 } else { MAX_TIME_PRECISION };
+        let (start, end) = if other == DataType::Date { (Field::Year, Field::Month) } else { (Field::Day, Field::Second) };
+        return DataType::Interval(Qualifier::new(start, end, MAX_LEADING_PRECISION, fraction));
+    }
+    if qualifier(&other).is_some() && !first && matches!(op, ArithOp::Mul | ArithOp::Div) {
+        return DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+    }
+    other
+}
+
 impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §6.14, §6.15] `a` `op` `b`, of types `ta` and
     /// `tb`, one a datetime or an interval: a datetime plus or minus an
     /// interval of its fields, or an interval plus a datetime, a datetime
     /// \[§6.14 SR3\]; two intervals of one class added or subtracted, of the
     /// fields of both \[§6.15 SR3c, SR4\]; an interval times or divided by a
-    /// number, or a number times one, an interval.
+    /// number, or a number times one, an interval. A `?` beside a TIME, if
+    /// `dynamic`, is the interval §17.6 GR5f gives it, of DAY though a time
+    /// has none: days do not move a time of day.
     ///
     /// # Errors
     ///
     /// SQLCODE -103 for any other.
-    pub(super) fn temporal(&self, (a, ta): (Expr, DataType), op: ArithOp, (b, tb): (Expr, DataType)) -> Result<(Expr, DataType)> {
+    pub(super) fn temporal(
+        &self,
+        (a, ta): (Expr, DataType),
+        op: ArithOp,
+        (b, tb): (Expr, DataType),
+        dynamic: bool,
+    ) -> Result<(Expr, DataType)> {
         let additive = matches!(op, ArithOp::Add | ArithOp::Sub);
         let arith = |x: Expr, y: Expr| Expr::Arith(Box::new(x), op, Box::new(y));
         if ta.is_datetime() && additive {
             let q = qualifier(&tb).ok_or_else(|| not_interval(&tb))?;
-            return if fits(&ta, q) { Ok((arith(shown(a, ta, self.now), b), ta)) } else { Err(not_added(&ta, q)) };
+            return if dynamic || fits(&ta, q) { Ok((arith(shown(a, ta, self.now), b), ta)) } else { Err(not_added(&ta, q)) };
         }
         if tb.is_datetime() && op == ArithOp::Add {
             let q = qualifier(&ta).ok_or_else(|| not_interval(&ta))?;
-            return if fits(&tb, q) { Ok((arith(a, shown(b, tb, self.now)), tb)) } else { Err(not_added(&tb, q)) };
+            return if dynamic || fits(&tb, q) { Ok((arith(a, shown(b, tb, self.now)), tb)) } else { Err(not_added(&tb, q)) };
         }
         let refused = || rule(format!("[ISO/IEC 9075:1992 §6.14, §6.15] {ta} {} {tb} is no datetime or interval arithmetic", op.symbol()));
         let number = |t: &DataType| t.is_numeric();
@@ -266,8 +293,24 @@ impl Binder<'_> {
     /// \[SR1\], each a datetime, the two comparable \[SR2\], then a datetime
     /// comparable with it or an interval of its fields \[SR3\].
     pub(super) fn overlaps(&self, left: &RowValue, right: &RowValue, scope: Scope<'_>) -> Result<Cond> {
-        let (d1, e1, type1) = self.period(left, scope)?;
-        let (d2, e2, type2) = self.period(right, scope)?;
+        // [ISO/IEC 9075:1992 §17.6 GR5n] a `?` beginning a period takes the
+        // other's type, or if both do, TIMESTAMP WITH TIME ZONE.
+        let dynamic = |row: &RowValue| row.first().is_some_and(|e| dynamic_of(e).is_some());
+        let ((d1, e1, type1), (d2, e2, type2)) = match (dynamic(left), dynamic(right)) {
+            (true, false) => {
+                let later = self.period(right, None, scope)?;
+                (self.period(left, Some(later.2), scope)?, later)
+            }
+            (false, true) => {
+                let earlier = self.period(left, None, scope)?;
+                let later = self.period(right, Some(earlier.2), scope)?;
+                (earlier, later)
+            }
+            (both, _) => {
+                let zoned = both.then_some(DataType::Timestamp { precision: MAX_TIME_PRECISION, zoned: true });
+                (self.period(left, zoned, scope)?, self.period(right, zoned, scope)?)
+            }
+        };
         if !type1.comparable(&type2) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §8.11 SR2] {type1} and {type2} are not comparable")));
         }
@@ -276,13 +319,13 @@ impl Binder<'_> {
     }
 
     /// [ISO/IEC 9075:1992 §8.11 SR1-SR3, GR2, GR4] A period of OVERLAPS:
-    /// its start, its end, the start plus an interval if one is given, and
-    /// its type.
-    fn period(&self, row: &RowValue, scope: Scope<'_>) -> Result<(Expr, Expr, DataType)> {
+    /// its start, a `?` taking the type `taken`, if any; its end, the start
+    /// plus an interval if one is given; and its type.
+    fn period(&self, row: &RowValue, taken: Option<DataType>, scope: Scope<'_>) -> Result<(Expr, Expr, DataType)> {
         let [first, second] = row.as_slice() else {
             return Err(rule(format!("[ISO/IEC 9075:1992 §8.11 SR1] a period of OVERLAPS has two values, not {}", row.len())));
         };
-        let (d, td) = self.value_expression(first, scope)?;
+        let (d, td) = self.typed_by(first, taken, scope)?;
         if !td.is_datetime() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §8.11 SR2] a period begins with a datetime, not {td}")));
         }

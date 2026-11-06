@@ -160,7 +160,7 @@ fn counts_survive_threads() {
 /// is reported with SQLCODE -916.
 #[test]
 fn long_and_malformed_entries_are_refused() {
-    let most = index(&[MONEY]).tree.max_entry();
+    let most = index(&[MONEY]).tree.max_key();
     let length = u32::try_from(most).unwrap();
     let index = index(&[DataType::Character { length }]);
     let long = Key(vec![Value::Char("x".repeat(most))]);
@@ -175,6 +175,26 @@ fn long_and_malformed_entries_are_refused() {
     assert_eq!(numbers.insert(Key(vec![exact(1, 0)]), 5).err().map(|e| e.code), Some(Code::Corrupt), "a count of two bytes");
     assert_eq!(numbers.remove(&Key(vec![exact(1, 0)]), 5).err().map(|e| e.code), Some(Code::Corrupt));
     assert_eq!(numbers.rows(&Key(vec![Value::Char("a".into())])).err().map(|e| e.code), Some(Code::Api), "a key of another type");
+}
+
+/// Verifies: [DESIGN] CONFORMANCE.md, Limits: an entry an index takes
+/// fits its tree, and one past the longest it takes is SQLCODE -900, the
+/// tree counting a value as 8 bytes never refusing what the index took.
+#[test]
+fn the_longest_entry_fits_its_tree() {
+    let most = index(&[MONEY]).tree.max_key();
+    let (mut taken, mut refused) = (false, false);
+    for length in most.saturating_sub(16)..most {
+        let index = index(&[DataType::Character { length: u32::try_from(length).unwrap() }]);
+        match index.insert(Key(vec![Value::Char("x".into())]), 1) {
+            Ok(()) => taken = true,
+            Err(e) => {
+                assert_eq!(e.code, Code::Unsupported, "of {length} characters");
+                refused = true;
+            }
+        }
+    }
+    assert!(taken && refused);
 }
 
 /// Verifies: [EXTENSION] the method: "btree", ordered, every operator but

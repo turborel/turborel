@@ -96,7 +96,8 @@ fn statement_information_18_1() {
 /// GR3k–GR3o] successful completion is a condition, of SQLSTATE 00000 and
 /// no message; an exception gives its SQLSTATE, its message and its
 /// lengths; the standard's classes are of ISO 9075, this
-/// implementation's of TURBOREL; there is no server or connection name.
+/// implementation's of TURBOREL; a session's server and connection are
+/// the default ones it effectively connected to.
 #[test]
 fn condition_information_18_1() {
     let db = diagnosed();
@@ -106,7 +107,7 @@ fn condition_information_18_1() {
     assert_eq!(condition(&a, "RETURNED_SQLSTATE"), "00000");
     assert_eq!((condition(&a, "CLASS_ORIGIN"), condition(&a, "SUBCLASS_ORIGIN")), ("ISO 9075".into(), "ISO 9075".into()));
     assert_eq!((condition(&a, "MESSAGE_TEXT"), condition(&a, "MESSAGE_LENGTH")), (String::new(), "0".into()));
-    assert_eq!((condition(&a, "SERVER_NAME"), condition(&a, "CONNECTION_NAME")), (String::new(), String::new()));
+    assert_eq!((condition(&a, "SERVER_NAME"), condition(&a, "CONNECTION_NAME")), ("DEFAULT".into(), "DEFAULT".into()));
     let failed = a.run("INSERT INTO T VALUES (8, 'Ü'), (8, 'H')").unwrap_err();
     assert_eq!(condition(&a, "RETURNED_SQLSTATE"), "23000");
     let message = failed.described();
@@ -147,6 +148,99 @@ fn what_a_condition_names_18_1() {
     assert_eq!(refused.code, Code::Constraint, "C references it: {refused:?}");
     assert_eq!(condition(&p, "RETURNED_SQLSTATE"), "23000");
     assert_eq!(given(&p), ["", "", "", "", "", ""], "P holds no privilege on C");
+}
+
+/// Schema A of `diagnosed`, with U, read by assertion FEW with T, of at
+/// most four rows between them; and domain PLUS, of a constraint ABOVE. P
+/// may insert into and read U, and CAST to PLUS.
+fn asserted() -> Database {
+    let db = diagnosed();
+    let a = db.session("A");
+    for sql in [
+        "CREATE TABLE U (K INTEGER)",
+        "GRANT SELECT, INSERT ON U TO P",
+        "CREATE DOMAIN PLUS AS INTEGER CONSTRAINT ABOVE CHECK (VALUE > 0)",
+        "GRANT USAGE ON DOMAIN PLUS TO P",
+        "CREATE ASSERTION FEW CHECK ((SELECT COUNT(*) FROM T) + (SELECT COUNT(*) FROM U) < 5)",
+    ] {
+        a.run(sql).unwrap();
+    }
+    a.commit().unwrap();
+    db
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 GR3f i, GR3f ii 2,
+/// GR3j iv] an assertion broken is named, with the one table the
+/// statement modified of those it reads; to another than its schema's
+/// owner it is not named, its table being.
+#[test]
+fn an_assertion_broken_is_named_18_1() {
+    let db = asserted();
+    let names = ["CONSTRAINT_CATALOG", "CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "TABLE_NAME"];
+    let given = |s: &Session| names.map(|item| condition(s, item));
+    let a = db.session("A");
+    assert!(a.run("INSERT INTO U VALUES (1), (2)").is_err());
+    assert_eq!(condition(&a, "RETURNED_SQLSTATE"), "23000");
+    assert_eq!(given(&a), ["TURBOREL", "A", "FEW", "U"]);
+    a.rollback().unwrap();
+    let p = db.session("P");
+    assert!(p.run("INSERT INTO A.U VALUES (1), (2)").is_err());
+    assert_eq!(given(&p), ["", "", "", "U"], "P owns no schema of it");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 GR3f i, GR3j iii, §6.10
+/// GR13] a domain constraint a CAST breaks is named, a domain's being no
+/// table constraint: to anyone, of no table.
+#[test]
+fn a_domain_constraint_broken_is_named_18_1() {
+    let db = asserted();
+    let names = ["CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "TABLE_NAME"];
+    let p = db.session("P");
+    assert!(p.run("INSERT INTO A.U VALUES (CAST(0 AS A.PLUS))").is_err());
+    assert_eq!(condition(&p, "RETURNED_SQLSTATE"), "23000");
+    assert_eq!(names.map(|item| condition(&p, item)), ["A", "ABOVE", ""]);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 GR3f, §11.8 GR7] a
+/// triggered data change violation names the foreign key and its table.
+#[test]
+fn a_triggered_data_change_violation_is_named_18_1() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE T (K INTEGER PRIMARY KEY, UP INTEGER CONSTRAINT LINK REFERENCES T ON UPDATE CASCADE)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES (1, NULL)").unwrap();
+    a.run("INSERT INTO T VALUES (2, 1)").unwrap();
+    assert!(a.run("UPDATE T SET K = K + 10, UP = 1").is_err());
+    assert_eq!(condition(&a, "RETURNED_SQLSTATE"), "27000");
+    assert_eq!(["CONSTRAINT_NAME", "TABLE_NAME"].map(|item| condition(&a, item)), ["LINK", "T"]);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 GR1b, §3.3.4.1] MORE is Y
+/// when a statement raised a condition the area does not hold: a second
+/// warning, or a warning an exception took the place of; N when one
+/// warning was raised, for however many rows, or none.
+#[test]
+fn more_says_a_condition_was_left_out_18_1() {
+    let db = diagnosed();
+    let a = db.session("A");
+    a.run("CREATE TABLE E (Z INTEGER)").unwrap();
+    a.run("INSERT INTO E VALUES (NULL), (1)").unwrap();
+    a.run("UPDATE T SET N = 'A'").unwrap();
+    assert_eq!(statement(&a, "MORE"), "N");
+    let cut = "CAST('LONG' AS CHAR(2))";
+    assert_eq!(a.run(&format!("UPDATE T SET N = {cut}")).unwrap().sqlstate().as_str(), "01004", "each of 3 rows");
+    assert_eq!(statement(&a, "MORE"), "N", "one condition");
+    let two = format!("UPDATE T SET N = {cut} WHERE K = (SELECT MAX(Z) FROM E)");
+    assert_eq!(a.run(&two).unwrap().sqlstate().as_str(), "01003", "the first kept");
+    assert_eq!((statement(&a, "NUMBER"), statement(&a, "MORE")), ("1".into(), "Y".into()));
+    assert!(a.run(&format!("UPDATE T SET K = -K, N = {cut}")).is_err());
+    assert_eq!((condition(&a, "RETURNED_SQLSTATE"), statement(&a, "MORE")), ("23000".into(), "Y".into()), "the exception in its place");
+    a.run("UPDATE T SET N = 'A'").unwrap();
+    assert_eq!(statement(&a, "MORE"), "N", "of each statement");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §18.1 SR1, SR2, GR2; §17.6]

@@ -211,7 +211,7 @@ impl Binder<'_> {
     }
 
     /// `v` bound, a `?` taking the type `taken`, if any [§17.6 GR5j, k, l].
-    fn typed_by(&self, v: &ValueExpression, taken: Option<DataType>, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+    pub(super) fn typed_by(&self, v: &ValueExpression, taken: Option<DataType>, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         match taken {
             Some(t) => self.typed(v, ParameterType::Of(t), scope),
             None => self.value_expression(v, scope),

@@ -78,8 +78,8 @@ fn write_skew_commits_only_below_serializable_4_28() {
     }
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.28] no level loses an update: the
-/// second writer of a row is refused (SQLCODE -911) while the first is
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.28] no level loses the update
+/// of a statement that reads what it writes: the second writer of a row is refused (SQLCODE -911) while the first is
 /// open, and a write over a change committed after the snapshot it reads
 /// at is refused too; READ COMMITTED's statement reads at a snapshot of
 /// its own, which holds the change, and writes over it.

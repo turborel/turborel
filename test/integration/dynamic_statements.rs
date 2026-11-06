@@ -80,12 +80,15 @@ fn what_prepare_and_execute_refuse_17_6_17_10() {
     let mut p = dynamic_host();
     assert_eq!(code(&s, "PREPARE S FROM 'DELETE FROM T'", &mut p), Code::SyntaxRule, "SR1");
     assert_eq!(code(&s, "PREPARE S FROM K", &mut p), Code::SyntaxRule, "SR2");
-    for refused in ["COMMIT AND CHAIN", "PREPARE X FROM TEXT", "GET DIAGNOSTICS N = NUMBER", "DELETE FROM T -- all\n"] {
+    let continued = "DELETE FROM T WHERE NAME = 'A' -- and more\n'B'";
+    for refused in ["COMMIT AND CHAIN", "PREPARE X FROM TEXT", "GET DIAGNOSTICS N = NUMBER", "DELETE FROM T -- all\n", continued] {
         text(&mut p, refused);
         assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000"), "{refused}");
     }
     assert_eq!(run(&s, "EXECUTE S", &mut p), Err("26000"), "§17.10 GR1");
     assert_eq!(run(&s, "DEALLOCATE PREPARE S", &mut p), Err("26000"), "§17.7 GR1");
+    text(&mut p, "DELETE FROM T WHERE NAME = '--' OR NAME = '''--'\n'--'");
+    run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
     text(&mut p, "UPDATE T SET AMT = ? WHERE ID = ?");
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
     assert_eq!(run(&s, "EXECUTE S", &mut p), Err("07004"), "§17.10 GR4");

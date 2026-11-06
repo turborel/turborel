@@ -2,6 +2,7 @@
 .idea/
 .DS_Store
 *.py
+*.pdf
 *.txt
 .claude/settings.local.json
 .claude/worktrees/

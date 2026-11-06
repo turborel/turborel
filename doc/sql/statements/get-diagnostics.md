@@ -41,7 +41,7 @@ The statement information items:
 | Item | Type | Value |
 |---|---|---|
 | NUMBER | exact | The number of conditions: 0 before any statement, else 1 |
-| MORE | character | N: no condition was left out |
+| MORE | character | N, or Y if the statement raised a condition the area does not hold |
 | COMMAND_FUNCTION | character | The statement, as `INSERT`, `UPDATE WHERE`, `DELETE WHERE`, `COMMIT WORK`, `DROP VIEW`; empty for a statement that did not parse |
 | DYNAMIC_FUNCTION | character | Of EXECUTE, the statement prepared; else empty |
 | ROW_COUNT | exact | The rows an INSERT, a searched UPDATE or DELETE changed |
@@ -55,14 +55,16 @@ The condition information items, of condition 1:
 | CLASS_ORIGIN, SUBCLASS_ORIGIN | character | `ISO 9075` for the standard's classes; `TURBOREL` for turborel's own, as TB911 |
 | MESSAGE_TEXT | character | The message, as the client shows it, without its position |
 | MESSAGE_LENGTH, MESSAGE_OCTET_LENGTH | exact | Its length in characters, and in octets |
-| CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME | character | The constraint broken |
+| CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME | character | The constraint or assertion broken |
 | CATALOG_NAME, SCHEMA_NAME, TABLE_NAME, COLUMN_NAME | character | The table the condition is about, and the column, where it is about one |
 | CURSOR_NAME | character | The cursor the condition is about |
-| SERVER_NAME, CONNECTION_NAME | character | Empty |
+| SERVER_NAME, CONNECTION_NAME | character | `DEFAULT`: a session embedded in a program is on the default connection |
 
 An item that does not apply is empty, or 0. A name of a table the
 session holds no privilege on is withheld, but for a syntax error or
-access rule violation (SQLSTATE class 42 or 2A).
+access rule violation (SQLSTATE class 42 or 2A). An assertion's name is
+withheld from a session that does not own its schema. An assertion broken
+also names the one table the statement modified of those it reads.
 
 A syntax error or access rule violation names the table that caused
 it: a table the statement names that is not defined, or has no column

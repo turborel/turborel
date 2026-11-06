@@ -4,6 +4,7 @@
 //! CASE, CAST and scalar subqueries in `binder/case.rs`, datetimes and
 //! intervals in `binder/datetime.rs` and `binder/interval.rs`.
 
+use super::interval::assumed;
 use super::set_functions::column_specifications;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
@@ -88,6 +89,24 @@ impl Binder<'_> {
         }
     }
 
+    /// [ISO/IEC 9075:1992 §17.6 GR5f-h] The two operands of `op` bound: a
+    /// `<dynamic parameter specification>` among them taking the type
+    /// `interval::assumed` gives. Both of them one takes none \[GR4c\].
+    fn operands(&self, (a, b): (&ValueExpression, &ValueExpression), op: ArithOp, scope: Scope<'_>) -> Result<[(Expr, DataType); 2]> {
+        match (dynamic_of(a), dynamic_of(b)) {
+            (Some(_), None) => {
+                let y = self.value_expression(b, scope)?;
+                Ok([self.typed(a, ParameterType::Of(assumed(op, y.1, true)), scope)?, y])
+            }
+            (None, Some(_)) => {
+                let x = self.value_expression(a, scope)?;
+                let y = self.typed(b, ParameterType::Of(assumed(op, x.1, false)), scope)?;
+                Ok([x, y])
+            }
+            (Some(_), Some(_)) | (None, None) => self.pair((a, b), scope),
+        }
+    }
+
     /// [X3.135-1986 §5.6] A `<value specification>`, which in a constraint
     /// is no authorization identifier [ISO/IEC 9075:1992 §11.9 SR5, §11.34
     /// SR6].
@@ -166,11 +185,12 @@ impl Binder<'_> {
         right: &ValueExpression,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        // [ISO/IEC 9075:1992 §17.6 GR5h] a `?` takes the other operand's
-        // type. Without one, each is bound as it is, so a chain of operators
-        // nests no deeper in the stack than it did.
-        let [(a, left_type), (b, right_type)] = if dynamic_of(left).is_some() || dynamic_of(right).is_some() {
-            self.pair((left, right), scope)?
+        // [ISO/IEC 9075:1992 §17.6 GR5f-h] a `?` takes the type its other
+        // operand gives it. Without one, each is bound as it is, so a chain
+        // of operators nests no deeper in the stack than it did.
+        let dynamic = dynamic_of(left).is_some() || dynamic_of(right).is_some();
+        let [(a, left_type), (b, right_type)] = if dynamic {
+            self.operands((left, right), op, scope)?
         } else {
             [self.value_expression(left, scope)?, self.value_expression(right, scope)?]
         };
@@ -182,7 +202,7 @@ impl Binder<'_> {
         }
         // [§6.14, §6.15] datetimes and intervals.
         if left_type.is_datetime() || right_type.is_datetime() || left_type.is_interval() || right_type.is_interval() {
-            return self.temporal((a, left_type), op, (b, right_type));
+            return self.temporal((a, left_type), op, (b, right_type), dynamic);
         }
         let t = match (left_type, right_type) {
             (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,

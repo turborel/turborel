@@ -58,7 +58,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use locks::{Locks, NodeLock};
-use node::{ENTRY_OVERHEAD, HEADER, Node, Shape};
+use node::{CHILD, ENTRY_OVERHEAD, HEADER, Node, Shape};
 pub use scan::{Direction, Scan, scan_of};
 pub use write::Update;
 #[cfg(test)]
@@ -270,6 +270,11 @@ impl BLinkTree {
     /// at least four to a node, so a split always leaves halves that fit.
     pub fn max_entry(&self) -> usize {
         self.capacity.saturating_sub(HEADER.saturating_mul(2)).checked_div(4).unwrap_or_default().saturating_sub(ENTRY_OVERHEAD)
+    }
+
+    /// The most bytes a key may take with any value of at most 8 bytes.
+    pub fn max_key(&self) -> usize {
+        self.max_entry().saturating_sub(CHILD)
     }
 
     /// Levels in the tree: 1 while the root is a leaf.

@@ -353,6 +353,8 @@ fn usage_with_grant_option_11_37() {
     c.rollback().unwrap();
     assert_eq!(a.run("REVOKE USAGE ON DOMAIN AMOUNT FROM C RESTRICT").unwrap().sqlstate().as_str(), "01006", "A granted C none");
     a.rollback().unwrap();
+    assert_eq!(a.run("REVOKE USAGE ON DOMAIN AMOUNT FROM B, C CASCADE").unwrap().sqlstate().as_str(), "01006", "for every grantee [GR8]");
+    a.rollback().unwrap();
     assert_eq!(
         exec(&a, "REVOKE GRANT OPTION FOR USAGE ON DOMAIN AMOUNT FROM B RESTRICT").err(),
         Some(Code::SyntaxRule),

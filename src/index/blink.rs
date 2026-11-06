@@ -247,7 +247,7 @@ impl BLinkIndex {
     fn entry(&self, key: &Key, row: RowId) -> Result<Vec<u8>> {
         let mut entry = self.prefix(key)?;
         entry.extend_from_slice(&row.to_be_bytes());
-        let most = self.tree.max_entry();
+        let most = self.tree.max_key();
         if entry.len() > most {
             return Err(SqlError::new(
                 Code::Unsupported,

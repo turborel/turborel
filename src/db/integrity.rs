@@ -412,7 +412,8 @@ impl State {
                     deferred.push(check)?;
                 } else if let Check::Assertion { constraint } = &check {
                     // Immediate, so it held as the statement began.
-                    self.check_assertion_after(tx, constraint, &mut effects)?;
+                    let checked = self.check_assertion_after(tx, constraint, &mut effects);
+                    checked.map_err(|e| self.of_modified(e, constraint, &mut effects))?;
                 } else {
                     self.check(tx, &check, &mut checking)?;
                 }
@@ -485,6 +486,25 @@ impl State {
             Check::AssertedRow { table, constraint, id, before } => {
                 self.check_asserted_row(tx, (table, constraint, *id, before.as_ref()), &mut checking.asserted)
             }
+        }
+    }
+
+    /// [ISO/IEC 9075:1992 §18.1 GR3f ii 2] `e`, about assertion `name`,
+    /// about the table too if the statement modified one table it reads.
+    fn of_modified(&self, e: SqlError, name: &QualifiedName, effects: &mut Effects<'_>) -> SqlError {
+        let Some(ConstraintKind::Check { reads, .. }) = self.catalog.assertion(name).map(|a| &a.kind) else { return e };
+        let mut modified = HashSet::new();
+        let seen = effects.done.visit(&mut |effect| {
+            let (Effect::Inserted { table, .. } | Effect::Updated { table, .. } | Effect::Deleted { table, .. }) = effect;
+            if reads.contains(table) {
+                modified.insert(table.clone());
+            }
+            Ok(())
+        });
+        let mut tables = modified.into_iter();
+        match (seen, tables.next(), tables.next()) {
+            (Ok(()), Some(table), None) => e.about(Subject { table: Some(table.parts()), ..Subject::assertion(name.parts()) }),
+            _ => e,
         }
     }
 

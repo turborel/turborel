@@ -18,12 +18,25 @@ pub struct Subject {
     pub column: Option<String>,
     /// The cursor in an invalid state \[GR3h\].
     pub cursor: Option<String>,
+    /// Whether the constraint is an assertion, which GR3j iv shows to its
+    /// schema's owner alone.
+    pub assertion: bool,
 }
 
 impl Subject {
     /// The constraint `constraint` of the table `table` \[GR3f\].
     pub fn constraint(constraint: (String, String), table: (String, String)) -> Subject {
         Subject { constraint: Some(constraint), table: Some(table), ..Subject::default() }
+    }
+
+    /// The assertion `assertion` \[GR3f i\].
+    pub fn assertion(assertion: (String, String)) -> Subject {
+        Subject { constraint: Some(assertion), assertion: true, ..Subject::default() }
+    }
+
+    /// The constraint `constraint` of a domain, of no table \[GR3f i\].
+    pub fn domain_constraint(constraint: (String, String)) -> Subject {
+        Subject { constraint: Some(constraint), ..Subject::default() }
     }
 
     /// The table or view `table` \[GR3g, GR3i\].

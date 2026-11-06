@@ -257,13 +257,14 @@ fn stale_paths_follow_a_leaf_taken_out() {
     assert_eq!(freed, [leaf], "once none may");
 }
 
-/// Verifies: [DESIGN] CONFORMANCE.md, Limits: the longest entry a B-link
-/// tree holds is 991 bytes at 4 KiB pages, 2,015 at 8 KiB and 16,351 at
-/// 64 KiB, with CRC-32C page checksums.
+/// Verifies: [DESIGN] CONFORMANCE.md, Limits: a B-link tree counts an
+/// entry to 991 bytes at 4 KiB pages, 2,015 at 8 KiB and 16,351 at 64 KiB,
+/// with CRC-32C page checksums, its value as 8 bytes at least, so an index
+/// has 983, 2,007 and 16,343 for a key and its row id.
 #[test]
 fn the_longest_entry_is_as_documented() {
     use crate::disk::memory::MemoryFileSystem;
-    for (page_size, most) in [(4_096_u32, 991_usize), (8_192, 2_015), (65_536, 16_351)] {
+    for (page_size, most, key) in [(4_096_u32, 991_usize, 983_usize), (8_192, 2_015, 2_007), (65_536, 16_351, 16_343)] {
         let pager = Pager::create(
             &MemoryFileSystem::new(),
             std::path::Path::new("/t"),
@@ -274,7 +275,10 @@ fn the_longest_entry_is_as_documented() {
         .unwrap();
         let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
         let file = pool.add_pager(Arc::new(pager));
-        assert_eq!(BLinkTree::create(pool, file).unwrap().max_entry(), most);
+        let tree = BLinkTree::create(pool, file).unwrap();
+        assert_eq!((tree.max_entry(), tree.max_key()), (most, key));
+        tree.insert(&vec![1; key], &[]).unwrap();
+        assert_eq!(tree.insert(&vec![2; key + 1], &[]).err().map(|e| e.code), Some(Code::Api), "the value counts as 8");
     }
 }
 

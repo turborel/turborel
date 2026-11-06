@@ -131,7 +131,8 @@ pub(super) fn in_dynamic(e: SqlError) -> SqlError {
 }
 
 /// [ISO/IEC 9075:1992 §17.6 GR4q] Whether `sql`, made of `tokens`, has a
-/// `<comment>` in a `<separator>` between them.
+/// `<comment>` in a `<separator>`: between them, or between the parts of a
+/// literal continued over lines [§5.3 SR1-SR4], one token.
 fn has_comment(sql: &str, tokens: &[Token]) -> bool {
     let chars: Vec<char> = sql.chars().collect();
     let mut from = 0;
@@ -139,7 +140,27 @@ fn has_comment(sql: &str, tokens: &[Token]) -> bool {
         if chars.get(from..t.start).is_some_and(|gap| gap.windows(2).any(|w| w == [COMMENT_START, COMMENT_START])) {
             return true;
         }
+        let continued = matches!(t.tok, Tok::CharacterString(_) | Tok::BitString(_));
+        if continued && chars.get(t.start..t.end).is_some_and(between_parts) {
+            return true;
+        }
         from = t.end;
+    }
+    false
+}
+
+/// Whether the characters of a literal hold a `<comment>` outside its
+/// quotes: a doubled `'` closes and opens them again.
+fn between_parts(literal: &[char]) -> bool {
+    let mut quoted = false;
+    let mut last = None;
+    for &c in literal {
+        if c == QUOTE {
+            quoted = !quoted;
+        } else if !quoted && c == COMMENT_START && last == Some(COMMENT_START) {
+            return true;
+        }
+        last = Some(c);
     }
     false
 }
@@ -147,6 +168,8 @@ fn has_comment(sql: &str, tokens: &[Token]) -> bool {
 /// [ISO/IEC 9075:1992 §5.2] The character a `<comment introducer>`, two of
 /// it, is made of.
 const COMMENT_START: char = '-';
+/// [ISO/IEC 9075:1992 §5.2] `<quote>`.
+const QUOTE: char = '\'';
 
 /// [§17.6 GR4a] A statement that is not a `<preparable statement>`
 /// (SQLSTATE 37000).

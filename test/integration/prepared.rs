@@ -97,6 +97,53 @@ fn a_parameter_takes_its_type_from_where_it_stands() {
     assert_eq!(query(&s, "SELECT K FROM T WHERE (K, N) = (?, ?)", &[int(1), text("ANN")]), ["1"]);
 }
 
+/// The types the parameters of `sql` are described with.
+fn described(s: &Session, sql: &str) -> Vec<String> {
+    s.prepare(sql).unwrap().parameters().iter().map(|t| t.data_type().to_string()).collect()
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5f, g, n; §6.14, §6.15,
+/// §8.11]: beside a date a `?` that adds to it is an interval of years and
+/// months, beside a time or timestamp one of days and seconds [f]; after an
+/// interval that multiplies or divides, a whole number [g]; beginning a
+/// period of OVERLAPS, the other's first element's type, or if both do,
+/// TIMESTAMP WITH TIME ZONE [n]. Each runs with a value of that type.
+#[test]
+fn a_parameter_beside_a_datetime_or_an_interval() {
+    let (_db, s) = session();
+    let year = "INTERVAL YEAR(9) TO MONTH";
+    let day = "INTERVAL DAY(9) TO SECOND(6)";
+    assert_eq!(described(&s, "SELECT DATE '2024-01-31' + ? FROM T"), [year]);
+    assert_eq!(described(&s, "SELECT ? + DATE '2024-01-31' FROM T"), [year]);
+    assert_eq!(described(&s, "SELECT DATE '2024-01-31' - ? FROM T"), [year]);
+    assert_eq!(described(&s, "SELECT TIMESTAMP '2024-01-31 10:00:00' + ? FROM T"), [day]);
+    assert_eq!(described(&s, "SELECT TIME '10:00:00' - ? FROM T"), [day]);
+    assert_eq!(described(&s, "SELECT INTERVAL '1' DAY * ? FROM T"), ["NUMERIC(18,0)"]);
+    assert_eq!(described(&s, "SELECT INTERVAL '1' DAY / ? FROM T"), ["NUMERIC(18,0)"]);
+    let zoned = "TIMESTAMP(6) WITH TIME ZONE";
+    assert_eq!(described(&s, "SELECT K FROM T WHERE (?, INTERVAL '1' DAY) OVERLAPS (DATE '2024-01-01', DATE '2024-01-05')"), ["DATE"]);
+    assert_eq!(described(&s, "SELECT K FROM T WHERE (DATE '2024-01-01', DATE '2024-01-05') OVERLAPS (?, INTERVAL '1' DAY)"), ["DATE"]);
+    assert_eq!(described(&s, "SELECT K FROM T WHERE (?, INTERVAL '1' DAY) OVERLAPS (?, INTERVAL '1' DAY)"), [zoned, zoned]);
+    assert_eq!(query(&s, "SELECT DATE '2024-01-15' + ? FROM T WHERE K = 1", &[text("1-1")]), ["2025-02-15"]);
+    assert_eq!(query(&s, "SELECT ? + DATE '2024-01-15' FROM T WHERE K = 1", &[text("0-1")]), ["2024-02-15"]);
+    assert_eq!(query(&s, "SELECT TIMESTAMP '2024-01-15 10:00:00' - ? FROM T WHERE K = 1", &[text("1 01:00:00")]), ["2024-01-14 09:00:00"]);
+    assert_eq!(
+        query(&s, "SELECT TIME '10:00:00' + ? FROM T WHERE K = 1", &[text("1 01:00:00")]),
+        ["11:00:00"],
+        "a day moves no time of day"
+    );
+    assert_eq!(query(&s, "SELECT K FROM T WHERE K = 1 AND INTERVAL '2' DAY * ? = INTERVAL '6' DAY", &[int(3)]), ["1"]);
+    assert_eq!(query(&s, "SELECT K FROM T WHERE K = 1 AND INTERVAL '6' DAY / ? = INTERVAL '2' DAY", &[int(3)]), ["1"]);
+    let inside = "SELECT K FROM T WHERE K = 1 AND (?, INTERVAL '1' DAY) OVERLAPS (DATE '2024-01-01', DATE '2024-01-05')";
+    assert_eq!(query(&s, inside, &[text("2024-01-02")]), ["1"]);
+    assert_eq!(query(&s, inside, &[text("2024-02-02")]).len(), 0);
+    let both = "SELECT K FROM T WHERE K = 1 AND (?, INTERVAL '1' HOUR) OVERLAPS (?, INTERVAL '1' HOUR)";
+    let at = |hour: &str| text(&format!("2024-01-02 {hour}:00:00+00:00"));
+    assert_eq!(query(&s, both, &[at("10"), at("10")]), ["1"]);
+    assert_eq!(query(&s, both, &[at("10"), at("12")]).len(), 0);
+    assert_eq!(s.prepare("SELECT ? - DATE '2024-01-15' FROM T").err().map(|e| e.code), Some(Code::SyntaxRule), "GR5h: two datetimes");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5b, c, d]: a string
 /// function says what type a `?` takes as its argument: CHARACTER VARYING
 /// for CHAR_LENGTH, POSITION's operands and concatenation's, NUMERIC(P,0)
