@@ -54,6 +54,7 @@
 //!   2 commit:   (nothing)
 //!   3 limit:    size u64
 //!   4 remove:   (nothing)
+//!   5 stale:    number u64
 //! ```
 
 mod file;

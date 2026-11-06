@@ -167,11 +167,17 @@ impl Seen {
         let heard = Heard(tx.stop.warnings());
         let true_of = |c: &Cond, row: Option<&Row>| row.map(|r| eval_cond(c, r, &heard)).transpose().map(|t| t == Some(Truth::True));
         match kind {
-            Kind::Reach(reach) => self.reached = self.reached || (is_in && true_of(reach, now)?),
+            // Each row evaluated, whatever the rows before settled, as a set
+            // function evaluates every row (RULES.md D15).
+            Kind::Reach(reach) => {
+                let reaches = is_in && true_of(reach, now)?;
+                self.reached = self.reached || reaches;
+            }
             Kind::Apart { beyond, within } => {
                 if is_in {
-                    self.reached = self.reached || true_of(beyond, now)?;
-                    self.outside = self.outside || !true_of(within, now)?;
+                    let (past, short) = (true_of(beyond, now)?, true_of(within, now)?);
+                    self.reached = self.reached || past;
+                    self.outside = self.outside || !short;
                 }
             }
             Kind::Distinct(_, x) => {

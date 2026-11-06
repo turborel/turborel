@@ -2,7 +2,7 @@
 //! they hold, and how a file is recovered from them as it is opened (see
 //! `disk/shadow.rs`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,6 +22,7 @@ pub(super) const KIND_SIZE: u8 = 1;
 const KIND_COMMIT: u8 = 2;
 const KIND_LIMIT: u8 = 3;
 const KIND_REMOVE: u8 = 4;
+const KIND_STALE: u8 = 5;
 
 /// \[DESIGN\] The endings of the names of a file's two side files: its own
 /// name and one of these.
@@ -80,6 +81,9 @@ pub(super) enum Op {
     Limit(u64),
     /// The file is removed.
     Remove,
+    /// A granule's blocks before this one no longer count: a cut dropped it
+    /// and nothing rewrote it.
+    Stale(u64),
 }
 
 pub(super) fn encode(op: &Op) -> Vec<u8> {
@@ -100,6 +104,10 @@ pub(super) fn encode(op: &Op) -> Vec<u8> {
             out.put_u64(*limit);
         }
         Op::Remove => out.put_u8(KIND_REMOVE),
+        Op::Stale(number) => {
+            out.put_u8(KIND_STALE);
+            out.put_u64(*number);
+        }
     }
     out
 }
@@ -112,6 +120,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Op> {
         KIND_COMMIT => Op::Commit,
         KIND_LIMIT => Op::Limit(r.u64()?),
         KIND_REMOVE => Op::Remove,
+        KIND_STALE => Op::Stale(r.u64()?),
         _ => return Err(r.corrupt("its kind is not known")),
     };
     r.finish()?;
@@ -135,6 +144,9 @@ pub(super) struct Side {
     pub(super) granules: HashMap<u64, BlockId>,
     /// Granules written while held: newer than those of `granules`.
     pub(super) held: HashMap<u64, Vec<u8>>,
+    /// Granules with a block in the file that a cut left no longer the
+    /// file's, so copying the side file after a crash skips them.
+    pub(super) stale: HashSet<u64>,
     /// Which of the two side files it is.
     pub(super) which: usize,
     /// The least size the file had while this side file was written to.
@@ -144,7 +156,7 @@ pub(super) struct Side {
 impl Side {
     /// Side file `which`, not yet made, of a file of size `limit`.
     pub(super) fn new(which: usize, limit: u64) -> Side {
-        Side { blocks: None, granules: HashMap::new(), held: HashMap::new(), which, limit }
+        Side { blocks: None, granules: HashMap::new(), held: HashMap::new(), stale: HashSet::new(), which, limit }
     }
 
     /// Whether it holds no granule.
@@ -183,7 +195,14 @@ impl Side {
     /// Forgets the granules wholly past `size`, of those before granule
     /// `kept` and it, and lowers the limit to `size`.
     pub(super) fn cut(&mut self, kept: u64, size: u64) {
-        self.granules.retain(|&n, _| n <= kept && offset(n) < size);
+        let stale = &mut self.stale;
+        self.granules.retain(|&n, _| {
+            let stays = n <= kept && offset(n) < size;
+            if !stays {
+                stale.insert(n);
+            }
+            stays
+        });
         self.held.retain(|&n, _| n <= kept && offset(n) < size);
         self.limit = self.limit.min(size);
     }
@@ -210,8 +229,8 @@ pub(super) fn recover(at: &At) -> Result<()> {
 }
 
 /// Copies the operations of a committed side file into the file at `at`:
-/// removed, if they say so; else made if missing, cut to the limit, the
-/// granules in order, the size.
+/// removed, if they say so; else made if missing, cut to the limit, each
+/// granule's newest content but those a cut made stale, the size.
 fn apply(at: &At, ops: Vec<Op>) -> Result<()> {
     let exists = at.fs.exists(&at.path)?;
     if ops.iter().any(|op| matches!(op, Op::Remove)) {
@@ -225,12 +244,24 @@ fn apply(at: &At, ops: Vec<Op>) -> Result<()> {
     if let Some(limit) = ops.iter().find_map(|op| if let Op::Limit(limit) = op { Some(*limit) } else { None }) {
         base.set_size(limit)?;
     }
+    let (mut newest, mut size) = (BTreeMap::new(), None);
     for op in ops {
         match op {
-            Op::Granule(number, content) => base.write_all_at(&content, offset(number))?,
-            Op::Size(to) => base.set_size(to)?,
+            Op::Granule(number, content) => {
+                newest.insert(number, content);
+            }
+            Op::Stale(number) => {
+                newest.remove(&number);
+            }
+            Op::Size(to) => size = Some(to),
             Op::Commit | Op::Limit(_) | Op::Remove => {}
         }
+    }
+    for (number, content) in newest {
+        base.write_all_at(&content, offset(number))?;
+    }
+    if let Some(to) = size {
+        base.set_size(to)?;
     }
     base.sync(Durability::Full)?;
     if exists { Ok(()) } else { at.sync_dir() }
@@ -244,7 +275,7 @@ pub(super) fn read_ops(blocks: &BlockFile) -> Result<(Vec<Op>, bool)> {
     while cursor.next(&mut payload)?.is_some() {
         match decode(&payload)? {
             Op::Commit => return Ok((ops, true)),
-            op @ (Op::Granule(..) | Op::Size(_) | Op::Limit(_) | Op::Remove) => ops.push(op),
+            op @ (Op::Granule(..) | Op::Size(_) | Op::Limit(_) | Op::Remove | Op::Stale(_)) => ops.push(op),
         }
     }
     Ok((ops, false))

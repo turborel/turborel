@@ -44,6 +44,7 @@ impl Pending {
         } else {
             let block = self.active.append(at, &Op::Granule(number, content))?;
             self.active.held.remove(&number);
+            self.active.stale.remove(&number);
             self.active.granules.insert(number, block);
         }
         Ok(())
@@ -249,11 +250,7 @@ impl Shadow {
     /// into it, its size set, synced.
     fn commit_content(&self, sealed: &Sealed) -> Result<()> {
         let side = &sealed.side;
-        let mut kept: Vec<(&u64, &Vec<u8>)> = side.held.iter().collect();
-        kept.sort_unstable_by_key(|(number, _)| **number);
-        let mut last: Vec<Op> = kept.into_iter().map(|(number, content)| Op::Granule(*number, content.clone())).collect();
-        last.extend([Op::Limit(side.limit), Op::Size(sealed.size)]);
-        self.end_side(sealed, &last)?;
+        self.end_side(sealed, &closing_ops(sealed))?;
         let (base, made) = self.base_to_write()?;
         base.set_size(side.limit.min(base.size()?))?;
         let mut numbers: Vec<u64> = side.granules.keys().chain(side.held.keys()).copied().collect();
@@ -362,4 +359,17 @@ impl DiskFile for ShadowFile {
     fn sync(&self, _durability: Durability) -> Result<()> {
         Ok(())
     }
+}
+
+/// What ends a batch's side file before its commit block: the granules a
+/// cut made stale, then those held, newer than either, the limit and the
+/// size.
+pub(super) fn closing_ops(sealed: &Sealed) -> Vec<Op> {
+    let side = &sealed.side;
+    let mut last: Vec<Op> = side.stale.iter().map(|number| Op::Stale(*number)).collect();
+    let mut kept: Vec<(&u64, &Vec<u8>)> = side.held.iter().collect();
+    kept.sort_unstable_by_key(|(number, _)| **number);
+    last.extend(kept.into_iter().map(|(number, content)| Op::Granule(*number, content.clone())));
+    last.extend([Op::Limit(side.limit), Op::Size(sealed.size)]);
+    last
 }

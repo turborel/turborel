@@ -140,7 +140,7 @@ fn writes_after_a_seal_wait_for_the_next_commit() {
 
 /// Verifies: [DESIGN] RULES.md D30, limits: a file cut over what a commit
 /// put in it, and grown again, reads zeros where it was cut, before and
-/// after the next commit, and across a crash after it.
+/// after the next commit.
 #[test]
 fn a_file_cut_and_grown_reads_zeros() {
     let disk = disk();
@@ -157,6 +157,58 @@ fn a_file_cut_and_grown_reads_zeros() {
     assert_eq!(back, expected, "before the commit");
     shadows.commit().unwrap();
     assert_eq!(content(&*disk), expected, "after it");
+}
+
+/// What the file at `PATH` on `disk` holds once `shadows` is sealed, its
+/// side file ended, the file not yet touched, and it is opened
+/// again.
+fn recovered(disk: &Arc<dyn FileSystem>, shadows: ShadowFileSystem) -> Vec<u8> {
+    shadows.seal().unwrap();
+    crash_after_commit_block(&shadows, PATH, file::closing_ops);
+    drop(shadows);
+    let again = ShadowFileSystem::new(Arc::clone(disk), hash());
+    drop(again.open(Path::new(PATH), OpenMode::ReadWrite).unwrap());
+    content(&**disk)
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D56, limits: a granule written to the
+/// side file, then cut and not written again, is not brought back by a
+/// crash after the commit block, which copies the side file; a granule
+/// written again after the cut is. Without the stale granules the first
+/// read the bytes cut, with no error.
+#[test]
+fn a_crash_after_the_commit_block_keeps_what_was_cut() {
+    let cut = |again: Option<&[u8]>| {
+        let disk = disk();
+        let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+        let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+        file.write_all_at(&[7_u8; 10_003], 0).unwrap();
+        file.set_size(5_003).unwrap();
+        file.set_size(9_000).unwrap();
+        if let Some(end) = again {
+            file.write_all_at(end, 8_997).unwrap();
+        }
+        recovered(&disk, shadows)
+    };
+    assert_eq!(cut(Some(b"end")), [vec![7_u8; 5_003], vec![0_u8; 3_994], b"end".to_vec()].concat(), "written again after the cut");
+    assert_eq!(cut(None), [vec![7_u8; 5_003], vec![0_u8; 3_997]].concat(), "not written again");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D56, limits: a cut while writes are
+/// held makes the granules already in the side file stale, and what is
+/// held after it stands, across a crash after the commit block.
+#[test]
+fn a_crash_keeps_a_cut_made_while_writes_are_held() {
+    let disk = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+    file.write_all_at(&[7_u8; 14_000], 0).unwrap();
+    shadows.hold().unwrap();
+    file.set_size(5_003).unwrap();
+    file.set_size(13_000).unwrap();
+    file.write_all_at(b"end", 12_997).unwrap();
+    let cut = recovered(&disk, shadows);
+    assert_eq!(cut, [vec![7_u8; 5_003], vec![0_u8; 7_994], b"end".to_vec()].concat());
 }
 
 /// Verifies: [DESIGN] RULES.md D30, shadow files: bytes a crash left half

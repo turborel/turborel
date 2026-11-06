@@ -245,3 +245,44 @@ fn assertions_checked_from_changes_answer_as_checked_whole() {
     assert!(refused > 40 && done > 150, "both outcomes, often: {refused} refused, {done} done");
     drop(asserted);
 }
+
+/// Verifies: [DESIGN] RULES.md D15, D51: a set function evaluates its
+/// argument on every row, so a row of a change that raises is raised for
+/// however early another row settles the form. MAX and MIN reached, equal
+/// or unequal, immediate and deferred, each answer as the same assertion
+/// checked whole. Without the fix the rows after the one that settled it
+/// were stored unevaluated.
+#[test]
+fn a_set_functions_argument_raises_on_every_row_of_the_change() {
+    let conditions = [
+        "(SELECT MAX(A / B) FROM T) > 0",
+        "(SELECT MAX(A / B) FROM T) >= 1",
+        "(SELECT MIN(A / B) FROM T) < 2",
+        "(SELECT MIN(A / B) FROM T) <= 1",
+        "(SELECT MAX(A / B) FROM T) = 1",
+        "(SELECT MIN(A / B) FROM T) = 1",
+        "(SELECT MAX(A / B) FROM T) <> 2",
+        "(SELECT MIN(A / B) FROM T) <> 0",
+    ];
+    for condition in conditions {
+        for (attributes, end) in [("", false), ("DEFERRABLE INITIALLY DEFERRED", true)] {
+            for whole in [false, true] {
+                let db = Database::new();
+                db.schema(
+                    "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL PRIMARY KEY, A INTEGER NOT NULL, B INTEGER NOT NULL)",
+                )
+                .unwrap();
+                let s = db.session("A");
+                s.run("INSERT INTO T VALUES (1, 1, 1)").unwrap();
+                s.commit().unwrap();
+                let checked = if whole { format!("{condition} AND 1 = 1") } else { condition.to_owned() };
+                s.run(&format!("CREATE ASSERTION P CHECK ({checked}) {attributes}")).unwrap();
+                s.commit().unwrap();
+                let inserted = exec(&s, "INSERT INTO T VALUES (2, 1, 1), (3, 1, 0)");
+                let done = if end { inserted.and_then(|_| exec(&s, "COMMIT")) } else { inserted };
+                let raised = if end { Code::CommitFailed } else { Code::Data };
+                assert_eq!(done, Err(raised), "{condition} {attributes} whole {whole}");
+            }
+        }
+    }
+}
