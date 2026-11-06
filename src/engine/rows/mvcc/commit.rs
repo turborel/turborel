@@ -97,6 +97,7 @@ impl RowTable {
         if changes.is_empty() {
             return;
         }
+        let count = u64::try_from(changes.len()).unwrap_or(u64::MAX);
         let (mut late, mut lost) = (Vec::new(), false);
         // A segment at a time: its garbage added before the next is read.
         for segment in changes.into_segments(false, &decode_change) {
@@ -133,6 +134,7 @@ impl RowTable {
             let rows = (!lost).then_some(late);
             self.versions.late.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(tx, (at, rows));
         }
+        self.gathered.changed(count);
     }
 
     /// Stamps the newest version of row `id`, made by `tx`, committed at

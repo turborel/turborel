@@ -30,6 +30,7 @@ use crate::error::Result;
 use crate::stats::parts::count;
 use crate::stats::{StatsBuilder, TableStats};
 use crate::sync::{read, write};
+use crate::txn::{NO_TRANSACTION, TxId};
 
 /// \[DESIGN\] A table's statistics, and how much it has changed since.
 pub(super) struct Gathered {
@@ -37,7 +38,9 @@ pub(super) struct Gathered {
     base: Refresh,
     refresh: RwLock<Refresh>,
     stats: RwLock<Option<Arc<TableStats>>>,
-    /// Rows inserted, updated or deleted since the last pass.
+    /// Rows inserted, updated or deleted by what has committed since the
+    /// last pass, which saw them. Not counted as they are written: a pass
+    /// cannot see an open transaction's, and would take them as seen.
     changes: AtomicU64,
     /// The rows the last pass found.
     rows: AtomicU64,
@@ -76,9 +79,9 @@ impl Gathered {
         read(&self.refresh).map_or(self.base, |r| *r)
     }
 
-    /// Counts a row inserted, updated or deleted.
-    pub(super) fn changed(&self) {
-        self.changes.fetch_add(1, Ordering::Relaxed);
+    /// Counts `rows` inserted, updated or deleted, committed.
+    pub(super) fn changed(&self, rows: u64) {
+        self.changes.fetch_add(rows, Ordering::Relaxed);
     }
 
     /// Whether a table opened was asked for them, or the table has changed
@@ -146,6 +149,15 @@ impl RowTable {
         self.gathered.changes.fetch_sub(before, Ordering::Relaxed);
         self.gathered.asked.store(false, Ordering::Release);
         Ok(stats)
+    }
+
+    /// Counts a row written by `tx`: at once outside a transaction, whose
+    /// writes are committed as they are made; else at its commit
+    /// (`commit_open`).
+    pub(super) fn counted_change(&self, tx: TxId) {
+        if tx == NO_TRANSACTION {
+            self.gathered.changed(1);
+        }
     }
 
     /// Whether its statistics are due to be gathered again, by the

@@ -45,7 +45,7 @@ fn near(got: Option<f64>, want: f64, by: f64) -> bool {
 /// A database whose table APP.T holds `n` rows, committed: ID 1 to `n`,
 /// GRADE = ID mod 10, NOTE NULL for every fourth; its background work
 /// done only when a test asks (JOBS.POLICY MANUAL, RULES.md D55).
-fn graded(n: u32) -> Database {
+pub(crate) fn graded(n: u32) -> Database {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, GRADE INTEGER, NOTE CHAR(5))").unwrap();
@@ -61,7 +61,7 @@ fn add(db: &Database, ids: impl Iterator<Item = u32>, grade: impl Fn(u32) -> u32
 }
 
 /// As `add`, the maintenance left to the database's thread.
-fn added(db: &Database, ids: impl Iterator<Item = u32>, grade: impl Fn(u32) -> u32) {
+pub(crate) fn added(db: &Database, ids: impl Iterator<Item = u32>, grade: impl Fn(u32) -> u32) {
     let s = db.session("APP");
     for i in ids {
         let note = if i % 4 == 0 { "NULL".to_string() } else { format!("'N{}'", i % 3) };
@@ -98,7 +98,7 @@ fn filters_are_estimated_from_statistics() {
 }
 
 /// The rows the Filter of "SELECT ID FROM T WHERE ID > `id`" keeps.
-fn above(db: &Database, id: u32) -> Option<f64> {
+pub(crate) fn above(db: &Database, id: u32) -> Option<f64> {
     kept(&db.session("APP"), &format!("SELECT ID FROM T WHERE ID > {id}"))
 }
 
@@ -126,21 +126,6 @@ fn statistics_follow_the_table() {
     assert!(near(above(&db, 150), 150.0, 20.0), "1,000 rows deleted: gathered again");
     assert_eq!(db.analyze("T").map_err(|e| e.code), Err(Code::Api));
     assert_eq!(db.analyze("APP.NONE").map_err(|e| e.code), Err(Code::Api));
-}
-
-/// Verifies: [DESIGN] RULES.md D31, statistics in the background: the
-/// database's maintenance thread gathers a table's statistics once it has
-/// changed enough, no call asking it to.
-#[test]
-fn statistics_are_gathered_in_the_background() {
-    let db = graded(1000);
-    db.set_job_policy(JobPolicy::Automatic).unwrap();
-    added(&db, 1001..=1300, |_| 1);
-    let until = std::time::Instant::now().checked_add(std::time::Duration::from_secs(30)).unwrap();
-    while above(&db, 1000).is_none_or(|e| e < 100.0) {
-        assert!(std::time::Instant::now() < until, "gathered within 30 seconds");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
 }
 
 /// Verifies: [DESIGN] RULES.md D31, estimates without statistics: for an

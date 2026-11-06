@@ -144,6 +144,7 @@ mod spilling;
 mod standby;
 mod statements;
 mod statistics;
+mod statistics_background;
 mod stores;
 mod subqueries;
 mod sums;

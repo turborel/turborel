@@ -281,7 +281,7 @@ impl TableStorage for RowTable {
                 // read the row or is summed again (`rows/zones.rs`).
                 self.zones.widen(id, Some(&row), false);
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
-                self.gathered.changed();
+                self.counted_change(tx);
                 Ok(id)
             }
             Ok(false) => {
@@ -299,7 +299,7 @@ impl TableStorage for RowTable {
         let (record, pages) = self.encode(id, &row)?;
         self.write_version(tx, id, Some(&record)).inspect_err(|_| self.free(&pages))?;
         self.zones.widen(id, Some(&row), true);
-        self.gathered.changed();
+        self.counted_change(tx);
         Ok(())
     }
 
@@ -307,7 +307,7 @@ impl TableStorage for RowTable {
         self.write_version(tx, id, None)?;
         self.zones.widen(id, None, true);
         self.counted.live.fetch_sub(1, Ordering::AcqRel);
-        self.gathered.changed();
+        self.counted_change(tx);
         Ok(())
     }
 
