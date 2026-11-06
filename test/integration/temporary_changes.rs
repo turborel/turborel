@@ -248,6 +248,7 @@ fn a_copy_reads_what_another_session_has_open_11_11() {
 #[test]
 fn an_alter_sees_every_sessions_rows_11_11() {
     let db = temporary();
+    crate::common::serializable(&db);
     let (a, b) = (db.session("A"), db.session("A"));
     a.run("INSERT INTO L VALUES (1, 'x')").unwrap();
     a.commit().unwrap();
@@ -298,6 +299,7 @@ fn a_refused_alter_leaves_no_copy_11_11() {
 #[test]
 fn a_transaction_begun_before_reads_no_altered_rows_11_10() {
     let db = temporary();
+    crate::common::serializable(&db);
     let (a, b) = (db.session("A"), db.session("A"));
     a.run("INSERT INTO L VALUES (1, 'a')").unwrap();
     a.commit().unwrap();

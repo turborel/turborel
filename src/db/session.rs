@@ -16,8 +16,9 @@ use crate::txn::{Reading, Stop};
 use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075:1992 §4.28] The access mode and isolation level of a
-/// transaction: READ WRITE and SERIALIZABLE unless SET TRANSACTION said
-/// otherwise [§12.3 GR6c iii 2B].
+/// transaction: READ WRITE, and of the level TRANSACTION.ISOLATION says,
+/// READ COMMITTED by default, unless SET TRANSACTION said otherwise
+/// [§12.3 GR6c iii 2B].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransactionMode {
     /// Its access mode.
@@ -40,17 +41,27 @@ impl TransactionMode {
     }
 }
 
+impl TransactionMode {
+    /// The modes of a transaction of `isolation` that names no access mode:
+    /// READ ONLY under READ UNCOMMITTED, else READ WRITE [§14.1 SR4].
+    pub(crate) fn of(isolation: IsolationLevel) -> TransactionMode {
+        let access = if isolation == IsolationLevel::ReadUncommitted { AccessMode::ReadOnly } else { AccessMode::ReadWrite };
+        TransactionMode { access, isolation }
+    }
+}
+
 impl Default for TransactionMode {
     fn default() -> TransactionMode {
-        TransactionMode { access: AccessMode::ReadWrite, isolation: IsolationLevel::Serializable }
+        TransactionMode { access: AccessMode::ReadWrite, isolation: IsolationLevel::ReadCommitted }
     }
 }
 
 impl Session {
     /// [ISO/IEC 9075:1992 §14.1] SET TRANSACTION: the modes of the next
-    /// transaction. The isolation level is SERIALIZABLE if none is written
-    /// \[SR2\]; the access mode READ ONLY under READ UNCOMMITTED, else READ
-    /// WRITE, if none is written \[SR4\]. A `<diagnostics size>` is checked
+    /// transaction. The isolation level is TRANSACTION.ISOLATION's if none
+    /// is written, which conforms to \[SR2\] only as SERIALIZABLE; the access
+    /// mode READ ONLY under READ UNCOMMITTED, else READ WRITE, if none is
+    /// written \[SR4\]. A `<diagnostics size>` is checked
     /// \[SR5, GR2\]: a statement reports one condition, its error, never
     /// more than any limit of at least 1 allows \[GR6, GR7\].
     ///
@@ -79,10 +90,12 @@ impl Session {
                 );
             }
         }
-        let isolation = modes.isolation.unwrap_or(IsolationLevel::Serializable);
-        let read_only = AccessMode::ReadOnly;
-        let access = modes.access.unwrap_or(if isolation == IsolationLevel::ReadUncommitted { read_only } else { AccessMode::ReadWrite });
-        self.next.set(TransactionMode { access, isolation });
+        let isolation = match modes.isolation {
+            Some(isolation) => isolation,
+            None => self.isolation(&*self.db.snapshot()?),
+        };
+        let chosen = TransactionMode::of(isolation);
+        self.next.set(Some(TransactionMode { access: modes.access.unwrap_or(chosen.access), isolation }));
         Ok(())
     }
 
@@ -93,8 +106,8 @@ impl Session {
 
     /// The modes the transaction it begins now takes: those SET TRANSACTION
     /// gave since the last ended, or the defaults [§12.3 GR6c iii 2].
-    pub(super) fn begin_mode(&self) {
-        self.mode.set(self.next.take());
+    pub(super) fn begin_mode(&self, st: &State) {
+        self.mode.set(self.next.take().unwrap_or_else(|| TransactionMode::of(self.isolation(st))));
     }
 
     /// [ISO/IEC 9075:1992 §13.6-§13.10 GR1, §12.3 GR6c v] In a READ ONLY

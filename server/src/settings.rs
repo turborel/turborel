@@ -160,7 +160,7 @@ pub const MAX_WORKERS: usize = 1024;
 /// from others only once its operator says so.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// \[DESIGN\] The default limit of connections.
-pub const DEFAULT_MAX_CONNECTIONS: usize = 256;
+pub const DEFAULT_MAX_CONNECTIONS: usize = 100;
 /// \[DESIGN\] The default batch of rows: about 64 KiB.
 pub const DEFAULT_BATCH_BYTES: usize = 64 * 1024;
 /// \[DESIGN\] The shortest limit of messages: room for any message but a

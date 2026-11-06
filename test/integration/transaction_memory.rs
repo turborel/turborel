@@ -93,6 +93,7 @@ fn commits(s: &Session, other: &Session, (read, wrote): (&[i32], &[i32])) -> Res
 #[test]
 fn reads_and_writes_past_the_rows_tracked_count_as_every_row() {
     let (db, s, other) = tracking(2);
+    crate::common::serializable(&db);
     assert_eq!(commits(&s, &other, (&[1, 2, 3], &[9])), Err(Code::Conflict), "its reads");
     assert_eq!(commits(&s, &other, (&[1], &[6, 7, 8])), Err(Code::Conflict), "the other's writes");
     s.run("ALTER TABLE T SET (TRANSACTIONS.TRACKED_ROWS = 100)").unwrap();
@@ -143,6 +144,7 @@ fn row_store_changes_spill_and_are_read_back() {
 fn changed_rows_past_the_bytes_held_are_kept_as_bounds() {
     for (held, expected) in [(4096, Err(Code::Conflict)), (1 << 20, Ok(()))] {
         let db = Database::new();
+        crate::common::serializable(&db);
         db.schema(&format!(
             "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER) WITH (TRANSACTIONS.HELD_BYTES = {held})"
         ))
@@ -169,6 +171,7 @@ fn changed_rows_past_the_bytes_held_are_kept_as_bounds() {
 #[test]
 fn garbage_is_read_and_collected_a_segment_at_a_time() {
     let db = Database::new();
+    crate::common::serializable(&db);
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER) WITH (TRANSACTIONS.HELD_BYTES = 4096)")
         .unwrap();
     let (s, reader) = (db.session("S"), db.session("S"));

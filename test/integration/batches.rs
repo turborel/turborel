@@ -115,6 +115,7 @@ fn set_functions_by_batch_answer_as_row_by_row() {
 #[test]
 fn rows_read_by_batch_are_read() {
     let db = Database::new();
+    crate::common::serializable(&db);
     let a = both(&db);
     for table in ["R", "C"] {
         let (one, two) = (db.session("A"), db.session("A"));

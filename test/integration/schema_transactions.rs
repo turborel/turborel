@@ -29,6 +29,7 @@ const SCHEMA: &str = "CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER 
 #[test]
 fn a_schema_is_its_transactions() {
     let db = Database::new();
+    crate::common::serializable(&db);
     db.schema("CREATE SCHEMA AUTHORIZATION B").unwrap();
     let (ann, other) = (db.session("ANN"), db.session("ANN"));
     assert_eq!(direct(&ann, SCHEMA), Ok(Completion::Success));

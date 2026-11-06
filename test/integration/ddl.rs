@@ -102,6 +102,7 @@ fn a_drop_sees_what_others_publish_meanwhile() {
 #[test]
 fn a_column_added_11_11() {
     let db = with_views();
+    crate::common::serializable(&db);
     let (s, other, earlier) = (db.session("D"), db.session("D"), db.session("D"));
     assert_eq!(count(&earlier, "SELECT K FROM T"), 3);
     s.run("ALTER TABLE T ADD COLUMN C INTEGER").unwrap();

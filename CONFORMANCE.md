@@ -752,6 +752,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §15.1 GR8b how an `<SQL-server name>` determines the server | It is an address, 'host', 'host:port', '[IPv6 address]:port', on Unix a socket's path beginning '/', or on Windows a named pipe's name beginning '\\'. It uses TLS when the default server's connection does, trusting the same certificates. An address is no `<identifier>`, so CONNECT to one names its connection with AS [GR6]. | `cli/src/dial.rs` |
 | §16.4 GR4 whether a session sets another authorization identifier | A session begun by the database's owner sets any, a user or not. Any other session sets only the one it began with (SQLSTATE 28000) (RULES.md D43). | `db/session.rs` |
 | §20.1 GR2a whether direct invocation terminated unexpectedly | A server's connection that ends without its client terminating it, lost, failed or cut by the server stopping. Its transaction is rolled back. | `server/src/native.rs` |
+| §14.1 SR2 default isolation level | READ COMMITTED, where the standard says SERIALIZABLE, following PostgreSQL. TRANSACTION.ISOLATION = SERIALIZABLE conforms. | `db/session.rs` |
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 
@@ -777,8 +778,8 @@ The standards leave memory to the implementation (RULES.md D38). This is in
 
 | Setting | Default | Holds |
 |---|---|---|
-| MEMORY.BUDGET_BYTES | 256 MiB | The database's budget |
-| STORAGE.POOL_BYTES | 32 MiB | A database's buffer pool, of its data file, or for a database in memory shared by its engine and index methods and made with its first table |
+| MEMORY.BUDGET_BYTES | 1 GiB | The database's budget |
+| STORAGE.POOL_BYTES | 128 MiB | A database's buffer pool, of its data file, or for a database in memory shared by its engine and index methods and made with its first table |
 | (none) | 2 MiB | The pool of an engine or index method made in memory on its own |
 | MEMORY.WORK_BYTES | 4 MiB, at least 64 KiB, a session's to set | What an operator, or a temporary table's instance (D49), holds before it spills |
 | SPILL.BATCH_BYTES | 16 KiB, from 4 KiB to 1 MiB | The bytes a spilled run is written in |

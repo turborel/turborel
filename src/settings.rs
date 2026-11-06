@@ -29,14 +29,14 @@ pub use builtin::{
     MEMORY_BUDGET_BYTES, MEMORY_WORK_BYTES, NULL_FRACTION, OFF, ON, OPTIMIZER_MAX_PASSES, PAGE_BYTES, POOL_BYTES, RANGE_SELECTIVITY,
     READ_AHEAD_PAGES, REKEY_BYTES_PER_SECOND, REORDER_GAIN, SESSION_COMMIT_AT_END, SESSION_TIME_ZONE, SLOW_STATEMENT_MS, SORT_COMPARE_COST,
     SPILL_BATCH_BYTES, SPILL_ENCODINGS, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, STATEMENT_TIMEOUT_MS, SWITCHES, SYSTEM_CACHE_BYTES,
-    TABLES_ENGINE, TABLES_UNIQUE_INDEX_METHOD, TRANSACTION_STRICT,
+    TABLES_ENGINE, TABLES_UNIQUE_INDEX_METHOD, TRANSACTION_ISOLATION, TRANSACTION_STRICT,
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
 pub use kind::{Kind, column_list, column_names};
 pub use started::Started;
 use words::word_of;
-pub use words::{lock_wait, lock_wait_word, log_durability, policy_word, session_end, session_end_word};
+pub use words::{isolation_level, lock_wait, lock_wait_word, log_durability, policy_word, session_end, session_end_word};
 
 /// When a change of a setting takes effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

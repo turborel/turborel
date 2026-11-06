@@ -194,6 +194,7 @@ fn rows_of_zones_settled_are_made_of_their_entries() {
 fn rows_written_are_read_until_settled_again() {
     let flags = Arc::new(Flags::default());
     let db = database(&flags);
+    crate::common::serializable(&db);
     let s = filled(&db);
     settle(&db);
     let (reader, other) = (db.session("X"), db.session("X"));
@@ -323,6 +324,7 @@ fn zones_are_read_after_opening_until_settled() {
 fn concurrent_writes_and_maintenance_keep_index_only_scans_right() {
     let flags = Arc::new(Flags::default());
     let db = Arc::new(database(&flags));
+    crate::common::serializable(&db);
     drop(filled(&db));
     settle(&db);
     let done = Arc::new(AtomicBool::new(false));

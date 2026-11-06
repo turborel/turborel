@@ -262,9 +262,10 @@ pub struct Session {
     /// The collation a prepared statement run now was prepared under, in
     /// place of `collation`, until it ends (`db/prepared.rs`).
     prepared_collation: RefCell<collations::Collating>,
-    /// The modes of its active transaction, and of the next [§14.1].
+    /// The modes of its active transaction, and those SET TRANSACTION gave
+    /// the next [§14.1].
     mode: Cell<TransactionMode>,
-    next: Cell<TransactionMode>,
+    next: Cell<Option<TransactionMode>>,
     /// What cancels its statements (RULES.md D44), and hears the warnings
     /// they raise as they run [ISO/IEC 9075:1992 §3.3.4.1].
     stop: Arc<Stop>,
@@ -353,7 +354,7 @@ impl Session {
             collation: RefCell::new(None),
             prepared_collation: RefCell::new(collations::Collating::AsSet),
             mode: Cell::new(TransactionMode::default()),
-            next: Cell::new(TransactionMode::default()),
+            next: Cell::new(None),
             stop: Arc::default(),
             temporaries: temporary::Temporaries::default(),
             conflict: RefCell::new(None),
@@ -407,7 +408,7 @@ impl Session {
         let wait = self.lock_wait(st);
         let mut inner = self.inner.borrow_mut();
         if inner.tx.is_none() {
-            self.begin_mode();
+            self.begin_mode(st);
         }
         let reading = self.mode.get().reading();
         Arc::clone(inner.tx.get_or_insert_with(|| Arc::new(st.begin_waiting((wait, reading, Arc::clone(&self.stop))))))

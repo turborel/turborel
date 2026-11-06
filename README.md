@@ -20,8 +20,8 @@ behind it, and each can be replaced or added to.
 - Standard SQL implementing SQL-86 in full, SQL-92 being taken in full, and each
   later standard in turn through SQL:2023, as one language. See
   [CONFORMANCE.md](CONFORMANCE.md).
-- Transactions that are serializable by default, run on many
-  threads at once, and survive a crash with multi-version concurrency
+- Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
+  on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
 - Multiple Indexes such as B-link trees and linear hash tables, chosen by a
   cost-based planner.

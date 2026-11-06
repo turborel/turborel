@@ -117,7 +117,7 @@ The server's settings, beside the database's:
                          the system's own)
   SERVER.KEEPALIVE_PROBES  probes unanswered before the connection is closed
                          (default 0, the system's own)
-  SERVER.MAX_CONNECTIONS connections taken at once (default 256)
+  SERVER.MAX_CONNECTIONS connections taken at once (default 100)
   SERVER.MAX_REFUSALS    connections past those refused at once, told why; past these,
                          closed untold (default 16)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
@@ -132,7 +132,7 @@ The database's files, fixed when it is created: --set them as it is:
   STORAGE.CHECKSUM       the hash function its files are checksummed with (default CRC-32/ISCSI;
                          SHA-256, or HMAC-SHA-256 keyed by --checksum-key)
   LOG.SEGMENT_BYTES      the bytes of a segment of its log (default 64 MiB)
-  STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 32 MiB)
+  STORAGE.POOL_BYTES     the bytes of its buffer pool, as it opens (default 128 MiB)
 Its files' formats from now on, changed at any time, SET DATABASE or --set:
   STORAGE.ENCODINGS      the encodings its files pass through, by commas: LZ4, and
                          AES-256-GCM:KEY or ChaCha20-Poly1305:KEY with a key of --keys

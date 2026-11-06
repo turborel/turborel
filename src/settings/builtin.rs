@@ -102,11 +102,26 @@ pub const CHECKSUM_KEY: Key = Key(43);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the storage settings.
 pub const REKEY_BYTES_PER_SECOND: Key = Key(44);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the transaction settings.
+pub const TRANSACTION_ISOLATION: Key = Key(45);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
 /// rule's, and the others.
 pub const SWITCHES: &[&str] = &[ON, OFF];
+/// The words of `TRANSACTION.ISOLATION`, the isolation levels.
+pub const ISOLATION_LEVELS: &[&str] = &[READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE];
+/// The isolation level of [ISO/IEC 9075:1992 §4.28] that may read what is
+/// not committed, which here reads as READ COMMITTED.
+pub const READ_UNCOMMITTED: &str = "READ UNCOMMITTED";
+/// The isolation level of a new snapshot for each statement.
+pub const READ_COMMITTED: &str = "READ COMMITTED";
+/// The isolation level of one snapshot.
+pub const REPEATABLE_READ: &str = "REPEATABLE READ";
+/// The isolation level whose outcome is that of transactions run one at a
+/// time.
+pub const SERIALIZABLE: &str = "SERIALIZABLE";
 /// The word of a two-way choice taken.
 pub const ON: &str = "ON";
 /// The word of a two-way choice not taken.
@@ -284,9 +299,10 @@ fn system_cache() -> Definition {
 
 /// \[DESIGN\] The settings declared after the others, each at its key's
 /// place, though of the storage settings: the system's cache, and the
-/// files' key and the sweep's pace (RULES.md D48).
-fn later() -> [Definition; 3] {
-    [system_cache(), checksum_key(), rekey_rate()]
+/// files' key and the sweep's pace (RULES.md D48); and, of the transaction
+/// settings, the level of one that names none.
+fn later() -> [Definition; 4] {
+    [system_cache(), checksum_key(), rekey_rate(), transaction_isolation()]
 }
 
 /// \[DESIGN\] The key a keyed checksum makes digests with from now on
@@ -297,6 +313,16 @@ fn checksum_key() -> Definition {
         ("STORAGE.CHECKSUM_KEY", Kind::Text { max: crate::hash::MAX_KEY_NAME }, text("")),
         DATABASE,
         "The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.",
+    )
+}
+
+/// \[EXTENSION\] The isolation level of a transaction that names none: at
+/// its key's place, after the others, though of the transaction settings.
+fn transaction_isolation() -> Definition {
+    defined(
+        ("TRANSACTION.ISOLATION", Kind::Choice(ISOLATION_LEVELS), text(READ_COMMITTED)),
+        (true, Effect::Transaction),
+        "The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED as PostgreSQL's default is, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.",
     )
 }
 

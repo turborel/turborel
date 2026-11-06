@@ -1,10 +1,11 @@
 //! \[DESIGN\] The words of the built-in two-way choices (RULES.md D36),
 //! ON and OFF, as the transaction coordinator's types: LOCKS.WAIT,
-//! SESSION.COMMIT_AT_END and TRANSACTION.STRICT; and LOG.DURABILITY's, as
-//! the log's.
+//! SESSION.COMMIT_AT_END and TRANSACTION.STRICT; LOG.DURABILITY's, as the
+//! log's; and TRANSACTION.ISOLATION's, as the parser's.
 
-use super::builtin::LOG_DURABILITY;
+use super::builtin::{LOG_DURABILITY, READ_COMMITTED, READ_UNCOMMITTED, REPEATABLE_READ};
 use super::{OFF, ON, Settings};
+use crate::ast::IsolationLevel;
 use crate::disk::io::Durability;
 use crate::txn::{LockWait, Policy, SessionEnd};
 use crate::value::Value;
@@ -22,6 +23,16 @@ pub fn session_end(v: &Value) -> SessionEnd {
 /// The lock wait a value says.
 pub fn lock_wait(v: &Value) -> LockWait {
     if word_of(v) == ON { LockWait::Wait } else { LockWait::NoWait }
+}
+
+/// The isolation level a value of `TRANSACTION.ISOLATION` says.
+pub fn isolation_level(v: &Value) -> IsolationLevel {
+    match word_of(v) {
+        READ_UNCOMMITTED => IsolationLevel::ReadUncommitted,
+        READ_COMMITTED => IsolationLevel::ReadCommitted,
+        REPEATABLE_READ => IsolationLevel::RepeatableRead,
+        _ => IsolationLevel::Serializable,
+    }
 }
 
 /// The word of `LOCKS.WAIT` for `wait`.

@@ -61,8 +61,8 @@ impl Session {
         // [ISO/IEC 9075:1992 §20.1 GR6b iii, iv] An SQL-schema statement,
         // so not of a READ ONLY transaction: the one active, or the next.
         let active = self.inner.borrow().tx.is_some();
-        let mode = if active { self.mode.get() } else { self.next.get() };
-        if mode.access == AccessMode::ReadOnly {
+        let access = if active { Some(self.mode.get().access) } else { self.next.get().map(|mode| mode.access) };
+        if access == Some(AccessMode::ReadOnly) {
             return fail(
                 Code::TransactionState,
                 "[ISO/IEC 9075:1992 §20.1 GR6b iv] a <schema definition> in a READ ONLY transaction".to_owned(),

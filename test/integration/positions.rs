@@ -107,6 +107,7 @@ fn statement_errors_are_placed_at_their_construct() {
 #[test]
 fn outcomes_have_their_sqlstates() {
     let db = setup();
+    crate::common::serializable(&db);
     let s = db.session("APP");
     let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null);
     let mut state = |sql: &str| match s.execute(sql, &mut p) {

@@ -22,13 +22,18 @@ indexes are made at once.
 
 ## Isolation levels
 
-A transaction is SERIALIZABLE unless [SET
-TRANSACTION](../sql/statements/set-transaction.md) says otherwise: its
-reads and writes are as if no other transaction ran at the same time.
-It reads a snapshot, the database as of when it began, so readers never
-wait for writers, nor writers for readers. REPEATABLE READ, READ
-COMMITTED and READ UNCOMMITTED read with less isolation, a snapshot of
-each statement at the last two.
+A transaction is READ COMMITTED unless [SET
+TRANSACTION](../sql/statements/set-transaction.md) or the setting
+TRANSACTION.ISOLATION says otherwise. Each of its statements reads a
+snapshot, the database as of when that statement began, so readers never
+wait for writers, nor writers for readers.
+
+SERIALIZABLE reads and writes as if no other transaction ran at the same
+time. It reads one snapshot, taken as it began, and checks that snapshot
+again as it commits. It is the level the SQL standard makes the default,
+and `SET DATABASE TRANSACTION.ISOLATION = 'SERIALIZABLE'` makes it this
+database's. REPEATABLE READ reads one snapshot and checks nothing as it
+commits, and READ UNCOMMITTED reads as READ COMMITTED does.
 
 ## Conflicts
 

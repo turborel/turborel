@@ -7,12 +7,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::{Database, Session, State};
+use crate::ast::IsolationLevel;
 use crate::binder::Context;
 use crate::diagnostics::{Event, Extension};
 use crate::error::{Code, Result, SqlError};
 use crate::log::record::Change;
 use crate::params::Params;
-use crate::settings::{self, Definition, Kind, LOCKS_WAIT, Listed, SESSION_COMMIT_AT_END};
+use crate::settings::{self, Definition, Kind, LOCKS_WAIT, Listed, SESSION_COMMIT_AT_END, TRANSACTION_ISOLATION};
 use crate::storage::TableOption;
 use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
@@ -510,6 +511,12 @@ impl Session {
         let mut copy = State::clone(&st);
         copy.settings = st.settings.overlaid(&own);
         Arc::new(copy)
+    }
+
+    /// The isolation level of a transaction that names none
+    /// (`TRANSACTION.ISOLATION`).
+    pub(super) fn isolation(&self, st: &State) -> IsolationLevel {
+        settings::isolation_level(st.settings.effective(TRANSACTION_ISOLATION, &self.own.borrow()).0)
     }
 
     /// Whether its transactions wait for locks (`LOCKS.WAIT`).

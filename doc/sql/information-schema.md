@@ -100,12 +100,12 @@ SELECT * FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS;
  SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE | IS_SESSION_SETTABLE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------+---------------------
  LOCKS.WAIT                                                   | OFF                                                          | DEFAULT      | YES
- MEMORY.BUDGET_BYTES                                          | 268435456                                                    | DEFAULT      | NO
+ MEMORY.BUDGET_BYTES                                          | 1073741824                                                   | DEFAULT      | NO
  SESSION.TIME_ZONE                                            | +00:00                                                       | DEFAULT      | YES
 (3 rows)
  RESERVED_BY                                                  |                BYTES
 --------------------------------------------------------------+----------------------
- the buffer pool of the data file                             |             33554432
+ the buffer pool of the data file                             |            134217728
 (1 row)
 ```
 

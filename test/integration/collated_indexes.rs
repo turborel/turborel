@@ -65,6 +65,7 @@ fn an_index_of_sort_keys_is_probed_by_its_own_collation() {
 #[test]
 fn a_read_through_sort_keys_is_tracked_for_its_commit() {
     let db = indexed();
+    crate::common::serializable(&db);
     let (a, b) = (db.session("A"), db.session("A"));
     assert_eq!(query(&a, "SELECT B FROM T WHERE NAME = 'nobody'").len(), 0);
     assert_eq!(query(&b, "SELECT B FROM T WHERE NAME = 'somebody'").len(), 0);

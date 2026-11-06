@@ -33,8 +33,8 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 |---|---|---|---|---|
 | CATALOG.COMPACT_AFTER_IMAGES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | CATALOG.NAME | TURBOREL | AN IDENTIFIER | at once |  |
-| CHECKPOINT.AFTER_BYTES | 67108864 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
-| CHECKPOINT.AFTER_CHANGES | 100000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
+| CHECKPOINT.AFTER_BYTES | 1073741824 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
+| CHECKPOINT.AFTER_CHANGES | 4000000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | CHECKPOINT.OVERDUE_FACTOR | 4 | INTEGER FROM 1 TO 1000000 | at once |  |
 | COLUMNSTORE.HEADER_CACHE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
@@ -49,7 +49,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | LOG.DURABILITY | DATA | ONE OF NONE, DATA, FULL | at once |  |
 | LOG.SEGMENT_BYTES | 67108864 | INTEGER FROM 4096 TO 1099511627775 | when the database is made |  |
 | LOG.SYNC_AFTER_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| MEMORY.BUDGET_BYTES | 268435456 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
+| MEMORY.BUDGET_BYTES | 1073741824 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
 | MEMORY.WORK_BYTES | 4194304 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
@@ -81,12 +81,13 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |
-| STORAGE.POOL_BYTES | 33554432 | INTEGER FROM 65536 TO 9223372036854775807 | at the next start |  |
+| STORAGE.POOL_BYTES | 134217728 | INTEGER FROM 65536 TO 9223372036854775807 | at the next start |  |
 | STORAGE.READ_AHEAD_PAGES | 32 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | STORAGE.REKEY_BYTES_PER_SECOND | 8388608 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| STORAGE.SYSTEM_CACHE_BYTES | 1073741824 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| STORAGE.SYSTEM_CACHE_BYTES | 4294967296 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | TABLES.ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
+| TRANSACTION.ISOLATION | READ COMMITTED | ONE OF READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE | from the next transaction | *session* |
 | TRANSACTION.STRICT | ON | ONE OF ON, OFF | from the next transaction |  |
 
 Each in a sentence:
@@ -147,6 +148,7 @@ Each in a sentence:
 - **STORAGE.SYSTEM_CACHE_BYTES**: The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.
 - **TABLES.ENGINE**: The storage engine of tables a schema creates.
 - **TABLES.UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.
+- **TRANSACTION.ISOLATION**: The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED as PostgreSQL's default is, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.
 - **TRANSACTION.STRICT**: ON refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; OFF allows it.
 
 ## The server's settings
@@ -169,7 +171,7 @@ Each in a sentence:
 | SERVER.KEEPALIVE_PROBES | 0 | INTEGER FROM 0 TO 127 | from the next connection |  |
 | SERVER.LOGIN_DELAY_MS | 10000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.LOGIN_TIMEOUT_MS | 60000 | INTEGER FROM 0 TO 4294967295 | at once |  |
-| SERVER.MAX_CONNECTIONS | 256 | INTEGER FROM 1 TO 4294967295 | at once |  |
+| SERVER.MAX_CONNECTIONS | 100 | INTEGER FROM 1 TO 4294967295 | at once |  |
 | SERVER.MAX_LOGINS | 4 | INTEGER FROM 1 TO 64 | at once |  |
 | SERVER.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 1024 TO 4294967295 | from the next connection |  |
 | SERVER.MAX_REFUSALS | 16 | INTEGER FROM 0 TO 4294967295 | at once |  |

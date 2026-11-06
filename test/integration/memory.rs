@@ -25,7 +25,7 @@ fn bytes(n: usize) -> Value {
 
 /// Verifies: [DESIGN] RULES.md D38, D56: a database in memory reserves the
 /// pool its engine and index methods share as its first table is made, of
-/// STORAGE.POOL_BYTES then, 32 MiB unless set, of MEMORY.BUDGET_BYTES's 256 MiB,
+/// STORAGE.POOL_BYTES then, 128 MiB unless set, of MEMORY.BUDGET_BYTES's 1 GiB,
 /// with the page heading their file, its indexes taking no more; past the budget a statement is refused
 /// (SQLCODE -918, SQLSTATE TB918); STORAGE.POOL_BYTES set after the pool is
 /// made changes nothing; a lower budget takes back nothing reserved; one
@@ -33,12 +33,12 @@ fn bytes(n: usize) -> Value {
 #[test]
 fn pools_reserve_the_budget() {
     let db = Database::new();
-    assert_eq!(db.memory().unwrap(), (256 * MIB, 0));
+    assert_eq!(db.memory().unwrap(), (1024 * MIB, 0));
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
     let (limit, made) = db.memory().unwrap();
-    assert!(limit == 256 * MIB && (32 * MIB + HEADER..33 * MIB).contains(&made), "the shared pool and its file: {made}");
+    assert!(limit == 1024 * MIB && (128 * MIB + HEADER..129 * MIB).contains(&made), "the shared pool and its file: {made}");
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE U (K INTEGER UNIQUE)").unwrap();
-    assert!((made..33 * MIB).contains(&db.memory().unwrap().1), "its index method shares them");
+    assert!((made..129 * MIB).contains(&db.memory().unwrap().1), "its index method shares them");
 
     let small = Database::new();
     small.set_setting("MEMORY.BUDGET_BYTES", &bytes(3 * MIB)).unwrap();
@@ -71,7 +71,7 @@ fn a_kept_database_makes_its_pool_in_its_budget() {
         db.open_files(&os(), &dir, &OpenOptions::default()).map(|_| db)
     };
     let db = open(64 * 8192).unwrap();
-    assert_eq!(db.memory().unwrap(), (256 * MIB, 64 * 8192));
+    assert_eq!(db.memory().unwrap(), (1024 * MIB, 64 * 8192));
     db.set_setting("MEMORY.BUDGET_BYTES", &bytes(MIB)).unwrap();
     db.close().unwrap();
     drop(db);

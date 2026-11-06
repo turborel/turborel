@@ -24,7 +24,7 @@ fn state(s: &Session, sql: &str) -> String {
 /// §12.3 GR6c v]: SET TRANSACTION sets the modes of the next transaction
 /// alone, and is refused while one is active; a READ ONLY one reads, but
 /// changes no data or schema (SQLSTATE 25000); one begun with no SET
-/// TRANSACTION before it is READ WRITE and SERIALIZABLE.
+/// TRANSACTION before it is READ WRITE and READ COMMITTED.
 #[test]
 fn set_transaction_sets_the_next_transaction_14_1() {
     let db = setup();
@@ -32,7 +32,7 @@ fn set_transaction_sets_the_next_transaction_14_1() {
     assert_eq!(exec(&s, "SET TRANSACTION READ ONLY"), Ok(Completion::Success));
     assert_eq!(s.transaction(), None, "not transaction-initiating");
     assert_eq!(count(&s, "SELECT ID FROM T"), 3);
-    let read_only = TransactionMode { access: AccessMode::ReadOnly, isolation: IsolationLevel::Serializable };
+    let read_only = TransactionMode { access: AccessMode::ReadOnly, isolation: IsolationLevel::ReadCommitted };
     assert_eq!(s.transaction_mode(), Some(read_only));
     for change in [
         "INSERT INTO T (ID) VALUES (9)",
@@ -48,7 +48,7 @@ fn set_transaction_sets_the_next_transaction_14_1() {
     s.commit().unwrap();
     assert_eq!(exec(&s, "INSERT INTO T (ID) VALUES (9)"), Ok(Completion::Success), "the next is READ WRITE again");
     assert_eq!(s.transaction_mode(), Some(TransactionMode::default()));
-    assert_eq!(TransactionMode::default(), TransactionMode { access: AccessMode::ReadWrite, isolation: IsolationLevel::Serializable });
+    assert_eq!(TransactionMode::default(), TransactionMode { access: AccessMode::ReadWrite, isolation: IsolationLevel::ReadCommitted });
     s.rollback().unwrap();
     assert_eq!(count(&s, "SELECT ID FROM T WHERE ID = 9"), 0);
 }
@@ -94,7 +94,44 @@ fn transaction_modes_are_checked_14_1() {
         Value::Exact(Decimal::new(-2, 0)),
     );
     assert_eq!(s.execute("SET TRANSACTION DIAGNOSTICS SIZE N", &mut p).unwrap_err().sqlstate().as_str(), "35000", "by a parameter");
-    assert_eq!(mode("SET TRANSACTION READ WRITE"), write(IsolationLevel::Serializable), "the refused ones changed nothing");
+    assert_eq!(mode("SET TRANSACTION READ WRITE"), write(IsolationLevel::ReadCommitted), "the refused ones changed nothing");
+}
+
+/// Verifies: [EXTENSION] RULES.md D29: TRANSACTION.ISOLATION is the level of
+/// a transaction that names none, READ COMMITTED by default where
+/// [ISO/IEC 9075:1992 §14.1 SR2] says SERIALIZABLE; it holds from the next
+/// transaction, a session's own over the database's and SET TRANSACTION over
+/// both; a SET TRANSACTION of no level takes it; READ UNCOMMITTED so chosen
+/// is READ ONLY, as it is written [§14.1 SR4].
+#[test]
+fn transaction_isolation_is_the_level_of_one_that_names_none() {
+    let word = |w: &str| Value::Char(w.to_owned());
+    let level = |s: &Session| {
+        count(s, "SELECT ID FROM T");
+        let mode = s.transaction_mode().unwrap();
+        s.rollback().unwrap();
+        mode
+    };
+    let db = setup();
+    let s = db.session("APP");
+    assert_eq!(level(&s).isolation, IsolationLevel::ReadCommitted, "by default");
+
+    db.set_setting("TRANSACTION.ISOLATION", &word("SERIALIZABLE")).unwrap();
+    assert_eq!(level(&s).isolation, IsolationLevel::Serializable, "the database's");
+    assert_eq!(exec(&s, "SET TRANSACTION READ ONLY"), Ok(Completion::Success));
+    assert_eq!(level(&s), TransactionMode { access: AccessMode::ReadOnly, isolation: IsolationLevel::Serializable }, "of no level");
+
+    s.set_setting("TRANSACTION.ISOLATION", &word("REPEATABLE READ")).unwrap();
+    assert_eq!(level(&s).isolation, IsolationLevel::RepeatableRead, "the session's over the database's");
+    assert_eq!(exec(&s, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"), Ok(Completion::Success));
+    assert_eq!(level(&s).isolation, IsolationLevel::ReadCommitted, "SET TRANSACTION over both, for one");
+    assert_eq!(level(&s).isolation, IsolationLevel::RepeatableRead, "and for that one alone");
+
+    s.set_setting("TRANSACTION.ISOLATION", &word("READ UNCOMMITTED")).unwrap();
+    assert_eq!(level(&s), TransactionMode { access: AccessMode::ReadOnly, isolation: IsolationLevel::ReadUncommitted }, "§14.1 SR4");
+
+    let refused = s.set_setting("TRANSACTION.ISOLATION", &word("SOMETIMES"));
+    assert!(refused.is_err(), "no level");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §16.2, §4.30]: SET SCHEMA sets

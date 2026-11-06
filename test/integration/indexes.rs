@@ -27,6 +27,7 @@ fn settle(db: &Database) {
 #[test]
 fn earlier_writers_run_again() {
     let db = setup();
+    crate::common::serializable(&db);
     let (early, reader, other) = (db.session("APP"), db.session("APP"), db.session("APP"));
     early.run("UPDATE T SET F = 9 WHERE ID = 1").unwrap();
     other.run("INSERT INTO U VALUES (7, 'Z')").unwrap();

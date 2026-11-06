@@ -69,6 +69,12 @@ pub fn code(s: &Session, sql: &str) -> Code {
     rows(s, sql).expect_err(sql)
 }
 
+/// Makes `db`'s transactions SERIALIZABLE unless they say otherwise, for a
+/// test of what that level alone guarantees.
+pub fn serializable(db: &Database) {
+    db.set_setting("TRANSACTION.ISOLATION", &Value::Char("SERIALIZABLE".to_owned())).unwrap();
+}
+
 /// `setup` with T at 60 rows and a hash index on ID: rows 4-60 have NAME
 /// `N` and the ID, null for every 10th, AMT = ID mod 7, and F 0.
 pub fn big() -> Database {

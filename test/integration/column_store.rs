@@ -93,6 +93,7 @@ fn a_column_table_answers_as_a_row_table() {
 #[test]
 fn frozen_rows_change_as_any() {
     let db = Database::new();
+    crate::common::serializable(&db);
     let a = both(&db);
     let reader = db.session("A");
     assert_eq!(rows(&reader, "SELECT N FROM C WHERE K = 10"), Ok(vec!["1".to_owned()]), "the reader's snapshot");
@@ -355,6 +356,7 @@ fn first_thousands(got: &[String]) -> bool {
 #[test]
 fn rows_read_as_they_are_frozen_are_read_once() {
     let db = Database::new();
+    crate::common::serializable(&db);
     let w = table_c(&db);
     let done = AtomicBool::new(false);
     thread::scope(|scope| {

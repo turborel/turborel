@@ -84,14 +84,17 @@ const UNDO: &str = "undo";
 /// The file locked while the database is open.
 pub(super) const LOCK: &str = "lock";
 
-/// \[DESIGN\] The row changes after which a checkpoint is taken, by default.
-pub const CHECKPOINT_AFTER: u64 = 100_000;
+/// \[DESIGN\] The row changes after which a checkpoint is taken, by default:
+/// as many as about 1 GiB of log holds, so `CHECKPOINT_BYTES` and this come
+/// due together.
+pub const CHECKPOINT_AFTER: u64 = 4_000_000;
 /// \[DESIGN\] The bytes written to the tables file's side file after which
-/// a checkpoint is taken, by default: 64 MiB.
-pub const CHECKPOINT_BYTES: u64 = 64 << 20;
+/// a checkpoint is taken, by default: 1 GiB, as PostgreSQL's `max_wal_size`.
+pub const CHECKPOINT_BYTES: u64 = 1 << 30;
 
-/// \[DESIGN\] The bytes of a database's buffer pool, by default: 32 MiB.
-pub const POOL_BYTES: usize = 32 << 20;
+/// \[DESIGN\] The bytes of a database's buffer pool, by default: 128 MiB, as
+/// PostgreSQL's `shared_buffers`.
+pub const POOL_BYTES: usize = 128 << 20;
 
 /// \[DESIGN\] How a database kept in a directory is opened: what its
 /// files do not fix. What they do is its settings fixed at creation

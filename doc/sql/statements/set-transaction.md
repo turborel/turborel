@@ -45,8 +45,12 @@ A mode not written takes its default:
 
 | Mode | Default |
 |---|---|
-| Isolation level | SERIALIZABLE |
+| Isolation level | READ COMMITTED, or what TRANSACTION.ISOLATION says |
 | Access mode | READ ONLY under READ UNCOMMITTED; READ WRITE otherwise |
+
+The default isolation level follows PostgreSQL. The standard says
+SERIALIZABLE, and a database or session gets that by setting
+[TRANSACTION.ISOLATION](../../appendix/c-settings.md) to SERIALIZABLE.
 
 How each level reads:
 
@@ -118,7 +122,7 @@ OK
 ```
 
 The UPDATE that failed did not end the transaction, and the next
-transaction takes the defaults again, SERIALIZABLE and READ WRITE.
+transaction takes the defaults again, READ COMMITTED and READ WRITE.
 
 SET TRANSACTION while a transaction is active is refused:
 

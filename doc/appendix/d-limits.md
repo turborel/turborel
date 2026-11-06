@@ -32,7 +32,7 @@ FROM clause. A deeper one is refused rather than run out of stack.
 | An index's key | of the default 8 KiB page, 2,007 bytes in a B-link tree, 8,116 in a hash index; of a 4 KiB page, 983 in a B-link tree; of a 64 KiB page, 16,343 in a B-link tree, 65,460 in a hash index |
 | A row | none: its long values are kept out of line |
 | A message to the server | SERVER.MAX_MESSAGE_BYTES, 16 MiB by default |
-| Connections at once | SERVER.MAX_CONNECTIONS, 256 by default |
+| Connections at once | SERVER.MAX_CONNECTIONS, 100 by default |
 | Prepared statements of a connection | SERVER.MAX_STATEMENTS, 1,024 by default |
 
 An index's key is compared whole in its page, so it is limited where a

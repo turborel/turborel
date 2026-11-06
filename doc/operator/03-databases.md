@@ -65,7 +65,7 @@ table's and the index's own lookups have found their pages there; else
 in the operating system's cache, or on the disk. A scan of a table the
 pool holds little of is priced as read from that cache. How much of the
 data file past the pool that cache holds is
-STORAGE.SYSTEM_CACHE_BYTES (1 GiB by default): set it to the memory the
+STORAGE.SYSTEM_CACHE_BYTES (4 GiB by default): set it to the memory the
 machine leaves its cache, or to 0 to price every page the pool misses as
 read from the disk, so that a scan is chosen over an index sooner. It
 changes no result, only plans, from the next statement planned; a
@@ -143,9 +143,9 @@ acknowledges a record to the group, whatever LOG.DURABILITY says
 
 A checkpoint writes the changes since the last to the data file, so a
 recovery reads the log only from there. One is due once
-CHECKPOINT.AFTER_CHANGES row changes have been logged, 100,000 by
+CHECKPOINT.AFTER_CHANGES row changes have been logged, 4,000,000 by
 default, or CHECKPOINT.AFTER_BYTES bytes written to the data file,
-64 MiB; the database's checkpoint thread takes it, so no transaction
+1 GiB; the database's checkpoint thread takes it, so no transaction
 waits for it. Each is told to the diagnostics, `checkpoint_taken`. One
 that fails leaves the changes since the last counted, so the next is due
 as soon as a transaction ends.

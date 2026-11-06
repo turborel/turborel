@@ -108,7 +108,7 @@ whether TLS is offered at all, takes effect as the server starts.
 
 | Setting | Limit |
 |---|---|
-| SERVER.MAX_CONNECTIONS | connections at once, 256 |
+| SERVER.MAX_CONNECTIONS | connections at once, 100 |
 | SERVER.WORKERS | statements run at once, one per processor |
 | SERVER.MAX_STATEMENTS | prepared statements of a connection, 1,024 |
 | SERVER.MAX_MESSAGE_BYTES | the longest message a client sends, 16 MiB |

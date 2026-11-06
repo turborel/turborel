@@ -30,6 +30,7 @@ fn database(scratch: &Scratch, schema: &str) -> (Database, TableFiles) {
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
     let db = Database::new();
+    crate::common::serializable(&db);
     db.register_engine(Box::new(RowStore::new(files.clone(), TableOptions::default()))).unwrap();
     db.use_engine(ROW_STORE).unwrap();
     db.schema(schema).unwrap();

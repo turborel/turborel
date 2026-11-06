@@ -26,8 +26,9 @@ use crate::files::plugins::PluginFiles;
 use crate::spill::WorkAreas;
 use crate::sync::lock_builtin;
 
-/// \[DESIGN\] The default MEMORY.BUDGET_BYTES: 256 MiB.
-pub const DEFAULT_BUDGET: usize = 256 << 20;
+/// \[DESIGN\] The default MEMORY.BUDGET_BYTES: 1 GiB, eight of the default
+/// buffer pools (`db::POOL_BYTES`), as a database may hold several at once.
+pub const DEFAULT_BUDGET: usize = 1 << 30;
 
 /// \[DESIGN\] A database's memory budget: its limit, and what is reserved
 /// of it. It may be shared between threads.

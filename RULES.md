@@ -832,6 +832,10 @@ a value read by one statement and written back by a later one can overwrite
 a change committed between them. An engine that ignores `TableStorage::read_mode` reads as
 SERIALIZABLE.
 
+A transaction that names no level takes TRANSACTION.ISOLATION, READ COMMITTED
+by default as in PostgreSQL. The standard says SERIALIZABLE
+[ISO/IEC 9075:1992 §14.1 SR2], and that setting at SERIALIZABLE conforms.
+
 The coordinator's table locks (D28) remain for engines that leave
 concurrency to it. A database transaction whose writes change nothing any
 snapshot reads says so (`TableStorage::preserving`), and is checked against

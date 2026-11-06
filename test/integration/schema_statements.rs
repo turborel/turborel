@@ -31,6 +31,7 @@ fn schemas() -> Database {
 #[test]
 fn a_table_is_created_in_a_transaction_11_3() {
     let db = schemas();
+    crate::common::serializable(&db);
     let a = db.session("A");
     let created = "CREATE TABLE U (K INTEGER NOT NULL UNIQUE, T INTEGER REFERENCES T, CHECK (K > 0))";
     assert_eq!(exec(&a, created), Ok(Completion::Success));
