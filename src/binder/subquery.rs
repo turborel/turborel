@@ -31,6 +31,13 @@ pub(super) struct Outer<'a> {
     captured: RefCell<Vec<Expr>>,
 }
 
+impl<'a> Outer<'a> {
+    /// The enclosing query's binder.
+    pub(super) fn binder(&self) -> &'a Binder<'a> {
+        self.binder
+    }
+}
+
 /// What a subquery's rows are for, which decides what its select list
 /// means.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -184,6 +191,7 @@ impl Binder<'_> {
         let nesting = Nesting::Subquery { outer: &outer, result };
         let bound = bind_query_expression(cx, &s.query, &nesting)?;
         let types = bound.columns.iter().map(|c| c.data_type).collect();
+        self.note_subquery(s, &bound.columns);
         let subquery = Subquery { plan: bound.plan, outer: outer.captured.into_inner() };
         Ok((Arc::new(subquery), types))
     }

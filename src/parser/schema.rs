@@ -6,8 +6,9 @@
 
 use super::Parser;
 use crate::ast::{
-    Action, CheckLevels, ColumnDefinition, DefaultOption, PrivilegeDefinition, QueryExpression, RevokeStatement, Schema, SchemaStatement,
-    SqlStatement, TableDefinition, TableElement, TableName, TableStorage, Temporary, TemporaryKind, ViewDefinition,
+    Action, CheckLevels, CollationDefinition, ColumnDefinition, DefaultOption, PrivilegeDefinition, PrivilegeObject, QueryExpression,
+    RevokeStatement, Schema, SchemaStatement, SqlStatement, TableDefinition, TableElement, TableName, TableStorage, Temporary,
+    TemporaryKind, ViewDefinition,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -46,6 +47,7 @@ impl Parser {
         //     | <grant statement> | <assertion definition> | <character set definition>
         //     | <collation definition> | <translation definition>
         let (mut domains, mut tables, mut views, mut privileges) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut collations = Vec::new();
         let mut assertions = Vec::new();
         loop {
             if self.is_kw(kw::GRANT) {
@@ -55,11 +57,7 @@ impl Parser {
             if !self.is_kw(kw::CREATE) {
                 break;
             }
-            // [§11.1] a character set, collation or translation
-            // definition: read, then refused.
-            if matches!(self.peek_at(1), Tok::KeyWord(kw::CHARACTER | kw::COLLATION | kw::TRANSLATION)) {
-                self.advance();
-                self.character_set_definition()?;
+            if self.character_set_element(&mut collations)? {
                 continue;
             }
             if matches!(self.peek_at(1), Tok::KeyWord(kw::VIEW)) {
@@ -73,7 +71,7 @@ impl Parser {
             }
         }
         self.end()?;
-        Ok(Schema { catalog, name, auth, domains, assertions, tables, views, privileges })
+        Ok(Schema { catalog, name, auth, collations, domains, assertions, tables, views, privileges })
     }
 
     /// [ISO/IEC 9075:1992 §5.4] `<schema name>` ::= \[`<catalog name>` .\]
@@ -86,6 +84,24 @@ impl Parser {
             return Ok((Some(first), self.identifier()?, at));
         }
         Ok((None, first, at))
+    }
+
+    /// [§11.1] A character set, translation or collation definition, if
+    /// next, at CREATE: a character set's or translation's read, then
+    /// refused; a collation's added to `collations`. Whether one was.
+    fn character_set_element(&mut self, collations: &mut Vec<CollationDefinition>) -> Result<bool> {
+        if matches!(self.peek_at(1), Tok::KeyWord(kw::CHARACTER | kw::TRANSLATION)) {
+            self.advance();
+            self.character_set_definition()?;
+            return Ok(true);
+        }
+        if !matches!(self.peek_at(1), Tok::KeyWord(kw::COLLATION)) {
+            return Ok(false);
+        }
+        self.advance();
+        self.advance();
+        collations.push(self.collation_definition()?);
+        Ok(true)
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1] A `<table definition>`, a
@@ -106,6 +122,10 @@ impl Parser {
             SchemaStatement::Domain(self.domain_definition()?)
         } else if self.next_is_kw(kw::ASSERTION) {
             SchemaStatement::Assertion(self.assertion_definition()?)
+        } else if self.next_is_kw(kw::COLLATION) {
+            self.advance();
+            self.advance();
+            SchemaStatement::Collation(self.collation_definition()?)
         } else {
             SchemaStatement::Table(self.table_definition()?)
         };
@@ -123,10 +143,10 @@ impl Parser {
             self.expect_kw(kw::FOR)?;
         }
         let actions = self.privileges()?;
-        let (table, domain) = self.object_name()?;
+        let (table, object) = self.object_name()?;
         self.expect_kw(kw::FROM)?;
         let grantees = self.grantees()?;
-        Ok(RevokeStatement { grant_option_for, actions, table, domain, grantees, behavior: self.drop_behavior()? })
+        Ok(RevokeStatement { grant_option_for, actions, table, object, grantees, behavior: self.drop_behavior()? })
     }
 
     /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=
@@ -270,14 +290,16 @@ impl Parser {
         let at = self.here();
         let name = self.identifier()?;
         let data_type = self.type_name()?;
+        // [ISO/IEC 9075-2:2023 §6.1] of its <predefined type>.
+        let of_type = self.collate_clause()?;
         let default = if self.accept_kw(kw::DEFAULT) { Some(self.default_option()?) } else { None };
         let mut constraints = Vec::new();
         while self.at_column_constraint() {
             constraints.push(self.column_constraint()?);
         }
-        // [ISO/IEC 9075:1992 §11.4] [<collate clause>]: refused.
-        self.collate_clause()?;
-        Ok(ColumnDefinition { name, at, data_type, default, constraints })
+        // [ISO/IEC 9075:1992 §11.4] [<collate clause>]
+        let collate = self.collate_after(of_type)?;
+        Ok(ColumnDefinition { name, at, data_type, default, constraints, collate })
     }
 
     /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` |
@@ -314,7 +336,7 @@ impl Parser {
     fn privilege_definition(&mut self) -> Result<PrivilegeDefinition> {
         self.expect_kw(kw::GRANT)?;
         let actions = self.privileges()?;
-        let (table, domain) = self.object_name()?;
+        let (table, object) = self.object_name()?;
         self.expect_kw(kw::TO)?;
         let grantees = self.grantees()?;
         let grant_option = self.accept_kw(kw::WITH);
@@ -322,7 +344,7 @@ impl Parser {
             self.expect_kw(kw::GRANT)?;
             self.expect_kw(kw::OPTION)?;
         }
-        Ok(PrivilegeDefinition { actions, table, domain, grantees, grant_option })
+        Ok(PrivilegeDefinition { actions, table, object, grantees, grant_option })
     }
 
     /// `<action>` ::= SELECT | DELETE | INSERT \[(`<privilege column
@@ -362,22 +384,24 @@ impl Parser {
     }
 
     /// ON `<object name>`: [ISO/IEC 9075:1992 §11.36] `<object name>` ::=
-    /// \[TABLE\] `<table name>` | DOMAIN `<domain name>`, of those
-    /// implemented: the name, and whether it is not a table's. A collation,
-    /// character set or translation is read, its name left empty.
-    fn object_name(&mut self) -> Result<(TableName, bool)> {
+    /// \[TABLE\] `<table name>` | DOMAIN `<domain name>` | COLLATION
+    /// `<collation name>`, of those implemented: the name, and what it
+    /// names. A character set or translation is read, its name left empty.
+    fn object_name(&mut self) -> Result<(TableName, PrivilegeObject)> {
         self.expect_kw(kw::ON)?;
         let at = self.here();
-        // A collation, character set or translation: refused as the
-        // statement ends.
+        // A character set or translation: refused as the statement ends.
         if self.character_set_object()? {
-            return Ok((TableName { auth: None, ident: String::new(), at }, true));
+            return Ok((TableName { auth: None, ident: String::new(), at }, PrivilegeObject::Domain));
         }
         if self.accept_kw(kw::DOMAIN) {
-            return Ok((self.table_name()?, true));
+            return Ok((self.table_name()?, PrivilegeObject::Domain));
+        }
+        if self.accept_kw(kw::COLLATION) {
+            return Ok((self.table_name()?, PrivilegeObject::Collation));
         }
         self.accept_kw(kw::TABLE);
-        Ok((self.table_name()?, false))
+        Ok((self.table_name()?, PrivilegeObject::Table))
     }
 
     /// `<grantee>` \[{, `<grantee>`}...\]

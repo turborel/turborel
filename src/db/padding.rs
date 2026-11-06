@@ -65,7 +65,11 @@ impl State {
                 AlterDomainAction::SetDefault(o) => self.catalog.domain(object).is_some_and(|d| pads(d.data_type, Some(o))),
                 AlterDomainAction::DropDefault | AlterDomainAction::AddConstraint(_) | AlterDomainAction::DropConstraint(_) => false,
             },
-            SchemaStatement::View(_) | SchemaStatement::Grant(_) | SchemaStatement::Revoke(_) | SchemaStatement::Assertion(_) => false,
+            SchemaStatement::View(_)
+            | SchemaStatement::Grant(_)
+            | SchemaStatement::Revoke(_)
+            | SchemaStatement::Assertion(_)
+            | SchemaStatement::Collation(_) => false,
         };
         padded.then_some(SqlState::ZERO_BIT_PADDING)
     }
@@ -84,6 +88,7 @@ impl State {
             AlterAction::DropColumn { .. }
             | AlterAction::AddConstraint(_)
             | AlterAction::DropConstraint { .. }
+            | AlterAction::RevertCollation(_)
             | AlterAction::Storage(_) => None,
         }
     }

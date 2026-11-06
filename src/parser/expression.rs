@@ -373,15 +373,22 @@ impl Parser {
             }
             let primary = self.qualified_primary()?;
             let factor = self.time_zone(primary)?;
-            self.collate_clause()?;
+            let factor = self.collated(factor)?;
             return Ok(ValueExpression::Monadic(sign, Box::new(factor)));
         }
         let primary = self.qualified_primary()?;
         let factor = self.time_zone(primary)?;
         // [ISO/IEC 9075:1992 §6.13] <character factor> ::= <character
-        // primary> [<collate clause>]: refused.
-        self.collate_clause()?;
-        Ok(factor)
+        // primary> [<collate clause>]
+        self.collated(factor)
+    }
+
+    /// `factor`, with the `<collate clause>` that may follow it.
+    fn collated(&mut self, factor: ValueExpression) -> Result<ValueExpression> {
+        Ok(match self.collate_clause()? {
+            Some(collation) => ValueExpression::Collated(Box::new(factor), collation),
+            None => factor,
+        })
     }
 
     /// A `<primary>`, with the `<interval qualifier>` that may follow it

@@ -125,10 +125,10 @@ impl State {
         let table = self.catalog.table(&ix.table).cloned().ok_or_else(|| api(format!("[EXTENSION] no table {}", ix.table)))?;
         let method = Arc::clone(self.methods.get(&ix.method).ok_or_else(|| api(format!("[EXTENSION] no index method {}", ix.method)))?);
         let next = IndexDesc { options, ..ix };
-        let structure: Arc<dyn Index> = Arc::from(method.create_on(&table.types(&next.columns).unwrap_or_default(), (&table, &next))?);
+        let structure: Arc<dyn Index> = Arc::from(method.create_on(&next.key_types(&table).unwrap_or_default(), (&table, &next))?);
         // Opened from its files, it is filled once the tables are (`Database::reopen`).
         if !self.leave_unbuilt(name) {
-            self.fill_index(&*structure, &table.name, &next.columns, Timestamp::MAX)?;
+            self.fill_index(&*structure, &next, Timestamp::MAX)?;
         }
         let mut catalog = self.catalog.duplicate();
         catalog.remove_index(name);
@@ -270,14 +270,14 @@ impl Database {
         let shut = current.tx.gate.shut();
         let tx = current.begin();
         let defined = self.change(|st| {
-            let (index, positions, _) = st.define_index(spec)?;
+            let (index, ix, _) = st.define_index(spec)?;
             st.building.insert(name.to_owned());
-            Ok((index, positions, Building::begin(st, qn)?))
+            Ok((index, ix, Building::begin(st, qn)?))
         });
         drop(shut);
-        let (index, positions, building) = defined?;
+        let (index, ix, building) = defined?;
         // 2. Filled.
-        let filled = self.snapshot().and_then(|st| st.fill_index(&*index, qn, &positions, tx.snapshot()));
+        let filled = self.snapshot().and_then(|st| st.fill_index(&*index, &ix, tx.snapshot()));
         // 3. Ready, or taken out.
         let done = match filled.and_then(|()| {
             self.change(|st| {

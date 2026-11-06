@@ -31,6 +31,7 @@ use crate::catalog::QualifiedName;
 use crate::functions::AggregateRef;
 use crate::system::SystemRead;
 use crate::value::DataType;
+use crate::value::collation::CollationRef;
 
 /// One set function to compute per group.
 #[derive(Debug, Clone)]
@@ -87,6 +88,10 @@ pub enum LogicalPlan {
     Aggregate {
         /// The grouping columns of `input`.
         groups: Vec<usize>,
+        /// \[EXTENSION\] What each groups by, if one is not the default
+        /// collation: rows are of a group by their sort keys, and the group
+        /// shows its first row's values [ISO/IEC 9075:1992 §8.2 GR3d].
+        collations: Vec<Option<CollationRef>>,
         /// The set functions computed per group.
         aggs: Vec<AggCall>,
         /// The rows grouped.
@@ -125,6 +130,9 @@ pub enum LogicalPlan {
         op: SetOp,
         /// ALL, which keeps duplicates.
         all: bool,
+        /// How many leading columns rows are compared by, if not all: their
+        /// sort keys, the rows' own values following them (RULES.md D60).
+        compared: Option<usize>,
         /// The first operand, which names the columns.
         left: Box<LogicalPlan>,
         /// The second operand.
@@ -205,7 +213,8 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>) {
         | Expr::Call(..)
         | Expr::Outer(..)
         | Expr::Dynamic(_)
-        | Expr::Cast(..) => {}
+        | Expr::Cast(..)
+        | Expr::SortKey(..) => {}
     }
     e.for_each_child(&mut |child| expr_subqueries(child, out));
 }
@@ -301,7 +310,7 @@ impl LogicalPlan {
                 n.extend(right.names());
                 n
             }
-            LogicalPlan::Aggregate { groups, aggs, input } => {
+            LogicalPlan::Aggregate { groups, aggs, input, .. } => {
                 let inner = input.names();
                 let mut n: Vec<String> = groups.iter().map(|&g| column_name(&inner, g)).collect();
                 n.extend(aggs.iter().map(|a| a.label.clone()));
@@ -359,12 +368,14 @@ impl LogicalPlan {
                 let left = g(left);
                 LogicalPlan::OuterJoin { kind, cond, left, right: g(right) }
             }
-            LogicalPlan::Aggregate { groups, aggs, input } => LogicalPlan::Aggregate { groups, aggs, input: g(input) },
+            LogicalPlan::Aggregate { groups, collations, aggs, input } => {
+                LogicalPlan::Aggregate { groups, collations, aggs, input: g(input) }
+            }
             LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs, input: g(input) },
             LogicalPlan::Distinct { input } => LogicalPlan::Distinct { input: g(input) },
-            LogicalPlan::SetOp { op, all, left, right } => {
+            LogicalPlan::SetOp { op, all, compared, left, right } => {
                 let left = g(left);
-                LogicalPlan::SetOp { op, all, left, right: g(right) }
+                LogicalPlan::SetOp { op, all, compared, left, right: g(right) }
             }
             LogicalPlan::Sort { keys, input } => LogicalPlan::Sort { keys, input: g(input) },
         }
@@ -388,7 +399,7 @@ impl LogicalPlan {
             LogicalPlan::OuterJoin { kind, cond, .. } => {
                 writeln!(out, "{pad}{kind:?} outer join on {}", render_cond(cond, &self.names()))
             }
-            LogicalPlan::Aggregate { groups, aggs, input } => {
+            LogicalPlan::Aggregate { groups, aggs, input, .. } => {
                 let n = inner(input);
                 let g: Vec<String> = groups.iter().map(|&i| column_name(&n, i)).collect();
                 let a: Vec<&str> = aggs.iter().map(|a| a.label.as_str()).collect();

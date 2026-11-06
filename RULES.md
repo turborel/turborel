@@ -97,6 +97,7 @@ verification approach DO-178C expects (§8).
 | D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
 | D59 | Import is rows from a pluggable source, over a connection |
+| D60 | Collations are sort keys, and a collation never changes |
 
 ### The project
 
@@ -125,6 +126,11 @@ reviewable and no supply chain needs qualifying. The exceptions are:
 - tokio and socket2 in the server crate (D42)
 - tokio's signals in the command-line client
 - rpassword in the command-line client and `turboreld` (D46)
+
+Generated data counts too. `src/value/collation/unicode13.bin` is no
+dependency, but it can't be read line by line. So `cargo xtask unicode` makes
+it from Unicode's own files, the build holds it to a digest, and
+`cargo xtask unicode-check` runs Unicode's conformance file against it (D60).
 
 #### D6. Production code only
 
@@ -303,13 +309,49 @@ dialects.
 
 SQL-92 comes first in full, then later standards through SQL:2023, each
 from its own text and never from memory or other products. The texts are
-local and untracked, and cited as `[X3.135-1986 §…]` and
-`[ISO/IEC 9075:1992 §…]`.
+local and untracked, and cited as `[X3.135-1986 §…]`,
+`[ISO/IEC 9075:1992 §…]` and `[ISO/IEC 9075-2:2023 §…]`.
 
 The module language and embedded SQL are not claimed. Character sets other
-than the one there is, collations, translations and leap seconds will
-never be implemented (CONFORMANCE.md). One character set keeps comparison,
-keys and storage simple.
+than the one there is, translations and leap seconds will never be
+implemented (CONFORMANCE.md). One character set keeps comparison, keys and
+storage simple. Collations don't need a second one (D60).
+
+#### D60. Collations are sort keys, and a collation never changes
+
+People sort and search text in their language, and expect `Bob` and `bob` to
+be one name, so scalar order alone isn't enough. A collation
+[ISO/IEC 9075-2:2023 §4.3.6] turns a string into a sort key, bytes that
+compare as the strings do. UCS_BASIC and SQL_TEXT are the order comparison
+always had. UNICODE is UCA 13.0, which UTS #10 maps to ISO/IEC 14651:2020, at
+the Shifted option and four levels. CASE_INSENSITIVE [EXTENSION] compares each
+character's simple case folding. CREATE COLLATION gives one of them another
+name or pad characteristic.
+
+The default stays as it was. A comparison by it is bare, so the optimizer,
+zones, Bloom filters and batches see nothing new. A comparison by another
+compares `Expr::SortKey`s, which are `Value::Bits`, so sorting, hashing and
+spilling need no change either. An index on a collated column holds sort keys
+as BIT VARYING, its key from `IndexDesc::key_of` wherever a row or values
+become a key. Such an index covers no query, gives no order, and is told to an
+engine as reading every row, so MVCC may refuse more commits and never fewer.
+Storage stays in scalar order, and only bare comparisons reach it. GROUP BY,
+DISTINCT and UNION group by keys and show each group's first row. A hash join
+makes its keys columns of its operands (`physical/collated.rs`).
+
+§9.15 decides the collation, from the statement's text (`binder/collation.rs`).
+It would refuse `C = 'x'` of any collated column, so a literal, parameter,
+CAST or USER yields to a column's, as SQL-92's Coercible did. A session
+collation applies to direct and prepared statements, as they are prepared, and
+never to views or constraints, which keep what they were defined with.
+
+A collation's name fixes its behaviour. PostgreSQL's indexes went wrong when a
+library changed its order underneath them, so the table is in the tree, a new
+Unicode version is a new collation, and a database whose collation has another
+version does not open. Case folds come from that table, not the toolchain's.
+
+DROP COLLATION reverts its columns to the default [§11.44 GR2], which reorders
+their indexes, so each table's rows are copied as ALTER TABLE copies them.
 
 #### D33. Schema changes are transactional
 
@@ -1189,6 +1231,10 @@ current definitions [§17.6 GR10], so a revoked privilege is missing at the
 next execution. A binding that reads a value, such as CURRENT_DATE, is never
 kept.
 
+A statement keeps the session collation it was prepared under, as §9.15
+applies at PREPARE, so a later SET COLLATION changes no statement prepared
+(D60).
+
 Prepare, Execute (with a row limit), Fetch, Close and Deallocate are the
 messages, because clients read large results in parts and must stop what
 they start. Complete carries SQLCODE and SQLSTATE so warnings reach the
@@ -1328,7 +1374,7 @@ under a target's directory is a module of that target.
 | R-DOC-1 | Every public item **shall** have a doc comment, with `# Errors` if it returns `Result` and `# Panics` if it can panic. | `missing_docs`, `missing_errors_doc`, `missing_panics_doc` |
 | R-DOC-2 | Comments **shall** say *why*: the rule implemented, the choice made, the invariant relied on. | review |
 | R-DOC-3 | Documentation **shall** build without warnings. | `cargo doc` with `-D warnings` |
-| R-DOC-4 | Behaviour the standard governs **shall** cite it as printed: `[X3.135-1986 §8.6 GR2]`, `[ISO/IEC 9075:1992 §11.19 SR13]`. Implementation-defined choices say so and state the choice. Beyond the standards: `[EXTENSION]`; ungoverned internals: `[DESIGN]`. BNF in doc comments goes in backticks. | review |
+| R-DOC-4 | Behaviour the standard governs **shall** cite it as printed: `[X3.135-1986 §8.6 GR2]`, `[ISO/IEC 9075:1992 §11.19 SR13]`, `[ISO/IEC 9075-2:2023 §9.15 SR4e]`. Implementation-defined choices say so and state the choice. Beyond the standards: `[EXTENSION]`; ungoverned internals: `[DESIGN]`. BNF in doc comments goes in backticks. | review |
 | R-DOC-5 | No commented-out code, no `TODO` or `FIXME` comments: open work goes in TODO.md, and code never cites TODO.md. | review; `cargo xtask verify` |
 | R-DOC-6 | Every file **shall** start with a `//!` doc giving its responsibility and clauses implemented. | review |
 | R-DOC-7 | Each implementation-defined choice **shall** be listed in CONFORMANCE.md with its implementing file. | review |

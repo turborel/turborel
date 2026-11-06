@@ -78,6 +78,7 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
             Ok(v)
         }
         Expr::Domain(x, d) => checked(eval(x, row, subqueries)?, d, subqueries),
+        Expr::SortKey(x, c) => Ok(c.sort_key(&eval(x, row, subqueries)?)),
         // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {

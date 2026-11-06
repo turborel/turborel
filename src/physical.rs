@@ -16,6 +16,7 @@
 //! dropped if that is cheaper than scanning in any order and sorting.
 
 mod access;
+mod collated;
 mod cost;
 mod estimate;
 mod indexed;
@@ -35,6 +36,7 @@ use crate::logical::{
     split_and,
 };
 use crate::system::SystemRead;
+use crate::value::collation::CollationRef;
 
 /// \[DESIGN\] A physical plan: the operators the executor runs, each with what
 /// EXPLAIN shows of it.
@@ -184,6 +186,8 @@ pub enum Plan {
     Aggregate {
         /// The grouping columns of `input`.
         groups: Vec<usize>,
+        /// What each groups by, if one is not the default collation.
+        collations: Vec<Option<CollationRef>>,
         /// The set functions computed per group.
         aggs: Vec<AggCall>,
         /// The grouping and set functions, as text.
@@ -210,6 +214,8 @@ pub enum Plan {
     SetOp {
         /// EXCEPT or INTERSECT.
         op: SetOp,
+        /// How many leading columns rows are compared by, if not all.
+        compared: Option<usize>,
         /// ALL, which keeps duplicates.
         all: bool,
         /// The first operand, read as it is pulled.
@@ -314,24 +320,7 @@ impl<'a> PhysicalPlanner<'a> {
 
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
 
-            LogicalPlan::Aggregate { groups, aggs, input } => {
-                let names = input.names();
-                let detail = format!(
-                    "group by [{}] computing [{}]",
-                    groups.iter().map(|&g| column_name(&names, g)).collect::<Vec<_>>().join(", "),
-                    aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
-                );
-                // Groups come in the order of their first rows (`exec/group.rs`),
-                // so rows in order of grouping columns give groups in that order.
-                let inner: Vec<SortKey> = want
-                    .iter()
-                    .map(|k| groups.get(k.column).map(|&c| SortKey { column: c, descending: k.descending }))
-                    .collect::<Option<_>>()
-                    .unwrap_or_default();
-                let b = self.build(input, &inner);
-                let plan = Plan::Aggregate { groups: groups.clone(), aggs: aggs.clone(), detail, input: Box::new(b.plan) };
-                Built { plan, ordered: !inner.is_empty() && b.ordered }
-            }
+            LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
 
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
 
@@ -341,7 +330,7 @@ impl<'a> PhysicalPlanner<'a> {
                 Built { plan: Plan::Distinct { input: Box::new(b.plan) }, ordered: b.ordered }
             }
 
-            LogicalPlan::SetOp { op, all, left, right } => self.set_operation((*op, *all), (left, right), want),
+            LogicalPlan::SetOp { .. } => self.set_operation(logical, want),
             LogicalPlan::System { read, .. } => Built::unordered(Plan::System { read: read.clone() }),
             LogicalPlan::Values { rows, .. } => {
                 let row = |r: &Vec<Expr>| format!("({})", r.iter().map(|e| render_expr(e, &[])).collect::<Vec<_>>().join(", "));
@@ -353,10 +342,35 @@ impl<'a> PhysicalPlanner<'a> {
         }
     }
 
+    /// The groups of `logical`, an aggregation, in the order of `want` if
+    /// their first rows' order can give it.
+    fn aggregate(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
+        let LogicalPlan::Aggregate { groups, collations, aggs, input } = logical else { return self.build_node(logical, want) };
+        let names = input.names();
+        let detail = format!(
+            "group by [{}] computing [{}]",
+            groups.iter().map(|&g| column_name(&names, g)).collect::<Vec<_>>().join(", "),
+            aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
+        );
+        // Groups come in the order of their first rows (`exec/group.rs`),
+        // so rows in order of grouping columns give groups in that order.
+        let inner: Vec<SortKey> = want
+            .iter()
+            .map(|k| groups.get(k.column).filter(|_| collations.is_empty()).map(|&c| SortKey { column: c, descending: k.descending }))
+            .collect::<Option<_>>()
+            .unwrap_or_default();
+        let b = self.build(input, &inner);
+        let plan =
+            Plan::Aggregate { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), detail, input: Box::new(b.plan) };
+        Built { plan, ordered: !inner.is_empty() && b.ordered }
+    }
+
     /// [X3.135-1986 §8.3 GR2b] UNION is UNION ALL followed by duplicate
     /// elimination; EXCEPT and INTERSECT keep the first operand's rows in
     /// its order [ISO/IEC 9075:1992 §7.10 GR1b].
-    fn set_operation(&self, (op, all): (SetOp, bool), (left, right): (&LogicalPlan, &LogicalPlan), want: &[SortKey]) -> Built {
+    fn set_operation(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
+        let LogicalPlan::SetOp { op, all, compared, left, right } = logical else { return self.build_node(logical, want) };
+        let (op, all, compared) = (*op, *all, *compared);
         let r = self.build(right, &[]);
         if op == SetOp::Union {
             let l = self.build(left, &[]);
@@ -364,7 +378,7 @@ impl<'a> PhysicalPlanner<'a> {
             return Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append) } });
         }
         let l = self.build(left, want);
-        Built { plan: Plan::SetOp { op, all, left: Box::new(l.plan), right: Box::new(r.plan) }, ordered: l.ordered }
+        Built { plan: Plan::SetOp { op, all, compared, left: Box::new(l.plan), right: Box::new(r.plan) }, ordered: l.ordered }
     }
 
     /// A filter directly on a table becomes part of the access path; any

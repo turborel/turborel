@@ -43,10 +43,12 @@
 
 use std::collections::BTreeSet;
 
+use crate::value::collation::Pad;
+
 use super::{
-    Actions, CheckLevels, ColumnDefault, ColumnDesc, ColumnDomain, ConstraintAttributes, ConstraintDesc, ConstraintKind, DomainDesc,
-    ForeignKey, Horizon, IndexDesc, MatchType, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary, TemporaryKind,
-    Underlying, UsageDesc, ViewDesc,
+    Actions, CheckLevels, CollationDesc, ColumnDefault, ColumnDesc, ColumnDomain, ConstraintAttributes, ConstraintDesc, ConstraintKind,
+    DomainDesc, ForeignKey, Horizon, IndexDesc, MatchType, PrivilegeDesc, QualifiedName, ReferentialAction, TableDesc, Temporary,
+    TemporaryKind, Underlying, UsageDesc, ViewDesc,
 };
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -122,6 +124,20 @@ fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
             put_default(out, default.as_ref());
         }
     }
+    put_collation_name(out, column.collation.as_ref());
+}
+
+/// A declared type collation: 0 for none, or 1 then its name.
+fn put_collation_name(out: &mut Vec<u8>, name: Option<&QualifiedName>) {
+    put_flag(out, name.is_some());
+    if let Some(name) = name {
+        put_name(out, name);
+    }
+}
+
+/// The name `put_collation_name` wrote.
+fn collation_name(r: &mut Reader<'_>) -> Result<Option<QualifiedName>> {
+    if flag(r)? { qualified(r).map(Some) } else { Ok(None) }
 }
 
 /// A default: 0 for none, 1 and a value, 2 for a user's, or 3 for a
@@ -170,7 +186,7 @@ fn column(r: &mut Reader<'_>) -> Result<ColumnDesc> {
     let (name, data_type, not_null) = (r.str()?, data_type(r)?, flag(r)?);
     let own = default(r)?;
     let domain = if flag(r)? { Some(ColumnDomain { name: qualified(r)?, default: default(r)? }) } else { None };
-    Ok(ColumnDesc { name, data_type, not_null, default: own, domain })
+    Ok(ColumnDesc { name, data_type, not_null, default: own, domain, collation: collation_name(r)? })
 }
 
 fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
@@ -321,7 +337,38 @@ pub(crate) fn put_domain(out: &mut Vec<u8>, domain: &DomainDesc) {
     put_type(out, domain.data_type);
     put_default(out, domain.default.as_ref());
     put_all(out, domain.constraints.iter(), put_constraint);
-    put_all(out, domain.usage.iter(), |out, u| {
+    put_usage(out, &domain.usage);
+    put_collation_name(out, domain.collation.as_ref());
+}
+
+/// [ISO/IEC 9075-2:2023 §11.43] `collation` in bytes: its name, base, pad
+/// (0 PAD SPACE, 1 NO PAD) and USAGE grants, as a domain's.
+pub(crate) fn put_collation(out: &mut Vec<u8>, collation: &CollationDesc) {
+    put_name(out, &collation.name);
+    out.put_str(&collation.base);
+    put_flag(out, collation.pad == Pad::None);
+    put_usage(out, &collation.usage);
+}
+
+/// The collation `put_collation` wrote.
+pub(crate) fn collation(r: &mut Reader<'_>) -> Result<CollationDesc> {
+    let (name, base) = (qualified(r)?, r.str()?);
+    let pad = if flag(r)? { Pad::None } else { Pad::Space };
+    Ok(CollationDesc { name, base, pad, usage: usage(r)? })
+}
+
+/// The domain `put_domain` wrote.
+pub(crate) fn domain(r: &mut Reader<'_>) -> Result<DomainDesc> {
+    let (name, data_type, default) = (qualified(r)?, data_type(r)?, default(r)?);
+    let constraints = get_all(r, constraint)?;
+    let usage = usage(r)?;
+    Ok(DomainDesc { name, data_type, default, constraints, usage, collation: collation_name(r)? })
+}
+
+/// Each USAGE grant, its grantor, grantee (0, or 1 then the name; none is
+/// PUBLIC) and grant option.
+fn put_usage(out: &mut Vec<u8>, usage: &[UsageDesc]) {
+    put_all(out, usage.iter(), |out, u| {
         out.put_str(&u.grantor);
         put_flag(out, u.grantee.is_some());
         if let Some(grantee) = &u.grantee {
@@ -331,16 +378,13 @@ pub(crate) fn put_domain(out: &mut Vec<u8>, domain: &DomainDesc) {
     });
 }
 
-/// The domain `put_domain` wrote.
-pub(crate) fn domain(r: &mut Reader<'_>) -> Result<DomainDesc> {
-    let (name, data_type, default) = (qualified(r)?, data_type(r)?, default(r)?);
-    let constraints = get_all(r, constraint)?;
-    let usage = get_all(r, |r| {
+/// The grants `put_usage` wrote.
+fn usage(r: &mut Reader<'_>) -> Result<Vec<UsageDesc>> {
+    get_all(r, |r| {
         let grantor = r.str()?;
         let grantee = if flag(r)? { Some(r.str()?) } else { None };
         Ok(UsageDesc { grantor, grantee, grantable: flag(r)? })
-    })?;
-    Ok(DomainDesc { name, data_type, default, constraints, usage })
+    })
 }
 
 /// `view` in bytes.
@@ -414,7 +458,15 @@ pub(crate) fn put_index(out: &mut Vec<u8>, index: &IndexDesc) {
 
 /// The index `put_index` wrote.
 pub(crate) fn index(r: &mut Reader<'_>) -> Result<IndexDesc> {
-    Ok(IndexDesc { name: r.str()?, table: qualified(r)?, columns: positions(r)?, method: r.str()?, unique: flag(r)?, options: options(r)? })
+    Ok(IndexDesc {
+        name: r.str()?,
+        table: qualified(r)?,
+        columns: positions(r)?,
+        method: r.str()?,
+        unique: flag(r)?,
+        options: options(r)?,
+        collations: Vec::new(),
+    })
 }
 
 /// `privilege` in bytes.
@@ -485,11 +537,11 @@ mod tests {
                     put_type(out, DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric });
                     put_flag(out, false);
                 },
-                &[tag, 0],
+                &[tag, 0, 0],
             )
         };
         assert_eq!(refused(&column_with(9), column), corrupt, "a default");
-        assert!(column(&mut Reader::new(&column_with(0), "column")).is_ok(), "no default, of no domain");
+        assert!(column(&mut Reader::new(&column_with(0), "column")).is_ok(), "no default, of no domain or collation");
         let foreign_key = |action: u8| {
             bytes(
                 |out| {

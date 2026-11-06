@@ -20,7 +20,7 @@ use crate::index::{self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMetho
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage, project};
+use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
@@ -375,12 +375,11 @@ impl Entries {
     ///
     /// The read's, and the index's.
     fn add(&self, read: Rows) -> Result<()> {
-        let columns = &self.index.columns;
         for each in read {
             let (id, row) = each?;
-            let key = project(&row, columns).ok_or_else(|| api(format!("[DESIGN] a row is shorter than index {}", self.index.name)))?;
-            if !key.iter().any(crate::value::Value::is_null) {
-                self.insert(Key(key), id)?;
+            let key = self.index.key_of(&row).ok_or_else(|| api(format!("[DESIGN] a row is shorter than index {}", self.index.name)))?;
+            if !key.0.iter().any(crate::value::Value::is_null) {
+                self.insert(key, id)?;
             }
         }
         Ok(())
@@ -410,8 +409,7 @@ impl Entries {
         if let Some(entries) = made.as_ref() {
             return Ok(Arc::clone(entries));
         }
-        let types =
-            self.desc.types(&self.index.columns).ok_or_else(|| api(format!("[DESIGN] index {} names no column", self.index.name)))?;
+        let types = self.index.key_types(&self.desc).ok_or_else(|| api(format!("[DESIGN] index {} names no column", self.index.name)))?;
         let on = (&self.desc, &self.index);
         let (pool, file) = pages.file()?;
         let entries: Arc<dyn Index> = if self.index.method == HASH_METHOD {

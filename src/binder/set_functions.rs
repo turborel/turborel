@@ -26,6 +26,8 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, db: &State) -> bool {
         | ValueExpression::Value(_)
         | ValueExpression::Column(_)
         | ValueExpression::Nested(_)
+        | ValueExpression::Collated(..)
+        | ValueExpression::CollationFor(_)
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
         | ValueExpression::Subquery(_)
@@ -64,6 +66,8 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Value(_)
         | ValueExpression::Column(_)
         | ValueExpression::Nested(_)
+        | ValueExpression::Collated(..)
+        | ValueExpression::CollationFor(_)
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
         | ValueExpression::Subquery(_)

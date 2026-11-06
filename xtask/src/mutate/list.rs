@@ -4,17 +4,19 @@
 //! here; a change to a quoted snippet brings its mutation up to date
 //! (`verify` refuses one that no longer applies).
 
+mod collations;
 mod reads;
 mod vr;
 
 use super::{Mutation, Package};
+pub use collations::COLLATIONS;
 pub use reads::READS;
 pub use vr::VR;
 
 /// Every mutation, in the order they run: the core's, then its reads',
 /// then replication's.
 pub fn all() -> Vec<Mutation> {
-    MUTATIONS.iter().chain(&READS).chain(&VR).copied().collect()
+    MUTATIONS.iter().chain(&READS).chain(&COLLATIONS).chain(&VR).copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints,

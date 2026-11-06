@@ -33,14 +33,16 @@ impl Parser {
         let name = self.table_name()?;
         self.accept_kw(kw::AS);
         let data_type = self.type_name()?;
+        // [ISO/IEC 9075-2:2023 §6.1] of its <predefined type>.
+        let of_type = self.collate_clause()?;
         let default = if self.accept_kw(kw::DEFAULT) { Some(self.default_option()?) } else { None };
         let mut constraints = Vec::new();
         while self.is_kw(kw::CONSTRAINT) || self.is_kw(kw::CHECK) {
             constraints.push(self.domain_constraint()?);
         }
-        // [<collate clause>]: refused.
-        self.collate_clause()?;
-        Ok(DomainDefinition { name, data_type, default, constraints })
+        // [<collate clause>]
+        let collate = self.collate_after(of_type)?;
+        Ok(DomainDefinition { name, data_type, default, constraints, collate })
     }
 
     /// [ISO/IEC 9075:1992 §11.21] `<domain constraint>` ::= \[`<constraint

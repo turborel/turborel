@@ -16,6 +16,7 @@ One reference page for each statement, in alphabetical order.
 - [COMMIT](commit.md): end a transaction, keeping its changes
 - [CONNECT](connect.md): connect to a server
 - [CREATE ASSERTION](create-assertion.md): define an assertion
+- [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE SCHEMA](create-schema.md): define a schema
@@ -30,6 +31,7 @@ One reference page for each statement, in alphabetical order.
 - [DESCRIBE](describe.md): describe a statement prepared in an SQL descriptor area
 - [DISCONNECT](disconnect.md): end connections
 - [DROP ASSERTION](drop-assertion.md): drop an assertion
+- [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP INDEX](drop-index.md): drop an index
 - [DROP SCHEMA](drop-schema.md): drop a schema
@@ -55,6 +57,7 @@ One reference page for each statement, in alphabetical order.
 - [SET CONSTRAINTS](set-constraints.md): set constraint modes
 - [SET DATABASE](set-database.md): change a database setting
 - [SET DESCRIPTOR](set-descriptor.md): set fields of an SQL descriptor area
+- [SET COLLATION](set-collation.md): set the session's collation
 - [SET SCHEMA](set-schema.md): set the default schema
 - [SET SESSION AUTHORIZATION](set-session-authorization.md): set the session's authorization identifier
 - [SET TIME ZONE](set-time-zone.md): set the session's time zone
@@ -70,10 +73,10 @@ written against its syntax is a syntax error instead (SQLCODE -102).
 
 | Statements | Why |
 |---|---|
-| CREATE CHARACTER SET, CREATE COLLATION, CREATE TRANSLATION, DROP CHARACTER SET, DROP COLLATION, DROP TRANSLATION | One character set, SQL_TEXT, its one collation, and no translations: never others |
+| CREATE CHARACTER SET, CREATE TRANSLATION, DROP CHARACTER SET, DROP TRANSLATION | One character set, SQL_TEXT, its one collation, and no translations: never others |
 | SET NAMES | The same |
 | CONNECT, SET CONNECTION, DISCONNECT, run by a session of an embedded database | They are the SQL-agent's, run by the client, not by a database ([CONNECT](connect.md)) |
 
-The standard: ISO/IEC 9075:1992 §11.28–§11.33 (character sets,
-collations and translations), §16.3 (SET NAMES) and §15.1–§15.3
+The standard: ISO/IEC 9075:1992 §11.28, §11.29, §11.32 and §11.33
+(character sets and translations), §16.3 (SET NAMES) and §15.1–§15.3
 (connections).

@@ -1,14 +1,16 @@
 //! [ISO/IEC 9075:1992 §5.3, §5.4, §10.4, §10.5, §11.1, §11.28-§11.33,
-//! §11.36, §16.3] Character sets, collations and translations: their
-//! grammar, read in full, so that SQL-92 that names any but SQL_TEXT, the
-//! one character set there is, or a collation or a translation, is refused
-//! as valid but never implemented (SQLCODE -900, RULES.md D32), and SQL
-//! that breaks their Format is a syntax error. Naming SQL_TEXT is taken.
+//! §11.36, §16.3; ISO/IEC 9075-2:2023 §10.7, §11.43] Character sets,
+//! collations and translations: their grammar, read in full. SQL-92 that
+//! names a character set but SQL_TEXT, the one there is, or a translation
+//! is refused as valid but never implemented (SQLCODE -900, RULES.md D32),
+//! and SQL that breaks their Format is a syntax error. Naming SQL_TEXT is
+//! taken, and a collation's clauses are read for the binder.
 
 use super::Parser;
-use crate::ast::{SqlStatement, ValueExpression};
+use crate::ast::{CollationDefinition, SqlStatement, TableName, ValueExpression};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
+use crate::value::collation::Pad;
 
 /// The one character set [ISO/IEC 9075:1992 §4.2, §10.4 SR3; RULES.md D32].
 const SQL_TEXT: &str = "SQL_TEXT";
@@ -35,14 +37,12 @@ fn is_language_identifier(name: &str) -> bool {
 }
 
 /// SQLCODE -900: `what`, valid SQL-92, names a character set other than
-/// SQL_TEXT, a collation or a translation, which are never implemented.
+/// SQL_TEXT or a translation, which are never implemented.
 fn never(at: usize, what: &str) -> SqlError {
     SqlError::at(
         Code::Unsupported,
         at,
-        format!(
-            "[DESIGN] {what} is valid SQL, but a character set other than SQL_TEXT, a collation and a translation are never implemented (RULES.md D32)"
-        ),
+        format!("[DESIGN] {what} is valid SQL, but a character set other than SQL_TEXT and a translation are never implemented"),
     )
 }
 
@@ -96,17 +96,63 @@ impl Parser {
         Ok(())
     }
 
-    /// [ISO/IEC 9075:1992 §10.5] `<collate clause>` ::= COLLATE `<collation
-    /// name>`, if next: refused once the statement is read.
-    pub(super) fn collate_clause(&mut self) -> Result<()> {
-        let at = self.here();
+    /// [ISO/IEC 9075:1992 §10.5; ISO/IEC 9075-2:2023 §10.7] `<collate clause>`
+    /// ::= COLLATE `<collation name>`, if next: the name.
+    pub(super) fn collate_clause(&mut self) -> Result<Option<TableName>> {
         if !self.accept_kw(kw::COLLATE) {
-            return Ok(());
+            return Ok(None);
         }
-        let name = self.qualified_name()?;
-        let refused = never(at, &format!("COLLATE {name}"));
-        self.refuse_later(refused);
-        Ok(())
+        self.table_name().map(Some)
+    }
+
+    /// `<collate clause>` `first`, if one came earlier, else one if next: of
+    /// a `<predefined type>` [ISO/IEC 9075-2:2023 §6.1], or after a column's
+    /// or domain's constraints [ISO/IEC 9075:1992 §11.4, §11.21].
+    pub(super) fn collate_after(&mut self, first: Option<TableName>) -> Result<Option<TableName>> {
+        if first.is_some() { Ok(first) } else { self.collate_clause() }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.4] `<current collation specification>` ::=
+    /// COLLATION FOR ( `<string value expression>` ).
+    pub(super) fn collation_for(&mut self) -> Result<ValueExpression> {
+        self.advance();
+        self.expect_kw(kw::FOR)?;
+        self.expect_delim(delim::LEFT_PAREN)?;
+        let operand = self.value_expression()?;
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::CollationFor(Box::new(operand)))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.43] `<collation name>` FOR `<character set
+    /// specification>` FROM `<existing collation name>` \[`<pad
+    /// characteristic>`\], after CREATE COLLATION. A source only SQL-92 has
+    /// is read, then refused.
+    pub(super) fn collation_definition(&mut self) -> Result<CollationDefinition> {
+        let name = self.table_name()?;
+        self.expect_kw(kw::FOR)?;
+        let at = self.here();
+        let set = self.character_set_name()?;
+        self.only_sql_text(at, &set);
+        self.expect_kw(kw::FROM)?;
+        let source = self.here();
+        let from = if matches!(self.peek(), Tok::KeyWord(kw::EXTERNAL | kw::DESC | kw::DEFAULT | kw::TRANSLATION)) {
+            self.collation_source()?;
+            let refused = SqlError::at(Code::Unsupported, source, "[DESIGN] a collation comes from another collation here".to_owned());
+            self.refuse_later(refused);
+            TableName { auth: None, ident: String::new(), at: source }
+        } else {
+            self.table_name()?
+        };
+        let pad = if self.accept_kw(kw::NO) {
+            self.expect_kw(kw::PAD)?;
+            Some(Pad::None)
+        } else if self.accept_kw(kw::PAD) {
+            self.expect_kw(kw::SPACE)?;
+            Some(Pad::Space)
+        } else {
+            None
+        };
+        Ok(CollationDefinition { name, from, pad })
     }
 
     /// [ISO/IEC 9075:1992 §11.30] `<collation source>` ::= EXTERNAL ( '
@@ -162,8 +208,6 @@ impl Parser {
             self.advance();
             self.advance();
             self.character_set_body()?
-        } else if self.accept_kw(kw::COLLATION) {
-            self.collation_body()?
         } else if self.accept_kw(kw::TRANSLATION) {
             self.translation_body()?
         } else {
@@ -187,22 +231,6 @@ impl Parser {
             self.collation_source()?;
         }
         Ok(format!("CREATE CHARACTER SET {name}"))
-    }
-
-    /// [§11.30] A `<collation definition>`, after CREATE COLLATION: what it
-    /// is.
-    fn collation_body(&mut self) -> Result<String> {
-        let name = self.qualified_name()?;
-        self.expect_kw(kw::FOR)?;
-        self.character_set_name()?;
-        self.expect_kw(kw::FROM)?;
-        self.collation_source()?;
-        if self.accept_kw(kw::NO) {
-            self.expect_kw(kw::PAD)?;
-        } else if self.accept_kw(kw::PAD) {
-            self.expect_kw(kw::SPACE)?;
-        }
-        Ok(format!("CREATE COLLATION {name}"))
     }
 
     /// [§11.32] A `<translation definition>`, after CREATE TRANSLATION: what
@@ -232,8 +260,6 @@ impl Parser {
             self.advance();
             self.advance();
             format!("DROP CHARACTER SET {}", self.character_set_name()?)
-        } else if self.accept_kw(kw::COLLATION) {
-            format!("DROP COLLATION {}", self.qualified_name()?)
         } else if self.accept_kw(kw::TRANSLATION) {
             format!("DROP TRANSLATION {}", self.qualified_name()?)
         } else {
@@ -259,13 +285,11 @@ impl Parser {
             self.refuse_later(refused);
             return Ok(true);
         }
-        for (word, what) in [(kw::COLLATION, "collation"), (kw::TRANSLATION, "translation")] {
-            if self.accept_kw(word) {
-                let name = self.qualified_name()?;
-                let refused = never(at, &format!("a privilege on the {what} {name}"));
-                self.refuse_later(refused);
-                return Ok(true);
-            }
+        if self.accept_kw(kw::TRANSLATION) {
+            let name = self.qualified_name()?;
+            let refused = never(at, &format!("a privilege on the translation {name}"));
+            self.refuse_later(refused);
+            return Ok(true);
         }
         Ok(false)
     }

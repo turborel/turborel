@@ -5,6 +5,7 @@
 //! Comments give the BNF exactly as implemented; alternatives in the
 //! standard that are not implemented are listed under "Not implemented".
 
+use crate::catalog::QualifiedName;
 use crate::value::datetime::{Field, Moment, Written};
 use crate::value::interval::Interval;
 use crate::value::{Bits, Decimal};
@@ -44,16 +45,16 @@ pub use expression::{
     TruthValue, ValueExpression,
 };
 pub use query::{
-    Correspondence, CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, QueryExpression,
-    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
-    TableExpression, TableReference, Updatability, ValuesRow,
+    Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
+    QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
+    SortSpecification, TableExpression, TableReference, Updatability, ValuesRow,
 };
 
 pub use schema::{
-    Action, AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, ColumnConstraint, ColumnConstraintKind,
-    ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, MatchType, OptionValue, PrivilegeDefinition, References,
-    ReferentialAction, RevokeStatement, Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement,
-    TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
+    Action, AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, ColumnConstraint,
+    ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, MatchType, OptionValue,
+    PrivilegeDefinition, PrivilegeObject, References, ReferentialAction, RevokeStatement, Schema, SchemaStatement, TableConstraint,
+    TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage, Temporary, TemporaryKind, TypeName, ViewDefinition,
 };
 pub use users::UserStatement;
 
@@ -206,6 +207,9 @@ pub enum ExtractField {
 pub enum SqlStatement {
     /// [X3.135-1986 §8.1] `<close statement>` ::= CLOSE `<cursor name>`
     Close(String),
+    /// [ISO/IEC 9075-2:2023 §19.10] `<set session collation statement>`: the
+    /// `<collation specification>`, or none for SET NO COLLATION.
+    SetCollation(Option<ValueSpecification>),
     /// [X3.135-1986 §8.2; ISO/IEC 9075:1992 §14.3] `<commit statement>` ::= COMMIT \[WORK\]. Also what the parser
     /// gives for a statement it read whole only to refuse at its end (`Parser::refuse_later`), never run.
     Commit,
@@ -400,6 +404,10 @@ pub enum AlterAction {
     /// [ISO/IEC 9075:1992 §11.16] `<add table constraint definition>` ::=
     /// ADD `<table constraint definition>`
     AddConstraint(TableConstraint),
+    /// \[DESIGN\] [ISO/IEC 9075-2:2023 §11.44 GR2] Columns of a collation
+    /// dropped made of the character set's: read only from the log, as
+    /// DROP COLLATION writes it.
+    RevertCollation(QualifiedName),
     /// [ISO/IEC 9075:1992 §11.17] `<drop table constraint definition>` ::=
     /// DROP CONSTRAINT `<constraint name>` `<drop behavior>`
     DropConstraint {
@@ -457,6 +465,8 @@ pub enum DropObject {
     Domain(TableName),
     /// An assertion [§11.35], which DROP names with no `<drop behavior>`.
     Assertion(TableName),
+    /// A collation [ISO/IEC 9075-2:2023 §11.44].
+    Collation(TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -473,7 +483,11 @@ impl DropObject {
     /// Where its name begins in the statement.
     pub fn at(&self) -> usize {
         match self {
-            DropObject::Table(name) | DropObject::View(name) | DropObject::Domain(name) | DropObject::Assertion(name) => name.at,
+            DropObject::Collation(name)
+            | DropObject::Table(name)
+            | DropObject::View(name)
+            | DropObject::Domain(name)
+            | DropObject::Assertion(name) => name.at,
             DropObject::Schema { at, .. } => *at,
         }
     }

@@ -206,6 +206,7 @@ impl State {
                 | Expr::Call(..)
                 | Expr::Case(..)
                 | Expr::Cast(..)
+                | Expr::SortKey(..)
                 | Expr::Domain(..)
                 | Expr::Subquery(..) => None,
             })

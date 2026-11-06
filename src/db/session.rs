@@ -123,6 +123,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
+            | SqlStatement::SetCollation(_)
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)

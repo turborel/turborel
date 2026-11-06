@@ -5,12 +5,12 @@
 use std::sync::Arc;
 
 use super::held::HeldRows;
-use super::{Found, Runner, broken, eval_cond, fetch, probe_index};
+use super::{Found, Runner, asked, broken, eval_cond, fetch, probe_index};
 use crate::db::State;
 use crate::error::Result;
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Condition, Row, RowId};
+use crate::storage::{Row, RowId};
 use crate::txn::{TxId, checked};
 
 /// Rows with their ids, each read when it is pulled.
@@ -34,10 +34,10 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
             Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
         }
         Plan::IndexScan { table, index, probe, reverse, .. } => {
-            let Found { storage, columns, entries } = probe_index(db, &table, &index, &probe, reverse)?;
-            storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe })?;
+            let Found { storage, ix, entries } = probe_index(db, &table, &index, &probe, reverse)?;
+            storage.read_by_condition(tx, &asked(&ix, probe))?;
             let rows = checked(entries, db.tx.stop_of(tx))
-                .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, (&columns, None), tx, &key, id)).transpose());
+                .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, (&ix, None), tx, &key, id)).transpose());
             Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
         }
         Plan::Filter { cond, input, .. } => {

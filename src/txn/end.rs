@@ -9,12 +9,12 @@ use std::sync::Arc;
 
 use super::owed::{Entry, Owed};
 use super::{Committing, Joined, Timestamp, Transactions, TxId, Txn, UndoFailure};
-use crate::catalog::QualifiedName;
+use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::index::{Index, Key};
 use crate::memory::Undoing;
-use crate::storage::{Row, RowId, TableStorage, project};
+use crate::storage::{Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 use crate::value::Value;
 
@@ -178,13 +178,13 @@ impl State {
             return Some(true);
         }
         {
-            let found: Vec<(&str, &Arc<dyn Index>, &[usize])> = self
+            let found: Vec<(&str, &Arc<dyn Index>, &IndexDesc)> = self
                 .catalog
                 .indexes(table)
                 .into_iter()
-                .filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix.columns.as_slice())))
+                .filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix)))
                 .collect();
-            let indexes: Vec<(&dyn Index, &[usize])> = found.iter().map(|&(_, index, columns)| (&**index, columns)).collect();
+            let indexes: Vec<(&dyn Index, &IndexDesc)> = found.iter().map(|&(_, index, ix)| (&**index, ix)).collect();
             // The entries owed first; then each version's go as it is
             // removed, an entry not taken back owed (`txn/owed.rs`). A
             // failure leaves the rest of the garbage for a later call.
@@ -250,10 +250,10 @@ impl State {
 /// `indexes`, each with its columns. Keys with a null were never inserted
 /// (`Index::insert`). Those that cannot be are left: their places among
 /// `indexes`, and their keys.
-pub(crate) fn remove_entries(indexes: &[(&dyn Index, &[usize])], id: RowId, row: &Row) -> Vec<(usize, Key)> {
+pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, row: &Row) -> Vec<(usize, Key)> {
     let mut failed = Vec::new();
-    for (at, (index, columns)) in indexes.iter().enumerate() {
-        if let Some(key) = project(row, columns).map(Key).filter(|k| !k.0.iter().any(Value::is_null))
+    for (at, (index, ix)) in indexes.iter().enumerate() {
+        if let Some(key) = ix.key_of(row).filter(|k| !k.0.iter().any(Value::is_null))
             && index.remove(&key, id).is_err()
         {
             failed.push((at, key));

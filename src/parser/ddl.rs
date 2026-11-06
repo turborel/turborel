@@ -20,6 +20,7 @@
 
 use super::Parser;
 use crate::ast::{AlterAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage};
+use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
 
@@ -27,16 +28,20 @@ use crate::lexer::{Tok, delim, kw};
 /// seals a table's rows again (RULES.md D48).
 pub const RESEAL: &str = "RESEAL";
 
+/// What the log writes for columns of a collation dropped.
+pub const REVERT_COLLATION: &str = "REVERT_COLLATION";
+
 impl Parser {
-    /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN or ASSERTION,
+    /// An SQL-schema statement: CREATE TABLE, VIEW, DOMAIN, ASSERTION or COLLATION,
     /// CREATE GLOBAL or LOCAL TEMPORARY TABLE, or ALTER DOMAIN
-    /// (`parser/schema.rs`); ALTER TABLE; DROP SCHEMA, TABLE, VIEW, DOMAIN or
-    /// ASSERTION; CREATE or DROP of a character set, collation or translation,
+    /// (`parser/schema.rs`); ALTER TABLE; DROP SCHEMA, TABLE, VIEW, DOMAIN,
+    /// ASSERTION or COLLATION; CREATE or DROP of a character set or translation,
     /// read then refused (`parser/charsets.rs`); or, of this implementation,
     /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
     /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
-        let defines = [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION].iter().any(|w| self.next_is_kw(w));
+        let defines =
+            [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION, kw::COLLATION].iter().any(|w| self.next_is_kw(w));
         if (self.is_kw(kw::CREATE) && defines) || (self.is_kw(kw::ALTER) && self.next_is_kw(kw::DOMAIN)) {
             return self.schema_statement();
         }
@@ -61,6 +66,10 @@ impl Parser {
         }
         if !alter && let Some(refused) = self.drop_character_set()? {
             return Ok(refused);
+        }
+        if !alter && self.accept_kw(kw::COLLATION) {
+            let object = DropObject::Collation(self.table_name()?);
+            return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
         }
         if self.accept_word("INDEX") {
             let at = self.here();
@@ -152,6 +161,12 @@ impl Parser {
         // <table options>] | RESEAL: no engine and no option.
         if self.accept_word(RESEAL) {
             return Ok(AlterAction::Storage(TableStorage::default()));
+        }
+        // Of the log alone: no statement writes it (`AlterAction`).
+        if matches!(self.catalogs, super::Catalogs::Kept) && self.accept_word(REVERT_COLLATION) {
+            let at = self.table_name()?;
+            let auth = at.auth.ok_or_else(|| self.syntax("a collation reverted names its schema"))?;
+            return Ok(AlterAction::RevertCollation(QualifiedName { auth, ident: at.ident }));
         }
         if self.accept_kw(kw::SET) {
             return Ok(AlterAction::Storage(TableStorage { engine: None, options: self.table_options()? }));

@@ -69,7 +69,14 @@ pub(in crate::db) fn kept_name(assertion: &QualifiedName) -> QualifiedName {
 pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
     let integer = DataType::Exact { precision: INTEGER_PRECISION, scale: 0, spelled: Spelled::Integer };
     let count = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Decimal };
-    let column = |named: &str, data_type| ColumnDesc { name: named.to_owned(), data_type, not_null: true, default: None, domain: None };
+    let column = |named: &str, data_type| ColumnDesc {
+        name: named.to_owned(),
+        data_type,
+        not_null: true,
+        default: None,
+        domain: None,
+        collation: None,
+    };
     let columns = vec![
         column("FORM", integer),
         column("COUNTED", count),

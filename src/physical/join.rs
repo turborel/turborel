@@ -32,6 +32,7 @@
 //! of its rows when the other has a row, as the RIGHT one does, so whether
 //! one is raised is the same.
 
+use super::collated::{Lifted, lifted};
 use super::indexed::{Equijoin, index_join, right_index_join};
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
@@ -48,6 +49,12 @@ impl PhysicalPlanner<'_> {
         let LogicalPlan::Product { left, right } = input else { return None };
         if cond.can_raise() {
             return None;
+        }
+        if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
+            let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };
+            let joined = LogicalPlan::Filter { cond, input: Box::new(product) };
+            let plan = LogicalPlan::Project { exprs: kept, input: Box::new(joined) };
+            return Some(self.build_node(&plan, want));
         }
         let width = left.width();
         let mut conjuncts = Vec::new();
@@ -241,6 +248,11 @@ impl PhysicalPlanner<'_> {
     /// swapped.
     #[inline(never)]
     pub(super) fn outer_join(&self, (kind, cond): (OuterJoin, &Cond), left: &LogicalPlan, right: &LogicalPlan, want: &[SortKey]) -> Built {
+        if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
+            let joined = LogicalPlan::OuterJoin { kind, cond, left: Box::new(left), right: Box::new(right) };
+            let plan = LogicalPlan::Project { exprs: kept, input: Box::new(joined) };
+            return self.build_node(&plan, want);
+        }
         let width = left.width();
         let parted = Parted::of(cond, width);
         let names: Vec<String> = left.names().into_iter().chain(right.names()).collect();

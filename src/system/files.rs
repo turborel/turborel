@@ -36,6 +36,7 @@ impl SystemTable for Files {
             not_null: true,
             default: None,
             domain: None,
+            collation: None,
         };
         vec![
             text_column(("PATH", PATH_LENGTH), true),

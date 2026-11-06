@@ -35,7 +35,8 @@ impl State {
         // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
         let (data_type, domain) = self.column_type(names, &def.data_type)?;
         let default = def.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose()?;
-        next.columns.push(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain });
+        let collation = self.declared_collation(names, (data_type, domain.as_ref()), def.collate.as_ref())?;
+        next.columns.push(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain, collation });
         let taken = self.all_constraint_names();
         let mut added = Described::new((&desc.name, names, Within::Session), &next.columns, taken);
         added.reserve(def.constraints.iter().filter_map(|c| c.name.as_ref()));

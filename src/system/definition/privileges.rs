@@ -192,6 +192,18 @@ fn usage_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
             [vec![text(SYSTEM_GRANTOR), text(PUBLIC)], ids(&catalog, &sql_text()).to_vec(), vec![text(kind), yes(grantable)]].concat()
         })
         .collect();
+    let collation = |name: &QualifiedName, grantor: &str, grantee: &str, grantable: bool| {
+        [vec![text(grantor), text(grantee)], ids(&catalog, name).to_vec(), vec![text("COLLATION"), yes(grantable)]].concat()
+    };
+    // The built-ins, as SQL_TEXT, PUBLIC's.
+    for name in seen.state.collations.keys().filter(|n| **n != sql_text().ident) {
+        let built = QualifiedName { auth: sql_text().auth, ident: name.clone() };
+        rows.push(collation(&built, SYSTEM_GRANTOR, PUBLIC, false));
+    }
+    for c in seen.state.catalog.collations() {
+        rows.push(collation(&c.name, SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &c.name.auth), true));
+        rows.extend(c.usage.iter().map(|u| collation(&c.name, &u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable)));
+    }
     for d in seen.state.catalog.domains() {
         let row = |grantor: &str, grantee: &str, grantable: bool| {
             [vec![text(grantor), text(grantee)], ids(&catalog, &d.name).to_vec(), vec![text("DOMAIN"), yes(grantable)]].concat()

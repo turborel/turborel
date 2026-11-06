@@ -6,14 +6,20 @@
 use std::cmp::Ordering;
 
 use super::estimate::{self, Known};
+use crate::catalog::IndexDesc;
 use crate::index::Probe;
 use crate::logical::{Cond, Expr, and_all, compared_with_constant, disjuncts, like_bounds, render_cond, split_and};
+use crate::value::collation::CollationRef;
 use crate::value::{CompOp, DataType, Decimal, Value, compare};
 
 /// A comparison of a column with a constant an index may answer: of the
 /// conjunct `at`, answering it `exact`ly, or else only bounding the rows it
 /// keeps, as a LIKE's prefix does, so that a filter still judges it.
+#[derive(Clone)]
 pub(super) struct Compared {
+    /// The collation it compares by, if not the default: an index serves it
+    /// only if its key is by the same (RULES.md D60).
+    pub(super) collation: Option<CollationRef>,
     pub(super) at: usize,
     pub(super) exact: bool,
     pub(super) column: usize,
@@ -40,13 +46,44 @@ type Comparisons = Vec<(CompOp, Value)>;
 pub(super) fn comparisons(conds: &[Cond], known: Known<'_>) -> (Vec<Compared>, Vec<Alternatives>) {
     let (mut compared, mut ors) = (Vec::new(), Vec::new());
     for (at, c) in conds.iter().enumerate() {
-        if let Some((column, exact, each)) = bounds(c) {
-            compared.extend(each.into_iter().map(|(op, value)| Compared { at, exact, column, op, value }));
+        if let Some((column, op, value, collation)) = collated_bound(c) {
+            compared.push(Compared { collation: Some(collation), at, exact: true, column, op, value });
+        } else if let Some((column, exact, each)) = bounds(c) {
+            compared.extend(each.into_iter().map(|(op, value)| Compared { collation: None, at, exact, column, op, value }));
         } else if let Some((column, exact, each)) = alternatives(c) {
             ors.push(Alternatives { at, column, exact, each, share: estimate::selectivity(c, known) });
         }
     }
     (compared, ors)
+}
+
+/// `c`, the sort key of a column compared with a constant's: the column,
+/// the operator, the constant's key and the collation.
+fn collated_bound(c: &Cond) -> Option<(usize, CompOp, Value, CollationRef)> {
+    let Cond::Compare(left, op, right) = c else { return None };
+    let (key, constant, op) = match (left, right) {
+        (Expr::SortKey(..), Expr::Const(_)) => (left, right, *op),
+        (Expr::Const(_), Expr::SortKey(..)) => (right, left, op.flip()),
+        _ => return None,
+    };
+    let (Expr::SortKey(column, collation), Expr::Const(value)) = (key, constant) else { return None };
+    let Expr::Column(column) = **column else { return None };
+    Some((column, op, value.clone(), collation.clone()))
+}
+
+/// Of the comparisons `all`, those an index `ix` serves: of a column of its
+/// key, by the collation the key is by; so no probe of raw text reaches an
+/// index of sort keys, nor one of sort keys an index of text.
+pub(super) fn served_by(all: &[Compared], ix: &IndexDesc) -> Vec<Compared> {
+    let serves = |c: &&Compared| {
+        let keyed = ix.columns.iter().position(|k| *k == c.column).and_then(|at| ix.collations.get(at)).and_then(Option::as_ref);
+        match (keyed, &c.collation) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.behaves_as(b),
+            (Some(_), None) | (None, Some(_)) => false,
+        }
+    };
+    all.iter().filter(serves).cloned().collect()
 }
 
 /// `c` as comparisons of one column with constants, each true of every

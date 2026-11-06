@@ -21,10 +21,12 @@ use std::sync::Arc;
 
 pub(super) use plans::{Keeping, KeptPlan, Plans};
 
+use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
 use crate::ast::{SqlStatement, TableName};
 use crate::binder::{self, OutColumn, WriteKind, bind_write};
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::{ParameterType, Params};
@@ -59,6 +61,10 @@ pub struct Prepared {
     /// [§17.19 SR1, §17.20 SR1].
     cursor: Option<Name>,
     implicit: Option<TableName>,
+    /// [ISO/IEC 9075-2:2023 §9.15 SR4c] The session's collation as it was
+    /// prepared: its Syntax Rules were applied then, so a later SET
+    /// COLLATION changes no statement prepared.
+    collation: Option<QualifiedName>,
 }
 
 impl Prepared {
@@ -273,7 +279,8 @@ impl Session {
             )
             .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
         })?;
-        Ok(Prepared { sql: sql.to_owned(), kind, parameters, columns, plans: Arc::default(), single_row, cursor, implicit })
+        let collation = self.collation.borrow().clone();
+        Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, plans: Arc::default(), single_row, cursor, implicit })
     }
 
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
@@ -299,7 +306,10 @@ impl Session {
                 self.bound(st, params, |cx| bind_write(cx, WriteKind::DeletePositioned, table, &[], None))?;
             }
             // [§17.6 GR5u]
-            SqlStatement::SetSchema(v) | SqlStatement::SetCatalog(v) | SqlStatement::SetSessionAuthorization(v) => {
+            SqlStatement::SetCollation(Some(v))
+            | SqlStatement::SetSchema(v)
+            | SqlStatement::SetCatalog(v)
+            | SqlStatement::SetSessionAuthorization(v) => {
                 drop(binder::value_specification_as(v, &self.auth(), params, ParameterType::Varying)?);
             }
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
@@ -325,6 +335,7 @@ impl Session {
             | SqlStatement::Schema { .. }
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
+            | SqlStatement::SetCollation(None)
             | SqlStatement::Served(_) => {}
         }
         Ok(())
@@ -360,6 +371,14 @@ impl Session {
         self.run_prepared(p, values.to_vec(), "EXECUTE")
     }
 
+    /// `run`'s, bound under the collation `p` was prepared with.
+    fn as_prepared<T>(&self, p: &Prepared, run: impl FnOnce() -> Result<T>) -> Result<T> {
+        let before = self.prepared_collation.replace(Collating::Fixed(p.collation.clone()));
+        let done = run();
+        self.prepared_collation.replace(before);
+        done
+    }
+
     /// `p`, not a query, run with `values` for its parameters, as `via`,
     /// EXECUTE or EXECUTE IMMEDIATE, runs it: as `execute` runs a
     /// statement, its positioned DELETE or UPDATE through the cursor found
@@ -371,7 +390,7 @@ impl Session {
         }
         let mut params = Params::executing(values).implying(p.implicit.clone());
         self.inner.borrow_mut().dynamic.positioned.clone_from(&p.cursor);
-        let done = self.execute_as(&p.sql, &mut params, Some((via, &p.plans)));
+        let done = self.as_prepared(p, || self.execute_as(&p.sql, &mut params, Some((via, &p.plans))));
         self.inner.borrow_mut().dynamic.positioned = None;
         done
     }
@@ -391,6 +410,6 @@ impl Session {
         }
         let params = Self::values_for(p, values)?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <dynamic open statement>.
-        self.open_with(("DYNAMIC OPEN", "SELECT"), |call| self.open_kept(call, p, &params))
+        self.as_prepared(p, || self.open_with(("DYNAMIC OPEN", "SELECT"), |call| self.open_kept(call, p, &params)))
     }
 }

@@ -78,6 +78,28 @@ NATIONAL CHARACTER is CHARACTER: there is one character set, SQL_TEXT,
 which holds every Unicode character, so the national one is the same.
 The Information Schema shows such a column as CHARACTER.
 
+### Collations
+
+A column of a character string compares by its collation, SQL_TEXT, the order
+of Unicode scalar values, unless it says otherwise:
+
+```sql
+CREATE TABLE PEOPLE (NAME VARCHAR(20) COLLATE CASE_INSENSITIVE UNIQUE);
+SELECT CITY FROM PLACES ORDER BY CITY COLLATE UNICODE;
+```
+
+| Collation | Order |
+|---|---|
+| SQL_TEXT, UCS_BASIC | Unicode scalar value, so `Z` before `a` |
+| UNICODE | Language-neutral, by base letter, then accent, then case |
+| CASE_INSENSITIVE | Scalar value of each character's case folding |
+
+In a comparison a literal takes the column's collation. Two columns of
+different collations need COLLATE. A collation's order never changes: a new
+Unicode version would be a new collation. See
+[CREATE COLLATION](statements/create-collation.md) and
+[SET COLLATION](statements/set-collation.md).
+
 ## Bit strings
 
 A bit string is a sequence of bits, written `B'1010'` in binary or

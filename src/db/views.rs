@@ -48,7 +48,14 @@ impl State {
         let columns = titles
             .into_iter()
             .zip(&bound.columns)
-            .map(|(column, c)| ColumnDesc { name: column, data_type: c.data_type, not_null: c.not_null, default: None, domain: None })
+            .map(|(column, c)| ColumnDesc {
+                name: column,
+                data_type: c.data_type,
+                not_null: c.not_null,
+                default: None,
+                domain: None,
+                collation: c.collation.clone(),
+            })
             .collect();
         if v.check_option.is_some() && updates.is_none() {
             return Err(rule(format!("[X3.135-1986 §6.5 SR9] {name} is WITH CHECK OPTION, so must be updatable")));

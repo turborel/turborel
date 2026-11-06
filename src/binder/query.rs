@@ -4,15 +4,18 @@
 
 use std::cell::RefCell;
 
+use super::collation::{any_of, of_column, sort_collations, with_sort};
 use super::from::{Bounds, From, bind_from, from_plan};
 use super::set_operations::ObjectColumn;
-use super::{Binder, Bound, Context, FromItem, Grouping, OutColumn, Outer, Scope, nondeterministic, rule, sort_keys, with_sort};
+use super::{Binder, Bound, Context, FromItem, Grouping, OutColumn, Outer, Scope, nondeterministic, rule, sort_keys};
 use crate::ast::{
-    ColumnSpecification, QuerySpecification, SelectItem, SelectList, SelectSublist, SortSpecification, TableExpression, TableName,
-    ValueExpression,
+    ColumnSpecification, GroupingColumn, QuerySpecification, SelectItem, SelectList, SelectSublist, SortSpecification, TableExpression,
+    TableName, ValueExpression,
 };
+use crate::db::State;
 use crate::error::{At, Result};
 use crate::logical::{Cond, Expr, LogicalPlan};
+use crate::value::collation::CollationRef;
 
 /// [X3.135-1986 §5.25] `<query specification>`, with the ORDER BY of its cursor if it is the
 /// whole `<query expression>`.
@@ -102,9 +105,22 @@ pub(super) fn bind_query(
     // [X3.135-1986 §5.25 GR2]
     plan = LogicalPlan::Project { exprs, input: Box::new(plan) };
     if spec.distinct {
-        plan = LogicalPlan::Distinct { input: Box::new(plan) };
+        plan = distinct(plan, (binder.db, binder.session_collation), &columns);
     }
-    Ok(with_sort(Bound { plan, columns }, keys))
+    let session = binder.session_collation;
+    let collations = sort_collations((binder.db, binder.auth, session), order_by, &keys, &columns)?;
+    Ok(with_sort(Bound { plan, columns }, (keys, collations)))
+}
+
+/// `plan`, of `columns`, DISTINCT: rows the same by each column's collation
+/// [ISO/IEC 9075:1992 §8.2 GR3d], grouped if one is not the default, which
+/// gives the first of each, as DISTINCT does.
+pub(super) fn distinct(plan: LogicalPlan, (db, session): (&State, Option<&CollationRef>), columns: &[OutColumn]) -> LogicalPlan {
+    let collations = any_of(columns.iter().map(|c| of_column(db, session, c)).collect());
+    if collations.is_empty() {
+        return LogicalPlan::Distinct { input: Box::new(plan) };
+    }
+    LogicalPlan::Aggregate { groups: (0..columns.len()).collect(), collations, aggs: Vec::new(), input: Box::new(plan) }
 }
 
 /// The items of a `<select list>`. [X3.135-1986 §5.25 SR4] "*" is a
@@ -155,8 +171,10 @@ fn bind_selected(
 ) -> Result<(Option<Grouping>, Vec<Expr>, Vec<OutColumn>)> {
     let grouping = if grouped || selected.iter().any(|i| binder.has_own_aggregate(&i.value)) {
         // [X3.135-1986 §5.22 SR2] each grouping column references a column of T.
-        let columns = te.group_by.iter().map(|cs| binder.resolve(cs).map(|(p, _)| p)).collect::<Result<Vec<_>>>()?;
-        Some(Grouping { columns, aggs: RefCell::new(Vec::new()) })
+        let columns = te.group_by.iter().map(|g| binder.resolve(&g.column).map(|(p, _)| p)).collect::<Result<Vec<_>>>()?;
+        // [ISO/IEC 9075-2:2023 §9.15] each by its collation.
+        let collations = te.group_by.iter().map(|g| binder.grouped_by(g)).collect::<Result<Vec<_>>>()?;
+        Some(Grouping { columns, collations: any_of(collations), aggs: RefCell::new(Vec::new()) })
     } else {
         None
     };
@@ -164,7 +182,7 @@ fn bind_selected(
     if first.is_ok() || grouping.is_some() || !binder.aggregated.get() {
         return first.map(|(exprs, columns)| (grouping, exprs, columns));
     }
-    let one = Some(Grouping { columns: Vec::new(), aggs: RefCell::new(Vec::new()) });
+    let one = Some(Grouping { columns: Vec::new(), collations: Vec::new(), aggs: RefCell::new(Vec::new()) });
     let (exprs, columns) = bind_select_list(binder, selected, select_scope(one.as_ref(), grouped))?;
     Ok((one, exprs, columns))
 }
@@ -214,6 +232,8 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
             | ValueExpression::Value(_)
             | ValueExpression::SetFunction(_)
             | ValueExpression::Nested(_)
+            | ValueExpression::Collated(..)
+            | ValueExpression::CollationFor(_)
             | ValueExpression::Call { .. }
             | ValueExpression::Function { .. }
             | ValueExpression::Case(_)
@@ -225,7 +245,8 @@ fn bind_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_>
             | ValueExpression::Subquery(_) => (None, false, None),
         };
         exprs.push(e);
-        columns.push(OutColumn { name: item.alias.clone().or(name), data_type, not_null, origin });
+        let collation = if data_type.is_character() { binder.result_collation(v) } else { None };
+        columns.push(OutColumn { name: item.alias.clone().or(name), collation, data_type, not_null, origin });
     }
     Ok((exprs, columns))
 }
@@ -257,9 +278,21 @@ fn order_by_column(binder: &Binder<'_>, columns: &[OutColumn], cs: &ColumnSpecif
 /// [ISO/IEC 9075:1992 §7.9 GR1b i]: GROUP BY of no rows makes none, and
 /// HAVING may remove every group, the single one included.
 fn group(plan: LogicalPlan, g: Grouping, having: Option<Cond>) -> LogicalPlan {
-    let plan = LogicalPlan::Aggregate { groups: g.columns, aggs: g.aggs.into_inner(), input: Box::new(plan) };
+    let plan = LogicalPlan::Aggregate { groups: g.columns, collations: g.collations, aggs: g.aggs.into_inner(), input: Box::new(plan) };
     match having {
         Some(cond) => LogicalPlan::Filter { cond, input: Box::new(plan) },
         None => plan,
+    }
+}
+
+impl Binder<'_> {
+    /// [ISO/IEC 9075:1992 §7.7] The collation `g` groups by.
+    fn grouped_by(&self, g: &GroupingColumn) -> Result<Option<CollationRef>> {
+        let (_, t) = self.resolve(&g.column)?;
+        if !t.is_character() {
+            return Ok(None);
+        }
+        let implicit = self.derived(&ValueExpression::Column(g.column.clone()))?;
+        self.chosen(g.collate.as_ref(), implicit)
     }
 }

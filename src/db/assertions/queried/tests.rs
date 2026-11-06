@@ -70,7 +70,7 @@ fn crossed() -> LogicalPlan {
 /// `SELECT K FROM T GROUP BY K HAVING f(arg) > 1`, of the call `f`.
 fn grouped(f: AggregateRef, (arg, result): (Option<Expr>, DataType)) -> LogicalPlan {
     let agg = AggCall { func: f, arg, distinct: false, result, label: "F".into() };
-    let aggregate = LogicalPlan::Aggregate { groups: vec![0], aggs: vec![agg], input: Box::new(scan("T")) };
+    let aggregate = LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: vec![agg], input: Box::new(scan("T")) };
     let having = filter(Cond::Compare(Expr::Column(1), CompOp::Gt, number(1)), aggregate);
     LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(having) }
 }
@@ -106,7 +106,7 @@ fn query_form(found: Option<Vec<Form>>) -> (&'static str, Form) {
 /// `(SELECT f(x) FROM rows) op 10`.
 fn bounded(f: AggregateRef, x: Expr, rows: LogicalPlan, op: CompOp) -> Cond {
     let agg = AggCall { func: f, arg: Some(x), distinct: false, result: COUNTED, label: "F".into() };
-    let aggregate = LogicalPlan::Aggregate { groups: Vec::new(), aggs: vec![agg], input: Box::new(rows) };
+    let aggregate = LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], input: Box::new(rows) };
     let s =
         Arc::new(Subquery { plan: LogicalPlan::Project { exprs: vec![Expr::Column(0)], input: Box::new(aggregate) }, outer: Vec::new() });
     Cond::Compare(Expr::Subquery(s, 0), op, number(10))
@@ -163,10 +163,10 @@ fn other_queries_are_checked_whole_11_34() {
         left: Box::new(scan("T")),
         right: Box::new(scan("U")),
     };
-    let set = LogicalPlan::SetOp { op: SetOp::Except, all: false, left: Box::new(scan("T")), right: Box::new(scan("U")) };
+    let set = LogicalPlan::SetOp { compared: None, op: SetOp::Except, all: false, left: Box::new(scan("T")), right: Box::new(scan("U")) };
     let agg = AggCall { func: count.clone(), arg: None, distinct: false, result: COUNTED, label: "F".into() };
-    let of_join = LogicalPlan::Aggregate { groups: vec![0], aggs: vec![agg.clone()], input: Box::new(joined()) };
-    let of_none = LogicalPlan::Aggregate { groups: Vec::new(), aggs: vec![agg], input: Box::new(scan("T")) };
+    let of_join = LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: vec![agg.clone()], input: Box::new(joined()) };
+    let of_none = LogicalPlan::Aggregate { collations: Vec::new(), groups: Vec::new(), aggs: vec![agg], input: Box::new(scan("T")) };
     let called =
         filter(Cond::Compare(Expr::Call(length, vec![Expr::Column(1)]), CompOp::Eq, Expr::Column(3)), product(scan("T"), scan("U")));
     let mut replaced = Registry::with_set_functions();
@@ -224,7 +224,7 @@ fn a_querys_columns_never_null_are_traced_6_5() {
     let known = Known { functions: &functions, catalog: &catalog };
     let [count, max] = ["COUNT", "MAX"].map(|f| functions.aggregate(f).unwrap());
     let calls = [count, max].map(|func| AggCall { func, arg: Some(Expr::Column(1)), distinct: false, result: COUNTED, label: "F".into() });
-    let aggregate = LogicalPlan::Aggregate { groups: vec![0], aggs: calls.to_vec(), input: Box::new(scan("T")) };
+    let aggregate = LogicalPlan::Aggregate { collations: Vec::new(), groups: vec![0], aggs: calls.to_vec(), input: Box::new(scan("T")) };
     let projected = LogicalPlan::Project { exprs: vec![Expr::Column(2), Expr::Column(1)], input: Box::new(crossed()) };
     let values = LogicalPlan::Values { rows: vec![vec![number(1)]], types: vec![COUNTED] };
     let cases = [
@@ -297,7 +297,7 @@ fn a_grouping_is_made_of_the_groups_changed_7_7() {
     let nulled = of(&[vec![Value::Null]]);
     assert!(matches!(nulled, LogicalPlan::Filter { cond: Cond::IsNull(Expr::Column(0), false), .. }));
     let both = of(&[vec![number_value(1)], vec![Value::Null]]);
-    assert!(matches!(both, LogicalPlan::SetOp { op: SetOp::Union, all: true, .. }));
+    assert!(matches!(both, LogicalPlan::SetOp { compared: None, op: SetOp::Union, all: true, .. }));
     assert!(matches!(of(&[]), LogicalPlan::Filter { cond: Cond::Const(Truth::False), .. }));
     let untyped = of_typed(&[vec![number_value(1)]], None);
     assert!(matches!(untyped, LogicalPlan::Filter { cond: Cond::Compare(..), .. }), "keys of no types by a condition");

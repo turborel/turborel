@@ -175,6 +175,12 @@ pub enum ValueExpression {
     SetFunction(SetFunctionSpecification),
     /// A `<value expression>` in parentheses.
     Nested(Box<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §10.7] A value of the collation its `<collate
+    /// clause>` names.
+    Collated(Box<ValueExpression>, TableName),
+    /// [ISO/IEC 9075-2:2023 §6.4] `<current collation specification>` ::=
+    /// COLLATION FOR ( `<string value expression>` ).
+    CollationFor(Box<ValueExpression>),
     /// [ISO/IEC 9075:1992 §6.9] A `<case expression>`.
     Case(Box<CaseExpression>),
     /// [ISO/IEC 9075:1992 §6.10] CAST (`<cast operand>` AS `<cast target>`).
@@ -344,7 +350,10 @@ impl ValueExpression {
                 f(a);
                 f(b);
             }
-            ValueExpression::Monadic(_, x) | ValueExpression::Nested(x) => f(x),
+            ValueExpression::Monadic(_, x)
+            | ValueExpression::Nested(x)
+            | ValueExpression::Collated(x, _)
+            | ValueExpression::CollationFor(x) => f(x),
             ValueExpression::SetFunction(sf) => match &sf.arg {
                 SetArg::CountStar => {}
                 SetArg::Distinct(x) | SetArg::All(x) => f(x),

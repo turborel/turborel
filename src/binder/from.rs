@@ -19,7 +19,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::case::set_type;
+use super::natural::natural;
 use super::query::Nesting;
 use super::set_operations::bind_query_expression;
 use super::subquery::Outer;
@@ -28,7 +28,7 @@ use super::{Binder, Context, Purpose, Scope, qualify, require, rule};
 use crate::ast::{DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, SearchCondition, TableReference};
 use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlError};
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, and_all, cond_columns};
+use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, cond_columns};
 use crate::system::SystemRead;
 
 /// A table, view or derived table of a `<from clause>`, or the common
@@ -154,7 +154,7 @@ impl From {
 
 /// The columns of the result of `tree`, in order [§7.5 SR5, SR6f]: a
 /// NATURAL or USING join's common columns, then each operand's others.
-fn columns(tree: &Tree, items: &[FromItem]) -> Vec<(usize, usize)> {
+pub(super) fn columns(tree: &Tree, items: &[FromItem]) -> Vec<(usize, usize)> {
     match tree {
         Tree::Item(i) => (0..items.get(*i).map_or(0, |it| it.desc.columns.len())).map(|c| (*i, c)).collect(),
         Tree::Join(j) => {
@@ -173,7 +173,7 @@ fn columns(tree: &Tree, items: &[FromItem]) -> Vec<(usize, usize)> {
 }
 
 /// The name of column `c` of item `i`.
-fn column_name(items: &[FromItem], i: usize, c: usize) -> &str {
+pub(super) fn column_name(items: &[FromItem], i: usize, c: usize) -> &str {
     items.get(i).and_then(|it| it.desc.columns.get(c)).map_or("", |col| col.name.as_str())
 }
 
@@ -322,6 +322,7 @@ fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
             not_null: c.not_null,
             default: None,
             domain: None,
+            collation: c.collation.clone(),
         })
         .collect();
     if let Some(names) = &d.columns {
@@ -361,9 +362,18 @@ fn bind_join(b: Bounds<'_>, j: &JoinedTable, start: usize, from: &mut From) -> R
     match (&j.on, j.natural) {
         (Some(JoinSpecification::On(c)), _) => cond = Some(bind_on(b, c, (&left, &right), start, from)?),
         (Some(JoinSpecification::Using(names)), _) => {
-            (cond, common) = natural(j, Some(names), (&left, &right), (start, start.saturating_add(lw).saturating_add(rw)), from)?;
+            (cond, common) = natural(
+                (j, b.cx.db, b.cx.collation),
+                Some(names),
+                (&left, &right),
+                (start, start.saturating_add(lw).saturating_add(rw)),
+                from,
+            )?;
         }
-        (None, true) => (cond, common) = natural(j, None, (&left, &right), (start, start.saturating_add(lw).saturating_add(rw)), from)?,
+        (None, true) => {
+            (cond, common) =
+                natural((j, b.cx.db, b.cx.collation), None, (&left, &right), (start, start.saturating_add(lw).saturating_add(rw)), from)?;
+        }
         (None, false) => {}
     }
     let mark = |tree: &Tree, bound: &mut From| {
@@ -411,95 +421,6 @@ fn bind_on(b: Bounds<'_>, c: &SearchCondition, (left, right): (&Tree, &Tree), st
     )?;
     from.used.extend(binder.used.into_inner().into_iter().map(|p| p.saturating_add(start)));
     Ok(cond)
-}
-
-/// The condition and common columns of a NATURAL join (`using` none) or a
-/// USING join `j` of `left` and `right`, the first starting at `start` and
-/// the common columns at `end` [ISO/IEC 9075:1992 §7.5 SR6, SR9, GR1d].
-#[expect(clippy::type_complexity, reason = "the condition and the item of the common columns, made together")]
-fn natural(
-    j: &JoinedTable,
-    using: Option<&[String]>,
-    (left, right): (&Tree, &Tree),
-    (start, end): (usize, usize),
-    from: &mut From,
-) -> Result<(Option<Cond>, Option<(usize, Vec<Expr>)>)> {
-    let (lcols, rcols) = (columns(left, &from.items), columns(right, &from.items));
-    let called = |cols: &[(usize, usize)], name: &str| {
-        cols.iter().filter(|&&(i, c)| column_name(&from.items, i, c) == name).copied().collect::<Vec<_>>()
-    };
-    let names: Vec<String> = match using {
-        Some(list) => list.to_vec(),
-        None => lcols.iter().map(|&(i, c)| column_name(&from.items, i, c).to_owned()).filter(|n| !called(&rcols, n).is_empty()).collect(),
-    };
-    let mut equal = Vec::new();
-    let mut exprs = Vec::new();
-    let mut descs = Vec::new();
-    let mut joined = Vec::new();
-    for name in &names {
-        let (in_left, in_right) = (called(&lcols, name), called(&rcols, name));
-        let ([first], [second]) = (in_left.as_slice(), in_right.as_slice()) else {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §7.5 SR6a, SR6b] {name} is not the name of exactly one column of each operand")));
-        };
-        let (cond, coalesced, desc, positions) = corresponding(j.kind, (&from.items, *first, *second), start)?;
-        from.used.extend(positions);
-        joined.extend([*first, *second]);
-        equal.push(cond);
-        exprs.push(coalesced);
-        descs.push(desc);
-    }
-    for (item, column) in joined {
-        from.items.get_mut(item).into_iter().for_each(|it| it.common.push(column));
-    }
-    if descs.is_empty() {
-        return Ok((None, None));
-    }
-    let name = QualifiedName { auth: String::new(), ident: format!("#{}", from.items.len()) };
-    let desc = TableDesc { columns: descs, ..super::views::unconstrained(&name) };
-    from.items.push(FromItem {
-        correlation: Some(name.ident.clone()),
-        table: name,
-        at: j.at,
-        desc,
-        offset: end,
-        source: Source::Common,
-        nullable: false,
-        common: Vec::new(),
-    });
-    Ok((and_all(equal), Some((from.items.len().saturating_sub(1), exprs))))
-}
-
-/// [ISO/IEC 9075:1992 §7.5 SR6c, SR6d, SR9] A pair of corresponding join
-/// columns of a join of `kind`, each an item and a column of it, the join
-/// starting at `start`: their equality and COALESCE over the join's
-/// columns, its common column's descriptor, and their places in the FROM
-/// row.
-fn corresponding(
-    kind: JoinKind,
-    (items, (left_item, left_column), (right_item, right_column)): (&[FromItem], (usize, usize), (usize, usize)),
-    start: usize,
-) -> Result<(Cond, Expr, ColumnDesc, [usize; 2])> {
-    let lost = || SqlError::new(Code::Api, "[DESIGN] a join operand lost a column");
-    let (first, second) = (items.get(left_item).ok_or_else(lost)?, items.get(right_item).ok_or_else(lost)?);
-    let (c1, c2) = (first.desc.columns.get(left_column).ok_or_else(lost)?, second.desc.columns.get(right_column).ok_or_else(lost)?);
-    // [SR6c] comparable.
-    let common = set_type(&[c1.data_type, c2.data_type], "§7.5 SR6c")?;
-    let at1 = first.offset.saturating_add(first.position(left_column));
-    let at2 = second.offset.saturating_add(second.position(right_column));
-    let (local1, local2) = (at1.saturating_sub(start), at2.saturating_sub(start));
-    let cast = |e: Expr, own| super::case::brought(e, own, common);
-    // [SR6d] COALESCE (TA.C, TB.C).
-    let coalesced = Expr::Case(
-        vec![(Cond::IsNull(Expr::Column(local1), true), cast(Expr::Column(local1), c1.data_type))],
-        Box::new(cast(Expr::Column(local2), c2.data_type)),
-    );
-    // [SR9] possibly nullable only if an outer join may null it on the side it is.
-    let (null1, null2) = (!c1.not_null || first.nullable, !c2.not_null || second.nullable);
-    let nullable = (matches!(kind, JoinKind::Right | JoinKind::Full | JoinKind::Union) && null1)
-        || (matches!(kind, JoinKind::Left | JoinKind::Full | JoinKind::Union) && null2);
-    let desc = ColumnDesc { name: c1.name.clone(), data_type: common, not_null: !nullable, default: None, domain: None };
-    let equal = Cond::Compare(Expr::Column(local1), crate::value::CompOp::Eq, Expr::Column(local2));
-    Ok((equal, coalesced, desc, [at1, at2]))
 }
 
 /// [X3.135-1986 §5.20 SR2, SR3; ISO/IEC 9075:1992 §6.3 SR3, SR4] The rule

@@ -48,14 +48,14 @@ use changes::{RowChange, decode_change, encode_change};
 
 use super::indexes::IndexSpec;
 use super::{Database, State};
-use crate::catalog::{IndexDesc, QualifiedName};
+use crate::catalog::IndexDesc;
 use crate::disk::encoding::Encodings;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::{Change, Record};
 use crate::log::{Log, Lsn};
 use crate::spill::Area;
-use crate::storage::{Row, RowId, project};
+use crate::storage::{Row, RowId};
 use crate::txn::Timestamp;
 use crate::txn::{NO_TRANSACTION, Persistence, TxId};
 use crate::value::Value;
@@ -115,10 +115,10 @@ pub struct RecoveryReport {
 /// on a loop that should take back a few.
 const MOST_ENTRIES: usize = 1_024;
 
-/// The key of `row` in an index on `columns`, unless it has a null: such
-/// keys are never inserted (`Index::insert`).
-fn key_of(row: &Row, columns: &[usize]) -> Option<Key> {
-    project(row, columns).map(Key).filter(|k| !k.0.iter().any(Value::is_null))
+/// The key of `row` in the index `ix`, unless it has a null: such keys are
+/// never inserted (`Index::insert`).
+fn key_of(row: &Row, ix: &IndexDesc) -> Option<Key> {
+    ix.key_of(row).filter(|k| !k.0.iter().any(Value::is_null))
 }
 
 /// Takes back every entry of `row` under `key` in `index`.
@@ -491,11 +491,11 @@ impl State {
         for ix in indexes {
             let method =
                 self.methods.get(&ix.method).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index method {}", ix.method)))?;
-            let types = self.catalog.table(&ix.table).and_then(|t| t.types(&ix.columns));
+            let types = self.catalog.table(&ix.table).and_then(|t| ix.key_types(t));
             let types =
                 types.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
             let index = method.create(&types)?;
-            self.load_index(&*index, &ix.table, &ix.columns, Timestamp::MAX)?;
+            self.load_index(&*index, &ix, Timestamp::MAX)?;
             self.indexes.insert(ix.name.clone(), Arc::from(index));
         }
         Ok(())
@@ -523,7 +523,7 @@ impl State {
         // A dropped table has no indexes left to mend (`Database::redo`).
         for ix in self.catalog.indexes(&change.table).into_iter().filter(|ix| kept(ix)) {
             let index = self.index_of(&ix.name)?;
-            for key in change.before.iter().chain(&change.after).filter_map(|r| key_of(r, &ix.columns)) {
+            for key in change.before.iter().chain(&change.after).filter_map(|r| key_of(r, ix)) {
                 take_back(&**index, &key, change.row)?;
             }
         }
@@ -539,7 +539,7 @@ impl State {
         let Some(now) = self.storage_of(&change.table)?.get(NO_TRANSACTION, change.row)? else { return Ok(()) };
         for ix in self.catalog.indexes(&change.table).into_iter().filter(|ix| kept(ix)) {
             let index = self.index_of(&ix.name)?;
-            if let Some(key) = key_of(&now, &ix.columns).filter(|k| index.rows(k).is_ok_and(|ids| !ids.contains(&change.row))) {
+            if let Some(key) = key_of(&now, ix).filter(|k| index.rows(k).is_ok_and(|ids| !ids.contains(&change.row))) {
                 index.insert(key, change.row)?;
             }
         }
@@ -547,10 +547,10 @@ impl State {
     }
 
     /// Adds to `index` an entry for each version of each row of `table`
-    /// readers may still see, keyed by `columns`; keys with a null are left
+    /// readers may still see, keyed as `ix` says; keys with a null are left
     /// out (`Index::insert`). One by one, as writers may add to it too.
-    pub(super) fn fill_index(&self, index: &dyn Index, table: &QualifiedName, columns: &[usize], as_of: Timestamp) -> Result<()> {
-        for entry in self.entries_for(table, columns, as_of)? {
+    pub(super) fn fill_index(&self, index: &dyn Index, ix: &IndexDesc, as_of: Timestamp) -> Result<()> {
+        for entry in self.entries_for(ix, as_of)? {
             let (key, id) = entry?;
             index.insert(key, id)?;
         }
@@ -560,26 +560,22 @@ impl State {
     /// As `fill_index`, into `index`, new, which nothing else reads or
     /// writes meanwhile: loaded whole (`Index::load`), in a work area of
     /// the database's MEMORY.WORK_BYTES.
-    pub(super) fn load_index(&self, index: &dyn Index, table: &QualifiedName, columns: &[usize], as_of: Timestamp) -> Result<()> {
+    pub(super) fn load_index(&self, index: &dyn Index, ix: &IndexDesc, as_of: Timestamp) -> Result<()> {
         use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, work_bytes};
         let area = Area::new(work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
-        index.load(&mut self.entries_for(table, columns, as_of)?, (&self.work, area))
+        index.load(&mut self.entries_for(ix, as_of)?, (&self.work, area))
     }
 
-    /// The entries an index on `columns` of `table` holds, of each version
+    /// The entries the index `ix` holds, of each version
     /// readers may still see: keys with a null left out.
-    fn entries_for<'a>(
-        &self,
-        table: &'a QualifiedName,
-        columns: &'a [usize],
-        as_of: Timestamp,
-    ) -> Result<impl Iterator<Item = Result<(Key, RowId)>> + 'a> {
-        let versions = Arc::clone(self.storage_of(table)?).versions(self.tx.horizon(), as_of, columns);
+    fn entries_for<'a>(&self, ix: &'a IndexDesc, as_of: Timestamp) -> Result<impl Iterator<Item = Result<(Key, RowId)>> + 'a> {
+        let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.columns);
         Ok(versions.filter_map(move |read| {
             let keyed = read.and_then(|(id, row)| {
-                let key = project(&row, columns)
-                    .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row of {table} is shorter than an index")))?;
-                Ok((Key(key), id))
+                let key = ix
+                    .key_of(&row)
+                    .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row of {} is shorter than an index", ix.table)))?;
+                Ok((key, id))
             });
             match keyed {
                 Ok((key, id)) => (!key.0.iter().any(Value::is_null)).then_some(Ok((key, id))),

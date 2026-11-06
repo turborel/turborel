@@ -27,6 +27,7 @@ use crate::spill::{Records, SpillRun, norm_row, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
+use crate::value::collation::CollationRef;
 
 /// The bytes a set function's state takes in memory, near enough.
 pub(super) const STATE_BYTES: usize = 64;
@@ -35,8 +36,21 @@ pub(super) const STATE_BYTES: usize = 64;
 pub(super) struct Spec {
     /// The grouping columns.
     pub(super) groups: Vec<usize>,
+    /// What each groups by, if one is not the default collation.
+    pub(super) collations: Vec<Option<CollationRef>>,
     /// The set functions.
     pub(super) aggs: Vec<AggCall>,
+}
+
+/// The key of a group of `values`: by their sort keys where `spec` says, so
+/// values equal by a collation are of one group, which keeps the first's
+/// [ISO/IEC 9075:1992 §8.2 GR3d].
+fn group_key(spec: &Spec, values: &Row) -> Vec<u8> {
+    if spec.collations.is_empty() {
+        return norm_row(values);
+    }
+    let keyed = |(v, c): (&Value, &Option<CollationRef>)| c.as_ref().map_or_else(|| v.clone(), |c| c.sort_key(v));
+    norm_row(&values.iter().zip(&spec.collations).map(keyed).collect::<Row>())
 }
 
 /// One group: its grouping values, the set functions fed so far, and the
@@ -160,7 +174,7 @@ impl Grouper {
         for r in rows {
             let (n, row) = r?;
             let values: Row = self.spec.groups.iter().map(|&c| column(&row, c).cloned()).collect::<Result<_>>()?;
-            let key = norm_row(&values);
+            let key = group_key(&self.spec, &values);
             if !found.contains_key(&key) {
                 if bytes > self.work.limit() {
                     overflow.push(&key, &numbered(n, &row), &mut self.work)?;

@@ -36,8 +36,20 @@ pub enum Updatability {
 pub struct SortSpecification {
     /// The column sorted on.
     pub key: SortColumn,
+    /// The `<collation name>` of its `<collate clause>`, if written.
+    pub collate: Option<TableName>,
     /// DESC was written.
     pub descending: bool,
+}
+
+/// [ISO/IEC 9075:1992 §7.7] `<grouping column reference>` ::= `<column
+/// reference>` \[`<collate clause>`\]
+#[derive(Debug, Clone)]
+pub struct GroupingColumn {
+    /// The `<column reference>`.
+    pub column: ColumnSpecification,
+    /// The `<collation name>` of its `<collate clause>`, if written.
+    pub collate: Option<TableName>,
 }
 
 /// How a `<sort specification>` names its column.
@@ -257,7 +269,7 @@ pub struct TableExpression {
     /// [X3.135-1986 §5.21] `<where clause>` ::= WHERE `<search condition>`
     pub where_clause: Option<SearchCondition>,
     /// [X3.135-1986 §5.22] `<group by clause>` ::= GROUP BY `<column specification>` \[{, `<column specification>`}...\]
-    pub group_by: Vec<ColumnSpecification>,
+    pub group_by: Vec<GroupingColumn>,
     /// [X3.135-1986 §5.23] `<having clause>` ::= HAVING `<search condition>`
     pub having: Option<SearchCondition>,
 }

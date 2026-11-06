@@ -28,6 +28,8 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod collated_indexes;
+mod collations;
 mod common;
 mod concepts;
 /// The fixtures over a database and the suites every log passes, written

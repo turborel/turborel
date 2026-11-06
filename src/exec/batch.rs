@@ -81,7 +81,11 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
 /// What `plan` reads, if it is an aggregation read by batches: of a
 /// subtree that gives them (`stream::layout`).
 fn read_of(plan: &Plan, db: &State) -> Option<Read> {
-    let Plan::Aggregate { groups, aggs, input, .. } = plan else { return None };
+    let Plan::Aggregate { groups, collations, aggs, input, .. } = plan else { return None };
+    // Batches key groups by their values, not by a collation's sort keys.
+    if !collations.is_empty() {
+        return None;
+    }
     let (columns, _) = stream::layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
     Some(Read { taken: taken(aggs, &columns)?, groups: at })
@@ -107,7 +111,7 @@ pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
 #[inline(never)]
 pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
     let Plan::Distinct { input } = plan else { return plan };
-    Plan::Aggregate { groups: (0..width).collect(), aggs: Vec::new(), detail: String::new(), input }
+    Plan::Aggregate { groups: (0..width).collect(), collations: Vec::new(), aggs: Vec::new(), detail: String::new(), input }
 }
 
 /// Whether `plan` is an aggregation read by batches.

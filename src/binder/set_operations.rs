@@ -6,16 +6,18 @@
 use std::collections::BTreeSet;
 
 use super::case::set_type;
+use super::collation::{any_of, of_column};
 use super::datetime::{stored, takes_zone};
 use super::expression::dynamic_of;
 use super::query::{Nesting, bind_query};
 use super::statements::{INSERT_RULE, check_assignment};
 use super::{Binder, Bound, Context, OutColumn, Scope, nondeterministic, rule};
 use crate::ast::{Correspondence, QueryExpression, RowElement, SetOperation, SetOperator, ValueExpression, ValuesRow};
-use crate::catalog::ColumnDesc;
+use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::{At, Result};
 use crate::logical::{Expr, LogicalPlan, SetOp};
 use crate::params::ParameterType;
+use crate::value::collation::CollationRef;
 use crate::value::{DataType, Value};
 
 /// An object column of an INSERT [X3.135-1986 §8.7 SR4]: what NULL and
@@ -110,7 +112,7 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
             types.extend(object);
             set_type(&types, "§7.2 GR2, §7.10 SR12b ii")?
         };
-        columns.push(OutColumn { name: None, data_type, not_null: false, origin: None });
+        columns.push(OutColumn { name: None, collation: None, data_type, not_null: false, origin: None });
     }
     let exprs = bound.into_iter().map(|r| r.into_iter().zip(&columns).map(|((e, t), c)| conformed(e, t, c.data_type)).collect()).collect();
     let types = columns.iter().map(|c| c.data_type).collect();
@@ -123,6 +125,46 @@ fn conformed(e: Expr, t: Option<DataType>, to: DataType) -> Expr {
         Some(t) => super::case::brought(e, t, to),
         None => e,
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.5] The collation of a set operation's column of
+/// `a` and `b`, none if they differ.
+fn result_collation(a: &OutColumn, b: &OutColumn) -> Option<QualifiedName> {
+    a.collation.clone().filter(|_| a.collation == b.collation)
+}
+
+/// `plan` keyed for a set operation by `collations`: the sort keys, then its
+/// own columns.
+fn keyed_operand(plan: LogicalPlan, collations: &[Option<CollationRef>]) -> LogicalPlan {
+    let width = collations.len();
+    let key = |(i, c): (usize, &Option<CollationRef>)| c.as_ref().map_or(Expr::Column(i), |c| Expr::sort_key(Expr::Column(i), c));
+    let exprs = collations.iter().enumerate().map(key).chain((0..width).map(Expr::Column)).collect();
+    LogicalPlan::Project { exprs, input: Box::new(plan) }
+}
+
+/// [ISO/IEC 9075:1992 §7.10 GR1b, §8.2 GR3d] The set operation `op` of `l`
+/// and `r`, of `columns`: rows the same by each column's collation, which
+/// gives the first of each.
+fn collated_set_operation(
+    cx: &Context<'_>,
+    (op, all): (SetOp, bool),
+    (l, r): (LogicalPlan, LogicalPlan),
+    columns: &[OutColumn],
+) -> LogicalPlan {
+    let (left, right) = (Box::new(l), Box::new(r));
+    let collations = any_of(columns.iter().map(|c| of_column(cx.db, cx.collation, c)).collect());
+    if collations.is_empty() || (op == SetOp::Union && all) {
+        return LogicalPlan::SetOp { op, all, compared: None, left, right };
+    }
+    if op == SetOp::Union {
+        let appended = LogicalPlan::SetOp { op, all: true, compared: None, left, right };
+        return LogicalPlan::Aggregate { groups: (0..columns.len()).collect(), collations, aggs: Vec::new(), input: Box::new(appended) };
+    }
+    let width = collations.len();
+    let (keyed_left, keyed_right) = (Box::new(keyed_operand(*left, &collations)), Box::new(keyed_operand(*right, &collations)));
+    let kept = (width..width.saturating_mul(2)).map(Expr::Column).collect();
+    let input = Box::new(LogicalPlan::SetOp { op, all, compared: Some(width), left: keyed_left, right: keyed_right });
+    LogicalPlan::Project { exprs: kept, input }
 }
 
 /// The first value of column `k` of `rows` that is not a `<dynamic
@@ -251,7 +293,8 @@ fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Res
     for (a, b) in left.columns.iter().zip(&right.columns) {
         let data_type = set_type(&[a.data_type, b.data_type], clause)?;
         let name = a.name.clone().filter(|_| a.name == b.name);
-        columns.push(OutColumn { name, data_type, not_null: a.not_null && b.not_null, origin: None });
+        let collation = result_collation(a, b);
+        columns.push(OutColumn { name, collation, data_type, not_null: a.not_null && b.not_null, origin: None });
     }
     let op = match s.op {
         SetOperator::Union => SetOp::Union,
@@ -259,7 +302,7 @@ fn combined(cx: Context<'_>, s: &SetOperation, left: Bound, right: Bound) -> Res
         SetOperator::Intersect => SetOp::Intersect,
     };
     let (l, r) = (conform(left, &columns), conform(right, &columns));
-    Ok(Bound { plan: LogicalPlan::SetOp { op, all: s.all, left: Box::new(l), right: Box::new(r) }, columns })
+    Ok(Bound { plan: collated_set_operation(&cx, (op, s.all), (l, r), &columns), columns })
 }
 
 /// The plan of `bound`, its columns cast to the types of `columns` where

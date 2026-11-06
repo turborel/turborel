@@ -10,7 +10,7 @@ use super::constraints::{self, Pending, Within};
 use super::defaults::default_of;
 use super::indexes::IndexSpec;
 use super::{Completion, Database, State, api};
-use crate::ast::{Action, PrivilegeDefinition, Schema, TableDefinition, TableElement};
+use crate::ast::{Action, PrivilegeDefinition, PrivilegeObject, Schema, TableDefinition, TableElement};
 use crate::binder::{no_column, qualify};
 use crate::catalog::{Actions, Catalog, ColumnDesc, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, TemporaryKind, applicable, merged};
 use crate::engine::rows::ROW_STORE;
@@ -96,9 +96,9 @@ impl State {
     /// concurrency to the coordinator, whose caller holds the table's
     /// exclusive lock (`Database::create_index`).
     pub(super) fn create_index(&mut self, spec: &IndexSpec) -> Result<()> {
-        let (index, cols, built) = self.define_index(spec)?;
+        let (index, ix, built) = self.define_index(spec)?;
         if !built {
-            self.load_index(&*index, &spec.table, &cols, Timestamp::MAX)?;
+            self.load_index(&*index, &ix, Timestamp::MAX)?;
         }
         Ok(())
     }
@@ -107,7 +107,7 @@ impl State {
     /// in the catalog, with its structure, empty unless reopened, so every
     /// write from this snapshot on keeps it up to date. Returns the
     /// structure, its columns' positions, and whether it was reopened.
-    pub(super) fn define_index(&mut self, spec: &IndexSpec) -> Result<(Arc<dyn Index>, Vec<usize>, bool)> {
+    pub(super) fn define_index(&mut self, spec: &IndexSpec) -> Result<(Arc<dyn Index>, IndexDesc, bool)> {
         let IndexSpec { name, table: qn, columns, method, options } = spec;
         let desc = self.catalog.table(qn).cloned().ok_or_else(|| api(format!("[EXTENSION] no table {qn}")))?;
         let cols = columns
@@ -137,16 +137,18 @@ impl State {
             method: method.clone(),
             unique: false,
             options: taken,
+            collations: Vec::new(),
         };
-        let (index, built) = self.index_structure(&*m, (&ix, &desc), &desc.types(&cols).unwrap_or_default())?;
+        let ix = self.with_key_collations(ix, &desc)?;
+        let (index, built) = self.index_structure(&*m, (&ix, &desc), &ix.key_types(&desc).unwrap_or_default())?;
         self.indexes.insert(name.clone(), Arc::clone(&index));
         let mut catalog = self.catalog.duplicate();
-        catalog.add_index(ix);
+        catalog.add_index(ix.clone());
         self.catalog = Arc::from(catalog);
         // Writers whose snapshot predates the index must not write the table
         // without maintaining it (`State::prepare_write`).
         self.lock_of(qn)?.definitions_changed(self.generation);
-        Ok((index, cols, built))
+        Ok((index, ix, built))
     }
 
     /// The one catalog's name, the setting CATALOG.NAME [ISO/IEC 9075:1992
@@ -224,36 +226,23 @@ impl State {
         Ok((owner, descs.into_iter().map(|d| (d.name.ident, d.engine)).collect(), warned.contains(&true), asserted, built))
     }
 
-    /// [ISO/IEC 9075:1992 §11.21] The domains of `<schema>` `s`, owned by
-    /// `owner`, its datetimes of `zone` where they write no displacement,
-    /// made first, which its tables' columns may be of: a failing
-    /// `<schema>` is discarded whole (`Database::change`).
-    fn schema_domains(&mut self, s: &Schema, owner: &str, zone: i16) -> Result<()> {
-        if s.domains.is_empty() {
-            return Ok(());
-        }
-        let mut catalog = self.catalog.duplicate();
-        catalog.create_schema(&s.name, owner, Vec::new());
-        self.catalog = Arc::from(catalog);
-        for d in &s.domains {
-            self.make_domain((&s.name, zone), d, false)?;
-        }
-        Ok(())
-    }
-
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
     /// privileges granted, and whether any was not; USAGE on a domain is
     /// granted in its descriptor [§11.36].
     fn schema_grants(&mut self, s: &Schema, owner: &str) -> Result<Vec<(Vec<PrivilegeDesc>, bool)>> {
         let mut granted = Vec::new();
         for p in &s.privileges {
-            if p.domain {
-                let done = self.grant_usage(owner, &s.name, p).or_at(p.table.at)?;
-                granted.push((Vec::new(), done.completion != Completion::Success));
-            } else {
+            if p.object == PrivilegeObject::Table {
                 // [ISO/IEC 9075:1992 §18.1 GR3g] its errors about the table it names.
                 let about = qualify(&p.table, &s.name).parts();
                 granted.push(self.describe_grant((owner, &s.name), p).map_err(|e| e.or_about_table(about)).or_at(p.table.at)?);
+            } else {
+                let done = if p.object == PrivilegeObject::Domain {
+                    self.grant_usage(owner, &s.name, p)
+                } else {
+                    self.grant_collation_usage(owner, p)
+                };
+                granted.push((Vec::new(), done.or_at(p.table.at)?.completion != Completion::Success));
             }
         }
         Ok(granted)
@@ -286,7 +275,8 @@ impl State {
             // [ISO/IEC 9075:1992 §11.4 SR5, AR1] its data type, or its domain's.
             let (data_type, domain) = self.column_type(names, &c.data_type).or_at(c.at)?;
             let default = c.default.as_ref().map(|o| default_of(data_type, o, zone)).transpose().or_at(c.at)?;
-            columns.push(ColumnDesc { name: c.name.clone(), data_type, not_null: false, default, domain });
+            let collation = self.declared_collation(names, (data_type, domain.as_ref()), c.collate.as_ref()).or_at(c.at)?;
+            columns.push(ColumnDesc { name: c.name.clone(), data_type, not_null: false, default, domain, collation });
         }
         if columns.is_empty() {
             return rule(format!("[ISO/IEC 9075:1992 §11.3 SR5] table {} has no column", t.name.ident));
@@ -476,7 +466,6 @@ impl State {
         let mut indexes = Vec::new();
         for (k, cols) in (1..).zip(d.unique()) {
             let name = constraint_index_name(&d.name, k);
-            let types = d.types(cols).ok_or_else(|| api(format!("[DESIGN] a UNIQUE constraint of {} is on a column it lacks", d.name)))?;
             let index = IndexDesc {
                 name: name.clone(),
                 table: d.name.clone(),
@@ -484,7 +473,11 @@ impl State {
                 method: self.constraint_method().to_owned(),
                 unique: true,
                 options: Vec::new(),
+                collations: Vec::new(),
             };
+            let index = self.with_key_collations(index, d)?;
+            let types =
+                index.key_types(d).ok_or_else(|| api(format!("[DESIGN] a UNIQUE constraint of {} is on a column it lacks", d.name)))?;
             let structure = match made.and_then(|m| m.indexes.iter().find(|(n, _)| *n == name)) {
                 Some((_, structure)) => Arc::clone(structure),
                 // A new table's index starts empty; a reopened one's is kept, or built.
@@ -529,6 +522,7 @@ mod tests {
             not_null: true,
             default: None,
             domain: None,
+            collation: None,
         };
         let name = QualifiedName { auth: "A".into(), ident: "T".into() };
         let key = ConstraintDesc {

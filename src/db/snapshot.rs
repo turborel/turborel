@@ -8,7 +8,9 @@
 //!
 //! ```text
 //! snapshot: schemas (count u32, each its name and its owner, str),
-//!           domains (count u32, each a domain), assertions (count u32,
+//!           domains (count u32, each a domain), collations (count u32,
+//!           each a collation), collation versions (count u32, each a name
+//!           and version), assertions (count u32,
 //!           each a constraint), tables (count u32, each a
 //!           table), views (likewise), indexes (likewise), privileges
 //!           (likewise), settings (count u32, each str and value), users
@@ -21,9 +23,10 @@ use std::sync::Arc;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
-    constraint, domain, index, privilege, put_constraint, put_domain, put_index, put_privilege, put_table, put_view, table, view,
+    collation, constraint, domain, index, privilege, put_collation, put_constraint, put_domain, put_index, put_privilege, put_table,
+    put_view, table, view,
 };
-use crate::catalog::{ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, TableDesc, ViewDesc};
+use crate::catalog::{CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, PrivilegeDesc, TableDesc, ViewDesc};
 use crate::error::Result;
 use crate::settings;
 use crate::value::Value;
@@ -35,6 +38,10 @@ pub(super) struct Snapshot {
     /// Each schema's name, and its owner.
     schemas: Vec<(String, String)>,
     domains: Vec<DomainDesc>,
+    /// The `<collation definition>`s made.
+    collations: Vec<CollationDesc>,
+    /// Each built-in collation's version as this was taken, by name.
+    collation_versions: Vec<(String, String)>,
     assertions: Vec<ConstraintDesc>,
     tables: Vec<TableDesc>,
     views: Vec<ViewDesc>,
@@ -62,8 +69,23 @@ impl Snapshot {
         let users = st.users.entries().map(|(n, v)| (n.clone(), v.clone())).collect();
         let owner = st.users.owner().map(str::to_owned);
         let domains = st.catalog.domains().into_iter().cloned().collect();
+        let collations = st.catalog.collations().into_iter().cloned().collect();
+        let collation_versions = st.collation_versions();
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
-        Snapshot { schemas, domains, assertions, tables, views, indexes, privileges, settings: st.settings.database_values(), users, owner }
+        Snapshot {
+            schemas,
+            domains,
+            collations,
+            collation_versions,
+            assertions,
+            tables,
+            views,
+            indexes,
+            privileges,
+            settings: st.settings.database_values(),
+            users,
+            owner,
+        }
     }
 
     /// The database's value of the setting `name`, if it set one.
@@ -81,6 +103,13 @@ impl Snapshot {
         }
         out.put_u32(count(self.domains.len()));
         self.domains.iter().for_each(|d| put_domain(out, d));
+        out.put_u32(count(self.collations.len()));
+        self.collations.iter().for_each(|c| put_collation(out, c));
+        out.put_u32(count(self.collation_versions.len()));
+        for (name, version) in &self.collation_versions {
+            out.put_str(name);
+            out.put_str(version);
+        }
         out.put_u32(count(self.assertions.len()));
         self.assertions.iter().for_each(|a| put_constraint(out, a));
         out.put_u32(count(self.tables.len()));
@@ -115,6 +144,8 @@ impl Snapshot {
     pub(super) fn get(r: &mut Reader<'_>) -> Result<Snapshot> {
         let schemas = (0..r.u32()?).map(|_| Ok((r.str()?, r.str()?))).collect::<Result<_>>()?;
         let domains = (0..r.u32()?).map(|_| domain(r)).collect::<Result<_>>()?;
+        let collations = (0..r.u32()?).map(|_| collation(r)).collect::<Result<_>>()?;
+        let collation_versions = (0..r.u32()?).map(|_| Ok((r.str()?, r.str()?))).collect::<Result<_>>()?;
         let assertions = (0..r.u32()?).map(|_| constraint(r)).collect::<Result<_>>()?;
         let tables = (0..r.u32()?).map(|_| table(r)).collect::<Result<_>>()?;
         let views = (0..r.u32()?).map(|_| view(r)).collect::<Result<_>>()?;
@@ -123,7 +154,20 @@ impl Snapshot {
         let settings = (0..r.u32()?).map(|_| Ok((r.str()?, value(r)?))).collect::<Result<_>>()?;
         let users = (0..r.u32()?).map(|_| Ok((r.str()?, r.bytes()?.to_vec()))).collect::<Result<_>>()?;
         let owner = if r.u8()? == 0 { None } else { Some(r.str()?) };
-        Ok(Snapshot { schemas, domains, assertions, tables, views, indexes, privileges, settings, users, owner })
+        Ok(Snapshot {
+            schemas,
+            domains,
+            collations,
+            collation_versions,
+            assertions,
+            tables,
+            views,
+            indexes,
+            privileges,
+            settings,
+            users,
+            owner,
+        })
     }
 }
 
@@ -144,9 +188,13 @@ impl State {
             catalog.create_schema(schema, owner, snapshot.tables.iter().filter(|t| t.name.auth == *schema).cloned().collect());
         }
         snapshot.domains.iter().cloned().for_each(|d| catalog.put_domain(d));
+        snapshot.collations.iter().cloned().for_each(|c| catalog.put_collation(c));
+        // Before the indexes, whose keys are by them.
+        self.catalog = Arc::from(catalog.duplicate());
         snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
         catalog.add_views(snapshot.views.clone());
         catalog.grant(snapshot.privileges.clone());
+        self.check_collation_versions(&*catalog, &snapshot.collation_versions)?;
         for desc in &snapshot.tables {
             let engine =
                 Arc::clone(self.engines.get(&desc.engine).ok_or_else(|| api(format!("[DESIGN] no storage engine {}", desc.engine)))?);
@@ -161,10 +209,11 @@ impl State {
                 .iter()
                 .find(|t| t.name == ix.table)
                 .ok_or_else(|| api(format!("[DESIGN] index {} has no table", ix.name)))?;
-            let types = desc.types(&ix.columns).ok_or_else(|| api(format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
-            let (structure, _) = self.index_structure(&*method, (ix, desc), &types)?;
+            let ix = self.with_key_collations(ix.clone(), desc)?;
+            let types = ix.key_types(desc).ok_or_else(|| api(format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
+            let (structure, _) = self.index_structure(&*method, (&ix, desc), &types)?;
             self.indexes.insert(ix.name.clone(), structure);
-            catalog.add_index(ix.clone());
+            catalog.add_index(ix);
         }
         for (name, v) in &snapshot.settings {
             // One read as the database opened, given before it did, is kept

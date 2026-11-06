@@ -15,6 +15,7 @@ use std::sync::Arc;
 use super::{InSet, Subquery};
 use crate::catalog::{MatchType, QualifiedName};
 use crate::functions::ScalarRef;
+use crate::value::collation::CollationRef;
 use crate::value::{ArithOp, CompOp, DataType, Value, constant_prefix};
 
 /// [ISO/IEC 9075:1992 §4.10.3, §6.10 GR13] The constraints a value CAST to
@@ -85,6 +86,11 @@ pub enum Expr {
     /// [ISO/IEC 9075:1992 §6.10 GR13] CAST to a domain: the value CAST to
     /// its data type, which none of its constraints may find false.
     Domain(Box<Expr>, Arc<DomainChecks>),
+    /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §9.15] A character string's sort key
+    /// under a collation, as bits, or the null value: how a comparison
+    /// under a collation other than the default sees its operand (RULES.md
+    /// D60). Made by `Expr::sort_key`.
+    SortKey(Box<Expr>, CollationRef),
     /// [ISO/IEC 9075:1992 §7.11 GR1] A `<scalar subquery>`, or a column, at
     /// this position, of a `<row subquery>`: the value there of its one
     /// row, null if it has none [§6.11 GR2].
@@ -173,6 +179,7 @@ impl Expr {
                 Expr::Case(whens, Box::new(f(*otherwise)))
             }
             Expr::Cast(x, t) => Expr::Cast(Box::new(f(*x)), t),
+            Expr::SortKey(x, c) => Expr::sort_key(f(*x), &c),
             Expr::Domain(x, checks) => Expr::Domain(Box::new(f(*x)), checks),
             Expr::Subquery(s, column) => Expr::Subquery(s.map_outer(f), column),
         }
@@ -183,7 +190,7 @@ impl Expr {
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a Expr)) {
         match self {
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) => {}
-            Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) => f(x),
+            Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) | Expr::SortKey(x, _) => f(x),
             Expr::Arith(a, _, b) => {
                 f(a);
                 f(b);
@@ -200,16 +207,25 @@ impl Expr {
         }
     }
 
+    /// `e`'s sort key under `collation`: of a constant, the constant key, so
+    /// a probe or IN list can use it.
+    pub fn sort_key(e: Expr, collation: &CollationRef) -> Expr {
+        if let Expr::Const(v) = &e {
+            return Expr::Const(collation.sort_key(v));
+        }
+        Expr::SortKey(Box::new(e), collation.clone())
+    }
+
     /// Whether evaluating this expression can raise a run-time error.
     /// Arithmetic can ([X3.135-1986 §5.9 GR5, GR6]), and so can a function,
     /// a CAST [ISO/IEC 9075:1992 §6.10], to a domain too, and a scalar subquery with more
-    /// than one row [§7.11 GR1]; a column, a constant and monadic minus
+    /// than one row [§7.11 GR1]; a column, a constant, a sort key and monadic minus
     /// cannot (exact values never exceed `MAX_EXACT_PRECISION` digits, so
     /// negation cannot overflow), and CASE only through its parts.
     pub fn can_raise(&self) -> bool {
         match self {
             Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => true,
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) => {
+            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) | Expr::SortKey(..) => {
                 let mut raises = false;
                 self.for_each_child(&mut |e| raises = raises || e.can_raise());
                 if let Expr::Case(whens, _) = self {

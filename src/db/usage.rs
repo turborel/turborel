@@ -12,9 +12,9 @@ use crate::binder::qualify;
 use crate::catalog::{Catalog, ConstraintDesc, ConstraintKind, DomainDesc, QualifiedName, UsageDesc, applicable, owner_of};
 use crate::error::{Code, Result, SqlError, SqlState};
 
-/// [ISO/IEC 9075:1992 §11.36 SR1, §11.37 SR1] That `actions`, of a domain,
-/// are USAGE, or ALL PRIVILEGES.
-fn usage_alone(actions: Option<&[Action]>) -> Result<()> {
+/// [ISO/IEC 9075:1992 §11.36 SR1, §11.37 SR1] That `actions`, of a domain or
+/// collation, are USAGE, or ALL PRIVILEGES.
+pub(super) fn usage_alone(actions: Option<&[Action]>) -> Result<()> {
     if actions.is_some_and(|list| list.iter().any(|a| *a != Action::Usage)) {
         return Err(rule("[ISO/IEC 9075:1992 §11.36 SR1, §11.37 SR1] of a domain, USAGE alone is granted or revoked".to_owned()));
     }

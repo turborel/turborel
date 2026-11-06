@@ -35,6 +35,7 @@ impl Parser {
                 Ok(ValueExpression::Case(Box::new(self.case_expression()?)))
             }
             Tok::KeyWord(kw::CAST) => self.cast_specification(),
+            Tok::KeyWord(kw::COLLATION) => self.collation_for(),
             Tok::KeyWord(kw::CURRENT_DATE | kw::CURRENT_TIME | kw::CURRENT_TIMESTAMP) => {
                 let f = self.datetime_value_function()?.ok_or_else(|| self.syntax("expected a <datetime value function>"))?;
                 Ok(ValueExpression::Datetime(f))

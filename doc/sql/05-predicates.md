@@ -96,6 +96,10 @@ SELECT ID FROM STAFF WHERE NAME LIKE '%!%%' ESCAPE '!';
 (0 rows)
 ```
 
+Under a collation LIKE compares folded characters, so
+`NAME LIKE 'b%'` finds `Bob` in a CASE_INSENSITIVE column. Under UNICODE, whose
+letters may be several characters, it is refused (SQLCODE -900).
+
 ## NULL
 
 `x IS NULL` is true if x is null; `IS NOT NULL` if it is not. It is

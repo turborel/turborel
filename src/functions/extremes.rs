@@ -7,6 +7,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::kw;
 use crate::storage::{Floats, Ints};
 use crate::value::codec::{put_value, value};
+use crate::value::collation::CollationRef;
 use crate::value::{DataType, Value, compare};
 
 /// MAX and MIN. [X3.135-1986 §5.8 SR8] the result type is the argument's. [X3.135-1986 §5.8 GR4d] by the [X3.135-1986 §5.11] rules.
@@ -90,4 +91,72 @@ impl Accumulator for ExtremeAcc {
 /// compares with it as `wanted`, or not at all (`ExtremeAcc::update`).
 fn best_of<'v>(values: impl Iterator<Item = &'v Value>, wanted: std::cmp::Ordering) -> Option<&'v Value> {
     values.filter(|v| !v.is_null()).reduce(|best, v| if compare(v, best).is_none_or(|o| o == wanted) { v } else { best })
+}
+
+/// \[EXTENSION\] MAX or MIN by a collation (RULES.md D60): the value whose
+/// sort key is greatest or least [ISO/IEC 9075-2:2023 §9.15].
+pub struct CollatedExtreme {
+    /// Whether it keeps the greatest.
+    pub max: bool,
+    /// What it orders by.
+    pub collation: CollationRef,
+}
+
+impl AggregateFunction for CollatedExtreme {
+    fn name(&self) -> &str {
+        if self.max { kw::MAX } else { kw::MIN }
+    }
+    fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
+        arg.ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §5.8 F] {} takes an argument", self.name())))
+    }
+    fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
+        Box::new(CollatedAcc { best: None, max: self.max, collation: self.collation.clone() })
+    }
+}
+
+/// The best value so far, with its sort key.
+struct CollatedAcc {
+    best: Option<(Value, Value)>,
+    max: bool,
+    collation: CollationRef,
+}
+
+impl Accumulator for CollatedAcc {
+    fn update(&mut self, v: &Value) -> Result<()> {
+        if v.is_null() {
+            return Ok(());
+        }
+        let key = self.collation.sort_key(v);
+        let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
+        if self.best.as_ref().is_none_or(|(best, _)| compare(&key, best) == Some(wanted)) {
+            self.best = Some((key, v.clone()));
+        }
+        Ok(())
+    }
+    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+        match rows {
+            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).try_for_each(|v| self.update(v)),
+            None => values.iter().try_for_each(|v| self.update(v)),
+        }
+    }
+    fn update_ints(&mut self, _: &Ints, _: Option<&[usize]>) -> Result<()> {
+        Ok(())
+    }
+    fn update_floats(&mut self, _: &Floats, _: Option<&[usize]>) -> Result<()> {
+        Ok(())
+    }
+    /// Its state is written, as `ExtremeAcc`'s.
+    fn write_state(&self, out: &mut Vec<u8>) -> bool {
+        put_value(out, self.best.as_ref().map_or(&Value::Null, |(_, v)| v));
+        true
+    }
+    fn merge(&mut self, state: &[u8]) -> Result<()> {
+        let mut reader = Reader::new(state, "a state of MAX or MIN");
+        let best = value(&mut reader)?;
+        reader.finish()?;
+        self.update(&best)
+    }
+    fn finish(&self) -> Result<Value> {
+        Ok(self.best.as_ref().map_or(Value::Null, |(_, v)| v.clone()))
+    }
 }

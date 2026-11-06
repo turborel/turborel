@@ -213,6 +213,12 @@ impl Txn {
         Ok(())
     }
 
+    /// Leaves the transaction able only to roll back, `why`: its definitions
+    /// changed in a way a statement's undoing does not take back.
+    pub(crate) fn doom(&self, why: &'static str) {
+        lock_builtin(&self.state).doomed.get_or_insert(why);
+    }
+
     /// Marks the current statement's changes undone in the log, if it wrote
     /// any. If that cannot be written, the log would show changes that were
     /// cancelled as made, so the transaction can then only roll back.

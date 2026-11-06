@@ -8,6 +8,17 @@ use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
+    /// A name of a table's form, and nothing after it: a `<collation name>`
+    /// in a value [ISO/IEC 9075-2:2023 §19.10 GR1a].
+    ///
+    /// # Errors
+    ///
+    /// The text is not one.
+    pub fn only_table_name(&mut self) -> Result<TableName> {
+        let name = self.table_name()?;
+        if *self.peek() == Tok::End { Ok(name) } else { Err(self.syntax("expected one name")) }
+    }
+
     /// [X3.135-1986 §5.4] `<table name>` ::= \[`<authorization identifier>`.\] `<table identifier>`
     pub(super) fn table_name(&mut self) -> Result<TableName> {
         let at = self.here();

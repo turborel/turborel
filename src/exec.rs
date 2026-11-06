@@ -31,13 +31,13 @@ mod work;
 
 use std::sync::Arc;
 
-use crate::catalog::QualifiedName;
+use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Entries as IndexEntries, Key, KeyOrder, Probe};
 use crate::logical::{Cond, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage, project};
+use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
 use crate::value::Value;
@@ -215,10 +215,10 @@ fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     };
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
-        Ok(Found { storage, columns, entries }) => match storage.read_by_condition(tx, &Condition { columns: columns.clone(), probe }) {
+        Ok(Found { storage, ix, entries }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {
             Ok(()) => {
                 let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
-                    entry.and_then(|(key, id)| entry_row(&*storage, (&columns, &needed, width), tx, key, id)).transpose()
+                    entry.and_then(|(key, id)| entry_row(&*storage, (&ix, &needed, width), tx, key, id)).transpose()
                 });
                 Box::new(checked(rows, db.tx.stop_of(tx)))
             }
@@ -243,9 +243,9 @@ fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     if batched(db) && batch::aggregable(&plan, db) {
         return batch::aggregated(plan, db, tx);
     }
-    let Plan::Aggregate { groups, aggs, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
+    let Plan::Aggregate { groups, collations, aggs, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
     let rows = execute(*input, db, tx);
-    group::grouping(group::Spec { groups, aggs }, rows, db, tx)
+    group::grouping(group::Spec { groups, collations, aggs }, rows, db, tx)
 }
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, sorted by `keys`.
@@ -295,23 +295,33 @@ fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIte
 /// What an index found: its entries, and how to read their rows.
 struct Found {
     storage: Arc<dyn TableStorage>,
-    /// The index's columns.
-    columns: Vec<usize>,
+    /// The index's key.
+    ix: KeyShape,
     /// The entries, in index order or reversed, read as they are taken.
     entries: IndexEntries,
 }
 
+/// What an engine is told a probe of `ix` reads. A key by a sort key is no
+/// value of its columns, so the probe cannot say which rows it chose, and
+/// the engine is told every row with a key: never narrower than the index,
+/// so it may refuse more commits, and never fewer (RULES.md D60).
+pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
+    let probe = if ix.is_collated() { Probe::All } else { probe };
+    Condition { columns: ix.columns.clone(), probe }
+}
+
 /// Row `id` of `storage`, as `tx` sees it, if that version has `key` in the
-/// index's `columns`: an index holds the entries of versions `tx` may not
+/// index `ix`: an index holds the entries of versions `tx` may not
 /// see (`Index`). Of a statement that reads only `needed`, only those and
 /// the index's columns are read (`TableStorage::get_columns`); else all.
 fn fetch(
     storage: &dyn TableStorage,
-    (columns, needed): (&[usize], Option<&[usize]>),
+    (ix, needed): (&KeyShape, Option<&[usize]>),
     tx: TxId,
     key: &Key,
     id: RowId,
 ) -> Result<Option<(RowId, Row)>> {
+    let columns = &ix.columns;
     let read = match needed {
         Some(needed) => {
             let mut read: Vec<usize> = needed.iter().chain(columns).copied().collect();
@@ -322,7 +332,7 @@ fn fetch(
         None => storage.get(tx, id)?,
     };
     let Some(row) = read else { return Ok(None) };
-    let seen = project(&row, columns).map(Key);
+    let seen = ix.key_of(&row);
     Ok(seen.filter(|seen| seen == key).map(|_| (id, row)))
 }
 
@@ -334,7 +344,7 @@ fn fetch(
 /// the columns `needed` the statement uses.
 fn entry_row(
     storage: &dyn TableStorage,
-    (columns, needed, width): (&[usize], &[usize], Option<usize>),
+    (ix, needed, width): (&KeyShape, &[usize], Option<usize>),
     tx: TxId,
     key: Key,
     id: RowId,
@@ -343,14 +353,14 @@ fn entry_row(
         && storage.visible_to_all(id)
     {
         let mut row = vec![Value::Null; width];
-        for (&column, value) in columns.iter().zip(key.0) {
+        for (&column, value) in ix.columns.iter().zip(key.0) {
             if let Some(slot) = row.get_mut(column) {
                 *slot = value;
             }
         }
         return Ok(Some(row));
     }
-    Ok(fetch(storage, (columns, Some(needed)), tx, &key, id)?.map(|(_, row)| row))
+    Ok(fetch(storage, (ix, Some(needed)), tx, &key, id)?.map(|(_, row)| row))
 }
 
 /// What `index` finds for `probe`, in index order, or reversed, read as
@@ -359,14 +369,11 @@ fn entry_row(
 /// engine (`TableStorage::read_by_condition`).
 fn probe_index(db: &State, table: &QualifiedName, index: &str, probe: &Probe, reverse: bool) -> Result<Found> {
     let storage = Arc::clone(db.storage_of(table)?);
-    let columns = db
-        .catalog
-        .index(index)
-        .map(|ix| ix.columns.clone())
-        .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
+    let ix =
+        db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
     let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
     let entries = Arc::clone(db.index_of(index)?).search(probe, order);
-    Ok(Found { storage, columns, entries })
+    Ok(Found { storage, ix, entries })
 }
 
 /// [X3.135-1986 §5.21 GR2] keep the rows for which the condition is true,
@@ -480,7 +487,7 @@ mod tests {
             st.work = areas(Some(Arc::new(Held { broken })), usize::MAX);
             let name = QualifiedName { auth: "A".into(), ident: "N".into() };
             let data_type = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-            let column = ColumnDesc { name: "K".into(), data_type, not_null: false, default: None, domain: None };
+            let column = ColumnDesc { name: "K".into(), data_type, not_null: false, default: None, domain: None, collation: None };
             let desc = TableDesc { name: name.clone(), columns: vec![column], ..state_desc() };
             let table = RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap();
             for k in 0..ROWS {
@@ -531,7 +538,13 @@ mod tests {
             eval_cond(&Cond::IsNull(crate::logical::Expr::Column(1), false), &row, &NoSubqueries).err().map(|e| e.code),
             Some(Code::Api)
         );
-        let aggregate = Plan::Aggregate { groups: vec![1], aggs: vec![], detail: String::new(), input: Box::new(one_row(row.clone())) };
+        let aggregate = Plan::Aggregate {
+            groups: vec![1],
+            collations: vec![],
+            aggs: vec![],
+            detail: String::new(),
+            input: Box::new(one_row(row.clone())),
+        };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey { column: 1, descending: false }];
         let sort = Plan::Sort { keys, detail: String::new(), input: Box::new(one_row(vec![Value::Null])) };

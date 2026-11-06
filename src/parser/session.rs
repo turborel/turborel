@@ -30,8 +30,8 @@ const DATABASE: &str = "DATABASE";
 impl Parser {
     /// A statement that begins with SET: SET of a setting, SET DATABASE,
     /// SET TRANSACTION, SET CONNECTION, SET SESSION AUTHORIZATION, SET
-    /// DESCRIPTOR, SET NAMES, SET TIME ZONE, SET CATALOG, SET SCHEMA, or SET
-    /// CONSTRAINTS.
+    /// DESCRIPTOR, SET NAMES, SET TIME ZONE, SET CATALOG, SET SCHEMA, SET
+    /// COLLATION, SET NO COLLATION, or SET CONSTRAINTS.
     pub(super) fn set_statement(&mut self) -> Result<SqlStatement> {
         let database = *self.peek_at(1) == Tok::Identifier(DATABASE.to_owned()) && self.at_setting_name(2);
         if database {
@@ -75,10 +75,8 @@ impl Parser {
             self.advance();
             return Ok(SqlStatement::SetCatalog(self.value_specification()?));
         }
-        if self.next_is_kw(kw::SCHEMA) {
-            self.advance();
-            self.advance();
-            return Ok(SqlStatement::SetSchema(self.value_specification()?));
+        if self.next_is_kw(kw::SCHEMA) || self.next_is_kw(kw::COLLATION) || self.next_is_kw(kw::NO) {
+            return self.set_schema_or_collation();
         }
         self.set_constraints()
     }
@@ -146,6 +144,36 @@ impl Parser {
             return Err(self.rule("[ISO/IEC 9075:1992 §14.1 SR3] READ WRITE is not with READ UNCOMMITTED"));
         }
         Ok(modes)
+    }
+
+    /// SET SCHEMA, or [ISO/IEC 9075-2:2023 §19.10] `<set session collation
+    /// statement>`, at SET.
+    fn set_schema_or_collation(&mut self) -> Result<SqlStatement> {
+        self.advance();
+        if self.accept_kw(kw::SCHEMA) {
+            return Ok(SqlStatement::SetSchema(self.value_specification()?));
+        }
+        let no = self.accept_kw(kw::NO);
+        self.expect_kw(kw::COLLATION)?;
+        let v = if no { None } else { Some(self.value_specification()?) };
+        self.collation_character_sets()?;
+        Ok(SqlStatement::SetCollation(v))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §19.10] \[FOR `<character set specification
+    /// list>`\]: taken if it names SQL_TEXT alone, the one there is.
+    fn collation_character_sets(&mut self) -> Result<()> {
+        if !self.accept_kw(kw::FOR) {
+            return Ok(());
+        }
+        loop {
+            let at = self.here();
+            let name = self.character_set_name()?;
+            self.only_sql_text(at, &name);
+            if !self.accept_delim(delim::COMMA) {
+                return Ok(());
+            }
+        }
     }
 
     /// [§14.1] `<level of isolation>` ::= READ UNCOMMITTED | READ COMMITTED

@@ -9,8 +9,8 @@ use super::prepared::{Keeping, Plans};
 use super::write::{delete_searched, update_searched};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
-    AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, RevokeStatement, SchemaStatement, ServedStatement,
-    SetClause, SqlStatement, TableName, TableStorage, UserStatement,
+    AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement,
+    ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
 };
 use crate::binder::{BoundWrite, Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
@@ -154,6 +154,7 @@ impl Session {
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
             SqlStatement::SetTransaction(modes) => return self.set_transaction(modes, params).map(|()| Completion::Success),
             SqlStatement::SetSchema(v) => return self.set_schema(st, v, params).map(|()| Completion::Success),
+            SqlStatement::SetCollation(v) => return self.set_collation(st, v.as_ref(), params).map(|()| Completion::Success),
             SqlStatement::SetCatalog(v) => return self.set_catalog(st, v, params).map(|()| Completion::Success),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::SetSessionAuthorization(v) => return self.set_session_authorization(v, params).map(|()| Completion::Success),
@@ -268,6 +269,7 @@ impl Session {
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
+            | SqlStatement::SetCollation(_)
             | SqlStatement::SetCatalog(_)
             | SqlStatement::SetTimeZone(_)
             | SqlStatement::SetSessionAuthorization(_)
@@ -299,8 +301,13 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::Index(IndexStatement::Create { table, .. })
         | SqlStatement::Drop { object: DropObject::Table(table), .. }
         | SqlStatement::Drop { object: DropObject::View(table), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Grant(PrivilegeDefinition { table, domain: false, .. }), .. }
-        | SqlStatement::Schema { statement: SchemaStatement::Revoke(RevokeStatement { table, domain: false, .. }), .. } => Some(table),
+        | SqlStatement::Schema {
+            statement: SchemaStatement::Grant(PrivilegeDefinition { table, object: PrivilegeObject::Table, .. }),
+            ..
+        }
+        | SqlStatement::Schema {
+            statement: SchemaStatement::Revoke(RevokeStatement { table, object: PrivilegeObject::Table, .. }), ..
+        } => Some(table),
         SqlStatement::Schema { statement: SchemaStatement::Table(t), .. } | SqlStatement::DeclareTable(t) => Some(&t.name),
         SqlStatement::Schema { statement: SchemaStatement::View(v), .. } => Some(&v.name),
         SqlStatement::Dynamic(d) => dynamic::changed_table(d).map(|(table, _)| table),
@@ -309,6 +316,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::Schema { statement: SchemaStatement::Domain(_), .. }
         | SqlStatement::Schema { statement: SchemaStatement::AlterDomain(_), .. }
         | SqlStatement::Schema { statement: SchemaStatement::Assertion(_), .. }
+        | SqlStatement::Schema { statement: SchemaStatement::Collation(_), .. }
         | SqlStatement::Drop { .. }
         | SqlStatement::Index(_)
         | SqlStatement::Close(_)
@@ -321,6 +329,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::SetTransaction(_)
         | SqlStatement::SetCatalog(_)
         | SqlStatement::SetSchema(_)
+        | SqlStatement::SetCollation(_)
         | SqlStatement::SetTimeZone(_)
         | SqlStatement::SetSessionAuthorization(_)
         | SqlStatement::Connection(_)
@@ -354,12 +363,27 @@ fn diagnostics_statement(sql: &str) -> bool {
     matches!(tokens.as_slice(), [Token { tok: Tok::KeyWord(kw::GET), .. }, Token { tok: Tok::KeyWord(kw::DIAGNOSTICS), .. }, ..])
 }
 
+/// How COMMAND_FUNCTION names schema statement `s` (`command_of`).
+fn schema_command(s: &SchemaStatement) -> &'static str {
+    match s {
+        SchemaStatement::Assertion(_) => "CREATE ASSERTION",
+        SchemaStatement::Collation(_) => "CREATE COLLATION",
+        SchemaStatement::Domain(_) => "CREATE DOMAIN",
+        SchemaStatement::AlterDomain(_) => "ALTER DOMAIN",
+        SchemaStatement::Table(_) => "CREATE TABLE",
+        SchemaStatement::View(_) => "CREATE VIEW",
+        SchemaStatement::Grant(_) => "GRANT",
+        SchemaStatement::Revoke(_) => "REVOKE",
+    }
+}
+
 /// [ISO/IEC 9075:1992 §18.1 GR1c, Table 22] How COMMAND_FUNCTION names
 /// `stmt`; \[EXTENSION\] a statement of this implementation by its first
 /// words.
 fn command_of(stmt: &SqlStatement) -> &'static str {
     match stmt {
         SqlStatement::Close(_) => "CLOSE CURSOR",
+        SqlStatement::Schema { statement, .. } => schema_command(statement),
         SqlStatement::Commit => "COMMIT WORK",
         SqlStatement::DeletePositioned { .. } => "DELETE CURSOR",
         SqlStatement::DeleteSearched { .. } => "DELETE WHERE",
@@ -369,13 +393,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Drop { object: DropObject::Schema { .. }, .. } => "DROP SCHEMA",
         SqlStatement::Drop { object: DropObject::Domain(_), .. } => "DROP DOMAIN",
         SqlStatement::Drop { object: DropObject::Assertion(_), .. } => "DROP ASSERTION",
-        SqlStatement::Schema { statement: SchemaStatement::Assertion(_), .. } => "CREATE ASSERTION",
-        SqlStatement::Schema { statement: SchemaStatement::Domain(_), .. } => "CREATE DOMAIN",
-        SqlStatement::Schema { statement: SchemaStatement::AlterDomain(_), .. } => "ALTER DOMAIN",
-        SqlStatement::Schema { statement: SchemaStatement::Table(_), .. } => "CREATE TABLE",
-        SqlStatement::Schema { statement: SchemaStatement::View(_), .. } => "CREATE VIEW",
-        SqlStatement::Schema { statement: SchemaStatement::Grant(_), .. } => "GRANT",
-        SqlStatement::Schema { statement: SchemaStatement::Revoke(_), .. } => "REVOKE",
+        SqlStatement::Drop { object: DropObject::Collation(_), .. } => "DROP COLLATION",
         SqlStatement::Fetch { .. } => "FETCH",
         SqlStatement::GetDiagnostics(_) => "GET DIAGNOSTICS",
         SqlStatement::Dynamic(d) => dynamic::command(d),
@@ -387,6 +405,7 @@ fn command_of(stmt: &SqlStatement) -> &'static str {
         SqlStatement::Select { .. } => "SELECT",
         SqlStatement::SetTransaction(_) => "SET TRANSACTION",
         SqlStatement::SetSchema(_) => "SET SCHEMA",
+        SqlStatement::SetCollation(_) => "SET COLLATION",
         SqlStatement::SetCatalog(_) => "SET CATALOG",
         SqlStatement::SetTimeZone(_) => "SET TIME ZONE",
         SqlStatement::SetSessionAuthorization(_) => "SET SESSION AUTHORIZATION",

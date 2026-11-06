@@ -27,6 +27,7 @@ use crate::value::Spelled;
 use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Value};
 
 mod extremes;
+pub use extremes::CollatedExtreme;
 use extremes::Extreme;
 mod floats;
 mod ints;

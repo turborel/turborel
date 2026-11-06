@@ -31,6 +31,7 @@ impl SystemTable for AssertionTotals {
             not_null,
             default: None,
             domain: None,
+            collation: None,
         };
         vec![
             identifier("CONSTRAINT_CATALOG", true),

@@ -12,12 +12,13 @@ Access Rule.
 
 In [the SQL-86 sections](#sql-86-clause-by-clause) a bare citation is SQL-86.
 Everywhere else a bare citation is SQL-92, and one marked `86` is SQL-86, as
-in `86 §5.5 SR3`. The code spells both out, as `[X3.135-1986 §8.6 GR2]` and
-`[ISO/IEC 9075:1992 §11.19 SR13]`.
+in `86 §5.5 SR3`. One marked `2023` is ISO/IEC 9075-2:2023, as in
+`2023 §9.15 SR4e`. The code spells them out, as `[X3.135-1986 §8.6 GR2]`,
+`[ISO/IEC 9075:1992 §11.19 SR13]` and `[ISO/IEC 9075-2:2023 §9.15 SR4e]`.
 
 Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
-[SQL-92](#sql-92) · [Extensions](#extensions) ·
+[SQL-92](#sql-92) · [Collations](#collations) · [Extensions](#extensions) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
 
@@ -433,7 +434,49 @@ changes, and constraints are checked serializably at every level.
 |---|---|---|
 | Leap seconds | By choice. Table 10 of §6.1 allows a SECOND of 60 or 61. A minute is always 60 seconds here, so datetime arithmetic, whose results over a leap second are implementation-defined [§6.1 Table 10, note], is exact. | A literal of one is SQLCODE -103, a CAST of one SQLSTATE 22018. |
 | The module language and embedded SQL | RULES.md D32 | A parameter written with a colon, `:P`, is SQLCODE -900, in dynamic SQL's statements too, where it would be an `<embedded variable name>`. |
-| Character sets other than SQL_TEXT, collations and translations | Never (RULES.md D32) | SQLCODE -900 for CHARACTER SET of another, its `<introducer>`, COLLATE, CONVERT, TRANSLATE, CREATE and DROP of a character set, collation or translation, a privilege on one, a schema's DEFAULT CHARACTER SET of another, and SET NAMES. |
+| Character sets other than SQL_TEXT, and translations | Never (RULES.md D32) | SQLCODE -900 for CHARACTER SET of another, its `<introducer>`, CONVERT, TRANSLATE, CREATE and DROP of a character set or translation, a privilege on one, a schema's DEFAULT CHARACTER SET of another, and SET NAMES. |
+
+---
+
+## Collations
+
+These follow ISO/IEC 9075-2:2023 (RULES.md D60), with Features F690 (collation
+support), F692 (extended collation support) and F693 (SQL-session
+collations). Citations here are of that edition unless marked.
+
+| Collation | Order | Pad | Where |
+|---|---|---|---|
+| UCS_BASIC | Unicode scalar value [§4.3.6] | PAD SPACE | `value/collation/folded.rs` |
+| SQL_TEXT | As UCS_BASIC (IA003) | PAD SPACE | `value/collation/folded.rs` |
+| UNICODE | ISO/IEC 14651:2020 without delta: UCA 13.0.0, Shifted, four levels | NO PAD | `value/collation/unicode.rs` |
+| CASE_INSENSITIVE | \[EXTENSION\] Each character's simple case folding, Unicode 13.0 | PAD SPACE | `value/collation/folded.rs` |
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| `<collate clause>` | §10.7, §6.1 SR3, 92 §10.5 | In a column or domain definition, after its type or its constraints, in a value expression, ORDER BY and GROUP BY. It needs USAGE on a collation a definition made [AR1]. Built-ins are of INFORMATION_SCHEMA, and an unqualified name is of them [§5.4 SR13a]. |
+| Which collation applies | §9.15 | Explicit, then the session's, then implicit. Two explicit, or two implicit that differ, are refused (SQLCODE -103). |
+| A literal, parameter, CAST or USER | \[EXTENSION\] 92 §4.2.3 | Yields to a column's collation, as SQL-92's Coercible did. §9.15 SR4e alone would refuse `C = 'x'` of a collated column. A subquery's column of no collation of its own yields too. |
+| Comparisons | §9.15 | =, <>, <, >, BETWEEN, IN, CASE, NULLIF, quantified comparisons, MATCH, UNIQUE and join conditions. |
+| ORDER BY, GROUP BY, DISTINCT, set operations | §9.15, 92 §8.2 GR3d | By the collation. A group shows its first row's value. |
+| MIN, MAX, COUNT(DISTINCT) | §9.15 | By the argument's collation. |
+| Foreign keys | §9.15 SR4a | A column and the one it references have one collation. MATCH PARTIAL of a collated column is refused (SQLCODE -900). |
+| CREATE COLLATION | §11.43 | FROM an existing collation, with NO PAD or PAD SPACE, or its pad. In a schema definition too. EXTERNAL, DESC, DEFAULT and TRANSLATION, SQL-92's sources, are refused (SQLCODE -900). |
+| DROP COLLATION | §11.44 | RESTRICT or CASCADE. Columns and domains revert to the default [GR2], each table's rows copied, and a constraint that no longer holds fails the statement. RESTRICT is refused while a view or constraint names it [SR4], and CASCADE takes them. A table of another owner is refused (SQLCODE -104). |
+| DROP SCHEMA | 92 §11.2 | Takes its collations. Refused (SQLCODE -900) while a table outside is of one: DROP COLLATION reverts it first. |
+| USAGE | 92 §10.3, §11.36, §11.37 | Granted and revoked. REVOKE of a privilege a column depends on is refused (SQLCODE -103), with CASCADE too. |
+| SET COLLATION, SET NO COLLATION | §19.10, §9.15 SR4c | The session's collation (ID236: SQL_TEXT's). A bad name is 2H000. It applies to direct statements and to statements as they are prepared, never to views, constraints or defaults. |
+| COLLATION FOR | §6.4 GR13 | The name of a value's own collation, which COLLATE takes. Null if its operands' conflict. |
+| Information Schema | 92 §21 | COLLATIONS, USAGE_PRIVILEGES and each column's and domain's collation. A column of a domain with a COLLATE of its own shows the domain's. |
+
+Module collations (§9.15 SR4d) do not apply, as the module language is not
+claimed. Dynamic SQL's descriptors show SQL_TEXT for a character string,
+whatever its collation.
+
+| Rule | Choice | Where |
+|---|---|---|
+| IA060, §8.5 LIKE under a collation | By each character's folding, of UCS_BASIC, SQL_TEXT and CASE_INSENSITIVE. Under UNICODE, whose characters contract and expand, refused (SQLCODE -900). | `binder/collation.rs` |
+| §9.11 POSITION | Exact, by characters, not by the collation | `functions/strings.rs` |
+| §4.3.6 a key's length | About 16 bytes for each character under UNICODE, so an index's limit holds less text | `value/collation/unicode.rs`, `index/blink.rs` |
 
 ---
 
@@ -797,6 +840,7 @@ Where the standards are unclear, turborel reads them as follows.
 | A bit string's descriptor [§21.3.5] | The description gives a bit string type its length in bits, and an octet length and a collation only to a character string type, but the check constraint TABLE_OR_DOMAIN_CHECK_COMBINATIONS requires all three of BIT and BIT VARYING. Its length in bits and the octets those take are given, as facts of it. No collation is, as a bit string has none. |
 | Bit strings brought together [§9.3 SR3b] | The result of CASE, a set operation or a table value constructor of BIT(3) and BIT(4) is BIT(4), but no rule extends a value of 3 bits to it. Each keeps its bits, so a BIT(3) value inserted into a BIT(4) column through VALUES is refused (SQLSTATE 22026), as it is alone [§9.2 GR3h]. |
 | A time or timestamp without time zone [§4.5.1, §6.1 GR5] | SQL-92 keeps it in UTC, the session's displacement implied, so it is kept so, and a value retrieved shows in the displacement of the session that retrieves it (RULES.md D54). Stored in a column WITH TIME ZONE, it takes that displacement. A datetime literal in a `<default clause>` without one is of UTC [§5.3 SR18], as a definition is read again where no session is. |
+| PAD SPACE under UNICODE [2023 §4.3.2, §11.43] | A space weighs only at the fourth level, so trailing spaces are taken away first. A character below a space then orders as past the string's end at that level, where padding would order it before. Only `CREATE COLLATION ... FROM UNICODE PAD SPACE` reaches this, as UNICODE itself is NO PAD. |
 | One datetime type [§9.3 SR3e, §11.5 SR3c] | "The same datetime type" is read as of the same fields, WITH TIME ZONE or not, as store assignment takes either [§9.2 SR2]. The result's type of CASE, a set operation or VALUES is WITH TIME ZONE if one is, of the greatest precision, and each value keeps its own form until it is assigned. DEFAULT CURRENT_TIME is taken by a TIME column. |
 | A datetime's or an interval's literal in CAST [§6.10 GR5e, GR6e, GR9a, GR12b] | "The shortest character string that conforms to the definition of `<literal>`" is read as the literal's string, the part between its quotes, an interval's sign before it. So CAST(DATE '2024-01-02' AS CHAR(10)) is '2024-01-02', and CAST from a string takes that string. An interval's fields after the leading one are of any digits, `<datetime value>` being an `<unsigned integer>` [§5.3]. SR21's two digits are of a datetime literal's. |
 | AT TIME ZONE [§6.14 GR4] | The value is "DV - TZ", DV the datetime in UTC. It is read as the same instant shown in the displacement TZ, of the type WITH TIME ZONE, as a datetime WITH TIME ZONE keeps its own [§4.5.1]. |
@@ -804,5 +848,6 @@ Where the standards are unclear, turborel reads them as follows.
 | An invalid SQL statement identifier [§17.6 GR8] | Table 23 has no such condition. It is read as invalid SQL statement name, 26000, the condition of a statement's name. |
 | A `<statement name>` and a LOCAL extended statement name [§5.4 GR12, GR13] | Both are of the module, here the session, but the one is an `<identifier>` and the other a value. They are names apart, as a `<cursor name>` and an extended cursor name are [§17.6 GR2a]. |
 | OVERLAPS with an interval [§8.11 SR3a] | "Such that the interval can be added to the datetime" is read as §6.14 SR3 says of addition, that the interval's fields are the datetime's. |
+| Which collation a session's statement is prepared under [2023 §9.15 SR4c] | Its Syntax Rules apply as it is prepared, so it keeps that collation at every execution and rebind, unlike the time zone (RULES.md D45). |
 | A `?` beside a TIME [§17.6 GR5f ii, §6.14 SR3] | GR5f gives the `?` INTERVAL DAY TO SECOND, though §6.14 SR3 lets a time take no day field. The type is kept as GR5f says, and the days do not move a time of day. |
 | The default connection's names [§18.1 GR3n ii, §12.3 GR6c i] | A session the host program starts effectively ran CONNECT TO DEFAULT, whose text gives no name of a connection or server. CONNECTION_NAME and SERVER_NAME are each read as `DEFAULT`, the word that stands for them. |

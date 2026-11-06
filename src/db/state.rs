@@ -3,7 +3,7 @@
 //! that rely on the invariant documented on `State`.
 
 use crate::memory::{DEFAULT_BUDGET, MemoryBudget};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::api;
@@ -30,6 +30,7 @@ use crate::stats::Statistics;
 use crate::storage::{StorageEngine, TableOption, TableStorage};
 use crate::system::SystemTables;
 use crate::txn::{Beginning, LockWait, Policy, Reading, TableLock, Transactions, Txn, UndoSpace};
+use crate::value::collation::Collation;
 use crate::value::types::TypeRegistry;
 
 /// \[DESIGN\] A snapshot of the database's definitions: its catalog, the
@@ -96,6 +97,8 @@ pub struct State {
     pub(crate) functions: Registry,
     /// The data types beyond the standard registered (RULES.md D53).
     pub(crate) types: TypeRegistry,
+    /// The collations there are, by name (RULES.md D60).
+    pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
     pub(crate) clock: Arc<dyn crate::clock::Clock>,
     pub(crate) optimizer: Optimizer,
@@ -151,6 +154,7 @@ impl State {
             methods: HashMap::new(),
             placement: HashMap::new(),
             hashes: crate::hash::crc::builtin(),
+            collations: crate::value::collation::builtin().into_iter().map(|c| (c.name().to_owned(), c)).collect(),
             encodings: Arc::default(),
             created: false,
             retired: HashMap::new(),
@@ -229,8 +233,8 @@ impl State {
                 let method = self.methods.get(&ix.method).ok_or_else(|| {
                     api(format!("[DESIGN] the catalog's index {} uses method {}, which is not built in", ix.name, ix.method))
                 })?;
-                let types = desc
-                    .types(&ix.columns)
+                let types = ix
+                    .key_types(desc)
                     .ok_or_else(|| api(format!("[DESIGN] the catalog's index {} is on a column its table lacks", ix.name)))?;
                 self.indexes.insert(ix.name.clone(), Arc::from(method.create(&types)?));
             }
@@ -406,6 +410,7 @@ mod tests {
             not_null: true,
             default: None,
             domain: None,
+            collation: None,
         };
         TableDesc {
             name: QualifiedName { auth: "A".into(), ident: "T".into() },
@@ -473,6 +478,7 @@ mod tests {
             method: "nope".into(),
             unique: false,
             options: Vec::new(),
+            collations: Vec::new(),
         });
         let mut st = State::with_builtins(Box::new(catalog));
         assert_eq!(st.attach_catalog_objects().err().map(|e| e.code), Some(Code::Api));

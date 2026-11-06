@@ -5,9 +5,9 @@
 
 use super::Parser;
 use crate::ast::{
-    Correspondence, CursorSpecification, DerivedTable, JoinKind, JoinSpecification, JoinedTable, NamedTable, QueryExpression,
-    QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn, SortSpecification,
-    TableExpression, TableName, TableReference, ValuesRow,
+    Correspondence, CursorSpecification, DerivedTable, GroupingColumn, JoinKind, JoinSpecification, JoinedTable, NamedTable,
+    QueryExpression, QuerySpecification, RowElement, SelectItem, SelectList, SelectSublist, SetOperation, SetOperator, SortColumn,
+    SortSpecification, TableExpression, TableName, TableReference, ValuesRow,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -43,15 +43,15 @@ impl Parser {
         } else {
             SortColumn::Column(self.column_specification()?)
         };
-        // [ISO/IEC 9075:1992 §13.1] [<collate clause>]: refused.
-        self.collate_clause()?;
+        // [ISO/IEC 9075:1992 §13.1] [<collate clause>]
+        let collate = self.collate_clause()?;
         let descending = if self.accept_kw(kw::DESC) {
             true
         } else {
             self.accept_kw(kw::ASC);
             false
         };
-        Ok(SortSpecification { key, descending })
+        Ok(SortSpecification { key, collate, descending })
     }
 
     /// [X3.135-1986 §8.3; ISO/IEC 9075:1992 §7.10] `<query expression>`
@@ -284,17 +284,20 @@ impl Parser {
         if self.accept_kw(kw::GROUP) {
             self.expect_kw(kw::BY)?;
             // [ISO/IEC 9075:1992 §7.7] <grouping column reference> ::=
-            // <column reference> [<collate clause>]: refused.
-            group_by.push(self.column_specification()?);
-            self.collate_clause()?;
+            // <column reference> [<collate clause>]
+            group_by.push(self.grouping_column()?);
             while self.accept_delim(delim::COMMA) {
-                group_by.push(self.column_specification()?);
-                self.collate_clause()?;
+                group_by.push(self.grouping_column()?);
             }
         }
         // [X3.135-1986 §5.23] <having clause> ::= HAVING <search condition>
         let having = if self.accept_kw(kw::HAVING) { Some(self.search_condition()?) } else { None };
         Ok(TableExpression { from, where_clause, group_by, having })
+    }
+
+    /// [ISO/IEC 9075:1992 §7.7] A `<grouping column reference>`.
+    fn grouping_column(&mut self) -> Result<GroupingColumn> {
+        Ok(GroupingColumn { column: self.column_specification()?, collate: self.collate_clause()? })
     }
 
     /// The `<table reference>`s of a `<from clause>`. The plan joins them one

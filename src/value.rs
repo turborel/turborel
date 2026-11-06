@@ -8,6 +8,7 @@ use crate::error::{Code, Result, SqlState, fail, fail_with};
 mod bits;
 pub(crate) mod cast;
 pub(crate) mod codec;
+pub mod collation;
 pub(crate) mod comparison;
 pub mod datetime;
 mod decimal;

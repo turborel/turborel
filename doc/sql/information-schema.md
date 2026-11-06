@@ -50,7 +50,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | CONSTRAINT_COLUMN_USAGE | column a constraint refers to |
 | COLUMN_DOMAIN_USAGE | column of a domain |
 | CHARACTER_SETS | character set: SQL_TEXT, the one there is |
-| COLLATIONS | collation: SQL_TEXT's, the one there is |
+| COLLATIONS | the built-in collations, and those CREATE COLLATION made |
 | TRANSLATIONS | translation: none |
 | SQL_LANGUAGES | standard conformance is claimed to: ISO 9075 of 1987, SQL-86, at Level 2, by direct invocation |
 

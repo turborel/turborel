@@ -3,7 +3,7 @@
 //! an OR, chosen by cost.
 
 use super::estimate::{self, Known};
-use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe};
+use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe, served_by};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
 use crate::engine::key::restores;
 use crate::index::{Index, IndexMethod, Probe};
@@ -144,8 +144,11 @@ impl PhysicalPlanner<'_> {
             let (Some(kind), Ok(found), Some(columns)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), columns) else {
                 continue;
             };
-            let types: Vec<DataType> = columns.iter().map(|c| c.data_type).collect();
-            let mut candidates = probes(&ix.columns, &types, (&compared, &ors), all, known);
+            let Some(types) = ix.key_types(desc) else { continue };
+            let served = served_by(&compared, ix);
+            let no_ors = Vec::new();
+            let alternatives = if ix.is_collated() { &no_ors } else { &ors };
+            let mut candidates = probes(&ix.columns, &types, (&served, alternatives), all, known);
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {
@@ -157,7 +160,9 @@ impl PhysicalPlanner<'_> {
                 // The probes of several ranges, an OR's, are of ranges apart
                 // and in key order (`probe::probes_of_any`): their rows,
                 // appended, are in key order too, read backward in reverse.
-                let order = if kind.ordered() && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
+                // A key of sort keys is in the order of no column.
+                let ordered_index = kind.ordered() && !ix.is_collated();
+                let order = if ordered_index && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
                 let all_keys = matches!(c.probes.first(), Some(Probe::All));
                 if !supported || untested.iter().any(|col| !col.not_null) || all_keys && order.is_none() {
                     continue;
@@ -166,7 +171,8 @@ impl PhysicalPlanner<'_> {
                 let (est, probed_cost) = priced((&**found, &distinct), &c, (all, types.len(), cost.index_descent), &**storage);
                 // Of a covering index, the rows its table says every reader
                 // sees are made of their entries, not fetched (RULES.md D34).
-                let visible = covers(&**kind, (&ix.columns, &types), read.needed).then(|| storage.visible_share()).flatten();
+                let whole = !ix.is_collated() && covers(&**kind, (&ix.columns, &types), read.needed);
+                let visible = whole.then(|| storage.visible_share()).flatten();
                 let entry_cost = ENTRY_SCAN_ROWS * scan_cost / all.max(1.0_f64);
                 let saved = |share: f64| est * share * (storage.fetch_cost() - entry_cost).max(0.0_f64);
                 let path_cost = probed_cost - visible.map_or(0.0_f64, saved);

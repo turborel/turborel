@@ -43,6 +43,7 @@ use crate::binder::{system_view_columns, view_uses};
 use crate::catalog::{CheckLevels, ColumnDefault, ColumnDesc, ConstraintDesc, QualifiedName, TemporaryKind, owner_of};
 use crate::error::Result;
 use crate::storage::Row;
+use crate::value::collation::{Pad, default_pad};
 use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
 
@@ -273,11 +274,13 @@ fn data_types(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for d in seen.state.catalog.domains() {
-        rows.push([ids(&catalog, &d.name).to_vec(), vec![text("")], data_type(&catalog, d.data_type)].concat());
+        rows.push([ids(&catalog, &d.name).to_vec(), vec![text("")], data_type(&catalog, d.data_type, d.collation.as_ref())].concat());
     }
     for o in objects(seen)? {
         for c in o.columns.iter().filter(|c| c.domain.is_none()) {
-            rows.push([ids(&catalog, &o.name).to_vec(), vec![text(&c.name)], data_type(&catalog, c.data_type)].concat());
+            rows.push(
+                [ids(&catalog, &o.name).to_vec(), vec![text(&c.name)], data_type(&catalog, c.data_type, c.collation.as_ref())].concat(),
+            );
         }
     }
     Ok(rows)
@@ -285,11 +288,12 @@ fn data_types(seen: &Seen<'_>) -> Result<Vec<Row>> {
 
 /// [§21.3.5 Description 3] The data type `t`, from DATA_TYPE on, as its
 /// kind describes it (`SqlType::descriptor`): a character string's
-/// collation SQL_TEXT, the one there is.
-fn data_type(catalog: &Value, t: DataType) -> Vec<Value> {
+/// collation `named`, else the character set's, SQL_TEXT.
+fn data_type(catalog: &Value, t: DataType, named: Option<&QualifiedName>) -> Vec<Value> {
     let d = t.kind().descriptor(&t);
     let optional = |n: Option<u32>| n.map_or(Value::Null, count);
-    let collation = if d.collated { ids(catalog, &information(SQL_TEXT)).to_vec() } else { vec![Value::Null, Value::Null, Value::Null] };
+    let default = information(SQL_TEXT);
+    let collation = if d.collated { ids(catalog, named.unwrap_or(&default)).to_vec() } else { vec![Value::Null, Value::Null, Value::Null] };
     let octets = d.octets.map_or(Value::Null, number);
     let head = vec![text(&d.name), optional(d.length), octets];
     let tail = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision)];
@@ -535,12 +539,16 @@ fn collations_columns() -> Vec<ColumnDesc> {
     Columns::of().ids("COLLATION", true).ids("CHARACTER_SET", true).data("PAD_ATTRIBUTE", false).done()
 }
 
-/// [§21.3.24 Description 4] SQL_TEXT, of SQL_TEXT, its pad attribute,
-/// implementation-defined, PAD SPACE: the shorter of two strings compared
-/// is padded with spaces [X3.135-1986 §5.11 GR5].
+/// [§21.3.24 Description 4] The built-in collations and those definitions
+/// made, each of SQL_TEXT, and its pad attribute.
 fn collations(seen: &Seen<'_>) -> Vec<Row> {
     let (catalog, sql_text) = (catalog_name(seen), information(SQL_TEXT));
-    vec![[ids(&catalog, &sql_text).to_vec(), ids(&catalog, &sql_text).to_vec(), vec![text("PAD SPACE")]].concat()]
+    let row = |name: &QualifiedName, pad: Pad| {
+        let pad = if pad == Pad::Space { "PAD SPACE" } else { "NO PAD" };
+        [ids(&catalog, name).to_vec(), ids(&catalog, &sql_text).to_vec(), vec![text(pad)]].concat()
+    };
+    let built = seen.state.collations.keys().map(|name| row(&information(name), default_pad(name)));
+    built.chain(seen.state.catalog.collations().into_iter().map(|c| row(&c.name, c.pad))).collect()
 }
 
 /// [ISO/IEC 9075:1992 §10.4 SR2, §11.30 SR4] The usage privileges on the

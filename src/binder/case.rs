@@ -232,7 +232,10 @@ impl Binder<'_> {
         if !xt.comparable(&yt) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.9 SR4a, §8.2 SR3] {xt} and {yt} are not comparable")));
         }
-        Ok((Cond::Compare(x, CompOp::Eq, y), yt))
+        let characters = xt.is_character() && yt.is_character();
+        let by = if characters { self.collation_of(&[self.derived(a)?, self.derived(b)?])? } else { None };
+        let keyed = |e: Expr| by.as_ref().map_or_else(|| e.clone(), |collation| Expr::sort_key(e.clone(), collation));
+        Ok((Cond::Compare(keyed(x), CompOp::Eq, keyed(y)), yt))
     }
 
     /// [§6.9 SR5-SR7, GR2] The CASE of conditions `whens`, each with its

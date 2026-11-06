@@ -11,8 +11,10 @@ CREATE DOMAIN: define a domain
 ```
 <domain definition> ::=
     CREATE DOMAIN <domain name> [ AS ] <data type>
+    [ <collate clause> ]
     [ DEFAULT <default option> ]
     [ <domain constraint>... ]
+    [ <collate clause> ]
 
 <domain constraint> ::=
     [ CONSTRAINT <constraint name> ] CHECK ( <search condition> ) [ <constraint attributes> ]
@@ -73,7 +75,6 @@ REFERENCES a CHECK needs.
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks a privilege a constraint needs |
 | 25000 | -917 | The transaction is READ ONLY |
-| 0A000 | -900 | A COLLATE clause |
 
 A CAST to the domain of a value one of its constraints is false of fails
 with SQLSTATE 23000, SQLCODE -201.

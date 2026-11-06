@@ -334,7 +334,7 @@ fn float_up_to_24_digits_is_real_and_rounds_on_assignment_5_5() {
 fn catalog_with_table(engine: &str) -> MemoryCatalog {
     let name = QualifiedName { auth: "A".into(), ident: "T".into() };
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
-    let column = ColumnDesc { name: "K".into(), data_type: integer, not_null: true, default: None, domain: None };
+    let column = ColumnDesc { name: "K".into(), data_type: integer, not_null: true, default: None, domain: None, collation: None };
     let constraint = ConstraintDesc {
         name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },
         kind: ConstraintKind::Unique { columns: vec![0], primary: false },
@@ -346,7 +346,15 @@ fn catalog_with_table(engine: &str) -> MemoryCatalog {
     let mut catalog = MemoryCatalog::default();
     catalog.create_schema("A", "A", vec![table]);
     let (method, options) = ("btree".into(), Vec::new());
-    catalog.add_index(IndexDesc { name: "A.T.UNIQUE1".into(), table: name, columns: vec![0], method, unique: true, options });
+    catalog.add_index(IndexDesc {
+        name: "A.T.UNIQUE1".into(),
+        table: name,
+        columns: vec![0],
+        method,
+        unique: true,
+        options,
+        collations: Vec::new(),
+    });
     catalog
 }
 

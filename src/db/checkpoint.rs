@@ -87,7 +87,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::record::{Change, Record};
 use crate::log::{Log, Lsn};
 use crate::settings::{CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES};
-use crate::storage::{Row, RowId, TableStorage, project};
+use crate::storage::{Row, RowId, TableStorage};
 use crate::sync::{lock, lock_builtin};
 use crate::threads::{Turn, Turned};
 use crate::txn::{NO_TRANSACTION, Persistence, TableLock, Timestamp};
@@ -533,8 +533,8 @@ impl State {
 /// `through`.
 fn log_entries(log: &dyn Log, (through, indexes): (Lsn, &[IndexDesc]), row: RowId, values: &Row) -> Result<()> {
     for ix in indexes {
-        let Some(key) = project(values, &ix.columns).filter(|k| !k.iter().any(Value::is_null)) else { continue };
-        let change = Change::Stale { through, index: ix.name.clone(), row, key };
+        let Some(key) = ix.key_of(values).filter(|k| !k.0.iter().any(Value::is_null)) else { continue };
+        let change = Change::Stale { through, index: ix.name.clone(), row, key: key.0 };
         log.append(&Record { tx: NO_TRANSACTION, change }.encode())?;
     }
     Ok(())

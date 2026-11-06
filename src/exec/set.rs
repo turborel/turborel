@@ -41,8 +41,8 @@ pub(super) fn values(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// A row as its duplicates know it [ISO/IEC 9075:1992 §7.10 GR1b i]:
 /// values equal by comparison, nulls identical.
-fn key(row: &Row) -> Vec<u8> {
-    norm_row(row)
+fn key(row: &Row, compared: Option<usize>) -> Vec<u8> {
+    norm_row(compared.and_then(|n| row.get(..n)).unwrap_or(row))
 }
 
 /// [ISO/IEC 9075:1992 §7.10 GR1b] EXCEPT or INTERSECT, `plan`: of a row
@@ -54,14 +54,14 @@ fn key(row: &Row) -> Vec<u8> {
 /// every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
 pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::SetOp { op, all, left, right } = plan else { return failed(broken("a set operation is not one")) };
-    let how = Kept { intersect: op == SetOp::Intersect, all };
-    match Operand::of(*right, db, tx).and_then(|second| counted_rows(second, (db, tx), how)) {
-        Ok((Counted::Held(counts), _, given)) => match Operand::of(*left, db, tx) {
+    let Plan::SetOp { op, all, compared, left, right } = plan else { return failed(broken("a set operation is not one")) };
+    let how = Kept { intersect: op == SetOp::Intersect, all, compared };
+    match Operand::of(*right, compared, (db, tx)).and_then(|second| counted_rows(second, (db, tx), how)) {
+        Ok((Counted::Held(counts), _, given)) => match Operand::of(*left, compared, (db, tx)) {
             Ok(first) => keeping(first, counts, how, given),
             Err(e) => failed(e),
         },
-        Ok((Counted::Partitioned(parts), work, given)) => match Operand::of(*left, db, tx) {
+        Ok((Counted::Partitioned(parts), work, given)) => match Operand::of(*left, compared, (db, tx)) {
             Ok(first) => partitioned(first, (parts, how), (work, given)),
             Err(e) => failed(e),
         },
@@ -72,7 +72,7 @@ pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// An operand's rows: one at a time, or, of a stream holding every column
 /// of its rows, by batch, each row keyed (`batch::keyed`).
 enum Operand {
-    Rows(RowIter),
+    Rows(RowIter, Option<usize>),
     Keyed(KeyedBatches),
 }
 
@@ -82,17 +82,17 @@ type Each<T> = Box<dyn Iterator<Item = Result<T>> + Send>;
 impl Operand {
     /// The rows of `plan`, by batch where EXECUTOR.BATCHES allows and it
     /// is such a stream, as `tx` sees them.
-    fn of(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Operand> {
-        if batched(db) && whole_width(&plan, db).is_some() {
+    fn of(plan: Plan, compared: Option<usize>, (db, tx): (&Arc<State>, TxId)) -> Result<Operand> {
+        if compared.is_none() && batched(db) && whole_width(&plan, db).is_some() {
             return Ok(Operand::Keyed(keyed(plan, db, tx)?));
         }
-        Ok(Operand::Rows(execute(plan, db, tx)))
+        Ok(Operand::Rows(execute(plan, db, tx), compared))
     }
 
     /// Each row's key, counted once.
     fn keys(self) -> Each<(Vec<u8>, u64)> {
         match self {
-            Operand::Rows(rows) => Box::new(rows.map(|r| r.map(|row| (key(&row), 1)))),
+            Operand::Rows(rows, compared) => Box::new(rows.map(move |r| r.map(|row| (key(&row, compared), 1)))),
             Operand::Keyed(batches) => Box::new(batches.flat_map(|b| each(b, |keyed, n| (keyed.key(n).to_vec(), 1)))),
         }
     }
@@ -100,7 +100,7 @@ impl Operand {
     /// Each row, with its key.
     fn rows(self) -> Each<(Vec<u8>, Row)> {
         match self {
-            Operand::Rows(rows) => Box::new(rows.map(|r| r.map(|row| (key(&row), row)))),
+            Operand::Rows(rows, compared) => Box::new(rows.map(move |r| r.map(|row| (key(&row, compared), row)))),
             Operand::Keyed(batches) => Box::new(batches.flat_map(|b| each(b, |keyed, n| (keyed.key(n).to_vec(), keyed.row(n))))),
         }
     }
@@ -189,7 +189,7 @@ fn uncounted(record: &[u8]) -> Result<(Vec<u8>, u64)> {
 fn keeping(first: Operand, mut counts: Bag, how: Kept, given: Work) -> RowIter {
     let mut given = Bag::new(given);
     match first {
-        Operand::Rows(rows) => Box::new(rows.filter_map(move |r| kept(how, (&mut counts, &mut given), r))),
+        Operand::Rows(rows, _) => Box::new(rows.filter_map(move |r| kept(how, (&mut counts, &mut given), r))),
         Operand::Keyed(batches) => Box::new(batches.flat_map(move |b| kept_of(how, (&mut counts, &mut given), b))),
     }
 }
@@ -261,7 +261,7 @@ fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Reco
             let mut lefts = parts.alike(work)?;
             for record in left.into_records()? {
                 let record = record?;
-                lefts.push(&key(&unnumbered(&record, work.types())?.1), &record)?;
+                lefts.push(&key(&unnumbered(&record, work.types())?.1, how.compared), &record)?;
             }
             for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
                 pair(runs, (how, depth.saturating_add(1)), &mut *sources, (&mut *work, given))?;
@@ -279,6 +279,7 @@ type Pair = (Box<dyn SpillRun>, Box<dyn SpillRun>);
 struct Kept {
     intersect: bool,
     all: bool,
+    compared: Option<usize>,
 }
 
 /// `r`, if the set operation keeps it: `counts` holds the second operand's
@@ -291,7 +292,7 @@ fn kept(how: Kept, (counts, given): (&mut Bag, &mut Bag), r: Result<Row>) -> Opt
         Ok(row) => row,
         Err(e) => return Some(Err(e)),
     };
-    match keeps(how, (counts, given), &key(&row)) {
+    match keeps(how, (counts, given), &key(&row, how.compared)) {
         Ok(true) => Some(Ok(row)),
         Ok(false) => None,
         Err(e) => Some(Err(e)),

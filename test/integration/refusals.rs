@@ -21,26 +21,20 @@ fn prepared(s: &Session, sql: &str) -> Code {
 
 /// Verifies: [EXTENSION] RULES.md D18, D32 [ISO/IEC 9075:1992 §5.3, §5.4,
 /// §6.1, §6.7, §6.13, §7.7, §10.4, §10.5, §11.1, §11.4, §11.21, §11.28-§11.33,
-/// §11.36, §11.37, §13.1, §16.3] a character set other than SQL_TEXT, a
-/// collation or a translation, named anywhere SQL-92 allows, is refused as
-/// valid but never implemented (SQLCODE -900); each statement written
+/// §11.36, §11.37, §13.1, §16.3] a character set other than SQL_TEXT or a
+/// translation, named anywhere SQL-92 allows, is refused as valid but never
+/// implemented (SQLCODE -900); each statement written
 /// wrong is a syntax error (SQLCODE -102).
 #[test]
-fn character_sets_and_collations_are_never_implemented() {
+fn other_character_sets_and_translations_are_never_implemented() {
     let db = setup();
     let s = db.session("APP");
     for never in [
         "SELECT _LATIN1'abc' FROM T",
         "SELECT _LATIN1\"NAME\" FROM T",
         "CREATE TABLE W (A CHAR(5) CHARACTER SET LATIN1)",
-        "CREATE TABLE W (A VARCHAR(5) CHARACTER SET APP.LATIN1 COLLATE Y)",
-        "CREATE TABLE W (A CHAR(5) NOT NULL COLLATE Y)",
-        "CREATE DOMAIN D2 AS CHAR(3) COLLATE Y",
         "SELECT CONVERT(NAME USING X) FROM T",
         "SELECT TRANSLATE(NAME USING APP.X) FROM T",
-        "SELECT NAME FROM T WHERE NAME COLLATE X = 'A'",
-        "SELECT NAME, COUNT(*) FROM T GROUP BY NAME COLLATE X",
-        "SELECT NAME FROM T ORDER BY NAME COLLATE X DESC",
         "CREATE CHARACTER SET CS AS GET LATIN1 COLLATE CL",
         "CREATE CHARACTER SET CS GET LATIN1 COLLATION FROM TRANSLATION TR THEN COLLATION CL",
         "CREATE COLLATION CL FOR LATIN1 FROM EXTERNAL('x') NO PAD",
@@ -50,9 +44,7 @@ fn character_sets_and_collations_are_never_implemented() {
         "CREATE TRANSLATION TR FOR A TO B FROM EXTERNAL('x')",
         "CREATE TRANSLATION TR FOR A TO B FROM APP.TR2",
         "DROP CHARACTER SET CS",
-        "DROP COLLATION CL",
         "DROP TRANSLATION TR",
-        "GRANT USAGE ON COLLATION CL TO PUBLIC",
         "GRANT USAGE ON CHARACTER SET CS TO PUBLIC",
         "REVOKE USAGE ON TRANSLATION TR FROM PUBLIC CASCADE",
         "SET NAMES 'LATIN1'",
@@ -60,7 +52,7 @@ fn character_sets_and_collations_are_never_implemented() {
         assert_eq!(failed(&s, never), Code::Unsupported, "{never}");
     }
     for wrong in [
-        "CREATE COLLATION CL FOR LATIN1",
+        "CREATE COLLATION CL FOR SQL_TEXT",
         "CREATE TRANSLATION TR FOR A FROM IDENTITY",
         "SELECT CONVERT(NAME) FROM T",
         "SELECT CONVERT FROM T",

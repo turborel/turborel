@@ -77,7 +77,7 @@ not granted (rule above, SQLSTATE 01007).
 |---|---|---|
 | 2A000 | -102 | The statement is not written as the synopsis shows: a column list of SELECT, among others |
 | 2A000 | -103 | A rule above is broken |
-| 0A000 | -900 | The object is a character set, a collation or a translation |
+| 0A000 | -900 | The object is a character set or a translation |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01007 | 0 | Not an error: a privilege was not held with grant option, and is not granted |
 

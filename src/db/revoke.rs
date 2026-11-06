@@ -28,7 +28,7 @@ use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::schema::granted_actions;
 use super::{Completion, State, rule};
-use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, RevokeStatement, TableName};
+use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, PrivilegeObject, RevokeStatement, TableName};
 use crate::binder::qualify;
 use crate::catalog::{
     Actions, Catalog, ConstraintDesc, ConstraintKind, Privilege, PrivilegeDesc, QualifiedName, applicable, merged, owner_of,
@@ -154,7 +154,10 @@ impl State {
     /// option goes depends on it (SQLSTATE 2B000) [GR2b]; -104 if `auth`
     /// holds no privilege on the object [AR1].
     pub(super) fn revoke(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Result<Defined> {
-        if r.domain {
+        if r.object == PrivilegeObject::Collation {
+            return self.revoke_collation_usage((auth, schema), r);
+        }
+        if r.object == PrivilegeObject::Domain {
             return self.revoke_usage((auth, schema), r).or_at(r.table.at);
         }
         let name = qualify(&r.table, schema);

@@ -10,7 +10,7 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::Change;
-use crate::storage::{Row, RowId, project};
+use crate::storage::{Row, RowId};
 use crate::txn::{Concurrency, Txn, Undo};
 use crate::value::Value;
 
@@ -21,9 +21,7 @@ impl State {
 
     /// The key of `row` in the index `ix`.
     fn index_key(ix: &IndexDesc, row: &Row) -> Result<Key> {
-        project(row, &ix.columns)
-            .map(Key)
-            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row is shorter than index {}", ix.name)))
+        ix.key_of(row).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row is shorter than index {}", ix.name)))
     }
 
     fn index_add(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {

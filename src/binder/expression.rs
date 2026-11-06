@@ -4,17 +4,20 @@
 //! CASE, CAST and scalar subqueries in `binder/case.rs`, datetimes and
 //! intervals in `binder/datetime.rs` and `binder/interval.rs`.
 
+use std::sync::Arc;
+
 use super::interval::assumed;
 use super::set_functions::column_specifications;
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Literal, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
-use crate::functions::AggregateRef;
+use crate::functions::{AggregateRef, CollatedExtreme};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
 use crate::value::Spelled;
+use crate::value::collation::CollationRef;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
 /// [X3.135-1986 §5.9 SR4] The type of an operation on two exact numbers. Its
@@ -107,6 +110,30 @@ impl Binder<'_> {
         }
     }
 
+    /// [ISO/IEC 9075-2:2023 §9.15] The set function `func` of `arg`, bound
+    /// from `written`, as its argument's collation has it: MAX and MIN
+    /// order by it, and DISTINCT compares by it; and that collation, if it
+    /// shows in the call's label.
+    fn collated_call(
+        &self,
+        (func, arg, arg_type): (AggregateRef, Option<Expr>, Option<DataType>),
+        written: Option<&ValueExpression>,
+        (extreme, distinct): (bool, bool),
+    ) -> Result<(AggregateRef, Option<Expr>, Option<CollationRef>)> {
+        let collation = match (written, arg_type) {
+            (Some(v), Some(t)) if t.is_character() => self.collation_of(&[self.derived(v)?])?,
+            (Some(_) | None, _) => None,
+        };
+        Ok(match collation {
+            Some(c) if extreme => {
+                let keeps = CollatedExtreme { max: func.0.name() == kw::MAX, collation: c.clone() };
+                (AggregateRef(Arc::new(keeps)), arg, Some(c))
+            }
+            Some(c) if distinct => (func, arg.map(|e| Expr::sort_key(e, &c)), Some(c)),
+            Some(_) | None => (func, arg, None),
+        })
+    }
+
     /// [X3.135-1986 §5.6] A `<value specification>`, which in a constraint
     /// is no authorization identifier [ISO/IEC 9075:1992 §11.9 SR5, §11.34
     /// SR6].
@@ -134,6 +161,8 @@ impl Binder<'_> {
             }
             ValueExpression::Column(cs) => self.column_expr(cs, scope),
             ValueExpression::Nested(inner) => self.value_expression(inner, scope),
+            ValueExpression::CollationFor(inner) => self.collation_for(inner, scope),
+            ValueExpression::Collated(inner, _) => self.collated_value(inner, scope),
             ValueExpression::Monadic(sign, inner) => self.monadic(*sign, inner, scope),
             ValueExpression::Dyadic(left, op, right) => self.dyadic(left, *op, right, scope),
             ValueExpression::SetFunction(sf) => self.set_function(sf, scope).or_at(sf.at),
@@ -272,6 +301,7 @@ impl Binder<'_> {
             Scope::Rows(why) => return Err(rule(why)),
             Scope::Select => return Err(rule(NOT_AGGREGATED)),
         };
+        let arg_of = arg;
         let (arg, arg_type) = match arg {
             None => (None, None),
             Some(v) => {
@@ -292,10 +322,12 @@ impl Binder<'_> {
         if self.purpose.constrains() && extreme && arg_type.is_some_and(|t| t.is_character()) {
             return Err(nondeterministic("§7.8 SR3a, §7.9 SR13c i", "MAX or MIN of a character string"));
         }
+        let (func, arg, named) = self.collated_call((func, arg, arg_type), arg_of, (extreme, distinct))?;
         let result = func.0.result_type(arg_type)?;
+        let collated = named.map_or_else(String::new, |c| format!(" COLLATE {}", c.collation.name()));
         let label = match &arg {
             None => format!("{}(*)", func.0.name()),
-            Some(e) => format!("{}({}{})", func.0.name(), if distinct { "DISTINCT " } else { "" }, render_expr(e, &self.names)),
+            Some(e) => format!("{}({}{}{collated})", func.0.name(), if distinct { "DISTINCT " } else { "" }, render_expr(e, &self.names)),
         };
         // The same set function written twice (say in SELECT and HAVING) is
         // computed once: the label names the function, argument and DISTINCT.

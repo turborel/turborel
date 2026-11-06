@@ -76,7 +76,10 @@ impl Session {
             SchemaStatement::View(v) => st.describe_view((&object.auth, schema), v).map(|_| ()).or_at(v.name.at),
             // [§11.8 SR4, §11.9 SR3] which tables its constraints refer to.
             SchemaStatement::Table(t) => State::clone(st).table_described((schema, self.now.get().zone), t, None).map(|_| ()),
-            SchemaStatement::Domain(_) | SchemaStatement::Assertion(_) | SchemaStatement::AlterDomain(_) => Ok(()),
+            SchemaStatement::Domain(_)
+            | SchemaStatement::Assertion(_)
+            | SchemaStatement::AlterDomain(_)
+            | SchemaStatement::Collation(_) => Ok(()),
         }
     }
 
@@ -148,6 +151,7 @@ fn indexes_of(desc: &TableDesc, method: &str) -> Vec<IndexDesc> {
             method: method.to_owned(),
             unique: true,
             options: Vec::new(),
+            collations: Vec::new(),
         })
         .collect()
 }

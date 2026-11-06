@@ -15,21 +15,21 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
-use crate::ast::{
-    ColumnSpecification, CursorSpecification, Literal, SearchCondition, SortColumn, SortSpecification, TableName, TruthValue,
-    ValueSpecification,
-};
+use crate::ast::{ColumnSpecification, CursorSpecification, SearchCondition, SortColumn, SortSpecification, TableName, TruthValue};
 use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, WHOLE, applicable};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
-use crate::logical::{AggCall, Cond, LogicalPlan, SortKey, Truth};
-use crate::params::{ParameterType, Params};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, SortKey, Truth};
+use crate::params::Params;
 use crate::settings::{self, Own};
+use crate::value::DataType;
+use crate::value::collation::CollationRef;
 use crate::value::datetime::Clocked;
-use crate::value::{DOUBLE_PRECISION, DataType, Value};
 
 mod arguments;
 mod case;
+mod collation;
+use collation::{sort_collations, with_sort};
 mod datetime;
 mod interval;
 pub(crate) use datetime::cast_is_valid;
@@ -37,6 +37,7 @@ pub use datetime::{function_type as datetime_function_type, literal_value as dat
 pub use interval::{displacement_of, is_displacement};
 mod expression;
 mod from;
+mod natural;
 mod predicates;
 mod purpose;
 mod query;
@@ -46,9 +47,9 @@ mod set_operations;
 mod statements;
 mod subquery;
 mod underlying;
+mod values;
 mod views;
 
-use crate::value::Spelled;
 use from::FromItem;
 use query::{Nesting, bind_query_specification};
 use set_operations::bind_query_expression;
@@ -59,6 +60,7 @@ pub use statements::{
 };
 use subquery::Outer;
 pub use underlying::underlying;
+pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
 
@@ -69,6 +71,9 @@ pub struct OutColumn {
     /// `<column specification>`, or [ISO/IEC 9075:1992 §7.9 SR9a] has an `<as
     /// clause>`; a set operation's as both operands name it [§7.10 SR10b i].
     pub name: Option<String>,
+    /// [ISO/IEC 9075-2:2023 §9.5] Its collation, none being the character
+    /// set's.
+    pub collation: Option<QualifiedName>,
     /// The column's type.
     pub data_type: DataType,
     /// [X3.135-1986 §5.25 SR10] constrained NOT NULL only if a named column of a NOT NULL column.
@@ -109,6 +114,10 @@ pub struct Context<'a> {
     pub params: &'a Params,
     /// What the query is bound for.
     pub purpose: Purpose,
+    /// [ISO/IEC 9075-2:2023 §9.15 SR4c] The session's collation, of a
+    /// statement it applies to: none of a view, a constraint or a default,
+    /// which keep what they were defined with.
+    pub collation: Option<&'a CollationRef>,
     /// The columns it sees of the tables it reads: a view's or a CHECK's,
     /// as they were defined [ISO/IEC 9075:1992 §11.11 GR2, note].
     pub horizon: &'a Horizon,
@@ -155,6 +164,7 @@ impl<'a> Context<'a> {
             user: auth,
             params,
             purpose,
+            collation: None,
             horizon: &WHOLE,
             own,
             definitions: false,
@@ -179,67 +189,9 @@ pub fn qualify(name: &TableName, auth: &str) -> QualifiedName {
 /// # Errors
 ///
 /// It does not bind.
-pub fn bind_value(cx: Context<'_>, v: &crate::ast::ValueExpression) -> Result<(crate::logical::Expr, DataType)> {
+pub fn bind_value(cx: Context<'_>, v: &crate::ast::ValueExpression) -> Result<(Expr, DataType)> {
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
     binder.value_expression(v, Scope::Rows("[ISO/IEC 9075:1992 §16.5] SET TIME ZONE has no set function"))
-}
-
-/// [X3.135-1986 §5.6] `<value specification>`: its value and data type.
-///
-/// # Errors
-///
-/// A parameter is undeclared, its indicator is not exact with scale 0, or its
-/// argument does not suit it.
-pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) -> Result<(Value, DataType)> {
-    Ok(match v {
-        // [X3.135-1986 §5.6 GR1]
-        ValueSpecification::Parameter(p) => params.input(p).or_at(p.at)?,
-        // [X3.135-1986 §5.6 GR3]
-        ValueSpecification::Literal(Literal::Character(s)) => (Value::Char(s.clone()), DataType::Character { length: char_length(s) }),
-        ValueSpecification::Literal(Literal::Exact(d)) => {
-            (Value::Exact(*d), DataType::Exact { precision: d.digits().max(d.scale), scale: d.scale, spelled: Spelled::Numeric })
-        }
-        ValueSpecification::Literal(Literal::Approximate(f)) => {
-            (Value::Approx(*f), DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float })
-        }
-        // [ISO/IEC 9075:1992 §5.3 SR10, SR11] fixed, of its bits.
-        ValueSpecification::Literal(Literal::Bit(b)) => (Value::Bits(b.clone()), DataType::Bit { length: b.len() }),
-        // [ISO/IEC 9075:1992 §5.3 SR15-SR18] here of UTC: a statement's
-        // binder gives its session's displacement (`Binder::value_specification`).
-        ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, 0)?,
-        // [ISO/IEC 9075:1992 §5.3 SR20] of its qualifier.
-        ValueSpecification::Literal(Literal::Interval(i)) => (Value::Interval(*i), DataType::Interval(i.qualifier)),
-        // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
-        // [X3.135-1986 §5.6 SR6] its length is implementor-defined; we use the identifier's own length.
-        // [ISO/IEC 9075:1992 §6.2 GR10, GR11] So are SESSION_USER, there
-        // being no other in a session, and SYSTEM_USER, the
-        // implementation-defined string being it: a library runs under no
-        // operating system user of its own.
-        ValueSpecification::User(_) => (Value::Char(auth.to_string()), DataType::Character { length: char_length(auth) }),
-        // [ISO/IEC 9075:1992 §17.6 GR4] where nothing gives it a type: the
-        // contexts that do bind it by `Binder::typed`.
-        ValueSpecification::Dynamic { index, at } => params.dynamic_value(*index, None).or_at(*at)?,
-    })
-}
-
-/// [ISO/IEC 9075:1992 §6.2] `v`, a `<value specification>`, a `<dynamic
-/// parameter specification>` taking the type `taken` its context gives it
-/// [§17.6 GR5].
-///
-/// # Errors
-///
-/// As `value_specification`.
-pub fn value_specification_as(v: &ValueSpecification, auth: &str, params: &Params, taken: ParameterType) -> Result<(Value, DataType)> {
-    if let ValueSpecification::Dynamic { index, at } = v {
-        return params.dynamic_value(*index, Some(taken)).or_at(*at);
-    }
-    value_specification(v, auth, params)
-}
-
-/// The length of `s` in characters, as a CHARACTER type's length. A string
-/// longer than `u32::MAX` characters is given that length.
-fn char_length(s: &str) -> u32 {
-    u32::try_from(s.chars().count()).unwrap_or(u32::MAX)
 }
 
 fn rule(msg: impl Into<String>) -> SqlError {
@@ -306,9 +258,11 @@ pub fn bind_cursor(cx: Context<'_>, c: &CursorSpecification) -> Result<Bound> {
     if let Some(spec) = c.query.spec() {
         return bind_query_specification(cx, spec, &c.order_by);
     }
+    let (db, auth, session) = (cx.db, cx.auth, cx.collation);
     let bound = bind_query_expression(cx, &c.query, &Nesting::Query)?;
     let keys = sort_keys(&c.order_by, &bound.columns, |cs| result_column(&bound.columns, cs).or_at(cs.at))?;
-    Ok(with_sort(bound, keys))
+    let collations = sort_collations((db, auth, session), &c.order_by, &keys, &bound.columns)?;
+    Ok(with_sort(bound, (keys, collations)))
 }
 
 /// [ISO/IEC 9075:1992 §13.1 SR10a] The column of a `<query expression>`'s
@@ -323,13 +277,6 @@ fn result_column(columns: &[OutColumn], cs: &ColumnSpecification) -> Result<usiz
         [] => Err(rule(format!("[ISO/IEC 9075:1992 §13.1 SR10a] the result has no column {}", cs.column))),
         [_, _, ..] => Err(rule(format!("[ISO/IEC 9075:1992 §13.1 SR10a] the result has more than one column {}", cs.column))),
     }
-}
-
-fn with_sort(bound: Bound, keys: Vec<SortKey>) -> Bound {
-    if keys.is_empty() {
-        return bound;
-    }
-    Bound { plan: LogicalPlan::Sort { keys, input: Box::new(bound.plan) }, columns: bound.columns }
 }
 
 /// [X3.135-1986 §8.3 SR6] and GR3b viii: each `<sort specification>` names a column of T.
@@ -361,6 +308,8 @@ fn sort_keys(
 /// The grouping columns of a grouped query, and the set functions found so far.
 struct Grouping {
     columns: Vec<usize>,
+    /// What each is grouped by, if any is not the default collation.
+    collations: Vec<Option<CollationRef>>,
     aggs: RefCell<Vec<AggCall>>,
 }
 
@@ -397,6 +346,11 @@ struct Binder<'a> {
     used: RefCell<BTreeSet<usize>>,
     /// The query this one is a subquery of, if it is one (`binder/subquery.rs`).
     outer: Option<&'a Outer<'a>>,
+    /// The session's collation, if it applies (`Context::collation`).
+    session_collation: Option<&'a CollationRef>,
+    /// The collations of each subquery's columns, as each is bound
+    /// (`binder/collation.rs`).
+    subquery_collations: RefCell<collation::SubqueryCollations>,
     /// What the query is bound for.
     purpose: Purpose,
     /// The columns of `items` it sees unqualified, in order (`From::visible_of`).
@@ -432,7 +386,8 @@ impl<'a> Binder<'a> {
     /// A binder of a query bound with `cx`, a subquery of `outer`'s if one
     /// is given, over the FROM row `row`, whose columns `used` it reads.
     fn new(cx: Context<'a>, outer: Option<&'a Outer<'a>>, (items, names, visible): Row, used: BTreeSet<usize>) -> Binder<'a> {
-        let Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses, selected, referencing, now } = cx;
+        let Context { db, auth, schema, user, params, purpose, collation, horizon, own, definitions, uses, selected, referencing, now } =
+            cx;
         let (used, aggregated) = (RefCell::new(used), Cell::new(false));
         Binder {
             db,
@@ -443,6 +398,8 @@ impl<'a> Binder<'a> {
             names,
             used,
             outer,
+            session_collation: collation,
+            subquery_collations: RefCell::new(Vec::new()),
             purpose,
             visible,
             horizon,
@@ -461,8 +418,23 @@ impl<'a> Binder<'a> {
     fn context(&self) -> Context<'a> {
         let (db, auth, schema, user, params) = (self.db, self.auth, self.schema, self.user, self.params);
         let (purpose, horizon, own, definitions) = (self.purpose, self.horizon, self.own, self.definitions);
-        let (referencing, now) = (self.referencing, self.now);
-        Context { db, auth, schema, user, params, purpose, horizon, own, definitions, uses: self.uses, selected: None, referencing, now }
+        let (referencing, now, collation) = (self.referencing, self.now, self.session_collation);
+        Context {
+            db,
+            auth,
+            schema,
+            user,
+            params,
+            purpose,
+            collation,
+            horizon,
+            own,
+            definitions,
+            uses: self.uses,
+            selected: None,
+            referencing,
+            now,
+        }
     }
 }
 

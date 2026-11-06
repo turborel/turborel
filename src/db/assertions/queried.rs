@@ -85,7 +85,10 @@ fn grouped(plan: &LogicalPlan, known: &Known<'_>) -> Option<Shape> {
         match node {
             LogicalPlan::Filter { cond, input } => node = row_cond(cond).then_some(&**input)?,
             LogicalPlan::Project { exprs, input } => node = exprs.iter().all(row_expr).then_some(&**input)?,
-            LogicalPlan::Aggregate { groups, aggs, input } => {
+            LogicalPlan::Aggregate { groups, collations, aggs, input } => {
+                if !collations.is_empty() {
+                    return None;
+                }
                 let standard = |f| known.functions.standard(f);
                 let same = aggs.iter().all(|a| standard(&a.func).is_some_and(|f| !summed_approximately(f, &a.result)));
                 let rows = passing(input).filter(|_| same && !groups.is_empty())?;
@@ -124,9 +127,14 @@ pub(super) fn never_null_in(plan: &LogicalPlan, x: &Expr, known: &Known<'_>) -> 
         Expr::Neg(y) => never_null_in(plan, y, known),
         Expr::Arith(a, _, b) => never_null_in(plan, a, known) && never_null_in(plan, b, known),
         Expr::Column(at) => column_never_null(plan, *at, known),
-        Expr::Call(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => {
-            false
-        }
+        Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::SortKey(..)
+        | Expr::Domain(..)
+        | Expr::Subquery(..) => false,
     }
 }
 
@@ -147,7 +155,7 @@ fn column_never_null(plan: &LogicalPlan, at: usize, known: &Known<'_>) -> bool {
         },
         LogicalPlan::Distinct { input } => column_never_null(input, at, known),
         LogicalPlan::Scan { table, .. } => declared(table, at, known.catalog),
-        LogicalPlan::Aggregate { groups, aggs, input } => match (groups.get(at), at.checked_sub(groups.len())) {
+        LogicalPlan::Aggregate { groups, aggs, input, .. } => match (groups.get(at), at.checked_sub(groups.len())) {
             (Some(g), _) => column_never_null(input, *g, known),
             // [ISO/IEC 9075:1992 §6.5 GR1a, GR2a] COUNT is a cardinality; the
             // others are null of no row [GR2b i].
@@ -210,9 +218,9 @@ fn constants<'r>(rows: impl Iterator<Item = &'r Row>) -> Vec<Vec<Expr>> {
 /// null, as grouping takes them [ISO/IEC 9075:1992 §3.1.3h, §7.7 GR1].
 pub(super) fn of_groups(plan: LogicalPlan, (keys, types): (&[Row], Option<&[DataType]>)) -> LogicalPlan {
     match plan {
-        LogicalPlan::Aggregate { groups, aggs, input } => {
+        LogicalPlan::Aggregate { groups, collations, aggs, input } => {
             let input = Box::new(keyed(*input, &groups, (keys, types)));
-            LogicalPlan::Aggregate { groups, aggs, input }
+            LogicalPlan::Aggregate { groups, collations, aggs, input }
         }
         LogicalPlan::Filter { .. } | LogicalPlan::Project { .. } => plan.map_inputs(|input| of_groups(input, (keys, types))),
         LogicalPlan::Scan { .. }
@@ -240,7 +248,9 @@ fn keyed(input: LogicalPlan, groups: &[usize], (keys, types): (&[Row], Option<&[
         LogicalPlan::Filter { cond, input: Box::new(input.clone()) }
     });
     match (joined, filtered) {
-        (Some(left), Some(right)) => LogicalPlan::SetOp { op: SetOp::Union, all: true, left: Box::new(left), right: Box::new(right) },
+        (Some(left), Some(right)) => {
+            LogicalPlan::SetOp { op: SetOp::Union, all: true, compared: None, left: Box::new(left), right: Box::new(right) }
+        }
         (Some(one), None) | (None, Some(one)) => one,
         (None, None) => LogicalPlan::Filter { cond: Cond::Const(Truth::False), input: Box::new(input) },
     }

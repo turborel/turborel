@@ -366,6 +366,22 @@ impl State {
             ))
             .or_at(p.at));
         }
+        // [ISO/IEC 9075-2:2023 §9.15 SR4a] the same collation.
+        for (&c, &k) in p.columns.iter().zip(&referenced) {
+            let of = |t: &TableDesc, at: usize| t.columns.get(at).map_or(Ok(None), |column| self.column_collation(column));
+            if of(child, c)? != of(parent, k)? {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §9.15 SR4a] the referencing columns of {} are not of the collations of those referenced",
+                    p.name
+                ))
+                .or_at(p.at));
+            }
+            let collated = child.columns.get(c).is_some_and(|column| column.collation.is_some());
+            if collated && r.match_type == crate::ast::MatchType::Partial {
+                let msg = format!("[DESIGN] MATCH PARTIAL of {} is of a column of a collation, which is not implemented", p.name);
+                return Err(SqlError::new(Code::Unsupported, msg).or_at(p.at));
+            }
+        }
         // [AR1] REFERENCES on each referenced column.
         let (held, _) = applicable(&*self.catalog, auth, &target);
         if let Some(column) = referenced.iter().find(|c| !held.references.contains(c)) {

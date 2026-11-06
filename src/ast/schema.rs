@@ -3,6 +3,7 @@
 
 use super::{DatetimeFunction, DropBehavior, Literal, QueryExpression, SearchCondition, TableName, UserFunction};
 use crate::value::DataType;
+use crate::value::collation::Pad;
 
 /// [X3.135-1986 §6.1; ISO/IEC 9075:1992 §11.1] `<schema definition>` ::=
 /// CREATE SCHEMA `<schema name clause>` \[`<schema element>`...\]
@@ -10,8 +11,8 @@ use crate::value::DataType;
 /// authorization identifier>` | `<schema name>` AUTHORIZATION `<schema
 /// authorization identifier>`
 /// `<schema element>` ::= `<domain definition>` | `<table definition>` | `<view definition>`
-///   | `<grant statement>` | `<assertion definition>`; a character set, collation or translation
-///   definition is read, then refused.
+///   | `<grant statement>` | `<assertion definition>` | `<collation definition>`; a character set
+///   or translation definition is read, then refused.
 #[derive(Debug)]
 pub struct Schema {
     /// The `<catalog name>` of its `<schema name>`, if written.
@@ -22,6 +23,8 @@ pub struct Schema {
     /// The `<schema authorization identifier>`, if written: else the
     /// session's \[SR2b\].
     pub auth: Option<String>,
+    /// The `<collation definition>`s, in order [ISO/IEC 9075-2:2023 §11.43].
+    pub collations: Vec<CollationDefinition>,
     /// The `<domain definition>`s, in order [ISO/IEC 9075:1992 §11.21].
     pub domains: Vec<DomainDefinition>,
     /// The `<assertion definition>`s, in order [§11.34].
@@ -56,6 +59,32 @@ pub enum SchemaStatement {
     AlterDomain(AlterDomain),
     /// An `<assertion definition>` [§11.34].
     Assertion(AssertionDefinition),
+    /// A `<collation definition>` [ISO/IEC 9075-2:2023 §11.43].
+    Collation(CollationDefinition),
+}
+
+/// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
+/// `<collation name>` FOR `<character set specification>` FROM `<existing
+/// collation name>` \[`<pad characteristic>`\]
+#[derive(Debug)]
+pub struct CollationDefinition {
+    /// The `<collation name>`.
+    pub name: TableName,
+    /// The `<existing collation name>`.
+    pub from: TableName,
+    /// The `<pad characteristic>`, if written.
+    pub pad: Option<Pad>,
+}
+
+/// [ISO/IEC 9075:1992 §11.36] What an `<object name>` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivilegeObject {
+    /// A table or view.
+    Table,
+    /// A domain.
+    Domain,
+    /// A collation [ISO/IEC 9075-2:2023 §11.43].
+    Collation,
 }
 
 /// [ISO/IEC 9075:1992 §11.34] `<assertion definition>` ::= CREATE ASSERTION
@@ -87,6 +116,8 @@ pub struct DomainDefinition {
     /// The `<domain constraint>`s: each a `<check constraint definition>`,
     /// VALUE in it a column named VALUE.
     pub constraints: Vec<TableConstraint>,
+    /// The `<collation name>` of its `<collate clause>`, if written.
+    pub collate: Option<TableName>,
 }
 
 /// [ISO/IEC 9075:1992 §11.22] `<alter domain statement>` ::= ALTER DOMAIN
@@ -141,10 +172,10 @@ pub struct RevokeStatement {
     pub grant_option_for: bool,
     /// The `<action>`s, or none for ALL PRIVILEGES.
     pub actions: Option<Vec<Action>>,
-    /// The `<table name>` of the `<object name>`, or its `<domain name>`.
+    /// The `<table name>`, `<domain name>` or `<collation name>`.
     pub table: TableName,
-    /// The `<object name>` is DOMAIN's [§11.36].
-    pub domain: bool,
+    /// What it names [§11.36].
+    pub object: PrivilegeObject,
     /// The `<grantee>`s: an `<authorization identifier>`, or none for PUBLIC.
     pub grantees: Vec<Option<String>>,
     /// The `<drop behavior>`.
@@ -187,10 +218,10 @@ pub enum CheckLevels {
 pub struct PrivilegeDefinition {
     /// The `<action>`s, or none for ALL PRIVILEGES.
     pub actions: Option<Vec<Action>>,
-    /// The `<table name>`, or the `<domain name>`.
+    /// The `<table name>`, `<domain name>` or `<collation name>`.
     pub table: TableName,
-    /// The `<object name>` is DOMAIN's [ISO/IEC 9075:1992 §11.36].
-    pub domain: bool,
+    /// What it names [ISO/IEC 9075:1992 §11.36].
+    pub object: PrivilegeObject,
     /// The `<grantee>`s: an `<authorization identifier>`, or none for PUBLIC.
     pub grantees: Vec<Option<String>>,
     /// WITH GRANT OPTION was written.
@@ -283,7 +314,7 @@ pub enum TableElement {
 /// \[`<default clause>`\] \[`<column constraint definition>`...\] [ISO/IEC
 /// 9075:1992 §11.4]
 ///
-/// Read and refused: `<collate clause>`.
+/// \[`<collate clause>`\] [ISO/IEC 9075-2:2023 §10.7, Feature F692].
 #[derive(Debug)]
 pub struct ColumnDefinition {
     /// The `<column name>`.
@@ -297,6 +328,8 @@ pub struct ColumnDefinition {
     pub default: Option<DefaultOption>,
     /// The `<column constraint definition>`s, in order.
     pub constraints: Vec<ColumnConstraint>,
+    /// The `<collation name>` of its `<collate clause>`, if written.
+    pub collate: Option<TableName>,
 }
 
 /// [ISO/IEC 9075:1992 §11.5] `<default option>` ::= `<literal>` | USER |

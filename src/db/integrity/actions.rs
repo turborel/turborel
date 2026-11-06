@@ -131,7 +131,10 @@ impl State {
         let key = project(change.old, &fk.referenced).ok_or_else(|| api(format!("[DESIGN] a row of {} is short", fk.table)))?;
         let new_key = change.new.as_ref().and_then(|new| project(new, &fk.referenced));
         // [GR6] an update acts only where a referenced value not null changed.
-        let changed = new_key.as_ref().is_some_and(|k| key.iter().zip(k).any(|(was, now)| !was.is_null() && !same_value(was, now)));
+        // By the column's collation: a value equal by it changes nothing.
+        let normal = self.normal(&fk.table, &fk.referenced, &key)?;
+        let new_normal = new_key.as_ref().map(|k| self.normal(&fk.table, &fk.referenced, k)).transpose()?;
+        let changed = new_normal.as_ref().is_some_and(|k| normal.iter().zip(k).any(|(was, now)| !was.is_null() && !same_value(was, now)));
         if (updated && !changed) || action == ReferentialAction::NoAction {
             return Ok(());
         }

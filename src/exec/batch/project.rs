@@ -40,7 +40,14 @@ fn plain(e: &Expr) -> bool {
     let own = match e {
         Expr::Subquery(..) | Expr::Outer(..) | Expr::Dynamic(_) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| c.subqueries().is_empty()),
-        Expr::Column(_) | Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) => true,
+        Expr::Column(_)
+        | Expr::Const(_)
+        | Expr::Neg(_)
+        | Expr::Arith(..)
+        | Expr::Call(..)
+        | Expr::Cast(..)
+        | Expr::SortKey(..)
+        | Expr::Domain(..) => true,
     };
     let mut all = own;
     e.for_each_child(&mut |child| all = all && plain(child));
@@ -64,6 +71,7 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::Dynamic(_)
         | Expr::Case(..)
         | Expr::Cast(..)
+        | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Subquery(..) => {
             if !plain(e) {

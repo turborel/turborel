@@ -349,6 +349,7 @@ pub(super) fn copy_rows(
         | AlterAction::DropColumn { .. }
         | AlterAction::AddConstraint(_)
         | AlterAction::DropConstraint { .. }
+        | AlterAction::RevertCollation(_)
         | AlterAction::Storage(_) => None,
     };
     let fill = added.as_ref().map(|c| default_value(c, effects.user(), effects.now)).transpose()?;

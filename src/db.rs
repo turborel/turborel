@@ -27,6 +27,7 @@
 //! | `Credentials`       | none: no password kept | CREATE and ALTER USER (RULES.md D43) |
 //! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
+//! | `Collation`         | UCS_BASIC, UNICODE and others | comparison of strings (RULES.md D60) |
 //! | `Log`               | file log, memory log  | commit and recovery (RULES.md D25) |
 //! | `LogStorage`, `CatalogStorage` | files in the directory | opening a database (RULES.md D25) |
 //! | `SystemTable`       | the Information Schema's | system tables (RULES.md D37)  |
@@ -69,6 +70,7 @@ mod background;
 mod catalog_file;
 mod checkpoint;
 mod clock;
+mod collations;
 mod completion;
 mod configured;
 mod constraints;
@@ -255,6 +257,11 @@ pub struct Session {
     /// The default schema of its unqualified names [ISO/IEC 9075:1992
     /// §4.30, §16.2].
     schema: RefCell<String>,
+    /// [ISO/IEC 9075-2:2023 §19.10] Its SQL-session collation, if set.
+    collation: RefCell<Option<QualifiedName>>,
+    /// The collation a prepared statement run now was prepared under, in
+    /// place of `collation`, until it ends (`db/prepared.rs`).
+    prepared_collation: RefCell<collations::Collating>,
     /// The modes of its active transaction, and of the next [§14.1].
     mode: Cell<TransactionMode>,
     next: Cell<TransactionMode>,
@@ -343,6 +350,8 @@ impl Session {
             deferral: RefCell::new(Deferral::default()),
             own: RefCell::new(crate::settings::Own::default()),
             schema: RefCell::new(auth.to_owned()),
+            collation: RefCell::new(None),
+            prepared_collation: RefCell::new(collations::Collating::AsSet),
             mode: Cell::new(TransactionMode::default()),
             next: Cell::new(TransactionMode::default()),
             stop: Arc::default(),

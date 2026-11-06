@@ -15,12 +15,13 @@ use std::sync::Arc;
 
 use super::ddl::{Changed, Dropped};
 use super::{Session, State, rule};
-use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, DropObject, TableName};
+use crate::ast::{AlterAction, AlterDomain, AlterDomainAction, DropBehavior, DropObject, TableName};
 use crate::binder::qualify;
 use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TemporaryKind, owner_of};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::log::record::{Change, DropTarget};
+use crate::parser::REVERT_COLLATION;
 use crate::settings::CATALOG_NAME;
 use crate::txn::Txn;
 
@@ -38,6 +39,7 @@ impl State {
             DropTarget::Schema(auth) => self.drop_schema(auth, cascade),
             DropTarget::Domain(qn) => self.drop_domain(qn, cascade),
             DropTarget::Assertion(qn) => self.drop_assertion(qn),
+            DropTarget::Collation(qn) => self.drop_collation(qn, cascade),
         }
     }
 
@@ -139,6 +141,7 @@ impl State {
         for assertion in assertions.iter().filter(|a| self.catalog.assertion(a).is_some()).cloned().collect::<Vec<_>>() {
             dropped.absorb(self.drop_assertion(&assertion)?);
         }
+        dropped.absorb(self.drop_schema_collations(auth)?);
         let mut catalog = self.catalog.duplicate();
         catalog.remove_schema(auth);
         self.catalog = Arc::from(catalog);
@@ -257,6 +260,12 @@ impl Session {
     pub(super) fn drop_object(&self, st: &Arc<State>, tx: &Txn, object: &DropObject, behavior: DropBehavior) -> Result<Completion> {
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
+        if let DropTarget::Collation(qn) = &target {
+            // Refused before a row is copied: a statement undone takes
+            // back its rows, not a table's new definition.
+            State::clone(st).drop_object(&target, cascade).or_at(object.at())?;
+            self.revert_columns(st, tx, qn).or_at(object.at())?;
+        }
         let mut held: Vec<QualifiedName> = Vec::new();
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
@@ -275,6 +284,28 @@ impl Session {
                 held.push(name);
             }
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.44 GR2] Each table's columns of collation `qn`
+    /// made of the character set's, each table's rows copied (`AlterAction`).
+    /// If one fails after another is done, the transaction only rolls back:
+    /// the one done keeps its new definition, its copied rows undone.
+    fn revert_columns(&self, st: &Arc<State>, tx: &Txn, qn: &QualifiedName) -> Result<()> {
+        let of = |t: &&crate::catalog::TableDesc| t.columns.iter().any(|c| c.collation.as_ref() == Some(qn));
+        let tables: Vec<QualifiedName> = st.catalog.tables().into_iter().filter(of).map(|t| t.name.clone()).collect();
+        let action = AlterAction::RevertCollation(qn.clone());
+        let text = format!("{REVERT_COLLATION} {}.{}", qn.auth, qn.ident);
+        for (done, table) in tables.into_iter().enumerate() {
+            let fresh = self.definitions(self.db.snapshot()?)?;
+            let name = TableName { auth: Some(table.auth), ident: table.ident, at: 0 };
+            if let Err(e) = self.alter_table(&fresh, tx, (&name, &action, &text)) {
+                if done > 0 {
+                    tx.doom("a DROP COLLATION failed with a table done");
+                }
+                return Err(e);
+            }
+        }
+        Ok(())
     }
 
     /// What `object` names, its names qualified by the default schema, if
@@ -301,6 +332,7 @@ impl Session {
             DropObject::View(view) => Ok(DropTarget::View(self.owned(st, view, "§11.20 AR1")?)),
             DropObject::Domain(domain) => Ok(DropTarget::Domain(self.owned(st, domain, "§11.27 AR1")?)),
             DropObject::Assertion(assertion) => Ok(DropTarget::Assertion(self.owned(st, assertion, "§11.35 AR1")?)),
+            DropObject::Collation(collation) => Ok(DropTarget::Collation(self.owned(st, collation, "§11.44 AR1")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

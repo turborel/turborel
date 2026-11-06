@@ -294,6 +294,10 @@ fn probed_columns(
     (keys, of_kind): (&[(usize, usize)], OfKind<'_>),
     kind: &dyn IndexMethod,
 ) -> Option<(Vec<usize>, Vec<DataType>)> {
+    // An equality of two columns' values is no probe of sort keys.
+    if ix.is_collated() {
+        return None;
+    }
     let types: Vec<DataType> = ix.columns.iter().map(|&c| columns.get(c).map(|d| d.data_type)).collect::<Option<_>>()?;
     let mut used = Vec::new();
     for (&column, data_type) in ix.columns.iter().zip(&types) {

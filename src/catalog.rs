@@ -18,12 +18,17 @@ use crate::value::types::datetime::current;
 use crate::value::{DataType, Value};
 
 pub(crate) mod codec;
+mod collations;
 mod constraints;
 mod domains;
+mod keys;
 mod privileges;
 
+use crate::value::collation::CollationRef;
+pub use collations::CollationDesc;
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc};
+pub use keys::KeyShape;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, applicable, merged};
 
 /// A `<table name>` with its `<authorization identifier>` made explicit.
@@ -77,6 +82,9 @@ pub struct ColumnDesc {
     /// names one, with that domain's default, kept with it as the domain
     /// changes (`db/domains.rs`).
     pub domain: Option<ColumnDomain>,
+    /// [ISO/IEC 9075-2:2023 §6.1 SR3] The declared type collation, if not
+    /// that of the character set.
+    pub collation: Option<QualifiedName>,
 }
 
 /// [ISO/IEC 9075:1992 §11.4 GR5] The domain a column is of.
@@ -269,6 +277,11 @@ pub struct IndexDesc {
     /// \[EXTENSION\] The method's index options it sets, by name, in order
     /// of name; the others are their defaults (RULES.md D41).
     pub options: Vec<(String, Value)>,
+    /// \[EXTENSION\] The collation of each key column if any is not the
+    /// default, its key that column's sort key; empty if none is, so a key
+    /// is the columns' values (`catalog/keys.rs`, RULES.md D60). Derived
+    /// from the table's columns, and not stored.
+    pub collations: Vec<Option<CollationRef>>,
 }
 
 /// \[DESIGN\] Where schemas, tables and indexes are described.
@@ -297,6 +310,8 @@ pub struct IndexDesc {
 ///   every view in a stable order.
 /// * After `put_domain`, `domain` returns it by name, and `domains` among
 ///   every domain in a stable order; after `remove_domain`, neither does.
+///   So too `put_collation`, `collation`, `collations` and
+///   `remove_collation`.
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`.
 /// * `duplicate` returns an independent copy: changing either leaves the
@@ -372,6 +387,14 @@ pub trait Catalog: Send + Sync {
     fn domain(&self, name: &QualifiedName) -> Option<&DomainDesc>;
     /// Every domain, in a stable order.
     fn domains(&self) -> Vec<&DomainDesc>;
+    /// Record a collation, in place of one of its name.
+    fn put_collation(&mut self, collation: CollationDesc);
+    /// The collation of this name a `<collation definition>` made, if any.
+    fn collation(&self, name: &QualifiedName) -> Option<&CollationDesc>;
+    /// Every collation definitions made, in a stable order.
+    fn collations(&self) -> Vec<&CollationDesc>;
+    /// Forget the collation of this name.
+    fn remove_collation(&mut self, name: &QualifiedName);
     /// Forget the domain with this name: one dropped [§11.27 GR3].
     fn remove_domain(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of
@@ -405,6 +428,7 @@ pub struct MemoryCatalog {
     views: HashMap<QualifiedName, ViewDesc>,
     privileges: Vec<PrivilegeDesc>,
     domains: HashMap<QualifiedName, DomainDesc>,
+    collations: HashMap<QualifiedName, CollationDesc>,
     assertions: HashMap<QualifiedName, ConstraintDesc>,
 }
 
@@ -498,6 +522,20 @@ impl Catalog for MemoryCatalog {
         let mut domains: Vec<&DomainDesc> = self.domains.values().collect();
         domains.sort_by_key(|d| d.name.to_string());
         domains
+    }
+    fn put_collation(&mut self, collation: CollationDesc) {
+        self.collations.insert(collation.name.clone(), collation);
+    }
+    fn collation(&self, name: &QualifiedName) -> Option<&CollationDesc> {
+        self.collations.get(name)
+    }
+    fn collations(&self) -> Vec<&CollationDesc> {
+        let mut collations: Vec<&CollationDesc> = self.collations.values().collect();
+        collations.sort_by_key(|c| c.name.to_string());
+        collations
+    }
+    fn remove_collation(&mut self, name: &QualifiedName) {
+        self.collations.remove(name);
     }
     fn remove_domain(&mut self, name: &QualifiedName) {
         self.domains.remove(name);

@@ -217,7 +217,7 @@ pub(crate) fn count(n: u64) -> Value {
 /// A column of counts, named `name`.
 pub(crate) fn counted(name: &str) -> ColumnDesc {
     let data_type = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
-    ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None }
+    ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None, collation: None }
 }
 
 /// A column of counts, named `name`, which may be null.
@@ -227,7 +227,7 @@ pub(crate) fn counted_or_null(name: &str) -> ColumnDesc {
 
 /// A column of text of at most `length` characters, named `name`.
 pub(crate) fn text(name: &str, length: u32, not_null: bool) -> ColumnDesc {
-    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None }
+    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None, collation: None }
 }
 
 /// \[EXTENSION\] INFORMATION_SCHEMA.CONNECTIONS.

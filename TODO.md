@@ -17,6 +17,14 @@ Code never cites this file (R-DOC-5).
 
 Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
 
+- Language collations: UNICODE orders by the language-neutral table, so
+  Swedish or German order needs tailorings from CLDR, each a collation of its
+  own name and version. LIKE under UNICODE is refused until then, since
+  contractions don't compare one character at a time.
+- REVOKE USAGE on a collation a schema's column depends on is refused, with
+  CASCADE too, and DROP SCHEMA with a collation another schema's table is of.
+  Both could revert the columns as DROP COLLATION does.
+
 ---
 
 ## SQL

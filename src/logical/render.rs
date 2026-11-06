@@ -33,6 +33,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
             text
         }
         Expr::Cast(x, t) => format!("CAST({} AS {t})", render_expr(x, names)),
+        Expr::SortKey(x, c) => format!("{} COLLATE {}", render_expr(x, names), c.collation.name()),
         Expr::Domain(x, d) => {
             // The CAST to the domain's data type it holds is shown as to the domain.
             let operand = if let Expr::Cast(operand, _) = &**x { operand } else { x };

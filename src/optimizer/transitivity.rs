@@ -75,6 +75,7 @@ fn compared(c: &Cond) -> Option<Compared> {
             | Expr::Dynamic(_)
             | Expr::Case(..)
             | Expr::Cast(..)
+            | Expr::SortKey(..)
             | Expr::Domain(..)
             | Expr::Subquery(..),
             _,

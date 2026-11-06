@@ -19,6 +19,9 @@ pub struct DomainDesc {
     pub constraints: Vec<ConstraintDesc>,
     /// USAGE on it [§10.3, §11.21 GR4, §11.36]: each grant.
     pub usage: Vec<UsageDesc>,
+    /// [ISO/IEC 9075-2:2023 §11.34] The declared type collation, if not
+    /// that of the character set.
+    pub collation: Option<QualifiedName>,
 }
 
 /// [ISO/IEC 9075:1992 §10.3] USAGE of a domain granted.
@@ -37,10 +40,17 @@ impl DomainDesc {
     /// schema's owner, `owner`, holds it grantably [§11.21 GR4]; another
     /// holds what is granted it or PUBLIC [§10.3 GR2].
     pub fn usage_of(&self, auth: &str, owner: &str) -> (bool, bool) {
-        if auth == owner {
-            return (true, true);
-        }
-        let granted = self.usage.iter().filter(|u| u.grantee.as_deref().is_none_or(|g| g == auth));
-        granted.fold((false, false), |(_, grantable), u| (true, grantable || u.grantable))
+        usage_held(&self.usage, auth, owner)
     }
+}
+
+/// Whether `auth` holds USAGE by `usage`, and whether grantably: an object's
+/// schema's owner, `owner`, holds it grantably; another holds what is
+/// granted it or PUBLIC [§10.3 GR2].
+pub(super) fn usage_held(usage: &[UsageDesc], auth: &str, owner: &str) -> (bool, bool) {
+    if auth == owner {
+        return (true, true);
+    }
+    let granted = usage.iter().filter(|u| u.grantee.as_deref().is_none_or(|g| g == auth));
+    granted.fold((false, false), |(_, grantable), u| (true, grantable || u.grantable))
 }

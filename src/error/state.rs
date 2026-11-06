@@ -65,6 +65,8 @@ impl SqlState {
     pub const MULTIPLE_SERVER_TRANSACTIONS: SqlState = SqlState("0A001");
     /// Invalid connection name.
     pub const INVALID_CONNECTION_NAME: SqlState = SqlState("2E000");
+    /// [ISO/IEC 9075-2:2023 §19.10 GR1] Invalid collation name.
+    pub const INVALID_COLLATION_NAME: SqlState = SqlState("2H000");
     /// Warning: disconnect error.
     pub const DISCONNECT_ERROR: SqlState = SqlState("01002");
     /// Connection exception: connection failure.

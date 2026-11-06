@@ -143,8 +143,16 @@ fn table(store: &RowStore, name: &str, length: u32) -> Arc<dyn TableStorage> {
             not_null: true,
             default: None,
             domain: None,
+            collation: None,
         },
-        ColumnDesc { name: "S".into(), data_type: DataType::Character { length }, not_null: false, default: None, domain: None },
+        ColumnDesc {
+            name: "S".into(),
+            data_type: DataType::Character { length },
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+        },
     ];
     let desc = TableDesc {
         name: QualifiedName { auth: "A".into(), ident: name.into() },

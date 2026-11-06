@@ -19,6 +19,7 @@ mod lint_audit;
 mod mutate;
 mod threads;
 mod trace;
+mod unicode;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -38,6 +39,13 @@ const INSTALL_HOOKS: &str = "install-hooks";
 const BENCH: &str = "bench";
 const MUTATE: &str = "mutate";
 const SIMULATE: &str = "simulate";
+const UNICODE: &str = "unicode";
+const UNICODE_CHECK: &str = "unicode-check";
+const FROM: &str = "--from";
+/// The support crate's check of the collation UNICODE against Unicode's own
+/// test file, built optimized, run outside `verify` (RULES.md D60).
+const UNICODE_CHECK_ARGS: [&str; 9] =
+    ["run", "--quiet", "--release", "--package", "turborel-test-support", "--features", "database", "--bin", "unicode_check"];
 /// The support crate's simulator sweep, built optimized, which `simulate`
 /// runs with the arguments given (RULES.md D57, R-TEST-5).
 const SIMULATE_ARGS: [&str; 9] =
@@ -74,7 +82,10 @@ commands:
                        the benchmarks in bench/, built optimized; keep or compare results (R-BENCH-1)
   {MUTATE} [NAME]        break each mechanism the list names, or one, and expect its tests to fail (R-TEST-9)
   {SIMULATE} [--seeds N] [--from S] [--plan NAME] [--databases]
-                       sweeps of the replication simulator longer than `verify` runs (D57, R-TEST-5)"
+                       sweeps of the replication simulator longer than `verify` runs (D57, R-TEST-5)
+  {UNICODE} {FROM} DIR   the collation table, from Unicode's files in DIR (D60)
+  {UNICODE_CHECK} {FROM} DIR
+                       the collation UNICODE against Unicode's test file in DIR (D60)"
     )
 }
 
@@ -106,6 +117,8 @@ fn run(args: &[String]) -> Result<()> {
         [BENCH, rest @ ..] => bench::run(&root, rest),
         [MUTATE, rest @ ..] => mutate::run(&root, rest),
         [SIMULATE, rest @ ..] => simulate(&root, rest),
+        [UNICODE, FROM, dir] => unicode::generate(&root, Path::new(dir)),
+        [UNICODE_CHECK, FROM, dir] => command::cargo(&root, &[UNICODE_CHECK_ARGS.as_slice(), &["--", dir]].concat(), NO_ENV),
         _ => Err(Error::new(usage())),
     }
 }

@@ -204,7 +204,7 @@ fn a_domain_of_a_plug_in_type() {
     ] {
         assert_eq!(exec(&a, bad).err(), Some(Code::SyntaxRule), "{why}");
     }
-    assert_eq!(exec(&a, "CREATE DOMAIN D AS IDENT COLLATE X").err(), Some(Code::Unsupported), "COLLATE");
+    assert_eq!(exec(&a, "CREATE DOMAIN D AS IDENT COLLATE X").err(), Some(Code::SyntaxRule), "COLLATE");
     a.commit().unwrap();
 }
 

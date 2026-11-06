@@ -240,7 +240,7 @@ fn checked(desc: &TableDesc, rows: Vec<Row>) -> Result<Vec<Row>> {
 
 /// A column of CHARACTER VARYING(`length`), NOT NULL if `not_null`.
 pub(crate) fn text_column((name, length): (&str, u32), not_null: bool) -> ColumnDesc {
-    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None }
+    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None, collation: None }
 }
 
 /// [ISO/IEC 9075:1992 §21.2.27] A column of SQL_IDENTIFIER, CHARACTER
@@ -258,6 +258,7 @@ pub(crate) fn cardinal(name: &str, not_null: bool) -> ColumnDesc {
         not_null,
         default: None,
         domain: None,
+        collation: None,
     }
 }
 

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::catalog::{ConstraintKind, QualifiedName, TableDesc};
+use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc};
 use crate::db::{State, api};
 use crate::error::{Code, Result, SqlError, Subject, fail};
 use crate::index::Key;
@@ -43,7 +43,7 @@ pub(in crate::db) struct KeyCheck<'s> {
     /// Whether it is a PRIMARY KEY.
     primary: bool,
     /// The indexes of exactly its columns that are unique.
-    unique: Vec<&'s str>,
+    unique: Vec<&'s IndexDesc>,
     /// Of a PRIMARY KEY, the first failure of a row not for a null, told
     /// at its end.
     failed: Option<SqlError>,
@@ -65,7 +65,7 @@ impl<'s> KeyCheck<'s> {
         let ConstraintKind::Unique { columns, primary } = kind else { return Ok(None) };
         let storage = st.storage_of(&desc.name)?;
         let indexes = st.catalog.indexes(&desc.name).into_iter();
-        let unique = indexes.filter(|ix| ix.unique && ix.columns == *columns).map(|ix| ix.name.as_str()).collect();
+        let unique = indexes.filter(|ix| ix.unique && ix.columns == *columns).collect();
         Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, primary: *primary, unique, failed: None }))
     }
 
@@ -85,7 +85,7 @@ impl<'s> KeyCheck<'s> {
         // None whose entry was its key's only one as it was inserted
         // (`Txn::alone`): its key has no null, and a row of its key
         // inserted after was not, and is read itself.
-        if self.unique.iter().any(|ix| self.txn.alone(ix, id)) {
+        if self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
             return Ok(());
         }
         let Some(row) = self.storage.get(self.txn.id, id)? else { return Ok(()) };
@@ -123,7 +123,11 @@ impl<'s> KeyCheck<'s> {
 
     /// The key of `row`.
     fn key_of(&self, row: &Row) -> Result<Key> {
-        project(row, self.columns).map(Key).ok_or_else(|| api(format!("[DESIGN] a row of {} is shorter than its columns", self.desc.name)))
+        let key = match self.unique.first() {
+            Some(ix) => ix.key_of(row),
+            None => project(row, self.columns).map(Key),
+        };
+        key.ok_or_else(|| api(format!("[DESIGN] a row of {} is shorter than its columns", self.desc.name)))
     }
 
     /// Whether `key`, of a row written, is held by another row too, through
@@ -131,7 +135,7 @@ impl<'s> KeyCheck<'s> {
     /// it.
     fn duplicate(&self, key: &Key) -> Result<()> {
         for ix in &self.unique {
-            let found = self.st.index_of(ix)?.rows(key)?;
+            let found = self.st.index_of(&ix.name)?.rows(key)?;
             if found.len() < 2 {
                 continue;
             }

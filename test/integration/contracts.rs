@@ -42,8 +42,16 @@ fn table_desc(auth: &str, ident: &str, engine: &str) -> TableDesc {
             not_null: true,
             default: None,
             domain: None,
+            collation: None,
         },
-        ColumnDesc { name: "S".into(), data_type: DataType::Character { length: 3 }, not_null: false, default: None, domain: None },
+        ColumnDesc {
+            name: "S".into(),
+            data_type: DataType::Character { length: 3 },
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+        },
     ];
     TableDesc {
         name: QualifiedName { auth: auth.into(), ident: ident.into() },
@@ -128,6 +136,7 @@ fn memory_catalog_keeps_the_catalog_contract() {
             method: "btree".into(),
             unique: false,
             options: Vec::new(),
+            collations: Vec::new(),
         });
     }
     assert_eq!(catalog.index("T_N").map(|i| i.table.to_string()), Some("A.T".into()));

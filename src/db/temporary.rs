@@ -193,11 +193,11 @@ impl Instance {
     fn collect(&self) {
         let Some(rows) = self.rows.made() else { return };
         let entries = self.rows.all_entries();
-        let indexes: Vec<(&dyn Index, &[usize])> = entries
+        let indexes: Vec<(&dyn Index, &IndexDesc)> = entries
             .iter()
             .map(|entries| {
                 let index: &dyn Index = &**entries;
-                (index, entries.index.columns.as_slice())
+                (index, &entries.index)
             })
             .collect();
         // An entry not taken back is left: an instance is read by no

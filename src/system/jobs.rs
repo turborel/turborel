@@ -32,6 +32,7 @@ impl SystemTable for Jobs {
             not_null: true,
             default: None,
             domain: None,
+            collation: None,
         };
         vec![
             text_column(("LABEL", LABEL_LENGTH), true),

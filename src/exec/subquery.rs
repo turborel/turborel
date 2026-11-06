@@ -154,6 +154,21 @@ impl Subqueries for NoSubqueries {
 /// its outer values as compared [X3.135-1986 §5.11 GR7].
 type Run = (usize, Vec<NormKey>);
 
+/// `v` as a run's key: a string as it is, since a subquery may tell apart
+/// strings that compare equal, by a collation of NO PAD or CHAR_LENGTH.
+fn exact_norm(v: &Value) -> NormKey {
+    match v {
+        Value::Char(s) => NormKey::Char(s.clone()),
+        Value::Null
+        | Value::Exact(_)
+        | Value::Approx(_)
+        | Value::Bits(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => v.norm(),
+    }
+}
+
 /// The rows of a decorrelated subquery: each, its subquery's columns
 /// first, by the buckets of its key columns' values, in memory or in a
 /// table of the spill area (`exec/join.rs`); rows with a null key are
@@ -308,7 +323,7 @@ fn rows_for(keyed: &Keyed, outer: &[Value], (limit, work): (Option<usize>, &mut 
 impl Subqueries for Runner {
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
         let at = std::ptr::from_ref(subquery).addr();
-        let key = (at, outer.iter().map(Value::norm).collect());
+        let key = (at, outer.iter().map(exact_norm).collect());
         if let Some(rows) = self.done.borrow().get(&key) {
             return Ok(rows.clone());
         }

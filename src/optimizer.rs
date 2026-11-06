@@ -460,7 +460,11 @@ impl Rule for PushHavingIntoWhere {
     }
     fn apply(&self, plan: &LogicalPlan, _ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         let LogicalPlan::Filter { cond, input } = plan else { return None };
-        let LogicalPlan::Aggregate { groups, aggs, input: rows } = &**input else { return None };
+        let LogicalPlan::Aggregate { groups, collations, aggs, input: rows } = &**input else { return None };
+        // A row of a group is not the group's value under a collation.
+        if !collations.is_empty() {
+            return None;
+        }
         let mut conjuncts = Vec::new();
         split_and(cond.clone(), &mut conjuncts);
         let (mut down, mut keep) = (Vec::new(), Vec::new());
@@ -479,7 +483,12 @@ impl Rule for PushHavingIntoWhere {
         if down.is_empty() || keep.iter().any(Cond::can_raise) {
             return None;
         }
-        let agg = LogicalPlan::Aggregate { groups: groups.clone(), aggs: aggs.clone(), input: Box::new(wrap((**rows).clone(), down)) };
+        let agg = LogicalPlan::Aggregate {
+            groups: groups.clone(),
+            collations: Vec::new(),
+            aggs: aggs.clone(),
+            input: Box::new(wrap((**rows).clone(), down)),
+        };
         Some(wrap(agg, keep))
     }
 }
@@ -529,13 +538,14 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::Dynamic(_)
                 | Expr::Case(..)
                 | Expr::Cast(..)
+                | Expr::SortKey(..)
                 | Expr::Domain(..)
                 | Expr::Subquery(..) => None,
             })
             .collect();
         // A UNIQUE column may be null [ISO/IEC 9075:1992 §8.9], and rows
         // with nulls there may be duplicates: its columns must be NOT NULL.
-        let keyed = |c: &usize| projected.contains(c) && desc.columns.get(*c).is_some_and(|col| col.not_null);
+        let keyed = |c: &usize| projected.contains(c) && desc.columns.get(*c).is_some_and(|col| col.not_null && col.collation.is_none());
         desc.unique().any(|u| u.iter().all(keyed)).then(|| (**input).clone())
     }
 }

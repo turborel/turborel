@@ -72,6 +72,7 @@ const DROPPED_VIEW: u8 = 2;
 const DROPPED_SCHEMA: u8 = 3;
 const DROPPED_DOMAIN: u8 = 4;
 const DROPPED_ASSERTION: u8 = 5;
+const DROPPED_COLLATION: u8 = 6;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,8 @@ pub enum DropTarget {
     Domain(QualifiedName),
     /// An assertion [§11.35].
     Assertion(QualifiedName),
+    /// A collation [ISO/IEC 9075-2:2023 §11.44].
+    Collation(QualifiedName),
 }
 
 /// What a transaction did, as a log record.
@@ -536,6 +539,10 @@ fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool) {
             out.put_u8(DROPPED_ASSERTION);
             put_table(out, assertion);
         }
+        DropTarget::Collation(collation) => {
+            out.put_u8(DROPPED_COLLATION);
+            put_table(out, collation);
+        }
     }
     out.put_u8(u8::from(cascade));
 }
@@ -548,6 +555,7 @@ fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_SCHEMA => Ok(DropTarget::Schema(r.str()?)),
         DROPPED_DOMAIN => Ok(DropTarget::Domain(table(r)?)),
         DROPPED_ASSERTION => Ok(DropTarget::Assertion(table(r)?)),
+        DROPPED_COLLATION => Ok(DropTarget::Collation(table(r)?)),
         other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
     }
 }

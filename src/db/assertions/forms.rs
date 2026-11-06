@@ -236,7 +236,7 @@ fn exists_form(s: &Subquery, known: &Known<'_>) -> Option<Form> {
 /// `op`, the comparison with it first, and `k`.
 fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> Option<Vec<Form>> {
     let LogicalPlan::Project { exprs, input } = &s.plan else { return None };
-    let LogicalPlan::Aggregate { groups, aggs, input: rows } = &**input else { return None };
+    let LogicalPlan::Aggregate { groups, aggs, input: rows, .. } = &**input else { return None };
     let ([Expr::Column(0)], [agg]) = (exprs.as_slice(), aggs.as_slice()) else { return None };
     let function = known.functions.standard(&agg.func).filter(|_| groups.is_empty() && s.outer.is_empty())?;
     match passing(rows) {
@@ -378,9 +378,14 @@ pub(super) fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), ca
         Expr::Const(v) => !v.is_null(),
         Expr::Neg(y) => never_null(y, (table, steps), catalog),
         Expr::Arith(a, _, b) => never_null(a, (table, steps), catalog) && never_null(b, (table, steps), catalog),
-        Expr::Call(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Case(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => {
-            false
-        }
+        Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::SortKey(..)
+        | Expr::Domain(..)
+        | Expr::Subquery(..) => false,
     }
 }
 
@@ -447,6 +452,7 @@ fn strict(e: &Expr, at: usize) -> bool {
         | Expr::Dynamic(_)
         | Expr::Case(..)
         | Expr::Cast(..)
+        | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Subquery(..) => false,
     }
@@ -472,7 +478,13 @@ pub(super) fn row_expr(e: &Expr) -> bool {
         Expr::Neg(x) => row_expr(x),
         Expr::Arith(a, _, b) => row_expr(a) && row_expr(b),
         Expr::Case(whens, otherwise) => whens.iter().all(|(c, result)| row_cond(c) && row_expr(result)) && row_expr(otherwise),
-        Expr::Call(..) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => false,
+        Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Cast(..)
+        | Expr::SortKey(..)
+        | Expr::Domain(..)
+        | Expr::Subquery(..) => false,
     }
 }
 

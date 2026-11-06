@@ -22,7 +22,7 @@ use super::alter::Made;
 use super::constraints::Within;
 use super::ddl::{Changed, Dropped, validate_rows};
 use super::{Completion, Session, State, api, long_texts, rule};
-use crate::ast::{PrivilegeDefinition, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition};
+use crate::ast::{PrivilegeDefinition, PrivilegeObject, SchemaStatement, SqlStatement, TableDefinition, TableName, ViewDefinition};
 use crate::binder::qualify;
 use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -111,6 +111,7 @@ impl Session {
             SchemaStatement::Revoke(r) => Ok(qualify(&r.table, schema)),
             SchemaStatement::Domain(d) => self.own_object(st, &d.name, (schema, "§11.21 AR1")),
             SchemaStatement::Assertion(a) => self.own_object(st, &a.name, (schema, "§11.34 AR1")),
+            SchemaStatement::Collation(c) => self.own_object(st, &c.name, (schema, "§11.43 SR1")),
             SchemaStatement::AlterDomain(a) => {
                 let qn = qualify(&a.name, schema);
                 // [§11.22 AR1] only the owner of its schema alters a domain.
@@ -165,6 +166,7 @@ impl State {
             SchemaStatement::Revoke(r) => self.revoke((auth, schema), r),
             SchemaStatement::Domain(d) => self.create_domain((schema, zone), d),
             SchemaStatement::Assertion(a) => self.create_assertion(schema, a, made),
+            SchemaStatement::Collation(c) => self.create_collation((auth, schema), c),
             SchemaStatement::AlterDomain(a) => self.alter_domain((schema, zone), a),
         }
     }
@@ -264,7 +266,10 @@ impl State {
     /// `schema`: what `auth` holds with grant option of what it names
     /// granted, a warning for the rest [GR14, GR15].
     fn grant(&mut self, auth: &str, schema: &str, p: &PrivilegeDefinition) -> Result<Defined> {
-        if p.domain {
+        if p.object == PrivilegeObject::Collation {
+            return self.grant_collation_usage(auth, p).or_at(p.table.at);
+        }
+        if p.object == PrivilegeObject::Domain {
             return self.grant_usage(auth, schema, p).or_at(p.table.at);
         }
         let (granted, warned) = self.describe_grant((auth, schema), p).or_at(p.table.at)?;

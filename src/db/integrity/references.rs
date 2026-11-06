@@ -14,7 +14,6 @@ use crate::catalog::{ForeignKey, MatchType, QualifiedName, TableDesc};
 use crate::db::{State, api};
 use crate::error::{Code, Result, fail};
 use crate::exec::HeldRows;
-use crate::index::Key;
 use crate::spill::ListSpace;
 use crate::storage::{Row, RowId, project};
 use crate::txn::Txn;
@@ -60,7 +59,10 @@ impl State {
     /// key read as taken (`Index::key_rows`), else read in full, a row at
     /// a time.
     fn each_row_with(&self, tx: &Txn, table: &QualifiedName, (columns, values): (&[usize], &[Value]), each: Visit<'_>) -> Result<()> {
-        let equal = |row: &Row| columns.iter().zip(values).all(|(&c, v)| row.get(c).is_some_and(|x| equals(x, v)));
+        // By each column's collation, as an index of it holds them.
+        let wanted = self.normal(table, columns, values)?;
+        let of_row = |row: &Row| project(row, columns).map(|v| self.normal(table, columns, &v));
+        let equal = |row: &Row| of_row(row).is_some_and(|v| v.is_ok_and(|v| v.iter().zip(&wanted).all(|(x, y)| equals(x, y))));
         let index = self
             .catalog
             .indexes(table)
@@ -71,7 +73,7 @@ impl State {
         let storage = self.storage_of(table)?;
         let key: Option<Vec<Value>> =
             ix.columns.iter().map(|c| columns.iter().position(|x| x == c).and_then(|at| values.get(at)).cloned()).collect();
-        let key = Key(key.ok_or_else(|| api("[DESIGN] an index key is not the values looked up"))?);
+        let key = ix.key_values(key.ok_or_else(|| api("[DESIGN] an index key is not the values looked up"))?);
         // The key's rows read as they are taken, so a search that stops
         // at the first never holds the rest.
         for found in Arc::clone(self.index_of(&ix.name)?).key_rows(&key) {
@@ -170,7 +172,9 @@ impl State {
         }
         if let Some(id) = id {
             let now = self.storage_of(&fk.table)?.get(tx.id, id)?;
-            if now.as_ref().and_then(|r| project(r, &fk.referenced)).is_some_and(|k| same(&k, &key)) {
+            let normal = self.normal(&fk.table, &fk.referenced, &key)?;
+            let row_now = now.as_ref().and_then(|r| project(r, &fk.referenced));
+            if row_now.map(|k| self.normal(&fk.table, &fk.referenced, &k)).transpose()?.is_some_and(|k| same(&k, &normal)) {
                 return Ok(false);
             }
         }

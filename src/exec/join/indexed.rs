@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed, fetch};
+use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
 use crate::error::Result;
 use crate::index::{Entries, Index, Key, KeyOrder, Probe};
@@ -30,13 +31,13 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
         return failed(broken("an index join is not one"));
     };
     let opened = db.storage_of(&table).map(Arc::clone).and_then(|storage| {
-        let columns = db.catalog.index(&index).map(|ix| ix.columns.clone()).ok_or_else(|| broken(&format!("no index {index}")))?;
-        Ok((storage, Arc::clone(db.index_of(&index)?), columns))
+        let ix = db.catalog.index(&index).map(IndexDesc::key_shape).ok_or_else(|| broken(&format!("no index {index}")))?;
+        Ok((storage, Arc::clone(db.index_of(&index)?), ix))
     });
     match opened {
-        Ok((storage, found, columns)) => Box::new(IndexJoin {
+        Ok((storage, found, ix)) => Box::new(IndexJoin {
             left: execute(*left, db, tx),
-            table: Probed { storage, index: found, columns, needed, tx, stop: db.tx.stop_of(tx) },
+            table: Probed { storage, index: found, ix, needed, tx, stop: db.tx.stop_of(tx) },
             keys,
             cond,
             nulls: outer.then(|| vec![Value::Null; width]),
@@ -53,7 +54,7 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
 struct Probed {
     storage: Arc<dyn TableStorage>,
     index: Arc<dyn Index>,
-    columns: Vec<usize>,
+    ix: KeyShape,
     needed: Vec<usize>,
     tx: TxId,
     stop: Option<Arc<Stop>>,
@@ -73,11 +74,11 @@ impl Probed {
         }
         // An index of one column is asked by a comparison, which every
         // method answers that supports equality.
-        let probe = match (values.len(), self.columns.len()) {
+        let probe = match (values.len(), self.ix.columns.len()) {
             (1, 1) => Probe::Compare { op: CompOp::Eq, value: values.into_iter().next().unwrap_or(Value::Null) },
             _ => Probe::Prefix { equal: values, then: None },
         };
-        self.storage.read_by_condition(self.tx, &Condition { columns: self.columns.clone(), probe: probe.clone() })?;
+        self.storage.read_by_condition(self.tx, &Condition { columns: self.ix.columns.clone(), probe: probe.clone() })?;
         let entries = Arc::clone(&self.index).search(&probe, KeyOrder::Ascending);
         Ok(Box::new(checked(entries, self.stop.clone())))
     }
@@ -85,7 +86,7 @@ impl Probed {
     /// The row of the entry `(key, id)`, if the version `tx` sees has it.
     fn row(&self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        Ok(fetch(&*self.storage, (&self.columns, Some(&self.needed)), self.tx, &key, id)?.map(|(_, row)| row))
+        Ok(fetch(&*self.storage, (&self.ix, Some(&self.needed)), self.tx, &key, id)?.map(|(_, row)| row))
     }
 }
 

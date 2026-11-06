@@ -30,6 +30,7 @@ impl SystemTable for FileFormats {
                 not_null: true,
                 default: None,
                 domain: None,
+                collation: None,
             },
         ]
     }

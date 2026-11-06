@@ -16,7 +16,7 @@ use super::ddl::Dropped;
 use super::defaults::default_of;
 use super::definitions::Defined;
 use super::{State, rule};
-use crate::ast::{AlterDomain, AlterDomainAction, DomainDefinition, TableConstraint, TableConstraintKind, TypeName};
+use crate::ast::{AlterDomain, AlterDomainAction, DomainDefinition, Schema, TableConstraint, TableConstraintKind, TypeName};
 use crate::binder::qualify;
 use crate::catalog::{ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, Horizon, QualifiedName, TableDesc, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -199,8 +199,9 @@ impl State {
         }
         self.not_in_own_usage(&qn, &constraints).or_at(d.name.at)?;
         let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).collect::<Vec<_>>();
+        let collation = self.declared_collation(schema, (data_type, None), d.collate.as_ref()).or_at(d.name.at)?;
         let mut catalog = self.catalog.duplicate();
-        catalog.put_domain(DomainDesc { name: qn, data_type, default, constraints, usage: Vec::new() });
+        catalog.put_domain(DomainDesc { name: qn, data_type, default, constraints, usage: Vec::new(), collation });
         self.catalog = Arc::from(catalog);
         Ok(Defined { locks: reads.into_iter().map(|t| (t, LockMode::Shared)).collect(), ..Defined::default() })
     }
@@ -308,7 +309,7 @@ impl State {
     /// This state with a table of `domain`'s schema made for its constraints:
     /// of one column VALUE, of `data_type`; and that table's name.
     fn with_value(&self, domain: &QualifiedName, data_type: DataType) -> (State, QualifiedName) {
-        let column = ColumnDesc { name: VALUE_COLUMN.to_owned(), data_type, not_null: false, default: None, domain: None };
+        let column = ColumnDesc { name: VALUE_COLUMN.to_owned(), data_type, not_null: false, default: None, domain: None, collation: None };
         let probe = QualifiedName { auth: domain.auth.clone(), ident: format!("{} VALUE", domain.ident) };
         let desc = TableDesc {
             name: probe.clone(),
@@ -548,4 +549,27 @@ pub(super) fn casts_check(c: &ConstraintDesc, qn: &QualifiedName) -> bool {
 /// Whether a constraint of table `t` CASTs to domain `qn`.
 fn casts_any(t: &TableDesc, qn: &QualifiedName) -> bool {
     t.constraints.iter().any(|c| casts_check(c, qn))
+}
+
+impl State {
+    /// [ISO/IEC 9075:1992 §11.21; ISO/IEC 9075-2:2023 §11.43] The collations
+    /// and domains of `<schema>` `s`, owned by `owner`, its datetimes of
+    /// `zone` where they write no displacement, made first, which its
+    /// tables' columns may be of: a failing `<schema>` is discarded whole
+    /// (`Database::change`).
+    pub(super) fn schema_domains(&mut self, s: &Schema, owner: &str, zone: i16) -> Result<()> {
+        if s.domains.is_empty() && s.collations.is_empty() {
+            return Ok(());
+        }
+        let mut catalog = self.catalog.duplicate();
+        catalog.create_schema(&s.name, owner, Vec::new());
+        self.catalog = Arc::from(catalog);
+        for c in &s.collations {
+            self.create_collation((owner, &s.name), c)?;
+        }
+        for d in &s.domains {
+            self.make_domain((&s.name, zone), d, false)?;
+        }
+        Ok(())
+    }
 }

@@ -44,9 +44,9 @@ fn bound_plan(plan: LogicalPlan, values: &[Value]) -> LogicalPlan {
     let node = match plan {
         LogicalPlan::Filter { cond, input } => LogicalPlan::Filter { cond: map_cond_exprs(cond, &bound), input },
         LogicalPlan::Project { exprs, input } => LogicalPlan::Project { exprs: exprs.into_iter().map(bound).collect(), input },
-        LogicalPlan::Aggregate { groups, aggs, input } => {
+        LogicalPlan::Aggregate { groups, collations, aggs, input } => {
             let aggs = aggs.into_iter().map(|a| AggCall { arg: a.arg.map(bound), ..a }).collect();
-            LogicalPlan::Aggregate { groups, aggs, input }
+            LogicalPlan::Aggregate { groups, collations, aggs, input }
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => {
             LogicalPlan::OuterJoin { kind, cond: map_cond_exprs(cond, &bound), left, right }
@@ -294,7 +294,7 @@ mod tests {
         let plans = [
             LogicalPlan::Product { left: Box::new(scan()), right: Box::new(inner_filter.clone()) },
             LogicalPlan::Project { exprs: vec![outer()], input: Box::new(scan()) },
-            LogicalPlan::Aggregate { groups: vec![], aggs: vec![], input: Box::new(inner_filter.clone()) },
+            LogicalPlan::Aggregate { groups: vec![], collations: vec![], aggs: vec![], input: Box::new(inner_filter.clone()) },
             LogicalPlan::Distinct { input: Box::new(inner_filter) },
         ];
         for plan in plans {

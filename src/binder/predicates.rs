@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use super::collation::liked;
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
@@ -27,7 +28,7 @@ fn or_all(conds: Vec<Cond>) -> Cond {
 }
 
 /// A bound row: its values and their types.
-type BoundRow = Vec<(Expr, DataType)>;
+pub(super) type BoundRow = Vec<(Expr, DataType)>;
 
 /// Whether `values` is a `<row subquery>` alone.
 fn is_row_subquery(values: &RowValue) -> bool {
@@ -90,6 +91,7 @@ impl Binder<'_> {
             Predicate::Comparison(left, op, right) => {
                 let (x, y) = self.rows_paired(left, right, scope)?;
                 comparable(&x, &y.iter().map(|(_, t)| *t).collect::<Vec<_>>(), "§8.2 SR1, SR3")?;
+                let (x, y) = self.keyed_rows((left, right), &x, &y)?;
                 compare_rows(&exprs(&x), *op, &exprs(&y))
             }
             Predicate::Between { value, low, high, not } => self.between([value, low, high], *not, scope)?,
@@ -106,13 +108,17 @@ impl Binder<'_> {
             Predicate::Like { value, pattern, escape, not } => self.like([value, pattern], escape.as_deref(), *not, scope)?,
             Predicate::Null { value, not } => self.null(value, *not, scope)?,
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
-            Predicate::Unique(s) => Cond::Unique(self.subquery(s, scope, Use::Rows)?.0),
+            Predicate::Unique(s) => {
+                let (bound, types) = self.subquery(s, scope, Use::Rows)?;
+                Cond::Unique(self.keyed_rows_of(s, &types, &bound)?)
+            }
             Predicate::Match { value, unique, match_type, subquery } => {
                 // [§17.6 GR5t] a `?` takes its subquery column's type.
                 let (s, types) = self.subquery(subquery, scope, Use::Rows)?;
                 let x = self.row_as(value, &types, scope)?;
                 comparable(&x, &types, "§8.10 SR1, SR2")?;
-                Cond::Match { values: exprs(&x), unique: *unique, match_type: *match_type, subquery: s }
+                let (x, keyed) = self.keyed_subquery((value, subquery), (&x, &types), &s)?;
+                Cond::Match { values: exprs(&x), unique: *unique, match_type: *match_type, subquery: keyed }
             }
         })
     }
@@ -170,7 +176,8 @@ impl Binder<'_> {
         let (bound, types) = self.subquery(s, scope, Use::Rows)?;
         let x = self.row_as(value, &types, scope)?;
         comparable(&x, &types, "§8.7 SR1, SR2").or_at(s.at)?;
-        Ok(Cond::Quantified(exprs(&x), op, quantifier, bound))
+        let (x, keyed) = self.keyed_subquery((value, s), (&x, &types), &bound)?;
+        Ok(Cond::Quantified(exprs(&x), op, quantifier, keyed))
     }
 
     /// [ISO/IEC 9075:1992 §8.3] "X BETWEEN Y AND Z" is "X >= Y AND X <= Z";
@@ -182,8 +189,10 @@ impl Binder<'_> {
         for other in [&y, &z] {
             comparable(&x, &other.iter().map(|(_, t)| *t).collect::<Vec<_>>(), "§8.3")?;
         }
-        let at_least = compare_rows(&exprs(&x), CompOp::Ge, &exprs(&y));
-        let at_most = compare_rows(&exprs(&x), CompOp::Le, &exprs(&z));
+        let (from, y) = self.keyed_rows((value, low), &x, &y)?;
+        let (to, z) = self.keyed_rows((value, high), &x, &z)?;
+        let at_least = compare_rows(&exprs(&from), CompOp::Ge, &exprs(&y));
+        let at_most = compare_rows(&exprs(&to), CompOp::Le, &exprs(&z));
         Ok(negated(Cond::And(Box::new(at_least), Box::new(at_most)), not))
     }
 
@@ -242,7 +251,8 @@ impl Binder<'_> {
                 None => self.value_expression(v, scope)?,
             };
             comparable(&x, &[t], "§8.4 SR1, SR4; §8.7 SR1, SR2")?;
-            any.push(compare_rows(&exprs(&x), CompOp::Eq, &[e]));
+            let (keyed, other) = self.keyed_rows((value, std::slice::from_ref(v)), &x, &vec![(e, t)])?;
+            any.push(compare_rows(&exprs(&keyed), CompOp::Eq, &exprs(&other)));
         }
         Ok(negated(or_all(any), not))
     }
@@ -266,7 +276,11 @@ impl Binder<'_> {
             }
             bound.push(e);
         }
-        let mut bound = bound.into_iter();
+        // [ISO/IEC 9075-2:2023 §8.5] under the operands' collation.
+        let operands = [Some(value), Some(pattern), escape].into_iter().flatten().map(|v| self.derived(v)).collect::<Result<Vec<_>>>()?;
+        let collation = self.collation_of(&operands)?;
+        let folded = |e: Expr| collation.as_ref().map_or_else(|| Ok(e.clone()), |c| liked(e.clone(), c));
+        let mut bound = bound.into_iter().map(folded).collect::<Result<Vec<_>>>()?.into_iter();
         let (Some(matched), Some(against)) = (bound.next(), bound.next()) else {
             return Err(rule("[ISO/IEC 9075:1992 §8.5 F] LIKE has a match value and a pattern"));
         };

@@ -22,6 +22,7 @@ fn participants_end_where_they_joined() {
         not_null: false,
         default: None,
         domain: None,
+        collation: None,
     };
     let desc = crate::catalog::TableDesc {
         name: name.clone(),

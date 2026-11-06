@@ -70,7 +70,7 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         }
         // [§11.34 GR4]
         SchemaStatement::Assertion(a) => condition(&a.check.text),
-        SchemaStatement::Grant(_) | SchemaStatement::Revoke(_) => None,
+        SchemaStatement::Grant(_) | SchemaStatement::Revoke(_) | SchemaStatement::Collation(_) => None,
     }
 }
 
@@ -79,9 +79,11 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
     match a {
         AlterAction::AddColumn(c) => of_column(c),
         AlterAction::AddConstraint(c) => of_constraint(c),
-        AlterAction::DropColumn { .. } | AlterAction::AlterColumn { .. } | AlterAction::DropConstraint { .. } | AlterAction::Storage(_) => {
-            None
-        }
+        AlterAction::DropColumn { .. }
+        | AlterAction::AlterColumn { .. }
+        | AlterAction::DropConstraint { .. }
+        | AlterAction::RevertCollation(_)
+        | AlterAction::Storage(_) => None,
     }
 }
 

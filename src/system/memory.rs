@@ -28,7 +28,7 @@ impl SystemTable for MemoryReservations {
         let bytes = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
         vec![
             text_column(("RESERVED_BY", OWNER_LENGTH), true),
-            ColumnDesc { name: "BYTES".to_owned(), data_type: bytes, not_null: true, default: None, domain: None },
+            ColumnDesc { name: "BYTES".to_owned(), data_type: bytes, not_null: true, default: None, domain: None, collation: None },
         ]
     }
 

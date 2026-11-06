@@ -490,7 +490,8 @@ impl Session {
     pub(super) fn bound<T>(&self, st: &State, params: &Params, bind: impl FnOnce(Context<'_>) -> Result<T>) -> Result<T> {
         let (own, schema) = (self.own.borrow(), self.schema.borrow());
         let now = Clocked::new(self.now.get(), params.noted());
-        bind(Context { own: &own, schema: &schema, now, ..Context::new(st, &self.auth(), params) })
+        let collation = self.session_collation(st)?;
+        bind(Context { own: &own, schema: &schema, now, collation: collation.as_ref(), ..Context::new(st, &self.auth(), params) })
     }
 
     /// What ends its open transaction when it ends (`SESSION.COMMIT_AT_END`).

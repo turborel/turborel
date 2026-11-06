@@ -28,6 +28,11 @@ turborel-replication = { path = "../replication", optional = true }
 name = "simulate"
 required-features = ["replication"]
 
+# The collation UNICODE against Unicode's test file, `cargo xtask unicode-check`.
+[[bin]]
+name = "unicode_check"
+required-features = ["database"]
+
 [features]
 client = ["dep:turborel-client"]
 server = ["client", "dep:turborel", "dep:turborel-protocol", "dep:turborel-server", "dep:tokio"]

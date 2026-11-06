@@ -49,7 +49,7 @@ SELECT: read rows
 <order by clause> ::=
     ORDER BY <sort specification> [ { , <sort specification> }... ]
 
-<sort specification> ::= { <unsigned integer> | <column reference> } [ ASC | DESC ]
+<sort specification> ::= { <unsigned integer> | <column reference> } [ COLLATE <collation name> ] [ ASC | DESC ]
 
 <updatability clause> ::= FOR READ ONLY
 ```
@@ -103,7 +103,7 @@ SELECT on each table and view the query names.
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | 22xxx | -301 | A data exception as a value is computed: division by zero (22012), a number out of range (22003), and the others of [Appendix A](../../appendix/a-sqlstate.md) |
-| 0A000 | -900 | Valid SQL not processed: a COLLATE clause, or a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md) |
+| 0A000 | -900 | Valid SQL not processed: a nesting deeper than the limits of [Appendix D](../../appendix/d-limits.md) |
 
 An error is placed at the construct it is about, its character position
 told.

@@ -104,7 +104,14 @@ impl SystemTable for Table {
         Some(&self.0)
     }
     fn columns(&self) -> Vec<ColumnDesc> {
-        vec![ColumnDesc { name: "K".into(), data_type: DataType::Character { length: 4 }, not_null: false, default: None, domain: None }]
+        vec![ColumnDesc {
+            name: "K".into(),
+            data_type: DataType::Character { length: 4 },
+            not_null: false,
+            default: None,
+            domain: None,
+            collation: None,
+        }]
     }
     fn rows(&self, _: &Seen<'_>) -> Result<Vec<Row>> {
         Ok(Vec::new())

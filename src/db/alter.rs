@@ -145,7 +145,26 @@ impl State {
                 Ok((self.drop_constraint((qn, names), name, *behavior).or_at(name.at)?, Made::default(), None))
             }
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
+            AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.44 GR2] The columns of `qn` of collation
+    /// `name` made of the character set's: its rows copied, so its indexes
+    /// are in the order of the collation they now have, and its constraints
+    /// hold by it.
+    fn revert_collation(
+        &mut self,
+        qn: &QualifiedName,
+        name: &QualifiedName,
+        (action, made): (&AlterAction, Option<&Made>),
+    ) -> Result<(Dropped, Made, Option<Reshape>)> {
+        let desc = self.base_table(qn)?;
+        let mut next = desc.clone();
+        next.columns.iter_mut().filter(|c| c.collation.as_ref() == Some(name)).for_each(|c| c.collation = None);
+        next.generation = desc.generation.saturating_add(1);
+        let (dropped, built) = self.regenerate(qn, (&desc, next), (Reshape::Keep, Vec::new()), (made, action))?;
+        Ok((dropped, built, Some(Reshape::Keep)))
     }
 
     /// The column actions of `alter_table`, whose rows change as the
@@ -163,6 +182,7 @@ impl State {
             AlterAction::AlterColumn { .. }
             | AlterAction::AddConstraint(_)
             | AlterAction::DropConstraint { .. }
+            | AlterAction::RevertCollation(_)
             | AlterAction::Storage(_) => {
                 return Err(api("[DESIGN] not a column action"));
             }
@@ -249,6 +269,15 @@ impl State {
         Err(rule(format!("[ISO/IEC 9075:1992 §11.10 {clause}] {qn} is {what}")))
     }
 
+    /// A name for a UNIQUE constraint's index on `next`: of as many names as
+    /// it has indexes, and one more, one is free of those `kept` too.
+    fn free_index_name(&self, next: &TableDesc, names: usize, kept: &[IndexDesc]) -> Result<String> {
+        let free = (0..=names)
+            .map(|k| constraint_index_name(&next.name, k))
+            .find(|n| self.catalog.index(n).is_none() && !kept.iter().any(|ix| &ix.name == n));
+        free.ok_or_else(|| api(format!("[DESIGN] no name is free for a UNIQUE constraint of {}", next.name)))
+    }
+
     /// The indexes of the table, `next` now, made again on its new
     /// generation (`made`'s, if given), their columns moved; one on a
     /// column removed, or enforcing a constraint no longer there, is not;
@@ -269,25 +298,23 @@ impl State {
             if ix.unique && !next.unique().any(|u| u == columns.as_slice()) {
                 continue;
             }
-            kept.push(IndexDesc { columns, ..ix.clone() });
+            kept.push(self.with_key_collations(IndexDesc { columns, ..ix.clone() }, next)?);
         }
         let added: Vec<Vec<usize>> =
             next.unique().filter(|u| !kept.iter().any(|ix| ix.unique && ix.columns == *u)).map(<[usize]>::to_vec).collect();
         // Of as many names as the table has indexes, and one more, one is free.
         let names = self.catalog.indexes(&next.name).len().saturating_add(added.len());
         for columns in added {
-            let free = (0..=names)
-                .map(|k| constraint_index_name(&next.name, k))
-                .find(|n| self.catalog.index(n).is_none() && !kept.iter().any(|ix| &ix.name == n));
-            let name = free.ok_or_else(|| api(format!("[DESIGN] no name is free for a UNIQUE constraint of {}", next.name)))?;
-            kept.push(IndexDesc {
-                name,
+            let ix = IndexDesc {
+                name: self.free_index_name(next, names, &kept)?,
                 table: next.name.clone(),
                 columns,
                 method: self.constraint_method().to_owned(),
                 unique: true,
                 options: Vec::new(),
-            });
+                collations: Vec::new(),
+            };
+            kept.push(self.with_key_collations(ix, next)?);
         }
         let mut out = Vec::new();
         for ix in kept {
@@ -296,7 +323,7 @@ impl State {
             } else {
                 let method =
                     Arc::clone(self.methods.get(&ix.method).ok_or_else(|| api(format!("[DESIGN] no index method {}", ix.method)))?);
-                let types = next.types(&ix.columns).unwrap_or_default();
+                let types = ix.key_types(next).unwrap_or_default();
                 self.index_structure(&*method, (&ix, next), &types)?.0
             };
             out.push((ix, structure));
@@ -351,6 +378,7 @@ impl State {
                 AlterAction::AlterColumn { .. }
                 | AlterAction::AddConstraint(_)
                 | AlterAction::DropConstraint { .. }
+                | AlterAction::RevertCollation(_)
                 | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint or the storage changes no view"),
             });
         };

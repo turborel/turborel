@@ -13,8 +13,7 @@ use crate::db::constraints::{Described, Within};
 use crate::db::ddl::Dropped;
 use crate::db::schema::constraint_index_name;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Index, Key};
-use crate::storage::project;
+use crate::index::Index;
 use crate::txn::{Timestamp, Txn};
 use crate::value::Value;
 
@@ -83,7 +82,7 @@ impl State {
     /// of `qn`.
     fn constraint_index(&self, qn: &QualifiedName, name: &str, columns: Vec<usize>) -> IndexDesc {
         let method = self.constraint_method().to_owned();
-        IndexDesc { name: name.to_owned(), table: qn.clone(), columns, method, unique: true, options: Vec::new() }
+        IndexDesc { name: name.to_owned(), table: qn.clone(), columns, method, unique: true, options: Vec::new(), collations: Vec::new() }
     }
 
     /// The index `name` of a unique constraint on `columns` of `qn`, filled
@@ -94,11 +93,11 @@ impl State {
     /// Empty, of a temporary table.
     fn unique_index(&mut self, qn: &QualifiedName, name: &str, columns: &[usize], tx: Option<&Txn>) -> Result<Arc<dyn Index>> {
         let desc = self.base_table(qn)?;
-        let ix = self.constraint_index(qn, name, columns.to_vec());
+        let ix = self.with_key_collations(self.constraint_index(qn, name, columns.to_vec()), &desc)?;
         let method = Arc::clone(
             self.methods.get(self.constraint_method()).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] no constraint index method"))?,
         );
-        let types = desc.types(columns).unwrap_or_default();
+        let types = ix.key_types(&desc).unwrap_or_default();
         let (structure, built) = self.index_structure(&*method, (&ix, &desc), &types)?;
         // [DESIGN] A temporary table's own storage holds no row: each
         // session's instance makes its entries of its own rows (RULES.md
@@ -111,11 +110,11 @@ impl State {
                 let all: Vec<usize> = (0..desc.columns.len()).collect();
                 for read in Arc::clone(self.storage_of(qn)?).scan(tx.id, &all) {
                     let (id, row) = read?;
-                    let Some(key) = project(&row, columns).filter(|k| !k.iter().any(Value::is_null)) else { continue };
-                    structure.insert(Key(key), id)?;
+                    let Some(key) = ix.key_of(&row).filter(|k| !k.0.iter().any(Value::is_null)) else { continue };
+                    structure.insert(key, id)?;
                 }
             }
-            None if !built => self.fill_index(&*structure, qn, columns, Timestamp::MAX)?,
+            None if !built => self.fill_index(&*structure, &ix, Timestamp::MAX)?,
             None => {}
         }
         Ok(structure)

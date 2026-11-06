@@ -168,7 +168,8 @@ USAGE on each domain a column is of.
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |
-| 0A000 | -900 | A COLLATE or CHARACTER SET clause of another character set |
+| 0A000 | -900 | A CHARACTER SET clause of another character set |
+| 2A000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
 
 ## EXAMPLES
 
