@@ -135,6 +135,32 @@ struct Taken {
     further: Option<PageId>,
 }
 
+/// How many of `leaf`'s entries are within the bounds, found by their
+/// places, no entry copied, and its right neighbour, as `take`'s.
+fn tally(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Result<(usize, Option<PageId>)> {
+    if leaf.level != 0 {
+        return Err(corrupt("a leaf's neighbour is not a leaf"));
+    }
+    if leaf.deleted {
+        return Ok((0, leaf.right));
+    }
+    let start = match lower {
+        Bound::Unbounded => 0,
+        Bound::Included(b) => leaf.search(b)?.unwrap_or_else(|at| at),
+        Bound::Excluded(b) => leaf.search(b)?.map_or_else(|at| at, |at| at.saturating_add(1)),
+    };
+    let end = match upper {
+        Bound::Unbounded => leaf.len(),
+        Bound::Included(b) => leaf.search(b)?.map_or_else(|at| at, |at| at.saturating_add(1)),
+        Bound::Excluded(b) => leaf.search(b)?.unwrap_or_else(|at| at),
+    };
+    let past = |high: &[u8]| match upper {
+        Bound::Unbounded => true,
+        Bound::Included(b) | Bound::Excluded(b) => high < b.as_slice(),
+    };
+    Ok((end.saturating_sub(start), leaf.right.filter(|_| leaf.high.is_some_and(past))))
+}
+
 /// Takes what is wanted from `leaf`.
 fn take(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Result<Taken> {
     if leaf.level != 0 {
@@ -218,6 +244,38 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
         }
         self.ready = taken.found;
         Ok(())
+    }
+}
+
+impl<T: Deref<Target = BLinkTree>> Scan<T> {
+    /// How many entries a forward scan would give, none known past `most`,
+    /// read a leaf at a time as the scan is, no entry copied.
+    ///
+    /// # Errors
+    ///
+    /// As reading a leaf's.
+    pub fn counted(mut self, most: usize) -> Result<Option<usize>> {
+        let mut counted = 0_usize;
+        loop {
+            let tree = &*self.tree;
+            let (found, further) = match self.next {
+                Next::Done => return Ok(Some(counted)),
+                Next::Leaf(id) => tally(&Node::parse(&tree.pool.read(tree.file, id.0)?)?, &self.lower, &self.upper)?,
+                Next::Descend => {
+                    let target = match &self.lower {
+                        Bound::Included(key) | Bound::Excluded(key) => Target::Key(key),
+                        Bound::Unbounded => Target::First,
+                    };
+                    let mut path = Path { tallied: matches!(target, Target::Key(_)), ..Path::default() };
+                    tree.descend(target, 0, &mut path, |leaf| tally(leaf, &self.lower, &self.upper))?.1
+                }
+            };
+            counted = counted.saturating_add(found);
+            if counted > most {
+                return Ok(None);
+            }
+            self.next = further.map_or(Next::Done, Next::Leaf);
+        }
     }
 }
 

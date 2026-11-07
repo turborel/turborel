@@ -282,6 +282,33 @@ fn the_longest_entry_is_as_documented() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D30: a count of the entries within bounds,
+/// none copied, says what a forward scan gives, within a leaf, across
+/// leaves and past both ends, whichever bounds are given; past its most,
+/// it says none is known.
+#[test]
+fn a_count_says_what_a_scan_gives() {
+    let (tree, _scratch) = tree("counted");
+    fill(&tree, 5_000);
+    let (from, to) = (key(300), key(900));
+    let (from, to) = (from.as_slice(), to.as_slice());
+    let open = Bound::Unbounded::<&[u8]>;
+    let cases = [
+        (open, open),
+        (Bound::Included(from), open),
+        (open, Bound::Excluded(to)),
+        (Bound::Excluded(from), Bound::Included(to)),
+        (Bound::Included(from), Bound::Included(from)),
+        (Bound::Included(to), Bound::Excluded(from)),
+    ];
+    for (lower, upper) in cases {
+        let scanned = tree.scan(lower, upper, Direction::Forward).count();
+        assert_eq!(tree.scan(lower, upper, Direction::Forward).counted(usize::MAX).unwrap(), Some(scanned));
+    }
+    assert_eq!(tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).counted(4_999).unwrap(), None);
+    assert_eq!(tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).counted(5_000).unwrap(), Some(5_000));
+}
+
 /// Verifies: [DESIGN] RULES.md D35, a tree's tally: a scan from a key is
 /// a lookup, as a `get` is, and one from an end of the tree is not; its
 /// pages missed per lookup are known once as many lookups are counted as

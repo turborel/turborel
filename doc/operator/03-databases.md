@@ -144,7 +144,7 @@ acknowledges a record to the group, whatever LOG.DURABILITY says
 A checkpoint writes the changes since the last to the data file, so a
 recovery reads the log only from there. One is due once
 CHECKPOINT.AFTER_CHANGES row changes have been logged, 4,000,000 by
-default, or CHECKPOINT.AFTER_BYTES bytes written to the data file,
+default, or CHECKPOINT.AFTER_BYTES bytes held by the data file's side file,
 1 GiB; the database's checkpoint thread takes it, so no transaction
 waits for it. Each is told to the diagnostics, `checkpoint_taken`. One
 that fails leaves the changes since the last counted, so the next is due

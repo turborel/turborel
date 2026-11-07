@@ -17,9 +17,11 @@
 //! comparison rules, so a value not of the column's type finds exactly the
 //! keys it should. A search reads a leaf at a time as its entries are
 //! taken (`engine/tree/scan.rs`), forward, or backward for descending keys.
-//! An estimate counts the entries a probe selects up to
-//! `MOST_COUNTED`: past that, it is not cheap, and the planner estimates from
-//! the table's statistics instead.
+//! An estimate counts the entries a probe selects up to `MOST_COUNTED`:
+//! past that, it is not cheap, and the planner estimates from the table's
+//! statistics instead, as it does at once for every entry, which no count
+//! tells it more of. Counted, a range's entries are found by their places
+//! in each leaf, none copied, unless each key is to be checked.
 
 use std::ops::{Bound, Deref};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -420,6 +422,14 @@ impl Index for BLinkIndex {
     }
 
     fn estimate(&self, probe: &Probe) -> Option<usize> {
+        if matches!(probe, Probe::All) {
+            return None;
+        }
+        let range = self.range(probe);
+        if let Some(r) = range.as_ref().filter(|r| !r.checked) {
+            let scan = scan_of(&self.tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), Direction::Forward);
+            return scan.counted(MOST_COUNTED).ok().flatten();
+        }
         let mut counted = 0_usize;
         for entry in self.entries(&self.tree, probe, (false, Direction::Forward)) {
             entry.ok()?;

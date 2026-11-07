@@ -5,9 +5,10 @@
 //! reserved whole as its header declares it: a client that declares a
 //! long body and sends little of it holds little.
 
+use std::pin::Pin;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf};
+use tokio::io::{AsyncBufRead, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf};
 use turborel::error::{Result, SqlError};
 use turborel::value::types::TypeRegistry;
 use turborel_protocol::{Failure, HEADER, Reply, Request, broken};
@@ -56,11 +57,35 @@ impl Wire {
         Request::decode_with(kind, &body, &self.types)
     }
 
+    /// The next request, if it has come whole and `take` gives something
+    /// of it: a client's requests sent together, read without waiting.
+    /// One that `take` refuses, or that is malformed, stays to be received,
+    /// so its failure comes in its turn.
+    pub(super) fn arrived<T>(&mut self, take: impl FnOnce(Request) -> Option<T>) -> Option<T> {
+        let waiting = self.reader.buffer();
+        let head = <[u8; HEADER]>::try_from(waiting.get(..HEADER)?).ok()?;
+        let (kind, length) = turborel_protocol::header(head, self.max_body).ok()?;
+        let end = HEADER.checked_add(length)?;
+        let taken = take(Request::decode_with(kind, waiting.get(HEADER..end)?, &self.types).ok()?)?;
+        Pin::new(&mut self.reader).consume(end);
+        Some(taken)
+    }
+
     /// Writes `reply`, to be sent at the next flush.
     pub(super) async fn send(&mut self, reply: &Reply) -> Result<()> {
         self.out.clear();
         reply.encode(&mut self.out);
         self.writer.write_all(&self.out).await.map_err(|e| broken(format!("[DESIGN] cannot send: {e}")))
+    }
+
+    /// Sends `replies` at once, in one write if they fit one.
+    pub(super) async fn send_all(&mut self, replies: &[Reply]) -> Result<()> {
+        self.out.clear();
+        for reply in replies {
+            reply.encode(&mut self.out);
+        }
+        self.writer.write_all(&self.out).await.map_err(|e| broken(format!("[DESIGN] cannot send: {e}")))?;
+        self.flush().await
     }
 
     /// Sends what was written.

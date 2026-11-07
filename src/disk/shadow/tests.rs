@@ -277,5 +277,91 @@ fn held_writes_reach_the_file_at_the_commit() {
     assert_eq!(given_up, b"given up");
 }
 
+/// A side file of `PATH` holding a block of granule 0, then, past it,
+/// granule 2's: the bytes of the first block's content changed on `disk`,
+/// a block written over, torn by a crash, among valid blocks, once the
+/// last commit is the given one.
+fn tear_first_block(disk: &Arc<dyn FileSystem>, which: usize) {
+    let side = disk.open(&side_path(Path::new(PATH), which), OpenMode::ReadWrite).unwrap();
+    side.write_all_at(&[0xAB_u8; 64], crate::disk::block::HEADER_LEN + 128).unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D30, shadow files: a granule written again
+/// takes the block it had, so the side file holds it once, and reads and
+/// a commit see the newest; written after a cut, it takes a new block,
+/// and stays the file's.
+#[test]
+fn a_granule_written_again_takes_its_block() {
+    let disk = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+    file.write_all_at(&[1_u8; 100], 0).unwrap();
+    file.write_all_at(&[2_u8; 100], side::offset(1)).unwrap();
+    let once = shadows.pending_bytes();
+    for round in 3_u8..50 {
+        file.write_all_at(&[round; 100], 0).unwrap();
+    }
+    assert_eq!(shadows.pending_bytes(), once, "held once");
+    let mut back = [0_u8; 1];
+    file.read_exact_at(&mut back, 0).unwrap();
+    assert_eq!(back, [49]);
+    file.set_size(0).unwrap();
+    file.write_all_at(&[7_u8; 100], 0).unwrap();
+    assert!(shadows.pending_bytes() > once, "a cut forgot its block");
+    shadows.commit().unwrap();
+    assert_eq!(content(&*disk), [7_u8; 100]);
+}
+
+/// Verifies: [DESIGN] RULES.md D30, shadow files: a block a crash tore as
+/// it was written over, valid blocks after it, in a side file with no
+/// commit block, is no damage: the file opens as its last commit left it,
+/// the side file thrown away.
+#[test]
+fn a_block_torn_as_it_was_written_over_loses_the_uncommitted() {
+    let disk = disk();
+    {
+        let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+        let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+        file.write_all_at(b"kept", 0).unwrap();
+        shadows.commit().unwrap();
+        file.write_all_at(&[1_u8; 100], 0).unwrap();
+        file.write_all_at(&[2_u8; 100], side::offset(2)).unwrap();
+    }
+    tear_first_block(&disk, 1);
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    let file = shadows.open(Path::new(PATH), OpenMode::ReadWrite).unwrap();
+    assert_eq!(file.size().unwrap(), 4);
+    assert_eq!(content(&*disk), b"kept");
+    assert!(!disk.exists(&side_path(Path::new(PATH), 1)).unwrap(), "thrown away");
+}
+
+/// Verifies: [DESIGN] RULES.md D30, shadow files: a side file with a
+/// commit block was synced before it, the sync counted, so a block found
+/// invalid before that commit block is damage, though a sector of it is
+/// zeros, as an interrupted write leaves: refused with SQLCODE -916, the
+/// side file kept.
+#[test]
+fn a_block_damaged_before_a_commit_block_is_refused() {
+    let disk = disk();
+    {
+        let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+        let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+        shadows.commit().unwrap();
+        file.write_all_at(&[1_u8; 100], 0).unwrap();
+        file.write_all_at(&[2_u8; 100], side::offset(2)).unwrap();
+        shadows.seal().unwrap();
+        let shadow = Arc::clone(lock_builtin(&shadows.files).get(Path::new(PATH)).unwrap());
+        let sealed = read(&shadow.pending).unwrap().sealed.clone().unwrap();
+        let syncs = || sealed.side.blocks.as_ref().unwrap().counts().syncs;
+        let before = syncs();
+        crash_after_commit_block(&shadows, PATH, file::closing_ops);
+        assert_eq!(syncs(), before + 2, "synced before the commit block, and after");
+    }
+    tear_first_block(&disk, 1);
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    assert_eq!(shadows.open(Path::new(PATH), OpenMode::ReadWrite).err().map(|e| e.code), Some(Code::Corrupt));
+    assert!(disk.exists(&side_path(Path::new(PATH), 1)).unwrap(), "kept, for its operator");
+}
+
 // Files made and removed at commits: split for size (RULES.md R-SIZE-4).
 mod made;

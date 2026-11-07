@@ -36,13 +36,13 @@ pub(super) struct Pending {
 }
 
 impl Pending {
-    /// Makes `content` granule `number`'s newest, in memory if held, else
-    /// appended to the side file.
+    /// Makes `content` granule `number`'s newest: in memory if held, else
+    /// in the side file, over its block there if it has one (`Side::place`).
     fn put(&mut self, at: &At, number: u64, content: Vec<u8>) -> Result<()> {
         if self.holding {
             self.active.held.insert(number, content);
         } else {
-            let block = self.active.append(at, &Op::Granule(number, content))?;
+            let block = self.active.place(at, number, &Op::Granule(number, content))?;
             self.active.held.remove(&number);
             self.active.stale.remove(&number);
             self.active.granules.insert(number, block);
@@ -154,7 +154,7 @@ impl Shadow {
         read(&self.pending).is_ok_and(|p| p.sealed.is_none() && p.unchanged())
     }
 
-    /// The bytes appended to the side file written to.
+    /// The bytes of the side file written to.
     pub(super) fn pending_bytes(&self) -> u64 {
         read(&self.pending).map_or(0, |p| p.active.bytes())
     }
@@ -228,8 +228,10 @@ impl Shadow {
         Ok(())
     }
 
-    /// Ends the side file of `sealed` with `last` and a commit block,
-    /// synced: from then on the batch is the file's, after a crash too.
+    /// Ends the side file of `sealed` with `last`, synced, then a commit
+    /// block, synced: from then on the batch is the file's, after a crash
+    /// too. Synced first, a commit block found says every block before it
+    /// is whole, whichever were written over.
     pub(super) fn end_side(&self, sealed: &Sealed, last: &[Op]) -> Result<()> {
         let side = &sealed.side;
         let made: BlockFile;
@@ -239,9 +241,11 @@ impl Shadow {
             made = self.at.fresh_side(side.which)?;
             &made
         };
-        for op in last.iter().chain([&Op::Commit]) {
+        for op in last {
             blocks.append(&encode(op))?;
         }
+        blocks.sync(Durability::Full)?;
+        blocks.append(&encode(&Op::Commit))?;
         blocks.sync(Durability::Full)
     }
 

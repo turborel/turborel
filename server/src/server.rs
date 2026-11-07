@@ -255,6 +255,13 @@ impl Services {
         self.idle(self.bounded(IDLE_IN_TRANSACTION_TIMEOUT_MS, Instant::now(), work, waiting)).await
     }
 
+    /// What says whether the server still takes statements, to be asked
+    /// where nothing waits on it.
+    pub fn serving(&self) -> impl Fn() -> bool + Send + 'static + use<> {
+        let stop = self.0.stop.clone();
+        move || *stop.borrow() == Stage::Serving
+    }
+
     /// Done once the server stops.
     pub async fn stopping(&self) {
         let mut stop = self.0.stop.clone();

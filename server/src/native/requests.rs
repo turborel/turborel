@@ -1,6 +1,11 @@
 //! What a session's worker does with a request (RULES.md D45): its
 //! statements, prepared ones among them [ISO/IEC 9075:1992 §17], and their
-//! cursors, the replies sent through a bounded channel as they come.
+//! cursors. Its replies are gathered and given back with the session, so
+//! a small result takes one wake of the connection's task and one write;
+//! a batch's worth is sent ahead through a bounded channel. A commit or
+//! rollback sent with a statement runs with it on one worker, its reply
+//! with the statement's. Nothing else does: a statement's reply is never
+//! held back while another may wait on a client reading it.
 
 use std::collections::HashMap;
 use std::mem;
@@ -65,9 +70,37 @@ fn cursor_state(msg: &str) -> SqlError {
     SqlError::new(Code::Cursor, msg)
 }
 
-/// What a worker sends a request's replies to, and the bytes a batch of
-/// rows is.
-pub(super) type Sending<'a> = (&'a mpsc::Sender<Reply>, usize);
+/// A request's replies: those gathered, and where a batch's worth goes.
+pub(super) struct Outgoing<'a> {
+    sender: &'a mpsc::Sender<Vec<Reply>>,
+    /// The bytes a batch of rows is.
+    batch: usize,
+    gathered: Vec<Reply>,
+}
+
+impl<'a> Outgoing<'a> {
+    /// None gathered yet, batches of `batch` bytes sent to `sender`.
+    pub(super) fn new(sender: &'a mpsc::Sender<Vec<Reply>>, batch: usize) -> Outgoing<'a> {
+        Outgoing { sender, batch, gathered: Vec::new() }
+    }
+
+    /// The replies gathered and not sent ahead: the request's last.
+    pub(super) fn gathered(self) -> Vec<Reply> {
+        self.gathered
+    }
+
+    /// Sends what is gathered, ahead of the rest.
+    fn send(&mut self) -> std::result::Result<(), Cut> {
+        self.sender.blocking_send(mem::take(&mut self.gathered)).map_err(|_| Cut::Gone)
+    }
+
+    /// Gathers the rows of `rows`, if any.
+    fn rows(&mut self, rows: &mut Vec<Row>) {
+        if !rows.is_empty() {
+            self.gathered.push(Reply::Rows(mem::take(rows)));
+        }
+    }
+}
 
 impl Held {
     /// What `session` holds, as it begins.
@@ -75,12 +108,44 @@ impl Held {
         Held { session, statements: HashMap::new(), cursors: HashMap::new() }
     }
 
-    /// Does `work`, its replies sent to `sending`; within `max_statements`
+    /// Does `work`, then what `then` holds if the connection is there and
+    /// its check says the connection is still served, as receiving it would
+    /// have asked; their replies gathered in `out`, within `max_statements`
     /// prepared statements.
-    pub(super) fn handle(&mut self, work: Work, sending: Sending<'_>, max_statements: usize) {
-        let last = match self.done(work, sending, max_statements) {
+    pub(super) fn handle_then(
+        &mut self,
+        work: Work,
+        then: Option<(Work, impl FnOnce() -> bool)>,
+        out: &mut Outgoing<'_>,
+        max_statements: usize,
+    ) {
+        if self.handle(work, out, max_statements)
+            && let Some((next, still)) = then
+            && still()
+        {
+            self.handle(next, out, max_statements);
+        }
+    }
+
+    /// Whether `work` is only a commit or a rollback: what may run with the
+    /// statement before it (see the module's documentation).
+    pub(super) fn ends_transaction(&self, work: &Work) -> bool {
+        let ends =
+            |sql: &str| ["COMMIT", "COMMIT WORK", "ROLLBACK", "ROLLBACK WORK"].iter().any(|end| sql.trim().eq_ignore_ascii_case(end));
+        match work {
+            Work::Query(sql) => ends(sql),
+            Work::Execute(n, values, _) => values.is_empty() && self.statements.get(n).is_some_and(|p| ends(p.sql())),
+            Work::Prepare(..) | Work::Fetch(..) | Work::Close(_) | Work::Deallocate(_) => false,
+        }
+    }
+
+    /// Does `work`, its replies gathered in `out`; within `max_statements`
+    /// prepared statements. Whether the connection is still there.
+    fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> bool {
+        let last = match self.done(work, out, max_statements) {
             Ok(Some(last)) => last,
-            Ok(None) | Err(Cut::Gone) => return,
+            Ok(None) => return true,
+            Err(Cut::Gone) => return false,
             Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
         };
         // [ISO/IEC 9075:1992 §15.1 GR1, §15.3 GR6] whether the transaction
@@ -93,25 +158,25 @@ impl Held {
         } else {
             last
         };
-        // A client gone hears nothing.
-        let _ = sending.0.blocking_send(last);
+        out.gathered.push(last);
+        true
     }
 
     /// Does `work`: the last reply, none if its rows ended it.
-    fn done(&mut self, work: Work, sending: Sending<'_>, max_statements: usize) -> std::result::Result<Option<Reply>, Cut> {
+    fn done(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> std::result::Result<Option<Reply>, Cut> {
         let failed = Cut::Failed;
         match work {
             Work::Query(sql) => match self.session.direct(&sql).map_err(failed)? {
                 Direct::Done(completion) => Ok(Some(Reply::Complete(completion.into()))),
                 Direct::Rows(cursor) => {
                     let mut open = Open { cursor, next: None, warning: self.session.warning() };
-                    describe(&open.cursor, sending)?;
-                    send_rows(&mut open, 0, sending).map(|ended| Some(ended.reply()))
+                    describe(&open.cursor, out);
+                    send_rows(&mut open, 0, out).map(|ended| Some(ended.reply()))
                 }
             },
             Work::Prepare(n, sql) => self.prepare(n, &sql, max_statements).map(Some).map_err(failed),
-            Work::Execute(n, values, rows) => self.execute(n, &values, (rows, sending)),
-            Work::Fetch(n, rows) => self.fetch(n, (rows, sending)),
+            Work::Execute(n, values, rows) => self.execute(n, &values, (rows, out)),
+            Work::Fetch(n, rows) => self.fetch(n, (rows, out)),
             Work::Close(n) => {
                 // [§17.16 GR1, §13.4 GR1]
                 let closed = self.cursors.remove(&n).ok_or_else(|| cursor_state("[ISO/IEC 9075:1992 §13.4 GR1] the cursor is not open"));
@@ -151,7 +216,7 @@ impl Held {
 
     /// [§17.10, §17.14] Executes statement `n` with `values`; a query's
     /// cursor opened, at most `rows` of it sent.
-    fn execute(&mut self, n: u32, values: &[Value], (rows, sending): (u32, Sending<'_>)) -> std::result::Result<Option<Reply>, Cut> {
+    fn execute(&mut self, n: u32, values: &[Value], (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
         let prepared = self.statements.get(&n).ok_or_else(|| Cut::Failed(no_statement(n)))?;
         if !prepared.is_query() {
             return self.session.execute_prepared(prepared, values).map(|c| Some(Reply::Complete(c.into()))).map_err(Cut::Failed);
@@ -161,23 +226,23 @@ impl Held {
             return Err(Cut::Failed(cursor_state("[ISO/IEC 9075:1992 §13.2 GR1] the statement's cursor is open")));
         }
         let cursor = self.session.open_prepared(prepared, values).map_err(Cut::Failed)?;
-        describe(&cursor, sending)?;
+        describe(&cursor, out);
         let warning = self.session.warning();
-        self.sent(n, Open { cursor, next: None, warning }, (rows, sending))
+        self.sent(n, Open { cursor, next: None, warning }, (rows, out))
     }
 
     /// [§17.15] At most `rows` more rows of statement `n`'s cursor: SQLSTATE
     /// 24000 if it is not open [§13.3 GR1].
-    fn fetch(&mut self, n: u32, (rows, sending): (u32, Sending<'_>)) -> std::result::Result<Option<Reply>, Cut> {
+    fn fetch(&mut self, n: u32, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
         let open =
             self.cursors.remove(&n).ok_or_else(|| Cut::Failed(cursor_state("[ISO/IEC 9075:1992 §13.3 GR1] the cursor is not open")))?;
-        self.sent(n, open, (rows, sending))
+        self.sent(n, open, (rows, out))
     }
 
     /// Sends at most `rows` rows of `open`, statement `n`'s cursor: kept
     /// open if it has more, closed once all are sent.
-    fn sent(&mut self, n: u32, mut open: Open, (rows, sending): (u32, Sending<'_>)) -> std::result::Result<Option<Reply>, Cut> {
-        let ended = send_rows(&mut open, rows, sending)?;
+    fn sent(&mut self, n: u32, mut open: Open, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
+        let ended = send_rows(&mut open, rows, out)?;
         if let Ended::More = ended {
             self.cursors.insert(n, open);
         }
@@ -206,14 +271,14 @@ impl Ended {
     }
 }
 
-/// Sends the columns of `cursor`'s rows.
-fn describe(cursor: &Cursor, (sender, _): Sending<'_>) -> std::result::Result<(), Cut> {
-    sender.blocking_send(Reply::Description(cursor.columns.iter().map(Column::from).collect())).map_err(|_| Cut::Gone)
+/// Gathers the columns of `cursor`'s rows.
+fn describe(cursor: &Cursor, out: &mut Outgoing<'_>) {
+    out.gathered.push(Reply::Description(cursor.columns.iter().map(Column::from).collect()));
 }
 
-/// Sends at most `limit` rows of `open`, all if 0, in batches of about the
-/// bytes of `sending`; reads one row past them, to tell if it has more.
-fn send_rows(open: &mut Open, limit: u32, (sender, batch): Sending<'_>) -> std::result::Result<Ended, Cut> {
+/// Gathers at most `limit` rows of `open`, all if 0, sent ahead in batches
+/// of about `out`'s bytes; reads one row past them, to tell if it has more.
+fn send_rows(open: &mut Open, limit: u32, out: &mut Outgoing<'_>) -> std::result::Result<Ended, Cut> {
     let limit = if limit == 0 { usize::MAX } else { usize::try_from(limit).unwrap_or(usize::MAX) };
     let (mut sent, mut rows, mut bytes): (usize, Vec<Row>, usize) = (0, Vec::new(), 0);
     loop {
@@ -224,25 +289,81 @@ fn send_rows(open: &mut Open, limit: u32, (sender, batch): Sending<'_>) -> std::
         let Some(row) = row else { break };
         if sent == limit {
             open.next = Some(row);
-            flush(&mut rows, sender)?;
+            out.rows(&mut rows);
             return Ok(Ended::More);
         }
         sent = sent.saturating_add(1);
         bytes = bytes.saturating_add(row_size(&row));
         rows.push(row);
-        if bytes >= batch {
-            flush(&mut rows, sender)?;
+        if bytes >= out.batch {
+            out.rows(&mut rows);
+            out.send()?;
             bytes = 0;
         }
     }
-    flush(&mut rows, sender)?;
+    out.rows(&mut rows);
     Ok(Ended::Done(sent > 0, open.warning))
 }
 
-/// Sends the rows of `rows`, if any.
-fn flush(rows: &mut Vec<Row>, sender: &mpsc::Sender<Reply>) -> std::result::Result<(), Cut> {
-    if rows.is_empty() {
-        return Ok(());
+#[cfg(test)]
+mod tests {
+    use turborel::db::Database;
+
+    use super::*;
+
+    /// A session of user X, of a database whose table X.T is empty.
+    fn held() -> Held {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER NOT NULL)").unwrap();
+        Held::new(db.session("X"))
     }
-    sender.blocking_send(Reply::Rows(mem::take(rows))).map_err(|_| Cut::Gone)
+
+    /// Runs `work` then a commit, if `still`, in `held`, with a channel of
+    /// room for what is sent ahead: the replies gathered.
+    fn run_then_commit(held: &mut Held, work: Work, still: bool) -> Vec<Reply> {
+        let (sender, _receiver) = mpsc::channel(4);
+        let mut out = Outgoing::new(&sender, 1 << 20);
+        held.handle_then(work, Some((Work::Query("COMMIT".into()), || still)), &mut out, 8);
+        out.gathered()
+    }
+
+    /// Verifies: [DESIGN] RULES.md D45: a commit sent with a statement runs
+    /// with it, both replies gathered, while the connection is still
+    /// served; if it is not, an operator having ended it or the server
+    /// stopping, the commit does not run: the transaction stays open, to
+    /// be rolled back, as the commit would not have been received.
+    #[test]
+    fn a_commit_sent_with_a_statement_runs_only_while_still_served() {
+        let insert = || Work::Query("INSERT INTO T VALUES (1)".into());
+        let mut gone = held();
+        assert_eq!(run_then_commit(&mut gone, insert(), false).len(), 1, "the statement's alone");
+        assert!(gone.session.transaction().is_some(), "not committed");
+        let mut served = held();
+        assert_eq!(run_then_commit(&mut served, insert(), true).len(), 2, "both, together");
+        assert!(served.session.transaction().is_none(), "committed");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D45: only a commit or a rollback, by
+    /// direct text or a prepared statement given no values, runs with the
+    /// statement before it; any other statement's reply is sent before
+    /// the next runs, so no reply waits on what may wait on its client.
+    #[test]
+    fn only_a_commit_or_a_rollback_runs_with_a_statement() {
+        let mut held = held();
+        let query = |sql: &str| Work::Query(sql.into());
+        for sql in ["COMMIT", " commit work ", "ROLLBACK", "rollback work"] {
+            assert!(held.ends_transaction(&query(sql)), "{sql}");
+        }
+        for sql in ["SELECT K FROM T", "INSERT INTO T VALUES (1)", "ROLLBACK TO SAVEPOINT S"] {
+            assert!(!held.ends_transaction(&query(sql)), "{sql}");
+        }
+        let (sender, _receiver) = mpsc::channel(4);
+        let mut out = Outgoing::new(&sender, 1 << 20);
+        held.handle(Work::Prepare(1, "COMMIT".into()), &mut out, 8);
+        held.handle(Work::Prepare(2, "SELECT K FROM T".into()), &mut out, 8);
+        assert!(held.ends_transaction(&Work::Execute(1, Vec::new(), 0)));
+        assert!(!held.ends_transaction(&Work::Execute(2, Vec::new(), 0)));
+        assert!(!held.ends_transaction(&Work::Execute(9, Vec::new(), 0)), "no such statement");
+        assert!(!held.ends_transaction(&Work::Fetch(1, 0)));
+    }
 }

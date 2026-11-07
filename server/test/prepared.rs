@@ -7,7 +7,7 @@ use turborel::db::Database;
 use turborel::value::{Decimal, Value};
 use turborel_client::connection::Outcome;
 use turborel_protocol::{Completed, Reply, Request};
-use turborel_server::settings::MAX_STATEMENTS;
+use turborel_server::settings::{BATCH_BYTES, MAX_STATEMENTS};
 
 use crate::common::{done, rows, start, state};
 
@@ -99,6 +99,50 @@ fn prepared_statements_are_refused_saying_why() {
     raw.send(&Request::Prepare { statement: 1, sql: "SELECT 1 FROM T".into() });
     assert!(matches!(raw.receive(), Some(Reply::Error(f)) if f.sqlstate == "24000"), "prepared again, its cursor open [§17.6 GR6]");
     assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["3"], "the connection goes on");
+}
+
+/// Verifies: [DESIGN] RULES.md D45: requests sent together are each
+/// answered in order, what one of them fails leaving the rest to run; a
+/// result of more than a batch among them comes whole, and in its place;
+/// a commit sent with a statement is answered after it, and it holds; a
+/// Terminate sent with them is taken after them.
+#[test]
+fn requests_sent_together_are_each_answered_in_their_turn() {
+    let db = database(40);
+    let server = start(&db, &[(BATCH_BYTES, 1)]);
+    let mut raw = server.raw();
+    raw.hello("X");
+    let mut bytes = Vec::new();
+    Request::Query("SELECT K FROM T".into()).encode(&mut bytes);
+    Request::Query("SELECT NOTHING FROM T".into()).encode(&mut bytes);
+    for _ in 0..40 {
+        Request::Query("SELECT COUNT(*) FROM T".into()).encode(&mut bytes);
+    }
+    Request::Query("INSERT INTO T VALUES (41)".into()).encode(&mut bytes);
+    Request::Query("COMMIT".into()).encode(&mut bytes);
+    Request::Terminate.encode(&mut bytes);
+    raw.send_bytes(&bytes);
+    assert!(matches!(raw.receive(), Some(Reply::Description(_))));
+    let mut read = 0;
+    let completed = loop {
+        match raw.receive() {
+            Some(Reply::Rows(batch)) => read += batch.len(),
+            other => break other,
+        }
+    };
+    assert_eq!(read, 40, "all of it, a batch at a time");
+    assert!(matches!(completed, Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
+    assert!(matches!(raw.receive(), Some(Reply::Error(_))), "the failure, in its turn");
+    for _ in 0..40 {
+        assert!(matches!(raw.receive(), Some(Reply::Description(_))));
+        assert!(matches!(raw.receive(), Some(Reply::Rows(r)) if r[0][0].to_string() == "40"));
+        assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
+    }
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))), "the commit");
+    assert!(raw.receive().is_none(), "closed");
+    let mut c = server.connect("X");
+    assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["41"]);
 }
 
 /// Verifies: [DESIGN] RULES.md D45: requests sent before the last is

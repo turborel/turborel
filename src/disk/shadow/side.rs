@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::GRANULE;
 use crate::bytes::{Put, Reader};
-use crate::disk::block::{BlockFile, BlockId, BlockOptions};
+use crate::disk::block::{BlockFile, BlockId, BlockOptions, damaged};
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
@@ -164,7 +164,7 @@ impl Side {
         self.granules.is_empty() && self.held.is_empty()
     }
 
-    /// The bytes appended to it.
+    /// The bytes of its blocks.
     pub(super) fn bytes(&self) -> u64 {
         self.blocks.as_ref().map_or(0, |b| b.end().0.saturating_sub(b.first().0))
     }
@@ -178,6 +178,16 @@ impl Side {
         let appended = blocks.append(&encode(op));
         self.blocks = Some(blocks);
         appended
+    }
+
+    /// Puts `op`, granule `number`'s content, over the granule's block if
+    /// it has one, so a page written back again and again takes one block;
+    /// else appends it.
+    pub(super) fn place(&mut self, at: &At, number: u64, op: &Op) -> Result<BlockId> {
+        match (self.granules.get(&number), self.blocks.as_ref()) {
+            (Some(&block), Some(blocks)) => blocks.overwrite(block, &encode(op)).map(|()| block),
+            _ => self.append(at, op),
+        }
     }
 
     /// The content of granule `number` as it holds it, if it does.
@@ -210,15 +220,25 @@ impl Side {
 
 /// Recovers the file at `at` from its side files: one ending in a commit
 /// block is copied into it, the file made if it is not there, or removed
-/// if the batch removed it; the side files are then thrown away.
+/// if the batch removed it; the side files are then thrown away. A crash
+/// can tear a block written over, so invalid bytes before valid blocks are
+/// no damage in a side file with no commit block. One with a commit block
+/// was synced whole before it, so there they are damage, whatever they
+/// look like, and it is refused (SQLCODE -916).
 pub(super) fn recover(at: &At) -> Result<()> {
     for which in 0..SIDES.len() {
         let side = side_path(&at.path, which);
         if !at.fs.exists(&side)? {
             continue;
         }
-        let (blocks, _) = BlockFile::open(&*at.fs, &side, &[Arc::clone(&at.hash)], &[], BlockOptions::default())?;
+        let formats = (&[Arc::clone(&at.hash)][..], &[][..]);
+        let (blocks, found) = BlockFile::open_uncut(&*at.fs, &side, formats, BlockOptions::default(), BlockId(0))?;
         let (ops, committed) = read_ops(&blocks)?;
+        if let Some(next) = found.follows
+            && (committed || ends_committed(&blocks)?)
+        {
+            return Err(damaged(&side, &found, next));
+        }
         drop(blocks);
         if committed {
             apply(at, ops)?;
@@ -226,6 +246,11 @@ pub(super) fn recover(at: &At) -> Result<()> {
         at.fs.remove(&side)?;
     }
     Ok(())
+}
+
+/// Whether the block that ends `blocks` is a commit block.
+fn ends_committed(blocks: &BlockFile) -> Result<bool> {
+    Ok(blocks.last_block()?.is_some_and(|last| matches!(decode(&last), Ok(Op::Commit))))
 }
 
 /// Copies the operations of a committed side file into the file at `at`:

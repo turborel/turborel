@@ -94,7 +94,7 @@ Each in a sentence:
 
 - **CATALOG.COMPACT_AFTER_IMAGES**: The images the catalog file holds after which the next is written, alone, to the other file.
 - **CATALOG.NAME**: The name of the catalog the schemata are in, as the Information Schema gives it [ISO/IEC 9075:1992 §21.2.2].
-- **CHECKPOINT.AFTER_BYTES**: The bytes written to the data file since the last checkpoint after which the end of a transaction takes one.
+- **CHECKPOINT.AFTER_BYTES**: The bytes of the data file's side file, each page once however often it was written, after which the end of a transaction takes a checkpoint.
 - **CHECKPOINT.AFTER_CHANGES**: The row changes logged after which the end of a transaction takes a checkpoint.
 - **CHECKPOINT.OVERDUE_FACTOR**: How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.
 - **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.

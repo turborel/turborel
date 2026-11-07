@@ -6,11 +6,12 @@
 //!
 //! What is written goes to a side file beside it (its name and `.shadow0`
 //! or `.shadow1`), a block file of checksummed blocks (`disk/block.rs`),
-//! never to the file itself: each write appends, for every granule of
-//! `GRANULE` bytes it touches, the granule's new content, and reads see the
-//! newest. A side file is made at the first block appended to it. Nothing
-//! about it needs syncing until its commit, as what is not committed is
-//! thrown away.
+//! never to the file itself: each write puts, for every granule of
+//! `GRANULE` bytes it touches, the granule's new content over its block
+//! there, or appends one if it has none, and reads see the newest, so a
+//! side file holds a granule once however often it is written. A side
+//! file is made at the first block appended to it. Nothing about it needs
+//! syncing until its commit, as what is not committed is thrown away.
 //!
 //! * **Hold** (`ShadowFileSystem::hold`): until the next seal, writes are
 //!   kept in memory, not appended to the side file, so what a checkpoint
@@ -20,8 +21,9 @@
 //!   the other side file from then on. Quick: it writes nothing. A file
 //!   with nothing to commit seals nothing.
 //! * **Commit** (`commit_sealed`): the granules the sealed batch held in
-//!   memory, its limit, its size and a commit block appended to its side
-//!   file, which is synced; then the file, made if it is not there, cut to
+//!   memory, its limit and its size appended to its side file, which is
+//!   synced; a commit block appended, and synced; then the file, made if
+//!   it is not there, cut to
 //!   the limit, every granule of the batch copied into it, its size set,
 //!   the file synced; then the batch forgotten. Writers go on meanwhile,
 //!   into the other side file. A crash before the commit block is durable
@@ -33,7 +35,8 @@
 //!   block and a commit block, so a crash before leaves it as the last
 //!   commit did. Directories are made at once, and never removed.
 //! * **Opening**: a side file ending in a commit block is copied into the
-//!   file, or removes it; the others are thrown away. Only a sealed side
+//!   file, or removes it; the others are thrown away, a block a crash tore
+//!   as it was written over among them. Only a sealed side
 //!   file is ever committed, and a batch is committed before the next is
 //!   sealed, so at most one has a commit block. A file is recovered as it
 //!   is first opened, or, for every file under a directory, by `recover`.
@@ -112,8 +115,8 @@ impl ShadowFileSystem {
         Ok(shadow)
     }
 
-    /// The bytes appended to the side files the files known write to, since
-    /// they were last sealed; writes held in memory are not counted.
+    /// The bytes of the side files the files known write to, since they
+    /// were last sealed; writes held in memory are not counted.
     pub fn pending_bytes(&self) -> u64 {
         self.known().iter().map(|s| s.pending_bytes()).sum()
     }

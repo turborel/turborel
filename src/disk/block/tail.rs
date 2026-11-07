@@ -19,7 +19,9 @@
 //! past the end of the file. Valid blocks after invalid bytes showing no
 //! interrupted write are damage: blocks once whole changed, which cutting
 //! would lose with what follows them, so the file is refused (SQLCODE
-//! -916), unchanged.
+//! -916), unchanged. A side file (`disk/shadow.rs`) has blocks written
+//! over, which this does not expect, so it judges `follows` by its commit
+//! block instead.
 
 use std::path::Path;
 
@@ -135,6 +137,28 @@ impl BlockFile {
         }
         self.file.set_size(recovery.end.0)?;
         self.file.sync(Durability::Full)
+    }
+
+    /// The payload of the valid block that ends the file, if one does,
+    /// whatever lies before it: found stepping back from the end, past any
+    /// invalid bytes `valid_end` stopped at.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if the file cannot be read.
+    pub(crate) fn last_block(&self) -> Result<Option<Vec<u8>>> {
+        let size = self.file.size()?;
+        let start = match self.before(BlockId(size)) {
+            Ok(Some(start)) => start,
+            Ok(None) => return Ok(None),
+            Err(e) if e.code == Code::Corrupt => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let mut payload = Vec::new();
+        Ok(match self.block_at(start.0, size, &mut payload)? {
+            Found::Block(_) => Some(self.pipeline.decode(0, &payload)?.into_owned()),
+            Found::Invalid(_) => None,
+        })
     }
 
     /// The offset of the first valid block after `after`, before `size`.

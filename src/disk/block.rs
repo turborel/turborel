@@ -1,7 +1,7 @@
-//! \[DESIGN\] The block manager (RULES.md D30): one append-only file of
-//! checksummed blocks, written sequentially, addressed by byte offset, and
-//! read at random or by a cursor that moves forwards and backwards. It
-//! knows nothing of what the blocks hold or of any component above it.
+//! \[DESIGN\] The block manager (RULES.md D30): one file of checksummed
+//! blocks, written sequentially, addressed by byte offset, and read at
+//! random or by a cursor that moves forwards and backwards. It knows
+//! nothing of what the blocks hold or of any component above it.
 //!
 //! An append is a write: it reserves the bytes after the last block with
 //! one atomic step, writes the block there with one positional write, and
@@ -38,6 +38,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
+pub(crate) use tail::damaged;
 
 use super::encoding::{Encoding, Pipeline};
 use super::io::{DiskFile, Durability, FileSystem, begin_file};
@@ -456,6 +457,34 @@ impl BlockFile {
         add(&self.counters.appended_bytes, payload.len());
         add(&self.counters.stored_bytes, stored.len());
         Ok(BlockId(start))
+    }
+
+    /// Writes `payload`, as long as the block's, over block `id`. A crash
+    /// can tear it among valid blocks, which an append cannot, so this is
+    /// for a file thrown away unless synced whole (`disk/shadow.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if the block cannot be read or written, which leaves
+    /// the file refusing appends; -916 if its length is not the payload's.
+    pub fn overwrite(&self, id: BlockId, payload: &[u8]) -> Result<()> {
+        let stored = self.pipeline.encode(0, payload)?;
+        let frame = format::frame(&*self.hash, &stored, self.options.max_block)?;
+        if self.failed.load(Ordering::SeqCst) {
+            return Err(self.broken());
+        }
+        let mut length = [0; format::LEN_BYTES];
+        self.file.read_exact_at(&mut length, id.0)?;
+        if frame.get(..format::LEN_BYTES) != Some(&length[..]) {
+            let msg = format!("[DESIGN] the block at offset {} of {} is of another length", id.0, self.path.display());
+            return Err(SqlError::new(Code::Corrupt, msg));
+        }
+        let written = self.file.write_all_at(&frame, id.0);
+        if written.is_err() {
+            self.failed.store(true, Ordering::SeqCst);
+            self.wake();
+        }
+        written
     }
 
     /// Makes the appended blocks durable as `durability` says.

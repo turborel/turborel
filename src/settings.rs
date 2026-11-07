@@ -16,6 +16,7 @@ mod kind;
 mod started;
 mod words;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::{Code, Result, SqlError};
@@ -226,6 +227,9 @@ pub(crate) fn accepted(name: &str, kind: &Kind, value: &Value) -> Result<Value> 
 #[derive(Debug, Clone)]
 pub struct Settings {
     definitions: Arc<Vec<Definition>>,
+    /// Each setting's place, by its name: what reads a setting often, as
+    /// a server for each request, reads it by name.
+    places: Arc<HashMap<String, usize>>,
     /// The database's value of each setting, at its key's place; none for
     /// its default.
     values: Vec<Option<Value>>,
@@ -241,15 +245,15 @@ impl Default for Settings {
     fn default() -> Self {
         let definitions = builtin();
         let values = vec![None; definitions.len()];
-        Settings { definitions: Arc::new(definitions), values, pending: Vec::new(), started: Arc::default() }
+        let places = definitions.iter().enumerate().map(|(at, d)| (d.name.clone(), at)).collect();
+        Settings { definitions: Arc::new(definitions), places: Arc::new(places), values, pending: Vec::new(), started: Arc::default() }
     }
 }
 
 impl Settings {
     /// The key of the setting named `name`, in any case.
     pub fn key(&self, name: &str) -> Option<Key> {
-        let name = canonical(name);
-        self.definitions.iter().position(|d| d.name == name).map(Key)
+        self.places.get(name).or_else(|| self.places.get(&canonical(name))).copied().map(Key)
     }
 
     /// The key of `name`, which must be declared.
@@ -291,9 +295,11 @@ impl Settings {
         definition.default = accepted(&definition.name, &definition.kind, &definition.default)?;
         let earlier = self.pending.iter().position(|(n, _)| *n == definition.name).map(|at| self.pending.remove(at).1);
         let value = earlier.map(|v| accepted(&definition.name, &definition.kind, &v)).transpose()?;
+        let key = self.values.len();
+        Arc::make_mut(&mut self.places).insert(definition.name.clone(), key);
         Arc::make_mut(&mut self.definitions).push(definition);
         self.values.push(value);
-        Ok(Key(self.values.len().saturating_sub(1)))
+        Ok(Key(key))
     }
 
     /// The database's value of `key`, or its default.

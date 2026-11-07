@@ -6,17 +6,19 @@
 
 mod collations;
 mod reads;
+mod shadow;
 mod vr;
 
 use super::{Mutation, Package};
 pub use collations::COLLATIONS;
 pub use reads::READS;
+pub use shadow::SHADOW;
 pub use vr::VR;
 
 /// Every mutation, in the order they run: the core's, then its reads',
-/// then replication's.
+/// collations' and shadow files', then replication's.
 pub fn all() -> Vec<Mutation> {
-    MUTATIONS.iter().chain(&READS).chain(&COLLATIONS).chain(&VR).copied().collect()
+    MUTATIONS.iter().chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&VR).copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints,

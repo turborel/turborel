@@ -208,7 +208,7 @@ fn priced(
     let share = c.guess / cost_of(c.probes.len());
     let (mut est, mut found) = (0.0_f64, 0.0_f64);
     for probe in &c.probes {
-        let by_keys = || distinct().filter(|_| whole_key(probe, width)).map(|d| all / d.max(1.0_f64));
+        let by_keys = || whole_key(probe, width).then(distinct).flatten().map(|d| all / d.max(1.0_f64));
         est += index.estimate(probe).map(cost_of).or_else(by_keys).unwrap_or(share);
         found += index.probe_pages(probe).map_or(levels, |pages| descent * pages) + missed;
     }

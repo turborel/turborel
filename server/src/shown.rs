@@ -133,6 +133,12 @@ impl Present {
         }
     }
 
+    /// What says whether an operator ended the connection, to be read
+    /// where nothing waits on it.
+    pub fn watching(&self) -> watch::Receiver<bool> {
+        self.ended.clone()
+    }
+
     /// Done once an operator ends the connection (`Operator::end`).
     pub async fn ended(&self) {
         let mut ended = self.ended.clone();

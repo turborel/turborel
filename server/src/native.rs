@@ -30,7 +30,7 @@ mod wire;
 use std::future::Future;
 use std::sync::Arc;
 
-use requests::{Held, Work};
+use requests::{Held, Outgoing, Work};
 use tokio::sync::mpsc;
 use turborel::db::Session;
 use turborel::error::{Code, Result, SqlError, SqlState};
@@ -333,8 +333,10 @@ async fn run(wire: &mut Wire, (services, present): (&Services, &Present), admitt
             Err(e) => break Err(e),
         };
         let Some(lent) = held.take() else { break Err(broken("[DESIGN] the session is gone")) };
+        let ending = wire.arrived(|request| work_of(request).ok().flatten().filter(|next| lent.ends_transaction(next)));
+        let then = ending.map(|next| (next, still_served(services, present, user.as_deref())));
         present.running(true);
-        let exchanged = exchange(wire, (services, present), lent, work).await;
+        let exchanged = exchange(wire, (services, present), lent, (work, then)).await;
         present.running(false);
         match exchanged {
             Ok(back) => held = Some(back),
@@ -370,26 +372,39 @@ async fn end(services: &Services, held: Held) -> Result<()> {
         .await
 }
 
-/// Does `work` with `lent` on a worker, sending its replies as they come,
-/// until the operator ends the connection: what it holds, given back.
-async fn exchange(wire: &mut Wire, (services, present): (&Services, &Present), lent: Held, work: Work) -> Result<Held> {
+/// What says whether the connection is still served, as `next` and
+/// `next_work` ask before each request: asked again on the worker, before
+/// the request sent with the one it runs.
+fn still_served(services: &Services, present: &Present, user: Option<&str>) -> impl FnOnce() -> bool + Send + 'static {
+    let (serving, ended, db, user) = (services.serving(), present.watching(), services.database().clone(), user.map(str::to_owned));
+    move || serving() && !*ended.borrow() && user.is_none_or(|name| db.is_user(&name).unwrap_or(false))
+}
+
+/// Does `work` with `lent` on a worker, and `then` after it if its check
+/// says to, sending their replies as they come, until the operator ends
+/// the connection: what it holds, given back.
+async fn exchange(
+    wire: &mut Wire,
+    (services, present): (&Services, &Present),
+    lent: Held,
+    (work, then): (Work, Option<(Work, impl FnOnce() -> bool + Send + 'static)>),
+) -> Result<Held> {
     let (sender, mut receiver) = mpsc::channel(IN_FLIGHT);
     let db = services.database();
     let (batch, max_statements) = (settings::count(db, settings::BATCH_BYTES), settings::count(db, settings::MAX_STATEMENTS));
     let mut held = lent;
     let worked = services.run(move || {
-        held.handle(work, (&sender, batch), max_statements);
-        held
+        let mut out = Outgoing::new(&sender, batch);
+        held.handle_then(work, then, &mut out, max_statements);
+        (held, out.gathered())
     });
     let running = stopped(worked, present);
+    let writing = &mut *wire;
     let forwarding = async move {
-        while let Some(reply) = receiver.recv().await {
+        while let Some(replies) = receiver.recv().await {
             // A client that stops taking what it is sent holds a worker:
             // it is given SERVER.IDLE_TIMEOUT_MS, as one sending nothing is.
-            services.idle(wire.send(&reply)).await?;
-            if receiver.is_empty() {
-                services.idle(wire.flush()).await?;
-            }
+            services.idle(writing.send_all(&replies)).await?;
         }
         Ok::<(), SqlError>(())
     };
@@ -402,8 +417,13 @@ async fn exchange(wire: &mut Wire, (services, present): (&Services, &Present), l
         }
     };
     let (back, forwarded) = tokio::join!(running, forward);
-    let back = back?;
-    if let Err(e) = forwarded {
+    let (back, last) = back?;
+    let sent = match forwarded {
+        Ok(()) if last.is_empty() => Ok(()),
+        Ok(()) => services.idle(wire.send_all(&last)).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = sent {
         // As `run`'s: the connection is lost.
         end(services, back).await?;
         return Err(e);

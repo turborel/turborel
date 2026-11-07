@@ -523,7 +523,7 @@ fn durability() -> [Definition; 3] {
         defined(
             ("CHECKPOINT.AFTER_BYTES", at_least(1), count(CHECKPOINT_BYTES)),
             DATABASE,
-            "The bytes written to the data file since the last checkpoint after which the end of a transaction takes one.",
+            "The bytes of the data file's side file, each page once however often it was written, after which the end of a transaction takes a checkpoint.",
         ),
         defined(
             ("CATALOG.COMPACT_AFTER_IMAGES", Kind::Integer { min: 1, max: 1_000_000 }, count(COMPACT_AFTER)),
