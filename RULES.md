@@ -1123,8 +1123,11 @@ read back from a socket in the server's tests on each platform.
 I/O that waits must not hold a thread, and a statement that waits must not
 hold an I/O thread. Tokio's tasks do I/O only. Statements run on at most
 SERVER.WORKERS blocking workers, and authentication on at most
-SERVER.MAX_LOGINS other threads. Rows reach the connection through a bounded
-channel. Each connection runs one request at a time.
+SERVER.MAX_LOGINS other threads. A worker writes the replies of the request
+it runs, a batch of SERVER.BATCH_BYTES at a time, each within
+SERVER.IDLE_TIMEOUT_MS, so a slow client holds its worker and a batch of
+memory, no more, while the connection's task reads the next request. Each
+connection runs one request at a time.
 
 Time limits bound every client, and memory is taken as bytes arrive, never
 as a header declares (`SERVER.*_TIMEOUT_MS`, `native::LOGIN_MESSAGE_BYTES`).

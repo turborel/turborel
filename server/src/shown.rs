@@ -63,7 +63,9 @@ struct Entry {
 /// \[DESIGN\] A connection's row of CONNECTIONS, while it is served: what
 /// serves it says who logged in and whether a statement runs. The row
 /// goes with its `Listed`, which the connection's stream holds, so before
-/// its client can see the connection closed (`holding.rs`).
+/// its client can see the connection closed (`holding.rs`). Cloned for
+/// the worker running a statement, to say so.
+#[derive(Clone)]
 pub struct Present {
     shown: Arc<Shown>,
     id: u64,

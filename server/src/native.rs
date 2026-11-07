@@ -3,12 +3,14 @@
 //! its requests in its session, one at a time, in order; or, its first and
 //! only message a Cancel, cancels the statement another connection runs.
 //!
-//! A request runs on a worker, which owns the session, its prepared
-//! statements and their open cursors while it runs (`native/requests.rs`).
-//! Its replies go from the worker to the connection's task through a
-//! bounded channel, so a client reading slowly holds the worker but never
-//! more than a few batches of memory; a client gone closes the channel,
-//! and the worker stops fetching. The session ends on a worker too: as
+//! A request runs on a worker, lent the session, its prepared statements
+//! and their open cursors, and the writer of the connection's replies,
+//! while it runs (`native/requests.rs`, `native/lent.rs`). It writes its
+//! replies itself, a batch at a time, each within SERVER.IDLE_TIMEOUT_MS,
+//! so a client reading slowly holds the worker but never more than a batch
+//! of memory, and a client gone fails a write, so the worker stops
+//! fetching. The connection's task reads the next request meanwhile, and
+//! waits for the loan back only to run it. The session ends on a worker too: as
 //! SESSION.COMMIT_AT_END says once the client terminates it, a commit that fails
 //! sent as the client's error before the connection closes; rolled back
 //! if the connection ends otherwise, lost or failed, cut by the server
@@ -24,19 +26,20 @@
 //! transaction is active. A session of a user is ended at its next request
 //! once the user is dropped (RULES.md D43).
 
+mod lent;
 mod requests;
 mod wire;
 
 use std::future::Future;
 use std::sync::Arc;
 
-use requests::{Held, Outgoing, Work};
-use tokio::sync::mpsc;
+use lent::{Lent, Loan, Sending, Slot};
+use requests::{Held, Work};
 use turborel::db::Session;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::value::types::TypeRegistry;
 use turborel_protocol::{Reply, Request, VERSION, broken};
-use wire::Wire;
+use wire::{Wire, Writer};
 
 use crate::auth::{Authenticator, Exchange, Peer, Step};
 use crate::server::{Connection, Protocol, Registered, Services, Serving};
@@ -44,13 +47,6 @@ use crate::settings;
 use crate::shown::Present;
 use crate::told;
 use crate::transport::Transport;
-
-/// \[DESIGN\] The batches of replies in flight on a connection, from the
-/// worker running its statement to the connection sending them: those a
-/// worker makes before it waits for the connection to take one. Fixed,
-/// not a setting (RULES.md D36): the shape of the channel made for each
-/// statement; what they hold is SERVER.BATCH_BYTES each, the setting.
-const IN_FLIGHT: usize = 4;
 
 /// \[DESIGN\] How often a statement of a connection its operator ended is
 /// cancelled again until it stops: a cancel made before it began does
@@ -83,8 +79,8 @@ impl Protocol for Native {
 
     fn refuse(&self, transport: Box<dyn Transport>, why: SqlError) -> Serving {
         Box::pin(async move {
-            let mut wire = Wire::new(transport, LOGIN_MESSAGE_BYTES, TypeRegistry::default());
-            wire.close_refusing(&why, REFUSED_WITHIN).await;
+            let (mut wire, mut writer) = Wire::new(transport, LOGIN_MESSAGE_BYTES, TypeRegistry::default());
+            wire::close_refusing(&mut wire, &mut writer, &why, REFUSED_WITHIN).await;
         })
     }
 }
@@ -137,21 +133,21 @@ async fn serve(connection: Connection) {
     // A client's values of types beyond the standard read as the
     // database's (RULES.md D53).
     let types = services.database().types().unwrap_or_default();
-    let mut wire = Wire::new(transport, max_body.min(LOGIN_MESSAGE_BYTES), types);
-    let ended = match services.login(arrived, welcome(&mut wire, (&peer, &present), &services)).await {
+    let (mut wire, mut writer) = Wire::new(transport, max_body.min(LOGIN_MESSAGE_BYTES), types);
+    let (mut writer, ended) = match services.login(arrived, welcome(&mut wire, &mut writer, (&peer, &present), &services)).await {
         Ok(Some(admitted)) => {
             wire.set_max_body(max_body);
-            run(&mut wire, (&services, &present), admitted).await
+            run(&mut wire, writer, (&services, &present), admitted).await
         }
-        Ok(None) => Ok(()),
-        Err(e) => Err(e),
+        Ok(None) => (writer, Ok(())),
+        Err(e) => (writer, Err(e)),
     };
     // Told within SERVER.IDLE_TIMEOUT_MS, as any reply: a client that takes
     // nothing would hold the connection open.
     let closing = async {
         match ended {
-            Ok(()) => wire.close().await,
-            Err(e) => wire.close_with(&e).await,
+            Ok(()) => writer.close().await,
+            Err(e) => writer.close_with(&e).await,
         }
         Ok(())
     };
@@ -170,7 +166,12 @@ fn refused(msg: String) -> SqlError {
 
 /// The client's first request: Hello, its session once authenticated, with
 /// its cancel key registered; or a Cancel, done here, and nothing more.
-async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: &Services) -> Result<Option<Admitted>> {
+async fn welcome(
+    wire: &mut Wire,
+    writer: &mut Writer,
+    (peer, present): (&Peer, &Present),
+    services: &Services,
+) -> Result<Option<Admitted>> {
     match next(wire, services, present).await? {
         Request::Cancel(key) => {
             services.cancel(&key);
@@ -178,7 +179,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
         }
         // No capability is defined in version 1, so none is taken.
         Request::Hello { version, user, mechanism, initial, capabilities: _ } => {
-            authenticate(wire, (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
+            authenticate((wire, writer), (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
         }
         Request::Answer(_)
         | Request::Query(_)
@@ -198,7 +199,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
 /// (`logins.rs`), so a Hello refused before any authenticator runs is
 /// slowed, counted and told as a proof refused is.
 async fn authenticate(
-    wire: &mut Wire,
+    (wire, writer): (&mut Wire, &mut Writer),
     (peer, present): (&Peer, &Present),
     services: &Services,
     hello: (u32, String, String, Vec<u8>),
@@ -215,14 +216,14 @@ async fn authenticate(
         }
     };
     let exchange = authenticator.begin(&user, peer);
-    let authorization = exchanged(wire, (peer, present), services, (exchange, initial)).await?;
+    let authorization = exchanged((wire, writer), (peer, present), services, (exchange, initial)).await?;
     // A user's session lasts while the user does (RULES.md D43).
     let member = db.is_user(&authorization)?.then(|| authorization.clone());
     let session = db.session(&authorization);
     let key = services.register_cancel(session.canceller())?;
     present.stoppable(session.canceller());
     present.authenticated(&authorization);
-    wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
+    writer.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
     Ok(Admitted { session, key, user: member })
 }
 
@@ -248,7 +249,7 @@ fn admitted(services: &Services, version: u32, user: &str, mechanism: &str) -> R
 /// turn after failed logins (`authenticate`), its failure counted
 /// (`logins.rs`).
 async fn exchanged(
-    wire: &mut Wire,
+    (wire, writer): (&mut Wire, &mut Writer),
     (peer, present): (&Peer, &Present),
     services: &Services,
     (begun, initial): (Box<dyn Exchange>, Vec<u8>),
@@ -264,7 +265,7 @@ async fn exchanged(
             .await?;
         exchange = taken;
         match step {
-            Step::Challenge(challenge) => wire.send_now(&Reply::Challenge(challenge)).await?,
+            Step::Challenge(challenge) => writer.send_now(&Reply::Challenge(challenge)).await?,
             Step::Accept(authorization) => {
                 logins.accepted(peer);
                 return Ok(authorization);
@@ -297,17 +298,12 @@ fn work_of(request: Request) -> Result<Option<Work>> {
 }
 
 /// The work of the client's next request, none for Terminate: waited for
-/// SERVER.IDLE_TIMEOUT_MS, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too if
-/// `in_transaction`. Refused (SQLSTATE 28000) if the session is `user`'s,
-/// and the user has been dropped since it logged in.
-async fn next_work(
-    wire: &mut Wire,
-    (services, present): (&Services, &Present),
-    in_transaction: bool,
-    user: Option<&str>,
-) -> Result<Option<Work>> {
-    let waiting = next(wire, services, present);
-    let request = if in_transaction { services.idle_in_transaction(waiting).await } else { services.idle(waiting).await };
+/// SERVER.IDLE_TIMEOUT_MS, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too while
+/// the session's transaction is active, as `slot` says (`awaited`).
+/// Refused (SQLSTATE 28000) if the session is `user`'s, and the user has
+/// been dropped since it logged in.
+async fn next_work(wire: &mut Wire, (services, present): (&Services, &Present), slot: &Slot, user: Option<&str>) -> Result<Option<Work>> {
+    let request = awaited(services, slot, next(wire, services, present)).await;
     let work = work_of(request?)?;
     let Some(name) = user else { return Ok(work) };
     if services.database().is_user(name)? {
@@ -316,41 +312,77 @@ async fn next_work(
     Err(refused(format!("[DESIGN] the user {name} was dropped: its connections end")))
 }
 
+/// `work`, done within SERVER.IDLE_TIMEOUT_MS, and within
+/// SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too while the session's transaction
+/// is active, as `slot` last saw it. The worker answering the request
+/// before may begin or end the transaction meanwhile: the limit is chosen
+/// again when it does, `work` going on.
+async fn awaited<T>(services: &Services, slot: &Slot, work: impl Future<Output = Result<T>>) -> Result<T> {
+    tokio::pin!(work);
+    loop {
+        // Enabled before the transaction is looked at, so a change between
+        // the two is not missed.
+        let changed = slot.changed();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        let bounded = async { if slot.active() { services.idle_in_transaction(&mut work).await } else { services.idle(&mut work).await } };
+        tokio::select! {
+            biased;
+            done = bounded => return done,
+            () = changed => {}
+        }
+    }
+}
+
+/// SERVER.BATCH_BYTES and SERVER.MAX_STATEMENTS, as they are now.
+fn limits(services: &Services) -> (usize, usize) {
+    let db = services.database();
+    (settings::count(db, settings::BATCH_BYTES), settings::count(db, settings::MAX_STATEMENTS))
+}
+
 /// Runs the client's requests in `admitted`'s session until it terminates,
 /// the connection fails or the server stops; then ends the session on a
 /// worker: as SESSION.COMMIT_AT_END says if the client terminated it, its failure
 /// returned to be sent before the connection closes; else rolled back
-/// [ISO/IEC 9075:1992 §20.1 GR2a]. Shown running while a request is.
-async fn run(wire: &mut Wire, (services, present): (&Services, &Present), admitted: Admitted) -> Result<()> {
+/// [ISO/IEC 9075:1992 §20.1 GR2a]. Each request runs on a worker lent the
+/// session and `writer` (`native/lent.rs`), shown running meanwhile; the
+/// writer comes back with the outcome, for the connection to close with.
+async fn run(wire: &mut Wire, writer: Writer, (services, present): (&Services, &Present), admitted: Admitted) -> (Writer, Result<()>) {
     // The key cancels the session's statements while it lives.
     let Admitted { session, key: _key, user } = admitted;
-    let mut held = Some(Held::new(session));
+    let slot = Slot::new(Held::new(session), writer);
+    let sending = Sending::new(services, present);
+    let mut back = None;
     let ended = loop {
-        let in_transaction = held.as_ref().is_some_and(|h| h.session.transaction().is_some());
-        let work = match next_work(wire, (services, present), in_transaction, user.as_deref()).await {
+        let work = match next_work(wire, (services, present), &slot, user.as_deref()).await {
             Ok(Some(work)) => work,
             Ok(None) => break Ok(()),
             Err(e) => break Err(e),
         };
-        let Some(lent) = held.take() else { break Err(broken("[DESIGN] the session is gone")) };
-        let ending = wire.arrived(|request| work_of(request).ok().flatten().filter(|next| lent.ends_transaction(next)));
+        // Given back once the request before is answered: at once, unless
+        // the client sent this one with it. Until then, an operator ending
+        // the connection cancels what runs.
+        let mut lent = stopped(slot.take(), present).await;
+        if let Some(failed) = lent.failed.take() {
+            back = Some(lent);
+            break Err(failed);
+        }
+        let ending = wire.arrived(|request| work_of(request).ok().flatten().filter(|next| lent.held.ends_transaction(next)));
         let then = ending.map(|next| (next, still_served(services, present, user.as_deref())));
-        present.running(true);
-        let exchanged = exchange(wire, (services, present), lent, (work, then)).await;
-        present.running(false);
-        match exchanged {
-            Ok(back) => held = Some(back),
-            Err(e) => break Err(e),
-        }
+        let (loan, sending, limits) = (Loan::new(&slot, lent), sending.clone(), limits(services));
+        // Not waited for: the loan comes back once the replies are written.
+        drop(services.spawn(move || loan.run((work, then), &sending, limits)).await);
     };
-    let Some(back) = held else { return ended };
-    match ended {
-        Ok(()) => terminated(services, back).await,
-        Err(e) => {
-            end(services, back).await?;
-            Err(e)
-        }
-    }
+    let Lent { held, writer: returned, failed } = match back {
+        Some(lent) => lent,
+        None => stopped(slot.take(), present).await,
+    };
+    // A write that failed lost the connection, whatever came after.
+    let ended = match failed.map_or(ended, Err) {
+        Ok(()) => terminated(services, held).await,
+        Err(e) => end(services, held).await.and(Err(e)),
+    };
+    (returned, ended)
 }
 
 /// Ends `held`'s session on a worker as SESSION.COMMIT_AT_END says, its client
@@ -378,55 +410,4 @@ async fn end(services: &Services, held: Held) -> Result<()> {
 fn still_served(services: &Services, present: &Present, user: Option<&str>) -> impl FnOnce() -> bool + Send + 'static {
     let (serving, ended, db, user) = (services.serving(), present.watching(), services.database().clone(), user.map(str::to_owned));
     move || serving() && !*ended.borrow() && user.is_none_or(|name| db.is_user(&name).unwrap_or(false))
-}
-
-/// Does `work` with `lent` on a worker, and `then` after it if its check
-/// says to, sending their replies as they come, until the operator ends
-/// the connection: what it holds, given back.
-async fn exchange(
-    wire: &mut Wire,
-    (services, present): (&Services, &Present),
-    lent: Held,
-    (work, then): (Work, Option<(Work, impl FnOnce() -> bool + Send + 'static)>),
-) -> Result<Held> {
-    let (sender, mut receiver) = mpsc::channel(IN_FLIGHT);
-    let db = services.database();
-    let (batch, max_statements) = (settings::count(db, settings::BATCH_BYTES), settings::count(db, settings::MAX_STATEMENTS));
-    let mut held = lent;
-    let worked = services.run(move || {
-        let mut out = Outgoing::new(&sender, batch);
-        held.handle_then(work, then, &mut out, max_statements);
-        (held, out.gathered())
-    });
-    let running = stopped(worked, present);
-    let writing = &mut *wire;
-    let forwarding = async move {
-        while let Some(replies) = receiver.recv().await {
-            // A client that stops taking what it is sent holds a worker:
-            // it is given SERVER.IDLE_TIMEOUT_MS, as one sending nothing is.
-            services.idle(writing.send_all(&replies)).await?;
-        }
-        Ok::<(), SqlError>(())
-    };
-    // Ended, the replies are let go, so a worker sending them stops: what
-    // it ran is cancelled (`Operator::end`).
-    let forward = async {
-        tokio::select! {
-            forwarded = forwarding => forwarded,
-            () = present.ended() => Err(ended()),
-        }
-    };
-    let (back, forwarded) = tokio::join!(running, forward);
-    let (back, last) = back?;
-    let sent = match forwarded {
-        Ok(()) if last.is_empty() => Ok(()),
-        Ok(()) => services.idle(wire.send_all(&last)).await,
-        Err(e) => Err(e),
-    };
-    if let Err(e) = sent {
-        // As `run`'s: the connection is lost.
-        end(services, back).await?;
-        return Err(e);
-    }
-    Ok(back)
 }

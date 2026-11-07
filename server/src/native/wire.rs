@@ -1,5 +1,7 @@
 //! A connection's messages, framed: requests read, replies written and
-//! flushed.
+//! flushed. The reader stays with the connection's task; the writer is
+//! lent with the session to the worker running a request, so the replies
+//! are written by the thread that made them (`native/lent.rs`).
 //!
 //! A request's body is read into memory as its bytes arrive, never
 //! reserved whole as its header declares it: a client that declares a
@@ -19,22 +21,26 @@ use crate::transport::Transport;
 /// it, the buffer grows as they do.
 const RESERVED: usize = 64 * 1024;
 
-/// A connection's messages.
+/// A connection's requests.
 pub(super) struct Wire {
     reader: BufReader<ReadHalf<Box<dyn Transport>>>,
-    writer: BufWriter<WriteHalf<Box<dyn Transport>>>,
     max_body: u32,
-    out: Vec<u8>,
     /// The types beyond the standard a request's values may be of.
     types: TypeRegistry,
 }
 
+/// A connection's replies.
+pub(super) struct Writer {
+    writer: BufWriter<WriteHalf<Box<dyn Transport>>>,
+    out: Vec<u8>,
+}
+
 impl Wire {
-    /// The messages of `transport`, taking requests of at most `max_body`
-    /// bytes.
-    pub(super) fn new(transport: Box<dyn Transport>, max_body: u32, types: TypeRegistry) -> Wire {
+    /// The messages of `transport`: its requests, of at most `max_body`
+    /// bytes, and its replies.
+    pub(super) fn new(transport: Box<dyn Transport>, max_body: u32, types: TypeRegistry) -> (Wire, Writer) {
         let (reader, writer) = tokio::io::split(transport);
-        Wire { reader: BufReader::new(reader), writer: BufWriter::new(writer), max_body, out: Vec::new(), types }
+        (Wire { reader: BufReader::new(reader), max_body, types }, Writer { writer: BufWriter::new(writer), out: Vec::new() })
     }
 
     /// Takes requests of at most `max_body` bytes from now on.
@@ -71,6 +77,21 @@ impl Wire {
         Some(taken)
     }
 
+    /// Takes what the client sends until it closes, or `within` runs out.
+    async fn drained(&mut self, within: Duration) {
+        let mut sink = [0_u8; 1024];
+        let drained = async {
+            while let Ok(n) = self.reader.read(&mut sink).await {
+                if n == 0 {
+                    break;
+                }
+            }
+        };
+        let _ = tokio::time::timeout(within, drained).await;
+    }
+}
+
+impl Writer {
     /// Writes `reply`, to be sent at the next flush.
     pub(super) async fn send(&mut self, reply: &Reply) -> Result<()> {
         self.out.clear();
@@ -110,25 +131,15 @@ impl Wire {
         let _ = self.send_now(&Reply::Error(Failure::from(why))).await;
         self.close().await;
     }
+}
 
-    /// Tells the client of `why`, closes its side, and takes what the
-    /// client sends until it closes too, or `within` runs out: a connection
-    /// closed with a message unread is reset, and a reset loses what was
-    /// sent before it on Windows, the refusal with it; taken, the close is
-    /// clean, and the client reads why. A client that has read its
-    /// refusal closes at once, so this waits on none but one that neither
-    /// sends nor closes.
-    pub(super) async fn close_refusing(&mut self, why: &SqlError, within: Duration) {
-        let _ = self.send_now(&Reply::Error(Failure::from(why))).await;
-        self.close().await;
-        let mut sink = [0_u8; 1024];
-        let drained = async {
-            while let Ok(n) = self.reader.read(&mut sink).await {
-                if n == 0 {
-                    break;
-                }
-            }
-        };
-        let _ = tokio::time::timeout(within, drained).await;
-    }
+/// Tells the client of `why`, closes its side, and takes what the client
+/// sends until it closes too, or `within` runs out: a connection closed
+/// with a message unread is reset, and a reset loses what was sent before
+/// it on Windows, the refusal with it; taken, the close is clean, and the
+/// client reads why. A client that has read its refusal closes at once,
+/// so this waits on none but one that neither sends nor closes.
+pub(super) async fn close_refusing(wire: &mut Wire, writer: &mut Writer, why: &SqlError, within: Duration) {
+    writer.close_with(why).await;
+    wire.drained(within).await;
 }

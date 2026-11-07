@@ -354,6 +354,10 @@ pub trait Catalog: Send + Sync {
     fn indexes(&self, table: &QualifiedName) -> Vec<&IndexDesc>;
     /// Every table, in a stable order, so a `Database` can give each its storage.
     fn tables(&self) -> Vec<&TableDesc>;
+    /// Every temporary table, in no fixed order, so a session can stand
+    /// its own instances in for them at each statement without the
+    /// ordering `tables` does (`db/temporary.rs`).
+    fn temporary_tables(&self) -> Vec<&TableDesc>;
     /// Record the views of a `<schema>` [X3.135-1986 §6.5].
     fn add_views(&mut self, views: Vec<ViewDesc>);
     /// The view with this name, if any.
@@ -477,6 +481,9 @@ impl Catalog for MemoryCatalog {
         let mut tables: Vec<&TableDesc> = self.tables.values().collect();
         tables.sort_by_key(|t| t.name.to_string());
         tables
+    }
+    fn temporary_tables(&self) -> Vec<&TableDesc> {
+        self.tables.values().filter(|t| t.temporary.is_some()).collect()
     }
     fn add_views(&mut self, views: Vec<ViewDesc>) {
         for v in views {

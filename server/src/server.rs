@@ -95,7 +95,7 @@ pub type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// authenticates it through the services' authenticators, each check on
 /// a login's thread (`Services::logins`) within SERVER.LOGIN_TIMEOUT_MS of
 /// `Connection::arrived` (`Services::login`), runs each statement on a
-/// worker (`Services::run`), and ends when the client goes, the server
+/// worker (`Services::run`, `Services::spawn`), and ends when the client goes, the server
 /// stops (`Services::stopping`) or its operator ends it
 /// (`Present::ended`), its session ended on a worker. `refuse` tells the client why it is refused, and closes.
 pub trait Protocol: Send + Sync {
@@ -186,15 +186,21 @@ impl Services {
     ///
     /// A connection failure if the worker failed, which is a defect.
     pub async fn run<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> Result<T> {
+        self.spawn(work).await.await.map_err(|_| broken("[DESIGN] a worker failed"))
+    }
+
+    /// `work` on a worker, once fewer statements run than SERVER.WORKERS
+    /// says: counted waiting until then, and busy while it runs. Its handle
+    /// may be dropped, as a request's is, its replies the worker's to write.
+    pub async fn spawn<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> tokio::task::JoinHandle<T> {
         let waiting = Counted::of(&self.0.shown, |s| &s.waiting);
         let permit = self.0.workers.take(|| count(&self.0.db, WORKERS)).await;
         drop(waiting);
         let busy = Counted::of(&self.0.shown, |s| &s.busy);
-        let ran = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let _held = (permit, busy);
             work()
-        });
-        ran.await.map_err(|_| broken("[DESIGN] a worker failed"))
+        })
     }
 
     /// What checks logins, on threads apart from the workers, and slows

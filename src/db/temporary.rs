@@ -73,7 +73,7 @@ impl Session {
     /// it is now (`Session::instance_place`).
     pub(super) fn with_temporaries(&self, published: Arc<State>) -> Arc<State> {
         let st = self.with_declared(published);
-        let temporary: Vec<TableDesc> = st.catalog.tables().into_iter().filter(|t| t.temporary.is_some()).cloned().collect();
+        let temporary: Vec<TableDesc> = st.catalog.temporary_tables().into_iter().cloned().collect();
         if temporary.is_empty() {
             lock_builtin(&self.temporaries.made).clear();
             return st;

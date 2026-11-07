@@ -3,7 +3,7 @@
 //! operator's tools tell them from the database's own
 //! (`turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,
 //! `turborel-read-ahead`).
-//! Its I/O threads are tokio's default, one for each processor; its
+//! Its I/O threads are one for every two processors (`runtime`); its
 //! blocking pool, where statements run, may grow to MAX_WORKERS,
 //! MOST_LOGINS for the checks of logins, and a few spare, but is made only
 //! as they need it, and no more than SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once

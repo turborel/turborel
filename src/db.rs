@@ -456,6 +456,7 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
+        let wrote = ending.as_ref().is_some_and(|tx| tx.wrote());
         if let Some(tx) = &ending {
             tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
         }
@@ -471,13 +472,14 @@ impl Session {
             self.db.hold_in_doubt(tx);
         }
         self.temporaries_ended(st, id);
-        // The transaction has ended: a checkpoint, maintenance, a fold of
-        // kept totals, or a sync of the log its commit did not wait for,
-        // may come due.
-        self.db.checkpoint_if_due();
+        // The transaction has ended. The garbage collected as it did may leave maintenance due; one that wrote
+        // may leave a checkpoint, a fold of kept totals, or a sync of the log its commit did not wait for, due.
         self.db.maintain_if_due();
-        self.db.fold_if_due();
-        self.db.sync_log_if_due();
+        if wrote {
+            self.db.checkpoint_if_due();
+            self.db.fold_if_due();
+            self.db.sync_log_if_due();
+        }
         ended
     }
 

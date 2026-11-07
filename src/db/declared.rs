@@ -161,7 +161,7 @@ impl State {
     /// tables, as the Information Schema shows them [ISO/IEC 9075:1992
     /// §13.11 GR5]; none if they have none.
     pub(crate) fn without_declared(&self) -> Option<State> {
-        if !self.catalog.tables().iter().any(|t| t.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared)) {
+        if !self.catalog.temporary_tables().iter().any(|t| t.temporary.is_some_and(|t| t.kind == TemporaryKind::Declared)) {
             return None;
         }
         let mut catalog = self.catalog.duplicate();

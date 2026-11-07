@@ -488,6 +488,12 @@ impl Txn {
         self.state()?.undo.push(entry)
     }
 
+    /// Whether it has written a table or definitions, so its end may
+    /// leave a checkpoint, a fold of kept totals or a sync of the log due.
+    pub(crate) fn wrote(&self) -> bool {
+        lock_builtin(&self.state).wrote
+    }
+
     /// Marks where the statement now starting begins, so that it alone can be
     /// undone if it fails [X3.135-1986 §7.3 GR3b i]. Reading at a snapshot
     /// for each statement, it takes a new one if `fresh` says so: when its

@@ -1,16 +1,15 @@
 //! What a session's worker does with a request (RULES.md D45): its
 //! statements, prepared ones among them [ISO/IEC 9075:1992 §17], and their
-//! cursors. Its replies are gathered and given back with the session, so
-//! a small result takes one wake of the connection's task and one write;
-//! a batch's worth is sent ahead through a bounded channel. A commit or
-//! rollback sent with a statement runs with it on one worker, its reply
-//! with the statement's. Nothing else does: a statement's reply is never
-//! held back while another may wait on a client reading it.
+//! cursors. Its replies are gathered, and written a batch's worth at a
+//! time, the rest with the last (`Outgoing`), so a small result takes one
+//! write. A commit or rollback sent with a statement runs with it on one
+//! worker, its reply with the statement's. Nothing else does: a
+//! statement's reply is never held back while another may wait on a
+//! client reading it.
 
 use std::collections::HashMap;
 use std::mem;
 
-use tokio::sync::mpsc;
 use turborel::db::{Completion, Cursor, Direct, Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::storage::Row;
@@ -53,8 +52,9 @@ pub(super) struct Held {
 
 /// Why rows stopped before their end.
 enum Cut {
-    /// The connection is gone: nothing more is sent.
-    Gone,
+    /// The connection is gone, a write having failed so: nothing more is
+    /// sent.
+    Gone(SqlError),
     /// Fetching failed.
     Failed(SqlError),
 }
@@ -70,28 +70,36 @@ fn cursor_state(msg: &str) -> SqlError {
     SqlError::new(Code::Cursor, msg)
 }
 
-/// A request's replies: those gathered, and where a batch's worth goes.
+/// A request's replies: those gathered, and what a batch's worth is sent
+/// through, ahead of the rest.
 pub(super) struct Outgoing<'a> {
-    sender: &'a mpsc::Sender<Vec<Reply>>,
+    sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>,
     /// The bytes a batch of rows is.
     batch: usize,
     gathered: Vec<Reply>,
 }
 
 impl<'a> Outgoing<'a> {
-    /// None gathered yet, batches of `batch` bytes sent to `sender`.
-    pub(super) fn new(sender: &'a mpsc::Sender<Vec<Reply>>, batch: usize) -> Outgoing<'a> {
-        Outgoing { sender, batch, gathered: Vec::new() }
+    /// None gathered yet, batches of `batch` bytes sent through `sink`.
+    pub(super) fn new(sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>, batch: usize) -> Outgoing<'a> {
+        Outgoing { sink, batch, gathered: Vec::new() }
     }
 
-    /// The replies gathered and not sent ahead: the request's last.
-    pub(super) fn gathered(self) -> Vec<Reply> {
-        self.gathered
+    /// Sends the replies gathered and not sent ahead: the request's last.
+    ///
+    /// # Errors
+    ///
+    /// The sink's: the connection is gone.
+    pub(super) fn finish(self) -> Result<()> {
+        if self.gathered.is_empty() {
+            return Ok(());
+        }
+        (self.sink)(self.gathered)
     }
 
     /// Sends what is gathered, ahead of the rest.
     fn send(&mut self) -> std::result::Result<(), Cut> {
-        self.sender.blocking_send(mem::take(&mut self.gathered)).map_err(|_| Cut::Gone)
+        (self.sink)(mem::take(&mut self.gathered)).map_err(Cut::Gone)
     }
 
     /// Gathers the rows of `rows`, if any.
@@ -112,19 +120,24 @@ impl Held {
     /// its check says the connection is still served, as receiving it would
     /// have asked; their replies gathered in `out`, within `max_statements`
     /// prepared statements.
+    ///
+    /// # Errors
+    ///
+    /// A write of replies failed: the connection is gone.
     pub(super) fn handle_then(
         &mut self,
         work: Work,
         then: Option<(Work, impl FnOnce() -> bool)>,
         out: &mut Outgoing<'_>,
         max_statements: usize,
-    ) {
-        if self.handle(work, out, max_statements)
-            && let Some((next, still)) = then
+    ) -> Result<()> {
+        self.handle(work, out, max_statements)?;
+        if let Some((next, still)) = then
             && still()
         {
-            self.handle(next, out, max_statements);
+            self.handle(next, out, max_statements)?;
         }
+        Ok(())
     }
 
     /// Whether `work` is only a commit or a rollback: what may run with the
@@ -140,12 +153,16 @@ impl Held {
     }
 
     /// Does `work`, its replies gathered in `out`; within `max_statements`
-    /// prepared statements. Whether the connection is still there.
-    fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> bool {
+    /// prepared statements.
+    ///
+    /// # Errors
+    ///
+    /// A write of replies failed: the connection is gone.
+    fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> Result<()> {
         let last = match self.done(work, out, max_statements) {
             Ok(Some(last)) => last,
-            Ok(None) => return true,
-            Err(Cut::Gone) => return false,
+            Ok(None) => return Ok(()),
+            Err(Cut::Gone(e)) => return Err(e),
             Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
         };
         // [ISO/IEC 9075:1992 §15.1 GR1, §15.3 GR6] whether the transaction
@@ -159,7 +176,7 @@ impl Held {
             last
         };
         out.gathered.push(last);
-        true
+        Ok(())
     }
 
     /// Does `work`: the last reply, none if its rows ended it.
@@ -318,13 +335,13 @@ mod tests {
         Held::new(db.session("X"))
     }
 
-    /// Runs `work` then a commit, if `still`, in `held`, with a channel of
-    /// room for what is sent ahead: the replies gathered.
+    /// Runs `work` then a commit, if `still`, in `held`, with batches too
+    /// large for anything to be sent ahead: the replies gathered.
     fn run_then_commit(held: &mut Held, work: Work, still: bool) -> Vec<Reply> {
-        let (sender, _receiver) = mpsc::channel(4);
-        let mut out = Outgoing::new(&sender, 1 << 20);
-        held.handle_then(work, Some((Work::Query("COMMIT".into()), || still)), &mut out, 8);
-        out.gathered()
+        let mut sink = |_: Vec<Reply>| Ok(());
+        let mut out = Outgoing::new(&mut sink, 1 << 20);
+        held.handle_then(work, Some((Work::Query("COMMIT".into()), || still)), &mut out, 8).unwrap();
+        out.gathered
     }
 
     /// Verifies: [DESIGN] RULES.md D45: a commit sent with a statement runs
@@ -357,10 +374,10 @@ mod tests {
         for sql in ["SELECT K FROM T", "INSERT INTO T VALUES (1)", "ROLLBACK TO SAVEPOINT S"] {
             assert!(!held.ends_transaction(&query(sql)), "{sql}");
         }
-        let (sender, _receiver) = mpsc::channel(4);
-        let mut out = Outgoing::new(&sender, 1 << 20);
-        held.handle(Work::Prepare(1, "COMMIT".into()), &mut out, 8);
-        held.handle(Work::Prepare(2, "SELECT K FROM T".into()), &mut out, 8);
+        let mut sink = |_: Vec<Reply>| Ok(());
+        let mut out = Outgoing::new(&mut sink, 1 << 20);
+        held.handle(Work::Prepare(1, "COMMIT".into()), &mut out, 8).unwrap();
+        held.handle(Work::Prepare(2, "SELECT K FROM T".into()), &mut out, 8).unwrap();
         assert!(held.ends_transaction(&Work::Execute(1, Vec::new(), 0)));
         assert!(!held.ends_transaction(&Work::Execute(2, Vec::new(), 0)));
         assert!(!held.ends_transaction(&Work::Execute(9, Vec::new(), 0)), "no such statement");
