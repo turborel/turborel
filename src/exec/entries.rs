@@ -5,13 +5,80 @@
 use std::sync::Arc;
 
 use super::held::HeldRows;
-use super::{Found, Runner, asked, broken, eval_cond, fetch, probe_index};
+use super::{Found, Runner, asked, broken, eval_cond, probe_index};
+use crate::catalog::KeyShape;
 use crate::db::State;
 use crate::error::Result;
+use crate::index::Key;
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Row, RowId};
+use crate::storage::{Near, Row, RowId, TableStorage};
 use crate::txn::{TxId, checked};
+use crate::value::Value;
+
+/// What the fetches of one scan of an index share: the columns they read,
+/// chosen once, and what the table keeps from read to read.
+pub(in crate::exec) struct Reading {
+    columns: Option<Vec<usize>>,
+    near: Near,
+}
+
+impl Reading {
+    /// For the scan of index `ix` by a statement that reads only `needed`
+    /// and the index's columns, if it names them; else every column.
+    pub(in crate::exec) fn of(ix: &KeyShape, needed: Option<&[usize]>) -> Reading {
+        let columns = needed.map(|needed| {
+            let mut read: Vec<usize> = needed.iter().chain(&ix.columns).copied().collect();
+            read.sort_unstable();
+            read.dedup();
+            read
+        });
+        Reading { columns, near: Near::default() }
+    }
+}
+
+/// Row `id` of `storage`, as `tx` sees it, if that version has `key` in the
+/// index `ix`: an index holds the entries of versions `tx` may not
+/// see (`Index`). Of a statement that reads only some columns, only those
+/// are read (`TableStorage::get_columns`).
+pub(in crate::exec) fn fetch(
+    storage: &dyn TableStorage,
+    ix: &KeyShape,
+    reading: &mut Reading,
+    (tx, id): (TxId, RowId),
+    key: &Key,
+) -> Result<Option<(RowId, Row)>> {
+    let Reading { columns, near } = reading;
+    let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
+    Ok(ix.key_of(&row).filter(|seen| seen == key).map(|_| (id, row)))
+}
+
+/// \[DESIGN\] (RULES.md D34) The row of an entry of row `id` under `key`
+/// in an index on `columns`, as `tx` sees it, if it does: of a scan
+/// covering the columns read, the row `width` columns wide, made of the
+/// key at `columns` and nulls elsewhere, if every reader sees the row's
+/// one version (`TableStorage::visible_to_all`); else read (`fetch`), of
+/// the columns the statement uses.
+pub(super) fn entry_row(
+    storage: &dyn TableStorage,
+    (ix, width): (&KeyShape, Option<usize>),
+    reading: &mut Reading,
+    (tx, id): (TxId, RowId),
+    key: Key,
+) -> Result<Option<Row>> {
+    if let Some(width) = width
+        && storage.visible_to_all(id)
+    {
+        let mut row = vec![Value::Null; width];
+        for (&column, value) in ix.columns.iter().zip(key.0) {
+            if let Some(slot) = row.get_mut(column) {
+                *slot = value;
+            }
+        }
+        return Ok(Some(row));
+    }
+    Ok(fetch(storage, ix, reading, (tx, id), &key)?.map(|(_, row)| row))
+}
 
 /// Rows with their ids, each read when it is pulled.
 pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
@@ -36,8 +103,9 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         Plan::IndexScan { table, index, probe, reverse, .. } => {
             let Found { storage, ix, entries } = probe_index(db, &table, &index, &probe, reverse)?;
             storage.read_by_condition(tx, &asked(&ix, probe))?;
+            let mut reading = Reading::of(&ix, None);
             let rows = checked(entries, db.tx.stop_of(tx))
-                .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, (&ix, None), tx, &key, id)).transpose());
+                .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key)).transpose());
             Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
         }
         Plan::Filter { cond, input, .. } => {

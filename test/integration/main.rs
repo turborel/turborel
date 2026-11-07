@@ -114,6 +114,7 @@ mod partial_groups;
 mod planning;
 mod plugin_files;
 mod plugin_settings;
+mod point_plans;
 mod positions;
 mod predicates;
 mod prepared;

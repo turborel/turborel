@@ -153,7 +153,10 @@ fn all_held(frames: usize, waited: &mut Option<Instant>, bound: Duration) -> Res
 /// One frame: the page it holds, its pins, whether it is dirty, whether it
 /// is being filled or emptied, and its content behind the page's latch.
 /// Its page changes only under the page table's shard lock and the latch
-/// held exclusively, so either keeps it as it is.
+/// held exclusively, so either keeps it as it is. Alone on its cache lines,
+/// as every read of its page writes the latch, and a frame's readers should
+/// not slow its neighbour's.
+#[repr(align(128))]
 struct Frame {
     /// The page's file, plus one; 0 for none.
     key_file: AtomicU64,

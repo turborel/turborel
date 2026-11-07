@@ -31,13 +31,14 @@ mod work;
 
 use std::sync::Arc;
 
+use self::entries::{Reading, entry_row};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Entries as IndexEntries, Key, KeyOrder, Probe};
+use crate::index::{Entries as IndexEntries, KeyOrder, Probe};
 use crate::logical::{Cond, SortKey, Truth, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage};
+use crate::storage::{Condition, Conjunction, Row, TableStorage};
 use crate::system::SystemRead;
 use crate::txn::{TxId, checked};
 use crate::value::Value;
@@ -217,8 +218,9 @@ fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     match probe_index(db, &table, &index, &probe, reverse) {
         Ok(Found { storage, ix, entries }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {
             Ok(()) => {
+                let mut reading = Reading::of(&ix, Some(&needed));
                 let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
-                    entry.and_then(|(key, id)| entry_row(&*storage, (&ix, &needed, width), tx, key, id)).transpose()
+                    entry.and_then(|(key, id)| entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)).transpose()
                 });
                 Box::new(checked(rows, db.tx.stop_of(tx)))
             }
@@ -308,59 +310,6 @@ struct Found {
 pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
     let probe = if ix.is_collated() { Probe::All } else { probe };
     Condition { columns: ix.columns.clone(), probe }
-}
-
-/// Row `id` of `storage`, as `tx` sees it, if that version has `key` in the
-/// index `ix`: an index holds the entries of versions `tx` may not
-/// see (`Index`). Of a statement that reads only `needed`, only those and
-/// the index's columns are read (`TableStorage::get_columns`); else all.
-fn fetch(
-    storage: &dyn TableStorage,
-    (ix, needed): (&KeyShape, Option<&[usize]>),
-    tx: TxId,
-    key: &Key,
-    id: RowId,
-) -> Result<Option<(RowId, Row)>> {
-    let columns = &ix.columns;
-    let read = match needed {
-        Some(needed) => {
-            let mut read: Vec<usize> = needed.iter().chain(columns).copied().collect();
-            read.sort_unstable();
-            read.dedup();
-            storage.get_columns(tx, id, &read)?
-        }
-        None => storage.get(tx, id)?,
-    };
-    let Some(row) = read else { return Ok(None) };
-    let seen = ix.key_of(&row);
-    Ok(seen.filter(|seen| seen == key).map(|_| (id, row)))
-}
-
-/// \[DESIGN\] (RULES.md D34) The row of an entry of row `id` under `key`
-/// in an index on `columns`, as `tx` sees it, if it does: of a scan
-/// covering the columns read, the row `width` columns wide, made of the
-/// key at `columns` and nulls elsewhere, if every reader sees the row's
-/// one version (`TableStorage::visible_to_all`); else read (`fetch`), of
-/// the columns `needed` the statement uses.
-fn entry_row(
-    storage: &dyn TableStorage,
-    (ix, needed, width): (&KeyShape, &[usize], Option<usize>),
-    tx: TxId,
-    key: Key,
-    id: RowId,
-) -> Result<Option<Row>> {
-    if let Some(width) = width
-        && storage.visible_to_all(id)
-    {
-        let mut row = vec![Value::Null; width];
-        for (&column, value) in ix.columns.iter().zip(key.0) {
-            if let Some(slot) = row.get_mut(column) {
-                *slot = value;
-            }
-        }
-        return Ok(Some(row));
-    }
-    Ok(fetch(storage, (ix, Some(needed)), tx, &key, id)?.map(|(_, row)| row))
 }
 
 /// What `index` finds for `probe`, in index order, or reversed, read as

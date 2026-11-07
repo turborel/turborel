@@ -22,14 +22,17 @@
 
 mod batch;
 mod condition;
+mod cost;
 mod newest;
 mod options;
 mod rows;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
+pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use newest::Newest;
-pub use rows::{Row, RowId, Rows, project};
+pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
+pub use rows::{Near, Row, RowId, Rows, project};
 
 use std::sync::Arc;
 
@@ -40,19 +43,6 @@ use crate::memory::Host;
 use crate::settings::Configurable;
 use crate::stats::Statistics;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
-
-pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
-
-/// \[DESIGN\] The default cost of one fetch by row id: a random read costs
-/// about three sequential ones. Fixed, not a setting (RULES.md D36): an
-/// engine states its own costs (`TableStorage::fetch_cost`).
-pub const DEFAULT_FETCH_COST: f64 = 3.0;
-
-/// A count of rows as a cost. Exact up to 2^32 rows; costs are estimates, so
-/// beyond that it saturates.
-pub fn cost_of(rows: usize) -> f64 {
-    f64::from(u32::try_from(rows).unwrap_or(u32::MAX))
-}
 
 /// \[DESIGN\] A kind of table storage: creates the `TableStorage` of each
 /// table placed in it.
@@ -226,6 +216,16 @@ pub trait TableStorage: Send + Sync {
     fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
         let _ = columns;
         self.get(tx, id)
+    }
+    /// \[DESIGN\] As `get`, or `get_columns` of `columns` if named, `near`
+    /// kept from read to read of a scan, for the engine. Default: those.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
+        let _ = near;
+        columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
     }
     /// Every live row, once each, with its id. The rows have every column
     /// at its position, but only those in `columns` need hold their value:

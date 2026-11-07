@@ -956,6 +956,12 @@ table's statistics, else the defaults PLANNER.EQUAL_SELECTIVITY,
 RANGE_SELECTIVITY and NULL_FRACTION. No plan waits for a statistics pass.
 Distinct keys come from a sketch kept with the index.
 
+A table of at least 1,024 rows, with no order wanted, is read by a probe that
+fixes every column of a unique index without pricing another path. The probe
+finds one row at most, so nothing could be cheaper by enough to be worth the
+zones and counts a comparison reads. The values still come from the execution
+(D45).
+
 Fetches are priced by where the page is found, with a row scanned costing
 1. A page in the pool costs 8.6, in the system's cache 72, and from disk
 5900. These weights come from `bench/kept.rs` and `bench/pages.rs`.

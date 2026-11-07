@@ -90,7 +90,7 @@ use crate::memory::Host;
 use crate::settings::Configurable;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::{Condition, Conjunction, Near, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::{lock_builtin, write};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 use crate::value::DataType;
@@ -333,12 +333,17 @@ impl TableStorage for RowTable {
     }
 
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>> {
-        self.get_of(tx, id, None)
+        self.get_of(tx, id, None, &mut Near::default())
     }
 
     /// Only `columns` decoded; of a frozen row, only their chunks read.
     fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
-        self.get_of(tx, id, Some(columns))
+        self.get_of(tx, id, Some(columns), &mut Near::default())
+    }
+
+    /// Reads the row from the leaf of the last read of `near`, if it can.
+    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
+        self.get_of(tx, id, columns, near)
     }
 
     /// Only `columns` are decoded, and only their values out of line read.

@@ -93,6 +93,15 @@ pub(super) fn bits_as_characters(b: &Bits, length: u32, fixed: bool) -> Result<(
 }
 
 /// A value not of a column of `t`'s type.
+/// `s` followed by `pad` spaces. As every CHARACTER read takes this path,
+/// it allocates once and formats nothing.
+fn spaced(s: &str, pad: usize) -> String {
+    let mut text = String::with_capacity(s.len().saturating_add(pad));
+    text.push_str(s);
+    text.extend(std::iter::repeat_n(' ', pad));
+    text
+}
+
 fn mismatch(v: &Value, t: &DataType) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {v} is not a value of a column of type {t}"))
 }
@@ -129,7 +138,7 @@ impl SqlType for Character {
         let length = length_of(t);
         let (count, fits) = (s.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
         if count <= fits {
-            return Ok(Value::Char(format!("{s}{}", " ".repeat(fits.saturating_sub(count)))));
+            return Ok(Value::Char(spaced(&s, fits.saturating_sub(count))));
         }
         if s.chars().skip(fits).all(|c| c == ' ') {
             return Ok(Value::Char(s.chars().take(fits).collect()));
@@ -224,7 +233,7 @@ impl SqlType for Character {
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let s = std::str::from_utf8(field).ok()?;
         let pad = usize::try_from(length_of(t)).ok()?.checked_sub(s.chars().count())?;
-        Some(Value::Char(format!("{s}{}", " ".repeat(pad))))
+        Some(Value::Char(spaced(s, pad)))
     }
 
     /// Padded with spaces to the length [X3.135-1986 §5.11 GR5]: Unicode

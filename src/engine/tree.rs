@@ -10,6 +10,8 @@
 //! node linked in by the same write that lowers the old node's high key,
 //! so a key is always reachable from where it was: a reader that finds a
 //! key above a node's high key follows the link (§3, §4).
+//! A scan of rows side by side starts each read from the leaf of the last
+//! (`near.rs`).
 //!
 //! * **Readers lock nothing.** They read a node under the buffer pool's
 //!   latch, held only while that one node is read (the paper's atomic
@@ -48,6 +50,7 @@
 
 mod load;
 mod locks;
+mod near;
 mod node;
 mod reclaim;
 mod scan;

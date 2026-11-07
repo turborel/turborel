@@ -5,6 +5,7 @@
 //! (`verify` refuses one that no longer applies).
 
 mod collations;
+mod near;
 mod reads;
 mod shadow;
 mod vr;
@@ -16,9 +17,9 @@ pub use shadow::SHADOW;
 pub use vr::VR;
 
 /// Every mutation, in the order they run: the core's, then its reads',
-/// collations' and shadow files', then replication's.
+/// collations', shadow files' and reads near the last, then replication's.
 pub fn all() -> Vec<Mutation> {
-    MUTATIONS.iter().chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&VR).copied().collect()
+    MUTATIONS.iter().chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&near::NEAR).chain(&VR).copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints,

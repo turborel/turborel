@@ -107,6 +107,8 @@ members = ["xtask", "protocol", "client", "server", "turboreld", "support", "cli
 # behaves like the tested build (RULES.md R-NUM-1).
 [profile.release]
 overflow-checks = true
+lto = "fat"
+codegen-units = 1
 
 # Lint levels are the rules of RULES.md. `cargo xtask verify` runs clippy with
 # `-D warnings`, so every "warn" here blocks a merge. Code that predates a rule

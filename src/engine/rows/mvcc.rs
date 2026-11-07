@@ -55,6 +55,7 @@
 //! commit whose changes can't be read back counts as committed and is never
 //! stamped.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -328,6 +329,17 @@ impl RowTable {
         open.reads_since.get_or_insert(at);
         open.reads.add(read, self.versions.tracked());
         Ok(())
+    }
+
+    /// As `visible_from`, of a newest version read into `newest`: its own
+    /// record is borrowed, not copied, as it is what most reads see.
+    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Cow<'b, [u8]>>> {
+        let version = Version::parse(newest)?;
+        if reader.sees(self.maker(&version)) {
+            return Ok((!version.deleted).then_some(Cow::Borrowed(version.record)));
+        }
+        let Some(at) = version.older else { return Ok(None) };
+        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Cow::Owned))
     }
 
     /// The record of the version of the row whose newest version is

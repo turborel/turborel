@@ -11,7 +11,8 @@
 
 use std::sync::Arc;
 
-use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed, fetch};
+use super::super::entries::{Reading, fetch};
+use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
 use crate::error::Result;
@@ -86,7 +87,8 @@ impl Probed {
     /// The row of the entry `(key, id)`, if the version `tx` sees has it.
     fn row(&self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        Ok(fetch(&*self.storage, (&self.ix, Some(&self.needed)), self.tx, &key, id)?.map(|(_, row)| row))
+        let mut reading = Reading::of(&self.ix, Some(&self.needed));
+        Ok(fetch(&*self.storage, &self.ix, &mut reading, (self.tx, id), &key)?.map(|(_, row)| row))
     }
 }
 

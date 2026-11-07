@@ -45,6 +45,8 @@ pub(super) struct Epochs {
     current: AtomicU64,
     under_way: Box<[Stripe]>,
     retired: Mutex<Vec<(u64, PageId)>>,
+    /// Moved as a page is retired (`near.rs`).
+    stamp: AtomicU64,
 }
 
 /// An operation counted in its epoch: its stripe and the epoch's parity.
@@ -68,7 +70,12 @@ impl Drop for Guard<'_> {
 
 impl Epochs {
     pub(super) fn new() -> Epochs {
-        Epochs { current: AtomicU64::new(0), under_way: (0..STRIPES).map(|_| Stripe::default()).collect(), retired: Mutex::new(Vec::new()) }
+        Epochs {
+            current: AtomicU64::new(0),
+            under_way: (0..STRIPES).map(|_| Stripe::default()).collect(),
+            retired: Mutex::new(Vec::new()),
+            stamp: AtomicU64::new(0),
+        }
     }
 
     /// Counts an operation beginning, in the epoch current: counted, and
@@ -110,8 +117,15 @@ impl Epochs {
         }
     }
 
+    /// What moves as a page is retired, loaded after an operation enters
+    /// its epoch, so a leaf known at this stamp is unfreed until it leaves.
+    pub(super) fn stamp(&self) -> u64 {
+        self.stamp.load(Ordering::SeqCst)
+    }
+
     /// Notes `page` taken out, to free once no operation may hold it.
     pub(super) fn retire(&self, page: PageId) {
+        self.stamp.fetch_add(1, Ordering::SeqCst);
         let epoch = self.current.load(Ordering::SeqCst);
         lock_builtin(&self.retired).push((epoch, page));
     }

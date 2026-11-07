@@ -16,6 +16,7 @@ use crate::disk::encoding::Pipeline;
 use crate::disk::io::OsFileSystem;
 use crate::disk::pager::Pager;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
+use crate::storage::Near;
 
 /// An empty tree in a new pager file of 4 KiB pages, in a pool holding it.
 fn tree(test: &str) -> (BLinkTree, Scratch) {
@@ -328,4 +329,86 @@ fn scans_from_a_key_are_lookups() {
     assert_eq!(tree.missed_pages(4_u64), Some(0.0_f64), "four lookups, their pages held");
     assert_eq!(tree.missed_pages(5_u64), None, "fewer than asked");
     assert_eq!(tree.unheld_share(), 0.0_f64);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, reads near the last: rising, falling
+/// and absent keys each answer as `get` does, the value left in `near`,
+/// and keys in order are read from the leaf remembered or the one right of
+/// it, never missing both.
+#[test]
+fn a_near_read_says_what_a_get_says() {
+    let (tree, _scratch) = tree("near-reads");
+    fill(&tree, 300);
+    let mut near = Near::default();
+    for k in (0..=301).chain((0..=301).rev()) {
+        let (found, got) = (tree.get_near(&key(k), &mut near).unwrap(), tree.get(&key(k)).unwrap());
+        assert_eq!(found, got.is_some(), "key {k}");
+        if let Some(value) = got {
+            assert_eq!(near.bytes, value);
+        }
+    }
+    near = Near::default();
+    assert!(tree.get_near(&key(1), &mut near).unwrap());
+    let leaf = near.leaf;
+    assert!(tree.get_near(&key(2), &mut near).unwrap());
+    assert_eq!((near.leaf, near.misses), (leaf, 0));
+    for k in 3..=300 {
+        assert!(tree.get_near(&key(k), &mut near).unwrap());
+        assert_eq!(near.misses, 0, "key {k} was read past both leaves it tries");
+    }
+    assert_ne!(near.leaf, leaf, "the read went on to the leaves right of the first");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, reads near the last: a leaf split since
+/// it was remembered answers only for the keys it kept, and the key moved
+/// right is found by a descent.
+#[test]
+fn a_near_read_finds_a_key_moved_by_a_split() {
+    let (tree, _scratch) = tree("near-split");
+    for k in 1..=30_u64 {
+        assert!(tree.insert(&key(k * 2), &VALUE).unwrap());
+    }
+    let mut near = Near::default();
+    assert!(tree.get_near(&key(2), &mut near).unwrap());
+    for k in 0..30_u64 {
+        assert!(tree.insert(&key(k * 2 + 1), &VALUE).unwrap());
+    }
+    for k in 1..=60 {
+        assert!(tree.get_near(&key(k), &mut near).unwrap(), "key {k}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D31, reads near the last: a leaf freed and
+/// made another tree's, with the same keys, answers nothing, as the
+/// tree's stamp moved when it was retired.
+#[test]
+fn a_near_read_trusts_no_leaf_retired() {
+    let (tree, _scratch) = tree("near-retired");
+    fill(&tree, 200);
+    let mut nears: Vec<Near> = (1..=190_u64).map(|_| Near::default()).collect();
+    for (k, near) in (1..=190).zip(&mut nears) {
+        assert!(tree.get_near(&key(k), near).unwrap());
+    }
+    for k in 1..=190 {
+        assert!(tree.delete(&key(k)).unwrap().is_some());
+    }
+    tree.free_retired().unwrap();
+    let other = BLinkTree::create(Arc::clone(&tree.pool), tree.file).unwrap();
+    fill(&other, 200);
+    for (k, near) in (1..=190).zip(&mut nears) {
+        assert!(!tree.get_near(&key(k), near).unwrap(), "key {k} came from another tree");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D31, reads near the last: keys that are not
+/// side by side soon stop being tried in the last leaf, still answered.
+#[test]
+fn a_near_read_of_scattered_keys_stops_trying_its_leaf() {
+    let (tree, _scratch) = tree("near-scattered");
+    fill(&tree, 400);
+    let mut near = Near::default();
+    for k in (1..=20_u64).map(|i| i % 2 * 370 + i) {
+        assert!(tree.get_near(&key(k), &mut near).unwrap());
+    }
+    assert_eq!(near.misses, 8);
 }

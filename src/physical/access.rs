@@ -5,6 +5,7 @@
 use super::estimate::{self, Known};
 use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe, served_by};
 use super::{Built, PhysicalPlanner, Plan, TableRead};
+use crate::catalog::IndexDesc;
 use crate::engine::key::restores;
 use crate::index::{Index, IndexMethod, Probe};
 use crate::logical::{Cond, SortKey, and_all, judged_by_sets, pushed_conjuncts, render_cond};
@@ -16,6 +17,11 @@ use crate::value::{CompOp, DataType};
 /// row made of the key, an entry at a time as a search gives them, where
 /// a scan reads its rows by batches (RULES.md D34). Measured.
 const ENTRY_SCAN_ROWS: f64 = 2.0;
+
+/// \[DESIGN\] The rows from which a table is taken to have more of them than
+/// a probe finding one could lose to a scan, so a probe fixing a unique key
+/// is chosen unpriced (`point_path`).
+const POINT_ROWS: usize = 1024;
 
 /// A way to read a table: its cost, with and without the sort it may still
 /// need, the rows it yields, whether in the order asked for (backward if
@@ -124,18 +130,20 @@ impl PhysicalPlanner<'_> {
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
         let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
-        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
-        let scan_cost = storage.scan_cost(read.needed);
         let stats = self.db.statistics(read.table);
         let known = Known { stats: stats.as_deref(), cost };
         let all = cost_of(storage.row_count());
-        let mut best =
-            in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });
-
         // RULES.md D15: a probe reads only the rows its conjuncts select, so the
         // other conjuncts would not be evaluated on the rest. When one of them
         // can raise an error it must see every row: probe no index then.
         let (compared, ors) = if conds.iter().any(Cond::can_raise) { (Vec::new(), Vec::new()) } else { comparisons(conds, known) };
+        if let Some(path) = want.is_empty().then(|| self.point_path(read, &compared, known)).flatten() {
+            return path;
+        }
+        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
+        let mut best =
+            in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });
+
         // An index being built is not read until it is (`Database::create_index`).
         for ix in self.db.catalog.indexes(read.table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
             // [DESIGN] An index the state lacks is not a path; neither is one on
@@ -146,8 +154,7 @@ impl PhysicalPlanner<'_> {
             };
             let Some(types) = ix.key_types(desc) else { continue };
             let served = served_by(&compared, ix);
-            let no_ors = Vec::new();
-            let alternatives = if ix.is_collated() { &no_ors } else { &ors };
+            let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { &ors };
             let mut candidates = probes(&ix.columns, &types, (&served, alternatives), all, known);
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
@@ -173,7 +180,7 @@ impl PhysicalPlanner<'_> {
                 // sees are made of their entries, not fetched (RULES.md D34).
                 let whole = !ix.is_collated() && covers(&**kind, (&ix.columns, &types), read.needed);
                 let visible = whole.then(|| storage.visible_share()).flatten();
-                let entry_cost = ENTRY_SCAN_ROWS * scan_cost / all.max(1.0_f64);
+                let entry_cost = ENTRY_SCAN_ROWS * storage.scan_cost(read.needed) / all.max(1.0_f64);
                 let saved = |share: f64| est * share * (storage.fetch_cost() - entry_cost).max(0.0_f64);
                 let path_cost = probed_cost - visible.map_or(0.0_f64, saved);
                 let total = path_cost + sort_penalty(est, order.is_some());
@@ -187,6 +194,42 @@ impl PhysicalPlanner<'_> {
         }
         best
     }
+}
+
+impl PhysicalPlanner<'_> {
+    /// A probe that fixes every column of a unique index, by the values of
+    /// this execution, if there is one. It finds one row at most, so no
+    /// other path is priced: not the zones of a scan, nor any index's
+    /// count, nor the rest of the rows' statistics.
+    fn point_path(&self, read: TableRead<'_>, compared: &[Compared], known: Known<'_>) -> Option<Path> {
+        let (storage, desc) = (self.db.storage_of(read.table).ok()?, self.db.catalog.table(read.table)?);
+        if storage.row_count() < POINT_ROWS {
+            return None;
+        }
+        let all = cost_of(storage.row_count());
+        let usable = |ix: &&_| ix_is_point(ix) && !self.db.building.contains(&ix.name);
+        self.db.catalog.indexes(read.table).into_iter().filter(usable).find_map(|ix| {
+            let (kind, found, types) = (self.db.methods.get(&ix.method)?, self.db.index_of(&ix.name).ok()?, ix.key_types(desc)?);
+            let served = served_by(compared, ix);
+            let fixes = |c: &Candidate| {
+                let [probe] = c.probes.as_slice() else { return false };
+                !c.loose && whole_key(probe, types.len()) && supports(&**kind, probe, (types.len(), false))
+            };
+            let c = probes(&ix.columns, &types, (&served, &[]), all, known).into_iter().find(fixes)?;
+            let descent = known.cost.index_descent * cost_of(storage.row_count().saturating_add(1)).log2();
+            let pages = c.probes.first().and_then(|p| found.probe_pages(p)).map_or(descent, |pages| known.cost.index_descent * pages);
+            let cost = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost();
+            let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
+            let covering = covers(&**kind, (&ix.columns, &types), read.needed) && storage.visible_share().is_some();
+            let chosen = Probed { index, method, columns, probes: c.probes, used: c.used, loose: false, covering };
+            Some(Path { total: cost, cost, est: 1.0_f64, ordered: false, reverse: false, index: Some(chosen), order: Vec::new() })
+        })
+    }
+}
+
+/// Whether a probe of all of `ix`'s columns finds one row at most.
+fn ix_is_point(ix: &IndexDesc) -> bool {
+    ix.unique && !ix.is_collated()
 }
 
 /// The rows `c`'s probes of `index` are estimated to find, and their cost,
