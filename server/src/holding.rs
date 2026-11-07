@@ -71,6 +71,12 @@ impl Drop for Holding {
     }
 }
 
+impl Transport for Holding {
+    fn direct(&mut self) -> Option<&mut dyn crate::transport::Direct> {
+        self.inner.direct()
+    }
+}
+
 impl AsyncRead for Holding {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_read(cx, buf)

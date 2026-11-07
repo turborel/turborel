@@ -2,23 +2,67 @@
 //! connections, each a stream that reads and writes, with the peer it came
 //! from. TCP, Unix sockets on Unix and named pipes on Windows are built
 //! in; TLS (`tls.rs`) secures a listener's streams, in the connection's
-//! own task.
+//! own task. A TCP or Unix stream is in two handles (`dual.rs`), so the
+//! worker answering a request takes a fast client's next itself, apart
+//! from the runtime; a named pipe's, or a stream TLS secures, the runtime
+//! reads for it.
+
+mod dual;
 
 use std::future::Future;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use turborel::db::Database;
 
+pub use dual::{Dual, Socket};
+
 use crate::auth::Peer;
 use crate::keepalive::Keepalive;
 
-/// A connection's stream.
-pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
+/// \[DESIGN\] A connection's stream: an extension point (RULES.md D42),
+/// what a `Listener` accepts.
+///
+/// Contract (RULES.md R-SAFE-3): it reads and writes through the runtime.
+/// One a thread can read and write itself, apart from the runtime, gives
+/// that handle from `direct` (`Dual`); one that cannot, as a stream TLS
+/// secures, leaves it `None`, the default, so an `impl Transport for It
+/// {}` is enough.
+pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send + 'static {
+    /// The stream as a thread reads and writes it itself, if it can.
+    fn direct(&mut self) -> Option<&mut dyn Direct> {
+        None
+    }
+}
 
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Transport for T {}
+/// \[DESIGN\] A stream a thread reads and writes itself, apart from the
+/// runtime: a worker takes a fast client's next request so, and answers
+/// it, waking no other thread (`native/lent.rs`).
+///
+/// Contract (RULES.md R-SAFE-3): `read` and `write` return at once with
+/// what there is, `WouldBlock` for nothing, until `wait` says how long
+/// they wait for it, `WouldBlock` or `TimedOut` once that runs out; a
+/// read of 0 bytes is the client closing. While they wait, the runtime
+/// must not read or write the stream: `wait(None)` ends that first. The
+/// system may round the wait up to its timer's tick.
+pub trait Direct: Read + Write {
+    /// Makes `read` and `write` wait `within` for what they lack, or not at
+    /// all.
+    ///
+    /// # Errors
+    ///
+    /// The system's, if the stream cannot be told.
+    fn wait(&mut self, within: Option<Duration>) -> io::Result<()>;
+}
+
+#[cfg(windows)]
+impl Transport for tokio::net::windows::named_pipe::NamedPipeServer {}
+
+#[cfg(test)]
+impl Transport for tokio::io::DuplexStream {}
 
 /// A connection accepted, and who from.
 pub type Accepted = io::Result<(Box<dyn Transport>, Peer)>;
@@ -93,7 +137,7 @@ impl Listener for Tcp {
         Box::pin(async {
             let (accepted, address) = self.listener.accept().await?;
             self.set_up(&accepted)?;
-            let stream: Box<dyn Transport> = Box::new(accepted);
+            let stream: Box<dyn Transport> = Box::new(Dual::tcp(accepted)?);
             Ok((stream, Peer::tcp(address)))
         })
     }
@@ -148,7 +192,7 @@ impl Listener for Local {
     fn accept(&self) -> Accepting<'_> {
         Box::pin(async {
             let (stream, _) = self.listener.accept().await?;
-            let stream: Box<dyn Transport> = Box::new(stream);
+            let stream: Box<dyn Transport> = Box::new(Dual::unix(stream)?);
             Ok((stream, Peer::local()))
         })
     }

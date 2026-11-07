@@ -213,8 +213,10 @@ such signal: there, a log is rotated with the server stopped, and TLS's
 files are taken again as their settings change.
 
 The server's threads are named `turborel-server-<n>`: its I/O threads,
-one for every two processors, and the threads statements run on, made as they
-are needed, at most SERVER.WORKERS running at once. The database's own
+one for every two processors, and the threads statements run on, made as
+they are needed, at most SERVER.WORKERS running a statement at once, and
+as many at most waiting on a client in a tight loop for its next request,
+which they read themselves. The database's own
 are `turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,
 `turborel-read-ahead` and `turborel-assertion-totals`, and a plug-in's
 `turborel-<kind>`

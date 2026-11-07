@@ -20,11 +20,10 @@
 //! hurries, accepts that failed, TLS and logins that failed, and
 //! connections refused past SERVER.MAX_CONNECTIONS.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
@@ -33,9 +32,13 @@ use turborel::db::Database;
 use turborel::diagnostics::Event;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::txn::Stop;
-use turborel_protocol::{CancelKey, KEY_BYTES, broken};
+use turborel_protocol::{CancelKey, broken};
+
+pub use crate::cancels::Registered;
+pub use crate::limit::Permit;
 
 use crate::auth::{Authenticator, Peer};
+use crate::cancels::Cancels;
 use crate::holding::{Hold, Holding};
 use crate::limit::{Held, Limit};
 use crate::logins::Logins;
@@ -44,7 +47,7 @@ use crate::settings::{
     IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_REFUSALS, SHUTDOWN_TIMEOUT_MS, WORKERS,
 };
 use crate::settings::{count, declare, millis};
-use crate::shown::{self, Operator, Present, Shown};
+use crate::shown::{self, Counted, Operator, Present, Shown};
 use crate::tls::{Handshaken, Secured, Tls};
 use crate::told::{Throttle, Told};
 use crate::transport::{Listener, Transport};
@@ -95,9 +98,10 @@ pub type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// authenticates it through the services' authenticators, each check on
 /// a login's thread (`Services::logins`) within SERVER.LOGIN_TIMEOUT_MS of
 /// `Connection::arrived` (`Services::login`), runs each statement on a
-/// worker (`Services::run`, `Services::spawn`), and ends when the client goes, the server
-/// stops (`Services::stopping`) or its operator ends it
-/// (`Present::ended`), its session ended on a worker. `refuse` tells the client why it is refused, and closes.
+/// worker (`Services::run`, `Services::spawn`, `Services::spawn_with`),
+/// and ends when the client goes, the server stops (`Services::stopping`)
+/// or its operator ends it (`Present::ended`), its session ended on a
+/// worker. `refuse` tells the client why it is refused, and closes.
 pub trait Protocol: Send + Sync {
     /// The protocol's name.
     fn name(&self) -> &'static str;
@@ -142,28 +146,18 @@ struct Shared {
     db: Database,
     authenticators: Vec<Arc<dyn Authenticator>>,
     workers: Arc<Limit>,
+    /// The connections keeping a worker waiting for their next request,
+    /// as many as SERVER.WORKERS at most (`native/lent.rs`).
+    hot: Arc<Limit>,
     stop: watch::Receiver<Stage>,
     /// What cancels each connection's statements, by its key (RULES.md D45).
-    cancels: Mutex<HashMap<CancelKey, Arc<Stop>>>,
+    cancels: Arc<Cancels>,
     /// What it shows of itself (`shown.rs`).
     shown: Arc<Shown>,
     /// Failed accepts, and connections refused, told at most once a minute.
     throttles: (Throttle, Throttle),
     /// What checks logins, apart from the workers (`logins.rs`).
     logins: Logins,
-}
-
-/// \[DESIGN\] A connection's cancel key, registered until this is dropped.
-pub struct Registered {
-    services: Services,
-    /// The key.
-    pub key: CancelKey,
-}
-
-impl Drop for Registered {
-    fn drop(&mut self) {
-        lock_builtin(&self.services.0.cancels).remove(&self.key);
-    }
 }
 
 impl Services {
@@ -193,14 +187,33 @@ impl Services {
     /// says: counted waiting until then, and busy while it runs. Its handle
     /// may be dropped, as a request's is, its replies the worker's to write.
     pub async fn spawn<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> tokio::task::JoinHandle<T> {
-        let waiting = Counted::of(&self.0.shown, |s| &s.waiting);
-        let permit = self.0.workers.take(|| count(&self.0.db, WORKERS)).await;
-        drop(waiting);
-        let busy = Counted::of(&self.0.shown, |s| &s.busy);
-        tokio::task::spawn_blocking(move || {
-            let _held = (permit, busy);
-            work()
+        self.spawn_with(move |permit| {
+            let done = work();
+            drop(permit);
+            done
         })
+        .await
+    }
+
+    /// As `spawn`, `work` given its permit, to give up while it waits on
+    /// its client and take again (`Permit`).
+    pub async fn spawn_with<T: Send + 'static>(&self, work: impl FnOnce(Permit) -> T + Send + 'static) -> tokio::task::JoinHandle<T> {
+        let waiting = Counted::of(&self.0.shown, |s| &s.waiting);
+        let held = self.0.workers.take(|| count(&self.0.db, WORKERS)).await;
+        drop(waiting);
+        let permit = Permit::new(&self.0.workers, &self.0.shown, &self.0.db, held);
+        tokio::task::spawn_blocking(move || work(permit))
+    }
+
+    /// Whether a statement waits for a worker.
+    pub fn waited_for(&self) -> bool {
+        self.0.shown.waiting.load(Ordering::Relaxed) > 0
+    }
+
+    /// A connection's place among those keeping a worker waiting for their
+    /// next request, if fewer than SERVER.WORKERS do; held while it is.
+    pub(crate) fn hot(&self) -> Option<Held> {
+        self.0.hot.try_take(count(&self.0.db, WORKERS))
     }
 
     /// What checks logins, on threads apart from the workers, and slows
@@ -261,11 +274,9 @@ impl Services {
         self.idle(self.bounded(IDLE_IN_TRANSACTION_TIMEOUT_MS, Instant::now(), work, waiting)).await
     }
 
-    /// What says whether the server still takes statements, to be asked
-    /// where nothing waits on it.
-    pub fn serving(&self) -> impl Fn() -> bool + Send + 'static + use<> {
-        let stop = self.0.stop.clone();
-        move || *stop.borrow() == Stage::Serving
+    /// Whether the server still takes statements.
+    pub fn is_serving(&self) -> bool {
+        *self.0.stop.borrow() == Stage::Serving
     }
 
     /// Done once the server stops.
@@ -279,13 +290,6 @@ impl Services {
     async fn hurried(&self) {
         let mut stop = self.0.stop.clone();
         let _ = stop.wait_for(|stage| *stage == Stage::Hurried).await;
-    }
-
-    /// Cancels the statement every session runs: the sessions'.
-    fn cancel_all(&self) -> u64 {
-        let cancels = lock_builtin(&self.0.cancels);
-        cancels.values().for_each(|stop| stop.cancel());
-        u64::try_from(cancels.len()).unwrap_or(u64::MAX)
     }
 
     /// One more connection refused past SERVER.MAX_CONNECTIONS: told at
@@ -304,34 +308,22 @@ impl Services {
         }
     }
 
-    /// \[DESIGN\] A new key, of the system's randomness, that cancels
-    /// `stop`'s statements from another connection (RULES.md D45); kept
-    /// until what is returned is dropped.
+    /// \[DESIGN\] A new key that cancels `stop`'s statements from another
+    /// connection (RULES.md D45); kept until what is returned is dropped
+    /// (`Cancels::register`).
     ///
     /// # Errors
     ///
     /// SQLCODE -915 if the system gives no randomness.
     pub fn register_cancel(&self, stop: Arc<Stop>) -> Result<Registered> {
-        let mut key = [0_u8; KEY_BYTES];
-        aws_lc_rs::rand::fill(&mut key).map_err(|_| SqlError::new(Code::Io, "[DESIGN] the system gave no randomness for a key"))?;
-        let key = CancelKey(key);
-        lock_builtin(&self.0.cancels).insert(key, stop);
-        Ok(Registered { services: self.clone(), key })
+        self.0.cancels.register(stop)
     }
 
     /// \[DESIGN\] Cancels the statement the session of `key` runs, if it
     /// is one's (RULES.md D45).
     pub fn cancel(&self, key: &CancelKey) {
-        if let Some(stop) = lock_builtin(&self.0.cancels).get(key) {
-            stop.cancel();
-        }
+        self.0.cancels.cancel(key);
     }
-}
-
-/// A lock whose holder cannot leave it broken: what it guards is read or
-/// replaced whole.
-fn lock_builtin<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// \[DESIGN\] A server of `Database`: the database stays the caller's,
@@ -340,22 +332,6 @@ pub struct Server {
     db: Database,
     authenticators: Vec<Arc<dyn Authenticator>>,
     shown: Arc<Shown>,
-}
-
-/// One more of a count of `shown.rs`, while it is held.
-struct Counted(Arc<Shown>, fn(&Shown) -> &AtomicU64);
-
-impl Counted {
-    fn of(shown: &Arc<Shown>, which: fn(&Shown) -> &AtomicU64) -> Counted {
-        which(shown).fetch_add(1, Ordering::Relaxed);
-        Counted(Arc::clone(shown), which)
-    }
-}
-
-impl Drop for Counted {
-    fn drop(&mut self) {
-        (self.1)(&self.0).fetch_sub(1, Ordering::Relaxed);
-    }
 }
 
 impl Server {
@@ -423,10 +399,10 @@ impl Server {
     pub async fn serve_until(self, endpoints: Vec<Endpoint>, stop: impl Future<Output = ()>, hurry: impl Future<Output = ()>) {
         let (announce, heard) = watch::channel(Stage::Serving);
         let limits = (Arc::new(Limit::default()), Arc::new(Limit::default()));
-        let (cancels, throttles) = (Mutex::new(HashMap::new()), (Throttle::default(), Throttle::default()));
+        let (cancels, throttles) = (Arc::default(), (Throttle::default(), Throttle::default()));
         let (db, authenticators, shown, logins) = (self.db, self.authenticators, self.shown, Logins::default());
-        let services =
-            Services(Arc::new(Shared { db, authenticators, workers: Arc::default(), stop: heard, cancels, shown, throttles, logins }));
+        let (workers, hot) = (Arc::default(), Arc::default());
+        let services = Services(Arc::new(Shared { db, authenticators, workers, hot, stop: heard, cancels, shown, throttles, logins }));
         let addresses = endpoints.iter().map(|e| e.listener.address()).collect();
         let mut listening = JoinSet::new();
         for endpoint in endpoints {
@@ -449,11 +425,11 @@ impl Server {
             () = hurry => {}
         }
         let _ = announce.send(Stage::Hurried);
-        services.database().tell(&Event::StopHurried { sessions: services.cancel_all() });
+        services.database().tell(&Event::StopHurried { sessions: services.0.cancels.cancel_all() });
         loop {
             tokio::select! {
                 () = drained(&mut listening) => return,
-                () = tokio::time::sleep(RECANCEL) => { services.cancel_all(); }
+                () = tokio::time::sleep(RECANCEL) => { services.0.cancels.cancel_all(); }
             }
         }
     }

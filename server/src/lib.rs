@@ -8,6 +8,7 @@
 //! `server::Protocol`, how they are spoken to.
 
 pub mod auth;
+mod cancels;
 pub mod certificate;
 mod holding;
 pub mod keepalive;

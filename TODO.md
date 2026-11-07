@@ -30,6 +30,16 @@ Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
 
 ---
 
+## Server
+
+- A worker waiting on a fast client's socket for its next request still wakes
+  an I/O thread for each request that comes, since the runtime keeps its
+  interest in the socket meanwhile. Giving the interest up while a worker
+  waits, and taking it again as the connection's task reads, would spare that
+  thread a wake for every request of a client in a tight loop.
+
+---
+
 ## SQL
 
 What came after SQL-92 follows it, written from the standards' own text

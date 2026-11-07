@@ -47,6 +47,23 @@ pub(crate) struct Shown {
     pub(crate) closed: AtomicU64,
 }
 
+/// One more of a count of the server's, while it is held.
+pub(crate) struct Counted(Arc<Shown>, fn(&Shown) -> &AtomicU64);
+
+impl Counted {
+    /// One more of the count `which` of `shown`.
+    pub(crate) fn of(shown: &Arc<Shown>, which: fn(&Shown) -> &AtomicU64) -> Counted {
+        which(shown).fetch_add(1, Ordering::Relaxed);
+        Counted(Arc::clone(shown), which)
+    }
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        (self.1)(&self.0).fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// A connection, as CONNECTIONS shows it.
 #[derive(Clone)]
 struct Entry {

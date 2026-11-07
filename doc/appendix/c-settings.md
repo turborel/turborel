@@ -221,7 +221,7 @@ Each in a sentence:
 - **SERVER.TLS_CLIENT_CA**: The PEM file of the authorities whose certificates a TLS client may present to log in by; none asked for if empty.
 - **SERVER.TLS_KEY**: The PEM file of the server's private key, taken again for the connections after a change.
 - **SERVER.TRUST_LOCAL**: Whether a client of this machine is trusted as who it says (ON), or proves it as every other does (OFF).
-- **SERVER.WORKERS**: Statements the server runs at once, at most.
+- **SERVER.WORKERS**: Statements the server runs at once, at most, and as many connections at most keeping a worker waiting for their next request.
 
 Plug-ins may declare settings of their own, listed alike: a plug-in of
 any kind its own, under its name, as the column store declares

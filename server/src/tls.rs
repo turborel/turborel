@@ -55,7 +55,7 @@ use turborel::files::Noted;
 use turborel_protocol::scram::{EXPORTER_BYTES, EXPORTER_LABEL, end_point};
 
 use crate::settings::{self, TLS_CERTIFICATE, TLS_CLIENT_CA, TLS_KEY};
-use crate::transport::Transport;
+use crate::transport::{Direct, Transport};
 
 pub use subject::common_name;
 
@@ -407,6 +407,20 @@ struct Prefixed {
     first: Option<u8>,
     inner: Box<dyn Transport>,
 }
+
+impl Transport for Prefixed {
+    fn direct(&mut self) -> Option<&mut dyn Direct> {
+        // The byte put back is read first, through the runtime.
+        if self.first.is_some() {
+            return None;
+        }
+        self.inner.direct()
+    }
+}
+
+/// The TLS state is the runtime's: a thread cannot read or write through
+/// it itself.
+impl Transport for tokio_rustls::server::TlsStream<Prefixed> {}
 
 impl AsyncRead for Prefixed {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {

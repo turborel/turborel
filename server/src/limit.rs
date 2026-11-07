@@ -2,10 +2,17 @@
 //! each time one is taken, so a setting that changes moves it: raised, it
 //! lets more in as soon as one is taken or given back; lowered, it lets
 //! none in until enough are given back. A semaphore's permits are fixed.
+//! A worker's permit (`Permit`) is one of the limit of SERVER.WORKERS,
+//! given up while the worker waits on its client, and taken again.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use tokio::runtime::Handle;
 use tokio::sync::Notify;
+use turborel::db::Database;
+
+use crate::settings::{WORKERS, count};
+use crate::shown::{Counted, Shown};
 
 /// What is held, and who waits.
 #[derive(Default)]
@@ -57,6 +64,46 @@ impl Drop for Held {
         *held = held.saturating_sub(1);
         drop(held);
         self.0.freed.notify_waiters();
+    }
+}
+
+/// \[DESIGN\] A worker's permit to run a statement, one of SERVER.WORKERS,
+/// counted busy while it holds it: given up while the worker waits on its
+/// client for the next request, and taken again, counted waiting until it
+/// is, for the request that came (`native/lent.rs`).
+pub struct Permit {
+    workers: Arc<Limit>,
+    shown: Arc<Shown>,
+    db: Database,
+    held: Option<(Held, Counted)>,
+}
+
+impl Permit {
+    /// `held`, one of `workers`, as many as SERVER.WORKERS of `db` says,
+    /// counted busy in `shown` while it is held.
+    pub(crate) fn new(workers: &Arc<Limit>, shown: &Arc<Shown>, db: &Database, held: Held) -> Permit {
+        let busy = Counted::of(shown, |s| &s.busy);
+        Permit { workers: Arc::clone(workers), shown: Arc::clone(shown), db: db.clone(), held: Some((held, busy)) }
+    }
+
+    /// Gives the permit up, for another statement.
+    pub fn release(&mut self) {
+        self.held = None;
+    }
+
+    /// Takes a permit again, once fewer statements run than SERVER.WORKERS
+    /// says; waiting on `handle`, the runtime's, from a thread apart from
+    /// it.
+    pub fn retake(&mut self, handle: &Handle) {
+        if self.held.is_some() {
+            return;
+        }
+        let most = || count(&self.db, WORKERS);
+        let held = self.workers.try_take(most()).unwrap_or_else(|| {
+            let _waiting = Counted::of(&self.shown, |s| &s.waiting);
+            handle.block_on(self.workers.take(most))
+        });
+        self.held = Some((held, Counted::of(&self.shown, |s| &s.busy)));
     }
 }
 

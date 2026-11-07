@@ -4,9 +4,11 @@
 //! (`turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,
 //! `turborel-read-ahead`).
 //! Its I/O threads are one for every two processors (`runtime`); its
-//! blocking pool, where statements run, may grow to MAX_WORKERS,
-//! MOST_LOGINS for the checks of logins, and a few spare, but is made only
-//! as they need it, and no more than SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once
+//! blocking pool, where statements run, may grow to twice MAX_WORKERS, as
+//! many waiting on a fast client for its next request as running a
+//! statement (`native/lent.rs`), MOST_LOGINS for the checks of logins, and
+//! a few spare, but is made only as they need it, and no more than
+//! SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once
 //! (`server.rs`, `logins.rs`). `turboreld` and the tests' servers are made
 //! by it alike. The thread writing the diagnostics' lines (`log.rs`) is
 //! made here too, `turborel-server-log`, so a sink set before the runtime
@@ -51,7 +53,7 @@ pub fn runtime(io_threads: Option<usize>) -> std::io::Result<Runtime> {
     let mut builder = Builder::new_multi_thread();
     builder
         .enable_all()
-        .max_blocking_threads(MAX_WORKERS.saturating_add(MOST_LOGINS).saturating_add(BLOCKING_SPARE))
+        .max_blocking_threads(MAX_WORKERS.saturating_add(MAX_WORKERS).saturating_add(MOST_LOGINS).saturating_add(BLOCKING_SPARE))
         .thread_name_fn(move || format!("{LABEL}-{}", made.fetch_add(1, Ordering::Relaxed)));
     let processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     builder.worker_threads(io_threads.unwrap_or(processors.div_ceil(2)));

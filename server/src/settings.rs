@@ -391,7 +391,7 @@ fn limits() -> [Definition; 7] {
             WORKERS,
             (1, i128::try_from(MAX_WORKERS).unwrap_or(most)),
             processors.min(MAX_WORKERS),
-            "Statements the server runs at once, at most.",
+            "Statements the server runs at once, at most, and as many connections at most keeping a worker waiting for their next request.",
         ),
         limit(MAX_CONNECTIONS, (1, most), DEFAULT_MAX_CONNECTIONS, "Connections the server takes at once, at most."),
         limit(

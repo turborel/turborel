@@ -1126,8 +1126,15 @@ SERVER.WORKERS blocking workers, and authentication on at most
 SERVER.MAX_LOGINS other threads. A worker writes the replies of the request
 it runs, a batch of SERVER.BATCH_BYTES at a time, each within
 SERVER.IDLE_TIMEOUT_MS, so a slow client holds its worker and a batch of
-memory, no more, while the connection's task reads the next request. Each
-connection runs one request at a time.
+memory, no more. A fast client's next request the worker reads itself,
+through a second handle of the socket that waits a millisecond or so apart
+from the runtime (`transport::Direct`), its permit to run statements given
+up meanwhile, so a request answered wakes one thread, the one that runs
+it. At most SERVER.WORKERS connections keep a worker waiting so, none while
+a statement waits for one, and a request that comes later the connection's
+task reads through the runtime. A stream TLS secures, or a named pipe, has
+no such handle, and takes the task's path. Each connection runs one request
+at a time.
 
 Time limits bound every client, and memory is taken as bytes arrive, never
 as a header declares (`SERVER.*_TIMEOUT_MS`, `native::LOGIN_MESSAGE_BYTES`).
