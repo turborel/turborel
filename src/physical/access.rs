@@ -215,7 +215,8 @@ impl PhysicalPlanner<'_> {
                 let [probe] = c.probes.as_slice() else { return false };
                 !c.loose && whole_key(probe, types.len()) && supports(&**kind, probe, (types.len(), false))
             };
-            let c = probes(&ix.columns, &types, (&served, &[]), all, known).into_iter().find(fixes)?;
+            let guessed = Known { stats: None, cost: known.cost };
+            let c = probes(&ix.columns, &types, (&served, &[]), all, guessed).into_iter().find(fixes)?;
             let descent = known.cost.index_descent * cost_of(storage.row_count().saturating_add(1)).log2();
             let pages = c.probes.first().and_then(|p| found.probe_pages(p)).map_or(descent, |pages| known.cost.index_descent * pages);
             let cost = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost();

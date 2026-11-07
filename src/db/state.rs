@@ -17,6 +17,7 @@ use crate::engine::rows::{COLUMN_STORE, ROW_STORE, RowStore, TableOptions};
 use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
+use crate::hash::murmur::MurmurMap;
 use crate::index::{BTreeMethod, HashMethod, Index, IndexMethod};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
@@ -87,9 +88,9 @@ pub struct State {
     pub(crate) users: Users,
     /// The tables of INFORMATION_SCHEMA whose rows it makes (`system.rs`).
     pub(crate) system: SystemTables,
-    pub(crate) storage: HashMap<QualifiedName, Arc<dyn TableStorage>>,
+    pub(crate) storage: MurmurMap<QualifiedName, Arc<dyn TableStorage>>,
     /// Each table's lock, shared by every snapshot that knows the table.
-    pub(crate) locks: HashMap<QualifiedName, Arc<TableLock>>,
+    pub(crate) locks: MurmurMap<QualifiedName, Arc<TableLock>>,
     pub(crate) indexes: HashMap<String, Arc<dyn Index>>,
     /// Indexes being built: kept up to date by every write, but not read
     /// until built (`Database::create_index`).
@@ -161,8 +162,8 @@ impl State {
             settings: Settings::default(),
             users: Users::default(),
             system: crate::system::builtin(),
-            storage: HashMap::new(),
-            locks: HashMap::new(),
+            storage: MurmurMap::default(),
+            locks: MurmurMap::default(),
             indexes: HashMap::new(),
             functions: Registry::with_set_functions(),
             types: TypeRegistry::default(),

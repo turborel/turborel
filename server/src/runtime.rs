@@ -39,7 +39,9 @@ pub(crate) fn writer(work: impl FnOnce() + Send + 'static) -> std::io::Result<st
 }
 
 /// The server's runtime: I/O threads as many as `io_threads` says, else
-/// one for each processor.
+/// half the processors, rounded up. They only move requests and replies,
+/// the blocking pool doing the work, and one for each processor loses a
+/// quarter of what a server gives once clients outnumber them.
 ///
 /// # Errors
 ///
@@ -51,9 +53,8 @@ pub fn runtime(io_threads: Option<usize>) -> std::io::Result<Runtime> {
         .enable_all()
         .max_blocking_threads(MAX_WORKERS.saturating_add(MOST_LOGINS).saturating_add(BLOCKING_SPARE))
         .thread_name_fn(move || format!("{LABEL}-{}", made.fetch_add(1, Ordering::Relaxed)));
-    if let Some(n) = io_threads {
-        builder.worker_threads(n);
-    }
+    let processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    builder.worker_threads(io_threads.unwrap_or(processors.div_ceil(2)));
     builder.build()
 }
 

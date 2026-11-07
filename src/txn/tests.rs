@@ -44,7 +44,7 @@ fn participants_end_where_they_joined() {
     for (commits, rows) in [(true, 1), (false, 1)] {
         let tx = st.begin();
         storage.begin(tx.id, tx.snapshot()).unwrap();
-        lock_builtin(&tx.state).joined.push(Joined { table: name.clone(), storage: Arc::clone(&storage) });
+        lock_builtin(&tx.state).joined.push(Joined { table: Arc::new(name.clone()), storage: Arc::clone(&storage) });
         lock_builtin(&tx.state).wrote = true;
         storage.insert(tx.id, vec![crate::value::Value::Null]).unwrap();
         if commits {

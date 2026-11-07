@@ -3,6 +3,7 @@
 //! transaction that wrote nothing; rollback; and the garbage collection of
 //! versions that follows either (RULES.md D25, D29).
 
+use std::borrow::Borrow;
 use std::collections::BTreeSet;
 use std::mem;
 use std::sync::Arc;
@@ -144,11 +145,11 @@ impl State {
     /// for the next transaction to end: the one that ended has already
     /// committed or rolled back. A temporary table's instances are each
     /// collected by their session instead (`db/temporary.rs`).
-    pub(crate) fn gc(&self, tables: &[QualifiedName]) {
+    pub(crate) fn gc(&self, tables: &[impl Borrow<QualifiedName>]) {
         let _gate = self.tx.gate.enter();
         let horizon = self.tx.horizon();
         let waiting: Vec<QualifiedName> = lock_builtin(&self.tx.uncollected).iter().cloned().collect();
-        let all: BTreeSet<&QualifiedName> = tables.iter().chain(&waiting).collect();
+        let all: BTreeSet<&QualifiedName> = tables.iter().map(Borrow::borrow).chain(&waiting).collect();
         for table in all {
             let left = self.collect_table(table, horizon);
             let mut uncollected = lock_builtin(&self.tx.uncollected);
@@ -234,7 +235,7 @@ impl State {
         };
         for Joined { table, storage } in &joined {
             if let Err(error) = storage.rollback(tx.id) {
-                failures.push(UndoFailure { table: Some(table.clone()), error, rows: true });
+                failures.push(UndoFailure { table: Some(QualifiedName::clone(table)), error, rows: true });
             }
         }
         let damage = self.report_damage(&failures, "the transaction's rollback");
@@ -263,8 +264,8 @@ pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, ro
 }
 
 /// The tables of `joined`, for garbage collection.
-fn tables(joined: &[Joined]) -> Vec<QualifiedName> {
-    joined.iter().map(|j| j.table.clone()).collect()
+fn tables(joined: &[Joined]) -> Vec<Arc<QualifiedName>> {
+    joined.iter().map(|j| Arc::clone(&j.table)).collect()
 }
 
 impl Transactions {

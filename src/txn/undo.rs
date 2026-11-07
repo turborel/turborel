@@ -25,8 +25,9 @@ use crate::value::types::TypeRegistry;
 /// commit and rollback.
 #[derive(Clone)]
 pub(crate) struct Joined {
-    /// The table, for messages and garbage collection.
-    pub(crate) table: QualifiedName,
+    /// The table, for messages and garbage collection: shared, as a
+    /// transaction's participants are copied as it reads and ends.
+    pub(crate) table: Arc<QualifiedName>,
     /// Its storage when it joined.
     pub(crate) storage: Arc<dyn TableStorage>,
 }
@@ -262,7 +263,7 @@ impl State {
         let mut failures = entries.apply(tx.id);
         for (joined, sp) in savepoints {
             if let Err(error) = joined.storage.rollback_to(tx.id, sp) {
-                failures.push(UndoFailure { table: Some(joined.table), error, rows: true });
+                failures.push(UndoFailure { table: Some(QualifiedName::clone(&joined.table)), error, rows: true });
             }
         }
         if !failures.is_empty() {

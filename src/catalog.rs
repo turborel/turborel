@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use crate::ast::{CheckLevels, Temporary, TemporaryKind};
+use crate::hash::murmur::MurmurMap;
 use crate::value::datetime::{Clocked, Moment};
 use crate::value::types::datetime::current;
 use crate::value::{DataType, Value};
@@ -423,7 +424,7 @@ pub fn owner_of<'a>(catalog: &'a dyn Catalog, schema: &'a str) -> &'a str {
 pub struct MemoryCatalog {
     /// Each schema's name, and its owner, in the order created.
     schemas: Vec<(String, String)>,
-    tables: HashMap<QualifiedName, TableDesc>,
+    tables: MurmurMap<QualifiedName, TableDesc>,
     indexes: Vec<IndexDesc>,
     views: HashMap<QualifiedName, ViewDesc>,
     privileges: Vec<PrivilegeDesc>,
