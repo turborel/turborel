@@ -79,7 +79,7 @@ fn plan_can_raise(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. } => false,
     };
-    own || plan.inputs().into_iter().any(plan_can_raise)
+    own || plan.inputs().any(plan_can_raise)
 }
 
 impl Subquery {
@@ -145,7 +145,7 @@ pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. } => false,
     };
-    own || plan.inputs().into_iter().any(plan_has_outer)
+    own || plan.inputs().any(plan_has_outer)
 }
 
 /// "column = slot" or "slot = column": the column and the slot.

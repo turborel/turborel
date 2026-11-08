@@ -88,7 +88,9 @@ pub struct State {
     pub(crate) users: Users,
     /// The tables of INFORMATION_SCHEMA whose rows it makes (`system.rs`).
     pub(crate) system: SystemTables,
-    pub(crate) storage: MurmurMap<QualifiedName, Arc<dyn TableStorage>>,
+    /// Each table's storage, by its name, which is shared: a transaction
+    /// the table joins holds it, so it copies no name (`State::join`).
+    pub(crate) storage: MurmurMap<Arc<QualifiedName>, Arc<dyn TableStorage>>,
     /// Each table's lock, shared by every snapshot that knows the table.
     pub(crate) locks: MurmurMap<QualifiedName, Arc<TableLock>>,
     pub(crate) indexes: HashMap<String, Arc<dyn Index>>,
@@ -228,7 +230,7 @@ impl State {
             let engine = self.engines.get(&desc.engine).ok_or_else(|| {
                 api(format!("[DESIGN] the catalog places {} in engine {}, which is not built in", desc.name, desc.engine))
             })?;
-            self.storage.insert(desc.name.clone(), Arc::from(engine.create_table(desc)?));
+            self.storage.insert(Arc::new(desc.name.clone()), Arc::from(engine.create_table(desc)?));
             self.locks.insert(desc.name.clone(), Arc::default());
             for ix in self.catalog.indexes(&desc.name) {
                 let method = self.methods.get(&ix.method).ok_or_else(|| {
@@ -370,6 +372,16 @@ impl State {
     /// The storage of `table`.
     pub(crate) fn storage_of(&self, table: &QualifiedName) -> Result<&Arc<dyn TableStorage>> {
         self.storage.get(table).ok_or_else(|| api(format!("[DESIGN] {table} has no storage")))
+    }
+
+    /// The storage of `table`, with its name as the state shares it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the table has no storage.
+    pub(crate) fn storage_named(&self, table: &QualifiedName) -> Result<(Arc<QualifiedName>, Arc<dyn TableStorage>)> {
+        let (name, storage) = self.storage.get_key_value(table).ok_or_else(|| api(format!("[DESIGN] {table} has no storage")))?;
+        Ok((Arc::clone(name), Arc::clone(storage)))
     }
 
     /// The lock of `table`.

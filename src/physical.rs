@@ -23,6 +23,7 @@ mod indexed;
 mod join;
 mod order;
 mod probe;
+mod shown;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 
@@ -37,6 +38,7 @@ use crate::logical::{
 };
 use crate::system::SystemRead;
 use crate::value::collation::CollationRef;
+use shown::Shown;
 
 /// \[DESIGN\] A physical plan: the operators the executor runs, each with what
 /// EXPLAIN shows of it.
@@ -255,8 +257,12 @@ pub enum Plan {
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
 /// engines, indexes and cost model.
+#[derive(Clone, Copy)]
 pub struct PhysicalPlanner<'a> {
     db: &'a State,
+    /// Whether the plan is made to be shown, its operators described
+    /// (`physical/shown.rs`), as EXPLAIN's is; one made to run is not.
+    shown: bool,
 }
 
 /// A built plan, and whether its rows come out in the order that was asked for.
@@ -271,18 +277,25 @@ impl Built {
     }
 }
 
-/// One table to read: its name, column names, and the columns the query uses.
+/// One table to read: its name, how the operators over it are described
+/// (`physical/shown.rs`), and the columns the query uses.
 #[derive(Clone, Copy)]
 struct TableRead<'a> {
     table: &'a QualifiedName,
-    names: &'a [String],
+    shown: Shown<'a>,
     needed: &'a [usize],
 }
 
 impl<'a> PhysicalPlanner<'a> {
-    /// A planner over the state `db`.
+    /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db }
+        PhysicalPlanner { db, shown: false }
+    }
+
+    /// A planner over the state `db`, of plans to show: each operator
+    /// described, as EXPLAIN shows it.
+    pub fn describing(db: &'a State) -> Self {
+        PhysicalPlanner { db, shown: true }
     }
 
     /// The physical plan for `logical`.
@@ -304,7 +317,9 @@ impl<'a> PhysicalPlanner<'a> {
     /// reordered (`build_node` of its operands), others are.
     fn build_node(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
         match logical {
-            LogicalPlan::Scan { table, names, needed } => self.access(TableRead { table, names, needed }, Vec::new(), want),
+            LogicalPlan::Scan { table, names, needed } => {
+                self.access(TableRead { table, shown: self.showing(names), needed }, Vec::new(), want)
+            }
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want),
 
             // The nested loop yields rows in the order of its left input.
@@ -334,7 +349,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::System { read, .. } => Built::unordered(Plan::System { read: read.clone() }),
             LogicalPlan::Values { rows, .. } => {
                 let row = |r: &Vec<Expr>| format!("({})", r.iter().map(|e| render_expr(e, &[])).collect::<Vec<_>>().join(", "));
-                let detail = rows.iter().map(row).collect::<Vec<_>>().join(", ");
+                let detail = if self.shown { rows.iter().map(row).collect::<Vec<_>>().join(", ") } else { String::new() };
                 Built::unordered(Plan::Values { rows: rows.clone(), detail })
             }
 
@@ -346,12 +361,13 @@ impl<'a> PhysicalPlanner<'a> {
     /// their first rows' order can give it.
     fn aggregate(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
         let LogicalPlan::Aggregate { groups, collations, aggs, input } = logical else { return self.build_node(logical, want) };
-        let names = input.names();
-        let detail = format!(
-            "group by [{}] computing [{}]",
-            groups.iter().map(|&g| column_name(&names, g)).collect::<Vec<_>>().join(", "),
-            aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
-        );
+        let detail = self.described(input, |names| {
+            format!(
+                "group by [{}] computing [{}]",
+                groups.iter().map(|&g| column_name(names, g)).collect::<Vec<_>>().join(", "),
+                aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
+            )
+        });
         // Groups come in the order of their first rows (`exec/group.rs`),
         // so rows in order of grouping columns give groups in that order.
         let inner: Vec<SortKey> = want
@@ -388,14 +404,14 @@ impl<'a> PhysicalPlanner<'a> {
         if let LogicalPlan::Scan { table, names, needed } = input {
             let mut conds = Vec::new();
             split_and(cond.clone(), &mut conds);
-            return self.access(TableRead { table, names, needed }, conds, want);
+            return self.access(TableRead { table, shown: self.showing(names), needed }, conds, want);
         }
         if let Some(join) = self.hash_join(cond, input, want) {
             return join;
         }
         let b = self.build_node(input, want);
         let cond = judged_by_sets(cond.clone());
-        let detail = render_cond(&cond, &input.names());
+        let detail = self.described(input, |names| render_cond(&cond, names));
         Built { plan: Plan::Filter { cond, detail, est: None, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 
@@ -411,7 +427,7 @@ impl<'a> PhysicalPlanner<'a> {
             .collect::<Option<_>>()
             .unwrap_or_default();
         let b = self.build(input, &inner);
-        let detail = exprs.iter().map(|e| render_expr(e, &input.names())).collect::<Vec<_>>().join(", ");
+        let detail = self.described(input, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
         Built { plan: Plan::Project { exprs: exprs.to_vec(), detail, input: Box::new(b.plan) }, ordered: !inner.is_empty() && b.ordered }
     }
 
@@ -421,7 +437,7 @@ impl<'a> PhysicalPlanner<'a> {
         if b.ordered {
             return Built::unordered(b.plan);
         }
-        let detail = render_keys(keys, &input.names());
+        let detail = self.described(input, |names| render_keys(keys, names));
         Built::unordered(Plan::Sort { keys: keys.to_vec(), detail, input: Box::new(b.plan) })
     }
 }
@@ -568,7 +584,7 @@ mod tests {
         );
         let st = Arc::new(State::with_builtins(Box::new(catalog)));
         let conds = vec![Cond::Const(crate::logical::Truth::True)];
-        let built = PhysicalPlanner::new(&st).access(TableRead { table: &name, names: &[], needed: &[] }, conds, &[]);
+        let built = PhysicalPlanner::new(&st).access(TableRead { table: &name, shown: Shown::of(None), needed: &[] }, conds, &[]);
         assert!(matches!(&built.plan, Plan::Filter { input, .. } if matches!(**input, Plan::SeqScan { .. })));
         let failed = execute(built.plan, &st, NO_TRANSACTION).collect::<Result<Vec<_>>>();
         assert_eq!(failed.err().map(|e| e.code), Some(Code::Api));

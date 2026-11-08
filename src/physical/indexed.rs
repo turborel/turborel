@@ -21,6 +21,7 @@
 use super::cost::HASH_ROW;
 use super::estimate::{self, Known};
 use super::join::Flip;
+use super::shown::Shown;
 use super::{PhysicalPlanner, Plan};
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::{IndexMethod, Probe};
@@ -68,46 +69,52 @@ pub(super) struct Equijoin<'a> {
 
 /// `join` as an index nested-loop join of `left`, built, probing as
 /// `probing` says, the probes of `rows` left rows; its condition shown
-/// with the columns of both operands named `names`: the equalities probed,
+/// with the columns of both operands described as `shown` says: the equalities probed,
 /// then what is judged of the pairs found. Of an operand that reads the
 /// table through a projection of its columns, the join is of the table's
 /// rows, its condition renumbered so, under a projection that gives the
 /// operand's columns.
-pub(super) fn index_join(mut probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), names: &[String]) -> Plan {
-    let Some((columns, table_names)) = probing.through.take() else { return table_join(probing, join, (left, rows), names) };
+pub(super) fn index_join(mut probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), shown: Shown<'_>) -> Plan {
+    let Some((columns, table_names)) = probing.through.take() else { return table_join(probing, join, (left, rows), shown) };
     let width = join.width;
     let of_table = |c: usize| c.checked_sub(width).map_or(Some(c), |at| columns.get(at).map(|&t| t.saturating_add(width)));
     let keys: Vec<(usize, usize)> = join.keys.iter().map(|&(l, r)| (l, columns.get(r).copied().unwrap_or(r))).collect();
     let rest = join.rest.into_iter().map(|c| map_cond_columns(c, &|i| of_table(i).unwrap_or(i))).collect();
-    let mut joined_names: Vec<String> = names.iter().take(width).cloned().collect();
-    joined_names.extend(table_names);
-    let joined = table_join(probing, Equijoin { keys: &keys, rest, ..join }, (left, rows), &joined_names);
+    let joined_names = shown.names().map(|names| {
+        let mut joined: Vec<String> = names.iter().take(width).cloned().collect();
+        joined.extend(table_names);
+        joined
+    });
+    let of_joined = Shown::of(joined_names.as_deref());
+    let joined = table_join(probing, Equijoin { keys: &keys, rest, ..join }, (left, rows), of_joined);
     let exprs: Vec<Expr> = (0..width).chain(columns.iter().map(|&t| t.saturating_add(width))).map(Expr::Column).collect();
-    let detail = exprs.iter().map(|e| render_expr(e, &joined_names)).collect::<Vec<_>>().join(", ");
+    let detail = of_joined.text(|names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
     Plan::Project { exprs, detail, input: Box::new(joined) }
 }
 
 /// The RIGHT outer join of a left operand that reads a table and a right
 /// operand of `rows` rows, built, `right`, on the equalities `swapped`,
 /// each a right column and a left column, and the rest of its condition
-/// `rest`, over the left's `width` columns then the right's, named
-/// `names`: as the LEFT index join of `right` probing the left's table as
-/// `probing` says, under a projection that puts the left's columns first.
+/// `rest`, over the left's `width` columns then the right's, `right_width`
+/// of them, described as `shown` says: as the LEFT index join of `right`
+/// probing the left's table as `probing` says, under a projection that
+/// puts the left's columns first.
 pub(super) fn right_index_join(
     probing: Probing,
     (swapped, rest): (&[(usize, usize)], Vec<Cond>),
     (right, rows): (Plan, f64),
-    (width, names): (usize, &[String]),
+    ((width, right_width), shown): ((usize, usize), Shown<'_>),
 ) -> Plan {
-    let flip = Flip { width, right_width: names.len().saturating_sub(width) };
+    let flip = Flip { width, right_width };
     let rest = rest.into_iter().map(|c| flip.cond(c)).collect();
-    let flipped = flip.names(names);
+    let flipped = flip.names(shown);
+    let of_flipped = Shown::of(flipped.as_deref());
     let join = Equijoin { width: flip.right_width, keys: swapped, rest, outer: true };
-    flip.restored(index_join(probing, join, (right, rows), &flipped), &flipped)
+    flip.restored(index_join(probing, join, (right, rows), of_flipped), of_flipped)
 }
 
 /// `index_join` of the table's own rows.
-fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), names: &[String]) -> Plan {
+fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), shown: Shown<'_>) -> Plan {
     let width = join.width;
     let equal = |&(l, r): &(usize, usize)| Cond::Compare(Expr::Column(l), CompOp::Eq, Expr::Column(r.saturating_add(width)));
     let keys: Vec<usize> = probing.used.iter().filter_map(|&k| join.keys.get(k).map(|&(l, _)| l)).collect();
@@ -116,7 +123,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), n
     let filter = probing.filter.map(|c| map_cond_columns(c, &|i| i.saturating_add(width)));
     let cond = and_all(join.rest.into_iter().chain(unused).chain(filter).collect()).map(judged_by_sets);
     let probed = probing.used.iter().filter_map(|&k| join.keys.get(k)).map(equal);
-    let detail = and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default();
+    let detail = shown.text(|names| and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default());
     Plan::IndexJoin {
         outer: join.outer,
         left: Box::new(left),

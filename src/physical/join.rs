@@ -34,6 +34,7 @@
 
 use super::collated::{Lifted, lifted};
 use super::indexed::{Equijoin, index_join, right_index_join};
+use super::shown::Shown;
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
     Cond, Expr, LogicalPlan, OuterJoin, SortKey, and_all, column_name, cond_columns, judged_by_sets, map_cond_columns, render_cond,
@@ -69,7 +70,8 @@ impl PhysicalPlanner<'_> {
         if keys.is_empty() {
             return None;
         }
-        let names = input.names();
+        let names = self.names_of(input);
+        let shown = Shown::of(names.as_deref());
         // As in a product, the rows come in the order of the left operand.
         let want_left = of_left(want, width);
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
@@ -77,17 +79,18 @@ impl PhysicalPlanner<'_> {
         // A few left rows each probing an index of the right's table.
         if let Some((probing, rows)) = self.probed_instead((left, right), &keys, &r.plan) {
             let join = Equijoin { width, keys: &keys, rest, outer: false };
-            return Some(Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered });
+            return Some(Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered });
         }
         // The left built instead, if it has fewer rows; its order is lost.
         if !ordered && self.larger(right, left) {
             let flip = Flip { width, right_width: right.width() };
-            let flipped = flip.names(&names);
+            let flipped = flip.names(shown);
+            let of_flipped = Shown::of(flipped.as_deref());
             let rest = rest.into_iter().map(|c| flip.cond(c)).collect();
-            let join = hashed((r.plan, l.plan), swapped_keys(&keys), rest, (flip.right_width, &flipped));
-            return Some(Built::unordered(flip.restored(join, &flipped)));
+            let join = hashed((r.plan, l.plan), swapped_keys(&keys), rest, (flip.right_width, of_flipped));
+            return Some(Built::unordered(flip.restored(join, of_flipped)));
         }
-        Some(Built { plan: hashed((l.plan, r.plan), keys, rest, (width, &names)), ordered })
+        Some(Built { plan: hashed((l.plan, r.plan), keys, rest, (width, shown)), ordered })
     }
 
     /// Whether `a` is estimated to give more rows than `b`; not if either's
@@ -99,12 +102,12 @@ impl PhysicalPlanner<'_> {
 
 /// The hash join of `left` and `right` on `keys`, the left `width` columns
 /// wide, its rows filtered by the rest of the condition, `rest`, over its
-/// pairs' columns, named `names`.
-fn hashed((left, right): (Plan, Plan), keys: Vec<(usize, usize)>, rest: Vec<Cond>, (width, names): (usize, &[String])) -> Plan {
-    let detail = keys_detail(&keys, names, width);
+/// pairs' columns, described as `shown` says.
+fn hashed((left, right): (Plan, Plan), keys: Vec<(usize, usize)>, rest: Vec<Cond>, (width, shown): (usize, Shown<'_>)) -> Plan {
+    let detail = shown.text(|names| keys_detail(&keys, names, width));
     let join = Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail };
     match and_all(rest).map(judged_by_sets) {
-        Some(c) => Plan::Filter { detail: render_cond(&c, names), cond: c, est: None, input: Box::new(join) },
+        Some(c) => Plan::Filter { detail: shown.text(|names| render_cond(&c, names)), cond: c, est: None, input: Box::new(join) },
         None => join,
     }
 }
@@ -130,16 +133,17 @@ impl Flip {
         map_cond_columns(c, &|i| self.column(i))
     }
 
-    /// The names of the join's columns, `names`, in the swapped join's order.
-    pub(super) fn names(self, names: &[String]) -> Vec<String> {
-        names.iter().skip(self.width).chain(names.iter().take(self.width)).cloned().collect()
+    /// The names of the join's columns, `shown` gives, in the swapped
+    /// join's order, if the plan is shown.
+    pub(super) fn names(self, shown: Shown<'_>) -> Option<Vec<String>> {
+        shown.names().map(|names| names.iter().skip(self.width).chain(names.iter().take(self.width)).cloned().collect())
     }
 
-    /// The swapped join `joined`, of columns named `flipped`, under a
-    /// projection putting its columns in the join's order.
-    pub(super) fn restored(self, joined: Plan, flipped: &[String]) -> Plan {
+    /// The swapped join `joined`, its columns described as `flipped`
+    /// says, under a projection putting its columns in the join's order.
+    pub(super) fn restored(self, joined: Plan, flipped: Shown<'_>) -> Plan {
         let exprs: Vec<Expr> = (0..self.width.saturating_add(self.right_width)).map(|i| Expr::Column(self.column(i))).collect();
-        let detail = exprs.iter().map(|e| render_expr(e, flipped)).collect::<Vec<_>>().join(", ");
+        let detail = flipped.text(|names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
         Plan::Project { exprs, detail, input: Box::new(joined) }
     }
 }
@@ -255,7 +259,8 @@ impl PhysicalPlanner<'_> {
         }
         let width = left.width();
         let parted = Parted::of(cond, width);
-        let names: Vec<String> = left.names().into_iter().chain(right.names()).collect();
+        let both = self.shown.then(|| left.names().into_iter().chain(right.names()).collect::<Vec<String>>());
+        let shown = Shown::of(both.as_deref());
         let want_left = if kind.keeps_right() { &[] } else { of_left(want, width) };
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
         let ordered = !want_left.is_empty() && l.ordered;
@@ -272,38 +277,42 @@ impl PhysicalPlanner<'_> {
             None
         };
         if let Some(((probing, rows), true)) = probed {
-            return Built::unordered(right_index_join(probing, (&swapped, parted.rest), (r.plan, rows), (width, &names)));
+            return Built::unordered(right_index_join(probing, (&swapped, parted.rest), (r.plan, rows), ((width, right.width()), shown)));
         }
         if let Some(((probing, rows), false)) = probed {
             let join = Equijoin { width, keys: &parted.keys, rest: parted.rest, outer: true };
-            return Built { plan: index_join(probing, join, (l.plan, rows), &names), ordered };
+            return Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered };
         }
         // A RIGHT join as the LEFT one of its operands swapped, which
         // builds its left, each operand's own condition the other's.
         if kind == OuterJoin::Right && !parted.keys.is_empty() && !self.larger(left, right) {
             let flip = Flip { width, right_width: right.width() };
-            let flipped = flip.names(&names);
-            let detail = render_cond(&flip.cond(cond.clone()), &flipped);
-            let join = hashed_outer(OuterJoin::Left, (r.plan, l.plan), parted.flipped(flip), ((flip.right_width, width), detail, &flipped));
-            return Built::unordered(flip.restored(join, &flipped));
+            let flipped = flip.names(shown);
+            let of_flipped = Shown::of(flipped.as_deref());
+            let detail = of_flipped.text(|names| render_cond(&flip.cond(cond.clone()), names));
+            let join =
+                hashed_outer(OuterJoin::Left, (r.plan, l.plan), parted.flipped(flip), ((flip.right_width, width), detail, of_flipped));
+            return Built::unordered(flip.restored(join, of_flipped));
         }
-        let plan = hashed_outer(kind, (l.plan, r.plan), parted, ((width, right.width()), render_cond(cond, &names), &names));
+        let plan =
+            hashed_outer(kind, (l.plan, r.plan), parted, ((width, right.width()), shown.text(|names| render_cond(cond, names)), shown));
         Built { plan, ordered }
     }
 }
 
 /// The outer join `kind` of `left` and `right`, of degrees `widths`, on
 /// its condition `parted`, as text `detail`, over its pairs' columns,
-/// named `names`.
+/// described as `shown` says.
 fn hashed_outer(
     kind: OuterJoin,
     (left, right): (Plan, Plan),
     parted: Parted,
-    (widths, detail, names): ((usize, usize), String, &[String]),
+    (widths, detail, shown): ((usize, usize), String, Shown<'_>),
 ) -> Plan {
     let Parted { keys, mut rest, own } = parted;
     let width = widths.0;
-    let detail = if keys.is_empty() { detail } else { format!("{detail}  (hashed on {})", keys_detail(&keys, names, width)) };
+    let detail =
+        if keys.is_empty() { detail } else { shown.text(|names| format!("{detail}  (hashed on {})", keys_detail(&keys, names, width))) };
     let own = if keys.is_empty() {
         rest.extend(own.0);
         rest.extend(own.1.into_iter().map(|c| map_cond_columns(c, &|i| i.saturating_add(width))));

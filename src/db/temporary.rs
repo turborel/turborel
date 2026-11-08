@@ -103,7 +103,7 @@ impl Session {
                 copy.indexes.insert(name, entries);
             }
             let rows: Arc<dyn TableStorage> = Arc::<Rows_>::clone(&instance.rows);
-            copy.storage.insert(desc.name.clone(), rows);
+            copy.storage.insert(Arc::new(desc.name.clone()), rows);
             copy.locks.insert(desc.name, instance.lock);
         }
         Arc::new(copy)
@@ -233,7 +233,7 @@ impl Instance {
             st.indexes.insert(index, of);
         }
         let rows: Arc<dyn TableStorage> = Arc::<Rows_>::clone(&self.rows);
-        st.storage.insert(name.clone(), rows);
+        st.storage.insert(Arc::new(name.clone()), rows);
         st.locks.insert(name.clone(), Arc::clone(&self.lock));
     }
 }

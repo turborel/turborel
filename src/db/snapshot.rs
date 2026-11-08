@@ -199,7 +199,7 @@ impl State {
             let engine =
                 Arc::clone(self.engines.get(&desc.engine).ok_or_else(|| api(format!("[DESIGN] no storage engine {}", desc.engine)))?);
             let storage = self.table_storage(&*engine, desc)?;
-            self.storage.insert(desc.name.clone(), storage);
+            self.storage.insert(Arc::new(desc.name.clone()), storage);
             self.locks.insert(desc.name.clone(), Arc::default());
         }
         for ix in &snapshot.indexes {

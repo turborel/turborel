@@ -6,6 +6,7 @@
 
 use std::sync::{Arc, Weak};
 
+use super::compiled::Compiled;
 use super::dynamic::Name;
 use super::position::{Move, Position};
 use super::prepared::Keeping;
@@ -20,7 +21,6 @@ use crate::error::{At, Code, Result, SqlState, fail, fail_with};
 use crate::exec::{Runner, execute};
 use crate::logical::{Cond, LogicalPlan, and_all};
 use crate::params::Params;
-use crate::physical::Plan;
 use crate::settings::FUNCTION_CALLS;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
@@ -221,16 +221,6 @@ fn check_object_columns(u: &Updatable, w: &BoundWrite, name: &str) -> Result<()>
     Ok(())
 }
 
-/// A cursor's specification bound and planned: its columns, its bound plan
-/// shown, the optimizer's trace, and its plans.
-pub(super) struct Compiled {
-    pub(super) columns: Vec<OutColumn>,
-    pub(super) bound: String,
-    pub(super) trace: Vec<&'static str>,
-    pub(super) optimized: LogicalPlan,
-    pub(super) physical: Plan,
-}
-
 impl Session {
     /// The row an updatable cursor is on. [X3.135-1986 §8.4 SR2, SR3, SR4, GR1]
     /// and the same-numbered rules of [X3.135-1986 §8.11]: the cursor is
@@ -275,38 +265,6 @@ impl Session {
 
     pub(super) fn parse_cursor(st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
         params.parser(sql, st.settings.is_on(FUNCTION_CALLS), &st.catalog_name())?.cursor_specification()
-    }
-
-    pub(super) fn compile(&self, st: &State, spec: &CursorSpecification, params: &Params) -> Result<Compiled> {
-        self.compile_kept(st, spec, params, None)
-    }
-
-    /// `spec` compiled as `compile` compiles it: of a prepared statement,
-    /// from the plan it keeps (`keeping`, RULES.md D45).
-    fn compile_kept(&self, st: &State, spec: &CursorSpecification, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Compiled> {
-        let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
-        let text = logical.explain();
-        let (optimized, trace, physical) = plan(st, logical);
-        Ok(Compiled { columns, bound: text, trace, optimized, physical })
-    }
-
-    /// [X3.135-1986 §8.3 SR4b; ISO/IEC 9075:1992 §13.1 SR5, §7.9 SR12] The
-    /// compiled specification of a cursor its text makes updatable, and
-    /// the one table it reads, unless a subquery of its WHERE clause reads
-    /// that table too \[SR12d\]: then it is read-only.
-    fn updatable_plan(
-        &self,
-        st: &State,
-        spec: &CursorSpecification,
-        params: &Params,
-        keeping: Option<&Keeping<'_>>,
-    ) -> Result<Option<(Compiled, QualifiedName)>> {
-        let c = self.compile_kept(st, spec, params, keeping)?;
-        let read = c.optimized.subquery_tables();
-        let own: Vec<QualifiedName> = c.optimized.tables().into_iter().filter(|t| !read.contains(t)).collect();
-        let [table] = own.as_slice() else { return Ok(None) };
-        let table = table.clone();
-        Ok(Some((c, table)))
     }
 
     /// The rows of a read-only cursor's specification, after taking

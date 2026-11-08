@@ -522,7 +522,8 @@ impl State {
         for engine in self.engines.values() {
             engine.checkpoint_finish()?;
         }
-        image.tables = self.storage.iter().map(|(name, storage)| (name.clone(), self.generation_of(name), storage.locator())).collect();
+        image.tables =
+            self.storage.iter().map(|(name, storage)| (QualifiedName::clone(name), self.generation_of(name), storage.locator())).collect();
         files.catalog.record(&image.encode(), self.compact_after())?;
         Ok(image)
     }

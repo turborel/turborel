@@ -456,7 +456,7 @@ impl State {
             let engine = Arc::clone(self.engines.get(&d.engine).ok_or_else(|| api(format!("[DESIGN] no storage engine {}", d.engine)))?);
             self.table_storage(&*engine, d)?
         };
-        self.storage.insert(d.name.clone(), Arc::clone(&storage));
+        self.storage.insert(Arc::new(d.name.clone()), Arc::clone(&storage));
         self.locks.insert(d.name.clone(), self.tx.name_lock(&d.name));
         let method = Arc::clone(
             self.methods

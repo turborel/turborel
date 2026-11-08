@@ -75,11 +75,11 @@ impl State {
     /// engine whose begin failed. The transaction's bookkeeping
     /// is not locked across the engine's `begin` (RULES.md R-ERR-4).
     fn join(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
-        let storage = Arc::clone(self.storage_of(table)?);
+        let (name, storage) = self.storage_named(table)?;
         if tx.state()?.joined.iter().any(|j| j.is(&storage)) {
             return Ok(());
         }
-        let joined = Joined { table: Arc::new(table.clone()), storage };
+        let joined = Joined { table: name, storage };
         joined.storage.begin(tx.id, tx.snapshot())?;
         if tx.reading != Reading::Serializable {
             joined.storage.read_mode(tx.id, tx.read_mode())?;

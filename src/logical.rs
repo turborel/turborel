@@ -286,19 +286,20 @@ impl LogicalPlan {
 }
 
 impl LogicalPlan {
-    /// Its inputs, in order.
-    pub fn inputs(&self) -> Vec<&LogicalPlan> {
-        match self {
-            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } => Vec::new(),
+    /// Its inputs, in order: two, one or none, given without a list made.
+    pub fn inputs(&self) -> impl Iterator<Item = &LogicalPlan> {
+        let (first, second): (Option<&LogicalPlan>, Option<&LogicalPlan>) = match self {
+            LogicalPlan::Scan { .. } | LogicalPlan::System { .. } | LogicalPlan::Values { .. } => (None, None),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
-                vec![left, right]
+                (Some(left), Some(right))
             }
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Aggregate { input, .. }
             | LogicalPlan::Project { input, .. }
             | LogicalPlan::Distinct { input }
-            | LogicalPlan::Sort { input, .. } => vec![input],
-        }
+            | LogicalPlan::Sort { input, .. } => (Some(input), None),
+        };
+        first.into_iter().chain(second)
     }
 
     /// Display names for the columns of this node's output.

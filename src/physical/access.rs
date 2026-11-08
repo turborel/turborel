@@ -4,6 +4,7 @@
 
 use super::estimate::{self, Known};
 use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe, served_by};
+use super::shown::Shown;
 use super::{Built, PhysicalPlanner, Plan, TableRead};
 use crate::catalog::IndexDesc;
 use crate::engine::key::restores;
@@ -89,7 +90,7 @@ impl PhysicalPlanner<'_> {
             };
             let cost = self.db.cost();
             let with =
-                Filtered { names: read.names, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64, most: 0.0_f64 };
+                Filtered { shown: read.shown, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64, most: 0.0_f64 };
             return filtered(plan, conds, &with);
         };
         let rows = storage.row_count();
@@ -120,7 +121,7 @@ impl PhysicalPlanner<'_> {
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
-        filtered(plan, conds, &Filtered { names: read.names, known, ordered: best.ordered, read: found, most })
+        filtered(plan, conds, &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most })
     }
 
     /// The cheapest way to read the table: a sequential scan, index probes
@@ -287,7 +288,8 @@ fn whole_key(probe: &Probe, width: usize) -> bool {
 /// part, or one of several.
 fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, cost, reverse): (f64, f64, bool)) -> Plan {
     let share = cost_of(probed.probes.len());
-    let whole = and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| render_cond(&c, read.names));
+    let whole =
+        and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| read.shown.text(|names| render_cond(&c, names)));
     let Probed { index, method, columns, mut probes, covering, .. } = probed;
     if reverse {
         probes.reverse();
@@ -295,7 +297,7 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
     let mut level: Vec<Plan> = probes
         .into_iter()
         .map(|probe| {
-            let detail = whole.clone().unwrap_or_else(|| render_probe(&probe, &columns, read.names));
+            let detail = whole.clone().unwrap_or_else(|| read.shown.text(|names| render_probe(&probe, &columns, names)));
             let (index, method, table) = (index.clone(), method.clone(), read.table.clone());
             let needed = read.needed.to_vec();
             Plan::IndexScan {
@@ -450,8 +452,8 @@ fn index_order(columns: &[usize], fixed: usize, want: &[SortKey]) -> Option<bool
 
 /// What a filter over a table access is planned with.
 struct Filtered<'a> {
-    /// The table's column names.
-    names: &'a [String],
+    /// How the filter is described (`physical/shown.rs`).
+    shown: Shown<'a>,
     /// The table's statistics, if its engine gives any, and the guesses.
     known: Known<'a>,
     /// Whether the access yields rows in the order asked for.
@@ -476,7 +478,7 @@ fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
         Some(c) => {
             let est = Some((with.read * estimate::selectivity(&c, with.known)).min(with.most));
             let c = judged_by_sets(c);
-            Plan::Filter { detail: render_cond(&c, with.names), cond: c, est, input: Box::new(plan) }
+            Plan::Filter { detail: with.shown.text(|names| render_cond(&c, names)), cond: c, est, input: Box::new(plan) }
         }
         None => plan,
     };

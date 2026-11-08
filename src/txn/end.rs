@@ -4,6 +4,7 @@
 //! versions that follows either (RULES.md D25, D29).
 
 use std::borrow::Borrow;
+use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::mem;
 use std::sync::Arc;
@@ -179,19 +180,25 @@ impl State {
             return Some(true);
         }
         {
-            let found: Vec<(&str, &Arc<dyn Index>, &IndexDesc)> = self
-                .catalog
-                .indexes(table)
-                .into_iter()
-                .filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix)))
-                .collect();
-            let indexes: Vec<(&dyn Index, &IndexDesc)> = found.iter().map(|&(_, index, ix)| (&**index, ix)).collect();
+            // The table's indexes, found as the first version is removed:
+            // most calls remove none, so most never look them up.
+            let found: OnceCell<Vec<Found<'_>>> = OnceCell::new();
+            let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc)>> = OnceCell::new();
+            let of_table = || {
+                self.catalog
+                    .indexes(table)
+                    .into_iter()
+                    .filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix)))
+                    .collect()
+            };
             // The entries owed first; then each version's go as it is
             // removed, an entry not taken back owed (`txn/owed.rs`). A
             // failure leaves the rest of the garbage for a later call.
             lock.owed.retry(&|name, index| self.index_of(name).is_ok_and(|now| Arc::ptr_eq(now, index)));
             let _ = storage.gc(horizon, &mut |id, row| {
-                let failed = remove_entries(&indexes, id, &row);
+                let found = found.get_or_init(of_table);
+                let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix)).collect());
+                let failed = remove_entries(indexes, id, &row);
                 let entries: Vec<Entry> = failed
                     .into_iter()
                     .filter_map(|(at, key)| {
@@ -262,6 +269,9 @@ pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, ro
     }
     failed
 }
+
+/// An index of a table collected: its name, the index and its description.
+type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
 
 /// The tables of `joined`, for garbage collection.
 fn tables(joined: &[Joined]) -> Vec<Arc<QualifiedName>> {

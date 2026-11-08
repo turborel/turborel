@@ -213,6 +213,12 @@ fn after(prefix: &[u8]) -> Bound<Vec<u8>> {
     Bound::Excluded(next)
 }
 
+/// The keys beginning with `prefix`, each checked if `checked`.
+fn within(prefix: Vec<u8>, checked: bool) -> Range {
+    let upper = after(&prefix);
+    Range { lower: Bound::Included(prefix), upper, checked }
+}
+
 /// As `after`, as a lower bound: the keys from it on.
 fn from_after(prefix: &[u8]) -> Option<Bound<Vec<u8>>> {
     match after(prefix) {
@@ -291,21 +297,28 @@ impl BLinkIndex {
         for (value, &data_type) in equal.iter().zip(&self.types) {
             let Some(at) = anchor(value, data_type) else { return Some(Range::all(true)) };
             checked |= !at.exact;
-            prefix.extend(at.key);
+            // The first anchor's key is the prefix so far, not copied.
+            if prefix.is_empty() {
+                prefix = at.key;
+            } else {
+                prefix.extend(at.key);
+            }
         }
-        let within = |check| Range { lower: Bound::Included(prefix.clone()), upper: after(&prefix), checked: check };
-        let Some((op, value)) = then else { return Some(within(checked)) };
-        let Some(at) = self.types.get(equal.len()).and_then(|&t| anchor(value, t)) else { return Some(within(true)) };
+        let Some((op, value)) = then else { return Some(within(prefix, checked)) };
+        let Some(at) = self.types.get(equal.len()).and_then(|&t| anchor(value, t)) else { return Some(within(prefix, true)) };
         let exact = at.exact;
-        let key = [prefix.as_slice(), &at.key].concat();
+        let key = if prefix.is_empty() { at.key } else { [prefix.as_slice(), &at.key].concat() };
         let (lower, upper) = match op {
             // Exact: the anchor's own entries are those equal to the value.
-            CompOp::Eq => (Bound::Included(key.clone()), after(&key)),
-            CompOp::Lt if exact => (Bound::Included(prefix.clone()), Bound::Excluded(key)),
-            CompOp::Lt | CompOp::Le => (Bound::Included(prefix.clone()), after(&key)),
+            CompOp::Eq => {
+                let upper = after(&key);
+                (Bound::Included(key), upper)
+            }
+            CompOp::Lt if exact => (Bound::Included(prefix), Bound::Excluded(key)),
+            CompOp::Lt | CompOp::Le => (Bound::Included(prefix), after(&key)),
             CompOp::Gt if exact => (from_after(&key)?, after(&prefix)),
             CompOp::Gt | CompOp::Ge => (Bound::Included(key), after(&prefix)),
-            CompOp::Ne => return Some(within(true)),
+            CompOp::Ne => return Some(within(prefix, true)),
         };
         Some(Range { lower, upper, checked: checked || !exact })
     }

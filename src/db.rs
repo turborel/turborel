@@ -54,10 +54,7 @@ use std::sync::{Arc, Mutex, Weak};
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, SqlState, fail};
-use crate::logical::LogicalPlan;
-use crate::optimizer::RuleContext;
 use crate::parser::Parser;
-use crate::physical::{PhysicalPlanner, Plan};
 use crate::settings::{COMMIT_SYNC, LOCKS_TIMEOUT_MS, STATEMENT_TIMEOUT_MS};
 use crate::sync::lock_builtin;
 use crate::txn::{SessionEnd, Stop, TxId, Txn, Window};
@@ -71,6 +68,7 @@ mod catalog_file;
 mod checkpoint;
 mod clock;
 mod collations;
+mod compiled;
 mod completion;
 mod configured;
 mod constraints;
@@ -125,6 +123,8 @@ mod usage;
 mod users;
 mod views;
 mod write;
+
+use compiled::plan;
 
 pub use prepared::Prepared;
 use scroll::{Kept, Updatable};
@@ -325,13 +325,6 @@ fn rule(msg: impl Into<String>) -> SqlError {
 fn cursor_error<T>(name: &str, msg: impl Into<String>) -> Result<T> {
     // [ISO/IEC 9075:1992 §18.1 GR3h] about the cursor.
     Err(SqlError::new(Code::Cursor, msg).about(crate::error::Subject::cursor(name)))
-}
-
-/// Optimize a logical plan and choose its physical plan.
-fn plan(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    let (optimized, trace) = st.optimizer.optimize(logical, &RuleContext { db: st });
-    let physical = PhysicalPlanner::new(st).plan(&optimized);
-    (optimized, trace, physical)
 }
 
 impl Session {
@@ -582,6 +575,7 @@ impl Drop for Session {
 // R-TEST-2 robustness).
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     /// Verifies: [DESIGN] RULES.md R-ERR-4: a call into a session already

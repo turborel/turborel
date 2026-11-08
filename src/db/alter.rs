@@ -218,7 +218,7 @@ impl State {
             let engine = Arc::clone(self.engines.get(&next.engine).ok_or_else(|| api(format!("[DESIGN] no engine {}", next.engine)))?);
             self.table_storage(&*engine, &next)?
         };
-        dropped.storage.extend(self.storage.insert(qn.clone(), Arc::clone(&storage)));
+        dropped.storage.extend(self.storage.insert(Arc::new(qn.clone()), Arc::clone(&storage)));
         let indexes = self.remake_indexes(&next, reshape, made, &mut dropped)?;
         let mut catalog = self.catalog.duplicate();
         catalog.replace_table(next.clone());

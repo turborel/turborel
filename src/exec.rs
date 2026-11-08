@@ -376,7 +376,8 @@ mod tests {
     fn state() -> State {
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
         let desc = state_desc();
-        st.storage.insert(desc.name.clone(), Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
+        st.storage
+            .insert(Arc::new(desc.name.clone()), Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
         st
     }
 
@@ -442,7 +443,7 @@ mod tests {
             for k in 0..ROWS {
                 table.insert(NO_TRANSACTION, vec![Value::Exact(Decimal::new(ROWS - k, 0))]).unwrap();
             }
-            st.storage.insert(name.clone(), Arc::from(table));
+            st.storage.insert(Arc::new(name.clone()), Arc::from(table));
             let plan = Plan::SeqScan { table: name, columns: vec![0], rows: 0, cost: 0.0_f64, order: vec![0], backward: false };
             let read = execute(plan, &Arc::new(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>();
             if broken {

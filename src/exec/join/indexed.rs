@@ -204,7 +204,8 @@ mod tests {
             generation: 0,
             temporary: None,
         };
-        st.storage.insert(desc.name.clone(), Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
+        st.storage
+            .insert(Arc::new(desc.name.clone()), Arc::from(RowStore::in_memory(TableOptions::default()).create_table(&desc).unwrap()));
         assert_eq!(code(&Arc::new(st), join_of_e()), Some(Code::Api), "no index");
     }
 }
