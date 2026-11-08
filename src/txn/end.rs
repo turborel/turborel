@@ -3,7 +3,6 @@
 //! transaction that wrote nothing; rollback; and the garbage collection of
 //! versions that follows either (RULES.md D25, D29).
 
-use std::borrow::Borrow;
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::mem;
@@ -51,8 +50,11 @@ impl State {
     /// committed.
     pub(crate) fn commit_publishing(&self, tx: &Txn, publish: &mut dyn FnMut(Timestamp) -> Result<()>) -> Result<()> {
         let (joined, wrote) = {
-            let st = tx.state()?;
-            (st.joined.clone(), st.wrote)
+            let mut st = tx.state()?;
+            // One that wrote keeps its participants, for its rollback if the commit fails; one that read alone
+            // is done with them.
+            let joined = if st.wrote { st.joined.clone() } else { mem::take(&mut st.joined) };
+            (joined, st.wrote)
         };
         if !wrote {
             // \[DESIGN\] It changed nothing, so it read one committed state,
@@ -61,9 +63,8 @@ impl State {
             for participant in &joined {
                 participant.storage.commit(tx.id, tx.snapshot());
             }
-            tx.state()?.joined.clear();
             tx.release();
-            self.gc(&tables(&joined));
+            self.gc(joined.iter().map(|j| &*j.table));
             return Ok(());
         }
         // The commit record and the versions stamped are one change to a
@@ -102,7 +103,7 @@ impl State {
                 // [DESIGN] RULES.md D29: not before every commit before it
                 // has ended, so its session's next snapshot counts it.
                 self.tx.wait_stable(at);
-                self.gc(&tables(&joined));
+                self.gc(joined.iter().map(|j| &*j.table));
                 published
             }
             Err(e) => {
@@ -145,19 +146,25 @@ impl State {
     /// collected all the same, as soon as it can be. A failure leaves them
     /// for the next transaction to end: the one that ended has already
     /// committed or rolled back. A temporary table's instances are each
-    /// collected by their session instead (`db/temporary.rs`).
-    pub(crate) fn gc(&self, tables: &[impl Borrow<QualifiedName>]) {
+    /// collected by their session instead (`db/temporary.rs`). `tables`
+    /// names each once; one still awaited is collected once too.
+    pub(crate) fn gc<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
         let _gate = self.tx.gate.enter();
         let horizon = self.tx.horizon();
         let waiting: Vec<QualifiedName> = lock_builtin(&self.tx.uncollected).iter().cloned().collect();
-        let all: BTreeSet<&QualifiedName> = tables.iter().map(Borrow::borrow).chain(&waiting).collect();
-        for table in all {
+        let collect = |table: &QualifiedName| {
             let left = self.collect_table(table, horizon);
             let mut uncollected = lock_builtin(&self.tx.uncollected);
             match left {
                 Some(true) => uncollected.insert(table.clone()),
                 Some(false) | None => uncollected.remove(table),
             };
+        };
+        for table in waiting.iter().filter(|w| !tables.clone().any(|t| t == *w)) {
+            collect(table);
+        }
+        for table in tables {
+            collect(table);
         }
     }
 
@@ -249,7 +256,7 @@ impl State {
         tx.log_abort();
         drop(gate);
         tx.release();
-        self.gc(&tables(&joined));
+        self.gc(joined.iter().map(|j| &*j.table));
         damage
     }
 }
@@ -272,11 +279,6 @@ pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, ro
 
 /// An index of a table collected: its name, the index and its description.
 type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
-
-/// The tables of `joined`, for garbage collection.
-fn tables(joined: &[Joined]) -> Vec<Arc<QualifiedName>> {
-    joined.iter().map(|j| Arc::clone(&j.table)).collect()
-}
 
 impl Transactions {
     /// Notes that `table`'s engine has maintenance due, for the

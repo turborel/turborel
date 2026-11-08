@@ -315,8 +315,9 @@ impl RowTable {
         Ok(())
     }
 
-    /// Records what `tx` read.
-    pub(super) fn note_read(&self, tx: TxId, read: Read) -> Result<()> {
+    /// Records what `tx` read, as `read` gives it, if its reads are
+    /// checked: given only then, so a read not checked copies nothing.
+    pub(super) fn note_read(&self, tx: TxId, read: impl FnOnce() -> Read) -> Result<()> {
         if tx == NO_TRANSACTION {
             return Ok(());
         }
@@ -327,7 +328,7 @@ impl RowTable {
         }
         let at = open.snapshot;
         open.reads_since.get_or_insert(at);
-        open.reads.add(read, self.versions.tracked());
+        open.reads.add(read(), self.versions.tracked());
         Ok(())
     }
 

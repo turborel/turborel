@@ -257,6 +257,12 @@ impl Default for Deferral {
 }
 
 impl Deferral {
+    /// Whether no check waits: none is pending, and none over all a
+    /// constraint reads.
+    pub(super) fn nothing_waits(&self) -> bool {
+        self.pending.is_empty() && self.wholes.is_empty()
+    }
+
     /// [§10.6 GR1, GR2; §14.2 GR2, GR3] Whether constraint `c` is deferred:
     /// deferrable, and so set, or initially deferred.
     pub(super) fn deferred(&self, c: &ConstraintDesc) -> bool {

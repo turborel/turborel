@@ -26,12 +26,13 @@ pub(super) struct Timed<T> {
 }
 
 impl<T: AsRef<str>> Timed<T> {
-    /// The work of `text`, run by `user`, timed from now, if `st`'s
-    /// DIAGNOSTICS.SLOW_STATEMENT_MS asks for it.
-    pub(super) fn of(st: &State, text: T, user: &str) -> Option<Timed<T>> {
+    /// The work of the text `text` gives, run by `user`, timed from now,
+    /// if `st`'s DIAGNOSTICS.SLOW_STATEMENT_MS asks for it: the text is
+    /// taken only then, so a statement not timed copies none.
+    pub(super) fn of(st: &State, text: impl FnOnce() -> T, user: &str) -> Option<Timed<T>> {
         let millis = u64::try_from(st.settings.integer(SLOW_STATEMENT_MS)).ok().filter(|&m| m > 0)?;
         let after = Duration::from_millis(millis);
-        let text = st.spill_encodings().stages().is_empty().then_some(text);
+        let text = st.spill_encodings().stages().is_empty().then(text);
         Some(Timed { text, user: user.to_owned(), after, since: Some(Instant::now()), busy: Duration::ZERO })
     }
 

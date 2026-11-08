@@ -528,7 +528,7 @@ impl TableStorage for RowTable {
     }
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
-        self.note_read(tx, Read::Condition(Conjunction::of(condition.clone())))
+        self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone())))
     }
 
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {

@@ -186,7 +186,7 @@ pub const MUTATIONS: [Mutation; 53] = [
         package: Package::Core,
         breaks: "kept plans: a prepared statement's plan kept across a change of the catalog",
         file: "src/db/prepared/plans.rs",
-        original: " && Weak::ptr_eq(&self.catalog, &other.catalog);",
+        original: " && std::ptr::addr_eq(Weak::as_ptr(&key.catalog), Arc::as_ptr(&self.st.catalog));",
         replacement: ";",
         integration: &["kept_plans::a_kept_plan_follows_the_transactions_own_definitions"],
         unit: &[],

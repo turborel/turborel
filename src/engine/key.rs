@@ -60,6 +60,9 @@ pub fn restores(t: &DataType) -> bool {
 /// The tags before a column's value.
 const NULL: u8 = 0;
 const PRESENT: u8 = 1;
+/// The bytes an anchor's key is given room for at once: a number's, or a
+/// moment's, with its tag; a long string's grows past them.
+const ANCHOR_BYTES: usize = 16;
 
 /// Appends the key of `values`, the values of columns of `types`, to `out`.
 ///
@@ -129,7 +132,7 @@ pub fn anchor(value: &Value, data_type: DataType) -> Option<Anchor> {
         return None;
     }
     let (anchored, exact) = data_type.kind().anchor(value, &data_type)?;
-    let mut key = Vec::new();
+    let mut key = Vec::with_capacity(ANCHOR_BYTES);
     encode_column(&anchored, data_type, &mut key).ok()?;
     Some(Anchor { key, exact })
 }

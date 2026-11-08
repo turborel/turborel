@@ -73,8 +73,8 @@ struct Kept {
 
 impl Kept {
     /// Nothing kept yet, with `key`.
-    fn empty(key: &Key) -> Kept {
-        Kept { key: key.clone(), statement: None, specification: None, plan: None }
+    fn empty(key: Key) -> Kept {
+        Kept { key, statement: None, specification: None, plan: None }
     }
 }
 
@@ -91,8 +91,8 @@ pub(in crate::db) enum KeptPlan {
 
 /// What a plan is made with, besides the statement's text: as the module
 /// says.
-#[derive(Debug, Clone)]
-pub(in crate::db) struct Key {
+#[derive(Debug)]
+struct Key {
     generation: u64,
     catalog: Weak<dyn Catalog>,
     auth: String,
@@ -101,22 +101,37 @@ pub(in crate::db) struct Key {
     own: Own,
 }
 
-impl Key {
-    /// Whether what is kept with `self` holds for `other`.
-    fn holds_for(&self, other: &Key) -> bool {
-        let definitions = self.generation == other.generation && Weak::ptr_eq(&self.catalog, &other.catalog);
-        let session = (&self.auth, &self.schema, self.zone) == (&other.auth, &other.schema, other.zone);
-        definitions && session && self.own.same_as(&other.own)
-    }
-}
-
-/// A prepared statement's plans, as one execution of it sees them.
+/// A prepared statement's plans, as one execution of it sees them: in the
+/// snapshot `st`, by `session`. What holds now is read from them as it is
+/// compared with what a plan was kept with, copied only as one is kept.
 pub(in crate::db) struct Keeping<'a> {
     plans: &'a Plans,
-    key: Key,
+    st: &'a State,
+    session: &'a Session,
 }
 
 impl Keeping<'_> {
+    /// Whether what is kept with `key` holds now.
+    fn holds(&self, key: &Key) -> bool {
+        let definitions =
+            key.generation == self.st.generation && std::ptr::addr_eq(Weak::as_ptr(&key.catalog), Arc::as_ptr(&self.st.catalog));
+        let session =
+            key.auth == *self.session.auth() && key.schema == *self.session.schema.borrow() && key.zone == self.session.now.get().zone;
+        definitions && session && key.own.same_as(&self.session.own.borrow())
+    }
+
+    /// What holds now, for a plan to be kept with.
+    fn key(&self) -> Key {
+        Key {
+            generation: self.st.generation,
+            catalog: Arc::downgrade(&self.st.catalog),
+            auth: self.session.auth().clone(),
+            schema: self.session.default_schema(),
+            zone: self.session.now.get().zone,
+            own: self.session.own.borrow().clone(),
+        }
+    }
+
     /// What `get` takes of what is kept, if it is kept with what holds now.
     ///
     /// # Errors
@@ -124,7 +139,7 @@ impl Keeping<'_> {
     /// SQLCODE -910 if a lock is poisoned.
     fn kept<T>(&self, get: impl FnOnce(&Kept) -> Option<T>) -> Result<Option<T>> {
         let kept = lock(&self.plans.kept)?;
-        Ok(kept.as_ref().filter(|k| k.key.holds_for(&self.key)).and_then(get))
+        Ok(kept.as_ref().filter(|k| self.holds(&k.key)).and_then(get))
     }
 
     /// Keeps what `put` puts, with what holds now: beside what is kept with
@@ -135,8 +150,8 @@ impl Keeping<'_> {
     /// SQLCODE -910 if a lock is poisoned.
     fn keep(&self, put: impl FnOnce(&mut Kept)) -> Result<()> {
         let mut kept = lock(&self.plans.kept)?;
-        let holding = kept.take().filter(|k| k.key.holds_for(&self.key));
-        put(kept.insert(holding.unwrap_or_else(|| Kept::empty(&self.key))));
+        let holding = kept.take().filter(|k| self.holds(&k.key));
+        put(kept.insert(holding.unwrap_or_else(|| Kept::empty(self.key()))));
         Ok(())
     }
 
@@ -192,16 +207,8 @@ fn filled_write(w: BoundWrite, values: &[Value]) -> Result<BoundWrite> {
 
 impl Session {
     /// `plans`, as an execution in the snapshot `st` sees them.
-    pub(in crate::db) fn keeping<'a>(&self, st: &State, plans: &'a Plans) -> Keeping<'a> {
-        let key = Key {
-            generation: st.generation,
-            catalog: Arc::downgrade(&st.catalog),
-            auth: self.auth().clone(),
-            schema: self.default_schema(),
-            zone: self.now.get().zone,
-            own: self.own.borrow().clone(),
-        };
-        Keeping { plans, key }
+    pub(in crate::db) fn keeping<'a>(&'a self, st: &'a State, plans: &'a Plans) -> Keeping<'a> {
+        Keeping { plans, st, session: self }
     }
 
     /// An UPDATE or DELETE, searched or positioned, as `bind` binds it with
@@ -285,7 +292,7 @@ impl Session {
     pub(in crate::db) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
         let st = call.state();
         let k = self.keeping(st, &p.plans);
-        let timed = super::super::slow::Timed::of(st, p.sql.clone(), &self.auth());
+        let timed = super::super::slow::Timed::of(st, || p.sql.clone(), &self.auth());
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))

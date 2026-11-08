@@ -50,7 +50,7 @@ impl Session {
     /// GR1d].
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(&'static str, &Plans)>) -> Result<Completion> {
         let mut call = self.enter()?;
-        call.timed = slow::Timed::of(call.state(), sql, &self.auth());
+        call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
         let parsed = Self::parsed(&call, sql, params, keeping.as_ref());
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the

@@ -93,6 +93,12 @@ impl Session {
     /// SQLCODE -201, SQLSTATE 23000, for the first that does not hold; the
     /// spill area's.
     fn check_deferred(&self, st: &Arc<State>, tx: &Txn, (named, gone): Chosen<'_>) -> Result<()> {
+        if self.deferral.borrow().nothing_waits() {
+            // Nothing to make: the participants are not even told of a
+            // check (`Txn::check_reads`), as a statement that read alone
+            // commits.
+            return Ok(());
+        }
         let (mut now, mut later) = (HeldRows::new(st.list_space()), HeldRows::new(st.list_space()));
         let (mut checked_now, mut waiting) = (HashSet::new(), HashSet::new());
         self.deferral.borrow_mut().pending.visit(&mut |c| {

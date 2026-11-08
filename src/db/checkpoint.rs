@@ -240,8 +240,8 @@ impl Database {
             if st.tx.active() > 0 {
                 return Err(api("[DESIGN] a database is closed with no transaction open"));
             }
-            let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
-            st.gc(&tables);
+            let tables = st.catalog.tables();
+            st.gc(tables.iter().map(|t| &t.name));
             for method in st.methods.values() {
                 method.checkpoint()?;
             }

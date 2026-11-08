@@ -51,7 +51,7 @@ impl RowTable {
     /// Row `id` as `tx` sees it, `columns` decoded, or all.
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
         let reader = self.reader(tx)?;
-        self.note_read(tx, Read::Row(id))?;
+        self.note_read(tx, || Read::Row(id))?;
         if !self.tree.get_near(&key(id), near)? {
             // Frozen, so committed before every snapshot (`rows/frozen.rs`).
             return self.frozen_row(id, columns);
@@ -84,7 +84,7 @@ impl RowTable {
     /// The rows `tx` sees, `columns` decoded, and only those `condition`
     /// matches, if given, which is then what counts as read.
     pub(super) fn scan_rows(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Rows {
-        let read = condition.clone().map_or(Read::All, Read::Condition);
+        let read = || condition.clone().map_or(Read::All, Read::Condition);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
@@ -152,7 +152,7 @@ impl RowTable {
         (columns, (keys, backward)): (&[usize], (&[usize], bool)),
         condition: Option<Conjunction>,
     ) -> Result<Ordered> {
-        let read = condition.clone().map_or(Read::All, Read::Condition);
+        let read = || condition.clone().map_or(Read::All, Read::Condition);
         let reader = self.reader(tx)?;
         self.note_read(tx, read)?;
         let directory = self.frozen.directory()?;
@@ -174,7 +174,7 @@ impl RowTable {
             let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
             return batches_of(rows, columns);
         }
-        let read = condition.clone().map_or(Read::All, Read::Condition);
+        let read = || condition.clone().map_or(Read::All, Read::Condition);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
@@ -190,7 +190,7 @@ impl RowTable {
     /// holds no group, leaving every row to the filter: each record's
     /// columns decoded straight into their vectors.
     fn gathered(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> Batches {
-        let read = condition.cloned().map_or(Read::All, Read::Condition);
+        let read = || condition.cloned().map_or(Read::All, Read::Condition);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),

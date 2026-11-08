@@ -58,19 +58,33 @@ impl Socket for std::os::unix::net::UnixStream {
 }
 
 /// \[DESIGN\] A stream in two handles: `io`, the runtime's, and `now`, a
-/// thread's own (`Direct`).
+/// thread's own (`Direct`). A wait is set on `now` in whole milliseconds,
+/// the finest a socket's is, and only as it changes: a worker asking for
+/// a fast client's next request asks for the same wait, less the
+/// microseconds gone, so it sets nothing (`native/lent.rs`).
 pub struct Dual<A, S> {
     io: A,
     now: S,
-    /// How long `now` waits for what it lacks, if it does (`Direct::wait`).
-    waiting: Option<Duration>,
+    /// Whether `now` waits for what it lacks (`Direct::wait`).
+    waiting: bool,
+    /// How long `now` is set to wait, when it does, if it was ever set.
+    timeout: Option<Duration>,
 }
 
 impl<A, S> Dual<A, S> {
     /// `io` and `now`, two handles of one stream, `now` not waiting.
     pub fn new(io: A, now: S) -> Dual<A, S> {
-        Dual { io, now, waiting: None }
+        Dual { io, now, waiting: false, timeout: None }
     }
+}
+
+/// One millisecond: the finest a socket's wait is set in.
+const MILLI: Duration = Duration::from_millis(1);
+
+/// `within` rounded up to whole milliseconds.
+fn whole_millis(within: Duration) -> Duration {
+    let truncated = Duration::from_millis(u64::try_from(within.as_millis()).unwrap_or(u64::MAX));
+    if truncated < within { truncated.saturating_add(MILLI) } else { truncated }
 }
 
 impl Dual<tokio::net::TcpStream, std::net::TcpStream> {
@@ -148,14 +162,16 @@ impl<A: Send + 'static, S: Socket> Write for Dual<A, S> {
 
 impl<A: Send + 'static, S: Socket> Direct for Dual<A, S> {
     fn wait(&mut self, within: Option<Duration>) -> io::Result<()> {
-        if within == self.waiting {
-            return Ok(());
+        if let Some(wait) = within.map(whole_millis)
+            && self.timeout != Some(wait)
+        {
+            self.now.set_timeouts(Some(wait))?;
+            self.timeout = Some(wait);
         }
-        if within.is_some() {
-            self.now.set_timeouts(within)?;
+        if within.is_some() != self.waiting {
+            self.now.set_nonblocking(within.is_none())?;
+            self.waiting = within.is_some();
         }
-        self.now.set_nonblocking(within.is_none())?;
-        self.waiting = within;
         Ok(())
     }
 }
@@ -173,6 +189,62 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    /// A socket that notes what it is told, and reads and writes nothing.
+    #[derive(Default)]
+    struct Told(std::cell::RefCell<Vec<String>>);
+
+    impl Read for Told {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(ErrorKind::WouldBlock.into())
+        }
+    }
+
+    impl Write for Told {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Socket for Told {
+        fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+            self.0.borrow_mut().push(format!("nonblocking {nonblocking}"));
+            Ok(())
+        }
+
+        fn set_timeouts(&self, within: Option<Duration>) -> io::Result<()> {
+            self.0.borrow_mut().push(format!("timeouts {:?}", within.map(|w| w.as_millis())));
+            Ok(())
+        }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D42: a wait is set in whole
+    /// milliseconds, rounded up, and only as it changes: the timeout when
+    /// it differs from the one set, the blocking mode when a wait begins
+    /// or ends. MC/DC pairs for setting the timeout, from a wait of a new
+    /// length: none asked; the same length asked. For the mode, from a
+    /// first wait: a wait again; none, twice.
+    #[test]
+    fn a_wait_is_set_in_whole_milliseconds_only_as_it_changes() {
+        assert_eq!(whole_millis(Duration::from_millis(1)), Duration::from_millis(1));
+        assert_eq!(whole_millis(Duration::from_millis(1) + Duration::from_nanos(1)), Duration::from_millis(2));
+        assert_eq!(whole_millis(Duration::ZERO), Duration::ZERO);
+        let mut dual = Dual::new((), Told::default());
+        let told = |of: &mut Dual<(), Told>, within: Option<Duration>| {
+            of.wait(within).unwrap();
+            of.now.0.take()
+        };
+        assert_eq!(told(&mut dual, Some(Duration::from_micros(999))), ["timeouts Some(1)", "nonblocking false"], "a first wait");
+        assert!(told(&mut dual, Some(Duration::from_micros(998))).is_empty(), "the same millisecond again");
+        assert_eq!(told(&mut dual, Some(Duration::from_millis(2))), ["timeouts Some(2)"], "a longer wait, still waiting");
+        assert_eq!(told(&mut dual, None), ["nonblocking true"], "the wait ended");
+        assert!(told(&mut dual, None).is_empty(), "ended already");
+        assert_eq!(told(&mut dual, Some(Duration::from_millis(2))), ["nonblocking false"], "waiting again, as long as last");
+    }
 
     /// A TCP connection of loopback in two handles, and its client's end,
     /// on a runtime of its own.

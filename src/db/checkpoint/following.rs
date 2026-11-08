@@ -12,7 +12,6 @@
 
 use super::super::files::DatabaseFiles;
 use super::super::{Database, api};
-use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::sync::lock_builtin;
@@ -42,8 +41,8 @@ impl Database {
         if let Some(table) = st.damaged_tables().first() {
             return Err(SqlError::new(Code::Damaged, format!("[DESIGN] {table} is damaged: no checkpoint is taken until it is repaired")));
         }
-        let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
-        st.gc(&tables);
+        let tables = st.catalog.tables();
+        st.gc(tables.iter().map(|t| &t.name));
         if let Some(table) = st.owing() {
             return Err(SqlError::new(
                 Code::Io,
@@ -53,7 +52,7 @@ impl Database {
             ));
         }
         let as_of = st.tx.stable();
-        for table in &tables {
+        for table in tables.iter().map(|t| &t.name) {
             let storage = st.storage_of(table)?;
             if std::sync::Arc::clone(storage).garbage(as_of).next().is_some() {
                 return Err(SqlError::new(
