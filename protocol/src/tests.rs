@@ -69,10 +69,16 @@ fn requests_read_back_as_written() {
         hello,
         Request::Answer(vec![]),
         Request::Answer(vec![9; 300]),
-        Request::Query("SELECT 1".into()),
+        Request::Query { sql: "SELECT 1".into(), ends: false },
+        Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: true },
         Request::Prepare { statement: u32::MAX, sql: "SELECT ? FROM T".into() },
-        Request::Execute { statement: 0, values: vec![Value::Null, Value::Char("é".into()), Value::Exact(Decimal::new(-5, 1))], rows: 10 },
-        Request::Execute { statement: 1, values: vec![], rows: 0 },
+        Request::Execute {
+            statement: 0,
+            values: vec![Value::Null, Value::Char("é".into()), Value::Exact(Decimal::new(-5, 1))],
+            rows: 10,
+            ends: false,
+        },
+        Request::Execute { statement: 1, values: vec![], rows: 0, ends: true },
         Request::Fetch { statement: 2, rows: u32::MAX },
         Request::Close { statement: 3 },
         Request::Deallocate { statement: 4 },
@@ -87,8 +93,8 @@ fn requests_read_back_as_written() {
     Request::Cancel(key).encode(&mut cancel);
     assert_eq!(cancel, [&[b'Z', 16, 0, 0, 0][..], &[7; 16][..]].concat());
     let mut bytes = Vec::new();
-    Request::Query("AB".into()).encode(&mut bytes);
-    assert_eq!(bytes, [b'Q', 6, 0, 0, 0, 2, 0, 0, 0, b'A', b'B']);
+    Request::Query { sql: "AB".into(), ends: true }.encode(&mut bytes);
+    assert_eq!(bytes, [b'Q', 7, 0, 0, 0, 2, 0, 0, 0, b'A', b'B', 1]);
     bytes.clear();
     Request::Terminate.encode(&mut bytes);
     assert_eq!(bytes, [b'X', 0, 0, 0, 0]);
@@ -190,9 +196,9 @@ fn replies_read_back_as_written() {
 #[test]
 fn a_body_past_the_limit_is_refused_from_its_header() {
     let mut bytes = Vec::new();
-    Request::Query("12".into()).encode(&mut bytes);
-    assert!(unframed(&bytes, 6).is_ok());
-    assert_eq!(unframed(&bytes, 5).map_err(|e| kind_of(&e)).err(), Some(FAILED));
+    Request::Query { sql: "12".into(), ends: false }.encode(&mut bytes);
+    assert!(unframed(&bytes, 7).is_ok());
+    assert_eq!(unframed(&bytes, 6).map_err(|e| kind_of(&e)).err(), Some(FAILED));
     assert_eq!(header([b'Q', 0xff, 0xff, 0xff, 0xff], MAX_BODY).map_err(|e| kind_of(&e)).err(), Some(FAILED));
 }
 

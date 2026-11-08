@@ -83,16 +83,15 @@ fn prepared_statements_are_refused_saying_why() {
     assert_eq!(state(&c.open_cursor(&query, &[int(0)], 1).unwrap_err()).0, "24000", "open");
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Execute { statement: 9, values: vec![], rows: 0 });
+    raw.send(&Request::Execute { statement: 9, values: vec![], rows: 0, ends: false });
     let Some(Reply::Error(unknown)) = raw.receive() else { panic!("no error") };
     assert_eq!(state(&unknown), ("26000", -921));
     raw.send(&Request::Deallocate { statement: 9 });
     assert!(matches!(raw.receive(), Some(Reply::Error(f)) if f.sqlstate == "26000"));
     raw.send(&Request::Prepare { statement: 1, sql: "SELECT K FROM T".into() });
     assert!(matches!(raw.receive(), Some(Reply::Prepared { statement: 1, .. })));
-    raw.send(&Request::Execute { statement: 1, values: vec![], rows: 1 });
-    assert!(matches!(raw.receive(), Some(Reply::Description(_))));
-    assert!(matches!(raw.receive(), Some(Reply::Rows(_))));
+    raw.send(&Request::Execute { statement: 1, values: vec![], rows: 1, ends: false });
+    assert!(matches!(raw.receive(), Some(Reply::Rows(_))), "no Description: Prepared gave the columns");
     assert!(matches!(raw.receive(), Some(Reply::Suspended)));
     raw.send(&Request::Deallocate { statement: 1 });
     assert!(matches!(raw.receive(), Some(Reply::Error(f)) if f.sqlstate == "24000"), "open");
@@ -104,8 +103,8 @@ fn prepared_statements_are_refused_saying_why() {
 /// Verifies: [DESIGN] RULES.md D45: requests sent together are each
 /// answered in order, what one of them fails leaving the rest to run; a
 /// result of more than a batch among them comes whole, and in its place;
-/// a commit sent with a statement is answered after it, and it holds; a
-/// Terminate sent with them is taken after them.
+/// a statement whose request ends its transaction is committed in its
+/// turn, and it holds; a Terminate sent with them is taken after them.
 #[test]
 fn requests_sent_together_are_each_answered_in_their_turn() {
     let db = database(40);
@@ -113,13 +112,12 @@ fn requests_sent_together_are_each_answered_in_their_turn() {
     let mut raw = server.raw();
     raw.hello("X");
     let mut bytes = Vec::new();
-    Request::Query("SELECT K FROM T".into()).encode(&mut bytes);
-    Request::Query("SELECT NOTHING FROM T".into()).encode(&mut bytes);
+    Request::Query { sql: "SELECT K FROM T".into(), ends: false }.encode(&mut bytes);
+    Request::Query { sql: "SELECT NOTHING FROM T".into(), ends: false }.encode(&mut bytes);
     for _ in 0..40 {
-        Request::Query("SELECT COUNT(*) FROM T".into()).encode(&mut bytes);
+        Request::Query { sql: "SELECT COUNT(*) FROM T".into(), ends: false }.encode(&mut bytes);
     }
-    Request::Query("INSERT INTO T VALUES (41)".into()).encode(&mut bytes);
-    Request::Query("COMMIT".into()).encode(&mut bytes);
+    Request::Query { sql: "INSERT INTO T VALUES (41)".into(), ends: true }.encode(&mut bytes);
     Request::Terminate.encode(&mut bytes);
     raw.send_bytes(&bytes);
     assert!(matches!(raw.receive(), Some(Reply::Description(_))));
@@ -138,8 +136,7 @@ fn requests_sent_together_are_each_answered_in_their_turn() {
         assert!(matches!(raw.receive(), Some(Reply::Rows(r)) if r[0][0].to_string() == "40"));
         assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     }
-    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))), "the commit");
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, active: false, .. }))), "committed with it");
     assert!(raw.receive().is_none(), "closed");
     let mut c = server.connect("X");
     assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["41"]);
@@ -157,8 +154,8 @@ fn requests_are_answered_in_order() {
     raw.hello("X");
     let batch = [
         Request::Prepare { statement: 7, sql: "SELECT K FROM T WHERE K = ?".into() },
-        Request::Execute { statement: 7, values: vec![int(2)], rows: 0 },
-        Request::Query("SELECT COUNT(*) FROM T".into()),
+        Request::Execute { statement: 7, values: vec![int(2)], rows: 0, ends: false },
+        Request::Query { sql: "SELECT COUNT(*) FROM T".into(), ends: false },
         Request::Prepare { statement: 8, sql: "SELECT K FROM T".into() },
         Request::Prepare { statement: 7, sql: "SELECT K FROM T".into() },
     ];
@@ -168,7 +165,6 @@ fn requests_are_answered_in_order() {
     }
     raw.send_bytes(&bytes);
     assert!(matches!(raw.receive(), Some(Reply::Prepared { statement: 7, .. })));
-    assert!(matches!(raw.receive(), Some(Reply::Description(_))));
     assert!(matches!(raw.receive(), Some(Reply::Rows(r)) if r.len() == 1 && r[0][0].to_string() == "2"));
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     assert!(matches!(raw.receive(), Some(Reply::Description(_))));
@@ -176,6 +172,49 @@ fn requests_are_answered_in_order() {
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     assert!(matches!(raw.receive(), Some(Reply::Error(f)) if f.sqlcode == -918), "past the limit");
     assert!(matches!(raw.receive(), Some(Reply::Prepared { statement: 7, .. })), "its own place");
+}
+
+/// Verifies: [EXTENSION] [DESIGN] RULES.md D45: a Query or an Execute that
+/// ends the transaction with its statement is committed once the
+/// statement succeeds, its completion saying no transaction is active,
+/// and another connection sees its change; rolled back if the statement
+/// fails, a change before it undone; the client's autocommit sends each
+/// statement so, and a cursor it opens keeps its transaction.
+#[test]
+fn a_request_may_end_its_transaction_with_its_statement() {
+    let db = database(3);
+    let server = start(&db, &[]);
+    let mut raw = server.raw();
+    raw.hello("X");
+    raw.send(&Request::Query { sql: "INSERT INTO T VALUES (4)".into(), ends: true });
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, active: false, .. }))));
+    let mut c = server.connect("X");
+    assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["4"], "committed");
+    raw.send(&Request::Query { sql: "INSERT INTO T VALUES (5)".into(), ends: false });
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { active: true, .. }))));
+    raw.send(&Request::Query { sql: "INSERT INTO T VALUES ('x')".into(), ends: true });
+    assert!(matches!(raw.receive(), Some(Reply::Error(f)) if !f.active));
+    raw.send(&Request::Prepare { statement: 1, sql: "SELECT COUNT(*) FROM T".into() });
+    assert!(matches!(raw.receive(), Some(Reply::Prepared { .. })));
+    raw.send(&Request::Execute { statement: 1, values: vec![], rows: 0, ends: true });
+    assert!(matches!(raw.receive(), Some(Reply::Rows(r)) if r[0][0].to_string() == "4"), "rolled back");
+    assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { active: false, .. }))));
+    c.set_autocommit(true);
+    assert!(c.autocommit());
+    let insert = c.prepare("INSERT INTO T VALUES (?)").unwrap();
+    c.execute(&insert, &[int(6)]).unwrap();
+    assert!(!c.in_transaction(), "committed with the statement");
+    let mut other = server.connect("X");
+    assert_eq!(rows(&other.query("SELECT COUNT(*) FROM T").unwrap()), ["5"], "seen by another connection");
+    let query = c.prepare("SELECT K FROM T ORDER BY K").unwrap();
+    let first = c.open_cursor(&query, &[], 1).unwrap();
+    assert!(first.more && c.in_transaction(), "a cursor keeps its transaction");
+    c.close(&query).unwrap();
+    assert!(c.in_transaction());
+    assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["5"]);
+    assert!(!c.in_transaction(), "a query ends it");
+    assert!(c.query("INSERT INTO T VALUES ('x')").is_err());
+    assert!(!c.in_transaction(), "a failure ends it too");
 }
 
 /// Verifies: [DESIGN] RULES.md D44, D45: a statement a connection runs is

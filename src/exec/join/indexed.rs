@@ -38,7 +38,7 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
     match opened {
         Ok((storage, found, ix)) => Box::new(IndexJoin {
             left: execute(*left, db, tx),
-            table: Probed { storage, index: found, ix, needed, tx, stop: db.tx.stop_of(tx) },
+            table: Probed { storage, index: found, reading: Reading::of(&ix, Some(&needed)), ix, tx, stop: db.tx.stop_of(tx) },
             keys,
             cond,
             nulls: outer.then(|| vec![Value::Null; width]),
@@ -50,13 +50,15 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter
 }
 
 /// The table an index join probes: its storage, the index, its columns,
-/// the table's columns the query uses, read as `tx` sees them, the
+/// what every fetch of its rows shares, read as `tx` sees them, the
 /// statement's stop looked at.
 struct Probed {
     storage: Arc<dyn TableStorage>,
     index: Arc<dyn Index>,
     ix: KeyShape,
-    needed: Vec<usize>,
+    /// The columns the query uses, chosen once, and the leaf last read, so
+    /// rows side by side are fetched from it (`exec/entries.rs`).
+    reading: Reading,
     tx: TxId,
     stop: Option<Arc<Stop>>,
 }
@@ -85,10 +87,9 @@ impl Probed {
     }
 
     /// The row of the entry `(key, id)`, if the version `tx` sees has it.
-    fn row(&self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
+    fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        let mut reading = Reading::of(&self.ix, Some(&self.needed));
-        Ok(fetch(&*self.storage, &self.ix, &mut reading, (self.tx, id), &key)?.map(|(_, row)| row))
+        Ok(fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?.map(|(_, row)| row))
     }
 }
 
@@ -137,7 +138,7 @@ impl IndexJoin {
 
     /// `l` joined with the row of `entry`, if the version read has it and
     /// the condition is true of the pair.
-    fn paired(&self, l: &Row, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
+    fn paired(&mut self, l: &Row, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let Some(r) = self.table.row(entry)? else { return Ok(None) };
         let joined: Row = l.iter().chain(&r).cloned().collect();
         let kept = match &self.cond {

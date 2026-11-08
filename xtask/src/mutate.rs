@@ -33,6 +33,8 @@ pub enum Package {
     Core,
     /// Replication, `turborel-replication`.
     Replication,
+    /// The server, `turborel-server`.
+    Server,
 }
 
 impl Package {
@@ -41,6 +43,7 @@ impl Package {
         match self {
             Package::Core => "turborel",
             Package::Replication => "turborel-replication",
+            Package::Server => "turborel-server",
         }
     }
 
@@ -49,6 +52,7 @@ impl Package {
         match self {
             Package::Core => "integration",
             Package::Replication => "replication",
+            Package::Server => "server",
         }
     }
 }
@@ -162,7 +166,7 @@ fn apply(source: &str, m: &Mutation) -> Result<String> {
 /// is not there.
 fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> {
     let mut problems = Vec::new();
-    for package in [Package::Core, Package::Replication] {
+    for package in [Package::Core, Package::Replication, Package::Server] {
         for target in [Target::Integration, Target::Unit] {
             let mut names: Vec<&str> = chosen.iter().filter(|m| m.package == package).flat_map(|m| m.tests(target)).copied().collect();
             names.sort_unstable();

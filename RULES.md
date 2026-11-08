@@ -960,7 +960,9 @@ A table of at least 1,024 rows, with no order wanted, is read by a probe that
 fixes every column of a unique index without pricing another path. The probe
 finds one row at most, so nothing could be cheaper by enough to be worth the
 zones and counts a comparison reads. The values still come from the execution
-(D45).
+(D45): a prepared statement's `?` fixes a column as a constant does, a null
+standing in for its value until each execution fills it
+(`physical/kept.rs`).
 
 Fetches are priced by where the page is found, with a row scanned costing
 1. A page in the pool costs 8.6, in the system's cache 72, and from disk
@@ -1126,15 +1128,16 @@ SERVER.WORKERS blocking workers, and authentication on at most
 SERVER.MAX_LOGINS other threads. A worker writes the replies of the request
 it runs, a batch of SERVER.BATCH_BYTES at a time, each within
 SERVER.IDLE_TIMEOUT_MS, so a slow client holds its worker and a batch of
-memory, no more. A fast client's next request the worker reads itself,
-through a second handle of the socket that waits a millisecond or so apart
-from the runtime (`transport::Direct`), its permit to run statements given
-up meanwhile, so a request answered wakes one thread, the one that runs
-it. At most SERVER.WORKERS connections keep a worker waiting so, none while
-a statement waits for one, and a request that comes later the connection's
-task reads through the runtime. A stream TLS secures, or a named pipe, has
-no such handle, and takes the task's path. Each connection runs one request
-at a time.
+memory, no more. A fast client's next request the worker reads itself. The
+socket is handed to it, the runtime's interest in it given up, and it waits
+a millisecond or so apart from the runtime (`transport::Direct`), its
+permit to run statements given up meanwhile. So a request answered wakes
+one thread, the one that runs it, and a request that comes while the worker
+waits wakes no other. At most SERVER.WORKERS connections keep a worker
+waiting so, none while a statement waits for one. A request that comes
+later the connection's task reads through the runtime, which takes the
+socket back. A stream TLS secures, or a named pipe, is not handed so, and
+takes the task's path. Each connection runs one request at a time.
 
 Time limits bound every client, and memory is taken as bytes arrive, never
 as a header declares (`SERVER.*_TIMEOUT_MS`, `native::LOGIN_MESSAGE_BYTES`).
@@ -1244,7 +1247,10 @@ Failures to prepare are SQLSTATE 37000. Unlike SQL's PREPARE it accepts a
 
 A statement keeps its parsed text and bound plan. Each execution fills the
 slots, then rewrites and plans, so access paths follow its values and never
-a generic plan (`db/prepared/plans.rs`). A kept plan holds while the
+a generic plan (`db/prepared/plans.rs`). A query whose plan is one probe
+fixing a whole unique key, which no value changes (D35), keeps that physical
+plan too, made once with its slots and filled at each execution
+(`physical/kept.rs`). A kept plan holds while the
 snapshot's generation, the catalog read, and the session's identity, schema,
 zone and settings are unchanged. Otherwise the statement is rebound against
 current definitions [§17.6 GR10], so a revoked privilege is missing at the
@@ -1259,7 +1265,16 @@ Prepare, Execute (with a row limit), Fetch, Close and Deallocate are the
 messages, because clients read large results in parts and must stop what
 they start. Complete carries SQLCODE and SQLSTATE so warnings reach the
 client, and Complete and Error end with whether a transaction is active.
-Requests may be pipelined.
+Requests may be pipelined. A prepared query's columns come with Prepared
+alone; Execute sends its rows.
+
+Query and Execute carry whether the transaction ends with the statement
+[EXTENSION]: committed as it succeeds, rolled back as it fails, so a
+statement that is its own transaction, as drivers' autocommit has it, is
+one request and one reply, and the server runs each request alone, never
+reading past it for a commit sent with it. The client library sends every
+statement so under `set_autocommit`; a cursor it opens keeps its
+transaction.
 
 Ready gives the product and version only once authenticated, along with a
 random 128-bit key. A connection whose only message is Cancel with that key

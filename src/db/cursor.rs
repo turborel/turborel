@@ -269,7 +269,9 @@ impl Session {
 
     /// The rows of a read-only cursor's specification, after taking
     /// shared locks on the tables it reads [X3.135-1986 §8.8 GR3b]: of a
-    /// prepared statement, from the plan it keeps (`keeping`, RULES.md D45).
+    /// prepared statement, from the plans it keeps (`keeping`, RULES.md
+    /// D45), its physical plan filled if its paths follow no value, else
+    /// its bound plan filled and planned.
     pub(super) fn open_rows(
         &self,
         st: &Arc<State>,
@@ -277,6 +279,9 @@ impl Session {
         spec: &CursorSpecification,
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<(Vec<OutColumn>, Stream)> {
+        if let Some((columns, physical, reads)) = keeping.map(|k| k.physical(params.dynamic_values())).transpose()?.flatten() {
+            return Ok((columns, Stream::kept(st, tx, physical, reads)?));
+        }
         let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
         Ok((columns, Stream::planned(st, tx, logical)?))
     }

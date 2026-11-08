@@ -7,7 +7,7 @@ Finished work leaves this file, and git keeps its history.
 
 Code never cites this file (R-DOC-5).
 
-[Next](#next) · [Server](#server) · [SQL](#sql) ·
+[Next](#next) · [SQL](#sql) ·
 [Query processing](#query-processing) ·
 [Storage and durability](#storage-and-durability)
 
@@ -27,16 +27,6 @@ Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
 - REVOKE USAGE on a collation a schema's column depends on is refused, with
   CASCADE too, and DROP SCHEMA with a collation another schema's table is of.
   Both could revert the columns as DROP COLLATION does.
-
----
-
-## Server
-
-- A worker waiting on a fast client's socket for its next request still wakes
-  an I/O thread for each request that comes, since the runtime keeps its
-  interest in the socket meanwhile. Giving the interest up while a worker
-  waits, and taking it again as the connection's task reads, would spare that
-  thread a wake for every request of a client in a tight loop.
 
 ---
 

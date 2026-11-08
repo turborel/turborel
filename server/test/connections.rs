@@ -21,14 +21,14 @@ fn a_connection_breaking_the_protocol_is_closed() {
     let db = Database::new();
     let server = start(&db, &[(MAX_MESSAGE_BYTES, 1024)]);
     let mut raw = server.raw();
-    raw.send(&Request::Query("SELECT 1".into()));
+    raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "no Hello");
     let mut raw = server.raw();
     raw.send_bytes(&[0, 0, 0, 0, 0]);
     assert_eq!(state(&raw.refusal()), ("08006", -919), "no such kind");
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query("X".repeat(1025)));
+    raw.send(&Request::Query { sql: "X".repeat(1025), ends: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "too long");
     for again in [
         Request::Hello { version: 1, user: "X".into(), mechanism: "trust".into(), initial: vec![], capabilities: vec![] },
@@ -125,7 +125,7 @@ fn an_idle_connection_is_closed_and_rolled_back() {
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (IDLE_TIMEOUT_MS, 50)]);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query("INSERT INTO T VALUES (1)".into()));
+    raw.send(&Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
@@ -149,10 +149,10 @@ fn a_client_not_taking_its_rows_is_let_go() {
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1), (IDLE_TIMEOUT_MS, 100)]);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query("DELETE FROM T WHERE K = 0".into()));
+    raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     // Four megabytes of rows, more than the sockets hold, never read.
-    raw.send(&Request::Query("SELECT K, S FROM T".into()));
+    raw.send(&Request::Query { sql: "SELECT K, S FROM T".into(), ends: false });
     let mut c = reconnected(&server);
     assert_eq!(crate::common::rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["4000"], "rolled back");
     drop(raw);
@@ -251,9 +251,9 @@ fn a_client_gone_amid_its_rows_is_let_go() {
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1)]);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query("DELETE FROM T WHERE K = 0".into()));
+    raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-    raw.send(&Request::Query("SELECT K FROM T".into()));
+    raw.send(&Request::Query { sql: "SELECT K FROM T".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Description(_))));
     drop(raw);
     let again = (0..10_000).find_map(|_| {

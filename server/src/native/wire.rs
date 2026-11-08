@@ -3,8 +3,8 @@
 //! (`native/lent.rs`), which reads and writes it apart from the runtime
 //! where its transport allows (`Transport::direct`), and waits so for a
 //! fast client's next request; the connection's task reads and writes it
-//! through the runtime, which the transport must not be waiting for a
-//! thread meanwhile: each step through the runtime ends the wait first.
+//! through the runtime, which takes the transport back from the thread
+//! as it does.
 //!
 //! What the client sends is taken into memory as its bytes arrive, never
 //! reserved whole as a header declares it: a client that declares a long
@@ -37,9 +37,6 @@ pub(super) struct Wire {
     inbox: Vec<u8>,
     start: usize,
     end: usize,
-    /// Whether the transport waits for a thread's reads and writes
-    /// (`Direct::wait`), so the runtime must not read or write it.
-    waiting: bool,
     max_body: u32,
     /// The types beyond the standard a request's values may be of.
     types: TypeRegistry,
@@ -57,16 +54,6 @@ pub(super) enum Arrived<T> {
     Left,
     /// None is whole yet.
     Awaited,
-}
-
-impl<T> Arrived<T> {
-    /// What was taken, if anything.
-    pub(super) fn taken(self) -> Option<T> {
-        match self {
-            Arrived::Taken(taken) => Some(taken),
-            Arrived::Left | Arrived::Awaited => None,
-        }
-    }
 }
 
 /// The connection failed receiving: `why`.
@@ -98,7 +85,7 @@ impl Wire {
     /// The messages of `transport`: its requests, of at most `max_body`
     /// bytes, and its replies.
     pub(super) fn new(transport: Box<dyn Transport>, max_body: u32, types: TypeRegistry) -> Wire {
-        Wire { transport, inbox: vec![0; INBOX], start: 0, end: 0, waiting: false, max_body, types, out: Vec::new(), sent: 0 }
+        Wire { transport, inbox: vec![0; INBOX], start: 0, end: 0, max_body, types, out: Vec::new(), sent: 0 }
     }
 
     /// Takes requests of at most `max_body` bytes from now on.
@@ -111,21 +98,8 @@ impl Wire {
         self.transport.direct().is_some()
     }
 
-    /// The runtime about to read or write: the transport waits for no
-    /// thread. Not told, it stays unread and unwritten, to be dropped.
-    fn through_runtime(&mut self) -> Result<()> {
-        if self.waiting {
-            if let Some(direct) = self.transport.direct() {
-                direct.wait(None).map_err(|e| cannot_receive(&e))?;
-            }
-            self.waiting = false;
-        }
-        Ok(())
-    }
-
     /// The client's next request.
     pub(super) async fn receive(&mut self) -> Result<Request> {
-        self.through_runtime()?;
         loop {
             let whole = self.whole()?;
             if let Some(request) = whole {
@@ -146,10 +120,9 @@ impl Wire {
     /// transport cannot be read so.
     pub(super) fn fill_within(&mut self, within: Duration) -> Result<bool> {
         self.make_room();
-        let Wire { transport, inbox, start, end, waiting, .. } = self;
+        let Wire { transport, inbox, start, end, .. } = self;
         let Some(direct) = transport.direct() else { return Ok(false) };
-        *waiting = true;
-        direct.wait(Some(within)).map_err(|e| cannot_receive(&e))?;
+        direct.wait(within).map_err(|e| cannot_receive(&e))?;
         loop {
             let read = direct.read(inbox.get_mut(*end..).unwrap_or_default());
             match read {
@@ -289,7 +262,6 @@ impl Wire {
 
     /// Sends the rest of the replies encoded last, through the runtime.
     pub(super) async fn send_rest(&mut self) -> Result<()> {
-        self.through_runtime()?;
         let rest = self.out.get(self.sent..).unwrap_or_default();
         self.transport.write_all(rest).await.map_err(|e| cannot_send(&e))?;
         self.sent = self.out.len();
@@ -310,9 +282,7 @@ impl Wire {
     /// Closes the connection, its replies sent.
     pub(super) async fn close(&mut self) {
         // The connection ends whatever happens: a client gone hears nothing.
-        if self.through_runtime().is_ok() {
-            let _ = self.transport.shutdown().await;
-        }
+        let _ = self.transport.shutdown().await;
     }
 
     /// Tells the client of `why`, if it still listens, and closes.
@@ -331,9 +301,6 @@ impl Wire {
     /// sends nor closes.
     pub(super) async fn close_refusing(&mut self, why: &SqlError, within: Duration) {
         self.close_with(why).await;
-        if self.through_runtime().is_err() {
-            return;
-        }
         let mut sink = [0_u8; DRAINED];
         let drained = async {
             while let Ok(n) = self.transport.read(&mut sink).await {
@@ -375,7 +342,7 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         runtime.block_on(async {
             let (mut wire, mut far) = piped(1024, 1024);
-            let mut bytes = encoded(&Request::Query("SELECT 1".into()));
+            let mut bytes = encoded(&Request::Query { sql: "SELECT 1".into(), ends: false });
             bytes.extend(encoded(&Request::Terminate));
             bytes.extend(encoded(&Request::Fetch { statement: 1, rows: 2 }));
             let rest = bytes.split_off(3);
@@ -384,7 +351,7 @@ mod tests {
                 far.write_all(&rest).await.unwrap();
                 far
             });
-            assert!(matches!(wire.receive().await.unwrap(), Request::Query(sql) if sql == "SELECT 1"));
+            assert!(matches!(wire.receive().await.unwrap(), Request::Query { sql, .. } if sql == "SELECT 1"));
             assert!(!wire.is_direct());
             assert!(!wire.fill_within(Duration::from_millis(1)).unwrap(), "not read apart from the runtime");
             assert!(matches!(wire.arrived(|_| None::<()>), Arrived::Left), "whole, not taken");
@@ -421,7 +388,7 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         runtime.block_on(async {
             let (mut short, mut client) = piped(1 << 20, 16);
-            let long = Request::Query("x".repeat(200_000));
+            let long = Request::Query { sql: "x".repeat(200_000), ends: false };
             let bytes = encoded(&long);
             client.write_all(&bytes[..HEADER]).await.unwrap();
             let refused = short.receive().await.unwrap_err();
@@ -431,7 +398,7 @@ mod tests {
             assert!(still_waiting(wire.receive()).await);
             assert!(wire.inbox.len() <= bytes.len() && wire.inbox.len() < 2 * RESERVED, "grown by steps: {}", wire.inbox.len());
             far.write_all(&bytes[RESERVED..]).await.unwrap();
-            assert!(matches!(wire.receive().await.unwrap(), Request::Query(sql) if sql.len() == 200_000));
+            assert!(matches!(wire.receive().await.unwrap(), Request::Query { sql, .. } if sql.len() == 200_000));
             assert_eq!(wire.inbox.len(), INBOX, "shrunk back");
             far.write_all(&bytes[..HEADER + 10]).await.unwrap();
             drop(far);

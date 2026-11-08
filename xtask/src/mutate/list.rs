@@ -1,30 +1,36 @@
 //! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9): each
-//! breaks one mechanism of the core, or of replication (`vr.rs`), and
-//! names tests, by their full paths, that each fail when it is broken. A mechanism a change adds gets one
+//! breaks one mechanism of the core, of replication (`vr.rs`) or of the
+//! server (`server.rs`), and names tests, by their full paths, that each fail when it is broken. A mechanism a change adds gets one
 //! here; a change to a quoted snippet brings its mutation up to date
 //! (`verify` refuses one that no longer applies).
 
 mod collations;
+mod kept;
 mod near;
 mod reads;
+mod server;
 mod shadow;
 mod vr;
 
 use super::{Mutation, Package};
 pub use collations::COLLATIONS;
+pub use kept::KEPT;
 pub use reads::READS;
+pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use vr::VR;
 
-/// Every mutation, in the order they run: the core's, then its reads',
-/// collations', shadow files' and reads near the last, then replication's.
+/// Every mutation, in the order they run: the core's, then its kept
+/// plans', reads', collations', shadow files' and reads near the last,
+/// then replication's, then the server's.
 pub fn all() -> Vec<Mutation> {
-    MUTATIONS.iter().chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&near::NEAR).chain(&VR).copied().collect()
+    let core = MUTATIONS.iter().chain(&KEPT).chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&near::NEAR);
+    core.chain(&VR).chain(&SERVER).copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints,
 /// assertions, the hash index.
-pub const MUTATIONS: [Mutation; 53] = [
+pub const MUTATIONS: [Mutation; 51] = [
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,
@@ -180,26 +186,6 @@ pub const MUTATIONS: [Mutation; 53] = [
         replacement: "let whole = by_prefix;",
         integration: &["spilled_sorts::spilled_sorts_give_the_rows_held_sorts_give"],
         unit: &["exec::sort::merge::tests::merged_by_prefixes_as_compared_whole"],
-    },
-    Mutation {
-        name: "kept-plan-definitions",
-        package: Package::Core,
-        breaks: "kept plans: a prepared statement's plan kept across a change of the catalog",
-        file: "src/db/prepared/plans.rs",
-        original: " && std::ptr::addr_eq(Weak::as_ptr(&key.catalog), Arc::as_ptr(&self.st.catalog));",
-        replacement: ";",
-        integration: &["kept_plans::a_kept_plan_follows_the_transactions_own_definitions"],
-        unit: &[],
-    },
-    Mutation {
-        name: "kept-plan-instant",
-        package: Package::Core,
-        breaks: "kept plans: a plan holding the statement's instant kept for the next execution",
-        file: "src/value/datetime.rs",
-        original: "            read.set(true);",
-        replacement: "            read.set(false);",
-        integration: &["kept_plans::a_plan_holding_the_instant_is_made_at_each_execution"],
-        unit: &[],
     },
     Mutation {
         name: "assertion-row",

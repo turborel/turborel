@@ -133,6 +133,13 @@ transaction is active, as the server said after the last statement. `canceller` 
 from another thread: `cancel` gives up after `CANCEL_WITHIN`, 10 seconds,
 if the server does not answer; `cancel_within` takes a limit of its own.
 
+A transaction begins with the first statement and lasts until COMMIT or
+ROLLBACK, as SQL-92 has it. `set_autocommit(true)` makes each statement
+`query`, `query_into` or `execute` runs its own transaction instead: the
+server commits it as the statement succeeds, or rolls it back as it
+fails, within the same request, so no COMMIT is sent. A cursor
+`open_cursor` opens is read within its transaction either way.
+
 ## Prepared statements
 
 `prepare` prepares a statement once, its dynamic parameters written

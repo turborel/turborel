@@ -82,7 +82,7 @@ fn a_mechanism_may_challenge_the_client() {
     let mut raw = server.raw();
     raw.send(&Request::Hello { version: 1, user: "ann".into(), mechanism: "echo".into(), initial: vec![], capabilities: vec![] });
     assert!(matches!(raw.receive(), Some(turborel_protocol::Reply::Challenge(_))));
-    raw.send(&Request::Query("SELECT 1".into()));
+    raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "a challenge is answered");
 }
 

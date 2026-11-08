@@ -356,8 +356,11 @@ pub trait Catalog: Send + Sync {
     fn tables(&self) -> Vec<&TableDesc>;
     /// Every temporary table, in no fixed order, so a session can stand
     /// its own instances in for them at each statement without the
-    /// ordering `tables` does (`db/temporary.rs`).
-    fn temporary_tables(&self) -> Vec<&TableDesc>;
+    /// ordering `tables` does (`db/temporary.rs`). By default, those among
+    /// `tables`; a catalog that can give them unordered should.
+    fn temporary_tables(&self) -> Vec<&TableDesc> {
+        self.tables().into_iter().filter(|t| t.temporary.is_some()).collect()
+    }
     /// Record the views of a `<schema>` [X3.135-1986 §6.5].
     fn add_views(&mut self, views: Vec<ViewDesc>);
     /// The view with this name, if any.

@@ -2,10 +2,12 @@
 //! statements, prepared ones among them [ISO/IEC 9075:1992 §17], and their
 //! cursors. Its replies are gathered, and written a batch's worth at a
 //! time, the rest with the last (`Outgoing`), so a small result takes one
-//! write. A commit or rollback sent with a statement runs with it on one
-//! worker, its reply with the statement's. Nothing else does: a
-//! statement's reply is never held back while another may wait on a
-//! client reading it.
+//! write. A request that ends the transaction with its statement
+//! \[EXTENSION\] commits once the statement is done, or rolls back if it
+//! failed, its one reply saying no transaction is active, so a statement
+//! that is its own transaction is one request and one reply. Nothing else
+//! runs with a statement: its reply is never held back while another may
+//! wait on a client reading it.
 
 use std::collections::HashMap;
 use std::mem;
@@ -18,19 +20,31 @@ use turborel_protocol::{Column, Completed, Failure, Reply, row_size};
 
 /// What a worker is asked to do.
 pub(super) enum Work {
-    /// A `<direct SQL statement>`: all its rows.
-    Query(String),
+    /// A `<direct SQL statement>`: all its rows; the transaction ended
+    /// with it if `ends` (`Request::Query`).
+    Query { sql: String, ends: bool },
     /// [§17.6] A statement to prepare as number `.0`.
     Prepare(u32, String),
-    /// [§17.10, §17.14] Statement `.0` executed with values `.1`; of a query,
-    /// at most `.2` rows sent, all if 0.
-    Execute(u32, Vec<Value>, u32),
+    /// [§17.10, §17.14] Statement `statement` executed with `values`; of a
+    /// query, at most `rows` rows sent, all if 0; the transaction ended
+    /// with it if `ends` (`Request::Execute`).
+    Execute { statement: u32, values: Vec<Value>, rows: u32, ends: bool },
     /// [§17.15] At most `.1` more rows of statement `.0`'s cursor.
     Fetch(u32, u32),
     /// [§17.16] Statement `.0`'s cursor closed.
     Close(u32),
     /// [§17.7] Statement `.0` destroyed.
     Deallocate(u32),
+}
+
+impl Work {
+    /// Whether the transaction ends with it.
+    fn ends(&self) -> bool {
+        match self {
+            Work::Query { ends, .. } | Work::Execute { ends, .. } => *ends,
+            Work::Prepare(..) | Work::Fetch(..) | Work::Close(_) | Work::Deallocate(_) => false,
+        }
+    }
 }
 
 /// A cursor of a prepared statement, open between requests, the row read
@@ -116,55 +130,22 @@ impl Held {
         Held { session, statements: HashMap::new(), cursors: HashMap::new() }
     }
 
-    /// Does `work`, then what `then` holds if the connection is there and
-    /// its check says the connection is still served, as receiving it would
-    /// have asked; their replies gathered in `out`, within `max_statements`
-    /// prepared statements.
+    /// Does `work`, its replies gathered in `out`, within `max_statements`
+    /// prepared statements; the transaction ended after it if the request
+    /// says so (`ended`).
     ///
     /// # Errors
     ///
     /// A write of replies failed: the connection is gone.
-    pub(super) fn handle_then(
-        &mut self,
-        work: Work,
-        then: Option<(Work, impl FnOnce() -> bool)>,
-        out: &mut Outgoing<'_>,
-        max_statements: usize,
-    ) -> Result<()> {
-        self.handle(work, out, max_statements)?;
-        if let Some((next, still)) = then
-            && still()
-        {
-            self.handle(next, out, max_statements)?;
-        }
-        Ok(())
-    }
-
-    /// Whether `work` is only a commit or a rollback: what may run with the
-    /// statement before it (see the module's documentation).
-    pub(super) fn ends_transaction(&self, work: &Work) -> bool {
-        let ends =
-            |sql: &str| ["COMMIT", "COMMIT WORK", "ROLLBACK", "ROLLBACK WORK"].iter().any(|end| sql.trim().eq_ignore_ascii_case(end));
-        match work {
-            Work::Query(sql) => ends(sql),
-            Work::Execute(n, values, _) => values.is_empty() && self.statements.get(n).is_some_and(|p| ends(p.sql())),
-            Work::Prepare(..) | Work::Fetch(..) | Work::Close(_) | Work::Deallocate(_) => false,
-        }
-    }
-
-    /// Does `work`, its replies gathered in `out`; within `max_statements`
-    /// prepared statements.
-    ///
-    /// # Errors
-    ///
-    /// A write of replies failed: the connection is gone.
-    fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> Result<()> {
+    pub(super) fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> Result<()> {
+        let ends = work.ends();
         let last = match self.done(work, out, max_statements) {
             Ok(Some(last)) => last,
             Ok(None) => return Ok(()),
             Err(Cut::Gone(e)) => return Err(e),
             Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
         };
+        let last = if ends { self.ended(last) } else { last };
         // [ISO/IEC 9075:1992 §15.1 GR1, §15.3 GR6] whether the transaction
         // is active, for the client's connection statements.
         let active = self.session.transaction().is_some();
@@ -179,11 +160,36 @@ impl Held {
         Ok(())
     }
 
+    /// \[EXTENSION\] `last`, the reply of a statement whose request ends the
+    /// transaction with it, once it is ended: committed after a
+    /// completion, the commit's failure in its place if it fails; rolled
+    /// back after a failure, the rollback's failure in its place if that
+    /// fails, the tables then damaged (RULES.md D19). A query's cursor
+    /// left open, its rows not all sent, keeps the transaction.
+    fn ended(&mut self, last: Reply) -> Reply {
+        let outcome = match &last {
+            Reply::Complete(_) => self.session.commit(),
+            Reply::Error(_) => self.session.rollback(),
+            Reply::Suspended
+            | Reply::Prepared { .. }
+            | Reply::Description(_)
+            | Reply::Rows(_)
+            | Reply::Challenge(_)
+            | Reply::Ready { .. } => {
+                return last;
+            }
+        };
+        match outcome {
+            Ok(()) => last,
+            Err(e) => Reply::Error(Failure::from(&e)),
+        }
+    }
+
     /// Does `work`: the last reply, none if its rows ended it.
     fn done(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> std::result::Result<Option<Reply>, Cut> {
         let failed = Cut::Failed;
         match work {
-            Work::Query(sql) => match self.session.direct(&sql).map_err(failed)? {
+            Work::Query { sql, .. } => match self.session.direct(&sql).map_err(failed)? {
                 Direct::Done(completion) => Ok(Some(Reply::Complete(completion.into()))),
                 Direct::Rows(cursor) => {
                     let mut open = Open { cursor, next: None, warning: self.session.warning() };
@@ -192,7 +198,7 @@ impl Held {
                 }
             },
             Work::Prepare(n, sql) => self.prepare(n, &sql, max_statements).map(Some).map_err(failed),
-            Work::Execute(n, values, rows) => self.execute(n, &values, (rows, out)),
+            Work::Execute { statement, values, rows, .. } => self.execute(statement, &values, (rows, out)),
             Work::Fetch(n, rows) => self.fetch(n, (rows, out)),
             Work::Close(n) => {
                 // [§17.16 GR1, §13.4 GR1]
@@ -232,7 +238,8 @@ impl Held {
     }
 
     /// [§17.10, §17.14] Executes statement `n` with `values`; a query's
-    /// cursor opened, at most `rows` of it sent.
+    /// cursor opened, at most `rows` of it sent, of the columns Prepared
+    /// gave: no Description.
     fn execute(&mut self, n: u32, values: &[Value], (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
         let prepared = self.statements.get(&n).ok_or_else(|| Cut::Failed(no_statement(n)))?;
         if !prepared.is_query() {
@@ -243,7 +250,6 @@ impl Held {
             return Err(Cut::Failed(cursor_state("[ISO/IEC 9075:1992 §13.2 GR1] the statement's cursor is open")));
         }
         let cursor = self.session.open_prepared(prepared, values).map_err(Cut::Failed)?;
-        describe(&cursor, out);
         let warning = self.session.warning();
         self.sent(n, Open { cursor, next: None, warning }, (rows, out))
     }
@@ -335,52 +341,59 @@ mod tests {
         Held::new(db.session("X"))
     }
 
-    /// Runs `work` then a commit, if `still`, in `held`, with batches too
-    /// large for anything to be sent ahead: the replies gathered.
-    fn run_then_commit(held: &mut Held, work: Work, still: bool) -> Vec<Reply> {
+    /// Runs `work` in `held`, with batches too large for anything to be
+    /// sent ahead: the replies gathered.
+    fn run(held: &mut Held, work: Work) -> Vec<Reply> {
         let mut sink = |_: Vec<Reply>| Ok(());
         let mut out = Outgoing::new(&mut sink, 1 << 20);
-        held.handle_then(work, Some((Work::Query("COMMIT".into()), || still)), &mut out, 8).unwrap();
+        held.handle(work, &mut out, 8).unwrap();
         out.gathered
     }
 
-    /// Verifies: [DESIGN] RULES.md D45: a commit sent with a statement runs
-    /// with it, both replies gathered, while the connection is still
-    /// served; if it is not, an operator having ended it or the server
-    /// stopping, the commit does not run: the transaction stays open, to
-    /// be rolled back, as the commit would not have been received.
-    #[test]
-    fn a_commit_sent_with_a_statement_runs_only_while_still_served() {
-        let insert = || Work::Query("INSERT INTO T VALUES (1)".into());
-        let mut gone = held();
-        assert_eq!(run_then_commit(&mut gone, insert(), false).len(), 1, "the statement's alone");
-        assert!(gone.session.transaction().is_some(), "not committed");
-        let mut served = held();
-        assert_eq!(run_then_commit(&mut served, insert(), true).len(), 2, "both, together");
-        assert!(served.session.transaction().is_none(), "committed");
+    /// Whether `replies` is one completion, of a transaction `active` or
+    /// not.
+    fn completed(replies: &[Reply], active: bool) -> bool {
+        matches!(replies, [Reply::Complete(Completed { sqlcode: 0, active: a, .. })] if *a == active)
     }
 
-    /// Verifies: [DESIGN] RULES.md D45: only a commit or a rollback, by
-    /// direct text or a prepared statement given no values, runs with the
-    /// statement before it; any other statement's reply is sent before
-    /// the next runs, so no reply waits on what may wait on its client.
+    /// The work that inserts `k`, the transaction ended with it if `ends`.
+    fn insert(k: i32, ends: bool) -> Work {
+        Work::Query { sql: format!("INSERT INTO T VALUES ({k})"), ends }
+    }
+
+    /// Verifies: [EXTENSION] [DESIGN] RULES.md D45: a request that ends the
+    /// transaction with its statement commits it once the statement is
+    /// done, or rolls it back if the statement failed, its one reply saying
+    /// no transaction is active; one that does not leaves it active.
     #[test]
-    fn only_a_commit_or_a_rollback_runs_with_a_statement() {
+    fn a_request_that_ends_its_transaction_commits_or_rolls_back() {
         let mut held = held();
-        let query = |sql: &str| Work::Query(sql.into());
-        for sql in ["COMMIT", " commit work ", "ROLLBACK", "rollback work"] {
-            assert!(held.ends_transaction(&query(sql)), "{sql}");
-        }
-        for sql in ["SELECT K FROM T", "INSERT INTO T VALUES (1)", "ROLLBACK TO SAVEPOINT S"] {
-            assert!(!held.ends_transaction(&query(sql)), "{sql}");
-        }
-        let mut sink = |_: Vec<Reply>| Ok(());
-        let mut out = Outgoing::new(&mut sink, 1 << 20);
-        held.handle(Work::Prepare(1, "COMMIT".into()), &mut out, 8).unwrap();
-        held.handle(Work::Prepare(2, "SELECT K FROM T".into()), &mut out, 8).unwrap();
-        assert!(held.ends_transaction(&Work::Execute(1, Vec::new(), 0)));
-        assert!(!held.ends_transaction(&Work::Execute(2, Vec::new(), 0)));
-        assert!(!held.ends_transaction(&Work::Execute(9, Vec::new(), 0)), "no such statement");
-        assert!(!held.ends_transaction(&Work::Fetch(1, 0)));
+        assert!(completed(&run(&mut held, insert(1_i32, true)), false), "committed");
+        assert!(held.session.transaction().is_none());
+        assert!(completed(&run(&mut held, insert(2_i32, false)), true), "left active");
+        let failed = run(&mut held, Work::Query { sql: "INSERT INTO T VALUES ('x')".into(), ends: true });
+        assert!(matches!(failed.as_slice(), [Reply::Error(Failure { active: false, .. })]), "{failed:?}");
+        assert!(held.session.transaction().is_none(), "rolled back");
+        let counted = run(&mut held, Work::Query { sql: "SELECT COUNT(*) FROM T".into(), ends: true });
+        assert!(matches!(&counted[1], Reply::Rows(rows) if rows[0][0].to_string() == "1"), "the second insert undone: {counted:?}");
+        assert!(matches!(counted.as_slice(), [Reply::Description(_), Reply::Rows(_), Reply::Complete(Completed { active: false, .. })]));
+    }
+
+    /// Verifies: [EXTENSION] [DESIGN] RULES.md D45: a prepared query's
+    /// execution sends its rows with no Description; its cursor left open,
+    /// the transaction its request would end stays active, through the
+    /// fetches after; one whose rows are all sent ends it.
+    #[test]
+    fn a_cursor_left_open_keeps_the_transaction_its_request_would_end() {
+        let mut held = held();
+        run(&mut held, Work::Prepare(1, "SELECT K FROM T".into()));
+        run(&mut held, insert(3_i32, false));
+        run(&mut held, insert(4_i32, false));
+        let opened = run(&mut held, Work::Execute { statement: 1, values: Vec::new(), rows: 1, ends: true });
+        assert!(matches!(opened.as_slice(), [Reply::Rows(_), Reply::Suspended]), "no Description: {opened:?}");
+        assert!(held.session.transaction().is_some(), "its cursor open");
+        let rest = run(&mut held, Work::Fetch(1, 0));
+        assert!(matches!(rest.as_slice(), [Reply::Rows(_), Reply::Complete(Completed { active: true, .. })]), "{rest:?}");
+        assert!(completed(&run(&mut held, Work::Execute { statement: 1, values: Vec::new(), rows: 0, ends: true })[1..], false));
     }
 }

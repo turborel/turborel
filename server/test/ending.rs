@@ -52,7 +52,7 @@ fn an_operator_ends_a_connection() {
     holder.run("INSERT INTO T VALUES (2)").unwrap();
     let mut waiting = server.raw();
     waiting.hello("X");
-    waiting.send(&Request::Query("DELETE FROM T".into()));
+    waiting.send(&Request::Query { sql: "DELETE FROM T".into(), ends: false });
     let id = id_of(&server, "X");
     assert!(server.operator.end(id));
     let mut last = None;
@@ -99,7 +99,7 @@ fn the_owner_ends_and_cancels_connections_in_sql() {
     assert!(owner.in_transaction());
     let mut long = server.raw();
     long.hello("Y");
-    long.send(&Request::Query("SELECT COUNT(*) FROM X.T A, X.T B, X.T C, X.T D".into()));
+    long.send(&Request::Query { sql: "SELECT COUNT(*) FROM X.T A, X.T B, X.T C, X.T D".into(), ends: false });
     let y = id_of(&server, "Y");
     long.0.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
     // Cancelled once it runs: a cancel before is of nothing.
@@ -113,7 +113,7 @@ fn the_owner_ends_and_cancels_connections_in_sql() {
     let Reply::Error(failure) = cancelled else { panic!("{cancelled:?}") };
     assert_eq!(state(&failure), ("TB920", -920));
     long.0.set_read_timeout(None).unwrap();
-    long.send(&Request::Query("VALUES 1".into()));
+    long.send(&Request::Query { sql: "VALUES 1".into(), ends: false });
     assert!(matches!(long.receive(), Some(Reply::Description(_))), "its session goes on");
     x.query("INSERT INTO T VALUES (100)").unwrap();
     owner.query(&format!("END CONNECTION {id}")).unwrap();
@@ -167,7 +167,7 @@ fn a_connection_idle_in_a_transaction_is_closed() {
     let mut raw = server.raw();
     raw.hello("X");
     std::thread::sleep(Duration::from_millis(300));
-    raw.send(&Request::Query("INSERT INTO T VALUES (1)".into()));
+    raw.send(&Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, active: true, .. }))), "outside one, it waited");
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));

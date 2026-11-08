@@ -319,6 +319,23 @@ pub(super) fn coerce(op: CompOp, value: &Value, column: &DataType) -> Option<Vec
     }
 }
 
+/// Whether a value of type `given` is placed among the values of a column
+/// of type `column` as it is (`coerce`), so a `?` of that type may stand
+/// in a probe of the column for its value (`physical/kept.rs`).
+pub(super) fn placed_as_is(given: &DataType, column: &DataType) -> bool {
+    matches!(
+        (column, given),
+        (DataType::Character { .. } | DataType::Varying { .. }, DataType::Character { .. } | DataType::Varying { .. })
+            | (DataType::Exact { .. }, DataType::Exact { .. })
+            | (DataType::Approximate { .. }, DataType::Approximate { .. })
+            | (DataType::Bit { .. } | DataType::BitVarying { .. }, DataType::Bit { .. } | DataType::BitVarying { .. })
+            | (DataType::Date, DataType::Date)
+            | (DataType::Time { .. }, DataType::Time { .. })
+            | (DataType::Timestamp { .. }, DataType::Timestamp { .. })
+            | (DataType::Interval(_), DataType::Interval(_))
+    )
+}
+
 /// [X3.135-1986 §5.11 GR4] The exact number `d` among approximate values:
 /// the `f64` equal to it, or the two on either side of it, found from its
 /// nearest by stepping.

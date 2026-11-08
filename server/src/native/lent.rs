@@ -70,9 +70,8 @@ impl Lent {
         Lent { held, wire, failed: None, fast: true }
     }
 
-    /// Does `work`, then a commit or rollback the client sent with it
-    /// (`Held::handle_then`), their replies written through `running` in
-    /// batches of about `batch` bytes, within `max_statements` prepared
+    /// Does `work` (`Held::handle`), its replies written through `running`
+    /// in batches of about `batch` bytes, within `max_statements` prepared
     /// statements; shown running meanwhile.
     ///
     /// # Errors
@@ -80,12 +79,10 @@ impl Lent {
     /// A write of replies failed: the connection is gone.
     fn answer(&mut self, work: Work, running: &Running, (batch, max_statements): (usize, usize)) -> Result<()> {
         let Lent { held, wire, .. } = self;
-        let ending = wire.arrived(|request| super::work_of(request).ok().flatten().filter(|next| held.ends_transaction(next))).taken();
-        let then = ending.map(|next| (next, || running.still()));
         running.present.running(true);
         let mut sink = |replies: Vec<Reply>| running.send(wire, &replies);
         let mut out = Outgoing::new(&mut sink, batch);
-        let written = held.handle_then(work, then, &mut out, max_statements).and_then(|()| out.finish());
+        let written = held.handle(work, &mut out, max_statements).and_then(|()| out.finish());
         running.present.running(false);
         written
     }
@@ -242,7 +239,10 @@ impl Running {
     /// (RULES.md D43).
     fn still(&self) -> bool {
         let db = self.services.database();
-        self.services.is_serving() && !*self.ended.borrow() && self.user.as_deref().is_none_or(|name| db.is_user(name).unwrap_or(false))
+        // The watch's guard is dropped before the database is asked, so an
+        // operator ending the connection never waits on that call (R-ERR-4).
+        let ended = *self.ended.borrow();
+        self.services.is_serving() && !ended && self.user.as_deref().is_none_or(|name| db.is_user(name).unwrap_or(false))
     }
 
     /// Sends `replies` through `wire`: apart from the runtime, as far as

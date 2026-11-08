@@ -3,9 +3,10 @@
 //! an OR, chosen by cost.
 
 use super::estimate::{self, Known};
+use super::kept::point_probe;
 use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe, served_by};
 use super::shown::Shown;
-use super::{Built, PhysicalPlanner, Plan, TableRead};
+use super::{Built, CostModel, PhysicalPlanner, Plan, ProbeSlot, TableRead};
 use crate::catalog::IndexDesc;
 use crate::engine::key::restores;
 use crate::index::{Index, IndexMethod, Probe};
@@ -40,14 +41,16 @@ struct Path {
 }
 
 /// An index probed: its name, its method's, its columns, its probes, one
-/// for each range of an OR, the conjuncts they answer exactly, whether
-/// they only bound the rows of others, which a filter still judges, and
-/// whether its key holds every column read (`covers`).
+/// for each range of an OR, the `?`s among the one probe's values if a
+/// prepared statement's (`physical/kept.rs`), the conjuncts they answer
+/// exactly, whether they only bound the rows of others, which a filter
+/// still judges, and whether its key holds every column read (`covers`).
 struct Probed {
     index: String,
     method: String,
     columns: Vec<usize>,
     probes: Vec<Probe>,
+    slots: Vec<ProbeSlot>,
     used: Vec<usize>,
     loose: bool,
     covering: bool,
@@ -70,6 +73,15 @@ impl Candidate {
     /// One probe.
     fn one(probe: Probe, (used, fixed, guess, loose): (Vec<usize>, usize, f64, bool)) -> Candidate {
         Candidate { probes: vec![probe], used, fixed, guess, loose }
+    }
+}
+
+impl Probed {
+    /// The index `ix` probed by `c`'s probes, `covering` if so; of no
+    /// `?`.
+    fn of(ix: &IndexDesc, c: Candidate, covering: bool) -> Probed {
+        let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
+        Probed { index, method, columns, probes: c.probes, slots: Vec::new(), used: c.used, loose: c.loose, covering }
     }
 }
 
@@ -137,8 +149,9 @@ impl PhysicalPlanner<'_> {
         // RULES.md D15: a probe reads only the rows its conjuncts select, so the
         // other conjuncts would not be evaluated on the rest. When one of them
         // can raise an error it must see every row: probe no index then.
-        let (compared, ors) = if conds.iter().any(Cond::can_raise) { (Vec::new(), Vec::new()) } else { comparisons(conds, known) };
-        if let Some(path) = want.is_empty().then(|| self.point_path(read, &compared, known)).flatten() {
+        let answerable: &[Cond] = if conds.iter().any(Cond::can_raise) { &[] } else { conds };
+        let (compared, ors) = comparisons(answerable, known);
+        if let Some(path) = want.is_empty().then(|| self.point_path(read, (answerable, &compared), known.cost)).flatten() {
             return path;
         }
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
@@ -186,8 +199,7 @@ impl PhysicalPlanner<'_> {
                 let path_cost = probed_cost - visible.map_or(0.0_f64, saved);
                 let total = path_cost + sort_penalty(est, order.is_some());
                 if total < best.total {
-                    let (index, method, keys, covering) = (ix.name.clone(), ix.method.clone(), ix.columns.clone(), visible.is_some());
-                    let chosen = Some(Probed { index, method, columns: keys, probes: c.probes, used: c.used, loose: c.loose, covering });
+                    let chosen = Some(Probed::of(ix, c, visible.is_some()));
                     let ordered = (order.is_some(), order.unwrap_or(false));
                     best = Path { total, cost: path_cost, est, ordered: ordered.0, reverse: ordered.1, index: chosen, order: Vec::new() };
                 }
@@ -199,38 +211,37 @@ impl PhysicalPlanner<'_> {
 
 impl PhysicalPlanner<'_> {
     /// A probe that fixes every column of a unique index, by the values of
-    /// this execution, if there is one. It finds one row at most, so no
-    /// other path is priced: not the zones of a scan, nor any index's
-    /// count, nor the rest of the rows' statistics.
-    fn point_path(&self, read: TableRead<'_>, compared: &[Compared], known: Known<'_>) -> Option<Path> {
+    /// this execution, or by a prepared statement's `?`s, filled at each
+    /// (`physical/kept.rs`), if there is one among `conds`, whose
+    /// comparisons with constants are `compared`. It finds one row at
+    /// most, so no other path is priced: not the zones of a scan, nor any
+    /// index's count, nor the rest of the rows' statistics.
+    fn point_path(&self, read: TableRead<'_>, (conds, compared): (&[Cond], &[Compared]), cost: &CostModel) -> Option<Path> {
         let (storage, desc) = (self.db.storage_of(read.table).ok()?, self.db.catalog.table(read.table)?);
         if storage.row_count() < POINT_ROWS {
             return None;
         }
-        let all = cost_of(storage.row_count());
         let usable = |ix: &&_| ix_is_point(ix) && !self.db.building.contains(&ix.name);
         self.db.catalog.indexes(read.table).into_iter().filter(usable).find_map(|ix| {
             let (kind, found, types) = (self.db.methods.get(&ix.method)?, self.db.index_of(&ix.name).ok()?, ix.key_types(desc)?);
             let served = served_by(compared, ix);
-            let fixes = |c: &Candidate| {
-                let [probe] = c.probes.as_slice() else { return false };
-                !c.loose && whole_key(probe, types.len()) && supports(&**kind, probe, (types.len(), false))
-            };
-            let guessed = Known { stats: None, cost: known.cost };
-            let c = probes(&ix.columns, &types, (&served, &[]), all, guessed).into_iter().find(fixes)?;
-            let descent = known.cost.index_descent * cost_of(storage.row_count().saturating_add(1)).log2();
-            let pages = c.probes.first().and_then(|p| found.probe_pages(p)).map_or(descent, |pages| known.cost.index_descent * pages);
-            let cost = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost();
+            let (probe, slots, used) = point_probe(conds, &served, (&ix.columns, &types))?;
+            if !supports(&**kind, &probe, (types.len(), false)) {
+                return None;
+            }
+            let descent = cost.index_descent * cost_of(storage.row_count().saturating_add(1)).log2();
+            let pages = found.probe_pages(&probe).map_or(descent, |pages| cost.index_descent * pages);
+            let total = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost();
             let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
             let covering = covers(&**kind, (&ix.columns, &types), read.needed) && storage.visible_share().is_some();
-            let chosen = Probed { index, method, columns, probes: c.probes, used: c.used, loose: false, covering };
-            Some(Path { total: cost, cost, est: 1.0_f64, ordered: false, reverse: false, index: Some(chosen), order: Vec::new() })
+            let chosen = Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering };
+            Some(Path { total, cost: total, est: 1.0_f64, ordered: false, reverse: false, index: Some(chosen), order: Vec::new() })
         })
     }
 }
 
 /// Whether a probe of all of `ix`'s columns finds one row at most.
-fn ix_is_point(ix: &IndexDesc) -> bool {
+pub(super) fn ix_is_point(ix: &IndexDesc) -> bool {
     ix.unique && !ix.is_collated()
 }
 
@@ -270,7 +281,7 @@ fn covers(method: &dyn IndexMethod, (columns, types): (&[usize], &[DataType]), n
 
 /// Whether `probe` holds every column of an index `width` columns wide
 /// equal.
-fn whole_key(probe: &Probe, width: usize) -> bool {
+pub(super) fn whole_key(probe: &Probe, width: usize) -> bool {
     match probe {
         Probe::Compare { op, .. } => *op == CompOp::Eq && width == 1,
         Probe::Prefix { equal, then } => then.is_none() && equal.len() == width,
@@ -290,7 +301,7 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
     let share = cost_of(probed.probes.len());
     let whole =
         and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| read.shown.text(|names| render_cond(&c, names)));
-    let Probed { index, method, columns, mut probes, covering, .. } = probed;
+    let Probed { index, method, columns, mut probes, mut slots, covering, .. } = probed;
     if reverse {
         probes.reverse();
     }
@@ -300,11 +311,14 @@ fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, c
             let detail = whole.clone().unwrap_or_else(|| read.shown.text(|names| render_probe(&probe, &columns, names)));
             let (index, method, table) = (index.clone(), method.clone(), read.table.clone());
             let needed = read.needed.to_vec();
+            // The `?`s are of a probe alone, the one of a point path.
+            let slots = std::mem::take(&mut slots);
             Plan::IndexScan {
                 table,
                 index,
                 method,
                 probe,
+                slots,
                 reverse,
                 columns: needed,
                 detail,

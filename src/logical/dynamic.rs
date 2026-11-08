@@ -37,6 +37,17 @@ pub fn filled_expr(e: Expr, values: &[Value]) -> Result<Expr> {
     filling.failed.map_or(Ok(e), Err)
 }
 
+/// `c`, each slot filled as `filled` fills a plan's.
+///
+/// # Errors
+///
+/// As `filled`.
+pub fn filled_cond(c: Cond, values: &[Value]) -> Result<Cond> {
+    let mut filling = Filling { values, failed: None };
+    let c = filling.cond(c);
+    filling.failed.map_or(Ok(c), Err)
+}
+
 /// The values slots are filled with, and the first error met.
 struct Filling<'a> {
     values: &'a [Value],

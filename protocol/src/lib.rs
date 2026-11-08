@@ -19,10 +19,17 @@
 //! * Prepare [ISO/IEC 9075:1992 §17.6]: Prepared, its parameters' types
 //!   and its columns [§17.8]; or an Error.
 //! * Execute [§17.10, §17.14]: a Complete; or, of a query, its cursor
-//!   opened, a Description and Rows, as many as asked, then Suspended if it
-//!   has more, which Fetch [§17.15] sends, or a Complete once it has none,
-//!   its cursor then closed; or an Error.
+//!   opened, its Rows, of the columns Prepared gave, as many as asked,
+//!   then Suspended if it has more, which Fetch [§17.15] sends, or a
+//!   Complete once it has none, its cursor then closed; or an Error.
 //! * Close [§17.16] and Deallocate [§17.7]: a Complete, or an Error.
+//!
+//! A Query or an Execute may say the transaction ends with its statement
+//! \[EXTENSION\]: it is committed once the statement succeeds, or rolled
+//! back if it fails, and the Complete or the Error says no transaction is
+//! active, so a statement that is its own transaction, as a driver's
+//! autocommit has it, is one request and one reply. A query's cursor left
+//! open keeps the transaction.
 //!
 //! A statement running is cancelled from another connection, whose first
 //! and only message is Cancel with the key: the server closes it, and the
@@ -59,9 +66,9 @@
 //! client      'H' hello: version u32, user, mechanism, initial bytes,
 //!                 capabilities (strings)
 //!             'A' answer: bytes
-//!             'Q' query: the SQL
+//!             'Q' query: the SQL, ends u8 (the transaction ends with it if 1)
 //!             'P' prepare: statement u32, the SQL
-//!             'E' execute: statement u32, values, rows u32 (0: all)
+//!             'E' execute: statement u32, values, rows u32 (0: all), ends u8
 //!             'F' fetch: statement u32, rows u32 (0: all)
 //!             'C' close: statement u32
 //!             'D' deallocate: statement u32

@@ -19,6 +19,7 @@ use turborel::storage::Row;
 use turborel_protocol::{CancelKey, Column, Completed, Failure, HEADER, MAX_BODY, Reply, Request, VERSION, broken};
 
 use crate::cancel::Canceller;
+pub use crate::mechanism::{Certificate, Mechanism, Password, TlsChannel, Trust};
 use crate::target::Target;
 use crate::timeouts::{Bound, Limit, TERMINATE_WITHIN, Timeouts, io_failed, limit, tcp_to};
 
@@ -28,132 +29,6 @@ const RESERVED: usize = 64 * 1024;
 
 /// What a client's errors are: what the server reports, as it reports it.
 pub type Result<T> = std::result::Result<T, Failure>;
-
-/// \[DESIGN\] A client's side of a mechanism of authentication: its name,
-/// its first bytes, and its answer to each challenge. The server's
-/// `Authenticator` of the same name is the other side.
-pub trait Mechanism {
-    /// The mechanism's name, as the server knows it.
-    fn name(&self) -> &str;
-    /// The bytes sent with Hello.
-    fn initial(&mut self) -> Vec<u8>;
-    /// The answer to the server's challenge `challenge`.
-    ///
-    /// # Errors
-    ///
-    /// If it has none: the connection is then given up.
-    fn answer(&mut self, challenge: &[u8]) -> Result<Vec<u8>>;
-    /// Whether what it sends gives away what proves the user, as a
-    /// password does, or lets one who overhears it guess that at leisure,
-    /// as SCRAM's proof does: if so, a connection over plain TCP refuses it
-    /// before anything is sent (`connect`, `target::connect_to`). None does
-    /// by default.
-    fn secret(&self) -> bool {
-        false
-    }
-    /// Whether the exchange may end as the server sends Ready: a mechanism
-    /// by which the server proves itself too, as SCRAM's, refuses one that
-    /// did not.
-    ///
-    /// # Errors
-    ///
-    /// If the server has not proved itself: the connection is then given
-    /// up. None does by default.
-    fn ready(&self) -> Result<()> {
-        Ok(())
-    }
-    /// The connection about to carry it is secured by TLS, of `channel`:
-    /// a mechanism that binds itself to its channel, as SCRAM's PLUS does,
-    /// takes it, for this connection alone. Called before `name` and
-    /// `initial` by `tls::connect` and `target::connect_to`; a program
-    /// opening a TLS stream of its own calls it, of `tls::channel`, before
-    /// `Connection::open`. None takes it by default.
-    fn bind(&mut self, _channel: &TlsChannel) {}
-}
-
-/// \[DESIGN\] What a TLS connection's handshake gives a mechanism to bind
-/// itself to (`Mechanism::bind`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TlsChannel {
-    /// The certificate the server presented, its chain's first, as DER.
-    pub certificate: Option<Vec<u8>>,
-    /// The connection's channel binding `tls-exporter` [RFC 9266 §2]: the
-    /// keying material its session exports, over TLS 1.3 alone.
-    pub exporter: Option<Vec<u8>>,
-}
-
-/// \[DESIGN\] The client's side of `trust`: nothing to prove, so a server
-/// takes it only from a client on its own machine.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Trust;
-
-/// The name of the mechanism `Trust` is a side of.
-pub const TRUST: &str = "trust";
-
-impl Mechanism for Trust {
-    fn name(&self) -> &str {
-        TRUST
-    }
-    fn initial(&mut self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn answer(&mut self, _: &[u8]) -> Result<Vec<u8>> {
-        Err(failed("[DESIGN] trust has no answer to a challenge"))
-    }
-}
-
-/// \[DESIGN\] The client's side of `password`: the password, sent whole,
-/// so only over TLS, a Unix socket or a named pipe. A connection over
-/// plain TCP refuses it before it sends anything, as the server would
-/// after.
-#[derive(Clone)]
-pub struct Password(pub String);
-
-/// The name of the mechanism `Password` is a side of.
-pub const PASSWORD: &str = "password";
-
-impl std::fmt::Debug for Password {
-    /// Never the password.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Password(..)")
-    }
-}
-
-impl Mechanism for Password {
-    fn name(&self) -> &str {
-        PASSWORD
-    }
-    fn initial(&mut self) -> Vec<u8> {
-        self.0.as_bytes().to_vec()
-    }
-    fn answer(&mut self, _: &[u8]) -> Result<Vec<u8>> {
-        Err(failed("[DESIGN] password has no answer to a challenge"))
-    }
-    fn secret(&self) -> bool {
-        true
-    }
-}
-
-/// \[DESIGN\] The client's side of `certificate`: nothing sent, the
-/// certificate presented over TLS (`tls::presenting`, with the feature
-/// `tls`) proving the user its common name names.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Certificate;
-
-/// The name of the mechanism `Certificate` is a side of.
-pub const CERTIFICATE: &str = "certificate";
-
-impl Mechanism for Certificate {
-    fn name(&self) -> &str {
-        CERTIFICATE
-    }
-    fn initial(&mut self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn answer(&mut self, _: &[u8]) -> Result<Vec<u8>> {
-        Err(failed("[DESIGN] certificate has no answer to a challenge"))
-    }
-}
 
 /// What a statement gave.
 #[derive(Debug, Clone)]
@@ -236,6 +111,8 @@ pub struct Connection<S: Read + Write> {
     /// The SQLSTATE of the warning the last statement completed with, if
     /// it did [ISO/IEC 9075:1992 §22.1].
     warning: Option<String>,
+    /// Whether each statement is its own transaction (`set_autocommit`).
+    pub(crate) autocommit: bool,
 }
 
 /// Connects to the server at `address` as `user`, authenticated by
@@ -315,6 +192,7 @@ impl<S: Read + Write> Connection<S> {
             next_statement: 0,
             active: false,
             warning: None,
+            autocommit: false,
         };
         let hello = Request::Hello {
             version: VERSION,
@@ -404,6 +282,23 @@ impl<S: Read + Write> Connection<S> {
         self.active
     }
 
+    /// \[EXTENSION\] Whether each statement `query`, `query_into` and
+    /// `execute` run is its own transaction from now on, if `on`: the
+    /// server commits it once the statement succeeds, or rolls it back
+    /// if it fails, within the request, so no COMMIT need be sent
+    /// (RULES.md D45). Off as a connection opens: a transaction begins
+    /// with the first statement and lasts until COMMIT or ROLLBACK
+    /// [ISO/IEC 9075:1992 §4.28]. A cursor `open_cursor` opens is read
+    /// within its transaction either way.
+    pub fn set_autocommit(&mut self, on: bool) {
+        self.autocommit = on;
+    }
+
+    /// Whether each statement is its own transaction (`set_autocommit`).
+    pub fn autocommit(&self) -> bool {
+        self.autocommit
+    }
+
     /// The SQLSTATE of the warning the last statement completed with, if it
     /// did [ISO/IEC 9075:1992 §22.1, class 01], as its Complete said: of a
     /// query too, once all its rows were read, its outcome being its rows.
@@ -426,13 +321,13 @@ impl<S: Read + Write> Connection<S> {
 
     /// Runs `sql`, a `<direct SQL statement>` [ISO/IEC 9075:1992 §20.1], in
     /// the connection's session: a query's rows, or another statement's
-    /// completion.
+    /// completion; the transaction ended with it under `set_autocommit`.
     ///
     /// # Errors
     ///
     /// The statement's, as the server reports it; a connection failure.
     pub fn query(&mut self, sql: &str) -> Result<Outcome> {
-        self.send(&Request::Query(sql.to_owned()))?;
+        self.send(&Request::Query { sql: sql.to_owned(), ends: self.autocommit })?;
         let columns = match self.receive()? {
             Reply::Complete(completed) => return Ok(Outcome::Done(completed)),
             Reply::Description(columns) => columns,
@@ -452,7 +347,7 @@ impl<S: Read + Write> Connection<S> {
     ///
     /// As `query`'s; a query's failure after some rows went to `sink`.
     pub fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed> {
-        self.send(&Request::Query(sql.to_owned()))?;
+        self.send(&Request::Query { sql: sql.to_owned(), ends: self.autocommit })?;
         match self.receive()? {
             Reply::Complete(completed) => return Ok(Streamed::Done(completed)),
             Reply::Description(columns) => sink.columns(&columns),

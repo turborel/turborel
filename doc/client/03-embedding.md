@@ -224,7 +224,9 @@ statement stays valid across transactions. A query, an INSERT, and a
 searched or positioned UPDATE or DELETE keep their plan between
 executions, a query also when SQL text opens it as a dynamic cursor:
 each execution puts its values in the kept plan and chooses indexes by
-them. The plan is made again when the definitions change (a table
+them. A query that finds one row by a unique key, `WHERE K = ?` of a
+PRIMARY KEY or UNIQUE column K, keeps its access path too, so its
+executions choose nothing. The plan is made again when the definitions change (a table
 altered, an index made or dropped, a local temporary table declared, a
 privilege granted or revoked, the transaction's own uncommitted changes
 among them), when a setting of the database or

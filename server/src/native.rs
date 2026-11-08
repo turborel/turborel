@@ -181,7 +181,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
             authenticate(wire, (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
         }
         Request::Answer(_)
-        | Request::Query(_)
+        | Request::Query { .. }
         | Request::Prepare { .. }
         | Request::Execute { .. }
         | Request::Fetch { .. }
@@ -284,9 +284,9 @@ async fn exchanged(
 /// The work `request` asks of the session; none for Terminate.
 fn work_of(request: Request) -> Result<Option<Work>> {
     Ok(Some(match request {
-        Request::Query(sql) => Work::Query(sql),
+        Request::Query { sql, ends } => Work::Query { sql, ends },
         Request::Prepare { statement, sql } => Work::Prepare(statement, sql),
-        Request::Execute { statement, values, rows } => Work::Execute(statement, values, rows),
+        Request::Execute { statement, values, rows, ends } => Work::Execute { statement, values, rows, ends },
         Request::Fetch { statement, rows } => Work::Fetch(statement, rows),
         Request::Close { statement } => Work::Close(statement),
         Request::Deallocate { statement } => Work::Deallocate(statement),

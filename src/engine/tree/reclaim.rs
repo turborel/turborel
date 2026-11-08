@@ -21,6 +21,13 @@
 //! line. The epoch moves on once no operation of the one before it is left;
 //! a page taken out in epoch e is freed once the epoch is e + 2, when every
 //! operation that began before it was taken out has ended.
+//!
+//! Reads that start from a leaf remembered from the last read (`near.rs`)
+//! rely on two orderings here. A leaf is marked deleted, under its lock,
+//! before its page is retired, so a leaf read not deleted is still in the
+//! tree. And `retire` moves the tree's stamp before it notes the page, so a
+//! read that loaded the stamp inside its epoch and finds it unchanged holds
+//! the number of no page retired since.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};

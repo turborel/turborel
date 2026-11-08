@@ -17,7 +17,7 @@ mod subquery;
 
 use std::fmt::Write;
 
-pub use dynamic::{filled, filled_expr};
+pub use dynamic::{filled, filled_cond, filled_expr};
 pub use expr::{
     Cond, DomainChecks, Expr, Quantifier, Slot, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs,
     map_expr_columns, or_all, split_and,

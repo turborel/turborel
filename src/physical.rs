@@ -21,11 +21,14 @@ mod cost;
 mod estimate;
 mod indexed;
 mod join;
+mod kept;
 mod order;
 mod probe;
 mod shown;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
+pub use kept::ProbeSlot;
+pub(crate) use kept::{filled_plan, keepable};
 
 use std::fmt::Write;
 
@@ -41,8 +44,9 @@ use crate::value::collation::CollationRef;
 use shown::Shown;
 
 /// \[DESIGN\] A physical plan: the operators the executor runs, each with what
-/// EXPLAIN shows of it.
-#[derive(Debug)]
+/// EXPLAIN shows of it. Cloned as a prepared statement's kept plan is
+/// filled for an execution (`physical/kept.rs`).
+#[derive(Debug, Clone)]
 pub enum Plan {
     /// Every row of a table, in the engine's order, or in that of `order`.
     SeqScan {
@@ -71,6 +75,10 @@ pub enum Plan {
         method: String,
         /// What is looked up.
         probe: Probe,
+        /// The `?`s of a prepared statement among the probe's values, a
+        /// null standing in for each until an execution fills it
+        /// (`physical/kept.rs`); none of a plan made with values.
+        slots: Vec<ProbeSlot>,
         /// Read the index backwards (for ORDER BY ... DESC).
         reverse: bool,
         /// The table's columns the query uses, the only ones a row found

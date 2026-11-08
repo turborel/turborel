@@ -405,6 +405,7 @@ mod tests {
             index: "I".into(),
             method: BTREE_METHOD.into(),
             probe: Probe::All,
+            slots: Vec::new(),
             reverse: false,
             columns: Vec::new(),
             detail: String::new(),

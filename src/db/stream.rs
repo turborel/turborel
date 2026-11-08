@@ -41,8 +41,9 @@ pub(super) struct Stream {
     failure: Option<SqlError>,
     /// The rows still to read from the plan; none once all are read.
     rest: Option<RowIter>,
-    /// The base tables the plan reads, its subqueries' too.
-    reads: Vec<QualifiedName>,
+    /// The base tables the plan reads, its subqueries' too; shared with a
+    /// prepared statement's kept plan (`db/prepared/plans.rs`).
+    reads: Arc<[QualifiedName]>,
     /// Where rows read ahead are held: its statement's work area.
     space: ListSpace,
 }
@@ -57,8 +58,18 @@ impl Stream {
     /// A lock is not granted; as `open`.
     pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
         let (optimized, _, physical) = super::plan(st, logical);
-        let reads = optimized.tables();
-        for t in &reads {
+        Stream::kept(st, tx, physical, optimized.tables().into())
+    }
+
+    /// The rows of `physical`, a plan made to run, which reads `reads`,
+    /// opened for transaction `tx` after taking shared locks on them
+    /// [X3.135-1986 §8.8 GR3b].
+    ///
+    /// # Errors
+    ///
+    /// A lock is not granted; as `open`.
+    pub(super) fn kept(st: &Arc<State>, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
+        for t in reads.iter() {
             st.read_lock(tx, t)?;
         }
         Stream::open(physical, reads, st, tx.id)
@@ -70,7 +81,7 @@ impl Stream {
     /// # Errors
     ///
     /// The plan, read now, raises one, or its rows cannot be held.
-    pub(super) fn open(physical: Plan, reads: Vec<QualifiedName>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
+    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
         let read_now = physical.can_raise();
         let rest = Some(execute(physical, st, tx));
         let mut stream = Stream { ready: None, failure: None, rest, reads, space: st.list_space() };

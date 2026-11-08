@@ -148,7 +148,7 @@ fn errors_reach_the_client_as_the_database_gives_them() {
     }
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query("SELECT K FROM Y.B".into()));
+    raw.send(&Request::Query { sql: "SELECT K FROM Y.B".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Description(_))));
     assert!(matches!(raw.receive(), Some(Reply::Rows(rows)) if rows.len() == 1), "the row read before");
     assert!(matches!(raw.receive(), Some(Reply::Error(failure)) if failure.sqlcode == -915));
@@ -172,13 +172,13 @@ fn rows_come_in_batches_after_their_description() {
         let server = start(&db, &[(BATCH_BYTES, batch)]);
         let mut raw = server.raw();
         raw.hello("X");
-        raw.send(&Request::Query("SELECT K FROM T ORDER BY K".into()));
+        raw.send(&Request::Query { sql: "SELECT K FROM T ORDER BY K".into(), ends: false });
         assert!(matches!(raw.receive(), Some(Reply::Description(columns)) if columns.len() == 1));
         for size in sizes {
             assert!(matches!(raw.receive(), Some(Reply::Rows(rows)) if rows.len() == size));
         }
         assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-        raw.send(&Request::Query("SELECT K FROM T WHERE K > 3".into()));
+        raw.send(&Request::Query { sql: "SELECT K FROM T WHERE K > 3".into(), ends: false });
         assert!(matches!(raw.receive(), Some(Reply::Description(_))));
         assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 100, .. }))));
     }
@@ -206,7 +206,7 @@ fn a_session_ends_as_its_connection_does() {
     assert_eq!(embedded(&db, "SELECT K FROM T"), ["1"], "rolled back");
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query("INSERT INTO T (K) VALUES (3)".into()));
+    raw.send(&Request::Query { sql: "INSERT INTO T (K) VALUES (3)".into(), ends: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     raw.0.shutdown(std::net::Shutdown::Write).unwrap();
     assert_eq!(state(&raw.refusal()).0, "08006", "the server closes, saying why");

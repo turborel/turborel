@@ -6,9 +6,12 @@
 //! (`Expr::Dynamic`): each execution fills the slots with its values
 //! (`logical/dynamic.rs`), then rewrites and plans the plan, so the access
 //! paths are chosen by its values and by the statistics of then, as a plan
-//! bound with the values as constants would be. A query keeps its
-//! `<cursor specification>` parsed, whether opened as an unnamed cursor or
-//! as a dynamic cursor [§17.14]. Another statement keeps its text parsed
+//! bound with the values as constants would be. A query whose physical
+//! plan is one probe fixing a whole unique key, which no value changes,
+//! keeps that plan too, made once with its slots, and fills it at each
+//! execution instead (`physical/kept.rs`). A query keeps its `<cursor
+//! specification>` parsed, whether opened as an unnamed cursor or as a
+//! dynamic cursor [§17.14]. Another statement keeps its text parsed
 //! alone.
 //!
 //! What is kept was made with the definitions and the session as they
@@ -37,10 +40,11 @@ use super::super::{Call, Cursor, Session, State};
 use super::Prepared;
 use crate::ast::{CursorSpecification, SqlStatement};
 use crate::binder::{BoundWrite, Context, OutColumn, bind_cursor};
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, QualifiedName};
 use crate::error::Result;
 use crate::logical::{LogicalPlan, filled, filled_expr};
 use crate::params::Params;
+use crate::physical::{Plan, filled_plan, keepable};
 use crate::settings::Own;
 use crate::sync::lock;
 use crate::value::Value;
@@ -69,13 +73,51 @@ struct Kept {
     /// A query's `<cursor specification>`, parsed.
     specification: Option<Arc<CursorSpecification>>,
     plan: Option<KeptPlan>,
+    /// A query's physical plan, if its paths follow no value of its.
+    physical: Physical,
 }
 
 impl Kept {
     /// Nothing kept yet, with `key`.
     fn empty(key: Key) -> Kept {
-        Kept { key, statement: None, specification: None, plan: None }
+        Kept { key, statement: None, specification: None, plan: None, physical: Physical::Untried }
     }
+
+    /// Its query's physical plan, kept, or its logical plan to make one
+    /// of, if not tried yet; none of a plan that varies with its values,
+    /// or of no query.
+    fn found(&self) -> Option<Found> {
+        let Some(KeptPlan::Query(columns, logical)) = &self.plan else { return None };
+        match &self.physical {
+            Physical::Untried => Some(Found::Untried(columns.clone(), logical.clone())),
+            Physical::Varies => None,
+            Physical::Fixed(plan, reads) => Some(Found::Fixed(columns.clone(), (**plan).clone(), Arc::clone(reads))),
+        }
+    }
+}
+
+/// A query's physical plan, kept if its paths follow no value of its
+/// (`physical/kept.rs`).
+#[derive(Debug)]
+enum Physical {
+    /// Not yet planned with its slots.
+    Untried,
+    /// Its paths follow its values: planned at each execution.
+    Varies,
+    /// Kept, with the tables it reads. Boxed: few statements keep one,
+    /// and a plan is wide.
+    Fixed(Box<Plan>, Arc<[QualifiedName]>),
+}
+
+/// A query's columns, its physical plan, and the tables it reads.
+pub(in crate::db) type Opened = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>);
+
+/// What `Keeping::physical` finds kept of a query: its columns, and its
+/// physical plan with the tables it reads, or its logical plan to make
+/// one of.
+enum Found {
+    Untried(Vec<OutColumn>, LogicalPlan),
+    Fixed(Vec<OutColumn>, Plan, Arc<[QualifiedName]>),
 }
 
 /// A statement's plan, bound, its `?`s slots.
@@ -193,6 +235,33 @@ impl Keeping<'_> {
         let Some(plan) = plan else { return Ok(()) };
         self.keep(|k| k.plan = Some(plan))
     }
+
+    /// A query's columns, its physical plan filled with `values`, and the
+    /// tables it reads, if its plan is kept with what holds now and its
+    /// paths follow no value (`physical::keepable`): made here once, from
+    /// the kept plan with its slots, and kept if so.
+    ///
+    /// # Errors
+    ///
+    /// As `physical::filled_plan`; SQLCODE -910 if a lock is poisoned.
+    pub(in crate::db) fn physical(&self, values: &[Value]) -> Result<Option<Opened>> {
+        let (columns, plan, reads) = match self.kept(Kept::found)? {
+            None => return Ok(None),
+            Some(Found::Fixed(columns, plan, reads)) => (columns, plan, reads),
+            Some(Found::Untried(columns, logical)) => {
+                let (optimized, _, plan) = super::super::plan(self.st, logical);
+                let fixed = keepable(&plan, self.st);
+                let reads: Arc<[QualifiedName]> = optimized.tables().into();
+                let physical = if fixed { Physical::Fixed(Box::new(plan.clone()), Arc::clone(&reads)) } else { Physical::Varies };
+                self.keep(|k| k.physical = physical)?;
+                if !fixed {
+                    return Ok(None);
+                }
+                (columns, plan, reads)
+            }
+        };
+        Ok(Some((columns, filled_plan(plan, values)?, reads)))
+    }
 }
 
 /// `w`, its slots filled with `values`.
@@ -296,5 +365,44 @@ impl Session {
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))
+    }
+}
+
+// Unit tests: what is kept of a physical plan, which no API shows
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::value::Decimal;
+
+    /// Verifies: [DESIGN] RULES.md D45: a prepared query's physical plan is
+    /// kept once an execution finds it one probe fixing a whole unique
+    /// key, after the execution that bound it; a query whose paths follow
+    /// its values keeps none; neither binds again.
+    #[test]
+    fn a_point_querys_physical_plan_is_kept_after_its_first_executions() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (A INTEGER NOT NULL, B INTEGER NOT NULL, C INTEGER, PRIMARY KEY (A, B))")
+            .unwrap();
+        let s = db.session("A");
+        for start in (0_i32..1200_i32).step_by(100) {
+            let values: Vec<String> =
+                (start..start + 100_i32).map(|i| format!("({}, {}, {i})", i.div_euclid(10), i.rem_euclid(10))).collect();
+            s.run(&format!("INSERT INTO P VALUES {}", values.join(", "))).unwrap();
+        }
+        s.commit().unwrap();
+        let int = |n: i128| Value::Exact(Decimal::new(n, 0));
+        let physical = |p: &Prepared| format!("{:?}", lock(&p.plans.kept).unwrap().as_ref().map(|k| &k.physical));
+        let point = s.prepare("SELECT C FROM P WHERE A = ? AND B = ?").unwrap();
+        let range = s.prepare("SELECT C FROM P WHERE A < ?").unwrap();
+        drop(s.open_prepared(&point, &[int(1), int(2)]).unwrap());
+        assert!(physical(&point).contains("Untried"), "{}", physical(&point));
+        drop(s.open_prepared(&point, &[int(1), int(2)]).unwrap());
+        assert!(physical(&point).contains("Fixed"), "{}", physical(&point));
+        drop(s.open_prepared(&range, &[int(3)]).unwrap());
+        drop(s.open_prepared(&range, &[int(3)]).unwrap());
+        assert!(physical(&range).contains("Varies"), "{}", physical(&range));
+        assert_eq!([point.plans_made(), range.plans_made()], [1, 1]);
     }
 }

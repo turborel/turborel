@@ -5,7 +5,7 @@ use turborel::error::Result;
 use turborel::value::Value;
 use turborel::value::types::TypeRegistry;
 
-use crate::fields::{put_row, put_strs, row, strs};
+use crate::fields::{flag, put_flag, put_row, put_strs, row, strs};
 use crate::{CancelKey, KEY_BYTES, broken, frame};
 
 const HELLO: u8 = b'H';
@@ -41,7 +41,16 @@ pub enum Request {
     Answer(Vec<u8>),
     /// A `<direct SQL statement>` [ISO/IEC 9075:1992 §20.1]: all its rows
     /// sent.
-    Query(String),
+    Query {
+        /// The statement.
+        sql: String,
+        /// \[EXTENSION\] Whether the transaction ends with the statement:
+        /// committed once it succeeds, rolled back if it fails, as a
+        /// COMMIT or a ROLLBACK sent after it would, so a statement that
+        /// is its own transaction is one request and one reply (RULES.md
+        /// D45). Nothing ends if no transaction is active after it.
+        ends: bool,
+    },
     /// [ISO/IEC 9075:1992 §17.6] Prepares `sql` as the client's statement
     /// `statement`, in place of one it had of that number \[GR6\].
     Prepare {
@@ -60,6 +69,10 @@ pub enum Request {
         values: Vec<Value>,
         /// The most rows sent now, of a query: all if 0.
         rows: u32,
+        /// \[EXTENSION\] Whether the transaction ends with the statement,
+        /// as a Query's; a query's cursor left open, its rows not all
+        /// sent, keeps it.
+        ends: bool,
     },
     /// [ISO/IEC 9075:1992 §17.15] At most `rows` more rows of the statement's
     /// cursor, all if 0.
@@ -98,15 +111,19 @@ impl Request {
                 put_strs(b, capabilities);
             }),
             Request::Answer(bytes) => frame(out, ANSWER, |b| b.put_bytes(bytes)),
-            Request::Query(sql) => frame(out, QUERY, |b| b.put_str(sql)),
+            Request::Query { sql, ends } => frame(out, QUERY, |b| {
+                b.put_str(sql);
+                put_flag(b, *ends);
+            }),
             Request::Prepare { statement, sql } => frame(out, PREPARE, |b| {
                 b.put_u32(*statement);
                 b.put_str(sql);
             }),
-            Request::Execute { statement, values, rows } => frame(out, EXECUTE, |b| {
+            Request::Execute { statement, values, rows, ends } => frame(out, EXECUTE, |b| {
                 b.put_u32(*statement);
                 put_row(b, values);
                 b.put_u32(*rows);
+                put_flag(b, *ends);
             }),
             Request::Fetch { statement, rows } => frame(out, FETCH, |b| {
                 b.put_u32(*statement);
@@ -145,9 +162,9 @@ impl Request {
                 capabilities: strs(&mut r)?,
             },
             ANSWER => Request::Answer(r.bytes()?.to_vec()),
-            QUERY => Request::Query(r.str()?),
+            QUERY => Request::Query { sql: r.str()?, ends: flag(&mut r)? },
             PREPARE => Request::Prepare { statement: r.u32()?, sql: r.str()? },
-            EXECUTE => Request::Execute { statement: r.u32()?, values: row(&mut r)?, rows: r.u32()? },
+            EXECUTE => Request::Execute { statement: r.u32()?, values: row(&mut r)?, rows: r.u32()?, ends: flag(&mut r)? },
             FETCH => Request::Fetch { statement: r.u32()?, rows: r.u32()? },
             CLOSE => Request::Close { statement: r.u32()? },
             DEALLOCATE => Request::Deallocate { statement: r.u32()? },
