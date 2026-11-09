@@ -171,7 +171,6 @@ fn a_commit_whose_sync_fails_is_in_doubt_until_recovered() {
         s.run("INSERT INTO T VALUES (2)").unwrap();
         s.run("INSERT INTO T VALUES (3)").unwrap();
         let segment = last_segment(&dir);
-        let before_commit = std::fs::metadata(&segment).unwrap().len();
         faults.inject(Rule::fail(Op::Sync).on("/log/"));
         let error = s.commit().unwrap_err();
         faults.clear();
@@ -186,10 +185,8 @@ fn a_commit_whose_sync_fails_is_in_doubt_until_recovered() {
         other.rollback().unwrap();
         assert_eq!(db.close().err().map(|e| e.code), Some(Code::Io), "no clean close");
         drop((s, other, db));
-        assert!(std::fs::metadata(&segment).unwrap().len() > before_commit, "the commit record written");
         if !reached {
-            let file = std::fs::OpenOptions::new().write(true).open(&segment).unwrap();
-            file.set_len(before_commit).unwrap();
+            faults.cut_to_synced(&segment);
         }
         let again = Database::new();
         let opened = again.open_files(&os(), &dir, &OpenOptions::default()).unwrap();

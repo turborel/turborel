@@ -76,6 +76,12 @@ const SEGMENT_PREFIX: &str = "segment-";
 const SEGMENT_SUFFIX: &str = ".log";
 /// \[DESIGN\] The default size at which a segment is ended.
 pub const DEFAULT_SEGMENT_SIZE: u64 = 64 * 1024 * 1024;
+/// \[DESIGN\] The bytes a segment keeps written with zeros past its
+/// records by default (`BlockOptions::ahead`), so a commit's sync carries
+/// no growth of the file: a megabyte, some thousands of small records
+/// between refills, and as many zeros at most to scan on open or to cut
+/// when the segment is sealed. Never more than the segment size.
+pub const DEFAULT_FILL_AHEAD: u64 = 1024 * 1024;
 /// \[DESIGN\] The smallest segment size allowed: a few blocks at least.
 pub const MIN_SEGMENT_SIZE: u64 = 4096;
 /// \[DESIGN\] The largest segment size: a position's block id bits.
@@ -105,7 +111,7 @@ impl Default for FileLogOptions {
             segment_size: DEFAULT_SEGMENT_SIZE,
             durability: DEFAULT_DURABILITY,
             pipeline: Pipeline::none(),
-            blocks: BlockOptions::default(),
+            blocks: BlockOptions { ahead: DEFAULT_FILL_AHEAD, ..BlockOptions::default() },
         }
     }
 }
@@ -397,10 +403,17 @@ fn segment_file(
     (hash, pipeline): (Arc<dyn HashFunction>, Pipeline),
     (options, durability): (&FileLogOptions, Durability),
 ) -> Result<BlockFile> {
+    let blocks = segment_blocks(options);
     match durability {
-        Durability::None => BlockFile::create_unsynced(fs, path, hash, pipeline, options.blocks),
-        Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, pipeline, options.blocks),
+        Durability::None => BlockFile::create_unsynced(fs, path, hash, pipeline, blocks),
+        Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, pipeline, blocks),
     }
+}
+
+/// The block files' options of a log of `options`: zeros filled ahead no
+/// further than a segment's size.
+fn segment_blocks(options: &FileLogOptions) -> BlockOptions {
+    BlockOptions { ahead: options.blocks.ahead.min(options.segment_size), ..options.blocks }
 }
 
 /// Checks a segment size.

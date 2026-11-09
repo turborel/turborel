@@ -90,11 +90,13 @@ fn a_crashed_file_log_recovers() {
     let log = file_log(&dir, small_segments());
     let positions: Vec<Lsn> = (0..30).map(|n| log.append(&record(n)).unwrap()).collect();
     log.sync(positions[29]).unwrap();
+    // Where the records of the last segment end: zeros filled ahead of
+    // them follow, to the end of the file.
+    let records_end = log.end().0 & ((1 << 40) - 1);
     drop(log);
     let files = segments(&dir);
     let last = files.last().unwrap();
-    let len = std::fs::metadata(last).unwrap().len();
-    std::fs::OpenOptions::new().write(true).open(last).unwrap().set_len(len - 5).unwrap();
+    std::fs::OpenOptions::new().write(true).open(last).unwrap().set_len(records_end - 5).unwrap();
     let (log, recovery) = reopen(&dir);
     assert!(recovery.cut > 0);
     let records = all(&log, Lsn(0));
@@ -284,4 +286,40 @@ fn a_damaged_file_log_is_refused_unchanged() {
     let (log, recovery) = reopen(&dir);
     assert_eq!(recovery.cut, 0);
     assert_eq!(all(&log, Lsn(0)).len(), 60);
+}
+
+/// Verifies: [DESIGN] RULES.md D25, file log: the segment appended to keeps
+/// zeros past its records, so a commit's sync carries no growth of the
+/// file; a segment sealed has them cut off, ending in its last record. A
+/// sealed segment a crash left still holding its zeros, the cut not durable,
+/// is checked whole on open even before the position known durable, so its
+/// records are read and the log goes on after them.
+#[test]
+fn segments_keep_zeros_ahead_until_sealed() {
+    let scratch = Scratch::new("log-fill");
+    let dir = scratch.path("log");
+    let log = file_log(&dir, small_segments());
+    let positions: Vec<Lsn> = (0..60).map(|n| log.append(&record(n)).unwrap()).collect();
+    log.sync(positions[59]).unwrap();
+    let end = log.end();
+    drop(log);
+    let files = segments(&dir);
+    assert!(files.len() > 3, "{}", files.len());
+    for (n, file) in files.iter().enumerate() {
+        let bytes = std::fs::read(file).unwrap();
+        let tail = &bytes[bytes.len() - 4..];
+        let last = n + 1 == files.len();
+        assert_eq!(tail == [0; 4], last, "segment {n}: only the one appended to ends in zeros");
+    }
+
+    // The crash came before the first segment's seal cut its zeros durably.
+    let mut first = std::fs::read(&files[0]).unwrap();
+    first.extend_from_slice(&[0; 1000]);
+    std::fs::write(&files[0], &first).unwrap();
+    let (log, recovery) = FileLog::open_through(fs(), &dir, (&[crc32c()], &[]), small_segments(), end).unwrap();
+    assert_eq!((recovery.end, recovery.cut), (end, 0), "{recovery:?}");
+    let read = all(&log, Lsn(0));
+    assert_eq!(read, positions.iter().copied().zip((0..60).map(record)).collect::<Vec<_>>());
+    let next = log.append(&record(60)).unwrap();
+    assert_eq!(all(&log, positions[59]).last().map(|r| r.0), Some(next));
 }

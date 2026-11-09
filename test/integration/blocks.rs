@@ -400,3 +400,118 @@ fn an_interrupted_write_before_valid_blocks_is_cut() {
     }
     assert_eq!(open(&end, TailPolicy::Truncate).unwrap().0.read(a).unwrap(), b"aaaa");
 }
+
+/// A block file at `path` keeping `ahead` bytes of zeros past its blocks.
+fn create_filled(path: &Path, ahead: u64) -> BlockFile {
+    BlockFile::create(&OsFileSystem, path, crc32c(), Pipeline::none(), BlockOptions { ahead, ..BlockOptions::default() }).unwrap()
+}
+
+/// The block file at `path` opened keeping `ahead` bytes of zeros.
+fn open_filled(path: &Path, ahead: u64) -> (BlockFile, Recovery) {
+    BlockFile::open(&OsFileSystem, path, &[crc32c()], &[], BlockOptions { ahead, ..BlockOptions::default() }).unwrap()
+}
+
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).unwrap().len()
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D30, block manager: a file given
+/// `ahead` keeps zeros past its blocks, so an append writes over bytes
+/// already there; they are refilled as appends near their end; one given
+/// none grows by its appends alone. The decision "no zeros are due" is
+/// shown by its pairs: `ahead` of 0 (no fill, the file as long as its
+/// blocks) against `ahead` set with zeros far enough (no refill, the file's
+/// length unchanged by an append); and zeros far enough against zeros
+/// short (a refill, the file longer).
+#[test]
+fn a_file_filled_ahead_keeps_zeros_past_its_blocks() {
+    let scratch = Scratch::new("blocks-fill");
+    let plain = scratch.path("plain");
+    let file = create(&plain);
+    file.append(&nonzero(100)).unwrap();
+    assert_eq!(file_len(&plain), file.end().0, "no zeros without ahead");
+
+    let path = scratch.path("filled");
+    let (ahead, half) = (4096, 2048);
+    let file = create_filled(&path, ahead);
+    file.append(&nonzero(100)).unwrap();
+    let filled = file_len(&path);
+    assert!(filled >= file.end().0 + half, "zeros past the blocks: {filled} for {}", file.end().0);
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes[usize::try_from(file.end().0).unwrap()..].iter().all(|&b| b == 0));
+    file.append(&nonzero(100)).unwrap();
+    assert_eq!(file_len(&path), filled, "no refill while the zeros reach far enough");
+    let payloads: Vec<Vec<u8>> = (0..60).map(|n| nonzero(50 + n * 7)).collect();
+    let ids: Vec<BlockId> = payloads.iter().map(|p| file.append(p).unwrap()).collect();
+    assert!(file_len(&path) > filled, "refilled as appends came near the end");
+    assert!(file_len(&path) >= file.end().0 + half);
+    for (id, payload) in ids.iter().zip(&payloads) {
+        assert_eq!(&file.read(*id).unwrap(), payload);
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D30, block manager: zeros alone after
+/// the valid blocks of a file filled ahead are its fill, kept on open and
+/// written over by the next append; opened with no fill, the same zeros
+/// are a torn end, cut. A write torn over the zeros is cut, and the bytes
+/// it wrote alone are reported, not the zeros after them.
+#[test]
+fn a_filled_file_reopens_with_its_zeros_kept_and_a_torn_write_cut() {
+    let scratch = Scratch::new("blocks-fill-reopen");
+    let path = scratch.path("filled");
+    let file = create_filled(&path, 4096);
+    let payloads: Vec<Vec<u8>> = (0..5).map(|n| nonzero(80 + n)).collect();
+    let ids: Vec<BlockId> = payloads.iter().map(|p| file.append(p).unwrap()).collect();
+    let end = file.end();
+    let len = file_len(&path);
+    drop(file);
+
+    let (file, recovery) = open_filled(&path, 4096);
+    assert_eq!((recovery.end, recovery.cut, recovery.interrupted), (end, 0, false), "the zeros kept as fill");
+    assert_eq!(file_len(&path), len);
+    let next = file.append(&nonzero(90)).unwrap();
+    assert_eq!(next, end, "appended over the zeros");
+    assert_eq!(walk(&file, BlockId(HEADER_LEN), true).len(), 6);
+    drop(file);
+
+    // A block's first ten bytes written over the zeros, the rest never.
+    let end = BlockId(next.0 + frame(90));
+    let mut f = OpenOptions::new().write(true).open(&path).unwrap();
+    f.seek(SeekFrom::Start(end.0)).unwrap();
+    f.write_all(&200_u32.to_le_bytes()).unwrap();
+    f.write_all(&[0xAB; 6]).unwrap();
+    drop(f);
+    let (file, recovery) = open_filled(&path, 4096);
+    assert_eq!((recovery.end, recovery.cut, recovery.interrupted), (end, 10, true), "the torn bytes alone");
+    assert_eq!(file_len(&path), end.0, "cut back to the blocks");
+    for (id, payload) in ids.iter().zip(&payloads) {
+        assert_eq!(&file.read(*id).unwrap(), payload);
+    }
+    file.append(&nonzero(10)).unwrap();
+    assert!(file_len(&path) > file.end().0, "filled again");
+    drop(file);
+
+    let (_, recovery) = open(&path, TailPolicy::Truncate).unwrap();
+    assert!(recovery.cut > 0 && recovery.interrupted, "with no fill, the zeros are a torn end: {recovery:?}");
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D30, block manager: appenders on many
+/// threads over a file filled ahead by little, so refills come often and
+/// appenders find the zeros short, write every block whole.
+#[test]
+fn appenders_on_many_threads_write_over_refilled_zeros() {
+    let scratch = Scratch::new("blocks-fill-threads");
+    let path = scratch.path("filled");
+    let file = Arc::new(create_filled(&path, 256));
+    let handles: Vec<_> = (0..8_u8)
+        .map(|t| {
+            let file = Arc::clone(&file);
+            thread::spawn(move || (0..200_usize).map(|n| (file.append(&vec![t + 1; 20 + n % 90]).unwrap(), t, n)).collect::<Vec<_>>())
+        })
+        .collect();
+    let written: Vec<(BlockId, u8, usize)> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+    for (id, t, n) in &written {
+        assert_eq!(file.read(*id).unwrap(), vec![t + 1; 20 + n % 90]);
+    }
+    assert_eq!(walk(&file, BlockId(HEADER_LEN), true).len(), written.len());
+}

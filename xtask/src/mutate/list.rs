@@ -5,6 +5,7 @@
 //! (`verify` refuses one that no longer applies).
 
 mod collations;
+mod fill;
 mod kept;
 mod near;
 mod reads;
@@ -14,6 +15,7 @@ mod vr;
 
 use super::{Mutation, Package};
 pub use collations::COLLATIONS;
+pub use fill::FILL;
 pub use kept::KEPT;
 pub use reads::READS;
 pub use server::SERVER;
@@ -21,10 +23,10 @@ pub use shadow::SHADOW;
 pub use vr::VR;
 
 /// Every mutation, in the order they run: the core's, then its kept
-/// plans', reads', collations', shadow files' and reads near the last,
-/// then replication's, then the server's.
+/// plans', reads', collations', shadow files', reads near the last and
+/// zeros filled ahead of the log, then replication's, then the server's.
 pub fn all() -> Vec<Mutation> {
-    let core = MUTATIONS.iter().chain(&KEPT).chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&near::NEAR);
+    let core = MUTATIONS.iter().chain(&KEPT).chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&near::NEAR).chain(&FILL);
     core.chain(&VR).chain(&SERVER).copied().collect()
 }
 

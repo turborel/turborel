@@ -126,6 +126,9 @@ impl FileLog {
         }
         self.healthy()?;
         segment.drain();
+        // Its zeros filled ahead go before the sync, which then makes its
+        // size the end of its records durably (`known_through`).
+        segment.blocks.trim().map_err(|e| self.failed(e, &format!("segment {}", segment.number)))?;
         let durability = self.durability();
         // A log syncing nothing asks for no sync, and claims nothing durable.
         if durability != Durability::None {

@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use turborel::catalog::TableDesc;
 use turborel::db::{Database, OpenOptions, Opened};
+use turborel::disk::block::{BlockFile, BlockOptions};
+use turborel::disk::io::OsFileSystem;
 use turborel::error::{Code, Result};
 use turborel::log::{FileLogOptions, Log, MemoryLog};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
@@ -231,10 +233,16 @@ fn a_damaged_log_is_refused_and_a_torn_one_reported() {
     assert_eq!(refused.code, Code::Corrupt);
     assert!(refused.msg.contains("is damaged at offset"), "{refused}");
     assert_eq!(std::fs::read(&segment).unwrap(), damaged, "unchanged");
-    // A record's first 10 bytes written, the crash before the rest.
+    // A record's first 10 bytes written over the zeros filled ahead of the
+    // records, the crash before the rest.
+    std::fs::write(&segment, &bytes).unwrap();
+    let filled = BlockOptions { ahead: 1, ..BlockOptions::default() };
+    let (blocks, _) = BlockFile::open(&OsFileSystem, &segment, &[crate::common::crc32c()], &[], filled).unwrap();
+    let records_end = usize::try_from(blocks.end().0).unwrap();
+    drop(blocks);
     let mut torn = bytes.clone();
-    torn.extend_from_slice(&200_u32.to_le_bytes());
-    torn.extend_from_slice(&[0xAB; 6]);
+    torn[records_end..records_end + 4].copy_from_slice(&200_u32.to_le_bytes());
+    torn[records_end + 4..records_end + 10].copy_from_slice(&[0xAB; 6]);
     std::fs::write(&segment, &torn).unwrap();
     let kept = crate::common::Kept::default();
     let db = Database::new();

@@ -3,8 +3,10 @@
 //! slow, when a rule says so.
 //! For the tests of the storage foundation's failure paths: what each
 //! component does when an open, read, write, sync or removal fails; and,
-//! as it notes the size of each file at its last sync, for those of what
-//! a failure of the system loses: the writes no sync covered; and each
+//! as it notes the size of each file at its last sync and what each write
+//! since wrote over, for those of what a failure of the system loses: the
+//! writes no sync covered, whether they grew a file or wrote over bytes in
+//! it, as a log's records do over the zeros filled ahead of them; and each
 //! sync's durability, for those of what is synced how.
 
 use std::collections::HashMap;
@@ -15,6 +17,9 @@ use std::time::Duration;
 
 use turborel::disk::io::{DiskFile, Durability, FileSystem, OpenMode, OsFileSystem};
 use turborel::error::{Code, Result, SqlError};
+
+/// Writes since a file's last sync: where each wrote, and what was there.
+type Overwritten = Vec<(u64, Vec<u8>)>;
 
 /// The operations a rule can match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +118,9 @@ pub struct Faults {
     injected: AtomicUsize,
     /// The size of each file synced, as its last sync left it.
     synced: Mutex<HashMap<PathBuf, u64>>,
+    /// The bytes each write since a file's last sync wrote over, in order:
+    /// where, and what was there.
+    unsynced: Mutex<HashMap<PathBuf, Overwritten>>,
     /// Each sync of a file done, in order: its path and durability.
     syncs: Mutex<Vec<(PathBuf, Durability)>>,
 }
@@ -148,7 +156,25 @@ impl Faults {
     /// what no sync covered lost.
     pub fn cut_to_synced(&self, path: &Path) {
         let size = self.synced.lock().unwrap().get(path).copied().unwrap_or(0);
-        std::fs::OpenOptions::new().write(true).open(path).unwrap().set_len(size).unwrap();
+        let file = OsFileSystem.open(path, OpenMode::ReadWrite).unwrap();
+        // Bytes written over since, put back as they were, the last first.
+        let overwritten = self.unsynced.lock().unwrap().remove(path).unwrap_or_default();
+        for (offset, old) in overwritten.iter().rev() {
+            file.write_all_at(old, *offset).unwrap();
+        }
+        file.set_size(size).unwrap();
+    }
+
+    /// Notes what a write of `len` bytes at `offset` to `inner`, at `path`,
+    /// is about to write over: none past the end of the file.
+    fn note_write(&self, path: &Path, inner: &dyn DiskFile, (offset, len): (u64, usize)) -> Result<()> {
+        let end = inner.size()?.min(offset.saturating_add(u64::try_from(len).unwrap()));
+        let mut old = vec![0; usize::try_from(end.saturating_sub(offset)).unwrap()];
+        if !old.is_empty() {
+            inner.read_exact_at(&mut old, offset)?;
+        }
+        self.unsynced.lock().unwrap().entry(path.to_path_buf()).or_default().push((offset, old));
+        Ok(())
     }
 
     /// The effect for `op` on `path` at `offset`, if a rule fires: the rule
@@ -255,7 +281,11 @@ impl DiskFile for FaultyFile {
         }
     }
     fn write_all_at(&self, data: &[u8], offset: u64) -> Result<()> {
-        match self.faults.fires(Op::Write, &self.path, offset) {
+        let fired = self.faults.fires(Op::Write, &self.path, offset);
+        if fired != Some(Effect::Fail) {
+            self.faults.note_write(&self.path, &*self.inner, (offset, data.len()))?;
+        }
+        match fired {
             Some(Effect::Tear) => {
                 self.inner.write_all_at(&data[..data.len().div_euclid(2)], offset)?;
                 Err(injected(Op::Write, &self.path))
@@ -281,6 +311,7 @@ impl DiskFile for FaultyFile {
         self.inner.sync(durability)?;
         let size = self.inner.size()?;
         self.faults.synced.lock().unwrap().insert(self.path.clone(), size);
+        self.faults.unsynced.lock().unwrap().remove(&self.path);
         self.faults.syncs.lock().unwrap().push((self.path.clone(), durability));
         Ok(())
     }

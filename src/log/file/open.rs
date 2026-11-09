@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::{FileLog, FileLogOptions, LogRecovery, Segment, check_segment_size, segment_number, split};
+use super::{FileLog, FileLogOptions, LogRecovery, Segment, check_segment_size, segment_blocks, segment_number, split};
 use crate::disk::block::{BlockFile, BlockId, HEADER_LEN, ReadWith, Recovery};
 use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
@@ -102,7 +102,7 @@ fn open_segments(
     let mut opened = Vec::with_capacity(numbered.len());
     for (n, (number, path)) in numbered.iter().enumerate() {
         let from = known_through(fs, (*number, path), (known, offset))?;
-        match BlockFile::open_uncut(fs, path, formats, options.blocks, from) {
+        match BlockFile::open_uncut(fs, path, formats, segment_blocks(options), from) {
             Ok((blocks, recovery)) => {
                 let torn = recovery.cut > 0;
                 opened.push((*number, path.clone(), blocks, recovery));
@@ -166,7 +166,7 @@ fn settle(
 /// Whether the segment at `path` holds a valid block; not if it is not a
 /// block file, as one half created is not.
 fn holds_a_block(fs: &dyn FileSystem, path: &Path, formats: ReadWith<'_>, options: &FileLogOptions) -> Result<bool> {
-    let blocks = options.blocks;
+    let blocks = segment_blocks(options);
     match BlockFile::open_uncut(fs, path, formats, blocks, BlockId(HEADER_LEN)) {
         Ok((_, recovery)) => Ok(recovery.end.0 > HEADER_LEN || recovery.follows.is_some()),
         Err(e) => {
@@ -190,6 +190,9 @@ fn half_created(fs: &dyn FileSystem, path: &Path, error: &SqlError) -> Result<bo
 /// Where segment `number` at `path` is known valid through, the log
 /// known durable through block `offset` of segment `known`: a segment
 /// before `known` to its end, `known` to `offset`, a later one nowhere.
+/// One a crash left holding zeros filled ahead of its records, its seal's
+/// cut of them not durable, ends in no valid block, so it is checked whole
+/// (`BlockFile::open_from`).
 fn known_through(fs: &dyn FileSystem, (number, path): (u64, &Path), (known, offset): (u64, BlockId)) -> Result<BlockId> {
     Ok(match number.cmp(&known) {
         std::cmp::Ordering::Less => BlockId(fs.open(path, OpenMode::ReadOnly)?.size()?),

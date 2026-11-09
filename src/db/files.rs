@@ -60,6 +60,7 @@ use super::stores::{CatalogStore, OpenedLog, StorePlace};
 use super::{Database, RecoveryReport, State, api};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::diagnostics::{Diagnostics, Event};
+use crate::disk::block::BlockOptions;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Pipeline;
 use crate::disk::io::{Durability, FileLock, FileSystem, OsFileSystem};
@@ -122,7 +123,9 @@ pub const UNDO_SEGMENT_SIZE: u64 = 16 << 20;
 
 impl Default for OpenOptions {
     fn default() -> Self {
-        let undo = FileLogOptions { segment_size: UNDO_SEGMENT_SIZE, durability: Durability::None, ..FileLogOptions::default() };
+        // Never synced, so filling zeros ahead of it would gain nothing.
+        let blocks = BlockOptions::default();
+        let undo = FileLogOptions { segment_size: UNDO_SEGMENT_SIZE, durability: Durability::None, blocks, ..FileLogOptions::default() };
         OpenOptions { undo, undo_batch: UNDO_BATCH }
     }
 }

@@ -21,7 +21,10 @@
 //! would lose with what follows them, so the file is refused (SQLCODE
 //! -916), unchanged. A side file (`disk/shadow.rs`) has blocks written
 //! over, which this does not expect, so it judges `follows` by its commit
-//! block instead.
+//! block instead. A file filled ahead with zeros (`fill.rs`) ends in them:
+//! the bytes after its valid blocks are judged only up to its last byte
+//! that is not zero, the zeros after that being its fill, and zeros alone
+//! after its valid blocks are no tail at all, kept as its fill.
 
 use std::path::Path;
 
@@ -86,12 +89,23 @@ impl BlockFile {
         let mut blocks = BlockFile::new(file, path, hash, options, size);
         blocks.pipeline = Pipeline::resolve(&ids, encodings, path)?;
         let end = blocks.valid_end(blocks.known(from, size)?, size)?;
-        let cut = size.saturating_sub(end);
+        // The zeros ending a file filled ahead are its fill, not a tail:
+        // what follows the blocks is judged as if the file ended before
+        // them, as a file grown only by appends would.
+        let written = if options.ahead > 0 { blocks.written_end(end, size)? } else { size };
+        let cut = written.saturating_sub(end);
         let mut recovery = Recovery { end: BlockId(end), cut, follows: None, interrupted: false };
         if cut > 0 {
-            recovery.follows = blocks.next_valid(end, size)?.map(BlockId);
-            let stop = recovery.follows.map_or(size, |b| b.0);
-            recovery.interrupted = blocks.runs_past(end, size)? || blocks.zero_end(end, stop)? || blocks.zero_sector(end, stop, size)?;
+            // A block ends in its length, whose high bytes are zeros when it
+            // is small: judged so far past the last byte that is not zero.
+            let slack = u64::try_from(LEN_BYTES.saturating_sub(1)).unwrap_or(0);
+            let judged = if options.ahead > 0 { written.saturating_add(slack).min(size) } else { size };
+            recovery.follows = blocks.next_valid(end, judged)?.map(BlockId);
+            let stop = recovery.follows.map_or(judged, |b| b.0);
+            recovery.interrupted =
+                blocks.runs_past(end, judged)? || blocks.zero_end(end, stop)? || blocks.zero_sector(end, stop, judged)?;
+        }
+        if size > end {
             blocks.reset_end(end);
         }
         Ok((blocks, recovery))
@@ -136,6 +150,7 @@ impl BlockFile {
             return Ok(());
         }
         self.file.set_size(recovery.end.0)?;
+        self.filled_to(recovery.end.0);
         self.file.sync(Durability::Full)
     }
 
@@ -214,6 +229,26 @@ impl BlockFile {
         let len = u32::from_le_bytes(len);
         let frame = u64::try_from(format::frame_len(usize::try_from(len).unwrap_or(usize::MAX), self.hash.digest_len()));
         Ok(len <= self.options.max_block && frame.unwrap_or(u64::MAX) > size.saturating_sub(at))
+    }
+
+    /// Where the bytes written from `from` to `to` end, read a chunk at a
+    /// time, the zeros after them the fill of a file filled ahead
+    /// (`fill.rs`): after the last byte that is not zero, or at `from` if
+    /// they are all zeros.
+    fn written_end(&self, from: u64, to: u64) -> Result<u64> {
+        let mut chunk = from;
+        let mut written = from;
+        let mut buffer = Vec::new();
+        while chunk < to {
+            let span = to.saturating_sub(chunk).min(SCAN_CHUNK);
+            buffer.resize(usize::try_from(span).unwrap_or(usize::MAX), 0);
+            self.file.read_exact_at(&mut buffer, chunk)?;
+            if let Some(last) = buffer.iter().rposition(|&b| b != 0) {
+                written = chunk.saturating_add(u64::try_from(last).unwrap_or(u64::MAX)).saturating_add(1);
+            }
+            chunk = chunk.saturating_add(span);
+        }
+        Ok(written)
     }
 
     /// Whether the bytes from `from` to `to` end in a zero length: the

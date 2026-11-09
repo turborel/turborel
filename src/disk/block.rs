@@ -13,6 +13,9 @@
 //! or writes (RULES.md R-ERR-4). Batching blocks is for the components
 //! above, which know what belongs together.
 //!
+//! A file given `BlockOptions::ahead` keeps zeros written past its blocks,
+//! so a sync after an append carries no growth of the file (`fill.rs`).
+//!
 //! A write that fails leaves a gap the blocks after it cannot be reached
 //! across, so the file then refuses appends until it is reopened, which
 //! recovers it.
@@ -27,7 +30,9 @@
 //! A read takes the first `FIRST_READ` bytes of a block at once, so a small
 //! block is read in one call; a larger one takes a second for the rest.
 
+mod counts;
 mod cursor;
+mod fill;
 mod format;
 mod tail;
 
@@ -36,6 +41,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
+pub use counts::BlockCounts;
+use counts::{Counters, add};
 pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
 pub(crate) use tail::damaged;
@@ -76,11 +83,15 @@ pub struct BlockOptions {
     pub max_block: u32,
     /// What opening does with bytes after the last valid block.
     pub tail: TailPolicy,
+    /// Bytes kept written with zeros past the appended blocks, 0 for
+    /// none, so a sync after an append carries no growth of the file
+    /// (`fill.rs`).
+    pub ahead: u64,
 }
 
 impl Default for BlockOptions {
     fn default() -> Self {
-        BlockOptions { max_block: DEFAULT_MAX_BLOCK, tail: TailPolicy::Truncate }
+        BlockOptions { max_block: DEFAULT_MAX_BLOCK, tail: TailPolicy::Truncate, ahead: 0 }
     }
 }
 
@@ -97,42 +108,6 @@ pub struct Recovery {
     /// zeros, never written; a zero length ending them; or a block running
     /// past the end of the file (`tail.rs`).
     pub interrupted: bool,
-}
-
-/// The counters of a block file, for the heuristics above it (RULES.md D30).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct BlockCounts {
-    /// Blocks appended.
-    pub appends: u64,
-    /// Payload bytes appended.
-    pub appended_bytes: u64,
-    /// Bytes they took once encoded: with compression, fewer.
-    pub stored_bytes: u64,
-    /// Blocks read.
-    pub reads: u64,
-    /// Payload bytes read.
-    pub read_bytes: u64,
-    /// Syncs.
-    pub syncs: u64,
-    /// Blocks read that failed their checksum or were incomplete.
-    pub corrupt_reads: u64,
-}
-
-/// `BlockCounts`, counted lock-free.
-#[derive(Debug, Default)]
-struct Counters {
-    appends: AtomicU64,
-    appended_bytes: AtomicU64,
-    stored_bytes: AtomicU64,
-    reads: AtomicU64,
-    read_bytes: AtomicU64,
-    syncs: AtomicU64,
-    corrupt_reads: AtomicU64,
-}
-
-/// Adds `n` to `counter`; it would wrap only after 2^64, which no file reaches.
-fn add(counter: &AtomicU64, n: usize) {
-    counter.fetch_add(u64::try_from(n).unwrap_or(u64::MAX), Ordering::Relaxed);
 }
 
 /// The hash functions and encodings a file may be read with.
@@ -168,6 +143,10 @@ pub struct BlockFile {
     parking: Mutex<()>,
     /// Signalled when a block is published or a write fails.
     advanced: Condvar,
+    /// The end of the bytes written, by blocks or by zeros filled ahead
+    /// of them; only the thread holding `filling` raises it.
+    filled: AtomicU64,
+    filling: Mutex<()>,
     counters: Counters,
 }
 
@@ -282,6 +261,8 @@ impl BlockFile {
             parked: AtomicUsize::new(0),
             parking: Mutex::new(()),
             advanced: Condvar::new(),
+            filled: AtomicU64::new(end),
+            filling: Mutex::new(()),
             counters: Counters::default(),
         }
     }
@@ -340,21 +321,6 @@ impl BlockFile {
     /// The encodings its payloads pass through.
     pub fn pipeline(&self) -> &Pipeline {
         &self.pipeline
-    }
-
-    /// The counters now.
-    pub fn counts(&self) -> BlockCounts {
-        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        let c = &self.counters;
-        BlockCounts {
-            appends: get(&c.appends),
-            appended_bytes: get(&c.appended_bytes),
-            stored_bytes: get(&c.stored_bytes),
-            reads: get(&c.reads),
-            read_bytes: get(&c.read_bytes),
-            syncs: get(&c.syncs),
-            corrupt_reads: get(&c.corrupt_reads),
-        }
     }
 
     /// A cursor positioned at `at`, a block's id or the end.
@@ -451,7 +417,7 @@ impl BlockFile {
         }
         let start = self.reserve(frame.len())?;
         let end = start.saturating_add(u64::try_from(frame.len()).unwrap_or(u64::MAX));
-        let written = self.file.write_all_at(&frame, start);
+        let written = self.fill_ahead(end).and_then(|()| self.file.write_all_at(&frame, start));
         self.publish(start, end, written)?;
         add(&self.counters.appends, 1);
         add(&self.counters.appended_bytes, payload.len());

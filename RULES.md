@@ -545,6 +545,11 @@ Checkpoints fall due after CHECKPOINT.AFTER_CHANGES row changes. The log
 is kept from the last checkpoint or the oldest open transaction's first
 record, and `Event::CheckpointOverdue` (D40) warns when it grows too far.
 
+The segment appended to keeps zeros written past its records, so a
+commit's sync carries no growth of the file, which costs a journaling file
+system a second flush. Zeros after the last record are this fill, kept on
+open and cut off as the segment is sealed.
+
 A segment cut short by a crash ends the log. Valid records after invalid
 bytes are damage, unless the invalid bytes show an interrupted write. That
 means an unwritten sector of zeros, a zero length ending them, or a record

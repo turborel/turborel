@@ -30,7 +30,10 @@ The log begins a new segment as the current one reaches
 LOG.SEGMENT_BYTES. If one cannot be begun, as when the disk is full,
 the current segment grows past that size, commits going on, until one
 can be; the failure is told once as a `failed` event
-([Diagnostics](08-diagnostics.md)).
+([Diagnostics](08-diagnostics.md)). The current segment's file runs up
+to a megabyte past its records, written with zeros, so a commit's sync
+does not grow the file. A segment is cut back to its records when the
+next one begins.
 
 A database made with `--memory` has no directory: it is gone when the
 server stops. Its pages, its temporary tables' rows and what its queries
