@@ -1,8 +1,11 @@
 //! \[DESIGN\] What EXPLAIN shows of an operator: text made of the names of
 //! its input's columns, when a plan is made to be shown; none, when it is
-//! made to run, so a statement run pays nothing for it.
+//! made to run, so a statement run pays nothing for it; and a plan written
+//! as EXPLAIN writes it, an operator a line.
 
-use super::PhysicalPlanner;
+use std::fmt::Write;
+
+use super::{PhysicalPlanner, Plan};
 use crate::logical::LogicalPlan;
 
 /// The names an operator's description is made of, if the plan is shown.
@@ -45,6 +48,77 @@ impl PhysicalPlanner<'_> {
     /// are described; else nothing.
     pub(super) fn described(&self, input: &LogicalPlan, render: impl FnOnce(&[String]) -> String) -> String {
         if self.shown { render(&input.names()) } else { String::new() }
+    }
+}
+
+impl Plan {
+    /// The plan as indented text, one operator per line.
+    pub fn explain(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out, 0);
+        out
+    }
+
+    fn write(&self, out: &mut String, depth: usize) {
+        let pad = "  ".repeat(depth);
+        // Writing to a String cannot fail.
+        let _ = match self {
+            Plan::SeqScan { table, rows, cost, order, backward, .. } => {
+                let ordered = scan_order(order, *backward);
+                writeln!(out, "{pad}SeqScan {table}{ordered}  (rows={rows}, cost={cost:.1})")
+            }
+            Plan::IndexScan { table, index, method, detail, est, cost, reverse, covering, .. } => writeln!(
+                out,
+                "{pad}{} {table} using {index} [{method}]{}: {detail}  (est. rows={est:.0}, cost={cost:.1})",
+                if *covering { "IndexOnlyScan" } else { "IndexScan" },
+                if *reverse { " backward" } else { "" }
+            ),
+            Plan::Filter { detail, est: None, .. } => writeln!(out, "{pad}Filter {detail}"),
+            Plan::Filter { detail, est: Some(est), .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
+            Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
+            Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
+            Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
+            Plan::IndexJoin { outer, table, index, method, detail, est, cost, .. } => writeln!(
+                out,
+                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
+                if *outer { "LeftOuter" } else { "" }
+            ),
+            Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
+            Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
+            Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
+            Plan::Append { .. } => writeln!(out, "{pad}Append"),
+            Plan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
+            Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
+            Plan::System { read } => writeln!(out, "{pad}System {}", read.name()),
+            Plan::Sort { detail, .. } => writeln!(out, "{pad}Sort {detail}"),
+        };
+        match self {
+            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Values { .. } | Plan::System { .. } => {}
+            Plan::Product { left, right }
+            | Plan::HashJoin { left, right, .. }
+            | Plan::OuterJoin { left, right, .. }
+            | Plan::Append { left, right }
+            | Plan::SetOp { left, right, .. } => {
+                left.write(out, depth.saturating_add(1));
+                right.write(out, depth.saturating_add(1));
+            }
+            Plan::Filter { input, .. }
+            | Plan::Aggregate { input, .. }
+            | Plan::Project { input, .. }
+            | Plan::Distinct { input }
+            | Plan::Sort { input, .. }
+            | Plan::IndexJoin { left: input, .. } => input.write(out, depth.saturating_add(1)),
+        }
+    }
+}
+
+/// How EXPLAIN shows a scan in the order of the columns `order`, read
+/// `backward` if so: nothing, of none.
+fn scan_order(order: &[usize], backward: bool) -> String {
+    match (order.is_empty(), backward) {
+        (true, _) => String::new(),
+        (false, false) => format!(" in order of {}", order.len()),
+        (false, true) => format!(" in order of {} backward", order.len()),
     }
 }
 

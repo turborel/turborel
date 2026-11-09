@@ -406,3 +406,42 @@ fn kept_plans_answer_as_statements_written_with_their_values() {
     let made: u64 = queries.iter().chain(&writes).map(|f| f.prepared.plans_made()).sum();
     assert!(made < 150, "plans are kept between changes: {made} made for 300 executions");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 GR5]; [DESIGN] RULES.md
+/// D45: range queries that learn their plans, of an index's range, read
+/// in order, summed, and their distinct values in order, give at every
+/// execution what the statement written with its values gives: after the
+/// plan is learned too, of other bounds, of none (NULL), of bounds the
+/// wrong way round, and of a range of every row, which a scan would read.
+#[test]
+fn a_learned_range_plan_gives_each_executions_rows() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE R (K INTEGER NOT NULL PRIMARY KEY, C INTEGER)").unwrap();
+    let s = db.session("X");
+    for start in (0..2000).step_by(250) {
+        let values: Vec<String> = (start..start + 250).map(|k| format!("({k}, {})", k % 7)).collect();
+        s.run(&format!("INSERT INTO R VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    let forms = [
+        "SELECT K, C FROM R WHERE K BETWEEN {0} AND {1} ORDER BY K",
+        "SELECT SUM(C) FROM R WHERE K BETWEEN {0} AND {1}",
+        "SELECT C FROM R WHERE K BETWEEN {0} AND {1} ORDER BY C",
+        "SELECT DISTINCT C FROM R WHERE K BETWEEN {0} AND {1} ORDER BY C",
+    ];
+    let bounds: Vec<(Value, Value)> = (0..12_i128)
+        .map(|n| (int(100 * n + 3), int(100 * n + 40)))
+        .chain([(Value::Null, int(9)), (int(50), int(10)), (int(-5), int(5000)), (int(7), int(7))])
+        .collect();
+    for form in forms {
+        let prepared = s.prepare(&form.replace("{0}", "?").replace("{1}", "?")).unwrap();
+        for (low, high) in &bounds {
+            // NULL alone is no `<value expression>`; cast, it is one
+            // [ISO/IEC 9075:1992 §6.10].
+            let written = |v: &Value| if v.is_null() { "CAST(NULL AS INTEGER)".to_string() } else { v.to_string() };
+            let direct = rows(&s, &form.replace("{0}", &written(low)).replace("{1}", &written(high))).unwrap();
+            assert_eq!(opened(&s, &prepared, &[low.clone(), high.clone()]), direct, "{form}: {low} to {high}");
+        }
+        assert_eq!(prepared.plans_made(), 1, "{form}");
+    }
+}

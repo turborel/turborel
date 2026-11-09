@@ -226,7 +226,12 @@ executions, a query also when SQL text opens it as a dynamic cursor:
 each execution puts its values in the kept plan and chooses indexes by
 them. A query that finds one row by a unique key, `WHERE K = ?` of a
 PRIMARY KEY or UNIQUE column K, keeps its access path too, so its
-executions choose nothing. The plan is made again when the definitions change (a table
+executions choose nothing. Another query keeps its access paths once
+five executions in a row choose the same ones, as `WHERE K BETWEEN ? AND
+?` does whose ranges are short, and is then planned no more, until a
+table it reads gains or loses a tenth of its rows and 50 more, when it
+looks again; one whose values keep choosing other paths is planned at
+each execution after twenty. The plan is made again when the definitions change (a table
 altered, an index made or dropped, a local temporary table declared, a
 privilege granted or revoked, the transaction's own uncommitted changes
 among them), when a setting of the database or

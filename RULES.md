@@ -915,7 +915,7 @@ Maintenance (`db/maintenance.rs`) is work an engine leaves for later, such
 as statistics, freezes and rewrites. No transaction waits for it, and no
 plan waits for or makes a pass. The row store reads every row of a table of
 up to 60,000 rows for its statistics, and a fixed sample of about 30,000 of
-a larger one's, scaling distinct values as PostgreSQL's ANALYZE does
+a larger one's, scaling its distinct values by Haas and Stokes's estimator
 (`rows/stats.rs`). So a pass costs the same however large the table grows.
 
 Execution runs by batch where it can (`exec/batch.rs`), with vectors of up
@@ -973,7 +973,9 @@ finds one row at most, so nothing could be cheaper by enough to be worth the
 zones and counts a comparison reads. The values still come from the execution
 (D45): a prepared statement's `?` fixes a column as a constant does, a null
 standing in for its value until each execution fills it
-(`physical/kept.rs`).
+(`physical/kept.rs`). A query learning its plan (D45) is planned with its
+values too, each `?` compared with a column standing in its probe for the
+value, its slot noted, so another execution's value can take its place.
 
 Fetches are priced by where the page is found, with a row scanned costing
 1. A page in the pool costs 8.6, in the system's cache 72, and from disk
@@ -1258,11 +1260,25 @@ Failures to prepare are SQLSTATE 37000. Unlike SQL's PREPARE it accepts a
 `<comment>`, as drivers send them (D58).
 
 A statement keeps its parsed text and bound plan. Each execution fills the
-slots, then rewrites and plans, so access paths follow its values and never
-a generic plan (`db/prepared/plans.rs`). A query whose plan is one probe
-fixing a whole unique key, which no value changes (D35), keeps that physical
-plan too, made once with its slots and filled at each execution
-(`physical/kept.rs`). A kept plan holds while the
+slots, then rewrites and plans, so access paths follow its values
+(`db/prepared/plans.rs`). A query whose plan is one probe fixing a whole
+unique key, which no value changes (D35), keeps that physical plan too, made
+once with its slots and filled at each execution (`physical/kept.rs`).
+
+Another query learns its physical plan. Planning a short range query costs
+about a seventh of its execution's CPU, measured under sysbench's
+read_only. Each of its first executions plans it twice, with its values,
+which it runs, and with its slots, its paths chosen by its values. Once five
+in a row give both plans one shape (`physical/kept/shape.rs`), the plan with
+slots is kept and filled at each execution. A query whose values keep
+choosing other paths stops learning after twenty and is planned at each
+execution. A table the kept plan reads that gains or loses more rows than
+its statistics are gathered again for has it learn again
+(`db/prepared/plans/learning.rs`). A later value that would choose another
+path, as a range of the whole table would, gets the learned plan, which
+gives the same rows at another cost.
+
+A kept plan holds while the
 snapshot's generation, the catalog read, and the session's identity, schema,
 zone and settings are unchanged. Otherwise the statement is rebound against
 current definitions [§17.6 GR10], so a revoked privilege is missing at the

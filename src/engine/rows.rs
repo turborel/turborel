@@ -70,7 +70,7 @@ use ids::{key, no_row, row_id};
 pub use meta::TABLE_FORMAT;
 use meta::{locator_of, meta_content, parse_locator};
 use mvcc::{Read, Versions};
-pub use options::{DEFAULT_HELD_BYTES, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
+pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
 use stats::Gathered;
 pub use undo::UndoStore;

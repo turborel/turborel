@@ -1,14 +1,17 @@
 //! \[DESIGN\] The probes an index can answer for the conjuncts of a filter
 //! over its table (RULES.md D34): comparisons of a column with constants,
 //! the bounds of a LIKE's prefix, and an OR of these of one column, an IN
-//! list among them, as one probe of each of its ranges.
+//! list among them, as one probe of each of its ranges. A planner given a
+//! prepared statement's values takes a comparison of a column with a `?`
+//! as one with its value, noting the slot (RULES.md D45).
 
 use std::cmp::Ordering;
 
 use super::estimate::{self, Known};
+use super::kept::{Place, ProbeSlot};
 use crate::catalog::IndexDesc;
 use crate::index::Probe;
-use crate::logical::{Cond, Expr, and_all, compared_with_constant, disjuncts, like_bounds, render_cond, split_and};
+use crate::logical::{Cond, Expr, Slot, and_all, compared_with_constant, disjuncts, filled_expr, like_bounds, render_cond, split_and};
 use crate::value::collation::CollationRef;
 use crate::value::{CompOp, DataType, Decimal, Value, compare};
 
@@ -25,6 +28,25 @@ pub(super) struct Compared {
     pub(super) column: usize,
     pub(super) op: CompOp,
     pub(super) value: Value,
+    /// The `?` the value is of, a prepared statement's, if it is one's.
+    pub(super) slot: Option<Slot>,
+}
+
+impl Compared {
+    /// The comparisons of a column of type `column` an index places for
+    /// it (`coerce`); of a `?`'s value, only itself, as another
+    /// execution's value is placed (`placed_as_is`), else none.
+    pub(super) fn placed(&self, column: &DataType) -> Option<Comparisons> {
+        if self.slot.is_some_and(|s| !placed_as_is(&s.data_type, column)) {
+            return None;
+        }
+        coerce(self.op, &self.value, column)
+    }
+
+    /// Its `?`, standing at `place` in a probe, if its value is one's.
+    pub(super) fn slot_at(&self, place: Place) -> Option<ProbeSlot> {
+        self.slot.map(|slot| ProbeSlot { place, slot })
+    }
 }
 
 /// A conjunct `at` that is an OR of comparisons of one column with
@@ -42,14 +64,18 @@ pub(super) struct Alternatives {
 /// Comparisons of a column with constants: each operator and constant.
 type Comparisons = Vec<(CompOp, Value)>;
 
-/// The comparisons and ORs of them among `conds`.
-pub(super) fn comparisons(conds: &[Cond], known: Known<'_>) -> (Vec<Compared>, Vec<Alternatives>) {
+/// The comparisons and ORs of them among `conds`: with a `?` too, given
+/// the `values` of an execution.
+pub(super) fn comparisons(conds: &[Cond], known: Known<'_>, values: Option<&[Value]>) -> (Vec<Compared>, Vec<Alternatives>) {
     let (mut compared, mut ors) = (Vec::new(), Vec::new());
     for (at, c) in conds.iter().enumerate() {
         if let Some((column, op, value, collation)) = collated_bound(c) {
-            compared.push(Compared { collation: Some(collation), at, exact: true, column, op, value });
+            compared.push(Compared { collation: Some(collation), at, exact: true, column, op, value, slot: None });
+        } else if let Some((column, op, slot, value)) = values.and_then(|v| slot_bound(c, v)) {
+            compared.push(Compared { collation: None, at, exact: true, column, op, value, slot: Some(slot) });
         } else if let Some((column, exact, each)) = bounds(c) {
-            compared.extend(each.into_iter().map(|(op, value)| Compared { collation: None, at, exact, column, op, value }));
+            let of = |(op, value)| Compared { collation: None, at, exact, column, op, value, slot: None };
+            compared.extend(each.into_iter().map(of));
         } else if let Some((column, exact, each)) = alternatives(c) {
             ors.push(Alternatives { at, column, exact, each, share: estimate::selectivity(c, known) });
         }
@@ -69,6 +95,21 @@ fn collated_bound(c: &Cond) -> Option<(usize, CompOp, Value, CollationRef)> {
     let (Expr::SortKey(column, collation), Expr::Const(value)) = (key, constant) else { return None };
     let Expr::Column(column) = **column else { return None };
     Some((column, op, value.clone(), collation.clone()))
+}
+
+/// `c`, a column compared with a `?`: the column, the operator, the slot,
+/// and its value among `values`, cast to its type as filling casts it;
+/// none if it is not one, or the value does not cast, which filling the
+/// plan then reports.
+fn slot_bound(c: &Cond, values: &[Value]) -> Option<(usize, CompOp, Slot, Value)> {
+    let Cond::Compare(left, op, right) = c else { return None };
+    let (column, op, slot) = match (left, right) {
+        (Expr::Column(column), Expr::Dynamic(slot)) => (*column, *op, *slot),
+        (Expr::Dynamic(slot), Expr::Column(column)) => (*column, op.flip(), *slot),
+        _ => return None,
+    };
+    let Ok(Expr::Const(value)) = filled_expr(Expr::Dynamic(slot), values) else { return None };
+    Some((column, op, slot, value))
 }
 
 /// Of the comparisons `all`, those an index `ix` serves: of a column of its
@@ -506,6 +547,36 @@ mod tests {
         assert!(coerce(CompOp::Eq, &Value::Approx(f64::INFINITY), &exact(2)).is_none());
         assert!(coerce(CompOp::Eq, &Value::Approx(1e300_f64), &exact(2)).is_none(), "past every exact value");
         assert!(coerce(CompOp::Eq, &Value::Char("A".into()), &exact(2)).is_none());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D45: a column compared with a `?` is
+    /// compared with its value, cast to the slot's type, its slot noted;
+    /// the value is placed in a probe only as it is, a `?` of a type the
+    /// column's values are placed otherwise than as it is in none, as
+    /// another execution's value could fall between two; a constant's as
+    /// it falls. MC/DC pairs of refusing: a `?` or a constant, its type
+    /// placed as it is or not, each alone.
+    #[test]
+    fn a_slots_value_is_placed_only_as_it_is() {
+        let first = |data_type| Slot { index: 0, data_type, at: 1 };
+        let cond = Cond::Compare(Expr::Dynamic(first(exact(0))), CompOp::Gt, Expr::Column(2));
+        let (compared, _) =
+            comparisons(&[cond], Known { stats: None, cost: &crate::physical::CostModel::default() }, Some(&[Value::Char("4".into())]));
+        let [c] = compared.as_slice() else { panic!("{} compared", compared.len()) };
+        assert_eq!((c.column, c.op, c.slot.map(|s| s.index)), (2, CompOp::Lt, Some(0)), "flipped, the slot noted");
+        assert_eq!(compare(&c.value, &int(4)), Some(Ordering::Equal), "the value cast to the slot's type");
+        let tenth = |slot: Option<Slot>| Compared {
+            collation: None,
+            at: 0,
+            exact: true,
+            column: 0,
+            op: CompOp::Eq,
+            value: Value::Approx(0.1_f64),
+            slot,
+        };
+        assert!(tenth(Some(first(approximate()))).placed(&approximate()).is_some(), "a ? of the column's kind");
+        assert!(tenth(Some(first(approximate()))).placed(&exact(1)).is_none(), "a ? of another kind");
+        assert_eq!(tenth(None).placed(&exact(1)).map(|each| each.len()), Some(2), "a constant between two values");
     }
 
     /// Verifies: [DESIGN] a probe is shown as the comparisons it makes of

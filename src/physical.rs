@@ -27,10 +27,8 @@ mod probe;
 mod shown;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
-pub use kept::ProbeSlot;
-pub(crate) use kept::{filled_plan, keepable};
-
-use std::fmt::Write;
+pub use kept::{Place, ProbeSlot};
+pub(crate) use kept::{filled_plan, keepable, same_shape};
 
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -40,6 +38,7 @@ use crate::logical::{
     split_and,
 };
 use crate::system::SystemRead;
+use crate::value::Value;
 use crate::value::collation::CollationRef;
 use shown::Shown;
 
@@ -271,6 +270,9 @@ pub struct PhysicalPlanner<'a> {
     /// Whether the plan is made to be shown, its operators described
     /// (`physical/shown.rs`), as EXPLAIN's is; one made to run is not.
     shown: bool,
+    /// Of a plan made with a prepared statement's slots, the values of the
+    /// execution its paths are chosen by (`physical/kept.rs`).
+    values: Option<&'a [Value]>,
 }
 
 /// A built plan, and whether its rows come out in the order that was asked for.
@@ -297,13 +299,20 @@ struct TableRead<'a> {
 impl<'a> PhysicalPlanner<'a> {
     /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: false }
+        PhysicalPlanner { db, shown: false, values: None }
+    }
+
+    /// A planner over the state `db`, of plans to run made with a prepared
+    /// statement's slots, their paths chosen by `values`, one execution's,
+    /// so that another's may fill them (`physical/kept.rs`).
+    pub fn slotted(db: &'a State, values: &'a [Value]) -> Self {
+        PhysicalPlanner { db, shown: false, values: Some(values) }
     }
 
     /// A planner over the state `db`, of plans to show: each operator
     /// described, as EXPLAIN shows it.
     pub fn describing(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: true }
+        PhysicalPlanner { db, shown: true, values: None }
     }
 
     /// The physical plan for `logical`.
@@ -460,16 +469,6 @@ fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
 /// its right's (`Plan::OuterJoin`), if either has one.
 pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
 
-/// How EXPLAIN shows a scan in the order of the columns `order`, read
-/// `backward` if so: nothing, of none.
-fn scan_order(order: &[usize], backward: bool) -> String {
-    match (order.is_empty(), backward) {
-        (true, _) => String::new(),
-        (false, false) => format!(" in order of {}", order.len()),
-        (false, true) => format!(" in order of {} backward", order.len()),
-    }
-}
-
 impl Plan {
     /// Whether running it can raise an error of a General Rule (an
     /// overflow, a division by zero, a subquery's cardinality): through a
@@ -495,65 +494,6 @@ impl Plan {
             }
             Plan::IndexJoin { left, cond, .. } => left.can_raise() || cond.as_ref().is_some_and(Cond::can_raise),
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
-        }
-    }
-
-    /// The plan as indented text, one operator per line.
-    pub fn explain(&self) -> String {
-        let mut out = String::new();
-        self.write(&mut out, 0);
-        out
-    }
-
-    fn write(&self, out: &mut String, depth: usize) {
-        let pad = "  ".repeat(depth);
-        // Writing to a String cannot fail.
-        let _ = match self {
-            Plan::SeqScan { table, rows, cost, order, backward, .. } => {
-                let ordered = scan_order(order, *backward);
-                writeln!(out, "{pad}SeqScan {table}{ordered}  (rows={rows}, cost={cost:.1})")
-            }
-            Plan::IndexScan { table, index, method, detail, est, cost, reverse, covering, .. } => writeln!(
-                out,
-                "{pad}{} {table} using {index} [{method}]{}: {detail}  (est. rows={est:.0}, cost={cost:.1})",
-                if *covering { "IndexOnlyScan" } else { "IndexScan" },
-                if *reverse { " backward" } else { "" }
-            ),
-            Plan::Filter { detail, est: None, .. } => writeln!(out, "{pad}Filter {detail}"),
-            Plan::Filter { detail, est: Some(est), .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
-            Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
-            Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
-            Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
-            Plan::IndexJoin { outer, table, index, method, detail, est, cost, .. } => writeln!(
-                out,
-                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
-                if *outer { "LeftOuter" } else { "" }
-            ),
-            Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
-            Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
-            Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
-            Plan::Append { .. } => writeln!(out, "{pad}Append"),
-            Plan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
-            Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
-            Plan::System { read } => writeln!(out, "{pad}System {}", read.name()),
-            Plan::Sort { detail, .. } => writeln!(out, "{pad}Sort {detail}"),
-        };
-        match self {
-            Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Values { .. } | Plan::System { .. } => {}
-            Plan::Product { left, right }
-            | Plan::HashJoin { left, right, .. }
-            | Plan::OuterJoin { left, right, .. }
-            | Plan::Append { left, right }
-            | Plan::SetOp { left, right, .. } => {
-                left.write(out, depth.saturating_add(1));
-                right.write(out, depth.saturating_add(1));
-            }
-            Plan::Filter { input, .. }
-            | Plan::Aggregate { input, .. }
-            | Plan::Project { input, .. }
-            | Plan::Distinct { input }
-            | Plan::Sort { input, .. }
-            | Plan::IndexJoin { left: input, .. } => input.write(out, depth.saturating_add(1)),
         }
     }
 }

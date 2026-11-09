@@ -124,7 +124,7 @@ mod users;
 mod views;
 mod write;
 
-use compiled::plan;
+use compiled::{plan, plan_slotted};
 
 pub use prepared::Prepared;
 use scroll::{Kept, Updatable};

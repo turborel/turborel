@@ -7,25 +7,46 @@
 //! the plan every execution would make, whatever its values, so it is made
 //! once, with its slots, and kept; each execution fills the slots, as
 //! `logical/dynamic.rs` fills a logical plan's. Every other plan is chosen
-//! by its values' statistics, and is made again at each execution.
+//! by its values' statistics: a planner given an execution's values may
+//! still make it with the slots, each `?` compared with a column standing
+//! in its probe for the value (`ProbeSlot`), so another execution can fill
+//! it, and the statement keeps such a plan once its executions keep making
+//! one of the same shape (`kept/shape.rs`).
 
 use super::Plan;
 use super::access::{ix_is_point, whole_key};
-use super::probe::{Compared, coerce, placed_as_is};
+use super::probe::{Compared, placed_as_is};
 use crate::db::State;
 use crate::error::{Code, Result, fail};
 use crate::index::Probe;
-use crate::logical::{Cond, Expr, Slot, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Expr, Slot, filled_cond, filled_expr};
 use crate::value::{CompOp, DataType, Value};
+
+mod shape;
+
+pub(crate) use shape::same_shape;
 
 /// A `?` of a probe: the slot, and the place among the probe's values its
 /// value takes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProbeSlot {
-    /// The place among the probe's values, from 0.
-    pub at: usize,
+    /// The place among the probe's values.
+    pub place: Place,
     /// The slot, whose type the value is cast to.
     pub slot: Slot,
+}
+
+/// Where a `?`'s value goes in a probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// The value compared with the index's column of this place, from 0:
+    /// a `Probe::Compare`'s, one of the equal values of a `Probe::Prefix`
+    /// or a `Probe::Range`, or the comparison after a prefix's.
+    Key(usize),
+    /// The lower bound of a `Probe::Range`.
+    Low,
+    /// The upper bound of a `Probe::Range`.
+    High,
 }
 
 /// The probe fixing every column of an index on `columns`, of `types`, by
@@ -41,11 +62,12 @@ pub(super) fn point_probe(
     let (mut equal, mut slots, mut used) = (Vec::new(), Vec::new(), Vec::new());
     for (at, (&column, data_type)) in columns.iter().zip(types).enumerate() {
         if let Some((value, answered)) = constant_equal(compared, column, data_type) {
+            slots.extend(answered.slot_at(Place::Key(at)));
             equal.push(value);
-            used.push(answered);
+            used.push(answered.at);
         } else if let Some((slot, answered)) = slot_equal(conds, column, data_type) {
             equal.push(Value::Null);
-            slots.push(ProbeSlot { at, slot });
+            slots.push(ProbeSlot { place: Place::Key(at), slot });
             used.push(answered);
         } else {
             return None;
@@ -61,12 +83,13 @@ pub(super) fn point_probe(
 }
 
 /// The value a constant among `compared` holds `column`, of `data_type`,
-/// equal to, placed as an index on it places it, and its conjunct.
-fn constant_equal(compared: &[Compared], column: usize, data_type: &DataType) -> Option<(Value, usize)> {
+/// equal to, placed as an index on it places it, and its comparison: of a
+/// `?`'s value, only as it is (`Compared::placed`).
+fn constant_equal<'c>(compared: &'c [Compared], column: usize, data_type: &DataType) -> Option<(Value, &'c Compared)> {
     compared.iter().filter(|c| c.column == column && c.exact && c.op == CompOp::Eq).find_map(|c| {
-        let placed = coerce(CompOp::Eq, &c.value, data_type)?;
+        let placed = c.placed(data_type)?;
         match placed.as_slice() {
-            [(CompOp::Eq, value)] => Some((value.clone(), c.at)),
+            [(CompOp::Eq, value)] => Some((value.clone(), c)),
             // A value between two of the column's equals none of them.
             _ => None,
         }
@@ -146,18 +169,25 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value]) -> Result<Plan> {
             Ok(Plan::Filter { cond, detail, est, input: Box::new(filled_plan(*input, values)?) })
         }
         Plan::IndexScan { .. } => filled_scan(plan, values),
-        Plan::SeqScan { .. }
-        | Plan::Product { .. }
+        Plan::SeqScan { .. } => Ok(plan),
+        Plan::Aggregate { groups, collations, aggs, detail, input } => {
+            let filled_agg = |a: AggCall| Ok(AggCall { arg: a.arg.map(|e| filled_expr(e, values)).transpose()?, ..a });
+            let aggs = aggs.into_iter().map(filled_agg).collect::<Result<_>>()?;
+            Ok(Plan::Aggregate { groups, collations, aggs, detail, input: Box::new(filled_plan(*input, values)?) })
+        }
+        Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(filled_plan(*input, values)?) }),
+        Plan::Sort { keys, detail, input } => Ok(Plan::Sort { keys, detail, input: Box::new(filled_plan(*input, values)?) }),
+        Plan::Append { left, right } => {
+            let left = Box::new(filled_plan(*left, values)?);
+            Ok(Plan::Append { left, right: Box::new(filled_plan(*right, values)?) })
+        }
+        Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::OuterJoin { .. }
-        | Plan::Aggregate { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
-        | Plan::Values { .. }
-        | Plan::Append { .. }
-        | Plan::Sort { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
+        | Plan::Values { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
     }
 }
 
@@ -192,10 +222,19 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::SortKey(..)
         | Expr::Domain(..) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
     };
-    let at = match probe {
-        Probe::Compare { value: first, .. } => (s.at == 0).then_some(first),
-        Probe::Prefix { equal, .. } => equal.get_mut(s.at),
-        Probe::All | Probe::Range { .. } => None,
+    let at = match (probe, s.place) {
+        (Probe::Compare { value: first, .. }, Place::Key(n)) => (n == 0).then_some(first),
+        (Probe::Prefix { equal, then }, Place::Key(n)) => {
+            if n == equal.len() {
+                then.as_mut().map(|(_, bound)| bound)
+            } else {
+                equal.get_mut(n)
+            }
+        }
+        (Probe::Range { equal, .. }, Place::Key(n)) => equal.get_mut(n),
+        (Probe::Range { low, .. }, Place::Low) => Some(&mut low.1),
+        (Probe::Range { high, .. }, Place::High) => Some(&mut high.1),
+        (Probe::All, _) | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High) => None,
     };
     match at {
         Some(at) => {
@@ -334,32 +373,34 @@ mod tests {
         let conds = vec![equal(1, Expr::Dynamic(slot(0))), Cond::Compare(Expr::Dynamic(slot(1)), CompOp::Eq, Expr::Column(0))];
         let both = point_probe(&conds, &[], (&[0, 1], &[INT, INT])).unwrap();
         assert!(same(&both.0, &Probe::Prefix { equal: vec![Value::Null, Value::Null], then: None }), "{both:?}");
-        assert_eq!(both.1, vec![ProbeSlot { at: 0, slot: slot(1) }, ProbeSlot { at: 1, slot: slot(0) }]);
+        assert_eq!(both.1, vec![ProbeSlot { place: Place::Key(0), slot: slot(1) }, ProbeSlot { place: Place::Key(1), slot: slot(0) }]);
         assert_eq!(both.2, vec![1, 0]);
-        let constant = Compared { collation: None, at: 1, exact: true, column: 0, op: CompOp::Eq, value: int(7) };
+        let constant = Compared { collation: None, at: 1, exact: true, column: 0, op: CompOp::Eq, value: int(7), slot: None };
         let mixed = point_probe(&conds, std::slice::from_ref(&constant), (&[0, 1], &[INT, INT])).unwrap();
         assert!(same(&mixed.0, &Probe::Prefix { equal: vec![int(7), Value::Null], then: None }), "{mixed:?}");
-        assert_eq!((mixed.1, mixed.2), (vec![ProbeSlot { at: 1, slot: slot(0) }], vec![1, 0]));
+        assert_eq!((mixed.1, mixed.2), (vec![ProbeSlot { place: Place::Key(1), slot: slot(0) }], vec![1, 0]));
         let one = point_probe(&conds, &[], (&[1], &[INT])).unwrap();
         assert!(same(&one.0, &Probe::Compare { op: CompOp::Eq, value: Value::Null }), "{one:?}");
-        assert_eq!(one.1, vec![ProbeSlot { at: 0, slot: slot(0) }]);
+        assert_eq!(one.1, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]);
         assert!(point_probe(&conds[..1], &[], (&[0, 1], &[INT, INT])).is_none(), "K not held equal");
         let text = DataType::Varying { length: 4 };
         assert!(point_probe(&conds, &[], (&[0, 1], &[INT, text])).is_none(), "a number in a text column");
         let less = Cond::Compare(Expr::Column(0), CompOp::Lt, Expr::Dynamic(slot(0)));
         assert!(point_probe(&[less], &[], (&[0], &[INT])).is_none(), "not an equality");
-        let between = Compared { collation: None, at: 0, exact: true, column: 0, op: CompOp::Eq, value: Value::Approx(0.5_f64) };
+        let between =
+            Compared { collation: None, at: 0, exact: true, column: 0, op: CompOp::Eq, value: Value::Approx(0.5_f64), slot: None };
         assert!(point_probe(&[], std::slice::from_ref(&between), (&[0], &[INT])).is_none(), "a number between the column's");
     }
 
     /// Verifies: [DESIGN] RULES.md D45: filling a kept plan puts each value,
     /// cast to its slot's type, in its place in the probe, and in the
-    /// filter and projection over it; a value its slot's type takes none
-    /// of fails as CAST fails; a `?` with no place in its probe, and a
-    /// plan of another operator, are refused.
+    /// filter and projection over it, a range's equal values and bounds
+    /// and a prefix's comparison among them; a value its slot's type takes
+    /// none of fails as CAST fails; a `?` with no place in its probe, and a
+    /// plan of an operator no kept plan holds, a join's, are refused.
     #[test]
     fn a_kept_plan_is_filled_with_each_executions_values() {
-        let slots = vec![ProbeSlot { at: 1, slot: slot(0) }];
+        let slots = vec![ProbeSlot { place: Place::Key(1), slot: slot(0) }];
         let standing = Probe::Prefix { equal: vec![int(7), Value::Null], then: None };
         let judged = Cond::Compare(Expr::Column(1), CompOp::Lt, Expr::Dynamic(slot(1)));
         let filtered = Plan::Filter { cond: judged, detail: String::new(), est: None, input: Box::new(scan("I", standing, slots)) };
@@ -371,14 +412,36 @@ mod tests {
         assert!(same(&cond, &Cond::Compare(Expr::Column(1), CompOp::Lt, Expr::Const(int(3)))), "{cond:?}");
         let Plan::IndexScan { probe, .. } = *input else { panic!("{input:?}") };
         assert!(same(&probe, &Probe::Prefix { equal: vec![int(7), int(12)], then: None }), "the string cast to INTEGER: {probe:?}");
-        let one = scan("I", Probe::Compare { op: CompOp::Eq, value: Value::Null }, vec![ProbeSlot { at: 0, slot: slot(0) }]);
+        let one = scan("I", Probe::Compare { op: CompOp::Eq, value: Value::Null }, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]);
         let Plan::IndexScan { probe: first, .. } = filled_plan(one, &[int(5)]).unwrap() else { panic!("not a scan") };
         assert!(same(&first, &Probe::Compare { op: CompOp::Eq, value: int(5) }), "{first:?}");
-        let failed = filled_plan(scan("I", Probe::All, vec![ProbeSlot { at: 0, slot: slot(0) }]), &[Value::Char("X".into())]).unwrap_err();
+        let failed =
+            filled_plan(scan("I", Probe::All, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]), &[Value::Char("X".into())])
+                .unwrap_err();
         assert_eq!(failed.code, Code::Data, "CAST fails first");
-        let misplaced = filled_plan(scan("I", Probe::All, vec![ProbeSlot { at: 0, slot: slot(0) }]), &[int(1)]).unwrap_err();
+        let misplaced = filled_plan(scan("I", Probe::All, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]), &[int(1)]).unwrap_err();
         assert_eq!(misplaced.code, Code::Api);
-        let other = Plan::Distinct { input: Box::new(scan("I", Probe::All, Vec::new())) };
+        let ranged =
+            Probe::Range { equal: vec![Value::Null], low: Box::new((CompOp::Ge, Value::Null)), high: Box::new((CompOp::Lt, Value::Null)) };
+        let bounds = [Place::Key(0), Place::Low, Place::High].map(|place| ProbeSlot { place, slot: slot(0) });
+        let Plan::IndexScan { probe: range, .. } = filled_plan(scan("I", ranged, bounds.to_vec()), &[int(4)]).unwrap() else {
+            panic!("not a scan")
+        };
+        let filled_range = Probe::Range { equal: vec![int(4)], low: Box::new((CompOp::Ge, int(4))), high: Box::new((CompOp::Lt, int(4))) };
+        assert!(same(&range, &filled_range), "{range:?}");
+        let then = Probe::Prefix { equal: vec![int(1)], then: Some((CompOp::Gt, Value::Null)) };
+        let Plan::IndexScan { probe: after, .. } =
+            filled_plan(scan("I", then, vec![ProbeSlot { place: Place::Key(1), slot: slot(0) }]), &[int(6)]).unwrap()
+        else {
+            panic!("not a scan")
+        };
+        assert!(same(&after, &Probe::Prefix { equal: vec![int(1)], then: Some((CompOp::Gt, int(6))) }), "{after:?}");
+        let low_of_prefix =
+            scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, vec![ProbeSlot { place: Place::Low, slot: slot(0) }]);
+        assert_eq!(filled_plan(low_of_prefix, &[int(1)]).unwrap_err().code, Code::Api, "a bound of no range");
+        let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())) };
+        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted) }, &[]).is_ok());
+        let other = Plan::Product { left: Box::new(scan("I", Probe::All, Vec::new())), right: Box::new(scan("I", Probe::All, Vec::new())) };
         assert_eq!(filled_plan(other, &[]).unwrap_err().code, Code::Api);
     }
 }

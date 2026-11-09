@@ -40,9 +40,9 @@ use crate::stats::{StatsBuilder, TableStats};
 use crate::sync::{read, write};
 use crate::txn::{NO_TRANSACTION, TxId};
 
-/// \[DESIGN\] The rows a pass over a large table reads, about: as many as
-/// PostgreSQL's ANALYZE samples at its default statistics target, three
-/// times the values a column's sample keeps (`parts::SAMPLE_VALUES`).
+/// \[DESIGN\] The rows a pass over a large table reads, about: three times
+/// the values a column's sample keeps (`parts::SAMPLE_VALUES`), so the
+/// sample is drawn from rows spread over the table, not from its first.
 const SAMPLED_ROWS: u64 = 30_000;
 /// \[DESIGN\] The row ids read together by a sampled pass: a run of them
 /// lies in a leaf or two, so one descent of the tree reads it.

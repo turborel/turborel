@@ -218,8 +218,8 @@ impl ColumnBuilder {
 /// \[DESIGN\] The distinct values of `of` values, from a sample of `sampled`
 /// of them holding `distinct` distinct ones, `once` of them seen once: Haas
 /// and Stokes's estimator Duj1 ("Estimating the number of classes in a
-/// finite population", JASA 93(444), 1998), n d / (n - f1 + f1 n / N), as
-/// PostgreSQL's ANALYZE uses; at least those of the sample, at most `of`.
+/// finite population", JASA 93(444), 1998), n d / (n - f1 + f1 n / N); at
+/// least those of the sample, at most `of`.
 pub fn scaled_distinct((distinct, once): (f64, f64), sampled: f64, of: f64) -> f64 {
     let below = sampled - once + once * sampled / of.max(1.0_f64);
     let scaled = if below > 0.0_f64 { sampled * distinct / below } else { of };

@@ -12,6 +12,7 @@ use crate::logical::LogicalPlan;
 use crate::optimizer::RuleContext;
 use crate::params::Params;
 use crate::physical::{PhysicalPlanner, Plan};
+use crate::value::Value;
 
 /// A cursor's specification bound and planned: its columns, its bound plan
 /// shown, if compiled to be shown, the optimizer's trace, and its plans.
@@ -26,6 +27,13 @@ pub(super) struct Compiled {
 /// Optimize a logical plan and choose its physical plan, to run.
 pub(super) fn plan(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
     planned(st, logical, PhysicalPlanner::new(st))
+}
+
+/// As `plan`, of a prepared statement's plan with its slots: its paths
+/// chosen by `values`, one execution's, its probes holding the slots, so
+/// that another execution may fill them (`physical/kept.rs`).
+pub(super) fn plan_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
+    planned(st, logical, PhysicalPlanner::slotted(st, values)).2
 }
 
 /// As `plan`, to show: each operator of the physical plan described, as

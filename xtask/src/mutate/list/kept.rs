@@ -1,12 +1,13 @@
 //! The mutations of prepared statements' kept plans (RULES.md R-TEST-9,
 //! D45): what a plan is kept with, a plan holding the statement's
-//! instant, and a physical plan kept with its slots, filled at each
-//! execution (`physical/kept.rs`).
+//! instant, a physical plan kept with its slots, filled at each
+//! execution (`physical/kept.rs`), and a plan learned from executions whose
+//! plans keep one shape (`db/prepared/plans/learning.rs`).
 
 use super::{Mutation, Package};
 
 /// The mutations of kept plans, in the order they run.
-pub const KEPT: [Mutation; 4] = [
+pub const KEPT: [Mutation; 10] = [
     Mutation {
         name: "kept-plan-definitions",
         package: Package::Core,
@@ -46,8 +47,71 @@ pub const KEPT: [Mutation; 4] = [
         replacement: "        Plan::Project { .. } | Plan::Filter { .. } => false,",
         integration: &[],
         unit: &[
-            "db::prepared::plans::tests::a_point_querys_physical_plan_is_kept_after_its_first_executions",
+            "db::prepared::plans::tests::a_point_plan_is_kept_at_once_and_a_range_plan_once_learned",
             "physical::kept::tests::a_probe_of_a_whole_unique_key_alone_is_kept",
         ],
+    },
+    Mutation {
+        name: "learned-high-unslotted",
+        package: Package::Core,
+        breaks: "learned plans: a range's upper bound kept as the learning execution's value, not filled",
+        file: "src/physical/access.rs",
+        original: "        slots.extend(lo_c.slot_at(Place::Low).into_iter().chain(hi_c.slot_at(Place::High)));",
+        replacement: "        slots.extend(lo_c.slot_at(Place::Low));",
+        integration: &["kept_plans::a_learned_range_plan_gives_each_executions_rows"],
+        unit: &["db::prepared::plans::tests::a_point_plan_is_kept_at_once_and_a_range_plan_once_learned"],
+    },
+    Mutation {
+        name: "learned-shape-unchecked",
+        package: Package::Core,
+        breaks: "learned plans: a plan made with slots kept though the plan made with the values has another shape",
+        file: "src/db/prepared/plans/learning.rs",
+        original: "        let shaped = same_shape(&slotted, custom);",
+        replacement: "        let shaped = true;",
+        integration: &[],
+        unit: &["db::prepared::plans::learning::tests::executions_agree_in_a_row_while_their_plans_keep_one_shape"],
+    },
+    Mutation {
+        name: "learned-streak-unbroken",
+        package: Package::Core,
+        breaks: "learned plans: executions whose plans change shape counted as agreeing in a row",
+        file: "src/db/prepared/plans/learning.rs",
+        original: "        let continued = shaped && self.last.as_deref().is_some_and(|last| same_shape(last, &slotted));",
+        replacement: "        let continued = shaped;",
+        integration: &[],
+        unit: &[
+            "db::prepared::plans::learning::tests::executions_agree_in_a_row_while_their_plans_keep_one_shape",
+            "db::prepared::plans::tests::a_query_whose_values_choose_its_paths_stops_learning",
+        ],
+    },
+    Mutation {
+        name: "learned-never-again",
+        package: Package::Core,
+        breaks: "learned plans: a plan learned kept however its tables grow",
+        file: "src/db/prepared/plans.rs",
+        original: "                if rows.as_deref().is_some_and(|rows| moved(self.st, &reads, rows)) {",
+        replacement: "                if rows.as_deref().is_some_and(|_| false) {",
+        integration: &[],
+        unit: &["db::prepared::plans::tests::a_learned_plan_is_learned_again_once_its_table_grows"],
+    },
+    Mutation {
+        name: "learned-shape-operators",
+        package: Package::Core,
+        breaks: "learned plans: range probes by other operators taken as one shape",
+        file: "src/physical/kept/shape.rs",
+        original: "            equal.len() == equal2.len() && low.0 == low2.0 && high.0 == high2.0",
+        replacement: "            equal.len() == equal2.len()",
+        integration: &[],
+        unit: &["physical::kept::shape::tests::index_scans_have_one_shape_whatever_their_values"],
+    },
+    Mutation {
+        name: "learned-slot-coerced",
+        package: Package::Core,
+        breaks: "learned plans: a `?`'s value placed in a probe as it falls, so another execution's lands in the wrong comparison",
+        file: "src/physical/probe.rs",
+        original: "        if self.slot.is_some_and(|s| !placed_as_is(&s.data_type, column)) {",
+        replacement: "        if self.slot.is_some_and(|_| false) {",
+        integration: &[],
+        unit: &["physical::probe::tests::a_slots_value_is_placed_only_as_it_is"],
     },
 ];

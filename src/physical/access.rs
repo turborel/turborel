@@ -3,16 +3,17 @@
 //! an OR, chosen by cost.
 
 use super::estimate::{self, Known};
-use super::kept::point_probe;
-use super::probe::{Alternatives, Compared, coerce, comparisons, probes_of_any, render_probe, served_by};
+use super::kept::{Place, point_probe};
+use super::probe::{Alternatives, Compared, comparisons, probes_of_any, render_probe, served_by};
 use super::shown::Shown;
 use super::{Built, CostModel, PhysicalPlanner, Plan, ProbeSlot, TableRead};
 use crate::catalog::IndexDesc;
 use crate::engine::key::restores;
+use crate::error::Result;
 use crate::index::{Index, IndexMethod, Probe};
-use crate::logical::{Cond, SortKey, and_all, judged_by_sets, pushed_conjuncts, render_cond};
+use crate::logical::{Cond, SortKey, and_all, filled_cond, judged_by_sets, pushed_conjuncts, render_cond};
 use crate::storage::{TableStorage, cost_of};
-use crate::value::{CompOp, DataType};
+use crate::value::{CompOp, DataType, Value};
 
 /// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
 /// rows of a scan of its table: its zone's visibility looked at and the
@@ -59,29 +60,30 @@ struct Probed {
 /// Probes an index could answer: its probes, of one range each, the
 /// conjuncts they answer exactly, how many of the index's first columns
 /// they hold equal, the rows they are guessed to find from the table's
-/// statistics, and whether they only bound the rows of a conjunct, which a
-/// filter still judges (a LIKE's).
+/// statistics, whether they only bound the rows of a conjunct, which a
+/// filter still judges (a LIKE's), and the `?`s among their values.
 struct Candidate {
     probes: Vec<Probe>,
     used: Vec<usize>,
     fixed: usize,
     guess: f64,
     loose: bool,
+    /// The `?`s among the one probe's values (`physical/kept.rs`).
+    slots: Vec<ProbeSlot>,
 }
 
 impl Candidate {
-    /// One probe.
+    /// One probe, of no `?`.
     fn one(probe: Probe, (used, fixed, guess, loose): (Vec<usize>, usize, f64, bool)) -> Candidate {
-        Candidate { probes: vec![probe], used, fixed, guess, loose }
+        Candidate { probes: vec![probe], used, fixed, guess, loose, slots: Vec::new() }
     }
 }
 
 impl Probed {
-    /// The index `ix` probed by `c`'s probes, `covering` if so; of no
-    /// `?`.
+    /// The index `ix` probed by `c`'s probes, `covering` if so.
     fn of(ix: &IndexDesc, c: Candidate, covering: bool) -> Probed {
         let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
-        Probed { index, method, columns, probes: c.probes, slots: Vec::new(), used: c.used, loose: c.loose, covering }
+        Probed { index, method, columns, probes: c.probes, slots: c.slots, used: c.used, loose: c.loose, covering }
     }
 }
 
@@ -150,11 +152,11 @@ impl PhysicalPlanner<'_> {
         // other conjuncts would not be evaluated on the rest. When one of them
         // can raise an error it must see every row: probe no index then.
         let answerable: &[Cond] = if conds.iter().any(Cond::can_raise) { &[] } else { conds };
-        let (compared, ors) = comparisons(answerable, known);
+        let (compared, ors) = comparisons(answerable, known, self.values);
         if let Some(path) = want.is_empty().then(|| self.point_path(read, (answerable, &compared), known.cost)).flatten() {
             return path;
         }
-        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, conds);
+        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(conds));
         let mut best =
             in_order(&**storage, want, Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread });
 
@@ -210,6 +212,14 @@ impl PhysicalPlanner<'_> {
 }
 
 impl PhysicalPlanner<'_> {
+    /// `conds`, each `?` filled with its value, if the planner is given
+    /// an execution's: what a scan's share is priced by, as a plan made
+    /// with the values would price it.
+    fn priced(&self, conds: &[Cond]) -> Vec<Cond> {
+        let filled = |values: &[Value]| conds.iter().map(|c| filled_cond(c.clone(), values)).collect::<Result<Vec<_>>>().ok();
+        self.values.and_then(filled).unwrap_or_else(|| conds.to_vec())
+    }
+
     /// A probe that fixes every column of a unique index, by the values of
     /// this execution, or by a prepared statement's `?`s, filled at each
     /// (`physical/kept.rs`), if there is one among `conds`, whose
@@ -382,7 +392,9 @@ fn scan_priced(storage: &dyn TableStorage, needed: &[usize], conds: &[Cond]) -> 
 /// next column, a lower and an upper bound of it, each OR of it, or none.
 /// Values are those an index places as SQL compares them (`coerce`). An
 /// index on one column is asked with `Probe::Compare`, which every method
-/// answers that supports the operator.
+/// answers that supports the operator. A `?`'s value stands in a probe
+/// with its slot noted, so another execution's may take its place
+/// (`physical/kept.rs`).
 fn probes(
     columns: &[usize],
     types: &[DataType],
@@ -393,52 +405,94 @@ fn probes(
     let on = |at: usize| {
         let (column, data_type) = (columns.get(at).copied(), types.get(at));
         compared.iter().filter(move |c| Some(c.column) == column).flat_map(move |c| {
-            let each = data_type.and_then(|t| coerce(c.op, &c.value, t)).unwrap_or_default();
+            let each = data_type.and_then(|t| c.placed(t)).unwrap_or_default();
             each.into_iter().map(move |(op, value)| (c, op, value))
         })
     };
-    let (mut equal, mut used, mut guess) = (Vec::new(), Vec::new(), all);
-    while let Some((c, _, value)) = on(equal.len()).find(|(_, op, _)| *op == CompOp::Eq) {
-        guess *= estimate::compare((c.column, CompOp::Eq, &value), known);
-        equal.push(value);
-        used.push(c.at);
+    let mut held = Held { equal: Vec::new(), used: Vec::new(), slots: Vec::new(), guess: all };
+    while let Some((c, _, value)) = on(held.equal.len()).find(|(_, op, _)| *op == CompOp::Eq) {
+        held.guess *= estimate::compare((c.column, CompOp::Eq, &value), known);
+        held.slots.extend(c.slot_at(Place::Key(held.equal.len())));
+        held.equal.push(value);
+        held.used.push(c.at);
     }
-    let fixed = equal.len();
-    // The conjuncts answered: of the equalities, and of `also` if exactly.
-    let with = |also: &[&Compared]| [used.clone(), also.iter().filter(|c| c.exact).map(|c| c.at).collect()].concat();
-    let mut out = Vec::new();
-    for (c, op, value) in on(fixed).filter(|(_, op, _)| *op != CompOp::Eq || fixed == 0) {
-        let guess = guess * estimate::compare((c.column, op, &value), known);
-        let probe = if fixed == 0 { Probe::Compare { op, value } } else { Probe::Prefix { equal: equal.clone(), then: Some((op, value)) } };
-        out.push(Candidate::one(probe, (with(&[c]), fixed, guess, !c.exact)));
-    }
+    let fixed = held.equal.len();
+    let mut out: Vec<Candidate> = on(fixed).filter(|(_, op, _)| *op != CompOp::Eq || fixed == 0).map(|b| held.then(b, known)).collect();
     // [ISO/IEC 9075:1992 §8.3 GR1] a lower and an upper bound of the next
     // column, as of BETWEEN: one range, the keys past the upper not read.
     let bound =
         |below: bool| on(fixed).find(|(_, op, _)| matches!(op, CompOp::Lt | CompOp::Le) == below && *op != CompOp::Eq && *op != CompOp::Ne);
-    if let (Some((lo_c, lo_op, lo)), Some((hi_c, hi_op, hi))) = (bound(false), bound(true)) {
+    if let (Some(low), Some(high)) = (bound(false), bound(true)) {
+        out.push(held.between(low, high, known));
+    }
+    // An OR of the next column's ranges, an IN list among them: a probe of
+    // each range. Of no `?` among the equal values, which each probe holds,
+    // and a kept plan's `?`s stand in one probe alone.
+    for any in ors.iter().filter(|a| Some(a.column) == columns.get(fixed).copied() && held.slots.is_empty()) {
+        let Some(probes) = types.get(fixed).and_then(|t| probes_of_any(&held.equal, t, any)) else { continue };
+        let used = if any.exact { [held.used.as_slice(), &[any.at]].concat() } else { held.used.clone() };
+        out.push(Candidate { probes, used, fixed, guess: held.guess * any.share, loose: !any.exact, slots: Vec::new() });
+    }
+    if fixed > 0 {
+        out.push(held.prefix(columns.len()));
+    }
+    out
+}
+
+/// The equalities of an index's first columns a probe holds: their values,
+/// the conjuncts they answer, the `?`s among them, and the rows they are
+/// guessed to keep.
+struct Held {
+    equal: Vec<Value>,
+    used: Vec<usize>,
+    slots: Vec<ProbeSlot>,
+    guess: f64,
+}
+
+/// A comparison of an index's column, placed (`Compared::placed`): the
+/// comparison, and the operator and value it is placed as.
+type Bound<'c> = (&'c Compared, CompOp, Value);
+
+impl Held {
+    /// The conjuncts answered: of the equalities, and of `also` if exactly.
+    fn with(&self, also: &[&Compared]) -> Vec<usize> {
+        [self.used.clone(), also.iter().filter(|c| c.exact).map(|c| c.at).collect()].concat()
+    }
+
+    /// The probe of the equalities, then the comparison `(c, op, value)` of
+    /// the next column.
+    fn then(&self, (c, op, value): Bound<'_>, known: Known<'_>) -> Candidate {
+        let guess = self.guess * estimate::compare((c.column, op, &value), known);
+        let (fixed, mut slots) = (self.equal.len(), self.slots.clone());
+        slots.extend(c.slot_at(Place::Key(fixed)));
+        let probe =
+            if fixed == 0 { Probe::Compare { op, value } } else { Probe::Prefix { equal: self.equal.clone(), then: Some((op, value)) } };
+        Candidate { slots, ..Candidate::one(probe, (self.with(&[c]), fixed, guess, !c.exact)) }
+    }
+
+    /// The probe of the equalities, then of the next column between `low`
+    /// and `high`.
+    fn between(&self, (lo_c, lo_op, lo): Bound<'_>, (hi_c, hi_op, hi): Bound<'_>, known: Known<'_>) -> Candidate {
         let (a, b) = (estimate::compare((lo_c.column, lo_op, &lo), known), estimate::compare((hi_c.column, hi_op, &hi), known));
         // Of one column, both hold where either does not fail: a + b - 1,
         // if the statistics know; else as if independent.
-        let guess = guess * (a + b - 1.0_f64).max(a * b);
-        let probe = Probe::Range { equal: equal.clone(), low: Box::new((lo_op, lo)), high: Box::new((hi_op, hi)) };
-        out.push(Candidate::one(probe, (with(&[lo_c, hi_c]), fixed, guess, !lo_c.exact || !hi_c.exact)));
+        let guess = self.guess * (a + b - 1.0_f64).max(a * b);
+        let mut slots = self.slots.clone();
+        slots.extend(lo_c.slot_at(Place::Low).into_iter().chain(hi_c.slot_at(Place::High)));
+        let probe = Probe::Range { equal: self.equal.clone(), low: Box::new((lo_op, lo)), high: Box::new((hi_op, hi)) };
+        let fixed = self.equal.len();
+        Candidate { slots, ..Candidate::one(probe, (self.with(&[lo_c, hi_c]), fixed, guess, !lo_c.exact || !hi_c.exact)) }
     }
-    // An OR of the next column's ranges, an IN list among them: a probe of
-    // each range.
-    for any in ors.iter().filter(|a| Some(a.column) == columns.get(fixed).copied()) {
-        let Some(probes) = types.get(fixed).and_then(|t| probes_of_any(&equal, t, any)) else { continue };
-        let used = if any.exact { [used.as_slice(), &[any.at]].concat() } else { used.clone() };
-        out.push(Candidate { probes, used, fixed, guess: guess * any.share, loose: !any.exact });
-    }
-    if fixed > 0 {
-        let probe = match (equal.as_slice(), columns.len()) {
+
+    /// The probe of the equalities alone, of an index `width` columns wide.
+    fn prefix(self, width: usize) -> Candidate {
+        let fixed = self.equal.len();
+        let probe = match (self.equal.as_slice(), width) {
             ([only], 1) => Probe::Compare { op: CompOp::Eq, value: only.clone() },
-            _ => Probe::Prefix { equal, then: None },
+            _ => Probe::Prefix { equal: self.equal, then: None },
         };
-        out.push(Candidate::one(probe, (used, fixed, guess, false)));
+        Candidate { slots: self.slots, ..Candidate::one(probe, (self.used, fixed, self.guess, false)) }
     }
-    out
 }
 
 /// How many of an index's first columns `probe` tests.
