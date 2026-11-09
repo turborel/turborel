@@ -51,15 +51,13 @@ struct MayWait {
     fast: bool,
     /// The wire is read apart from the runtime (`Wire::is_direct`).
     direct: bool,
-    /// A statement of another connection's waits for a worker
-    /// (`Services::waited_for`).
-    waited_for: bool,
 }
 
 impl MayWait {
-    /// Whether the worker waits.
+    /// Whether the worker waits. A statement of another connection's
+    /// waiting for a worker does not stop it: waiting, it holds no permit.
     fn allowed(&self) -> bool {
-        self.fast && self.direct && !self.waited_for
+        self.fast && self.direct
     }
 }
 
@@ -88,9 +86,8 @@ impl Lent {
     }
 
     /// The client's next request, waited for `WAITED` apart from the
-    /// runtime, if the client is fast and the wire can be read so, no
-    /// statement waits for a worker (`MayWait`) and the connection may
-    /// keep one (`Services::hot`); `permit` given up while it waits, and
+    /// runtime, if the client is fast and the wire can be read so
+    /// (`MayWait`) and the connection may keep a worker (`Services::hot`); `permit` given up while it waits, and
     /// taken again once a request to run came. None, the client slow from
     /// now, if none came in time; none, too, for a request the connection's
     /// task is to read: one that is no work, or malformed, or that came
@@ -100,7 +97,7 @@ impl Lent {
     ///
     /// The read failed: the connection is gone.
     fn next(&mut self, running: &Running, permit: &mut Permit) -> Result<Option<Work>> {
-        let may = MayWait { fast: self.fast, direct: self.wire.is_direct(), waited_for: running.services.waited_for() };
+        let may = MayWait { fast: self.fast, direct: self.wire.is_direct() };
         if !may.allowed() {
             return Ok(None);
         }
@@ -272,16 +269,14 @@ mod tests {
     use super::*;
 
     /// Verifies: [DESIGN] RULES.md D42: a worker waits on its client for
-    /// the next request only while the client is fast, the wire is read
-    /// apart from the runtime, and no statement waits for a worker. MC/DC
-    /// pairs, from all allowed: `fast` false; `direct` false; `waited_for`
-    /// true: each alone forbids it.
+    /// the next request only while the client is fast and the wire is read
+    /// apart from the runtime. MC/DC pairs, from both allowed: `fast`
+    /// false; `direct` false: each alone forbids it.
     #[test]
-    fn a_worker_waits_on_a_fast_client_read_directly_while_none_waits_for_it() {
-        assert!(MayWait { fast: true, direct: true, waited_for: false }.allowed());
-        assert!(!MayWait { fast: false, direct: true, waited_for: false }.allowed(), "slow");
-        assert!(!MayWait { fast: true, direct: false, waited_for: false }.allowed(), "through the runtime only");
-        assert!(!MayWait { fast: true, direct: true, waited_for: true }.allowed(), "a statement waits for a worker");
+    fn a_worker_waits_on_a_fast_client_read_directly() {
+        assert!(MayWait { fast: true, direct: true }.allowed());
+        assert!(!MayWait { fast: false, direct: true }.allowed(), "slow");
+        assert!(!MayWait { fast: true, direct: false }.allowed(), "through the runtime only");
     }
 
     /// Verifies: [DESIGN] RULES.md D42: the loan is taken once it is given

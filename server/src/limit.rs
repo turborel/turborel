@@ -4,6 +4,12 @@
 //! none in until enough are given back. A semaphore's permits are fixed.
 //! A worker's permit (`Permit`) is one of the limit of SERVER.WORKERS,
 //! given up while the worker waits on its client, and taken again.
+//!
+//! One given back wakes one waiter, not every one, as only one can take
+//! it: a waiter woken that finds none, another having taken it first,
+//! waits again, and one dropped as it is woken passes the wake on
+//! (`Notify::notify_one`). One taken that leaves room wakes the next, so
+//! a limit raised lets in as many as it allows.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -33,6 +39,11 @@ impl Limit {
             return None;
         }
         *held = held.saturating_add(1);
+        let room = *held < limit;
+        drop(held);
+        if room {
+            self.freed.notify_one();
+        }
         Some(Held(Arc::clone(self)))
     }
 
@@ -63,7 +74,7 @@ impl Drop for Held {
         let mut held = self.0.held.lock().unwrap_or_else(PoisonError::into_inner);
         *held = held.saturating_sub(1);
         drop(held);
-        self.0.freed.notify_waiters();
+        self.0.freed.notify_one();
     }
 }
 
@@ -144,5 +155,42 @@ mod tests {
         drop((second, third));
         assert_eq!(limit.held(), 0);
         assert!(limit.try_take(2).is_some());
+    }
+
+    /// How many of two waiters on a limit of one, held, are let in as the
+    /// one held is given back, the limit `raised` meanwhile.
+    fn let_in(runtime: &tokio::runtime::Runtime, raised: usize) -> usize {
+        let limit = Arc::new(Limit::default());
+        let allowed = Arc::new(AtomicUsize::new(1));
+        let first = limit.try_take(1).unwrap();
+        let wait = || {
+            let (limit, allowed) = (Arc::clone(&limit), Arc::clone(&allowed));
+            async move { limit.take(move || allowed.load(Ordering::SeqCst)).await }
+        };
+        runtime.block_on(async {
+            let waiters = [tokio::spawn(wait()), tokio::spawn(wait())];
+            tokio::task::yield_now().await;
+            assert!(waiters.iter().all(|w| !w.is_finished()), "both wait");
+            allowed.store(raised, Ordering::SeqCst);
+            drop(first);
+            for _ in 0_u8..4 {
+                tokio::task::yield_now().await;
+            }
+            let finished = waiters.iter().filter(|w| w.is_finished()).count();
+            waiters.iter().for_each(tokio::task::JoinHandle::abort);
+            finished
+        })
+    }
+
+    /// Verifies: [DESIGN] RULES.md D42: one given back lets in one of two
+    /// waiters, the other waiting still; with the limit raised meanwhile,
+    /// the one let in, leaving room, lets the other in too. MC/DC of the
+    /// wake on a take: room left (the second let in) against none left (it
+    /// waits).
+    #[test]
+    fn one_given_back_lets_in_one_waiter_and_room_left_the_next() {
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        assert_eq!(let_in(&runtime, 1), 1_usize, "no room left");
+        assert_eq!(let_in(&runtime, 2), 2_usize, "room left");
     }
 }

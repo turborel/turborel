@@ -44,7 +44,8 @@ use crate::limit::{Held, Limit};
 use crate::logins::Logins;
 use crate::password::Pbkdf2;
 use crate::settings::{
-    IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_REFUSALS, SHUTDOWN_TIMEOUT_MS, WORKERS,
+    IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_REFUSALS, MAX_WORKERS, SHUTDOWN_TIMEOUT_MS,
+    WORKERS,
 };
 use crate::settings::{count, declare, millis};
 use crate::shown::{self, Counted, Operator, Present, Shown};
@@ -147,7 +148,8 @@ struct Shared {
     authenticators: Vec<Arc<dyn Authenticator>>,
     workers: Arc<Limit>,
     /// The connections keeping a worker waiting for their next request,
-    /// as many as SERVER.WORKERS at most (`native/lent.rs`).
+    /// as many as MAX_WORKERS at most, the blocking pool's threads beside
+    /// those running statements (`native/lent.rs`, `runtime.rs`).
     hot: Arc<Limit>,
     stop: watch::Receiver<Stage>,
     /// What cancels each connection's statements, by its key (RULES.md D45).
@@ -205,15 +207,13 @@ impl Services {
         tokio::task::spawn_blocking(move || work(permit))
     }
 
-    /// Whether a statement waits for a worker.
-    pub fn waited_for(&self) -> bool {
-        self.0.shown.waiting.load(Ordering::Relaxed) > 0
-    }
-
     /// A connection's place among those keeping a worker waiting for their
-    /// next request, if fewer than SERVER.WORKERS do; held while it is.
+    /// next request, if fewer than MAX_WORKERS do, so the blocking pool
+    /// has a thread for each beside the statements running; held while it
+    /// is. A waiting worker holds no permit, so a statement waiting for one
+    /// is not kept waiting by it.
     pub(crate) fn hot(&self) -> Option<Held> {
-        self.0.hot.try_take(count(&self.0.db, WORKERS))
+        self.0.hot.try_take(MAX_WORKERS)
     }
 
     /// What checks logins, on threads apart from the workers, and slows

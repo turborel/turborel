@@ -1141,8 +1141,9 @@ socket is handed to it, the runtime's interest in it given up, and it waits
 a millisecond or so apart from the runtime (`transport::Direct`), its
 permit to run statements given up meanwhile. So a request answered wakes
 one thread, the one that runs it, and a request that comes while the worker
-waits wakes no other. At most SERVER.WORKERS connections keep a worker
-waiting so, none while a statement waits for one. A request that comes
+waits wakes no other. A waiting worker holds no permit, so as many keep
+waiting as the blocking pool has threads for, while statements wait for
+permits too. A request that comes
 later the connection's task reads through the runtime, which takes the
 socket back. A stream TLS secures, or a named pipe, is not handed so, and
 takes the task's path. Each connection runs one request at a time.
