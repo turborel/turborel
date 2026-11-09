@@ -125,11 +125,13 @@ fn filled(db: &Database) -> Session {
     s
 }
 
-/// Runs the maintenance due of `db`, each zone settled as far as it can be.
+/// Runs the jobs due of `db`, then its maintenance now, each zone settled
+/// as far as it can be, though zones looked at lately rest.
 fn settle(db: &Database) {
     for _ in 0..4 {
         db.run_due().unwrap();
     }
+    db.maintain().unwrap();
 }
 
 /// The rows of K = 1 that `s` reads of T, its index told by `flags` to

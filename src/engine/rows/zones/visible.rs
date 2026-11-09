@@ -4,9 +4,12 @@
 
 use std::sync::atomic::Ordering as AtomicOrdering;
 
-use super::super::RowTable;
+use std::ops::Bound;
+
 use super::super::version::{Maker, Version};
-use super::{Map, SAMPLED, Zone, Zones, zone_at};
+use super::super::{RowTable, key};
+use super::{Map, SAMPLED, ZONE_ROWS, Zone, Zones, zone_at};
+use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::RowId;
 use crate::sync::{lock_builtin, read};
@@ -103,6 +106,22 @@ impl RowTable {
         zone.unsettled = false;
         self.zones.unsettled.fetch_sub(1, AtomicOrdering::AcqRel);
         true
+    }
+
+    /// What the newest versions of the rows of zone `at`, not stale, show
+    /// of their visibility to a reader at or after `horizon`, and how many
+    /// are no deletion: a zone settled so, its bounds kept, decodes no row
+    /// and reads no older version.
+    pub(super) fn settled_of(&self, at: usize, horizon: Timestamp) -> Result<(Seen, u32)> {
+        let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
+        let (low, high) = (key(first), key(first.saturating_add(ZONE_ROWS)));
+        let (mut seen, mut rows) = (Seen::Visible, 0_u32);
+        for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Excluded(&high[..]), Direction::Forward) {
+            let (_, newest) = entry?;
+            seen = seen.and(self.seen_of(&newest, horizon)?);
+            rows = rows.saturating_add(u32::from(!Version::parse(&newest)?.deleted));
+        }
+        Ok((seen, rows))
     }
 
     /// What the newest version of a row, `newest`, shows of its

@@ -13,7 +13,11 @@
 //! again from every version of its rows a reader at or after the horizon
 //! may read, an open transaction's among them; a write meanwhile counts a
 //! change of the zone, and its sum is then thrown away. A zone is never
-//! narrower than its rows, at most wider. The older versions it reads no
+//! narrower than its rows, at most wider. A write leaves it stale only if
+//! the version it replaced may have been all that reached a bound, or the
+//! one null: a value it changed or deleted that lay strictly inside the
+//! bounds, or one it kept, leaves every bound reached by a row's newest
+//! version still (`Zones::narrows`). The older versions it reads no
 //! transaction pins for it: a row one of which is released and truncated
 //! as it reads is read again (`RowTable::unpinned`).
 //!
@@ -30,13 +34,19 @@
 //! still be there (`Map::pending`). A write makes it not, before its index
 //! entries are written, so a reader that finds a
 //! new entry finds its zone not visible; and leaves it unsettled, for the
-//! maintenance thread to settle as it sums it up: visible, or not, or,
-//! of a commit too recent for the horizon, again later. Collection
+//! maintenance thread to settle as it sums it up, or, a zone not stale,
+//! from its rows' newest versions alone, decoding none: visible, or not,
+//! or, of a commit too recent for the horizon, again later. Collection
 //! leaving none of a zone's versions to collect, or taking out a
 //! deletion, unsettles it again; a version whose index entries it could
 //! not take back is left to collect until they are
 //! (`TableStorage::taken_back`). Kept in memory alone: a table opened
 //! has every zone unsettled, of tables that keep no column too.
+//!
+//! Once a pass of the maintenance thread has looked at every zone due,
+//! the zones rest for `REST`, asking for no maintenance, so writes going
+//! on cost a pass over the zones they changed a second, not one a write:
+//! a zone narrows, and is settled, that much later (`zones/summed.rs`).
 //!
 //! Kept in memory, and with the table's pages at each checkpoint
 //! (`zones/saved.rs`), so a table opened knows the zones its last
@@ -46,19 +56,16 @@
 //! zone takes a few bytes of each row.
 
 use std::cmp::Ordering;
-use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Mutex, RwLock};
+use std::time::Instant;
 
 use super::RowTable;
-use super::version::{Maker, Version};
+use super::version::Version;
 use crate::engine::record::RecordFormat;
-use crate::engine::rows::{key, row_id};
-use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::{Conjunct, Conjunction, Row, RowId};
 use crate::sync::{lock_builtin, read, write};
-use crate::txn::Timestamp;
 use crate::value::{DataType, Value, compare};
 
 /// \[DESIGN\] The row ids of a zone: a thread's block of them is four
@@ -75,6 +82,18 @@ const SHORT: u32 = 32;
 const SAMPLED: usize = 256;
 /// \[DESIGN\] The most zones one call of the maintenance thread sums up.
 const MOST_SUMMED: usize = 64;
+
+/// What a write replaced of a row, for its zone (`Zones::widen`).
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Replaced<'r> {
+    /// Nothing: the row is new.
+    Nothing,
+    /// A version whose values are not known, so the zone may be wider
+    /// than its rows from now.
+    Unknown,
+    /// The row's newest version, holding these values of the columns kept.
+    Row(&'r Row),
+}
 
 /// A zone: of each column kept, its least and greatest value not null and
 /// whether one is null.
@@ -149,6 +168,10 @@ pub(super) struct Zones {
     /// The zone a sum up looks from, so zones a reader keeps stale do not
     /// keep the others waiting.
     next_sum: AtomicUsize,
+    /// When the zones were made, and the nanoseconds after it until which
+    /// they are not due, 0 for none (`REST`).
+    born: Instant,
+    rest_until: AtomicU64,
     /// The records of a zone's least and greatest values, of the columns
     /// kept, as they are saved.
     format: RecordFormat,
@@ -238,6 +261,8 @@ impl Zones {
             stale: AtomicUsize::new(0),
             unsettled: AtomicUsize::new(0),
             next_sum: AtomicUsize::new(0),
+            born: Instant::now(),
+            rest_until: AtomicU64::new(0),
             format: RecordFormat::new(&kept_types),
             directory: place.as_ref().map_or(0, |p| p.directory.0),
             place: Mutex::new(place),
@@ -249,15 +274,15 @@ impl Zones {
         self.directory
     }
 
-    /// Widens the zone of row `id` to hold `row`, once it is written;
-    /// marked stale if the row replaces another, which it may then be
-    /// wider than.
-    pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaces: bool) {
+    /// Widens the zone of row `id` to hold `row`, once it is written, the
+    /// row's version it `replaced` taken out of it: marked stale if that
+    /// may leave it wider than its rows (`Zones::narrows`).
+    pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaced: Replaced<'_>) {
         let at = zone_at(id);
         if let Ok(map) = read(&self.map)
             && let Some(zone) = map.zones.get(at)
         {
-            self.change((&map, at), &mut lock_builtin(zone), (row, replaces));
+            self.change((&map, at), &mut lock_builtin(zone), (row, replaced));
             map.changed(at);
             return;
         }
@@ -272,7 +297,7 @@ impl Zones {
             map.push(Zone::empty(self.kept.len(), known));
         }
         if let Some(zone) = map.zones.get(at) {
-            self.change((&map, at), &mut lock_builtin(zone), (row, replaces));
+            self.change((&map, at), &mut lock_builtin(zone), (row, replaced));
         }
         map.changed(at);
     }
@@ -280,14 +305,14 @@ impl Zones {
     /// Marks the zone of row `id` stale, an insert of it undone: the row
     /// taken out, the zone may be wider than its rows.
     pub(super) fn undone(&self, id: RowId) {
-        self.widen(id, None, true);
+        self.widen(id, None, Replaced::Unknown);
     }
 
     /// `widen`'s change of `zone`, zone `at` of `map`, under its lock: not
     /// visible from now, before the row's index entries are written, and
     /// unsettled; under the lock a sum up settles it under, so none settles
     /// it visible over the change.
-    fn change(&self, (map, at): (&Map, usize), zone: &mut Zone, (row, replaces): (Option<&Row>, bool)) {
+    fn change(&self, (map, at): (&Map, usize), zone: &mut Zone, (row, replaced): (Option<&Row>, Replaced<'_>)) {
         zone.changes = zone.changes.saturating_add(1);
         if let Some(flag) = map.visible.get(at) {
             flag.store(false, AtomicOrdering::Release);
@@ -296,16 +321,42 @@ impl Zones {
             zone.unsettled = true;
             self.unsettled.fetch_add(1, AtomicOrdering::AcqRel);
         }
-        if !replaces {
+        if matches!(replaced, Replaced::Nothing) {
             zone.rows = zone.rows.saturating_add(1);
         }
+        let stales = !zone.stale && self.narrows(zone, row, replaced);
         if let Some(row) = row {
             zone.hold(self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
         }
-        if replaces && !zone.stale {
+        if stales {
             zone.stale = true;
             self.stale.fetch_add(1, AtomicOrdering::AcqRel);
         }
+    }
+
+    /// Whether `zone`, not stale, may be left wider than its rows as `row`,
+    /// or a deletion, replaces what was `replaced`: unless, of each column
+    /// kept, the replaced value is the new one, or lies strictly inside
+    /// the zone's bounds, so some other row still reaches each bound and
+    /// the one null, if any, is still there. A zone keeping no column has
+    /// no bound to narrow.
+    fn narrows(&self, zone: &Zone, row: Option<&Row>, replaced: Replaced<'_>) -> bool {
+        let old = match replaced {
+            Replaced::Nothing => return false,
+            Replaced::Unknown | Replaced::Row(_) if self.kept.is_empty() => return false,
+            Replaced::Unknown => return true,
+            Replaced::Row(old) => old,
+        };
+        self.kept.iter().zip(&zone.bounds).any(|(&c, bounds)| {
+            let was = old.get(c).unwrap_or(&Value::Null);
+            let same = row
+                .and_then(|r| r.get(c))
+                .is_some_and(|now| (was.is_null() && now.is_null()) || compare(was, now) == Some(Ordering::Equal));
+            let inside = bounds.as_ref().is_some_and(|(least, greatest)| {
+                compare(least, was) == Some(Ordering::Less) && compare(was, greatest) == Some(Ordering::Less)
+            });
+            !same && !inside
+        })
     }
 
     /// The ranges of row ids a scan told `conditions` reads, in order, each
@@ -418,115 +469,32 @@ fn passes(zone: &Zone, tests: &[Test<'_>]) -> bool {
 }
 
 impl RowTable {
+    /// Widens the zone of row `id` to hold `row`, or a deletion, written
+    /// over the row's newest version `replaced`, if known (`Zones::widen`).
+    /// Only the columns kept are decoded of it; one that cannot be is
+    /// taken as not known.
+    pub(super) fn widen_over(&self, id: RowId, row: Option<&Row>, replaced: Option<&[u8]>) {
+        let kept = &self.zones.kept;
+        let old = replaced.filter(|_| !kept.is_empty()).and_then(|bytes| {
+            let version = Version::parse(bytes).ok().filter(|v| !v.deleted)?;
+            self.decode(id, version.record, Some(kept)).ok()
+        });
+        self.zones.widen(id, row, old.as_ref().map_or(Replaced::Unknown, Replaced::Row));
+    }
+
     /// Widens the zone of row `id` to hold `version`, a version of it put
     /// back in its tree, as a write widens it once written: a zone summed
     /// up while the version was not the row's newest holds it again.
     pub(super) fn widen_to(&self, id: RowId, version: &[u8]) -> Result<()> {
         let version = Version::parse(version)?;
         let row = if version.deleted { None } else { Some(self.decode(id, version.record, Some(&self.zones.kept))?) };
-        self.zones.widen(id, row.as_ref(), true);
+        self.zones.widen(id, row.as_ref(), Replaced::Unknown);
         Ok(())
-    }
-
-    /// Sums up again some of the zones stale or not known, or unsettled,
-    /// of the versions of their rows a reader at or after `horizon` may
-    /// read, from where the last left off: whether one is now up to date,
-    /// or settled. One whose rows have versions a reader may still read
-    /// besides their newest stays stale, to be summed up again once none
-    /// does; one of a commit too recent stays unsettled.
-    pub(super) fn sum_zones(&self, horizon: Timestamp) -> Result<bool> {
-        let due: Vec<(usize, u64)> = {
-            let map = read(&self.zones.map)?;
-            let from = self.zones.next_sum.load(AtomicOrdering::Acquire).min(map.zones.len());
-            let order = (from..map.zones.len()).chain(0..from);
-            let stale = order.filter_map(|at| {
-                let zone = lock_builtin(map.zones.get(at)?);
-                (zone.stale || zone.unsettled).then_some((at, zone.changes))
-            });
-            stale.take(MOST_SUMMED).collect()
-        };
-        let mut done = false;
-        for &(at, changes) in &due {
-            let summed = self.zone_of(at, horizon)?;
-            let map = read(&self.zones.map)?;
-            let Some(slot) = map.zones.get(at) else { continue };
-            let mut zone = lock_builtin(slot);
-            // A write meanwhile: summed again later.
-            if zone.changes != changes {
-                continue;
-            }
-            let (was_stale, unsettled) = (zone.stale, zone.unsettled);
-            *zone = Zone { changes, unsettled, ..summed };
-            map.changed(at);
-            if was_stale && !summed.stale {
-                self.zones.stale.fetch_sub(1, AtomicOrdering::AcqRel);
-                done = true;
-            }
-            if unsettled && self.settle((&map, at), &mut zone, summed.seen) {
-                done = true;
-            }
-        }
-        if let Some(&(last, _)) = due.last() {
-            self.zones.next_sum.store(last.saturating_add(1), AtomicOrdering::Release);
-        }
-        Ok(done)
-    }
-
-    /// The zone of the rows of zone `at`, summed up from their versions a
-    /// reader at or after `horizon` may read: stale still if any is not
-    /// its row's newest committed, as a reader of it may end. A row read
-    /// again (`RowTable::unpinned`) may leave it wider, never narrower.
-    /// What its rows' newest versions show of their visibility, too.
-    fn zone_of(&self, at: usize, horizon: Timestamp) -> Result<Zone> {
-        let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
-        let (low, high) = (key(first), key(first.saturating_add(ZONE_ROWS)));
-        let kept = &self.zones.kept;
-        let mut zone = Zone::empty(kept.len(), true);
-        zone.stale = false;
-        for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Excluded(&high[..]), Direction::Forward) {
-            let (k, newest) = entry?;
-            let id = row_id(&k)?;
-            zone.seen = zone.seen.and(self.seen_of(&newest, horizon)?);
-            let mut held = |bytes: Vec<u8>, reading_at: Timestamp| {
-                let live = !Version::parse(&bytes)?.deleted;
-                self.hold_versions(&mut zone, id, bytes, reading_at)?;
-                Ok(live)
-            };
-            if self.unpinned((&k, newest), horizon, &mut held)? == Some(true) {
-                zone.rows = zone.rows.saturating_add(1);
-            }
-        }
-        Ok(zone)
-    }
-
-    /// Widens `zone` to hold each version of row `id`, whose newest is
-    /// `newest`, a reader at or after `horizon` may read: stale if one is
-    /// not its newest.
-    fn hold_versions(&self, zone: &mut Zone, id: RowId, newest: Vec<u8>, horizon: Timestamp) -> Result<()> {
-        let kept = &self.zones.kept;
-        let mut bytes = newest;
-        loop {
-            let older = {
-                let version = Version::parse(&bytes)?;
-                if !version.deleted {
-                    let row = self.decode(id, version.record, Some(kept))?;
-                    zone.hold(kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
-                }
-                // Versions before one committed at or before the horizon
-                // no reader reads.
-                match self.maker(&version) {
-                    Maker::Committed(stamp) => version.older.filter(|_| stamp > horizon),
-                    Maker::Open(_) => version.older,
-                }
-            };
-            zone.stale |= older.is_some();
-            let Some(older) = older else { return Ok(()) };
-            bytes = self.undo.read(older)?;
-        }
     }
 }
 
 mod saved;
+mod summed;
 mod visible;
 
 pub(super) use saved::Place;

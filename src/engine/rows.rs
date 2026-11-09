@@ -74,7 +74,7 @@ pub use options::{DEFAULT_HELD_BYTES, DEFAULT_TRACKED_ROWS, Refresh, TableOption
 use sealing::Sealing;
 use stats::Gathered;
 pub use undo::UndoStore;
-use zones::Zones;
+use zones::{Replaced, Zones};
 
 use super::columns::cache;
 use super::record::{RecordFormat, Spill};
@@ -279,7 +279,7 @@ impl TableStorage for RowTable {
             Ok(true) => {
                 // Widened once written, so a zone summed meanwhile either
                 // read the row or is summed again (`rows/zones.rs`).
-                self.zones.widen(id, Some(&row), false);
+                self.zones.widen(id, Some(&row), Replaced::Nothing);
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
                 self.counted_change(tx);
                 Ok(id)
@@ -297,15 +297,15 @@ impl TableStorage for RowTable {
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
         let (record, pages) = self.encode(id, &row)?;
-        self.write_version(tx, id, Some(&record)).inspect_err(|_| self.free(&pages))?;
-        self.zones.widen(id, Some(&row), true);
+        let replaced = self.write_version(tx, id, Some(&record)).inspect_err(|_| self.free(&pages))?;
+        self.widen_over(id, Some(&row), replaced.as_deref());
         self.counted_change(tx);
         Ok(())
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.write_version(tx, id, None)?;
-        self.zones.widen(id, None, true);
+        let replaced = self.write_version(tx, id, None)?;
+        self.widen_over(id, None, replaced.as_deref());
         self.counted.live.fetch_sub(1, Ordering::AcqRel);
         self.counted_change(tx);
         Ok(())
@@ -324,11 +324,11 @@ impl TableStorage for RowTable {
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
                 Ok(())
             }
-            Ok(false) => self.write_version(tx, id, Some(&record)),
+            Ok(false) => self.write_version(tx, id, Some(&record)).map(|_| ()),
             Err(e) => Err(e),
         };
         restored.inspect_err(|_| self.free(&pages))?;
-        self.zones.widen(id, Some(&row), true);
+        self.zones.widen(id, Some(&row), Replaced::Unknown);
         Ok(())
     }
 
@@ -447,7 +447,7 @@ impl TableStorage for RowTable {
     /// Writes the row's newest version outright (`rows/recovery.rs`).
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
         self.apply_newest(id, row.clone())?;
-        self.zones.widen(id, row.as_ref(), true);
+        self.zones.widen(id, row.as_ref(), Replaced::Unknown);
         Ok(())
     }
 
@@ -547,7 +547,7 @@ impl TableStorage for RowTable {
     /// Statistics to gather; zones to sum up; rows to freeze, groups to
     /// write again, entries to take out.
     fn maintenance_due(&self) -> bool {
-        self.gather_wanted() || self.zones.due() || self.freeze_wanted()
+        self.gather_wanted() || self.zones.wanted() || self.freeze_wanted()
     }
 
     /// Statistics gathered as one call's work, zones summed up as the

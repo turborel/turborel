@@ -904,9 +904,12 @@ raise an error (`TableStorage::scan_where`). Each conjunct holds for every
 row the filter keeps, so an engine may skip rows they don't match, and the
 filter still judges every row given. The row store skips by zone maps per
 1024 row ids (`rows/zones.rs`), and the column store by frozen chunk.
-A zone is never narrower than what a snapshot may read. Row counts and zones
-are saved with the pages at each checkpoint, so opening needs no pass over
-the rows.
+A zone is never narrower than what a snapshot may read, and it narrows with
+a bounded lag. A write stales its zone only if the replaced value may have
+been all that reached a bound. After a pass over every zone due, the zones
+rest for a second, so steady writes cost maintenance one pass a second.
+Row counts and zones are saved with the pages at each checkpoint, so
+opening needs no pass over the rows.
 
 Maintenance (`db/maintenance.rs`) is work an engine leaves for later, such
 as statistics, freezes and rewrites. No transaction waits for it, and no

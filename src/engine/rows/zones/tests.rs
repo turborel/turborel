@@ -113,7 +113,7 @@ fn zones_skip_what_no_reader_can_match() {
     table.commit(writer, 2);
     // The reader, of a snapshot before the update, holds the horizon.
     summed(&table, 1);
-    assert!(table.maintenance_due(), "stale while the reader is open");
+    assert!(table.zones.due(), "stale while the reader is open");
     assert_eq!(found(&table, reader, &equal(0, 0)), ["0"], "the old value, for the open reader");
     assert!(reads(&table, &equal(0, 99_999), ids[0]), "the new value too");
     table.commit(reader, 1);
@@ -475,4 +475,91 @@ fn a_zone_summed_up_as_versions_go_leaves_out_rows_gone_and_fails_on_a_loss() {
     // The older version lost, nothing else changed.
     *lock_builtin(&log.on_read) = Some(Box::new(move || lost.truncate_before(lost.end()).unwrap()));
     assert_eq!(table.sum_zones(1).map_err(|e| e.code), Err(Code::Corrupt), "a real loss");
+}
+
+/// Whether a zone of `table` is stale.
+fn stale(table: &RowTable) -> bool {
+    table.zones.stale.load(std::sync::atomic::Ordering::Acquire) > 0
+}
+
+/// The rows the zone of row `id` of `table` counts.
+fn zone_rows(table: &RowTable, id: RowId) -> u32 {
+    let map = table.zones.map.read().unwrap();
+    lock_builtin(&map.zones[super::zone_at(id)]).rows
+}
+
+/// Verifies: [DESIGN] RULES.md D31, zone maps: a write stales its zone
+/// only if the version it replaced may leave the zone wider than its
+/// rows. MC/DC of `Zones::narrows`, stale unless the replaced value is
+/// the new one or lies strictly inside the bounds: the replaced value
+/// kept, on the least bound (not stale), against one changed on the
+/// greatest (stale), shows the first; one changed strictly inside (not
+/// stale), against that same change on the greatest, shows the second.
+/// A deletion inside stales nothing, one of a bound does.
+#[test]
+fn a_write_inside_its_zones_bounds_stales_nothing() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    summed(&table, 1);
+    assert!(!stale(&table));
+    table.begin(10, 1).unwrap();
+    table.update(10, ids[0], vec![int(0), Value::Char("other".into())]).unwrap();
+    assert!(!stale(&table), "the least value kept");
+    table.update(10, ids[50], row(60)).unwrap();
+    assert!(!stale(&table), "a value changed inside the bounds");
+    table.delete(10, ids[40]).unwrap();
+    assert!(!stale(&table), "a value deleted inside the bounds");
+    table.update(10, ids[99], row(50)).unwrap();
+    assert!(stale(&table), "the greatest value changed");
+    table.validate(10, 2).unwrap();
+    table.commit(10, 2);
+    summed(&table, 3);
+    assert!(!stale(&table) && !reads(&table, &equal(0, 99), ids[99]), "narrowed");
+    table.begin(11, 3).unwrap();
+    table.delete(11, ids[0]).unwrap();
+    assert!(stale(&table), "the least value deleted");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, D34, zone maps: a zone a write left
+/// unsettled but not stale is settled from its rows' newest versions, its
+/// bounds kept, its rows counted again: a deletion inside the bounds
+/// counts one row fewer, leaves the zone not visible to every reader,
+/// and narrows nothing.
+#[test]
+fn a_zone_unsettled_alone_is_settled_with_its_bounds_kept() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    summed(&table, 1);
+    assert_eq!(zone_rows(&table, ids[0]), 100);
+    assert!(table.zones.visible(ids[0]), "settled visible");
+    table.begin(10, 1).unwrap();
+    table.delete(10, ids[40]).unwrap();
+    table.validate(10, 2).unwrap();
+    table.commit(10, 2);
+    assert!(!stale(&table) && table.zones.due(), "unsettled alone");
+    summed(&table, 3);
+    assert!(!table.zones.due(), "settled");
+    assert_eq!(zone_rows(&table, ids[0]), 99, "the deletion counted");
+    assert!(!table.zones.visible(ids[0]), "a deletion is seen by no reader alone");
+    assert!(reads(&table, &equal(0, 40), ids[40]), "the bounds kept");
+}
+
+/// Verifies: [DESIGN] RULES.md D31, zone maps: once a pass of the
+/// maintenance thread has looked at every zone due, the zones rest, so a
+/// write meanwhile leaves work due but asks for no maintenance until the
+/// rest is over. MC/DC of the pass's end: a pass looking at fewer zones
+/// than one call sums up rests them; one of as many, more due, does not.
+#[test]
+fn zones_rest_after_a_pass_over_every_zone_due() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let rows = u64::try_from(super::MOST_SUMMED + 1).unwrap() * ZONE_ROWS;
+    let ids: Vec<RowId> = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(i128::from(n))).unwrap()).collect();
+    assert!(table.sum_zones(u64::MAX).unwrap());
+    assert!(table.zones.wanted(), "more zones due than one call sums up: no rest");
+    assert!(table.sum_zones(u64::MAX).unwrap());
+    assert!(!table.zones.due() && !table.zones.wanted(), "every zone looked at");
+    table.update(NO_TRANSACTION, ids[0], row(-1)).unwrap();
+    assert!(table.zones.due() && !table.zones.wanted(), "due, but resting");
+    table.zones.rest_until.store(0, std::sync::atomic::Ordering::Release);
+    assert!(table.zones.wanted(), "the rest over");
 }
