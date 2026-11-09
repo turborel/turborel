@@ -6,7 +6,11 @@
 //! the planner asks through a trait, `Statistics`, every answer optional:
 //! an engine answers what it knows and the planner falls back to defaults
 //! for the rest. A row store samples whole rows in a pass, as the built-in
-//! one does, its column store's frozen rows among them; a columnar
+//! one does, its column store's frozen rows among them, every row of a
+//! small table and a sample of a large one's (`StatsBuilder::counting`):
+//! distinct values then scaled from the sample's, as Haas and Stokes
+//! estimate them, and its least and greatest values not taken as bounds
+//! (`ColumnStats::unbounded`); a columnar
 //! engine may know distinct values exactly from its dictionaries, least and
 //! greatest values from each segment, and the width of each column apart,
 //! and answers from those.
@@ -21,11 +25,14 @@
 pub mod parts;
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Debug;
+use std::hash::BuildHasher;
 
 pub use parts::Sampling;
 use parts::{Histogram, HyperLogLog, Reservoir, count};
 
+use crate::hash::murmur::MurmurBuildHasher;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, compare};
 
@@ -69,6 +76,9 @@ pub struct ColumnStats {
     pub max: Option<Value>,
     /// Its non-null values' histogram.
     pub histogram: Histogram,
+    /// Whether values may lie past `min` and `max`, they being a sample's,
+    /// so a value outside them is not estimated to match no row.
+    pub unbounded: bool,
 }
 
 impl ColumnStats {
@@ -81,8 +91,9 @@ impl ColumnStats {
             return 0.0;
         }
         let present = (1.0_f64 - self.nulls).clamp(0.0, 1.0);
-        let outside = self.min.as_ref().is_some_and(|min| compare(value, min) == Some(Ordering::Less))
-            || self.max.as_ref().is_some_and(|max| compare(value, max) == Some(Ordering::Greater));
+        let outside = !self.unbounded
+            && (self.min.as_ref().is_some_and(|min| compare(value, min) == Some(Ordering::Less))
+                || self.max.as_ref().is_some_and(|max| compare(value, max) == Some(Ordering::Greater)));
         let equal = if outside || self.min.is_none() { 0.0_f64 } else { present / self.distinct.max(1.0) };
         let below = present * self.histogram.below(value).unwrap_or(0.5_f64);
         let fraction = match op {
@@ -138,6 +149,9 @@ pub struct ColumnBuilder {
     sample: Reservoir,
     min: Option<Value>,
     max: Option<Value>,
+    /// Of a sample of the rows, how often each value was seen, by the hash
+    /// of its normalized form, for the distinct values to be scaled.
+    seen: Option<HashMap<u64, u32>>,
 }
 
 impl ColumnBuilder {
@@ -159,6 +173,10 @@ impl ColumnBuilder {
             return;
         }
         self.sketch.add(value);
+        if let Some(seen) = self.seen.as_mut() {
+            let times = seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_default();
+            *times = times.saturating_add(1);
+        }
         self.sample.add(value);
         if self.min.as_ref().is_none_or(|min| compare(value, min) == Some(Ordering::Less)) {
             self.min = Some(value.clone());
@@ -177,8 +195,35 @@ impl ColumnBuilder {
             min: self.min,
             max: self.max,
             histogram: Histogram::of_sorted(&self.sample.into_sorted(), self.sampling.buckets),
+            unbounded: false,
         }
     }
+
+    /// The statistics of a table of `rows` rows, the values added a sample
+    /// of them: the share NULL and the histogram the sample's, the distinct
+    /// values scaled from its (`scaled_distinct`), and not bounded by its
+    /// least and greatest.
+    fn finish_scaled(mut self, rows: f64) -> ColumnStats {
+        let seen = self.seen.take().unwrap_or_default();
+        let present = count(self.values.saturating_sub(self.nulls));
+        let once = count(seen.values().map(|&t| u64::from(t == 1)).sum());
+        let mut stats = self.finish();
+        stats.distinct =
+            scaled_distinct((count(u64::try_from(seen.len()).unwrap_or(u64::MAX)), once), present, rows * (1.0_f64 - stats.nulls));
+        stats.unbounded = true;
+        stats
+    }
+}
+
+/// \[DESIGN\] The distinct values of `of` values, from a sample of `sampled`
+/// of them holding `distinct` distinct ones, `once` of them seen once: Haas
+/// and Stokes's estimator Duj1 ("Estimating the number of classes in a
+/// finite population", JASA 93(444), 1998), n d / (n - f1 + f1 n / N), as
+/// PostgreSQL's ANALYZE uses; at least those of the sample, at most `of`.
+pub fn scaled_distinct((distinct, once): (f64, f64), sampled: f64, of: f64) -> f64 {
+    let below = sampled - once + once * sampled / of.max(1.0_f64);
+    let scaled = if below > 0.0_f64 { sampled * distinct / below } else { of };
+    scaled.clamp(distinct.min(of), of.max(distinct))
 }
 
 /// \[DESIGN\] Gathers a table's statistics from its rows, in one pass.
@@ -199,6 +244,13 @@ impl StatsBuilder {
         StatsBuilder { rows: 0, bytes: 0, columns: vec![ColumnBuilder::sampling(sampling); columns] }
     }
 
+    /// As `sampling`, for rows that are a sample of a table's, to be
+    /// finished by `finish_sampled`: each value counted as it is seen.
+    pub fn counting(columns: usize, sampling: Sampling) -> StatsBuilder {
+        let column = ColumnBuilder { seen: Some(HashMap::new()), ..ColumnBuilder::sampling(sampling) };
+        StatsBuilder { rows: 0, bytes: 0, columns: vec![column; columns] }
+    }
+
     /// Adds `row`, which takes `bytes` bytes as stored.
     pub fn add(&mut self, row: &Row, bytes: usize) {
         for (column, value) in self.columns.iter_mut().zip(row) {
@@ -212,6 +264,15 @@ impl StatsBuilder {
     pub fn finish(self) -> TableStats {
         let width = if self.rows == 0 { 0.0_f64 } else { count(self.bytes) / count(self.rows) };
         TableStats { rows: self.rows, width, columns: self.columns.into_iter().map(ColumnBuilder::finish).collect() }
+    }
+
+    /// The statistics of a table of `rows` rows, those added a sample of
+    /// them (`counting`): their width the sample's, each column's as
+    /// `ColumnBuilder::finish_scaled` gives.
+    pub fn finish_sampled(self, rows: u64) -> TableStats {
+        let width = if self.rows == 0 { 0.0_f64 } else { count(self.bytes) / count(self.rows) };
+        let columns = self.columns.into_iter().map(|c| c.finish_scaled(count(rows))).collect();
+        TableStats { rows, width, columns }
     }
 }
 

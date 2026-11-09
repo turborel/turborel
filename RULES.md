@@ -913,7 +913,10 @@ opening needs no pass over the rows.
 
 Maintenance (`db/maintenance.rs`) is work an engine leaves for later, such
 as statistics, freezes and rewrites. No transaction waits for it, and no
-plan waits for or makes a pass.
+plan waits for or makes a pass. The row store reads every row of a table of
+up to 60,000 rows for its statistics, and a fixed sample of about 30,000 of
+a larger one's, scaling distinct values as PostgreSQL's ANALYZE does
+(`rows/stats.rs`). So a pass costs the same however large the table grows.
 
 Execution runs by batch where it can (`exec/batch.rs`), with vectors of up
 to 2048 values per column. EXECUTOR.BATCHES is ON by default, and OFF reads a

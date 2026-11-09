@@ -11,6 +11,7 @@ mod near;
 mod reads;
 mod server;
 mod shadow;
+mod stats;
 mod vr;
 mod zones;
 
@@ -21,16 +22,17 @@ pub use kept::KEPT;
 pub use reads::READS;
 pub use server::SERVER;
 pub use shadow::SHADOW;
+pub use stats::STATS;
 pub use vr::VR;
 pub use zones::ZONES;
 
 /// Every mutation, in the order they run: the core's, then its kept
-/// plans', reads', collations', shadow files', reads near the last,
-/// zeros filled ahead of the log and zone maintenance, then
+/// plans', reads', collations', shadow files', reads near the last, zeros
+/// filled ahead of the log, zone maintenance and sampled statistics, then
 /// replication's, then the server's.
 pub fn all() -> Vec<Mutation> {
-    let core = MUTATIONS.iter().chain(&KEPT).chain(&READS).chain(&COLLATIONS).chain(&SHADOW).chain(&near::NEAR).chain(&FILL).chain(&ZONES);
-    core.chain(&VR).chain(&SERVER).copied().collect()
+    let lists: [&[Mutation]; 11] = [&MUTATIONS, &KEPT, &READS, &COLLATIONS, &SHADOW, &near::NEAR, &FILL, &ZONES, &STATS, &VR, &SERVER];
+    lists.into_iter().flatten().copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints,

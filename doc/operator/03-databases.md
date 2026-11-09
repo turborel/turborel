@@ -220,6 +220,11 @@ when the program embedding the database asks. It takes effect at once:
 SET DATABASE JOBS.POLICY = 'PAUSED'
 ```
 
+A table's statistics are gathered from every row of a table of up to
+60,000 rows. A larger table is sampled, about 30,000 of its rows read, so
+a pass costs the same however large the table grows, and its distinct
+values are estimated from the sample.
+
 Each thread started or stopped is told to the diagnostics, `thread`, as
 is each failure of its work. The threads are named for their work:
 `turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,

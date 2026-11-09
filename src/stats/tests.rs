@@ -1,7 +1,7 @@
 //! Unit tests of the optimizer's statistics: the sketch's accuracy, the
 //! histogram's fractions, the selectivities they give, a deterministic
-//! sample, and the parts built a column at a time (RULES.md R-TEST-1,
-//! R-TEST-2).
+//! sample, the parts built a column at a time, and a sample's distinct
+//! values scaled (RULES.md R-TEST-1, R-TEST-2).
 
 use super::parts::{Histogram, HyperLogLog, Reservoir, SAMPLE_VALUES, SAMPLED_BITS, SAMPLED_CHARACTERS};
 use super::*;
@@ -232,4 +232,34 @@ fn statistics_answer_through_the_trait() {
     let unknown: &dyn Statistics = &Unknown;
     assert_eq!((unknown.rows(), unknown.width(&[]), unknown.distinct(0), unknown.nulls(0)), (None, None, None, None));
     assert_eq!(unknown.selectivity(0, CompOp::Eq, &number(1)), None);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, statistics of a sample: Haas and
+/// Stokes's estimate scales distinct values seen once each to every value
+/// distinct, and keeps those all seen more than once as the sample's; a
+/// sampled table's rows are those it is told, its NULL share and distinct
+/// values the sample's, scaled; its columns are not bounded, so equality
+/// outside the sample's values matches some rows. MC/DC of the bound: a
+/// column of a sample (unbounded, some rows) against one read whole
+/// (bounded, none) for the same value below the least.
+#[test]
+fn a_sample_scales_its_distinct_values_and_bounds_nothing() {
+    assert!(near(scaled_distinct((1_000.0_f64, 1_000.0_f64), 1_000.0_f64, 100_000.0_f64), 100_000.0_f64, 1.0_f64));
+    assert!(near(scaled_distinct((10.0_f64, 0.0_f64), 1_000.0_f64, 100_000.0_f64), 10.0_f64, 1e-9_f64));
+    assert!(near(scaled_distinct((0.0_f64, 0.0_f64), 0.0_f64, 0.0_f64), 0.0_f64, 1e-9_f64), "no value");
+    let mut builder = StatsBuilder::counting(1, Sampling::default());
+    for i in 0..10_000_u32 {
+        let value = if i % 10 == 0 { Value::Null } else { number(i + 1) };
+        builder.add(&vec![value], 9);
+    }
+    let sampled = builder.finish_sampled(100_000);
+    let column = &sampled.columns[0];
+    assert_eq!((sampled.rows, sampled.width), (100_000, 9.0_f64));
+    assert!(near(column.nulls, 0.1_f64, 1e-9_f64));
+    assert!(near(column.distinct, 90_000.0_f64, 1.0_f64), "{} distinct", column.distinct);
+    assert!(column.unbounded);
+    assert!(column.selectivity(CompOp::Eq, &number(0)) > 0.0_f64, "below the sample's least");
+    let whole = numbers(10_000).columns.swap_remove(0);
+    assert!(!whole.unbounded);
+    assert_eq!(whole.selectivity(CompOp::Eq, &number(0)), 0.0_f64, "below the least");
 }
