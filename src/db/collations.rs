@@ -7,16 +7,20 @@ use std::collections::BTreeSet;
 
 use std::sync::Arc;
 
+mod revert;
+mod usage;
+
+pub(super) use revert::{added_collation, is_made};
+
 use super::ddl::Dropped;
 use super::definitions::Defined;
 use super::revoke::Abandoned;
-use super::usage::usage_alone;
-use super::{Completion, Session, State};
-use crate::ast::{CollationDefinition, PrivilegeDefinition, RevokeStatement, TableName, ValueSpecification};
+use super::{Session, State};
+use crate::ast::{CollationDefinition, TableName, ValueSpecification};
 use crate::binder::{self, qualify};
 use crate::catalog::{
     Catalog, CollationDesc, ColumnDesc, ColumnDomain, ConstraintDesc, ConstraintKind, DomainDesc, IndexDesc, QualifiedName, TableDesc,
-    UsageDesc, ViewDesc, owner_of,
+    ViewDesc, owner_of,
 };
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::lexer::{Tok, delim, kw, lex};
@@ -215,70 +219,6 @@ impl State {
         Ok(Defined::default())
     }
 
-    /// [ISO/IEC 9075:1992 §11.36] GRANT USAGE `p` on a collation, by `auth`.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -103 if it is no collation definitions made, or the
-    /// privilege is other than USAGE; -104 if `auth` holds none grantably.
-    pub(super) fn grant_collation_usage(&mut self, auth: &str, p: &PrivilegeDefinition) -> Result<Defined> {
-        usage_alone(p.actions.as_deref())?;
-        let qn = collation_name(&p.table);
-        let mut desc = self.made_collation(&qn)?;
-        let owner = owner_of(&*self.catalog, &qn.auth).to_owned();
-        let (held, grantable) = desc.usage_of(auth, &owner);
-        if !held {
-            return Err(SqlError::new(Code::Privilege, format!("[ISO/IEC 9075:1992 §11.36 AR1] {auth} holds no USAGE on collation {qn}")));
-        }
-        let mut defined = Defined::default();
-        if !grantable {
-            defined.completion = Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED);
-            return Ok(defined);
-        }
-        for grantee in &p.grantees {
-            desc.usage.retain(|u| !(u.grantor == auth && u.grantee == *grantee));
-            desc.usage.push(UsageDesc { grantor: auth.to_owned(), grantee: grantee.clone(), grantable: p.grant_option });
-        }
-        self.put_collation(desc);
-        Ok(defined)
-    }
-
-    /// [ISO/IEC 9075:1992 §11.37] REVOKE USAGE `r` on a collation, by `auth`.
-    ///
-    /// # Errors
-    ///
-    /// As `grant_collation_usage`; SQLCODE -103 if a schema's owner, left
-    /// without it, has a column of it \[SR18\], with CASCADE too, as only
-    /// DROP COLLATION copies a table's rows to revert it.
-    pub(super) fn revoke_collation_usage(&mut self, (auth, _): (&str, &str), r: &RevokeStatement) -> Result<Defined> {
-        usage_alone(r.actions.as_deref())?;
-        let qn = collation_name(&r.table);
-        let mut desc = self.made_collation(&qn)?;
-        let named = |u: &UsageDesc| u.grantor == auth && r.grantees.contains(&u.grantee);
-        let granted = |grantee: &Option<String>| desc.usage.iter().any(|u| u.grantor == auth && u.grantee == *grantee);
-        let warned = !r.grantees.iter().all(granted);
-        if r.grant_option_for {
-            desc.usage.iter_mut().filter(|u| named(u)).for_each(|u| u.grantable = false);
-        } else {
-            desc.usage.retain(|u| !named(u));
-        }
-        // [§11.37 SR18] nothing of it left to one whose schema still uses it.
-        let owner_of_it = owner_of(&*self.catalog, &qn.auth);
-        let loses = |schema: &str| !desc.usage_of(owner_of(&*self.catalog, schema), owner_of_it).0;
-        let of = |c: &ColumnDesc| c.collation.as_ref() == Some(&qn);
-        if self.catalog.tables().into_iter().any(|t| loses(&t.name.auth) && t.columns.iter().any(of)) {
-            let msg =
-                format!("[ISO/IEC 9075:1992 §11.37 SR18] revoking USAGE on {qn} abandons a column of it: DROP COLLATION reverts them");
-            return Err(SqlError::new(Code::SyntaxRule, msg));
-        }
-        self.put_collation(desc);
-        let mut defined = Defined::default();
-        if warned {
-            defined.completion = Completion::Warning(SqlState::PRIVILEGE_NOT_REVOKED);
-        }
-        Ok(defined)
-    }
-
     /// [ISO/IEC 9075-2:2023 §11.44] Drops collation `qn`, whose columns are
     /// reverted already (`Session::revert_columns`): domains of it revert
     /// too \[GR2\], and with `cascade`, the views and constraints that name
@@ -290,7 +230,7 @@ impl State {
     /// a view or constraint names it \[SR4\].
     pub(super) fn drop_collation(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         self.made_collation(qn)?;
-        let abandoned = self.naming_collation(qn);
+        let abandoned = self.naming_collation(qn, &|_| true);
         if !cascade && !abandoned.is_empty() {
             return Err(SqlError::new(
                 Code::SyntaxRule,
@@ -302,10 +242,7 @@ impl State {
         for domain in self.catalog.domains().into_iter().filter(|d| d.collation.as_ref() == Some(qn)) {
             catalog.put_domain(DomainDesc { collation: None, ..domain.clone() });
         }
-        let kept: Vec<ViewDesc> =
-            self.catalog.views().into_iter().filter(|v| v.columns.iter().any(|c| c.collation.as_ref() == Some(qn))).cloned().collect();
-        for mut view in kept {
-            view.columns.iter_mut().filter(|c| c.collation.as_ref() == Some(qn)).for_each(|c| c.collation = None);
+        for view in self.views_collated(qn, &|_| true) {
             catalog.remove_view(&view.name);
             catalog.add_views(vec![view]);
         }
@@ -314,40 +251,46 @@ impl State {
         Ok(dropped)
     }
 
-    /// What names collation `qn` in its text.
-    fn naming_collation(&self, qn: &QualifiedName) -> Abandoned {
+    /// What names collation `qn` in its text, of a schema `within` takes:
+    /// a view by its own, a table's or domain's constraint by the table's
+    /// or domain's, an assertion by its own.
+    fn naming_collation(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Abandoned {
         let names = |c: &ConstraintDesc| matches!(&c.kind, ConstraintKind::Check { text, .. } if collates(text, qn));
         let mut abandoned = Abandoned::default();
-        abandoned.views = self.catalog.views().into_iter().filter(|v| collates(&v.query, qn)).map(|v| v.name.clone()).collect();
-        for t in self.catalog.tables() {
+        let views = self.catalog.views().into_iter().filter(|v| within(&v.name.auth) && collates(&v.query, qn));
+        abandoned.views = views.map(|v| v.name.clone()).collect();
+        for t in self.catalog.tables().into_iter().filter(|t| within(&t.name.auth)) {
             abandoned
                 .constraints
                 .extend(t.constraints.iter().filter(|c| c.domain.is_none() && names(c)).map(|c| (t.name.clone(), c.clone())));
         }
-        for d in self.catalog.domains() {
+        for d in self.catalog.domains().into_iter().filter(|d| within(&d.name.auth)) {
             abandoned.domain_constraints.extend(d.constraints.iter().filter(|c| names(c)).map(|c| (d.name.clone(), c.name.clone())));
         }
-        abandoned.assertions = self.catalog.assertions().into_iter().filter(|a| names(a)).map(|a| a.name.clone()).collect();
+        let assertions = self.catalog.assertions().into_iter().filter(|a| within(&a.name.auth) && names(a));
+        abandoned.assertions = assertions.map(|a| a.name.clone()).collect();
         abandoned
     }
 
-    /// \[DESIGN\] [ISO/IEC 9075:1992 §11.2 GR5] The collations of schema
-    /// `auth`, which is being dropped.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -900 if a column or domain of another schema is of one: its
-    /// rows would need copying, which DROP COLLATION does first.
+    /// The views of a schema `within` takes with a column of collation
+    /// `qn`, those columns made of the character set's [ISO/IEC 9075-2:2023
+    /// §11.44 GR2, §12.7 GR12ad].
+    fn views_collated(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> Vec<ViewDesc> {
+        let of = |v: &&ViewDesc| within(&v.name.auth) && v.columns.iter().any(|c| c.collation.as_ref() == Some(qn));
+        let mut views: Vec<ViewDesc> = self.catalog.views().into_iter().filter(of).cloned().collect();
+        for view in &mut views {
+            view.columns.iter_mut().filter(|c| c.collation.as_ref() == Some(qn)).for_each(|c| c.collation = None);
+        }
+        views
+    }
+
+    /// [ISO/IEC 9075:1992 §11.2 GR5; ISO/IEC 9075-2:2023 §11.2 GR5] The
+    /// collations of schema `auth`, which is being dropped, each as DROP
+    /// COLLATION with CASCADE drops it: the columns of other schemas'
+    /// tables of it are reverted already (`Session::drop_object`).
     pub(super) fn drop_schema_collations(&mut self, auth: &str) -> Result<Dropped> {
-        let mine: Vec<QualifiedName> =
-            self.catalog.collations().into_iter().filter(|c| c.name.auth == auth).map(|c| c.name.clone()).collect();
         let mut dropped = Dropped::default();
-        for qn in mine {
-            let outside = self.catalog.tables().into_iter().any(|t| t.columns.iter().any(|c| c.collation.as_ref() == Some(&qn)));
-            if outside {
-                let msg = format!("[DESIGN] a table outside schema {auth} is of its collation {qn}: DROP COLLATION it first");
-                return Err(SqlError::new(Code::Unsupported, msg));
-            }
+        for qn in self.schema_collations(auth) {
             dropped.absorb(self.drop_collation(&qn, true)?);
         }
         Ok(dropped)

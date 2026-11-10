@@ -15,13 +15,12 @@ use std::sync::Arc;
 
 use super::ddl::{Changed, Dropped};
 use super::{Session, State, rule};
-use crate::ast::{AlterAction, AlterDomain, AlterDomainAction, DropBehavior, DropObject, TableName};
+use crate::ast::{AlterDomain, AlterDomainAction, DropBehavior, DropObject, TableName};
 use crate::binder::qualify;
 use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TemporaryKind, owner_of};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
 use crate::log::record::{Change, DropTarget};
-use crate::parser::REVERT_COLLATION;
 use crate::settings::CATALOG_NAME;
 use crate::txn::Txn;
 
@@ -108,7 +107,8 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such schema [SR2] (SQLSTATE 3F000), or,
-    /// not `cascade`, it holds a table, view, domain or assertion [SR3].
+    /// not `cascade`, it holds a table, view, domain, assertion or
+    /// collation [SR3].
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -121,7 +121,8 @@ impl State {
             self.catalog.domains().into_iter().filter(|d| d.name.auth == auth).map(|d| d.name.clone()).collect();
         let assertions: Vec<QualifiedName> =
             self.catalog.assertions().into_iter().filter(|a| a.name.auth == auth).map(|a| a.name.clone()).collect();
-        let held = tables.first().or(views.first()).or(domains.first()).or(assertions.first());
+        let collations = self.schema_collations(auth);
+        let held = tables.first().or(views.first()).or(domains.first()).or(assertions.first()).or(collations.first());
         if let (Some(first), false) = (held, cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
@@ -260,11 +261,23 @@ impl Session {
     pub(super) fn drop_object(&self, st: &Arc<State>, tx: &Txn, object: &DropObject, behavior: DropBehavior) -> Result<Completion> {
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
-        if let DropTarget::Collation(qn) = &target {
+        let reverting: Vec<(QualifiedName, Vec<QualifiedName>)> = match &target {
+            DropTarget::Collation(qn) => vec![(qn.clone(), st.tables_of_collation(qn, None))],
+            // [§11.2 GR5] Its own tables go, those of other schemas revert.
+            DropTarget::Schema(auth) => {
+                st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()
+            }
+            DropTarget::Table(_) | DropTarget::View(_) | DropTarget::Domain(_) | DropTarget::Assertion(_) => Vec::new(),
+        };
+        if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
             // back its rows, not a table's new definition.
             State::clone(st).drop_object(&target, cascade).or_at(object.at())?;
-            self.revert_columns(st, tx, qn).or_at(object.at())?;
+            for (qn, tables) in reverting {
+                // No table of it defined meanwhile (`collations/revert.rs`).
+                self.prepare_change(st, tx, &qn)?;
+                self.revert_columns(tx, &qn, &tables).or_at(object.at())?;
+            }
         }
         let mut held: Vec<QualifiedName> = Vec::new();
         loop {
@@ -284,28 +297,6 @@ impl Session {
                 held.push(name);
             }
         }
-    }
-
-    /// [ISO/IEC 9075-2:2023 §11.44 GR2] Each table's columns of collation `qn`
-    /// made of the character set's, each table's rows copied (`AlterAction`).
-    /// If one fails after another is done, the transaction only rolls back:
-    /// the one done keeps its new definition, its copied rows undone.
-    fn revert_columns(&self, st: &Arc<State>, tx: &Txn, qn: &QualifiedName) -> Result<()> {
-        let of = |t: &&crate::catalog::TableDesc| t.columns.iter().any(|c| c.collation.as_ref() == Some(qn));
-        let tables: Vec<QualifiedName> = st.catalog.tables().into_iter().filter(of).map(|t| t.name.clone()).collect();
-        let action = AlterAction::RevertCollation(qn.clone());
-        let text = format!("{REVERT_COLLATION} {}.{}", qn.auth, qn.ident);
-        for (done, table) in tables.into_iter().enumerate() {
-            let fresh = self.definitions(self.db.snapshot()?)?;
-            let name = TableName { auth: Some(table.auth), ident: table.ident, at: 0 };
-            if let Err(e) = self.alter_table(&fresh, tx, (&name, &action, &text)) {
-                if done > 0 {
-                    tx.doom("a DROP COLLATION failed with a table done");
-                }
-                return Err(e);
-            }
-        }
-        Ok(())
     }
 
     /// What `object` names, its names qualified by the default schema, if

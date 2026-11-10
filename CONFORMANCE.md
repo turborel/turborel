@@ -216,7 +216,7 @@ there only the statements whose operands may be `<literal>`s are of use.
 | A constraint's schema | §5.4 SR8 | A name written without a schema is of the `<schema definition>`'s schema, else of the session's default schema, which may differ from its table's or domain's (RULES.md D47). A declared local temporary table's is of MODULE. |
 | When constraints are checked | §14.2 | At the end of each statement. Deferred ones, by SET CONSTRAINTS or INITIALLY DEFERRED, at commit. |
 | Defaults | §11.5 | A literal, NULL, USER, CURRENT_USER, SESSION_USER, SYSTEM_USER, or a datetime value function. Used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns added, and the referential action SET DEFAULT. |
-| DROP SCHEMA, DROP TABLE, DROP VIEW | §11.2, §11.18, §11.20 | CASCADE and RESTRICT, inside transactions (RULES.md D33). DROP SCHEMA RESTRICT is refused, and CASCADE drops them, while constraints named in the schema are of tables or domains of another (D47). |
+| DROP SCHEMA, DROP TABLE, DROP VIEW | §11.2, §11.18, §11.20 | CASCADE and RESTRICT, inside transactions (RULES.md D33). DROP SCHEMA RESTRICT is refused, and CASCADE drops them, while constraints named in the schema are of tables or domains of another (D47). RESTRICT is refused while the schema holds a collation [§11.2 SR3]. |
 | ALTER TABLE | §11.10–§11.17 | ADD and DROP COLUMN, ALTER COLUMN defaults, ADD and DROP CONSTRAINT, CASCADE and RESTRICT, inside transactions (D33). |
 | Views | §11.19, §11.11 GR2 | Of any query expression. WITH LOCAL or CASCADED CHECK OPTION, checked against every view an update spans [GR11]. A view keeps the columns it saw when defined, whatever columns are added later. |
 | CREATE TABLE, CREATE VIEW, GRANT, REVOKE on their own | §11.3, §11.19, §11.36, §11.37, §20.1 | In a transaction (RULES.md D33, D47). |
@@ -461,9 +461,9 @@ collations). Citations here are of that edition unless marked.
 | MIN, MAX, COUNT(DISTINCT) | §9.15 | By the argument's collation. |
 | Foreign keys | §9.15 SR4a | A column and the one it references have one collation. MATCH PARTIAL of a collated column is refused (SQLCODE -900). |
 | CREATE COLLATION | §11.43 | FROM an existing collation, with NO PAD or PAD SPACE, or its pad. In a schema definition too. EXTERNAL, DESC, DEFAULT and TRANSLATION, SQL-92's sources, are refused (SQLCODE -900). |
-| DROP COLLATION | §11.44 | RESTRICT or CASCADE. Columns and domains revert to the default [GR2], each table's rows copied, and a constraint that no longer holds fails the statement. RESTRICT is refused while a view or constraint names it [SR4], and CASCADE takes them. A table of another owner is refused (SQLCODE -104). |
-| DROP SCHEMA | 92 §11.2 | Takes its collations. Refused (SQLCODE -900) while a table outside is of one: DROP COLLATION reverts it first. |
-| USAGE | 92 §10.3, §11.36, §11.37 | Granted and revoked. REVOKE of a privilege a column depends on is refused (SQLCODE -103), with CASCADE too. |
+| DROP COLLATION | §11.44 | RESTRICT or CASCADE. Columns and domains revert to the default [GR2], each table's rows copied, and a constraint that no longer holds fails the statement. RESTRICT is refused while a view or constraint names it [SR4], and CASCADE takes them. A table of another owner is reverted too [GR2]. A table referencing one reverted after it is checked again. |
+| DROP SCHEMA | 92 §11.2, §11.2 | Takes its collations as DROP COLLATION CASCADE does [92 GR5; GR5], the columns of other schemas' tables reverted first. RESTRICT is refused while it holds one [92 SR3]. |
+| USAGE | 92 §10.3, §11.36, §11.37, §12.7 | Granted and revoked. A column or domain of a schema whose owner is left without USAGE is impacted [GR12n]. RESTRICT refuses it (SQLCODE -103, SQLSTATE 2B000) [GR12q], and CASCADE reverts it to the default [GR12ad], each table's rows copied as DROP COLLATION copies them. That schema's views, constraints and assertions naming the collation are abandoned [GR12a, c, d, f] and go with CASCADE. A grant whose grantor loses the grant option falls [92 §11.37 SR7]. |
 | SET COLLATION, SET NO COLLATION | §19.10, §9.15 SR4c | The session's collation (ID236: SQL_TEXT's). A bad name is 2H000. It applies to direct statements and to statements as they are prepared, never to views, constraints or defaults. |
 | COLLATION FOR | §6.4 GR13 | The name of a value's own collation, which COLLATE takes. Null if its operands' conflict. |
 | Information Schema | 92 §21 | COLLATIONS, USAGE_PRIVILEGES and each column's and domain's collation. A column of a domain with a COLLATE of its own shows the domain's. |
@@ -477,6 +477,7 @@ whatever its collation.
 | IA060, §8.5 LIKE under a collation | By each character's folding, of UCS_BASIC, SQL_TEXT and CASE_INSENSITIVE. Under UNICODE, whose characters contract and expand, refused (SQLCODE -900). | `binder/collation.rs` |
 | §9.11 POSITION | Exact, by characters, not by the collation | `functions/strings.rs` |
 | §4.3.6 a key's length | About 16 bytes for each character under UNICODE, so an index's limit holds less text | `value/collation/unicode.rs`, `index/blink.rs` |
+| §12.7 GR12l, an impacted collation | A collation made FROM another made one keeps only the built-in it orders by, so none is impacted when USAGE on its source is revoked | `db/collations.rs` |
 
 ---
 

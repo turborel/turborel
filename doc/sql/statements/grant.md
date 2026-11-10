@@ -23,14 +23,18 @@ GRANT: give privileges
     | REFERENCES [ ( <column name list> ) ]
     | USAGE
 
-<object name> ::= [ TABLE ] <table name> | DOMAIN <domain name>
+<object name> ::=
+      [ TABLE ] <table name>
+    | DOMAIN <domain name>
+    | COLLATION <collation name>
 
 <grantee> ::= PUBLIC | <authorization identifier>
 ```
 
 ## DESCRIPTION
 
-GRANT gives each grantee privileges on a table, a view or a domain:
+GRANT gives each grantee privileges on a table, a view, a domain or a
+collation CREATE COLLATION made:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -39,7 +43,7 @@ GRANT gives each grantee privileges on a table, a view or a domain:
 | UPDATE | update the table; on columns, set only those columns |
 | DELETE | delete rows |
 | REFERENCES | name the table, or the columns, in a constraint: a foreign key that references them, a CHECK or an assertion that reads them |
-| USAGE | use the domain: define a column of it, CAST to it |
+| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE |
 
 INSERT, UPDATE or REFERENCES without columns is the privilege on the
 table and on each of its columns, and on each column added to it later.
@@ -61,7 +65,8 @@ USAGE_PRIVILEGES show the privileges.
 
 1. The object exists. A table named without a schema is of the
    session's default schema.
-2. Of a domain, USAGE alone is granted; of a table, USAGE is not.
+2. Of a domain or a collation, USAGE alone is granted; of a table,
+   USAGE is not.
 3. Each column named is the table's.
 4. Of a temporary table, ALL PRIVILEGES alone is granted.
 5. The transaction is not READ ONLY.

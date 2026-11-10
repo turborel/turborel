@@ -19,13 +19,16 @@ DROP SCHEMA: drop a schema
 ## DESCRIPTION
 
 DROP SCHEMA drops a schema. RESTRICT refuses the drop if the schema
-holds a table, a view, a domain or an assertion. CASCADE drops each of
-them first: its tables, as DROP TABLE CASCADE does, and so the views,
-constraints and assertions of other schemas that refer to them; its
-views left; its domains, as DROP DOMAIN CASCADE does; and its
+holds a table, a view, a domain, an assertion or a collation. CASCADE
+drops each of them first: its tables, as DROP TABLE CASCADE does, and so
+the views, constraints and assertions of other schemas that refer to
+them; its views left; its domains, as DROP DOMAIN CASCADE does; and its
 assertions. A constraint named in the schema of a table or a domain of
 another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
-CONSTRAINT drops it; RESTRICT refuses the drop while there is one.
+CONSTRAINT drops it; RESTRICT refuses the drop while there is one. Its
+collations go last, as DROP COLLATION CASCADE drops them, so a column of
+one in another schema's table is made of the default collation, its rows
+copied, and that can fail if a constraint no longer holds.
 
 DROP SCHEMA runs within the session's transaction: ROLLBACK undoes it,
 as it does not undo a [CREATE SCHEMA](create-schema.md).
@@ -50,6 +53,7 @@ The schema is its user's.
 | 3F000 | -103 | There is no such schema, or a catalog other than the one there is is named |
 | 2A000 | -103 | RESTRICT, and the schema holds something |
 | 2A000 | -104 | Its user does not own the schema |
+| 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -87,7 +91,8 @@ turborel: SQLCODE -104 (SQLSTATE 2A000): schema ANN is owned by ANN, not BOB [IS
 
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.2. SQL-86 has no DROP SCHEMA. Dropping the
+ISO/IEC 9075:1992 §11.2; its collations, ISO/IEC 9075-2:2023 §11.2 GR5.
+SQL-86 has no DROP SCHEMA. Dropping the
 constraints named in the schema of another schema's tables and domains,
 which SQL-92 leaves, is an extension.
 

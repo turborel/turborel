@@ -19,6 +19,7 @@ use std::mem;
 use std::sync::Arc;
 
 use super::alter::Made;
+use super::collations::is_made;
 use super::constraints::Within;
 use super::ddl::{Changed, Dropped, validate_rows};
 use super::{Completion, Session, State, api, long_texts, rule};
@@ -64,6 +65,7 @@ impl Session {
         let object = self.object_of(st, statement, &schema)?;
         self.refuse_declared(st, statement, (&object, &schema))?;
         st.acquire_name(tx, &object, LockMode::Exclusive)?;
+        self.revert_impacted(tx, statement)?;
         let mut held = vec![(object, LockMode::Exclusive)];
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
@@ -303,9 +305,15 @@ fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedNam
 }
 
 /// The tables other than `desc` its foreign keys reference and its CHECKs
-/// read.
+/// read, and the collations made its columns are of, which are not
+/// reverted meanwhile (`db/collations/revert.rs`).
 fn read_by(desc: &TableDesc) -> Vec<QualifiedName> {
     let mut read: Vec<QualifiedName> = Vec::new();
+    for name in desc.columns.iter().filter_map(|c| c.collation.clone()).filter(is_made) {
+        if !read.contains(&name) {
+            read.push(name);
+        }
+    }
     for c in &desc.constraints {
         let names = match &c.kind {
             ConstraintKind::ForeignKey(fk) => vec![fk.table.clone()],

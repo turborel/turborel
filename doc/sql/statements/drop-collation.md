@@ -19,7 +19,10 @@ DROP COLLATION drops a collation CREATE COLLATION made. Its columns and
 domains go back to the default collation, each table's rows copied and its
 indexes built again. That can take as long as ALTER TABLE, and it fails if a
 constraint no longer holds, as when strings become duplicates. If it fails on
-one table after another is done, the transaction can only roll back.
+one table after another is done, the transaction can only roll back. A
+table whose foreign key references one reverted after it is checked again,
+so a key holds by the collation its referenced columns end with. The tables
+reverted may be anyone's.
 
 With RESTRICT it is refused while a view or constraint names the collation.
 With CASCADE they go too.
@@ -30,14 +33,14 @@ With CASCADE they go too.
 
 ## PRIVILEGES
 
-Its schema's owner, who owns the schemas of the tables reverted too.
+Its schema's owner.
 
 ## ERRORS
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2A000 | -103 | No such collation, or, with RESTRICT, a view or constraint names it |
-| 2A000 | -104 | Its user does not own the schema or a table's |
+| 2A000 | -104 | Its user does not own the collation's schema |
 | 23000 | -201 | A constraint no longer holds of a table's rows |
 
 ## EXAMPLES
@@ -78,4 +81,4 @@ ISO/IEC 9075-2:2023 §11.44, Feature F690.
 
 ## SEE ALSO
 
-[CREATE COLLATION](create-collation.md), [ALTER TABLE](alter-table.md)
+[CREATE COLLATION](create-collation.md), [ALTER TABLE](alter-table.md), [REVOKE](revoke.md), [DROP SCHEMA](drop-schema.md)

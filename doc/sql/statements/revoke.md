@@ -32,6 +32,15 @@ grantee's that needs the privilege. RESTRICT refuses the revoke if
 anything would be abandoned; CASCADE destroys what is abandoned, and
 what that abandons in turn.
 
+USAGE taken on a collation leaves some schemas' owners without it. A
+column or domain of such a schema that is of the collation is impacted:
+RESTRICT refuses the revoke (SQLSTATE 2B000), and CASCADE makes it of the
+default collation, each table's rows copied and its indexes built again,
+as ALTER TABLE does. That can take as long, and it fails if a constraint
+no longer holds of the rows. A table whose foreign key references one
+reverted is checked again. The schema's views and constraints that name
+the collation in COLLATE are abandoned.
+
 A privilege named that its user had not granted the grantee is not
 taken, and the statement completes with the warning SQLSTATE 01006.
 
@@ -40,7 +49,7 @@ REVOKE runs within the session's transaction: ROLLBACK undoes it.
 ## RULES
 
 1. The object exists, as for [GRANT](grant.md).
-2. RESTRICT: nothing is abandoned.
+2. RESTRICT: nothing is abandoned, and no column or domain is impacted.
 3. The transaction is not READ ONLY.
 
 ## PRIVILEGES
@@ -53,6 +62,8 @@ None: a user revokes only what it granted.
 |---|---|---|
 | 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
+| 2B000 | -103 | RESTRICT, and a column or domain of a schema left without USAGE is of the collation |
+| 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01006 | 0 | Not an error: a privilege named was not granted, and is not taken |
 
@@ -90,10 +101,49 @@ OK, with a warning: SQLSTATE 01006
 Taking BOB's grant option took CAROL's SELECT, which it had granted;
 taking BOB's SELECT took his view. ANN had granted BOB no DELETE.
 
+Of a collation: ANN made FOLD, `FOR SQL_TEXT FROM CASE_INSENSITIVE NO
+PAD`, and granted BOB USAGE on it, and BOB's table FRIENDS has a column
+N of it, unique, holding Bob. Run by ANN:
+
+```sql
+REVOKE USAGE ON COLLATION ANN.FOLD FROM BOB RESTRICT;
+REVOKE USAGE ON COLLATION ANN.FOLD FROM BOB CASCADE;
+COMMIT;
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2B000): revoking USAGE on ANN.FOLD impacts BOB.FRIENDS, which is of it: revoke it with CASCADE [ISO/IEC 9075-2:2023 §12.7 GR12q]
+OK
+OK
+```
+
+Then by BOB:
+
+```sql
+SELECT COLLATION FOR (N) FROM FRIENDS;
+SELECT COUNT(*) FROM FRIENDS WHERE N = 'BOB';
+INSERT INTO FRIENDS VALUES ('bob');
+```
+
+```
+
+--------------------------------------------------------------
+ SQL_TEXT
+(1 row)
+
+----------------------
+                    0
+(1 row)
+OK
+```
+
+N compares by the default collation now, so 'bob' is not Bob.
+
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.37. SQL-86 has no REVOKE.
+ISO/IEC 9075:1992 §11.37. Of a collation, ISO/IEC 9075-2:2023 §12.7,
+as SQL-92 has no rule for a column of one. SQL-86 has no REVOKE.
 
 ## SEE ALSO
 
-[GRANT](grant.md), [DROP USER](drop-user.md)
+[GRANT](grant.md), [DROP USER](drop-user.md), [DROP COLLATION](drop-collation.md)

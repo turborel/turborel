@@ -1,11 +1,11 @@
 //! The mutations of collations (RULES.md R-TEST-9, D60): what keeps an
-//! index of sort keys honest, the order of a key, and what a DROP COLLATION
-//! leaves when it fails.
+//! index of sort keys honest, the order of a key, and how DROP COLLATION,
+//! REVOKE USAGE and DROP SCHEMA revert a collation's columns.
 
 use super::{Mutation, Package};
 
 /// The mutations of collations, in the order they run.
-pub const COLLATIONS: [Mutation; 8] = [
+pub const COLLATIONS: [Mutation; 14] = [
     Mutation {
         name: "collated-read-tracked",
         package: Package::Core,
@@ -69,11 +69,77 @@ pub const COLLATIONS: [Mutation; 8] = [
     Mutation {
         name: "drop-collation-doomed",
         package: Package::Core,
-        breaks: "DROP COLLATION: a failure past its first table leaves the transaction able to commit",
-        file: "src/db/drop.rs",
-        original: "                    tx.doom(\"a DROP COLLATION failed with a table done\");\n",
+        breaks: "a collation's revert: a failure past its first table leaves the transaction able to commit",
+        file: "src/db/collations/revert.rs",
+        original: "            tx.doom(\"a collation's columns were reverted on a table before one failed\");\n",
         replacement: "",
-        integration: &["collations::a_drop_collation_failing_on_a_later_table_only_rolls_back"],
+        integration: &[
+            "collations::a_drop_collation_failing_on_a_later_table_only_rolls_back",
+            "collation_usage::a_revoke_usage_failing_on_a_later_table_only_rolls_back",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "revoke-usage-reverts-impacted",
+        package: Package::Core,
+        breaks: "REVOKE USAGE with CASCADE: the impacted columns are not reverted",
+        file: "src/db/definitions.rs",
+        original: "        self.revert_impacted(tx, statement)?;\n",
+        replacement: "",
+        integration: &["collation_usage::revoke_usage_reverts_impacted_columns_12_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "revoke-usage-impacted-refused",
+        package: Package::Core,
+        breaks: "REVOKE USAGE with RESTRICT: a column impacted is not refused",
+        file: "src/db/collations/usage.rs",
+        original: "    if let Some(first) = impacted {",
+        replacement: "    if let Some(first) = impacted.filter(|_| false) {",
+        integration: &["collation_usage::revoke_usage_reverts_impacted_columns_12_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "revoke-usage-fixed-point",
+        package: Package::Core,
+        breaks: "REVOKE USAGE: a grant whose grantor lost the grant option stands",
+        file: "src/db/collations/usage.rs",
+        original: "            desc.usage.retain(|u| held.usage_of(&u.grantor, &owner).1);",
+        replacement: "            desc.usage.retain(|u| held.usage_of(&u.grantor, &owner).0);",
+        integration: &["collation_usage::a_grant_option_lost_takes_a_collations_grants_with_it_11_37"],
+        unit: &[],
+    },
+    Mutation {
+        name: "collation-revert-recheck",
+        package: Package::Core,
+        breaks: "a collation's revert: a table referencing one reverted is not checked again",
+        file: "src/db/collations/revert.rs",
+        original: "            self.recheck_referencing(tx, tables)",
+        replacement: "            Ok(())",
+        integration: &[
+            "collation_usage::a_one_sided_revert_checks_the_key_again",
+            "collation_usage::a_referencing_table_is_checked_once_its_parent_reverts",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "drop-schema-reverts-outside",
+        package: Package::Core,
+        breaks: "DROP SCHEMA: the columns of other schemas' tables of its collations are not reverted",
+        file: "src/db/drop.rs",
+        original: "                st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()",
+        replacement: "                st.schema_collations(auth).into_iter().map(|qn| (qn, Vec::new())).collect()",
+        integration: &["collation_usage::drop_schema_reverts_other_schemas_columns_11_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "collation-held-by-definer",
+        package: Package::Core,
+        breaks: "a table defined of a collation made holds no lock on it",
+        file: "src/db/definitions.rs",
+        original: "    for name in desc.columns.iter().filter_map(|c| c.collation.clone()).filter(is_made) {",
+        replacement: "    for name in desc.columns.iter().filter_map(|c| c.collation.clone()).filter(|_| false) {",
+        integration: &["collation_usage::a_definition_holds_its_collation_until_it_ends"],
         unit: &[],
     },
     Mutation {

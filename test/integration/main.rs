@@ -29,6 +29,7 @@
 )]
 
 mod collated_indexes;
+mod collation_usage;
 mod collations;
 mod common;
 mod concepts;

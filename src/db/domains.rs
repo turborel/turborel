@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use super::collations::is_made;
 use super::ddl::Dropped;
 use super::defaults::default_of;
 use super::definitions::Defined;
@@ -198,8 +199,9 @@ impl State {
             constraints.push(made);
         }
         self.not_in_own_usage(&qn, &constraints).or_at(d.name.at)?;
-        let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).collect::<Vec<_>>();
         let collation = self.declared_collation(schema, (data_type, None), d.collate.as_ref()).or_at(d.name.at)?;
+        // Its collation made, not reverted meanwhile (`db/collations/revert.rs`).
+        let reads = constraints.iter().flat_map(|c| reads_of(c).to_vec()).chain(collation.clone().filter(is_made)).collect::<Vec<_>>();
         let mut catalog = self.catalog.duplicate();
         catalog.put_domain(DomainDesc { name: qn, data_type, default, constraints, usage: Vec::new(), collation });
         self.catalog = Arc::from(catalog);

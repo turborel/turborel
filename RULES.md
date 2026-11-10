@@ -345,13 +345,22 @@ CAST or USER yields to a column's, as SQL-92's Coercible did. A session
 collation applies to direct and prepared statements, as they are prepared, and
 never to views or constraints, which keep what they were defined with.
 
-A collation's name fixes its behaviour. PostgreSQL's indexes went wrong when a
-library changed its order underneath them, so the table is in the tree, a new
+A collation's name fixes its behaviour. An index goes wrong when a library
+changes its order underneath it, so the table is in the tree, a new
 Unicode version is a new collation, and a database whose collation has another
 version does not open. Case folds come from that table, not the toolchain's.
 
 DROP COLLATION reverts its columns to the default [§11.44 GR2], which reorders
 their indexes, so each table's rows are copied as ALTER TABLE copies them.
+REVOKE USAGE on it with CASCADE reverts the same way the columns and domains of
+the schemas it leaves without USAGE [ISO/IEC 9075-2:2023 §12.7 GR12n, GR12ad],
+and DROP SCHEMA with CASCADE those of other schemas of the collations it takes
+[§11.2 GR5]. A table whose foreign key references one reverted after it, or not
+reverted, is checked again, so a key holds by the collation its referenced
+columns end with. The reverts need no Access Rule, as the statements the
+standard effectively executes run without one, so a table of another owner is
+reverted too. A definition of a column or domain of a collation made holds the
+collation's name shared to its end, which a revert holds exclusive.
 
 #### D33. Schema changes are transactional
 
@@ -389,7 +398,9 @@ GRANT and REVOKE follow §11.36 and §11.37. A privilege stands while its
 grantor holds it with grant option, as a fixed point built from owners'
 privileges, so mutually supporting cycles fall together [§11.37 SR11].
 Warnings are completions, SQLCODE 0 plus their SQLSTATE [§22.2, Table 24].
-SQL-92's PUBLIC rules replace SQL-86's narrower ones.
+SQL-92's PUBLIC rules replace SQL-86's narrower ones. REVOKE USAGE on a
+collation follows ISO/IEC 9075-2:2023 §12.7 GR12, as SQL-92 has no rule for a
+column of it.
 
 #### D49. Temporary tables, an instance per session
 

@@ -25,12 +25,13 @@
 use std::sync::Arc;
 
 use super::alter::{Made, Reshape};
+use super::collations::added_collation;
 use super::defaults::default_value;
 use super::integrity::Effects;
 use super::{Database, Session, State, api};
 use crate::ast::{AlterAction, TableName};
 use crate::binder::qualify;
-use crate::catalog::{QualifiedName, TemporaryKind};
+use crate::catalog::{QualifiedName, Temporary, TemporaryKind};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, fail};
 use crate::index::Index;
@@ -225,23 +226,43 @@ impl Session {
                 format!("[ISO/IEC 9075:1992 §11.10 SR5] {qn} is a declared local temporary table: it is not altered"),
             );
         }
-        self.prepare_change(st, tx, &qn)?;
+        self.alter_base_table(st, tx, (&qn, action, text), temporary)
+    }
+
+    /// `alter_table` of table `qn`, temporary as `temporary` says, without
+    /// its Access Rule: as a collation's columns are reverted, whoever owns
+    /// them [ISO/IEC 9075-2:2023 §11.44 GR2, §12.7 GR12ad].
+    pub(super) fn alter_base_table(
+        &self,
+        st: &Arc<State>,
+        tx: &Txn,
+        (qn, action, text): (&QualifiedName, &AlterAction, &str),
+        temporary: Option<Temporary>,
+    ) -> Result<Completion> {
+        let schema = self.default_schema();
+        self.prepare_change(st, tx, qn)?;
         // [DESIGN] Of a temporary table, no other transaction using an
         // instance of it meanwhile, nor one having written one since this
         // transaction's snapshot (RULES.md D49).
         if temporary.is_some() {
-            st.temporaries.alter(&qn, (tx.id, tx.snapshot()))?;
+            st.temporaries.alter(qn, (tx.id, tx.snapshot()))?;
         }
         let mut next = State::clone(st);
         let zone = self.now.get().zone;
-        let (_, made, reshape) = next.alter_table((&qn, &schema, zone), action, (None, Some(tx)))?;
+        let (_, made, reshape) = next.alter_table((qn, &schema, zone), action, (None, Some(tx)))?;
+        // A column added of a collation made holds its name shared, so no
+        // REVOKE or DROP of it reverts the columns meanwhile.
+        if let Some(Err(e)) = added_collation(&next, qn, action).map(|c| st.acquire_name(tx, &c, LockMode::Shared)) {
+            made.discard();
+            return Err(e);
+        }
         let next = Arc::new(next);
         let checked = match (reshape, action) {
             // [DESIGN] Of a temporary table, each session's instance's rows,
             // not the definition's (`db/temporary/reshape.rs`).
             (Some(reshape), _) => match temporary {
-                Some(_) => self.reshape_instances((st, &next), tx, (&qn, action, reshape)),
-                None => copy_rows(st, &next, tx, &qn, (action, reshape, self.effects(&next))),
+                Some(_) => self.reshape_instances((st, &next), tx, (qn, action, reshape)),
+                None => copy_rows(st, &next, tx, qn, (action, reshape, self.effects(&next))),
             },
             // [§11.12 GR1] a default changes no row, nor does an option
             // changed in place.
@@ -249,8 +270,8 @@ impl Session {
             // [DESIGN] Of a temporary table, each session's rows, as it sees
             // them (`db/temporary/reshape.rs`).
             (None, _) => match temporary {
-                Some(_) => self.validate_instances((st, &next), tx, (&qn, action)),
-                None => validate_rows(&next, tx, &qn, self.effects(&next)),
+                Some(_) => self.validate_instances((st, &next), tx, (qn, action)),
+                None => validate_rows(&next, tx, qn, self.effects(&next)),
             },
         };
         if let Err(e) = checked {
@@ -258,8 +279,8 @@ impl Session {
             return Err(e);
         }
         // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
-        let padding = next.padding_of_alter(&qn, action);
-        let change = Change::AlterTable { table: qn, action: text.to_owned(), schema, zone };
+        let padding = next.padding_of_alter(qn, action);
+        let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
         Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)).warned(padding))
     }
