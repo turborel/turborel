@@ -4,12 +4,13 @@
 /// database's: listed with the others, where it listens taking effect as
 /// it starts and its limits for each statement; a value out of range is
 /// refused (SQLCODE -910); a database served again keeps them declared
-/// once. Its built-in protocol is named "native".
+/// once. Its built-in protocol is named "native". SERVER.WORKERS is four
+/// for each processor the system reports, at most `MAX_WORKERS`.
 #[test]
 fn the_servers_settings_are_the_databases() {
     use turborel::settings::Effect;
     use turborel_server::server::Server;
-    use turborel_server::settings::{HOST, PORT, WORKERS};
+    use turborel_server::settings::{HOST, MAX_WORKERS, PORT, WORKERS, WORKERS_PER_PROCESSOR};
     let db = turborel::db::Database::new();
     drop(Server::new(db.clone()).unwrap());
     drop(Server::new(db.clone()).unwrap());
@@ -18,6 +19,9 @@ fn the_servers_settings_are_the_databases() {
     assert_eq!((effect(HOST), effect(PORT), effect(WORKERS)), (Some(Effect::Start), Some(Effect::Start), Some(Effect::Statement)));
     assert_eq!(listed.iter().filter(|l| l.definition.name.starts_with("SERVER.")).count(), 25);
     assert_eq!(db.setting(PORT).unwrap().to_string(), "7422");
+    let processors = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let workers = processors.saturating_mul(WORKERS_PER_PROCESSOR).min(MAX_WORKERS);
+    assert_eq!(db.setting(WORKERS).unwrap().to_string(), workers.to_string());
     assert_eq!(turborel_server::server::Protocol::name(&turborel_server::native::Native), "native");
     let refused = db.set_setting(WORKERS, &turborel::value::Value::Exact(turborel::value::Decimal::new(0, 0))).unwrap_err();
     assert_eq!(refused.code, turborel::error::Code::Api);
@@ -91,7 +95,8 @@ fn effect_words(effect: turborel::settings::Effect) -> &'static str {
 }
 
 /// Appendix C's table and sentences of `listed`, as the page prints them:
-/// the default of SERVER.WORKERS, the machine's processors, in words.
+/// the default of SERVER.WORKERS, four for each of the machine's
+/// processors, in words.
 fn appendix_section(listed: &[&turborel::settings::Listed]) -> String {
     use std::fmt::Write as _;
     let mut table = String::from("| Setting | Default | Values | Takes effect | |\n|---|---|---|---|---|\n");
@@ -100,7 +105,7 @@ fn appendix_section(listed: &[&turborel::settings::Listed]) -> String {
         let d = &l.definition;
         let mut default = d.default.to_string();
         if d.name == turborel_server::settings::WORKERS {
-            "the processors".clone_into(&mut default);
+            "four per processor".clone_into(&mut default);
         }
         if default.is_empty() {
             "(empty)".clone_into(&mut default);

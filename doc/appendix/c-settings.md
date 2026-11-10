@@ -186,7 +186,7 @@ Each in a sentence:
 | SERVER.TLS_CLIENT_CA | (empty) | TEXT OF AT MOST 1024 CHARACTERS | from the next connection |  |
 | SERVER.TLS_KEY | (empty) | TEXT OF AT MOST 1024 CHARACTERS | from the next connection |  |
 | SERVER.TRUST_LOCAL | OFF | ONE OF ON, OFF | at the next start |  |
-| SERVER.WORKERS | the processors | INTEGER FROM 1 TO 1024 | at once |  |
+| SERVER.WORKERS | four per processor | INTEGER FROM 1 TO 1024 | at once |  |
 
 Each in a sentence:
 

@@ -156,6 +156,13 @@ pub const DEFAULT_TICK_MS: usize = 100;
 /// should allow. Fixed, not a setting (RULES.md D36): the runtime's shape,
 /// fixed as it is made, bounding SERVER.WORKERS, which is the setting.
 pub const MAX_WORKERS: usize = 1024;
+/// \[DESIGN\] The default workers for each processor the system reports at
+/// start: four, so clients past the processors run their statements as
+/// they come instead of queueing for a permit, while statements at once,
+/// and the memory their sorts and tables hold, stay bounded. With one per
+/// processor, a client a processor too many waited at each request, and a
+/// worker holding a permit that the system preempted held up the rest.
+pub const WORKERS_PER_PROCESSOR: usize = 4;
 /// \[DESIGN\] The default host: this machine only, so a server is reached
 /// from others only once its operator says so.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -390,7 +397,7 @@ fn limits() -> [Definition; 7] {
         limit(
             WORKERS,
             (1, i128::try_from(MAX_WORKERS).unwrap_or(most)),
-            processors.min(MAX_WORKERS),
+            processors.saturating_mul(WORKERS_PER_PROCESSOR).min(MAX_WORKERS),
             "Statements the server runs at once, at most; a worker waiting on its client for the next request runs none.",
         ),
         limit(MAX_CONNECTIONS, (1, most), DEFAULT_MAX_CONNECTIONS, "Connections the server takes at once, at most."),

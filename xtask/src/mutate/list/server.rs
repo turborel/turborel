@@ -1,12 +1,13 @@
 //! The mutations of the server (RULES.md R-TEST-9, D42): a stream handed
 //! to the thread that waits on it for a fast client's next request
-//! (`transport/handed.rs`), and a worker's permit taken leaving room
-//! letting the next waiter in (`limit.rs`).
+//! (`transport/handed.rs`), a worker's permit taken leaving room
+//! letting the next waiter in (`limit.rs`), and SERVER.WORKERS four for
+//! each processor by default (`settings.rs`).
 
 use super::{Mutation, Package};
 
 /// The server's mutations, in the order they run.
-pub const SERVER: [Mutation; 2] = [
+pub const SERVER: [Mutation; 3] = [
     Mutation {
         name: "handed-to-thread",
         package: Package::Server,
@@ -29,5 +30,15 @@ pub const SERVER: [Mutation; 2] = [
         replacement: "        if false && room {",
         integration: &[],
         unit: &["limit::tests::one_given_back_lets_in_one_waiter_and_room_left_the_next"],
+    },
+    Mutation {
+        name: "workers-one-per-processor",
+        package: Package::Server,
+        breaks: "SERVER.WORKERS by default one for each processor, so clients past the processors queue for a permit",
+        file: "server/src/settings.rs",
+        original: "            processors.saturating_mul(WORKERS_PER_PROCESSOR).min(MAX_WORKERS),",
+        replacement: "            processors.min(MAX_WORKERS),",
+        integration: &["settings::the_servers_settings_are_the_databases"],
+        unit: &[],
     },
 ];
