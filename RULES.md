@@ -974,7 +974,8 @@ finds one row at most, so nothing could be cheaper by enough to be worth the
 zones and counts a comparison reads. The values still come from the execution
 (D45): a prepared statement's `?` fixes a column as a constant does, a null
 standing in for its value until each execution fills it
-(`physical/kept.rs`). A query learning its plan (D45) is planned with its
+(`physical/kept.rs`). A searched UPDATE or DELETE keeps the probe of its
+object rows the same way. A query learning its plan (D45) is planned with its
 values too, each `?` compared with a column standing in its probe for the
 value, its slot noted, so another execution's value can take its place.
 

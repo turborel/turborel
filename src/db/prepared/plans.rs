@@ -6,10 +6,11 @@
 //! (`Expr::Dynamic`): each execution fills the slots with its values
 //! (`logical/dynamic.rs`), then rewrites and plans the plan, so the access
 //! paths are chosen by its values and by the statistics of then, as a plan
-//! bound with the values as constants would be. A query whose physical
-//! plan is one probe fixing a whole unique key, which no value changes,
-//! keeps that plan too, made once with its slots, and fills it at each
-//! execution instead (`physical/kept.rs`). Any other query learns its
+//! bound with the values as constants would be. A query, a searched
+//! UPDATE or a searched DELETE whose physical plan, of its rows or its
+//! object rows, is one probe fixing a whole unique key, which no value
+//! changes, keeps that plan too, made once with its slots, and fills it
+//! at each execution instead (`physical/kept.rs`). Any other query learns its
 //! plan: each of its first executions also plans it with its slots, its
 //! paths chosen by its values; once `LEARNED_RUNS` in a row make the two
 //! plans one shape (`physical/kept/shape.rs`), it keeps the one with its
@@ -42,14 +43,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use super::super::write::Target;
+use super::super::write::{Target, Written};
 use super::super::{Call, Cursor, Session, State};
 use super::Prepared;
 use crate::ast::{CursorSpecification, SqlStatement};
 use crate::binder::{BoundWrite, Context, OutColumn, bind_cursor};
 use crate::catalog::{Catalog, QualifiedName};
 use crate::error::Result;
-use crate::logical::{LogicalPlan, filled, filled_expr};
+use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
 use crate::physical::{Plan, filled_plan, keepable};
 use crate::settings::Own;
@@ -83,7 +84,8 @@ struct Kept {
     /// A query's `<cursor specification>`, parsed.
     specification: Option<Arc<CursorSpecification>>,
     plan: Option<KeptPlan>,
-    /// A query's physical plan, if its paths follow no value of its.
+    /// A query's physical plan, or an UPDATE's or DELETE's of its object
+    /// rows, if its paths follow no value of its.
     physical: Physical,
 }
 
@@ -140,8 +142,9 @@ enum Found {
 pub(in crate::db) enum KeptPlan {
     /// A query's columns and plan.
     Query(Vec<OutColumn>, LogicalPlan),
-    /// A searched or positioned UPDATE's or DELETE's.
-    Write(Box<BoundWrite>),
+    /// A searched or positioned UPDATE's or DELETE's, shared with each
+    /// execution, which fills its own SET values and object rows' plan.
+    Write(Arc<BoundWrite>),
     /// An INSERT's table, and its query's plan, if it has one.
     Insert(Box<Target>, Option<LogicalPlan>),
 }
@@ -292,6 +295,31 @@ impl Keeping<'_> {
         Ok((columns, filled_plan(plan, values)?, reads))
     }
 
+    /// `w`, a kept UPDATE or DELETE, filled with `values`: its object rows
+    /// by its physical plan made once with its slots, kept, if its paths
+    /// follow no value (`physical::keepable`); else by its logical plan,
+    /// planned as it runs.
+    ///
+    /// # Errors
+    ///
+    /// As `Written::filled`; SQLCODE -910 if a lock is poisoned.
+    fn written(&self, w: Arc<BoundWrite>, values: &[Value]) -> Result<Written> {
+        let fixed = |k: &Kept| match &k.physical {
+            Physical::Untried => None,
+            Physical::Fixed(plan, reads, _) => Some(Some(((**plan).clone(), Arc::clone(reads)))),
+            Physical::Varies | Physical::Learning(_) => Some(None),
+        };
+        if let Some(kept) = self.kept(fixed)? {
+            return Written::filled(w, kept, values);
+        }
+        let (_, _, plan) = super::super::plan(self.st, w.rows.clone());
+        let reads: Arc<[QualifiedName]> = w.rows.tables().into();
+        let kept = keepable(&plan, self.st).then_some((plan, reads));
+        let physical = kept.as_ref().map_or(Physical::Varies, |(p, r)| Physical::Fixed(Box::new(p.clone()), Arc::clone(r), None));
+        self.keep(|k| k.physical = physical)?;
+        Written::filled(w, kept, values)
+    }
+
     /// An execution of a query learning its plan, which `was` says: its
     /// plan made with `values`, to run, and what is kept after it, as
     /// `Learning::kept` says, from it and its plan made with slots.
@@ -309,16 +337,6 @@ impl Keeping<'_> {
     }
 }
 
-/// `w`, its slots filled with `values`.
-///
-/// # Errors
-///
-/// As `filled`.
-fn filled_write(w: BoundWrite, values: &[Value]) -> Result<BoundWrite> {
-    let set = w.set.into_iter().map(|(c, e)| Ok((c, e.map(|e| filled_expr(e, values)).transpose()?))).collect::<Result<_>>()?;
-    Ok(BoundWrite { set, rows: filled(w.rows, values)?, ..w })
-}
-
 impl Session {
     /// `plans`, as an execution in the snapshot `st` sees them.
     pub(in crate::db) fn keeping<'a>(&'a self, st: &'a State, plans: &'a Plans) -> Keeping<'a> {
@@ -327,27 +345,31 @@ impl Session {
 
     /// An UPDATE or DELETE, searched or positioned, as `bind` binds it with
     /// `params`: of a prepared statement, as it keeps it, its values
-    /// filled in.
+    /// filled in (`Keeping::written`).
     ///
     /// # Errors
     ///
-    /// Those of `bind`; as `filled`.
+    /// Those of `bind`; as `Keeping::written`.
     pub(in crate::db) fn write_bound(
         &self,
         st: &State,
         params: &Params,
         keeping: Option<&Keeping<'_>>,
         bind: impl FnOnce(Context<'_>) -> Result<BoundWrite>,
-    ) -> Result<BoundWrite> {
-        let Some(k) = keeping else { return self.bound(st, params, bind) };
+    ) -> Result<Written> {
+        let Some(k) = keeping else { return self.bound(st, params, bind).map(Written::of) };
         let values = params.dynamic_values();
-        if let Some(KeptPlan::Write(w)) = k.plan()? {
-            return filled_write(*w, values);
+        if let Some(w) = k.kept(|kept| if let Some(KeptPlan::Write(w)) = &kept.plan { Some(Arc::clone(w)) } else { None })? {
+            return k.written(w, values);
         }
         let binding = params.keeping();
-        let w = self.bound(st, &binding, bind)?;
-        k.made((!binding.held()).then(|| KeptPlan::Write(Box::new(w.clone()))))?;
-        filled_write(w, values)
+        let w = Arc::new(self.bound(st, &binding, bind)?);
+        if binding.held() {
+            k.made(None)?;
+            return Written::filled(w, None, values);
+        }
+        k.made(Some(KeptPlan::Write(Arc::clone(&w))))?;
+        k.written(w, values)
     }
 
     /// [X3.135-1986 §8.8 GR3a] The `<cursor specification>` `sql`, parsed

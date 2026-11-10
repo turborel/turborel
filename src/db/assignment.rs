@@ -4,9 +4,10 @@
 //! §8.12], and assignment to FETCH and SELECT targets [X3.135-1986 §8.6,
 //! §8.10].
 
+use super::write::Written;
 use super::{Completion, api, rule};
 use crate::ast::ParameterSpecification;
-use crate::binder::{self, OutColumn, ViewCheck};
+use crate::binder::{OutColumn, ViewCheck};
 use crate::catalog::CheckLevels;
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
 use crate::exec::{Subqueries, eval, eval_cond};
@@ -58,23 +59,24 @@ fn check_row(check: &ViewCheck, row: &Row, rule: &str, subqueries: &dyn Subqueri
 }
 
 /// The columns the `<set clause>`s of `w` give values to.
-pub(super) fn set_columns(w: &binder::BoundWrite) -> Vec<usize> {
-    w.set.iter().map(|(c, _)| *c).collect()
+pub(super) fn set_columns(w: &Written) -> Vec<usize> {
+    w.set().iter().map(|(c, _)| *c).collect()
 }
 
 /// [X3.135-1986 §8.11 GR3-GR4, §8.12 GR2-GR3] the candidate row: a copy of the
 /// object row with each SET value, every value computed from the object row
 /// "before any value of the object row is updated", its subqueries run by
 /// `subqueries`.
-pub(super) fn candidate(w: &binder::BoundWrite, old: &Row, (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
+pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
     let mut new = old.clone();
-    for (i, value) in &w.set {
+    let desc = &w.bound.desc;
+    for (i, value) in w.set() {
         let v = match value {
             None => Value::Null,
             Some(e) => eval(e, old, subqueries)?,
         };
-        let (Some(slot), Some(column)) = (new.get_mut(*i), w.desc.columns.get(*i)) else {
-            return Err(api(format!("[DESIGN] {} has no column {i}", w.desc.name)));
+        let (Some(slot), Some(column)) = (new.get_mut(*i), desc.columns.get(*i)) else {
+            return Err(api(format!("[DESIGN] {} has no column {i}", desc.name)));
         };
         *slot = assign(v, &column.data_type, assign_rule)?;
     }
@@ -268,8 +270,15 @@ mod tests {
             temporary: None,
         };
         let rows = LogicalPlan::Scan { table: name.clone(), names: vec!["K".into()], needed: vec![0] };
-        let write =
-            binder::BoundWrite { named: name.clone(), table: name, desc, set: vec![(3, None)], rows, checks: Vec::new(), auth: "A".into() };
-        assert_eq!(candidate(&write, &vec![Value::Null], ("§8.12 GR6", &NoSubqueries)).err().map(|e| e.code), Some(Code::Api));
+        let write = crate::binder::BoundWrite {
+            named: name.clone(),
+            table: name,
+            desc,
+            set: vec![(3, None)],
+            rows,
+            checks: Vec::new(),
+            auth: "A".into(),
+        };
+        assert_eq!(candidate(&Written::of(write), &vec![Value::Null], ("§8.12 GR6", &NoSubqueries)).err().map(|e| e.code), Some(Code::Api));
     }
 }

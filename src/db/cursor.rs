@@ -10,12 +10,13 @@ use super::compiled::Compiled;
 use super::dynamic::Name;
 use super::position::{Move, Position};
 use super::prepared::Keeping;
+use super::write::Written;
 use super::{
     Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, Updatable, api, assign_targets,
     candidate, check_option, check_targets, cursor_error, plan, rule, set_columns,
 };
 use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification, Updatability, ValueSpecification};
-use crate::binder::{self, BoundWrite, OutColumn, bind_select};
+use crate::binder::{self, OutColumn, bind_select};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::error::{At, Code, Result, SqlState, fail, fail_with};
 use crate::exec::{Runner, execute};
@@ -208,9 +209,9 @@ fn open_updatable(
 /// through cursor `name`, updatable as `u`, sets are among those its FOR
 /// UPDATE names, and none of them is read by its ORDER BY. A positioned
 /// DELETE sets none.
-fn check_object_columns(u: &Updatable, w: &BoundWrite, name: &str) -> Result<()> {
-    for (column, _) in &w.set {
-        let named = || w.desc.columns.get(*column).map_or_else(|| column.to_string(), |c| c.name.clone());
+fn check_object_columns(u: &Updatable, w: &Written, name: &str) -> Result<()> {
+    for (column, _) in w.set() {
+        let named = || w.bound.desc.columns.get(*column).map_or_else(|| column.to_string(), |c| c.name.clone());
         if !u.settable.contains(column) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §13.9 SR8] cursor {name} is not FOR UPDATE of {}", named())));
         }
@@ -230,8 +231,8 @@ impl Session {
     /// The cursor's own state is used, as recorded at OPEN, rather than its
     /// text: the text may name parameters of the procedure that opened it,
     /// which this statement need not declare [X3.135-1986 §8.3 SR2, §8.8 GR3a].
-    pub(super) fn positioned_row(&self, cx: StatementContext<'_>, name: &Name, w: &BoundWrite, clause: &str) -> Result<RowId> {
-        let (named, table) = (&w.named, &w.table);
+    pub(super) fn positioned_row(&self, cx: StatementContext<'_>, name: &Name, w: &Written, clause: &str) -> Result<RowId> {
+        let (named, table) = (&w.bound.named, &w.bound.table);
         let inner = self.inner.borrow();
         let c = inner.cursors.get(name).ok_or_else(|| rule(format!("[X3.135-1986 {clause} SR2] no cursor {name} is declared")))?;
         let read_only = || rule(format!("[X3.135-1986 {clause} SR3, §8.3 SR4] cursor {name} is read-only"));
@@ -521,19 +522,20 @@ impl Session {
 
     /// [X3.135-1986 §8.11] the positioned UPDATE bound as `w`, through
     /// cursor `cursor`.
-    pub(super) fn update_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&Name, usize), w: &BoundWrite) -> Result<Completion> {
+    pub(super) fn update_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&Name, usize), w: &Written) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
         let id = self.positioned_row(cx, cursor, w, "§8.11").or_at(at)?;
-        let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;
-        for t in w.set_tables() {
+        let table = &w.bound.table;
+        let old = st.storage_of(table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {table} vanished")))?;
+        for t in w.bound.set_tables() {
             st.read_lock(tx, &t)?;
         }
         let runner = Runner::new(st, tx.id);
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
-        st.update_row(tx, &w.table, id, &new)?;
-        check_option(&w.checks, [&new], ("§8.11 GR5", &runner))?;
+        st.update_row(tx, table, id, &new)?;
+        check_option(&w.bound.checks, [&new], ("§8.11 GR5", &runner))?;
         let mut effects = self.effects(st);
-        effects.updated(&w.table, id, old, &set_columns(w))?;
+        effects.updated(table, id, old, &set_columns(w))?;
         st.end_statement(tx, effects)?;
         self.changed_through(cursor, id);
         Ok(Completion::Success)
@@ -541,13 +543,14 @@ impl Session {
 
     /// [X3.135-1986 §8.4] the positioned DELETE bound as `w`, through
     /// cursor `cursor`.
-    pub(super) fn delete_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&Name, usize), w: &BoundWrite) -> Result<Completion> {
+    pub(super) fn delete_positioned(&self, cx: StatementContext<'_>, (cursor, at): (&Name, usize), w: &Written) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
         let id = self.positioned_row(cx, cursor, w, "§8.4").or_at(at)?;
-        let old = st.storage_of(&w.table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {} vanished", w.table)))?;
-        st.delete_row(tx, &w.table, id)?;
+        let table = &w.bound.table;
+        let old = st.storage_of(table)?.get(tx.id, id)?.ok_or_else(|| api(format!("[DESIGN] row {id} of {table} vanished")))?;
+        st.delete_row(tx, table, id)?;
         let mut effects = self.effects(st);
-        effects.deleted(&w.table, id, old)?;
+        effects.deleted(table, id, old)?;
         st.end_statement(tx, effects)?;
         // [X3.135-1986 §4.12] the cursor is now before the next row.
         if let Some(DeclaredCursor { open: Some(OpenCursor { rows: CursorRows::Updatable(u), .. }), .. }) =

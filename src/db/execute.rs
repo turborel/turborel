@@ -6,20 +6,20 @@ use std::sync::Arc;
 
 use super::dynamic::{self, Name};
 use super::prepared::{Keeping, Plans};
-use super::write::{delete_searched, update_searched};
+use super::write::{Written, delete_searched, update_searched};
 use super::{Call, Completion, Session, StatementContext, slow};
 use crate::ast::{
     AlterAction, ConnectionStatement, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement,
     ServedStatement, SetClause, SqlStatement, TableName, TableStorage, UserStatement,
 };
-use crate::binder::{BoundWrite, Context, WriteKind, bind_write, qualify};
+use crate::binder::{Context, WriteKind, bind_write, qualify};
 use crate::error::{Code, Result, SqlState, fail};
 use crate::lexer::{Tok, Token, kw, lex};
 use crate::params::Params;
 use crate::settings::FUNCTION_CALLS;
 
 /// A positioned DELETE or UPDATE run through a cursor (`Session::positioned`).
-type Positioned = fn(&Session, StatementContext<'_>, (&Name, usize), &BoundWrite) -> Result<Completion>;
+type Positioned = fn(&Session, StatementContext<'_>, (&Name, usize), &Written) -> Result<Completion>;
 
 impl Session {
     /// Execute an `<SQL statement>` [X3.135-1986 §7.3]. `params` plays the part
@@ -220,7 +220,7 @@ impl Session {
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
         let w = self.write_bound(cx.st, params, keeping, |b| bind_write(b, kind, table, set, None))?;
-        self.settle_cursors(cx.st, &w.table);
+        self.settle_cursors(cx.st, &w.bound.table);
         run(self, cx, (&self.positioned_key(&cursor.0), cursor.1), &w)
     }
 
@@ -240,14 +240,14 @@ impl Session {
             SqlStatement::UpdateSearched { table, set, where_clause } => {
                 let bind = |b: Context<'_>| bind_write(b, WriteKind::UpdateSearched, table, set, where_clause.as_ref());
                 let w = self.write_bound(st, params, keeping, bind)?;
-                self.settle_cursors(st, &w.table);
-                update_searched(cx, &w, self.effects(st)).map(|n| self.affected(n))
+                self.settle_cursors(st, &w.bound.table);
+                update_searched(cx, w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::DeleteSearched { table, where_clause } => {
                 let bind = |b: Context<'_>| bind_write(b, WriteKind::DeleteSearched, table, &[], where_clause.as_ref());
                 let w = self.write_bound(st, params, keeping, bind)?;
-                self.settle_cursors(st, &w.table);
-                delete_searched(cx, &w, self.effects(st)).map(|n| self.affected(n))
+                self.settle_cursors(st, &w.bound.table);
+                delete_searched(cx, w, self.effects(st)).map(|n| self.affected(n))
             }
             SqlStatement::UpdatePositioned { table, set, cursor } => {
                 self.positioned(cx, (table, set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), (params, keeping))

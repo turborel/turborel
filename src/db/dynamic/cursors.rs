@@ -9,6 +9,7 @@
 use super::{Name, dynamic_error};
 use crate::ast::{DynamicName, ExtendedName, FetchOrientation, SetClause, TableName, UsingClause};
 use crate::binder::{WriteKind, bind_write};
+use crate::db::write::Written;
 use crate::db::{Completion, DeclaredCursor, Session, StatementContext, rule};
 use crate::error::{Result, SqlState};
 use crate::lexer::{Tok, delim, lex};
@@ -184,7 +185,7 @@ impl Session {
         let key = self.cursor_key(&DynamicName::Extended(cursor.clone()), params, "§17.17 SR2")?;
         let w = self.bound(cx.st, params, |b| bind_write(b, WriteKind::DeletePositioned, table, &[], None))?;
         self.settle_cursors(cx.st, &w.table);
-        self.delete_positioned(cx, (&key, cursor.at), &w)
+        self.delete_positioned(cx, (&key, cursor.at), &Written::of(w))
     }
 
     /// [ISO/IEC 9075:1992 §17.18] UPDATE of the row the extended cursor is
@@ -204,7 +205,7 @@ impl Session {
         let key = self.cursor_key(&DynamicName::Extended(cursor.clone()), params, "§17.18 SR2")?;
         let w = self.bound(cx.st, params, |b| bind_write(b, WriteKind::UpdatePositioned, table, set, None))?;
         self.settle_cursors(cx.st, &w.table);
-        self.update_positioned(cx, (&key, cursor.at), &w)
+        self.update_positioned(cx, (&key, cursor.at), &Written::of(w))
     }
 }
 

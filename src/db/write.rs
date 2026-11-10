@@ -15,8 +15,9 @@ use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_c
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{HeldRows, Runner, execute, row_entries};
-use crate::logical::{LogicalPlan, filled};
+use crate::logical::{Expr, LogicalPlan, filled, filled_expr};
 use crate::params::Params;
+use crate::physical::{Plan, filled_plan};
 use crate::storage::{Row, RowId};
 use crate::txn::Txn;
 use crate::value::datetime::Now;
@@ -69,6 +70,59 @@ impl Target {
             *slot = assign(v, &col.data_type, "ISO/IEC 9075:1992 §13.8 GR4b iii")?;
         }
         Ok(row)
+    }
+}
+
+/// An UPDATE or DELETE as one execution runs it: as bound, shared with
+/// the plan a prepared statement keeps (RULES.md D45), its SET values and
+/// the plan of its object rows filled with the execution's values.
+pub(super) struct Written {
+    /// As bound; of a kept plan, its slots unfilled.
+    pub(super) bound: Arc<BoundWrite>,
+    /// Its SET values filled, of a kept plan; else none, and the bound
+    /// ones are.
+    set: Option<Vec<(usize, Option<Expr>)>>,
+    rows: ObjectRows,
+}
+
+/// The plan of an UPDATE's or DELETE's object rows.
+enum ObjectRows {
+    /// As bound, planned as the statement runs.
+    Bound,
+    /// A kept plan's, filled, planned as the statement runs.
+    Filled(LogicalPlan),
+    /// Planned once with its slots and kept, filled; the tables its
+    /// object rows' plan reads.
+    Kept(Plan, Arc<[QualifiedName]>),
+}
+
+impl Written {
+    /// `bound`, as a statement not prepared runs it.
+    pub(super) fn of(bound: BoundWrite) -> Written {
+        Written { bound: Arc::new(bound), set: None, rows: ObjectRows::Bound }
+    }
+
+    /// `bound`, a kept plan, filled with `values`: its object rows by
+    /// `kept`, its plan made once with its slots and the tables it reads,
+    /// if given; else by its logical plan, filled.
+    ///
+    /// # Errors
+    ///
+    /// As `filled` and `physical::filled_plan`.
+    pub(super) fn filled(bound: Arc<BoundWrite>, kept: Option<(Plan, Arc<[QualifiedName]>)>, values: &[Value]) -> Result<Written> {
+        let fill = |(c, e): &(usize, Option<Expr>)| Ok((*c, e.clone().map(|e| filled_expr(e, values)).transpose()?));
+        let set = bound.set.iter().map(fill).collect::<Result<_>>()?;
+        let rows = match kept {
+            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values)?, reads),
+            None => ObjectRows::Filled(filled(bound.rows.clone(), values)?),
+        };
+        Ok(Written { bound, set: Some(set), rows })
+    }
+
+    /// Its SET values: column position and new value (`None` is NULL), in
+    /// the order written.
+    pub(super) fn set(&self) -> &[(usize, Option<Expr>)] {
+        self.set.as_deref().unwrap_or(&self.bound.set)
     }
 }
 
@@ -241,48 +295,60 @@ fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -
 /// The object rows of a searched UPDATE or DELETE, found before any is
 /// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to MEMORY.WORK_BYTES, the
 /// rest spilled (RULES.md D38).
-pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: &BoundWrite) -> Result<HeldRows<(RowId, Row)>> {
+pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Written, HeldRows<(RowId, Row)>)> {
+    let Written { bound, set, rows } = w;
     // T, to be written, and the tables its subqueries read.
-    st.update_lock(tx, &w.table)?;
+    st.update_lock(tx, &bound.table)?;
+    let (logical, kept) = match rows {
+        ObjectRows::Bound => (Some(bound.rows.clone()), None),
+        ObjectRows::Filled(logical) => (Some(logical), None),
+        ObjectRows::Kept(plan, reads) => (None, Some((plan, reads))),
+    };
+    let reads = match (&logical, &kept) {
+        (_, Some((_, reads))) => reads.to_vec(),
+        (Some(logical), None) => logical.tables(),
+        (None, None) => Vec::new(),
+    };
     // The tables its condition's and its SET values' subqueries read, the
     // object table among them perhaps [ISO/IEC 9075:1992 §13.7, §13.10,
-    // Leveling Rules].
-    for t in w.rows.tables().into_iter().chain(w.set_tables()) {
+    // Leveling Rules]. A SET value's subqueries read the same tables
+    // filled or not.
+    for t in reads.into_iter().chain(bound.set_tables()) {
         st.read_lock(tx, &t)?;
     }
-    let (_, _, physical) = plan(st, w.rows.clone());
-    row_entries(physical, st, tx.id)
+    let physical = match (kept, logical) {
+        (Some((physical, _)), _) => physical,
+        (None, logical) => plan(st, logical.unwrap_or_else(|| bound.rows.clone())).2,
+    };
+    let entries = row_entries(physical, st, tx.id)?;
+    Ok((Written { bound, set, rows: ObjectRows::Bound }, entries))
 }
 
 /// [X3.135-1986 §8.12] the searched UPDATE bound as `w`: the rows it
 /// updated [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
 /// §7.3 GR3a iv].
-pub(super) fn update_searched(
-    StatementContext { st, tx }: StatementContext<'_>,
-    w: &BoundWrite,
-    mut effects: Effects<'_>,
-) -> Result<usize> {
-    let objects = object_rows(st, tx, w)?;
+pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+    let (w, objects) = object_rows(st, tx, w)?;
     if objects.is_empty() {
         return Ok(0);
     }
     let count = objects.len();
-    let columns = set_columns(w);
+    let columns = set_columns(&w);
     let runner = Runner::new(st, tx.id);
     // [ISO/IEC 9075:1992 §13.10 GR6] every value computed before any row
     // is updated: a subquery of one may read the table.
     let mut changes = HeldRows::new(st.list_space());
     for object in objects {
         let (id, old) = object?;
-        let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
+        let new = candidate(&w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
         changes.push((id, old, new))?;
     }
     changes.visit(&mut |(id, old, new)| {
-        st.update_row(tx, &w.table, *id, new)?;
-        effects.updated(&w.table, *id, old.clone(), &columns)
+        st.update_row(tx, &w.bound.table, *id, new)?;
+        effects.updated(&w.bound.table, *id, old.clone(), &columns)
     })?;
-    if !w.checks.is_empty() {
-        changes.visit(&mut |(_, _, new)| check_option(&w.checks, [new], ("§8.12 GR4", &runner)))?;
+    if !w.bound.checks.is_empty() {
+        changes.visit(&mut |(_, _, new)| check_option(&w.bound.checks, [new], ("§8.12 GR4", &runner)))?;
     }
     st.end_statement(tx, effects)?;
     Ok(count)
@@ -291,20 +357,16 @@ pub(super) fn update_searched(
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
 /// deleted [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
 /// §7.3 GR3a iv].
-pub(super) fn delete_searched(
-    StatementContext { st, tx }: StatementContext<'_>,
-    w: &BoundWrite,
-    mut effects: Effects<'_>,
-) -> Result<usize> {
-    let objects = object_rows(st, tx, w)?;
+pub(super) fn delete_searched(StatementContext { st, tx }: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
+    let (w, objects) = object_rows(st, tx, w)?;
     if objects.is_empty() {
         return Ok(0);
     }
     let count = objects.len();
     for object in objects {
         let (id, old) = object?;
-        st.delete_row(tx, &w.table, id)?;
-        effects.deleted(&w.table, id, old)?;
+        st.delete_row(tx, &w.bound.table, id)?;
+        effects.deleted(&w.bound.table, id, old)?;
     }
     st.end_statement(tx, effects)?;
     Ok(count)

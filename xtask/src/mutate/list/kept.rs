@@ -1,13 +1,14 @@
 //! The mutations of prepared statements' kept plans (RULES.md R-TEST-9,
 //! D45): what a plan is kept with, a plan holding the statement's
 //! instant, a physical plan kept with its slots, filled at each
-//! execution (`physical/kept.rs`), and a plan learned from executions whose
-//! plans keep one shape (`db/prepared/plans/learning.rs`).
+//! execution (`physical/kept.rs`), a write's plan of its object rows kept
+//! so too, and a plan learned from executions whose plans keep one shape
+//! (`db/prepared/plans/learning.rs`).
 
 use super::{Mutation, Package};
 
 /// The mutations of kept plans, in the order they run.
-pub const KEPT: [Mutation; 10] = [
+pub const KEPT: [Mutation; 13] = [
     Mutation {
         name: "kept-plan-definitions",
         package: Package::Core,
@@ -113,5 +114,35 @@ pub const KEPT: [Mutation; 10] = [
         replacement: "        if self.slot.is_some_and(|_| false) {",
         integration: &[],
         unit: &["physical::probe::tests::a_slots_value_is_placed_only_as_it_is"],
+    },
+    Mutation {
+        name: "kept-write-any-plan",
+        package: Package::Core,
+        breaks: "kept plans: a write keeps the plan of its object rows though its paths follow its values",
+        file: "src/db/prepared/plans.rs",
+        original: "        let kept = keepable(&plan, self.st).then_some((plan, reads));",
+        replacement: "        let kept = Some((plan, reads));",
+        integration: &[],
+        unit: &["db::prepared::plans::tests::a_point_write_keeps_its_plan_and_a_range_write_none"],
+    },
+    Mutation {
+        name: "kept-write-never-kept",
+        package: Package::Core,
+        breaks: "kept plans: a write's plan of its object rows made with its slots and never kept, so made again at each execution",
+        file: "src/db/prepared/plans.rs",
+        original: "        self.keep(|k| k.physical = physical)?;\n        Written::filled(w, kept, values)",
+        replacement: "        drop(physical);\n        Written::filled(w, kept, values)",
+        integration: &[],
+        unit: &["db::prepared::plans::tests::a_point_write_keeps_its_plan_and_a_range_write_none"],
+    },
+    Mutation {
+        name: "kept-write-unfilled",
+        package: Package::Core,
+        breaks: "kept plans: a write's kept plan of its object rows run with its slots unfilled",
+        file: "src/db/write.rs",
+        original: "            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values)?, reads),",
+        replacement: "            Some((plan, reads)) => ObjectRows::Kept(plan, reads),",
+        integration: &[],
+        unit: &["db::prepared::plans::tests::a_point_write_keeps_its_plan_and_a_range_write_none"],
     },
 ];
