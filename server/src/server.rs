@@ -32,6 +32,7 @@ use turborel::db::Database;
 use turborel::diagnostics::Event;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::txn::Stop;
+use turborel::value::Value;
 use turborel_protocol::{CancelKey, broken};
 
 pub use crate::cancels::Registered;
@@ -349,6 +350,9 @@ impl Server {
     /// setting a plug-in.
     pub fn new(db: Database) -> Result<Server> {
         declare(&db)?;
+        // A row's second writer waits for the first to end, as clients of a
+        // server expect; deadlocks are refused (RULES.md D28).
+        db.set_setting_default("LOCKS.WAIT", &Value::Char("ON".to_owned()))?;
         db.set_credentials(Box::new(Pbkdf2::of(&db)))?;
         let shown = Arc::new(Shown::default());
         db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;

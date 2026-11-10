@@ -37,25 +37,48 @@ commits, and READ UNCOMMITTED reads as READ COMMITTED does.
 
 ## Conflicts
 
-Two transactions that would change one row are not both let: the second
-is refused, not made to wait, and may run again once the first ends.
+Two transactions that would change one row are not both let at once. On
+a server the second waits for the first to end. If the first rolled back,
+the second changes the row as it found it. If the first committed, at READ
+COMMITTED the second checks its WHERE clause against the row the first
+left, and changes that row, its new values computed from it, or leaves it.
+At REPEATABLE READ and SERIALIZABLE it is refused instead, SQLSTATE TB911,
+and the statement may run again in a new transaction.
 
 ```
--- in one session:
+-- in one session, SALARY being 1000:
 UPDATE EMPLOYEES SET SALARY = SALARY + 100 WHERE ID = 1;
--- in another, before the first commits:
-UPDATE EMPLOYEES SET SALARY = 1 WHERE ID = 1;
+-- in another, before the first commits; it waits:
+UPDATE EMPLOYEES SET SALARY = SALARY + 1 WHERE ID = 1;
+-- in the first:
+COMMIT;
+-- in the second, its UPDATE done:
+COMMIT;
+SELECT SALARY FROM EMPLOYEES WHERE ID = 1;
 ```
+
+```
+       SALARY
+--------------
+         1101
+(1 row)
+```
+
+`SET LOCKS.WAIT = 'OFF'` refuses the second at once instead
+([SET](../sql/statements/set-setting.md)), as a database no server serves
+does by default, since a program driving its sessions from one thread
+could never let the first end:
 
 ```
 turborel: SQLCODE -911 (SQLSTATE TB911): a row it would change was changed by a transaction this one does not see, or is being changed; run the transaction again
 ```
 
-`SET LOCKS.WAIT = 'ON'` makes a statement wait for a lock another
-transaction holds, rather than be refused at once
-([SET](../sql/statements/set-setting.md)). A commit that could not keep
-the transactions serializable is refused, SQLSTATE 40001, the
-transaction rolled back, to be run again.
+Two transactions each waiting for a row the other changed would wait
+forever: the second to wait is refused at once, SQLSTATE TB911, only its
+statement undone. LOCKS.TIMEOUT_MS bounds any wait. A positioned UPDATE or
+DELETE, and a referential action, waits too, but is refused if the first
+committed. A commit that could not keep the transactions serializable is
+refused, SQLSTATE 40001, the transaction rolled back, to be run again.
 
 ## Read-only transactions
 

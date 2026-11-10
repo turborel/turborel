@@ -66,9 +66,14 @@ so two transactions may each commit what the other's reads would have
 forbidden (write skew).
 
 At every level, a transaction reads no change another has not committed,
-and loses no update: a statement that writes a row another transaction
-wrote and has not committed, or committed after this one's snapshot, is
-refused (SQLSTATE TB911) and undone, and may be run again. Constraints
+and loses no update. A statement that writes a row another transaction
+wrote and has not committed waits for it to end under LOCKS.WAIT ON, as on
+a server, and is refused at once under OFF (SQLSTATE TB911). Once that
+transaction commits, or if it committed after this one's snapshot, a
+searched UPDATE or DELETE at READ COMMITTED writes the row it left if its
+search condition still holds of it, and leaves it if not; at the other
+levels the statement is refused (SQLSTATE TB911) and undone, and may be
+run again. Constraints
 are checked, and referential actions run, as at SERIALIZABLE at every
 level. A table of an engine that does not isolate transactions itself is
 read as at SERIALIZABLE at every level; the built-in row store does.

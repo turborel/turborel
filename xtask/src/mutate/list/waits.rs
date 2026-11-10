@@ -1,0 +1,79 @@
+//! The mutations of a row's second writer waiting (RULES.md R-TEST-9, D28,
+//! D29): the wait, the deadlock refusal, the re-check of the version the
+//! first committed, and the served default.
+
+use super::{Mutation, Package};
+
+/// The mutations of row waits, in the order they run.
+pub const WAITS: [Mutation; 7] = [
+    Mutation {
+        name: "row-wait-skipped",
+        package: Package::Core,
+        breaks: "a row's second writer is refused at once instead of waiting for the first",
+        file: "src/txn/write.rs",
+        original: "                self.wait_for_writer(tx, table, writer)?;",
+        replacement: "                return Err(e);",
+        integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "row-recheck-ignored",
+        package: Package::Core,
+        breaks: "a waiting writer changes a row its search condition no longer holds of",
+        file: "src/db/write.rs",
+        original: "        Ok(truth == Truth::True)",
+        replacement: "        Ok(truth == Truth::True || true)",
+        integration: &["row_waits::a_waiting_writer_skips_a_row_no_longer_matching_4_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "row-recheck-at-one-snapshot",
+        package: Package::Core,
+        breaks: "REPEATABLE READ writes a version committed after its snapshot",
+        file: "src/txn/write.rs",
+        original: "            let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };",
+        replacement: "            let Some(check) = recheck.as_mut() else { return Err(e) };",
+        integration: &["row_waits::one_snapshot_waits_then_is_refused_if_the_first_commits_4_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "newest-stamp-unchecked",
+        package: Package::Core,
+        breaks: "a write over the newest version takes any stamp, so a version committed since is written over",
+        file: "src/engine/rows/mvcc.rs",
+        original: "                        Past::Stamp(seen) => at != seen,",
+        replacement: "                        Past::Stamp(_) => false,",
+        integration: &[],
+        unit: &["engine::rows::tests::the_newest_version_is_written_over_by_its_stamp"],
+    },
+    Mutation {
+        name: "newest-writer-untold",
+        package: Package::Core,
+        breaks: "the newest state of a row names no open writer, so its second writer never waits",
+        file: "src/engine/rows/mvcc.rs",
+        original: "            Maker::Open(by) => (Some(by).filter(|&by| by != tx), 0),",
+        replacement: "            Maker::Open(_) => (None, 0),",
+        integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
+        unit: &["engine::rows::tests::the_newest_version_is_written_over_by_its_stamp"],
+    },
+    Mutation {
+        name: "row-wait-no-deadlock-check",
+        package: Package::Core,
+        breaks: "two writers waiting for each other's rows wait until their timeout",
+        file: "src/txn/locks.rs",
+        original: "        if would_deadlock(&waits_for, tx.id, &ids) {",
+        replacement: "        if false && would_deadlock(&waits_for, tx.id, &ids) {",
+        integration: &["row_waits::writers_whose_rows_cross_are_refused_the_deadlock"],
+        unit: &[],
+    },
+    Mutation {
+        name: "served-locks-no-wait",
+        package: Package::Server,
+        breaks: "a served database refuses a row's second writer at once",
+        file: "server/src/server.rs",
+        original: "        db.set_setting_default(\"LOCKS.WAIT\", &Value::Char(\"ON\".to_owned()))?;\n",
+        replacement: "",
+        integration: &["settings::a_served_database_waits_for_locks_by_default"],
+        unit: &[],
+    },
+];

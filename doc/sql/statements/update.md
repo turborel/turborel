@@ -63,7 +63,7 @@ privilege beyond UPDATE.
 | 23000 | -201 | A row as changed breaks a constraint |
 | 44000 | -201 | A row changed through a view WITH CHECK OPTION is no longer a row of the view |
 | 22xxx | -301 | A data exception as a value is computed or assigned |
-| TB911 | -911 | A row was written by another transaction, not committed, or committed after this one's snapshot: the statement is undone, and may be run again |
+| TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
 | 25000 | -917 | The transaction is READ ONLY |
 | 02000 | 100 | Not an error: no row was changed |
 

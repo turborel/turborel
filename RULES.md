@@ -819,11 +819,14 @@ A writer whose snapshot predates a change to its table is refused (SQLCODE
 
 #### D28. Transactions may wait for locks, and deadlocks are refused
 
-LOCKS.WAIT says whether a statement meeting a lock waits or is refused at
+LOCKS.WAIT says whether a statement meeting a lock, or a row another
+transaction is changing, waits for that transaction to end or is refused at
 once (SQLCODE -911). LOCKS.TIMEOUT_MS bounds the wait. A wait closing a
-cycle is refused at once, and only the statement is undone. Sessions on
-their own threads should wait, and a program driving several sessions from
-one thread must not.
+cycle, through tables or rows, is refused at once, and only the statement is
+undone. Sessions on their own threads should wait, and a program driving
+several sessions from one thread must not, so LOCKS.WAIT is OFF by default
+and ON in a database a server serves, whose sessions each run on a worker
+of their own as their statements come.
 
 #### D29. Engines own concurrency, at logical timestamps
 
@@ -831,8 +834,9 @@ Only the engine knows its versions and rows. Transaction ids and commit
 timestamps come from increasing counters, never the wall clock. An engine
 that isolates transactions itself keeps row versions, so readers and
 writers never block each other and writers meet only on the same row. A
-row's second writer is refused (SQLCODE -911), and commit checks that
-nothing read has changed.
+row's second writer waits for the first to end (D28), and goes on if it
+rolled back. If it committed, a transaction reading at one snapshot is
+refused (SQLCODE -911), and commit checks that nothing read has changed.
 
 Commit is atomic across engines. Each validates at the commit timestamp and
 then commits at it. A commit returns only once every commit before it has
@@ -844,9 +848,13 @@ Below SERIALIZABLE [ISO/IEC 9075:1992 §4.28, §14.1 GR5], a transaction
 reads at one snapshot (REPEATABLE READ) or a new one per statement (READ
 COMMITTED, and READ UNCOMMITTED, which reads nothing uncommitted). Write
 skew commits, and constraint checks stay serializable. An update one
-statement bases on what it read is never lost. At the per-statement levels,
-a value read by one statement and written back by a later one can overwrite
-a change committed between them. An engine that ignores `TableStorage::read_mode` reads as
+statement bases on what it read is never lost. At the per-statement levels a
+searched UPDATE or DELETE that finds a row changed by a transaction it does
+not see, under LOCKS.WAIT ON, reads the version committed, checks its search
+condition of it, and changes that version or leaves the row
+(`TableStorage::newest`, `write_newest`). A positioned write, or a
+referential action, is refused instead. A value read by one statement and
+written back by a later one can overwrite a change committed between them. An engine that ignores `TableStorage::read_mode` reads as
 SERIALIZABLE.
 
 A transaction that names no level takes TRANSACTION.ISOLATION, READ COMMITTED

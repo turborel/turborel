@@ -145,6 +145,28 @@ impl State {
 }
 
 impl Database {
+    /// \[DESIGN\] Whether a transaction that finds a table locked against it,
+    /// or a row another transaction changed, waits (`LockWait::Wait`, for
+    /// sessions on threads of their own) or is refused at once
+    /// (`LockWait::NoWait`, the default of a database no server serves).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
+    pub fn set_lock_wait(&self, wait: LockWait) -> Result<()> {
+        self.set_setting("LOCKS.WAIT", &Value::Char(settings::lock_wait_word(wait).to_owned()))
+    }
+
+    /// \[DESIGN\] How many statements wait now for a lock or a row another
+    /// transaction holds (RULES.md D28).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
+    pub fn waiting_statements(&self) -> Result<usize> {
+        self.snapshot()?.tx.waiting()
+    }
+
     /// \[DESIGN\] Sets the database's value of the setting `name`, in any
     /// case, for statements that begin from now on, or transactions, as
     /// the setting says; kept with the definitions, so it holds when the
@@ -321,6 +343,23 @@ impl Database {
         let name = definition.name.clone();
         let done = self.change(|st| st.settings.declare(definition).map(|_| ()));
         self.registered((Extension::Setting, &name), done)
+    }
+
+    /// \[DESIGN\] Makes `value` the default of the setting `name` while the
+    /// database runs, kept nowhere, as a server serving it gives a setting
+    /// a default of its own (RULES.md D36): a value set stands, and one set
+    /// to its default takes this.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such setting, or `value` is not of its
+    /// kind.
+    pub fn set_setting_default(&self, name: &str, value: &Value) -> Result<()> {
+        self.change(|st| {
+            let key = st.settings.known(name)?;
+            st.settings.set_default(key, value)
+        })?;
+        self.apply_settings()
     }
 
     /// \[EXTENSION\] Declares `option`, an option of every table, for the

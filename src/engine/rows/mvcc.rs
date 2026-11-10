@@ -66,6 +66,7 @@ mod lists;
 mod open;
 mod pending;
 mod reads;
+mod write;
 
 use lists::{decode_change, encode_change};
 pub(in crate::engine::rows) use reads::Read;
@@ -92,6 +93,16 @@ fn conflict() -> SqlError {
         Code::Conflict,
         "[DESIGN] a row it would change was changed by a transaction this one does not see, or is being changed; run the transaction again",
     )
+}
+
+/// What a write of a row checks its newest committed version against.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Past {
+    /// That the transaction's snapshot sees it.
+    Snapshot,
+    /// That it committed at this timestamp, which `TableStorage::newest`
+    /// gave (`TableStorage::write_newest`).
+    Stamp(Timestamp),
 }
 
 /// A row's newest version, and, if it is one made of its frozen values,
@@ -353,19 +364,19 @@ impl RowTable {
     /// finds the entry it read gone or changed is tried once
     /// more: a freeze may have taken out the entry of a row frozen, the same
     /// row then read from its group (`rows/frozen.rs`); else it conflicts.
-    pub(super) fn write_version(&self, tx: TxId, id: RowId, record: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+    pub(super) fn write_version(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
         if tx == NO_TRANSACTION {
             return self.write_latest(id, record).map(|()| None);
         }
-        if let Some(replaced) = self.try_write(tx, id, record)? {
+        if let Some(replaced) = self.try_write(tx, id, record, past)? {
             return Ok(Some(replaced));
         }
-        self.try_write(tx, id, record)?.map(Some).ok_or_else(conflict)
+        self.try_write(tx, id, record, past)?.map(Some).ok_or_else(conflict)
     }
 
     /// `write_version`'s work: the version it replaced, none if the entry
     /// it read was gone or changed by then.
-    fn try_write(&self, tx: TxId, id: RowId, record: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+    fn try_write(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
@@ -383,7 +394,11 @@ impl RowTable {
                     (version.older, None)
                 }
                 Maker::Committed(at) => {
-                    if at > snapshot {
+                    let newer = match past {
+                        Past::Snapshot => at > snapshot,
+                        Past::Stamp(seen) => at != seen,
+                    };
+                    if newer {
                         return Err(conflict());
                     }
                     if version.deleted {
@@ -515,23 +530,23 @@ impl RowTable {
 impl RowTable {
     /// The newest state of row `id`, for UNIQUE.
     pub(super) fn newest_of(&self, tx: TxId, id: RowId) -> Result<Newest> {
-        let Some(newest) = self.tree.get(&key(id))? else { return Ok(Newest { row: self.frozen_row(id, None)?, pending: None }) };
+        let Some(newest) = self.tree.get(&key(id))? else { return Ok(Newest::of(self.frozen_row(id, None)?)) };
         let version = Version::parse(&newest)?;
         let decoded = |record: &[u8], deleted: bool| if deleted { Ok(None) } else { self.decode(id, record, None).map(Some) };
-        let other = match self.maker(&version) {
-            Maker::Open(by) => by != tx,
-            Maker::Committed(_) => false,
+        let (writer, stamp) = match self.maker(&version) {
+            Maker::Open(by) => (Some(by).filter(|&by| by != tx), 0),
+            Maker::Committed(at) => (None, at),
         };
-        if !other {
-            return Ok(Newest { row: decoded(version.record, version.deleted)?, pending: None });
-        }
+        let Some(by) = writer else {
+            return Ok(Newest { row: decoded(version.record, version.deleted)?, pending: None, writer: None, stamp });
+        };
         let pending = decoded(version.record, version.deleted)?;
         let committed = match version.older {
             Some(at) => self.visible_from(self.undo.read(at)?, Reader::Latest)?,
             None => None,
         };
         let row = committed.map(|record| self.decode(id, &record, None)).transpose()?;
-        Ok(Newest { row, pending: Some(pending) })
+        Ok(Newest { row, pending: Some(pending), writer: Some(by), stamp: 0 })
     }
 
     /// Every version of row `id`, whose newest version is `newest`,

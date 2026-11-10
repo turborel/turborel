@@ -3,6 +3,7 @@
 //! the object rows of searched UPDATE and DELETE [X3.135-1986 §8.5, §8.12].
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::assignment::{candidate, check_option};
@@ -14,12 +15,12 @@ use crate::ast::{ColumnName, InsertSource, InsertStatement, QueryExpression, Row
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{At, Result};
-use crate::exec::{HeldRows, Runner, execute, row_entries};
-use crate::logical::{Expr, LogicalPlan, filled, filled_expr};
+use crate::exec::{HeldRows, Runner, eval_cond, execute, row_entries};
+use crate::logical::{Expr, LogicalPlan, Truth, filled, filled_cond, filled_expr};
 use crate::params::Params;
 use crate::physical::{Plan, filled_plan};
 use crate::storage::{Row, RowId};
-use crate::txn::Txn;
+use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
@@ -83,6 +84,9 @@ pub(super) struct Written {
     /// ones are.
     set: Option<Vec<(usize, Option<Expr>)>>,
     rows: ObjectRows,
+    /// The values it was filled with, of a kept plan: its search condition
+    /// is filled with them only if a row is checked again (`condition`).
+    values: Option<Vec<Value>>,
 }
 
 /// The plan of an UPDATE's or DELETE's object rows.
@@ -99,7 +103,7 @@ enum ObjectRows {
 impl Written {
     /// `bound`, as a statement not prepared runs it.
     pub(super) fn of(bound: BoundWrite) -> Written {
-        Written { bound: Arc::new(bound), set: None, rows: ObjectRows::Bound }
+        Written { bound: Arc::new(bound), set: None, rows: ObjectRows::Bound, values: None }
     }
 
     /// `bound`, a kept plan, filled with `values`: its object rows by
@@ -116,13 +120,30 @@ impl Written {
             Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values)?, reads),
             None => ObjectRows::Filled(filled(bound.rows.clone(), values)?),
         };
-        Ok(Written { bound, set: Some(set), rows })
+        Ok(Written { bound, set: Some(set), rows, values: Some(values.to_vec()) })
     }
 
     /// Its SET values: column position and new value (`None` is NULL), in
     /// the order written.
     pub(super) fn set(&self) -> &[(usize, Option<Expr>)] {
         self.set.as_deref().unwrap_or(&self.bound.set)
+    }
+
+    /// Whether row `row` of the object table, a version another
+    /// transaction committed after the statement's snapshot, is one it
+    /// changes: its views' conditions and its search condition hold of it
+    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29).
+    ///
+    /// # Errors
+    ///
+    /// As `eval_cond`.
+    fn holds_of(&self, row: &Row, runner: &Runner) -> Result<bool> {
+        let LogicalPlan::Filter { cond, .. } = &self.bound.rows else { return Ok(true) };
+        let truth = match &self.values {
+            Some(values) => eval_cond(&filled_cond(cond.clone(), values)?, row, runner)?,
+            None => eval_cond(cond, row, runner)?,
+        };
+        Ok(truth == Truth::True)
     }
 }
 
@@ -296,7 +317,7 @@ fn query_rows(cx: StatementContext<'_>, target: &Target, logical: LogicalPlan) -
 /// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to MEMORY.WORK_BYTES, the
 /// rest spilled (RULES.md D38).
 pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Written, HeldRows<(RowId, Row)>)> {
-    let Written { bound, set, rows } = w;
+    let Written { bound, set, rows, values } = w;
     // T, to be written, and the tables its subqueries read.
     st.update_lock(tx, &bound.table)?;
     let (logical, kept) = match rows {
@@ -321,7 +342,7 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
         (None, logical) => plan(st, logical.unwrap_or_else(|| bound.rows.clone())).2,
     };
     let entries = row_entries(physical, st, tx.id)?;
-    Ok((Written { bound, set, rows: ObjectRows::Bound }, entries))
+    Ok((Written { bound, set, rows: ObjectRows::Bound, values }, entries))
 }
 
 /// [X3.135-1986 §8.12] the searched UPDATE bound as `w`: the rows it
@@ -332,7 +353,6 @@ pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>,
     if objects.is_empty() {
         return Ok(0);
     }
-    let count = objects.len();
     let columns = set_columns(&w);
     let runner = Runner::new(st, tx.id);
     // [ISO/IEC 9075:1992 §13.10 GR6] every value computed before any row
@@ -343,15 +363,42 @@ pub(super) fn update_searched(StatementContext { st, tx }: StatementContext<'_>,
         let new = candidate(&w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
         changes.push((id, old, new))?;
     }
-    changes.visit(&mut |(id, old, new)| {
-        st.update_row(tx, &w.bound.table, *id, new)?;
-        effects.updated(&w.bound.table, *id, old.clone(), &columns)
+    // A row another transaction changed is written in the version it
+    // committed, if it is still one to change, its values computed from it.
+    let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
+    changes.visit(&mut |(id, _, new)| {
+        let mut recomputed = None;
+        let mut recheck = |newest: &Row| {
+            if !w.holds_of(newest, &runner)? {
+                return Ok(Again::Skip);
+            }
+            let row = candidate(&w, newest, ("ISO/IEC 9075:1992 §13.10 GR8", &runner))?;
+            recomputed = Some(row.clone());
+            Ok(Again::Update(row))
+        };
+        match st.rewrite_row(tx, (&w.bound.table, *id), Some(new), &mut recheck)? {
+            Some(old) => {
+                effects.updated(&w.bound.table, *id, old, &columns)?;
+                if let Some(row) = recomputed {
+                    again.insert(*id, Some(row));
+                }
+            }
+            None => {
+                again.insert(*id, None);
+            }
+        }
+        Ok(())
     })?;
     if !w.bound.checks.is_empty() {
-        changes.visit(&mut |(_, _, new)| check_option(&w.bound.checks, [new], ("§8.12 GR4", &runner)))?;
+        let checked = |row: &Row| check_option(&w.bound.checks, [row], ("§8.12 GR4", &runner));
+        changes.visit(&mut |(id, _, new)| match again.get(id) {
+            Some(None) => Ok(()),
+            Some(Some(row)) => checked(row),
+            None => checked(new),
+        })?;
     }
     st.end_statement(tx, effects)?;
-    Ok(count)
+    Ok(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count()))
 }
 
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
@@ -362,11 +409,17 @@ pub(super) fn delete_searched(StatementContext { st, tx }: StatementContext<'_>,
     if objects.is_empty() {
         return Ok(0);
     }
-    let count = objects.len();
+    let runner = Runner::new(st, tx.id);
+    let mut count = 0_usize;
     for object in objects {
-        let (id, old) = object?;
-        st.delete_row(tx, &w.bound.table, id)?;
-        effects.deleted(&w.bound.table, id, old)?;
+        let (id, _) = object?;
+        // A row another transaction changed is deleted in the version it
+        // committed, if it is still one to delete.
+        let mut recheck = |newest: &Row| Ok(if w.holds_of(newest, &runner)? { Again::Delete } else { Again::Skip });
+        if let Some(old) = st.rewrite_row(tx, (&w.bound.table, id), None, &mut recheck)? {
+            effects.deleted(&w.bound.table, id, old)?;
+            count = count.saturating_add(1);
+        }
     }
     st.end_statement(tx, effects)?;
     Ok(count)

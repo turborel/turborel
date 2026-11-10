@@ -18,7 +18,7 @@ or a [configuration file](02-turboreld.md#configuration-files), or on a
 running server by its owner, in SQL:
 
 ```sql
-SET DATABASE LOCKS.WAIT = 'ON';
+SET DATABASE LOCKS.WAIT = 'OFF';
 SET DATABASE SERVER.MAX_CONNECTIONS TO 512;
 SET DATABASE LOCKS.WAIT = DEFAULT;
 ```

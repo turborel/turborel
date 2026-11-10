@@ -426,7 +426,7 @@ changes, and constraints are checked serializably at every level.
 |---|---|---|
 | SERIALIZABLE | Is serializable | None |
 | REPEATABLE READ | One snapshot | None |
-| READ COMMITTED, READ UNCOMMITTED | One snapshot for each statement | A statement loses no update. A value read by one statement and written back by a later one can overwrite a change committed between them, which §4.28 allows. |
+| READ COMMITTED, READ UNCOMMITTED | One snapshot for each statement | A statement loses no update. Under LOCKS.WAIT ON a searched UPDATE or DELETE writes a row another transaction changed once that transaction ends, in the version it committed, if its search condition still holds of it. A value read by one statement and written back by a later one can overwrite a change committed between them, which §4.28 allows. |
 
 ### Not implemented
 

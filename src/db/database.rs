@@ -30,7 +30,7 @@ use crate::settings;
 use crate::spill::Spill;
 use crate::storage::StorageEngine;
 use crate::sync::{lock, read, write};
-use crate::txn::{Damage, LockMode, LockWait, Policy, SessionEnd, Txn};
+use crate::txn::{Damage, LockMode, Policy, SessionEnd, Txn};
 use crate::value::Value;
 
 /// A shared handle to a database. Cloning it is cheap, and clones may be used
@@ -466,17 +466,6 @@ impl Database {
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_transaction_policy(&self, policy: Policy) -> Result<()> {
         self.set_setting("TRANSACTION.STRICT", &Value::Char(settings::policy_word(policy).to_owned()))
-    }
-
-    /// \[DESIGN\] Whether a transaction that finds a table locked against it
-    /// waits (`LockWait::Wait`, for sessions on threads of their own) or is
-    /// refused at once (`LockWait::NoWait`, the default).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
-    pub fn set_lock_wait(&self, wait: LockWait) -> Result<()> {
-        self.set_setting("LOCKS.WAIT", &Value::Char(settings::lock_wait_word(wait).to_owned()))
     }
 
     /// What happens to an open transaction when a session ends: the choice is

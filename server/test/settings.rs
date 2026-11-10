@@ -27,6 +27,26 @@ fn the_servers_settings_are_the_databases() {
     assert_eq!(refused.code, turborel::error::Code::Api);
 }
 
+/// Verifies: [DESIGN] RULES.md D28, D36: a database a server serves waits
+/// for a lock or a row another transaction holds, LOCKS.WAIT ON by
+/// default, where one no server serves refuses at once; a value set
+/// stands, and one set to its default is the server's again.
+#[test]
+fn a_served_database_waits_for_locks_by_default() {
+    use turborel::value::Value;
+    use turborel_server::server::Server;
+    let shown = |db: &turborel::db::Database| db.setting("LOCKS.WAIT").unwrap().to_string();
+    let db = turborel::db::Database::new();
+    assert_eq!(shown(&db), "OFF");
+    let server = Server::new(db.clone()).unwrap();
+    assert_eq!(shown(&db), "ON");
+    db.set_setting("LOCKS.WAIT", &Value::Char("OFF".to_owned())).unwrap();
+    assert_eq!(shown(&db), "OFF", "a value set stands");
+    db.reset_setting("LOCKS.WAIT").unwrap();
+    assert_eq!(shown(&db), "ON", "its default the server's");
+    drop(server);
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.1, §6.2]; [DESIGN] RULES.md
 /// D36, D42, D43: the owner, connected, configures the running server in
 /// SQL: SET DATABASE of a server's limit takes effect at once, a

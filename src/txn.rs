@@ -115,6 +115,7 @@ use undo::UndoLog;
 /// what cancels its statements.
 pub(crate) type Beginning = (LockWait, Reading, Arc<Stop>);
 pub(crate) use undo::{Joined, UndoEntry, UndoSpace};
+pub(crate) use write::Again;
 
 /// \[DESIGN\] A logical timestamp (RULES.md D29): a value of the counter
 /// that orders the commits of a database's transactions, which snapshots

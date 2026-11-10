@@ -69,7 +69,7 @@ use ids::IdBlocks;
 use ids::{key, no_row, row_id};
 pub use meta::TABLE_FORMAT;
 use meta::{locator_of, meta_content, parse_locator};
-use mvcc::{Read, Versions};
+use mvcc::{Past, Read, Versions};
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
 use stats::Gathered;
@@ -296,19 +296,15 @@ impl TableStorage for RowTable {
     }
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        let (record, pages) = self.encode(id, &row)?;
-        let replaced = self.write_version(tx, id, Some(&record)).inspect_err(|_| self.free(&pages))?;
-        self.widen_over(id, Some(&row), replaced.as_deref());
-        self.counted_change(tx);
-        Ok(())
+        self.write_over(tx, id, Some(row), Past::Snapshot)
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        let replaced = self.write_version(tx, id, None)?;
-        self.widen_over(id, None, replaced.as_deref());
-        self.counted.live.fetch_sub(1, Ordering::AcqRel);
-        self.counted_change(tx);
-        Ok(())
+        self.write_over(tx, id, None, Past::Snapshot)
+    }
+
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
+        self.write_over(tx, id, row, Past::Stamp(seen))
     }
 
     /// Puts row `id` back, or replaces it if it is there; ids given from
@@ -324,7 +320,7 @@ impl TableStorage for RowTable {
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
                 Ok(())
             }
-            Ok(false) => self.write_version(tx, id, Some(&record)).map(|_| ()),
+            Ok(false) => self.write_version(tx, id, Some(&record), Past::Snapshot).map(|_| ()),
             Err(e) => Err(e),
         };
         restored.inspect_err(|_| self.free(&pages))?;

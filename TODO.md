@@ -17,9 +17,6 @@ Code never cites this file (R-DOC-5).
 
 Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
 
-- Row conflicts wait: a row's second writer is refused at once (SQLCODE -911)
-  at every level, where PostgreSQL's READ COMMITTED waits for the first to end
-  and reads the row again. Comparisons under contention show this as retries.
 - Language collations: UNICODE orders by the language-neutral table, so
   Swedish or German order needs tailorings from CLDR, each a collation of its
   own name and version. LIKE under UNICODE is refused until then, since

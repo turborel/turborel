@@ -116,6 +116,41 @@ fn deleted_rows_cannot_be_written() {
     assert_eq!(code(table.update(10, b, row())), Some(Code::Conflict), "a deletion after its snapshot");
 }
 
+/// Verifies: [DESIGN] RULES.md D29, `TableStorage::newest` and
+/// `write_newest`: the newest state of a row names the open transaction
+/// changing it, and, once it commits, stamps its version with its commit;
+/// a transaction whose snapshot is older writes over that version given
+/// its stamp, and is refused (SQLCODE -911) given another, or while
+/// another transaction's change is open.
+#[test]
+fn the_newest_version_is_written_over_by_its_stamp() {
+    let scratch = Scratch::new("unit-newest");
+    let pager =
+        Pager::create(&OsFileSystem, &scratch.path("rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap();
+    let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
+    let a = table.insert(crate::txn::NO_TRANSACTION, row("x")).unwrap();
+    let code = |r: Result<()>| r.err().map(|e| e.code);
+    let shown = |r: Option<Row>| r.map(|r| r.iter().map(ToString::to_string).collect::<String>());
+    table.begin(10, 1).unwrap();
+    table.begin(11, 1).unwrap();
+    table.update(11, a, row("y")).unwrap();
+    let open = table.newest(10, a).unwrap();
+    assert_eq!((open.writer, open.stamp, shown(open.row)), (Some(11), 0, shown(Some(row("x")))));
+    assert_eq!(code(table.write_newest(10, a, Some(row("z")), 0)), Some(Code::Conflict), "a change open");
+    table.validate(11, 2).unwrap();
+    table.commit(11, 2);
+    let committed = table.newest(10, a).unwrap();
+    assert_eq!((committed.writer, committed.stamp, shown(committed.row)), (None, 2, shown(Some(row("y")))));
+    assert_eq!(code(table.update(10, a, row("z"))), Some(Code::Conflict), "after its snapshot");
+    assert_eq!(code(table.write_newest(10, a, Some(row("z")), 1)), Some(Code::Conflict), "another stamp");
+    table.write_newest(10, a, Some(row("z")), 2).unwrap();
+    assert_eq!(shown(table.newest(10, a).unwrap().row), shown(Some(row("z"))), "its own change");
+}
+
 /// Verifies: [DESIGN] RULES.md D29, `TableStorage::preserving`: a
 /// transaction whose writes keep what every snapshot reads fails no reader
 /// of the rows it rewrites, and none fails it; the same writes of another

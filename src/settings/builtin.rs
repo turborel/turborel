@@ -350,7 +350,7 @@ fn limits() -> [Definition; 4] {
         defined(
             ("LOCKS.TIMEOUT_MS", at_least(0), whole(0)),
             SESSION,
-            "The milliseconds a statement waits for a lock, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.",
+            "The milliseconds a statement waits for a lock or a row, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.",
         ),
         defined(
             ("DIAGNOSTICS.SLOW_STATEMENT_MS", at_least(0), whole(0)),
@@ -386,7 +386,7 @@ fn definitions() -> [Definition; 5] {
         defined(
             ("LOCKS.WAIT", Kind::Choice(SWITCHES), text(OFF)),
             (true, Effect::Transaction),
-            "ON waits for a lock another transaction holds; OFF refuses the statement at once.",
+            "ON waits for a lock, or a row, another transaction holds until it ends; OFF refuses the statement at once. ON in a database a server serves.",
         ),
         defined(
             ("SESSION.COMMIT_AT_END", Kind::Choice(SWITCHES), text(ON)),

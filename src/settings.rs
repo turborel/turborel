@@ -302,6 +302,21 @@ impl Settings {
         Ok(Key(key))
     }
 
+    /// Makes `value` the default of `key`, kept nowhere: what serves the
+    /// database gives it (`Database::set_setting_default`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `key` is no setting's, or `value` is not of its kind.
+    pub fn set_default(&mut self, key: Key, value: &Value) -> Result<()> {
+        let definition = self.definition(key).ok_or_else(|| misuse("there is no such setting"))?;
+        let value = accepted(&definition.name, &definition.kind, value)?;
+        if let Some(d) = Arc::make_mut(&mut self.definitions).get_mut(key.0) {
+            d.default = value;
+        }
+        Ok(())
+    }
+
     /// The database's value of `key`, or its default.
     pub fn get(&self, key: Key) -> &Value {
         match self.values.get(key.0) {

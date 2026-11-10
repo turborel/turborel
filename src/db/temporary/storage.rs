@@ -272,6 +272,9 @@ impl TableStorage for Rows_ {
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
         self.write(tx)?.delete(tx, id)
     }
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
+        self.write(tx)?.write_newest(tx, id, row, seen)
+    }
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
         self.write(tx)?.restore(tx, id, row)
     }
@@ -291,7 +294,7 @@ impl TableStorage for Rows_ {
         self.made().map_or(Ok(()), |rows| rows.read_by_condition(tx, condition))
     }
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
-        self.made().map_or(Ok(Newest { row: None, pending: None }), |rows| rows.newest(tx, id))
+        self.made().map_or(Ok(Newest::of(None)), |rows| rows.newest(tx, id))
     }
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         self.made().and_then(|rows| rows.statistics())

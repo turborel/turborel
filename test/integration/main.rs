@@ -131,6 +131,7 @@ mod rekeying;
 mod reopen;
 mod replicated_state;
 mod revoke;
+mod row_waits;
 mod rowstore;
 mod rule_settings;
 mod schema_statements;
