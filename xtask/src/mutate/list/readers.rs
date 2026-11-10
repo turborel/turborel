@@ -1,12 +1,13 @@
 //! The mutations of the read-only path (RULES.md R-TEST-9, D29): what a
 //! transaction that wrote nothing collects as it ends, when maintenance
-//! is due, and the shared bookkeeping every transaction takes and gives
-//! back, its logged first and what cancels its statements.
+//! is due, the shared bookkeeping every transaction takes and gives
+//! back, its logged first and what cancels its statements, and what a scan
+//! keeps of a transaction's bookkeeping in a table.
 
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 5] = [
+pub const READERS: [Mutation; 10] = [
     Mutation {
         name: "reader-collects-nothing",
         package: Package::Core,
@@ -56,5 +57,55 @@ pub const READERS: [Mutation; 5] = [
         replacement: "        let _ = &self.noted;",
         integration: &[],
         unit: &["txn::tests::maintenance_is_due_from_a_note_until_taken"],
+    },
+    Mutation {
+        name: "kept-after-end",
+        package: Package::Core,
+        breaks: "read-only path: a scan reads through a transaction's bookkeeping after it ended",
+        file: "src/engine/rows/mvcc/open.rs",
+        original: "            if !open.ended {",
+        replacement: "            if true {",
+        integration: &[],
+        unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
+    },
+    Mutation {
+        name: "kept-after-commit",
+        package: Package::Core,
+        breaks: "read-only path: a transaction's bookkeeping not marked ended as it commits",
+        file: "src/engine/rows/mvcc/commit.rs",
+        original: "            open.ended = true;",
+        replacement: "            open.ended = false;",
+        integration: &[],
+        unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
+    },
+    Mutation {
+        name: "kept-after-rollback",
+        package: Package::Core,
+        breaks: "read-only path: a transaction's bookkeeping not marked ended as it rolls back",
+        file: "src/engine/rows/mvcc.rs",
+        original: "            lock_builtin(&open).ended = true;",
+        replacement: "            lock_builtin(&open).ended = false;",
+        integration: &[],
+        unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
+    },
+    Mutation {
+        name: "kept-for-another-table",
+        package: Package::Core,
+        breaks: "read-only path: what a scan kept of one table's bookkeeping read through another",
+        file: "src/engine/rows/mvcc/open.rs",
+        original: "by == tx && of == table",
+        replacement: "by == tx",
+        integration: &[],
+        unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
+    },
+    Mutation {
+        name: "kept-read-unrecorded",
+        package: Package::Core,
+        breaks: "read-only path: a row read by id not recorded, so a commit is not checked against it",
+        file: "src/engine/rows/mvcc/open.rs",
+        original: "        self.record(open, || Read::Row(id));",
+        replacement: "        let _ = id;",
+        integration: &["isolation::constraints_are_checked_serializably_at_every_level_4_28"],
+        unit: &[],
     },
 ];

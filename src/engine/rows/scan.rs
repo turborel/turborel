@@ -50,8 +50,7 @@ impl Iterator for Ranged {
 impl RowTable {
     /// Row `id` as `tx` sees it, `columns` decoded, or all.
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
-        let reader = self.reader(tx)?;
-        self.note_read(tx, || Read::Row(id))?;
+        let reader = self.read_row(tx, id, near)?;
         if !self.tree.get_near(&key(id), near)? {
             // Frozen, so committed before every snapshot (`rows/frozen.rs`).
             return self.frozen_row(id, columns);

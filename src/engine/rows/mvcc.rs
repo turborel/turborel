@@ -63,6 +63,7 @@ use std::sync::{Arc, Mutex, RwLock};
 mod commit;
 mod gc;
 mod lists;
+mod open;
 mod pending;
 mod reads;
 
@@ -141,6 +142,8 @@ struct Open {
     /// (`TableStorage::preserving`): then no commit is checked against it,
     /// nor it against any.
     preserving: bool,
+    /// Whether it has ended here, so a scan keeping it finds it again.
+    ended: bool,
 }
 
 /// A transaction validated in the table: kept while one could still be
@@ -259,23 +262,6 @@ impl Versions {
 }
 
 impl RowTable {
-    /// Who `tx` is as a reader.
-    pub(super) fn reader(&self, tx: TxId) -> Result<Reader> {
-        if tx == NO_TRANSACTION {
-            return Ok(Reader::Latest);
-        }
-        let open = self.open_of(tx)?;
-        let snapshot = lock_builtin(&open).snapshot;
-        Ok(Reader::At { tx, snapshot })
-    }
-
-    fn open_of(&self, tx: TxId) -> Result<Arc<Mutex<Open>>> {
-        let open = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        open.get(&tx)
-            .map(Arc::clone)
-            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table")))
-    }
-
     /// Who made a version, counting a committed transaction whose stamp is
     /// late as committed.
     pub(super) fn maker(&self, version: &Version<'_>) -> Maker {
@@ -291,7 +277,8 @@ impl RowTable {
     pub(super) fn begin_open(&self, tx: TxId, snapshot: Timestamp) {
         let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let changes = SpillList::new(self.versions.space());
-        let made = || Open { snapshot, changes, reads: Reads::default(), checked: true, reads_since: None, preserving: false };
+        let made =
+            || Open { snapshot, changes, reads: Reads::default(), checked: true, reads_since: None, preserving: false, ended: false };
         open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
     }
 
@@ -312,23 +299,6 @@ impl RowTable {
         open.preserving = true;
         open.checked = false;
         open.reads = Reads::default();
-        Ok(())
-    }
-
-    /// Records what `tx` read, as `read` gives it, if its reads are
-    /// checked: given only then, so a read not checked copies nothing.
-    pub(super) fn note_read(&self, tx: TxId, read: impl FnOnce() -> Read) -> Result<()> {
-        if tx == NO_TRANSACTION {
-            return Ok(());
-        }
-        let open = self.open_of(tx)?;
-        let mut open = lock_builtin(&open);
-        if !open.checked {
-            return Ok(());
-        }
-        let at = open.snapshot;
-        open.reads_since.get_or_insert(at);
-        open.reads.add(read(), self.versions.tracked());
         Ok(())
     }
 
@@ -527,7 +497,10 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
+        let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
+        if let Some(open) = removed {
+            lock_builtin(&open).ended = true;
+        }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         undone
     }

@@ -3,8 +3,9 @@
 //! older version kept for open readers, deleted rows not written, the
 //! versions and the garbage read as of a time, a dropped table's pages
 //! freed, a fetch priced by what its table reads and by the system's
-//! cache, the pages its pool reads ahead as the settings say, and writes
-//! that keep what every snapshot reads failing no reader (RULES.md
+//! cache, the pages its pool reads ahead as the settings say, writes
+//! that keep what every snapshot reads failing no reader, and a scan
+//! keeping a transaction's bookkeeping only while it is open (RULES.md
 //! R-TEST-1, R-TEST-2, R-TEST-7).
 
 use turborel_test_support::Scratch;
@@ -414,5 +415,34 @@ fn pages_in_memory_are_read_ahead_by_their_reader() {
         let past: Vec<u64> = (100..164).collect();
         assert_eq!(pool.ahead_pages(&mut ahead, file, &past), 16_usize, "a window, of 128 frames");
         assert_eq!(pool.ahead_pages(&mut ahead, file, &past[16..]), 0_usize, "queued, so no room: {made_first}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D29, a scan's reads by row id: what a scan
+/// keeps of a transaction's bookkeeping serves that transaction's reads of
+/// that table only while it is open there. Ended by commit or by rollback,
+/// or read through another table, the read is refused as one by a
+/// transaction that has not begun (SQLCODE -901).
+#[test]
+fn a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open() {
+    let pages = crate::engine::MemoryPages::new(1 << 20_u32);
+    let (pool, file) = pages.file("kept").unwrap();
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::Character { length: 1 }], TableOptions::default()).unwrap();
+    let other = RowTable::create(&files, &[DataType::Character { length: 1 }], TableOptions::default()).unwrap();
+    let id = table.insert(crate::txn::NO_TRANSACTION, vec![crate::value::Value::Char("7".into())]).unwrap();
+    let api = Some(Code::Api);
+    for committed in [true, false] {
+        let mut near = Near::default();
+        table.begin(10, 9).unwrap();
+        assert!(table.get_near(10, id, None, &mut near).unwrap().is_some(), "first read, found in the map");
+        assert!(table.get_near(10, id, None, &mut near).unwrap().is_some(), "second read, kept");
+        assert_eq!(other.get_near(10, id, None, &mut near).err().map(|e| e.code), api, "another table's read");
+        if committed {
+            table.commit(10, 9);
+        } else {
+            table.rollback(10).unwrap();
+        }
+        assert_eq!(table.get_near(10, id, None, &mut near).err().map(|e| e.code), api, "ended, committed {committed}");
     }
 }

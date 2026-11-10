@@ -1,7 +1,11 @@
 //! \[DESIGN\] Rows as a table gives them: a row, its id, and rows read as
 //! they are pulled.
 
+use std::any::Any;
+use std::sync::Arc;
+
 use crate::error::Result;
+use crate::txn::TxId;
 use crate::value::Value;
 
 /// A row: one value per column, in column order.
@@ -27,6 +31,9 @@ pub struct Near {
     pub(crate) misses: u8,
     /// The value read, kept so each read does not allocate one.
     pub(crate) bytes: Vec<u8>,
+    /// The reading transaction, the table and its bookkeeping there, found
+    /// by the last read (`rows/mvcc/open.rs`).
+    pub(crate) open: Option<(TxId, usize, Arc<dyn Any + Send + Sync>)>,
 }
 
 /// \[DESIGN\] Rows a table gives, with their ids, read as they are pulled.

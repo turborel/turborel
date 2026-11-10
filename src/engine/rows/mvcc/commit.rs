@@ -93,7 +93,11 @@ impl RowTable {
     pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
         let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
         let Some(open) = removed else { return };
-        let changes = mem::take(&mut lock_builtin(&open).changes);
+        let changes = {
+            let mut open = lock_builtin(&open);
+            open.ended = true;
+            mem::take(&mut open.changes)
+        };
         if changes.is_empty() {
             return;
         }
