@@ -7,6 +7,7 @@ use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::mem;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::owed::{Entry, Owed};
 use super::{Committing, Joined, Timestamp, Transactions, TxId, Txn, UndoFailure};
@@ -64,7 +65,7 @@ impl State {
                 participant.storage.commit(tx.id, tx.snapshot());
             }
             tx.release();
-            self.gc(joined.iter().map(|j| &*j.table));
+            self.gc_read();
             return Ok(());
         }
         // The commit record and the versions stamped are one change to a
@@ -159,12 +160,27 @@ impl State {
                 Some(true) => uncollected.insert(table.clone()),
                 Some(false) | None => uncollected.remove(table),
             };
+            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
         };
         for table in waiting.iter().filter(|w| !tables.clone().any(|t| t == *w)) {
             collect(table);
         }
         for table in tables {
             collect(table);
+        }
+    }
+
+    /// \[DESIGN\] After a transaction that wrote nothing ends, garbage
+    /// collection as `gc`'s, of the tables awaiting it alone (RULES.md D29):
+    /// a transaction makes garbage only as it commits or rolls back changes,
+    /// collecting its tables then, so the tables this one read hold none it
+    /// left. Its end may move the horizon, so those awaiting are collected,
+    /// and none is while none awaits, nor is the gate taken. It notes no
+    /// maintenance: a table's is noted as a writer collects it, and noted
+    /// again after each round while still due (`db/maintenance.rs`).
+    pub(crate) fn gc_read(&self) {
+        if self.tx.awaiting.load(Ordering::Acquire) {
+            self.gc(std::iter::empty());
         }
     }
 
@@ -284,17 +300,22 @@ impl Transactions {
     /// Notes that `table`'s engine has maintenance due, for the
     /// database's maintenance thread (`db/maintenance.rs`).
     pub(crate) fn note_maintenance(&self, table: &QualifiedName) {
-        lock_builtin(&self.maintenance).insert(table.clone());
+        let mut noted = lock_builtin(&self.maintenance);
+        noted.insert(table.clone());
+        self.noted.store(true, Ordering::Release);
     }
 
-    /// Whether a table has maintenance due.
+    /// Whether a table has maintenance due, looked at without a lock, as
+    /// every transaction's end looks.
     pub(crate) fn maintenance_due(&self) -> bool {
-        !lock_builtin(&self.maintenance).is_empty()
+        self.noted.load(Ordering::Acquire)
     }
 
     /// The tables noted with maintenance due, forgotten.
     pub(crate) fn take_maintenance(&self) -> BTreeSet<QualifiedName> {
-        mem::take(&mut *lock_builtin(&self.maintenance))
+        let mut noted = lock_builtin(&self.maintenance);
+        self.noted.store(false, Ordering::Release);
+        mem::take(&mut *noted)
     }
 
     /// Notes that `table`, of an assertion's kept totals, has rows to fold,

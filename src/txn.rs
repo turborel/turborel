@@ -106,6 +106,7 @@ use locks::WaitsFor;
 pub(crate) use logging::Held;
 pub use reading::{ReadMode, Reading};
 pub use stop::Stop;
+use stop::Stops;
 pub(crate) use stop::Window;
 pub(crate) use stop::checked;
 use undo::UndoLog;
@@ -262,14 +263,19 @@ pub(crate) struct Transactions {
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected as any transaction ends.
     uncollected: Mutex<BTreeSet<QualifiedName>>,
+    /// Whether `uncollected` names any table, as it was last changed: so a
+    /// transaction that wrote nothing looks at it without its lock.
+    awaiting: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
+    /// Whether `maintenance` names any table.
+    noted: AtomicBool,
     /// The tables of assertions' kept totals with rows to fold
     /// (`db/assertions/fold.rs`).
     folds: Mutex<BTreeSet<QualifiedName>>,
     /// What cancels the statements of each open transaction, for a plan's
     /// scans to look at (`txn/stop.rs`).
-    stops: Mutex<HashMap<TxId, Arc<Stop>>>,
+    stops: Stops,
     /// The lock of each name a transaction defines, a table's or a view's,
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
@@ -291,7 +297,7 @@ impl Transactions {
 
     /// What cancels the statements of open transaction `tx`, if it is one.
     pub(crate) fn stop_of(&self, tx: TxId) -> Option<Arc<Stop>> {
-        lock_builtin(&self.stops).get(&tx).cloned()
+        self.stops.of(tx)
     }
 }
 
@@ -324,9 +330,11 @@ impl Default for Transactions {
             following: Mutex::new(Following::default()),
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
+            awaiting: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
+            noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
-            stops: Mutex::new(HashMap::new()),
+            stops: Stops::default(),
             names: Mutex::new(HashMap::new()),
         }
     }
@@ -355,7 +363,7 @@ impl Transactions {
     pub(crate) fn begin(self: &Arc<Self>, log: Option<Arc<dyn Log>>, (lock_wait, reading, stop): Beginning, space: UndoSpace) -> Txn {
         let (id, snapshot) = self.clock.begin();
         self.active.fetch_add(1, Ordering::SeqCst);
-        lock_builtin(&self.stops).insert(id, Arc::clone(&stop));
+        self.stops.insert(id, Arc::clone(&stop));
         Txn {
             id,
             snapshot: AtomicU64::new(snapshot),
@@ -540,8 +548,11 @@ impl Txn {
 impl Drop for Txn {
     fn drop(&mut self) {
         self.release();
-        lock_builtin(&self.shared.firsts).remove(&self.id);
-        lock_builtin(&self.shared.stops).remove(&self.id);
+        // Only one that logged a record has a first to forget.
+        if self.state.get_mut().map_or(true, |st| st.logged) {
+            lock_builtin(&self.shared.firsts).remove(&self.id);
+        }
+        self.shared.stops.remove(self.id);
         self.shared.active.fetch_sub(1, Ordering::SeqCst);
     }
 }

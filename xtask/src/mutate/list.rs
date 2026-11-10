@@ -8,6 +8,7 @@ mod collations;
 mod fill;
 mod kept;
 mod near;
+mod readers;
 mod reads;
 mod server;
 mod shadow;
@@ -19,6 +20,7 @@ use super::{Mutation, Package};
 pub use collations::COLLATIONS;
 pub use fill::FILL;
 pub use kept::KEPT;
+pub use readers::READERS;
 pub use reads::READS;
 pub use server::SERVER;
 pub use shadow::SHADOW;
@@ -27,11 +29,12 @@ pub use vr::VR;
 pub use zones::ZONES;
 
 /// Every mutation, in the order they run: the core's, then its kept
-/// plans', reads', collations', shadow files', reads near the last, zeros
+/// plans', the read-only path's, reads', collations', shadow files', reads near the last, zeros
 /// filled ahead of the log, zone maintenance and sampled statistics, then
 /// replication's, then the server's.
 pub fn all() -> Vec<Mutation> {
-    let lists: [&[Mutation]; 11] = [&MUTATIONS, &KEPT, &READS, &COLLATIONS, &SHADOW, &near::NEAR, &FILL, &ZONES, &STATS, &VR, &SERVER];
+    let lists: [&[Mutation]; 12] =
+        [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &SHADOW, &near::NEAR, &FILL, &ZONES, &STATS, &VR, &SERVER];
     lists.into_iter().flatten().copied().collect()
 }
 

@@ -172,3 +172,44 @@ fn the_log_appends_with_no_lock_held() {
     tx.statement_undone();
     assert_eq!(*lock_builtin(&log.locked), [false, false]);
 }
+
+/// Verifies: [DESIGN] RULES.md D25, D44: a transaction that logged a
+/// record holds the log from its first until it ends, dropped; one that
+/// logged none holds nothing, and its end leaves the other's held; what
+/// cancels an open transaction's statements is found by its id, whichever
+/// shard holds it, until it ends.
+#[test]
+fn a_transactions_first_record_and_stop_last_until_it_ends() {
+    let shared = Arc::new(Transactions::default());
+    let log: Arc<dyn Log> = Arc::new(crate::log::MemoryLog::default());
+    let begin = || shared.begin(Some(Arc::clone(&log)), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default());
+    let (writer, reader) = (begin(), begin());
+    writer.log_change(crate::log::record::Change::Abort).unwrap();
+    assert!(shared.oldest_logged().is_some(), "the writer's first");
+    let more: Vec<Txn> = (0_u32..40_u32).map(|_| begin()).collect();
+    for tx in [&writer, &reader].into_iter().chain(&more) {
+        assert!(shared.stop_of(tx.id).is_some(), "open: found in its shard");
+    }
+    let (writer_id, reader_id) = (writer.id, reader.id);
+    drop(reader);
+    assert!(shared.oldest_logged().is_some(), "one that logged nothing leaves the writer's");
+    assert!(shared.stop_of(reader_id).is_none(), "ended");
+    drop(writer);
+    assert_eq!(shared.oldest_logged(), None, "forgotten as the writer ended");
+    assert!(shared.stop_of(writer_id).is_none());
+    assert!(more.iter().all(|tx| shared.stop_of(tx.id).is_some()), "the others still open");
+}
+
+/// Verifies: [DESIGN] RULES.md D29: maintenance is due from a table's note,
+/// looked at without a lock, until the tables noted are taken, each once.
+#[test]
+fn maintenance_is_due_from_a_note_until_taken() {
+    let shared = Transactions::default();
+    assert!(!shared.maintenance_due(), "none noted");
+    let table = QualifiedName { auth: "A".into(), ident: "T".into() };
+    shared.note_maintenance(&table);
+    shared.note_maintenance(&table);
+    assert!(shared.maintenance_due());
+    assert_eq!(shared.take_maintenance().len(), 1);
+    assert!(!shared.maintenance_due(), "taken");
+}

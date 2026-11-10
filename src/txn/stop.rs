@@ -22,10 +22,14 @@
 //! expressions, too (`error::Warnings`): what a statement reaches through
 //! its transaction, as it reaches the flag, wherever its rows are pulled.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::TxId;
 use crate::error::{Code, Result, SqlError, Warnings};
+use crate::sync::lock_builtin;
 
 /// The flag a session's statements look at.
 #[derive(Debug)]
@@ -187,13 +191,56 @@ impl Drop for Window<'_> {
     }
 }
 
+/// \[DESIGN\] The shards a database's map of open transactions' flags is
+/// split in, by transaction id, so that transactions beginning and ending
+/// on many threads at once seldom take the same lock.
+const STOP_SHARDS: u64 = 32;
+
+/// \[DESIGN\] What cancels the statements of each open transaction, for a
+/// plan's scans to look at: in `STOP_SHARDS` shards, by transaction id.
+pub(crate) struct Stops {
+    shards: Vec<Mutex<HashMap<TxId, Arc<Stop>>>>,
+}
+
+impl Default for Stops {
+    fn default() -> Self {
+        Stops { shards: (0..STOP_SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
+    }
+}
+
+impl Stops {
+    /// The shard of `tx`, if there is one.
+    fn shard(&self, tx: TxId) -> Option<&Mutex<HashMap<TxId, Arc<Stop>>>> {
+        usize::try_from(tx % STOP_SHARDS).ok().and_then(|at| self.shards.get(at))
+    }
+
+    /// Notes `stop` as what cancels `tx`'s statements.
+    pub(crate) fn insert(&self, tx: TxId, stop: Arc<Stop>) {
+        if let Some(shard) = self.shard(tx) {
+            lock_builtin(shard).insert(tx, stop);
+        }
+    }
+
+    /// What cancels the statements of `tx`, if it is open.
+    pub(crate) fn of(&self, tx: TxId) -> Option<Arc<Stop>> {
+        self.shard(tx).and_then(|shard| lock_builtin(shard).get(&tx).cloned())
+    }
+
+    /// Forgets `tx`'s, as it ends.
+    pub(crate) fn remove(&self, tx: TxId) {
+        if let Some(shard) = self.shard(tx) {
+            lock_builtin(shard).remove(&tx);
+        }
+    }
+}
+
 /// `rows`, each read only while `stop`, if any, is not cancelled, and
 /// taken only if it was not cancelled as the row was read. From a cancel
 /// on, every read is its error: the rows were cut short there, and a row
 /// read as it came is not taken, so none may seem to be the last.
 pub(crate) fn checked<T>(
     rows: impl Iterator<Item = Result<T>> + Send + 'static,
-    stop: Option<std::sync::Arc<Stop>>,
+    stop: Option<Arc<Stop>>,
 ) -> impl Iterator<Item = Result<T>> + Send + 'static
 where
     T: Send + 'static,
@@ -204,7 +251,7 @@ where
         if let Some(e) = &cut {
             return Some(Err(e.clone()));
         }
-        let looked = |flag: &Option<std::sync::Arc<Stop>>| flag.as_deref().map_or(Ok(()), Stop::check);
+        let looked = |flag: &Option<Arc<Stop>>| flag.as_deref().map_or(Ok(()), Stop::check);
         let read = looked(&stop).and_then(|()| {
             let row = rows.next();
             looked(&stop).map(|()| row)
@@ -253,9 +300,9 @@ mod tests {
     /// is read.
     #[test]
     fn rows_end_at_a_cancel() {
-        let stop = std::sync::Arc::new(Stop::default());
+        let stop = Arc::new(Stop::default());
         let _window = stop.window();
-        let mut rows = checked((1_i32..=3_i32).map(Ok::<i32, SqlError>), Some(std::sync::Arc::clone(&stop)));
+        let mut rows = checked((1_i32..=3_i32).map(Ok::<i32, SqlError>), Some(Arc::clone(&stop)));
         assert_eq!(rows.next().map(Result::ok), Some(Some(1_i32)));
         stop.cancel();
         assert_eq!(rows.next().map(|r| r.err().map(|e| e.code)), Some(Some(Code::Cancelled)));

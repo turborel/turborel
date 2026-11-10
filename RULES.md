@@ -826,7 +826,8 @@ nothing read has changed.
 Commit is atomic across engines. Each validates at the commit timestamp and
 then commits at it. A commit returns only once every commit before it has
 ended, so its session's next snapshot counts it. A transaction that wrote
-nothing commits at its snapshot, unchecked.
+nothing commits at its snapshot, unchecked. Its end collects only the tables
+whose versions await collection, since it leaves no garbage of its own.
 
 Below SERIALIZABLE [ISO/IEC 9075:1992 §4.28, §14.1 GR5], a transaction
 reads at one snapshot (REPEATABLE READ) or a new one per statement (READ
