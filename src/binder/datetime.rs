@@ -89,8 +89,8 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => e,
@@ -114,19 +114,27 @@ pub(super) fn takes_zone(from: DataType, to: DataType) -> bool {
 }
 
 /// [ISO/IEC 9075:1992 §6.10 SR4] Whether CAST takes a value of `from` to
-/// `to`: as `castable` says, either a datetime or interval type; else no
-/// number to or from a bit string, as `Binder::cast` refuses.
+/// `to`: as `castable` says, either a datetime or interval type; else as
+/// `binary_castable` says, as `Binder::cast` refuses.
 pub(crate) fn cast_is_valid(from: &DataType, to: &DataType) -> bool {
     if from.is_datetime() || to.is_datetime() || from.is_interval() || to.is_interval() {
         return castable(from, to);
     }
-    !((from.is_bit() && to.is_numeric()) || (from.is_numeric() && to.is_bit()))
+    binary_castable(from, to)
+}
+
+/// [ISO/IEC 9075-2:2023 §6.13 SR7] Whether CAST takes a value of `from` to
+/// `to` as far as binary strings go: a binary string to and from binary
+/// strings alone, or a type beyond the standard, which says for itself.
+pub(crate) fn binary_castable(from: &DataType, to: &DataType) -> bool {
+    let beyond = matches!(from, DataType::Extension(_)) || matches!(to, DataType::Extension(_));
+    beyond || from.is_binary() == to.is_binary()
 }
 
 /// [ISO/IEC 9075:1992 §6.10 SR4] Whether CAST takes a value of `from` to
 /// `to`, either a datetime type: from and to a character string, a
 /// datetime of the same fields, a date and a timestamp, a time and a
-/// timestamp; no number, no bit string.
+/// timestamp; no number, no binary string.
 fn castable(from: &DataType, to: &DataType) -> bool {
     if from.is_interval() || to.is_interval() {
         return interval_castable(from, to);
@@ -139,8 +147,8 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => None,
@@ -237,8 +245,8 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => None,

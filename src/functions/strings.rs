@@ -7,7 +7,9 @@
 //! A result is of the type its Syntax Rules give: CHARACTER VARYING of
 //! SUBSTRING and TRIM [§6.7 SR2a, SR6e], the string's type of UPPER and
 //! LOWER [§6.7 SR3a], and of `||` fixed or varying as its operands are
-//! [§6.13 SR3a].
+//! [§6.13 SR3a]. Of binary strings [ISO/IEC 9075-2:2023 §4.4], `||`,
+//! SUBSTRING, POSITION and OCTET_LENGTH take them too, as SQL:2023's rules
+//! say.
 
 use std::sync::Arc;
 
@@ -16,7 +18,7 @@ use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::value::Spelled;
-use crate::value::{BYTE_BITS, DataType, Decimal, MAX_BIT_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
+use crate::value::{BYTE_BITS, Binary, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
 
 /// The key word under which concatenation is registered: an operator, so no
 /// call by name reaches it.
@@ -48,8 +50,8 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
         DataType::Character { length } | DataType::Varying { length } => Ok(*length),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -61,12 +63,12 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
     }
 }
 
-/// The length of `t`, a bit string type, its maximum length if it is
-/// varying, and whether it is; none if it is no bit string type.
-fn bit_string(t: &DataType) -> Option<(u32, bool)> {
+/// The length of `t`, a binary string type, its maximum length if it is
+/// varying, and whether it is; none if it is no binary string type.
+fn binary_string(t: &DataType) -> Option<(u32, bool)> {
     match t {
-        DataType::Bit { length } => Some((*length, false)),
-        DataType::BitVarying { length } => Some((*length, true)),
+        DataType::Binary { length } => Some((*length, false)),
+        DataType::VarBinary { length } => Some((*length, true)),
         DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }
@@ -88,8 +90,8 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -109,7 +111,7 @@ fn text(v: &Value) -> Result<Option<&str>> {
         Value::Char(s) => Ok(Some(s)),
         Value::Exact(_)
         | Value::Approx(_)
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
@@ -132,7 +134,7 @@ fn whole(v: Option<&Value>) -> Result<Option<i128>> {
         Some(
             Value::Char(_)
             | Value::Approx(_)
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -146,13 +148,6 @@ fn counted(n: usize) -> Value {
     Value::Exact(Decimal::new(i128::try_from(n).unwrap_or(i128::MAX), 0))
 }
 
-/// Whether the operand other than `position` of two is not a `<dynamic
-/// parameter specification>`.
-fn other_known(position: usize, args: &[Option<DataType>]) -> bool {
-    let other = usize::from(position == 0);
-    args.get(other).is_some_and(Option::is_some)
-}
-
 /// [§6.13] `<concatenation>`: the characters of one string, then the
 /// other's \[GR2\]; null if either is \[GR2a\]. Of the sum of their
 /// lengths: varying if either is, else fixed \[SR3a\].
@@ -164,8 +159,8 @@ impl ScalarFunction for Concatenation {
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let [a, b] = args else { return fail(Code::Api, "[DESIGN] || takes two operands") };
-        if let (Some((x, xv)), Some((y, yv))) = (bit_string(a), bit_string(b)) {
-            return bit_concatenation(x.saturating_add(y), xv || yv);
+        if let (Some((x, xv)), Some((y, yv))) = (binary_string(a), binary_string(b)) {
+            return binary_concatenation(x.saturating_add(y), xv || yv);
         }
         let length = character(CONCATENATION, a)?.saturating_add(character(CONCATENATION, b)?);
         // [SR3a i] varying, at most the longest varying string.
@@ -181,17 +176,17 @@ impl ScalarFunction for Concatenation {
         }
         Ok(DataType::Character { length })
     }
-    /// [§17.6 GR5d] CHARACTER VARYING, unless the other operand is one too
-    /// \[GR4c\].
+    /// [§17.6 GR5d] CHARACTER VARYING, or BINARY VARYING beside a binary
+    /// string, unless the other operand is one too \[GR4c\].
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
-        other_known(position, args).then_some(ParameterType::Varying)
+        beside(position, args)
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [a, b] = args else { return fail(Code::Api, "[DESIGN] || takes two operands") };
-        if let (Value::Bits(a), Value::Bits(b)) = (a, b) {
-            return Ok(Value::Bits(a.concat(b)));
+        if let (Value::Binary(a), Value::Binary(b)) = (a, b) {
+            return within_most(a.concat(b));
         }
-        if matches!(a, Value::Bits(_)) || matches!(b, Value::Bits(_)) {
+        if matches!(a, Value::Binary(_)) || matches!(b, Value::Binary(_)) {
             return Ok(Value::Null);
         }
         Ok(match (text(a)?, text(b)?) {
@@ -201,28 +196,58 @@ impl ScalarFunction for Concatenation {
     }
 }
 
-/// [§6.13 SR6a] The type of `<bit concatenation>`: of `length` bits,
-/// varying if an operand is, at most the longest varying bit string; else
-/// fixed, no longer than the longest fixed one.
-fn bit_concatenation(length: u32, varying: bool) -> Result<DataType> {
+/// [ISO/IEC 9075-2:2023 §6.32 SR6a] The type of `<binary
+/// concatenation>`: of `length` octets, varying if an operand is, at most
+/// the longest varying binary string \[SR6a ii\]; else fixed, no longer than
+/// the longest fixed one \[SR6a iii\].
+fn binary_concatenation(length: u32, varying: bool) -> Result<DataType> {
     if varying {
-        return Ok(DataType::BitVarying { length: length.min(MAX_BIT_LENGTH) });
+        return Ok(DataType::VarBinary { length: length.min(MAX_BINARY_LENGTH) });
     }
-    if length > MAX_BIT_LENGTH {
+    if length > MAX_BINARY_LENGTH {
         return fail(
             Code::SyntaxRule,
-            format!("[ISO/IEC 9075:1992 §6.13 SR6a ii] || of BIT({length}) is longer than {MAX_BIT_LENGTH} bits"),
+            format!("[ISO/IEC 9075-2:2023 §6.32 SR6a iii] || of BINARY({length}) is longer than {MAX_BINARY_LENGTH} octets"),
         );
     }
-    Ok(DataType::Bit { length })
+    Ok(DataType::Binary { length })
 }
 
-/// [§6.7] `<character substring function>` and `<bit substring function>`:
-/// SUBSTRING(C FROM S \[FOR L\]), called with C, S and, if written, L.
+/// [ISO/IEC 9075-2:2023 §6.32 GR3b ii] `s`, joined, if no longer than the
+/// longest varying binary string; else its first octets, if those after
+/// are all X'00'. Joined fixed strings are never longer \[SR6a iii\].
+///
+/// # Errors
+///
+/// SQLSTATE 22001 if an octet after them is not X'00'.
+fn within_most(s: Binary) -> Result<Value> {
+    let past = s.bytes().get(usize::try_from(MAX_BINARY_LENGTH).unwrap_or(usize::MAX)..).unwrap_or_default();
+    if past.iter().any(|&o| o != 0) {
+        return fail_with(
+            Code::Data,
+            SqlState::STRING_DATA_RIGHT_TRUNCATION,
+            format!("[ISO/IEC 9075-2:2023 §6.32 GR3b ii 3] || of {} octets is longer than {MAX_BINARY_LENGTH}", s.len()),
+        );
+    }
+    Ok(Value::Binary(if past.is_empty() { s } else { s.substring(1, MAX_BINARY_LENGTH) }))
+}
+
+/// [§17.6 GR5] The type of a `<dynamic parameter specification>` one of
+/// two operands, at `position`: BINARY VARYING beside a binary string,
+/// else CHARACTER VARYING; none beside another parameter.
+fn beside(position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
+    let other = args.get(usize::from(position == 0))?.as_ref()?;
+    Some(if other.is_binary() { ParameterType::Of(DataType::VarBinary { length: MAX_BINARY_LENGTH }) } else { ParameterType::Varying })
+}
+
+/// [§6.7] `<character substring function>`, and [ISO/IEC 9075-2:2023
+/// §6.33] `<binary substring function>`: SUBSTRING(C FROM S \[FOR L\]),
+/// called with C, S and, if written, L.
 struct Substring;
 
-/// [§6.7 GR1b-GR1e, GR6b-GR6e] Where SUBSTRING's result starts and ends in
-/// a string of `length` characters or bits, from 0, end excluded, of S and
+/// [§6.7 GR1b-GR1e; ISO/IEC 9075-2:2023 §6.33 GR17] Where SUBSTRING's
+/// result starts and ends in a string of `length` characters or octets,
+/// from 0, end excluded, of S and
 /// L, `args` after the string; none if S or L is null.
 ///
 /// # Errors
@@ -260,9 +285,10 @@ impl ScalarFunction for Substring {
         for t in rest {
             integer(kw::SUBSTRING, t)?;
         }
-        // [SR7] of a bit string, a varying one as long as it at most.
-        if let Some((length, _)) = bit_string(source) {
-            return Ok(DataType::BitVarying { length });
+        // [ISO/IEC 9075-2:2023 §6.33 SR21a] of a binary string, a varying
+        // one as long as it at most.
+        if let Some((length, _)) = binary_string(source) {
+            return Ok(DataType::VarBinary { length });
         }
         // [SR2a] varying, as long as the string at most.
         Ok(DataType::Varying { length: character(kw::SUBSTRING, source)? })
@@ -274,10 +300,10 @@ impl ScalarFunction for Substring {
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let source = args.first().unwrap_or(&Value::Null);
-        if let Value::Bits(b) = source {
+        if let Value::Binary(b) = source {
             let Some((from, to)) = span(args, usize::try_from(b.len()).unwrap_or(usize::MAX))? else { return Ok(Value::Null) };
             let (start, count) = (u32::try_from(from).unwrap_or(u32::MAX), u32::try_from(to.saturating_sub(from)).unwrap_or(0));
-            return Ok(Value::Bits(b.substring(start.saturating_add(1), count)));
+            return Ok(Value::Binary(b.substring(start.saturating_add(1), count)));
         }
         let Some(c) = text(source)? else { return Ok(Value::Null) };
         let chars: Vec<char> = c.chars().collect();
@@ -343,7 +369,9 @@ impl ScalarFunction for Trim {
 }
 
 /// [§6.6] `<position expression>`: POSITION(A IN B), called with A and B:
-/// 1 if A is empty, else where A first starts in B, from 1, or 0 \[GR1\].
+/// 1 if A is empty, else where A first starts in B, from 1, or 0 \[GR1\];
+/// of binary strings, the same in octets [ISO/IEC 9075-2:2023 §6.31
+/// GR3].
 struct Position;
 
 impl ScalarFunction for Position {
@@ -352,17 +380,24 @@ impl ScalarFunction for Position {
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let [a, b] = args else { return fail(Code::Api, "[DESIGN] POSITION takes two strings") };
+        // [ISO/IEC 9075-2:2023 §6.31] binary strings both, or character strings.
+        if binary_string(a).is_some() && binary_string(b).is_some() {
+            return Ok(COUNTED);
+        }
         character(kw::POSITION, a)?;
         character(kw::POSITION, b)?;
         Ok(COUNTED)
     }
-    /// [§17.6 GR5c] CHARACTER VARYING, unless the other string is one too
-    /// \[GR4l\].
+    /// [§17.6 GR5c] CHARACTER VARYING, or BINARY VARYING beside a binary
+    /// string, unless the other string is one too \[GR4l\].
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
-        other_known(position, args).then_some(ParameterType::Varying)
+        beside(position, args)
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [a, b] = args else { return fail(Code::Api, "[DESIGN] POSITION takes two strings") };
+        if let (Value::Binary(a), Value::Binary(b)) = (a, b) {
+            return Ok(counted(usize::try_from(b.position(a)).unwrap_or(usize::MAX)));
+        }
         let (Some(a), Some(b)) = (text(a)?, text(b)?) else { return Ok(Value::Null) };
         if a.is_empty() {
             return Ok(counted(1));
@@ -377,9 +412,11 @@ enum Unit {
     /// Characters [§6.6 GR4].
     Characters,
     /// Octets of the string as UTF-8, its implementation-defined form of use
-    /// \[GR5\].
+    /// \[GR5\]; of a binary string, its octets [ISO/IEC 9075-2:2023 §6.31
+    /// GR6].
     Octets,
-    /// Bits of those octets \[GR6\].
+    /// \[EXTENSION\] Bits of those octets, as SQL-92 counts them \[GR6\];
+    /// SQL:2023 has no BIT_LENGTH.
     Bits,
 }
 
@@ -396,35 +433,35 @@ impl ScalarFunction for Length {
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let [s] = args else { return fail(Code::Api, "[DESIGN] a length takes one string") };
-        if bit_string(s).is_none() {
+        // [ISO/IEC 9075-2:2023 §6.31] CHAR_LENGTH of a character string
+        // alone; OCTET_LENGTH of any string.
+        let counts_octets = matches!(self.unit, Unit::Octets | Unit::Bits);
+        if !(counts_octets && binary_string(s).is_some()) {
             character(self.name, s)?;
         }
         Ok(COUNTED)
     }
-    /// [§17.6 GR5b] CHARACTER VARYING, of CHAR_LENGTH and OCTET_LENGTH;
-    /// of BIT_LENGTH BIT VARYING \[GR5e\].
+    /// [§17.6 GR5b] CHARACTER VARYING.
     fn parameter_type(&self, _position: usize, _args: &[Option<DataType>]) -> Option<ParameterType> {
-        Some(match self.unit {
-            Unit::Characters | Unit::Octets => ParameterType::Varying,
-            Unit::Bits => ParameterType::Of(DataType::BitVarying { length: MAX_BIT_LENGTH }),
-        })
+        Some(ParameterType::Varying)
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [s] = args else { return fail(Code::Api, "[DESIGN] a length takes one string") };
-        // [GR4a ii, GR5a, GR6a] a bit string's bits, and the octets they
-        // fill.
-        if let Value::Bits(b) = s {
-            let bits = match self.unit {
-                Unit::Characters | Unit::Octets => b.len().div_ceil(BYTE_BITS),
-                Unit::Bits => b.len(),
-            };
-            return Ok(counted(usize::try_from(bits).unwrap_or(usize::MAX)));
-        }
-        let Some(s) = text(s)? else { return Ok(Value::Null) };
-        Ok(counted(match self.unit {
-            Unit::Characters => s.chars().count(),
-            Unit::Octets => s.len(),
-            Unit::Bits => s.len().saturating_mul(8),
-        }))
+        let octets = match s {
+            Value::Binary(b) => b.bytes().len(),
+            Value::Char(c) => {
+                if matches!(self.unit, Unit::Characters) {
+                    c.chars().count()
+                } else {
+                    c.len()
+                }
+            }
+            Value::Null => return Ok(Value::Null),
+            Value::Exact(_) | Value::Approx(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
+                return text(s).map(|_| Value::Null);
+            }
+        };
+        let bits = usize::try_from(BYTE_BITS).unwrap_or(usize::MAX);
+        Ok(counted(if matches!(self.unit, Unit::Bits) { octets.saturating_mul(bits) } else { octets }))
     }
 }

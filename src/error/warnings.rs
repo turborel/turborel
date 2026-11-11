@@ -91,7 +91,7 @@ mod tests {
         assert!(!warnings.raised());
         warnings.raise(SqlState::STRING_TRUNCATED);
         assert!(warnings.raised());
-        warnings.raise(SqlState::ZERO_BIT_PADDING);
+        warnings.raise(SqlState::PRIVILEGE_NOT_GRANTED);
         assert_eq!(warnings.take(), Some(SqlState::STRING_TRUNCATED));
         assert!(!warnings.raised(), "none raised once taken");
         assert_eq!(warnings.take(), None);
@@ -108,7 +108,7 @@ mod tests {
         warnings.raise(SqlState::STRING_TRUNCATED);
         warnings.raise(SqlState::STRING_TRUNCATED);
         assert!(!warnings.take_left_out(), "the same condition");
-        warnings.raise(SqlState::ZERO_BIT_PADDING);
+        warnings.raise(SqlState::NULL_VALUE_ELIMINATED);
         assert!(warnings.take_left_out());
         assert!(!warnings.take_left_out(), "asked once");
         assert_eq!(warnings.take(), Some(SqlState::STRING_TRUNCATED));

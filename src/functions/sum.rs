@@ -57,7 +57,7 @@ impl Total {
                 let units = s.units.checked_add(i.units).map_or_else(beyond, Ok)?;
                 Total::Interval(Interval { units, qualifier: s.qualifier.joined(&i.qualifier, MAX_LEADING_PRECISION) })
             }
-            (Total::Empty, Value::Char(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_)) => {
+            (Total::Empty, Value::Char(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_)) => {
                 Total::Other(v.clone())
             }
             (Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::Other(_), _) => {

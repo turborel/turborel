@@ -12,7 +12,7 @@ SQLSTATE 0A000.
 |---|---|
 | An identifier | 128 characters |
 | CHARACTER and CHARACTER VARYING | 32,767 characters |
-| BIT and BIT VARYING | 262,136 bits (32,767 octets) |
+| BINARY and BINARY VARYING | 32,767 octets |
 | NUMERIC, DECIMAL and an exact literal | 18 digits |
 | FLOAT | 53 binary digits; an approximate literal within the range of DOUBLE PRECISION |
 | A datetime's fraction of a second | 6 digits |

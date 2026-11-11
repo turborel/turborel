@@ -167,7 +167,7 @@ impl SqlType for IntervalKind {
                     uncastable(&v, t)
                 }
             }
-            Value::Approx(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Approx(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),
         }
     }
 
@@ -312,7 +312,7 @@ mod tests {
         let (dt, ym) = qualifiers();
         let (t_dt, t_ym) = (DataType::Interval(dt), DataType::Interval(ym));
         let month = Value::Interval(Interval { units: 13, qualifier: ym });
-        for v in [month.clone(), Value::Approx(1.0), Value::Bits(crate::value::Bits::default())] {
+        for v in [month.clone(), Value::Approx(1.0), Value::Binary(crate::value::Binary::default())] {
             assert_eq!(INTERVAL_DAY_TIME.cast(v, &t_dt).unwrap_err().code, Code::Data);
         }
         assert!(INTERVAL_DAY_TIME.cast(Value::Null, &t_dt).unwrap().is_null());

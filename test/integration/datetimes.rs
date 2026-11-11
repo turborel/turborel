@@ -195,7 +195,7 @@ fn datetimes_are_cast_6_10() {
     );
     assert_eq!(code(&a, "SELECT CAST(D AS CHAR(5)) FROM T"), Code::Data, "22001");
     assert_eq!(code(&a, "SELECT CAST('2024-13-01' AS DATE) FROM T"), Code::Data, "22018");
-    for bad in ["CAST(D AS TIME)", "CAST(TIME '01:00:00' AS DATE)", "CAST(1 AS DATE)", "CAST(D AS INTEGER)", "CAST(D AS BIT(8))"] {
+    for bad in ["CAST(D AS TIME)", "CAST(TIME '01:00:00' AS DATE)", "CAST(1 AS DATE)", "CAST(D AS INTEGER)", "CAST(D AS BINARY(8))"] {
         assert_eq!(code(&a, &format!("SELECT {bad} FROM T")), Code::SyntaxRule, "{bad}");
     }
     a.commit().unwrap();

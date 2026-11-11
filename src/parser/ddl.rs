@@ -255,7 +255,7 @@ impl Parser {
             Tok::Identifier(_) => return Ok(OptionValue::Word(self.identifier()?)),
             Tok::KeyWord(k) => k,
             Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Introducer(_)
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)

@@ -6,7 +6,7 @@ use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::types::INTERVAL_DAY_TIME;
 use crate::value::types::{
-    APPROXIMATE, BIT, BIT_VARYING, BOOLEAN, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
+    APPROXIMATE, BINARY, BINARY_VARYING, BOOLEAN, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
 };
 use crate::value::{DataType, Spelled, SqlType};
 
@@ -17,8 +17,8 @@ const APPROXIMATE_TYPE: u8 = 2;
 /// A type beyond the standard: its kind's name, then its parameters.
 const EXTENSION_TYPE: u8 = 3;
 const VARYING_TYPE: u8 = 4;
-const BIT_TYPE: u8 = 5;
-const BIT_VARYING_TYPE: u8 = 6;
+const BINARY_TYPE: u8 = 5;
+const VARBINARY_TYPE: u8 = 6;
 const DATE_TYPE: u8 = 7;
 const TIME_TYPE: u8 = 8;
 const TIME_ZONED_TYPE: u8 = 9;
@@ -39,8 +39,8 @@ pub(super) fn put_type(out: &mut Vec<u8>, data_type: DataType) {
     match data_type {
         DataType::Character { .. } => out.put_u8(CHARACTER_TYPE),
         DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
-        DataType::Bit { .. } => out.put_u8(BIT_TYPE),
-        DataType::BitVarying { .. } => out.put_u8(BIT_VARYING_TYPE),
+        DataType::Binary { .. } => out.put_u8(BINARY_TYPE),
+        DataType::VarBinary { .. } => out.put_u8(VARBINARY_TYPE),
         DataType::Boolean => out.put_u8(BOOLEAN_TYPE),
         DataType::Date => out.put_u8(DATE_TYPE),
         DataType::Time { zoned: false, .. } => out.put_u8(TIME_TYPE),
@@ -77,8 +77,8 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         DataType::Approximate { precision, .. } => DataType::Approximate { precision, spelled },
         DataType::Character { .. }
         | DataType::Varying { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -103,8 +103,8 @@ pub(super) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         EXACT_TYPE | DECIMAL_TYPE | INTEGER_TYPE | SMALLINT_TYPE => &EXACT,
         APPROXIMATE_TYPE | REAL_TYPE | DOUBLE_PRECISION_TYPE => &APPROXIMATE,
         VARYING_TYPE => &VARYING,
-        BIT_TYPE => &BIT,
-        BIT_VARYING_TYPE => &BIT_VARYING,
+        BINARY_TYPE => &BINARY,
+        VARBINARY_TYPE => &BINARY_VARYING,
         BOOLEAN_TYPE => &BOOLEAN,
         DATE_TYPE => &DATE,
         TIME_TYPE => &TIME,

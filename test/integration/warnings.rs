@@ -1,6 +1,6 @@
 //! Warnings an expression raises as a statement runs [ISO/IEC 9075:1992
-//! §3.3.4.1]: a CAST that cuts a string or pads a bit string [§6.10], a
-//! set function that eliminates a null [§6.5 GR1b]; the statement's
+//! §3.3.4.1]: a CAST that cuts a string [§6.10; ISO/IEC 9075-2:2023
+//! §6.13], a set function that eliminates a null [§6.5 GR1b]; the statement's
 //! completion, read as its rows are read by batches and row by row, in
 //! the diagnostics area [§18.1] too.
 
@@ -17,12 +17,12 @@ fn warned_db() -> Database {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
-           CREATE TABLE W (K INTEGER, F FLOAT, N VARCHAR(4), C CHAR(3), B BIT(4))
+           CREATE TABLE W (K INTEGER, F FLOAT, N VARCHAR(4), C CHAR(3), B BINARY(2))
            CREATE TABLE CK (N VARCHAR(4) CHECK (CAST(N AS CHAR(1)) = 'A'))",
     )
     .unwrap();
     let a = db.session("A");
-    a.run("INSERT INTO W VALUES (1, 1.5E0, 'AB', 'XY', B'1010'), (NULL, NULL, NULL, NULL, NULL), (3, 2.5E0, 'A', 'Z', B'0001')").unwrap();
+    a.run("INSERT INTO W VALUES (1, 1.5E0, 'AB', 'XY', X'0A0B'), (NULL, NULL, NULL, NULL, NULL), (3, 2.5E0, 'A', 'Z', X'0001')").unwrap();
     a.commit().unwrap();
     db
 }
@@ -83,41 +83,18 @@ fn a_cast_that_cuts_a_character_string_warns_6_10() {
     a.rollback().unwrap();
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR7b, GR7c, GR8b,
-/// §3.3.4.1] a CAST to BIT that cuts bits completes with the warning
-/// string data, right truncation, 01004, one that pads them with 0 bits
-/// with implicit zero-bit padding, 01008; to BIT VARYING, only a cut
-/// warns; of a character string's bits too.
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.13 GR13, §4.4.1] a CAST
+/// to BINARY or BINARY VARYING that cuts octets completes with the warning
+/// string data, right truncation, 01004; one that pads BINARY with X'00'
+/// octets raises none, as SQL:2023 has no implicit zero-bit padding.
 #[test]
-fn a_cast_that_cuts_or_pads_a_bit_string_warns_6_10() {
+fn a_cast_that_cuts_a_binary_string_warns_6_13() {
     let db = warned_db();
     let a = db.session("A");
-    assert_eq!(both_ways(&a, "SELECT CAST(B AS BIT(2)) FROM W"), Some("01004"));
-    assert_eq!(both_ways(&a, "SELECT CAST(B AS BIT(6)) FROM W"), Some("01008"));
-    assert_eq!(both_ways(&a, "SELECT CAST(B AS BIT VARYING(2)) FROM W"), Some("01004"));
-    assert_eq!(both_ways(&a, "SELECT CAST(B AS BIT VARYING(6)), CAST(B AS BIT(4)) FROM W"), None);
-    assert_eq!(both_ways(&a, "SELECT CAST(N AS BIT(4)) FROM W"), Some("01004"), "8 bits a character");
-    assert_eq!(both_ways(&a, "SELECT CAST('A' AS BIT(8)), CAST('A' AS BIT VARYING(9)) FROM W"), None);
+    assert_eq!(both_ways(&a, "SELECT CAST(B AS BINARY(1)) FROM W"), Some("01004"), "GR13a ii");
+    assert_eq!(both_ways(&a, "SELECT CAST(B AS VARBINARY(1)) FROM W"), Some("01004"), "GR13b ii");
+    assert_eq!(both_ways(&a, "SELECT CAST(B AS BINARY(3)), CAST(B AS VARBINARY(3)), CAST(B AS BINARY(2)) FROM W"), None, "GR13a iii");
     assert_eq!(returned(&a), "00000");
-    assert_eq!(both_ways(&a, "SELECT CAST('A' AS BIT(9)) FROM W"), Some("01008"));
-    assert_eq!(returned(&a), "01008");
-    a.rollback().unwrap();
-}
-
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.10 GR5d, GR6d, §3.3.4.1] a
-/// CAST of a bit string to a character string warns of implicit zero-bit
-/// padding, 01008, if its bits are not a whole number of characters, or a
-/// fixed length adds characters; of string data, right truncation, 01004,
-/// if characters are cut.
-#[test]
-fn a_cast_of_a_bit_string_to_characters_warns_6_10() {
-    let db = warned_db();
-    let a = db.session("A");
-    assert_eq!(both_ways(&a, "SELECT CAST(X'4142' AS CHAR(1)) FROM W"), Some("01004"), "GR5d i");
-    assert_eq!(both_ways(&a, "SELECT CAST(X'4142' AS CHAR(3)) FROM W"), Some("01008"), "GR5d ii");
-    assert_eq!(both_ways(&a, "SELECT CAST(X'4142' AS VARCHAR(1)) FROM W"), Some("01004"), "GR6d ii");
-    assert_eq!(both_ways(&a, "SELECT CAST(B'010000010' AS VARCHAR(2)) FROM W"), Some("01008"), "PAD not 0");
-    assert_eq!(both_ways(&a, "SELECT CAST(X'4142' AS CHAR(2)), CAST(X'4142' AS VARCHAR(3)) FROM W"), None);
     a.rollback().unwrap();
 }
 

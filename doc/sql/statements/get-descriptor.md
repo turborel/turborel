@@ -41,7 +41,7 @@ The fields of an item, of a dynamic parameter or a column, as
 | Field | Type | Value |
 |---|---|---|
 | TYPE | exact | The data type's code, below |
-| LENGTH | exact | A string's length, in characters or bits; a datetime's length in positions |
+| LENGTH | exact | A string's length, in characters or octets; a datetime's length in positions |
 | OCTET_LENGTH | exact | A string's length in octets at most: 4 to a character |
 | RETURNED_LENGTH, RETURNED_OCTET_LENGTH | exact | Of a varying string fetched, its length, and in octets |
 | PRECISION | exact | A number's precision; a datetime's or interval's fractional seconds precision |
@@ -63,9 +63,9 @@ The codes of TYPE:
 | 1 | CHARACTER | 9 | DATE, TIME or TIMESTAMP |
 | 2 | NUMERIC | 10 | INTERVAL |
 | 3 | DECIMAL | 12 | CHARACTER VARYING |
-| 4 | INTEGER | 14 | BIT |
-| 5 | SMALLINT | 15 | BIT VARYING |
-| 6 | FLOAT | 16 | BOOLEAN |
+| 4 | INTEGER | 16 | BOOLEAN |
+| 5 | SMALLINT | 60 | BINARY |
+| 6 | FLOAT | 61 | BINARY VARYING |
 | 7 | REAL | -1 | a type of a plug-in |
 | 8 | DOUBLE PRECISION | | |
 
@@ -134,7 +134,9 @@ GET DESCRIPTOR 'NO_ROW' N = COUNT           -921 (33000): no SQL descriptor area
 
 ISO/IEC 9075:1992 §17.4, of the descriptor areas of §17.1, Tables 17 to
 20. SQL-92 makes it no `<directly executable statement>` [§20.1]. SQL-86
-has no dynamic SQL.
+has no dynamic SQL. The codes 60 and 61 of BINARY and BINARY VARYING, and
+their lengths in octets, are ISO/IEC 9075-2:2023's [§20.1 Table 30,
+§20.10 GR7d ii].
 
 ## SEE ALSO
 

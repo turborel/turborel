@@ -46,7 +46,7 @@ fn casts_in_a_session() {
 /// the session's displacement; a string is the datetime it writes, of the
 /// instant its displacement gives; a
 /// datetime CAST to a string its literal's string; a date to a time, a
-/// number or a bit string to a datetime, is no value (SQLSTATE 22005); a
+/// number or a binary string to a datetime, is no value (SQLSTATE 22005); a
 /// year out of 0001 to 9999 is refused (22007).
 #[test]
 fn more_casts_in_a_session() {
@@ -66,7 +66,7 @@ fn more_casts_in_a_session() {
         (date, DataType::Time { precision: 0, zoned: false }),
         (of(Moment::Time, "01:00:00"), DataType::Date),
         (Value::Exact(crate::value::Decimal::new(1, 0)), DataType::Date),
-        (Value::Bits(crate::value::Bits::default()), DataType::Date),
+        (Value::Binary(crate::value::Binary::default()), DataType::Date),
     ] {
         assert_eq!(cast_at(v, &t, session()).unwrap_err().code, Code::Data, "{t}");
     }

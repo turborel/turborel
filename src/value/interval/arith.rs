@@ -59,7 +59,7 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
         Value::Null
         | Value::Char(_)
         | Value::Exact(_)
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

@@ -22,11 +22,11 @@
 
 use std::cmp::Ordering;
 
-use super::character::{OCTETS_PER_CHARACTER, bits_as_characters, cut, string, unwarned};
+use super::character::{OCTETS_PER_CHARACTER, cut, string, unwarned};
 use super::{Descriptor, SqlType, malformed, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
-use crate::value::cast::approximate_literal;
+use crate::value::cast::{approximate_literal, uncastable};
 use crate::value::{Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
 
 /// The kind of CHARACTER VARYING(length).
@@ -171,9 +171,8 @@ impl SqlType for Varying {
     /// [ISO/IEC 9075:1992 §6.10 GR6] A number's shortest literal, if no
     /// longer than the maximum length \[GR6a, GR6b\]; a string cut to it,
     /// with the warning string data, right truncation if a character cut is
-    /// not a space \[GR6c\]; a bit string's characters, cut to it, with
-    /// their warnings \[GR6d\] (`bits_as_characters`); a value beyond the
-    /// standard, its text, as a string.
+    /// not a space \[GR6c\]; no binary string [ISO/IEC 9075-2:2023 §6.13
+    /// SR7]; a value beyond the standard, its text, as a string.
     fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
         let length = length_of(t);
         let cut_to = |s: &str| {
@@ -185,7 +184,7 @@ impl SqlType for Varying {
             Value::Exact(d) => within(d.to_string(), t).map(unwarned),
             Value::Approx(x) => within(approximate_literal(x), t).map(unwarned),
             Value::Char(s) => Ok(cut_to(&s)),
-            Value::Bits(b) => bits_as_characters(&b, length, false),
+            Value::Binary(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
             // [GR6e] its literal's string, as it shows.
             Value::Datetime(d) => super::datetime::as_string(&d, length, false).map(unwarned),

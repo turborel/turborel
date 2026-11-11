@@ -43,7 +43,7 @@ clause, is run as SELECT ... INTO runs one: its one row is put where the
 INTO clause says, into the targets, as FETCH assigns them, or into the
 items of a descriptor area, each value cast to its item's type, its
 INDICATOR 0 and DATA the value, or INDICATOR -1 of the null value; and
-RETURNED_LENGTH and RETURNED_OCTET_LENGTH of a CHARACTER VARYING or BIT
+RETURNED_LENGTH and RETURNED_OCTET_LENGTH of a CHARACTER VARYING or BINARY
 VARYING value. No row is no data, SQLSTATE 02000; more than one, an
 exception. Any other query is read by a cursor
 ([ALLOCATE CURSOR](allocate-cursor.md)), not executed.

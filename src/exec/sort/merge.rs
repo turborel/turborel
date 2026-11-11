@@ -228,7 +228,7 @@ mod tests {
     use crate::spill::testing::{Held, areas};
     use crate::spill::{Area, SpillArea};
     use crate::storage::{Batch as Vectors, Column};
-    use crate::value::{Bits, Decimal, Value};
+    use crate::value::{Binary, Decimal, Value};
 
     /// A spill area whose runs are held in memory.
     fn area() -> Box<dyn SpillArea> {
@@ -301,7 +301,7 @@ mod tests {
     /// several, each writing chunks again, give the rows in the order
     /// comparing them whole gives, stably: ASC and DESC, nulls among them,
     /// of integers whose prefixes hold them whole, ties broken by the next
-    /// key; of strings longer than a prefix, alike in it; of bit strings
+    /// key; of strings longer than a prefix, alike in it; of binary strings
     /// long and short; of exact numbers past 64 bits; of no key, the runs'
     /// order kept.
     #[test]
@@ -310,7 +310,7 @@ mod tests {
         let columns: [Box<dyn Fn(i128) -> Value>; 4] = [
             Box::new(move |n| if n % 7_i128 == 0 { Value::Null } else { int(n * 7919_i128 % 13_i128) }),
             Box::new(|n| if n % 5_i128 == 0 { Value::Null } else { Value::Char(format!("a shared start {}", n * 31_i128 % 11_i128)) }),
-            Box::new(|n| Value::Bits(Bits::of_bits(&"10".repeat(usize::try_from(n * 13_i128 % 40_i128).unwrap())).unwrap())),
+            Box::new(|n| Value::Binary(Binary::new(vec![0xA5; usize::try_from(n * 13_i128 % 40_i128).unwrap()]))),
             Box::new(move |n| int(if n % 2_i128 == 0 { i128::MAX - n % 3_i128 } else { i128::MIN + n % 3_i128 })),
         ];
         for column in &columns {

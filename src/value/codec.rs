@@ -10,7 +10,7 @@
 //!          i64, scale u8: so most take 10 bytes, not 21 |
 //!        3 (approximate) IEEE-754 bits u64 |
 //!        4 (beyond the standard) its kind's name, then its kind's bytes |
-//!        5 (bit string) its length in bits u32, then its bytes |
+//!        5 (binary string) its octets, their count u32 first |
 //!        6 (date) | 7 (time) | 8 (timestamp): with time zone u8, precision u8,
 //!          displacement in minutes u32, microseconds in UTC u64 |
 //!        9 (interval) its fields' ranks, then its precisions, each u32,
@@ -32,8 +32,8 @@ const EXACT: u8 = 2;
 const APPROXIMATE: u8 = 3;
 /// A value of a kind beyond the standard: its kind's name, then its bytes.
 const EXTENSION: u8 = 4;
-/// A bit string: its length in bits, then its bytes.
-const BITS: u8 = 5;
+/// A binary string: its octets.
+const BINARY: u8 = 5;
 /// A date, a time and a timestamp: as their kinds write them.
 const DATE: u8 = 6;
 const TIME: u8 = 7;
@@ -62,7 +62,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
-        Value::Bits(_) => BITS,
+        Value::Binary(_) => BINARY,
         Value::Bool(_) => BOOL,
         Value::Datetime(d) => match d.moment {
             Moment::Date => DATE,
@@ -95,7 +95,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         CHARACTER => &types::CHARACTER,
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
-        BITS => &types::BIT_VARYING,
+        BINARY => &types::BINARY_VARYING,
         BOOL => &types::BOOLEAN,
         DATE => &types::DATE,
         TIME => &types::TIME,

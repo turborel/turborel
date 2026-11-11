@@ -229,7 +229,7 @@ mod tests {
     use crate::exec::work::Work;
     use crate::functions::{Accumulator, Registry};
     use crate::storage::{Floats, Texts};
-    use crate::value::{Bits, DataType, Decimal};
+    use crate::value::{Binary, DataType, Decimal};
 
     /// The rows and numbers of `record`, which must be of rows.
     fn rows_of(record: &[u8]) -> Result<(Batch, Vec<u64>)> {
@@ -247,7 +247,7 @@ mod tests {
             Value::Char("a".to_owned()),
             Value::Null,
             Value::Exact(Decimal::new(15_i128, 1_u32)),
-            Value::Bits(Bits::of_bits("101").unwrap()),
+            Value::Binary(Binary::new(vec![0xA0])),
         ]);
         let floats = Column::Floats(Floats::new(vec![1.5_f64, -0.0_f64, 2.0_f64, 3.0_f64], None));
         let ends = vec![1_usize, 3_usize, 3_usize, 5_usize];

@@ -194,15 +194,15 @@ fn retrieved(fetched: &Value, target: &DataType, assign_rule: &str) -> Result<(V
             }
             Ok((Value::Char(s.clone()), 0, None))
         }
-        // [§9.1 GR3f-GR3j] as it is, its first L bits, or a fixed length's
-        // padded with 0 bits, as CAST fits them [§6.10 GR7].
-        (DataType::Bit { length } | DataType::BitVarying { length }, Value::Bits(b)) => {
+        // [ISO/IEC 9075-2:2023 §9.1 GR7h-GR7l] as it is, its first L
+        // octets, or a fixed length's padded with X'00' octets, as CAST
+        // fits them [§6.13 GR13].
+        (DataType::Binary { length } | DataType::VarBinary { length }, Value::Binary(b)) => {
             let value = cast(fetched.clone(), target)?;
             if b.len() > *length {
                 return Ok((value, indicator_of(usize::try_from(b.len()).unwrap_or(usize::MAX))?, cut));
             }
-            let padded = b.len() < *length && matches!(target, DataType::Bit { .. });
-            Ok((value, 0, padded.then_some(SqlState::ZERO_BIT_PADDING)))
+            Ok((value, 0, None))
         }
         // [X3.135-1986 §8.6 GR10d, GR10e; §9.1 GR3k] exact, approximate.
         (target_type, value) => {

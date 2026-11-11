@@ -2,12 +2,12 @@
 //! BOOLEAN's truth values read as values and conditions, the set functions
 //! of truth values, an index on a BOOLEAN probed, and a dynamic parameter
 //! counted once however often the parser reads it; underscores in numeric
-//! literals.
+//! literals; binary strings, their literals, keys, assignment and CAST.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 9] = [
+pub const SQL2023: [Mutation; 15] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -97,5 +97,65 @@ pub const SQL2023: [Mutation; 9] = [
         replacement: "    let placed = !t.starts_with('_') && !t.ends_with('_');",
         integration: &["language::underscores_in_numeric_literals_5_3"],
         unit: &["value::cast::tests::numeric_literals"],
+    },
+    Mutation {
+        name: "binary-zero-unescaped",
+        package: Package::Core,
+        breaks: "a binary string's X'00' octet is not escaped in its key, so X'01' and X'0100' keys begin each other",
+        file: "src/value/binary.rs",
+        original: "            if b == 0 {\n                out.push(ESCAPE);\n            }\n",
+        replacement: "",
+        integration: &[],
+        unit: &["value::binary::tests::binary_keys_order_as_binary_strings_compare"],
+    },
+    Mutation {
+        name: "binary-odd-hexits",
+        package: Package::Core,
+        breaks: "a binary string literal of an odd number of hexits is taken, its last hexit dropped",
+        file: "src/value/binary.rs",
+        original: "        if !odd.is_empty() {\n            return None;\n        }\n",
+        replacement: "",
+        integration: &["binary::binary_string_literals_5_3"],
+        unit: &["value::binary::tests::binary_strings_are_made_cut_joined_and_searched"],
+    },
+    Mutation {
+        name: "binary-position-of-empty",
+        package: Package::Core,
+        breaks: "POSITION of the empty binary string is 0, not 1",
+        file: "src/value/binary.rs",
+        original: "        if needle.is_empty() {\n            return 1;\n        }",
+        replacement: "        if needle.is_empty() {\n            return 0;\n        }",
+        integration: &["binary::operations_on_binary_strings_6_32"],
+        unit: &["value::binary::tests::binary_strings_are_made_cut_joined_and_searched"],
+    },
+    Mutation {
+        name: "binary-assigned-cut",
+        package: Package::Core,
+        breaks: "a binary string longer than its column is cut, octets not X'00' and all, not refused",
+        file: "src/value/types/binary.rs",
+        original: "        if past.iter().any(|&o| o != 0) {",
+        replacement: "        if false {",
+        integration: &["binary::binary_strings_are_assigned_9_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "binary-cast-unpadded",
+        package: Package::Core,
+        breaks: "CAST to BINARY(n) of a shorter string is not extended with X'00' octets",
+        file: "src/value/types/binary.rs",
+        original: "        let fitted = if self.varying { cut } else { padded(&cut, length) };",
+        replacement: "        let fitted = cut;",
+        integration: &["binary::binary_strings_are_cast_6_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "binary-cast-from-anything",
+        package: Package::Core,
+        breaks: "CAST between a binary string and another type binds, refused only as it runs",
+        file: "src/binder/datetime.rs",
+        original: "    beyond || from.is_binary() == to.is_binary()",
+        replacement: "    beyond || true",
+        integration: &["binary::binary_strings_are_cast_6_13"],
+        unit: &[],
     },
 ];

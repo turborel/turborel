@@ -19,7 +19,7 @@
 //!   9075:1992 §5.3 SR1, SR4, SR9].
 
 use crate::error::{Code, Result, SqlError};
-use crate::value::Bits;
+use crate::value::Binary;
 
 /// Declares a constant for each `<key word>`, named as it is written, in
 /// `kw`, and `KEY_WORDS`, the list of them all.
@@ -172,8 +172,8 @@ pub enum Tok {
     ApproximateNumeric(String),
     /// The value of a `<character string literal>`, with '' already turned into '.
     CharacterString(String),
-    /// The value of a `<bit string literal>` or a `<hex string literal>`.
-    BitString(Bits),
+    /// The value of a `<binary string literal>` [ISO/IEC 9075-2:2023 §5.3].
+    BinaryString(Binary),
     /// [ISO/IEC 9075:1992 §5.3, §5.4] `<introducer>` `<character set
     /// specification>`: the character set's name, upper case, its schema's
     /// before a period if written, before a `<character string literal>`
@@ -221,8 +221,8 @@ fn error(code: Code, pos: usize, msg: impl Into<String>) -> SqlError {
 /// A character that cannot start a `<token>`, an unterminated `<comment>`,
 /// `<character string literal>` or `<delimited identifier>`, a `<newline>`
 /// inside either of the last two, an empty `<delimited identifier>`, a
-/// `<bit string literal>` or `<hex string literal>` holding a character not
-/// its own, a token not followed by a separator or delimiter, or an
+/// `<binary string literal>` holding a character not its own or an odd
+/// number of hexits, a token not followed by a separator or delimiter, or an
 /// `<identifier>` too long.
 pub fn lex(src: &str) -> Result<Vec<Token>> {
     let mut s = Scanner { c: src.chars().collect(), at: 0 };
@@ -337,8 +337,8 @@ impl Scanner {
             self.advance(1);
             return self.character_string();
         }
-        if matches!(first, 'B' | 'b' | 'X' | 'x') && self.peek(1) == Some(QUOTE) {
-            return self.bit_string(first);
+        if matches!(first, 'X' | 'x') && self.peek(1) == Some(QUOTE) {
+            return self.binary_string();
         }
         if first == '_' && self.next_is(1, |c| c.is_ascii_alphabetic()) {
             return Ok(self.introducer());
@@ -462,7 +462,7 @@ impl Scanner {
             self.advance(1);
             self.skip_digits();
         }
-        // The E in either case, as the letters of B'', X'' and N'' are
+        // The E in either case, as the letters of X'' and N'' are
         // [ISO/IEC 9075:1992 §5.1 GR1].
         if matches!(self.peek(0), Some('E' | 'e')) {
             // The E, then the sign if there is one.
@@ -518,21 +518,18 @@ impl Scanner {
         }
     }
 
-    /// [ISO/IEC 9075:1992 §5.3] `<bit string literal>` ::= B ' \[`<bit>`...\]
-    /// ' \[{`<separator>`... ' \[`<bit>`...\] '}...\], each `<bit>` 0 or 1;
-    /// `<hex string literal>`, X then quoted `<hexit>`s, four bits each
-    /// \[SR11\]. `first`, B or X, in either case, is the next character;
-    /// the parts are one literal as a character string literal's are
-    /// \[SR2-SR4\].
-    fn bit_string(&mut self, first: char) -> Result<Tok> {
+    /// [ISO/IEC 9075-2:2023 §5.3] `<binary string literal>` ::= X ' pairs
+    /// of `<hexit>`s, spaces between them, ' and further quoted parts, each
+    /// `<hexit>` four bits \[SR20\]. X, in either case \[SR6\], is the next
+    /// character. Spaces are passed over \[SR4\], and the parts are one
+    /// literal as a character string literal's are \[SR5, SR7\].
+    fn binary_string(&mut self) -> Result<Tok> {
         let start = self.at;
         self.advance(1);
-        let digits = self.quoted_parts()?;
-        let hex = matches!(first, 'X' | 'x');
-        let bits = if hex { Bits::of_hex(&digits) } else { Bits::of_bits(&digits) };
-        bits.map(Tok::BitString).ok_or_else(|| {
-            let (literal, of) = if hex { ("<hex string literal>", "<hexit>") } else { ("<bit string literal>", "<bit>") };
-            error(Code::Lexical, start, format!("[ISO/IEC 9075:1992 §5.3] a {literal} holds a character not a {of}"))
+        let hexits = self.quoted_parts()?;
+        Binary::of_hex(&hexits).map(Tok::BinaryString).ok_or_else(|| {
+            let msg = "[ISO/IEC 9075-2:2023 §5.3] a <binary string literal> holds pairs of <hexit>s and spaces, and nothing else";
+            error(Code::Lexical, start, msg)
         })
     }
 

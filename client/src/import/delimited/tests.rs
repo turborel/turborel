@@ -23,7 +23,7 @@ fn got(v: Value) -> Got {
         Value::Char(s) => Some(s),
         other @ (Value::Exact(_)
         | Value::Approx(_)
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

@@ -43,14 +43,14 @@
 //! value:      tag u8: 0 null; 1 character, a string; 2 exact, units i128
 //!             then scale u32; 3 approximate, the f64's bits u64; 4 of a
 //!             type beyond the standard (RULES.md D53), its type's name, its
-//!             text, then its bytes; 6 a bit string, its length in bits u32,
-//!             then its bytes; 8 date, 9 time, 11 timestamp, each zoned u8,
+//!             text, then its bytes; 6 a binary string, its octets as
+//!             bytes; 8 date, 9 time, 11 timestamp, each zoned u8,
 //!             precision u8, the zone's displacement in minutes, an i16's
 //!             bits in a u32, then the instant, microseconds in UTC, i64 as
 //!             u64; 13 interval, its qualifier
 //!             as its data type's, then units i128
-//! data type:  tag u8: 1 character, 5 character varying, 6 bit, 7 bit
-//!             varying, each length u32; 2 exact, precision u32 then scale
+//! data type:  tag u8: 1 character, 5 character varying, 6 binary, 7
+//!             binary varying, each length u32; 2 exact, precision u32 then scale
 //!             u32; 3 approximate, precision u32; 4 beyond the standard, its
 //!             name, then its parameters, a list of u32; 8 date, 9 time,
 //!             10 time with time zone, 11 timestamp, 12 timestamp with time

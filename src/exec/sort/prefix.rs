@@ -3,15 +3,15 @@
 //! one kind: an exact number's floor, the first bytes of a string padded
 //! with spaces, an approximate number's bits in order, a datetime's
 //! instant in UTC (as a time or timestamp WITH TIME ZONE compares), an
-//! interval's units, a bit string's first bits and its length; nulls placed
+//! interval's units, a binary string's first octets and its length; nulls placed
 //! by `NULLS_SORT_HIGH`; reversed if the key is DESC. Two rows whose
 //! prefixes differ are in that order. In memory, the prefixes and the
 //! rows' places are sorted, side by side, rows of equal prefixes compared
 //! whole, then by place, so the sort is stable; then the rows are put in
 //! that order. If every prefix holds its value whole (an integer, an
 //! instant or an interval within 64 bits, not at either end, a string of no
-//! more than its bytes, an approximate number, a bit string of no more
-//! than its bits), rows of equal prefixes are of equal first keys, and
+//! more than its bytes, an approximate number, a binary string of no more
+//! than its octets), rows of equal prefixes are of equal first keys, and
 //! only the rest are compared. A first key whose values are not all of one
 //! kind of these, or of a number whose floor cannot be found, sorts the
 //! rows whole. A spilled sort writes each row's prefix beside it, for its
@@ -23,7 +23,7 @@ use super::compare_rows;
 use crate::logical::SortKey;
 use crate::storage::{Cell, Row};
 use crate::value::datetime::Moment;
-use crate::value::{Bits, Decimal, NULLS_SORT_HIGH, Value, pow10};
+use crate::value::{Binary, Decimal, NULLS_SORT_HIGH, Value, pow10};
 
 /// The bit that orders a signed number's prefix after its sign.
 const SIGN: u64 = 1 << 63;
@@ -31,17 +31,16 @@ const SIGN: u64 = 1 << 63;
 /// The bytes of a string a prefix holds.
 const PREFIX_BYTES: usize = 8;
 
-/// The bytes of a bit string's bits a prefix holds; the last of its
+/// The octets of a binary string a prefix holds; the last of its
 /// `PREFIX_BYTES` holds the string's length.
-const BITS_PREFIX_BYTES: usize = 7;
+const BINARY_PREFIX_BYTES: usize = 7;
 
-/// The most bits a bit string's prefix holds whole: `BITS_PREFIX_BYTES`
-/// bytes of 8 bits.
-const BITS_HELD: u32 = 56;
+/// The most octets a binary string's prefix holds whole.
+const BINARY_HELD: u32 = 7;
 
-/// The length a bit string's prefix gives one longer than `BITS_HELD`:
-/// greater than any it holds whole.
-const LONG_BITS: u8 = u8::MAX;
+/// The length a binary string's prefix gives one longer than
+/// `BINARY_HELD`: greater than any it holds whole.
+const LONG_BINARY: u8 = u8::MAX;
 
 /// A null's prefix, before a DESC key reverses it: the greatest if nulls
 /// sort high, else the least.
@@ -80,8 +79,8 @@ pub(super) enum Kind {
     /// An interval, year-month or not: one of the other class compares
     /// with it as equal.
     Interval(bool),
-    /// A bit string.
-    Bits,
+    /// A binary string.
+    Binary,
 }
 
 /// Every kind, in the order of their codes, from 1 (`Kind::code`).
@@ -95,7 +94,7 @@ const KINDS: [Kind; 10] = [
     Kind::Datetime(Moment::Timestamp),
     Kind::Interval(true),
     Kind::Interval(false),
-    Kind::Bits,
+    Kind::Binary,
 ];
 
 impl Kind {
@@ -158,9 +157,9 @@ pub(super) fn prefix_of(value: &Value, descending: bool) -> Option<Prefix> {
             let (bits, held) = signed(i.units);
             (Kind::Interval(i.qualifier.year_month()), bits, held)
         }
-        Value::Bits(b) => {
-            let (bits, held) = bit_string(b);
-            (Kind::Bits, bits, held)
+        Value::Binary(b) => {
+            let (bits, held) = binary_string(b);
+            (Kind::Binary, bits, held)
         }
         // Truth values are compared whole, and two keys of them seldom
         // tie past one byte, so a prefix would save little.
@@ -238,19 +237,20 @@ fn approximate(f: f64) -> u64 {
     if bits & SIGN == 0 { bits | SIGN } else { !bits }
 }
 
-/// The prefix of a bit string, compared bit by bit, then by length
-/// [ISO/IEC 9075:1992 §8.2 GR4]: its first bits, then its length, or
-/// `LONG_BITS` if longer than they hold; and whether it is no longer. Of
-/// two strings, one the start of the other, the shorter's prefix is no
-/// greater: its bits are padded with 0s, and its length is less.
-fn bit_string(b: &Bits) -> (u64, bool) {
+/// The prefix of a binary string, compared octet by octet, then by
+/// length [ISO/IEC 9075-2:2023 §8.2 GR5]: its first octets, then its
+/// length, or `LONG_BINARY` if longer than they hold; and whether it is no
+/// longer. Of two strings, one the start of the other, the shorter's
+/// prefix is no greater: its octets are padded with 0s, and its length is
+/// less.
+fn binary_string(b: &Binary) -> (u64, bool) {
     let mut bytes = [0_u8; PREFIX_BYTES];
-    for (to, from) in bytes.iter_mut().zip(b.bytes().iter().take(BITS_PREFIX_BYTES)) {
+    for (to, from) in bytes.iter_mut().zip(b.bytes().iter().take(BINARY_PREFIX_BYTES)) {
         *to = *from;
     }
-    let held = b.len() <= BITS_HELD;
+    let held = b.len() <= BINARY_HELD;
     if let Some(last) = bytes.last_mut() {
-        *last = if held { u8::try_from(b.len()).unwrap_or(LONG_BITS) } else { LONG_BITS };
+        *last = if held { u8::try_from(b.len()).unwrap_or(LONG_BINARY) } else { LONG_BINARY };
     }
     (u64::from_be_bytes(bytes), held)
 }
@@ -278,11 +278,12 @@ mod tests {
     /// GR6]: of two values of one kind, the lesser's prefix is no greater,
     /// and those held whole differ: timestamps by their instants, whatever
     /// their zones, those of one instant alike; intervals by their units,
-    /// past 64 bits not whole; bit strings bit by bit, then by length, past
-    /// 56 bits not whole, the empty one least. A plug-in's value has none;
+    /// past 64 bits not whole; binary strings octet by octet, then by
+    /// length, past 7 octets not whole, the empty one least [ISO/IEC
+    /// 9075-2:2023 §8.2 GR5]. A plug-in's value has none;
     /// every kind keeps its code.
     #[test]
-    fn prefixes_of_datetimes_intervals_and_bits_keep_order() {
+    fn prefixes_of_datetimes_intervals_and_binary_strings_keep_order() {
         let of = |v: &Value| prefix_of(v, false).unwrap();
         let hour = 3_600_000_000_i64;
         let stamps: Vec<Prefix> = [stamp(hour, 60_i16), stamp(hour, 0_i16), stamp(2_i64 * hour, 0_i16)].iter().map(of).collect();
@@ -293,14 +294,14 @@ mod tests {
         assert!(intervals.iter().map(|p| p.bits).is_sorted(), "{intervals:?}");
         assert_eq!(intervals.iter().map(|p| p.whole).collect::<Vec<bool>>(), [true, true, true, false]);
         assert_eq!(of(&interval(1_i128, (Field::Year, Field::Month))).kind, Kind::Interval(true));
-        let ones = |n: usize| "1".repeat(n);
-        let digits = ["", "0", "00", "0011", "01", "1", "10"].map(str::to_owned);
-        let digits = [&digits[..], &[ones(56_usize), ones(57_usize), ones(60_usize)]].concat();
-        let bits: Vec<Prefix> = digits.iter().map(|d| of(&Value::Bits(Bits::of_bits(d).unwrap()))).collect();
+        let ff = |n: usize| "FF".repeat(n);
+        let hexits = ["", "00", "0000", "0011", "01", "FF", "FF00"].map(str::to_owned);
+        let hexits = [&hexits[..], &[ff(7_usize), ff(8_usize), ff(9_usize)]].concat();
+        let bits: Vec<Prefix> = hexits.iter().map(|h| of(&Value::Binary(Binary::of_hex(h).unwrap()))).collect();
         assert!(bits.iter().map(|p| p.bits).is_sorted(), "{bits:?}");
         assert!(bits.windows(2).take(8).all(|w| w[0].bits < w[1].bits), "whole ones differ");
         assert_eq!(bits.iter().map(|p| p.whole).collect::<Vec<bool>>(), [true, true, true, true, true, true, true, true, false, false]);
-        assert_eq!(bits[8].bits, bits[9].bits, "alike past 56 bits");
+        assert_eq!(bits[8].bits, bits[9].bits, "alike past 7 octets");
         assert_eq!(prefix_of(&unregistered("POINT", "(1 2)", &[1_u8]), false), None);
         assert!(KINDS.iter().all(|&k| Kind::of_code(k.code()) == Some(k)));
         assert_eq!((Kind::of_code(0_u8), Kind::of_code(u8::MAX)), (None, None));
@@ -387,16 +388,16 @@ mod tests {
         }
     }
 
-    /// Bit strings of `digits`, null of none.
-    fn bit_strings(digits: &[String]) -> Vec<Value> {
-        digits.iter().map(|d| if d.is_empty() { Value::Null } else { Value::Bits(Bits::of_bits(d).unwrap()) }).collect()
+    /// Binary strings of `hexits`, null of none.
+    fn binary_strings(hexits: &[String]) -> Vec<Value> {
+        hexits.iter().map(|h| if h.is_empty() { Value::Null } else { Value::Binary(Binary::of_hex(h).unwrap()) }).collect()
     }
 
     /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.3 GR3b]: rows sorted
     /// by prefixes are in the order comparing them whole gives, stably:
     /// ascending and DESC, nulls among them, ties of a whole prefix broken
     /// by the next key, strings longer than a prefix, exact numbers of
-    /// fractions, approximate numbers, bit strings; a key of two kinds
+    /// fractions, approximate numbers, binary strings; a key of two kinds
     /// sorted whole.
     #[test]
     fn sorted_by_prefixes_as_whole() {
@@ -422,14 +423,14 @@ mod tests {
                 Value::Approx(2.5_f64),
             ],
             vec![int(1_i128), text("a"), Value::Null, int(2_i128), int(0_i128), text("b")],
-            bit_strings(&["1", "", "0", "1", "", "01"].map(str::to_owned)),
+            binary_strings(&["FF", "", "00", "FF", "", "0001"].map(str::to_owned)),
         ]);
         assert!(sorted(&[], vec![vec![int(2_i128)], vec![int(1_i128)]]).len() == 2, "no key, the rows as they were");
     }
 
     /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.3 GR3b] [ISO/IEC
     /// 9075:1992 §8.2 GR4, GR5, GR6]: rows sorted by prefixes of timestamps
-    /// of zones, of intervals, of bit strings longer and shorter than a
+    /// of zones, of intervals, of binary strings longer and shorter than a
     /// prefix, are in the order comparing them whole gives, stably; a key
     /// of datetimes of two types, of intervals of two classes, or of a
     /// plug-in's values, which have no prefixes, sorted whole.
@@ -437,7 +438,7 @@ mod tests {
     fn sorted_by_prefixes_of_other_kinds_as_whole() {
         let date = Value::Datetime(Datetime::of_local(Moment::Date, 0_i64, 0_i16, false, 0_u32));
         let (day, month) = ((Field::Day, Field::Hour), (Field::Year, Field::Month));
-        let ones = |n: usize| "10".repeat(n).chars().take(n).collect::<String>();
+        let octets = |n: usize| "A5".repeat(n);
         let point = |n: u8| unregistered("POINT", "(1 2)", &[n]);
         as_whole(&[
             vec![stamp(9_i64, 60_i16), Value::Null, stamp(5_i64, 0_i16), stamp(9_i64, 0_i16), stamp(-4_i64, -60_i16), stamp(5_i64, 0_i16)],
@@ -449,7 +450,7 @@ mod tests {
                 interval(0_i128, day),
                 interval(i128::MIN, day),
             ],
-            bit_strings(&[ones(70_usize), String::new(), ones(57_usize), ones(58_usize), "1".to_owned(), ones(56_usize)]),
+            binary_strings(&[octets(9_usize), String::new(), octets(8_usize), octets(10_usize), "01".to_owned(), octets(7_usize)]),
             vec![stamp(3_i64, 0_i16), date.clone(), stamp(1_i64, 0_i16), Value::Null, date, stamp(2_i64, 0_i16)],
             vec![
                 interval(3_i128, day),

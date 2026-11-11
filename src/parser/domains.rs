@@ -103,7 +103,7 @@ impl Parser {
     ///     [ <left paren> <unsigned integer> [ <comma> <unsigned integer> ] <right paren> ]
     /// ```
     pub(super) fn type_name(&mut self) -> Result<TypeName> {
-        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_boolean_type() {
+        if !matches!(self.peek(), Tok::Identifier(_)) || self.at_boolean_type() || self.at_binary_type() {
             return Ok(TypeName::Data(self.data_type()?));
         }
         let name = self.table_name()?;

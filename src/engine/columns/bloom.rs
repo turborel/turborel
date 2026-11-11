@@ -48,7 +48,7 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
             key.push(NUMBER_TAG);
             key.extend_from_slice(&bits.to_le_bytes());
         }
-        Bucket::Bits(b) => {
+        Bucket::Binary(b) => {
             key.push(BITS_TAG);
             key.extend_from_slice(&b);
         }

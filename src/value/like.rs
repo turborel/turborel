@@ -191,7 +191,7 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
         Some(
             Value::Exact(_)
             | Value::Approx(_)
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -205,7 +205,7 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
         Value::Null => Some(None),
         Value::Exact(_)
         | Value::Approx(_)
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

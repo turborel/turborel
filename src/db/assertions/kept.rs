@@ -265,7 +265,7 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
             Value::Null => {}
             other @ (Value::Char(_)
             | Value::Approx(_)
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

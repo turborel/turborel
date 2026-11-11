@@ -20,10 +20,10 @@ const APPROXIMATE: u8 = 3;
 const EXTENSION: u8 = 4;
 /// CHARACTER VARYING, as a type: its values are strings, as CHARACTER's.
 const VARYING: u8 = 5;
-/// BIT, as a type; a bit string, of either bit type, as a value.
-const BIT: u8 = 6;
-/// BIT VARYING, as a type: its values are bit strings, as BIT's.
-const BIT_VARYING: u8 = 7;
+/// BINARY, as a type; a binary string, of either binary type, as a value.
+const BINARY: u8 = 6;
+/// BINARY VARYING, as a type: its values are binary strings, as BINARY's.
+const BINARY_VARYING: u8 = 7;
 /// DATE, as a type and a value.
 const DATE: u8 = 8;
 /// TIME, as a type; a time, of either time type, as a value.
@@ -89,8 +89,8 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
     match t {
         DataType::Character { .. } => b.put_u8(CHARACTER),
         DataType::Varying { .. } => b.put_u8(VARYING),
-        DataType::Bit { .. } => b.put_u8(BIT),
-        DataType::BitVarying { .. } => b.put_u8(BIT_VARYING),
+        DataType::Binary { .. } => b.put_u8(BINARY),
+        DataType::VarBinary { .. } => b.put_u8(BINARY_VARYING),
         DataType::Boolean => b.put_u8(BOOLEAN),
         DataType::Date => b.put_u8(DATE),
         DataType::Time { zoned: false, .. } => b.put_u8(TIME),
@@ -125,8 +125,8 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         EXACT => Some(&types::EXACT),
         APPROXIMATE => Some(&types::APPROXIMATE),
         VARYING => Some(&types::VARYING),
-        BIT => Some(&types::BIT),
-        BIT_VARYING => Some(&types::BIT_VARYING),
+        BINARY => Some(&types::BINARY),
+        BINARY_VARYING => Some(&types::BINARY_VARYING),
         BOOLEAN => Some(&types::BOOLEAN),
         DATE => Some(&types::DATE),
         TIME => Some(&types::TIME),
@@ -188,7 +188,7 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
         Value::Char(_) => CHARACTER,
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
-        Value::Bits(_) => BIT,
+        Value::Binary(_) => BINARY,
         Value::Bool(_) => BOOLEAN,
         Value::Datetime(d) => match d.moment {
             Moment::Date => DATE,
@@ -239,8 +239,8 @@ pub fn row_size(row: &Row) -> usize {
         Value::Approx(_) => 9,
         // Its tag and its byte.
         Value::Bool(_) => 2,
-        // Its tag, its length and its bytes, after theirs.
-        Value::Bits(b) => b.bytes().len().saturating_add(9),
+        // Its tag, then its octets after their count.
+        Value::Binary(b) => b.bytes().len().saturating_add(5),
         // Its tag, its zone's flag, precision and displacement, and its
         // instant.
         Value::Datetime(_) => 15,

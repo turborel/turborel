@@ -198,7 +198,7 @@ impl Binder<'_> {
         if t.is_character() {
             return Err(rule("[X3.135-1986 §5.9 SR3] a character string <primary> cannot have an operator"));
         }
-        if t.is_bit() || t.is_datetime() {
+        if t.is_binary() || t.is_datetime() {
             return Err(rule(format!("[ISO/IEC 9075:1992 §6.12] {t} is no <numeric primary>")));
         }
         Ok(match (sign, e) {
@@ -228,8 +228,8 @@ impl Binder<'_> {
         if left_type.is_character() || right_type.is_character() {
             return Err(rule("[X3.135-1986 §5.9 SR3] character string values cannot be used with arithmetic operators"));
         }
-        if left_type.is_bit() || right_type.is_bit() {
-            return Err(rule("[ISO/IEC 9075:1992 §6.12] bit string values cannot be used with arithmetic operators"));
+        if left_type.is_binary() || right_type.is_binary() {
+            return Err(rule("[ISO/IEC 9075-2:2023 §6.30 SR3] binary string values cannot be used with arithmetic operators"));
         }
         // [§6.14, §6.15] datetimes and intervals.
         if left_type.is_datetime() || right_type.is_datetime() || left_type.is_interval() || right_type.is_interval() {

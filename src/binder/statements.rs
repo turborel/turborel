@@ -105,7 +105,8 @@ pub fn check_assignment(col: &crate::catalog::ColumnDesc, t: DataType, r: Assign
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in a
 /// target of type `target`? A character string in a character string, a
-/// bit string in a bit string, a number in a number, a datetime in a
+/// binary string in a binary string [ISO/IEC 9075-2:2023 §9.2 SR3], a
+/// number in a number, a datetime in a
 /// datetime of its fields, an interval in a comparable interval.
 /// \[EXTENSION\] Where either is a type beyond the standard, which SR2
 /// does not speak of (RULES.md D53): a value comparable with the target,
@@ -120,7 +121,7 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     }
     let temporal = target.is_datetime() || t.is_datetime() || target.is_interval() || t.is_interval();
     let datetime = if temporal { target.comparable(t) } else { true };
-    target.is_character() == t.is_character() && target.is_bit() == t.is_bit() && datetime
+    target.is_character() == t.is_character() && target.is_binary() == t.is_binary() && datetime
 }
 
 /// Which statement changes the table.

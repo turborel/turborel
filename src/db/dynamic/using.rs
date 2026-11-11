@@ -51,11 +51,12 @@ fn check_count(count: i64, occurrences: i64, rule: &str) -> Result<()> {
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR7g ii] RETURNED_LENGTH and
-/// RETURNED_OCTET_LENGTH of `v`, a varying string's.
+/// RETURNED_OCTET_LENGTH of `v`, a varying string's: of a binary string,
+/// its octets both.
 fn returned(item: &mut Item, v: &Value) {
     let (length, octets) = match v {
         Value::Char(s) => (s.chars().count(), s.len()),
-        Value::Bits(b) => (usize::try_from(b.len()).unwrap_or(usize::MAX), b.bytes().len()),
+        Value::Binary(b) => (usize::try_from(b.len()).unwrap_or(usize::MAX), b.bytes().len()),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)
@@ -70,9 +71,9 @@ fn returned(item: &mut Item, v: &Value) {
     item.set(DescriptorItem::ReturnedOctetLength, exact(i64::try_from(octets).unwrap_or(i64::MAX)));
 }
 
-/// Whether `t` is CHARACTER VARYING or BIT VARYING.
+/// Whether `t` is CHARACTER VARYING or BINARY VARYING.
 fn varying(t: DataType) -> bool {
-    matches!(t, DataType::Varying { .. } | DataType::BitVarying { .. })
+    matches!(t, DataType::Varying { .. } | DataType::VarBinary { .. })
 }
 
 impl Session {

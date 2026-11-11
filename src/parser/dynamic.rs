@@ -162,7 +162,7 @@ impl Parser {
             Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => None,

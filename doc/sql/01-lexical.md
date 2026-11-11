@@ -78,8 +78,7 @@ table's, or a correlation name's, `S.NAME`. See [Names](03-names.md).
 |---|---|---|
 | Character string | `'it''s'`, `''` | CHARACTER of its length |
 | National character string | `N'text'` | CHARACTER of its length |
-| Bit string | `B'1010'` | BIT of its length |
-| Hexadecimal string | `X'1F'` | BIT of four bits a digit |
+| Binary string | `X'1F'`, `X'0A 0B'` | BINARY of its octets, two hexits each |
 | Exact number | `42`, `-3.75`, `.5`, `5.`, `1_000_000` | NUMERIC of its digits |
 | Approximate number | `1.5E3`, `-2E-1` | FLOAT(53), of DOUBLE PRECISION's precision |
 | Boolean | `TRUE`, `FALSE`, `UNKNOWN` | BOOLEAN, UNKNOWN its null |
@@ -91,8 +90,11 @@ table's, or a correlation name's, `S.NAME`. See [Names](03-names.md).
 A quote in a character string is written twice. A string may be written
 in parts, each quoted, separated by a separator holding a newline: the
 parts are one string. A character string may begin with an introducer
-naming its character set, `_SQL_TEXT'text'`, of SQL_TEXT alone. The
-letters B, X, N and E may be written in either case.
+naming its character set, `_SQL_TEXT'text'`, of SQL_TEXT alone. A
+binary string holds an even number of hexits, spaces among them passed
+over, and may be written in parts as a character string may. The
+letters X, N and E may be written in either case. SQL-92's bit string
+literal, `B'1010'`, is gone, as SQL:2023 has none.
 
 An exact number holds at most 18 digits; an approximate number is
 within the range of DOUBLE PRECISION. A datetime literal is a valid
@@ -100,7 +102,8 @@ date or time:
 
 ```sql
 VALUES ('ab'
-  'cd', 'it''s', '', N'n', B'101', X'1F', 1.5E3, .5, 5.);
+  'cd', 'it''s', '', N'n', X'1F', x'0a 0b'
+  'FF', 1.5E3, .5, 5.);
 VALUES 'ab' 'cd';
 VALUES 123456789012345678901;
 VALUES 1E400;
@@ -108,9 +111,9 @@ VALUES TIME '25:00:00';
 ```
 
 ```
-      |      |  |   |     |          |                          |     |
-------+------+--+---+-----+----------+--------------------------+-----+-----
- abcd | it's |  | n | 101 | 00011111 |                    1.5E3 | 0.5 |   5
+      |      |  |   |    |        |                          |     |
+------+------+--+---+----+--------+--------------------------+-----+-----
+ abcd | it's |  | n | 1F | 0A0BFF |                    1.5E3 | 0.5 |   5
 (1 row)
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected end of statement, found 'cd' (at character 12)
 turborel: SQLCODE -900 (SQLSTATE 0A000): <exact numeric literal> 123456789012345678901 has 21 digits; this implementation's maximum exact precision is 18 [X3.135-1986 §5.2 SR4] (at character 7)
@@ -169,4 +172,5 @@ extensions.
 [Key Words](../appendix/b-key-words.md) lists them all.
 
 The standard: ISO/IEC 9075:1992 §5.1–§5.3; X3.135-1986 §5.1–§5.3; ISO/IEC
-9075-2:2023 §5.3 for underscores and boolean literals.
+9075-2:2023 §5.3 for underscores, binary string literals and boolean
+literals.

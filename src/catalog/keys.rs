@@ -62,7 +62,7 @@ impl IndexDesc {
     }
 
     /// The types of the key, of `table`: those of its columns, but of
-    /// BIT VARYING where a column is by a sort key.
+    /// BINARY VARYING where a column is by a sort key.
     pub fn key_types(&self, table: &TableDesc) -> Option<Vec<DataType>> {
         let mut types = table.types(&self.columns)?;
         for (t, c) in types.iter_mut().zip(&self.collations) {

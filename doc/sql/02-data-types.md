@@ -11,7 +11,7 @@ or two unsigned integers it takes; so may a domain.
 ```
 <data type> ::=
       <character string type> | <national character string type>
-    | <bit string type> | <boolean type>
+    | <binary string type> | <boolean type>
     | <exact numeric type> | <approximate numeric type>
     | <datetime type> | <interval type>
 ```
@@ -21,8 +21,8 @@ or two unsigned integers it takes; so may a domain.
 | CHARACTER(n) | n characters, padded with spaces | CHAR(n); CHAR is CHAR(1) |
 | CHARACTER VARYING(n) | up to n characters | CHAR VARYING(n), VARCHAR(n) |
 | NATIONAL CHARACTER(n) | as CHARACTER | NCHAR(n), NATIONAL CHAR(n), and VARYING |
-| BIT(n) | n bits | BIT is BIT(1) |
-| BIT VARYING(n) | up to n bits | |
+| BINARY(n) | n octets, padded with X'00' | BINARY is BINARY(1) |
+| BINARY VARYING(n) | up to n octets | VARBINARY(n) |
 | BOOLEAN | TRUE or FALSE, and UNKNOWN as its null | |
 | NUMERIC(p, s), DECIMAL(p, s) | exact numbers of p digits, s after the point | DEC(p, s); (p) is (p, 0); no precision is 18 |
 | INTEGER | NUMERIC(10, 0) | INT |
@@ -34,8 +34,8 @@ or two unsigned integers it takes; so may a domain.
 | TIMESTAMP(p) | a date and a time | TIMESTAMP is TIMESTAMP(6); WITH TIME ZONE |
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 
-The longest string is 32,767 characters, the longest bit string 262,136
-bits, and an exact number holds at most 18 digits. A type past a limit
+The longest string is 32,767 characters, the longest binary string 32,767
+octets, and an exact number holds at most 18 digits. A type past a limit
 is valid SQL turborel does not process: SQLCODE -900, SQLSTATE 0A000.
 The [Limits](../appendix/d-limits.md) appendix lists them all.
 
@@ -102,32 +102,42 @@ Unicode version would be a new collation. See
 [CREATE COLLATION](statements/create-collation.md) and
 [SET COLLATION](statements/set-collation.md).
 
-## Bit strings
+## Binary strings
 
-A bit string is a sequence of bits, written `B'1010'` in binary or
-`X'FF'` in hexadecimal. A value of BIT(n) has exactly n bits: one of
-another length is refused. BIT VARYING(n) holds up to n. Bit strings are
-compared bit by bit; BIT_LENGTH gives a bit string's length.
+A binary string is a sequence of octets, written `X'A0FF'`, two hexits
+to an octet. Spaces may stand among the hexits, and parts on separate
+lines are one literal, as a character string's are. A literal is
+BINARY of its octets. A value of BINARY(n) has exactly n octets: one
+shorter is padded with X'00' octets, and one longer is cut if the octets
+past n are all X'00', else refused. BINARY VARYING(n), or VARBINARY(n),
+holds up to n, cut the same way. Its length must be written.
+
+Binary strings compare octet by octet, and a string is less than a
+longer one it begins, so `X'01'` is less than `X'0100'`. `||` joins
+two, SUBSTRING and POSITION count octets, and OCTET_LENGTH gives a
+binary string's length. BIT_LENGTH, which counts eight bits to an
+octet, is kept from SQL-92.
 
 ```sql
-CREATE TABLE BT (B BIT(8), V BIT VARYING(16));
-INSERT INTO BT VALUES (B'10100000', X'FF');
-SELECT B, V, BIT_LENGTH(V), B || V FROM BT;
-INSERT INTO BT (B) VALUES (B'101');
+CREATE TABLE BT (B BINARY(4), V VARBINARY(16));
+INSERT INTO BT VALUES (X'A0', X'FF 00');
+SELECT B, V, OCTET_LENGTH(V), B || V, POSITION(X'00' IN V) FROM BT;
+INSERT INTO BT (B) VALUES (X'0102030405');
 ```
 
 ```
 OK
 OK
- B        | V                |                      |
-----------+------------------+----------------------+--------------------------
- 10100000 | 11111111         |                    8 | 1010000011111111
+ B        | V                                |                      |                                          |
+----------+----------------------------------+----------------------+------------------------------------------+----------------------
+ A0000000 | FF00                             |                    2 | A0000000FF00                             |                    2
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 22026): a bit string of 3 bits is not of BIT(8)'s length [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3h]
+turborel: SQLCODE -301 (SQLSTATE 22001): a binary string of 5 octets, not X'00' beyond 4, does not fit BINARY(4) [ISO/IEC 9075:1992 §13.8 GR4b iii; ISO/IEC 9075-2:2023 §9.2 GR3b ix 2]
 ```
 
-A bit string is not a number: CAST takes one to and from character
-strings, whose UTF-8 bytes are its bits, and not to or from numbers.
+A binary string is neither a number nor characters. CAST takes one only
+to another binary type, and nothing else to one. SQL-92's BIT and BIT
+VARYING, and its `B'...'` literals, are gone, as SQL:2023 has none.
 
 ## Booleans
 
@@ -330,21 +340,19 @@ UPDATE, a default, FETCH and SELECT INTO each assign. The value is taken
 to the column's type: a string padded or its trailing spaces dropped, a
 number's extra fraction digits truncated, a datetime's extra fraction
 digits dropped; a value that does not fit is refused (SQLSTATE 22001 of
-a string, 22003 of a number, 22026 of a bit string of the wrong
-length). A value of another kind, as a number to a character column, is
+a string, 22003 of a number). A value of another kind, as a number to a character column, is
 refused as the statement is read. A string read into a parameter too
 short for it is cut to fit instead, its indicator holding its length,
-with the warning 01004; a bit string shorter than a BIT parameter is
-padded with 0 bits, with the warning 01008, as a default shorter than
-its BIT column is when it is defined.
+with the warning 01004, a binary string too; a binary string shorter
+than a BINARY parameter is padded with X'00' octets, with no warning.
 
 **CAST** ( *value* AS *type* ) gives the value in another type, or a
 domain's, checking the domain's constraints:
 
-| From \ To | Character | Bit | Exact | Approximate | Datetime | Interval |
+| From \ To | Character | Binary | Exact | Approximate | Datetime | Interval |
 |---|---|---|---|---|---|---|
-| Character | yes | yes | its literal | its literal | its literal | its literal |
-| Bit | yes | yes | no | no | no | no |
+| Character | yes | no | its literal | its literal | its literal | its literal |
+| Binary | no | yes | no | no | no | no |
 | Exact | yes | no | yes | yes | no | of one field |
 | Approximate | yes | no | yes | yes | no | no |
 | Datetime | yes | no | no | no | yes, of its fields | no |
@@ -359,7 +367,7 @@ VALUES (CAST('42' AS INTEGER), CAST(3.99 AS INTEGER), '[' || CAST(12 AS CHAR(4))
         CAST('2026-10-28' AS DATE), CAST(TIMESTAMP '2026-10-28 13:45:00' AS TIME));
 VALUES CAST('x' AS INTEGER);
 VALUES CAST(12345 AS CHAR(3));
-VALUES CAST(1 AS BIT(8));
+VALUES CAST(1 AS BINARY(8));
 ```
 
 ```
@@ -369,21 +377,20 @@ VALUES CAST(1 AS BIT(8));
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22018): 'x' is not a <signed numeric literal> [ISO/IEC 9075:1992 §6.10 GR3b i, GR4b i]
 turborel: SQLCODE -301 (SQLSTATE 22001): '12345' is longer than CHARACTER(3) [ISO/IEC 9075:1992 §6.10 GR5a iv]
-turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of NUMERIC(1,0) to BIT(8) is not valid [ISO/IEC 9075:1992 §6.10 SR4] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of NUMERIC(1,0) to BINARY(8) is not valid [ISO/IEC 9075-2:2023 §6.13 SR7] (at character 7)
 ```
 
 A string CAST to a shorter character type is cut to its length, the
 statement completing with the warning 01004 if a character cut is not
-a space. A bit string CAST to a shorter bit type is cut, with the
-warning 01004, and to a longer BIT padded with 0 bits, with the warning
-01008. A bit string CAST to characters warns of 0 bits added, 01008, as
-its last character or a fixed length is filled out, and of characters
-cut, 01004.
+a space. A binary string CAST to a shorter binary type is cut, with the
+warning 01004, and to a longer BINARY padded with X'00' octets, with no
+warning.
 
 ```sql
 VALUES CAST('abcdef' AS CHAR(3));
 VALUES CAST('abc   ' AS VARCHAR(3));
-VALUES CAST(B'1' AS BIT(4));
+VALUES CAST(X'010203' AS BINARY(2));
+VALUES CAST(X'01' AS BINARY(3));
 ```
 
 ```
@@ -397,10 +404,16 @@ VALUES CAST(B'1' AS BIT(4));
 (1 row)
 
 ------
- 1000
-(1 row, with a warning: SQLSTATE 01008)
+ 0102
+(1 row, with a warning: SQLSTATE 01004)
+
+--------
+ 010000
+(1 row)
 ```
 
 The standard: ISO/IEC 9075:1992 §4.2–§4.5 and §6.1 the types, §6.10
-CAST, §9.1 and §9.2 assignment, §10.1 the interval qualifier; X3.135-1986
-§5.5, whose types are CHARACTER and the numbers.
+CAST, §9.1 and §9.2 assignment, §10.1 the interval qualifier; ISO/IEC
+9075-2:2023 §4.4, §4.6 and §6.1 the binary string and Boolean types,
+§6.13 their CAST, §9.1 and §9.2 their assignment; X3.135-1986 §5.5,
+whose types are CHARACTER and the numbers.

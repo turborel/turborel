@@ -6,7 +6,7 @@ use turborel::params::ParameterType;
 use turborel::storage::Row;
 use turborel::value::datetime::{Datetime, Field, Moment, parse};
 use turborel::value::interval::{Interval, Qualifier};
-use turborel::value::{Bits, Decimal, Value};
+use turborel::value::{Binary, Decimal, Value};
 
 use super::fields::{CHARACTER, EXACT, NULL};
 use super::*;
@@ -111,7 +111,7 @@ fn edge_rows() -> Vec<Row> {
     vec![
         vec![Value::Exact(Decimal::new(-12_345, 2)), Value::Char("abcd".into()), Value::Approx(-0.5)],
         vec![Value::Exact(Decimal::new(i128::MAX, 0)), Value::Null, Value::Approx(f64::MAX)],
-        vec![Value::Bits(Bits::of_bits("1010101011").unwrap()), Value::Bits(Bits::default())],
+        vec![Value::Binary(Binary::new(vec![0xAB, 0, 0xC0])), Value::Binary(Binary::default())],
         vec![Value::Bool(true), Value::Bool(false), Value::Null],
         vec![
             datetime(Moment::Date, "2024-02-29"),
@@ -129,8 +129,8 @@ fn every_reply() -> Vec<Reply> {
         Column { name: Some("K".into()), data_type: DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, not_null: true },
         Column { name: None, data_type: DataType::Character { length: 4 }, not_null: false },
         Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53, spelled: Spelled::Float }, not_null: false },
-        Column { name: Some("B".into()), data_type: DataType::Bit { length: 10 }, not_null: false },
-        Column { name: Some("V".into()), data_type: DataType::BitVarying { length: 3 }, not_null: false },
+        Column { name: Some("B".into()), data_type: DataType::Binary { length: 10 }, not_null: false },
+        Column { name: Some("V".into()), data_type: DataType::VarBinary { length: 3 }, not_null: false },
         Column { name: Some("L".into()), data_type: DataType::Boolean, not_null: false },
         Column { name: Some("D".into()), data_type: DataType::Date, not_null: false },
         Column { name: Some("T".into()), data_type: DataType::Time { precision: 2, zoned: false }, not_null: false },

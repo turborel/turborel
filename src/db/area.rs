@@ -285,7 +285,7 @@ fn condition_number(n: &ValueSpecification, auth: &str, params: &Params) -> Resu
         ),
         Value::Char(_)
         | Value::Approx(_)
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

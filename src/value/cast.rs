@@ -21,9 +21,9 @@ pub fn cast(v: Value, to: &DataType) -> Result<Value> {
 }
 
 /// [ISO/IEC 9075:1992 §6.10] `cast`, and the warning the cast raises, a
-/// completion condition [§3.3.4.1], if it raises one: of a string cut, or
-/// a bit string padded with 0 bits \[GR5c ii, GR5d, GR6c ii, GR6d, GR7,
-/// GR8\], as the target type's kind says (`SqlType::cast_warned`).
+/// completion condition [§3.3.4.1], if it raises one: of a string cut
+/// \[GR5c ii, GR6c ii\], or a binary string [ISO/IEC 9075-2:2023 §6.13
+/// GR13], as the target type's kind says (`SqlType::cast_warned`).
 ///
 /// # Errors
 ///

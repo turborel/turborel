@@ -156,14 +156,14 @@ fn rows_too_long_move_their_longest_values_out() {
 
 /// Verifies: [DESIGN] RULES.md D31, values out of line: a value is
 /// measured by the bytes its record holds, whatever its type: a VARCHAR
-/// value of trailing spaces, kept with them, and a BIT VARYING value go
+/// value of trailing spaces, kept with them, and a BINARY VARYING value go
 /// out of line past the threshold, and a record they would make longer
 /// than the most a row may take has them moved out; each read back as
 /// written.
 #[test]
 fn values_of_every_varying_type_are_measured() {
-    let format = RecordFormat::new(&[DataType::Varying { length: 1000 }, DataType::BitVarying { length: 8000 }]);
-    let row = vec![Value::Char(format!("{:<300}", "x")), Value::Bits(crate::value::Bits::new(vec![0xAB; 300], 2400).unwrap())];
+    let format = RecordFormat::new(&[DataType::Varying { length: 1000 }, DataType::VarBinary { length: 8000 }]);
+    let row = vec![Value::Char(format!("{:<300}", "x")), Value::Binary(crate::value::Binary::new(vec![0xAB; 300]))];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 100, most: 4000 }, &mut store).unwrap();
     assert_eq!(store.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [0, 1], "both past the threshold");

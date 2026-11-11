@@ -200,7 +200,7 @@ fn kept(t: &DataType) -> bool {
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_) => true,
-        DataType::Bit { .. } | DataType::BitVarying { .. } | DataType::Extension(_) => false,
+        DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Extension(_) => false,
     }
 }
 

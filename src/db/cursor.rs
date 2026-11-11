@@ -173,7 +173,7 @@ fn how_far(j: &ValueSpecification, auth: &str, params: &Params) -> Result<i128> 
         ),
         Value::Char(_)
         | Value::Approx(_)
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

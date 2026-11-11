@@ -57,7 +57,7 @@ impl InSet {
             Value::Null => Some(None),
             Value::Exact(_)
             | Value::Approx(_)
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

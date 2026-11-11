@@ -29,7 +29,7 @@ use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_
 use crate::storage::cost_of;
 use crate::value::datetime::{Datetime, Moment};
 use crate::value::interval::Interval;
-use crate::value::{Bits, CompOp, DataType, Decimal, Value};
+use crate::value::{Binary, CompOp, DataType, Decimal, Value};
 
 /// An index of the table an operand reads that a join's equalities probe:
 /// the table, its filter, the index, and of each of the index's first
@@ -384,7 +384,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
 
 /// Whether values of type `a` are placed among the keys of a column of
 /// type `b` (`engine/key.rs` `anchor`): of one kind, character strings of
-/// either length, and bit strings, alike.
+/// either length, and binary strings, alike.
 fn alike(a: &DataType, b: &DataType) -> bool {
     family(a) == family(b)
 }
@@ -393,7 +393,7 @@ fn alike(a: &DataType, b: &DataType) -> bool {
 fn family(t: &DataType) -> &'static str {
     match t {
         DataType::Character { .. } | DataType::Varying { .. } => "CHARACTER",
-        DataType::Bit { .. } | DataType::BitVarying { .. } => "BIT",
+        DataType::Binary { .. } | DataType::VarBinary { .. } => "BINARY",
         DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -414,7 +414,7 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Exact { .. } => Some(Value::Exact(Decimal::new(0, 0))),
         DataType::Approximate { .. } => Some(Value::Approx(0.0_f64)),
         DataType::Character { .. } | DataType::Varying { .. } => Some(Value::Char(String::new())),
-        DataType::Bit { .. } | DataType::BitVarying { .. } => Bits::new(vec![0], 1).ok().map(Value::Bits),
+        DataType::Binary { .. } | DataType::VarBinary { .. } => Some(Value::Binary(Binary::new(vec![0]))),
         DataType::Boolean => Some(Value::Bool(false)),
         DataType::Date => Some(moment(Moment::Date, false)),
         DataType::Time { zoned, .. } => Some(moment(Moment::Time, *zoned)),
@@ -432,7 +432,7 @@ mod tests {
     use crate::value::Spelled;
 
     /// Verifies: [DESIGN] RULES.md D35: character strings of either length
-    /// are of one kind, as are bit strings, but exact and approximate
+    /// are of one kind, as are binary strings, but exact and approximate
     /// numbers are not; a probe's pages are asked with a value of each type
     /// built in; and only a table's read has a cost to set the probes
     /// against.
@@ -441,11 +441,11 @@ mod tests {
         let double = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
         let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
         assert!(alike(&DataType::Character { length: 1 }, &DataType::Varying { length: 2 }));
-        assert!(alike(&DataType::Bit { length: 1 }, &DataType::BitVarying { length: 8 }));
+        assert!(alike(&DataType::Binary { length: 1 }, &DataType::VarBinary { length: 8 }));
         assert!(!alike(&integer, &double) && alike(&double, &double));
         assert!(matches!(sample(&double), Some(Value::Approx(_))) && matches!(sample(&integer), Some(Value::Exact(_))));
         assert!(matches!(sample(&DataType::Date), Some(Value::Datetime(_))));
-        assert!(matches!(sample(&DataType::Bit { length: 8 }), Some(Value::Bits(_))));
+        assert!(matches!(sample(&DataType::Binary { length: 8 }), Some(Value::Binary(_))));
         assert_eq!(access_cost(&Plan::Values { rows: Vec::new(), detail: String::new() }), None);
     }
 

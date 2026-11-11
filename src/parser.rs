@@ -120,7 +120,7 @@ fn describe(t: &Tok) -> String {
         Tok::KeyWord(k) => k.to_string(),
         Tok::Identifier(s) | Tok::ExactNumeric(s) | Tok::ApproximateNumeric(s) => s.clone(),
         Tok::CharacterString(s) => format!("'{s}'"),
-        Tok::BitString(b) => format!("B'{b}'"),
+        Tok::BinaryString(b) => format!("X'{b}'"),
         Tok::Introducer(name) => format!("_{name}"),
         Tok::Delimiter(d) => format!("\"{d}\""),
         Tok::End => "end of statement".into(),
@@ -335,7 +335,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Delimiter(_)
             | Tok::End => Err(self.syntax("expected an <identifier>")),
         }
@@ -361,7 +361,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => Err(self.syntax("expected an <unsigned integer>")),
@@ -553,7 +553,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected an <SQL statement> [X3.135-1986 §7.3]")),

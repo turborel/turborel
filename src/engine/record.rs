@@ -12,7 +12,7 @@
 //!          type writes them: an exact number's units at the column's
 //!          scale (i64), an approximate number's IEEE-754 bits, a
 //!          datetime's instant in UTC (i64, a zone i16 after it if zoned),
-//!          an interval's units (i128), a BIT string's bytes; zeros for
+//!          an interval's units (i128), a BINARY string's octets; zeros for
 //!          NULL
 //! ends:    for each column of varying width, in column order, u32: where
 //!          its bytes end, counted from the start of the variable bytes;

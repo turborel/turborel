@@ -17,6 +17,9 @@ pub const MAX_WIDTH: usize = 60;
 const APPROXIMATE_WIDTH: usize = 24;
 /// The characters of a truth value at its longest: `FALSE`.
 const BOOLEAN_WIDTH: usize = 5;
+/// The hexits an octet of a binary string shows as [ISO/IEC 9075-2:2023
+/// §5.3 SR20].
+const HEXITS_PER_OCTET: usize = 2;
 
 /// How a column is shown.
 #[derive(Debug, Clone, Copy)]
@@ -45,9 +48,10 @@ fn positions(base: usize, precision: u32, zoned: bool) -> usize {
 /// What a column of `t`'s values needs, named `name`.
 fn shape(name: &str, t: &DataType) -> Shape {
     let (width, right) = match t {
-        // A bit string as its 0s and 1s, one to a bit.
-        DataType::Character { length } | DataType::Varying { length } | DataType::Bit { length } | DataType::BitVarying { length } => {
-            (usize::try_from(*length).unwrap_or(MAX_WIDTH), false)
+        DataType::Character { length } | DataType::Varying { length } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
+        // A binary string as its hexits, two to an octet.
+        DataType::Binary { length } | DataType::VarBinary { length } => {
+            (usize::try_from(*length).unwrap_or(MAX_WIDTH).saturating_mul(HEXITS_PER_OCTET), false)
         }
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
@@ -128,7 +132,7 @@ impl Sink for Table<'_> {
                     Value::Char(_)
                     | Value::Exact(_)
                     | Value::Approx(_)
-                    | Value::Bits(_)
+                    | Value::Binary(_)
                     | Value::Bool(_)
                     | Value::Datetime(_)
                     | Value::Interval(_)
@@ -196,7 +200,7 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D46; [ISO/IEC 9075:1992 §6.1 SR27] a
     /// column of a datetime is as wide as its length in positions, its
-    /// fraction and displacement counted; of a bit string, its bits.
+    /// fraction and displacement counted; of a binary string, its hexits.
     #[test]
     fn datetime_columns_are_as_wide_as_their_positions() {
         let width = |t: DataType| shape("C", &t).width;
@@ -205,7 +209,7 @@ mod tests {
         assert_eq!(width(DataType::Time { precision: 2, zoned: true }), 17);
         assert_eq!(width(DataType::Timestamp { precision: 6, zoned: false }), 26);
         assert_eq!(width(DataType::Timestamp { precision: 3, zoned: true }), 29);
-        assert_eq!(width(DataType::BitVarying { length: 12 }), 12);
+        assert_eq!(width(DataType::VarBinary { length: 12 }), 24);
         let day_second = turborel::value::interval::Qualifier::new(
             turborel::value::datetime::Field::Day,
             turborel::value::datetime::Field::Second,

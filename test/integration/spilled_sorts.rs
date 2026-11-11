@@ -14,7 +14,7 @@ const ROWS: usize = 3000;
 
 /// The columns of `X` sorted by, of each kind with prefixes: integers,
 /// decimals, approximate numbers, strings longer and shorter than a
-/// prefix, datetimes of each type, intervals of each class, and bit
+/// prefix, datetimes of each type, intervals of each class, and binary
 /// strings longer and shorter than a prefix.
 const COLUMNS: &[&str] = &["I", "D", "F", "C", "V", "DT", "TM", "TS", "TZ", "IY", "ID", "B"];
 
@@ -44,7 +44,7 @@ fn x_row(k: usize) -> String {
         zone.abs().div_euclid(60),
         zone.abs() % 60
     );
-    let bits: String = (0..=(k * 7) % 80).map(|i| if (k.div_euclid(3) + i).is_multiple_of(3) { '1' } else { '0' }).collect();
+    let octets: String = (0..=(k * 7) % 10).map(|i| if (k.div_euclid(3) + i).is_multiple_of(3) { "A5" } else { "00" }).collect();
     [
         k.to_string(),
         null(17, format!("{}", (k * 7919) % 500)),
@@ -58,7 +58,7 @@ fn x_row(k: usize) -> String {
         format!("TIMESTAMP '{tz}'"),
         null(37, format!("INTERVAL '{}-{}' YEAR TO MONTH", (k * 3) % 20, k % 12)),
         null(41, format!("INTERVAL '{} {:02}:{:02}:{:02}' DAY TO SECOND", k % 9, k % 24, (k * 7) % 60, k % 60)),
-        null(43, format!("B'{bits}'")),
+        null(43, format!("X'{octets}'")),
     ]
     .join(", ")
 }
@@ -68,7 +68,7 @@ fn filled(db: &Database) -> Session {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION S CREATE TABLE X (K INTEGER, I INTEGER, D DECIMAL(9, 2), F DOUBLE PRECISION,
            C CHARACTER(30), V CHARACTER VARYING(12), DT DATE, TM TIME, TS TIMESTAMP, TZ TIMESTAMP WITH TIME ZONE,
-           IY INTERVAL YEAR TO MONTH, ID INTERVAL DAY TO SECOND, B BIT VARYING(80))",
+           IY INTERVAL YEAR TO MONTH, ID INTERVAL DAY TO SECOND, B VARBINARY(11))",
     )
     .unwrap();
     let s = db.session("S");

@@ -89,24 +89,28 @@ The numeric functions:
 
 | Function | Value |
 |---|---|
-| CHAR_LENGTH(s), CHARACTER_LENGTH(s) | the characters of a string; of a bit string, its octets |
-| OCTET_LENGTH(s) | the octets of a string, as UTF-8, or of a bit string |
-| BIT_LENGTH(s) | the bits of a string, or of a bit string |
-| POSITION(a IN b) | where string a first begins in b, from 1; 0 if not in it, 1 if a is empty |
+| CHAR_LENGTH(s), CHARACTER_LENGTH(s) | the characters of a character string |
+| OCTET_LENGTH(s) | the octets of a string, as UTF-8, or of a binary string |
+| BIT_LENGTH(s) | *(extension)* eight bits to each of those octets |
+| POSITION(a IN b) | where string a first begins in b, from 1; 0 if not in it, 1 if a is empty; of binary strings, in octets |
 | EXTRACT(f FROM d) | the field f of a datetime or interval |
 
 ## String expressions
 
-`||` joins two strings, or two bit strings; of CHARACTER VARYING if
-either is. The string functions:
+`||` joins two strings, or two binary strings; of CHARACTER VARYING, or
+BINARY VARYING, if either is. Binary strings joined past 32,767 octets
+keep their first ones if the rest are X'00', else are refused (SQLSTATE
+22001). The string functions:
 
 | Function | Value |
 |---|---|
-| SUBSTRING(s FROM start [FOR length]) | the characters of s from start, counting from 1, length of them or the rest |
+| SUBSTRING(s FROM start [FOR length]) | the characters of s from start, counting from 1, length of them or the rest; of a binary string, its octets |
 | UPPER(s), LOWER(s) | s in upper or lower case |
 | TRIM([[LEADING \| TRAILING \| BOTH] [c] FROM] s) | s without the character c, a space if not written, at its start, end or both, the default |
 
-A function of a CHARACTER VARYING string is CHARACTER VARYING.
+A function of a CHARACTER VARYING string is CHARACTER VARYING, and
+SUBSTRING of a binary string BINARY VARYING. UPPER, LOWER and TRIM take
+character strings alone.
 
 ```sql
 VALUES ('Ada' || ' ' || 'Lovelace', SUBSTRING('Lovelace' FROM 1 FOR 4), UPPER('ada'),
@@ -122,6 +126,17 @@ VALUES ('[' || TRIM('  x  ') || ']', TRIM(LEADING '0' FROM '007'), OCTET_LENGTH(
          |     |                      |
 ---------+-----+----------------------+----------------------
  [x]     | 7   |                    2 |                    8
+(1 row)
+```
+
+```sql
+VALUES (POSITION(X'0B' IN X'0A0B0C'), SUBSTRING(X'0A0B0C' FROM 2), X'0A' || X'0B', OCTET_LENGTH(X'0A0B'), BIT_LENGTH(X'0A0B'));
+```
+
+```
+                      |        |      |                      |
+----------------------+--------+------+----------------------+----------------------
+                    2 | 0B0C   | 0A0B |                    2 |                   16
 (1 row)
 ```
 
@@ -248,4 +263,5 @@ CAST(*value* AS *type*) gives a value in another type, or a domain's:
 [Data Types](02-data-types.md) shows which types CAST takes to which.
 
 The standard: ISO/IEC 9075:1992 §6.2–§6.15 and §7.11; X3.135-1986 §5.6–§5.9;
-ISO/IEC 9075-2:2023 §6.29, §6.46 and §10.9 for truth values.
+ISO/IEC 9075-2:2023 §6.29, §6.46 and §10.9 for truth values, §6.31–§6.33
+for binary strings.

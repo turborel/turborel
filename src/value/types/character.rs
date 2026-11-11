@@ -11,8 +11,8 @@ use std::cmp::Ordering;
 use super::{Descriptor, SqlType};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
-use crate::value::cast::{approximate_literal, padded};
-use crate::value::{BYTE_BITS, Bits, Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
+use crate::value::cast::{approximate_literal, padded, uncastable};
+use crate::value::{Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
 
 /// The kind of CHARACTER(length).
 #[derive(Debug)]
@@ -35,24 +35,6 @@ pub(super) fn string(v: &Value) -> Option<&str> {
     if let Value::Char(s) = v { Some(s) } else { None }
 }
 
-/// [ISO/IEC 9075:1992 §6.10 GR5d, GR6d] The characters `b`'s bits are,
-/// of the form-of-use UTF-8, whose least character is of 8 bits: its
-/// bytes, its last extended with 0 bits.
-///
-/// # Errors
-///
-/// SQLSTATE 22018 if they are not UTF-8: a string holds characters, so
-/// is of a valid encoding.
-pub(super) fn of_bits(b: &Bits) -> Result<String> {
-    String::from_utf8(b.bytes().to_vec()).or_else(|_| {
-        fail_with(
-            Code::Data,
-            SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
-            format!("[ISO/IEC 9075:1992 §6.10 GR5d, GR6d] the bit string B'{b}' is not characters of UTF-8"),
-        )
-    })
-}
-
 /// A value cast with no warning.
 pub(super) fn unwarned(v: Value) -> (Value, Option<SqlState>) {
     (v, None)
@@ -65,31 +47,6 @@ pub(super) fn cut(s: &str, length: u32) -> (String, Option<SqlState>) {
     let fits = usize::try_from(length).unwrap_or(usize::MAX);
     let lost = s.chars().skip(fits).any(|c| c != ' ');
     (s.chars().take(fits).collect(), lost.then_some(SqlState::STRING_TRUNCATED))
-}
-
-/// [ISO/IEC 9075:1992 §6.10 GR5d, GR6d] The bit string `b` cast to a
-/// character string of length `length`, `fixed`, or of that maximum
-/// length: its characters (`of_bits`), cut to the length, or, `fixed`,
-/// extended to it with characters of 0 bits. The warning raised is the
-/// first of: implicit zero-bit padding, its last character extended with
-/// 0 bits, its bits not a multiple of 8; string data, right truncation,
-/// characters cut \[GR5d i, GR6d ii\]; implicit zero-bit padding,
-/// characters added \[GR5d ii\].
-///
-/// # Errors
-///
-/// As `of_bits`.
-pub(super) fn bits_as_characters(b: &Bits, length: u32, fixed: bool) -> Result<(Value, Option<SqlState>)> {
-    let text = of_bits(b)?;
-    let (count, fits) = (text.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
-    let added = if fixed { fits.saturating_sub(count) } else { 0 };
-    let warning = if !b.len().is_multiple_of(BYTE_BITS) || added > 0 {
-        Some(SqlState::ZERO_BIT_PADDING)
-    } else {
-        (count > fits).then_some(SqlState::STRING_TRUNCATED)
-    };
-    let cast = text.chars().chain(std::iter::repeat_n('\0', added)).take(fits).collect();
-    Ok((Value::Char(cast), warning))
 }
 
 /// A value not of a column of `t`'s type.
@@ -162,8 +119,7 @@ impl SqlType for Character {
     /// [ISO/IEC 9075:1992 §6.10 GR5] A number's shortest literal, padded
     /// \[GR5a, GR5b\]; a string cut or padded \[GR5c\], with the warning
     /// string data, right truncation if a character cut is not a space
-    /// \[GR5c ii\]; a bit string's characters, cut or padded, with their
-    /// warnings \[GR5d\] (`bits_as_characters`).
+    /// \[GR5c ii\]; no binary string [ISO/IEC 9075-2:2023 §6.13 SR7].
     fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
         let length = length_of(t);
         match v {
@@ -179,7 +135,7 @@ impl SqlType for Character {
             // [GR5e] its literal's string, as it shows, padded.
             Value::Datetime(d) => super::datetime::as_string(&d, length, true).map(unwarned),
             Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true).map(unwarned),
-            Value::Bits(b) => bits_as_characters(&b, length, true),
+            Value::Binary(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
         }
     }

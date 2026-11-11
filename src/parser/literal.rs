@@ -54,7 +54,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => return None,
@@ -76,9 +76,9 @@ impl Parser {
     }
 
     /// `<literal>` ::= `<character string literal>` | `<numeric literal>` |
-    /// `<bit string literal>` | `<hex string literal>` | `<datetime literal>`
-    /// | `<interval literal>` [ISO/IEC 9075:1992 §5.3] | `<boolean literal>`
-    /// [ISO/IEC 9075-2:2023 §5.3]
+    /// `<datetime literal>` | `<interval literal>` [ISO/IEC 9075:1992 §5.3]
+    /// | `<binary string literal>` | `<boolean literal>` [ISO/IEC
+    /// 9075-2:2023 §5.3]
     pub(super) fn literal(&mut self) -> Result<Literal> {
         if self.at_datetime_literal() {
             return self.datetime_literal();
@@ -99,7 +99,7 @@ impl Parser {
         let at = self.here();
         let lit = match self.peek().clone() {
             Tok::CharacterString(s) => Literal::Character(s),
-            Tok::BitString(b) => Literal::Bit(b),
+            Tok::BinaryString(b) => Literal::Binary(b),
             Tok::ExactNumeric(t) => {
                 // [X3.135-1986 §5.2 SR4] sets no maximum number of digits (RULES.md D18).
                 let d = parse_exact(&t).map_err(|m| SqlError::at(Code::Unsupported, at, m))?;

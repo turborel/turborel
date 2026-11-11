@@ -9,7 +9,7 @@ use crate::error::Code;
 use std::cmp::Ordering;
 
 use crate::value::Spelled;
-use crate::value::{Bits, Decimal, compare, compare_strings};
+use crate::value::{Binary, Decimal, compare, compare_strings};
 
 /// A value of the kind beyond the standard nothing here knows.
 fn foreign() -> Value {
@@ -72,8 +72,8 @@ fn built_in_kinds_refuse_other_kinds() {
         DataType::Character { length: 3 },
         DataType::Exact { precision: 5, scale: 1, spelled: Spelled::Numeric },
         DataType::Approximate { precision: 53, spelled: Spelled::Float },
-        DataType::Bit { length: 3 },
-        DataType::BitVarying { length: 3 },
+        DataType::Binary { length: 3 },
+        DataType::VarBinary { length: 3 },
         DataType::Boolean,
         DataType::Date,
         DataType::Time { precision: 3, zoned: true },
@@ -93,7 +93,7 @@ fn built_in_kinds_refuse_other_kinds() {
         Value::Exact(Decimal::new(4, 0)),
         Value::Exact(Decimal::new(2, 0)),
         Value::Char("2024-01-01".into()),
-        Value::Bits(Bits::default()),
+        Value::Binary(Binary::default()),
         Value::Approx(1.0),
         Value::Exact(Decimal::new(3, 0)),
     ];
@@ -138,32 +138,33 @@ fn built_in_kinds_cast_and_write() {
     assert_eq!(out.len(), 4 + 16 + 4 + 8, "a value of another kind writes its kind's zero");
 }
 
-/// Verifies: [DESIGN] RULES.md D53; [ISO/IEC 9075:1992 §6.10 SR4, §5.3]
-/// the bit kinds refuse to CAST a number or a value beyond the standard
-/// (SQLSTATE 22005), write a literal as B'...', a value of another kind as
-/// the empty bit string, and read back no bit string longer than its
-/// bytes (SQLCODE -916); a record of a fixed length is of the bytes its
-/// bits take, one of another length refused (SQLCODE -910).
+/// Verifies: [DESIGN] RULES.md D53; [ISO/IEC 9075-2:2023 §6.13 SR7,
+/// §5.3] the binary kinds refuse to CAST a number, a character string or
+/// a value beyond the standard (SQLSTATE 22005), write a literal as
+/// X'...', a value of another kind as the empty binary string, and read
+/// back no value cut short (SQLCODE -916); a record of a fixed length is
+/// of its octets, one of another length refused (SQLCODE -910), and read
+/// back only of that length.
 #[test]
-fn bit_kinds_cast_and_write() {
-    let t = DataType::Bit { length: 4 };
-    assert_eq!(code(BIT.cast(Value::Exact(Decimal::new(1, 0)), &t)), Some(Code::Data));
-    assert_eq!(code(BIT_VARYING.cast(foreign(), &t)), Some(Code::Data));
-    let b = Value::Bits(Bits::of_bits("101").unwrap());
-    assert_eq!((BIT.literal(&b), BIT.literal(&Value::Null)), ("B'101'".to_owned(), "NULL".to_owned()));
-    assert_eq!(code(BIT.encode_record(&b, &t)), Some(Code::Api), "3 bits for BIT(4)");
-    assert_eq!(BIT.record_width(&t), Some(1));
-    assert!(BIT.decode_record(&[], &t).is_none() && BIT_VARYING.decode_record(&[], &t).is_none());
-    assert!(BIT_VARYING.decode_record(&[9, 0], &t).is_none(), "more bits unused than a byte has");
+fn binary_kinds_cast_and_write() {
+    let t = DataType::Binary { length: 4 };
+    assert_eq!(code(BINARY.cast(Value::Exact(Decimal::new(1, 0)), &t)), Some(Code::Data));
+    assert_eq!(code(BINARY.cast(Value::Char("AB".into()), &t)), Some(Code::Data));
+    assert_eq!(code(BINARY_VARYING.cast(foreign(), &t)), Some(Code::Data));
+    let b = Value::Binary(Binary::new(vec![0xA0, 0x0B, 0]));
+    assert_eq!((BINARY.literal(&b), BINARY.literal(&Value::Null)), ("X'A00B00'".to_owned(), "NULL".to_owned()));
+    assert_eq!(code(BINARY.encode_record(&b, &t)), Some(Code::Api), "3 octets for BINARY(4)");
+    assert_eq!(BINARY.record_width(&t), Some(4));
+    assert!(BINARY.decode_record(&[1, 2, 3], &t).is_none() && BINARY_VARYING.decode_record(&[], &t).is_some());
     let mut out = Vec::new();
-    BIT.put_value(&Value::Null, &mut out);
-    assert_eq!(out.len(), 4 + 4, "the empty bit string");
-    let mut long = Vec::new();
-    long.put_u32(9);
-    long.put_bytes(&[0xFF]);
-    assert_eq!(code(BIT.value(&mut Reader::new(&long, "value"))), Some(Code::Corrupt), "9 bits in a byte");
-    assert_eq!(BIT.descriptor(&t).octets, Some(1));
-    assert_eq!(BIT_VARYING.written(&DataType::BitVarying { length: 7 }), "BIT VARYING(7)");
+    BINARY.put_value(&Value::Null, &mut out);
+    assert_eq!(out.len(), 4, "the empty binary string");
+    let mut short = Vec::new();
+    short.put_u32(9);
+    short.put_u8(0xFF);
+    assert_eq!(code(BINARY.value(&mut Reader::new(&short, "value"))), Some(Code::Corrupt), "9 octets of 1");
+    assert_eq!(BINARY.descriptor(&t).octets, Some(4));
+    assert_eq!(BINARY_VARYING.written(&DataType::VarBinary { length: 7 }), "BINARY VARYING(7)");
 }
 
 /// Verifies: [DESIGN] RULES.md D53: a type's parameters are at most two,
@@ -222,4 +223,20 @@ fn varying_keys_order_as_strings_compare() {
             assert!(ka == kb || !kb.starts_with(ka), "{a:?}'s key begins {b:?}'s");
         }
     }
+}
+
+/// Verifies: [DESIGN] R-ERR-2: an assignment's message cites the rule
+/// applying it and the clause applied, a clause of SQL-92 after a rule of
+/// SQL-92 without its standard again, after another rule with it, and a
+/// clause naming its standard as it is. MC/DC of `assignment_rule`: the
+/// clause names its standard (third case against the first), the rule is
+/// of SQL-92 (first against second).
+#[test]
+fn assignment_rules_cite_their_standards() {
+    use crate::value::assignment_rule;
+    let (sql92, x3, sql2023) = ("ISO/IEC 9075:1992 §13.8 GR4b iii", "X3.135-1986 §8.7 GR7", "ISO/IEC 9075-2:2023 §9.2 GR3b ix 2");
+    assert_eq!(assignment_rule(sql92, "§9.2 GR3e"), "ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3e");
+    assert_eq!(assignment_rule(x3, "§9.2 GR3e"), "X3.135-1986 §8.7 GR7; ISO/IEC 9075:1992 §9.2 GR3e");
+    assert_eq!(assignment_rule(sql92, sql2023), "ISO/IEC 9075:1992 §13.8 GR4b iii; ISO/IEC 9075-2:2023 §9.2 GR3b ix 2");
+    assert_eq!(assignment_rule(x3, sql2023), "X3.135-1986 §8.7 GR7; ISO/IEC 9075-2:2023 §9.2 GR3b ix 2");
 }

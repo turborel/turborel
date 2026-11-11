@@ -90,8 +90,8 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         DataType::Varying { length } => (length, false),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -140,7 +140,7 @@ impl SqlType for Boolean {
             | Value::Char(_)
             | Value::Exact(_)
             | Value::Approx(_)
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Extension(_) => unassignable(&v, t, rule),
@@ -154,7 +154,7 @@ impl SqlType for Boolean {
         match v {
             Value::Null | Value::Bool(_) => Ok(v),
             Value::Char(s) => boolean_literal(&s),
-            Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
+            Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
                 uncastable(&v, t)
             }
         }

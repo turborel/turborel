@@ -49,12 +49,11 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let padding = padding_of(&next, sql);
         let change = Change::Schema { sql: sql.to_owned(), owner, engines, zone };
         self.stage(&fresh, tx, Changed { next, change, made: Some(made) })?;
         let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
         let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(long_texts::of_schema);
-        Ok(long_texts::warned(done, sql, schema).warned(padding))
+        Ok(long_texts::warned(done, sql, schema))
     }
 }
 
@@ -85,7 +84,7 @@ impl Database {
             logged?;
             let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
             let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(long_texts::of_schema);
-            Ok(long_texts::warned(done, sql, schema).warned(padding_of(st, sql)))
+            Ok(long_texts::warned(done, sql, schema))
         }))
     }
 }
@@ -115,10 +114,4 @@ impl State {
 pub(super) fn schema_tables(sql: &str, engines: &[(String, String)]) -> Vec<QualifiedName> {
     let Ok(schema) = Parser::new(sql).and_then(|p| p.of_definition().schema()) else { return Vec::new() };
     engines.iter().map(|(ident, _)| QualifiedName { auth: schema.name.clone(), ident: ident.clone() }).collect()
-}
-
-/// [ISO/IEC 9075:1992 §11.5 GR1b v] The warning of the `<schema
-/// definition>` `sql`, as `st` holds it, if a default it placed pads.
-fn padding_of(st: &State, sql: &str) -> Option<SqlState> {
-    Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().and_then(|s| st.padding_of_schema(&s))
 }

@@ -35,11 +35,9 @@ impl SqlState {
     /// 9075:1992 §11.19 GR13].
     pub const QUERY_EXPRESSION_TOO_LONG: SqlState = SqlState("0100A");
     /// Warning: string data, right truncation [ISO/IEC 9075:1992 §9.1
-    /// GR3b, GR3e; §6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7b, GR8b].
+    /// GR3b, GR3e; §6.10 GR5c ii, GR6c ii; ISO/IEC 9075-2:2023 §9.1 GR7i,
+    /// GR7l; §6.13 GR13].
     pub const STRING_TRUNCATED: SqlState = SqlState("01004");
-    /// Warning: implicit zero-bit padding [ISO/IEC 9075:1992 §9.1 GR3h,
-    /// §6.10 GR5d, GR6d, GR7c].
-    pub const ZERO_BIT_PADDING: SqlState = SqlState("01008");
     /// Warning: null value eliminated in set function [ISO/IEC 9075:1992
     /// §6.5 GR1b].
     pub const NULL_VALUE_ELIMINATED: SqlState = SqlState("01003");
@@ -111,8 +109,6 @@ impl SqlState {
     pub const DATA_EXCEPTION: SqlState = SqlState("22000");
     /// Data exception: string data, right truncation.
     pub const STRING_DATA_RIGHT_TRUNCATION: SqlState = SqlState("22001");
-    /// Data exception: string data, length mismatch.
-    pub const STRING_DATA_LENGTH_MISMATCH: SqlState = SqlState("22026");
     /// Data exception: null value, no indicator parameter.
     pub const NULL_VALUE_NO_INDICATOR: SqlState = SqlState("22002");
     /// Data exception: numeric value out of range.

@@ -494,7 +494,7 @@ pub fn count(db: &Database, name: &str) -> usize {
             Value::Approx(_)
             | Value::Char(_)
             | Value::Null
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -521,7 +521,7 @@ pub fn text(db: &Database, name: &str) -> String {
             Value::Exact(_)
             | Value::Approx(_)
             | Value::Null
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)

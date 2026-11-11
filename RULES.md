@@ -334,9 +334,9 @@ name or pad characteristic.
 
 The default stays as it was. A comparison by it is bare, so the optimizer,
 zones, Bloom filters and batches see nothing new. A comparison by another
-compares `Expr::SortKey`s, which are `Value::Bits`, so sorting, hashing and
+compares `Expr::SortKey`s, which are `Value::Binary`, so sorting, hashing and
 spilling need no change either. An index on a collated column holds sort keys
-as BIT VARYING, its key from `IndexDesc::key_of` wherever a row or values
+as BINARY VARYING, its key from `IndexDesc::key_of` wherever a row or values
 become a key. Such an index covers no query, gives no order, and is told to an
 engine as reading every row, so MVCC may refuse more commits and never fewer.
 Storage stays in scalar order, and only bare comparisons reach it. GROUP BY,

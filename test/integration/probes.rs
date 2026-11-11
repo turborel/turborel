@@ -20,19 +20,19 @@ const ROWS: i32 = 300;
 /// Schema P: tables I, indexed, and S, not, of the same rows: K 0 to 299,
 /// N 'n' and K, C 'c' and K mod 40 (CHAR, padded), D a day from
 /// 2020-01-01, Z an instant written at a displacement of K mod 3 hours, V
-/// an interval of K days, B the bits of K mod 256, X K / 10 as a DOUBLE
+/// an interval of K days, B the octet of K mod 256, X K / 10 as a DOUBLE
 /// PRECISION, M K + 0.25 as a DECIMAL(6,2).
 fn twins() -> Database {
     let db = Database::new();
     let columns = "K INTEGER NOT NULL, N VARCHAR(8), C CHAR(6), D DATE, Z TIMESTAMP(0) WITH TIME ZONE, V INTERVAL DAY(3), \
-                   B BIT(8), X DOUBLE PRECISION, M DECIMAL(6,2)";
+                   B BINARY(1), X DOUBLE PRECISION, M DECIMAL(6,2)";
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION P CREATE TABLE I ({columns}) CREATE TABLE S ({columns})")).unwrap();
     let s = db.session("P");
     for k in 0..ROWS {
         let zone = k % 3;
         let values = format!(
             "{k}, 'n{k}', 'c{}', DATE '2020-01-01' + INTERVAL '{k}' DAY(3), TIMESTAMP '2020-01-01 {:02}:00:00+0{zone}:00' + \
-             INTERVAL '{k}' HOUR(3), INTERVAL '{k}' DAY(3), B'{:08b}', {k}E-1, {k}.25",
+             INTERVAL '{k}' HOUR(3), INTERVAL '{k}' DAY(3), X'{:02X}', {k}E-1, {k}.25",
             k % 40,
             zone,
             k % 256
@@ -115,12 +115,13 @@ fn an_in_list_and_an_or_of_ranges_are_probed() {
     assert_eq!(sorted(&s, "SELECT K FROM I WHERE N = 'x'"), ["10", "14"]);
 }
 
-/// Verifies: [DESIGN] RULES.md D34 [ISO/IEC 9075:1992 §8.2 GR4, GR5,
-/// GR6]: columns of DATE, TIMESTAMP WITH TIME ZONE, INTERVAL and BIT are
+/// Verifies: [DESIGN] RULES.md D34 [ISO/IEC 9075:1992 §8.2 GR5, GR6]
+/// [ISO/IEC 9075-2:2023 §8.2 GR5]: columns of DATE, TIMESTAMP WITH TIME
+/// ZONE, INTERVAL and BINARY are
 /// probed by constants of their kinds, an instant written at another
 /// displacement finding the rows of that instant.
 #[test]
-fn datetimes_intervals_and_bits_are_probed() {
+fn datetimes_intervals_and_binary_strings_are_probed() {
     let db = twins();
     let s = db.session("P");
     for (query, least, index) in [
@@ -130,7 +131,7 @@ fn datetimes_intervals_and_bits_are_probed() {
         ("SELECT K FROM I WHERE Z < TIMESTAMP '2020-01-01 03:00:00+00:00'", 2, "I_Z"),
         ("SELECT K FROM I WHERE V = INTERVAL '12' DAY", 1, "I_V"),
         ("SELECT K FROM I WHERE V > INTERVAL '6960' HOUR(4)", 9, "I_V"),
-        ("SELECT K FROM I WHERE B = B'00001100'", 2, "I_B"),
+        ("SELECT K FROM I WHERE B = X'0C'", 2, "I_B"),
         ("SELECT K FROM I WHERE D IN (DATE '2020-01-02', DATE '2020-01-09')", 2, "I_D"),
     ] {
         let plan = planned(&s, query, least);
@@ -227,14 +228,14 @@ fn a_raising_conjunct_of_one_of_three_operands() {
 
 /// Schema P of `twins`, with table E of a few rows: K 4, 8, 8, a null and
 /// 1000, C, D and B of K as I's and S's are, of 1000 C 'c0', D
-/// 2030-01-01 and B 11111111.
+/// 2030-01-01 and B X'FF'.
 fn with_few() -> Database {
     let db = twins();
     let s = db.session("P");
-    s.run("CREATE TABLE E (K INTEGER, C CHAR(6), D DATE, B BIT(8))").unwrap();
+    s.run("CREATE TABLE E (K INTEGER, C CHAR(6), D DATE, B BINARY(1))").unwrap();
     s.run(
-        "INSERT INTO E VALUES (4, 'c4', DATE '2020-01-05', B'00000100'), (8, 'c8', DATE '2020-01-09', B'00001000'), \
-         (8, 'c8', DATE '2020-01-09', B'00001000'), (NULL, 'c0', NULL, NULL), (1000, 'c0', DATE '2030-01-01', B'11111111')",
+        "INSERT INTO E VALUES (4, 'c4', DATE '2020-01-05', X'04'), (8, 'c8', DATE '2020-01-09', X'08'), \
+         (8, 'c8', DATE '2020-01-09', X'08'), (NULL, 'c0', NULL, NULL), (1000, 'c0', DATE '2030-01-01', X'FF')",
     )
     .unwrap();
     s.commit().unwrap();
@@ -291,7 +292,7 @@ fn few_rows_probe_an_index_of_the_other_table() {
 }
 
 /// Verifies: [X3.135-1986 §5.20 GR2b, §5.11 GR4]; [DESIGN] RULES.md D35,
-/// D34: a few rows probe an index on a DATE or a BIT column, by values of
+/// D34: a few rows probe an index on a DATE or a BINARY column, by values of
 /// its kind; an index on two columns by both, or by its first if the
 /// second is NOT NULL; not a hash index by its first column alone, nor a
 /// B-link index whose second column may be null, nor an index by values

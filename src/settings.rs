@@ -151,7 +151,7 @@ fn bytes(value: &Value, default: usize) -> usize {
         Value::Approx(_)
         | Value::Char(_)
         | Value::Null
-        | Value::Bits(_)
+        | Value::Binary(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)

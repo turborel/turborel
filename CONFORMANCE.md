@@ -254,9 +254,7 @@ where its CAST warns, so the warning belongs to the statement that runs it.
 
 | Case | Outcome | Rules |
 |---|---|---|
-| Cuts a string, a character not a space or any bit | Warning 01004 | §6.10 GR5c ii, GR5d, GR6c ii, GR6d, GR7b, GR7c, GR8b |
-| Pads a bit string with 0 bits | Warning 01008 | same |
-| A bit string to characters that both pads and cuts | Warning 01008 alone | §6.10 GR5d |
+| Cuts a string, a character not a space | Warning 01004 | §6.10 GR5c ii, GR6c ii |
 
 **Set functions** [§6.5] take a value expression holding no set function or
 subquery, including over outer references [SR4, SR5].
@@ -343,20 +341,14 @@ day-time (RULES.md D54).
 | OVERLAPS | Implemented | §8.11 |
 | SET TIME ZONE | Implemented | §16.5 |
 
-**BIT and BIT VARYING** [§6.1] come with the literals `B'...'` and `X'...'`
-[§5.3].
-
-| Use | Behaviour | Rules |
-|---|---|---|
-| Assignment | BIT(n) takes n bits, else 22001 or 22026. BIT VARYING(n) takes at most n. | §9.2 GR3f–GR3j |
-| Comparing, indexing, uniqueness | Bit by bit | §8.2 GR4 |
-| `\|\|` | BIT if both operands are, else BIT VARYING | §6.13 SR6 |
-| SUBSTRING | Of BIT VARYING | §6.7 SR7, GR6 |
-| CHAR_LENGTH, OCTET_LENGTH, BIT_LENGTH | Implemented | §6.6 GR4–GR6 |
-| CASE, set operations | BIT VARYING if any is | §9.3 SR3b |
-| CAST | To and from character strings, not numbers. Raises 01004 and 01008 as it cuts or pads. | §6.10 SR4, GR5d, GR6d, GR7, GR8 |
-| Defaults | A bit string literal. A BIT one shorter than the column or domain is padded with 0 bits, and the definition placing it completes with 01008. | §11.5 SR3a ii, GR1b iv, v; §11.4 GR5, §11.11 GR4, §11.13 GR2, §11.21 GR3, §11.23 GR2 |
-| Retrieved into a parameter | Cut to fit with 01004, or a BIT one padded with 0 bits with 01008 | §9.1 GR3f–GR3j |
+**BIT and BIT VARYING** [§6.1], and the bit string literal `B'...'`
+[§5.3], are not implemented. SQL:2003 dropped them and SQL:2023 has none,
+so the newer text wins (RULES.md D32). `X'...'` is SQL:2023's binary
+string literal, and BINARY and BINARY VARYING take the place of the bit
+strings (see [Binary strings](#binary-strings)). So do its warning 01008,
+implicit zero-bit padding, and its exception 22026, string data, length
+mismatch, which nothing raises now. BIT_LENGTH stays, counting eight bits
+to each octet of a character or binary string.
 
 ### Temporary tables
 
@@ -526,6 +518,40 @@ none [SR44-SR46]. An underscore anywhere else ends the number, which a
 non-decimal integers of Feature T661, `0X`, `0O` and `0B`, are not
 implemented.
 
+### Binary strings
+
+Feature T021 (BINARY and VARBINARY data types), with Features T023
+(compound binary literals) and T024 (spaces in binary literals), and of
+Feature T022 SUBSTRING on binary strings.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| BINARY(n), BINARY VARYING(n), VARBINARY(n) | §4.4, §6.1 SR1, SR4, SR5, SR19-SR21 | Strings of octets. BINARY is BINARY(1), and VARBINARY is BINARY VARYING. A maximum length is written, as without Feature T081 [SR26]. |
+| `<binary string literal>` | §5.3 SR4-SR7, SR20 | X, in either case, then quoted pairs of hexits, spaces among them passed over. Parts separated by a newline are one literal. An odd number of hexits, or a character neither a hexit nor a space, is a lexical error (SQLCODE -101). Its type is BINARY of its octets (IV191). |
+| Assignment | §9.2 GR3b viii-xii | BINARY(n) takes n octets, a shorter value padded with X'00', a longer one cut if the octets past n are all X'00', else 22001. BINARY VARYING(n) takes at most n, cut the same way. Only a binary string is assigned to one [SR3]. |
+| Retrieved into a parameter | §9.1 GR5a, GR7h-GR7l | Cut to fit with 01004, the indicator its length, or a BINARY one padded with X'00' octets. |
+| Comparing, indexing, uniqueness | §8.2 GR5 | Octet by octet, a string less than a longer one it begins (IA219), so trailing X'00' octets count (IA022). A key escapes each X'00' octet, so no key begins another. |
+| `\|\|` | §6.32 SR6a, GR3 | BINARY if both operands are, else BINARY VARYING. A result past 32,767 octets keeps its first ones if the rest are X'00', else 22001. |
+| SUBSTRING | §6.33 SR21, GR17 | Of BINARY VARYING, its octets. |
+| POSITION, OCTET_LENGTH | §6.31 GR3, GR6 | In octets. CHAR_LENGTH takes character strings alone. |
+| CASE, set operations | §9.5 SR3b | BINARY VARYING if any is, BINARY if all are, of the greatest length. A binary string with any other type is SQLCODE -103. |
+| CAST | §6.13 SR7, GR13 | From and to binary strings alone, else SQLCODE -103. Cut with 01004, or to BINARY padded with X'00' octets with no warning. |
+| Defaults | §11.5 SR4a ii, GR2a iv, v | A binary string literal no longer than the column or domain, a BINARY one padded with X'00' octets, with no warning. |
+| Descriptor areas | §20.1 Table 30, §20.5 GR4c iii 3, §20.10 GR7d ii | TYPE 60 of BINARY, 61 of BINARY VARYING. LENGTH and OCTET_LENGTH the length in octets. TYPE set sets LENGTH 1. |
+| Information Schema | 92 §21 | DATA_TYPE 'BINARY' or 'BINARY VARYING', CHARACTER_MAXIMUM_LENGTH and CHARACTER_OCTET_LENGTH the length in octets. |
+
+SQL:2023 wins over SQL-92 here (RULES.md D32). `X'...'` was a bit string
+of four bits a hexit, and is now a binary string, so an odd number of
+hexits is refused. CAST no longer takes a string's UTF-8 to bits and
+back. BINARY and VARBINARY are no key words of SQL-92, so both stay
+identifiers, read as data types where a data type is. A domain cannot be
+named BINARY or VARBINARY. TRIM and OVERLAY on binary strings, the rest
+of Feature T022, and the binary large objects of Feature T045 are not
+implemented.
+
+A collation's sort keys are binary strings, and an index on a collated
+column keys them as BINARY VARYING (RULES.md D60).
+
 ---
 
 ## Extensions
@@ -687,8 +713,10 @@ topic. The Where column names the file that implements each.
 | 86 §8.3 GR3b vii where nulls sort | Greater than every value, so last ascending and first descending | `value.rs` |
 | §6.1 SR2 the national character set | SQL_TEXT, the one there is. NATIONAL CHARACTER is CHARACTER. | `parser/data_type.rs`, `lexer.rs` |
 | §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |
-| §6.10 GR5d, GR6d a bit string CAST to a character string | Its bytes as UTF-8, the form-of-use, whose least character is 8 bits. Bytes not UTF-8 are refused (SQLSTATE 22018), as a string holds characters. | `value/types/character.rs` |
-| §6.10 GR7, GR8 a character string CAST to a bit string | The bits of its UTF-8 | `value/types/bit.rs` |
+| 2023 §4.4.1, IA022, whether trailing X'00' octets of a binary string are significant | They are | `value/binary.rs` |
+| 2023 §8.2 GR5, IA219, a binary string beginning another, the rest X'00' | Less than it | `value/binary.rs` |
+| 2023 §5.3 SR20, IV191, the type of a `<binary string literal>` | BINARY of its octets | `binder/values.rs` |
+| 2023 §6.32 SR6a, IL003 and IL007, the longest fixed and varying binary strings | 32,767 octets each | `value.rs` |
 | §9.1 GR3k, §9.2 GR3k a number stored or retrieved into an exact type | An exact number's extra fraction digits are truncated. An approximate number is rounded to the scale. | `value/types/exact.rs`, `value/types/approximate.rs` |
 
 ### Datetimes and intervals
@@ -842,7 +870,7 @@ SQLCODE -900 (RULES.md D18).
 
 | Limit | Value | Why | Where |
 |---|---|---|---|
-| BIT and BIT VARYING length | 262,136 bits (32,767 octets) | §6.1 SR3 requires only a length above 0. | `value.rs`, `parser/data_type.rs` |
+| BINARY and BINARY VARYING length | 32,767 octets | 2023 §6.1 SR4 requires only a length above 0. | `value.rs`, `parser/data_type.rs` |
 | CHARACTER length | 32,767 characters | 86 §5.5 SR2 requires only a length above 0. Values are stored padded to their length [86 §8.7 GR7b], so without a limit `CHAR(4000000000)` could allocate about 4 GB for each value. | `value.rs`, `parser/data_type.rs` |
 | Exact precision | 18 digits, for NUMERIC, DECIMAL and exact literals | 86 §5.5 SR6, SR7 and 86 §5.2 SR4 set no maximum. | `value.rs`, `parser/data_type.rs`, `parser/literal.rs` |
 | FLOAT precision | 53 binary digits, and approximate literals within the range of a double | 86 §5.5 SR10 allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser/literal.rs` |
@@ -886,8 +914,7 @@ Where the standards are unclear, turborel reads them as follows.
 
 | Text | Reading |
 |---|---|
-| A bit string's descriptor [§21.3.5] | The description gives a bit string type its length in bits, and an octet length and a collation only to a character string type, but the check constraint TABLE_OR_DOMAIN_CHECK_COMBINATIONS requires all three of BIT and BIT VARYING. Its length in bits and the octets those take are given, as facts of it. No collation is, as a bit string has none. |
-| Bit strings brought together [§9.3 SR3b] | The result of CASE, a set operation or a table value constructor of BIT(3) and BIT(4) is BIT(4), but no rule extends a value of 3 bits to it. Each keeps its bits, so a BIT(3) value inserted into a BIT(4) column through VALUES is refused (SQLSTATE 22026), as it is alone [§9.2 GR3h]. |
+| Binary strings brought together [2023 §9.5 SR3b] | The result of CASE, a set operation or a table value constructor of BINARY(2) and BINARY(3) is BINARY(3), but no rule extends a value of 2 octets to it. Each keeps its octets until it is assigned, where a BINARY(3) column pads it [§9.2 GR3b x]. |
 | A time or timestamp without time zone [§4.5.1, §6.1 GR5] | SQL-92 keeps it in UTC, the session's displacement implied, so it is kept so, and a value retrieved shows in the displacement of the session that retrieves it (RULES.md D54). Stored in a column WITH TIME ZONE, it takes that displacement. A datetime literal in a `<default clause>` without one is of UTC [§5.3 SR18], as a definition is read again where no session is. |
 | UNICODE_<LOCALE> and CLDR [UTS #35 Part 5 §3.13.2] | The rules tailor UNICODE, not CLDR's root collation, which orders 105 of its 24,412 characters otherwise. These are currency symbols, length and repetition marks, and a few Cyrillic letters. The script groups `[reorder]` moves are laid over UNICODE's primaries from CLDR's own, as UTS #35 describes for allkeys.txt. So the digits of scripts, which UNICODE puts before the currency symbols, are in the group of digits but stay where UNICODE has them. |
 | PAD SPACE under UNICODE [2023 §4.3.2, §11.43] | A space weighs only at the fourth level, so trailing spaces are taken away first. A character below a space then orders as past the string's end at that level, where padding would order it before. Only `CREATE COLLATION ... FROM UNICODE PAD SPACE` reaches this, as UNICODE itself is NO PAD. |

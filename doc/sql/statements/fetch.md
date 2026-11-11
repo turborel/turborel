@@ -40,9 +40,9 @@ completes with no data, SQLSTATE 02000, the targets unchanged.
 A null value sets the target's indicator to -1. A character string
 longer than its target is cut to fit, and the indicator holds its
 length in characters; FETCH then completes with a warning, SQLSTATE
-01004, SQLCODE 0. A bit string is cut so, its length in bits in the
-indicator; one shorter than a BIT target is padded with 0 bits, with the
-warning 01008. Any other value is assigned to a target as to a column,
+01004, SQLCODE 0. A binary string is cut so, its length in octets in the
+indicator; one shorter than a BINARY target is padded with X'00' octets,
+with no warning. Any other value is assigned to a target as to a column,
 by its type.
 
 INTO SQL DESCRIPTOR puts the row into the items of a descriptor area,
@@ -80,7 +80,6 @@ None.
 | 22002 | -301 | A null value, and its target has no indicator |
 | 02000 | 100 | Not an error: no data, the cursor past its last row or before its first |
 | 01004 | 0 | Not an error: a warning, a string cut to fit its target |
-| 01008 | 0 | Not an error: a warning, a bit string padded with 0 bits to fit its target |
 
 ## EXAMPLES
 

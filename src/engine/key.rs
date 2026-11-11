@@ -15,7 +15,7 @@
 //!                length [X3.135-1986 §5.11 GR5]
 //!   varying:     the UTF-8 less its trailing spaces, in chunks, each with a
 //!                marker of what follows (`value/types/varying.rs`)
-//!   bit:         each byte and a marker, the last's its bits (`value/bits.rs`)
+//!   binary:      each octet, a 0 one escaped, then an end (`value/binary.rs`)
 //!   datetime:    the instant in UTC as i64, sign bit flipped, big-endian
 //!   interval:    the units as i128, sign bit flipped, big-endian
 //!   extension:   as its type writes it
@@ -39,7 +39,7 @@ use crate::value::{DataType, Value};
 /// \[DESIGN\] Whether a value of type `t` is the same value decoded from
 /// its key (`decode_key`), so an index-only scan may give it for the
 /// column's (RULES.md D34): an exact number at its column's scale; a
-/// character string padded to its column's length; a bit string; a truth
+/// character string padded to its column's length; a binary string; a truth
 /// value; a date,
 /// a time or a timestamp of no time zone; an interval. Not a varying
 /// string, whose key leaves out its trailing spaces; an approximate
@@ -49,8 +49,8 @@ pub fn restores(t: &DataType) -> bool {
     match t {
         DataType::Character { .. }
         | DataType::Exact { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Interval(_) => true,
@@ -149,7 +149,7 @@ mod tests {
     use crate::value::Spelled;
     use crate::value::datetime::{Field, Moment};
     use crate::value::interval::{Interval, Qualifier};
-    use crate::value::{Bits, Datetime, Decimal, compare};
+    use crate::value::{Binary, Datetime, Decimal, compare};
 
     fn key(values: &[Value], types: &[DataType]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -270,8 +270,8 @@ mod tests {
         let restored = [
             (DataType::Character { length: 3 }, Value::Char("ab ".into())),
             (DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, exact(-12_345, 2)),
-            (DataType::Bit { length: 4 }, Value::Bits(Bits::new(vec![0xA0], 4).unwrap())),
-            (DataType::BitVarying { length: 16 }, Value::Bits(Bits::new(vec![0xFF, 0x80], 9).unwrap())),
+            (DataType::Binary { length: 4 }, Value::Binary(Binary::new(vec![0xA0, 0, 0, 1]))),
+            (DataType::VarBinary { length: 16 }, Value::Binary(Binary::new(vec![0xFF, 0, 0x80]))),
             (DataType::Date, Value::Datetime(Datetime { moment: Moment::Date, utc: 86_400_000_000, zone: 0, zoned: false, precision: 0 })),
             (DataType::Time { precision: 2, zoned: false }, day(3_600_000_000, Moment::Time, false)),
             (DataType::Timestamp { precision: 2, zoned: false }, day(-1, Moment::Timestamp, false)),

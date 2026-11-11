@@ -56,7 +56,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_) => Ok(ValueExpression::Value(self.value_specification()?)),
+            | Tok::BinaryString(_) => Ok(ValueExpression::Value(self.value_specification()?)),
             // [ISO/IEC 9075:1992 §5.3, §5.4] a character string literal, or
             // a column, of a character set.
             Tok::Introducer(_) => {
@@ -111,7 +111,7 @@ impl Parser {
             | Tok::ExactNumeric(_)
             | Tok::ApproximateNumeric(_)
             | Tok::CharacterString(_)
-            | Tok::BitString(_)
+            | Tok::BinaryString(_)
             | Tok::Introducer(_)
             | Tok::Delimiter(_)
             | Tok::End => return Err(self.syntax("expected a <set function specification>")),

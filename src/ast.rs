@@ -8,7 +8,7 @@
 use crate::catalog::QualifiedName;
 use crate::value::datetime::{Field, Moment, Written};
 use crate::value::interval::Interval;
-use crate::value::{Bits, Decimal};
+use crate::value::{Binary, Decimal};
 
 /// [X3.135-1986 §5.4] `<table name>` ::= \[`<authorization identifier>`.\] `<table identifier>`
 ///
@@ -151,7 +151,9 @@ pub struct ParameterSpecification {
     pub at: usize,
 }
 
-/// [X3.135-1986 §5.2; ISO/IEC 9075:1992 §5.3] `<literal>`: character string, numeric, bit, hex, datetime or interval
+/// [X3.135-1986 §5.2; ISO/IEC 9075:1992 §5.3; ISO/IEC 9075-2:2023 §5.3]
+/// `<literal>`: character string, numeric, binary string, Boolean, datetime
+/// or interval
 #[derive(Debug, Clone)]
 pub enum Literal {
     /// A `<character string literal>`'s value.
@@ -160,9 +162,8 @@ pub enum Literal {
     Exact(Decimal),
     /// An `<approximate numeric literal>`.
     Approximate(f64),
-    /// A `<bit string literal>`'s or `<hex string literal>`'s value
-    /// [ISO/IEC 9075:1992 §5.3].
-    Bit(Bits),
+    /// A `<binary string literal>`'s value [ISO/IEC 9075-2:2023 §5.3].
+    Binary(Binary),
     /// A `<datetime literal>`'s fields, as written [ISO/IEC 9075:1992
     /// §5.3]: of a displacement the SQL-session gives, if it writes none
     /// \[SR18\].

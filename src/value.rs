@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 
-mod bits;
+mod binary;
 pub(crate) mod cast;
 pub(crate) mod codec;
 pub mod collation;
@@ -17,7 +17,7 @@ mod like;
 mod operators;
 pub mod types;
 
-pub use bits::{BYTE_BITS, Bits};
+pub use binary::{BYTE_BITS, Binary};
 pub use cast::{cast, cast_warned};
 pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use datetime::Datetime;
@@ -56,9 +56,11 @@ pub const INDICATOR_PRECISION: u32 = 9;
 // implementation does not process: SQLCODE -900 (RULES.md D18).
 // ---------------------------------------------------------------------------
 
-/// \[DESIGN\] Longest BIT(`<length>`) and BIT VARYING: the bits of the
-/// longest character string's bytes, at one byte to a character.
-pub const MAX_BIT_LENGTH: u32 = 32_767 * 8;
+/// \[DESIGN\] Longest BINARY(`<length>`) and BINARY VARYING, in octets:
+/// the implementation-defined maxima IL003 and IL007 [ISO/IEC 9075-2:2023
+/// §6.32 SR6a], the longest character string's at one octet to a
+/// character.
+pub const MAX_BINARY_LENGTH: u32 = 32_767;
 
 /// \[DESIGN\] Longest `CHARACTER(<length>)`. [X3.135-1986 §5.5 SR2] only requires a
 /// length greater than 0; values are padded to their length
@@ -100,8 +102,8 @@ pub fn spelling(t: &DataType) -> Spelled {
         DataType::Exact { spelled, .. } | DataType::Approximate { spelled, .. } => *spelled,
         DataType::Character { .. }
         | DataType::Varying { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -148,15 +150,16 @@ pub enum DataType {
         /// How it was written.
         spelled: Spelled,
     },
-    /// [ISO/IEC 9075:1992 §6.1] BIT(length): a bit string of fixed length.
-    Bit {
-        /// The length in bits.
+    /// [ISO/IEC 9075-2:2023 §6.1] BINARY(length): a binary string of
+    /// fixed length.
+    Binary {
+        /// The length in octets.
         length: u32,
     },
-    /// [ISO/IEC 9075:1992 §6.1] BIT VARYING(length): a bit string of
-    /// variable length.
-    BitVarying {
-        /// The maximum length in bits.
+    /// [ISO/IEC 9075-2:2023 §6.1] BINARY VARYING(length) or
+    /// VARBINARY(length): a binary string of variable length.
+    VarBinary {
+        /// The maximum length in octets.
         length: u32,
     },
     /// [ISO/IEC 9075-2:2023 §6.1] BOOLEAN.
@@ -188,9 +191,9 @@ impl DataType {
     pub fn is_character(&self) -> bool {
         matches!(self, DataType::Character { .. } | DataType::Varying { .. })
     }
-    /// Whether this is a bit string type.
-    pub fn is_bit(&self) -> bool {
-        matches!(self, DataType::Bit { .. } | DataType::BitVarying { .. })
+    /// Whether this is a binary string type.
+    pub fn is_binary(&self) -> bool {
+        matches!(self, DataType::Binary { .. } | DataType::VarBinary { .. })
     }
     /// Whether this is a datetime type.
     pub fn is_datetime(&self) -> bool {
@@ -219,7 +222,8 @@ impl fmt::Display for DataType {
 
 // ---------------------------------------------------------------------------
 // Values [X3.135-1986 §4.2] null, character string, or number; and
-// [ISO/IEC 9075:1992 §4.3, §4.5] bit string, datetime or interval
+// [ISO/IEC 9075:1992 §4.5] datetime or interval; [ISO/IEC 9075-2:2023
+// §4.4, §4.6] binary string or truth value
 // ---------------------------------------------------------------------------
 
 /// A value [X3.135-1986 §4.2].
@@ -233,8 +237,8 @@ pub enum Value {
     Exact(Decimal),
     /// An approximate number.
     Approx(f64),
-    /// [ISO/IEC 9075:1992 §4.3] A bit string.
-    Bits(Bits),
+    /// [ISO/IEC 9075-2:2023 §4.4.1] A binary string.
+    Binary(Binary),
     /// [ISO/IEC 9075-2:2023 §4.6] A truth value, True or False; Unknown is
     /// `Null` [§4.6.1].
     Bool(bool),
@@ -259,7 +263,7 @@ impl Value {
             Value::Approx(f) => Some(*f),
             Value::Null
             | Value::Char(_)
-            | Value::Bits(_)
+            | Value::Binary(_)
             | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
@@ -274,7 +278,7 @@ impl Value {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
             Value::Interval(i) => Value::Interval(interval::Interval { units: i.units.saturating_neg(), ..*i }),
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
+            Value::Null | Value::Char(_) | Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
         }
     }
 
@@ -297,7 +301,7 @@ impl Value {
                 NormKey::Exact(u, s)
             }
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
-            Value::Bits(b) => NormKey::Bits(b.clone()),
+            Value::Binary(b) => NormKey::Binary(b.clone()),
             Value::Bool(b) => NormKey::Bool(*b),
             Value::Datetime(d) => NormKey::Instant(d.utc),
             Value::Interval(i) => NormKey::Span(i.units),
@@ -316,7 +320,7 @@ impl fmt::Display for Value {
             Value::Exact(d) => write!(f, "{d}"),
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),
-            Value::Bits(b) => write!(f, "{b}"),
+            Value::Binary(b) => write!(f, "{b}"),
             // [ISO/IEC 9075-2:2023 §5.3] Written as a <boolean literal>.
             Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
             Value::Datetime(d) => write!(f, "{d}"),
@@ -338,8 +342,8 @@ pub enum NormKey {
     Exact(i128, u32),
     /// The bits of an `f64`, with -0 as +0.
     Approx(u64),
-    /// A bit string.
-    Bits(Bits),
+    /// A binary string.
+    Binary(Binary),
     /// A truth value.
     Bool(bool),
     /// A datetime's instant, in UTC.
@@ -433,9 +437,12 @@ pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
 }
 
 /// The citation of the rule `rule` that assigns a value, and of the
-/// clause `clause` of ISO/IEC 9075:1992 that it applies: written once if
-/// `rule` is of that standard too.
+/// clause `clause` that it applies, of ISO/IEC 9075:1992 unless it names
+/// its standard: that standard written once if `rule` is of it too.
 pub(crate) fn assignment_rule(rule: &str, clause: &str) -> String {
+    if clause.starts_with("ISO/IEC") {
+        return format!("{rule}; {clause}");
+    }
     match rule.strip_prefix("ISO/IEC 9075:1992 ") {
         Some(_) => format!("{rule}, {clause}"),
         None => format!("{rule}; ISO/IEC 9075:1992 {clause}"),

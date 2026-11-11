@@ -53,7 +53,7 @@ mod assertion_totals;
 mod assertions;
 mod batch_joins;
 mod batches;
-mod bits;
+mod binary;
 mod blocks;
 mod booleans;
 mod buffer;

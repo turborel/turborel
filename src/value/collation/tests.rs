@@ -106,7 +106,7 @@ fn the_pad_characteristic_counts() {
 #[test]
 fn sort_keys_are_values() {
     let c = named(CASE_INSENSITIVE, Pad::None);
-    assert!(matches!(c.sort_key(&Value::Char("ab".into())), Value::Bits(b) if b.bytes() == b"ab"));
+    assert!(matches!(c.sort_key(&Value::Char("ab".into())), Value::Binary(b) if b.bytes() == b"ab"));
     assert!(matches!(c.sort_key(&Value::Null), Value::Null));
     assert!(matches!(c.sort_key(&Value::Approx(1.0)), Value::Approx(_)));
     let _: Arc<dyn Collation> = Arc::clone(&c.collation);

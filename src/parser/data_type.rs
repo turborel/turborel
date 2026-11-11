@@ -1,24 +1,24 @@
 //! The `<data type>` grammar [X3.135-1986 §5.5], with SQL-92's national
-//! character, bit string, datetime and interval types [ISO/IEC 9075:1992
-//! §6.1], the implementor-defined precisions and the \[DESIGN\] limits it
+//! character, datetime and interval types [ISO/IEC 9075:1992 §6.1],
+//! SQL:2023's Boolean and binary string types [ISO/IEC 9075-2:2023 §6.1],
+//! the implementor-defined precisions and the \[DESIGN\] limits it
 //! applies.
 
 use super::Parser;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
-use crate::value::types::BOOLEAN_NAME;
+use crate::value::types::{BINARY_NAME, BOOLEAN_NAME, VARBINARY_NAME};
 use crate::value::{
-    DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BIT_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION,
+    DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION,
     REAL_PRECISION, SMALLINT_PRECISION,
 };
 
 impl Parser {
     /// [X3.135-1986 §5.5] `<data type>`
     pub(super) fn data_type(&mut self) -> Result<DataType> {
-        if self.at_boolean_type() {
-            self.advance();
-            return Ok(DataType::Boolean);
+        if let Some(t) = self.named_type()? {
+            return Ok(t);
         }
         let Tok::KeyWord(kw) = *self.peek() else {
             return Err(self.syntax("expected a <data type>"));
@@ -42,7 +42,6 @@ impl Parser {
                 }
                 self.character_string_type()
             }
-            kw::BIT => self.bit_string_type(),
             kw::DATE | kw::TIME | kw::TIMESTAMP => self.datetime_type(),
             // [ISO/IEC 9075:1992 §6.1] `<interval type>` ::= INTERVAL
             // `<interval qualifier>`.
@@ -74,11 +73,30 @@ impl Parser {
         }
     }
 
+    /// [ISO/IEC 9075-2:2023 §6.1] A `<boolean type>` or a `<binary string
+    /// type>`, if one is next, of names no key words of SQL-92.
+    fn named_type(&mut self) -> Result<Option<DataType>> {
+        if self.at_boolean_type() {
+            self.advance();
+            return Ok(Some(DataType::Boolean));
+        }
+        if self.at_binary_type() {
+            return self.binary_string_type().map(Some);
+        }
+        Ok(None)
+    }
+
     /// [ISO/IEC 9075-2:2023 §6.1] Whether `<boolean type>` ::= BOOLEAN is
     /// next. BOOLEAN is no key word of SQL-92, so it is read as an
     /// identifier, and a domain cannot be named BOOLEAN.
     pub(super) fn at_boolean_type(&self) -> bool {
         matches!(self.peek(), Tok::Identifier(name) if name == BOOLEAN_NAME)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Whether a `<binary string type>` is
+    /// next, BINARY or VARBINARY, read as identifiers as BOOLEAN is.
+    pub(super) fn at_binary_type(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(name) if name == BINARY_NAME || name == VARBINARY_NAME)
     }
 
     /// `<character string type>` ::= CHARACTER \[(`<length>`)\] | CHAR \[(`<length>`)\]
@@ -121,34 +139,38 @@ impl Parser {
         Ok(length)
     }
 
-    /// [ISO/IEC 9075:1992 §6.1] `<bit string type>` ::= BIT \[(`<length>`)\]
-    /// | BIT VARYING (`<length>`); an omitted length 1 [SR4].
-    fn bit_string_type(&mut self) -> Result<DataType> {
+    /// [ISO/IEC 9075-2:2023 §6.1] `<binary string type>` ::= BINARY
+    /// \[(`<length>`)\] | BINARY VARYING (`<maximum length>`) | VARBINARY
+    /// (`<maximum length>`), the same [SR1]; an omitted length 1 [SR5]. A
+    /// maximum length is written, as without Feature T081 [SR26].
+    fn binary_string_type(&mut self) -> Result<DataType> {
+        let varbinary = matches!(self.peek(), Tok::Identifier(name) if name == VARBINARY_NAME);
         self.advance();
-        if self.accept_kw(kw::VARYING) {
+        if varbinary || self.accept_kw(kw::VARYING) {
             self.expect_delim(delim::LEFT_PAREN)?;
-            let length = self.bit_length()?;
+            let length = self.binary_length()?;
             self.expect_delim(delim::RIGHT_PAREN)?;
-            return Ok(DataType::BitVarying { length });
+            return Ok(DataType::VarBinary { length });
         }
         let mut length = 1;
         if self.accept_delim(delim::LEFT_PAREN) {
-            length = self.bit_length()?;
+            length = self.binary_length()?;
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
-        Ok(DataType::Bit { length })
+        Ok(DataType::Binary { length })
     }
 
-    /// [ISO/IEC 9075:1992 §6.1 SR3] A bit string type's `<length>`: more
-    /// than 0, and no more than this implementation's longest bit string.
-    fn bit_length(&mut self) -> Result<u32> {
+    /// [ISO/IEC 9075-2:2023 §6.1 SR4] A binary string type's `<length>`:
+    /// more than 0, and no more than this implementation's longest binary
+    /// string, in octets.
+    fn binary_length(&mut self) -> Result<u32> {
         let at = self.here();
         let length = self.positive("length")?;
-        if length > MAX_BIT_LENGTH {
+        if length > MAX_BINARY_LENGTH {
             return Err(SqlError::at(
                 Code::Unsupported,
                 at,
-                format!("[DESIGN] a bit string of {length} bits is longer than this implementation's maximum of {MAX_BIT_LENGTH}"),
+                format!("[DESIGN] a binary string of {length} octets is longer than this implementation's maximum of {MAX_BINARY_LENGTH}"),
             ));
         }
         Ok(length)

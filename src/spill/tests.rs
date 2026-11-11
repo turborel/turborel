@@ -5,7 +5,7 @@ use super::{bucket_key, heap_bytes, norm_key, put_norm, row_bytes};
 use crate::value::datetime::{Field, Moment};
 use crate::value::interval::{Interval, Qualifier};
 use crate::value::types::unregistered;
-use crate::value::{Bits, Datetime, Decimal, Value, bucket};
+use crate::value::{Binary, Datetime, Decimal, Value, bucket};
 
 /// Verifies: [DESIGN] RULES.md D38, normalized keys: a value's key made in
 /// place (`put_norm`) is the bytes of the key of its normalized value
@@ -27,7 +27,7 @@ fn keys_made_in_place_are_normalized_keys() {
         Value::Approx(0.0),
         Value::Approx(-0.0),
         Value::Approx(1.5),
-        Value::Bits(Bits::of_bits("101").unwrap()),
+        Value::Binary(Binary::new(vec![0xA0])),
         Value::Exact(Decimal::new(70_i128, 1_u32)),
         Value::Exact(Decimal::new(i128::from(i64::MAX) + 1_i128, 0_u32)),
         Value::Exact(Decimal::new(i128::from(i64::MIN), 0_u32)),
@@ -56,7 +56,7 @@ fn keys_made_in_place_are_normalized_keys() {
 }
 
 /// Verifies: [DESIGN] RULES.md D38, normalized keys and buckets of the
-/// other kinds: datetimes, intervals, bit strings and values of a kind
+/// other kinds: datetimes, intervals, binary strings and values of a kind
 /// beyond the standard key as their normalized values do, and the keys of
 /// the buckets of those that have them, as a hash join's spilled rows are
 /// keyed, are alike of values alike and differ of values that differ.
@@ -68,7 +68,7 @@ fn keys_of_every_kind() {
         Value::Datetime(Datetime::of_local(Moment::Timestamp, 5_000_000, 60, true, 6)),
         Value::Interval(Interval { units: 90, qualifier: day_hour }),
         Value::Interval(Interval { units: 91, qualifier: day_hour }),
-        Value::Bits(Bits::of_bits("1101").unwrap()),
+        Value::Binary(Binary::new(vec![0xD0, 0])),
         unregistered("POINT", "(1 2)", &[1, 2]),
         unregistered("POINT", "(3 4)", &[3, 4]),
     ];
@@ -80,7 +80,7 @@ fn keys_of_every_kind() {
     // Of those with buckets: an unregistered kind gives none, so is never
     // hashed.
     let keyed: Vec<(usize, Vec<u8>)> = values.iter().enumerate().filter_map(|(n, v)| bucket(v).map(|b| (n, bucket_key(&[b])))).collect();
-    assert!(keyed.len() >= 5, "datetimes, intervals and bit strings have buckets");
+    assert!(keyed.len() >= 5, "datetimes, intervals and binary strings have buckets");
     for (n, key) in &keyed {
         assert_eq!(Some(key.clone()), bucket(&values[*n].clone()).map(|b| bucket_key(&[b])), "alike of {n}");
         assert!(keyed.iter().all(|(m, other)| m == n || other != key), "{n} differs of the others");
@@ -89,15 +89,14 @@ fn keys_of_every_kind() {
 
 /// Verifies: [DESIGN] RULES.md D38, a row's bytes: what a value holds
 /// apart from itself counts toward its row's, as an operator bounds its
-/// work area by them, of strings, bit strings and values of a kind beyond
+/// work area by them, of strings, binary strings and values of a kind beyond
 /// the standard alike; the values that hold nothing apart count none.
-/// Regression test (R-TEST-7): a bit string or a plug-in's value counted
+/// Regression test (R-TEST-7): a binary string or a plug-in's value counted
 /// as the size of a value alone, however many bytes it held, so rows of
 /// them overran MEMORY.WORK_BYTES.
 #[test]
 fn rows_count_the_bytes_their_values_hold() {
-    let long = "1".repeat(8000usize);
-    let bits = Value::Bits(Bits::of_bits(&long).unwrap());
+    let bits = Value::Binary(Binary::new(vec![0xFF; 1000usize]));
     assert_eq!(heap_bytes(&bits), 1000usize);
     let blob = unregistered("BLOB", "x", &[7u8; 4096]);
     let Value::Extension(e) = &blob else { panic!("an extension value") };

@@ -71,7 +71,7 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
         Cell::Value(Value::Exact(d)) => Some(i64::try_from(d.units).map_or((VALUES, 0_u32), |_| (INTS, d.scale))),
         Cell::Approx(_) | Cell::Value(Value::Approx(_)) => Some((FLOATS, 0_u32)),
         Cell::Text(_) | Cell::Value(Value::Char(_)) => Some((TEXTS, 0_u32)),
-        Cell::Value(Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+        Cell::Value(Value::Binary(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
             Some((VALUES, 0_u32))
         }
     }
@@ -211,7 +211,7 @@ fn column(reader: &mut Reader<'_>, rows: usize) -> Result<Column> {
 mod tests {
     use super::*;
     use crate::error::Code;
-    use crate::value::{Bits, Decimal};
+    use crate::value::{Binary, Decimal};
 
     /// The rows of `batch` and their heads, written as a chunk and read
     /// back: the vectors' kinds, the heads, and the rows as strings.
@@ -264,7 +264,7 @@ mod tests {
                 Column::Values(vec![exact(1_i128, 0_u32), Value::Char("a".to_owned()), Value::Null]),
                 Column::Values(vec![exact(i128::MAX, 0_u32), exact(1_i128, 0_u32), exact(2_i128, 0_u32)]),
                 Column::Values(vec![exact(1_i128, 0_u32), exact(1_i128, 1_u32), Value::Null]),
-                Column::Values(vec![Value::Bits(Bits::of_bits("101").unwrap()), Value::Null, Value::Null]),
+                Column::Values(vec![Value::Binary(Binary::new(vec![0xA0])), Value::Null, Value::Null]),
                 Column::nulls(3_usize),
             ],
             rows: 3,
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                format!("1.50,0.7,1.5E0,a,y,1,{max},1,101,NULL"),
+                format!("1.50,0.7,1.5E0,a,y,1,{max},1,A0,NULL"),
                 "NULL,NULL,-0E0,NULL,x,a,1,0.1,NULL,NULL".to_owned(),
                 "-0.03,-0.2,2E0,bcde,y,NULL,2,NULL,NULL,NULL".to_owned()
             ]

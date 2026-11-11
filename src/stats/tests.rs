@@ -3,7 +3,7 @@
 //! sample, the parts built a column at a time, and a sample's distinct
 //! values scaled (RULES.md R-TEST-1, R-TEST-2).
 
-use super::parts::{Histogram, HyperLogLog, Reservoir, SAMPLE_VALUES, SAMPLED_BITS, SAMPLED_CHARACTERS};
+use super::parts::{Histogram, HyperLogLog, Reservoir, SAMPLE_VALUES, SAMPLED_CHARACTERS, SAMPLED_OCTETS};
 use super::*;
 use crate::value::Decimal;
 
@@ -136,7 +136,7 @@ fn statistics_are_deterministic() {
 
 /// Verifies: [DESIGN] RULES.md D31, samples of long values: a character
 /// string is sampled as its first `SAMPLED_CHARACTERS` characters, counted
-/// as characters, not bytes, and a bit string as its first `SAMPLED_BITS`
+/// as characters, not bytes, and a binary string as its first `SAMPLED_OCTETS`
 /// bits, short ones whole; so a sample of strings of 10,000 characters
 /// takes no more than one of short ones, and its histogram still places a
 /// value by its beginning, the least and greatest kept whole.
@@ -157,14 +157,14 @@ fn long_values_are_sampled_by_their_prefixes() {
     assert!(near(column.selectivity(CompOp::Lt, &long(500)), 0.5, 0.05), "{}", column.selectivity(CompOp::Lt, &long(500)));
     assert_eq!(format!("{:?}", column.max), format!("{:?}", Some(long(999))), "the greatest whole");
     let short = Value::Char("short".into());
-    let bits = |n: u32| Value::Bits(crate::value::Bits::of_bits(&"10".repeat(usize::try_from(n >> 1_u32).unwrap())).unwrap());
-    for (value, length) in [(short, 5_u32), (bits(8), 8), (bits(SAMPLED_BITS), SAMPLED_BITS), (bits(5_000), SAMPLED_BITS)] {
+    let bits = |n: u32| Value::Binary(crate::value::Binary::new(vec![0xA5; usize::try_from(n).unwrap()]));
+    for (value, length) in [(short, 5_u32), (bits(8), 8), (bits(SAMPLED_OCTETS), SAMPLED_OCTETS), (bits(5_000), SAMPLED_OCTETS)] {
         let mut one = Reservoir::keeping(1);
         one.add(&value);
         let got = one.into_sorted();
         let sampled_length = match got.first() {
             Some(Value::Char(s)) => u32::try_from(s.chars().count()).unwrap(),
-            Some(Value::Bits(b)) => b.len(),
+            Some(Value::Binary(b)) => b.len(),
             other => panic!("{other:?}"),
         };
         assert_eq!(sampled_length, length);

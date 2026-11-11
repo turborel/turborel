@@ -124,9 +124,11 @@ fn the_types_of_fields_17_4_17_5() {
     assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 TXT = NAME", &mut p), Ok(Completion::Success));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.5 GR4, GR5a-j] TYPE set
-/// sets the fields its type takes: a character string's character set,
-/// SQL_TEXT, and LENGTH 1; a bit string's LENGTH 1; a datetime's PRECISION
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.5 GR4, GR5a-j; ISO/IEC
+/// 9075-2:2023 §20.5 GR4c iii 3] TYPE set sets the fields its type takes:
+/// a character string's character set, SQL_TEXT, and LENGTH 1; a binary
+/// string's LENGTH 1, BINARY's code 60 and BINARY VARYING's 61, 14 no
+/// code now; a datetime's PRECISION
 /// 0; an interval's DATETIME_INTERVAL_PRECISION 2; NUMERIC's and
 /// DECIMAL's SCALE 0 and PRECISION 18, the default; FLOAT's PRECISION 53;
 /// DATETIME_INTERVAL_CODE set, PRECISION 6 of a TIMESTAMP and of an
@@ -143,7 +145,10 @@ fn type_set_sets_its_fields_17_5() {
     assert_eq!((field(&s, 1, "LENGTH"), text_field(&s, 1, "CHARACTER_SET_SCHEMA")), ("9".to_owned(), "INFORMATION_SCHEMA".to_owned()));
     set("TYPE = 12", &mut p);
     assert_eq!((field(&s, 1, "LENGTH"), text_field(&s, 1, "CHARACTER_SET_NAME")), ("1".to_owned(), "SQL_TEXT".to_owned()));
-    set("TYPE = 14", &mut p);
+    set("TYPE = 60", &mut p);
+    assert_eq!(field(&s, 1, "LENGTH"), "1");
+    set("TYPE = 61, LENGTH = 5", &mut p);
+    set("TYPE = 61", &mut p);
     assert_eq!(field(&s, 1, "LENGTH"), "1");
     set("TYPE = 2", &mut p);
     assert_eq!((field(&s, 1, "PRECISION"), field(&s, 1, "SCALE")), ("18".to_owned(), "0".to_owned()));
@@ -164,7 +169,8 @@ fn type_set_sets_its_fields_17_5() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.8 GR2, §17.9 GR3, GR4,
-/// §17.1 Tables 18-20, §6.1 SR27] DESCRIBE OUTPUT describes each column:
+/// §17.1 Tables 18-20, §6.1 SR27; ISO/IEC 9075-2:2023 §20.1 Table 30,
+/// §20.10 GR7d ii] DESCRIBE OUTPUT describes each column:
 /// TYPE its code, the fields its type takes, NULLABLE, NAME and UNNAMED,
 /// a datetime's length in positions; DESCRIBE INPUT each dynamic
 /// parameter, NULLABLE 1 and UNNAMED 1; a statement of no row has COUNT
@@ -175,7 +181,7 @@ fn describe_by_the_codes_of_tables_18_to_20_17_9() {
     let s = db.session("APP");
     s.run(
         "CREATE TABLE W (A CHAR(4) NOT NULL, B VARCHAR(7), C NUMERIC(5,2), D DECIMAL(4), E INTEGER, F SMALLINT, G FLOAT(10), \
-         H REAL, I DOUBLE PRECISION, J BIT(3), L BIT VARYING(9), M DATE, O TIME(3), Q TIMESTAMP(2) WITH TIME ZONE, \
+         H REAL, I DOUBLE PRECISION, J BINARY(3), L VARBINARY(9), M DATE, O TIME(3), Q TIMESTAMP(2) WITH TIME ZONE, \
          R INTERVAL DAY(3) TO SECOND(4), S INTERVAL YEAR TO MONTH, X TIME WITH TIME ZONE)",
     )
     .unwrap();
@@ -186,7 +192,7 @@ fn describe_by_the_codes_of_tables_18_to_20_17_9() {
     assert_eq!(run(&s, "DESCRIBE S USING SQL DESCRIPTOR 'D'", &mut p), Ok(Completion::Success));
     assert_eq!(count(&s), "18");
     let types: Vec<String> = (1..=18).map(|n| field(&s, n, "TYPE")).collect();
-    assert_eq!(types, ["1", "12", "2", "3", "4", "5", "6", "7", "8", "14", "15", "9", "9", "9", "10", "10", "9", "2"]);
+    assert_eq!(types, ["1", "12", "2", "3", "4", "5", "6", "7", "8", "60", "61", "9", "9", "9", "10", "10", "9", "2"]);
     let lengths: Vec<String> = [1, 2, 10, 11, 12, 13, 14, 17].into_iter().map(|n| field(&s, n, "LENGTH")).collect();
     assert_eq!(lengths, ["4", "7", "3", "9", "10", "12", "28", "14"], "§6.1 SR27 of a datetime");
     let codes: Vec<String> = [12, 13, 14, 15, 16, 17].into_iter().map(|n| field(&s, n, "DATETIME_INTERVAL_CODE")).collect();
@@ -194,7 +200,7 @@ fn describe_by_the_codes_of_tables_18_to_20_17_9() {
     let precisions: Vec<String> = [3, 4, 7, 13, 14, 15].into_iter().map(|n| field(&s, n, "PRECISION")).collect();
     assert_eq!(precisions, ["5", "4", "24", "3", "2", "4"]);
     assert_eq!((field(&s, 3, "SCALE"), field(&s, 15, "DATETIME_INTERVAL_PRECISION")), ("2".to_owned(), "3".to_owned()));
-    assert_eq!((field(&s, 1, "OCTET_LENGTH"), field(&s, 11, "OCTET_LENGTH")), ("16".to_owned(), "2".to_owned()));
+    assert_eq!((field(&s, 1, "OCTET_LENGTH"), field(&s, 11, "OCTET_LENGTH")), ("16".to_owned(), "9".to_owned()));
     assert_eq!((field(&s, 1, "NULLABLE"), field(&s, 2, "NULLABLE")), ("0".to_owned(), "1".to_owned()));
     assert_eq!((text_field(&s, 2, "NAME"), field(&s, 2, "UNNAMED")), ("B".to_owned(), "0".to_owned()));
     assert_eq!((text_field(&s, 18, "NAME"), field(&s, 18, "UNNAMED")), (String::new(), "1".to_owned()));

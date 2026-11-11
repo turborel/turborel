@@ -29,8 +29,9 @@ fn boolean_set_type(types: &[DataType], clause: &str) -> Result<DataType> {
 }
 
 /// [ISO/IEC 9075:1992 §9.3] The result type of values of `types`: CHARACTER
-/// of the greatest length, if all are character strings [SR3a ii]; BIT so,
-/// if all are bit strings [SR3b ii]; either VARYING if one is; exact,
+/// of the greatest length, if all are character strings [SR3a ii]; BINARY
+/// so, if all are binary strings [ISO/IEC 9075-2:2023 §9.5 SR3b]; either
+/// VARYING if one is; exact,
 /// of the greatest scale, if all are exact [SR3c], with as many digits
 /// before the point as any has, up to `MAX_EXACT_PRECISION`, the
 /// implementation-defined precision; else approximate, of
@@ -41,7 +42,7 @@ fn boolean_set_type(types: &[DataType], clause: &str) -> Result<DataType> {
 /// # Errors
 ///
 /// SQLCODE -103 if a character string is among numbers [SR2, SR3a], a
-/// bit string among other values [SR3b], a datetime or interval among
+/// binary string among other values, a datetime or interval among
 /// values not comparable with it [SR3e, SR3f], a truth value among other
 /// values, or a value of a type beyond the standard among values of
 /// another type.
@@ -64,16 +65,16 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if characters != 0 && characters != types.len() {
         return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3a] character strings and numbers are brought together")));
     }
-    let bits = types.iter().filter(|t| t.is_bit()).count();
-    if bits != 0 && bits != types.len() {
-        return Err(rule(format!("[ISO/IEC 9075:1992 {clause}, §9.3 SR2, SR3b] bit strings and other values are brought together")));
+    let binaries = types.iter().filter(|t| t.is_binary()).count();
+    if binaries != 0 && binaries != types.len() {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.5 SR3b] {clause}: binary strings and other values are brought together")));
     }
     let (mut length, mut varying) = (0_u32, false);
     let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
     for t in types {
         match t {
-            DataType::Character { length: n } | DataType::Bit { length: n } => length = length.max(*n),
-            DataType::Varying { length: n } | DataType::BitVarying { length: n } => (length, varying) = (length.max(*n), true),
+            DataType::Character { length: n } | DataType::Binary { length: n } => length = length.max(*n),
+            DataType::Varying { length: n } | DataType::VarBinary { length: n } => (length, varying) = (length.max(*n), true),
             DataType::Exact { precision, scale: s, .. } => {
                 whole = whole.max(precision.saturating_sub(*s));
                 scale = scale.max(*s);
@@ -88,12 +89,13 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
         }
     }
     let digits = whole.saturating_add(scale).min(MAX_EXACT_PRECISION);
-    Ok(match (characters, bits, exact) {
+    Ok(match (characters, binaries, exact) {
         (0, 0, true) => DataType::Exact { precision: digits, scale, spelled: Spelled::Numeric },
         (0, 0, false) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        // [§9.3 SR3b i] varying if any is; [SR3b ii] else fixed.
-        (0, _, _) if varying => DataType::BitVarying { length },
-        (0, _, _) => DataType::Bit { length },
+        // [ISO/IEC 9075-2:2023 §9.5 SR3b ii] varying if any is; [SR3b
+        // iii] else fixed.
+        (0, _, _) if varying => DataType::VarBinary { length },
+        (0, _, _) => DataType::Binary { length },
         // [§9.3 SR3a i] varying if any is; [SR3a ii] else fixed.
         _ if varying => DataType::Varying { length },
         _ => DataType::Character { length },
@@ -163,12 +165,13 @@ fn datetime_precision(t: &DataType) -> u32 {
 }
 
 /// `e`, of type `from`, as a value of `to`, the type values of both are
-/// brought together as [§9.3]: cast to it, but for a bit string, kept as it
-/// is, of its own bits, as §9.3 gives the result's type alone and a cast
-/// to a fixed length would extend it with 0 bits [§6.10 GR7c]; and a
+/// brought together as [§9.3]: cast to it, but for a binary string, kept
+/// as it is, of its own octets, as [ISO/IEC 9075-2:2023 §9.5] gives the
+/// result's type alone and a cast to a fixed length would extend it with
+/// X'00' octets [§6.13 GR13a iii]; and a
 /// datetime too, of its own instant, as one type holds both [SR3e].
 pub(super) fn brought(e: Expr, from: DataType, to: DataType) -> Expr {
-    let kept = from == to || (from.is_bit() && to.is_bit()) || (from.is_datetime() && to.is_datetime());
+    let kept = from == to || (from.is_binary() && to.is_binary()) || (from.is_datetime() && to.is_datetime());
     if kept { e } else { Expr::Cast(Box::new(e), to) }
 }
 
@@ -299,9 +302,8 @@ impl Binder<'_> {
         if t.is_datetime() || target.is_datetime() || t.is_interval() || target.is_interval() {
             return Ok((self.datetime_cast(e, t, target)?, target));
         }
-        // [SR4] no number to or from a bit string.
-        if (t.is_bit() && target.is_numeric()) || (t.is_numeric() && target.is_bit()) {
-            return Err(rule(format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {t} to {target} is not valid")));
+        if !super::datetime::binary_castable(&t, &target) {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.13 SR7] CAST of {t} to {target} is not valid")));
         }
         Ok((Expr::Cast(Box::new(e), target), target))
     }

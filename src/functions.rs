@@ -449,8 +449,8 @@ impl AggregateFunction for Sum {
             DataType::Approximate { .. }
             | DataType::Character { .. }
             | DataType::Varying { .. }
-            | DataType::Bit { .. }
-            | DataType::BitVarying { .. }
+            | DataType::Binary { .. }
+            | DataType::VarBinary { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
@@ -484,8 +484,8 @@ impl AggregateFunction for Avg {
             DataType::Approximate { .. }
             | DataType::Character { .. }
             | DataType::Varying { .. }
-            | DataType::Bit { .. }
-            | DataType::BitVarying { .. }
+            | DataType::Binary { .. }
+            | DataType::VarBinary { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }

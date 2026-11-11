@@ -10,8 +10,8 @@
 //!   R: "Random sampling with a reservoir", ACM TOMS 11(1), 1985), its
 //!   random choices from a fixed seed, so the same values always give the
 //!   same sample. A character string is kept as its first
-//!   `SAMPLED_CHARACTERS` characters, a bit string its first `SAMPLED_BITS`
-//!   bits, so a column of long values takes no more memory to sample than
+//!   `SAMPLED_CHARACTERS` characters, a binary string its first
+//!   `SAMPLED_OCTETS` octets, so a column of long values takes no more memory to sample than
 //!   one of short ones; a histogram of them places a value by its prefix.
 //! * `Histogram`: an equi-depth histogram of a sample.
 //!
@@ -39,9 +39,9 @@ pub const BUCKETS: usize = 100;
 /// enough to tell apart the values of most columns, few enough that a
 /// sample of long strings takes at most a few megabytes.
 pub const SAMPLED_CHARACTERS: usize = 64;
-/// \[DESIGN\] The most bits of a bit string a sample keeps, as many
-/// bytes as `SAMPLED_CHARACTERS`.
-pub const SAMPLED_BITS: u32 = 512;
+/// \[DESIGN\] The most octets of a binary string a sample keeps, as many
+/// as `SAMPLED_CHARACTERS`.
+pub const SAMPLED_OCTETS: u32 = 64;
 
 /// How a column's values are sampled: the most a sample keeps, and the
 /// buckets of the histogram drawn from it.
@@ -210,17 +210,17 @@ impl Reservoir {
 }
 
 /// `value` as a sample keeps it: a character string its first
-/// `SAMPLED_CHARACTERS` characters, a bit string its first `SAMPLED_BITS`
-/// bits, which compare no greater than it, any other whole.
+/// `SAMPLED_CHARACTERS` characters, a binary string its first
+/// `SAMPLED_OCTETS` octets, which compare no greater than it, any other whole.
 pub fn sampled(value: &Value) -> Value {
     match value {
         Value::Char(s) => match s.char_indices().nth(SAMPLED_CHARACTERS) {
             Some((end, _)) => Value::Char(s.get(..end).unwrap_or_default().to_owned()),
             None => value.clone(),
         },
-        Value::Bits(b) => {
-            if b.len() > SAMPLED_BITS {
-                Value::Bits(b.substring(1, SAMPLED_BITS))
+        Value::Binary(b) => {
+            if b.len() > SAMPLED_OCTETS {
+                Value::Binary(b.substring(1, SAMPLED_OCTETS))
             } else {
                 value.clone()
             }

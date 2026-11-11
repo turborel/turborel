@@ -66,8 +66,8 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
             DataType::Exact { .. } | DataType::Approximate { .. } => exact_default(*d, subject),
             DataType::Character { .. }
             | DataType::Varying { .. }
-            | DataType::Bit { .. }
-            | DataType::BitVarying { .. }
+            | DataType::Binary { .. }
+            | DataType::VarBinary { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
@@ -79,15 +79,15 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
         // [ISO/IEC 9075-2:2023 §11.5 SR4a vii] a <boolean literal> of a
         // Boolean column; UNKNOWN the null value [§4.6.1].
         Literal::Boolean(b) => (subject == DataType::Boolean).then(|| b.map_or(Value::Null, Value::Bool)).ok_or_else(not_of),
-        // [SR3a ii] a bit string no longer than the column; [GR1b iv, v]
-        // of a fixed length, extended with 0 bits, the statement placing
-        // it completing with the warning (`db/padding.rs`).
-        Literal::Bit(b) => {
-            let (DataType::Bit { length } | DataType::BitVarying { length }) = subject else { return Err(not_of()) };
+        // [ISO/IEC 9075-2:2023 §11.5 SR4a ii] a binary string no longer
+        // than the column; [GR2a iv, GR2a v] of a fixed length, extended
+        // with X'00' octets, with no warning.
+        Literal::Binary(b) => {
+            let (DataType::Binary { length } | DataType::VarBinary { length }) = subject else { return Err(not_of()) };
             if b.len() > length {
-                return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a ii] the default B'{b}' is longer than {subject}")));
+                return Err(rule(format!("[ISO/IEC 9075-2:2023 §11.5 SR4a ii] the default X'{b}' is longer than {subject}")));
             }
-            subject.kind().cast(Value::Bits(b.clone()), &subject)
+            subject.kind().cast(Value::Binary(b.clone()), &subject)
         }
         // [SR3a vi] an interval of the column's class, in its fields.
         Literal::Interval(i) => {
@@ -152,8 +152,8 @@ fn character_default(s: &str, subject: DataType) -> Option<Result<Value>> {
         DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.to_owned()), &subject)),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

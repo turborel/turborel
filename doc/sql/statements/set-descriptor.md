@@ -38,7 +38,7 @@ undefined. Setting TYPE makes the other fields undefined but these:
 | TYPE | Set with it |
 |---|---|
 | CHARACTER, CHARACTER VARYING | LENGTH 1; the character set SQL_TEXT, of INFORMATION_SCHEMA |
-| BIT, BIT VARYING | LENGTH 1 |
+| BINARY, BINARY VARYING | LENGTH 1 |
 | BOOLEAN | nothing |
 | NUMERIC, DECIMAL | PRECISION 18, SCALE 0 |
 | FLOAT | PRECISION 53 |
@@ -122,7 +122,8 @@ turborel: SQLCODE -921 (SQLSTATE 33000): no SQL descriptor area 'STAFF' is alloc
 
 ISO/IEC 9075:1992 §17.5, of the descriptor areas of §17.1. SQL-92 makes
 it no `<directly executable statement>` [§20.1]: direct SQL takes it as
-a statement of this implementation's. SQL-86 has no dynamic SQL.
+a statement of this implementation's. SQL-86 has no dynamic SQL. TYPE
+set to 60, BINARY, sets LENGTH 1 [ISO/IEC 9075-2:2023 §20.5 GR4c iii 3].
 
 ## SEE ALSO
 

@@ -31,8 +31,8 @@ fn fits(t: &DataType, q: Qualifier) -> bool {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => false,
@@ -106,8 +106,8 @@ fn zoned(t: DataType) -> DataType {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => t,

@@ -308,8 +308,8 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
         DataType::Varying { .. } => Some(None),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }

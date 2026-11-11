@@ -34,11 +34,6 @@ each group.
 
 ### Types and literals
 
-- BINARY and VARBINARY (T021) [§6.1], then BIT and BIT VARYING removed.
-  SQL:2003 dropped the bit strings and SQL:2023 has none, so the newer text
-  wins (D32), and `X'…'` becomes a binary string literal [§5.3]. A
-  collation's sort keys are bit strings today (D60), and an index on a
-  collated column keys BIT VARYING, so both move to VARBINARY first.
 - DECFLOAT (T076) [§4.4, §6.1]. Decimal floating point, for amounts that
   must round as decimals do yet outgrow a fixed scale.
 - VARCHAR and VARBINARY without a maximum length (T081) [§6.1]. The length

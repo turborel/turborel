@@ -25,8 +25,8 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         ValueSpecification::Literal(Literal::Approximate(f)) => {
             (Value::Approx(*f), DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float })
         }
-        // [ISO/IEC 9075:1992 §5.3 SR10, SR11] fixed, of its bits.
-        ValueSpecification::Literal(Literal::Bit(b)) => (Value::Bits(b.clone()), DataType::Bit { length: b.len() }),
+        // [ISO/IEC 9075-2:2023 §5.3 SR20] BINARY of its octets, IV191.
+        ValueSpecification::Literal(Literal::Binary(b)) => (Value::Binary(b.clone()), DataType::Binary { length: b.len() }),
         // [ISO/IEC 9075:1992 §5.3 SR15-SR18] here of UTC: a statement's
         // binder gives its session's displacement (`Binder::value_specification`).
         ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, 0)?,

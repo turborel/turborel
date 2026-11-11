@@ -201,7 +201,8 @@ fn prepared_writes_take_their_columns_types() {
 /// every row outside an INSERT [j], as IN's value and its list's first
 /// [k], as both of POSITION's operands [l], of UPPER [n], TRIM [o] and
 /// SUBSTRING's string [p]; and where GR5 gives none: a CASE result, and a
-/// setting's value. BIT_LENGTH's is BIT VARYING [§17.6 GR5e].
+/// setting's value. BIT_LENGTH's is CHARACTER VARYING; beside a binary
+/// string, one of || is BINARY VARYING.
 #[test]
 fn a_parameter_with_no_type_is_refused() {
     let (_db, s) = session();
@@ -229,9 +230,12 @@ fn a_parameter_with_no_type_is_refused() {
         let e = s.prepare(sql).unwrap_err();
         assert_eq!((e.code, e.sqlstate().as_str()), (Code::SyntaxRule, "37000"), "{sql}: {e}");
     }
-    // [GR5e] BIT_LENGTH's `?` is BIT VARYING of the longest length.
+    // [GR5b] BIT_LENGTH's `?` is CHARACTER VARYING; beside a binary
+    // string, a `?` of || is BINARY VARYING of the longest length.
     let bits = s.prepare("SELECT BIT_LENGTH(?) FROM T").unwrap();
-    assert_eq!(bits.parameters(), [ParameterType::Of(DataType::BitVarying { length: turborel::value::MAX_BIT_LENGTH })]);
+    assert_eq!(bits.parameters(), [ParameterType::Varying]);
+    let joined = s.prepare("SELECT X'AB' || ? FROM T").unwrap();
+    assert_eq!(joined.parameters(), [ParameterType::Of(DataType::VarBinary { length: turborel::value::MAX_BINARY_LENGTH })]);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.2 SR2, §17.6 GR4a, §17.9

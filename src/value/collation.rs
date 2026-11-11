@@ -4,7 +4,7 @@
 //!
 //! A collation of the default behaviour (`CollationRef::is_default`) makes
 //! no sort key: its comparisons stay bare, and `value/comparison.rs` judges
-//! them. Any other reaches comparison as `Value::Bits` of the sort key, so
+//! them. Any other reaches comparison as `Value::Binary` of the sort key, so
 //! ordering, grouping, hashing and spilling need not know of collations,
 //! and an index on a collated column holds sort keys.
 //!
@@ -23,7 +23,7 @@ mod unicode;
 use std::fmt;
 use std::sync::Arc;
 
-use super::{Bits, DataType, MAX_BIT_LENGTH, Value};
+use super::{Binary, DataType, MAX_BINARY_LENGTH, Value};
 
 pub use unicode::Unicode;
 
@@ -42,7 +42,7 @@ pub const CASE_INSENSITIVE: &str = "CASE_INSENSITIVE";
 pub const TAILORED: &str = "UNICODE_";
 
 /// The type of a sort key: how an index on a collated column holds it.
-pub const SORT_KEY: DataType = DataType::BitVarying { length: MAX_BIT_LENGTH };
+pub const SORT_KEY: DataType = DataType::VarBinary { length: MAX_BINARY_LENGTH };
 
 /// [ISO/IEC 9075-2:2023 §4.3.2] How a collation compares strings of unequal
 /// length.
@@ -110,14 +110,13 @@ impl CollationRef {
         self.pad == other.pad && (self.collation.name() == other.collation.name() || (scalar(self) && scalar(other)))
     }
 
-    /// `v`'s sort key, as bits; a null stays null, and anything but a
-    /// character string stays as it is.
+    /// `v`'s sort key, as a binary string; a null stays null, and anything
+    /// but a character string stays as it is.
     pub fn sort_key(&self, v: &Value) -> Value {
         let Value::Char(text) = v else { return v.clone() };
         let mut key = Vec::with_capacity(text.len());
         self.collation.sort_key(text, self.pad, &mut key);
-        let bits = u32::try_from(key.len()).ok().and_then(|n| n.checked_mul(super::BYTE_BITS));
-        bits.and_then(|len| Bits::new(key, len).ok()).map_or_else(|| v.clone(), Value::Bits)
+        Value::Binary(Binary::new(key))
     }
 }
 

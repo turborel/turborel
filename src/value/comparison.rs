@@ -1,11 +1,11 @@
 //! Comparison of values [X3.135-1986 §5.11]: character strings with padding,
-//! and numbers by algebraic value, exact and approximate alike; bit strings,
-//! datetimes and intervals as [ISO/IEC 9075:1992 §8.2] says; a value beyond
-//! the standard as its kind says.
+//! and numbers by algebraic value, exact and approximate alike; datetimes and
+//! intervals as [ISO/IEC 9075:1992 §8.2] says, binary strings as [ISO/IEC
+//! 9075-2:2023 §8.2] does; a value beyond the standard as its kind says.
 
 use std::cmp::Ordering;
 
-use super::types::{BIT_VARYING, SqlType};
+use super::types::{BINARY_VARYING, SqlType};
 use super::{Decimal, Value};
 
 /// [X3.135-1986 §5.11 GR5] compare character strings after padding the shorter with spaces.
@@ -26,27 +26,28 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
-        // bit string with either: bit strings are with each other [ISO/IEC
-        // 9075:1992 §4.3.1]; nor a datetime or an interval with another kind.
+        // binary string with either: binary strings are with each other
+        // [ISO/IEC 9075-2:2023 §4.4.1]; nor a datetime or an interval with
+        // another kind.
         (Value::Null, _)
         | (_, Value::Null)
         | (Value::Char(_), Value::Exact(_))
         | (Value::Char(_), Value::Approx(_))
         | (Value::Exact(_), Value::Char(_))
         | (Value::Approx(_), Value::Char(_))
-        | (Value::Bits(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_), Value::Bits(_))
+        | (Value::Binary(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_), Value::Binary(_))
         | (Value::Datetime(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_))
         | (Value::Char(_) | Value::Exact(_) | Value::Approx(_), Value::Datetime(_))
-        | (Value::Interval(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_), Value::Interval(_))
+        | (Value::Interval(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_), Value::Interval(_))
         // [ISO/IEC 9075-2:2023 §4.6.2] a truth value with truth values alone.
-        | (Value::Bool(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_))
-        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_), Value::Bool(_)) => None,
+        | (Value::Bool(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_) | Value::Interval(_))
+        | (Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::Binary(_) | Value::Datetime(_) | Value::Interval(_), Value::Bool(_)) => None,
         (Value::Char(x), Value::Char(y)) => Some(compare_strings(x, y)),
         (Value::Exact(_) | Value::Approx(_), Value::Exact(_) | Value::Approx(_)) => compare_numbers(a, b),
-        // [ISO/IEC 9075:1992 §8.2 GR4] bit by bit.
-        (Value::Bits(x), Value::Bits(y)) => Some(x.cmp(y)),
+        // [ISO/IEC 9075-2:2023 §8.2 GR5] octet by octet.
+        (Value::Binary(x), Value::Binary(y)) => Some(x.cmp(y)),
         // [ISO/IEC 9075-2:2023 §4.6.2] True is greater than False.
         (Value::Bool(x), Value::Bool(y)) => Some(x.cmp(y)),
         // [ISO/IEC 9075:1992 §8.2 GR5] by their instants.
@@ -69,12 +70,24 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
         (Value::Approx(x), Value::Exact(y)) => compare_exact_approximate(y, *x).map(Ordering::reverse),
         (Value::Approx(x), Value::Approx(y)) => x.partial_cmp(y),
         (
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_),
+            Value::Null
+            | Value::Char(_)
+            | Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_),
             _,
         )
         | (
             _,
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_),
+            Value::Null
+            | Value::Char(_)
+            | Value::Binary(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_),
         ) => None,
     }
 }
@@ -92,9 +105,9 @@ pub enum Bucket {
     Char(String),
     /// The bits of a number's nearest `f64`, with -0 as +0.
     Number(u64),
-    /// A bit string, as its key: boxed, so a bucket of a number or a
+    /// A binary string, as its key: boxed, so a bucket of a number or a
     /// character string stays small.
-    Bits(Box<[u8]>),
+    Binary(Box<[u8]>),
     /// A truth value.
     Bool(bool),
     /// A datetime's instant, its microseconds in UTC.
@@ -113,7 +126,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Null => None,
         Value::Char(s) => Some(Bucket::Char(s.trim_end_matches(' ').to_owned())),
         Value::Exact(_) | Value::Approx(_) => number_bucket(v),
-        Value::Bits(_) => BIT_VARYING.bucket(v),
+        Value::Binary(_) => BINARY_VARYING.bucket(v),
         Value::Bool(b) => Some(Bucket::Bool(*b)),
         Value::Datetime(d) => Some(Bucket::Instant(d.utc)),
         Value::Interval(i) => Some(Bucket::Span(i.units)),
@@ -127,7 +140,13 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
     let f = match v {
         Value::Exact(d) => d.nearest(),
         Value::Approx(f) => *f,
-        Value::Null | Value::Char(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
+        Value::Null
+        | Value::Char(_)
+        | Value::Binary(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => {
             return None;
         }
     };

@@ -278,11 +278,9 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        // [ISO/IEC 9075:1992 §11.5 GR1b v] a default placed padded.
-        let padding = next.padding_of_alter(qn, action);
         let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
-        Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)).warned(padding))
+        Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)))
     }
 
     /// Before a change of definitions to `table`, a table, view or schema

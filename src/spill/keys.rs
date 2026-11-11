@@ -25,7 +25,7 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
                 out.push(5);
                 out.extend_from_slice(&units.to_le_bytes());
             }
-            Bucket::Bits(held) => {
+            Bucket::Binary(held) => {
                 out.push(3);
                 out.extend_from_slice(&u64::try_from(held.len()).unwrap_or(u64::MAX).to_le_bytes());
                 out.extend_from_slice(held);
@@ -66,7 +66,7 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
         Value::Char(s) => put_norm_text(s, out),
         Value::Exact(d) => put_norm_exact(d.units, d.scale, out),
         Value::Approx(f) => put_norm_approx(*f, out),
-        Value::Bits(b) => {
+        Value::Binary(b) => {
             out.push(BITS_TAG);
             b.put_key(out);
         }
@@ -153,7 +153,7 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
                 out.push(APPROX_TAG);
                 out.extend_from_slice(&bits.to_le_bytes());
             }
-            NormKey::Bits(b) => {
+            NormKey::Binary(b) => {
                 out.push(BITS_TAG);
                 b.put_key(&mut out);
             }

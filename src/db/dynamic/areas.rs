@@ -106,8 +106,8 @@ fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
         DataType::Character { length } | DataType::Varying { length } => !target || length >= NAME_LENGTH,
         DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
@@ -326,7 +326,8 @@ fn set_type(item: &mut Item, catalog: &str) {
             item.default_character_set(catalog);
             item.set_number(DescriptorItem::Length, 1);
         }
-        code::BIT | code::BIT_VARYING => item.set_number(DescriptorItem::Length, 1),
+        // [ISO/IEC 9075-2:2023 §20.5 GR4c iii 3] of a binary string, LENGTH 1.
+        code::BINARY | code::BINARY_VARYING => item.set_number(DescriptorItem::Length, 1),
         code::DATETIME => item.set_number(DescriptorItem::Precision, 0),
         code::INTERVAL => item.set_number(DescriptorItem::DatetimeIntervalPrecision, LEADING_PRECISION),
         code::NUMERIC | code::DECIMAL => {

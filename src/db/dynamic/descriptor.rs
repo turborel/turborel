@@ -40,12 +40,12 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const INTERVAL: i64 = 10;
     /// CHARACTER VARYING.
     pub(in crate::db::dynamic) const VARYING: i64 = 12;
-    /// BIT.
-    pub(in crate::db::dynamic) const BIT: i64 = 14;
-    /// BIT VARYING.
-    pub(in crate::db::dynamic) const BIT_VARYING: i64 = 15;
     /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BOOLEAN.
     pub(in crate::db::dynamic) const BOOLEAN: i64 = 16;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY.
+    pub(in crate::db::dynamic) const BINARY: i64 = 60;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BINARY VARYING.
+    pub(in crate::db::dynamic) const BINARY_VARYING: i64 = 61;
     /// \[DESIGN\] An implementation-defined data type, of a code less than 0:
     /// a plug-in's (RULES.md D53), each described by this one code.
     pub(in crate::db::dynamic) const EXTENSION: i64 = -1;
@@ -203,7 +203,9 @@ impl Item {
                 self.sql_text(CHARACTER_SET, catalog);
                 self.sql_text(COLLATION, catalog);
             }
-            DataType::Bit { length } | DataType::BitVarying { length } => {
+            // [ISO/IEC 9075-2:2023 §20.10 GR7d ii] LENGTH and OCTET_LENGTH the
+            // length in octets.
+            DataType::Binary { length } | DataType::VarBinary { length } => {
                 self.set_number(DescriptorItem::Length, i64::from(length));
                 self.set_number(DescriptorItem::OctetLength, octets.unwrap_or(0));
             }
@@ -253,8 +255,8 @@ impl Item {
             code::FLOAT => format!("FLOAT({precision})"),
             code::REAL => "REAL".to_owned(),
             code::DOUBLE_PRECISION => "DOUBLE PRECISION".to_owned(),
-            code::BIT => format!("BIT({length})"),
-            code::BIT_VARYING => format!("BIT VARYING({length})"),
+            code::BINARY => format!("BINARY({length})"),
+            code::BINARY_VARYING => format!("BINARY VARYING({length})"),
             code::BOOLEAN => crate::value::types::BOOLEAN_NAME.to_owned(),
             code::DATETIME => {
                 let (_, written) = DATETIME_CODES.iter().find(|(c, _)| *c == n(DescriptorItem::DatetimeIntervalCode))?;
@@ -315,8 +317,8 @@ fn type_code(t: DataType) -> i64 {
             Spelled::DoublePrecision => code::DOUBLE_PRECISION,
             Spelled::Float | Spelled::Numeric | Spelled::Decimal | Spelled::Integer | Spelled::Smallint => code::FLOAT,
         },
-        DataType::Bit { .. } => code::BIT,
-        DataType::BitVarying { .. } => code::BIT_VARYING,
+        DataType::Binary { .. } => code::BINARY,
+        DataType::VarBinary { .. } => code::BINARY_VARYING,
         DataType::Boolean => code::BOOLEAN,
         DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } => code::DATETIME,
         DataType::Interval(_) => code::INTERVAL,
@@ -341,8 +343,8 @@ fn datetime_shape(t: DataType) -> (i64, i64, i64) {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
-        | DataType::Bit { .. }
-        | DataType::BitVarying { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
         | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
@@ -365,9 +367,9 @@ pub(super) fn matches(described: DataType, t: DataType, target: bool) -> bool {
             named && (!matches!(spelling(&t), Spelled::Float) || precision == its_precision)
         }
         (DataType::Character { length }, DataType::Character { length: its_length })
-        | (DataType::Bit { length }, DataType::Bit { length: its_length }) => length == its_length,
+        | (DataType::Binary { length }, DataType::Binary { length: its_length }) => length == its_length,
         (DataType::Varying { length }, DataType::Varying { length: its_length })
-        | (DataType::BitVarying { length }, DataType::BitVarying { length: its_length }) => {
+        | (DataType::VarBinary { length }, DataType::VarBinary { length: its_length }) => {
             its_length == length || (target && its_length > length)
         }
         (_, _) => described == t,

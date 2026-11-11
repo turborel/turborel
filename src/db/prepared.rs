@@ -146,7 +146,7 @@ fn has_comment(sql: &str, tokens: &[Token]) -> bool {
         if chars.get(from..t.start).is_some_and(|gap| gap.windows(2).any(|w| w == [COMMENT_START, COMMENT_START])) {
             return true;
         }
-        let continued = matches!(t.tok, Tok::CharacterString(_) | Tok::BitString(_));
+        let continued = matches!(t.tok, Tok::CharacterString(_) | Tok::BinaryString(_));
         if continued && chars.get(t.start..t.end).is_some_and(between_parts) {
             return true;
         }
