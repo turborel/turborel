@@ -44,6 +44,7 @@ use crate::txn::{TxId, checked};
 use crate::value::Value;
 
 pub use entries::{Entries, row_entries, table_entries};
+pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};

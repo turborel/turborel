@@ -33,22 +33,36 @@ BY names one for itself. These are built in.
 
 A language's collation is UNICODE with that language's letters where its
 dictionaries put them. UNICODE_SV sorts `å`, `ä` and `ö` after `z`, UNICODE_ES
-puts `ñ` after `n`, and UNICODE_DE_PHONEBOOK sorts `ü` as `ue`. The order comes
-from CLDR 38, the Unicode Consortium's locale data. There is one for each of
-these, by its CLDR locale.
+puts `ñ` after `n`, UNICODE_EL puts Greek before Latin, and UNICODE_ZH sorts
+Chinese by pinyin. The order comes from CLDR 38, the Unicode Consortium's
+locale data, which has one or more types of collation for each locale.
 
-| Collations | Languages |
+A locale's usual type is named UNICODE_ and the CLDR locale, such as UNICODE_SV
+or UNICODE_ZH_HANT. Each of these is built in.
+
+```text
+AF AM AR AS AZ BE BG BN BO BR BS BS_CYRL CEB CHR CS CY DA DSB DZ EE EL
+EN_US_POSIX EO ES ET FA FA_AF FF_ADLM FI FIL FO FR_CA GL GU HA HAW HE HI HR
+HSB HU HY IG IS JA KA KK KL KM KN KO KOK KU KY LKT LN LO LT LV MK ML MN MR MT
+MY NB NE NN OM OR PA PL PS RO RU SE SI SK SL SMN SQ SR SR_LATN SV TA TE TH TK
+TO TR UG UK UR UZ VI WAE WO YI YO ZH ZH_HANT
+```
+
+Another type adds its name after the locale's.
+
+| Collations | Order |
 |---|---|
-| UNICODE_DA, UNICODE_FI, UNICODE_FO, UNICODE_IS, UNICODE_NB, UNICODE_NN, UNICODE_SE, UNICODE_SMN, UNICODE_SV | Danish, Finnish, Faroese, Icelandic, Norwegian Bokmål and Nynorsk, Northern and Inari Sami, Swedish |
-| UNICODE_DE_PHONEBOOK, UNICODE_ES, UNICODE_ES_TRADITIONAL, UNICODE_FR_CA, UNICODE_GL | German phone book, Spanish, traditional Spanish (`ch` and `ll` as letters), Canadian French (accents compared from the end), Galician |
-| UNICODE_CS, UNICODE_DSB, UNICODE_HSB, UNICODE_HU, UNICODE_LT, UNICODE_LV, UNICODE_PL, UNICODE_RO, UNICODE_SK, UNICODE_SL, UNICODE_SQ | Czech, Lower and Upper Sorbian, Hungarian, Lithuanian, Latvian, Polish, Romanian, Slovak, Slovenian, Albanian |
-| UNICODE_AF, UNICODE_BR, UNICODE_CY, UNICODE_EO, UNICODE_MT, UNICODE_TR, UNICODE_UZ, UNICODE_TK, UNICODE_WAE | Afrikaans, Breton, Welsh, Esperanto, Maltese, Turkish, Uzbek, Turkmen, Walser |
-| UNICODE_CEB, UNICODE_FIL, UNICODE_HAW, UNICODE_KL, UNICODE_LKT, UNICODE_TO, UNICODE_VI | Cebuano, Filipino, Hawaiian, Greenlandic, Lakota, Tongan, Vietnamese |
-| UNICODE_EE, UNICODE_HA, UNICODE_IG, UNICODE_LN, UNICODE_OM, UNICODE_WO, UNICODE_YO | Ewe, Hausa, Igbo, Lingala, Oromo, Wolof, Yoruba |
+| UNICODE_DE_PHONEBOOK, UNICODE_DE_AT_PHONEBOOK | German phone book, `ü` as `ue` |
+| UNICODE_ES_TRADITIONAL, UNICODE_FI_TRADITIONAL, UNICODE_VI_TRADITIONAL, UNICODE_BN_TRADITIONAL, UNICODE_KN_TRADITIONAL | the language's traditional order, such as Spanish `ch` and `ll` as letters |
+| UNICODE_SV_STANDARD | Swedish before 2006, `w` as `v` |
+| UNICODE_ZH_STROKE, UNICODE_ZH_ZHUYIN, UNICODE_ZH_BIG5HAN, UNICODE_ZH_GB2312HAN | Chinese by strokes, by zhuyin, or as the Big5 and GB 2312 character sets order it |
+| UNICODE_ZH_UNIHAN, UNICODE_JA_UNIHAN, UNICODE_KO_UNIHAN | ideographs by radical, then strokes |
+| UNICODE_CS_DIGITS_AFTER | Czech with digits after letters |
+| UNICODE_AR_COMPAT, UNICODE_LN_PHONETIC, UNICODE_SI_DICTIONARY, UNICODE_DE_EOR | Arabic of compatibility forms, Lingala by sound, Sinhala as its dictionaries order it, German by the European ordering rules |
+| UNICODE_EOR, UNICODE_EMOJI | the European ordering rules for Latin, Greek and Cyrillic; emoji in the order of their charts |
 
-A language not listed sorts by UNICODE. For some, such as Russian and Greek,
-that is already their order. Others, such as Croatian, Hindi and Chinese, have
-letters UNICODE puts elsewhere.
+UNICODE_JA compares three levels, so hiragana and katakana of one sound are
+equal, and so are strings that differ only in punctuation.
 
 CREATE COLLATION gives one of them another name and pad characteristic. Under
 PAD SPACE a shorter string compares as if extended with spaces. Under NO PAD

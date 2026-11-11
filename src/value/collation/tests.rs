@@ -113,11 +113,11 @@ fn sort_keys_are_values() {
 }
 
 /// Verifies: [DESIGN] RULES.md D3, D60: the table is the one the generator
-/// makes from Unicode 13.0: every built-in reads it, the four and the 48
+/// makes from Unicode 13.0: every built-in reads it, the four and the 123
 /// tailorings, and a change to its bytes changes this digest, which fixes
 /// what `Collation::version` says.
 #[test]
 fn the_table_is_the_one_generated() {
-    assert_eq!(builtin().len(), 52, "the table read");
+    assert_eq!(builtin().len(), 127, "the table read");
     assert_eq!(table::digest(), table::DIGEST);
 }

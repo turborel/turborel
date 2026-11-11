@@ -92,7 +92,7 @@ SELECT CITY FROM PLACES ORDER BY CITY COLLATE UNICODE;
 |---|---|
 | SQL_TEXT, UCS_BASIC | Unicode scalar value, so `Z` before `a` |
 | UNICODE | Language-neutral, by base letter, then accent, then case |
-| UNICODE_SV, UNICODE_DE_PHONEBOOK, ... | UNICODE as a language orders it, such as Swedish `å` after `z` |
+| UNICODE_SV, UNICODE_ZH, UNICODE_DE_PHONEBOOK, ... | UNICODE as a language orders it, such as Swedish `å` after `z` or Chinese by pinyin |
 | CASE_INSENSITIVE | Scalar value of each character's case folding |
 
 In a comparison a literal takes the column's collation. Two columns of

@@ -33,6 +33,10 @@ impl Collation for Scalar {
     fn fold(&self, c: char) -> Option<char> {
         Some(c)
     }
+
+    fn weighs(&self, _: char) -> bool {
+        true
+    }
 }
 
 /// `CASE_INSENSITIVE`, whose folds are `Table`'s, of Unicode 13.0 for good
@@ -61,5 +65,9 @@ impl Collation for Folded {
 
     fn fold(&self, c: char) -> Option<char> {
         Some(self.0.fold(c))
+    }
+
+    fn weighs(&self, _: char) -> bool {
+        true
     }
 }

@@ -195,6 +195,11 @@ impl Table {
         }
     }
 
+    /// Every element the table holds.
+    pub(super) fn all_elements(&self) -> impl Iterator<Item = Element> + '_ {
+        (0..self.elements.records).filter_map(|i| self.element(i))
+    }
+
     fn element(&self, i: usize) -> Option<Element> {
         let at = i.checked_mul(ELEMENT_BYTES)?.checked_add(self.elements.start)?;
         let weight = |n: usize| read_u16(at.checked_add(n.checked_mul(2)?)?);

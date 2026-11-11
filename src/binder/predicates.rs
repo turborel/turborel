@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use super::collation::liked;
+use super::collation::like_under;
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
@@ -279,8 +279,13 @@ impl Binder<'_> {
         // [ISO/IEC 9075-2:2023 §8.5] under the operands' collation.
         let operands = [Some(value), Some(pattern), escape].into_iter().flatten().map(|v| self.derived(v)).collect::<Result<Vec<_>>>()?;
         let collation = self.collation_of(&operands)?;
-        let folded = |e: Expr| collation.as_ref().map_or_else(|| Ok(e.clone()), |c| liked(e.clone(), c));
-        let mut bound = bound.into_iter().map(folded).collect::<Result<Vec<_>>>()?.into_iter();
+        if bound.len() < 2 {
+            return Err(rule("[ISO/IEC 9075:1992 §8.5 F] LIKE has a match value and a pattern"));
+        }
+        if let Some(c) = collation {
+            return Ok(negated(like_under(bound, &c), not));
+        }
+        let mut bound = bound.into_iter();
         let (Some(matched), Some(against)) = (bound.next(), bound.next()) else {
             return Err(rule("[ISO/IEC 9075:1992 §8.5 F] LIKE has a match value and a pattern"));
         };

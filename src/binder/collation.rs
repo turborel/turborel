@@ -20,12 +20,13 @@ use crate::ast::{
 };
 use crate::catalog::QualifiedName;
 use crate::db::State;
-use crate::error::{Code, Result, SqlError};
+use crate::error::Result;
+use crate::exec::{Escape, like_escape};
 use crate::functions::{ScalarFunction, ScalarRef};
-use crate::logical::{Expr, LogicalPlan, SortKey, Subquery};
+use crate::logical::{Cond, Expr, LogicalPlan, SortKey, Subquery};
 use crate::system::INFORMATION_SCHEMA;
 use crate::value::collation::{CollationRef, SQL_TEXT};
-use crate::value::{DataType, Value};
+use crate::value::{CompOp, DataType, Decimal, Spelled, Value, like_collated};
 
 /// The collations of each subquery's columns, by the subquery's text.
 pub(super) type SubqueryCollations = Vec<(*const AstSubquery, Vec<Option<QualifiedName>>)>;
@@ -76,18 +77,49 @@ impl ScalarFunction for Folded {
     }
 }
 
-/// [ISO/IEC 9075:1992 §8.5] `e`, an operand of LIKE under `collation`.
-///
-/// # Errors
-///
-/// SQLCODE -900 if its characters do not compare one at a time, which is
-/// implementation-defined (IA060).
-pub(super) fn liked(e: Expr, collation: &CollationRef) -> Result<Expr> {
-    if collation.collation.fold('a').is_none() {
-        let msg = format!("[ISO/IEC 9075-2:2023 §8.5] LIKE under the collation {} is not implemented", collation.collation.name());
-        return Err(SqlError::new(Code::Unsupported, msg));
+/// [ISO/IEC 9075-2:2023 §8.5 GR3d] LIKE under a collation whose characters
+/// do not compare one at a time: one if the match value, the pattern and
+/// the escape character, its arguments, match, zero if not, null if one is
+/// null.
+struct Collated(CollationRef);
+
+impl ScalarFunction for Collated {
+    fn name(&self) -> &str {
+        self.0.collation.name()
     }
-    Ok(Expr::Call(ScalarRef(Arc::new(Folded(collation.clone()))), vec![e]))
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Smallint })
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let escape = match like_escape(args.get(2))? {
+            Escape::None => None,
+            Escape::Of(c) => Some(c),
+            Escape::Null => return Ok(Value::Null),
+        };
+        let (Some(Value::Char(value)), Some(Value::Char(pattern))) = (args.first(), args.get(1)) else { return Ok(Value::Null) };
+        let matched = like_collated(value, pattern, escape, &self.0)?;
+        Ok(Value::Exact(Decimal::new(i128::from(matched), 0)))
+    }
+}
+
+/// [ISO/IEC 9075:1992 §8.5] `e`, an operand of LIKE under `collation`,
+/// whose characters compare one at a time: each folded.
+fn liked(e: Expr, collation: &CollationRef) -> Expr {
+    Expr::Call(ScalarRef(Arc::new(Folded(collation.clone()))), vec![e])
+}
+
+/// [ISO/IEC 9075-2:2023 §8.5] LIKE of `operands`, the match value, the
+/// pattern and the escape character if one was given, under `collation`:
+/// by each character folded if they compare one at a time, otherwise by
+/// substrings equal under it (IA060).
+pub(super) fn like_under(operands: Vec<Expr>, collation: &CollationRef) -> Cond {
+    if collation.collation.fold('a').is_some() {
+        let mut folded = operands.into_iter().map(|e| liked(e, collation));
+        let (matched, against) = (folded.next().unwrap_or(Expr::Const(Value::Null)), folded.next().unwrap_or(Expr::Const(Value::Null)));
+        return Cond::Like(matched, against, folded.next());
+    }
+    let call = Expr::Call(ScalarRef(Arc::new(Collated(collation.clone()))), operands);
+    Cond::Compare(call, CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(1, 0))))
 }
 
 /// The collation `name`, unless the default: a comparison by it stays bare.

@@ -55,14 +55,15 @@ fn comparisons_and_unique_follow_the_language_4_3_6() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.5, §11.43] RULES.md D60:
-/// LIKE under a language's collation is refused, as under UNICODE; CREATE
+/// LIKE under a language's collation tells å from a; CREATE
 /// COLLATION gives one another name; the Information Schema shows each,
 /// NO PAD, its USAGE PUBLIC's.
 #[test]
 fn a_language_collation_is_a_built_in_4_3_6() {
     let db = database();
     let a = db.session("A");
-    assert_eq!(a.open_cursor("SELECT 1 FROM S WHERE WORD LIKE 'a%'").err().map(|e| e.code), Some(Code::Unsupported));
+    assert_eq!(query(&a, "SELECT WORD FROM S WHERE WORD LIKE 'a%'"), ["apa"]);
+    assert_eq!(query(&a, "SELECT WORD FROM S WHERE WORD LIKE 'a\u{30A}%'"), ["åka"]);
     a.run("CREATE COLLATION SWEDISH FOR SQL_TEXT FROM UNICODE_SV PAD SPACE").unwrap();
     assert_eq!(query(&a, "SELECT WORD FROM S WHERE WORD COLLATE A.SWEDISH = 'åka   '"), ["åka"]);
     let seen = query(&a, "SELECT PAD_ATTRIBUTE FROM INFORMATION_SCHEMA.COLLATIONS WHERE COLLATION_NAME IN ('UNICODE_SV', 'UNICODE_FR_CA')");
@@ -70,4 +71,24 @@ fn a_language_collation_is_a_built_in_4_3_6() {
     let usage = "SELECT GRANTEE, IS_GRANTABLE FROM INFORMATION_SCHEMA.USAGE_PRIVILEGES WHERE OBJECT_NAME = 'UNICODE_SV'";
     assert_eq!(query(&a, usage), ["PUBLIC,NO"]);
     assert_eq!(a.run("CREATE TABLE X (W VARCHAR(9) COLLATE UNICODE_XX)").err().map(|e| e.code), Some(Code::SyntaxRule));
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.5, §13.1] RULES.md D60:
+/// every type of a locale's collation is one, its scripts reordered,
+/// Greek before Latin and Chinese ideographs by pinyin or by strokes
+/// before both; under Japanese, of three levels, LIKE finds katakana
+/// for hiragana and passes over punctuation.
+#[test]
+fn every_type_of_a_locale_orders_its_script_4_3_6() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (W VARCHAR(20))").unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO T VALUES ('alpha'), ('ωμέγα'), ('中'), ('二'), ('阿')").unwrap();
+    assert_eq!(query(&a, "SELECT W FROM T ORDER BY W COLLATE UNICODE"), ["alpha", "ωμέγα", "中", "二", "阿"]);
+    assert_eq!(query(&a, "SELECT W FROM T ORDER BY W COLLATE UNICODE_EL"), ["ωμέγα", "alpha", "中", "二", "阿"]);
+    assert_eq!(query(&a, "SELECT W FROM T ORDER BY W COLLATE UNICODE_ZH"), ["阿", "二", "中", "alpha", "ωμέγα"]);
+    assert_eq!(query(&a, "SELECT W FROM T ORDER BY W COLLATE UNICODE_ZH_STROKE"), ["二", "中", "阿", "alpha", "ωμέγα"]);
+    a.run("INSERT INTO T VALUES ('カ-ナ')").unwrap();
+    assert_eq!(query(&a, "SELECT W FROM T WHERE W COLLATE UNICODE_JA LIKE 'かな'"), ["カ-ナ"]);
+    assert_eq!(query(&a, "SELECT W FROM T WHERE W COLLATE UNICODE LIKE 'かな'"), Vec::<String>::new());
 }

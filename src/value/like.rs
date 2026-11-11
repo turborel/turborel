@@ -15,10 +15,13 @@
 //! padding is involved: a `CHARACTER(5)` value 'ABC  ' does not match the
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
+mod collated;
+
 use std::collections::HashMap;
 
 use super::Value;
 use crate::error::{Code, Result, SqlState, fail_with};
+pub use collated::collated;
 
 /// A substring specifier of a pattern, one character long.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

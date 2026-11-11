@@ -53,6 +53,7 @@ const EXTENSIONS: [(u32, u32); 7] = [
 ];
 
 /// `UNICODE`, reading `Table`.
+#[derive(Clone)]
 pub struct Unicode(Arc<Table>);
 
 impl Unicode {
@@ -115,6 +116,35 @@ impl Unicode {
     /// `c`'s canonical combining class.
     pub(super) fn class(&self, c: char) -> u32 {
         self.0.class(c)
+    }
+
+    /// The elements of `c` alone, no contraction it begins made, added to
+    /// `out`.
+    pub(super) fn alone(&self, c: char, out: &mut Vec<Element>) {
+        match self.0.entry(c) {
+            Some(entry) => self.0.elements(entry.run, out),
+            None => implicit(&self.0, c, out),
+        }
+    }
+
+    /// \[UTS #35 Part 5 §3.11\] The weights of the greatest element whose
+    /// first level is ignorable, and of the greatest whose first two are.
+    pub(super) fn last_ignorables(&self) -> [[u16; 3]; 2] {
+        let mut out = [[0; 3]; 2];
+        for e in self.0.all_elements() {
+            let [p, s, _] = e.weights;
+            let slot = match (p, s) {
+                (0, 0) => out.get_mut(1),
+                (0, _) => out.get_mut(0),
+                _ => None,
+            };
+            if let Some(slot) = slot
+                && e.weights > *slot
+            {
+                *slot = e.weights;
+            }
+        }
+        out
     }
 
     /// \[UTS #10 S2.1\] The longest contraction at `at`, and what S2.1.1
@@ -258,5 +288,9 @@ impl Collation for Unicode {
     /// Characters may contract or expand, so none compares alone.
     fn fold(&self, _: char) -> Option<char> {
         None
+    }
+
+    fn weighs(&self, c: char) -> bool {
+        self.elements(vec![c]).iter().any(|e| e.weights[0] != 0)
     }
 }

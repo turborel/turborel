@@ -10,7 +10,7 @@ choices:
 | What | turborel |
 |---|---|
 | The character set; its order | Unicode, SQL_TEXT; strings ordered by Unicode scalar value, unless a collation says otherwise |
-| LIKE under a collation | by each character's folding; refused under UNICODE and the collations of languages |
+| LIKE under a collation | by each character's folding; under UNICODE and the collations of languages, each run of the pattern's characters matches a part of the value equal to it |
 | The end of a line | `\n` or `\r\n` |
 | NUMERIC and DECIMAL of no precision | 18 digits |
 | DECIMAL; INTEGER; SMALLINT | as written; NUMERIC(10, 0); NUMERIC(5, 0) |

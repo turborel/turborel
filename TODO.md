@@ -17,11 +17,6 @@ Code never cites this file (R-DOC-5).
 
 Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
 
-- Languages whose CLDR rules reorder scripts, such as Croatian, Greek, Hindi
-  and Chinese, need script reordering before they get collations of their own.
-- LIKE under UNICODE and its tailorings is refused, since contractions don't
-  compare one character at a time.
-
 ---
 
 ## SQL

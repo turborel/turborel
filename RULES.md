@@ -131,8 +131,9 @@ Generated data counts too. `src/value/collation/unicode13.bin` is no
 dependency, but it can't be read line by line. So `cargo xtask unicode` makes
 it from Unicode's own files, the build holds it to a digest, and
 `cargo xtask unicode-check` runs Unicode's conformance file against it (D60).
-`src/value/collation/cldr38.rules` can be read, but `cargo xtask cldr` makes it
-from CLDR's files all the same, and the build holds it to a digest too.
+`src/value/collation/cldr38.rules` and `cldr38.groups` can be read, but
+`cargo xtask cldr` makes them from CLDR's files all the same, and the build
+holds the rules to a digest too.
 
 #### D6. Production code only
 
@@ -347,13 +348,19 @@ CAST or USER yields to a column's, as SQL-92's Coercible did. A session
 collation applies to direct and prepared statements, as they are prepared, and
 never to views or constraints, which keep what they were defined with.
 
-UNICODE_<LOCALE> [EXTENSION] is UNICODE tailored for a language by CLDR 38's
-rules, so UNICODE_SV puts `å`, `ä` and `ö` after `z`. A tailored letter has to
-fit between UNICODE's weights, so a tailoring's weights are 32 bits, UNICODE's
-in the upper half (`value/collation/tailored`). The rules tailor UNICODE itself
-rather than CLDR's root collation, which orders 105 of its 24,412 characters
-otherwise, currency symbols, length marks and a few Cyrillic letters among them.
-Languages whose rules reorder scripts have no collation yet.
+UNICODE_<LOCALE> [EXTENSION] is UNICODE tailored by CLDR 38's rules, one for
+each collation type of each locale but those for search. UNICODE_SV puts `å`,
+`ä` and `ö` after `z`, UNICODE_EL puts Greek before Latin, and UNICODE_ZH
+orders ideographs by pinyin. A tailored letter has to fit between UNICODE's
+weights, so a tailoring's weights are 64 bits, UNICODE's in the upper half
+(`value/collation/tailored`). The Han orders tail tens of thousands of
+ideographs after one weight, which 16 bits could not count.
+
+The rules tailor UNICODE itself rather than CLDR's root collation, which orders
+105 of its 24,412 characters otherwise, currency symbols, length marks and a
+few Cyrillic letters among them. `[reorder]` moves CLDR's script groups, laid
+over UNICODE's primaries as UTS #35 describes for allkeys.txt
+(`value/collation/reorder.rs`).
 
 A collation's name fixes its behaviour. An index goes wrong when a library
 changes its order underneath it, so the table is in the tree, a new

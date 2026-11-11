@@ -122,9 +122,10 @@ fn equal_strings_are_one_by_a_collation() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §8.5] LIKE under
-/// CASE_INSENSITIVE folds both sides; under UNICODE it is refused (SQLCODE
-/// -900), an implementation-defined choice (IA060); COLLATE UCS_BASIC is
-/// exact.
+/// CASE_INSENSITIVE folds both sides; under UNICODE each run of the pattern
+/// matches a substring equal to it [GR3d ii 4], a case or accent telling
+/// them apart, NOT LIKE its negation, a null pattern unknown, a bad escape
+/// a data exception; COLLATE UCS_BASIC is exact.
 #[test]
 fn like_follows_the_collation_8_5() {
     let db = collated();
@@ -132,7 +133,14 @@ fn like_follows_the_collation_8_5() {
     assert_eq!(query(&a, "SELECT AGE FROM P WHERE NAME LIKE 'B%'"), ["30"]);
     assert_eq!(query(&a, "SELECT AGE FROM P WHERE NAME LIKE 'b%'"), ["30"]);
     assert_eq!(query(&a, "SELECT AGE FROM P WHERE NAME COLLATE UCS_BASIC LIKE 'b%'").len(), 0);
-    assert_eq!(a.open_cursor("SELECT 1 FROM W WHERE WORD LIKE 'a%'").err().map(|e| e.code), Some(Code::Unsupported));
+    assert_eq!(query(&a, "SELECT WORD FROM W WHERE WORD LIKE 'r%' ORDER BY WORD"), ["resume", "résumé"]);
+    assert_eq!(query(&a, "SELECT WORD FROM W WHERE WORD LIKE 'r_sum_' ORDER BY WORD"), ["resume", "résumé"]);
+    assert_eq!(query(&a, "SELECT WORD FROM W WHERE WORD LIKE 're\u{301}sum%'"), ["résumé"]);
+    assert_eq!(query(&a, "SELECT WORD FROM W WHERE WORD NOT LIKE '%e%' ORDER BY WORD"), ["résumé", "zoo"]);
+    assert_eq!(query(&a, "SELECT WORD FROM W WHERE WORD LIKE 'z%' ORDER BY WORD"), ["zoo"]);
+    assert_eq!(query(&a, "SELECT WORD FROM W WHERE WORD LIKE CAST(NULL AS VARCHAR(3))").len(), 0);
+    let bad = a.open_cursor("SELECT 1 FROM W WHERE WORD LIKE 'a' ESCAPE 'xy'").and_then(|mut c| c.fetch().map(|_| ()));
+    assert_eq!(bad.err().map(|e| e.code), Some(Code::Data));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.43 GR5, §4.3.2] a
@@ -312,7 +320,7 @@ fn a_session_collation_19_10() {
     assert_eq!(refused.as_deref(), Some("2H000"), "GR1a");
     assert_eq!(a.run("SET COLLATION 1").err().map(|e| e.code), Some(Code::SyntaxRule), "SR1");
     a.run("SET COLLATION ' UNICODE ' FOR SQL_TEXT").unwrap();
-    assert_eq!(a.open_cursor("SELECT S FROM N WHERE S LIKE 'a%'").err().map(|e| e.code), Some(Code::Unsupported), "LIKE too");
+    assert_eq!(query(&a, "SELECT S FROM N WHERE S LIKE 'r_sum_'"), ["résumé"], "LIKE too");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.4 GR13] COLLATION FOR names a

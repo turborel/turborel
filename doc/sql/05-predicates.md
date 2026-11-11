@@ -97,9 +97,12 @@ SELECT ID FROM STAFF WHERE NAME LIKE '%!%%' ESCAPE '!';
 ```
 
 Under a collation LIKE compares folded characters, so
-`NAME LIKE 'b%'` finds `Bob` in a CASE_INSENSITIVE column. Under UNICODE, whose
-letters may be several characters, and under a language's collation such as
-UNICODE_SV, it is refused (SQLCODE -900).
+`NAME LIKE 'b%'` finds `Bob` in a CASE_INSENSITIVE column. Under UNICODE and
+a language's collation, whose letters may be several characters, each run of
+the pattern's characters matches a part of the value equal to it under the
+collation. So `WORD LIKE 'å%'` finds `åka` but not `apa` under UNICODE_SV,
+and under UNICODE_JA, which ignores punctuation and the kana's script,
+`'かな'` matches `カ-ナ`.
 
 ## NULL
 

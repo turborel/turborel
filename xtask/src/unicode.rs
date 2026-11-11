@@ -39,38 +39,57 @@ const HEX: u32 = 16;
 /// One collation element: a primary, secondary and tertiary weight, and
 /// whether it is variable.
 #[derive(Clone, Copy)]
-struct Element {
-    weights: [u16; 3],
-    variable: bool,
+pub struct Element {
+    pub weights: [u16; 3],
+    pub variable: bool,
 }
 
 /// What `allkeys.txt` holds.
 #[derive(Default)]
-struct Weights {
-    single: BTreeMap<u32, Vec<Element>>,
+pub struct Weights {
+    pub single: BTreeMap<u32, Vec<Element>>,
     contracted: BTreeMap<[u32; MOST_CONTRACTED], Vec<Element>>,
     /// The first and last code point of a range, its primary and origin.
-    implicit: Vec<[u32; 4]>,
+    pub implicit: Vec<[u32; 4]>,
+}
+
+/// The Unicode files a table is made from, read.
+pub struct Sources {
+    pub decompositions: BTreeMap<u32, Vec<u32>>,
+    pub classes: BTreeMap<u32, u32>,
+    pub folds: BTreeMap<u32, u32>,
+}
+
+impl Sources {
+    /// `UnicodeData.txt` and `CaseFolding.txt` in `from`, read.
+    pub fn read(from: &Path) -> Result<Sources> {
+        let (decompositions, classes) = parsed_data(&read(from, UNICODE_DATA)?)?;
+        let folds = parsed_folds(&read(from, CASE_FOLDING)?)?;
+        Ok(Sources { decompositions, classes, folds })
+    }
 }
 
 /// Generates the table from the files in `from`.
 pub fn generate(root: &Path, from: &Path) -> Result<()> {
     let weights = parsed_weights(&read(from, ALLKEYS)?)?;
-    let (decompositions, classes) = parsed_data(&read(from, UNICODE_DATA)?)?;
-    let folds = parsed_folds(&read(from, CASE_FOLDING)?)?;
-    let bytes = table(&weights, &decompositions, &classes, &folds)?;
+    let bytes = table(*MAGIC, &weights, &Sources::read(from)?)?;
     let path = root.join(TABLE);
     fs::write(&path, &bytes).map_err(|e| Error::new(format!("cannot write {}: {e}", path.display())))?;
     println!("unicode: wrote {} bytes to {TABLE}", bytes.len());
     Ok(())
 }
 
-fn read(from: &Path, name: &str) -> Result<String> {
+/// The weights of `allkeys.txt` in `from`.
+pub fn ducet(from: &Path) -> Result<Weights> {
+    parsed_weights(&read(from, ALLKEYS)?)
+}
+
+pub fn read(from: &Path, name: &str) -> Result<String> {
     let path = from.join(name);
     fs::read_to_string(&path).map_err(|e| Error::new(format!("cannot read {}: {e}", path.display())))
 }
 
-fn hex(field: &str) -> Result<u32> {
+pub fn hex(field: &str) -> Result<u32> {
     u32::from_str_radix(field.trim(), HEX).map_err(|e| Error::new(format!("'{field}' is no hexadecimal number: {e}")))
 }
 
@@ -116,7 +135,7 @@ fn weight_line(line: &str, into: &mut Weights) -> Result<()> {
     Ok(())
 }
 
-fn parsed_weights(text: &str) -> Result<Weights> {
+pub fn parsed_weights(text: &str) -> Result<Weights> {
     if !text.lines().any(|l| l.trim() == VERSION_LINE) {
         return Err(Error::new(format!("{ALLKEYS} is not of {VERSION_LINE}")));
     }
@@ -272,19 +291,16 @@ fn pairs(map: &BTreeMap<u32, u32>) -> Vec<u8> {
     out
 }
 
-fn table(
-    weights: &Weights,
-    decompositions: &BTreeMap<u32, Vec<u32>>,
-    classes: &BTreeMap<u32, u32>,
-    folds: &BTreeMap<u32, u32>,
-) -> Result<Vec<u8>> {
+/// The table of `weights` and `sources`, beginning with `magic`.
+pub fn table(magic: [u8; 8], weights: &Weights, sources: &Sources) -> Result<Vec<u8>> {
+    let Sources { decompositions, classes, folds } = sources;
     let ([chars, elements, contractions], [char_count, element_count, contraction_count]) = weight_sections(weights)?;
     let (decomposed, parts, part_count) = decomposition_sections(decompositions)?;
     let mut implicit = Vec::new();
     for &value in weights.implicit.iter().flatten() {
         put(&mut implicit, value);
     }
-    let mut out = MAGIC.to_vec();
+    let mut out = magic.to_vec();
     let sizes = [
         char_count,
         element_count,

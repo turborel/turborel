@@ -88,7 +88,7 @@ commands:
   {UNICODE} {FROM} DIR   the collation table, from Unicode's files in DIR (D60)
   {UNICODE_CHECK} {FROM} DIR
                        the collation UNICODE against Unicode's test file in DIR (D60)
-  {CLDR} {FROM} DIR      the tailorings of the collations UNICODE_<LOCALE>, from CLDR's files in DIR (D60)"
+  {CLDR} {FROM} CLDR UCD  the collations UNICODE_<LOCALE>, from CLDR's files in CLDR and Unicode's in UCD (D60)"
     )
 }
 
@@ -121,7 +121,7 @@ fn run(args: &[String]) -> Result<()> {
         [MUTATE, rest @ ..] => mutate::run(&root, rest),
         [SIMULATE, rest @ ..] => simulate(&root, rest),
         [UNICODE, FROM, dir] => unicode::generate(&root, Path::new(dir)),
-        [CLDR, FROM, dir] => cldr::generate(&root, Path::new(dir)),
+        [CLDR, FROM, cldr, ucd] => cldr::generate(&root, Path::new(cldr), Path::new(ucd)),
         [UNICODE_CHECK, FROM, dir] => command::cargo(&root, &[UNICODE_CHECK_ARGS.as_slice(), &["--", dir]].concat(), NO_ENV),
         _ => Err(Error::new(usage())),
     }

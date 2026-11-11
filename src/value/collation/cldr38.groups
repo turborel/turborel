@@ -1,0 +1,45 @@
+# The script reordering groups of CLDR 38 over the primaries of UNICODE
+# (RULES.md D60), made by `cargo xtask cldr`: a line for each range, its
+# first and last primary and the reorder codes of its group. From CLDR's
+# FractionalUCA.txt, under the terms of LICENSE-UNICODE.
+0201 0209 space
+020A 04B3 punct
+04B4 1D55 symbol
+1D56 1E2C digit
+1E2D 1E2D punct
+1E2E 1F45 digit
+1F46 1F61 symbol
+1F62 1F97 currency
+1F98 1FA1 digit
+1FA2 231D Latn
+231E 2386 Grek Copt
+2387 2549 Cyrl
+254A 259E Glag Perm
+259F 25F4 Geor
+25F5 261D Armn
+261E 2663 Hebr Phnx Samr
+2664 2747 Arab
+2748 29D6 Syrc Mand Thaa Nkoo Tfng Ethi
+29D7 2A3C Deva
+2A3D 2A7E Beng
+2A7F 2AB7 Guru
+2AB8 2AFC Gujr
+2AFD 2B3F Orya
+2B40 2B71 Taml
+2B72 2BBB Telu
+2BBC 2C05 Knda
+2C06 2C4F Mlym
+2C50 3216 Sinh Mtei Sylo Saur Kthi Mahj Shrd Khoj Sind Mult Gran Newa Tirh Sidd Modi Takr Diak Nand Dogr Ahom Gonm Gong Sund Brah Khar Bhks
+3217 3256 Thai
+3257 32D8 Laoo Tavt
+32D9 33A5 Tibt Zanb Soyo
+33A6 36BA Marc Lepc Phag Limb Tglg Hano Buhd Tagb Bugi Maka Batk Rjng Kali Mymr Rohg Cakm Khmr
+36BB 3C34 Tale Talu Lana Cham Bali Java Mong Olck Cher Osge Cans Ogam
+3C35 3CB8 Runr Hung Orkh
+3CB9 4174 Vaii Bamu Bass Mend Medf Adlm
+4175 42D9 Hang
+42DA 4428 Hira Hrkt Kana
+4429 4B66 Bopo Yiii Lisu Plrd Wara Pauc Hmng Hmnp Wcho Lyci Cari Lydi Ital Goth
+4B67 55A6 Dsrt Shaw Dupl Osma Elba Aghb Sora Mroo Linb Lina Cprt Sarb Narb Avst Palm Nbat Hatr Armi Prti Phli Phlp Elym Mani Sogo Sogd Yezi Chrs Ugar Xpeo Xsux
+55A7 FB3E Egyp Merc Mero Hluw Tang Nshu Kits
+FB3F FBBF Hani Hans Hant

@@ -14,6 +14,7 @@
 
 mod folded;
 mod pad;
+mod reorder;
 mod rules;
 mod table;
 mod tailored;
@@ -63,7 +64,12 @@ pub enum Pad {
 ///   them as the collation does, and are equal only if the strings compare
 ///   equal;
 /// * `fold` is `Some` of every character only if comparing folded
-///   characters one by one agrees with `sort_key`, which LIKE relies on.
+///   characters one by one agrees with `sort_key`, which LIKE relies on;
+/// * `weighs` is true of a character that, alone, has a first-level
+///   weight its keys hold, at the first level or, if it is variable, at
+///   the fourth, so a string of `n` such characters has at least
+///   `n / MOST_CONTRACTED` elements its keys hold, which LIKE's search
+///   relies on.
 pub trait Collation: Send + Sync {
     /// Its name.
     fn name(&self) -> &str;
@@ -74,7 +80,13 @@ pub trait Collation: Send + Sync {
     /// The character `c` compares as, if its strings compare one character
     /// at a time.
     fn fold(&self, c: char) -> Option<char>;
+    /// Whether `c` alone has a first-level weight its keys hold.
+    fn weighs(&self, c: char) -> bool;
 }
+
+/// \[EXTENSION\] The most characters one element of a key is made of: the
+/// longest string a tailoring names, an emoji sequence of eight.
+pub const MOST_CONTRACTED: usize = 8;
 
 /// A collation and its pad characteristic [ISO/IEC 9075-2:2023 §11.43 GR5].
 #[derive(Clone)]
