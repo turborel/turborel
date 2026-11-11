@@ -23,8 +23,23 @@ behind it, and each can be replaced or added to.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
+- Two storage engines over one data file, chosen per table. The row store
+  suits point reads and updates. The column store freezes rows into
+  compressed column groups for scans of a few columns of many rows, and
+  keeps new rows in a delta so writes stay fast. A table moves between them
+  with ALTER TABLE.
 - Multiple Indexes such as B-link trees and linear hash tables, chosen by a
   cost-based planner.
+- Collations, from binary order through case-insensitive to the Unicode
+  Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
+  and compares as its readers expect.
+- Compression and encryption at rest, LZ4 and AES-256-GCM or
+  ChaCha20-Poly1305, for a whole database or one table.
+- Replication over a group of servers. A change commits once a majority
+  holds it, the backups serve reads, and they choose a new primary within
+  seconds when one is lost.
+- Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
+- Import of CSV and tab-separated files through the client.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
   users and passwords, prepared statements and cancellation.
