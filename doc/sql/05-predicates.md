@@ -125,7 +125,8 @@ SELECT ID FROM STAFF WHERE DEPT IS NULL;
 
 `x op ALL (subquery)` is true if the comparison is true of every row of
 the subquery, and of none; `x op ANY (subquery)`, or SOME, if it is
-true of one.
+true of one. ANY or SOME before anything but a subquery is the set
+function of truth values, so `x = ANY(y)` compares x with it.
 
 ```sql
 SELECT ID FROM STAFF WHERE SALARY > ALL (SELECT SALARY FROM STAFF WHERE DEPT = 'OPS') ORDER BY ID;
@@ -259,7 +260,13 @@ SELECT ID FROM STAFF WHERE SALARY > 7000 OR DEPT = 'OPS' ORDER BY ID;
 ```
 
 NOT kept neither Barbara's row, its salary's comparison unknown, nor so
-its negation. A condition is no value: SQL-92 has no BOOLEAN type, so a
-comparison is not selected nor stored.
+its negation.
 
-The standard: ISO/IEC 9075:1992 §8.1–§8.12; X3.135-1986 §5.10–§5.18.
+A value of type [BOOLEAN](02-data-types.md#booleans) is a condition of
+its own, so `WHERE DONE` keeps the rows where the column DONE is TRUE. A
+value of any other type there is refused, SQLCODE -103. A condition is
+also a value ([Value Expressions](04-expressions.md#conditions-as-values)),
+so `(SALARY > 7000) IS NULL` is true where the comparison is unknown.
+
+The standard: ISO/IEC 9075:1992 §8.1–§8.12; X3.135-1986 §5.10–§5.18;
+ISO/IEC 9075-2:2023 §6.46 for a BOOLEAN value as a condition.

@@ -120,7 +120,8 @@ fn slot_equal(conds: &[Cond], column: usize, data_type: &DataType) -> Option<(Sl
             | Cond::Exists(_)
             | Cond::Unique(_)
             | Cond::Quantified(..)
-            | Cond::Match { .. } => return None,
+            | Cond::Match { .. }
+            | Cond::Value(_) => return None,
         };
         placed_as_is(&slot.data_type, data_type).then_some((*slot, at))
     })
@@ -220,7 +221,8 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::Case(..)
         | Expr::Subquery(..)
         | Expr::SortKey(..)
-        | Expr::Domain(..) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
+        | Expr::Domain(..)
+        | Expr::Truth(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
     };
     let at = match (probe, s.place) {
         (Probe::Compare { value: first, .. }, Place::Key(n)) => (n == 0).then_some(first),

@@ -44,6 +44,8 @@ pub(super) mod code {
     pub(in crate::db::dynamic) const BIT: i64 = 14;
     /// BIT VARYING.
     pub(in crate::db::dynamic) const BIT_VARYING: i64 = 15;
+    /// [ISO/IEC 9075-2:2023 §20.1, Table 30] BOOLEAN.
+    pub(in crate::db::dynamic) const BOOLEAN: i64 = 16;
     /// \[DESIGN\] An implementation-defined data type, of a code less than 0:
     /// a plug-in's (RULES.md D53), each described by this one code.
     pub(in crate::db::dynamic) const EXTENSION: i64 = -1;
@@ -222,6 +224,8 @@ impl Item {
                 self.set_number(DescriptorItem::DatetimeIntervalPrecision, i64::from(q.leading));
                 self.set_number(DescriptorItem::Precision, i64::from(q.fraction));
             }
+            // [ISO/IEC 9075-2:2023 §20.1 SR6j] Of BOOLEAN, TYPE alone.
+            DataType::Boolean => {}
             DataType::Extension(_) => self.extension = Some(t),
         }
     }
@@ -251,6 +255,7 @@ impl Item {
             code::DOUBLE_PRECISION => "DOUBLE PRECISION".to_owned(),
             code::BIT => format!("BIT({length})"),
             code::BIT_VARYING => format!("BIT VARYING({length})"),
+            code::BOOLEAN => crate::value::types::BOOLEAN_NAME.to_owned(),
             code::DATETIME => {
                 let (_, written) = DATETIME_CODES.iter().find(|(c, _)| *c == n(DescriptorItem::DatetimeIntervalCode))?;
                 written.replace("{p}", &precision.to_string())
@@ -312,6 +317,7 @@ fn type_code(t: DataType) -> i64 {
         },
         DataType::Bit { .. } => code::BIT,
         DataType::BitVarying { .. } => code::BIT_VARYING,
+        DataType::Boolean => code::BOOLEAN,
         DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } => code::DATETIME,
         DataType::Interval(_) => code::INTERVAL,
         DataType::Extension(_) => code::EXTENSION,
@@ -337,6 +343,7 @@ fn datetime_shape(t: DataType) -> (i64, i64, i64) {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
     }

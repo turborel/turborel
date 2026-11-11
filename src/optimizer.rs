@@ -232,11 +232,15 @@ fn fold_expr(e: &Expr) -> Option<Expr> {
 }
 
 /// Whether `e`, not a constant, can be computed now: an operation on
-/// constants alone, calling only a deterministic function.
+/// constants alone, calling only a deterministic function, its condition,
+/// if a truth value's, of no subquery.
 fn computable(e: &Expr) -> bool {
     let mut constant = !matches!(e, Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Subquery(..));
     if let Expr::Call(func, _) = e {
         constant = constant && func.0.deterministic();
+    }
+    if let Expr::Truth(c) = e {
+        constant = constant && c.subqueries().is_empty();
     }
     e.for_each_child(&mut |child| constant = constant && matches!(child, Expr::Const(_)));
     constant
@@ -245,6 +249,11 @@ fn computable(e: &Expr) -> bool {
 /// The folded form of `c`, or `None` if nothing in it folds.
 fn fold_cond(c: &Cond) -> Option<Cond> {
     match c {
+        // [ISO/IEC 9075-2:2023 §4.6.1] a constant's truth.
+        Cond::Value(Expr::Const(v)) => Some(Cond::Const(Truth::of(v))),
+        Cond::Value(e) => {
+            fold_expr(e).map(|folded| if let Expr::Const(v) = &folded { Cond::Const(Truth::of(v)) } else { Cond::Value(folded) })
+        }
         Cond::Const(_)
         | Cond::IsNull(..)
         | Cond::Like(..)
@@ -359,7 +368,8 @@ fn simplify(c: &Cond) -> Option<Cond> {
         | Cond::Unique(_)
         | Cond::Quantified(..)
         | Cond::Match { .. }
-        | Cond::In(..) => None,
+        | Cond::In(..)
+        | Cond::Value(_) => None,
     }
 }
 
@@ -540,7 +550,8 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::Cast(..)
                 | Expr::SortKey(..)
                 | Expr::Domain(..)
-                | Expr::Subquery(..) => None,
+                | Expr::Subquery(..)
+                | Expr::Truth(_) => None,
             })
             .collect();
         // A UNIQUE column may be null [ISO/IEC 9075:1992 §8.9], and rows

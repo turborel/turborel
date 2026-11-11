@@ -101,6 +101,7 @@ fn heap(v: &Value) -> usize {
         | Value::Exact(_)
         | Value::Approx(_)
         | Value::Bits(_)
+        | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Extension(_) => 0,

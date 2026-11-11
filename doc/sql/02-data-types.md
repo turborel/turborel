@@ -11,7 +11,7 @@ or two unsigned integers it takes; so may a domain.
 ```
 <data type> ::=
       <character string type> | <national character string type>
-    | <bit string type>
+    | <bit string type> | <boolean type>
     | <exact numeric type> | <approximate numeric type>
     | <datetime type> | <interval type>
 ```
@@ -23,6 +23,7 @@ or two unsigned integers it takes; so may a domain.
 | NATIONAL CHARACTER(n) | as CHARACTER | NCHAR(n), NATIONAL CHAR(n), and VARYING |
 | BIT(n) | n bits | BIT is BIT(1) |
 | BIT VARYING(n) | up to n bits | |
+| BOOLEAN | TRUE or FALSE, and UNKNOWN as its null | |
 | NUMERIC(p, s), DECIMAL(p, s) | exact numbers of p digits, s after the point | DEC(p, s); (p) is (p, 0); no precision is 18 |
 | INTEGER | NUMERIC(10, 0) | INT |
 | SMALLINT | NUMERIC(5, 0) | |
@@ -127,6 +128,64 @@ turborel: SQLCODE -301 (SQLSTATE 22026): a bit string of 3 bits is not of BIT(8)
 
 A bit string is not a number: CAST takes one to and from character
 strings, whose UTF-8 bytes are its bits, and not to or from numbers.
+
+## Booleans
+
+BOOLEAN holds the truth values TRUE and FALSE. UNKNOWN is its null
+value, so `UNKNOWN` and `NULL` written into a column are the same. TRUE
+is greater than FALSE, and a truth value compares with truth values
+alone.
+
+A condition is a value wherever a value is written: in a select list, a
+VALUES row, an UPDATE's SET, a CASE result or a CAST operand. A BOOLEAN
+value is a condition wherever one is written, so `WHERE DONE` reads a
+column. A value of any other type there is refused.
+
+EVERY gives TRUE if each value of its group is TRUE, ANY and SOME if one
+is. Each leaves nulls out, and is null of a group with no other values.
+
+CAST takes a character string to BOOLEAN if it is TRUE, FALSE or
+UNKNOWN, in any case and with spaces either side, and a truth value to a
+string as `'TRUE'` or `'FALSE'`. BOOLEAN and EVERY are not reserved
+words, so a column of an older database named either keeps its name.
+
+```sql
+CREATE TABLE TASK (ID INTEGER, DONE BOOLEAN DEFAULT FALSE);
+INSERT INTO TASK VALUES (1, TRUE), (2, FALSE), (3, UNKNOWN);
+SELECT ID, DONE, NOT DONE, ID > 1 AND DONE IS NOT TRUE FROM TASK;
+SELECT ID FROM TASK WHERE DONE;
+SELECT EVERY(DONE), ANY(DONE), COUNT(DONE) FROM TASK;
+VALUES CAST(' true ' AS BOOLEAN);
+VALUES CAST('yes' AS BOOLEAN);
+SELECT ID FROM TASK WHERE ID;
+```
+
+```
+OK
+OK
+           ID | DONE  |       |
+--------------+-------+-------+-------
+            1 | TRUE  | FALSE | FALSE
+            2 | FALSE | TRUE  | TRUE
+            3 |       |       | TRUE
+(3 rows)
+           ID
+--------------
+            1
+(1 row)
+       |       |
+-------+-------+----------------------
+ FALSE | TRUE  |                    2
+(1 row, with a warning: SQLSTATE 01003)
+
+-------
+ TRUE
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22018): 'yes' is not a <boolean literal> [ISO/IEC 9075-2:2023 §6.13 GR21a ii]
+turborel: SQLCODE -103 (SQLSTATE 2A000): a <boolean predicand> is of type BOOLEAN (found INTEGER) [ISO/IEC 9075-2:2023 §6.46 SR3] (at character 26)
+```
+
+The warning is SQLSTATE 01003, a null left out of a set function.
 
 ## Numbers
 

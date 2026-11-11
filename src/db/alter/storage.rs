@@ -66,6 +66,7 @@ pub(in crate::db) fn value_of(value: &OptionValue) -> Value {
         // An option is the database's, of no session: its datetime of UTC.
         OptionValue::Literal(Literal::Datetime(w)) => crate::binder::datetime_literal(w, 0),
         OptionValue::Literal(Literal::Interval(i)) => Value::Interval(*i),
+        OptionValue::Literal(Literal::Boolean(b)) => b.map_or(Value::Null, Value::Bool),
     }
 }
 

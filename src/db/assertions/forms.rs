@@ -208,7 +208,8 @@ fn form_of(c: &Cond, known: &Known<'_>) -> Option<Vec<Form>> {
         | Cond::Exists(_)
         | Cond::Quantified(..)
         | Cond::Unique(_)
-        | Cond::Match { .. } => None,
+        | Cond::Match { .. }
+        | Cond::Value(_) => None,
     }
 }
 
@@ -385,7 +386,8 @@ pub(super) fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), ca
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => false,
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => false,
     }
 }
 
@@ -423,7 +425,8 @@ fn rejected(at: usize, steps: &[Step]) -> bool {
 /// §8.5 GR1, GR2, §8.6 GR3].
 pub(super) fn rejects(c: &Cond, at: usize) -> bool {
     match c {
-        Cond::IsNull(e, true) | Cond::Like(e, ..) | Cond::In(e, _) => strict(e, at),
+        // [ISO/IEC 9075-2:2023 §4.6.1] a null BOOLEAN value is Unknown.
+        Cond::IsNull(e, true) | Cond::Like(e, ..) | Cond::In(e, _) | Cond::Value(e) => strict(e, at),
         Cond::Compare(a, _, b) => strict(a, at) || strict(b, at),
         Cond::Is(inner, Truth::True, false) => rejects(inner, at),
         Cond::And(a, b) => rejects(a, at) || rejects(b, at),
@@ -454,7 +457,8 @@ fn strict(e: &Expr, at: usize) -> bool {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => false,
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => false,
     }
 }
 
@@ -465,7 +469,7 @@ pub(super) fn row_cond(c: &Cond) -> bool {
         Cond::Or(a, b) | Cond::And(a, b) => row_cond(a) && row_cond(b),
         Cond::Not(a) | Cond::Is(a, ..) => row_cond(a),
         Cond::Compare(a, _, b) => row_expr(a) && row_expr(b),
-        Cond::IsNull(e, _) | Cond::In(e, _) => row_expr(e),
+        Cond::IsNull(e, _) | Cond::In(e, _) | Cond::Value(e) => row_expr(e),
         Cond::Like(e, pattern, escape) => row_expr(e) && row_expr(pattern) && escape.as_ref().is_none_or(row_expr),
         Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(_) | Cond::Match { .. } => false,
     }
@@ -478,6 +482,7 @@ pub(super) fn row_expr(e: &Expr) -> bool {
         Expr::Neg(x) => row_expr(x),
         Expr::Arith(a, _, b) => row_expr(a) && row_expr(b),
         Expr::Case(whens, otherwise) => whens.iter().all(|(c, result)| row_cond(c) && row_expr(result)) && row_expr(otherwise),
+        Expr::Truth(c) => row_cond(c),
         Expr::Call(..)
         | Expr::Outer(..)
         | Expr::Dynamic(_)

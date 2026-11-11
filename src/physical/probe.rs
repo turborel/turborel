@@ -344,6 +344,7 @@ pub(super) fn coerce(op: CompOp, value: &Value, column: &DataType) -> Option<Vec
         | (DataType::Exact { .. }, Value::Exact(_))
         | (DataType::Approximate { .. }, Value::Approx(_))
         | (DataType::Bit { .. } | DataType::BitVarying { .. }, Value::Bits(_))
+        | (DataType::Boolean, Value::Bool(_))
         | (DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. }, Value::Datetime(_))
         | (DataType::Interval(_), Value::Interval(_)) => Placed::At(value.clone()),
         (DataType::Approximate { .. }, Value::Exact(d)) => approximate_place(d)?,
@@ -370,6 +371,7 @@ pub(super) fn placed_as_is(given: &DataType, column: &DataType) -> bool {
             | (DataType::Exact { .. }, DataType::Exact { .. })
             | (DataType::Approximate { .. }, DataType::Approximate { .. })
             | (DataType::Bit { .. } | DataType::BitVarying { .. }, DataType::Bit { .. } | DataType::BitVarying { .. })
+            | (DataType::Boolean, DataType::Boolean)
             | (DataType::Date, DataType::Date)
             | (DataType::Time { .. }, DataType::Time { .. })
             | (DataType::Timestamp { .. }, DataType::Timestamp { .. })

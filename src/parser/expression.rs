@@ -67,15 +67,15 @@ impl Parser {
         Ok(SearchCondition::Is(Box::new(primary), value, not))
     }
 
-    /// [X3.135-1986 §5.18] `<boolean primary>` ::= `<predicate>` | (`<search condition>`)
+    /// [X3.135-1986 §5.18] `<boolean primary>` ::= `<predicate>` | (`<search
+    /// condition>`); or [ISO/IEC 9075-2:2023 §6.46] a `<boolean predicand>`.
     ///
     /// "(A + 1) = 2" is a `<predicate>`; "(A = 1 OR B = 2)" is a parenthesized
     /// `<search condition>`. Try `<predicate>` first; on failure, backtrack.
     fn boolean_primary(&mut self) -> Result<SearchCondition> {
         let start = self.pos;
-        let at = self.here();
         let first = match self.predicate() {
-            Ok(p) => return Ok(SearchCondition::Predicate(Box::new(p), at)),
+            Ok(c) => return Ok(c),
             Err(e) => e,
         };
         self.pos = start;
@@ -93,23 +93,63 @@ impl Parser {
     /// `<between predicate>` | `<in predicate>` | `<like predicate>` |
     /// `<null predicate>` | `<quantified comparison predicate>` | `<exists
     /// predicate>` | `<unique predicate>` | `<match predicate>` | `<overlaps
-    /// predicate>`
-    fn predicate(&mut self) -> Result<Predicate> {
+    /// predicate>`; or [ISO/IEC 9075-2:2023 §6.46] a `<boolean predicand>`,
+    /// one value that no predicate's operator follows.
+    fn predicate(&mut self) -> Result<SearchCondition> {
+        let at = self.here();
+        let predicate = |p: Predicate| SearchCondition::Predicate(Box::new(p), at);
         // [§8.8] <exists predicate> ::= EXISTS <table subquery>
         if self.accept_kw(kw::EXISTS) {
-            return Ok(Predicate::Exists(Box::new(self.subquery()?)));
+            return Ok(predicate(Predicate::Exists(Box::new(self.subquery()?))));
         }
         // [§8.9] <unique predicate> ::= UNIQUE <table subquery>
         if self.accept_kw(kw::UNIQUE) {
-            return Ok(Predicate::Unique(Box::new(self.subquery()?)));
+            return Ok(predicate(Predicate::Unique(Box::new(self.subquery()?))));
         }
         let value = self.row_value()?;
-        if self.accept_kw(kw::IS) {
+        if self.at_null_test() {
             // [§8.6] <null predicate> ::= <row value constructor> IS [NOT] NULL
+            self.advance();
             let not = self.accept_kw(kw::NOT);
             self.expect_kw(kw::NULL)?;
-            return Ok(Predicate::Null { value, not });
+            return Ok(predicate(Predicate::Null { value, not }));
         }
+        let row = match (self.at_predicate_operator(), <[ValueExpression; 1]>::try_from(value)) {
+            (false, Ok([v])) => return Ok(SearchCondition::Predicand(Box::new(v), at)),
+            (true, Ok(one)) => Vec::from(one),
+            (false | true, Err(row)) => row,
+        };
+        self.predicate_rest(row).map(predicate)
+    }
+
+    /// Whether IS \[NOT\] NULL is next, IS \[NOT\] TRUE, FALSE or UNKNOWN
+    /// being a `<boolean test>` of a predicand [ISO/IEC 9075-2:2023 §6.46].
+    fn at_null_test(&self) -> bool {
+        let null_at = |n: usize| matches!(self.peek_at(n), Tok::KeyWord(kw::NULL));
+        self.is_kw(kw::IS) && (null_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && null_at(2)))
+    }
+
+    /// Whether what follows a row value makes it a predicate's: MATCH,
+    /// NOT, BETWEEN, IN, LIKE, OVERLAPS or a `<comp op>`.
+    fn at_predicate_operator(&self) -> bool {
+        match self.peek() {
+            Tok::KeyWord(word) => [kw::MATCH, kw::NOT, kw::BETWEEN, kw::IN, kw::LIKE, kw::OVERLAPS].contains(word),
+            Tok::Delimiter(d) => {
+                [delim::EQUALS, delim::NOT_EQUALS, delim::LESS, delim::GREATER, delim::LESS_OR_EQUAL, delim::GREATER_OR_EQUAL].contains(d)
+            }
+            Tok::Identifier(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BitString(_)
+            | Tok::Introducer(_)
+            | Tok::End => false,
+        }
+    }
+
+    /// The rest of a predicate after its first row value, `value`, but for
+    /// a `<null predicate>`.
+    fn predicate_rest(&mut self, value: RowValue) -> Result<Predicate> {
         if self.accept_kw(kw::MATCH) {
             // [§8.10] <match predicate> ::= <row value constructor> MATCH [UNIQUE] [PARTIAL | FULL] <table subquery>
             let unique = self.accept_kw(kw::UNIQUE);
@@ -138,13 +178,30 @@ impl Parser {
         }
         let op = self.comp_op()?;
         // [§8.7] <quantifier> ::= ALL | SOME | ANY
-        if self.is_kw(kw::ANY) || self.is_kw(kw::SOME) || self.is_kw(kw::ALL) {
+        if self.at_quantifier() {
             let all = self.is_kw(kw::ALL);
             self.advance();
             return Ok(Predicate::Quantified { value, op, all, subquery: Box::new(self.subquery()?) });
         }
         // [§8.2] <comparison predicate> ::= <row value constructor> <comp op> <row value constructor>
         Ok(Predicate::Comparison(value, op, self.row_value()?))
+    }
+
+    /// Whether a `<quantifier>` is next: ALL, or SOME or ANY before a
+    /// subquery, either being of SQL:2023 a set function too [ISO/IEC
+    /// 9075-2:2023 §10.9].
+    fn at_quantifier(&mut self) -> bool {
+        if self.is_kw(kw::ALL) {
+            return true;
+        }
+        if !self.is_kw(kw::ANY) && !self.is_kw(kw::SOME) {
+            return false;
+        }
+        let start = self.pos;
+        self.advance();
+        let subquery = self.at_subquery();
+        self.pos = start;
+        subquery
     }
 
     /// [ISO/IEC 9075:1992 §7.1] `<row value constructor>` ::= `<row value
@@ -170,7 +227,7 @@ impl Parser {
         if self.is_kw(kw::NULL) || self.is_kw(kw::DEFAULT) {
             return Err(self.rule("[ISO/IEC 9075:1992 §7.1 SR1] NULL and DEFAULT are row values of an INSERT's query expression alone"));
         }
-        self.value_expression()
+        self.common_value_expression()
     }
 
     /// (`<row value constructor list>`), if a list of two elements or more
@@ -182,7 +239,7 @@ impl Parser {
         if self.is_kw(kw::NULL) || self.is_kw(kw::DEFAULT) {
             return self.predicate_element().map(|_| None);
         }
-        let Ok(first) = self.value_expression() else { return Ok(None) };
+        let Ok(first) = self.common_value_expression() else { return Ok(None) };
         if !self.accept_delim(delim::COMMA) {
             return Ok(None);
         }
@@ -281,9 +338,9 @@ impl Parser {
             return Ok(Predicate::InSubquery { value, subquery: Box::new(self.subquery()?), not });
         }
         self.expect_delim(delim::LEFT_PAREN)?;
-        let mut list = vec![self.value_expression()?];
+        let mut list = vec![self.common_value_expression()?];
         while self.accept_delim(delim::COMMA) {
-            list.push(self.value_expression()?);
+            list.push(self.common_value_expression()?);
         }
         if list.len() < 2 {
             return Err(self.syntax("[ISO/IEC 9075:1992 §8.4 F] an <in value list> has two or more <value expression>s"));
@@ -299,8 +356,8 @@ impl Parser {
         let (Some(value), None) = (values.pop(), values.pop()) else {
             return Err(self.syntax("[ISO/IEC 9075:1992 §8.5 F] the <match value> of LIKE is one value, not a row"));
         };
-        let pattern = Box::new(self.value_expression()?);
-        let escape = if self.accept_kw(kw::ESCAPE) { Some(Box::new(self.value_expression()?)) } else { None };
+        let pattern = Box::new(self.common_value_expression()?);
+        let escape = if self.accept_kw(kw::ESCAPE) { Some(Box::new(self.common_value_expression()?)) } else { None };
         Ok(Predicate::Like { value: Box::new(value), pattern, escape, not })
     }
 
@@ -308,11 +365,37 @@ impl Parser {
     // [X3.135-1986 §5.9] <value expression>
     // =====================================================================
 
+    /// [ISO/IEC 9075-2:2023 §6.29] `<value expression>` ::= `<common value
+    /// expression>` | `<boolean value expression>`: a `<search condition>`
+    /// read as a value [§6.46], one alone that is no predicate being the
+    /// value itself. Each one read is kept by where it begins, so a
+    /// parenthesized one read again as the parser backtracks is not parsed
+    /// again, which would take time exponential in its nesting.
+    pub(super) fn value_expression(&mut self) -> Result<ValueExpression> {
+        let start = self.pos;
+        if let Some((read, end, dynamic)) = self.read_values.get(&start).cloned() {
+            self.pos = end;
+            self.dynamic = self.dynamic.max(dynamic);
+            return read;
+        }
+        let read = self.search_condition().map(|c| match c {
+            SearchCondition::Predicand(v, _) => *v,
+            SearchCondition::Or(..)
+            | SearchCondition::And(..)
+            | SearchCondition::Not(_)
+            | SearchCondition::Is(..)
+            | SearchCondition::Predicate(..) => ValueExpression::Boolean(Box::new(c)),
+        });
+        self.read_values.insert(start, (read.clone(), self.pos, self.dynamic));
+        read
+    }
+
     /// [X3.135-1986 §5.9] `<value expression>` ::= `<term>` | `<value
     /// expression>` + `<term>` | `<value expression>` - `<term>`; and
     /// [ISO/IEC 9075:1992 §6.13] `<concatenation>` ::= `<character value
-    /// expression>` || `<character factor>`
-    pub(super) fn value_expression(&mut self) -> Result<ValueExpression> {
+    /// expression>` || `<character factor>`. Of SQL:2023, a `<common value
+    /// expression>` [ISO/IEC 9075-2:2023 §6.29], no truth value.
+    pub(super) fn common_value_expression(&mut self) -> Result<ValueExpression> {
         self.nested(|p| {
             let mut left = p.term()?;
             loop {

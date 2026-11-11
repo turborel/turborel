@@ -39,6 +39,7 @@ undefined. Setting TYPE makes the other fields undefined but these:
 |---|---|
 | CHARACTER, CHARACTER VARYING | LENGTH 1; the character set SQL_TEXT, of INFORMATION_SCHEMA |
 | BIT, BIT VARYING | LENGTH 1 |
+| BOOLEAN | nothing |
 | NUMERIC, DECIMAL | PRECISION 18, SCALE 0 |
 | FLOAT | PRECISION 53 |
 | a datetime | PRECISION 0 |

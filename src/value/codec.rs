@@ -14,7 +14,8 @@
 //!        6 (date) | 7 (time) | 8 (timestamp): with time zone u8, precision u8,
 //!          displacement in minutes u32, microseconds in UTC u64 |
 //!        9 (interval) its fields' ranks, then its precisions, each u32,
-//!          then its units i128
+//!          then its units i128 |
+//!        11 (truth value) 0 for False, 1 for True u8
 //! row:   values u32, then each value
 //! ```
 
@@ -42,6 +43,8 @@ const INTERVAL: u8 = 9;
 /// An exact number whose units fit 64 bits and scale 8: its units, then its
 /// scale.
 const EXACT_WORD: u8 = 10;
+/// A truth value: its byte.
+const BOOL: u8 = 11;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -60,6 +63,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
         Value::Bits(_) => BITS,
+        Value::Bool(_) => BOOL,
         Value::Datetime(d) => match d.moment {
             Moment::Date => DATE,
             Moment::Time => TIME,
@@ -92,6 +96,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         EXACT => &types::EXACT,
         APPROXIMATE => &types::APPROXIMATE,
         BITS => &types::BIT_VARYING,
+        BOOL => &types::BOOLEAN,
         DATE => &types::DATE,
         TIME => &types::TIME,
         TIMESTAMP => &types::TIMESTAMP,

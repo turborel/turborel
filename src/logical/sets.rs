@@ -55,7 +55,13 @@ impl InSet {
         let strings = |v: &Value| match v {
             Value::Char(s) => Some(Some(s.trim_end_matches(' ').to_owned())),
             Value::Null => Some(None),
-            Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => None,
+            Value::Exact(_)
+            | Value::Approx(_)
+            | Value::Bits(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_) => None,
         };
         let texts =
             long.then(|| values.iter().map(strings).collect::<Option<Vec<_>>>()).flatten().map(|t| t.into_iter().flatten().collect());
@@ -136,7 +142,8 @@ pub fn judged_by_sets(cond: Cond) -> Cond {
         | Cond::Quantified(..)
         | Cond::Unique(_)
         | Cond::Match { .. }
-        | Cond::In(..)) => other,
+        | Cond::In(..)
+        | Cond::Value(_)) => other,
     }
 }
 

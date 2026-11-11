@@ -56,9 +56,14 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
     let result = Qualifier { leading: u8::try_from(MAX_LEADING_PRECISION).unwrap_or(9), ..interval.qualifier };
     let exact = match factor {
         Value::Approx(x) => approximate_to_exact(*x, (MAX_EXACT_PRECISION, FACTOR_SCALE), "ISO/IEC 9075:1992 §6.15 GR4")?,
-        Value::Null | Value::Char(_) | Value::Exact(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
-            factor.clone()
-        }
+        Value::Null
+        | Value::Char(_)
+        | Value::Exact(_)
+        | Value::Bits(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => factor.clone(),
     };
     let Value::Exact(number) = exact else {
         return fail_with(Code::Data, SqlState::DATA_EXCEPTION, format!("[ISO/IEC 9075:1992 §6.15] {factor} is no number"));

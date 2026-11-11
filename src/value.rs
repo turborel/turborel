@@ -14,6 +14,7 @@ pub mod datetime;
 mod decimal;
 pub mod interval;
 mod like;
+mod operators;
 pub mod types;
 
 pub use bits::{BYTE_BITS, Bits};
@@ -22,6 +23,7 @@ pub use comparison::{Bucket, bucket, compare, compare_strings};
 pub use datetime::Datetime;
 pub use decimal::{Decimal, pow10};
 pub use like::{LikePattern, LikePatterns, collated as like_collated, constant_pattern, constant_prefix, like};
+pub use operators::{ArithOp, CompOp};
 pub use types::{Descriptor, SqlType};
 
 // ---------------------------------------------------------------------------
@@ -100,6 +102,7 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Varying { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
@@ -156,6 +159,8 @@ pub enum DataType {
         /// The maximum length in bits.
         length: u32,
     },
+    /// [ISO/IEC 9075-2:2023 §6.1] BOOLEAN.
+    Boolean,
     /// [ISO/IEC 9075:1992 §6.1] DATE.
     Date,
     /// [ISO/IEC 9075:1992 §6.1] TIME(precision) \[WITH TIME ZONE\].
@@ -213,88 +218,6 @@ impl fmt::Display for DataType {
 }
 
 // ---------------------------------------------------------------------------
-// Operators shared by the AST, planner and executor
-// ---------------------------------------------------------------------------
-
-/// [X3.135-1986 §5.11] `<comp op>` ::= = | <> | < | > | <= | >=
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompOp {
-    /// =
-    Eq,
-    /// <>
-    Ne,
-    /// <
-    Lt,
-    /// >
-    Gt,
-    /// <=
-    Le,
-    /// >=
-    Ge,
-}
-
-impl CompOp {
-    /// [X3.135-1986 §5.11 GR3] the truth of "x `<op>` y" given how x compares to y.
-    pub fn holds(self, ord: Ordering) -> bool {
-        match self {
-            CompOp::Eq => ord == Ordering::Equal,
-            CompOp::Ne => ord != Ordering::Equal,
-            CompOp::Lt => ord == Ordering::Less,
-            CompOp::Gt => ord == Ordering::Greater,
-            CompOp::Le => ord != Ordering::Greater,
-            CompOp::Ge => ord != Ordering::Less,
-        }
-    }
-    /// The operator to use when the operands are swapped: "5 < X" is "X > 5".
-    #[must_use]
-    pub fn flip(self) -> CompOp {
-        match self {
-            CompOp::Lt => CompOp::Gt,
-            CompOp::Gt => CompOp::Lt,
-            CompOp::Le => CompOp::Ge,
-            CompOp::Ge => CompOp::Le,
-            CompOp::Eq | CompOp::Ne => self,
-        }
-    }
-    /// The operator as written in SQL.
-    pub fn symbol(self) -> &'static str {
-        match self {
-            CompOp::Eq => "=",
-            CompOp::Ne => "<>",
-            CompOp::Lt => "<",
-            CompOp::Gt => ">",
-            CompOp::Le => "<=",
-            CompOp::Ge => ">=",
-        }
-    }
-}
-
-/// [X3.135-1986 §5.9] dyadic arithmetic operators.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArithOp {
-    /// +
-    Add,
-    /// -
-    Sub,
-    /// *
-    Mul,
-    /// /
-    Div,
-}
-
-impl ArithOp {
-    /// The operator as written in SQL.
-    pub fn symbol(self) -> &'static str {
-        match self {
-            ArithOp::Add => "+",
-            ArithOp::Sub => "-",
-            ArithOp::Mul => "*",
-            ArithOp::Div => "/",
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Values [X3.135-1986 §4.2] null, character string, or number; and
 // [ISO/IEC 9075:1992 §4.3, §4.5] bit string, datetime or interval
 // ---------------------------------------------------------------------------
@@ -312,6 +235,9 @@ pub enum Value {
     Approx(f64),
     /// [ISO/IEC 9075:1992 §4.3] A bit string.
     Bits(Bits),
+    /// [ISO/IEC 9075-2:2023 §4.6] A truth value, True or False; Unknown is
+    /// `Null` [§4.6.1].
+    Bool(bool),
     /// [ISO/IEC 9075:1992 §4.5.1] A datetime.
     Datetime(Datetime),
     /// [ISO/IEC 9075:1992 §4.5.2] An interval.
@@ -331,7 +257,13 @@ impl Value {
         match self {
             Value::Exact(d) => Some(d.to_f64()),
             Value::Approx(f) => Some(*f),
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => None,
+            Value::Null
+            | Value::Char(_)
+            | Value::Bits(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_) => None,
         }
     }
 
@@ -342,7 +274,7 @@ impl Value {
             Value::Exact(d) => Value::Exact(d.negated()),
             Value::Approx(f) => Value::Approx(-f),
             Value::Interval(i) => Value::Interval(interval::Interval { units: i.units.saturating_neg(), ..*i }),
-            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
+            Value::Null | Value::Char(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => self.clone(),
         }
     }
 
@@ -366,6 +298,7 @@ impl Value {
             }
             Value::Approx(f) => NormKey::Approx(if *f == 0.0 { 0f64.to_bits() } else { f.to_bits() }),
             Value::Bits(b) => NormKey::Bits(b.clone()),
+            Value::Bool(b) => NormKey::Bool(*b),
             Value::Datetime(d) => NormKey::Instant(d.utc),
             Value::Interval(i) => NormKey::Span(i.units),
             // Equal values of a kind beyond the standard have the same bytes
@@ -384,6 +317,8 @@ impl fmt::Display for Value {
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),
             Value::Bits(b) => write!(f, "{b}"),
+            // [ISO/IEC 9075-2:2023 §5.3] Written as a <boolean literal>.
+            Value::Bool(b) => f.write_str(if *b { crate::lexer::kw::TRUE } else { crate::lexer::kw::FALSE }),
             Value::Datetime(d) => write!(f, "{d}"),
             Value::Interval(i) => write!(f, "{i}"),
             Value::Extension(e) => f.write_str(&e.kind.text(self)),
@@ -405,6 +340,8 @@ pub enum NormKey {
     Approx(u64),
     /// A bit string.
     Bits(Bits),
+    /// A truth value.
+    Bool(bool),
     /// A datetime's instant, in UTC.
     Instant(i64),
     /// An interval's units.

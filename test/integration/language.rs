@@ -306,8 +306,9 @@ fn boolean_primary_backtracking_5_18() {
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE (ID) = 1"), Ok(vec!["1".into()]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ((ID + 1) = 2)"), Ok(vec!["1".into()]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ((ID = 1 OR ID = 2)) AND NOT (ID = 1)"), Ok(vec!["2".into()]));
-    // Robustness: a <search condition> is made of <predicate>s, and each operator needs both operands.
-    assert_eq!(code(&s, "SELECT ID FROM T WHERE ID"), Code::Syntax);
+    // Robustness: each operator needs both operands; a value alone is a
+    // condition only if it is of type BOOLEAN [ISO/IEC 9075-2:2023 §6.46 SR3].
+    assert_eq!(code(&s, "SELECT ID FROM T WHERE ID"), Code::SyntaxRule);
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = 1 AND"), Code::Syntax);
     assert_eq!(code(&s, "SELECT ID FROM T WHERE (ID = 1"), Code::Syntax);
 }

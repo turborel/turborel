@@ -74,7 +74,8 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => {
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => {
             return None;
         }
     })

@@ -134,7 +134,8 @@ pub(super) fn never_null_in(plan: &LogicalPlan, x: &Expr, known: &Known<'_>) -> 
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => false,
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => false,
     }
 }
 

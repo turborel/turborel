@@ -12,9 +12,11 @@
 pub use ddl::{RESEAL, REVERT_COLLATION};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast::{ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName};
+use crate::ast::{
+    ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression,
+};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
@@ -93,6 +95,9 @@ pub struct Parser {
     /// prepared that changes a row through a cursor and names no table, the
     /// table of the cursor's specification.
     implicit: Option<TableName>,
+    /// Each `<value expression>` read, by the token it begins at: what was
+    /// read, the token after it, and the dynamic parameters read by then.
+    read_values: HashMap<usize, (Result<ValueExpression>, usize, Option<usize>)>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -170,6 +175,7 @@ impl Parser {
             refused: None,
             catalogs: Catalogs::Refused,
             implicit: None,
+            read_values: HashMap::new(),
         })
     }
 

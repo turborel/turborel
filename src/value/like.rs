@@ -188,14 +188,28 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
             Some(c)
         }
         Some(Value::Null) => return Some(None),
-        Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+        Some(
+            Value::Exact(_)
+            | Value::Approx(_)
+            | Value::Bits(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_),
+        ) => {
             return None;
         }
     };
     match pattern {
         Value::Char(p) => LikePattern::new(p, escape).ok().map(Some),
         Value::Null => Some(None),
-        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => None,
+        Value::Exact(_)
+        | Value::Approx(_)
+        | Value::Bits(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => None,
     }
 }
 

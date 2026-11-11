@@ -68,19 +68,17 @@ fn literal_value(literal: &Literal, subject: DataType, zone: i16) -> Result<Valu
             | DataType::Varying { .. }
             | DataType::Bit { .. }
             | DataType::BitVarying { .. }
+            | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Extension(_) => Err(not_of()),
         },
-        Literal::Approximate(f) => {
-            if let DataType::Approximate { .. } = subject {
-                Ok(Value::Approx(*f))
-            } else {
-                Err(not_of())
-            }
-        }
+        Literal::Approximate(f) => matches!(subject, DataType::Approximate { .. }).then_some(Value::Approx(*f)).ok_or_else(not_of),
+        // [ISO/IEC 9075-2:2023 §11.5 SR4a vii] a <boolean literal> of a
+        // Boolean column; UNKNOWN the null value [§4.6.1].
+        Literal::Boolean(b) => (subject == DataType::Boolean).then(|| b.map_or(Value::Null, Value::Bool)).ok_or_else(not_of),
         // [SR3a ii] a bit string no longer than the column; [GR1b iv, v]
         // of a fixed length, extended with 0 bits, the statement placing
         // it completing with the warning (`db/padding.rs`).
@@ -156,6 +154,7 @@ fn character_default(s: &str, subject: DataType) -> Option<Result<Value>> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }

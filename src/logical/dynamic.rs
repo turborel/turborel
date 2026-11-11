@@ -86,6 +86,7 @@ impl Filling<'_> {
                 let whens = whens.into_iter().map(|(c, result)| (self.cond(c), self.expr(result))).collect();
                 Expr::Case(whens, Box::new(self.expr(*otherwise)))
             }
+            Expr::Truth(c) => Expr::Truth(Box::new(self.cond(*c))),
             other @ (Expr::Column(_)
             | Expr::Const(_)
             | Expr::Neg(_)
@@ -126,6 +127,7 @@ impl Filling<'_> {
             }
             Cond::IsNull(e, not) => Cond::IsNull(self.expr(e), not),
             Cond::In(e, set) => Cond::In(self.expr(e), set),
+            Cond::Value(e) => Cond::Value(self.expr(e)),
             Cond::Like(e, pattern, escape) => {
                 let (e, pattern) = (self.expr(e), self.expr(pattern));
                 Cond::Like(e, pattern, escape.map(|x| self.expr(x)))

@@ -234,3 +234,20 @@ fn the_api_prepare_takes_comments_and_later_cursors_d58() {
     assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("34000"), "GR2b");
     assert_eq!(rows(&s, "SELECT ID FROM T").unwrap(), ["3"]);
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5] Regression test (R-TEST-7):
+/// a `<dynamic parameter specification>` in parentheses before a `<comp
+/// op>`, read twice as the parser backtracks, is one parameter, not two.
+#[test]
+fn a_parenthesized_parameter_is_counted_once_17_6() {
+    let db = setup();
+    let s = db.session("APP");
+    for sql in ["SELECT ID FROM T WHERE (? + 1) = 2", "SELECT ID FROM T WHERE ((?)) = 1", "SELECT ID FROM T WHERE (?, 1) = (1, ?)"] {
+        let p = s.prepare(sql).unwrap();
+        let expected = if sql.contains("(1, ?)") { 2 } else { 1 };
+        assert_eq!(p.parameters().len(), expected, "{sql}");
+    }
+    let p = s.prepare("SELECT ID FROM T WHERE (? + 1) = 2").unwrap();
+    let mut opened = s.open_prepared(&p, &[number(1)]).unwrap();
+    assert_eq!(opened.fetch().unwrap().map(|r| r[0].to_string()), Some("1".to_owned()));
+}

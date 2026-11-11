@@ -8,11 +8,13 @@
 use super::Parser;
 use crate::ast::{CaseExpression, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification};
 use crate::error::Result;
+use crate::functions::EVERY;
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
     /// `<primary>` ::= `<value specification>` | `<column specification>`
-    ///   | `<set function specification>` | (`<value expression>`)
+    ///   | `<set function specification>` | (`<value expression>`), a
+    ///   truth value among them [ISO/IEC 9075-2:2023 §6.3]
     ///   | `<case expression>` | `<cast specification>` | `<scalar
     ///   subquery>` | `<numeric value function>` | `<string value function>`
     ///   | `<datetime value function>` [ISO/IEC 9075:1992 §6.11]
@@ -28,7 +30,7 @@ impl Parser {
                 Ok(ValueExpression::Nested(Box::new(e)))
             }
             Tok::Identifier(_) => self.identifier_primary(),
-            Tok::KeyWord(kw::COUNT) | Tok::KeyWord(kw::AVG) | Tok::KeyWord(kw::MAX) | Tok::KeyWord(kw::MIN) | Tok::KeyWord(kw::SUM) => {
+            Tok::KeyWord(kw::COUNT | kw::AVG | kw::MAX | kw::MIN | kw::SUM | kw::ANY | kw::SOME) => {
                 Ok(ValueExpression::SetFunction(self.set_function_specification()?))
             }
             Tok::KeyWord(kw::CASE) | Tok::KeyWord(kw::NULLIF) | Tok::KeyWord(kw::COALESCE) => {
@@ -42,6 +44,7 @@ impl Parser {
             }
             Tok::KeyWord(kw::EXTRACT) => self.extract_expression(),
             Tok::KeyWord(kw::DATE | kw::TIME | kw::TIMESTAMP | kw::INTERVAL)
+            | Tok::KeyWord(kw::TRUE | kw::FALSE | kw::UNKNOWN)
             | Tok::KeyWord(kw::USER)
             | Tok::KeyWord(kw::CURRENT_USER)
             | Tok::KeyWord(kw::SESSION_USER)
@@ -75,6 +78,12 @@ impl Parser {
     /// A `<primary>` that starts with an `<identifier>`: a function call, a
     /// `<parameter specification>`, or a `<column specification>`.
     fn identifier_primary(&mut self) -> Result<ValueExpression> {
+        // [ISO/IEC 9075-2:2023 §10.9] EVERY, no key word of SQL-92, before
+        // "(" the set function.
+        let every = matches!(self.peek(), Tok::Identifier(name) if name == EVERY);
+        if every && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
+            return Ok(ValueExpression::SetFunction(self.set_function_specification()?));
+        }
         // An <identifier> followed by "(" never occurs in SQL-86.
         if matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             if !self.extensions {
@@ -94,8 +103,18 @@ impl Parser {
     /// | `<set function type>` (\[DISTINCT | ALL\] `<value expression>`)
     fn set_function_specification(&mut self) -> Result<SetFunctionSpecification> {
         let at = self.here();
-        let Tok::KeyWord(name) = *self.peek() else {
-            return Err(self.syntax("expected a <set function specification>"));
+        let name = match self.peek() {
+            Tok::KeyWord(name) => *name,
+            // [ISO/IEC 9075-2:2023 §10.9] EVERY, no key word of SQL-92.
+            Tok::Identifier(name) if name == EVERY => EVERY,
+            Tok::Identifier(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BitString(_)
+            | Tok::Introducer(_)
+            | Tok::Delimiter(_)
+            | Tok::End => return Err(self.syntax("expected a <set function specification>")),
         };
         self.advance();
         self.expect_delim(delim::LEFT_PAREN)?;
@@ -145,11 +164,11 @@ impl Parser {
             }
             CaseExpression::Searched { whens, otherwise: self.else_clause()? }
         } else {
-            let operand = self.value_expression()?;
+            let operand = self.common_value_expression()?;
             let mut whens = Vec::new();
             self.expect_kw(kw::WHEN)?;
             loop {
-                let value = self.value_expression()?;
+                let value = self.common_value_expression()?;
                 self.expect_kw(kw::THEN)?;
                 whens.push((value, self.result()?));
                 if !self.accept_kw(kw::WHEN) {
@@ -209,11 +228,11 @@ impl Parser {
             kw::TRIM => self.trim_operands()?,
             kw::POSITION => {
                 // POSITION (<character value expression> IN <character value expression>)
-                let needle = self.value_expression()?;
+                let needle = self.common_value_expression()?;
                 self.expect_kw(kw::IN)?;
-                vec![needle, self.value_expression()?]
+                vec![needle, self.common_value_expression()?]
             }
-            _ => vec![self.value_expression()?],
+            _ => vec![self.common_value_expression()?],
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::Function { name, args, at })
@@ -222,11 +241,11 @@ impl Parser {
     /// SUBSTRING (`<character value expression>` FROM `<start position>`
     /// \[FOR `<string length>`\]): its operands.
     fn substring_operands(&mut self) -> Result<Vec<ValueExpression>> {
-        let source = self.value_expression()?;
+        let source = self.common_value_expression()?;
         self.expect_kw(kw::FROM)?;
-        let mut args = vec![source, self.value_expression()?];
+        let mut args = vec![source, self.common_value_expression()?];
         if self.accept_kw(kw::FOR) {
-            args.push(self.value_expression()?);
+            args.push(self.common_value_expression()?);
         }
         Ok(args)
     }
@@ -242,20 +261,20 @@ impl Parser {
             let character = if self.accept_kw(kw::FROM) {
                 literal(" ")
             } else {
-                let c = self.value_expression()?;
+                let c = self.common_value_expression()?;
                 self.expect_kw(kw::FROM)?;
                 c
             };
-            return Ok(vec![literal(w), character, self.value_expression()?]);
+            return Ok(vec![literal(w), character, self.common_value_expression()?]);
         }
         // [§6.7] FROM with neither: BOTH [SR6b] and a space [SR6c].
         if self.accept_kw(kw::FROM) {
-            return Ok(vec![literal(kw::BOTH), literal(" "), self.value_expression()?]);
+            return Ok(vec![literal(kw::BOTH), literal(" "), self.common_value_expression()?]);
         }
-        let first = self.value_expression()?;
+        let first = self.common_value_expression()?;
         if self.accept_kw(kw::FROM) {
             // [SR6a] FROM after a <trim character>.
-            return Ok(vec![literal(kw::BOTH), first, self.value_expression()?]);
+            return Ok(vec![literal(kw::BOTH), first, self.common_value_expression()?]);
         }
         Ok(vec![literal(kw::BOTH), literal(" "), first])
     }
@@ -267,9 +286,9 @@ impl Parser {
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut args = Vec::new();
         if !self.accept_delim(delim::RIGHT_PAREN) {
-            args.push(self.value_expression()?);
+            args.push(self.common_value_expression()?);
             while self.accept_delim(delim::COMMA) {
-                args.push(self.value_expression()?);
+                args.push(self.common_value_expression()?);
             }
             self.expect_delim(delim::RIGHT_PAREN)?;
         }

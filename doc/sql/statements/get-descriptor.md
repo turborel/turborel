@@ -60,13 +60,14 @@ The codes of TYPE:
 
 | Code | Type | Code | Type |
 |---|---|---|---|
-| 1 | CHARACTER | 8 | DOUBLE PRECISION |
-| 2 | NUMERIC | 9 | DATE, TIME or TIMESTAMP |
-| 3 | DECIMAL | 10 | INTERVAL |
-| 4 | INTEGER | 12 | CHARACTER VARYING |
-| 5 | SMALLINT | 14 | BIT |
-| 6 | FLOAT | 15 | BIT VARYING |
+| 1 | CHARACTER | 9 | DATE, TIME or TIMESTAMP |
+| 2 | NUMERIC | 10 | INTERVAL |
+| 3 | DECIMAL | 12 | CHARACTER VARYING |
+| 4 | INTEGER | 14 | BIT |
+| 5 | SMALLINT | 15 | BIT VARYING |
+| 6 | FLOAT | 16 | BOOLEAN |
 | 7 | REAL | -1 | a type of a plug-in |
+| 8 | DOUBLE PRECISION | | |
 
 The codes of DATETIME_INTERVAL_CODE, of a datetime: 1 DATE, 2 TIME, 3
 TIMESTAMP, 4 TIME WITH TIME ZONE, 5 TIMESTAMP WITH TIME ZONE; of an

@@ -50,6 +50,7 @@ fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
@@ -70,6 +71,7 @@ fn bit_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Varying { .. }
         | DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
@@ -88,6 +90,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
@@ -104,9 +107,13 @@ fn text(v: &Value) -> Result<Option<&str>> {
     match v {
         Value::Null => Ok(None),
         Value::Char(s) => Ok(Some(s)),
-        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
-            fail(Code::Api, "[DESIGN] a string function was given a value not a character string")
-        }
+        Value::Exact(_)
+        | Value::Approx(_)
+        | Value::Bits(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => fail(Code::Api, "[DESIGN] a string function was given a value not a character string"),
     }
 }
 
@@ -122,9 +129,15 @@ fn whole(v: Option<&Value>) -> Result<Option<i128>> {
                 not_integer()
             }
         }
-        Some(Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
-            not_integer()
-        }
+        Some(
+            Value::Char(_)
+            | Value::Approx(_)
+            | Value::Bits(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_),
+        ) => not_integer(),
     }
 }
 

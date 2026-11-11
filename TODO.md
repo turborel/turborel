@@ -34,10 +34,6 @@ each group.
 
 ### Types and literals
 
-- BOOLEAN (T031) [§4.6, §5.3, §6.1]. Truth values are computed and never
-  stored or returned, so a predicate cannot be a column, a parameter or a
-  select list item. Cycle marks (T133), IS JSON and the JSON item method
-  boolean() all give one.
 - Underscores in numeric literals (T662) [§5.3], as `1_000_000`. A rule of
   the lexer alone.
 - BINARY and VARBINARY (T021) [§6.1], then BIT and BIT VARYING removed.
@@ -88,7 +84,7 @@ each group.
 - WITH and WITH RECURSIVE (T121, T122, T131, T132) [§7.17], with SEARCH and
   CYCLE (T133) [§7.18]. Hierarchies and graphs need recursion, and a query
   that names a subquery once reads better than one that repeats it. Cycle
-  marks of any type need BOOLEAN.
+  marks may be of any type, BOOLEAN among them.
 - Enhanced derived column names (T285) [§7.16]. A select list item's column
   is named from its expression in more cases.
 - Partitioned outer joins (F403) [§7.10], `PARTITION BY` on one side of an

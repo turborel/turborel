@@ -21,7 +21,7 @@ OK
 
 The simplest values are:
 
-- a literal, `42` or `'Ada'` ([Lexical Elements](01-lexical.md));
+- a literal, `42`, `'Ada'` or `TRUE` ([Lexical Elements](01-lexical.md));
 - a column, `NAME` or `S.NAME` ([Names](03-names.md));
 - USER, the same as CURRENT_USER, the session's authorization
   identifier; SESSION_USER and SYSTEM_USER, which are the same here, a
@@ -177,6 +177,8 @@ a query reads, or of each group of its GROUP BY.
 | COUNT(x) | the rows where x is not null |
 | SUM(x), AVG(x) | the sum and mean of x; of exact numbers, AVG of the scale 2 more; of intervals too |
 | MIN(x), MAX(x) | the least and greatest x |
+| EVERY(x) | of a BOOLEAN x, TRUE if each x is TRUE, else FALSE |
+| ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
 each value of x once: `COUNT(DISTINCT DEPT)`. Of no rows, COUNT is 0
@@ -231,9 +233,19 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
 FROM STAFF)`.
 
+## Conditions as values
+
+A [condition](05-predicates.md), such as `SALARY > 6000` or `DEPT IS
+NULL OR SALARY < 6000`, is a value of type BOOLEAN wherever a value is
+written: in a select list, a VALUES row, an UPDATE's SET, a CASE result,
+a CAST operand, a set function's argument, or in parentheses. Its value
+is TRUE, FALSE, or null when it is unknown. In a comparison, a condition
+of its own is written in parentheses, `(A = 1) = (B = 2)`.
+
 ## CAST
 
 CAST(*value* AS *type*) gives a value in another type, or a domain's:
 [Data Types](02-data-types.md) shows which types CAST takes to which.
 
-The standard: ISO/IEC 9075:1992 §6.2–§6.15 and §7.11; X3.135-1986 §5.6–§5.9.
+The standard: ISO/IEC 9075:1992 §6.2–§6.15 and §7.11; X3.135-1986 §5.6–§5.9;
+ISO/IEC 9075-2:2023 §6.29, §6.46 and §10.9 for truth values.

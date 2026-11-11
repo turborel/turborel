@@ -13,6 +13,10 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
                 out.push(1);
                 out.extend_from_slice(&bits.to_le_bytes());
             }
+            Bucket::Bool(b) => {
+                out.push(BOOL_BUCKET);
+                out.push(u8::from(*b));
+            }
             Bucket::Instant(utc) => {
                 out.push(4);
                 out.extend_from_slice(&utc.to_le_bytes());
@@ -36,6 +40,9 @@ pub fn bucket_key(key: &[Bucket]) -> Vec<u8> {
     out
 }
 
+/// The tag of a truth value's bucket in a key of buckets (`bucket_key`).
+const BOOL_BUCKET: u8 = 6;
+
 /// The tags of a normalized key's values (`norm_key`).
 const NULL_TAG: u8 = 0;
 const CHAR_TAG: u8 = 1;
@@ -48,6 +55,8 @@ const SPAN_TAG: u8 = 7;
 /// The tag of an exact number that is an integer within 64 bits: its key
 /// is the tag and those 8 bytes, a fixed width, not its units and scale.
 const INTEGER_TAG: u8 = 8;
+/// The tag of a truth value, then its byte.
+const BOOL_TAG: u8 = 9;
 
 /// Appends `v`'s normalized key to `out`: the bytes `norm_key` gives of
 /// `v.norm()`, made without making it.
@@ -60,6 +69,10 @@ pub fn put_norm(v: &Value, out: &mut Vec<u8>) {
         Value::Bits(b) => {
             out.push(BITS_TAG);
             b.put_key(out);
+        }
+        Value::Bool(b) => {
+            out.push(BOOL_TAG);
+            out.push(u8::from(*b));
         }
         Value::Datetime(d) => {
             out.push(INSTANT_TAG);
@@ -143,6 +156,10 @@ pub fn norm_key(key: &[NormKey]) -> Vec<u8> {
             NormKey::Bits(b) => {
                 out.push(BITS_TAG);
                 b.put_key(&mut out);
+            }
+            NormKey::Bool(b) => {
+                out.push(BOOL_TAG);
+                out.push(u8::from(*b));
             }
             NormKey::Instant(utc) => {
                 out.push(INSTANT_TAG);

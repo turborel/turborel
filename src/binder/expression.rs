@@ -171,6 +171,8 @@ impl Binder<'_> {
             ValueExpression::Case(case) => self.case(case, scope),
             ValueExpression::Cast { operand, target, at } => self.cast(operand.as_deref(), target, scope).or_at(*at),
             ValueExpression::Subquery(s) => self.scalar_subquery(s, scope),
+            // [ISO/IEC 9075-2:2023 §6.46 SR1] A truth value, of type BOOLEAN.
+            ValueExpression::Boolean(c) => Ok((Expr::Truth(Box::new(self.search_condition(c, scope)?)), DataType::Boolean)),
             ValueExpression::Datetime(f) => self.datetime_function(*f),
             ValueExpression::Extract { field, source, at } => self.extract(*field, source, scope).or_at(*at),
             ValueExpression::Difference { minuend, subtrahend, qualifier, at } => {

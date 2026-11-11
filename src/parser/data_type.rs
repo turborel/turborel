@@ -7,6 +7,7 @@ use super::Parser;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
+use crate::value::types::BOOLEAN_NAME;
 use crate::value::{
     DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BIT_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION,
     REAL_PRECISION, SMALLINT_PRECISION,
@@ -15,6 +16,10 @@ use crate::value::{
 impl Parser {
     /// [X3.135-1986 §5.5] `<data type>`
     pub(super) fn data_type(&mut self) -> Result<DataType> {
+        if self.at_boolean_type() {
+            self.advance();
+            return Ok(DataType::Boolean);
+        }
         let Tok::KeyWord(kw) = *self.peek() else {
             return Err(self.syntax("expected a <data type>"));
         };
@@ -67,6 +72,13 @@ impl Parser {
             }
             _ => Err(self.syntax("expected a <data type>")),
         }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Whether `<boolean type>` ::= BOOLEAN is
+    /// next. BOOLEAN is no key word of SQL-92, so it is read as an
+    /// identifier, and a domain cannot be named BOOLEAN.
+    pub(super) fn at_boolean_type(&self) -> bool {
+        matches!(self.peek(), Tok::Identifier(name) if name == BOOLEAN_NAME)
     }
 
     /// `<character string type>` ::= CHARACTER \[(`<length>`)\] | CHAR \[(`<length>`)\]

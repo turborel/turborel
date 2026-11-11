@@ -55,7 +55,8 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
         | Cond::Exists(_)
         | Cond::Unique(_)
         | Cond::Quantified(..)
-        | Cond::Match { .. } => found.extend(single(cond)),
+        | Cond::Match { .. }
+        | Cond::Value(_) => found.extend(single(cond)),
     }
 }
 
@@ -144,7 +145,8 @@ pub fn compared_with_constant(cond: &Cond) -> Option<(usize, CompOp, &Value)> {
         | Cond::Unique(_)
         | Cond::Quantified(..)
         | Cond::Match { .. }
-        | Cond::In(..) => None,
+        | Cond::In(..)
+        | Cond::Value(_) => None,
     }
 }
 

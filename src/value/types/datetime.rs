@@ -65,6 +65,7 @@ fn shape(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => None,
     }
@@ -169,7 +170,9 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
         Value::Null => Ok(Value::Null),
         Value::Char(s) => of_text(s, shape, now),
         Value::Datetime(d) => convert(d, shape, now),
-        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Interval(_) | Value::Extension(_) => uncastable(&v, t),
+        Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Bool(_) | Value::Interval(_) | Value::Extension(_) => {
+            uncastable(&v, t)
+        }
     }
 }
 

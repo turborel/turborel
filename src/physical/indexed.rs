@@ -394,7 +394,8 @@ fn family(t: &DataType) -> &'static str {
     match t {
         DataType::Character { .. } | DataType::Varying { .. } => "CHARACTER",
         DataType::Bit { .. } | DataType::BitVarying { .. } => "BIT",
-        DataType::Date
+        DataType::Boolean
+        | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
@@ -414,6 +415,7 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Approximate { .. } => Some(Value::Approx(0.0_f64)),
         DataType::Character { .. } | DataType::Varying { .. } => Some(Value::Char(String::new())),
         DataType::Bit { .. } | DataType::BitVarying { .. } => Bits::new(vec![0], 1).ok().map(Value::Bits),
+        DataType::Boolean => Some(Value::Bool(false)),
         DataType::Date => Some(moment(Moment::Date, false)),
         DataType::Time { zoned, .. } => Some(moment(Moment::Time, *zoned)),
         DataType::Timestamp { zoned, .. } => Some(moment(Moment::Timestamp, *zoned)),

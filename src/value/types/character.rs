@@ -180,6 +180,7 @@ impl SqlType for Character {
             Value::Datetime(d) => super::datetime::as_string(&d, length, true).map(unwarned),
             Value::Interval(i) => super::datetime::fitted(i.to_string(), length, true).map(unwarned),
             Value::Bits(b) => bits_as_characters(&b, length, true),
+            Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
         }
     }
 

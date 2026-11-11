@@ -263,8 +263,13 @@ pub(super) fn row_totals(form: &Form, row: &Row, tx: &Txn) -> Result<Totals> {
         match eval(&t.x, row, &heard)? {
             Value::Exact(d) => out = Totals { counted: 1, sum: Some(d), ..out },
             Value::Null => {}
-            other
-            @ (Value::Char(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+            other @ (Value::Char(_)
+            | Value::Approx(_)
+            | Value::Bits(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_)) => {
                 return Err(SqlError::new(Code::Api, format!("[DESIGN] {other:?} is no exact number of a SUM or AVG kept")));
             }
         }

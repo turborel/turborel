@@ -118,7 +118,7 @@ impl Parser {
         self.advance();
         self.expect_kw(kw::FOR)?;
         self.expect_delim(delim::LEFT_PAREN)?;
-        let operand = self.value_expression()?;
+        let operand = self.common_value_expression()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::CollationFor(Box::new(operand)))
     }
@@ -305,7 +305,7 @@ impl Parser {
         let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected CONVERT or TRANSLATE")) };
         self.advance();
         self.expect_delim(delim::LEFT_PAREN)?;
-        let converted = self.value_expression()?;
+        let converted = self.common_value_expression()?;
         self.expect_kw(kw::USING)?;
         let name = self.qualified_name()?;
         self.expect_delim(delim::RIGHT_PAREN)?;

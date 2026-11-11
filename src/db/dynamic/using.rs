@@ -56,7 +56,15 @@ fn returned(item: &mut Item, v: &Value) {
     let (length, octets) = match v {
         Value::Char(s) => (s.chars().count(), s.len()),
         Value::Bits(b) => (usize::try_from(b.len()).unwrap_or(usize::MAX), b.bytes().len()),
-        Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => return,
+        Value::Null
+        | Value::Exact(_)
+        | Value::Approx(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => {
+            return;
+        }
     };
     item.set(DescriptorItem::ReturnedLength, exact(i64::try_from(length).unwrap_or(i64::MAX)));
     item.set(DescriptorItem::ReturnedOctetLength, exact(i64::try_from(octets).unwrap_or(i64::MAX)));

@@ -22,6 +22,7 @@ use crate::error::{Code, Result, SqlError, SqlState};
 
 mod approximate;
 mod bit;
+mod boolean;
 mod character;
 pub(crate) mod datetime;
 mod exact;
@@ -31,6 +32,8 @@ mod varying;
 
 pub use approximate::{APPROXIMATE, Approximate};
 pub use bit::{BIT, BIT_VARYING, Bit};
+pub(crate) use boolean::as_text as boolean_text;
+pub use boolean::{BOOLEAN, BOOLEAN_NAME, Boolean};
 pub use character::{CHARACTER, Character};
 pub use datetime::{Chronon, DATE, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED};
 pub use exact::{EXACT, Exact};
@@ -393,6 +396,7 @@ impl DataType {
             DataType::Varying { .. } => &VARYING,
             DataType::Bit { .. } => &BIT,
             DataType::BitVarying { .. } => &BIT_VARYING,
+            DataType::Boolean => &BOOLEAN,
             DataType::Date => &DATE,
             DataType::Time { zoned: false, .. } => &TIME,
             DataType::Time { zoned: true, .. } => &TIME_ZONED,
@@ -420,7 +424,7 @@ impl DataType {
             DataType::Varying { .. } => VARYING.encode_record(v, self),
             DataType::Bit { .. } => BIT.encode_record(v, self),
             DataType::BitVarying { .. } => BIT_VARYING.encode_record(v, self),
-            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
+            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
                 self.kind().encode_record(v, self)
             }
             DataType::Exact { .. } => EXACT.encode_record(v, self),
@@ -436,7 +440,7 @@ impl DataType {
             DataType::Varying { .. } => VARYING.decode_record(field, self),
             DataType::Bit { .. } => BIT.decode_record(field, self),
             DataType::BitVarying { .. } => BIT_VARYING.decode_record(field, self),
-            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
+            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
                 self.kind().decode_record(field, self)
             }
             DataType::Exact { .. } => EXACT.decode_record(field, self),
@@ -456,7 +460,7 @@ impl DataType {
             DataType::Varying { .. } => VARYING.encode_key(v, self, out),
             DataType::Bit { .. } => BIT.encode_key(v, self, out),
             DataType::BitVarying { .. } => BIT_VARYING.encode_key(v, self, out),
-            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
+            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
                 self.kind().encode_key(v, self, out)
             }
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
@@ -476,7 +480,7 @@ impl DataType {
             DataType::Varying { .. } => VARYING.decode_key(rest, self),
             DataType::Bit { .. } => BIT.decode_key(rest, self),
             DataType::BitVarying { .. } => BIT_VARYING.decode_key(rest, self),
-            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
+            DataType::Boolean | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) => {
                 self.kind().decode_key(rest, self)
             }
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
@@ -496,6 +500,7 @@ impl Value {
             Value::Exact(_) => Some(&EXACT),
             Value::Approx(_) => Some(&APPROXIMATE),
             Value::Bits(_) => Some(&BIT_VARYING),
+            Value::Bool(_) => Some(&BOOLEAN),
             Value::Datetime(d) => Some(datetime::kind_of(d)),
             Value::Interval(i) => Some(interval::kind_of(i.qualifier)),
             Value::Extension(e) => Some(e.kind),

@@ -40,6 +40,7 @@ fn plain(e: &Expr) -> bool {
     let own = match e {
         Expr::Subquery(..) | Expr::Outer(..) | Expr::Dynamic(_) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| c.subqueries().is_empty()),
+        Expr::Truth(c) => c.subqueries().is_empty(),
         Expr::Column(_)
         | Expr::Const(_)
         | Expr::Neg(_)
@@ -73,7 +74,8 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => {
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => {
             if !plain(e) {
                 return None;
             }

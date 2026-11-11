@@ -40,6 +40,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
             format!("CAST({} AS {})", render_expr(operand, names), d.domain)
         }
         Expr::Subquery(_, column) => format!("(<subquery>).{}", column.saturating_add(1)),
+        Expr::Truth(c) => format!("({})", render_cond(c, names)),
     }
 }
 
@@ -61,6 +62,7 @@ pub fn render_cond(c: &Cond, names: &[String]) -> String {
         Cond::Compare(a, op, b) => format!("{} {} {}", render_expr(a, names), op.symbol(), render_expr(b, names)),
         Cond::IsNull(e, not) => format!("{} IS {}NULL", render_expr(e, names), if *not { "NOT " } else { "" }),
         Cond::Exists(_) => "EXISTS (<subquery>)".to_string(),
+        Cond::Value(e) => render_expr(e, names),
         Cond::Quantified(values, op, q, _) => {
             let quantifier = match q {
                 Quantifier::All => " ALL",

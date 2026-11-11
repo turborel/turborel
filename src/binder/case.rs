@@ -15,6 +15,19 @@ use crate::value::Spelled;
 use crate::value::interval::Qualifier;
 use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
+/// [ISO/IEC 9075-2:2023 §9.5 SR3f] Of `types`, one of them BOOLEAN,
+/// BOOLEAN if all are.
+///
+/// # Errors
+///
+/// SQLCODE -103 if one is not.
+fn boolean_set_type(types: &[DataType], clause: &str) -> Result<DataType> {
+    if types.iter().any(|t| *t != DataType::Boolean) {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.5 SR3f] {clause}: truth values and other values are brought together")));
+    }
+    Ok(DataType::Boolean)
+}
+
 /// [ISO/IEC 9075:1992 §9.3] The result type of values of `types`: CHARACTER
 /// of the greatest length, if all are character strings [SR3a ii]; BIT so,
 /// if all are bit strings [SR3b ii]; either VARYING if one is; exact,
@@ -22,19 +35,24 @@ use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Valu
 /// before the point as any has, up to `MAX_EXACT_PRECISION`, the
 /// implementation-defined precision; else approximate, of
 /// `DOUBLE_PRECISION` [SR3d]; datetimes and intervals as `datetime_set_type`
-/// and `interval_set_type` give [SR3e, SR3f]. `clause` is the rule to cite.
+/// and `interval_set_type` give [SR3e, SR3f]; BOOLEAN, if all are
+/// [ISO/IEC 9075-2:2023 §9.5 SR3f]. `clause` is the rule to cite.
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if a character string is among numbers [SR2, SR3a], a
 /// bit string among other values [SR3b], a datetime or interval among
-/// values not comparable with it [SR3e, SR3f], or a value of a type beyond
-/// the standard among values of another type.
+/// values not comparable with it [SR3e, SR3f], a truth value among other
+/// values, or a value of a type beyond the standard among values of
+/// another type.
 pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     // \[EXTENSION\] Values of a type beyond the standard come together
     // only with values of the same type (RULES.md D53).
     if let Some(e) = types.iter().find(|t| matches!(t, DataType::Extension(_))) {
         return extension_set_type(*e, types, clause);
+    }
+    if types.contains(&DataType::Boolean) {
+        return boolean_set_type(types, clause);
     }
     if let Some(first) = types.iter().find(|t| t.is_datetime()) {
         return datetime_set_type(*first, types, clause);
@@ -61,7 +79,12 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
                 scale = scale.max(*s);
             }
             DataType::Approximate { .. } => exact = false,
-            DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. } | DataType::Interval(_) | DataType::Extension(_) => {}
+            DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Extension(_) => {}
         }
     }
     let digits = whole.saturating_add(scale).min(MAX_EXACT_PRECISION);
@@ -69,21 +92,11 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
         (0, 0, true) => DataType::Exact { precision: digits, scale, spelled: Spelled::Numeric },
         (0, 0, false) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         // [§9.3 SR3b i] varying if any is; [SR3b ii] else fixed.
-        (0, _, _) => {
-            if varying {
-                DataType::BitVarying { length }
-            } else {
-                DataType::Bit { length }
-            }
-        }
+        (0, _, _) if varying => DataType::BitVarying { length },
+        (0, _, _) => DataType::Bit { length },
         // [§9.3 SR3a i] varying if any is; [SR3a ii] else fixed.
-        _ => {
-            if varying {
-                DataType::Varying { length }
-            } else {
-                DataType::Character { length }
-            }
-        }
+        _ if varying => DataType::Varying { length },
+        _ => DataType::Character { length },
     })
 }
 

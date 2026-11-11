@@ -5,7 +5,9 @@
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::value::types::INTERVAL_DAY_TIME;
-use crate::value::types::{APPROXIMATE, BIT, BIT_VARYING, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING};
+use crate::value::types::{
+    APPROXIMATE, BIT, BIT_VARYING, BOOLEAN, CHARACTER, DATE, EXACT, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED, VARYING,
+};
 use crate::value::{DataType, Spelled, SqlType};
 
 /// The tag of each built-in kind of type, before its parameters.
@@ -31,6 +33,7 @@ const INTEGER_TYPE: u8 = 14;
 const SMALLINT_TYPE: u8 = 15;
 const REAL_TYPE: u8 = 16;
 const DOUBLE_PRECISION_TYPE: u8 = 17;
+const BOOLEAN_TYPE: u8 = 18;
 
 pub(super) fn put_type(out: &mut Vec<u8>, data_type: DataType) {
     match data_type {
@@ -38,6 +41,7 @@ pub(super) fn put_type(out: &mut Vec<u8>, data_type: DataType) {
         DataType::Varying { .. } => out.put_u8(VARYING_TYPE),
         DataType::Bit { .. } => out.put_u8(BIT_TYPE),
         DataType::BitVarying { .. } => out.put_u8(BIT_VARYING_TYPE),
+        DataType::Boolean => out.put_u8(BOOLEAN_TYPE),
         DataType::Date => out.put_u8(DATE_TYPE),
         DataType::Time { zoned: false, .. } => out.put_u8(TIME_TYPE),
         DataType::Time { zoned: true, .. } => out.put_u8(TIME_ZONED_TYPE),
@@ -75,6 +79,7 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Varying { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }
@@ -100,6 +105,7 @@ pub(super) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         VARYING_TYPE => &VARYING,
         BIT_TYPE => &BIT,
         BIT_VARYING_TYPE => &BIT_VARYING,
+        BOOLEAN_TYPE => &BOOLEAN,
         DATE_TYPE => &DATE,
         TIME_TYPE => &TIME,
         TIME_ZONED_TYPE => &TIME_ZONED,

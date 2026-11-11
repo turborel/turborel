@@ -241,7 +241,8 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         | Cond::Exists(_)
         | Cond::Unique(_)
         | Cond::Quantified(..)
-        | Cond::Match { .. } => compared_with_constant(cond)
+        | Cond::Match { .. }
+        | Cond::Value(_) => compared_with_constant(cond)
             .and_then(|(c, op, v)| Some(Judged::Compare(place(c)?, op, v.clone())))
             .or_else(|| compared_of_integers(cond, columns)),
     };

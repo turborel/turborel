@@ -36,6 +36,8 @@ const TIMESTAMP: u8 = 11;
 const TIMESTAMP_ZONED: u8 = 12;
 /// INTERVAL, as a type and a value: its qualifier says its class.
 const INTERVAL: u8 = 13;
+/// BOOLEAN, as a type and a value.
+const BOOLEAN: u8 = 14;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -89,6 +91,7 @@ fn put_type(b: &mut Vec<u8>, t: &DataType) {
         DataType::Varying { .. } => b.put_u8(VARYING),
         DataType::Bit { .. } => b.put_u8(BIT),
         DataType::BitVarying { .. } => b.put_u8(BIT_VARYING),
+        DataType::Boolean => b.put_u8(BOOLEAN),
         DataType::Date => b.put_u8(DATE),
         DataType::Time { zoned: false, .. } => b.put_u8(TIME),
         DataType::Time { zoned: true, .. } => b.put_u8(TIME_ZONED),
@@ -124,6 +127,7 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         VARYING => Some(&types::VARYING),
         BIT => Some(&types::BIT),
         BIT_VARYING => Some(&types::BIT_VARYING),
+        BOOLEAN => Some(&types::BOOLEAN),
         DATE => Some(&types::DATE),
         TIME => Some(&types::TIME),
         TIME_ZONED => Some(&types::TIME_ZONED),
@@ -185,6 +189,7 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
         Value::Exact(_) => EXACT,
         Value::Approx(_) => APPROXIMATE,
         Value::Bits(_) => BIT,
+        Value::Bool(_) => BOOLEAN,
         Value::Datetime(d) => match d.moment {
             Moment::Date => DATE,
             Moment::Time => TIME,
@@ -232,6 +237,8 @@ pub fn row_size(row: &Row) -> usize {
         Value::Char(s) => s.len().saturating_add(5),
         Value::Exact(_) => 21,
         Value::Approx(_) => 9,
+        // Its tag and its byte.
+        Value::Bool(_) => 2,
         // Its tag, its length and its bytes, after theirs.
         Value::Bits(b) => b.bytes().len().saturating_add(9),
         // Its tag, its zone's flag, precision and displacement, and its

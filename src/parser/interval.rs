@@ -180,6 +180,6 @@ impl Parser {
         if self.accept_kw(kw::LOCAL) {
             return Ok(SqlStatement::SetTimeZone(None));
         }
-        Ok(SqlStatement::SetTimeZone(Some(self.value_expression()?)))
+        Ok(SqlStatement::SetTimeZone(Some(self.common_value_expression()?)))
     }
 }

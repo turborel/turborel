@@ -91,6 +91,7 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => e,
     }
@@ -140,6 +141,7 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => None,
     };
@@ -237,6 +239,7 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Interval(_)
         | DataType::Extension(_) => None,
     }

@@ -16,9 +16,14 @@ use crate::value::{Value, compare};
 fn ordering(f: f64, constant: &Value) -> Option<Ordering> {
     match constant {
         Value::Approx(c) => f.partial_cmp(c),
-        Value::Null | Value::Char(_) | Value::Exact(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => {
-            compare(&Value::Approx(f), constant)
-        }
+        Value::Null
+        | Value::Char(_)
+        | Value::Exact(_)
+        | Value::Bits(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => compare(&Value::Approx(f), constant),
     }
 }
 

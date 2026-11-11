@@ -163,6 +163,7 @@ fn exact_norm(v: &Value) -> NormKey {
         | Value::Exact(_)
         | Value::Approx(_)
         | Value::Bits(_)
+        | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Extension(_) => v.norm(),

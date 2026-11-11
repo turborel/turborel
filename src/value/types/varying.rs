@@ -186,6 +186,7 @@ impl SqlType for Varying {
             Value::Approx(x) => within(approximate_literal(x), t).map(unwarned),
             Value::Char(s) => Ok(cut_to(&s)),
             Value::Bits(b) => bits_as_characters(&b, length, false),
+            Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
             // [GR6e] its literal's string, as it shows.
             Value::Datetime(d) => super::datetime::as_string(&d, length, false).map(unwarned),
             Value::Interval(i) => super::datetime::fitted(i.to_string(), length, false).map(unwarned),

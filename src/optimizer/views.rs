@@ -83,7 +83,7 @@ fn alike(c: &Cond) -> bool {
     match c {
         Cond::Const(_) => true,
         Cond::Compare(a, _, b) => plain(a) && plain(b),
-        Cond::IsNull(e, _) | Cond::In(e, _) => plain(e),
+        Cond::IsNull(e, _) | Cond::In(e, _) | Cond::Value(e) => plain(e),
         Cond::Or(a, b) | Cond::And(a, b) => alike(a) && alike(b),
         Cond::Not(a) | Cond::Is(a, ..) => alike(a),
         Cond::Like(..) | Cond::Exists(_) | Cond::Quantified(..) | Cond::Unique(_) | Cond::Match { .. } => false,
@@ -93,7 +93,10 @@ fn alike(c: &Cond) -> bool {
 /// Clears `plain` if `e` has anything but columns, constants, outer
 /// references, signs and arithmetic.
 fn expr_columns_only(e: &Expr, plain: &mut bool) {
-    if matches!(e, Expr::Call(..) | Expr::Case(..) | Expr::Cast(..) | Expr::SortKey(..) | Expr::Domain(..) | Expr::Subquery(..)) {
+    if matches!(
+        e,
+        Expr::Call(..) | Expr::Case(..) | Expr::Cast(..) | Expr::SortKey(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::Truth(_)
+    ) {
         *plain = false;
     }
     e.for_each_child(&mut |child| expr_columns_only(child, plain));

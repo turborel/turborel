@@ -55,6 +55,7 @@ mod batch_joins;
 mod batches;
 mod bits;
 mod blocks;
+mod booleans;
 mod buffer;
 mod buffer_claims;
 mod cancel;

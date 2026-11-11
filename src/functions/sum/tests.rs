@@ -36,6 +36,7 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
             | Value::Approx(_)
             | Value::Char(_)
             | Value::Bits(_)
+            | Value::Bool(_)
             | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Extension(_) => None,

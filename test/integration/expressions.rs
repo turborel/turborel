@@ -135,5 +135,7 @@ fn unique_match_and_boolean_tests_8_9() {
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE (AMT > 0) IS UNKNOWN"), expected(&["3"]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE (AMT > 0) IS NOT TRUE ORDER BY ID"), expected(&["2", "3"]));
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE NOT AMT > 0 IS FALSE ORDER BY ID"), expected(&["1", "3"]), "NOT (AMT > 0 IS FALSE)");
-    assert_eq!(code(&s, "SELECT ID FROM T WHERE (AMT > 0) IS NULL"), Code::Syntax);
+    // [ISO/IEC 9075-2:2023 §6.46, §8.8] Of SQL:2023, a truth value is a
+    // value, null when Unknown, which SQL-92 refused as a syntax error.
+    assert_eq!(rows(&s, "SELECT ID FROM T WHERE (AMT > 0) IS NULL"), expected(&["3"]));
 }

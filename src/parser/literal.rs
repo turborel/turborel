@@ -27,12 +27,15 @@ impl Parser {
         }
         if self.is_delim(delim::QUESTION) {
             // [ISO/IEC 9075:1992 §6.2 SR2] only in a statement being prepared.
-            let Some(index) = self.dynamic else {
+            let Some(read) = self.dynamic else {
                 return Err(self.rule("[ISO/IEC 9075:1992 §6.2 SR2] a <dynamic parameter specification> is in a prepared statement only"));
             };
+            // Numbered by the ones before it in the text, so one read again
+            // as the parser backtracks keeps its number.
+            let index = self.toks.iter().take(self.pos).filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count();
             let at = self.here();
             self.advance();
-            self.dynamic = Some(index.saturating_add(1));
+            self.dynamic = Some(read.max(index.saturating_add(1)));
             return Ok(ValueSpecification::Dynamic { index, at });
         }
         Ok(ValueSpecification::Literal(self.literal()?))
@@ -74,7 +77,8 @@ impl Parser {
 
     /// `<literal>` ::= `<character string literal>` | `<numeric literal>` |
     /// `<bit string literal>` | `<hex string literal>` | `<datetime literal>`
-    /// | `<interval literal>` [ISO/IEC 9075:1992 §5.3]
+    /// | `<interval literal>` [ISO/IEC 9075:1992 §5.3] | `<boolean literal>`
+    /// [ISO/IEC 9075-2:2023 §5.3]
     pub(super) fn literal(&mut self) -> Result<Literal> {
         if self.at_datetime_literal() {
             return self.datetime_literal();
@@ -105,6 +109,11 @@ impl Parser {
                 let f = parse_approximate(&t, at)?;
                 Literal::Approximate(if negative { -f } else { f })
             }
+            // [ISO/IEC 9075-2:2023 §5.3] <boolean literal> ::= TRUE | FALSE
+            // | UNKNOWN, UNKNOWN the null value [GR14].
+            Tok::KeyWord(kw::TRUE) => Literal::Boolean(Some(true)),
+            Tok::KeyWord(kw::FALSE) => Literal::Boolean(Some(false)),
+            Tok::KeyWord(kw::UNKNOWN) => Literal::Boolean(None),
             Tok::KeyWord(_) | Tok::Identifier(_) | Tok::Introducer(_) | Tok::Delimiter(_) | Tok::End => {
                 return Err(self.syntax("expected a <literal>"));
             }

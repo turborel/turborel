@@ -167,7 +167,7 @@ impl SqlType for IntervalKind {
                     uncastable(&v, t)
                 }
             }
-            Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),
+            Value::Approx(_) | Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Extension(_) => uncastable(&v, t),
         }
     }
 

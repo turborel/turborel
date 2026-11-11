@@ -33,6 +33,7 @@ const BITS_TAG: u8 = 3;
 const INSTANT_TAG: u8 = 4;
 const SPAN_TAG: u8 = 5;
 const EXTENSION_TAG: u8 = 6;
+const BOOL_TAG: u8 = 7;
 
 /// The two halves of the hash of `v`'s bucket; none for the null value,
 /// which equals nothing.
@@ -50,6 +51,10 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
         Bucket::Bits(b) => {
             key.push(BITS_TAG);
             key.extend_from_slice(&b);
+        }
+        Bucket::Bool(b) => {
+            key.push(BOOL_TAG);
+            key.push(u8::from(b));
         }
         Bucket::Instant(utc) => {
             key.push(INSTANT_TAG);

@@ -52,6 +52,36 @@ pub enum Truth {
     Unknown,
 }
 
+impl Truth {
+    /// [ISO/IEC 9075-2:2023 §4.6.1] The BOOLEAN value of it: Unknown is
+    /// the null value.
+    pub fn value(self) -> Value {
+        match self {
+            Truth::True => Value::Bool(true),
+            Truth::False => Value::Bool(false),
+            Truth::Unknown => Value::Null,
+        }
+    }
+
+    /// [ISO/IEC 9075-2:2023 §4.6.1] The truth value `v` is: the null value
+    /// Unknown. A value of another kind, which the binder lets no boolean
+    /// predicand be [§6.46 SR3], is Unknown too.
+    pub fn of(v: &Value) -> Truth {
+        match v {
+            Value::Bool(true) => Truth::True,
+            Value::Bool(false) => Truth::False,
+            Value::Null
+            | Value::Char(_)
+            | Value::Exact(_)
+            | Value::Approx(_)
+            | Value::Bits(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_) => Truth::Unknown,
+        }
+    }
+}
+
 /// A bound `<value expression>` [X3.135-1986 §5.9, ISO/IEC 9075:1992 §6.11].
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -95,6 +125,9 @@ pub enum Expr {
     /// this position, of a `<row subquery>`: the value there of its one
     /// row, null if it has none [§6.11 GR2].
     Subquery(Arc<Subquery>, usize),
+    /// [ISO/IEC 9075-2:2023 §6.46] A `<boolean value expression>` as a
+    /// value: True, False, or the null value for Unknown [§4.6.1].
+    Truth(Box<Cond>),
 }
 
 /// A bound `<search condition>` [X3.135-1986 §5.18].
@@ -142,6 +175,9 @@ pub enum Cond {
         /// The `<table subquery>`.
         subquery: Arc<Subquery>,
     },
+    /// [ISO/IEC 9075-2:2023 §6.46] A `<boolean predicand>`: the truth
+    /// value of a BOOLEAN value, the null value Unknown [§4.6.1].
+    Value(Expr),
     /// \[DESIGN\] An `<in predicate>` of constants judged by their set
     /// (`logical/sets.rs`): the OR of the value's equalities with each
     /// [X3.135-1986 §5.13 GR2], as the physical planner makes a long one.
@@ -182,6 +218,7 @@ impl Expr {
             Expr::SortKey(x, c) => Expr::sort_key(f(*x), &c),
             Expr::Domain(x, checks) => Expr::Domain(Box::new(f(*x)), checks),
             Expr::Subquery(s, column) => Expr::Subquery(s.map_outer(f), column),
+            Expr::Truth(c) => Expr::Truth(Box::new(c.map_exprs(f))),
         }
     }
 
@@ -204,6 +241,7 @@ impl Expr {
                 f(otherwise);
             }
             Expr::Subquery(s, _) => s.outer.iter().for_each(f),
+            Expr::Truth(c) => c.for_each_expr(f),
         }
     }
 
@@ -221,10 +259,12 @@ impl Expr {
     /// a CAST [ISO/IEC 9075:1992 §6.10], to a domain too, and a scalar subquery with more
     /// than one row [§7.11 GR1]; a column, a constant, a sort key and monadic minus
     /// cannot (exact values never exceed `MAX_EXACT_PRECISION` digits, so
-    /// negation cannot overflow), and CASE only through its parts.
+    /// negation cannot overflow), and CASE only through its parts, as a
+    /// truth value only through its condition.
     pub fn can_raise(&self) -> bool {
         match self {
             Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) => true,
+            Expr::Truth(c) => c.can_raise(),
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) | Expr::SortKey(..) => {
                 let mut raises = false;
                 self.for_each_child(&mut |e| raises = raises || e.can_raise());
@@ -275,6 +315,7 @@ impl Cond {
                 Cond::Match { values, unique, match_type, subquery: subquery.map_outer(f) }
             }
             Cond::In(e, set) => Cond::In(f(e), set),
+            Cond::Value(e) => Cond::Value(f(e)),
         }
     }
 
@@ -292,7 +333,7 @@ impl Cond {
                 f(a);
                 f(b);
             }
-            Cond::IsNull(e, _) | Cond::In(e, _) => f(e),
+            Cond::IsNull(e, _) | Cond::In(e, _) | Cond::Value(e) => f(e),
             Cond::Like(e, pattern, escape) => {
                 f(e);
                 f(pattern);
@@ -313,7 +354,7 @@ impl Cond {
             Cond::Or(a, b) | Cond::And(a, b) => [a.subqueries(), b.subqueries()].concat(),
             Cond::Not(a) | Cond::Is(a, ..) => a.subqueries(),
             Cond::Exists(s) | Cond::Unique(s) | Cond::Quantified(.., s) | Cond::Match { subquery: s, .. } => vec![&**s],
-            Cond::Const(_) | Cond::Compare(..) | Cond::IsNull(..) | Cond::Like(..) | Cond::In(..) => Vec::new(),
+            Cond::Const(_) | Cond::Compare(..) | Cond::IsNull(..) | Cond::Like(..) | Cond::In(..) | Cond::Value(_) => Vec::new(),
         }
     }
 
@@ -340,7 +381,8 @@ impl Cond {
             | Cond::Unique(_)
             | Cond::Quantified(..)
             | Cond::Match { .. }
-            | Cond::In(..) => false,
+            | Cond::In(..)
+            | Cond::Value(_) => false,
         };
         let mut raises = own || self.subqueries().iter().any(|s| s.can_raise());
         self.for_each_expr(&mut |e| raises = raises || e.can_raise());

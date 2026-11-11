@@ -204,6 +204,7 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>) {
     match e {
         Expr::Subquery(s, _) => out.push(s),
         Expr::Case(whens, _) => out.extend(whens.iter().flat_map(|(c, _)| c.subqueries())),
+        Expr::Truth(c) => out.extend(c.subqueries()),
         // A domain's constraints are run for the value CAST, and read their tables.
         Expr::Domain(_, d) => d.checks.iter().for_each(|(_, c)| out.extend(cond_subqueries(c))),
         Expr::Column(_)

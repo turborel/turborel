@@ -71,7 +71,9 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
         Cell::Value(Value::Exact(d)) => Some(i64::try_from(d.units).map_or((VALUES, 0_u32), |_| (INTS, d.scale))),
         Cell::Approx(_) | Cell::Value(Value::Approx(_)) => Some((FLOATS, 0_u32)),
         Cell::Text(_) | Cell::Value(Value::Char(_)) => Some((TEXTS, 0_u32)),
-        Cell::Value(Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => Some((VALUES, 0_u32)),
+        Cell::Value(Value::Bits(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+            Some((VALUES, 0_u32))
+        }
     }
 }
 

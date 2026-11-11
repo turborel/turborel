@@ -91,7 +91,8 @@ fn shaped(e: &Expr, depth: usize) -> bool {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => false,
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => false,
     }
 }
 
@@ -142,7 +143,8 @@ fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
-        | Expr::Subquery(..) => None,
+        | Expr::Subquery(..)
+        | Expr::Truth(_) => None,
     }
 }
 

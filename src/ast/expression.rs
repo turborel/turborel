@@ -33,6 +33,9 @@ pub enum SearchCondition {
     Is(Box<SearchCondition>, TruthValue, bool),
     /// A `<predicate>`, and where it begins.
     Predicate(Box<Predicate>, usize),
+    /// [ISO/IEC 9075-2:2023 §6.46] A `<boolean predicand>`: a value
+    /// expression of type BOOLEAN \[SR3\], and where it begins.
+    Predicand(Box<ValueExpression>, usize),
 }
 
 /// [ISO/IEC 9075:1992 §8.12] `<truth value>` ::= TRUE | FALSE | UNKNOWN
@@ -175,6 +178,10 @@ pub enum ValueExpression {
     SetFunction(SetFunctionSpecification),
     /// A `<value expression>` in parentheses.
     Nested(Box<ValueExpression>),
+    /// [ISO/IEC 9075-2:2023 §6.29, §6.46] A `<boolean value expression>`
+    /// as a value: a search condition's truth value, Unknown the null value
+    /// [§4.6.1].
+    Boolean(Box<SearchCondition>),
     /// [ISO/IEC 9075-2:2023 §10.7] A value of the collation its `<collate
     /// clause>` names.
     Collated(Box<ValueExpression>, TableName),
@@ -255,7 +262,8 @@ pub enum ValueExpression {
 ///     COUNT(*) | `<distinct set function>` | `<all set function>`
 #[derive(Debug, Clone)]
 pub struct SetFunctionSpecification {
-    /// COUNT, AVG, MAX, MIN or SUM
+    /// COUNT, AVG, MAX, MIN or SUM; \[ISO/IEC 9075-2:2023 §10.9\] EVERY,
+    /// ANY or SOME
     pub name: &'static str,
     /// What the function is applied to.
     pub arg: SetArg,
@@ -361,6 +369,7 @@ impl ValueExpression {
             ValueExpression::Cast { operand, .. } => operand.iter().for_each(|x| f(x)),
             ValueExpression::Function { args, .. } | ValueExpression::Call { args, .. } => args.iter().for_each(f),
             ValueExpression::Case(case) => case.for_each_child(f),
+            ValueExpression::Boolean(c) => c.for_each_value(f),
         }
     }
 
@@ -376,6 +385,9 @@ impl ValueExpression {
             for (c, _) in whens {
                 c.for_each_own_subquery(f);
             }
+        }
+        if let ValueExpression::Boolean(c) = self {
+            c.for_each_own_subquery(f);
         }
         self.for_each_child(&mut |child| child.for_each_subquery(f));
     }
@@ -437,6 +449,7 @@ impl SearchCondition {
             }
             SearchCondition::Not(a) | SearchCondition::Is(a, ..) => a.for_each_value(f),
             SearchCondition::Predicate(p, _) => p.for_each_value(f),
+            SearchCondition::Predicand(v, _) => f(v),
         }
     }
 
@@ -456,6 +469,7 @@ impl SearchCondition {
             }
             SearchCondition::Not(a) | SearchCondition::Is(a, ..) => a.for_each_own_subquery(f),
             SearchCondition::Predicate(p, _) => p.subquery().into_iter().for_each(f),
+            SearchCondition::Predicand(..) => {}
         }
     }
 }

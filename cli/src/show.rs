@@ -15,6 +15,8 @@ pub const MAX_WIDTH: usize = 60;
 /// The characters of an approximate number at its longest:
 /// `-1.2345678901234567E-308`.
 const APPROXIMATE_WIDTH: usize = 24;
+/// The characters of a truth value at its longest: `FALSE`.
+const BOOLEAN_WIDTH: usize = 5;
 
 /// How a column is shown.
 #[derive(Debug, Clone, Copy)]
@@ -50,6 +52,7 @@ fn shape(name: &str, t: &DataType) -> Shape {
         // A sign and a point beside the digits.
         DataType::Exact { precision, .. } => (usize::try_from(*precision).unwrap_or(MAX_WIDTH).saturating_add(2), true),
         DataType::Approximate { .. } => (APPROXIMATE_WIDTH, true),
+        DataType::Boolean => (BOOLEAN_WIDTH, false),
         // [ISO/IEC 9075:1992 §6.1 SR27] its length in positions.
         DataType::Date => (DATE_WIDTH, false),
         DataType::Time { precision, zoned } => (positions(TIME_WIDTH, *precision, *zoned), false),
@@ -126,6 +129,7 @@ impl Sink for Table<'_> {
                     | Value::Exact(_)
                     | Value::Approx(_)
                     | Value::Bits(_)
+                    | Value::Bool(_)
                     | Value::Datetime(_)
                     | Value::Interval(_)
                     | Value::Extension(_) => v.to_string(),

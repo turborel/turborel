@@ -18,7 +18,8 @@ in `86 §5.5 SR3`. One marked `2023` is ISO/IEC 9075-2:2023, as in
 
 Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
-[SQL-92](#sql-92) · [Collations](#collations) · [Extensions](#extensions) ·
+[SQL-92](#sql-92) · [Collations](#collations) · [Truth values](#truth-values) ·
+[Extensions](#extensions) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
 
@@ -479,6 +480,35 @@ whatever its collation.
 | §9.11 POSITION | Exact, by characters, not by the collation | `functions/strings.rs` |
 | §4.3.6 a key's length | About 16 bytes for each character under UNICODE and half as many again under a tailoring, so an index's limit holds less text | `value/collation/unicode.rs`, `value/collation/tailored.rs`, `index/blink.rs` |
 | §12.7 GR12l, an impacted collation | A collation made FROM another made one keeps only the built-in it orders by, so none is impacted when USAGE on its source is revoked | `db/collations.rs` |
+
+---
+
+## Truth values
+
+These follow ISO/IEC 9075-2:2023 with Feature T031 (BOOLEAN data type).
+Citations here are of that edition unless marked.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| BOOLEAN | §4.6, §6.1 | A data type of a column, a domain, a parameter and a result. Its values are True and False, Unknown its null value [§4.6.1], True greater than False [§4.6.2]. A value is one byte in a row and in a key. |
+| `<boolean literal>` | §5.3 SR47, GR14 | TRUE, FALSE and UNKNOWN, UNKNOWN the null value. A column's default may be one [§11.5 SR4a vii]. |
+| `<boolean value expression>` as a value | §6.29, §6.46 | Where a select list, a VALUES row, an UPDATE's SET, a CASE result, CAST, COALESCE, NULLIF or a set function takes a `<value expression>`, and in parentheses. A comparison's operands are `<common value expression>`s, so a condition compared is parenthesized. |
+| `<boolean predicand>` | §6.46 SR3 | A value alone, no predicate's operator after it, is a condition, and of type BOOLEAN, else SQLCODE -103. IS TRUE, FALSE and UNKNOWN test it [§6.46], and IS NULL is its null predicate [§8.8]. |
+| CASE and COALESCE | §9.5 SR3f | Their results are all BOOLEAN or none, else SQLCODE -103. |
+| CAST | §6.13 GR11f, GR12f, GR21 | A character string casts to BOOLEAN as a `<boolean literal>`, its spaces trimmed and in any case, else SQLSTATE 22018. A truth value casts to a string as 'TRUE' or 'FALSE', 22018 if it is too short. No other type casts to or from BOOLEAN. |
+| EVERY, ANY, SOME | §10.9 SR7e, GR7d | Set functions of a BOOLEAN argument, nulls left out, null of no values. ANY and SOME before a subquery are a quantifier [92 §8.7], before anything else the set function. |
+| Descriptor areas | §20.1 Table 30, SR6j | TYPE 16, with no other field. |
+| Information Schema | 92 §21 | A BOOLEAN column's DATA_TYPE is 'BOOLEAN'. |
+
+SQL:2023 wins over SQL-92 here (RULES.md D32). A value alone as a
+condition, `WHERE C`, was a syntax error (SQLCODE -104) and is now refused
+only if C is not a BOOLEAN (SQLCODE -103). A condition's IS NULL,
+`(C > 0) IS NULL`, was a syntax error and is now true where the condition
+is unknown. ANY and SOME were quantifiers alone.
+
+SQL:2023 reserves BOOLEAN and EVERY [§5.2], and SQL-92 does not, so both
+stay identifiers, key words only where they are read: BOOLEAN as a data
+type and EVERY before a parenthesis. A domain cannot be named BOOLEAN.
 
 ---
 

@@ -79,6 +79,8 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
         }
         Expr::Domain(x, d) => checked(eval(x, row, subqueries)?, d, subqueries),
         Expr::SortKey(x, c) => Ok(c.sort_key(&eval(x, row, subqueries)?)),
+        // [ISO/IEC 9075-2:2023 §6.46] a condition's truth value as a value.
+        Expr::Truth(c) => Ok(eval_cond(c, row, subqueries)?.value()),
         // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {
@@ -165,6 +167,8 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
         Cond::Unique(s) => truth(subqueries.rows(s, &outer_values(s, row, subqueries)?, None)?.unique()?),
         // [X3.135-1986 §5.13 GR2, §5.18 GR2] the OR of its equalities, by its set.
         Cond::In(e, set) => set.truth(&eval(e, row, subqueries)?),
+        // [ISO/IEC 9075-2:2023 §4.6.1] a BOOLEAN value's truth, null Unknown.
+        Cond::Value(e) => Truth::of(&eval(e, row, subqueries)?),
         Cond::Match { values: xs, unique, match_type, subquery } => {
             let rows = subqueries.rows(subquery, &outer_values(subquery, row, subqueries)?, None)?;
             matched(&values(xs, row, subqueries)?, (*unique, *match_type), rows.rows()?)?
@@ -351,7 +355,15 @@ pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
             }
         }
         Some(Value::Null) => Escape::Null,
-        Some(Value::Exact(_) | Value::Approx(_) | Value::Bits(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_)) => {
+        Some(
+            Value::Exact(_)
+            | Value::Approx(_)
+            | Value::Bits(_)
+            | Value::Bool(_)
+            | Value::Datetime(_)
+            | Value::Interval(_)
+            | Value::Extension(_),
+        ) => {
             return fail_with(
                 Code::Data,
                 SqlState::INVALID_ESCAPE_CHARACTER,

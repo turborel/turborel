@@ -33,9 +33,12 @@ mod floats;
 mod ints;
 mod strings;
 mod sum;
+mod truths;
 use sum::{AvgAcc, SumAcc};
 
 pub use strings::CONCATENATION;
+pub use truths::EVERY;
+use truths::Truths;
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
@@ -270,8 +273,9 @@ pub(crate) enum Standard {
 }
 
 impl Registry {
-    /// A registry holding the five SQL-86 set functions, and the string
-    /// functions of SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
+    /// A registry holding the five SQL-86 set functions, EVERY, ANY and
+    /// SOME [ISO/IEC 9075-2:2023 §10.9], and the string functions of
+    /// SQL-92 [ISO/IEC 9075:1992 §6.6, §6.7, §6.13].
     pub fn with_set_functions() -> Registry {
         let standard = [
             AggregateRef(Arc::new(Count)),
@@ -281,7 +285,8 @@ impl Registry {
             AggregateRef(Arc::new(Avg)),
         ];
         let scalars = strings::functions().into_iter().map(|f| (f.name().to_string(), ScalarRef(f))).collect();
-        let aggregates = standard.iter().map(|f| (f.0.name().to_string(), f.clone())).collect();
+        let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
+        let aggregates = standard.iter().chain(&truths).map(|f| (f.0.name().to_string(), f.clone())).collect();
         Registry { scalars, aggregates, standard }
     }
 
@@ -446,6 +451,7 @@ impl AggregateFunction for Sum {
             | DataType::Varying { .. }
             | DataType::Bit { .. }
             | DataType::BitVarying { .. }
+            | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }
@@ -480,6 +486,7 @@ impl AggregateFunction for Avg {
             | DataType::Varying { .. }
             | DataType::Bit { .. }
             | DataType::BitVarying { .. }
+            | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
             | DataType::Timestamp { .. }

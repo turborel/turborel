@@ -39,7 +39,8 @@ use crate::value::{DataType, Value};
 /// \[DESIGN\] Whether a value of type `t` is the same value decoded from
 /// its key (`decode_key`), so an index-only scan may give it for the
 /// column's (RULES.md D34): an exact number at its column's scale; a
-/// character string padded to its column's length; a bit string; a date,
+/// character string padded to its column's length; a bit string; a truth
+/// value; a date,
 /// a time or a timestamp of no time zone; an interval. Not a varying
 /// string, whose key leaves out its trailing spaces; an approximate
 /// number, -0.0's key 0.0's; a time or timestamp of a time zone, its key
@@ -50,6 +51,7 @@ pub fn restores(t: &DataType) -> bool {
         | DataType::Exact { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Interval(_) => true,
         DataType::Time { zoned, .. } | DataType::Timestamp { zoned, .. } => !zoned,

@@ -51,4 +51,11 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-The standard: ISO/IEC 9075:1992 §5.2.
+SQL:2023 reserves BOOLEAN and EVERY, which SQL-92 does not, so a column
+of an older database may be named either. Both stay identifiers here,
+key words only where they are read: BOOLEAN as a data type, so a domain
+cannot be named BOOLEAN, and EVERY before a parenthesis, as the set
+function. A table's column named EVERY is written `"EVERY"` only where a
+parenthesis follows it.
+
+The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

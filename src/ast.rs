@@ -170,6 +170,9 @@ pub enum Literal {
     /// An `<interval literal>`'s value, its sign applied [ISO/IEC
     /// 9075:1992 §5.3 GR5].
     Interval(Interval),
+    /// [ISO/IEC 9075-2:2023 §5.3] A `<boolean literal>`: TRUE, FALSE, or
+    /// none for UNKNOWN, the null value [§4.6.1].
+    Boolean(Option<bool>),
 }
 
 /// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`: CURRENT_DATE,

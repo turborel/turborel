@@ -15,7 +15,9 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
-use crate::ast::{ColumnSpecification, CursorSpecification, SearchCondition, SortColumn, SortSpecification, TableName, TruthValue};
+use crate::ast::{
+    ColumnSpecification, CursorSpecification, SearchCondition, SortColumn, SortSpecification, TableName, TruthValue, ValueExpression,
+};
 use crate::catalog::{Actions, ColumnDesc, Horizon, QualifiedName, TableDesc, WHOLE, applicable};
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError, Subject};
@@ -189,7 +191,7 @@ pub fn qualify(name: &TableName, auth: &str) -> QualifiedName {
 /// # Errors
 ///
 /// It does not bind.
-pub fn bind_value(cx: Context<'_>, v: &crate::ast::ValueExpression) -> Result<(Expr, DataType)> {
+pub fn bind_value(cx: Context<'_>, v: &ValueExpression) -> Result<(Expr, DataType)> {
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
     binder.value_expression(v, Scope::Rows("[ISO/IEC 9075:1992 §16.5] SET TIME ZONE has no set function"))
 }
@@ -558,6 +560,19 @@ impl Binder<'_> {
                 Cond::Is(Box::new(self.search_condition(a, scope)?), truth, *not)
             }
             SearchCondition::Predicate(p, at) => self.predicate(p, scope).or_at(*at)?,
+            SearchCondition::Predicand(v, at) => self.predicand(v, scope).or_at(*at)?,
         })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.46 SR3] A `<boolean predicand>` as a
+    /// condition, a value of type BOOLEAN: a truth value written as one
+    /// given back as its condition.
+    fn predicand(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<Cond> {
+        let (e, t) = self.value_expression(v, scope)?;
+        if t != DataType::Boolean {
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.46 SR3] a <boolean predicand> is of type BOOLEAN (found {t})")));
+        }
+        let Expr::Truth(c) = e else { return Ok(Cond::Value(e)) };
+        Ok(*c)
     }
 }

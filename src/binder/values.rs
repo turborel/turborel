@@ -32,6 +32,9 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         ValueSpecification::Literal(Literal::Datetime(w)) => datetime::literal(w, 0)?,
         // [ISO/IEC 9075:1992 §5.3 SR20] of its qualifier.
         ValueSpecification::Literal(Literal::Interval(i)) => (Value::Interval(*i), DataType::Interval(i.qualifier)),
+        // [ISO/IEC 9075-2:2023 §5.3 SR47, GR14] TRUE, FALSE or UNKNOWN, a BOOLEAN,
+        // UNKNOWN being its null value [§4.6.1].
+        ValueSpecification::Literal(Literal::Boolean(b)) => (b.map_or(Value::Null, Value::Bool), DataType::Boolean),
         // [X3.135-1986 §5.6 GR4] USER is the current authorization identifier.
         // [X3.135-1986 §5.6 SR6] its length is implementor-defined; we use the identifier's own length.
         // [ISO/IEC 9075:1992 §6.2 GR10, GR11] So are SESSION_USER, there

@@ -225,7 +225,13 @@ pub fn sampled(value: &Value) -> Value {
                 value.clone()
             }
         }
-        Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) | Value::Extension(_) => value.clone(),
+        Value::Null
+        | Value::Exact(_)
+        | Value::Approx(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Extension(_) => value.clone(),
     }
 }
 

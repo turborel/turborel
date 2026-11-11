@@ -216,6 +216,7 @@ impl Binder<'_> {
                 SetArg::CountStar => Derived::Yielding,
             },
             ValueExpression::Dyadic(..)
+            | ValueExpression::Boolean(_)
             | ValueExpression::CollationFor(_)
             | ValueExpression::Value(_)
             | ValueExpression::Call { .. }

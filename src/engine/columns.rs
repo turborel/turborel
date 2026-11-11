@@ -310,6 +310,7 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }

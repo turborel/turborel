@@ -195,6 +195,7 @@ fn kept(t: &DataType) -> bool {
         DataType::Character { length } | DataType::Varying { length } => *length <= SHORT,
         DataType::Exact { .. }
         | DataType::Approximate { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }

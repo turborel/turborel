@@ -108,6 +108,7 @@ fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
         | DataType::Approximate { .. }
         | DataType::Bit { .. }
         | DataType::BitVarying { .. }
+        | DataType::Boolean
         | DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }

@@ -430,7 +430,7 @@ pub fn heap_bytes(v: &Value) -> usize {
         Value::Char(s) => s.len(),
         Value::Bits(b) => b.bytes().len(),
         Value::Extension(e) => e.bytes.len(),
-        Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Datetime(_) | Value::Interval(_) => 0,
+        Value::Null | Value::Exact(_) | Value::Approx(_) | Value::Bool(_) | Value::Datetime(_) | Value::Interval(_) => 0,
     }
 }
 

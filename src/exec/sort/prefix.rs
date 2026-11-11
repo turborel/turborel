@@ -162,7 +162,9 @@ pub(super) fn prefix_of(value: &Value, descending: bool) -> Option<Prefix> {
             let (bits, held) = bit_string(b);
             (Kind::Bits, bits, held)
         }
-        Value::Extension(_) => return None,
+        // Truth values are compared whole, and two keys of them seldom
+        // tie past one byte, so a prefix would save little.
+        Value::Bool(_) | Value::Extension(_) => return None,
     };
     Some(finished((kind, bits, held), descending))
 }

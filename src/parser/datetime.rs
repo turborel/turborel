@@ -98,7 +98,7 @@ impl Parser {
         };
         self.advance();
         self.expect_kw(kw::FROM)?;
-        let source = Box::new(self.value_expression()?);
+        let source = Box::new(self.common_value_expression()?);
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::Extract { field, source, at })
     }
