@@ -3,8 +3,8 @@
 This file says what turborel implements of the SQL standards, and which
 choices it makes where the standards leave them open. The standards are read
 as one language (RULES.md D32). **ANSI X3.135-1986** ("SQL-86", FIPS PUB 127)
-comes first, extended by **ISO/IEC 9075:1992** ("SQL-92"). Where they differ,
-the newer one wins.
+comes first, extended by **ISO/IEC 9075:1992** ("SQL-92") and
+**ISO/IEC 9075-2:2023** ("SQL:2023"). Where they differ, the newer one wins.
 
 A citation like `§11.19 SR13` means clause 11.19, Syntax Rule 13. **F** is a
 Format (the BNF), **SR** a Syntax Rule, **GR** a General Rule and **AR** an

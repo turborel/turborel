@@ -61,7 +61,7 @@ verification approach DO-178C expects (§8).
 | D15 | Whether a run-time error is raised does not depend on the plan |
 | D18 | A limit the standard does not set is not a syntax error |
 | D19 | A failed undo damages its table |
-| D32 | SQL-86 and SQL-92 are one language |
+| D32 | SQL-86, SQL-92 and SQL:2023 are one language |
 | D33 | Schema changes are transactional |
 | D47 | Schema statements on their own |
 | D49 | Temporary tables, an instance per session |
@@ -303,15 +303,16 @@ A silently half-undone table would break §7.3 GR3b i and §8.9 GR1.
 Refusing the table instead hides a state no transaction produced, and the
 log can put it right.
 
-#### D32. SQL-86 and SQL-92 are one language
+#### D32. SQL-86, SQL-92 and SQL:2023 are one language
 
 ISO/IEC 9075:1992 extends X3.135-1986. The newer wins where they differ,
 and restrictions SQL-92 keeps only for Entry or Intermediate SQL are
 lifted. One consistent language serves programs better than a choice of
 dialects.
 
-SQL-92 comes first in full, then later standards through SQL:2023, each
-from its own text and never from memory or other products. The texts are
+SQL-92 and SQL:2023 are implemented side by side, each from its own text
+and never from memory or other products. Where SQL:2023 differs from
+SQL-92, it wins, as SQL-92 does over SQL-86. The texts are
 local and untracked, and cited as `[X3.135-1986 §…]`,
 `[ISO/IEC 9075:1992 §…]` and `[ISO/IEC 9075-2:2023 §…]`.
 
