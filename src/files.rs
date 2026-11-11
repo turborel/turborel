@@ -30,11 +30,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard, Weak};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, Weak};
 use std::time::Duration;
 
 use crate::disk::io::{DiskFile, Durability, FileLock, FileSystem, OpenMode};
 use crate::error::{Code, Result, SqlError};
+use crate::sync::Signal;
 
 /// \[DESIGN\] The default of FILES.MAX_OPEN: well under the 1024 most
 /// systems allow a process by default, for the connections and the rest
@@ -58,7 +59,7 @@ pub struct Registry {
     /// The uses so far, each file's last kept as its place in the order.
     clock: AtomicU64,
     /// Woken as a file is done being read or written, for one waiting.
-    done: Condvar,
+    done: Signal,
     waiting: Mutex<()>,
     /// Set as the database closes: no file is opened after.
     shut: AtomicBool,

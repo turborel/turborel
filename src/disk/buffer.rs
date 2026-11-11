@@ -34,7 +34,7 @@ mod tally;
 
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 pub use ahead::{Ahead, AheadReader};
@@ -49,7 +49,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
 use crate::memory::{Reservation, Undoing};
-use crate::sync::lock_builtin;
+use crate::sync::{Signal, lock_builtin};
 
 /// A file registered with a pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -169,7 +169,7 @@ struct Frame {
     loading: AtomicBool,
     /// Guards waiting for `loading` to clear.
     waiting: Mutex<()>,
-    changed: Condvar,
+    changed: Signal,
     content: RwLock<Vec<u8>>,
 }
 
@@ -182,7 +182,7 @@ impl Frame {
             dirty: AtomicBool::new(false),
             loading: AtomicBool::new(false),
             waiting: Mutex::new(()),
-            changed: Condvar::new(),
+            changed: Signal::default(),
             content: RwLock::new(Vec::new()),
         }
     }

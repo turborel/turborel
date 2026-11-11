@@ -1,11 +1,12 @@
 //! The mutations of a row's second writer waiting (RULES.md R-TEST-9, D28,
 //! D29): the wait, the deadlock refusal, the re-check of the version the
-//! first committed, and the served default.
+//! first committed, and the served default; and of signals (D27), a waiter
+//! counted and a notify made while one waits.
 
 use super::{Mutation, Package};
 
-/// The mutations of row waits, in the order they run.
-pub const WAITS: [Mutation; 7] = [
+/// The mutations of row waits and signals, in the order they run.
+pub const WAITS: [Mutation; 9] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
@@ -75,5 +76,25 @@ pub const WAITS: [Mutation; 7] = [
         replacement: "",
         integration: &["settings::a_served_database_waits_for_locks_by_default"],
         unit: &[],
+    },
+    Mutation {
+        name: "signal-uncounted",
+        package: Package::Core,
+        breaks: "signals: a waiter is not counted, so a notify skips it and it waits for nothing",
+        file: "src/sync/signal.rs",
+        original: "        waiting.fetch_add(1, Ordering::SeqCst);",
+        replacement: "        waiting.fetch_add(0, Ordering::SeqCst);",
+        integration: &[],
+        unit: &["sync::signal::tests::a_notify_wakes_each_thread_counted_waiting"],
+    },
+    Mutation {
+        name: "signal-notify-skipped",
+        package: Package::Core,
+        breaks: "signals: a notify of all is skipped while threads wait, so none wakes",
+        file: "src/sync/signal.rs",
+        original: "        if self.waiting.load(Ordering::SeqCst) > 0 {\n            self.condvar.notify_all();",
+        replacement: "        if self.waiting.load(Ordering::SeqCst) == 0 {\n            self.condvar.notify_all();",
+        integration: &[],
+        unit: &["sync::signal::tests::a_notify_wakes_each_thread_counted_waiting"],
     },
 ];

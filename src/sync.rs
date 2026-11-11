@@ -6,12 +6,17 @@
 //! as SQLCODE -910 rather than unwrapped, so the database refuses to go on
 //! with state it cannot trust.
 //!
-//! And the gate checkpoints shut (`Gate`), and the stripe of each thread
-//! (`thread_stripe`).
+//! And the gate checkpoints shut (`Gate`), the stripe of each thread
+//! (`thread_stripe`), and a condition variable that counts its waiters
+//! (`Signal`, `sync/signal.rs`).
 
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::error::{Code, SqlError};
+
+mod signal;
+
+pub(crate) use signal::Signal;
 
 /// The error for a lock whose holder panicked.
 fn poisoned<T>(_: PoisonError<T>) -> SqlError {

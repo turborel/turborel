@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
@@ -22,7 +22,7 @@ use super::{LockMode, LockWait, Timestamp, Transactions, TxId, Txn};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::sync::{lock, lock_builtin};
+use crate::sync::{Signal, lock, lock_builtin};
 
 /// \[DESIGN\] How long a lock wait sleeps before it looks again for a
 /// cancel of its statement (RULES.md D44), unless a release wakes it.
@@ -159,7 +159,7 @@ struct Holder {
 #[derive(Default)]
 pub(crate) struct TableLock {
     holders: Mutex<Vec<Holder>>,
-    released: Condvar,
+    released: Signal,
     /// Set when a change to the table could not be undone, until
     /// `Database::repair_table` builds its indexes again, or opening the
     /// database again recovers its rows (RULES.md D19). The damage a failed

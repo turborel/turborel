@@ -51,7 +51,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use super::{Log, LogCapabilities, Lsn, Records};
 use crate::diagnostics::{Diagnostics, NoDiagnostics};
@@ -60,7 +60,7 @@ use crate::disk::encoding::{Encoding, Pipeline};
 use crate::disk::io::{Durability, FileSystem};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
-use crate::sync::lock_builtin;
+use crate::sync::{Signal, lock_builtin};
 
 mod open;
 mod segments;
@@ -135,7 +135,7 @@ struct Segment {
     /// Appends that took this segment and have not finished.
     in_flight: AtomicUsize,
     idle: Mutex<()>,
-    drained: Condvar,
+    drained: Signal,
     /// Every block before this offset is durable.
     durable_end: AtomicU64,
     /// Whether it was ended, all its appends finished, and synced.
@@ -195,7 +195,7 @@ pub struct FileLog {
     rotating: AtomicBool,
     /// Whether a thread is syncing for a group; the others wait on `synced`.
     syncing: Mutex<bool>,
-    synced: Condvar,
+    synced: Signal,
     counters: Counters,
     /// Where a failure it goes on past is told.
     events: Arc<dyn Diagnostics>,
@@ -251,7 +251,7 @@ impl Segment {
             blocks,
             in_flight: AtomicUsize::new(0),
             idle: Mutex::new(()),
-            drained: Condvar::new(),
+            drained: Signal::default(),
             durable_end: AtomicU64::new(HEADER_LEN),
             sealed: AtomicBool::new(false),
         })
@@ -347,7 +347,7 @@ impl FileLog {
             segments: Mutex::new(segments.into_iter().map(|s| (s.number, s)).collect()),
             rotating: AtomicBool::new(false),
             syncing: Mutex::new(false),
-            synced: Condvar::new(),
+            synced: Signal::default(),
             counters: Counters::default(),
             events: Arc::new(NoDiagnostics),
             told: AtomicBool::new(false),

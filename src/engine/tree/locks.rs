@@ -5,11 +5,11 @@
 //! deadlock (§6.1, Theorem 1). Held locks are kept by shard, so writers of
 //! different nodes rarely meet.
 
-use std::sync::{Condvar, Mutex, PoisonError};
+use std::sync::{Mutex, PoisonError};
 
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
-use crate::sync::lock_builtin;
+use crate::sync::{Signal, lock_builtin};
 
 /// Shards of the held locks.
 const SHARDS: u64 = 64;
@@ -19,7 +19,7 @@ struct Shard {
     /// The pages locked in this shard: few at a time, as each writer holds
     /// at most three (§5).
     held: Mutex<Vec<PageId>>,
-    released: Condvar,
+    released: Signal,
 }
 
 /// The locks of one tree's nodes.
