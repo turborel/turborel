@@ -18,7 +18,7 @@ in `86 §5.5 SR3`. One marked `2023` is ISO/IEC 9075-2:2023, as in
 
 Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
-[SQL-92](#sql-92) · [Collations](#collations) · [Truth values](#truth-values) ·
+[SQL-92](#sql-92) · [Collations](#collations) · [SQL:2023](#sql2023) ·
 [Extensions](#extensions) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
@@ -483,10 +483,14 @@ whatever its collation.
 
 ---
 
-## Truth values
+## SQL:2023
 
-These follow ISO/IEC 9075-2:2023 with Feature T031 (BOOLEAN data type).
-Citations here are of that edition unless marked.
+What SQL:2023 adds beyond collations, written from ISO/IEC 9075-2:2023
+(RULES.md D32). Citations here are of that edition unless marked.
+
+### Truth values
+
+Feature T031 (BOOLEAN data type).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -509,6 +513,18 @@ is unknown. ANY and SOME were quantifiers alone.
 SQL:2023 reserves BOOLEAN and EVERY [§5.2], and SQL-92 does not, so both
 stay identifiers, key words only where they are read: BOOLEAN as a data
 type and EVERY before a parenthesis. A domain cannot be named BOOLEAN.
+
+### Numeric literals
+
+Feature T662 (underscores in numeric literals). An `<unsigned decimal
+integer>` holds an `<underscore>` between two digits [§5.3], and is the same
+without it [SR22], so it counts toward no precision. That holds of a
+literal's whole part, fraction and exponent, and of a string CAST reads as
+a number [§6.13 GR8b, GR9b]. A datetime's or an interval's string holds
+none [SR44-SR46]. An underscore anywhere else ends the number, which a
+`<separator>` or a `<delimiter token>` must follow (SQLCODE -101). The
+non-decimal integers of Feature T661, `0X`, `0O` and `0B`, are not
+implemented.
 
 ---
 

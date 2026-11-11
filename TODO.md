@@ -34,8 +34,6 @@ each group.
 
 ### Types and literals
 
-- Underscores in numeric literals (T662) [§5.3], as `1_000_000`. A rule of
-  the lexer alone.
 - BINARY and VARBINARY (T021) [§6.1], then BIT and BIT VARYING removed.
   SQL:2003 dropped the bit strings and SQL:2023 has none, so the newer text
   wins (D32), and `X'…'` becomes a binary string literal [§5.3]. A

@@ -3,7 +3,6 @@
 //! fail when it is broken. A mechanism a change adds gets one here; a change to a quoted snippet brings its
 //! mutation up to date (`verify` refuses one that no longer applies).
 
-mod booleans;
 mod collations;
 mod fill;
 mod kept;
@@ -12,6 +11,7 @@ mod readers;
 mod reads;
 mod server;
 mod shadow;
+mod sql2023;
 mod stats;
 mod tailorings;
 mod vr;
@@ -33,11 +33,11 @@ pub use waits::WAITS;
 pub use zones::ZONES;
 
 /// Every mutation, in the order they run: the core's, its kept plans', the
-/// read-only path's, reads', collations', tailorings', BOOLEAN's, shadow
+/// read-only path's, reads', collations', tailorings', SQL:2023's, shadow
 /// files', reads near the last, zeros filled ahead of the log, zone
 /// maintenance, sampled statistics, row waits, replication's, the server's.
 pub fn all() -> Vec<Mutation> {
-    let core: [&[Mutation]; 8] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &booleans::BOOLEANS, &SHADOW];
+    let core: [&[Mutation]; 8] = [&MUTATIONS, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &SHADOW];
     let rest: [&[Mutation]; 7] = [&near::NEAR, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER];
     core.into_iter().chain(rest).flatten().copied().collect()
 }

@@ -80,8 +80,9 @@ table's, or a correlation name's, `S.NAME`. See [Names](03-names.md).
 | National character string | `N'text'` | CHARACTER of its length |
 | Bit string | `B'1010'` | BIT of its length |
 | Hexadecimal string | `X'1F'` | BIT of four bits a digit |
-| Exact number | `42`, `-3.75`, `.5`, `5.` | NUMERIC of its digits |
+| Exact number | `42`, `-3.75`, `.5`, `5.`, `1_000_000` | NUMERIC of its digits |
 | Approximate number | `1.5E3`, `-2E-1` | FLOAT(53), of DOUBLE PRECISION's precision |
+| Boolean | `TRUE`, `FALSE`, `UNKNOWN` | BOOLEAN, UNKNOWN its null |
 | Date | `DATE '2026-10-28'` | DATE |
 | Time | `TIME '13:45:30.25'`, `TIME '13:45:30+02:00'` | TIME of its fraction's digits |
 | Timestamp | `TIMESTAMP '2026-10-28 13:45:30'` | TIMESTAMP of its fraction's digits |
@@ -119,6 +120,26 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): TIME '25:00:00' is no valid <datetime l
 
 The parts of `'ab' 'cd'` on one line are two strings, not one.
 
+A number may hold an underscore between two of its digits, in its whole
+part, its fraction or its exponent, to group them. It is the same number
+without them, and they count toward no limit. One anywhere else, first,
+last, beside a period or another underscore, is refused. CAST reads a
+string's number the same way, but a datetime's or an interval's string
+holds no underscore.
+
+```sql
+VALUES (1_000_000, 3.141_592, 6.022_140_76E23, CAST('1_000' AS INTEGER));
+VALUES 1__000;
+```
+
+```
+           |           |                          |
+-----------+-----------+--------------------------+--------------
+   1000000 |  3.141592 |            6.02214076E23 |         1000
+(1 row)
+turborel: SQLCODE -101 (SQLSTATE 2A000): "1" must be followed by a <delimiter token> or a <separator>, not '_' [X3.135-1986 §5.3 SR2] (at character 8)
+```
+
 ## Comments
 
 A comment begins with two minus signs and runs to the end of the line:
@@ -147,4 +168,5 @@ extensions.
 [SET](statements/set-setting.md) sets.
 [Key Words](../appendix/b-key-words.md) lists them all.
 
-The standard: ISO/IEC 9075:1992 §5.1–§5.3; X3.135-1986 §5.1–§5.3.
+The standard: ISO/IEC 9075:1992 §5.1–§5.3; X3.135-1986 §5.1–§5.3; ISO/IEC
+9075-2:2023 §5.3 for underscores and boolean literals.

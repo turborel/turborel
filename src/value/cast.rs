@@ -112,9 +112,19 @@ pub(crate) fn numeric_literal(s: &str) -> Result<Value> {
     )
 }
 
+/// [ISO/IEC 9075-2:2023 §5.3 SR22] The digits of `t` if it is an
+/// `<unsigned decimal integer>`, or empty, an `<underscore>` only between
+/// two digits: the same without its underscores.
+fn digits_of(t: &str) -> Option<String> {
+    let placed = !t.starts_with('_') && !t.ends_with('_') && !t.contains("__");
+    (placed && t.chars().all(|c| c.is_ascii_digit() || c == '_')).then(|| t.replace('_', ""))
+}
+
 /// [ISO/IEC 9075:1992 §5.3] The value of `s` if it is a `<signed numeric
 /// literal>`: an exact one, [+|-] digits with a period among or before
-/// them, or an approximate one, that followed by E and a signed integer.
+/// them, or an approximate one, that followed by E and a signed integer;
+/// its digits perhaps with underscores [ISO/IEC 9075-2:2023 §5.3,
+/// §6.13 GR8b, GR9b].
 fn literal_value(s: &str) -> Option<Value> {
     let (negative, body) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -125,17 +135,15 @@ fn literal_value(s: &str) -> Option<Value> {
         None => (body, None),
     };
     let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = |t: &str| t.chars().all(|c| c.is_ascii_digit());
-    if (whole.is_empty() && fraction.is_empty()) || !digits(whole) || !digits(fraction) {
+    let (whole, fraction) = (digits_of(whole)?, digits_of(fraction)?);
+    if whole.is_empty() && fraction.is_empty() {
         return None;
     }
     if let Some(e) = exponent {
         let e = e.strip_prefix('+').unwrap_or(e);
-        let unsigned = e.strip_prefix('-').unwrap_or(e);
-        if unsigned.is_empty() || !digits(unsigned) {
-            return None;
-        }
-        let x: f64 = format!("{mantissa}E{e}").parse().ok()?;
+        let (sign, unsigned) = e.strip_prefix('-').map_or(("", e), |u| ("-", u));
+        let unsigned = digits_of(unsigned).filter(|u| !u.is_empty())?;
+        let x: f64 = format!("{whole}.{fraction}E{sign}{unsigned}").parse().ok()?;
         return Some(Value::Approx(if negative { -x } else { x }));
     }
     let scale = u32::try_from(fraction.len()).ok()?;
@@ -149,7 +157,12 @@ mod tests {
     use super::*;
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3, §6.10 GR3b, GR5b i] what is a
-    /// `<signed numeric literal>`, and the shortest approximate literal.
+    /// `<signed numeric literal>`, and the shortest approximate literal;
+    /// [ISO/IEC 9075-2:2023 §5.3 SR22] its digits with underscores between them.
+    ///
+    /// `digits_of`'s decision, MC/DC pairs against "1_0", true: "_1" shows
+    /// the first underscore, "1_" the last, "1__0" two together, "A1" a
+    /// character neither digit nor underscore.
     #[test]
     fn numeric_literals() {
         let exact = |s: &str| if let Some(Value::Exact(d)) = literal_value(s) { Some((d.units, d.scale)) } else { None };
@@ -157,7 +170,10 @@ mod tests {
         assert_eq!(exact(".5"), Some((5, 1)));
         let Some(Value::Approx(x)) = literal_value("+1E-2") else { panic!("+1E-2 is approximate") };
         assert!((x - 0.01_f64).abs() < 1e-12_f64);
-        for bad in ["", ".", "1.2.3", "E1", "1E", "1E+", "A1", "--1"] {
+        assert_eq!(exact("1_000.000_5"), Some((10_000_005, 4)), "underscores between digits");
+        let Some(Value::Approx(y)) = literal_value("5.E1_0") else { panic!("5.E1_0 is approximate") };
+        assert!((y - 5e10_f64).abs() < 1.0_f64);
+        for bad in ["", ".", "1.2.3", "E1", "1E", "1E+", "A1", "--1", "_1", "1_", "1__0", "1_.5", "1._5", "1E_1", "_"] {
             assert!(literal_value(bad).is_none(), "{bad}");
         }
         assert_eq!(approximate_literal(0.0), "0E0");

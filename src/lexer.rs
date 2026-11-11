@@ -451,12 +451,16 @@ impl Scanner {
     ///
     /// or `<approximate numeric literal>` ::= `<mantissa>`E`<exponent>`, where
     /// `<exponent>` ::= `<signed integer>` ::= [+|-] `<unsigned integer>`.
+    ///
+    /// [ISO/IEC 9075-2:2023 §5.3] Each `<unsigned decimal integer>` of it may
+    /// hold an `<underscore>` between two digits, and is the same without
+    /// [SR22], so the token's text has none.
     fn number(&mut self) -> Tok {
         let start = self.at;
-        self.skip_while(is_digit);
+        self.skip_digits();
         if self.peek(0) == Some('.') {
             self.advance(1);
-            self.skip_while(is_digit);
+            self.skip_digits();
         }
         // The E in either case, as the letters of B'', X'' and N'' are
         // [ISO/IEC 9075:1992 §5.1 GR1].
@@ -465,11 +469,27 @@ impl Scanner {
             let before_digits = usize::from(matches!(self.peek(1), Some('+' | '-'))).saturating_add(1);
             if self.next_is(before_digits, is_digit) {
                 self.advance(before_digits);
-                self.skip_while(is_digit);
-                return Tok::ApproximateNumeric(self.text(start));
+                self.skip_digits();
+                return Tok::ApproximateNumeric(self.text(start).replace('_', ""));
             }
         }
-        Tok::ExactNumeric(self.text(start))
+        Tok::ExactNumeric(self.text(start).replace('_', ""))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §5.3] `<unsigned decimal integer>` ::= `<digit>`
+    /// \[{\[`<underscore>`\] `<digit>`}...\]: digits, an underscore taken
+    /// only after a digit and before another. One anywhere else is left,
+    /// and the number must not be followed by it (`check_followed`).
+    fn skip_digits(&mut self) {
+        loop {
+            let from = self.at;
+            self.skip_while(is_digit);
+            let between = self.at > from && self.peek(0) == Some('_') && self.next_is(1, is_digit);
+            if !between {
+                return;
+            }
+            self.advance(1);
+        }
     }
 
     /// [ISO/IEC 9075:1992 §5.3] `<character string literal>` ::= '

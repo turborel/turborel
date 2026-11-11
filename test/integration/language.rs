@@ -145,6 +145,32 @@ fn literals_give_their_values_5_2() {
     assert_eq!(rows(&s, "SELECT 1.5e2, 2e-1 FROM T WHERE ID = 1"), Ok(vec!["1.5E2,2E-1".into()]));
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §5.3 SR22, §6.13 GR8b, GR9b]
+/// an underscore between two digits of a numeric literal is as if it were
+/// not written, so it counts toward no precision; one anywhere else ends
+/// the number where nothing may follow it (SQLCODE -101). CAST reads a
+/// string's number so; a datetime's or an interval's string holds none
+/// [SR44-SR46].
+///
+/// The lexer's decision to take an underscore, MC/DC pairs against "1_5",
+/// true: "1._5" shows a digit before it, "1_a" a digit after it.
+#[test]
+fn underscores_in_numeric_literals_5_3() {
+    let db = setup();
+    let s = db.session("APP");
+    assert_eq!(rows(&s, "VALUES (1_000_000, 1_0.2_5, .0_1, 1_5E1_0, 2E-0_1)"), Ok(vec!["1000000,10.25,0.01,1.5E11,2E-1".into()]));
+    let longest = format!("{}_9", "9".repeat(usize::try_from(MAX_EXACT_PRECISION - 1).unwrap()));
+    assert_eq!(rows(&s, &format!("VALUES {longest}")), Ok(vec!["9".repeat(usize::try_from(MAX_EXACT_PRECISION).unwrap())]), "no digit");
+    for bad in ["VALUES 1_", "VALUES 1__0", "VALUES 1_.5", "VALUES 1._5", "VALUES 1_a", "VALUES 1E_1"] {
+        assert_eq!(code(&s, bad), Code::Lexical, "{bad}");
+    }
+    assert_eq!(rows(&s, "VALUES (CAST(' 1_000 ' AS INTEGER), CAST('2_5E-1' AS REAL))"), Ok(vec!["1000,2.5E0".into()]));
+    assert_eq!(code(&s, "VALUES CAST('1__0' AS INTEGER)"), Code::Data, "22018");
+    assert_eq!(code(&s, "VALUES INTERVAL '1_0' DAY"), Code::SyntaxRule, "SR44");
+    assert_eq!(code(&s, "VALUES DATE '2_026-01-01'"), Code::SyntaxRule, "SR46");
+    assert!(rows(&s, "SELECT _A FROM (VALUES 1) AS X (_A)").is_err(), "an identifier begins with a letter still");
+}
+
 /// Verifies: [X3.135-1986 §5.2 SR4]; [DESIGN] an exact literal of the maximum
 /// precision is accepted, and one digit more gets SQLCODE -900.
 #[test]

@@ -1,12 +1,13 @@
-//! The mutations of BOOLEAN (RULES.md R-TEST-9): truth values read as
-//! values and conditions, the set functions of truth values, an index on
-//! a BOOLEAN probed, and a dynamic parameter counted once however often
-//! the parser reads it.
+//! The mutations of what SQL:2023 adds to SQL-92 (RULES.md R-TEST-9, D32):
+//! BOOLEAN's truth values read as values and conditions, the set functions
+//! of truth values, an index on a BOOLEAN probed, and a dynamic parameter
+//! counted once however often the parser reads it; underscores in numeric
+//! literals.
 
 use super::{Mutation, Package};
 
-/// The mutations of BOOLEAN, in the order they run.
-pub const BOOLEANS: [Mutation; 6] = [
+/// The mutations of SQL:2023's additions, in the order they run.
+pub const SQL2023: [Mutation; 9] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -66,5 +67,35 @@ pub const BOOLEANS: [Mutation; 6] = [
         replacement: "            let index = read;",
         integration: &["dynamic_statements::a_parenthesized_parameter_is_counted_once_17_6"],
         unit: &[],
+    },
+    Mutation {
+        name: "underscore-after-no-digit",
+        package: Package::Core,
+        breaks: "an underscore is taken after a period as between digits, so 1._5 is a number",
+        file: "src/lexer.rs",
+        original: "            let between = self.at > from && self.peek(0) == Some('_') && self.next_is(1, is_digit);",
+        replacement: "            let between = self.peek(0) == Some('_') && self.next_is(1, is_digit);",
+        integration: &["language::underscores_in_numeric_literals_5_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "underscores-kept-in-number",
+        package: Package::Core,
+        breaks: "a numeric literal's underscores stay in its text, so its digits are misread and miscounted",
+        file: "src/lexer.rs",
+        original: "        Tok::ExactNumeric(self.text(start).replace('_', \"\"))",
+        replacement: "        Tok::ExactNumeric(self.text(start))",
+        integration: &["language::underscores_in_numeric_literals_5_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "cast-underscores-doubled",
+        package: Package::Core,
+        breaks: "CAST takes two underscores together in a string's number",
+        file: "src/value/cast.rs",
+        original: "    let placed = !t.starts_with('_') && !t.ends_with('_') && !t.contains(\"__\");",
+        replacement: "    let placed = !t.starts_with('_') && !t.ends_with('_');",
+        integration: &["language::underscores_in_numeric_literals_5_3"],
+        unit: &["value::cast::tests::numeric_literals"],
     },
 ];
