@@ -1,11 +1,12 @@
 //! The mutations of reads near the last (RULES.md R-TEST-9): what lets a
-//! remembered leaf answer; and of what lets a probe go unpriced.
+//! remembered leaf answer, and the entry after the last tried first; and
+//! of what lets a probe go unpriced.
 
 use super::{Mutation, Package};
 
 /// The mutations of reads near the last and point paths, in the order they
 /// run.
-pub const NEAR: [Mutation; 3] = [
+pub const NEAR: [Mutation; 5] = [
     Mutation {
         name: "near-stamp",
         package: Package::Core,
@@ -23,6 +24,26 @@ pub const NEAR: [Mutation; 3] = [
         file: "src/engine/tree/near.rs",
         original: " && node.key(0)? <= key)",
         replacement: " && (node.key(0)? <= key || key.len() > 0))",
+        integration: &[],
+        unit: &["engine::tree::tests::a_near_read_says_what_a_get_says"],
+    },
+    Mutation {
+        name: "near-after-unchecked",
+        package: Package::Core,
+        breaks: "reads near the last: the entry after the last found is taken without its key compared, so a read gives another key's row",
+        file: "src/engine/tree/near.rs",
+        original: "Some(next) if leaf.key(next)? == key => Ok(next),",
+        replacement: "Some(next) if leaf.key(next).is_ok() => Ok(next),",
+        integration: &[],
+        unit: &["engine::tree::tests::a_near_read_tries_the_entry_after_the_last"],
+    },
+    Mutation {
+        name: "node-key-value",
+        package: Package::Core,
+        breaks: "a leaf's keys: an entry's key is read from where its value begins, so every search goes astray",
+        file: "src/engine/tree/node.rs",
+        original: "        slice(heap, at.saturating_add(SLOT), u16_at(heap, at)?)\n",
+        replacement: "        slice(heap, at, u16_at(heap, at)?)\n",
         integration: &[],
         unit: &["engine::tree::tests::a_near_read_says_what_a_get_says"],
     },

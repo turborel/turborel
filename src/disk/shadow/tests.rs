@@ -365,3 +365,31 @@ fn a_block_damaged_before_a_commit_block_is_refused() {
 
 // Files made and removed at commits: split for size (RULES.md R-SIZE-4).
 mod made;
+
+/// Verifies: [DESIGN] RULES.md D30, shadow files: a granule written in
+/// part after a commit keeps the rest the file holds, read from the file
+/// below its size at that commit, the last granule as the first; one past
+/// that size reads zeros.
+#[test]
+fn a_granule_written_in_part_keeps_the_rest_of_the_file() {
+    let disk = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+    let size = GRANULE * 4;
+    file.write_all_at(&vec![5_u8; size], 0).unwrap();
+    shadows.commit().unwrap();
+    for at in [0, size - 1] {
+        file.write_all_at(b"x", u64::try_from(at).unwrap()).unwrap();
+    }
+    file.write_all_at(b"y", u64::try_from(size + 1).unwrap()).unwrap();
+    let mut expected = vec![5_u8; size + 2];
+    expected[0] = b'x';
+    expected[size - 1] = b'x';
+    expected[size] = 0;
+    expected[size + 1] = b'y';
+    let mut back = vec![1_u8; size + 2];
+    file.read_exact_at(&mut back, 0).unwrap();
+    assert_eq!(back, expected, "before the commit");
+    shadows.commit().unwrap();
+    assert_eq!(content(&*disk), expected, "after it");
+}

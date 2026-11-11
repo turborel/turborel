@@ -1,10 +1,11 @@
 //! The mutations of shadow files (RULES.md R-TEST-9): a granule held once
-//! in its side file, and what recovery takes a torn block for.
+//! in its side file, what recovery takes a torn block for, and the size
+//! below which a granule is read from the file.
 
 use super::{Mutation, Package};
 
 /// The mutations of shadow files, in the order they run.
-pub const SHADOW: [Mutation; 3] = [
+pub const SHADOW: [Mutation; 4] = [
     Mutation {
         name: "side-granule-once",
         package: Package::Core,
@@ -34,5 +35,15 @@ pub const SHADOW: [Mutation; 3] = [
         replacement: "            && committed",
         integration: &[],
         unit: &["disk::shadow::tests::a_block_damaged_before_a_commit_block_is_refused"],
+    },
+    Mutation {
+        name: "shadow-committed-bound",
+        package: Package::Core,
+        breaks: "shadow files: a granule in the upper half of the file is taken for zeros, so writing part of it loses the rest",
+        file: "src/disk/shadow/file.rs",
+        original: "pending.committed.is_some_and(|size| start < size)",
+        replacement: "pending.committed.is_some_and(|size| start < size / 2)",
+        integration: &[],
+        unit: &["disk::shadow::tests::a_granule_written_in_part_keeps_the_rest_of_the_file"],
     },
 ];

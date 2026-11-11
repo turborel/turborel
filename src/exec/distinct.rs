@@ -60,11 +60,12 @@ impl Distinct {
                 Err(e) => return Some(Err(e)),
             };
             let k = key(&row);
-            if self.seen.contains(&k) {
+            let bytes = k.len().saturating_add(ENTRY_BYTES);
+            // Hashed once: a key seen already is not inserted again.
+            if !self.seen.insert(k) {
                 continue;
             }
-            self.bytes = self.bytes.saturating_add(k.len()).saturating_add(ENTRY_BYTES);
-            self.seen.insert(k);
+            self.bytes = self.bytes.saturating_add(bytes);
             if self.bytes > self.work.limit() {
                 self.rest = Some(self.partitioned().unwrap_or_else(failed));
             }

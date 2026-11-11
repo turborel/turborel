@@ -221,7 +221,10 @@ impl<'a> Node<'a> {
     ///
     /// As `entry`.
     pub(super) fn key(&self, i: usize) -> Result<&'a [u8]> {
-        Ok(self.entry(i)?.0)
+        let slot = i.checked_mul(SLOT).and_then(|s| self.slots.checked_add(s)).ok_or_else(|| corrupt("a slot is past its end"))?;
+        let at = self.heap.checked_add(u16_at(self.bytes, slot)?).ok_or_else(|| corrupt("an entry is past its end"))?;
+        let heap = self.bytes.get(..self.slots).ok_or_else(|| corrupt("its heap is past its end"))?;
+        slice(heap, at.saturating_add(SLOT), u16_at(heap, at)?)
     }
 
     /// Where `key` is: `Ok(i)` if entry `i` holds it, `Err(i)` if it would

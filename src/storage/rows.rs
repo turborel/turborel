@@ -29,6 +29,9 @@ pub struct Near {
     pub(crate) leaf: Option<(u64, u64)>,
     /// The reads in a row that its page did not answer.
     pub(crate) misses: u8,
+    /// The place in that page of the entry the last read found, where the
+    /// next read looks first, just after it (`tree/near.rs`).
+    pub(crate) at: Option<usize>,
     /// The value read, kept so each read does not allocate one.
     pub(crate) bytes: Vec<u8>,
     /// The reading transaction, the table and its bookkeeping there, found

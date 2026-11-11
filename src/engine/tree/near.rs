@@ -43,9 +43,9 @@ impl BLinkTree {
         if let Some(found) = self.in_leaf(key, stamp, near)? {
             return Ok(found);
         }
-        let bytes = &mut near.bytes;
+        let (bytes, at) = (&mut near.bytes, &mut near.at);
         let mut path = Path { tallied: true, ..Path::default() };
-        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| copied(leaf, key, bytes))?;
+        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| copied(leaf, key, (bytes, at)))?;
         near.leaf = Some((leaf.0, stamp));
         Ok(found)
     }
@@ -63,7 +63,7 @@ impl BLinkTree {
                 self.tally.lookup();
                 near.misses = 0;
                 near.leaf = Some((leaf, stamp));
-                return copied(&node, key, &mut near.bytes).map(Some);
+                return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
             }
             next = node.right.filter(|_| node.level == 0 && !node.deleted && !node.covers(key)).map(|right| right.0);
         }
@@ -77,12 +77,21 @@ fn answers(node: &Node<'_>, key: &[u8]) -> Result<bool> {
     Ok(node.level == 0 && !node.deleted && node.len() > 0 && node.covers(key) && node.key(0)? <= key)
 }
 
-/// Whether `leaf` holds `key`, its value copied to `bytes`.
-fn copied(leaf: &Node<'_>, key: &[u8], bytes: &mut Vec<u8>) -> Result<bool> {
+/// Whether `leaf` holds `key`, its value copied to `bytes` and its place
+/// left in `at`. The entry after the one at `at` is tried first, as a scan
+/// through an index asks for the rows of a range in order; its key is
+/// compared, so a place left by another leaf costs one comparison.
+fn copied(leaf: &Node<'_>, key: &[u8], (bytes, at): (&mut Vec<u8>, &mut Option<usize>)) -> Result<bool> {
     bytes.clear();
-    match leaf.search(key)? {
-        Ok(at) => {
-            bytes.extend_from_slice(leaf.entry(at)?.1);
+    let next = at.and_then(|at| at.checked_add(1)).filter(|&next| next < leaf.len());
+    let found = match next {
+        Some(next) if leaf.key(next)? == key => Ok(next),
+        _ => leaf.search(key)?,
+    };
+    *at = found.ok();
+    match found {
+        Ok(found) => {
+            bytes.extend_from_slice(leaf.entry(found)?.1);
             Ok(true)
         }
         Err(_) => Ok(false),

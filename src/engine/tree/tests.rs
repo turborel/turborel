@@ -412,3 +412,25 @@ fn a_near_read_of_scattered_keys_stops_trying_its_leaf() {
     }
     assert_eq!(near.misses, 8);
 }
+
+/// Verifies: [DESIGN] RULES.md D31, reads near the last: the entry after
+/// the one last found is tried first, and taken only if it holds the key.
+/// MC/DC of the try, an entry after and its key the one asked: the tree's
+/// last key then one past it (no entry after), a place left by a read of
+/// another key (a key not the one asked), and the next key in order.
+#[test]
+fn a_near_read_tries_the_entry_after_the_last() {
+    let (tree, _scratch) = tree("near-after");
+    fill(&tree, 300);
+    let mut near = Near::default();
+    assert!(tree.get_near(&key(1), &mut near).unwrap());
+    let first = near.at;
+    assert!(tree.get_near(&key(2), &mut near).unwrap());
+    assert_eq!(near.at, first.map(|at| at + 1), "the next key in order");
+    near.at = first;
+    assert!(tree.get_near(&key(7), &mut near).unwrap());
+    assert_eq!(near.bytes, tree.get(&key(7)).unwrap().unwrap(), "the entry after holds another key");
+    assert!(tree.get_near(&key(300), &mut near).unwrap());
+    assert!(!tree.get_near(&key(301), &mut near).unwrap(), "no entry after the last");
+    assert_eq!(near.at, None, "a key not found leaves no place");
+}

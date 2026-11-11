@@ -175,9 +175,12 @@ impl Shadow {
             limit = limit.min(sealed.side.limit);
         }
         let mut content = vec![0; GRANULE];
-        if let Some(base) = read(&self.base)?.as_ref().filter(|_| start < limit)
-            && start < base.size()?
-        {
+        // The file holds zeros past its size at the last commit, or the
+        // sealed batch's granules, found above, so it is read only below
+        // that size, kept rather than asked for each read; while a batch
+        // is committed a read past the file's end gives zeros too.
+        let within = start < limit && pending.committed.is_some_and(|size| start < size);
+        if let Some(base) = read(&self.base)?.as_ref().filter(|_| within) {
             let _ = base.read_at(&mut content, start)?;
         }
         Ok(content)

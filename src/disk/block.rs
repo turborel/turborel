@@ -114,8 +114,12 @@ pub struct Recovery {
 pub type ReadWith<'a> = (&'a [Arc<dyn HashFunction>], &'a [Arc<dyn Encoding>]);
 
 /// \[DESIGN\] The bytes a read of a block takes first: a block that fits,
-/// as most of a log's do, is read in one call.
-const FIRST_READ: usize = 4096;
+/// as most of a log's do, is read in one call. A shadow file's block of a
+/// granule, 4096 bytes of content framed by at most 81 more (its length
+/// before and after, a digest of at most 64 bytes, and the granule's kind
+/// and number), fits too, as a page read from a side file reads one for
+/// each of its granules.
+const FIRST_READ: usize = 4096 + 128;
 
 /// \[DESIGN\] Times an appender checks whether the blocks before its own are
 /// published before it parks: most appends finish within a few checks, and
