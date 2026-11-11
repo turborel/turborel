@@ -22,13 +22,33 @@ CREATE COLLATION: define a collation
 
 A collation says how character strings compare. A column takes one by its
 `<collate clause>`, a domain likewise, and an expression, ORDER BY or GROUP
-BY names one for itself. There are four built in.
+BY names one for itself. These are built in.
 
 | Collation | Order | Pad |
 |---|---|---|
 | SQL_TEXT, UCS_BASIC | Unicode scalar value, so `Z` before `a` | PAD SPACE |
 | UNICODE | Language-neutral, by base letter, then accent, then case | NO PAD |
+| UNICODE_SV, UNICODE_DE_PHONEBOOK, ... | UNICODE as a language orders it | NO PAD |
 | CASE_INSENSITIVE | Scalar value of each character's case folding | PAD SPACE |
+
+A language's collation is UNICODE with that language's letters where its
+dictionaries put them. UNICODE_SV sorts `å`, `ä` and `ö` after `z`, UNICODE_ES
+puts `ñ` after `n`, and UNICODE_DE_PHONEBOOK sorts `ü` as `ue`. The order comes
+from CLDR 38, the Unicode Consortium's locale data. There is one for each of
+these, by its CLDR locale.
+
+| Collations | Languages |
+|---|---|
+| UNICODE_DA, UNICODE_FI, UNICODE_FO, UNICODE_IS, UNICODE_NB, UNICODE_NN, UNICODE_SE, UNICODE_SMN, UNICODE_SV | Danish, Finnish, Faroese, Icelandic, Norwegian Bokmål and Nynorsk, Northern and Inari Sami, Swedish |
+| UNICODE_DE_PHONEBOOK, UNICODE_ES, UNICODE_ES_TRADITIONAL, UNICODE_FR_CA, UNICODE_GL | German phone book, Spanish, traditional Spanish (`ch` and `ll` as letters), Canadian French (accents compared from the end), Galician |
+| UNICODE_CS, UNICODE_DSB, UNICODE_HSB, UNICODE_HU, UNICODE_LT, UNICODE_LV, UNICODE_PL, UNICODE_RO, UNICODE_SK, UNICODE_SL, UNICODE_SQ | Czech, Lower and Upper Sorbian, Hungarian, Lithuanian, Latvian, Polish, Romanian, Slovak, Slovenian, Albanian |
+| UNICODE_AF, UNICODE_BR, UNICODE_CY, UNICODE_EO, UNICODE_MT, UNICODE_TR, UNICODE_UZ, UNICODE_TK, UNICODE_WAE | Afrikaans, Breton, Welsh, Esperanto, Maltese, Turkish, Uzbek, Turkmen, Walser |
+| UNICODE_CEB, UNICODE_FIL, UNICODE_HAW, UNICODE_KL, UNICODE_LKT, UNICODE_TO, UNICODE_VI | Cebuano, Filipino, Hawaiian, Greenlandic, Lakota, Tongan, Vietnamese |
+| UNICODE_EE, UNICODE_HA, UNICODE_IG, UNICODE_LN, UNICODE_OM, UNICODE_WO, UNICODE_YO | Ewe, Hausa, Igbo, Lingala, Oromo, Wolof, Yoruba |
+
+A language not listed sorts by UNICODE. For some, such as Russian and Greek,
+that is already their order. Others, such as Croatian, Hindi and Chinese, have
+letters UNICODE puts elsewhere.
 
 CREATE COLLATION gives one of them another name and pad characteristic. Under
 PAD SPACE a shorter string compares as if extended with spaces. Under NO PAD

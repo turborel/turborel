@@ -38,4 +38,5 @@ FROM clause. A deeper one is refused rather than run out of stack.
 An index's key is compared whole in its page, so it is limited where a
 row is not; STORAGE.PAGE_BYTES, chosen as a database is made, raises the
 limit. A column of a collation is keyed by its sort key, about 16 bytes for
-each character under UNICODE, so its index holds shorter text.
+each character under UNICODE and half as many again under a language's
+collation, so its index holds shorter text.

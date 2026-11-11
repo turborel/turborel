@@ -186,7 +186,9 @@ fn privileges_are_described_21_2_10() {
     let column = "SELECT GRANTOR, GRANTEE, TABLE_NAME, COLUMN_NAME, PRIVILEGE_TYPE, IS_GRANTABLE \
                   FROM INFORMATION_SCHEMA.COLUMN_PRIVILEGES WHERE TABLE_SCHEMA = 'S' AND TABLE_NAME <> 'P'";
     assert_eq!(seen(&other, column), ["S|R|BIG|A|SELECT|NO", "S|R|BIG|I|SELECT|NO", "S|R|C|A|UPDATE|YES"]);
-    let usage = "SELECT GRANTOR, GRANTEE, OBJECT_NAME, OBJECT_TYPE, PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.USAGE_PRIVILEGES";
+    // The collations UNICODE_<LOCALE> are shown as UNICODE is (language_collations.rs).
+    let usage = "SELECT GRANTOR, GRANTEE, OBJECT_NAME, OBJECT_TYPE, PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.USAGE_PRIVILEGES \
+                 WHERE OBJECT_NAME NOT LIKE 'UNICODE!_%' ESCAPE '!'";
     assert_eq!(
         seen(&other, usage),
         [
@@ -237,7 +239,10 @@ fn the_information_schema_is_the_databases_21_1() {
         ["SQL_TEXT|UTF-8|1112064|SQL_TEXT"]
     );
     assert_eq!(
-        seen(&s, "SELECT COLLATION_NAME, PAD_ATTRIBUTE FROM INFORMATION_SCHEMA.COLLATIONS"),
+        seen(
+            &s,
+            "SELECT COLLATION_NAME, PAD_ATTRIBUTE FROM INFORMATION_SCHEMA.COLLATIONS WHERE COLLATION_NAME NOT LIKE 'UNICODE!_%' ESCAPE '!'"
+        ),
         ["CASE_INSENSITIVE|PAD SPACE", "SQL_TEXT|PAD SPACE", "UCS_BASIC|PAD SPACE", "UNICODE|NO PAD"]
     );
     db.schema(

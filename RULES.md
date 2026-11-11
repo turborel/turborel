@@ -131,6 +131,8 @@ Generated data counts too. `src/value/collation/unicode13.bin` is no
 dependency, but it can't be read line by line. So `cargo xtask unicode` makes
 it from Unicode's own files, the build holds it to a digest, and
 `cargo xtask unicode-check` runs Unicode's conformance file against it (D60).
+`src/value/collation/cldr38.rules` can be read, but `cargo xtask cldr` makes it
+from CLDR's files all the same, and the build holds it to a digest too.
 
 #### D6. Production code only
 
@@ -344,6 +346,14 @@ It would refuse `C = 'x'` of any collated column, so a literal, parameter,
 CAST or USER yields to a column's, as SQL-92's Coercible did. A session
 collation applies to direct and prepared statements, as they are prepared, and
 never to views or constraints, which keep what they were defined with.
+
+UNICODE_<LOCALE> [EXTENSION] is UNICODE tailored for a language by CLDR 38's
+rules, so UNICODE_SV puts `å`, `ä` and `ö` after `z`. A tailored letter has to
+fit between UNICODE's weights, so a tailoring's weights are 32 bits, UNICODE's
+in the upper half (`value/collation/tailored`). The rules tailor UNICODE itself
+rather than CLDR's root collation, which orders 105 of its 24,412 characters
+otherwise, currency symbols, length marks and a few Cyrillic letters among them.
+Languages whose rules reorder scripts have no collation yet.
 
 A collation's name fixes its behaviour. An index goes wrong when a library
 changes its order underneath it, so the table is in the tree, a new

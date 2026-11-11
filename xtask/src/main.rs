@@ -9,6 +9,7 @@
 mod baseline;
 mod bench;
 mod citations;
+mod cldr;
 mod command;
 mod coverage;
 mod error;
@@ -41,6 +42,7 @@ const MUTATE: &str = "mutate";
 const SIMULATE: &str = "simulate";
 const UNICODE: &str = "unicode";
 const UNICODE_CHECK: &str = "unicode-check";
+const CLDR: &str = "cldr";
 const FROM: &str = "--from";
 /// The support crate's check of the collation UNICODE against Unicode's own
 /// test file, built optimized, run outside `verify` (RULES.md D60).
@@ -85,7 +87,8 @@ commands:
                        sweeps of the replication simulator longer than `verify` runs (D57, R-TEST-5)
   {UNICODE} {FROM} DIR   the collation table, from Unicode's files in DIR (D60)
   {UNICODE_CHECK} {FROM} DIR
-                       the collation UNICODE against Unicode's test file in DIR (D60)"
+                       the collation UNICODE against Unicode's test file in DIR (D60)
+  {CLDR} {FROM} DIR      the tailorings of the collations UNICODE_<LOCALE>, from CLDR's files in DIR (D60)"
     )
 }
 
@@ -118,6 +121,7 @@ fn run(args: &[String]) -> Result<()> {
         [MUTATE, rest @ ..] => mutate::run(&root, rest),
         [SIMULATE, rest @ ..] => simulate(&root, rest),
         [UNICODE, FROM, dir] => unicode::generate(&root, Path::new(dir)),
+        [CLDR, FROM, dir] => cldr::generate(&root, Path::new(dir)),
         [UNICODE_CHECK, FROM, dir] => command::cargo(&root, &[UNICODE_CHECK_ARGS.as_slice(), &["--", dir]].concat(), NO_ENV),
         _ => Err(Error::new(usage())),
     }

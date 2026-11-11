@@ -450,6 +450,7 @@ collations). Citations here are of that edition unless marked.
 | SQL_TEXT | As UCS_BASIC (IA003) | PAD SPACE | `value/collation/folded.rs` |
 | UNICODE | ISO/IEC 14651:2020 without delta: UCA 13.0.0, Shifted, four levels | NO PAD | `value/collation/unicode.rs` |
 | CASE_INSENSITIVE | \[EXTENSION\] Each character's simple case folding, Unicode 13.0 | PAD SPACE | `value/collation/folded.rs` |
+| UNICODE_<LOCALE> | \[EXTENSION\] UNICODE tailored by CLDR 38's rules for a language: AF, BR, CEB, CS, CY, DA, DE_PHONEBOOK, DSB, EE, EO, ES, ES_TRADITIONAL, FI, FIL, FO, FR_CA, GL, HA, HAW, HSB, HU, IG, IS, KL, LKT, LN, LT, LV, MT, NB, NN, OM, PL, RO, SE, SK, SL, SMN, SQ, SV, TK, TO, TR, UZ, VI, WAE, WO, YO | NO PAD | `value/collation/tailored.rs` |
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -474,9 +475,9 @@ whatever its collation.
 
 | Rule | Choice | Where |
 |---|---|---|
-| IA060, §8.5 LIKE under a collation | By each character's folding, of UCS_BASIC, SQL_TEXT and CASE_INSENSITIVE. Under UNICODE, whose characters contract and expand, refused (SQLCODE -900). | `binder/collation.rs` |
+| IA060, §8.5 LIKE under a collation | By each character's folding, of UCS_BASIC, SQL_TEXT and CASE_INSENSITIVE. Under UNICODE and its tailorings, whose characters contract and expand, refused (SQLCODE -900). | `binder/collation.rs` |
 | §9.11 POSITION | Exact, by characters, not by the collation | `functions/strings.rs` |
-| §4.3.6 a key's length | About 16 bytes for each character under UNICODE, so an index's limit holds less text | `value/collation/unicode.rs`, `index/blink.rs` |
+| §4.3.6 a key's length | About 16 bytes for each character under UNICODE and half as many again under a tailoring, so an index's limit holds less text | `value/collation/unicode.rs`, `value/collation/tailored.rs`, `index/blink.rs` |
 | §12.7 GR12l, an impacted collation | A collation made FROM another made one keeps only the built-in it orders by, so none is impacted when USAGE on its source is revoked | `db/collations.rs` |
 
 ---
@@ -842,6 +843,7 @@ Where the standards are unclear, turborel reads them as follows.
 | A bit string's descriptor [§21.3.5] | The description gives a bit string type its length in bits, and an octet length and a collation only to a character string type, but the check constraint TABLE_OR_DOMAIN_CHECK_COMBINATIONS requires all three of BIT and BIT VARYING. Its length in bits and the octets those take are given, as facts of it. No collation is, as a bit string has none. |
 | Bit strings brought together [§9.3 SR3b] | The result of CASE, a set operation or a table value constructor of BIT(3) and BIT(4) is BIT(4), but no rule extends a value of 3 bits to it. Each keeps its bits, so a BIT(3) value inserted into a BIT(4) column through VALUES is refused (SQLSTATE 22026), as it is alone [§9.2 GR3h]. |
 | A time or timestamp without time zone [§4.5.1, §6.1 GR5] | SQL-92 keeps it in UTC, the session's displacement implied, so it is kept so, and a value retrieved shows in the displacement of the session that retrieves it (RULES.md D54). Stored in a column WITH TIME ZONE, it takes that displacement. A datetime literal in a `<default clause>` without one is of UTC [§5.3 SR18], as a definition is read again where no session is. |
+| UNICODE_<LOCALE> and CLDR [UTS #35 Part 5 §3.1] | The rules tailor UNICODE, not CLDR's root collation, which orders 105 of its 24,412 characters otherwise: currency symbols, length and repetition marks, and a few Cyrillic letters. Languages whose rules reorder scripts, such as Greek, Russian and Croatian, have no collation of their own. |
 | PAD SPACE under UNICODE [2023 §4.3.2, §11.43] | A space weighs only at the fourth level, so trailing spaces are taken away first. A character below a space then orders as past the string's end at that level, where padding would order it before. Only `CREATE COLLATION ... FROM UNICODE PAD SPACE` reaches this, as UNICODE itself is NO PAD. |
 | One datetime type [§9.3 SR3e, §11.5 SR3c] | "The same datetime type" is read as of the same fields, WITH TIME ZONE or not, as store assignment takes either [§9.2 SR2]. The result's type of CASE, a set operation or VALUES is WITH TIME ZONE if one is, of the greatest precision, and each value keeps its own form until it is assigned. DEFAULT CURRENT_TIME is taken by a TIME column. |
 | A datetime's or an interval's literal in CAST [§6.10 GR5e, GR6e, GR9a, GR12b] | "The shortest character string that conforms to the definition of `<literal>`" is read as the literal's string, the part between its quotes, an interval's sign before it. So CAST(DATE '2024-01-02' AS CHAR(10)) is '2024-01-02', and CAST from a string takes that string. An interval's fields after the leading one are of any digits, `<datetime value>` being an `<unsigned integer>` [§5.3]. SR21's two digits are of a datetime literal's. |

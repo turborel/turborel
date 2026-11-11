@@ -14,7 +14,9 @@
 
 mod folded;
 mod pad;
+mod rules;
 mod table;
+mod tailored;
 mod unicode;
 
 use std::fmt;
@@ -34,6 +36,9 @@ pub const SQL_TEXT: &str = "SQL_TEXT";
 pub const UNICODE: &str = "UNICODE";
 /// \[EXTENSION\] `UCS_BASIC` of each character's simple case folding.
 pub const CASE_INSENSITIVE: &str = "CASE_INSENSITIVE";
+/// \[EXTENSION\] What the name of `UNICODE` tailored for a language begins
+/// with, the language's CLDR locale after it: `UNICODE_SV`.
+pub const TAILORED: &str = "UNICODE_";
 
 /// The type of a sort key: how an index on a collated column holds it.
 pub const SORT_KEY: DataType = DataType::BitVarying { length: MAX_BIT_LENGTH };
@@ -123,15 +128,17 @@ pub fn builtin() -> Vec<Arc<dyn Collation>> {
     let mut all: Vec<Arc<dyn Collation>> = vec![Arc::new(folded::Scalar(UCS_BASIC)), Arc::new(folded::Scalar(SQL_TEXT))];
     if let Ok(table) = table::Table::read().map(Arc::new) {
         all.push(Arc::new(folded::Folded(Arc::clone(&table))));
+        all.extend(tailored::all(&table).into_iter().map(|t| -> Arc<dyn Collation> { Arc::new(t) }));
         all.push(Arc::new(Unicode::new(table)));
     }
     all
 }
 
 /// [ISO/IEC 9075-2:2023 §4.3.6] A built-in's pad characteristic. UNICODE
-/// conforms to ISO/IEC 14651 without delta, and padding would be one.
+/// conforms to ISO/IEC 14651 without delta, and padding would be one; its
+/// tailorings pad as it does.
 pub fn default_pad(name: &str) -> Pad {
-    if name == UNICODE { Pad::None } else { Pad::Space }
+    if name == UNICODE || name.starts_with(TAILORED) { Pad::None } else { Pad::Space }
 }
 
 #[cfg(test)]

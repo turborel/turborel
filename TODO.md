@@ -17,10 +17,10 @@ Code never cites this file (R-DOC-5).
 
 Nothing is chosen yet. Each item becomes a decision in RULES.md when done.
 
-- Language collations: UNICODE orders by the language-neutral table, so
-  Swedish or German order needs tailorings from CLDR, each a collation of its
-  own name and version. LIKE under UNICODE is refused until then, since
-  contractions don't compare one character at a time.
+- Languages whose CLDR rules reorder scripts, such as Croatian, Greek, Hindi
+  and Chinese, need script reordering before they get collations of their own.
+- LIKE under UNICODE and its tailorings is refused, since contractions don't
+  compare one character at a time.
 
 ---
 

@@ -61,7 +61,7 @@ impl Unicode {
     }
 
     /// \[UTS #10 S1\] `text` in Normalization Form D.
-    fn normalized(&self, text: &str) -> Vec<char> {
+    pub(super) fn normalized(&self, text: &str) -> Vec<char> {
         let mut out = Vec::with_capacity(text.len());
         for c in text.chars() {
             let code = u32::from(c);
@@ -88,23 +88,33 @@ impl Unicode {
     }
 
     /// \[UTS #10 S2\] The collation elements of `chars`.
-    fn elements(&self, mut chars: Vec<char>) -> Vec<Element> {
+    pub(super) fn elements(&self, mut chars: Vec<char>) -> Vec<Element> {
         let mut out = Vec::with_capacity(chars.len());
         let mut at = 0;
-        while let Some(&first) = chars.get(at) {
-            let Some(entry) = self.0.entry(first) else {
-                implicit(&self.0, first, &mut out);
-                at = at.saturating_add(1);
-                continue;
-            };
-            if !entry.contracts {
-                self.0.elements(entry.run, &mut out);
-                at = at.saturating_add(1);
-                continue;
-            }
-            at = self.contracted(&mut chars, at, &mut out);
+        while at < chars.len() {
+            at = self.step(&mut chars, at, &mut out);
         }
         out
+    }
+
+    /// \[UTS #10 S2\] The elements of the longest match at `at`, added to
+    /// `out`, and where the next starts.
+    pub(super) fn step(&self, chars: &mut Vec<char>, at: usize, out: &mut Vec<Element>) -> usize {
+        let Some(&first) = chars.get(at) else { return at.saturating_add(1) };
+        let Some(entry) = self.0.entry(first) else {
+            implicit(&self.0, first, out);
+            return at.saturating_add(1);
+        };
+        if !entry.contracts {
+            self.0.elements(entry.run, out);
+            return at.saturating_add(1);
+        }
+        self.contracted(chars, at, out)
+    }
+
+    /// `c`'s canonical combining class.
+    pub(super) fn class(&self, c: char) -> u32 {
+        self.0.class(c)
     }
 
     /// \[UTS #10 S2.1\] The longest contraction at `at`, and what S2.1.1

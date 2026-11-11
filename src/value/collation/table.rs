@@ -241,7 +241,13 @@ impl Table {
 /// The table's FNV-1a digest, to hold it to `DIGEST`.
 #[cfg(test)]
 pub(super) fn digest() -> u64 {
-    BYTES.iter().fold(FNV_BASIS, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(FNV_PRIME))
+    fnv(BYTES)
+}
+
+/// The FNV-1a digest of `bytes`.
+#[cfg(test)]
+pub(super) fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(FNV_BASIS, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(FNV_PRIME))
 }
 
 /// A record's count and offset, in one number.

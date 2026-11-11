@@ -1,0 +1,376 @@
+# The tailorings of the collations UNICODE_<LOCALE> (RULES.md D60), from the
+# collation rules of CLDR 38, made by `cargo xtask cldr`. Each begins with a
+# line "@ NAME LOCALE TYPE". The rules are CLDR's, under the terms of
+# LICENSE-UNICODE.
+@ UNICODE_AF af standard
+&N<<<ŉ
+@ UNICODE_BR br standard
+&C<ch<<<Ch<<<CH<c''h=c\u2019h<<<C''h=C\u2019h<<<C''H=C\u2019H
+@ UNICODE_CEB ceb standard
+&N<ñ<<<Ñ<ng<<<Ng<<<NG
+@ UNICODE_CS cs standard
+&C<č<<<Č
+&H<ch<<<cH<<<Ch<<<CH
+&R<ř<<<Ř
+&S<š<<<Š
+&Z<ž<<<Ž
+@ UNICODE_CY cy standard
+&C<ch<<<Ch<<<CH
+&D<dd<<<Dd<<<DD
+&F<ff<<<Ff<<<FF
+&G<ng<<<Ng<<<NG
+&L<ll<<<Ll<<<LL
+&P<ph<<<Ph<<<PH
+&R<rh<<<Rh<<<RH
+&T<th<<<Th<<<TH
+@ UNICODE_DA da standard
+[caseFirst upper]
+&D<<đ<<<Đ<<ð<<<Ð
+&th<<<þ
+&TH<<<Þ
+&Y<<ü<<<Ü<<ű<<<Ű
+&[before 1]ǀ<æ<<<Æ<<ä<<<Ä<ø<<<Ø<<ö<<<Ö<<ő<<<Ő<å<<<Å<<<aa<<<Aa<<<AA
+&oe<<œ<<<Œ
+@ UNICODE_DE_PHONEBOOK de phonebook
+&AE<<ä<<<Ä
+&OE<<ö<<<Ö
+&UE<<ü<<<Ü
+@ UNICODE_DSB dsb standard
+&C<č<<<Č<ć<<<Ć
+&E<ě<<<Ě
+&H<ch<<<cH<<<Ch<<<CH
+&[before 1] L<ł<<<Ł
+&N<ń<<<Ń
+&R<ŕ<<<Ŕ
+&S<š<<<Š<ś<<<Ś
+&Z<ž<<<Ž<ź<<<Ź
+@ UNICODE_EE ee standard
+&̌<<̂
+&D<dz<<<Dz<<<DZ<ɖ<<<Ɖ
+&E<ɛ<<<Ɛ
+&F<ƒ<<<Ƒ
+&G<gb<<<Gb<<<GB<ɣ<<<Ɣ
+&H<x<<<X
+&K<kp<<<Kp<<<KP
+&N<ny<<<Ny<<<NY<ŋ<<<Ŋ
+&O<ɔ<<<Ɔ
+&T<ts<<<Ts<<<TS
+&V<ʋ<<<Ʋ
+@ UNICODE_EO eo standard
+&C<ĉ<<<Ĉ
+&G<ĝ<<<Ĝ
+&H<ĥ<<<Ĥ
+&J<ĵ<<<Ĵ
+&S<ŝ<<<Ŝ
+&U<ŭ<<<Ŭ
+@ UNICODE_ES es standard
+&N<ñ<<<Ñ
+@ UNICODE_ES_TRADITIONAL es traditional
+&N<ñ<<<Ñ
+&C<ch<<<Ch<<<CH
+&l<ll<<<Ll<<<LL
+@ UNICODE_FI fi standard
+&D\u0335<<đ<<<Đ
+&G\u0335<<ǥ<<<Ǥ
+&N\u0335<<ŋ<<<Ŋ
+&T\u0335<<ŧ<<<Ŧ
+&Y<<ü<<<Ü
+&Z\u0335<<ʒ<<<Ʒ
+&[before 1]ǀ<å<<<Å<ä<<<Ä<<æ<<<Æ<ö<<<Ö<<ø<<<Ø
+@ UNICODE_FIL fil standard
+&N<ñ<<<Ñ<ng<<<Ng<<<NG
+@ UNICODE_FO fo standard
+&D<<đ<<<Đ<<ð<<<Ð
+&t<<<þ/h
+&T<<<Þ/H
+&Y<<ü<<<Ü<<ű<<<Ű
+&[before 1]ǀ<æ<<<Æ<<ä<<<Ä<<ę<<<Ę<ø<<<Ø<<ö<<<Ö<<ő<<<Ő<<œ<<<Œ<å<<<Å<<<aa<<<Aa<<<AA
+@ UNICODE_FR_CA fr_CA standard
+[backwards 2]
+@ UNICODE_GL gl standard
+&N<ñ<<<Ñ
+@ UNICODE_HA ha standard
+&B<ɓ<<<Ɓ
+&D<ɗ<<<Ɗ
+&K<ƙ<<<Ƙ
+&S<sh<<<Sh<<<SH
+&T<ts<<<Ts<<<TS
+&Y<ƴ<<<ʼy<<<''y<<<Ƴ<<<ʼY<<<''Y
+@ UNICODE_HAW haw standard
+&a<e<<<E<i<<<I<o<<<O<u<<<U
+&w<ʻ
+@ UNICODE_HSB hsb standard
+&C<č<<<Č<ć<<<Ć
+&E<ě<<<Ě
+&H<ch<<<cH<<<Ch<<<CH
+&[before 1] L<ł<<<Ł
+&R<ř<<<Ř
+&S<š<<<Š
+&Z<ž<<<Ž<ź<<<Ź
+@ UNICODE_HU hu standard
+&C<cs<<<Cs<<<CS
+&D<dz<<<Dz<<<DZ
+&DZ<dzs<<<Dzs<<<DZS
+&G<gy<<<Gy<<<GY
+&L<ly<<<Ly<<<LY
+&N<ny<<<Ny<<<NY
+&S<sz<<<Sz<<<SZ
+&T<ty<<<Ty<<<TY
+&Z<zs<<<Zs<<<ZS
+&O<ö<<<Ö<<ő<<<Ő
+&U<ü<<<Ü<<ű<<<Ű
+&cs<<<ccs/cs
+&Cs<<<Ccs/cs
+&CS<<<CCS/CS
+&dz<<<ddz/dz
+&Dz<<<Ddz/dz
+&DZ<<<DDZ/DZ
+&dzs<<<ddzs/dzs
+&Dzs<<<Ddzs/dzs
+&DZS<<<DDZS/DZS
+&gy<<<ggy/gy
+&Gy<<<Ggy/gy
+&GY<<<GGY/GY
+&ly<<<lly/ly
+&Ly<<<Lly/ly
+&LY<<<LLY/LY
+&ny<<<nny/ny
+&Ny<<<Nny/ny
+&NY<<<NNY/NY
+&sz<<<ssz/sz
+&Sz<<<Ssz/sz
+&SZ<<<SSZ/SZ
+&ty<<<tty/ty
+&Ty<<<Tty/ty
+&TY<<<TTY/TY
+&zs<<<zzs/zs
+&Zs<<<Zzs/zs
+&ZS<<<ZZS/ZS
+@ UNICODE_IG ig standard
+&B<ch<<<Ch<<<CH
+&G<gb<<<Gb<<<GB<gh<<<Gh<<<GH<gw<<<Gw<<<GW
+&I<ị<<<Ị
+&K<kp<<<Kp<<<KP<kw<<<Kw<<<KW
+&N<ṅ<<<Ṅ<nw<<<Nw<<<NW<ny<<<Ny<<<NY
+&O<ọ<<<Ọ
+&S<sh<<<Sh<<<SH
+&U<ụ<<<Ụ
+@ UNICODE_IS is standard
+&[before 1]b<á<<<Á
+&d<<đ<<<Đ<ð<<<Ð
+&[before 1]f<é<<<É
+&[before 1]j<í<<<Í
+&[before 1]p<ó<<<Ó
+&[before 1]v<ú<<<Ú
+&[before 1]z<ý<<<Ý
+&[before 1]ǀ<æ<<<Æ<<ä<<<Ä<ö<<<Ö<<ø<<<Ø<å<<<Å
+@ UNICODE_KL kl standard
+&D<<đ<<<Đ<<ð<<<Ð
+&Q<<ĸ<<<K''
+&t<<<þ/h
+&T<<<Þ/H
+&Y<<ü<<<Ü<<ű<<<Ű
+&[before 1]ǀ<æ<<<Æ<<ä<<<Ä<<ę<<<Ę<ø<<<Ø<<ö<<<Ö<<ő<<<Ő<<œ<<<Œ<å<<<Å
+@ UNICODE_LKT lkt standard
+&C<č<<<Č
+&G<ǧ<<<Ǧ
+&H<ȟ<<<Ȟ
+&S<š<<<Š
+&Z<ž<<<Ž
+@ UNICODE_LN ln standard
+&E<ɛ<<<Ɛ
+&O<<ɔ<<<Ɔ
+@ UNICODE_LT lt standard
+&̀=̇̀
+&́=̇́
+&̃=̇̃
+&A<<ą<<<Ą
+&C<č<<<Č
+&E<<ę<<<Ę<<ė<<<Ė
+&I<<į<<<Į<<y<<<Y
+&S<š<<<Š
+&U<<ų<<<Ų<<ū<<<Ū
+&Z<ž<<<Ž
+@ UNICODE_LV lv standard
+&[before 1]D<č<<<Č
+&[before 1]H<ģ<<<Ģ
+&I<<y<<<Y
+&[before 1]L<ķ<<<Ķ
+&[before 1]M<ļ<<<Ļ
+&[before 1]O<ņ<<<Ņ
+&[before 1]S<ŗ<<<Ŗ
+&[before 1]T<š<<<Š
+&[before 1]Ʒ<ž<<<Ž
+@ UNICODE_MT mt standard
+[caseFirst upper]
+&[before 1]c<ċ<<<Ċ
+&[before 1]g<ġ<<<Ġ
+&[before 1]h<għ<<<gĦ<<<Għ<<<GĦ
+&[before 1]i<ħ<<<Ħ
+&[before 1]z<ż<<<Ż
+@ UNICODE_NB nb standard
+&D<<đ<<<Đ<<ð<<<Ð
+&t<<<þ/h
+&T<<<Þ/H
+&Y<<ü<<<Ü<<ű<<<Ű
+&[before 1]ǀ<æ<<<Æ<<ä<<<Ä<<ę<<<Ę<ø<<<Ø<<ö<<<Ö<<ő<<<Ő<<œ<<<Œ<å<<<Å<<aa<<<Aa<<<AA
+@ UNICODE_NN nn standard
+&D<<đ<<<Đ<<ð<<<Ð
+&t<<<þ/h
+&T<<<Þ/H
+&Y<<ü<<<Ü<<ű<<<Ű
+&[before 1]ǀ<æ<<<Æ<<ä<<<Ä<<ę<<<Ę<ø<<<Ø<<ö<<<Ö<<ő<<<Ő<<œ<<<Œ<å<<<Å<<aa<<<Aa<<<AA
+@ UNICODE_OM om standard
+&Z<ch<<<Ch<<<CH<dh<<<Dh<<<DH<kh<<<Kh<<<KH<ny<<<Ny<<<NY<ph<<<Ph<<<PH<sh<<<Sh
+@ UNICODE_PL pl standard
+&A<ą<<<Ą
+&C<ć<<<Ć
+&E<ę<<<Ę
+&L<ł<<<Ł
+&N<ń<<<Ń
+&O<ó<<<Ó
+&S<ś<<<Ś
+&Z<ź<<<Ź<ż<<<Ż
+@ UNICODE_RO ro standard
+&A<ă<<<Ă<â<<<Â
+&I<î<<<Î
+&S<ş=ș<<<Ş=Ș
+&T<ţ=ț<<<Ţ=Ț
+@ UNICODE_SE se standard
+&[before 1]b<á<<<Á
+&[before 1]d<č
+<<<Č<ʒ
+<<<Ʒ<ǯ
+<<<Ǯ
+&[before 1]e<đ
+<<<Đ<<ð
+<<<Ð
+&[before 1]h<ǧ
+<<<Ǧ<ǥ
+<<<Ǥ
+&[before 1]l<ǩ
+<<<Ǩ
+&[before 1]o<ŋ
+<<<Ŋ<<ń
+<<<Ń<<ñ
+<<<Ñ
+&[before 1]t<š
+<<<Š
+&[before 1]u<ŧ
+<<<Ŧ<<þ
+<<<Þ
+&y<<ü
+<<<Ü<<ű
+<<<Ű
+&[before 1]ǀ
+<ž
+<<<Ž<ø
+<<<Ø<<œ
+<<<Œ<æ
+<<<Æ<å
+<<<Å<<ȧ
+<<<Ȧ<ä
+<<<Ä<<ã
+<<<Ã<ö
+<<<Ö<<ő
+<<<Ő<<õ
+<<<Õ<<ô
+<<<Ô<<ǫ
+<<<Ǫ
+@ UNICODE_SK sk standard
+&A<ä<<<Ä
+&C<č<<<Č
+&H<ch<<<cH<<<Ch<<<CH
+&O<ô<<<Ô
+&R<ř<<<Ř
+&S<š<<<Š
+&Z<ž<<<Ž
+@ UNICODE_SL sl standard
+&C<č<<<Č<ć<<<Ć
+&D<đ<<<Đ
+&S<š<<<Š
+&Z<ž<<<Ž
+@ UNICODE_SMN smn standard
+&A<â<<<Â<<à<<<À
+&C<č<<<Č
+&D<đ<<<Đ
+&Ŋ<<ñ<<<Ñ<<ń<<<Ń
+&S<š<<<Š
+&Z<ž<<<Ž<æ<<<Æ<ø<<<Ø<å<<<Å<ã<<<Ã<ä<<<Ä<á<<<Á<ö<<<Ö
+@ UNICODE_SQ sq standard
+&[before 1]D<ç<<<Ç
+&[before 1]E<dh<<<Dh<<<DH
+&[before 1]F<ë<<<Ë
+&[before 1]H<gj<<<Gj<<<GJ
+&[before 1]M<ll<<<Ll<<<LL
+&[before 1]O<nj<<<Nj<<<NJ
+&[before 1]S<rr<<<Rr<<<RR
+&[before 1]T<sh<<<Sh<<<SH
+&[before 1]U<th<<<Th<<<TH
+&[before 1]Y<xh<<<Xh<<<XH
+&[before 1]Ʒ<zh<<<Zh<<<ZH
+@ UNICODE_SV sv standard
+&D<<đ<<<Đ<<ð<<<Ð
+&t<<<þ/h
+&T<<<Þ/H
+&v<<<V<<w<<<W
+&Y<<ü<<<Ü<<ű<<<Ű
+&[before 1]ǀ<å<<<Å<ä<<<Ä<<æ<<<Æ<<ę<<<Ę<ö<<<Ö<<ø<<<Ø<<ő<<<Ő<<œ<<<Œ<<ô<<<Ô
+@ UNICODE_TK tk standard
+&C<ç<<<Ç
+&E<ä<<<Ä
+&J<ž<<<Ž
+&N<ň<<<Ň
+&O<ö<<<Ö
+&S<ş<<<Ş
+&U<ü<<<Ü
+&Y<ý<<<Ý
+@ UNICODE_TO to standard
+&n<ng<<<Ng<<<NG<<<ŋ<<<Ŋ
+&z<ʻ<<<ʽ
+&a<<á<<<Á<<ā<<<Ā
+&e<<é<<<É<<ē<<<Ē
+&i<<í<<<Í<<ī<<<Ī
+&o<<ó<<<Ó<<ō<<<Ō
+&u<<ú<<<Ú<<ū<<<Ū
+@ UNICODE_TR tr standard
+&C<ç<<<Ç
+&G<ğ<<<Ğ
+&[before 1]i<ı<<<I
+&i<<<İ
+&O<ö<<<Ö
+&S<ş<<<Ş
+&U<ü<<<Ü
+@ UNICODE_UZ uz standard
+&[before 1]ʒ<oʻ=o‘=o''<<<Oʻ=O‘=O''
+<gʻ=g‘=g''<<<Gʻ=G‘=G''
+<sh<<<Sh<<<SH
+<ch<<<Ch<<<CH
+@ UNICODE_VI vi standard
+&̀<<̉<<̃<<́<<̣
+&a<ă<<<Ă<â<<<Â
+&d<đ<<<Đ
+&e<ê<<<Ê
+&o<ô<<<Ô<ơ<<<Ơ
+&u<ư<<<Ư
+@ UNICODE_WAE wae standard
+&á=aa
+&ã=ää
+&é=ee
+&í=ii
+&ó=oo
+&õ=öö
+&č=ch
+&š=sch
+&ú=uu
+&ũ=üü
+@ UNICODE_WO wo standard
+&A<à<<<À
+&E<é<<<É<ë<<<Ë
+&N<ñ<<<Ñ<ŋ<<<Ŋ
+&O<ó<<<Ó
+@ UNICODE_YO yo standard
+&E<ẹ<<<Ẹ
+&G<gb<<<Gb<<<GB
+&O<ọ<<<Ọ
+&S<ṣ<<<Ṣ
