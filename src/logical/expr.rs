@@ -507,7 +507,7 @@ mod tests {
         assert!(!case(compare(column(), column()), column()).can_raise());
         assert!(case(compare(quotient(), column()), column()).can_raise());
         assert!(case(compare(column(), column()), quotient()).can_raise());
-        assert!(Expr::Cast(Box::new(column()), DataType::Character { length: 1 }).can_raise());
+        assert!(Expr::Cast(Box::new(column()), DataType::character(1)).can_raise());
     }
 
     /// Verifies: [DESIGN] a condition can raise exactly when one of its operands can.

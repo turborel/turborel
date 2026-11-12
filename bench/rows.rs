@@ -89,9 +89,9 @@ fn table(bench: &Bench, long: usize) -> (RowStore, Arc<dyn TableStorage>) {
     let store = RowStore::new(TableFiles::new(pool, file, Arc::new(MemoryLog::new())), TableOptions::default());
     let columns = [
         ("K", DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric }),
-        ("NAME", DataType::Character { length: 40 }),
+        ("NAME", DataType::character(40)),
         ("F", DataType::Approximate { precision: 53, spelled: Spelled::Float }),
-        ("LAST", DataType::Character { length: u32::try_from(last_length(long)).unwrap() }),
+        ("LAST", DataType::character(u32::try_from(last_length(long)).unwrap())),
     ];
     let desc = TableDesc {
         name: QualifiedName { auth: "A".into(), ident: "T".into() },

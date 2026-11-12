@@ -33,7 +33,7 @@ mod runs;
 pub mod scan;
 
 use crate::error::{Code, Result, SqlError};
-use crate::value::{DataType, Value};
+use crate::value::{CharUnits, DataType, Value};
 
 use encoded::{Body, Sizer};
 
@@ -301,12 +301,14 @@ impl<'a> Chunk<'a> {
 /// \[DESIGN\] Of a character string type, the characters a value of it is
 /// padded to as it is read, if any: a CHARACTER string's length, written
 /// without its trailing spaces (`record.rs`), a VARCHAR's none, written as
-/// it is; none of any other type.
+/// it is; none of any other type, nor of CHARACTER whose length is in
+/// octets, each of whose values is padded to its own number of characters.
 pub fn padding(t: &DataType) -> Option<Option<usize>> {
     match t {
-        DataType::Character { length } => usize::try_from(*length).ok().map(Some),
+        DataType::Character { length, units: CharUnits::Characters } => usize::try_from(*length).ok().map(Some),
         DataType::Varying { .. } => Some(None),
-        DataType::Exact { .. }
+        DataType::Character { units: CharUnits::Octets, .. }
+        | DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }

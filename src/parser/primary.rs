@@ -10,7 +10,7 @@ use crate::ast::{
     CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
 };
 use crate::error::Result;
-use crate::functions::{EVERY, FORMAT, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS};
+use crate::functions::{EVERY, FORMAT, GREATEST, LEAST, LPAD, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, using};
 use crate::lexer::{Tok, delim, kw};
 
 impl Parser {
@@ -271,6 +271,12 @@ impl Parser {
                 vec![needle, self.common_value_expression()?]
             }
             _ => vec![self.common_value_expression()?],
+        };
+        // [ISO/IEC 9075-2:2023 §6.31, §6.33] USING of CHAR_LENGTH, POSITION
+        // and SUBSTRING [Feature T062].
+        let name = match self.char_length_units()? {
+            Some(units) => using(name, units).ok_or_else(|| self.syntax("USING follows no CHAR_LENGTH, POSITION or SUBSTRING"))?,
+            None => name,
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::Function { name, args, at })

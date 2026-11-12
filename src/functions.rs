@@ -46,7 +46,7 @@ pub use regex::{
     AFTER, CHARACTERS, FLAG, LIKE_REGEX, LikeRegex, OCCURRENCE, OCCURRENCES_REGEX, OCTETS, POSITION_REGEX, REGEX_FUNCTIONS, START,
     SUBSTRING_REGEX, TRANSLATE_REGEX, regex_function, subject_of,
 };
-pub use strings::CONCATENATION;
+pub use strings::{CONCATENATION, using};
 pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;
 use truths::Truths;

@@ -10,7 +10,7 @@ use crate::functions::{
     AFTER, CHARACTERS, FLAG, OCCURRENCE, OCCURRENCES_REGEX, OCTETS, POSITION_REGEX, START, SUBSTRING_REGEX, TRANSLATE_REGEX,
 };
 use crate::lexer::{Tok, delim, kw};
-use crate::value::Decimal;
+use crate::value::{CharUnits, Decimal};
 
 /// A character literal of `s`.
 fn characters(s: &str) -> ValueExpression {
@@ -20,6 +20,23 @@ fn characters(s: &str) -> ValueExpression {
 /// An exact literal of `n`.
 fn exact(n: i128) -> ValueExpression {
     ValueExpression::Value(ValueSpecification::Literal(Literal::Exact(Decimal::new(n, 0))))
+}
+
+impl Parser {
+    /// [ISO/IEC 9075-2:2023 §6.1, §6.31, §6.33] \[USING `<char length
+    /// units>`\]: the units, if written.
+    pub(super) fn char_length_units(&mut self) -> Result<Option<CharUnits>> {
+        if !self.accept_kw(kw::USING) {
+            return Ok(None);
+        }
+        if self.accept_word(CHARACTERS) {
+            Ok(Some(CharUnits::Characters))
+        } else if self.accept_word(OCTETS) {
+            Ok(Some(CharUnits::Octets))
+        } else {
+            Err(self.syntax("[ISO/IEC 9075-2:2023 §6.1] expected CHARACTERS or OCTETS after USING"))
+        }
+    }
 }
 
 /// What follows the subject, written or implicit.
@@ -83,12 +100,10 @@ impl Parser {
     /// SR12].
     fn regex_rest(&mut self, name: &str) -> Result<Rest> {
         let from = if self.accept_kw(kw::FROM) { self.common_value_expression()? } else { exact(1) };
-        let units = if self.accept_kw(kw::USING) {
-            let unit = [CHARACTERS, OCTETS].into_iter().find(|u| self.accept_word(u));
-            characters(unit.ok_or_else(|| self.syntax("[ISO/IEC 9075-2:2023 §6.1] expected CHARACTERS or OCTETS"))?)
-        } else {
-            characters(CHARACTERS)
-        };
+        let units = characters(match self.char_length_units()? {
+            Some(CharUnits::Octets) => OCTETS,
+            Some(CharUnits::Characters) | None => CHARACTERS,
+        });
         let translate = name == TRANSLATE_REGEX;
         let (occurrence, all) = if name != OCCURRENCES_REGEX && self.accept_word(OCCURRENCE) {
             if translate && self.accept_kw(kw::ALL) { (exact(1), true) } else { (self.common_value_expression()?, false) }

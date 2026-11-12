@@ -9,7 +9,7 @@ use crate::value::Decimal;
 use crate::value::Spelled;
 
 const MONEY: DataType = DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric };
-const CODE: DataType = DataType::Character { length: 3 };
+const CODE: DataType = DataType::character(3);
 
 fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))
@@ -75,7 +75,7 @@ fn pairs_are_counted() {
     index.remove(&k, 1).unwrap();
     index.remove(&k, 9).unwrap();
     assert_eq!(index.rows(&k).unwrap(), vec![2]);
-    let long = Arc::<dyn Index>::from(method.create(&[DataType::Character { length: 9_000 }]).unwrap());
+    let long = Arc::<dyn Index>::from(method.create(&[DataType::character(9_000)]).unwrap());
     let refused = long.insert(Key(vec![Value::Char("x".repeat(9_000))]), 1).err().map(|e| e.code);
     assert_eq!(refused, Some(Code::Unsupported));
 }

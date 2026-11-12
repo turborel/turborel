@@ -66,7 +66,7 @@ fn probes_find_what_sql_compares() {
 /// 'ab ' equals 'ab' and 'abcd' is above 'abc'; keys come back padded.
 #[test]
 fn strings_longer_than_the_column_are_compared_padded() {
-    let index = index(&[DataType::Character { length: 3 }]);
+    let index = index(&[DataType::character(3)]);
     for (row, s) in (1..).zip(["ab", "abc", "abd"]) {
         index.insert(Key(vec![Value::Char(s.into())]), row).unwrap();
     }
@@ -162,7 +162,7 @@ fn counts_survive_threads() {
 fn long_and_malformed_entries_are_refused() {
     let most = index(&[MONEY]).tree.max_key();
     let length = u32::try_from(most).unwrap();
-    let index = index(&[DataType::Character { length }]);
+    let index = index(&[DataType::character(length)]);
     let long = Key(vec![Value::Char("x".repeat(most))]);
     assert_eq!(index.insert(long, 1).err().map(|e| e.code), Some(Code::Unsupported));
     assert_eq!(searched(&index, &Probe::All).unwrap().len(), 0);
@@ -185,7 +185,7 @@ fn the_longest_entry_fits_its_tree() {
     let most = index(&[MONEY]).tree.max_key();
     let (mut taken, mut refused) = (false, false);
     for length in most.saturating_sub(16)..most {
-        let index = index(&[DataType::Character { length: u32::try_from(length).unwrap() }]);
+        let index = index(&[DataType::character(u32::try_from(length).unwrap())]);
         match index.insert(Key(vec![Value::Char("x".into())]), 1) {
             Ok(()) => taken = true,
             Err(e) => {
@@ -256,7 +256,7 @@ fn a_discarded_index_frees_its_pages_when_it_goes() {
 /// its column); none with a NULL value.
 #[test]
 fn prefix_probes_find_what_sql_compares() {
-    const CODE: DataType = DataType::Character { length: 3 };
+    const CODE: DataType = DataType::character(3);
     let index = index(&[MONEY, CODE]);
     let mut keys = Vec::new();
     for units in [1_000, 1_055, 1_056] {
@@ -295,7 +295,7 @@ fn prefix_probes_find_what_sql_compares() {
 /// the method's default, of `insert` and `rows`, says what the truth is.
 #[test]
 fn an_entry_alone_is_its_keys_only_one() {
-    let text = DataType::Varying { length: 40 };
+    let text = DataType::varying(40);
     let index = index(&[text]);
     let mut held: std::collections::HashMap<u64, Vec<RowId>> = std::collections::HashMap::new();
     let (mut alone, mut truly) = (0_u32, 0_u32);

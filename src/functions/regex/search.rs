@@ -15,7 +15,7 @@ use crate::functions::ScalarFunction;
 use crate::functions::strings::{character, text, whole};
 use crate::params::ParameterType;
 use crate::regex::Captures;
-use crate::value::{DataType, Value};
+use crate::value::{CharUnits, DataType, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.31] OCCURRENCES_REGEX, no key word of SQL-92.
 pub const OCCURRENCES_REGEX: &str = "OCCURRENCES_REGEX";
@@ -151,7 +151,7 @@ impl ScalarFunction for Substring {
         };
         let strings = [("pattern", pattern), ("flag", flag), ("subject", subject)];
         operands(SUBSTRING_REGEX, &strings, &[("start position", from), ("occurrence", occurrence), ("group", group)])?;
-        Ok(DataType::Varying { length: character(SUBSTRING_REGEX, subject)? })
+        Ok(DataType::Varying { length: character(SUBSTRING_REGEX, subject)?, units: CharUnits::Characters })
     }
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
         parameter(position, args, &[1, 2, 3], &[4, 5, 6])

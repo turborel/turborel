@@ -117,7 +117,7 @@ fn set_statements_set_a_sessions_own() {
     count(&s, "SELECT ID FROM T");
     s.rollback().unwrap();
     assert_eq!(s.setting("SESSION.COMMIT_AT_END").unwrap().to_literal(), "'OFF'", "ROLLBACK leaves it");
-    let mut p = turborel::params::Params::new().declare("V", turborel::value::DataType::Character { length: 8 }, word("ON"));
+    let mut p = turborel::params::Params::new().declare("V", turborel::value::DataType::character(8), word("ON"));
     s.execute("SET SESSION.COMMIT_AT_END = V", &mut p).unwrap();
     assert_eq!(s.setting("SESSION.COMMIT_AT_END").unwrap().to_literal(), "'ON'");
     for (sql, refused) in [

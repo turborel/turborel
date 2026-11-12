@@ -10,8 +10,8 @@ use crate::value::{Decimal, Spelled};
 fn types() -> Vec<DataType> {
     vec![
         DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Decimal },
-        DataType::Character { length: 6 },
-        DataType::Varying { length: 40 },
+        DataType::character(6),
+        DataType::varying(40),
         DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision },
     ]
 }
@@ -90,7 +90,7 @@ fn gathered((format, records, store): (&RecordFormat, &[Vec<u8>], &[Vec<u8>]), c
 /// refused with SQLCODE -916 as it is gathered, as it is decoded.
 #[test]
 fn malformed_fields_are_refused() {
-    let short = RecordFormat::new(&[DataType::Varying { length: 4 }]);
+    let short = RecordFormat::new(&[DataType::varying(4)]);
     let mut record = Vec::new();
     short.encode(&vec![Value::Char("abc".into())], &mut record).unwrap();
     let mut fetch = |r: Reference| -> Result<Vec<u8>> { panic!("fetched {r:?}") };
@@ -98,7 +98,7 @@ fn malformed_fields_are_refused() {
     let mut numbers = Gathering::new(&[DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }], &[0]);
     assert_eq!(numbers.push((&short, &record), &mut fetch).err().map(|e| e.code), Some(Code::Corrupt));
     let bad = record.iter().map(|&b| if b == b'b' { 0xFF_u8 } else { b }).collect::<Vec<u8>>();
-    let mut texts = Gathering::new(&[DataType::Varying { length: 4 }], &[0]);
+    let mut texts = Gathering::new(&[DataType::varying(4)], &[0]);
     assert_eq!(texts.push((&short, &bad), &mut fetch).err().map(|e| e.code), Some(Code::Corrupt));
     assert_eq!(short.column(&bad, 0).err().map(|e| e.code), Some(Code::Corrupt), "as decoded");
 }

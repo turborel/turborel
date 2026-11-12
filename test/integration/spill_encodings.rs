@@ -176,7 +176,7 @@ fn a_scroll_cursor_holds_rows_encrypted_once_a_table_is() {
     let s = db.session("S");
     s.declare_cursor("DECLARE C SCROLL CURSOR FOR SELECT K, S FROM P").unwrap();
     let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let mut p = Params::new().declare("K_OUT", integer, Value::Null).declare("S_OUT", DataType::Character { length: 60 }, Value::Null);
+    let mut p = Params::new().declare("K_OUT", integer, Value::Null).declare("S_OUT", DataType::character(60), Value::Null);
     let mut fetch = |how: &str| {
         s.execute(&format!("FETCH {how} FROM C INTO K_OUT, S_OUT"), &mut p).unwrap();
         (p.value("K_OUT").to_string(), p.value("S_OUT").to_string().trim_end().to_owned())

@@ -28,7 +28,7 @@ use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
 use turborel::txn::Stop;
-use turborel::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use turborel::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
 use crate::auth::Peer;
 
@@ -252,7 +252,14 @@ pub(crate) fn counted_or_null(name: &str) -> ColumnDesc {
 
 /// A column of text of at most `length` characters, named `name`.
 pub(crate) fn text(name: &str, length: u32, not_null: bool) -> ColumnDesc {
-    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None, collation: None }
+    ColumnDesc {
+        name: name.to_owned(),
+        data_type: DataType::Varying { length, units: CharUnits::Characters },
+        not_null,
+        default: None,
+        domain: None,
+        collation: None,
+    }
 }
 
 /// \[EXTENSION\] INFORMATION_SCHEMA.CONNECTIONS.

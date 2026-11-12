@@ -47,7 +47,7 @@ fn both_ways(s: &Session, sql: &str) -> Option<&'static str> {
 
 /// The SQLSTATE GET DIAGNOSTICS gives of the last statement's condition.
 fn returned(s: &Session) -> String {
-    let mut p = Params::new().declare("S", DataType::Character { length: 5 }, Value::Null);
+    let mut p = Params::new().declare("S", DataType::character(5), Value::Null);
     s.execute("GET DIAGNOSTICS EXCEPTION 1 S = RETURNED_SQLSTATE", &mut p).unwrap();
     p.value("S").to_string()
 }
@@ -71,7 +71,7 @@ fn a_cast_that_cuts_a_character_string_warns_6_10() {
     assert_eq!(returned(&a), "00000");
     assert_eq!(both_ways(&a, "SELECT CAST('ABC' AS CHAR(2)) FROM W"), Some("01004"), "a constant");
     assert_eq!(both_ways(&a, "SELECT CAST('A  ' AS VARCHAR(1)), CAST('A' AS CHAR(3)) FROM W"), None, "spaces cut, or padded");
-    let mut p = Params::new().declare("X", DataType::Character { length: 1 }, Value::Null);
+    let mut p = Params::new().declare("X", DataType::character(1), Value::Null);
     let done = a.execute("SELECT CAST(N AS VARCHAR(1)) INTO X FROM W WHERE K = 1", &mut p).unwrap();
     assert_eq!((done, p.value("X").to_string()), (Completion::Warning(SqlState::STRING_TRUNCATED), "A".to_owned()));
     assert_eq!(exec(&a, "INSERT INTO W (K, C) VALUES (9, CAST('LONG' AS CHAR(3)))"), Ok(Completion::Warning(SqlState::STRING_TRUNCATED)));

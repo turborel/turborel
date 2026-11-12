@@ -127,7 +127,7 @@ fn edge_rows() -> Vec<Row> {
 fn every_reply() -> Vec<Reply> {
     let columns = vec![
         Column { name: Some("K".into()), data_type: DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, not_null: true },
-        Column { name: None, data_type: DataType::Character { length: 4 }, not_null: false },
+        Column { name: None, data_type: DataType::character(4), not_null: false },
         Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53, spelled: Spelled::Float }, not_null: false },
         Column { name: Some("B".into()), data_type: DataType::Binary { length: 10 }, not_null: false },
         Column { name: Some("V".into()), data_type: DataType::VarBinary { length: 3 }, not_null: false },
@@ -217,7 +217,7 @@ fn malformed_messages_are_connection_failures() {
     assert_eq!(Request::decode(b'Q', &[5, 0, 0, 0, b'A']).map_err(failed).err(), Some(FAILED), "cut short");
     assert_eq!(Request::decode(b'X', &[0]).map_err(failed).err(), Some(FAILED), "a byte after its end");
     assert_eq!(Request::decode(b'Q', &[1, 0, 0, 0, 0xff]).map_err(failed).err(), Some(FAILED), "not UTF-8");
-    let description = |flag: u8, tag: u8| [1, 0, 0, 0, flag, tag, 1, 0, 0, 0, 0];
+    let description = |flag: u8, tag: u8| [1, 0, 0, 0, flag, tag, 1, 0, 0, 0, 0, 0];
     assert!(Reply::decode(b'D', &description(0, CHARACTER)).is_ok());
     assert_eq!(Reply::decode(b'D', &description(2, CHARACTER)).map_err(failed).err(), Some(FAILED), "a flag of 2");
     assert_eq!(Reply::decode(b'D', &description(0, 99)).map_err(failed).err(), Some(FAILED), "no such type");

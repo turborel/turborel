@@ -12,7 +12,7 @@ use super::{Descriptor, SqlType};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_literal, padded, uncastable};
-use crate::value::{Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
+use crate::value::{Bucket, CharUnits, DataType, Value, assignment_rule, compare_strings, unassignable};
 
 /// The kind of CHARACTER(length).
 #[derive(Debug)]
@@ -25,9 +25,41 @@ pub static CHARACTER: Character = Character;
 /// UTF-8.
 pub(super) const OCTETS_PER_CHARACTER: usize = 4;
 
-/// The length of `t`, a character string type.
-fn length_of(t: &DataType) -> u32 {
-    if let DataType::Character { length } = t { *length } else { 0 }
+/// The length of `t`, a character string type, and what it counts.
+fn length_of(t: &DataType) -> (u32, CharUnits) {
+    if let DataType::Character { length, units } = t { (*length, *units) } else { (0, CharUnits::Characters) }
+}
+
+/// The tag of `units` in a type's parameters.
+pub(super) fn put_units(units: CharUnits, out: &mut Vec<u8>) {
+    out.put_u8(match units {
+        CharUnits::Characters => 0,
+        CharUnits::Octets => 1,
+    });
+}
+
+/// The units whose tag `r` reads.
+pub(super) fn read_units(r: &mut Reader<'_>) -> Result<CharUnits> {
+    match r.u8()? {
+        0 => Ok(CharUnits::Characters),
+        1 => Ok(CharUnits::Octets),
+        _ => Err(super::malformed()),
+    }
+}
+
+/// `t` written: its key word and length, and OCTETS if it counts them
+/// [ISO/IEC 9075-2:2023 §6.1].
+pub(super) fn written_as(name: &str, length: u32, units: CharUnits) -> String {
+    match units {
+        CharUnits::Characters => format!("{name}({length})"),
+        CharUnits::Octets => format!("{name}({length} OCTETS)"),
+    }
+}
+
+/// Octets a value of `length` in `units` takes at most, as UTF-8.
+pub(super) fn octets_of(length: u32, units: CharUnits) -> usize {
+    let per = if units == CharUnits::Octets { 1 } else { OCTETS_PER_CHARACTER };
+    usize::try_from(length).unwrap_or(usize::MAX).saturating_mul(per)
 }
 
 /// The value's string, if it is one.
@@ -41,12 +73,13 @@ pub(super) fn unwarned(v: Value) -> (Value, Option<SqlState>) {
 }
 
 /// [ISO/IEC 9075:1992 §6.10 GR5c ii, GR6c ii] The first `length`
-/// characters of `s`, and the warning string data, right truncation if
-/// any after them is not a space.
-pub(super) fn cut(s: &str, length: u32) -> (String, Option<SqlState>) {
-    let fits = usize::try_from(length).unwrap_or(usize::MAX);
-    let lost = s.chars().skip(fits).any(|c| c != ' ');
-    (s.chars().take(fits).collect(), lost.then_some(SqlState::STRING_TRUNCATED))
+/// characters of `s`, or whole characters of no more than `length` octets
+/// [ISO/IEC 9075-2:2023 §6.1 SR16b], and the warning string data, right
+/// truncation if any after them is not a space.
+pub(super) fn cut(s: &str, length: u32, units: CharUnits) -> (String, Option<SqlState>) {
+    let kept = units.prefix(s, usize::try_from(length).unwrap_or(usize::MAX));
+    let lost = s.get(kept.len()..).unwrap_or_default().chars().any(|c| c != ' ');
+    (kept.to_owned(), lost.then_some(SqlState::STRING_TRUNCATED))
 }
 
 /// A value not of a column of `t`'s type.
@@ -69,7 +102,8 @@ impl SqlType for Character {
     }
 
     fn written(&self, t: &DataType) -> String {
-        format!("CHARACTER({})", length_of(t))
+        let (length, units) = length_of(t);
+        written_as("CHARACTER", length, units)
     }
 
     /// [X3.135-1986 §4.2] "A character string and a number are not
@@ -89,24 +123,24 @@ impl SqlType for Character {
     }
 
     /// [ISO/IEC 9075:1992 §9.2 GR3b, GR3c] padded with spaces to the
-    /// length, or without trailing spaces beyond it.
+    /// length, or without trailing spaces beyond it; in octets, of a
+    /// length in octets [ISO/IEC 9075-2:2023 §6.1 SR16b].
     fn assign(&self, v: Value, t: &DataType, rule: &str) -> Result<Value> {
         let Value::Char(s) = v else { return unassignable(&v, t, rule) };
-        let length = length_of(t);
-        let (count, fits) = (s.chars().count(), usize::try_from(length).unwrap_or(usize::MAX));
+        let (length, units) = length_of(t);
+        let (count, fits) = (units.count(&s), usize::try_from(length).unwrap_or(usize::MAX));
         if count <= fits {
             return Ok(Value::Char(spaced(&s, fits.saturating_sub(count))));
         }
-        if s.chars().skip(fits).all(|c| c == ' ') {
-            return Ok(Value::Char(s.chars().take(fits).collect()));
+        let kept = units.prefix(&s, fits);
+        if s.get(kept.len()..).unwrap_or_default().chars().all(|c| c == ' ') {
+            return Ok(Value::Char(spaced(kept, fits.saturating_sub(units.count(kept)))));
         }
+        let unit = if units == CharUnits::Octets { "octets" } else { "characters" };
         fail_with(
             Code::Data,
             SqlState::STRING_DATA_RIGHT_TRUNCATION,
-            format!(
-                "[{}] a value of {count} characters, not spaces beyond {length}, does not fit {t}",
-                assignment_rule(rule, "§9.2 GR3b ii")
-            ),
+            format!("[{}] a value of {count} {unit}, not spaces beyond {length}, does not fit {t}", assignment_rule(rule, "§9.2 GR3b ii")),
         )
     }
 
@@ -121,7 +155,7 @@ impl SqlType for Character {
     /// string data, right truncation if a character cut is not a space
     /// \[GR5c ii\]; no binary string [ISO/IEC 9075-2:2023 §6.13 SR7].
     fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
-        let length = length_of(t);
+        let (length, units) = length_of(t);
         match v {
             Value::Null => Ok((Value::Null, None)),
             Value::Exact(d) => padded(&d.to_string(), length).map(unwarned),
@@ -131,7 +165,7 @@ impl SqlType for Character {
             // A value of a kind beyond the standard, as its kind shows it.
             Value::Extension(ref e) => padded(&e.kind.text(&v), length).map(unwarned),
             Value::Char(s) => {
-                let (kept, warning) = cut(&s, length);
+                let (kept, warning) = cut(&s, length, units);
                 Ok((self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")?, warning))
             }
             // [GR5e] its literal's string, as it shows, padded.
@@ -155,11 +189,10 @@ impl SqlType for Character {
     }
 
     /// Its collation SQL_TEXT's; four octets to a character, the most
-    /// UTF-8 takes.
+    /// UTF-8 takes, or its length of a length in octets.
     fn descriptor(&self, t: &DataType) -> Descriptor {
-        let length = length_of(t);
-        let octets = usize::try_from(length).unwrap_or(usize::MAX).saturating_mul(OCTETS_PER_CHARACTER);
-        Descriptor { length: Some(length), octets: Some(octets), collated: true, ..Descriptor::of(self.name()) }
+        let (length, units) = length_of(t);
+        Descriptor { length: Some(length), octets: Some(octets_of(length, units)), collated: true, ..Descriptor::of(self.name()) }
     }
 
     fn put_value(&self, v: &Value, out: &mut Vec<u8>) {
@@ -171,11 +204,13 @@ impl SqlType for Character {
     }
 
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>) {
-        out.put_u32(length_of(t));
+        let (length, units) = length_of(t);
+        out.put_u32(length);
+        put_units(units, out);
     }
 
     fn params(&self, r: &mut Reader<'_>) -> Result<DataType> {
-        Ok(DataType::Character { length: r.u32()? })
+        Ok(DataType::Character { length: r.u32()?, units: read_units(r)? })
     }
 
     /// Of variable length.
@@ -191,7 +226,8 @@ impl SqlType for Character {
     /// Padded again to the length.
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let s = std::str::from_utf8(field).ok()?;
-        let pad = usize::try_from(length_of(t)).ok()?.checked_sub(s.chars().count())?;
+        let (length, units) = length_of(t);
+        let pad = usize::try_from(length).ok()?.checked_sub(units.count(s))?;
         Some(Value::Char(spaced(s, pad)))
     }
 
@@ -200,16 +236,23 @@ impl SqlType for Character {
     /// bytes.
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
         let s = string(v).ok_or_else(|| mismatch(v, t))?;
-        let pad = usize::try_from(length_of(t)).ok().and_then(|n| n.checked_sub(s.chars().count())).ok_or_else(|| mismatch(v, t))?;
+        let (length, units) = length_of(t);
+        let pad = usize::try_from(length).ok().and_then(|n| n.checked_sub(units.count(s))).ok_or_else(|| mismatch(v, t))?;
         out.extend_from_slice(s.as_bytes());
         out.resize(out.len().saturating_add(pad), b' ');
         Ok(())
     }
 
     /// The value ends where the character after its `length`-th begins: at
-    /// a byte that does not continue a character.
+    /// a byte that does not continue a character; of a length in octets,
+    /// after so many.
     fn decode_key(&self, rest: &mut &[u8], t: &DataType) -> Result<Value> {
-        let length = usize::try_from(length_of(t)).map_err(|_| super::malformed())?;
+        let (length, units) = length_of(t);
+        let length = usize::try_from(length).map_err(|_| super::malformed())?;
+        if units == CharUnits::Octets {
+            let s = std::str::from_utf8(super::take(rest, length)?).map_err(|_| super::malformed())?;
+            return Ok(Value::Char(s.to_owned()));
+        }
         let starts = rest.iter().enumerate().filter(|&(_, b)| b & 0xC0 != 0x80).map(|(i, _)| i);
         let end = starts.clone().nth(length).unwrap_or(rest.len());
         let s = std::str::from_utf8(super::take(rest, end)?).map_err(|_| super::malformed())?;
@@ -222,7 +265,8 @@ impl SqlType for Character {
     /// Cut to the length.
     fn anchor(&self, v: &Value, t: &DataType) -> Option<(Value, bool)> {
         let s = string(v)?;
-        let length = usize::try_from(length_of(t)).ok()?;
-        Some((Value::Char(s.chars().take(length).collect()), s.chars().count() <= length))
+        let (length, units) = length_of(t);
+        let length = usize::try_from(length).ok()?;
+        Some((Value::Char(units.prefix(s, length).to_owned()), units.count(s) <= length))
     }
 }

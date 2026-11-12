@@ -207,7 +207,7 @@ struct Made<'a> {
 
 impl Source for Made<'_> {
     fn headings(&mut self) -> Result<Option<Vec<Heading>>, SourceError> {
-        let id = Heading { name: "id".into(), data_type: Some(DataType::Varying { length: 10 }) };
+        let id = Heading { name: "id".into(), data_type: Some(DataType::varying(10)) };
         Ok(Some(vec![id, Heading { name: "NAME".into(), data_type: None }]))
     }
 

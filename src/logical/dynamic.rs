@@ -221,7 +221,7 @@ mod tests {
         let joined = LogicalPlan::OuterJoin {
             kind: OuterJoin::Left,
             cond: compare(slot(1)),
-            left: Box::new(LogicalPlan::Values { rows: vec![vec![slot(0)]], types: vec![DataType::Character { length: 4 }] }),
+            left: Box::new(LogicalPlan::Values { rows: vec![vec![slot(0)]], types: vec![DataType::character(4)] }),
             right: Box::new(scan()),
         };
         let plan = LogicalPlan::Project { exprs: vec![case], input: Box::new(LogicalPlan::Filter { cond, input: Box::new(joined) }) };

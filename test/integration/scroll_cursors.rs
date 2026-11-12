@@ -159,7 +159,7 @@ fn an_ordered_cursor_for_update_13_9() {
     let mut p = params(Value::Null);
     s.declare_cursor("DECLARE C CURSOR FOR SELECT K, N FROM T WHERE K > 1 ORDER BY K DESC FOR UPDATE").unwrap();
     s.execute("OPEN C", &mut p).unwrap();
-    let mut q = p.clone().declare("N_OUT", DataType::Character { length: 2 }, Value::Null);
+    let mut q = p.clone().declare("N_OUT", DataType::character(2), Value::Null);
     s.execute("FETCH C INTO K_OUT, N_OUT", &mut q).unwrap();
     assert_eq!(q.value("K_OUT").to_string(), "5", "highest first");
     s.execute("UPDATE T SET N = 'Y' WHERE CURRENT OF C", &mut q).unwrap();

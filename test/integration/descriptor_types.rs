@@ -43,8 +43,8 @@ fn a_row_of_every_type_into_a_descriptor_17_9() {
     )
     .unwrap();
     let mut p = dynamic_host()
-        .declare("CH", DataType::Character { length: 4 }, Value::Null)
-        .declare("VA", DataType::Varying { length: 20 }, Value::Null)
+        .declare("CH", DataType::character(4), Value::Null)
+        .declare("VA", DataType::varying(20), Value::Null)
         .declare("NU", DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Numeric }, Value::Null)
         .declare("FL", DataType::Approximate { precision: 53, spelled: Spelled::Float }, Value::Null)
         .declare("RE", DataType::Approximate { precision: 24, spelled: Spelled::Real }, Value::Null)

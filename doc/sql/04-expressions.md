@@ -105,7 +105,7 @@ keep their first ones if the rest are X'00', else are refused (SQLSTATE
 
 | Function | Value |
 |---|---|
-| SUBSTRING(s FROM start [FOR length]) | the characters of s from start, counting from 1, length of them or the rest; of a binary string, its octets |
+| SUBSTRING(s FROM start [FOR length] [USING units]) | the characters of s from start, counting from 1, length of them or the rest; of a binary string, its octets |
 | UPPER(s), LOWER(s) | s in upper or lower case |
 | TRIM([[LEADING \| TRAILING \| BOTH] [c] FROM] s) | s without the character c, a space if not written, at its start, end or both, the default |
 | LTRIM(s [, set]), RTRIM(s [, set]), BTRIM(s [, set]) | s without any of the characters of set, a space if not written, at its start, its end or both |
@@ -153,6 +153,23 @@ VALUES (POSITION(X'0B' IN X'0A0B0C'), SUBSTRING(X'0A0B0C' FROM 2), X'0A' || X'0B
                       |        |      |                      |
 ----------------------+--------+------+----------------------+----------------------
                     2 | 0B0C   | 0A0B |                    2 |                   16
+(1 row)
+```
+
+SUBSTRING, POSITION(a IN s [USING units]) and CHAR_LENGTH(s [USING
+units]) count characters, or with USING OCTETS octets of the string's
+UTF-8. A substring in octets takes the whole characters within them, so
+it never splits one. USING CHARACTERS is the default spelled out, and a
+binary string's functions take no USING.
+
+```sql
+VALUES (CHAR_LENGTH('café' USING OCTETS), POSITION('crème' IN 'café crème' USING OCTETS), SUBSTRING('café crème' FROM 7 USING OCTETS));
+```
+
+```
+                      |                      |
+----------------------+----------------------+------------
+                    5 |                    7 | crème
 (1 row)
 ```
 

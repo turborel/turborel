@@ -15,7 +15,7 @@ use turborel::value::Spelled;
 fn params() -> Params {
     Params::new()
         .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null)
-        .declare("NAME_OUT", DataType::Character { length: 2 }, Value::Null)
+        .declare("NAME_OUT", DataType::character(2), Value::Null)
         .indicator("NAME_IND", 0)
         .declare("AMT_OUT", DataType::Exact { precision: 8, scale: 2, spelled: Spelled::Numeric }, Value::Null)
         .indicator("AMT_IND", 0)

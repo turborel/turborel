@@ -60,7 +60,7 @@ fn exact(units: i128, scale: u32) -> Value {
 #[test]
 fn character_keeps_the_type_contract() {
     let strings = ["", "a", "a  ", "ab", "\t", "z", "é", "Ω€"];
-    type_contract(DataType::Character { length: 5 }, &strings.map(|s| Value::Char(s.into())));
+    type_contract(DataType::character(5), &strings.map(|s| Value::Char(s.into())));
 }
 
 /// Verifies: [DESIGN] RULES.md R-SAFE-3, D53; [ISO/IEC 9075:1992 §8.2 GR3a]
@@ -70,7 +70,7 @@ fn character_keeps_the_type_contract() {
 #[test]
 fn varying_keeps_the_type_contract() {
     let strings = ["", "   ", "a", "a  ", "a\t", "a!", "ab", "\u{0}", "é", "Ω€", "abcdefgh", "abcdefghi", "abcdefgh  x", "abcdefgh\t"];
-    type_contract(DataType::Varying { length: 12 }, &strings.map(|s| Value::Char(s.into())));
+    type_contract(DataType::varying(12), &strings.map(|s| Value::Char(s.into())));
 }
 
 /// Binary strings of the hexits of `hexits`.

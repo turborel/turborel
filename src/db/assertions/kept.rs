@@ -44,7 +44,7 @@ use crate::storage::{Condition, Conjunct, Conjunction, Row};
 use crate::system::DEFINITION_SCHEMA;
 use crate::txn::{ReadMode, Txn};
 use crate::value::codec::put_value;
-use crate::value::{CompOp, DataType, Decimal, INTEGER_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{CharUnits, CompOp, DataType, Decimal, INTEGER_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
 
 /// The columns of a table of kept totals, by place: the form, the change
 /// of the values counted, of the nulls, the sum's units and scale, and
@@ -81,7 +81,7 @@ pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
         column("FORM", integer),
         column("COUNTED", count),
         column("NULLED", count),
-        column("UNITS", DataType::Varying { length: 40 }),
+        column("UNITS", DataType::Varying { length: 40, units: CharUnits::Characters }),
         column("SCALE", integer),
         column("MOVE", integer),
     ];

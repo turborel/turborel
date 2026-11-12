@@ -443,7 +443,7 @@ mod tests {
     fn kinds_samples_and_reads() {
         let double = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
         let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-        assert!(alike(&DataType::Character { length: 1 }, &DataType::Varying { length: 2 }));
+        assert!(alike(&DataType::character(1), &DataType::varying(2)));
         assert!(alike(&DataType::Binary { length: 1 }, &DataType::VarBinary { length: 8 }));
         assert!(!alike(&integer, &double) && alike(&double, &double));
         assert!(matches!(sample(&double), Some(Value::Approx(_))) && matches!(sample(&integer), Some(Value::Exact(_))));

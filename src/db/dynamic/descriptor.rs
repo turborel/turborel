@@ -199,7 +199,7 @@ impl Item {
     fn describe_type(&mut self, t: DataType, catalog: &str) {
         let octets = t.kind().descriptor(&t).octets.map(number);
         match t {
-            DataType::Character { length } | DataType::Varying { length } => {
+            DataType::Character { length, .. } | DataType::Varying { length, .. } => {
                 self.set_number(DescriptorItem::Length, i64::from(length));
                 self.set_number(DescriptorItem::OctetLength, octets.unwrap_or(0));
                 self.sql_text(CHARACTER_SET, catalog);
@@ -375,10 +375,14 @@ pub(super) fn matches(described: DataType, t: DataType, target: bool) -> bool {
         (DataType::Approximate { precision, .. }, DataType::Approximate { precision: its_precision, .. }) => {
             named && (!matches!(spelling(&t), Spelled::Float) || precision == its_precision)
         }
-        (DataType::Character { length }, DataType::Character { length: its_length })
-        | (DataType::Binary { length }, DataType::Binary { length: its_length }) => length == its_length,
-        (DataType::Varying { length }, DataType::Varying { length: its_length })
-        | (DataType::VarBinary { length }, DataType::VarBinary { length: its_length }) => {
+        (DataType::Character { length, units }, DataType::Character { length: its_length, units: its_units }) => {
+            (length, units) == (its_length, its_units)
+        }
+        (DataType::Binary { length }, DataType::Binary { length: its_length }) => length == its_length,
+        (DataType::Varying { length, units }, DataType::Varying { length: its_length, units: its_units }) => {
+            units == its_units && (its_length == length || (target && its_length > length))
+        }
+        (DataType::VarBinary { length }, DataType::VarBinary { length: its_length }) => {
             its_length == length || (target && its_length > length)
         }
         (_, _) => described == t,

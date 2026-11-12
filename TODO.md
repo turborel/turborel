@@ -32,13 +32,6 @@ D and the clauses that define them, so a bare `§` here is SQL:2023. The
 groups run in the order they build on each other, and so do the items in
 each group.
 
-### Expressions and functions
-
-- Character length units (T062). `USING CHARACTERS` and `USING OCTETS` on
-  CHAR_LENGTH, POSITION and SUBSTRING [§6.31, §6.33], and a
-  length in octets in a data type, `VARCHAR(10 OCTETS)` [§6.1]. The
-  regular expression functions take them already (F846).
-
 ### Tables and schemas
 
 - Sequence generators (T176, T177) [§4.29, §6.14, §11.72 to §11.74]. CREATE,

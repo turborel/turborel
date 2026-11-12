@@ -51,7 +51,7 @@ fn positions(base: usize, precision: u32, zoned: bool) -> usize {
 /// What a column of `t`'s values needs, named `name`.
 fn shape(name: &str, t: &DataType) -> Shape {
     let (width, right) = match t {
-        DataType::Character { length } | DataType::Varying { length } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
+        DataType::Character { length, .. } | DataType::Varying { length, .. } => (usize::try_from(*length).unwrap_or(MAX_WIDTH), false),
         // A binary string as its hexits, two to an octet.
         DataType::Binary { length } | DataType::VarBinary { length } => {
             (usize::try_from(*length).unwrap_or(MAX_WIDTH).saturating_mul(HEXITS_PER_OCTET), false)
@@ -173,10 +173,10 @@ mod tests {
         let mut out = Vec::new();
         let mut table = Table::new(&mut out, "?");
         let columns = [
-            column(Some("NAME"), DataType::Character { length: 3 }),
+            column(Some("NAME"), DataType::character(3)),
             column(Some("N"), DataType::Exact { precision: 3, scale: 1, spelled: Spelled::Numeric }),
             column(None, DataType::Approximate { precision: 53, spelled: Spelled::Float }),
-            column(Some("LONG"), DataType::Character { length: 32767 }),
+            column(Some("LONG"), DataType::character(32767)),
         ];
         table.columns(&columns);
         let row = vec![Value::Char("ab".into()), Value::Exact(Decimal::new(-125, 1)), Value::Null, Value::Char("x".into())];
@@ -198,7 +198,7 @@ mod tests {
     fn a_warning_follows_the_count() {
         let mut out = Vec::new();
         let mut table = Table::new(&mut out, "");
-        table.columns(&[column(Some("A"), DataType::Character { length: 1 })]);
+        table.columns(&[column(Some("A"), DataType::character(1))]);
         table.rows(&[vec![Value::Char("a".into())], vec![Value::Char("b".into())]]);
         table.finish(2, Some("01004")).unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -241,7 +241,7 @@ mod tests {
         }
         let mut out = Broken;
         let mut table = Table::new(&mut out, "");
-        table.columns(&[column(Some("A"), DataType::Character { length: 1 })]);
+        table.columns(&[column(Some("A"), DataType::character(1))]);
         table.rows(&[vec![Value::Char("a".into())]]);
         assert_eq!(table.finish(2, None).unwrap_err().to_string(), "closed");
     }

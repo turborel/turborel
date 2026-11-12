@@ -171,8 +171,8 @@ fn main() -> Result<(), turborel::error::SqlError> {
     let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
     let mut p = Params::new()
         .declare("NEW_ID", integer, Value::Exact(Decimal::new(4, 0)))
-        .declare("NEW_NAME", DataType::Varying { length: 30 }, Value::Char("Barbara".into()))
-        .declare("OUT_NAME", DataType::Varying { length: 30 }, Value::Null)
+        .declare("NEW_NAME", DataType::varying(30), Value::Char("Barbara".into()))
+        .declare("OUT_NAME", DataType::varying(30), Value::Null)
         .indicator("OUT_IND", 0);
     ann.execute("INSERT INTO STAFF VALUES (NEW_ID, NEW_NAME)", &mut p)?;
     ann.execute("SELECT NAME INTO OUT_NAME INDICATOR OUT_IND FROM STAFF WHERE ID = NEW_ID", &mut p)?;
@@ -279,9 +279,9 @@ fn main() -> Result<(), turborel::error::SqlError> {
     let ann = db.session("ANN");
     let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     let mut p = Params::new()
-        .declare("TEXT", DataType::Varying { length: 200 }, Value::Char("INSERT INTO STAFF VALUES (?, ?)".into()))
+        .declare("TEXT", DataType::varying(200), Value::Char("INSERT INTO STAFF VALUES (?, ?)".into()))
         .declare("MY_ID", integer, Value::Exact(Decimal::new(1, 0)))
-        .declare("MY_NAME", DataType::Varying { length: 30 }, Value::Char("Ada".into()));
+        .declare("MY_NAME", DataType::varying(30), Value::Char("Ada".into()));
     ann.execute("PREPARE ADD_ONE FROM TEXT", &mut p)?;
     ann.execute("EXECUTE ADD_ONE USING MY_ID, MY_NAME", &mut p)?;
     p.set("TEXT", Value::Char("SELECT NAME FROM STAFF WHERE ID = ?".into()));
@@ -365,7 +365,7 @@ use turborel::value::{DataType, Decimal, Spelled, Value};
 /// WIDTH(s): the characters of s, stored in a CHARACTER(5).
 struct Width;
 
-const FIVE: DataType = DataType::Character { length: 5 };
+const FIVE: DataType = DataType::character(5);
 
 impl ScalarFunction for Width {
     fn name(&self) -> &str {

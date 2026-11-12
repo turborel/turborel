@@ -14,7 +14,7 @@ use crate::storage::{Condition, Conjunct, Conjunction};
 use crate::value::{CompOp, Decimal, Spelled};
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-const TEXT: DataType = DataType::Varying { length: 100 };
+const TEXT: DataType = DataType::varying(100);
 const TYPES: [DataType; 3] = [INTEGER, TEXT, INTEGER];
 
 fn int(n: i128) -> Value {

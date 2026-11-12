@@ -20,7 +20,7 @@ use crate::ast::TableName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::parser::Parser;
 use crate::value::cast;
-use crate::value::{DataType, MAX_CHARACTER_LENGTH, Value};
+use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
 /// [ISO/IEC 9075:1992 §17.6 GR5] The type a `?` takes from its context.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,7 +36,7 @@ impl ParameterType {
     pub fn data_type(self) -> DataType {
         match self {
             ParameterType::Of(t) => t,
-            ParameterType::Varying => DataType::Varying { length: MAX_CHARACTER_LENGTH },
+            ParameterType::Varying => DataType::Varying { length: MAX_CHARACTER_LENGTH, units: CharUnits::Characters },
         }
     }
 }

@@ -92,7 +92,7 @@ fn columns_have_descriptions() {
     let described: Vec<(Option<String>, DataType, bool)> =
         cursor.columns.iter().map(|c| (c.name.clone(), c.data_type, c.not_null)).collect();
     assert_eq!(described[0], (Some("ID".into()), DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric }, true));
-    assert_eq!(described[1], (Some("NAME".into()), DataType::Character { length: 6 }, false));
+    assert_eq!(described[1], (Some("NAME".into()), DataType::character(6), false));
     assert_eq!((described[2].0.clone(), described[2].2), (None, false), "an expression is an unnamed column");
 }
 
@@ -120,7 +120,7 @@ fn a_call_passes_parameters_and_returns_a_status() {
     let s = db.session("APP");
     let mut p = Params::new()
         .declare("K", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(3, 0)))
-        .declare("N", DataType::Character { length: 6 }, Value::Null)
+        .declare("N", DataType::character(6), Value::Null)
         .indicator("NI", 0);
     let found = s.execute("SELECT NAME INTO N NI FROM T WHERE ID = K", &mut p).unwrap();
     assert_eq!((found.sqlcode(), p.indicator_value("NI")), (0, Some(-1)), "found, and the name is null");
@@ -137,7 +137,7 @@ fn statements_operate_on_tables() {
     let s = db.session("M");
     assert_eq!(exec(&s, "INSERT INTO D VALUES (1, 'A')"), Ok(Completion::Success));
     assert_eq!(exec(&s, "UPDATE D SET V = 'B' WHERE K = 1"), Ok(Completion::Success));
-    let mut p = Params::new().declare("OUT", DataType::Character { length: 2 }, Value::Null);
+    let mut p = Params::new().declare("OUT", DataType::character(2), Value::Null);
     s.execute("SELECT V INTO OUT FROM D", &mut p).unwrap();
     assert_eq!(p.value("OUT").to_string(), "B ");
     assert_eq!(exec(&s, "DELETE FROM D WHERE K = 1"), Ok(Completion::Success));

@@ -19,25 +19,60 @@ use super::ScalarFunction;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::lexer::kw;
 use crate::params::ParameterType;
-use crate::value::Spelled;
 use crate::value::{BYTE_BITS, Binary, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
+use crate::value::{CharUnits, Spelled};
 
 /// The key word under which concatenation is registered: an operator, so no
 /// call by name reaches it.
 pub const CONCATENATION: &str = "||";
 
+/// The names CHAR_LENGTH, POSITION and SUBSTRING are registered under with
+/// USING CHARACTERS and USING OCTETS, which no call by name reaches.
+const USING: [(&str, CharUnits, &str); 6] = [
+    (kw::CHAR_LENGTH, CharUnits::Characters, "CHAR_LENGTH USING CHARACTERS"),
+    (kw::CHAR_LENGTH, CharUnits::Octets, "CHAR_LENGTH USING OCTETS"),
+    (kw::POSITION, CharUnits::Characters, "POSITION USING CHARACTERS"),
+    (kw::POSITION, CharUnits::Octets, "POSITION USING OCTETS"),
+    (kw::SUBSTRING, CharUnits::Characters, "SUBSTRING USING CHARACTERS"),
+    (kw::SUBSTRING, CharUnits::Octets, "SUBSTRING USING OCTETS"),
+];
+
+/// The name the function `name` is registered under with USING `units`;
+/// none if it takes no USING.
+pub fn using(name: &str, units: CharUnits) -> Option<&'static str> {
+    USING.iter().find(|(n, u, _)| *n == name && *u == units).map(|(.., registered)| *registered)
+}
+
+/// The name of the function `name` takes with USING `units`.
+fn named(name: &'static str, units: Option<CharUnits>) -> &'static str {
+    units.and_then(|u| using(name, u)).unwrap_or(name)
+}
+
 /// Every string function, to register.
 pub fn functions() -> Vec<Arc<dyn ScalarFunction>> {
-    vec![
+    let mut all: Vec<Arc<dyn ScalarFunction>> = vec![
         Arc::new(Concatenation),
-        Arc::new(Substring),
         Arc::new(Fold { upper: true }),
         Arc::new(Fold { upper: false }),
-        Arc::new(Position),
-        Arc::new(Length { name: kw::CHAR_LENGTH, unit: Unit::Characters }),
-        Arc::new(Length { name: kw::OCTET_LENGTH, unit: Unit::Octets }),
-        Arc::new(Length { name: kw::BIT_LENGTH, unit: Unit::Bits }),
-    ]
+        Arc::new(Length { name: kw::OCTET_LENGTH, unit: Unit::Octets, binary: true }),
+        Arc::new(Length { name: kw::BIT_LENGTH, unit: Unit::Bits, binary: true }),
+    ];
+    for units in [None, Some(CharUnits::Characters), Some(CharUnits::Octets)] {
+        let unit = if units == Some(CharUnits::Octets) { Unit::Octets } else { Unit::Characters };
+        all.push(Arc::new(Substring { units }));
+        all.push(Arc::new(Position { units }));
+        all.push(Arc::new(Length { name: named(kw::CHAR_LENGTH, units), unit, binary: false }));
+    }
+    all
+}
+
+/// [ISO/IEC 9075-2:2023 §6.31, §6.33] Of the binary string function
+/// `name`, no USING, which only a character string's takes.
+fn no_units(name: &str, units: Option<CharUnits>) -> Result<()> {
+    match units {
+        Some(_) => fail(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §6.31, §6.33] {name} of binary strings takes no USING")),
+        None => Ok(()),
+    }
 }
 
 /// The type of a length or position [§6.6 SR2, SR5]: exact numeric with
@@ -48,7 +83,7 @@ const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scal
 /// is varying, or a Syntax Rule error.
 pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
     match t {
-        DataType::Character { length } | DataType::Varying { length } => Ok(*length),
+        DataType::Character { length, .. } | DataType::Varying { length, .. } => Ok(*length),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }
@@ -63,6 +98,12 @@ pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
             fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}"))
         }
     }
+}
+
+/// What the length of `t`, a character string type, counts; characters
+/// of any other.
+fn units_of(t: &DataType) -> CharUnits {
+    if let DataType::Character { units, .. } | DataType::Varying { units, .. } = t { *units } else { CharUnits::Characters }
 }
 
 /// The length of `t`, a binary string type, its maximum length if it is
@@ -169,9 +210,12 @@ impl ScalarFunction for Concatenation {
             return binary_concatenation(x.saturating_add(y), xv || yv);
         }
         let length = character(CONCATENATION, a)?.saturating_add(character(CONCATENATION, b)?);
+        // [ISO/IEC 9075-2:2023 §6.1 SR16] in octets if both are, else in
+        // characters, which a length in octets bounds.
+        let units = if units_of(a) == units_of(b) { units_of(a) } else { CharUnits::Characters };
         // [SR3a i] varying, at most the longest varying string.
         if matches!(a, DataType::Varying { .. }) || matches!(b, DataType::Varying { .. }) {
-            return Ok(DataType::Varying { length: length.min(MAX_CHARACTER_LENGTH) });
+            return Ok(DataType::Varying { length: length.min(MAX_CHARACTER_LENGTH), units });
         }
         // [SR3a ii] fixed, no longer than the longest fixed string.
         if length > MAX_CHARACTER_LENGTH {
@@ -180,7 +224,7 @@ impl ScalarFunction for Concatenation {
                 format!("[ISO/IEC 9075:1992 §6.13 SR3a ii] || of CHARACTER({length}) is longer than {MAX_CHARACTER_LENGTH} characters"),
             );
         }
-        Ok(DataType::Character { length })
+        Ok(DataType::Character { length, units })
     }
     /// [§17.6 GR5d] CHARACTER VARYING, or BINARY VARYING beside a binary
     /// string, unless the other operand is one too \[GR4c\].
@@ -248,8 +292,11 @@ fn beside(position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
 
 /// [§6.7] `<character substring function>`, and [ISO/IEC 9075-2:2023
 /// §6.33] `<binary substring function>`: SUBSTRING(C FROM S \[FOR L\]),
-/// called with C, S and, if written, L.
-struct Substring;
+/// called with C, S and, if written, L; [Feature T062] its positions in
+/// the units written after USING, characters if none.
+struct Substring {
+    units: Option<CharUnits>,
+}
 
 /// [§6.7 GR1b-GR1e; ISO/IEC 9075-2:2023 §6.33 GR17] Where SUBSTRING's
 /// result starts and ends in a string of `length` characters or octets,
@@ -283,7 +330,7 @@ fn span(args: &[Value], length: usize) -> Result<Option<(usize, usize)>> {
 
 impl ScalarFunction for Substring {
     fn name(&self) -> &'static str {
-        kw::SUBSTRING
+        named(kw::SUBSTRING, self.units)
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let (source, rest) =
@@ -294,10 +341,11 @@ impl ScalarFunction for Substring {
         // [ISO/IEC 9075-2:2023 §6.33 SR21a] of a binary string, a varying
         // one as long as it at most.
         if let Some((length, _)) = binary_string(source) {
+            no_units(kw::SUBSTRING, self.units)?;
             return Ok(DataType::VarBinary { length });
         }
         // [SR2a] varying, as long as the string at most.
-        Ok(DataType::Varying { length: character(kw::SUBSTRING, source)? })
+        Ok(DataType::Varying { length: character(self.name(), source)?, units: CharUnits::Characters })
     }
     /// [§17.6 GR5c] the start and the length NUMERIC(P, 0), P the greatest
     /// precision; the string none \[GR4p\].
@@ -312,10 +360,21 @@ impl ScalarFunction for Substring {
             return Ok(Value::Binary(b.substring(start.saturating_add(1), count)));
         }
         let Some(c) = text(source)? else { return Ok(Value::Null) };
+        if self.units == Some(CharUnits::Octets) {
+            let Some((from, to)) = span(args, c.len())? else { return Ok(Value::Null) };
+            return Ok(Value::Char(within_octets(c, from, to)));
+        }
         let chars: Vec<char> = c.chars().collect();
         let Some((from, to)) = span(args, chars.len())? else { return Ok(Value::Null) };
         Ok(Value::Char(chars.get(from..to).unwrap_or_default().iter().collect()))
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §6.33 GR3a] The characters of `c` whose octets,
+/// as UTF-8, lie wholly within octets `from` to `to`, from 0, end
+/// excluded: a character cut by either end is not taken (UV074).
+fn within_octets(c: &str, from: usize, to: usize) -> String {
+    c.char_indices().filter(|(at, ch)| *at >= from && at.saturating_add(ch.len_utf8()) <= to).map(|(_, ch)| ch).collect()
 }
 
 /// [§6.7] `<fold>`: UPPER or LOWER, of the simple Latin letters \[GR2c\];
@@ -343,21 +402,25 @@ impl ScalarFunction for Fold {
 /// [§6.6] `<position expression>`: POSITION(A IN B), called with A and B:
 /// 1 if A is empty, else where A first starts in B, from 1, or 0 \[GR1\];
 /// of binary strings, the same in octets [ISO/IEC 9075-2:2023 §6.31
-/// GR3].
-struct Position;
+/// GR3]; [Feature T062] where in the units written after USING,
+/// characters if none.
+struct Position {
+    units: Option<CharUnits>,
+}
 
 impl ScalarFunction for Position {
     fn name(&self) -> &'static str {
-        kw::POSITION
+        named(kw::POSITION, self.units)
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let [a, b] = args else { return fail(Code::Api, "[DESIGN] POSITION takes two strings") };
         // [ISO/IEC 9075-2:2023 §6.31] binary strings both, or character strings.
         if binary_string(a).is_some() && binary_string(b).is_some() {
+            no_units(kw::POSITION, self.units)?;
             return Ok(COUNTED);
         }
-        character(kw::POSITION, a)?;
-        character(kw::POSITION, b)?;
+        character(self.name(), a)?;
+        character(self.name(), b)?;
         Ok(COUNTED)
     }
     /// [§17.6 GR5c] CHARACTER VARYING, or BINARY VARYING beside a binary
@@ -374,7 +437,9 @@ impl ScalarFunction for Position {
         if a.is_empty() {
             return Ok(counted(1));
         }
-        Ok(counted(b.find(a).map_or(0, |at| b.get(..at).map_or(0, |before| before.chars().count()).saturating_add(1))))
+        // [ISO/IEC 9075-2:2023 §6.31 GR2b] in octets, where in B's UTF-8.
+        let before = |at: usize| if self.units == Some(CharUnits::Octets) { at } else { b.get(..at).map_or(0, |x| x.chars().count()) };
+        Ok(counted(b.find(a).map_or(0, |at| before(at).saturating_add(1))))
     }
 }
 
@@ -393,10 +458,14 @@ enum Unit {
 }
 
 /// [§6.6] `<length expression>`: CHAR_LENGTH (or CHARACTER_LENGTH),
-/// OCTET_LENGTH or BIT_LENGTH.
+/// OCTET_LENGTH or BIT_LENGTH; [Feature T062] CHAR_LENGTH USING
+/// CHARACTERS or OCTETS, which count as CHAR_LENGTH and OCTET_LENGTH
+/// [ISO/IEC 9075-2:2023 §6.31 GR5b].
 struct Length {
     name: &'static str,
     unit: Unit,
+    /// Whether it takes a binary string too.
+    binary: bool,
 }
 
 impl ScalarFunction for Length {
@@ -407,8 +476,7 @@ impl ScalarFunction for Length {
         let [s] = args else { return fail(Code::Api, "[DESIGN] a length takes one string") };
         // [ISO/IEC 9075-2:2023 §6.31] CHAR_LENGTH of a character string
         // alone; OCTET_LENGTH of any string.
-        let counts_octets = matches!(self.unit, Unit::Octets | Unit::Bits);
-        if !(counts_octets && binary_string(s).is_some()) {
+        if !(self.binary && binary_string(s).is_some()) {
             character(self.name, s)?;
         }
         Ok(COUNTED)

@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn character_keys_sort_as_padded_strings() {
         let values = ["", " ", "a", "a ", "a\u{1}", "a b", "ab", "abcd", "b", "é", "€", "\u{10FFFF}"];
-        keys_sort_as_values(DataType::Character { length: 4 }, &values.map(|s| Value::Char(s.into())));
+        keys_sort_as_values(DataType::character(4), &values.map(|s| Value::Char(s.into())));
     }
 
     /// Verifies: [DESIGN] RULES.md D31, key encoding: NULL sorts before every
@@ -221,7 +221,7 @@ mod tests {
     /// its column is refused with SQLCODE -910.
     #[test]
     fn composite_keys_and_refusals() {
-        let types = [DataType::Character { length: 2 }, DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric }];
+        let types = [DataType::character(2), DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric }];
         let k = |s: &str, n: i128| key(&[Value::Char(s.into()), exact(n, 0)], &types);
         assert_eq!(key(&[Value::Null, exact(9, 0)], &types).cmp(&k("", -9)), Ordering::Less);
         assert!(k("a", 9) < k("b", -9) && k("a", -1) < k("a", 1) && k("é", 0) > k("z", 0));
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn keys_decode_to_their_values() {
         let types = [
-            DataType::Character { length: 3 },
+            DataType::character(3),
             DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric },
             DataType::Approximate { precision: 53, spelled: Spelled::Float },
         ];
@@ -270,7 +270,7 @@ mod tests {
         let day = |micros: i64, moment, zoned| Value::Datetime(Datetime { moment, utc: micros, zone: 0, zoned, precision: 2 });
         let qualifier = Qualifier::new(Field::Day, Field::Second, 2, 2);
         let restored = [
-            (DataType::Character { length: 3 }, Value::Char("ab ".into())),
+            (DataType::character(3), Value::Char("ab ".into())),
             (DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, exact(-12_345, 2)),
             (DataType::Binary { length: 4 }, Value::Binary(Binary::new(vec![0xA0, 0, 0, 1]))),
             (DataType::VarBinary { length: 16 }, Value::Binary(Binary::new(vec![0xFF, 0, 0x80]))),
@@ -285,7 +285,7 @@ mod tests {
         }
         let zoned = Value::Datetime(Datetime { moment: Moment::Time, utc: 0, zone: 60, zoned: true, precision: 2 });
         let lost = [
-            (DataType::Varying { length: 4 }, Value::Char("ab ".into())),
+            (DataType::varying(4), Value::Char("ab ".into())),
             (DataType::Approximate { precision: 53, spelled: Spelled::Float }, Value::Approx(-0.0)),
             (DataType::Time { precision: 2, zoned: true }, zoned),
         ];
@@ -332,7 +332,7 @@ mod tests {
         );
         let exactness = |value: &Value, data_type| anchor(value, data_type).map(|a| a.exact);
         assert_eq!((exactness(&exact(15_500, 4), money), exactness(&exact(15_501, 4), money)), (Some(true), Some(false)));
-        let short = DataType::Character { length: 3 };
+        let short = DataType::character(3);
         let words: Vec<Value> = ["ab", "abc", "abd", "b"].map(|s| Value::Char(s.into())).to_vec();
         check(short, &words, &["abcd", "abc   ", "aaaa", "zzzz", "ab", "abc"].map(|s| Value::Char(s.into())));
         let real = DataType::Approximate { precision: 53, spelled: Spelled::Float };

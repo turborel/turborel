@@ -34,7 +34,7 @@ fn targets() -> Params {
     let exact = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
     Params::new()
         .declare("NUM", exact, Value::Null)
-        .declare("TXT", DataType::Character { length: 128 }, Value::Null)
+        .declare("TXT", DataType::character(128), Value::Null)
         .declare("J", exact, Value::Exact(Decimal::new(1, 0)))
         .declare("Q", DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, Value::Null)
 }
@@ -329,7 +329,7 @@ fn an_inaccessible_column_is_named_18_1() {
 fn a_string_cut_to_fit_is_a_warning() {
     let db = diagnosed();
     let a = db.session("A");
-    let mut p = targets().declare("SHORT", DataType::Character { length: 1 }, Value::Null);
+    let mut p = targets().declare("SHORT", DataType::character(1), Value::Null);
     let done = a.execute("SELECT N INTO SHORT FROM T WHERE K = 1", &mut p).unwrap();
     assert_eq!((done, p.value("SHORT").to_string()), (Completion::Warning(SqlState::STRING_TRUNCATED), "A".to_owned()));
     assert_eq!(condition(&a, "RETURNED_SQLSTATE"), "01004");
@@ -341,7 +341,7 @@ fn a_string_cut_to_fit_is_a_warning() {
 /// The CATALOG_NAME of condition 1 as it is, padding and all; and its
 /// SCHEMA_NAME, TABLE_NAME and COLUMN_NAME.
 fn named(s: &Session) -> [String; 4] {
-    let mut p = targets().declare("CAT", DataType::Varying { length: 128 }, Value::Null);
+    let mut p = targets().declare("CAT", DataType::varying(128), Value::Null);
     s.execute("GET DIAGNOSTICS EXCEPTION 1 CAT = CATALOG_NAME", &mut p).unwrap();
     let catalog = p.value("CAT").to_string();
     [catalog, condition(s, "SCHEMA_NAME"), condition(s, "TABLE_NAME"), condition(s, "COLUMN_NAME")]

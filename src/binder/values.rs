@@ -5,7 +5,7 @@ use super::datetime;
 use crate::ast::{Literal, ValueSpecification};
 use crate::error::{At, Result};
 use crate::params::{ParameterType, Params};
-use crate::value::{DOUBLE_PRECISION, DataType, Spelled, Value};
+use crate::value::{CharUnits, DOUBLE_PRECISION, DataType, Spelled, Value};
 
 /// [X3.135-1986 §5.6] `<value specification>`: its value and data type.
 ///
@@ -18,7 +18,9 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         // [X3.135-1986 §5.6 GR1]
         ValueSpecification::Parameter(p) => params.input(p).or_at(p.at)?,
         // [X3.135-1986 §5.6 GR3]
-        ValueSpecification::Literal(Literal::Character(s)) => (Value::Char(s.clone()), DataType::Character { length: char_length(s) }),
+        ValueSpecification::Literal(Literal::Character(s)) => {
+            (Value::Char(s.clone()), DataType::Character { length: char_length(s), units: CharUnits::Characters })
+        }
         ValueSpecification::Literal(Literal::Exact(d)) => {
             (Value::Exact(*d), DataType::Exact { precision: d.digits().max(d.scale), scale: d.scale, spelled: Spelled::Numeric })
         }
@@ -41,7 +43,9 @@ pub fn value_specification(v: &ValueSpecification, auth: &str, params: &Params) 
         // being no other in a session, and SYSTEM_USER, the
         // implementation-defined string being it: a library runs under no
         // operating system user of its own.
-        ValueSpecification::User(_) => (Value::Char(auth.to_string()), DataType::Character { length: char_length(auth) }),
+        ValueSpecification::User(_) => {
+            (Value::Char(auth.to_string()), DataType::Character { length: char_length(auth), units: CharUnits::Characters })
+        }
         // [ISO/IEC 9075:1992 §17.6 GR4] where nothing gives it a type: the
         // contexts that do bind it by `Binder::typed`.
         ValueSpecification::Dynamic { index, at } => params.dynamic_value(*index, None).or_at(*at)?,

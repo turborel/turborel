@@ -69,7 +69,8 @@ functions before a parenthesis, as the trims are. Within POSITION_REGEX,
 START and AFTER are words unless IN or FLAG follows, so
 `POSITION_REGEX(START IN S)` searches S for the value of a column START.
 OCCURRENCE, CHARACTERS and OCTETS are read only where those functions
-take them. FORMAT, which SQL:2023 does not reserve either, is
-read only after a CAST's target.
+take them, and after USING in CHAR_LENGTH, POSITION and SUBSTRING, and
+after a character string type's length. FORMAT, which SQL:2023 does not
+reserve either, is read only after a CAST's target.
 
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

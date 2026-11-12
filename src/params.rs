@@ -113,7 +113,7 @@ impl Params {
             if self.list.iter().take(i).any(|q| q.name == p.name) {
                 return Err(api(format!("[X3.135-1986 §7.3 SR2] parameter {} is declared twice", p.name)));
             }
-            if let DataType::Character { length } | DataType::Varying { length } = p.data_type
+            if let DataType::Character { length, .. } | DataType::Varying { length, .. } = p.data_type
                 && length > MAX_CHARACTER_LENGTH
             {
                 return Err(api(format!(
@@ -171,8 +171,8 @@ impl Params {
 /// kind, its length, fields and precision then as its assignment checks
 /// them.
 fn argument_fits(value: &Value, data_type: DataType) -> bool {
-    if let (Value::Char(s), DataType::Character { length } | DataType::Varying { length }) = (value, data_type) {
-        return usize::try_from(length).is_ok_and(|l| s.chars().count() <= l);
+    if let (Value::Char(s), DataType::Character { length, units } | DataType::Varying { length, units }) = (value, data_type) {
+        return usize::try_from(length).is_ok_and(|l| units.count(s) <= l);
     }
     matches!(
         (value, data_type),

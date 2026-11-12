@@ -97,7 +97,7 @@ fn set_operation_results_take_both_operands_types_7_10() {
     let c = s.open_cursor("SELECT ID, NAME FROM T UNION SELECT ID, CODE FROM U").unwrap();
     assert_eq!(c.columns[0].name.as_deref(), Some("ID"), "SR12b i 1");
     assert_eq!(c.columns[1].name, None, "SR12b i 2");
-    assert_eq!(c.columns[1].data_type, DataType::Character { length: 6 });
+    assert_eq!(c.columns[1].data_type, DataType::character(6));
     assert!(c.columns[0].not_null, "both NOT NULL");
     let c = s.open_cursor("SELECT ID FROM T UNION SELECT AMT AS ID FROM T").unwrap();
     assert!(!c.columns[0].not_null, "AMT may be null");

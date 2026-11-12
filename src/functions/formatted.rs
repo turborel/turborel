@@ -50,8 +50,8 @@ fn target(t: &DataType) -> Option<Target> {
 /// is one.
 fn string(t: &DataType) -> Option<(u32, bool)> {
     match t {
-        DataType::Character { length } => Some((*length, true)),
-        DataType::Varying { length } => Some((*length, false)),
+        DataType::Character { length, .. } => Some((*length, true)),
+        DataType::Varying { length, .. } => Some((*length, false)),
         DataType::Date
         | DataType::Time { .. }
         | DataType::Timestamp { .. }

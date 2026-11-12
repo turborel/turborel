@@ -16,9 +16,9 @@ use super::number;
 /// text.
 pub fn dynamic_host() -> Params {
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
-    let name = DataType::Varying { length: 128 };
+    let name = DataType::varying(128);
     Params::new()
-        .declare("TEXT", DataType::Varying { length: 500 }, Value::Null)
+        .declare("TEXT", DataType::varying(500), Value::Null)
         .declare("SN", name, Value::Null)
         .declare("CN", name, Value::Null)
         .declare("DN", name, Value::Null)
@@ -26,9 +26,9 @@ pub fn dynamic_host() -> Params {
         .declare("ID", integer, Value::Null)
         .declare("N", integer, Value::Null)
         .declare("VAL", integer, Value::Null)
-        .declare("NM", DataType::Character { length: 6 }, Value::Null)
+        .declare("NM", DataType::character(6), Value::Null)
         .indicator("NI", 0)
-        .declare("TXT", DataType::Character { length: 128 }, Value::Null)
+        .declare("TXT", DataType::character(128), Value::Null)
 }
 
 /// `sql` run with `p`: its completion, or its error's SQLSTATE.

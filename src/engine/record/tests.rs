@@ -15,10 +15,10 @@ fn exact(units: i128, scale: u32) -> Value {
 fn types() -> Vec<DataType> {
     let mut t = vec![
         DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric },
-        DataType::Character { length: 5 },
+        DataType::character(5),
         DataType::Approximate { precision: 53, spelled: Spelled::Float },
         DataType::Exact { precision: 6, scale: 2, spelled: Spelled::Numeric },
-        DataType::Character { length: 3 },
+        DataType::character(3),
     ];
     t.extend(t.clone());
     t
@@ -81,7 +81,7 @@ fn values_must_be_of_their_columns_types() {
         assert_eq!(format.encode(&vec![bad.clone()], &mut Vec::new()).err().map(|e| e.code), Some(Code::Api), "{bad:?}");
     }
     assert_eq!(format.encode(&vec![], &mut Vec::new()).err().map(|e| e.code), Some(Code::Api));
-    let chars = RecordFormat::new(&[DataType::Character { length: 2 }]);
+    let chars = RecordFormat::new(&[DataType::character(2)]);
     assert_eq!(chars.encode(&vec![Value::Exact(Decimal::new(1, 0))], &mut Vec::new()).err().map(|e| e.code), Some(Code::Api));
 }
 
@@ -108,8 +108,8 @@ fn spill(format: &RecordFormat, row: &Row, spill: Spill, store: &mut Vec<(usize,
 fn long_values_go_out_of_line() {
     let format = RecordFormat::new(&[
         DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric },
-        DataType::Character { length: 100 },
-        DataType::Character { length: 100 },
+        DataType::character(100),
+        DataType::character(100),
     ]);
     let long = format!("{}{}", "é".repeat(10), "x".repeat(30));
     let row = vec![exact(1, 0), Value::Char(format!("{long:<100}")), Value::Char(format!("{:<100}", "short"))];
@@ -137,8 +137,7 @@ fn long_values_go_out_of_line() {
 /// error is the encoding's.
 #[test]
 fn rows_too_long_move_their_longest_values_out() {
-    let format =
-        RecordFormat::new(&[DataType::Character { length: 200 }, DataType::Character { length: 200 }, DataType::Character { length: 20 }]);
+    let format = RecordFormat::new(&[DataType::character(200), DataType::character(200), DataType::character(20)]);
     let row = vec![Value::Char("a".repeat(100)), Value::Char("b".repeat(150)), Value::Char("c".repeat(20))];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 1000, most: 180 }, &mut store).unwrap();
@@ -162,7 +161,7 @@ fn rows_too_long_move_their_longest_values_out() {
 /// written.
 #[test]
 fn values_of_every_varying_type_are_measured() {
-    let format = RecordFormat::new(&[DataType::Varying { length: 1000 }, DataType::VarBinary { length: 8000 }]);
+    let format = RecordFormat::new(&[DataType::varying(1000), DataType::VarBinary { length: 8000 }]);
     let row = vec![Value::Char(format!("{:<300}", "x")), Value::Binary(crate::value::Binary::new(vec![0xAB; 300]))];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 100, most: 4000 }, &mut store).unwrap();
@@ -194,8 +193,7 @@ fn malformed_references_are_refused() {
 /// UTF-8 or longer than their column, or a column that does not exist.
 #[test]
 fn malformed_records_are_refused() {
-    let format =
-        RecordFormat::new(&[DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric }, DataType::Character { length: 2 }]);
+    let format = RecordFormat::new(&[DataType::Exact { precision: 4, scale: 0, spelled: Spelled::Numeric }, DataType::character(2)]);
     let mut bytes = Vec::new();
     format.encode(&vec![exact(7, 0), Value::Char("ab".into())], &mut bytes).unwrap();
     let corrupt = |b: &[u8]| format.decode(b).err().map(|e| e.code);

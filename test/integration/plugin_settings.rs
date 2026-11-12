@@ -56,7 +56,7 @@ impl ScalarFunction for Scalar {
         Some(&self.0)
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Character { length: 4 })
+        Ok(DataType::character(4))
     }
     fn call(&self, _: &[Value]) -> Result<Value> {
         Ok(Value::Null)
@@ -86,7 +86,7 @@ impl AggregateFunction for Aggregate {
         Some(&self.0)
     }
     fn result_type(&self, _: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Character { length: 4 })
+        Ok(DataType::character(4))
     }
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
         Box::new(Nothing)
@@ -106,7 +106,7 @@ impl SystemTable for Table {
     fn columns(&self) -> Vec<ColumnDesc> {
         vec![ColumnDesc {
             name: "K".into(),
-            data_type: DataType::Character { length: 4 },
+            data_type: DataType::character(4),
             not_null: false,
             default: None,
             domain: None,

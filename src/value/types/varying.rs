@@ -22,12 +22,12 @@
 
 use std::cmp::Ordering;
 
-use super::character::{OCTETS_PER_CHARACTER, cut, string, unwarned};
+use super::character::{cut, octets_of, put_units, read_units, string, unwarned, written_as};
 use super::{Descriptor, SqlType, malformed, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_literal, uncastable};
-use crate::value::{Bucket, DataType, Value, assignment_rule, compare_strings, unassignable};
+use crate::value::{Bucket, CharUnits, DataType, Value, assignment_rule, compare_strings, unassignable};
 
 /// The kind of CHARACTER VARYING(length).
 #[derive(Debug)]
@@ -48,9 +48,10 @@ const GREATER: u8 = 3;
 /// holds it.
 const SPACE: u8 = b' ';
 
-/// The maximum length of `t`, a variable-length character string type.
-fn length_of(t: &DataType) -> u32 {
-    if let DataType::Varying { length } = t { *length } else { 0 }
+/// The maximum length of `t`, a variable-length character string type,
+/// and what it counts.
+fn length_of(t: &DataType) -> (u32, CharUnits) {
+    if let DataType::Varying { length, units } = t { (*length, *units) } else { (0, CharUnits::Characters) }
 }
 
 /// A value not of a column of `t`'s type.
@@ -64,7 +65,8 @@ fn mismatch(v: &Value, t: &DataType) -> SqlError {
 ///
 /// SQLSTATE 22001 if it is [§6.10 GR6a iii, GR6b iii 3].
 fn within(text: String, t: &DataType) -> Result<Value> {
-    if u32::try_from(text.chars().count()).is_ok_and(|n| n <= length_of(t)) {
+    let (length, units) = length_of(t);
+    if u32::try_from(units.count(&text)).is_ok_and(|n| n <= length) {
         return Ok(Value::Char(text));
     }
     fail_with(
@@ -122,7 +124,8 @@ impl SqlType for Varying {
     }
 
     fn written(&self, t: &DataType) -> String {
-        format!("CHARACTER VARYING({})", length_of(t))
+        let (length, units) = length_of(t);
+        written_as("CHARACTER VARYING", length, units)
     }
 
     /// [X3.135-1986 §4.2] Character strings are comparable, of fixed or
@@ -142,23 +145,24 @@ impl SqlType for Varying {
     }
 
     /// [ISO/IEC 9075:1992 §9.2 GR3d, GR3e] kept as it is, if no longer
-    /// than the maximum length; else without trailing spaces beyond it.
+    /// than the maximum length; else without trailing spaces beyond it; in
+    /// octets, of a length in octets [ISO/IEC 9075-2:2023 §6.1 SR16b].
     fn assign(&self, v: Value, t: &DataType, rule: &str) -> Result<Value> {
         let Value::Char(s) = v else { return unassignable(&v, t, rule) };
-        let (count, most) = (s.chars().count(), usize::try_from(length_of(t)).unwrap_or(usize::MAX));
+        let (length, units) = length_of(t);
+        let (count, most) = (units.count(&s), usize::try_from(length).unwrap_or(usize::MAX));
         if count <= most {
             return Ok(Value::Char(s));
         }
-        if s.chars().skip(most).all(|c| c == ' ') {
-            return Ok(Value::Char(s.chars().take(most).collect()));
+        let kept = units.prefix(&s, most);
+        if s.get(kept.len()..).unwrap_or_default().chars().all(|c| c == ' ') {
+            return Ok(Value::Char(kept.to_owned()));
         }
+        let unit = if units == CharUnits::Octets { "octets" } else { "characters" };
         fail_with(
             Code::Data,
             SqlState::STRING_DATA_RIGHT_TRUNCATION,
-            format!(
-                "[{}] a value of {count} characters, not spaces beyond {most}, does not fit {t}",
-                assignment_rule(rule, "§9.2 GR3e ii")
-            ),
+            format!("[{}] a value of {count} {unit}, not spaces beyond {most}, does not fit {t}", assignment_rule(rule, "§9.2 GR3e ii")),
         )
     }
 
@@ -174,9 +178,9 @@ impl SqlType for Varying {
     /// not a space \[GR6c\]; no binary string [ISO/IEC 9075-2:2023 §6.13
     /// SR7]; a value beyond the standard, its text, as a string.
     fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
-        let length = length_of(t);
+        let (length, units) = length_of(t);
         let cut_to = |s: &str| {
-            let (kept, warning) = cut(s, length);
+            let (kept, warning) = cut(s, length, units);
             (Value::Char(kept), warning)
         };
         match v {
@@ -210,9 +214,8 @@ impl SqlType for Varying {
     /// Its collation SQL_TEXT's; four octets to a character, the most
     /// UTF-8 takes.
     fn descriptor(&self, t: &DataType) -> Descriptor {
-        let length = length_of(t);
-        let octets = usize::try_from(length).unwrap_or(usize::MAX).saturating_mul(OCTETS_PER_CHARACTER);
-        Descriptor { length: Some(length), octets: Some(octets), collated: true, ..Descriptor::of(self.name()) }
+        let (length, units) = length_of(t);
+        Descriptor { length: Some(length), octets: Some(octets_of(length, units)), collated: true, ..Descriptor::of(self.name()) }
     }
 
     fn put_value(&self, v: &Value, out: &mut Vec<u8>) {
@@ -224,11 +227,13 @@ impl SqlType for Varying {
     }
 
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>) {
-        out.put_u32(length_of(t));
+        let (length, units) = length_of(t);
+        out.put_u32(length);
+        put_units(units, out);
     }
 
     fn params(&self, r: &mut Reader<'_>) -> Result<DataType> {
-        Ok(DataType::Varying { length: r.u32()? })
+        Ok(DataType::Varying { length: r.u32()?, units: read_units(r)? })
     }
 
     /// Of variable length.

@@ -14,7 +14,7 @@ use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
 use crate::value::Spelled;
 use crate::value::interval::Qualifier;
-use crate::value::{CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
+use crate::value::{CharUnits, CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
 
 /// [ISO/IEC 9075-2:2023 §9.5 SR3f] Of `types`, one of them BOOLEAN,
 /// BOOLEAN if all are.
@@ -63,17 +63,22 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if let Some(precision) = types.iter().filter_map(decfloat_precision).max() {
         return Ok(DataType::DecFloat { precision });
     }
-    let (mut length, mut varying, mut whole, mut scale, mut exact) = (0_u32, false, 0_u32, 0_u32, true);
+    if let Some(t) = string_set_type(types) {
+        return Ok(t);
+    }
+    let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
     for t in types {
         match t {
-            DataType::Character { length: n } | DataType::Binary { length: n } => length = length.max(*n),
-            DataType::Varying { length: n } | DataType::VarBinary { length: n } => (length, varying) = (length.max(*n), true),
             DataType::Exact { precision, scale: s, .. } => {
                 whole = whole.max(precision.saturating_sub(*s));
                 scale = scale.max(*s);
             }
             DataType::Approximate { .. } => exact = false,
-            DataType::DecFloat { .. }
+            DataType::Character { .. }
+            | DataType::Varying { .. }
+            | DataType::Binary { .. }
+            | DataType::VarBinary { .. }
+            | DataType::DecFloat { .. }
             | DataType::Boolean
             | DataType::Date
             | DataType::Time { .. }
@@ -83,16 +88,50 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
         }
     }
     let digits = whole.saturating_add(scale).min(MAX_EXACT_PRECISION);
-    Ok(match (characters, binaries, exact) {
-        (0, 0, true) => DataType::Exact { precision: digits, scale, spelled: Spelled::Numeric },
-        (0, 0, false) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        // [ISO/IEC 9075-2:2023 §9.5 SR3b ii] varying if any is; [SR3b
-        // iii] else fixed.
-        (0, _, _) if varying => DataType::VarBinary { length },
-        (0, _, _) => DataType::Binary { length },
-        // [§9.3 SR3a i] varying if any is; [SR3a ii] else fixed.
-        _ if varying => DataType::Varying { length },
-        _ => DataType::Character { length },
+    Ok(if exact {
+        DataType::Exact { precision: digits, scale, spelled: Spelled::Numeric }
+    } else {
+        DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float }
+    })
+}
+
+/// [ISO/IEC 9075:1992 §9.3 SR3a; ISO/IEC 9075-2:2023 §9.5 SR3b] The result
+/// type of `types`, if they are character strings or binary strings, all
+/// one or the other: of the greatest length, varying if any is \[SR3a i,
+/// SR3b ii\], else fixed \[SR3a ii, SR3b iii\]. A character string's
+/// length is in octets if all are \[§6.1 SR16\], else in characters, which
+/// a length in octets bounds.
+fn string_set_type(types: &[DataType]) -> Option<DataType> {
+    let first = types.first()?;
+    if !first.is_character() && !first.is_binary() {
+        return None;
+    }
+    let (mut length, mut varying, mut octets) = (0_u32, false, true);
+    for t in types {
+        match t {
+            DataType::Character { length: n, units } => (length, octets) = (length.max(*n), octets && *units == CharUnits::Octets),
+            DataType::Varying { length: n, units } => {
+                (length, varying, octets) = (length.max(*n), true, octets && *units == CharUnits::Octets);
+            }
+            DataType::Binary { length: n } => length = length.max(*n),
+            DataType::VarBinary { length: n } => (length, varying) = (length.max(*n), true),
+            DataType::Exact { .. }
+            | DataType::Approximate { .. }
+            | DataType::DecFloat { .. }
+            | DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Extension(_) => {}
+        }
+    }
+    let units = if octets { CharUnits::Octets } else { CharUnits::Characters };
+    Some(match (first.is_binary(), varying) {
+        (true, true) => DataType::VarBinary { length },
+        (true, false) => DataType::Binary { length },
+        (false, true) => DataType::Varying { length, units },
+        (false, false) => DataType::Character { length, units },
     })
 }
 

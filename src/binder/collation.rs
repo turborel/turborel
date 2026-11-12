@@ -26,7 +26,7 @@ use crate::functions::{ScalarFunction, ScalarRef, source_of};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, Subquery};
 use crate::system::INFORMATION_SCHEMA;
 use crate::value::collation::{CollationRef, SQL_TEXT};
-use crate::value::{CompOp, DataType, Decimal, Spelled, Value, like_collated};
+use crate::value::{CharUnits, CompOp, DataType, Decimal, Spelled, Value, like_collated};
 
 /// The collations of each subquery's columns, by the subquery's text.
 pub(super) type SubqueryCollations = Vec<(*const AstSubquery, Vec<Option<QualifiedName>>)>;
@@ -69,7 +69,7 @@ impl ScalarFunction for Folded {
         self.0.collation.name()
     }
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        Ok(args.first().copied().unwrap_or(DataType::Varying { length: 0 }))
+        Ok(args.first().copied().unwrap_or(DataType::Varying { length: 0, units: CharUnits::Characters }))
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(Value::Char(text)) = args.first() else { return Ok(args.first().cloned().unwrap_or(Value::Null)) };
@@ -399,7 +399,7 @@ impl Binder<'_> {
             Derived::Yielding => named(None),
             Derived::Conflicting => Value::Null,
         };
-        Ok((Expr::Const(value), DataType::Varying { length: MAX_IDENTIFIER_LENGTH }))
+        Ok((Expr::Const(value), DataType::Varying { length: MAX_IDENTIFIER_LENGTH, units: CharUnits::Characters }))
     }
 
     /// The collation of the select-list item `e`, as a result column's.

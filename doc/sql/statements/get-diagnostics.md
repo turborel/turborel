@@ -103,9 +103,9 @@ VARCHAR(30), CONSTRAINT PAID CHECK (ID > 0)):
 let s = db.session("ANN");
 let mut p = Params::new()
     .declare("N", DataType::Exact { precision: 9, scale: 0 }, Value::Null)
-    .declare("CMD", DataType::Varying { length: 128 }, Value::Null)
-    .declare("STATE", DataType::Character { length: 5 }, Value::Null)
-    .declare("NAME", DataType::Varying { length: 128 }, Value::Null);
+    .declare("CMD", DataType::varying(128), Value::Null)
+    .declare("STATE", DataType::character(5), Value::Null)
+    .declare("NAME", DataType::varying(128), Value::Null);
 s.run("INSERT INTO STAFF VALUES (1, 'Ada'), (2, 'Grace')")?;
 s.execute("GET DIAGNOSTICS N = ROW_COUNT, CMD = COMMAND_FUNCTION", &mut p)?;
 // N = 2, CMD = INSERT

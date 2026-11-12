@@ -27,8 +27,11 @@ pub(super) fn default_of(subject: DataType, option: &DefaultOption, zone: i16) -
     let literal = match option {
         DefaultOption::Null => return Ok(ColumnDefault::Value(Value::Null)),
         DefaultOption::User(_) => {
-            let long =
-                if let DataType::Character { length } | DataType::Varying { length } = subject { length >= USER_LENGTH } else { false };
+            let long = if let DataType::Character { length, .. } | DataType::Varying { length, .. } = subject {
+                length >= USER_LENGTH
+            } else {
+                false
+            };
             if !long {
                 return Err(rule(format!(
                     "[ISO/IEC 9075:1992 §11.5 SR3b] an authorization identifier is the default only of a character string of at least {USER_LENGTH} characters, not {subject}"
@@ -147,8 +150,8 @@ fn exact_default(d: Decimal, subject: DataType) -> Result<Value> {
 /// SQLCODE -103 if it is longer than the column; CAST's errors.
 fn character_default(s: &str, subject: DataType) -> Option<Result<Value>> {
     match subject {
-        DataType::Character { length } | DataType::Varying { length } => {
-            if s.chars().count() > usize::try_from(length).unwrap_or(usize::MAX) {
+        DataType::Character { length, units } | DataType::Varying { length, units } => {
+            if units.count(s) > usize::try_from(length).unwrap_or(usize::MAX) {
                 return Some(Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a i] the default '{s}' is longer than {subject}"))));
             }
             Some(Ok(Value::Char(s.to_owned())))

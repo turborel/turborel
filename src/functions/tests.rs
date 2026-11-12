@@ -176,7 +176,7 @@ fn set_functions_merge_their_states_as_their_values() {
         assert_eq!(all, split, "{} of intervals", function.name());
     }
     let ties = [Value::Char("a".to_owned()), Value::Char("a  ".to_owned())];
-    let text = DataType::Varying { length: 3 };
+    let text = DataType::varying(3);
     assert_eq!(merged(&Extreme { max: true }, text, &ties, 1_usize).1, "Ok(Char(\"a\"))");
     let double = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
     let mut none = Vec::new();

@@ -21,7 +21,7 @@ use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage};
 use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
-const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::Varying { length: 20 }];
+const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(20)];
 
 fn row(n: i128) -> Row {
     vec![Value::Exact(Decimal::new(n, 0)), Value::Char(format!("v{n}"))]
@@ -327,7 +327,7 @@ fn compressed_groups_take_fewer_pages() {
         DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer },
         DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer },
         DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Decimal },
-        DataType::Varying { length: 20 },
+        DataType::varying(20),
     ];
     let make = |n: i128| {
         vec![

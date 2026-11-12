@@ -385,7 +385,7 @@ mod tests {
         assert!(same(&one.0, &Probe::Compare { op: CompOp::Eq, value: Value::Null }), "{one:?}");
         assert_eq!(one.1, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]);
         assert!(point_probe(&conds[..1], &[], (&[0, 1], &[INT, INT])).is_none(), "K not held equal");
-        let text = DataType::Varying { length: 4 };
+        let text = DataType::varying(4);
         assert!(point_probe(&conds, &[], (&[0, 1], &[INT, text])).is_none(), "a number in a text column");
         let less = Cond::Compare(Expr::Column(0), CompOp::Lt, Expr::Dynamic(slot(0)));
         assert!(point_probe(&[less], &[], (&[0], &[INT])).is_none(), "not an equality");

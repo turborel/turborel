@@ -14,7 +14,7 @@ use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::value::collation::CollationRef;
-use crate::value::{DataType, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Spelled, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.33] LTRIM's name, no key word of SQL-92.
 pub const LTRIM: &str = "LTRIM";
@@ -163,7 +163,7 @@ impl ScalarFunction for Trim {
         // [SR14c, SR15b.i.1] the character comparable with the source.
         character(self.name, sc)?;
         // [SR14b, SR15a] varying, as long as the source at most.
-        Ok(DataType::Varying { length: character(self.name, s)? })
+        Ok(DataType::Varying { length: character(self.name, s)?, units: CharUnits::Characters })
     }
     /// \[GR12, GR13\] Null if S or SC is; S if either is empty \[GR13d\];
     /// else S with each character contained in SC removed from the ends
@@ -205,7 +205,7 @@ impl ScalarFunction for Padding {
             );
         }
         // [SR16c]
-        Ok(DataType::Varying { length: PADDED_LENGTH })
+        Ok(DataType::Varying { length: PADDED_LENGTH, units: CharUnits::Characters })
     }
     /// \[EXTENSION\] The total pad length NUMERIC(P, 0), as SUBSTRING's
     /// length [ISO/IEC 9075:1992 §17.6 GR5c]; the strings none.

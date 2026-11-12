@@ -12,7 +12,7 @@ use turborel::value::Spelled;
 fn targets() -> Params {
     Params::new()
         .declare("ID_OUT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Null)
-        .declare("NAME_OUT", DataType::Character { length: 2 }, Value::Null)
+        .declare("NAME_OUT", DataType::character(2), Value::Null)
         .indicator("NAME_IND", 0)
         .declare("LIMIT", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(1, 0)))
 }
@@ -234,7 +234,7 @@ fn fetch_assigns_by_the_type_of_the_target() {
     let s = db.session("APP");
     s.declare_cursor("DECLARE N CURSOR FOR SELECT NAME FROM T WHERE ID = 1").unwrap();
     s.declare_cursor("DECLARE A CURSOR FOR SELECT AMT FROM T WHERE ID = 1").unwrap();
-    let mut p = Params::new().declare("NAME6", DataType::Character { length: 6 }, Value::Null).indicator("NAME6_IND", 0).declare(
+    let mut p = Params::new().declare("NAME6", DataType::character(6), Value::Null).indicator("NAME6_IND", 0).declare(
         "ONE_DIGIT",
         DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric },
         Value::Null,
@@ -459,7 +459,7 @@ fn a_select_statement_needs_into_8_10() {
 fn character_parameters_are_bounded_too() {
     let db = setup();
     let s = db.session("APP");
-    let at_most = |length| Params::new().declare("C", DataType::Character { length }, Value::Null);
+    let at_most = |length| Params::new().declare("C", DataType::character(length), Value::Null);
     assert!(s.execute("COMMIT WORK", &mut at_most(MAX_CHARACTER_LENGTH)).is_ok());
     assert_eq!(s.execute("COMMIT WORK", &mut at_most(MAX_CHARACTER_LENGTH + 1)).map_err(|e| e.code), Err(Code::Api));
 }
@@ -471,7 +471,7 @@ fn a_negative_indicator_makes_the_value_null_5_6() {
     let s = db.session("APP");
     let mut p = Params::new()
         .declare("ID", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(7, 0)))
-        .declare("N", DataType::Character { length: 6 }, Value::Char("ZED".into()))
+        .declare("N", DataType::character(6), Value::Char("ZED".into()))
         .indicator("NI", -1);
     // [X3.135-1986 §5.6 GR1] a negative indicator makes the value null.
     s.execute("INSERT INTO T (ID, NAME) VALUES (ID, N INDICATOR NI)", &mut p).unwrap();
@@ -486,7 +486,7 @@ fn an_unqualified_name_is_the_parameter_7_3() {
     let s = db.session("APP");
     let mut p = Params::new()
         .declare("ID", DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric }, Value::Exact(Decimal::new(8, 0)))
-        .declare("N", DataType::Character { length: 6 }, Value::Char("ZED".into()))
+        .declare("N", DataType::character(6), Value::Char("ZED".into()))
         .indicator("NI", 0);
     s.execute("INSERT INTO T (ID, NAME) VALUES (ID, N NI)", &mut p).unwrap();
     // [X3.135-1986 §7.3 SR4] the column ID must be qualified, since a parameter is named ID.
@@ -543,7 +543,7 @@ fn parameters_are_checked_when_used_5_6() {
     let db = setup();
     let s = db.session("APP");
     let exact = DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric };
-    let short = DataType::Character { length: 2 };
+    let short = DataType::character(2);
     let insert = |p: &mut Params, sql: &str| s.execute(sql, p).map_err(|e| e.code);
     // §5.6 SR2: an indicator parameter is exact numeric with scale 0.
     let mut p = Params::new().declare("N", short, Value::Char("AB".into())).declare("NI", short, Value::Char("X".into()));

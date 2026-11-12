@@ -15,7 +15,7 @@ use crate::functions::strings::{character, text, whole};
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::regex::{Captures, Regex, zero_length};
-use crate::value::{DataType, MAX_CHARACTER_LENGTH, Value};
+use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.33] TRANSLATE_REGEX, no key word of SQL-92.
 pub const TRANSLATE_REGEX: &str = "TRANSLATE_REGEX";
@@ -46,7 +46,8 @@ impl ScalarFunction for Translate {
         let strings = [("pattern", pattern), ("flag", flag), ("subject", subject), ("replacement", replacement)];
         operands(TRANSLATE_REGEX, &strings, &[("start position", from), ("occurrence", occurrence)])?;
         let empty = character(TRANSLATE_REGEX, replacement)? == 0;
-        Ok(DataType::Varying { length: if empty { character(TRANSLATE_REGEX, subject)? } else { TRANSLATED_LENGTH } })
+        let length = if empty { character(TRANSLATE_REGEX, subject)? } else { TRANSLATED_LENGTH };
+        Ok(DataType::Varying { length, units: CharUnits::Characters })
     }
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
         parameter(position, args, &[2, 3, 4, 5], &[6, 7])

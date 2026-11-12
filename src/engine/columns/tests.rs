@@ -9,8 +9,8 @@ fn int(n: i128) -> Value {
 }
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-const TEXT: DataType = DataType::Varying { length: 100 };
-const CHAR: DataType = DataType::Character { length: 20 };
+const TEXT: DataType = DataType::varying(100);
+const CHAR: DataType = DataType::character(20);
 
 /// The values of the chunk of all of `values`, read back.
 fn round_trip(t: &DataType, values: &[Value]) -> Vec<String> {

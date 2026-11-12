@@ -67,7 +67,7 @@ fn settings_are_a_system_table_21_1() {
         "DECLARE C CURSOR FOR SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'SESSION.COMMIT_AT_END'",
     )
     .unwrap();
-    let mut p = Params::new().declare("V", DataType::Character { length: 8 }, Value::Null);
+    let mut p = Params::new().declare("V", DataType::character(8), Value::Null);
     s.execute("OPEN C", &mut p).unwrap();
     s.set_setting("SESSION.COMMIT_AT_END", &word("OFF")).unwrap();
     s.execute("FETCH C INTO V", &mut p).unwrap();
@@ -121,7 +121,7 @@ impl SystemTable for Readers {
     fn columns(&self) -> Vec<ColumnDesc> {
         vec![ColumnDesc {
             name: "READER".into(),
-            data_type: DataType::Character { length: 4 },
+            data_type: DataType::character(4),
             not_null: true,
             default: None,
             domain: None,

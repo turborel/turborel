@@ -149,7 +149,7 @@ fn varying_strings_are_retrieved_9_1() {
     let a = db.session("A");
     a.run("INSERT INTO T VALUES ('ab', 'x'), ('abcde', 'y')").unwrap();
     let declared = || {
-        Params::new().declare("OUT", DataType::Varying { length: 3 }, Value::Null).declare(
+        Params::new().declare("OUT", DataType::varying(3), Value::Null).declare(
             "IND",
             DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
             Value::Null,

@@ -142,10 +142,10 @@ fn inserts(bench: &Bench, s: &Session) {
 fn host() -> Params {
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
     Params::new()
-        .declare("TEXT", DataType::Varying { length: 100 }, Value::Char(String::new()))
+        .declare("TEXT", DataType::varying(100), Value::Char(String::new()))
         .declare("KV", integer, int(0))
         .declare("FK", integer, int(0))
-        .declare("NM", DataType::Character { length: 20 }, Value::Char(String::new()))
+        .declare("NM", DataType::character(20), Value::Char(String::new()))
 }
 
 /// `k` as an INTEGER's value.

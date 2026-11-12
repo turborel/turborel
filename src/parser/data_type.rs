@@ -7,11 +7,12 @@
 
 use super::Parser;
 use crate::error::{Code, Result, SqlError};
+use crate::functions::{CHARACTERS, OCTETS};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
 use crate::value::types::{BINARY_NAME, BOOLEAN_NAME, DECFLOAT_NAME, VARBINARY_NAME};
 use crate::value::{
-    DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BINARY_LENGTH,
+    CharUnits, DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION, MAX_BINARY_LENGTH,
     MAX_CHARACTER_LENGTH, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, REAL_PRECISION, SMALLINT_PRECISION,
 };
 
@@ -144,19 +145,30 @@ impl Parser {
         let varchar = *self.peek() == Tok::KeyWord(kw::VARCHAR);
         self.advance();
         if varchar || self.accept_kw(kw::VARYING) {
-            let mut length = MAX_CHARACTER_LENGTH;
-            if self.accept_delim(delim::LEFT_PAREN) {
-                length = self.string_length()?;
-                self.expect_delim(delim::RIGHT_PAREN)?;
-            }
-            return Ok(DataType::Varying { length });
+            let (length, units) = self.character_length(MAX_CHARACTER_LENGTH)?;
+            return Ok(DataType::Varying { length, units });
         }
-        let mut length = 1; // [X3.135-1986 §5.5 SR3] omitted <length> is 1
-        if self.accept_delim(delim::LEFT_PAREN) {
-            length = self.string_length()?;
-            self.expect_delim(delim::RIGHT_PAREN)?;
+        // [X3.135-1986 §5.5 SR3] omitted <length> is 1
+        let (length, units) = self.character_length(1)?;
+        Ok(DataType::Character { length, units })
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] \[(`<character length>`)\], ::= `<length>`
+    /// \[`<char length units>`\]: its length, `implicit` if none is written,
+    /// and its units, CHARACTERS if none are [SR9; Feature T062].
+    fn character_length(&mut self, implicit: u32) -> Result<(u32, CharUnits)> {
+        if !self.accept_delim(delim::LEFT_PAREN) {
+            return Ok((implicit, CharUnits::Characters));
         }
-        Ok(DataType::Character { length })
+        let length = self.string_length()?;
+        let units = if self.accept_word(OCTETS) {
+            CharUnits::Octets
+        } else {
+            self.accept_word(CHARACTERS);
+            CharUnits::Characters
+        };
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok((length, units))
     }
 
     /// [ISO/IEC 9075:1992 §6.1] A character string type's `<length>`: more

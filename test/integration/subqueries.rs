@@ -97,7 +97,7 @@ fn comparison_with_a_subquery_5_11() {
     assert_eq!(code(&s, "SELECT ID FROM T WHERE ID = (SELECT CODE FROM U WHERE CODE = 'A')"), Code::SyntaxRule);
     let mut p = Params::new().declare("N", DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }, Value::Null).declare(
         "C",
-        DataType::Character { length: 3 },
+        DataType::character(3),
         Value::Char("B".into()),
     );
     s.execute("SELECT COUNT(*) INTO N FROM T WHERE ID = (SELECT ID FROM U WHERE CODE = C)", &mut p).unwrap();

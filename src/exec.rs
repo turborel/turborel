@@ -536,7 +536,7 @@ mod tests {
         use crate::error::{SqlState, Warnings};
         use crate::logical::{Expr, LogicalPlan, Subquery};
         use crate::value::DataType;
-        let cut = Expr::Cast(Box::new(Expr::Const(Value::Char("ABC".into()))), DataType::Character { length: 1 });
+        let cut = Expr::Cast(Box::new(Expr::Const(Value::Char("ABC".into()))), DataType::character(1));
         assert_eq!(eval(&cut, &Vec::new(), &NoSubqueries).unwrap().to_string(), "A");
         let warnings = Warnings::default();
         assert_eq!(eval(&cut, &Vec::new(), &Heard(&warnings)).unwrap().to_string(), "A");

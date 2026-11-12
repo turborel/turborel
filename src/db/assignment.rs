@@ -179,18 +179,21 @@ fn retrieved(fetched: &Value, target: &DataType, assign_rule: &str) -> Result<(V
     match (target, fetched) {
         // [X3.135-1986 §8.6 GR10a-c; §9.1 GR3a-c] the first L characters,
         // or padded with spaces to length L.
-        (DataType::Character { length }, Value::Char(s)) => {
-            let (m, l) = (s.chars().count(), usize::try_from(*length).unwrap_or(usize::MAX));
+        // [ISO/IEC 9075-2:2023 §6.1 SR16b] in octets, of a length in octets.
+        (DataType::Character { length, units }, Value::Char(s)) => {
+            let (m, l) = (units.count(s), usize::try_from(*length).unwrap_or(usize::MAX));
             if m > l {
-                return Ok((Value::Char(s.chars().take(l).collect()), indicator_of(m)?, cut));
+                let kept = units.prefix(s, l);
+                let padded = format!("{kept}{}", " ".repeat(l.saturating_sub(units.count(kept))));
+                return Ok((Value::Char(padded), indicator_of(m)?, cut));
             }
             Ok((Value::Char(format!("{s}{}", " ".repeat(l.saturating_sub(m)))), 0, None))
         }
         // [§9.1 GR3d, GR3e] as it is, or its first L characters.
-        (DataType::Varying { length }, Value::Char(s)) => {
-            let (m, l) = (s.chars().count(), usize::try_from(*length).unwrap_or(usize::MAX));
+        (DataType::Varying { length, units }, Value::Char(s)) => {
+            let (m, l) = (units.count(s), usize::try_from(*length).unwrap_or(usize::MAX));
             if m > l {
-                return Ok((Value::Char(s.chars().take(l).collect()), indicator_of(m)?, cut));
+                return Ok((Value::Char(units.prefix(s, l).to_owned()), indicator_of(m)?, cut));
             }
             Ok((Value::Char(s.clone()), 0, None))
         }

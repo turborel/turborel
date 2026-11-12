@@ -192,7 +192,7 @@ pub(super) fn keeps_any(types: &[DataType]) -> bool {
 /// Whether a column of type `t` is kept.
 fn kept(t: &DataType) -> bool {
     match t {
-        DataType::Character { length } | DataType::Varying { length } => *length <= SHORT,
+        DataType::Character { length, .. } | DataType::Varying { length, .. } => *length <= SHORT,
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }

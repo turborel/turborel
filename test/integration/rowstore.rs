@@ -147,7 +147,7 @@ fn table(store: &RowStore, name: &str, length: u32) -> Arc<dyn TableStorage> {
         },
         ColumnDesc {
             name: "S".into(),
-            data_type: DataType::Character { length },
+            data_type: DataType::character(length),
             not_null: false,
             default: None,
             domain: None,

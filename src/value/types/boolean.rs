@@ -86,8 +86,8 @@ pub(crate) fn boolean_literal(s: &str) -> Result<Value> {
 pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
     let word = if b { kw::TRUE } else { kw::FALSE };
     let (length, fixed) = match *t {
-        DataType::Character { length } => (length, true),
-        DataType::Varying { length } => (length, false),
+        DataType::Character { length, .. } => (length, true),
+        DataType::Varying { length, .. } => (length, false),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }

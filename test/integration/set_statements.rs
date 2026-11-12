@@ -177,7 +177,7 @@ fn set_schema_qualifies_unqualified_names_16_2() {
     assert_eq!(s.default_schema(), "O", "unchanged by the refused ones");
     assert_eq!(exec(&s, "SET SCHEMA 'TURBOREL.APP'"), Ok(Completion::Success));
     assert_eq!(count(&s, "SELECT ID FROM T"), 3);
-    let mut p = Params::new().declare("S", DataType::Character { length: 8 }, Value::Char("\"O\"".into()));
+    let mut p = Params::new().declare("S", DataType::character(8), Value::Char("\"O\"".into()));
     s.execute("SET SCHEMA S", &mut p).unwrap();
     assert_eq!(rows(&s, "SELECT K FROM T"), expected(&["7"]), "a delimited identifier, by a parameter");
 }

@@ -20,7 +20,7 @@ or two unsigned integers it takes; so may a domain.
 | Type | Holds | Written |
 |---|---|---|
 | CHARACTER(n) | n characters, padded with spaces | CHAR(n); CHAR is CHAR(1) |
-| CHARACTER VARYING(n) | up to n characters | CHAR VARYING(n), VARCHAR(n); VARCHAR is VARCHAR(32767) |
+| CHARACTER VARYING(n) | up to n characters | CHAR VARYING(n), VARCHAR(n); VARCHAR is VARCHAR(32767); VARCHAR(n OCTETS) up to n octets |
 | NATIONAL CHARACTER(n) | as CHARACTER | NCHAR(n), NATIONAL CHAR(n), and VARYING |
 | BINARY(n) | n octets, padded with X'00' | BINARY is BINARY(1) |
 | BINARY VARYING(n) | up to n octets | VARBINARY(n); VARBINARY is VARBINARY(32767) |
@@ -79,6 +79,32 @@ OK
 turborel: SQLCODE -301 (SQLSTATE 22001): a value of 6 characters, not spaces beyond 5, does not fit CHARACTER(5) [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3b ii]
 OK
 ```
+
+A length may count octets of the string's UTF-8 instead, written
+`VARCHAR(10 OCTETS)` or `CHAR(10 OCTETS)`, and `10 CHARACTERS` is the
+default spelled out. A fixed string is then padded to so many octets,
+and a value or CAST is cut at whole characters, so `é`, two octets, is
+never split:
+
+```sql
+CREATE TABLE BYTES (V VARCHAR(4 OCTETS), F CHAR(4 OCTETS));
+INSERT INTO BYTES VALUES ('éé', 'é');
+SELECT '[' || F || ']' AS FIXED, OCTET_LENGTH(V) AS VO, CHAR_LENGTH(F) AS FC FROM BYTES;
+INSERT INTO BYTES VALUES ('ééé', 'a');
+```
+
+```
+OK
+OK
+ FIXED  |                   VO |                   FC
+--------+----------------------+----------------------
+ [é  ]  |                    4 |                    3
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22001): a value of 6 octets, not spaces beyond 4, does not fit CHARACTER VARYING(4 OCTETS) [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3e ii]
+```
+
+Strings brought together, by CASE, UNION or `||`, keep a length in
+octets if all of them have one, and otherwise count characters.
 
 NATIONAL CHARACTER is CHARACTER: there is one character set, SQL_TEXT,
 which holds every Unicode character, so the national one is the same.

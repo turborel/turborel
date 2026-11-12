@@ -183,7 +183,7 @@ pub fn cast_at(v: Value, t: &DataType, now: Now) -> Result<Value> {
 
 /// The length of `t`, if a character string type.
 fn string_length(t: &DataType) -> Option<u32> {
-    if let DataType::Character { length } | DataType::Varying { length } = t { Some(*length) } else { None }
+    if let DataType::Character { length, .. } | DataType::Varying { length, .. } = t { Some(*length) } else { None }
 }
 
 /// [ISO/IEC 9075:1992 §6.10 GR5e, GR6e] `d`'s literal's string as a

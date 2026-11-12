@@ -34,8 +34,7 @@ fn stale_references_are_refused() {
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
     let table =
-        RowTable::create(&files, &[DataType::Character { length: 9 }], TableOptions { out_of_line: Some(2), ..TableOptions::default() })
-            .unwrap();
+        RowTable::create(&files, &[DataType::character(9)], TableOptions { out_of_line: Some(2), ..TableOptions::default() }).unwrap();
     let page = table.put_value(7, 0, b"long").unwrap();
     let reference = Reference { column: 0, at: page.0, length: 4 };
     assert_eq!(table.get_value(7, reference).unwrap(), b"long");
@@ -70,7 +69,7 @@ fn an_undone_change_keeps_its_older_version_for_open_readers() {
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let table = RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap();
+    let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
     let id = table.insert(crate::txn::NO_TRANSACTION, vec![crate::value::Value::Char("old  ".into())]).unwrap();
     let (writer, reader) = (10, 11);
     table.begin(writer, 9).unwrap();
@@ -99,7 +98,7 @@ fn deleted_rows_cannot_be_written() {
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let table = RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap();
+    let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
     let row = || vec![crate::value::Value::Char("x    ".into())];
     let (a, b) = (table.insert(crate::txn::NO_TRANSACTION, row()).unwrap(), table.insert(crate::txn::NO_TRANSACTION, row()).unwrap());
     let code = |r: Result<()>| r.err().map(|e| e.code);
@@ -130,7 +129,7 @@ fn the_newest_version_is_written_over_by_its_stamp() {
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let table = RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap();
+    let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
     let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
     let a = table.insert(crate::txn::NO_TRANSACTION, row("x")).unwrap();
     let code = |r: Result<()>| r.err().map(|e| e.code);
@@ -170,7 +169,7 @@ fn preserving_writes_fail_no_reader() {
         let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
         let file = pool.add_pager(Arc::new(pager));
         let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-        let table = RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap();
+        let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
         let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
         let a = table.insert(crate::txn::NO_TRANSACTION, row("a")).unwrap();
         table.begin(20, 1).unwrap();
@@ -203,7 +202,7 @@ fn versions_are_those_committed_by_a_time() {
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let table = Arc::new(RowTable::create(&files, &[DataType::Character { length: 1 }], TableOptions::default()).unwrap());
+    let table = Arc::new(RowTable::create(&files, &[DataType::character(1)], TableOptions::default()).unwrap());
     let value = |v: &str| vec![crate::value::Value::Char(v.into())];
     let id = table.insert(crate::txn::NO_TRANSACTION, value("a")).unwrap();
     table.begin(10, 9).unwrap();
@@ -237,7 +236,7 @@ fn a_discarded_table_frees_its_pages_when_it_goes() {
     let pool = Arc::new(BufferPool::new(64, Box::new(Clock::new(64))).unwrap());
     let file = pool.add_pager(Arc::clone(&pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let types = [DataType::Character { length: 900 }];
+    let types = [DataType::character(900)];
     let long = |n: u64| vec![crate::value::Value::Char(format!("{n:>900}"))];
     let written = |table: &RowTable| {
         let ids: Vec<RowId> = (0..300).map(|n| table.insert(crate::txn::NO_TRANSACTION, long(n)).unwrap()).collect();
@@ -283,7 +282,7 @@ fn garbage_is_read_as_of_a_commit() {
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let table = Arc::new(RowTable::create(&files, &[DataType::Character { length: 5 }], TableOptions::default()).unwrap());
+    let table = Arc::new(RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap());
     let char = |s: &str| vec![crate::value::Value::Char(s.into())];
     let id = table.insert(crate::txn::NO_TRANSACTION, char("first")).unwrap();
     for (tx, at, value) in [(10, 20, "secnd"), (11, 30, "third")] {
@@ -326,7 +325,7 @@ fn wide(n: u32) -> Row {
 #[test]
 fn a_fetch_is_priced_by_what_its_table_reads() {
     let files = small_pool();
-    let types = [DataType::Character { length: 200 }];
+    let types = [DataType::character(200)];
     let small = RowTable::create(&files, &types, TableOptions::default()).unwrap();
     let ids: Vec<RowId> = (0..10_u32).map(|n| small.insert(crate::txn::NO_TRANSACTION, wide(n)).unwrap()).collect();
     let held = |cost: f64| (cost - frozen::ROW_FETCH_HELD).abs() < 1e-9_f64;
@@ -357,7 +356,7 @@ fn a_fetch_is_priced_by_what_its_table_reads() {
 #[test]
 fn a_scan_is_priced_by_what_its_pool_holds() {
     let files = small_pool();
-    let table = RowTable::create(&files, &[DataType::Character { length: 200 }], TableOptions::default()).unwrap();
+    let table = RowTable::create(&files, &[DataType::character(200)], TableOptions::default()).unwrap();
     table.insert(crate::txn::NO_TRANSACTION, wide(0_u32)).unwrap();
     assert!((table.scan_cost(&[0]) - 1.0_f64).abs() < 1e-9_f64, "held: a row, all its columns read");
     for n in 1..2000_u32 {
@@ -379,7 +378,7 @@ fn a_scan_is_priced_by_what_its_pool_holds() {
 #[test]
 fn a_fetch_is_priced_by_the_system_cache() {
     let files = small_pool();
-    let table = RowTable::create(&files, &[DataType::Character { length: 200 }], TableOptions::default()).unwrap();
+    let table = RowTable::create(&files, &[DataType::character(200)], TableOptions::default()).unwrap();
     table.insert(crate::txn::NO_TRANSACTION, wide(0_u32)).unwrap();
     files.system_cache.store(0_u64, Ordering::Release);
     assert!((table.fetch_cost() - frozen::ROW_FETCH_HELD).abs() < 1e-9_f64, "the file fits the pool");
@@ -463,8 +462,8 @@ fn a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open() {
     let pages = crate::engine::MemoryPages::new(1 << 20_u32);
     let (pool, file) = pages.file("kept").unwrap();
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
-    let table = RowTable::create(&files, &[DataType::Character { length: 1 }], TableOptions::default()).unwrap();
-    let other = RowTable::create(&files, &[DataType::Character { length: 1 }], TableOptions::default()).unwrap();
+    let table = RowTable::create(&files, &[DataType::character(1)], TableOptions::default()).unwrap();
+    let other = RowTable::create(&files, &[DataType::character(1)], TableOptions::default()).unwrap();
     let id = table.insert(crate::txn::NO_TRANSACTION, vec![crate::value::Value::Char("7".into())]).unwrap();
     let api = Some(Code::Api);
     for committed in [true, false] {

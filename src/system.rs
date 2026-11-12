@@ -55,7 +55,7 @@ use crate::lexer::MAX_IDENTIFIER_LENGTH;
 use crate::settings::Own;
 use crate::storage::Row;
 use crate::value::Spelled;
-use crate::value::{DataType, Decimal, INTEGER_PRECISION, Value, assign};
+use crate::value::{CharUnits, DataType, Decimal, INTEGER_PRECISION, Value, assign};
 
 pub use information::{SystemView, view};
 pub use settings::DESCRIPTION_LENGTH;
@@ -240,7 +240,14 @@ fn checked(desc: &TableDesc, rows: Vec<Row>) -> Result<Vec<Row>> {
 
 /// A column of CHARACTER VARYING(`length`), NOT NULL if `not_null`.
 pub(crate) fn text_column((name, length): (&str, u32), not_null: bool) -> ColumnDesc {
-    ColumnDesc { name: name.to_owned(), data_type: DataType::Varying { length }, not_null, default: None, domain: None, collation: None }
+    ColumnDesc {
+        name: name.to_owned(),
+        data_type: DataType::Varying { length, units: CharUnits::Characters },
+        not_null,
+        default: None,
+        domain: None,
+        collation: None,
+    }
 }
 
 /// [ISO/IEC 9075:1992 §21.2.27] A column of SQL_IDENTIFIER, CHARACTER

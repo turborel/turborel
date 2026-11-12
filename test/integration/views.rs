@@ -276,7 +276,7 @@ fn cursors_over_views_8_3() {
     assert_eq!(rows(&s, &format!("SELECT NAME FROM E WHERE ID = {first}")), expected(&[]));
     s.declare_cursor("DECLARE R CURSOR FOR SELECT NAME FROM STAFF").unwrap();
     s.execute("OPEN R", &mut p).unwrap();
-    let mut q = Params::new().declare("N", DataType::Character { length: 6 }, Value::Null);
+    let mut q = Params::new().declare("N", DataType::character(6), Value::Null);
     s.execute("FETCH R INTO N", &mut q).unwrap();
     assert_eq!(s.execute("DELETE FROM STAFF WHERE CURRENT OF R", &mut q).unwrap_err().code, Code::SyntaxRule);
 }

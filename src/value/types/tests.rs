@@ -69,7 +69,7 @@ fn an_unregistered_value_is_nothing_else() {
 #[test]
 fn built_in_kinds_refuse_other_kinds() {
     let types = [
-        DataType::Character { length: 3 },
+        DataType::character(3),
         DataType::Exact { precision: 5, scale: 1, spelled: Spelled::Numeric },
         DataType::Approximate { precision: 53, spelled: Spelled::Float },
         DataType::Binary { length: 3 },
@@ -126,7 +126,7 @@ fn refuses(t: &DataType, other: &Value) {
 fn built_in_kinds_cast_and_write() {
     assert_eq!(code(EXACT.cast(foreign(), &DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Numeric })), Some(Code::Data));
     assert_eq!(code(APPROXIMATE.cast(foreign(), &DataType::Approximate { precision: 24, spelled: Spelled::Float })), Some(Code::Data));
-    let shown = CHARACTER.cast(foreign(), &DataType::Character { length: 5 }).unwrap();
+    let shown = CHARACTER.cast(foreign(), &DataType::character(5)).unwrap();
     assert_eq!(shown.to_string(), "ABC  ", "a value beyond the standard CAST to a string is its text");
     assert_eq!(EXACT.literal(&Value::Exact(Decimal::new(15, 1))), "1.5");
     assert_eq!(APPROXIMATE.literal(&Value::Approx(1.5)), "1.5E0");
@@ -208,7 +208,7 @@ fn varying_keys_order_as_strings_compare() {
     }
     strings.sort();
     strings.dedup();
-    let t = DataType::Varying { length: 3 };
+    let t = DataType::varying(3);
     let key = |s: &str| {
         let mut out = Vec::new();
         t.encode_key(&Value::Char(s.to_owned()), &mut out).unwrap();

@@ -101,11 +101,11 @@ of rows 1, Ada, 7200; 2, Grace, 8100; and 3, NULL, 6900:
 let s = db.session("ANN");
 let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
 let mut p = Params::new()
-    .declare("TEXT", DataType::Varying { length: 200 }, Value::Null)
-    .declare("STMT", DataType::Varying { length: 128 }, Value::Null)
+    .declare("TEXT", DataType::varying(200), Value::Null)
+    .declare("STMT", DataType::varying(128), Value::Null)
     .declare("MY_ID", integer, Value::Exact(Decimal::new(1, 0)))
     .declare("RAISE", integer, Value::Exact(Decimal::new(100, 0)))
-    .declare("MY_NAME", DataType::Varying { length: 30 }, Value::Null)
+    .declare("MY_NAME", DataType::varying(30), Value::Null)
     .indicator("NAME_IND", 0);
 p.set("TEXT", Value::Char("UPDATE STAFF SET SALARY = SALARY + ? WHERE ID = ?".into()));
 s.execute("PREPARE RAISE_ONE FROM TEXT", &mut p)?;

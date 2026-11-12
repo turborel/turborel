@@ -17,6 +17,8 @@ pub mod interval;
 mod like;
 mod operators;
 pub mod types;
+mod units;
+pub use units::CharUnits;
 
 pub use binary::{BYTE_BITS, Binary};
 pub use cast::{cast, cast_warned};
@@ -133,14 +135,18 @@ impl PartialEq for Spelled {
 pub enum DataType {
     /// CHARACTER(length)
     Character {
-        /// The length in characters.
+        /// The length, in `units`.
         length: u32,
+        /// [ISO/IEC 9075-2:2023 §6.1 SR16] What the length counts.
+        units: CharUnits,
     },
     /// [ISO/IEC 9075:1992 §6.1] CHARACTER VARYING(length), CHAR VARYING,
     /// VARCHAR: a character string of variable length.
     Varying {
-        /// The maximum length in characters.
+        /// The maximum length, in `units`.
         length: u32,
+        /// [ISO/IEC 9075-2:2023 §6.1 SR16] What the length counts.
+        units: CharUnits,
     },
     /// NUMERIC, DECIMAL, INTEGER, SMALLINT.
     Exact {
@@ -201,6 +207,14 @@ pub enum DataType {
 }
 
 impl DataType {
+    /// CHARACTER(`length`), in characters.
+    pub const fn character(length: u32) -> DataType {
+        DataType::Character { length, units: CharUnits::Characters }
+    }
+    /// CHARACTER VARYING(`length`), in characters.
+    pub const fn varying(length: u32) -> DataType {
+        DataType::Varying { length, units: CharUnits::Characters }
+    }
     /// Whether this is a character string type.
     pub fn is_character(&self) -> bool {
         matches!(self, DataType::Character { .. } | DataType::Varying { .. })

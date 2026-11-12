@@ -29,12 +29,12 @@ fn boolean_literals_are_read_6_13() {
 /// boundary pair; (5, FALSE) and (4, FALSE) likewise.
 #[test]
 fn truth_values_are_cast_to_text_6_13() {
-    assert_eq!(as_text(true, &DataType::Character { length: 4 }).unwrap().to_string(), "TRUE");
-    assert_eq!(as_text(true, &DataType::Character { length: 6 }).unwrap().to_string(), "TRUE  ");
-    assert_eq!(as_text(true, &DataType::Varying { length: 6 }).unwrap().to_string(), "TRUE");
-    assert_eq!(as_text(false, &DataType::Varying { length: 5 }).unwrap().to_string(), "FALSE");
-    assert_eq!(code(as_text(true, &DataType::Varying { length: 3 })), Some(Code::Data));
-    assert_eq!(code(as_text(false, &DataType::Character { length: 4 })), Some(Code::Data));
+    assert_eq!(as_text(true, &DataType::character(4)).unwrap().to_string(), "TRUE");
+    assert_eq!(as_text(true, &DataType::character(6)).unwrap().to_string(), "TRUE  ");
+    assert_eq!(as_text(true, &DataType::varying(6)).unwrap().to_string(), "TRUE");
+    assert_eq!(as_text(false, &DataType::varying(5)).unwrap().to_string(), "FALSE");
+    assert_eq!(code(as_text(true, &DataType::varying(3))), Some(Code::Data));
+    assert_eq!(code(as_text(false, &DataType::character(4))), Some(Code::Data));
     assert_eq!(code(as_text(true, &DataType::Date)), Some(Code::Data), "no character string");
 }
 
@@ -78,7 +78,7 @@ fn booleans_are_cast_assigned_and_compared_6_13() {
     assert!(BOOLEAN.cast(Value::Exact(crate::value::Decimal::new(1, 0)), &t).is_err());
     assert_eq!(BOOLEAN.assign(Value::Bool(false), &t, "test").unwrap().to_string(), "FALSE");
     assert!(BOOLEAN.assign(Value::Char("TRUE".into()), &t, "test").is_err());
-    assert!(BOOLEAN.comparable(&t) && !BOOLEAN.comparable(&DataType::Character { length: 4 }));
+    assert!(BOOLEAN.comparable(&t) && !BOOLEAN.comparable(&DataType::character(4)));
     assert_eq!(BOOLEAN.written(&t), "BOOLEAN");
     assert_eq!(BOOLEAN.literal(&Value::Bool(true)), "TRUE");
 }

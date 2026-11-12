@@ -708,6 +708,30 @@ SQL-92, so each stays an identifier, a function before a parenthesis.
 START or AFTER is the word of POSITION_REGEX unless IN or FLAG follows
 it, so a column of either name may be its pattern.
 
+### Character length units
+
+Feature T062 (character length units). A character string type's length
+may be written in OCTETS, `VARCHAR(10 OCTETS)`, or in CHARACTERS, the
+default [§6.1 SR9]. One in octets bounds the UTF-8 of each value [SR16b],
+which is the form of use of the one character set, so the repertoire is
+UCS as SR8 requires.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Assignment | §9.2 GR3 | A value of more octets is 22001 unless only spaces are past them, and those are dropped. A fixed string is padded with spaces to its octets. |
+| CAST | §6.13 GR5c, GR6c | A string is cut to whole characters of no more octets, with the warning 01004 if anything but spaces is lost. |
+| Host variables | §9.1 GR3 | Cut and padded as CAST does, the indicator the value's length in octets. |
+| Brought together | §9.5 SR3a, §6.33 SR3a | Of CASE, set operations and `||`, the length is in octets if every string's is, else in characters, which a length in octets bounds. A function's result, SUBSTRING's or a trim's, is in characters. |
+| Descriptors | §20.10 GR7d, Information Schema | LENGTH and CHARACTER_MAXIMUM_LENGTH the length written, OCTET_LENGTH and CHARACTER_OCTET_LENGTH the same number (IA227). |
+| CHAR_LENGTH, POSITION, SUBSTRING | §6.31 GR2, GR5, §6.33 GR3 | USING OCTETS counts octets of the string's UTF-8, USING CHARACTERS characters, the default. CHAR_LENGTH in octets is OCTET_LENGTH. |
+
+A substring in octets whose ends cut a character takes only the whole
+characters within them, as GR3 counts octets yet the result is a
+character string; this is UV074's choice for a start position too. A
+binary string's POSITION and SUBSTRING take no USING, their syntax having
+none, so USING there is SQLCODE -103. CHARACTERS and OCTETS are no key
+words of SQL-92, so each stays an identifier.
+
 ### Formatted CAST
 
 Feature T839 (formatted cast of datetimes to/from character strings).
@@ -887,6 +911,7 @@ topic. The Where column names the file that implements each.
 | 86 §5.1 SR1 character set; 86 §5.11 GR6 collating sequence | Unicode, in Unicode scalar order | `lexer.rs`, `value/comparison.rs` |
 | 86 §5.3 end-of-line indicator | `\n` or `\r\n` | `lexer.rs` |
 | 86 §5.5 SR3 precision of NUMERIC and DECIMAL when omitted | 18 | `value.rs` |
+| 2023 §6.1 GR3 (IA227) a length in octets as characters | The same number, the most characters so many octets hold | `value/types/character.rs` |
 | 86 §5.5 SR7–SR9 precision of DECIMAL, INTEGER, SMALLINT | As specified, 10, 5 | `value.rs` |
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |

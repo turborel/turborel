@@ -121,7 +121,7 @@ and 3, NULL, 6900:
 let s = db.session("ANN");
 let mut p = Params::new()
     .declare("MY_ID", DataType::Exact { precision: 9, scale: 0 }, Value::Null)
-    .declare("MY_NAME", DataType::Varying { length: 30 }, Value::Null)
+    .declare("MY_NAME", DataType::varying(30), Value::Null)
     .indicator("NAME_IND", 0)
     .declare("FLOOR", DataType::Exact { precision: 9, scale: 0 }, Value::Exact(Decimal::new(7000, 0)));
 s.declare_cursor("DECLARE U CURSOR FOR SELECT ID, NAME FROM STAFF WHERE SALARY > FLOOR FOR UPDATE OF SALARY")?;

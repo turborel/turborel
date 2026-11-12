@@ -56,12 +56,8 @@ fn more_casts_in_a_session() {
     assert_eq!(cast(Value::Char("10:00:00-03:00".into()), DataType::Time { precision: 0, zoned: false }), "14:00:00", "its instant");
     assert_eq!(cast(Value::Char("10:00:00".into()), DataType::Time { precision: 0, zoned: true }), "10:00:00+01:00");
     assert_eq!(cast(Value::Null, DataType::Date), "NULL");
-    assert_eq!(cast(date.clone(), DataType::Varying { length: 10 }), "2024-05-06");
-    assert_eq!(
-        cast(Value::Exact(crate::value::Decimal::new(1, 0)), DataType::Character { length: 3 }),
-        "1  ",
-        "not a datetime: as the type casts"
-    );
+    assert_eq!(cast(date.clone(), DataType::varying(10)), "2024-05-06");
+    assert_eq!(cast(Value::Exact(crate::value::Decimal::new(1, 0)), DataType::character(3)), "1  ", "not a datetime: as the type casts");
     for (v, t) in [
         (date, DataType::Time { precision: 0, zoned: false }),
         (of(Moment::Time, "01:00:00"), DataType::Date),

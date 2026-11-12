@@ -227,7 +227,7 @@ impl ScalarFunction for TooLong {
         "LONG"
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Character { length: 6 })
+        Ok(DataType::character(6))
     }
     fn call(&self, _: &[Value]) -> Result<Value> {
         Ok(Value::Char("TENLETTERS".into()))

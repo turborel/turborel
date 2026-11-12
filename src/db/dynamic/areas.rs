@@ -103,7 +103,7 @@ fn of_field_type(f: DescriptorItem, t: DataType, target: bool) -> bool {
         return matches!(t, DataType::Exact { scale: 0, .. });
     }
     match t {
-        DataType::Character { length } | DataType::Varying { length } => !target || length >= NAME_LENGTH,
+        DataType::Character { length, .. } | DataType::Varying { length, .. } => !target || length >= NAME_LENGTH,
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }

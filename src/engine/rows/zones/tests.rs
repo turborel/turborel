@@ -20,7 +20,7 @@ use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
 /// A number kept, a long text not.
-const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::Varying { length: 100 }];
+const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
 
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))

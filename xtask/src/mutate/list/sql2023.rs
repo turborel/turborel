@@ -6,13 +6,13 @@
 //! decimal floating point, its rounding, range, keys and comparison;
 //! varying strings of no written maximum length; a simple CASE's lists
 //! of WHEN operands, and predicates among them; GREATEST and LEAST;
-//! trims and pads; CAST with FORMAT. Regular expressions' are in
-//! `regex.rs`.
+//! trims and pads; CAST with FORMAT; lengths in octets. Regular
+//! expressions' are in `regex.rs`.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 49] = [
+pub const SQL2023: [Mutation; 55] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -248,8 +248,8 @@ pub const SQL2023: [Mutation; 49] = [
         package: Package::Core,
         breaks: "VARCHAR written without a length holds one character, not the longest string",
         file: "src/parser/data_type.rs",
-        original: "            let mut length = MAX_CHARACTER_LENGTH;",
-        replacement: "            let mut length = 1;",
+        original: "let (length, units) = self.character_length(MAX_CHARACTER_LENGTH)?;",
+        replacement: "let (length, units) = self.character_length(1)?;",
         integration: &["varying::the_names_of_varying_strings_6_1", "varying::varying_strings_of_no_written_length_t081"],
         unit: &[],
     },
@@ -501,6 +501,66 @@ pub const SQL2023: [Mutation; 49] = [
         original: "let now = if template.needs_now(datetime.0) { now.instant() } else {",
         replacement: "let now = if false { now.instant() } else {",
         integration: &["formatted_casts::strings_are_read_9_51"],
+        unit: &[],
+    },
+    Mutation {
+        name: "units-octets-prefix-empty",
+        package: Package::Core,
+        breaks: "a string's start of so many octets is always empty",
+        file: "src/value/units.rs",
+        original: "(0..=most.min(s.len())).rev().find(|at| s.is_char_boundary(*at))",
+        replacement: "(0..=most.min(s.len())).find(|at| s.is_char_boundary(*at))",
+        integration: &["length_units::octet_lengths_6_1"],
+        unit: &["value::units::tests::strings_are_counted_in_units_6_1"],
+    },
+    Mutation {
+        name: "units-varying-counts-characters",
+        package: Package::Core,
+        breaks: "a VARCHAR whose length is in octets takes a value of more octets but no more characters",
+        file: "src/value/types/varying.rs",
+        original: "let (count, most) = (units.count(&s), usize::try_from(length)",
+        replacement: "let (count, most) = (s.chars().count(), usize::try_from(length)",
+        integration: &["length_units::octet_lengths_6_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "units-kept-as-characters",
+        package: Package::Core,
+        breaks: "a length in octets is kept as one in characters, so a reopened column takes longer values",
+        file: "src/value/types/character.rs",
+        original: "CharUnits::Octets => 1,",
+        replacement: "CharUnits::Octets => 0,",
+        integration: &["length_units::octet_lengths_are_kept"],
+        unit: &[],
+    },
+    Mutation {
+        name: "units-substring-cut-character",
+        package: Package::Core,
+        breaks: "SUBSTRING USING OCTETS takes a character its end cuts",
+        file: "src/functions/strings.rs",
+        original: "*at >= from && at.saturating_add(ch.len_utf8()) <= to",
+        replacement: "*at >= from && *at < to",
+        integration: &["length_units::functions_count_in_units_6_31"],
+        unit: &[],
+    },
+    Mutation {
+        name: "units-position-in-characters",
+        package: Package::Core,
+        breaks: "POSITION USING OCTETS counts characters",
+        file: "src/functions/strings.rs",
+        original: "if self.units == Some(CharUnits::Octets) { at }",
+        replacement: "if false { at }",
+        integration: &["length_units::functions_count_in_units_6_31"],
+        unit: &[],
+    },
+    Mutation {
+        name: "units-result-in-characters",
+        package: Package::Core,
+        breaks: "strings of lengths in octets brought together give a length in characters",
+        file: "src/binder/case.rs",
+        original: "let units = if octets { CharUnits::Octets }",
+        replacement: "let units = if false { CharUnits::Octets }",
+        integration: &["length_units::octet_lengths_brought_together_9_5"],
         unit: &[],
     },
 ];

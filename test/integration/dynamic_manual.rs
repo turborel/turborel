@@ -25,18 +25,18 @@ fn staff() -> Database {
 /// its indicator NAME_IND; WHAT, a field's text.
 fn program() -> Params {
     let integer = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric };
-    let name = DataType::Varying { length: 128 };
+    let name = DataType::varying(128);
     Params::new()
-        .declare("TEXT", DataType::Varying { length: 200 }, Value::Null)
+        .declare("TEXT", DataType::varying(200), Value::Null)
         .declare("STMT", name, Value::Null)
         .declare("CUR", name, Value::Null)
         .declare("MY_ID", integer, Value::Exact(Decimal::new(1, 0)))
         .declare("RAISE", integer, Value::Exact(Decimal::new(100, 0)))
         .declare("FLOOR", integer, Value::Exact(Decimal::new(7000, 0)))
         .declare("N", integer, Value::Null)
-        .declare("MY_NAME", DataType::Varying { length: 30 }, Value::Null)
+        .declare("MY_NAME", DataType::varying(30), Value::Null)
         .indicator("NAME_IND", 0)
-        .declare("WHAT", DataType::Character { length: 128 }, Value::Null)
+        .declare("WHAT", DataType::character(128), Value::Null)
 }
 
 /// `p`'s parameter `name` set to the string `s`.
